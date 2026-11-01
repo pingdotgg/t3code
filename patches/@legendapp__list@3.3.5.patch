@@ -1618,8 +1618,32 @@ index 95465f2ab89ce41a10553f58af83618f7310e83c..d7cbe1cb43449cc29822b2646deabbdd
        }
      }
    }
+diff --git a/react.d.ts b/react.d.ts
+index b6c7481603f4119495551b3e4c1c071984c144af..0dc4ac679c9318db0d9e2aa06f7f57a99f13adf2 100644
+--- a/react.d.ts
++++ b/react.d.ts
+@@ -816,7 +816,19 @@ type LegendListPropsOverrides<ItemT, TItemType extends string | undefined> = Omi
+     refScrollView?: Ref<HTMLElement | ScrollViewMethods>;
+     ListHeaderComponentStyle?: CSSProperties | undefined;
+     ListFooterComponentStyle?: CSSProperties | undefined;
++    /**
++     * Called synchronously after the list scrolls itself to keep visible content in place,
++     * before the browser reports the scroll. Offsets are along the scroll axis.
++     */
++    onScrollAdjust?: (adjustment: {
++        before: ScrollAdjustPosition;
++        after: ScrollAdjustPosition;
++    }) => void;
+ };
++interface ScrollAdjustPosition {
++    offset: number;
++    maxOffset: number;
++}
+ type LegendListProps<ItemT = any, TItemType extends string | undefined = string | undefined> = LegendListPropsOverrides<ItemT, TItemType>;
+ type LegendListRef = Omit<LegendListRef$1, "getAnimatableRef" | "getNativeScrollRef" | "getScrollableNode" | "getScrollResponder"> & {
+     getAnimatableRef(): HTMLElement | ScrollViewMethods;
 diff --git a/react.js b/react.js
-index 914d2dafaafa001c9ab6791a0a0581659295e333..8c320b0dfb3ea60ef145274b37b1297b7dee26dc 100644
+index 914d2dafaafa001c9ab6791a0a0581659295e333..da8a4b92fe2952b34feb4c2163f46a265b05c298 100644
 --- a/react.js
 +++ b/react.js
 @@ -1908,6 +1908,10 @@ function updateScroll(ctx, newScroll, forceUpdate, options) {
@@ -1892,7 +1916,26 @@ index 914d2dafaafa001c9ab6791a0a0581659295e333..8c320b0dfb3ea60ef145274b37b1297b
  }
  function useFreshDataTransitionVisibility(readyToRender, transitionEpoch) {
    const [completedTransitionEpoch, setCompletedTransitionEpoch] = React3.useState(transitionEpoch);
-@@ -6446,8 +6517,8 @@ function ScrollAdjust() {
+@@ -6430,7 +6501,17 @@ function ScrollAdjust() {
+         const intendedScroll = userOffsetDelta !== 0 ? currentScroll + userOffsetDelta : ctx.state.scroll;
+         const scrollDelta = intendedScroll - currentScroll;
+         const shouldScroll = Math.abs(scrollDelta) > 0.01;
+-        const scrollBy = () => scrollAdjustBy(el, axis.x * scrollDelta, axis.y * scrollDelta);
++        const onScrollAdjust = ctx.state.props.onScrollAdjust;
++        const readPosition = () => ({
++          offset: horizontal ? el.scrollLeft : el.scrollTop,
++          maxOffset: el[axis.contentSizeKey] - el[axis.viewportSizeKey]
++        });
++        // Read before any temporary end padding widens the scroll range.
++        const before = onScrollAdjust && shouldScroll ? readPosition() : void 0;
++        const scrollBy = () => {
++          scrollAdjustBy(el, axis.x * scrollDelta, axis.y * scrollDelta);
++          if (onScrollAdjust && before) onScrollAdjust({ before, after: readPosition() });
++        };
+         contentNodeRef.current = contentNode;
+         if (shouldScroll && contentNode) {
+           const totalSize = contentNode[axis.contentSizeKey];
+@@ -6446,8 +6527,8 @@ function ScrollAdjust() {
                window.getComputedStyle(contentNode)[axis.paddingEndProp]
              );
              const temporaryPaddingEnd = `${(currentPaddingEnd || 0) + pad}px`;
@@ -1902,8 +1945,24 @@ index 914d2dafaafa001c9ab6791a0a0581659295e333..8c320b0dfb3ea60ef145274b37b1297b
              void contentNode.offsetHeight;
              scrollBy();
              if (resetPaddingRafRef.current !== void 0) {
+@@ -7745,6 +7826,7 @@ var LegendListInner = typedForwardRef(function LegendListInner2(props, forwarded
+     onEndReached,
+     onEndReachedThreshold = 0.5,
+     onItemSizeChanged,
++    onScrollAdjust,
+     onMetricsChange,
+     onLayout: onLayoutProp,
+     onLoad,
+@@ -8003,6 +8085,7 @@ var LegendListInner = typedForwardRef(function LegendListInner2(props, forwarded
+     onEndReachedThreshold,
+     onFirstVisibleItemChanged,
+     onItemSizeChanged,
++    onScrollAdjust,
+     onLoad,
+     onMomentumScrollEnd,
+     onScroll: throttleScrollFn,
 diff --git a/react.mjs b/react.mjs
-index 95465f2ab89ce41a10553f58af83618f7310e83c..252a9d5b23e271c089d30c357a78dff754f1c899 100644
+index 95465f2ab89ce41a10553f58af83618f7310e83c..acaa7405ad93b34ce67799fac16df73ef9589a31 100644
 --- a/react.mjs
 +++ b/react.mjs
 @@ -1887,6 +1887,10 @@ function updateScroll(ctx, newScroll, forceUpdate, options) {
@@ -2176,7 +2235,26 @@ index 95465f2ab89ce41a10553f58af83618f7310e83c..252a9d5b23e271c089d30c357a78dff7
  }
  function useFreshDataTransitionVisibility(readyToRender, transitionEpoch) {
    const [completedTransitionEpoch, setCompletedTransitionEpoch] = useState(transitionEpoch);
-@@ -6425,8 +6496,8 @@ function ScrollAdjust() {
+@@ -6409,7 +6480,17 @@ function ScrollAdjust() {
+         const intendedScroll = userOffsetDelta !== 0 ? currentScroll + userOffsetDelta : ctx.state.scroll;
+         const scrollDelta = intendedScroll - currentScroll;
+         const shouldScroll = Math.abs(scrollDelta) > 0.01;
+-        const scrollBy = () => scrollAdjustBy(el, axis.x * scrollDelta, axis.y * scrollDelta);
++        const onScrollAdjust = ctx.state.props.onScrollAdjust;
++        const readPosition = () => ({
++          offset: horizontal ? el.scrollLeft : el.scrollTop,
++          maxOffset: el[axis.contentSizeKey] - el[axis.viewportSizeKey]
++        });
++        // Read before any temporary end padding widens the scroll range.
++        const before = onScrollAdjust && shouldScroll ? readPosition() : void 0;
++        const scrollBy = () => {
++          scrollAdjustBy(el, axis.x * scrollDelta, axis.y * scrollDelta);
++          if (onScrollAdjust && before) onScrollAdjust({ before, after: readPosition() });
++        };
+         contentNodeRef.current = contentNode;
+         if (shouldScroll && contentNode) {
+           const totalSize = contentNode[axis.contentSizeKey];
+@@ -6425,8 +6506,8 @@ function ScrollAdjust() {
                window.getComputedStyle(contentNode)[axis.paddingEndProp]
              );
              const temporaryPaddingEnd = `${(currentPaddingEnd || 0) + pad}px`;
@@ -2186,6 +2264,22 @@ index 95465f2ab89ce41a10553f58af83618f7310e83c..252a9d5b23e271c089d30c357a78dff7
              void contentNode.offsetHeight;
              scrollBy();
              if (resetPaddingRafRef.current !== void 0) {
+@@ -7724,6 +7805,7 @@ var LegendListInner = typedForwardRef(function LegendListInner2(props, forwarded
+     onEndReached,
+     onEndReachedThreshold = 0.5,
+     onItemSizeChanged,
++    onScrollAdjust,
+     onMetricsChange,
+     onLayout: onLayoutProp,
+     onLoad,
+@@ -7982,6 +8064,7 @@ var LegendListInner = typedForwardRef(function LegendListInner2(props, forwarded
+     onEndReachedThreshold,
+     onFirstVisibleItemChanged,
+     onItemSizeChanged,
++    onScrollAdjust,
+     onLoad,
+     onMomentumScrollEnd,
+     onScroll: throttleScrollFn,
 diff --git a/reanimated.d.ts b/reanimated.d.ts
 index e5043320700b12f34f4c0babbc341f85ca8135c1..e8cbd461325a2e2e9ffd61de26a85ae4d108555c 100644
 --- a/reanimated.d.ts
