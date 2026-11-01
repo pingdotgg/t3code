@@ -78,6 +78,11 @@ function ConfiguredConnectOnboardingDialog() {
     primaryEnvironmentId === null ? environmentsReady : primarySessionState._tag !== "Initial";
 
   const controller = useCloudLinkController();
+  const hostLabel = controller.linkState.target?.label ?? "this host";
+  const stepLabels: Record<OnboardingStep, string> = {
+    publish: `Share ${hostLabel}`,
+    devices: "Connect devices",
+  };
   const accountPage = useT3ConnectAccountPage();
   const showPublishStep = canManageRelay && controller.linkState.target !== null;
   const steps: ReadonlyArray<OnboardingStep> = showPublishStep
@@ -191,7 +196,7 @@ function ConfiguredConnectOnboardingDialog() {
       title: "T3 Connect enabled",
       description: exposeEnvironment
         ? "This environment is available to your other devices through T3 Connect."
-        : "This environment publishes agent activity to your mobile clients.",
+        : "This environment sends agent activity to your mobile devices.",
     });
     setStep("devices");
   };
@@ -216,15 +221,12 @@ function ConfiguredConnectOnboardingDialog() {
         <WizardHeader
           title="Set up T3 Connect"
           description={
-            <>
-              Mesh your devices together. Publish this environment and connect the rest, all in one
-              place.
-            </>
+            <>Use T3 Code on your other devices. Choose what to share and which hosts to connect.</>
           }
         >
           {steps.length > 1 ? (
             <WizardSteps
-              steps={steps.map((id) => STEP_LABELS[id])}
+              steps={steps.map((id) => stepLabels[id])}
               currentStep={steps.indexOf(step)}
               isStepDisabled={() => isApplying}
               onStepChange={(index) => {
@@ -244,6 +246,7 @@ function ConfiguredConnectOnboardingDialog() {
         <WizardPanel>
           {step === "publish" ? (
             <PublishStep
+              hostLabel={hostLabel}
               exposeEnvironment={exposeEnvironment}
               publishAgentActivity={publishAgentActivity}
               disabled={isApplying || !canManageRelay || linkStateData === null}
@@ -307,12 +310,8 @@ function ConfiguredConnectOnboardingDialog() {
   );
 }
 
-const STEP_LABELS: Record<OnboardingStep, string> = {
-  publish: "Publish",
-  devices: "Connect devices",
-};
-
 function PublishStep({
+  hostLabel,
   exposeEnvironment,
   publishAgentActivity,
   disabled,
@@ -322,6 +321,7 @@ function PublishStep({
   onExposeEnvironmentChange,
   onPublishAgentActivityChange,
 }: {
+  readonly hostLabel: string;
   readonly exposeEnvironment: boolean;
   readonly publishAgentActivity: boolean;
   readonly disabled: boolean;
@@ -335,15 +335,15 @@ function PublishStep({
     <div className="space-y-3">
       <div className="rounded-lg border">
         <OnboardingToggleRow
-          title="Publish this environment"
-          description="Make this environment available to your other devices through T3 Connect."
+          title="Allow access to this environment through T3 Connect"
+          description={`Connect to ${hostLabel} from other devices signed in to your account.`}
           checked={exposeEnvironment}
           disabled={disabled}
           onCheckedChange={onExposeEnvironmentChange}
         />
         <OnboardingToggleRow
-          title="Publish agent activity"
-          description="Send activity from this environment to your mobile clients for push notifications and Live Activities."
+          title="Send agent activity to mobile devices"
+          description="Use agent activity in push notifications or Live Activities on your phone."
           checked={publishAgentActivity}
           disabled={disabled}
           onCheckedChange={onPublishAgentActivityChange}
