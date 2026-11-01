@@ -74,6 +74,14 @@ describe("timeline scroll follow opt-out", () => {
     expect(scrolledUp({ top: 1199.5, height: 1700 })).toBe(false);
     expect(scrolledUp({ top: 1199, height: 1700 })).toBe(false);
     expect(scrolledUp({ top: 1198.5, height: 1700 })).toBe(true);
+
+    // Height lost in the same event explains only that much upward movement.
+    expect(scrolledUp({ top: 1194, height: 1696 })).toBe(false);
+    expect(scrolledUp({ top: 1193.5, height: 1696 })).toBe(false);
+    expect(scrolledUp({ top: 1193, height: 1696 })).toBe(true);
+    // Jumping from the end to the top as a virtualized row remeasures 4px smaller.
+    const jumpedToTop = createUpwardScrollDetector({ top: 18040, height: 19240 });
+    expect(jumpedToTop({ top: 0, height: 19236 })).toBe(true);
   });
 
   it("preserves upward new-turn positioning, then detects the reader leaving that anchor", () => {

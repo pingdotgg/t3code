@@ -32,16 +32,18 @@ export function isTimelineScrollTarget(
 export function createUpwardScrollDetector(initial: { top: number; height: number }) {
   let baseline = initial;
   return (next: { top: number; height: number; programmatic?: boolean }) => {
-    if (next.programmatic || next.height < baseline.height || next.top > baseline.top) {
+    if (next.programmatic || next.top > baseline.top) {
       baseline = next;
       return false;
     }
-    if (next.top < baseline.top - 1) {
+    // Content shrinking above the view can pull the scroll up by as much as it lost.
+    const explainedTop = baseline.top - Math.max(0, baseline.height - next.height);
+    if (next.top < explainedTop - 1) {
       baseline = next;
       return true;
     }
     // A slow scroll can move under a pixel per event; let those moves add up.
-    baseline = { top: baseline.top, height: next.height };
+    baseline = { top: Math.max(next.top, explainedTop), height: next.height };
     return false;
   };
 }

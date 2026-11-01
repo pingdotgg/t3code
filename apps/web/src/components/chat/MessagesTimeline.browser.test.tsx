@@ -47,6 +47,7 @@ import { toastManager } from "../ui/toast";
 import type { CitedHistory } from "./citationProcedure";
 import type { TimelineNavigation } from "./timelineViewport";
 import { rememberTimelinePosition } from "./timelineScrollAnchoring";
+import { useTimelineFollow } from "./useTimelineFollow";
 import {
   COMPOSER_CONTEXT_CLIPBOARD_MIME,
   decodeComposerContextFragment,
@@ -292,6 +293,94 @@ describe("MessagesTimeline work rows", () => {
       }
     },
   );
+});
+
+/** The timeline with the follow logic ChatView and GuestPage give it. */
+function FollowingTimeline({
+  props,
+  entries,
+}: {
+  props: Omit<TimelineProps, "timelineEntries">;
+  entries: ReadonlyArray<Entry>;
+}) {
+  const follow = useTimelineFollow({
+    legendListRef: props.listRef,
+    composerTimelineInset: 0,
+    routeThreadKey: props.routeThreadKey,
+    activeThreadKey: props.routeThreadKey,
+    isServerThread: false,
+    serverProjection: null,
+    threadStatus: "live",
+    activeActivityRun: null,
+    activeRunningTurnId: null,
+    timelineEntries: entries as Entry[],
+    timelineAnchorMessageId: null,
+    setTimelineAnchor: () => {},
+  });
+  return (
+    <>
+      <MessagesTimeline
+        {...props}
+        timelineEntries={entries as Entry[]}
+        liveFollowEnabled={follow.timelineLiveFollowEnabled}
+        onIsAtEndChange={follow.onIsAtEndChangeStable}
+        onViewportAttach={follow.attachTimelineViewport}
+      />
+      {follow.showScrollToBottom ? <button type="button">Scroll to end</button> : null}
+    </>
+  );
+}
+
+describe("MessagesTimeline following", () => {
+  it("reaches the end of a long answer when the turn ends while it scrolls there", async () => {
+    const props = { ...baseProps(), isWorking: true };
+    const history = Array.from({ length: 30 }, (_, index) =>
+      message(`Reply ${index}\n\n${"word ".repeat(200)}`, { role: "assistant" }, `reply-${index}`),
+    );
+    const viewport = () => props.listRef.current!.getScrollableNode()!;
+    const distanceFromEnd = () =>
+      viewport().scrollHeight - viewport().clientHeight - viewport().scrollTop;
+    // Before mounting: the list arms its opening-target timer on mount.
+    using _timers = fakeTimers();
+    await using screen = await renderElement(<FollowingTimeline props={props} entries={history} />);
+    await vi.waitFor(() => expect(distanceFromEnd()).toBeLessThanOrEqual(1));
+    // The list re-snaps to its opening target on new data until that target expires.
+    await act(() => vi.advanceTimersByTime(2_500));
+
+    // The whole answer arrives in one update while the turn works, so the list glides to it.
+    const answer = message(
+      Array.from({ length: 200 }, (_, index) => `${index + 1}. ${"fact ".repeat(30)}`).join("\n"),
+      { role: "assistant" },
+      "answer",
+    );
+    const scrollBeforeAnswer = viewport().scrollTop;
+    await screen.rerender(<FollowingTimeline props={props} entries={[...history, answer]} />);
+    await vi.waitFor(() => {
+      expect(viewport().scrollTop).toBeGreaterThan(scrollBeforeAnswer);
+      expect(distanceFromEnd()).toBeGreaterThan(viewport().clientHeight * 2);
+    });
+
+    // Mid-glide the turn ends and a row above shrinks; keeping it in place is an instant
+    // scroll, which stops the glide.
+    const finished = [
+      ...history.slice(0, -1),
+      message("Reply 29", { role: "assistant" }, "reply-29"),
+      answer,
+    ];
+    await screen.rerender(
+      <FollowingTimeline props={{ ...props, isWorking: false }} entries={finished} />,
+    );
+
+    // Chrome's smooth scroll over this distance runs past waitFor's default second.
+    await vi.waitFor(() => expect(distanceFromEnd()).toBeLessThanOrEqual(1), { timeout: 5000 });
+    expect(screen.buttons("Scroll to end")).toHaveLength(0);
+
+    // A screen reader moving to the first message leaves the end on purpose; it stays there.
+    await act(() => screen.container.querySelector("h3")!.scrollIntoView({ block: "start" }));
+    await vi.waitFor(() => expect(screen.buttons("Scroll to end")).toHaveLength(1));
+    await act(() => vi.advanceTimersByTime(1_000));
+    expect(distanceFromEnd()).toBeGreaterThan(viewport().clientHeight);
+  });
 });
 
 describe("MessagesTimeline messages", () => {
