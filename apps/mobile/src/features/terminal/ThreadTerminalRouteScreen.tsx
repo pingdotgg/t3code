@@ -20,7 +20,6 @@ import { AppText as Text } from "../../components/ui/AppText";
 import { TerminalContextSheet } from "./TerminalContextSheet";
 import { hasNativeTerminalSurface, supportsNativeTerminalOutput } from "./nativeTerminalModule";
 import * as Clipboard from "expo-clipboard";
-import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import { AsyncResult } from "effect/reactivity";
 import {
@@ -340,7 +339,7 @@ function readLiveTerminalSessions(
 ): ReadonlyArray<TerminalMenuSession> {
   if (!readEnvironmentScope(environmentId, AuthTerminalReadScope)) return [];
   const result = appAtomRegistry.get(terminalEnvironment.metadata({ environmentId, input: null }));
-  const summaries = Option.getOrElse(AsyncResult.value(result), () => []);
+  const summaries = AsyncResult.getOrElse(result, () => []);
   return summaries
     .filter((summary) => summary.threadId === threadId)
     .map((summary) => ({
@@ -977,7 +976,14 @@ function ThreadTerminal(props: {
                     KeyboardController.dismiss();
                     requestCapture();
                   }}
-                  className="px-4 py-2"
+                  className="px-4 pt-2"
+                  style={{
+                    paddingBottom:
+                      8 +
+                      (keyboardState.isVisible
+                        ? 0
+                        : (nativeColumnMetrics?.safeArea.bottom ?? insets.bottom)),
+                  }}
                 >
                   <Text style={{ color: terminalTheme.foreground }}>Attach visible output</Text>
                 </Pressable>

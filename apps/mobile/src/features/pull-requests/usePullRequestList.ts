@@ -3,7 +3,6 @@ import { executeAtomQuery, squashAtomCommandFailure } from "@t3tools/client-runt
 import type { EnvironmentId, PullRequestDiffStat, PullRequestListInput } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
-import * as Option from "effect/Option";
 import { AsyncResult, Atom, type AtomRegistry } from "effect/reactivity";
 import { use, useMemo, useState } from "react";
 import { environmentCatalog } from "../../connection/catalog";
@@ -32,7 +31,7 @@ type Read = <A>(atom: Atom.Atom<A>) => A;
 
 /** The head the list query holds now, cached or answered. */
 function currentHead(read: Read, target: ListTarget) {
-  return Option.getOrNull(AsyncResult.value(read(composerPullRequests.list(target))));
+  return AsyncResult.getOrElse(read(composerPullRequests.list(target)), () => null);
 }
 
 function currentPages(read: Read, target: ListTarget): PullRequestListPages | null {
@@ -163,8 +162,7 @@ export function usePullRequestList(targets: readonly ListTarget[]) {
   const refreshAtom = refreshLoadFamily(scopeKey);
   const page = useAtomValue(pageAtom);
   const refresh = useAtomValue(refreshAtom);
-  // Starting one kind of load clears the other, so at most one holds an error.
-  const loadError = settledError(refresh) ?? settledError(page);
+  const loadError = settledError(page);
 
   // A page or refresh asked for while an environment was unreachable fails at once, and its
   // error stops loading on scroll. Once it is back, ask for the page again; a refresh's error is
@@ -185,7 +183,7 @@ export function usePullRequestList(targets: readonly ListTarget[]) {
     const pageResult = registry.get(pageAtom);
     const refreshResult = registry.get(refreshAtom);
     if (pageResult.waiting || refreshResult.waiting) return;
-    if (!retry && (settledError(refreshResult) ?? settledError(pageResult))) return;
+    if (!retry && settledError(pageResult)) return;
     if (!continuations(registry, targets).length) return;
     registry.set(refreshAtom, Atom.Reset);
     registry.set(pageAtom, retry);

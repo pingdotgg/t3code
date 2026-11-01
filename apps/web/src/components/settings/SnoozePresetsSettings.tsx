@@ -16,7 +16,7 @@ import * as Schema from "effect/Schema";
 import { PlusIcon, XIcon } from "lucide-react";
 
 import { useNowMinute } from "../../hooks/useNowMinute";
-import { reconcileSnoozeDraft } from "./SnoozePresetsSettings.logic";
+import { reconcileSnoozeDraft, sortSnoozeRows } from "./SnoozePresetsSettings.logic";
 import { formatShortTimestamp } from "../../timestampFormat";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
@@ -90,6 +90,16 @@ function nextCandidate(presets: ReadonlyArray<SnoozePresetSetting>): SnoozePrese
   );
 }
 
+// Row order is only display order, so it does not make a list differ from the defaults.
+function sameSnoozePresets(
+  left: ReadonlyArray<SnoozePresetSetting>,
+  right: ReadonlyArray<SnoozePresetSetting>,
+) {
+  const ids = (presets: ReadonlyArray<SnoozePresetSetting>) =>
+    presets.map(snoozePresetId).toSorted();
+  return Equal.equals(ids(left), ids(right));
+}
+
 const isSnoozePresetDay = Schema.is(SnoozePresetDay);
 
 interface KindMemory {
@@ -109,16 +119,28 @@ function withWhen(
   return { kind: "at", day: when, time: preset.kind === "at" ? preset.time : memory.time };
 }
 
-/** Edits the snooze menu's options. Menus sort them by wake time, so rows keep the order they were added in. */
+/**
+ * Edits the snooze menu's options. Rows sort by wake time like the menu, but only when focus
+ * leaves the list, so a row never moves under the pointer mid-edit.
+ */
 export function SnoozePresetsRow() {
   const settings = useScopedSettings();
   const updateSettings = useUpdateScopedSettings();
   const saved = settings.snoozePresets;
+  const nowMinute = useNowMinute();
+  const now = new Date(`${nowMinute}Z`);
   // Edits build on a local draft, so a second edit before the first save echoes back
   // does not restore what the first one changed. Echoes of our own writes keep the draft.
-  const [presets, setPresets] = useState(saved);
-  // Row keys survive removals, so a row's in-progress field state stays with that row.
-  const [keys, setKeys] = useState<ReadonlyArray<number>>(() => saved.map((_, index) => index));
+  // Row keys survive removals and sorts, so a row's in-progress field state stays with it.
+  // One state, so a sort queued in the same event as an edit applies on top of it.
+  const [rows, setRows] = useState(() =>
+    sortSnoozeRows(
+      saved,
+      saved.map((_, index) => index),
+      now,
+    ),
+  );
+  const { presets, keys } = rows;
   const [nextKey, setNextKey] = useState(saved.length);
   // Null forces the next render to adopt the saved value, as after a failed write.
   const [savedSource, setSavedSource] = useState<ReadonlyArray<SnoozePresetSetting> | null>(saved);
@@ -134,8 +156,7 @@ export function SnoozePresetsRow() {
     const reconciled = reconcileSnoozeDraft(written, saved);
     if (reconciled.adopt) {
       setWritten([]);
-      setPresets(saved);
-      setKeys(freshKeys(saved.length));
+      setRows(sortSnoozeRows(saved, freshKeys(saved.length), now));
     } else {
       setWritten(reconciled.pending);
     }
@@ -145,8 +166,7 @@ export function SnoozePresetsRow() {
     nextKeys: ReadonlyArray<number> = keys,
   ) => {
     if (!mixed && Equal.equals(snoozePresets, presets)) return;
-    setPresets(snoozePresets);
-    setKeys(nextKeys);
+    setRows({ presets: snoozePresets, keys: nextKeys });
     setWritten((previous) => [...previous, snoozePresets]);
     updateSettings(
       { snoozePresets },
@@ -168,10 +188,17 @@ export function SnoozePresetsRow() {
       {...searchableSetting("snooze-options")}
       description="Choices in every snooze menu, listed soonest first. Weekdays mean the next one after today."
       resetAction={
-        !mixed && Equal.equals(presets, DEFAULT_SNOOZE_PRESETS) ? null : (
+        !mixed && sameSnoozePresets(presets, DEFAULT_SNOOZE_PRESETS) ? null : (
           <SettingResetButton
             label="snooze options"
-            onClick={() => save(DEFAULT_SNOOZE_PRESETS, freshKeys(DEFAULT_SNOOZE_PRESETS.length))}
+            onClick={() => {
+              const sorted = sortSnoozeRows(
+                DEFAULT_SNOOZE_PRESETS,
+                freshKeys(DEFAULT_SNOOZE_PRESETS.length),
+                now,
+              );
+              save(sorted.presets, sorted.keys);
+            }}
           />
         )
       }
@@ -188,6 +215,7 @@ export function SnoozePresetsRow() {
           )
         }
         onAdd={() => save([...presets, nextCandidate(presets)], [...keys, ...freshKeys(1)])}
+        onSettle={() => setRows((current) => sortSnoozeRows(current.presets, current.keys, now))}
       />
     </SettingsRow>
   );
@@ -200,6 +228,7 @@ function SnoozePresetList(props: {
   onChange: (index: number, preset: SnoozePresetSetting) => void;
   onRemove: (index: number) => void;
   onAdd: () => void;
+  onSettle: () => void;
 }) {
   const nowMinute = useNowMinute();
   const now = new Date(`${nowMinute}Z`);
@@ -232,7 +261,20 @@ function SnoozePresetList(props: {
   );
 
   return (
-    <div className="flex flex-col gap-1.5 pt-3 pb-2">
+    <div
+      className="flex flex-col gap-1.5 pt-3 pb-2"
+      onBlur={(event) => {
+        const list = event.currentTarget;
+        const next = event.relatedTarget;
+        if (list.contains(next)) return;
+        // Select popups portal out of the list, so focus moving into one is not leaving it.
+        if (next instanceof Element && next.closest('[data-slot="select-popup"]')) return;
+        // Waits for the amount field's blur commit, and skips its Enter blur-and-refocus.
+        queueMicrotask(() => {
+          if (!list.contains(document.activeElement)) props.onSettle();
+        });
+      }}
+    >
       {props.presets.map((preset, index) => {
         const preview = previews[index]!;
         return (
@@ -371,7 +413,7 @@ function DurationFields(props: { minutes: number; onChange: (minutes: number) =>
     <>
       <NumberField
         size="sm"
-        className="w-24"
+        className="w-32"
         min={1}
         max={maxAmount}
         step={1}

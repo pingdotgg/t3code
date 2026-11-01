@@ -4,7 +4,6 @@ import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
 import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
-import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import { AsyncResult, Atom, AtomRegistry } from "effect/reactivity";
@@ -264,7 +263,7 @@ export function readManagedRelaySnapshotState<A>(
 ): ManagedRelaySnapshotState<A> {
   const failure = result._tag === "Failure" ? describeManagedRelayFailure(result.cause) : null;
   return {
-    data: Option.getOrNull(AsyncResult.value(result)),
+    data: AsyncResult.getOrElse(result, () => null),
     error: failure?.message ?? null,
     errorTraceId: failure?.traceId ?? null,
     isPending: result.waiting,
