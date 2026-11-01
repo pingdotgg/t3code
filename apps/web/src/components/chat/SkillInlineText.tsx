@@ -1,38 +1,35 @@
+import type { ScopedThreadRef, ServerProviderSkill } from "@t3tools/contracts";
+import { formatProviderSkillDisplayName } from "@t3tools/shared/inlineSkills";
 import { Children, cloneElement, isValidElement, type ReactNode } from "react";
-import type { ServerProviderSkill } from "@t3tools/contracts";
+import { matchInlineSkills } from "@t3tools/shared/inlineSkills";
 
-import { formatProviderSkillDisplayName } from "../../providerSkillPresentation";
-import {
-  CHAT_INLINE_CHIP_CLASS_NAME,
-  CHAT_INLINE_CHIP_LABEL_CLASS_NAME,
-  COMPOSER_INLINE_CHIP_ICON_CLASS_NAME,
-  SKILL_CHIP_ICON_SVG,
-} from "../composerInlineChip";
-import { cn } from "~/lib/utils";
+import { useRightPanelStore } from "~/rightPanelStore";
+import { SKILL_CHIP_ICON_SVG } from "../composerInlineChip";
+import { ContextChipPopover } from "../contextChipParts";
+import { Button } from "../ui/button";
 
-const SKILL_TOKEN_REGEX = /(^|\s)\$([a-zA-Z][a-zA-Z0-9:_-]*)(?=\s|$)/g;
-
-type InlineSkill = Pick<ServerProviderSkill, "name" | "displayName">;
-
-export function SkillInlineText(props: { text: string; skills: ReadonlyArray<InlineSkill> }) {
+function SkillInlineText(props: {
+  text: string;
+  skills: ReadonlyArray<ServerProviderSkill>;
+  threadRef: ScopedThreadRef | undefined;
+}) {
   const nodes: ReactNode[] = [];
   let cursor = 0;
 
-  for (const match of props.text.matchAll(SKILL_TOKEN_REGEX)) {
-    const prefix = match[1] ?? "";
-    const name = match[2] ?? "";
-    const start = (match.index ?? 0) + prefix.length;
-    const rawText = `$${name}`;
-    const skill = props.skills.find((candidate) => candidate.name === name);
-    if (!skill) {
-      continue;
-    }
-
+  for (const { start, end, skill, rawText } of matchInlineSkills(props.text, props.skills)) {
     if (start > cursor) {
       nodes.push(props.text.slice(cursor, start));
     }
-    nodes.push(<SkillChip key={`${start}:${name}`} skill={skill} rawText={rawText} />);
-    cursor = start + rawText.length;
+    nodes.push(
+      <SkillChipPopover
+        key={`${start}:${skill.name}`}
+        label={formatProviderSkillDisplayName(skill)}
+        description={skillPopoverDescription(skill)}
+        copyMarkdown={rawText}
+        onViewInstructions={skillInstructionsOpener(props.threadRef, skill)}
+      />,
+    );
+    cursor = end;
   }
 
   if (cursor === 0) {
@@ -46,17 +43,17 @@ export function SkillInlineText(props: { text: string; skills: ReadonlyArray<Inl
 
 export function renderSkillInlineMarkdownChildren(
   children: ReactNode,
-  skills: ReadonlyArray<InlineSkill>,
+  skills: ReadonlyArray<ServerProviderSkill>,
+  threadRef: ScopedThreadRef | undefined,
 ): ReactNode {
   return Children.map(children, (child) => {
     if (typeof child === "string") {
-      return <SkillInlineText text={child} skills={skills} />;
+      return <SkillInlineText text={child} skills={skills} threadRef={threadRef} />;
     }
     if (!isValidElement<{ children?: ReactNode; node?: { tagName?: string } }>(child)) {
       return child;
     }
-    // Custom react-markdown components replace the intrinsic type, so also
-    // check the hast node they carry.
+    // Custom markdown components replace intrinsic types; check their hast tags.
     const markdownTagName = typeof child.type === "string" ? child.type : child.props.node?.tagName;
     if (markdownTagName === "code" || markdownTagName === "a") {
       return child;
@@ -67,29 +64,58 @@ export function renderSkillInlineMarkdownChildren(
     return cloneElement(
       child,
       undefined,
-      renderSkillInlineMarkdownChildren(child.props.children, skills),
+      renderSkillInlineMarkdownChildren(child.props.children, skills, threadRef),
     );
   });
 }
 
-function SkillChip(props: { skill: InlineSkill; rawText: string }) {
+export function skillPopoverDescription(
+  skill: Pick<ServerProviderSkill, "description" | "shortDescription">,
+) {
+  return skill.description?.trim() || skill.shortDescription?.trim() || null;
+}
+
+export function skillInstructionsOpener(
+  threadRef: ScopedThreadRef | null | undefined,
+  skill: Pick<ServerProviderSkill, "path"> | undefined,
+) {
+  if (!threadRef || !skill?.path) return undefined;
+  return () => useRightPanelStore.getState().openFile(threadRef, skill.path);
+}
+
+export function SkillChipPopover(props: {
+  label: string;
+  description: string | null | undefined;
+  copyMarkdown?: string | undefined;
+  onViewInstructions: (() => void) | undefined;
+}) {
   return (
-    <span className="inline-flex align-middle leading-none" data-markdown-copy={props.rawText}>
-      <span
-        className={cn(
-          CHAT_INLINE_CHIP_CLASS_NAME,
-          "border-fuchsia-500/25 bg-fuchsia-500/12 text-fuchsia-700 dark:text-fuchsia-300",
-        )}
-      >
-        <span
-          aria-hidden="true"
-          className={COMPOSER_INLINE_CHIP_ICON_CLASS_NAME}
-          dangerouslySetInnerHTML={{ __html: SKILL_CHIP_ICON_SVG }}
-        />
-        <span className={CHAT_INLINE_CHIP_LABEL_CLASS_NAME}>
-          {formatProviderSkillDisplayName(props.skill)}
-        </span>
-      </span>
-    </span>
+    <ContextChipPopover
+      kind="skill"
+      icon={<SkillChipIcon />}
+      label={props.label}
+      accessibleLabel={`Skill ${props.label}`}
+      copyMarkdown={props.copyMarkdown}
+    >
+      <div className="space-y-3 p-2 text-sm">
+        <p className="font-medium">{props.label}</p>
+        <p>{props.description || "No description is available for this skill."}</p>
+        {props.onViewInstructions ? (
+          <Button variant="outline" size="sm" onClick={props.onViewInstructions}>
+            View instructions
+          </Button>
+        ) : null}
+      </div>
+    </ContextChipPopover>
+  );
+}
+
+function SkillChipIcon() {
+  return (
+    <span
+      aria-hidden="true"
+      className="contents"
+      dangerouslySetInnerHTML={{ __html: SKILL_CHIP_ICON_SVG }}
+    />
   );
 }

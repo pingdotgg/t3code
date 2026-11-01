@@ -1,14 +1,55 @@
+import { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
+import { formatInlineContextReference } from "./lib/composerContextReferences";
+import { threadContextReference } from "./lib/composerContextRecords";
+import { threadContextRecord } from "@t3tools/shared/composerContextReferences";
 
 import {
-  buildPendingUserInputAnswers,
-  countAnsweredPendingUserInputQuestions,
+  carryDisplacedCustomAnswerIntoPrompt,
   derivePendingUserInputProgress,
-  findFirstUnansweredPendingUserInputQuestionIndex,
-  resolvePendingUserInputAnswer,
-  setPendingUserInputCustomAnswer,
-  togglePendingUserInputOptionSelection,
+  projectPendingUserInputAnswer,
+  threadContextsReferencedByAnswer,
 } from "./pendingUserInput";
+
+describe("projectPendingUserInputAnswer", () => {
+  const record = threadContextRecord(
+    {
+      environmentId: EnvironmentId.make("env-answer"),
+      threadId: ThreadId.make("reference-thread"),
+    },
+    "Reference work",
+  );
+
+  it("sends thread chips as readable links with the actual thread ID", () => {
+    const answer = `Compare ${formatInlineContextReference(threadContextReference(record))}`;
+    expect(projectPendingUserInputAnswer(answer, [record])).toBe(
+      "Compare [Reference work](t3-thread://v2/env-answer/reference-thread)",
+    );
+  });
+
+  // regression: #18789 answers to pending questions lost exact text and option values
+  it("preserves option values and exact answer text", () => {
+    const options = [" first\t", "second"];
+    expect(projectPendingUserInputAnswer(options, [record])).toBe(options);
+    expect(projectPendingUserInputAnswer("  Edited answer\n", [record])).toBe("  Edited answer\n");
+  });
+});
+
+describe("threadContextsReferencedByAnswer", () => {
+  const kept = threadContextRecord(
+    { environmentId: EnvironmentId.make("env-answer"), threadId: ThreadId.make("kept-thread") },
+    "Kept work",
+  );
+  const deleted = threadContextRecord(
+    { environmentId: EnvironmentId.make("env-answer"), threadId: ThreadId.make("deleted-thread") },
+    "Deleted work",
+  );
+
+  it("preserves remaining chips without restoring deleted thread records", () => {
+    const answer = `Compare ${formatInlineContextReference(threadContextReference(kept))}`;
+    expect(threadContextsReferencedByAnswer(answer, [deleted, kept])).toEqual([kept]);
+  });
+});
 
 const singleSelectQuestion = {
   id: "scope",
@@ -22,138 +63,6 @@ const singleSelectQuestion = {
   ],
   multiSelect: false,
 } as const;
-
-const multiSelectQuestion = {
-  id: "areas",
-  header: "Areas",
-  question: "Which areas should this change cover?",
-  options: [
-    {
-      label: "Server",
-      description: "Server",
-    },
-    {
-      label: "Web",
-      description: "Web",
-    },
-  ],
-  multiSelect: true,
-} as const;
-
-describe("resolvePendingUserInputAnswer", () => {
-  it("prefers a custom answer over selected options", () => {
-    expect(
-      resolvePendingUserInputAnswer(singleSelectQuestion, {
-        selectedOptionLabels: ["Orchestration-first"],
-        customAnswer: "Keep the existing envelope for one release",
-      }),
-    ).toBe("Keep the existing envelope for one release");
-  });
-
-  it("falls back to the selected option for single-select questions", () => {
-    expect(
-      resolvePendingUserInputAnswer(singleSelectQuestion, {
-        selectedOptionLabels: ["Orchestration-first"],
-      }),
-    ).toBe("Orchestration-first");
-  });
-
-  it("returns all selected labels for multi-select questions", () => {
-    expect(
-      resolvePendingUserInputAnswer(multiSelectQuestion, {
-        selectedOptionLabels: ["Server", "Web"],
-      }),
-    ).toEqual(["Server", "Web"]);
-  });
-
-  it("clears the preset selection when a custom answer is entered", () => {
-    expect(
-      setPendingUserInputCustomAnswer(
-        {
-          selectedOptionLabels: ["Server", "Web"],
-        },
-        "doesn't matter",
-      ),
-    ).toEqual({
-      customAnswer: "doesn't matter",
-    });
-  });
-});
-
-describe("togglePendingUserInputOptionSelection", () => {
-  it("toggles options for multi-select questions", () => {
-    expect(togglePendingUserInputOptionSelection(multiSelectQuestion, undefined, "Server")).toEqual(
-      {
-        customAnswer: "",
-        selectedOptionLabels: ["Server"],
-      },
-    );
-
-    expect(
-      togglePendingUserInputOptionSelection(
-        multiSelectQuestion,
-        {
-          selectedOptionLabels: ["Server", "Web"],
-        },
-        "Server",
-      ),
-    ).toEqual({
-      customAnswer: "",
-      selectedOptionLabels: ["Web"],
-    });
-  });
-});
-
-describe("buildPendingUserInputAnswers", () => {
-  it("returns a canonical answer map for complete prompts", () => {
-    expect(
-      buildPendingUserInputAnswers(
-        [
-          singleSelectQuestion,
-          {
-            id: "compat",
-            header: "Compat",
-            question: "How strict should compatibility be?",
-            options: [
-              {
-                label: "Keep current envelope",
-                description: "Preserve current wire format",
-              },
-            ],
-            multiSelect: false,
-          },
-        ],
-        {
-          scope: {
-            selectedOptionLabels: ["Orchestration-first"],
-          },
-          compat: {
-            customAnswer: "Keep the current envelope for one release window",
-          },
-        },
-      ),
-    ).toEqual({
-      scope: "Orchestration-first",
-      compat: "Keep the current envelope for one release window",
-    });
-  });
-
-  it("returns arrays for answered multi-select prompts", () => {
-    expect(
-      buildPendingUserInputAnswers([multiSelectQuestion], {
-        areas: {
-          selectedOptionLabels: ["Server", "Web"],
-        },
-      }),
-    ).toEqual({
-      areas: ["Server", "Web"],
-    });
-  });
-
-  it("returns null when any question is unanswered", () => {
-    expect(buildPendingUserInputAnswers([singleSelectQuestion], {})).toBeNull();
-  });
-});
 
 describe("pending user input question progress", () => {
   const questions = [
@@ -172,37 +81,15 @@ describe("pending user input question progress", () => {
     },
   ] as const;
 
-  it("counts only answered questions", () => {
-    expect(
-      countAnsweredPendingUserInputQuestions(questions, {
-        scope: {
-          selectedOptionLabels: ["Orchestration-first"],
-        },
-      }),
-    ).toBe(1);
-  });
-
-  it("finds the first unanswered question", () => {
-    expect(
-      findFirstUnansweredPendingUserInputQuestionIndex(questions, {
-        scope: {
-          selectedOptionLabels: ["Orchestration-first"],
-        },
-      }),
-    ).toBe(1);
-  });
-
-  it("returns the last question index when all answers are complete", () => {
-    expect(
-      findFirstUnansweredPendingUserInputQuestionIndex(questions, {
-        scope: {
-          selectedOptionLabels: ["Orchestration-first"],
-        },
-        compat: {
-          customAnswer: "Keep it for one release window",
-        },
-      }),
-    ).toBe(1);
+  it("counts a deliberately cleared answer as answered", () => {
+    const question = { ...singleSelectQuestion, initialAnswer: "  Proposed message\n" };
+    const drafts = { scope: { customAnswer: "" } };
+    expect(derivePendingUserInputProgress([question], drafts, 0)).toMatchObject({
+      customAnswer: "",
+      resolvedAnswer: "",
+      canAdvance: true,
+      isComplete: true,
+    });
   });
 
   it("derives the active question and advancement state", () => {
@@ -211,7 +98,7 @@ describe("pending user input question progress", () => {
         questions,
         {
           scope: {
-            selectedOptionLabels: ["Orchestration-first"],
+            selectedOptionValues: ["Orchestration-first"],
           },
         },
         0,
@@ -219,7 +106,7 @@ describe("pending user input question progress", () => {
     ).toMatchObject({
       questionIndex: 0,
       activeQuestion: questions[0],
-      selectedOptionLabels: ["Orchestration-first"],
+      selectedOptionValues: ["Orchestration-first"],
       customAnswer: "",
       resolvedAnswer: "Orchestration-first",
       answeredQuestionCount: 1,
@@ -228,23 +115,25 @@ describe("pending user input question progress", () => {
       canAdvance: true,
     });
   });
+});
 
-  it("treats multi-select questions as answered when they have selected options", () => {
-    expect(
-      derivePendingUserInputProgress(
-        [multiSelectQuestion],
-        {
-          areas: {
-            selectedOptionLabels: ["Server", "Web"],
-          },
-        },
-        0,
-      ),
-    ).toMatchObject({
-      selectedOptionLabels: ["Server", "Web"],
-      resolvedAnswer: ["Server", "Web"],
-      canAdvance: true,
-      isComplete: true,
-    });
+describe("carryDisplacedCustomAnswerIntoPrompt", () => {
+  // regression: #12577 clicking a question option discarded typed text
+  it("keeps the thread draft when nothing was typed into the answer", () => {
+    expect(carryDisplacedCustomAnswerIntoPrompt("draft", undefined)).toBe("draft");
+    expect(carryDisplacedCustomAnswerIntoPrompt("draft", "   ")).toBe("draft");
+  });
+
+  // regression: #12577 clicking a question option discarded typed text
+  it("moves the typed answer into an empty thread draft", () => {
+    expect(carryDisplacedCustomAnswerIntoPrompt("", "also rename the flag ")).toBe(
+      "also rename the flag",
+    );
+  });
+
+  it("appends the typed answer after an existing thread draft", () => {
+    expect(carryDisplacedCustomAnswerIntoPrompt("first half\n", "second half")).toBe(
+      "first half\n\nsecond half",
+    );
   });
 });

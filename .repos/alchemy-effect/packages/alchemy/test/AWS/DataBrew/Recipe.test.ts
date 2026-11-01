@@ -118,5 +118,5 @@ test.provider(
       const gone = yield* getWorkingRecipe(created.recipe.recipeName);
       expect(gone).toBeUndefined();
     }),
-  { timeout: 120_000 },
+  { tags: ["provider:aws", "provider:aws:databrew", "live"], timeout: 120_000 },
 );

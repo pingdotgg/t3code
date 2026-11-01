@@ -90,11 +90,8 @@ export type ProxyEndpoint = Resource<
  * Zero Trust plans. The kind is immutable; name and `ips` converge in
  * place. Accounts are limited to a small number of proxy endpoints, so
  * prefer reusing one per account.
- * @resource
- * @product Gateway
- * @category Cloudflare One (Zero Trust)
- * @section Creating a Proxy Endpoint
- * @example Identity-based endpoint (all plans)
+ * ### Creating a Proxy Endpoint
+ * **Example:** Identity-based endpoint (all plans)
  * ```typescript
  * const proxy = yield* Cloudflare.Gateway.ProxyEndpoint("UserProxy", {
  *   kind: "identity",
@@ -103,7 +100,7 @@ export type ProxyEndpoint = Resource<
  * const host = `${proxy.subdomain}.proxy.cloudflare-gateway.com`;
  * ```
  *
- * @example IP allowlist endpoint (Enterprise)
+ * **Example:** IP allowlist endpoint (Enterprise)
  * ```typescript
  * const proxy = yield* Cloudflare.Gateway.ProxyEndpoint("OfficeProxy", {
  *   kind: "ip",
@@ -112,6 +109,10 @@ export type ProxyEndpoint = Resource<
  * ```
  *
  * @see https://developers.cloudflare.com/cloudflare-one/connections/connect-devices/agentless/pac-files/
+ *
+ * @resource
+ * @product Gateway
+ * @category Cloudflare One (Zero Trust)
  */
 export const ProxyEndpoint = Resource<ProxyEndpoint>(TypeId);
 
@@ -189,7 +190,7 @@ export const ProxyEndpointProvider = () =>
       // 3. Sync — diff observed name/ips against desired and PATCH only
       //    the delta; skip the call entirely on a no-op. `ips` compares as
       //    an unordered set and only applies to ip-kind endpoints.
-      const observedIps = "ips" in observed ? [...observed.ips] : [];
+      const observedIps = observedIpsOf(observed);
       const dirty =
         observed.name !== name ||
         (kind === "ip" &&
@@ -268,6 +269,13 @@ const resolveName = (id: string, name: string | undefined) =>
     return yield* createPhysicalName({ id, lowercase: true });
   });
 
+/**
+ * Identity-kind endpoints report `ips: null` on the wire (previously `[]`),
+ * so a key-presence check is not enough — only a real array counts.
+ */
+const observedIpsOf = (endpoint: ObservedEndpoint): string[] =>
+  "ips" in endpoint && Array.isArray(endpoint.ips) ? [...endpoint.ips] : [];
+
 const toAttributes = (
   endpoint: ObservedEndpoint,
   accountId: string,
@@ -276,7 +284,7 @@ const toAttributes = (
   accountId,
   name: endpoint.name,
   kind: (endpoint.kind ?? "ip") as ProxyEndpointKind,
-  ips: "ips" in endpoint ? [...endpoint.ips] : [],
+  ips: observedIpsOf(endpoint),
   subdomain: endpoint.subdomain ?? undefined,
   createdAt: endpoint.createdAt ?? undefined,
   updatedAt: endpoint.updatedAt ?? undefined,

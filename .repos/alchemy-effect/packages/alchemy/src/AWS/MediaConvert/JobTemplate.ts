@@ -76,9 +76,8 @@ export interface JobTemplate extends Resource<
  * configuration (inputs, output groups, and job-level settings) that new jobs
  * are created from so callers only supply the input/output specifics.
  *
- * @resource
- * @section Creating a Job Template
- * @example MP4 File-Group Template
+ * ### Creating a Job Template
+ * **Example:** MP4 File-Group Template
  * ```typescript
  * const template = yield* MediaConvert.JobTemplate("Mp4", {
  *   description: "Single MP4 output",
@@ -109,6 +108,8 @@ export interface JobTemplate extends Resource<
  *   },
  * });
  * ```
+ *
+ * @resource
  */
 export const JobTemplate = Resource<JobTemplate>(
   "AWS.MediaConvert.JobTemplate",

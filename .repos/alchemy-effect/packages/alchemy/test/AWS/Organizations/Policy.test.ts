@@ -18,25 +18,28 @@ const { test } = Test.make({ providers: AWS.providers() });
 // account, AWS-managed SCPs like `FullAWSAccess` appear; otherwise `list()`
 // degrades to `[]` via the typed `AWSOrganizationsNotInUseException` /
 // `AccessDeniedException` catches, so the assertions hold without deploying.
-test.provider("list enumerates organization policies", (stack) =>
-  Effect.gen(function* () {
-    const provider = yield* Provider.findProvider(Policy);
-    const all = yield* provider.list();
+test.provider(
+  "list enumerates organization policies",
+  (stack) =>
+    Effect.gen(function* () {
+      const provider = yield* Provider.findProvider(Policy);
+      const all = yield* provider.list();
 
-    expect(Array.isArray(all)).toBe(true);
+      expect(Array.isArray(all)).toBe(true);
 
-    for (const policy of all) {
-      expect(typeof policy.policyId).toBe("string");
-      expect(policy.policyId.length).toBeGreaterThan(0);
-      expect(typeof policy.policyArn).toBe("string");
-      expect(policy.policyArn.startsWith("arn:aws")).toBe(true);
-      expect(typeof policy.name).toBe("string");
-      expect(policy.document).toBeDefined();
-      expect(policy.tags).toBeDefined();
-    }
+      for (const policy of all) {
+        expect(typeof policy.policyId).toBe("string");
+        expect(policy.policyId.length).toBeGreaterThan(0);
+        expect(typeof policy.policyArn).toBe("string");
+        expect(policy.policyArn.startsWith("arn:aws")).toBe(true);
+        expect(typeof policy.name).toBe("string");
+        expect(policy.document).toBeDefined();
+        expect(policy.tags).toBeDefined();
+      }
 
-    yield* stack.destroy();
-  }),
+      yield* stack.destroy();
+    }),
+  { tags: ["provider:aws", "provider:aws:organizations", "live"] },
 );
 
 // PolicyDocument adoption: a typed `ServiceControlPolicyDocument` deploys, the
@@ -131,5 +134,13 @@ test.provider.skipIf(!process.env.AWS_ORG_MANAGEMENT_ACCOUNT)(
         );
       expect(gone).toBe(true);
     }),
-  { timeout: 240_000 },
+  {
+    tags: [
+      "provider:aws",
+      "provider:aws:iam",
+      "provider:aws:organizations",
+      "live",
+    ],
+    timeout: 240_000,
+  },
 );

@@ -61,9 +61,8 @@ export interface Policy extends Resource<
  * An AWS IoT policy that grants MQTT permissions (connect, publish,
  * subscribe, receive) to certificates and other principals.
  *
- * @resource
- * @section Creating a Policy
- * @example Allow Publish and Subscribe
+ * ### Creating a Policy
+ * **Example:** Allow Publish and Subscribe
  * ```typescript
  * const policy = yield* Policy("device-policy", {
  *   policyDocument: {
@@ -75,6 +74,8 @@ export interface Policy extends Resource<
  *   },
  * });
  * ```
+ *
+ * @resource
  */
 export const Policy = Resource<Policy>("AWS.IoT.Policy");
 

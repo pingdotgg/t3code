@@ -34,24 +34,27 @@ const retryForbidden = <A, E extends { _tag: string }, R>(
 // result is naturally an empty `BgpPrefixAttributes[]` — the exact
 // shape `read` produces. This exercises the distilled wiring live on every run
 // without requiring the BYOIP contract/entitlement.
-test.provider("list enumerates BGP prefixes across BYOIP prefixes", (stack) =>
-  Effect.gen(function* () {
-    yield* stack.destroy();
+test.provider(
+  "list enumerates BGP prefixes across BYOIP prefixes",
+  (stack) =>
+    Effect.gen(function* () {
+      yield* stack.destroy();
 
-    const provider = yield* Provider.findProvider(
-      Cloudflare.Addressing.BgpPrefix,
-    );
-    const all = yield* retryForbidden(provider.list());
+      const provider = yield* Provider.findProvider(
+        Cloudflare.Addressing.BgpPrefix,
+      );
+      const all = yield* retryForbidden(provider.list());
 
-    expect(Array.isArray(all)).toBe(true);
-    for (const p of all) {
-      expect(typeof p.bgpPrefixId).toBe("string");
-      expect(typeof p.prefixId).toBe("string");
-      expect(typeof p.accountId).toBe("string");
-      expect(typeof p.cidr).toBe("string");
-      expect(typeof p.onDemand.advertised).toBe("boolean");
-    }
+      expect(Array.isArray(all)).toBe(true);
+      for (const p of all) {
+        expect(typeof p.bgpPrefixId).toBe("string");
+        expect(typeof p.prefixId).toBe("string");
+        expect(typeof p.accountId).toBe("string");
+        expect(typeof p.cidr).toBe("string");
+        expect(typeof p.onDemand.advertised).toBe("boolean");
+      }
 
-    yield* stack.destroy();
-  }).pipe(logLevel),
+      yield* stack.destroy();
+    }).pipe(logLevel),
+  { tags: ["provider:cloudflare", "provider:cloudflare:addressing", "live"] },
 );

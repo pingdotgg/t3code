@@ -1,5 +1,6 @@
 import * as ce from "@distilled.cloud/aws/cost-explorer";
 import * as Effect from "effect/Effect";
+import * as Schedule from "effect/Schedule";
 import { diffTags } from "../../Tags.ts";
 import { Region } from "../Region.ts";
 
@@ -11,8 +12,28 @@ import { Region } from "../Region.ts";
 // (same pattern as CloudFront KVS / ECR Public / WAFv2 / GlobalAccelerator).
 export const CE_REGION = "us-east-1" as const;
 
-export const pinCe = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
-  effect.pipe(Effect.provideService(Region, Effect.succeed(CE_REGION)));
+// Cost Explorer's control-plane rate limits are extremely low and shared
+// account-wide, so concurrent deploys readily trip `LimitExceededException:
+// Rate limit exceeded`. Retry it with capped exponential backoff, bounded
+// (~47s total) so a genuine quota LimitExceeded still surfaces quickly.
+const ceThrottleRetrySchedule = Schedule.max([
+  Schedule.min([
+    Schedule.exponential("1 second"),
+    Schedule.spaced("8 seconds"),
+  ]),
+  Schedule.recurs(8),
+]);
+
+export const pinCe = <A, E extends { _tag: string }, R>(
+  effect: Effect.Effect<A, E, R>,
+): Effect.Effect<A, E, R> =>
+  effect.pipe(
+    Effect.provideService(Region, Effect.succeed(CE_REGION)),
+    Effect.retry({
+      while: (e) => e._tag === "LimitExceededException",
+      schedule: ceThrottleRetrySchedule,
+    }),
+  );
 
 /** Convert a plain tag record to Cost Explorer's `ResourceTag` list shape. */
 export const toResourceTags = (

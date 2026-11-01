@@ -1,0 +1,69 @@
+import type { ProviderUserInputAnswers, UserInputAttachments } from "@t3tools/contracts";
+import * as Schema from "effect/Schema";
+import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
+import { resolveAttachmentPath } from "../attachmentStore.ts";
+import * as DocumentText from "./DocumentText.ts";
+class UserInputAttachmentError extends Schema.TaggedError<UserInputAttachmentError>()(
+  "UserInputAttachmentError",
+  {
+    operation: Schema.String,
+    issue: Schema.String,
+    cause: Schema.optional(Schema.Defect()),
+  },
+) {}
+
+const quoteReference = Schema.encodeSync(Schema.fromJsonString(Schema.String));
+
+/** Keep provider answer protocols unchanged; paths refer to files on the provider's server. */
+export const appendUserInputAttachmentPaths = Effect.fn("appendUserInputAttachmentPaths")(
+  function* (input: {
+    answers: ProviderUserInputAnswers;
+    attachmentsByQuestionId?: UserInputAttachments | undefined;
+    attachmentsDir: string;
+  }) {
+    const answers = new Map(Object.entries(input.answers));
+    const fs = yield* FileSystem.FileSystem;
+    const documents = yield* DocumentText.DocumentText;
+    for (const [questionId, attachments] of Object.entries(input.attachmentsByQuestionId ?? {})) {
+      if (attachments.length === 0) continue;
+      const references: string[] = [];
+      for (const attachment of attachments) {
+        const path = resolveAttachmentPath({ attachmentsDir: input.attachmentsDir, attachment });
+        if (
+          !path ||
+          !(yield* fs.exists(path).pipe(
+            Effect.mapError(
+              (cause) =>
+                new UserInputAttachmentError({
+                  operation: "respondToUserInput",
+                  issue: `Could not access attachment '${attachment.name}'.`,
+                  cause,
+                }),
+            ),
+          ))
+        ) {
+          return yield* new UserInputAttachmentError({
+            operation: "respondToUserInput",
+            issue: `Attachment '${attachment.name}' is no longer available. Attach it again.`,
+          });
+        }
+        const extracted = yield* documents.ensure(path);
+        references.push(
+          `Attached ${attachment.type} ${quoteReference(attachment.name)}: ${quoteReference(path)}${extracted ? ` (text extracted to: ${quoteReference(extracted)})` : ""}`,
+        );
+      }
+      const answer = answers.get(questionId);
+      const text = references.join("\n");
+      answers.set(
+        questionId,
+        Array.isArray(answer)
+          ? [...answer, text]
+          : typeof answer === "string" && answer.length > 0
+            ? `${answer}\n\n${text}`
+            : text,
+      );
+    }
+    return Object.fromEntries(answers);
+  },
+);

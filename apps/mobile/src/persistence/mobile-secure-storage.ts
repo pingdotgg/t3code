@@ -6,7 +6,7 @@ import * as SecureStore from "expo-secure-store";
 
 const MobileSecureStorageOperation = Schema.Literals(["read", "write", "delete"]);
 
-export class MobileSecureStorageError extends Schema.TaggedErrorClass<MobileSecureStorageError>()(
+export class MobileSecureStorageError extends Schema.TaggedError<MobileSecureStorageError>()(
   "MobileSecureStorageError",
   {
     operation: MobileSecureStorageOperation,
@@ -28,7 +28,7 @@ export class MobileSecureStorage extends Context.Service<
   }
 >()("@t3tools/mobile/persistence/MobileSecureStorage") {}
 
-export const make = MobileSecureStorage.of({
+const make = MobileSecureStorage.of({
   getItem: Effect.fn("MobileSecureStorage.getItem")((key) =>
     Effect.tryPromise({
       try: () => SecureStore.getItemAsync(key),

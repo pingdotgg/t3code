@@ -12,9 +12,8 @@ import type { Workspace } from "./Workspace.ts";
  * trigger an in-place Grafana version upgrade via `grafanaVersion`. Provide
  * the implementation with
  * `Effect.provide(AWS.Grafana.UpdateWorkspaceConfigurationHttp)`.
- * @binding
- * @section Managing Configuration
- * @example Enable Unified Alerting
+ * ### Managing Configuration
+ * **Example:** Enable Unified Alerting
  * ```typescript
  * const updateConfig = yield* Grafana.UpdateWorkspaceConfiguration(workspace);
  *
@@ -24,6 +23,8 @@ import type { Workspace } from "./Workspace.ts";
  *   }),
  * });
  * ```
+ *
+ * @binding
  */
 export interface UpdateWorkspaceConfiguration extends Binding.Service<
   UpdateWorkspaceConfiguration,

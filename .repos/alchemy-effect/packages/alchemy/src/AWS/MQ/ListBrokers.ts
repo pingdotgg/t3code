@@ -8,15 +8,16 @@ import * as Binding from "../../Binding.ts";
  *
  * Lists all Amazon MQ brokers in the account/region. Provide the
  * implementation with `Effect.provide(AWS.MQ.ListBrokersHttp)`.
- * @binding
- * @section Observing a Broker
- * @example List All Brokers
+ * ### Observing a Broker
+ * **Example:** List All Brokers
  * ```typescript
  * const listBrokers = yield* MQ.ListBrokers();
  *
  * const page = yield* listBrokers();
  * // page.BrokerSummaries → [{ BrokerName: "orders", BrokerState: "RUNNING", … }]
  * ```
+ *
+ * @binding
  */
 export interface ListBrokers extends Binding.Service<
   ListBrokers,

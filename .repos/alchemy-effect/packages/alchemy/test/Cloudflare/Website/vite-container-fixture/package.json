@@ -1,0 +1,12 @@
+{
+  "name": "alchemy-vite-container-fixture",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "devDependencies": {
+    "@cloudflare/containers": "catalog:",
+    "alchemy": "workspace:*",
+    "effect": "catalog:",
+    "vite": "catalog:"
+  }
+}

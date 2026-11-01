@@ -123,9 +123,8 @@ export interface WebACL extends Resource<
  * distributions (set `Distribution.webAclId` to the web ACL's ARN) and are
  * always provisioned in `us-east-1` — the provider pins the region for you.
  *
- * @resource
- * @section Creating Web ACLs
- * @example Allow-by-Default Web ACL with a Managed Rule Group
+ * ### Creating Web ACLs
+ * **Example:** Allow-by-Default Web ACL with a Managed Rule Group
  * ```typescript
  * const acl = yield* AWS.WAFv2.WebACL("ApiFirewall", {
  *   rules: [
@@ -149,7 +148,7 @@ export interface WebACL extends Resource<
  * });
  * ```
  *
- * @example Rate Limiting Requests per IP
+ * **Example:** Rate Limiting Requests per IP
  * ```typescript
  * const acl = yield* AWS.WAFv2.WebACL("RateLimited", {
  *   defaultAction: { Allow: {} },
@@ -171,8 +170,8 @@ export interface WebACL extends Resource<
  * });
  * ```
  *
- * @section CloudFront Scope
- * @example Web ACL for a CloudFront Distribution
+ * ### CloudFront Scope
+ * **Example:** Web ACL for a CloudFront Distribution
  * ```typescript
  * const acl = yield* AWS.WAFv2.WebACL("EdgeFirewall", {
  *   scope: "CLOUDFRONT", // provisioned in us-east-1 automatically
@@ -185,14 +184,16 @@ export interface WebACL extends Resource<
  * });
  * ```
  *
- * @section Protecting Regional Resources
- * @example Associate with a Cognito User Pool
+ * ### Protecting Regional Resources
+ * **Example:** Associate with a Cognito User Pool
  * ```typescript
  * const association = yield* AWS.WAFv2.WebACLAssociation("PoolFirewall", {
  *   webAclArn: acl.webAclArn,
  *   resourceArn: userPool.userPoolArn,
  * });
  * ```
+ *
+ * @resource
  */
 export const WebACL = Resource<WebACL>("AWS.WAFv2.WebACL");
 

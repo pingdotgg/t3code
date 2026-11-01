@@ -2,15 +2,24 @@
  * The `alchemy-test` CLI.
  *
  * ```sh
- * alchemy-test [paths...] [-t pattern] [--timeout ms] [--retry n]
- *              [--concurrency n] [--sequential] [--tui]
+ * alchemy-test [paths...] [-t pattern] [--exclude path]... [--timeout ms]
+ *              [--retry n] [--concurrency n] [--sequential] [--tui]
  *              [--profile name] [--fast]
+ *              [--tags 'unit || (e2e && !live)']
  * ```
  *
  * Runs every `*.test.ts` under the given paths (default `./test`) in a single
  * bun process. Interactive terminals get the opentui view; otherwise tests
  * are logged line-by-line and failures are dumped at the end.
  */
+// The runner executes every test file's effects on ONE event loop, so any
+// fiber touching a relative path can race a transient process-wide chdir.
+// cross-spawn (bundled in vite/build tools the tests exercise) chdirs the
+// whole process to resolve a spawn's binary; `process.chdir.disabled` is
+// its own escape hatch (built for worker threads) — with it set, commands
+// still resolve via PATH and absolutize against the spawn's `cwd`.
+(process.chdir as { disabled?: boolean }).disabled = true;
+
 import * as BunRuntime from "@effect/platform-bun/BunRuntime";
 import * as BunServices from "@effect/platform-bun/BunServices";
 import * as Effect from "effect/Effect";
@@ -19,9 +28,11 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Runtime from "effect/Runtime";
-import * as Argument from "effect/unstable/cli/Argument";
-import * as Command from "effect/unstable/cli/Command";
-import * as Flag from "effect/unstable/cli/Flag";
+import * as Argument from "effect/cli/Argument";
+import * as Command from "effect/cli/Command";
+import * as Flag from "effect/cli/Flag";
+
+import { parsePlan } from "./Plan.ts";
 
 import packageJson from "../package.json" with { type: "json" };
 import { PlainReporterLive, printSummary } from "./PlainReporter.ts";
@@ -30,30 +41,58 @@ import { run, type RunOptions } from "./Runner.ts";
 import { captureStrayOutput } from "./StrayOutput.ts";
 import { TuiReporter } from "./Tui.ts";
 
-const paths = Argument.string("paths").pipe(
+const paths = Argument.String("paths").pipe(
   Argument.withDescription("Test files or directories (default: ./test)"),
   Argument.variadic(),
 );
 
-const testNamePattern = Flag.string("test-name-pattern").pipe(
+const testNamePattern = Flag.String("test-name-pattern").pipe(
   Flag.withAlias("t"),
   Flag.withDescription("Only run tests whose title matches this regex"),
   Flag.optional,
 );
 
-const timeout = Flag.integer("timeout").pipe(
+const exclude = Flag.String("exclude").pipe(
+  Flag.withDescription(
+    "Skip test files under this path (repeatable). Existing files/directories exclude by prefix; anything else is a case-insensitive substring filter. Explicitly passing an excluded path as a positional argument overrides the exclusion.",
+  ),
+  Flag.atLeast(0),
+);
+
+const tagsFilter = Flag.String("tags").pipe(
+  Flag.withDescription(
+    'Select tags using &&, ||, !, parentheses and * wildcards (e.g. "e2e && provider:aws && !slow"). Repeated filters are ANDed.',
+  ),
+  Flag.atLeast(0),
+);
+
+const plan = Flag.String("plan").pipe(
+  Flag.withDescription(
+    "JSON array of sequential phases; nested arrays run branches in parallel. Each branch has tags (ANDed expressions) and optional file concurrency. First match wins; shared hooks live until the file's final phase.",
+  ),
+  Flag.optional,
+);
+
+const dryRun = Flag.Boolean("dry-run").pipe(
+  Flag.withDescription(
+    "Collect tests and show the execution plan without running tests or hooks",
+  ),
+  Flag.withDefault(false),
+);
+
+const timeout = Flag.Int("timeout").pipe(
   Flag.withDescription("Default per-test timeout in milliseconds"),
   Flag.withDefault(120_000),
 );
 
-const retry = Flag.integer("retry").pipe(
+const retry = Flag.Int("retry").pipe(
   Flag.withDescription(
     "Times a failing test is retried before failing the run",
   ),
   Flag.withDefault(2),
 );
 
-const concurrency = Flag.string("concurrency").pipe(
+const concurrency = Flag.String("concurrency").pipe(
   Flag.withAlias("c"),
   Flag.withDescription(
     'Maximum number of files running concurrently: a number (default 32) or "unbounded". Unbounded runs of large suites saturate the event loop and drown real failures in spurious 0ms beforeAll timeouts.',
@@ -72,26 +111,26 @@ const toConcurrency = (value: string): number | "unbounded" => {
   return parsed;
 };
 
-const sequential = Flag.boolean("sequential").pipe(
+const sequential = Flag.Boolean("sequential").pipe(
   Flag.withDescription("Run tests within each file sequentially"),
   Flag.withDefault(false),
 );
 
-const tui = Flag.boolean("tui").pipe(
+const tui = Flag.Boolean("tui").pipe(
   Flag.withDescription(
     "Opt in to the interactive TUI (default is plain line output)",
   ),
   Flag.withDefault(false),
 );
 
-const profile = Flag.string("profile").pipe(
+const profile = Flag.String("profile").pipe(
   Flag.withDescription(
     'Set ALCHEMY_PROFILE for the run (e.g. "testing") before any test module is imported',
   ),
   Flag.optional,
 );
 
-const fast = Flag.boolean("fast").pipe(
+const fast = Flag.Boolean("fast").pipe(
   Flag.withDescription(
     "Set FAST=1 — suites skip their slow tests (long-provisioning resources, smoke tests)",
   ),
@@ -126,6 +165,10 @@ const rootCommand = Command.make(
   {
     paths,
     testNamePattern,
+    tagsFilter,
+    plan,
+    dryRun,
+    exclude,
     timeout,
     retry,
     concurrency,
@@ -138,26 +181,31 @@ const rootCommand = Command.make(
     // Environment knobs — set BEFORE any test module is imported (imports
     // happen inside `run` during collection), so `skipIf(process.env.FAST)`
     // gates and profile-dependent layers see the final values.
-    //
-    // CI=true: interactive-detection gates (`process.env.CI`, TTY probes)
-    // make tools take "inherit the terminal" paths — e.g. drizzle-kit is
-    // spawned with stdio: "inherit" when interactive — and raw child writes
-    // to our TTY corrupt the reporter/TUI. CI=true forces every such tool
-    // down its non-interactive path; anything they print through pipes or
-    // the Console service is still captured per test.
+    // Inherit CI from the caller: setting it here also disables local auth
+    // profiles, even when the caller explicitly selected one.
     yield* Effect.sync(() => {
-      process.env.CI ??= "true";
       if (Option.isSome(args.profile)) {
         process.env.ALCHEMY_PROFILE = args.profile.value;
       }
       if (args.fast) {
         process.env.FAST = "1";
       }
+      // The runner owns the terminal: stdout belongs to the reporter (or
+      // the TUI) and stdin carries TUI keystrokes. Code under test must see
+      // the same non-interactive, colorless process CI gives it, regardless
+      // of the terminal this run was launched from — otherwise assertions
+      // on CLI output and on interactive-vs-plain copy depend on whether a
+      // human or a pipeline started the run. Sigil's detection honors
+      // FORCE_COLOR over everything else, so pin it rather than NO_COLOR.
+      process.env.ALCHEMY_NO_TUI = "1";
+      process.env.NO_COLOR = "1";
+      process.env.FORCE_COLOR = "0";
     });
 
     // Plain line output by default; the TUI is opt-in (`--tui`) and requires
     // an interactive terminal.
-    const interactive = args.tui && process.stdout.isTTY === true;
+    const interactive =
+      !args.dryRun && args.tui && process.stdout.isTTY === true;
     const path = yield* Path.Path;
     const root = process.cwd();
     // Per-run log file (timestamp + pid) so concurrent runs in different
@@ -177,7 +225,11 @@ const rootCommand = Command.make(
     const options: RunOptions = {
       root,
       paths: args.paths,
+      exclude: args.exclude,
       filter: toFilter(args.testNamePattern),
+      tagsFilter: args.tagsFilter,
+      dryRun: args.dryRun,
+      plan: Option.isSome(args.plan) ? parsePlan(args.plan.value) : undefined,
       timeout: args.timeout,
       retry: args.retry,
       concurrency: toConcurrency(args.concurrency),

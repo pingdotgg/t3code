@@ -16,8 +16,7 @@ export interface PreviewViewportPreset {
 
 type PreviewViewportPresetDefinition = Omit<PreviewViewportPreset, "id">;
 
-// Keep this in Chrome DevTools' default-device order. Dimensions are CSS
-// viewport sizes from Chromium's EmulatedDevices.ts standard catalog.
+// Chromium EmulatedDevices.ts CSS viewport sizes in Chrome DevTools default-device order.
 const PREVIEW_VIEWPORT_PRESET_DEFINITIONS = {
   "iphone-se": {
     label: "iPhone SE",
@@ -172,15 +171,4 @@ export function resolvePreviewViewport(
     width: input.width,
     height: input.height,
   };
-}
-
-export function previewViewportLabel(viewport: PreviewViewportSetting): string {
-  return viewport._tag === "fill" ? "Fill panel" : `${viewport.width} × ${viewport.height}`;
-}
-
-export function previewViewportPresetOrientation(
-  viewport: PreviewViewportSetting,
-): "portrait" | "landscape" | null {
-  if (viewport._tag === "fill" || viewport.width === viewport.height) return null;
-  return viewport.width > viewport.height ? "landscape" : "portrait";
 }

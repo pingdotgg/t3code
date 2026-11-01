@@ -12,9 +12,8 @@ import * as Binding from "../../Binding.ts";
  * implementation with
  * `Effect.provide(AWS.Forecast.DescribeDatasetImportJobHttp)`.
  *
- * @binding
- * @section Importing Data
- * @example Poll an Import Job
+ * ### Importing Data
+ * **Example:** Poll an Import Job
  * ```typescript
  * // init
  * const describeDatasetImportJob = yield* AWS.Forecast.DescribeDatasetImportJob();
@@ -27,6 +26,8 @@ import * as Binding from "../../Binding.ts";
  *   yield* Effect.logError(`import failed: ${detail.Message}`);
  * }
  * ```
+ *
+ * @binding
  */
 export interface DescribeDatasetImportJob extends Binding.Service<
   DescribeDatasetImportJob,

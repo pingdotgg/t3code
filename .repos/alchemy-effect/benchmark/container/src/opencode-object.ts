@@ -1,7 +1,7 @@
 import * as Cloudflare from "alchemy/Cloudflare";
 import * as Effect from "effect/Effect";
 import * as Schedule from "effect/Schedule";
-import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
+import * as HttpClientRequest from "effect/http/HttpClientRequest";
 import { OpencodeContainer } from "./opencode-container.ts";
 
 // Matches OPENCODE_SERVER_PASSWORD=bench in contexts/opencode/Dockerfile

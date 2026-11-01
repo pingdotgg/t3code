@@ -128,7 +128,14 @@ test.provider(
 
       yield* stack.destroy();
     }).pipe(logLevel),
-  { timeout: 120_000 },
+  {
+    tags: [
+      "provider:cloudflare",
+      "provider:cloudflare:resourcesharing",
+      "live",
+    ],
+    timeout: 120_000,
+  },
 );
 
 test.provider(
@@ -189,7 +196,15 @@ test.provider(
 
       yield* stack.destroy();
     }).pipe(logLevel),
-  { timeout: 180_000 },
+  {
+    tags: [
+      "provider:cloudflare",
+      "provider:cloudflare:gateway",
+      "provider:cloudflare:resourcesharing",
+      "live",
+    ],
+    timeout: 180_000,
+  },
 );
 
 test.provider.skipIf(!recipientAccountId)(
@@ -280,7 +295,15 @@ test.provider.skipIf(!recipientAccountId)(
 
       yield* expectGone(accountId, share.shareId);
     }).pipe(logLevel),
-  { timeout: 180_000 },
+  {
+    tags: [
+      "provider:cloudflare",
+      "provider:cloudflare:gateway",
+      "provider:cloudflare:resourcesharing",
+      "live",
+    ],
+    timeout: 180_000,
+  },
 );
 
 test.provider.skipIf(!recipientAccountId)(
@@ -343,5 +366,13 @@ test.provider.skipIf(!recipientAccountId)(
 
       yield* expectGone(accountId, share.shareId);
     }).pipe(logLevel),
-  { timeout: 180_000 },
+  {
+    tags: [
+      "provider:cloudflare",
+      "provider:cloudflare:gateway",
+      "provider:cloudflare:resourcesharing",
+      "live",
+    ],
+    timeout: 180_000,
+  },
 );

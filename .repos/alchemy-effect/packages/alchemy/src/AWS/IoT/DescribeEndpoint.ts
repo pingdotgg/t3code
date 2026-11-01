@@ -12,9 +12,8 @@ export interface DescribeEndpointRequest extends iot.DescribeEndpointRequest {}
  * `endpointType: "iot:Data-ATS"` for the recommended ATS data endpoint that
  * devices and MQTT clients connect to. Provide the implementation with
  * `Effect.provide(AWS.IoT.DescribeEndpointHttp)`.
- * @binding
- * @section Endpoints
- * @example Discover the ATS Data Endpoint
+ * ### Endpoints
+ * **Example:** Discover the ATS Data Endpoint
  * ```typescript
  * const describeEndpoint = yield* AWS.IoT.DescribeEndpoint();
  *
@@ -22,6 +21,8 @@ export interface DescribeEndpointRequest extends iot.DescribeEndpointRequest {}
  *   endpointType: "iot:Data-ATS",
  * });
  * ```
+ *
+ * @binding
  */
 export interface DescribeEndpoint extends Binding.Service<
   DescribeEndpoint,

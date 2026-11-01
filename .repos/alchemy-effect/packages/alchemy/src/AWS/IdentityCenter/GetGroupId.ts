@@ -10,9 +10,8 @@ import type { Instance } from "./Instance.ts";
  * Resolves a group's `GroupId` from a unique attribute (e.g. the display name) in the bound instance's identity store. The instance's
  * `IdentityStoreId` is injected from the binding. Provide the implementation with
  * `Effect.provide(AWS.IdentityCenter.GetGroupIdHttp)`.
- * @binding
- * @section Looking Up Groups
- * @example Resolve a GroupId From a Display Name
+ * ### Looking Up Groups
+ * **Example:** Resolve a GroupId From a Display Name
  * ```typescript
  * // init — bind the operation to the Identity Center instance
  * const getGroupId = yield* AWS.IdentityCenter.GetGroupId(instance);
@@ -27,6 +26,8 @@ import type { Instance } from "./Instance.ts";
  *   },
  * });
  * ```
+ *
+ * @binding
  */
 export interface GetGroupId extends Binding.Service<
   GetGroupId,

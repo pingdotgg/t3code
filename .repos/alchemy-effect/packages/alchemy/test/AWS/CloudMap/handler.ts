@@ -2,8 +2,8 @@ import * as AWS from "@/AWS";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import { HttpServerRequest } from "effect/unstable/http/HttpServerRequest";
-import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
+import { HttpServerRequest } from "effect/http/HttpServerRequest";
+import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import path from "pathe";
 import { getDefaultVpc } from "../DefaultVpc.ts";
 
@@ -34,7 +34,7 @@ const resolveFixtureVpc = Effect.gen(function* () {
 export default CloudMapTestFunction.make(
   {
     main,
-    url: true,
+    functionUrl: true,
     // several routes fan out Cloud Map API calls; the 3s default is too tight
     timeout: Duration.seconds(30),
   },

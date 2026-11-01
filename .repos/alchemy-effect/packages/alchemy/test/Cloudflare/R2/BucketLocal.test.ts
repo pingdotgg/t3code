@@ -32,7 +32,9 @@ test.provider(
 
       const out = yield* stack.deploy(
         Effect.gen(function* () {
-          const bucket = yield* Cloudflare.R2.Bucket("SeedBucket");
+          const bucket = yield* Cloudflare.R2.Bucket("SeedBucket", {
+            forceDestroy: true,
+          });
 
           const Seed = Action(
             "Seed",
@@ -96,5 +98,8 @@ test.provider(
 
       yield* stack.destroy();
     }).pipe(logLevel),
-  { timeout: 120_000 },
+  {
+    tags: ["provider:cloudflare", "provider:cloudflare:r2", "live"],
+    timeout: 120_000,
+  },
 );

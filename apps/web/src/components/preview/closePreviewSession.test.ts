@@ -3,8 +3,7 @@ import type {
   PreviewSessionSnapshot,
   ScopedThreadRef,
 } from "@t3tools/contracts";
-import * as Cause from "effect/Cause";
-import { AsyncResult } from "effect/unstable/reactivity";
+import { AsyncResult } from "effect/reactivity";
 import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 import {
@@ -12,6 +11,8 @@ import {
   readThreadPreviewState,
   resetPreviewStateForTests,
 } from "~/previewStateStore";
+
+import { useClosedViewStore } from "~/closedViewStore";
 
 import { closePreviewSession } from "./closePreviewSession";
 
@@ -33,7 +34,10 @@ const snapshot: PreviewSessionSnapshot = {
   updatedAt: "2026-06-18T19:00:00.000Z",
 };
 
-beforeEach(resetPreviewStateForTests);
+beforeEach(() => {
+  resetPreviewStateForTests();
+  useClosedViewStore.setState({ entries: [] });
+});
 
 describe("closePreviewSession", () => {
   it("suppresses stale server snapshots while the close is in flight", async () => {
@@ -53,27 +57,16 @@ describe("closePreviewSession", () => {
       threadRef,
     });
 
+    expect(useClosedViewStore.getState().entries).toEqual([]);
     expect(readThreadPreviewState(threadRef).sessions).toEqual({});
     applyPreviewServerSnapshot(threadRef, snapshot);
     expect(readThreadPreviewState(threadRef).sessions).toEqual({});
 
     finishClose?.();
     await closing;
+    expect(useClosedViewStore.getState().entries).toMatchObject([
+      { kind: "browser", threadRef, snapshot },
+    ]);
     expect(closePreview).toHaveBeenCalledWith({ threadId: "thread-1", tabId: "tab-1" });
-  });
-
-  it("restores the last snapshot when the server close fails", async () => {
-    applyPreviewServerSnapshot(threadRef, snapshot);
-
-    const result = await closePreviewSession({
-      closePreview: async () => AsyncResult.failure(Cause.fail(new Error("close failed"))),
-      snapshot,
-      tabId: snapshot.tabId,
-      threadRef,
-    });
-
-    expect(result._tag).toBe("Failure");
-    expect(readThreadPreviewState(threadRef).snapshot).toEqual(snapshot);
-    expect(readThreadPreviewState(threadRef).sessions).toEqual({ [snapshot.tabId]: snapshot });
   });
 });

@@ -1,6 +1,7 @@
 import { PgliteClient } from "@effect/sql-pglite"
 import { assert, describe, layer } from "@effect/vitest"
-import { Effect } from "effect"
+import { Deferred, Effect } from "effect"
+import { TestClock } from "effect/testing"
 
 const ClientLayer = PgliteClient.layer({})
 
@@ -58,5 +59,56 @@ describe("PgliteClient transactions", () => {
         )
         assert.strictEqual(rows.at(0)?.total, 1)
       }))
+
+    it.effect("releases completed nested transaction locks", () =>
+      Effect.gen(function*() {
+        const sql = yield* PgliteClient.PgliteClient
+        const locks = sql`SELECT count(*)::integer AS count FROM pg_locks
+          WHERE pid = pg_backend_pid() AND locktype = 'transactionid'`
+        yield* sql.withTransaction(Effect.gen(function*() {
+          yield* sql`CREATE TEMP TABLE savepoint_locks (value INTEGER) ON COMMIT DROP`
+
+          yield* sql.withTransaction(sql`INSERT INTO savepoint_locks VALUES (1)`)
+          assert.deepStrictEqual(yield* locks, [{ count: 1 }])
+
+          const error = yield* sql.withTransaction(
+            sql`INSERT INTO savepoint_locks VALUES (2)`.pipe(Effect.andThen(Effect.fail("rollback")))
+          ).pipe(Effect.flip)
+          assert.strictEqual(error, "rollback")
+          assert.deepStrictEqual(yield* locks, [{ count: 1 }])
+
+          assert.deepStrictEqual(yield* sql`SELECT value FROM savepoint_locks`, [{ value: 1 }])
+        }))
+      }))
+
+    it.effect("preserves successful concurrent nested transactions", () =>
+      Effect.gen(function*() {
+        const sql = yield* setup("tx_nested_concurrent")
+        const firstStarted = yield* Deferred.make<void>()
+        const firstInserted = yield* Deferred.make<void>()
+
+        yield* sql.withTransaction(
+          Effect.all([
+            sql.withTransaction(
+              Effect.gen(function*() {
+                yield* Deferred.succeed(firstStarted, undefined)
+                yield* Effect.sleep("100 millis")
+                yield* sql.unsafe(`INSERT INTO tx_nested_concurrent (name) VALUES ('first')`)
+                yield* Deferred.succeed(firstInserted, undefined)
+              })
+            ),
+            Deferred.await(firstStarted).pipe(
+              Effect.andThen(sql.withTransaction(
+                Deferred.await(firstInserted).pipe(
+                  Effect.andThen(Effect.fail("rollback"))
+                )
+              ))
+            )
+          ], { concurrency: "unbounded" }).pipe(Effect.catch(() => Effect.void))
+        )
+
+        const rows = yield* sql.unsafe<{ name: string }>(`SELECT name FROM tx_nested_concurrent`)
+        assert.deepStrictEqual(rows, [{ name: "first" }])
+      }).pipe(TestClock.withLive))
   })
 })

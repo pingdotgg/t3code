@@ -1,7 +1,7 @@
 import * as Cloudflare from "@/Cloudflare";
 import * as Effect from "effect/Effect";
-import { HttpServerRequest } from "effect/unstable/http/HttpServerRequest";
-import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
+import { HttpServerRequest } from "effect/http/HttpServerRequest";
+import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import { Object } from "./object.ts";
 
 export default Cloudflare.Worker(
@@ -23,6 +23,12 @@ export default Cloudflare.Worker(
         if (url.pathname === "/ping") {
           const pong = yield* object.ping();
           return HttpServerResponse.text(pong);
+        }
+
+        // The env var a `Binding.Service` bound onto the container.
+        if (url.pathname === "/bound-env") {
+          const value = yield* object.boundEnv();
+          return yield* HttpServerResponse.json({ value: value ?? null });
         }
 
         // Seed R2 through the DO's native binding.

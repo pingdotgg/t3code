@@ -1,67 +1,33 @@
-# Effect Subtyping (v3) → Yieldable (v4)
+# Effect subtyping changes in v4
 
-In v3, many types were structural subtypes of `Effect` — they carried the
+In v3, many types were structural subtypes of `Effect`. They carried the
 Effect type ID at runtime and could be used anywhere an `Effect` was expected.
 This included `Ref`, `Deferred`, `Fiber`, `FiberRef`, `Config`, `Option`,
 `Either`, `Context.Tag`, and others.
 
-While convenient, this created a class of subtle bugs. Because these types
-_were_ Effects, they could be silently passed to Effect combinators when you
-intended to pass the value itself. For example, passing a `Ref` where you meant
-to pass the value inside the `Ref`, or accidentally mapping over a `Deferred`
-as an Effect instead of awaiting it.
+While convenient, this could cause subtle bugs. For example, passing a `Ref`
+to an Effect combinator would read its value instead of treating the ref itself
+as a value.
 
-v4 replaces this with the **`Yieldable`** trait: a narrower contract that
-allows `yield*` in generators but does **not** make the type assignable to
-`Effect`.
+In v4, several of these types are no longer Effect subtypes. Use explicit
+conversion or module functions to obtain an Effect. There is no `Yieldable`
+trait that makes non-Effect values usable in `Effect.gen`.
 
-## The `Yieldable` Interface
+## Option and Result require conversion
 
-```ts
-interface Yieldable<Self, A, E = never, R = never> {
-  asEffect(): Effect<A, E, R>
-  [Symbol.iterator](): EffectIterator<Self>
-}
-```
+`Option` and `Result` (the replacement for v3's `Either`) are plain values,
+not Effects. They do not have an `.asEffect()` method, and cannot be yielded
+directly in `Effect.gen`. Their iterators work with `Option.gen` and
+`Result.gen`, respectively, not with `Effect.gen`.
 
-Some example types that implement `Yieldable`:
+Use `Effect.fromOption` or `Effect.fromResult` in Effect code:
 
-- `Effect` itself
-- `Option` — yields the value or fails with `NoSuchElementError`
-- `Result` — yields the success or fails with the error
-- `Config` — yields the config value or fails with `ConfigError`
-- `Context.Service` — yields the service from the environment
+- `Effect.fromOption` succeeds with the contained value for `Some` and fails
+  with `Cause.NoSuchElementError` for `None`. An optional `onNone` callback
+  supplies a custom error.
+- `Effect.fromResult` preserves the success value or failure error.
 
-Some example types that are **no longer** Effect subtypes and do **not**
-implement `Yieldable`:
-
-- `Ref` — use `Ref.get(ref)` to read
-- `Deferred` — use `Deferred.await(deferred)` to wait
-- `Fiber` — use `Fiber.join(fiber)` to await
-
-## `yield*` Still Works
-
-`yield*` in `Effect.gen` works with any `Yieldable`. The runtime calls
-`.asEffect()` internally when yielding.
-
-```ts
-import { Effect, Option } from "effect"
-
-// The type of program is `Effect<number, NoSuchElementError>`
-const program = Effect.gen(function*() {
-  // yield* works with Yieldable types — same as v3
-  const value = yield* Option.some(42)
-  return value // 42
-})
-```
-
-## Effect Combinators Require `.asEffect()`
-
-In v3, you could pass a `Yieldable` type directly to Effect combinators because
-it was a subtype of `Effect`. In v4, you must explicitly convert with
-`.asEffect()`.
-
-**v3** — Option is an Effect subtype, so this compiles:
+**v3**: Option is an Effect subtype, so this compiles:
 
 ```ts
 import { Effect, Option } from "effect"
@@ -70,27 +36,61 @@ import { Effect, Option } from "effect"
 const program = Effect.map(Option.some(42), (n) => n + 1)
 ```
 
-**v4** — Option is not an Effect, so you must convert explicitly:
+**v4**: Convert explicitly, both in combinators and in generators:
 
 ```ts
-import { Effect, Option } from "effect"
+import { Effect, Option, Result } from "effect"
 
-// Option is Yieldable but not Effect — use .asEffect()
-const program = Effect.map(Option.some(42).asEffect(), (n) => n + 1)
+// Effect<number, Cause.NoSuchElementError>
+const program = Effect.map(Effect.fromOption(Option.some(42)), (n) => n + 1)
 
-// Or more idiomatically, use a generator:
+// Effect<number, Cause.NoSuchElementError>
 const program2 = Effect.gen(function*() {
-  const n = yield* Option.some(42)
+  const n = yield* Effect.fromOption(Option.some(42))
   return n + 1
 })
+
+// Effect<number, never>
+const program3 = Effect.gen(function*() {
+  const n = yield* Effect.fromResult(Result.succeed(123))
+  return n + 1
+})
+
+// Effect<never, string>
+const failed = Effect.fromResult(Result.fail("failed"))
+
+// Effect<never, string>
+const missing = Effect.fromOption(Option.none(), () => "missing")
 ```
 
-## Types No Longer Subtypes of Effect
+## Config and services remain Effects
+
+`Config` and `Context.Service` remain Effect subtypes. You can yield them
+in `Effect.gen` or pass them directly to Effect combinators without conversion.
+
+```ts
+import { Config, Context, Effect } from "effect"
+
+class Greeting extends Context.Service<Greeting, { readonly message: string }>()("Greeting") {}
+
+const program = Effect.gen(function*() {
+  const name = yield* Config.String("NAME").pipe(Config.withDefault("world"))
+  const greeting = yield* Greeting
+  return `${greeting.message}, ${name}!`
+}).pipe(Effect.provideService(Greeting, { message: "Hello" }))
+
+const port = Effect.map(Config.Port("PORT").pipe(Config.withDefault(3000)), (n) => n + 1)
+```
+
+`Effectable.Class.asEffect()` is a mechanism for defining custom Effects,
+not a conversion method available on every iterable value.
+
+## Types no longer subtypes of Effect
 
 Several types that extended `Effect` in v3 no longer do so in v4. Use the
 appropriate module functions instead.
 
-**v3** — `Ref` extends `Effect<A>`, yielding the current value:
+**v3**: `Ref` extends `Effect<A>`, yielding the current value:
 
 ```ts
 import { Effect, Ref } from "effect"
@@ -101,7 +101,7 @@ const program = Effect.gen(function*() {
 })
 ```
 
-**v4** — `Ref` is a plain value, use `Ref.get`:
+**v4**: `Ref` is a plain value, use `Ref.get`:
 
 ```ts
 import { Effect, Ref } from "effect"
@@ -109,10 +109,11 @@ import { Effect, Ref } from "effect"
 const program = Effect.gen(function*() {
   const ref = yield* Ref.make(0)
   const value = yield* Ref.get(ref)
+  return value
 })
 ```
 
-**v3** — `Deferred` extends `Effect<A, E>`, resolving when completed:
+**v3**: `Deferred` extends `Effect<A, E>`, resolving when completed:
 
 ```ts
 import { Deferred, Effect } from "effect"
@@ -123,18 +124,20 @@ const program = Effect.gen(function*() {
 })
 ```
 
-**v4** — `Deferred` is a plain value, use `Deferred.await`:
+**v4**: `Deferred` is a plain value, use `Deferred.await`:
 
 ```ts
 import { Deferred, Effect } from "effect"
 
 const program = Effect.gen(function*() {
   const deferred = yield* Deferred.make<string, never>()
+  yield* Deferred.succeed(deferred, "done")
   const value = yield* Deferred.await(deferred)
+  return value
 })
 ```
 
-**v3** — `Fiber` extends `Effect<A, E>`, joining on yield:
+**v3**: `Fiber` extends `Effect<A, E>`, joining on yield:
 
 ```ts
 import { Effect, Fiber } from "effect"
@@ -145,29 +148,25 @@ const program = Effect.gen(function*() {
 })
 ```
 
-**v4** — `Fiber` is a plain value, use `Fiber.join`:
+**v4**: `Fiber` is a plain value, use `Fiber.join`:
 
 ```ts
 import { Effect, Fiber } from "effect"
 
 const program = Effect.gen(function*() {
+  const task = Effect.succeed(42)
   const fiber = yield* Effect.forkChild(task)
   const result = yield* Fiber.join(fiber)
+  return result
 })
 ```
 
-## Why This Changed
+## Why this changed
 
 The v3 subtyping approach meant the type system could not distinguish between
-"I have a Ref" and "I have an Effect that reads the Ref." This ambiguity led
-to bugs that were difficult to diagnose:
+"I have a Ref" and "I have an Effect that reads the Ref." For example,
+`Effect.all` could accept an array of refs and silently read all of them.
 
-- Passing a `Ref` to `Effect.map` would read the ref's value rather than
-  transforming the ref itself — often not the intended behavior.
-- A `Deferred` in a data structure could silently be treated as an Effect,
-  causing unexpected awaits.
-- Combinators like `Effect.all` would accept an array of `Ref` values and
-  silently read all of them, instead of producing a type error.
-
-The `Yieldable` trait preserves the ergonomic `yield*` syntax in generators
-while making the conversion to `Effect` explicit everywhere else.
+In v4, explicit functions such as `Ref.get`, `Deferred.await`, `Fiber.join`,
+`Effect.fromOption`, and `Effect.fromResult` make these operations visible
+and prevent those values from being passed accidentally to Effect combinators.

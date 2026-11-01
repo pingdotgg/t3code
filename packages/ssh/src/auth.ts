@@ -1,4 +1,4 @@
-import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Config from "effect/Config";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
@@ -7,6 +7,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as PlatformError from "effect/PlatformError";
+import * as Semaphore from "effect/Semaphore";
 
 import { SshPasswordPromptError } from "./errors.ts";
 
@@ -17,7 +18,7 @@ export interface SshPasswordRequest {
   readonly attempt: number;
 }
 
-export interface SshAskpassFile {
+interface SshAskpassFile {
   readonly path: string;
   readonly contents: string;
   readonly mode?: number;
@@ -48,7 +49,9 @@ export class SshPasswordPrompt extends Context.Service<SshPasswordPrompt, SshPas
     SshPasswordPrompt,
     SshPasswordPrompt.of({
       isAvailable: false,
-      request: () => Effect.succeed(null),
+      request: Effect.fn("SshPasswordPrompt.request")(function () {
+        return Effect.succeed(null);
+      }),
     }),
   );
 }
@@ -71,7 +74,7 @@ function joinSshAskpassPath(
   return platform === "win32" ? `${trimmed}\\${fileName}` : `${trimmed}/${fileName}`;
 }
 
-export const ASKPASS_POSIX_SCRIPT = `#!/bin/sh
+const ASKPASS_POSIX_SCRIPT = `#!/bin/sh
 # Invoked by ssh via SSH_ASKPASS when T3 Code re-runs ssh with a cached password
 # from the renderer's in-app prompt. We never expose a native dialog here - if
 # T3_SSH_AUTH_SECRET is missing, that's a caller bug and we fail loudly.
@@ -83,11 +86,11 @@ printf 'T3 Code ssh-askpass invoked without T3_SSH_AUTH_SECRET.\\n' >&2
 exit 1
 `;
 
-export const ASKPASS_WINDOWS_LAUNCHER_SCRIPT = `@echo off\r
+const ASKPASS_WINDOWS_LAUNCHER_SCRIPT = `@echo off\r
 powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0ssh-askpass.ps1" %*\r
 `;
 
-export const ASKPASS_WINDOWS_SCRIPT = `# Invoked by ssh via SSH_ASKPASS (through ssh-askpass.cmd) when T3 Code re-runs\r
+const ASKPASS_WINDOWS_SCRIPT = `# Invoked by ssh via SSH_ASKPASS (through ssh-askpass.cmd) when T3 Code re-runs\r
 # ssh with a cached password from the renderer's in-app prompt. We never expose\r
 # a native dialog here - if T3_SSH_AUTH_SECRET is missing, that's a caller bug\r
 # and we fail loudly.\r
@@ -99,77 +102,103 @@ if ($null -ne $env:T3_SSH_AUTH_SECRET) {\r
 exit 1\r
 `;
 
-export const getDefaultSshAskpassDirectory = Effect.fn("ssh/auth.getDefaultSshAskpassDirectory")(
-  function* () {
-    const fs = yield* FileSystem.FileSystem;
+const buildSshAskpassHelperDescriptor = Effect.fn("ssh/auth.buildSshAskpassHelperDescriptor")(
+  function* (input: {
+    readonly directory: string;
+  }): Effect.fn.Return<SshAskpassHelperDescriptor, never, Path.Path> {
+    const platform = yield* HostProcess.Platform;
     const path = yield* Path.Path;
-    const parentDirectory = yield* fs.makeTempDirectory({ prefix: "t3code-ssh-runtime-" });
-    return path.join(parentDirectory, SSH_ASKPASS_DIR_NAME);
-  },
-);
+    const directory = input.directory;
 
-export const buildSshAskpassHelperDescriptor = Effect.fn(
-  "ssh/auth.buildSshAskpassHelperDescriptor",
-)(function* (input: {
-  readonly directory: string;
-}): Effect.fn.Return<SshAskpassHelperDescriptor, never, Path.Path> {
-  const platform = yield* HostProcessPlatform;
-  const path = yield* Path.Path;
-  const directory = input.directory;
+    if (platform === "win32") {
+      const powershellPath = joinSshAskpassPath(directory, "ssh-askpass.ps1", platform);
+      return {
+        launcherPath: joinSshAskpassPath(directory, "ssh-askpass.cmd", platform),
+        files: [
+          {
+            path: joinSshAskpassPath(directory, "ssh-askpass.cmd", platform),
+            contents: ASKPASS_WINDOWS_LAUNCHER_SCRIPT,
+          },
+          {
+            path: powershellPath,
+            contents: ASKPASS_WINDOWS_SCRIPT,
+          },
+        ],
+      };
+    }
 
-  if (platform === "win32") {
-    const powershellPath = joinSshAskpassPath(directory, "ssh-askpass.ps1", platform);
     return {
-      launcherPath: joinSshAskpassPath(directory, "ssh-askpass.cmd", platform),
+      launcherPath: path.join(directory, "ssh-askpass.sh"),
       files: [
         {
-          path: joinSshAskpassPath(directory, "ssh-askpass.cmd", platform),
-          contents: ASKPASS_WINDOWS_LAUNCHER_SCRIPT,
-        },
-        {
-          path: powershellPath,
-          contents: ASKPASS_WINDOWS_SCRIPT,
+          path: path.join(directory, "ssh-askpass.sh"),
+          contents: ASKPASS_POSIX_SCRIPT,
+          mode: 0o700,
         },
       ],
     };
+  },
+);
+
+const ensureSshAskpassHelpers = Effect.fn("ssh/auth.ensureSshAskpassHelpers")(function* (input: {
+  readonly directory: string;
+}): Effect.fn.Return<string, PlatformError.PlatformError, FileSystem.FileSystem | Path.Path> {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const descriptor = yield* buildSshAskpassHelperDescriptor(input);
+  const platform = yield* HostProcess.Platform;
+
+  yield* fs.makeDirectory(path.dirname(descriptor.launcherPath), { recursive: true });
+
+  for (const file of descriptor.files) {
+    const existing = yield* fs.exists(file.path);
+    const current = existing ? yield* fs.readFileString(file.path) : null;
+    if (current !== file.contents) {
+      yield* fs.writeFileString(file.path, file.contents);
+    }
+    if (file.mode !== undefined && platform !== "win32") {
+      yield* fs.chmod(file.path, file.mode);
+    }
   }
 
-  return {
-    launcherPath: path.join(directory, "ssh-askpass.sh"),
-    files: [
-      {
-        path: path.join(directory, "ssh-askpass.sh"),
-        contents: ASKPASS_POSIX_SCRIPT,
-        mode: 0o700,
-      },
-    ],
-  };
+  return descriptor.launcherPath;
 });
 
-export const ensureSshAskpassHelpers = Effect.fn("ssh/auth.ensureSshAskpassHelpers")(
-  function* (input: {
-    readonly directory: string;
-  }): Effect.fn.Return<string, PlatformError.PlatformError, FileSystem.FileSystem | Path.Path> {
+// Keep setup serialized through cancellation so writes finish before another command uses the helper.
+let defaultSshAskpassRuntimeDirectory: string | undefined;
+const defaultSshAskpassLock = Semaphore.makeUnsafe(1);
+
+const ensureDefaultSshAskpassHelpers = Effect.fn("ssh/auth.ensureDefaultSshAskpassHelpers")(
+  function* () {
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
-    const descriptor = yield* buildSshAskpassHelperDescriptor(input);
-    const platform = yield* HostProcessPlatform;
-
-    yield* fs.makeDirectory(path.dirname(descriptor.launcherPath), { recursive: true });
-
-    for (const file of descriptor.files) {
-      const existing = yield* fs.exists(file.path);
-      const current = existing ? yield* fs.readFileString(file.path) : null;
-      if (current !== file.contents) {
-        yield* fs.writeFileString(file.path, file.contents);
-      }
-      if (file.mode !== undefined && platform !== "win32") {
-        yield* fs.chmod(file.path, file.mode);
+    const userId = yield* HostProcess.UserId;
+    let runtimeDirectory = defaultSshAskpassRuntimeDirectory;
+    if (runtimeDirectory !== undefined) {
+      const cached = runtimeDirectory;
+      const reusable = yield* Effect.all([fs.realPath(cached), fs.stat(cached)]).pipe(
+        Effect.map(
+          ([resolved, info]) =>
+            resolved === cached &&
+            info.type === "Directory" &&
+            (userId === undefined || Option.getOrUndefined(info.uid) === userId),
+        ),
+        Effect.orElseSucceed(() => false),
+      );
+      if (!reusable) {
+        runtimeDirectory = undefined;
       }
     }
-
-    return descriptor.launcherPath;
+    runtimeDirectory ??= yield* fs.realPath(
+      yield* fs.makeTempDirectory({ prefix: "t3code-ssh-runtime-" }),
+    );
+    const launcherPath = yield* ensureSshAskpassHelpers({
+      directory: path.join(runtimeDirectory, SSH_ASKPASS_DIR_NAME),
+    });
+    defaultSshAskpassRuntimeDirectory = runtimeDirectory;
+    return launcherPath;
   },
+  (effect) => defaultSshAskpassLock.withPermit(Effect.uninterruptible(effect)),
 );
 
 export const buildSshChildEnvironment = Effect.fn("ssh/auth.buildSshChildEnvironment")(function* (
@@ -184,16 +213,18 @@ export const buildSshChildEnvironment = Effect.fn("ssh/auth.buildSshChildEnviron
     return baseEnv;
   }
 
-  const platform = yield* HostProcessPlatform;
+  const platform = yield* HostProcess.Platform;
   const hostDisplay = input.baseEnv
     ? input.baseEnv.DISPLAY
-    : yield* Config.string("DISPLAY").pipe(
+    : yield* Config.String("DISPLAY").pipe(
         Config.option,
         Effect.orElseSucceed(() => Option.none<string>()),
         Effect.map(Option.getOrUndefined),
       );
-  const directory = input.askpassDirectory ?? (yield* getDefaultSshAskpassDirectory());
-  const sshAskpass = yield* ensureSshAskpassHelpers({ directory });
+  const sshAskpass =
+    input.askpassDirectory === undefined
+      ? yield* ensureDefaultSshAskpassHelpers()
+      : yield* ensureSshAskpassHelpers({ directory: input.askpassDirectory });
 
   return {
     ...baseEnv,
@@ -213,5 +244,13 @@ export function isSshAuthFailure(error: unknown): boolean {
     ) ||
     /authentication failed/u.test(normalized) ||
     /too many authentication failures/u.test(normalized)
+  );
+}
+
+// A local agent signing failure cannot be remedied by the remote account password.
+export function isSshAgentSigningFailure(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return /sign_and_send_pubkey: signing failed(?: for [^\n]* from agent:|: (?:agent refused operation|communication with agent failed))/u.test(
+    message,
   );
 }

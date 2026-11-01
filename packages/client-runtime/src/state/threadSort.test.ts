@@ -1,9 +1,15 @@
+import { RunId } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
-  planPinnedMove,
-  sortPinnedThreadsByOrderKey,
+  generateSpreadPinOrderKeys,
+  pinOrderKeyBetween,
+  planPinnedReorder,
+  resolveSettledThreadTimestamp,
+  sortActiveThreadsByOrderKey,
+  sortSettledThreads,
   sortThreads,
+  type SettledThreadTimestampInput,
   type ThreadSortInput,
 } from "./threadSort.ts";
 
@@ -20,7 +26,100 @@ function makeThread(overrides: Partial<TestThread> = {}): TestThread {
   };
 }
 
+describe("resolveSettledThreadTimestamp", () => {
+  it("prefers the persisted settlement stamp over later activity", () => {
+    expect(
+      resolveSettledThreadTimestamp({
+        settledAt: "2026-03-09T10:00:00.000Z",
+        latestUserMessageAt: "2026-03-09T11:00:00.000Z",
+        latestRun: null,
+        updatedAt: "2026-03-09T12:00:00.000Z",
+      }),
+    ).toBe("2026-03-09T10:00:00.000Z");
+  });
+
+  it("falls back to the latest activity when the stamp is missing or malformed", () => {
+    expect(
+      resolveSettledThreadTimestamp({
+        settledAt: "invalid",
+        latestUserMessageAt: "2026-03-09T11:00:00.000Z",
+        latestRun: null,
+        updatedAt: "2026-03-09T12:00:00.000Z",
+      }),
+    ).toBe("2026-03-09T11:00:00.000Z");
+    expect(
+      resolveSettledThreadTimestamp({
+        settledAt: null,
+        latestUserMessageAt: null,
+        latestRun: null,
+        updatedAt: "2026-03-09T12:00:00.000Z",
+      }),
+    ).toBe("2026-03-09T12:00:00.000Z");
+  });
+});
+
+describe("sortSettledThreads", () => {
+  const settled = (input: {
+    id: string;
+    settledAt?: string | null;
+    latestUserMessageAt?: string | null;
+    latestRun?: SettledThreadTimestampInput["latestRun"];
+    updatedAt?: string;
+  }) => ({
+    id: input.id,
+    settledAt: input.settledAt ?? null,
+    latestUserMessageAt: input.latestUserMessageAt ?? null,
+    latestRun: input.latestRun ?? null,
+    updatedAt: input.updatedAt ?? "2026-03-09T09:00:00.000Z",
+  });
+
+  it("counts a turn completion as activity for auto-settled threads", () => {
+    const sorted = sortSettledThreads([
+      settled({ id: "message-only", latestUserMessageAt: "2026-03-09T10:04:00.000Z" }),
+      settled({
+        id: "completed-later",
+        latestUserMessageAt: "2026-03-09T10:00:00.000Z",
+        latestRun: {
+          runId: RunId.make("run-1"),
+          status: "completed",
+          assistantMessageId: null,
+          requestedAt: "2026-03-09T10:00:00.000Z",
+          startedAt: "2026-03-09T10:00:00.000Z",
+          completedAt: "2026-03-09T10:30:00.000Z",
+        },
+      }),
+    ]);
+
+    expect(sorted.map((thread) => thread.id)).toEqual(["completed-later", "message-only"]);
+  });
+
+  it("breaks timestamp ties by id so the order is stable", () => {
+    const sorted = sortSettledThreads([
+      settled({ id: "b", settledAt: "2026-03-09T10:00:00.000Z" }),
+      settled({ id: "a", settledAt: "2026-03-09T10:00:00.000Z" }),
+    ]);
+
+    expect(sorted.map((thread) => thread.id)).toEqual(["a", "b"]);
+  });
+});
+
 describe("sortThreads", () => {
+  it.each(["created_at", "updated_at"] as const)(
+    "preserves references, input order and descending id ties for %s",
+    (sortOrder) => {
+      const threads = Object.freeze([
+        makeThread({ id: "a" }),
+        makeThread({ id: "z" }),
+        makeThread({ id: "invalid-a", createdAt: "invalid", updatedAt: "invalid" }),
+        makeThread({ id: "invalid-z", createdAt: "invalid", updatedAt: "invalid" }),
+      ]);
+      const sorted = sortThreads(threads, sortOrder);
+      expect(sorted).toEqual([threads[1], threads[0], threads[3], threads[2]]);
+      expect(sorted[0]).toBe(threads[1]);
+      expect(threads[0]?.id).toBe("a");
+    },
+  );
+
   it("falls back to updatedAt and createdAt when latestUserMessageAt is invalid and there are no messages", () => {
     const sorted = sortThreads(
       [
@@ -75,68 +174,131 @@ describe("sortThreads", () => {
   });
 });
 
-describe("planPinnedMove", () => {
-  it("moves a thread up with a single key write", () => {
-    const assignments = planPinnedMove({
-      orderedIds: ["a", "b", "c"],
-      keysById: new Map([
-        ["a", "f"],
-        ["b", "m"],
-        ["c", "t"],
-      ]),
-      movedId: "c",
-      direction: "up",
+describe("planPinnedReorder with hidden rows", () => {
+  it("keeps hidden slots available when inserting between visible neighbors", () => {
+    const midpoint = pinOrderKeyBetween("f", "t")!;
+    const keysById = new Map([
+      ["a", "f"],
+      ["b", "t"],
+      ["moved", "z"],
+      ["snoozed", midpoint],
+    ]);
+    const assignments = planPinnedReorder({
+      orderedIds: ["a", "moved", "b"],
+      keysById,
+      movedId: "moved",
     });
     expect(assignments).toHaveLength(1);
-    expect(assignments![0]!.id).toBe("c");
-    expect(assignments![0]!.orderKey > "f" && assignments![0]!.orderKey < "m").toBe(true);
+    const key = assignments[0]!.orderKey;
+    expect(key > "f" && key < "t").toBe(true);
+    expect(key).not.toBe(midpoint);
+    expect(assignments[0]!.id).toBe("moved");
   });
 
-  it("returns null when the move falls off the end of the list", () => {
-    const input = {
-      orderedIds: ["a", "b"],
-      keysById: new Map([
-        ["a", "f"],
-        ["b", "m"],
-      ]),
-    };
-    expect(planPinnedMove({ ...input, movedId: "a", direction: "up" })).toBeNull();
-    expect(planPinnedMove({ ...input, movedId: "b", direction: "down" })).toBeNull();
-  });
-
-  it("materializes keys for the whole section when a neighbor is keyless", () => {
-    const assignments = planPinnedMove({
-      orderedIds: ["a", "b", "c"],
-      keysById: new Map([
-        ["a", null],
-        ["b", "m"],
-        ["c", null],
-      ]),
-      movedId: "b",
-      direction: "up",
-    });
-    expect(assignments).not.toBeNull();
-    const keys = assignments!.map((entry) => entry.orderKey);
-    expect([...keys].sort()).toEqual(keys);
+  it("materializes keyless rows without overwriting hidden slots", () => {
+    const reserved = generateSpreadPinOrderKeys(6);
+    const keysById = new Map<string, string | null>([
+      ["a", null],
+      ["b", null],
+      ["c", null],
+      ...reserved.map((key, i) => [`hidden-${i}`, key] as const),
+    ]);
+    const assignments = planPinnedReorder({ orderedIds: ["c", "a", "b"], keysById, movedId: "c" });
+    expect(assignments.map(({ id }) => id)).toEqual(["c", "a", "b"]);
+    const keys = assignments.map(({ orderKey }) => orderKey);
+    expect(keys).toEqual([...keys].sort());
+    expect(new Set(keys).size).toBe(3);
+    expect(keys.every((key) => !reserved.includes(key))).toBe(true);
   });
 });
 
-describe("sortPinnedThreadsByOrderKey", () => {
-  it("breaks equal keys by id THEN environment so merged lists are stable everywhere", () => {
-    const sorted = sortPinnedThreadsByOrderKey([
+describe("generateSpreadPinOrderKeys", () => {
+  it.each([0, 1, 650, 675, 676, 1_001, 2_000])(
+    "leaves unique, insertable keys for %i threads",
+    (count) => {
+      const keys = generateSpreadPinOrderKeys(count);
+      expect(keys).toHaveLength(count);
+      expect(new Set(keys).size).toBe(count);
+      expect([...keys].sort()).toEqual(keys);
+      for (let index = 0; index < keys.length; index += 1) {
+        const before = keys[index - 1] ?? null;
+        const after = keys[index]!;
+        expect(after).toMatch(/^[a-z]*[b-z]$/);
+        const between = pinOrderKeyBetween(before, after);
+        expect(between).not.toBeNull();
+        expect(between! < after).toBe(true);
+        if (before !== null) expect(between! > before).toBe(true);
+      }
+    },
+  );
+});
+
+describe("sortActiveThreadsByOrderKey", () => {
+  it("keeps new and reopened threads ahead of the saved order", () => {
+    const sorted = sortActiveThreadsByOrderKey([
       {
-        id: "thread-1",
-        createdAt: "2026-03-09T10:00:00.000Z",
-        pinOrderKey: "m",
-        environmentId: "env-b",
+        id: "arranged-first",
+        createdAt: "2026-03-09T09:00:00.000Z",
+        activeOrderKey: "f",
       },
       {
-        id: "thread-1",
+        id: "new",
         createdAt: "2026-03-09T11:00:00.000Z",
-        pinOrderKey: "m",
-        environmentId: "env-a",
+        activeOrderKey: null,
+      },
+      {
+        id: "arranged-last",
+        createdAt: "2026-03-09T12:00:00.000Z",
+        unsettledAt: "2026-03-09T13:00:00.000Z",
+        activeOrderKey: "t",
+      },
+      {
+        id: "reopened",
+        createdAt: "2026-03-01T09:00:00.000Z",
+        unsettledAt: "2026-03-09T12:00:00.000Z",
       },
     ]);
-    expect(sorted.map((thread) => thread.environmentId)).toEqual(["env-a", "env-b"]);
+    expect(sorted.map((thread) => thread.id)).toEqual([
+      "reopened",
+      "new",
+      "arranged-first",
+      "arranged-last",
+    ]);
+  });
+
+  it("breaks equal order keys and timestamps by thread then environment", () => {
+    for (const activeOrderKey of [null, "m"]) {
+      const threads = [
+        { id: "thread-b", environmentId: "env-a" },
+        { id: "thread-a", environmentId: "env-b" },
+        { id: "thread-a", environmentId: "env-a" },
+      ].map((thread) => ({
+        ...thread,
+        createdAt: "2026-03-09T10:00:00.000Z",
+        activeOrderKey,
+      }));
+      expect(
+        sortActiveThreadsByOrderKey(threads).map(
+          (thread) => `${thread.id}:${thread.environmentId}`,
+        ),
+      ).toEqual(["thread-a:env-a", "thread-a:env-b", "thread-b:env-a"]);
+    }
+  });
+
+  it("materializes a large active list without changing the requested order", () => {
+    const threads = Array.from({ length: 1_200 }, (_, index) => ({
+      id: String(index),
+      createdAt: "2026-03-09T10:00:00.000Z",
+      activeOrderKey: null as string | null,
+    }));
+    const orderedIds = threads.map((thread) => thread.id).toReversed();
+    const assignments = planPinnedReorder({
+      orderedIds,
+      movedId: orderedIds[0]!,
+      keysById: new Map(threads.map((thread) => [thread.id, thread.activeOrderKey])),
+    });
+    const keys = new Map(assignments.map((assignment) => [assignment.id, assignment.orderKey]));
+    const updated = threads.map((thread) => ({ ...thread, activeOrderKey: keys.get(thread.id) }));
+    expect(sortActiveThreadsByOrderKey(updated).map((thread) => thread.id)).toEqual(orderedIds);
   });
 });

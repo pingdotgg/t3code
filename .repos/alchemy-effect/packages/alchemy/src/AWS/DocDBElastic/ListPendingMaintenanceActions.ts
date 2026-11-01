@@ -10,9 +10,8 @@ import * as Binding from "../../Binding.ts";
  * cluster in the account — feed it into an ops dashboard or a maintenance
  * scheduler. Provide the implementation with
  * `Effect.provide(AWS.DocDBElastic.ListPendingMaintenanceActionsHttp)`.
- * @binding
- * @section Scheduling Maintenance
- * @example List All Pending Maintenance
+ * ### Scheduling Maintenance
+ * **Example:** List All Pending Maintenance
  * ```typescript
  * const listPending = yield* DocDBElastic.ListPendingMaintenanceActions();
  *
@@ -21,6 +20,8 @@ import * as Binding from "../../Binding.ts";
  *   yield* Effect.logInfo(action.resourceArn ?? "");
  * }
  * ```
+ *
+ * @binding
  */
 export interface ListPendingMaintenanceActions extends Binding.Service<
   ListPendingMaintenanceActions,

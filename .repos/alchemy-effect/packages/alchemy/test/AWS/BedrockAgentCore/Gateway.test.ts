@@ -22,6 +22,7 @@ test.provider(
       );
       expect(error._tag).toBe("ResourceNotFoundException");
     }),
+  { tags: ["provider:aws", "provider:aws:bedrockagentcore", "live"] },
 );
 
 const assertGatewayGone = (gatewayIdentifier: string) =>
@@ -106,5 +107,13 @@ test.provider(
       yield* stack.destroy();
       yield* assertGatewayGone(gateway.gatewayId);
     }),
-  { timeout: 240_000 },
+  {
+    tags: [
+      "provider:aws",
+      "provider:aws:bedrockagentcore",
+      "provider:aws:iam",
+      "live",
+    ],
+    timeout: 240_000,
+  },
 );

@@ -11,9 +11,8 @@ import * as Binding from "../../Binding.ts";
  * `polly:ListLexicons`. Provide the implementation with
  * `Effect.provide(AWS.Polly.ListLexiconsHttp)`.
  *
- * @binding
- * @section Managing Lexicons
- * @example List the region's lexicons
+ * ### Managing Lexicons
+ * **Example:** List the region's lexicons
  * ```typescript
  * // init
  * const listLexicons = yield* AWS.Polly.ListLexicons();
@@ -22,6 +21,8 @@ import * as Binding from "../../Binding.ts";
  * const result = yield* listLexicons();
  * const names = (result.Lexicons ?? []).map((lexicon) => lexicon.Name);
  * ```
+ *
+ * @binding
  */
 export interface ListLexicons extends Binding.Service<
   ListLexicons,

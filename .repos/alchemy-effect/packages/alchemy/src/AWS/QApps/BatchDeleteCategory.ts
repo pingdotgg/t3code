@@ -16,9 +16,8 @@ export interface BatchDeleteCategoryRequest extends Omit<
  *
  * Deletes library categories by id. Provide the implementation with
  * `Effect.provide(AWS.QApps.BatchDeleteCategoryHttp)`.
- * @binding
- * @section Categories
- * @example Delete Categories
+ * ### Categories
+ * **Example:** Delete Categories
  * ```typescript
  * // init — bind the operation to the Q App
  * const batchDeleteCategory = yield* AWS.QApps.BatchDeleteCategory(app);
@@ -26,6 +25,8 @@ export interface BatchDeleteCategoryRequest extends Omit<
  * // runtime
  * yield* batchDeleteCategory({ categories: [categoryId] });
  * ```
+ *
+ * @binding
  */
 export interface BatchDeleteCategory extends Binding.Service<
   BatchDeleteCategory,

@@ -7,10 +7,10 @@ import { describe, expect } from "bun:test";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schedule from "effect/Schedule";
-import * as FetchHttpClient from "effect/unstable/http/FetchHttpClient";
-import * as HttpClient from "effect/unstable/http/HttpClient";
-import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
-import { RpcClient, RpcSerialization } from "effect/unstable/rpc";
+import * as FetchHttpClient from "effect/http/FetchHttpClient";
+import * as HttpClient from "effect/http/HttpClient";
+import * as HttpClientResponse from "effect/http/HttpClientResponse";
+import { RpcClient, RpcSerialization } from "effect/rpc";
 import Stack from "../alchemy.run.ts";
 import { TodoRpcs } from "../src/backend/rpc.ts";
 
@@ -39,7 +39,10 @@ describe.each([true, false])(
           HttpClient.get(new URL("/rpc", stack.websiteUrl)).pipe(
             Effect.flatMap(HttpClientResponse.filterStatusOk),
             Effect.retry({
-              schedule: Schedule.max([Schedule.spaced("500 millis"), Schedule.recurs(20)]),
+              schedule: Schedule.max([
+                Schedule.spaced("500 millis"),
+                Schedule.recurs(20),
+              ]),
             }),
           ),
         ),

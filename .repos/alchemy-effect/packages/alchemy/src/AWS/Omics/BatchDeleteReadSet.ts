@@ -15,15 +15,16 @@ export interface BatchDeleteReadSetRequest extends Omit<
  * store/workflow id is injected automatically and the action is granted on the
  * bound resource. Provide the implementation with
  * `Effect.provide(AWS.Omics.BatchDeleteReadSetHttp)`.
- * @binding
- * @section Read Sets
- * @example Bind BatchDeleteReadSet to a SequenceStore
+ * ### Read Sets
+ * **Example:** Bind BatchDeleteReadSet to a SequenceStore
  * ```typescript
  * // init
  * const batchDeleteReadSet = yield* AWS.Omics.BatchDeleteReadSet(store);
  * // runtime
  * const result = yield* batchDeleteReadSet({});
  * ```
+ *
+ * @binding
  */
 export interface BatchDeleteReadSet extends Binding.Service<
   BatchDeleteReadSet,

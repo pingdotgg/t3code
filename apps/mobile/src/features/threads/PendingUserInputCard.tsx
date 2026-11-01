@@ -1,169 +1,159 @@
-import type { ApprovalRequestId, UserInputQuestion } from "@t3tools/contracts";
-import { useCallback, useRef } from "react";
+import { Button } from "../../components/ui/Button";
+import { QuestionAttachments } from "./QuestionAttachments";
+import type { EnvironmentId, RuntimeRequestId } from "@t3tools/contracts";
+import type { ThreadUserInputQuestion } from "@t3tools/client-runtime/state/thread-requests";
+import {
+  markdownProseDirection,
+  textDirection,
+  type TextDirection,
+} from "@t3tools/shared/textDirection";
+import { useRef } from "react";
 import { Platform, Pressable, ScrollView, View, type LayoutChangeEvent } from "react-native";
 import Animated, {
   Easing,
   FadeInUp,
   FadeOutDown,
-  LinearTransition,
   useAnimatedStyle,
   useSharedValue,
-  withTiming,
+  type DerivedValue,
   type SharedValue,
 } from "react-native-reanimated";
 
 import { USER_INPUT_TOGGLE_DURATION_MS } from "./pendingUserInputLayout";
 
-import { SymbolView } from "../../components/AppSymbol";
-import { AppText as Text, AppTextInput as TextInput } from "../../components/AppText";
-import { ControlPill } from "../../components/ControlPill";
+import { SymbolView } from "../../components/ui/AppSymbol";
+import { AppText as Text } from "../../components/ui/AppText";
+import { ControlPill } from "../../components/ui/ControlPill";
 import { cn } from "../../lib/cn";
-import { useThemeColor } from "../../lib/useThemeColor";
+import { SelectableMarkdownText } from "../../native/SelectableMarkdownText";
+import { useOpenPullRequest } from "../../native/useOpenPullRequest";
+import { useMarkdownPreviewStyles } from "../files/FileMarkdownPreview";
+import { useLiveThreadLinkLabels } from "../../state/entities";
 import {
   isPendingUserInputOptionSelected,
-  type PendingUserInput,
   type PendingUserInputDraftAnswer,
-} from "../../lib/threadActivity";
+} from "@t3tools/client-runtime/state/pending-user-input";
+import type { PendingUserInput } from "../../lib/threadActivity";
 
 export interface PendingUserInputCardProps {
+  readonly environmentId: EnvironmentId;
+  readonly canOperateThread: boolean;
   readonly pendingUserInput: PendingUserInput;
-  /**
-   * Constant while a request is pending (it reserves keyboard space), so the
-   * keyboard transition is pure translation; changes only on rare discrete
-   * corrections, which the layout transition smooths.
-   */
-  readonly maxHeight: number;
+  readonly maxHeight: DerivedValue<number>;
   readonly collapsed: boolean;
   readonly onToggleCollapsed: () => void;
-  /** Renders a stop control on the collapsed bar, which replaces the composer. */
   readonly onStopThread?: () => void;
-  /**
-   * 0 collapsed → 1 expanded. Slides the iOS overlay card down behind the
-   * collapsed bar (inside a clipping window) on the UI thread; the host
-   * animates it directly from the tap handler so the card and the feed
-   * inset glide start the same frame.
-   */
   readonly cardProgress?: SharedValue<number>;
-  /**
-   * Receives how far the expanded card extends above the bar footprint
-   * (written from onLayout with no re-render); the host adds it to the
-   * thread feed's end inset so the end of the chat stays visible above the
-   * card.
-   */
   readonly cardCoverage?: SharedValue<number>;
-  /** Fires on custom-answer focus/blur; hosts use it to vet stale keyboard state. */
   readonly onInputFocusChange?: (focused: boolean) => void;
   readonly drafts: Record<string, PendingUserInputDraftAnswer>;
   readonly answers: Record<string, string | ReadonlyArray<string>> | null;
-  readonly respondingUserInputId: ApprovalRequestId | null;
+  readonly respondingUserInputId: RuntimeRequestId | null;
   readonly onSelectOption: (
-    requestId: ApprovalRequestId,
-    question: UserInputQuestion,
-    label: string,
+    requestId: RuntimeRequestId,
+    question: ThreadUserInputQuestion,
+    value: string,
   ) => void;
   readonly onChangeCustomAnswer: (
-    requestId: ApprovalRequestId,
+    requestId: RuntimeRequestId,
     questionId: string,
     customAnswer: string,
   ) => void;
   readonly onSubmit: () => Promise<unknown>;
+  readonly onDismiss: () => Promise<unknown>;
 }
 
-/**
- * On iOS the collapsed bar is the PERMANENT in-flow footprint — the expanded
- * card is an absolutely-positioned overlay rising above it. The overlay's
- * measured height (which drives the thread feed's bottom inset) therefore
- * never changes on collapse/expand, so the transcript stays perfectly still
- * while the card animates over it.
- *
- * Android cannot use the overlay: it does not hit-test touches outside a
- * parent's bounds, which made everything above the bar-sized wrapper
- * untouchable. There the expanded card renders in-flow instead (the wrapper
- * grows with it, and the host skips the coverage inset since the measured
- * overlay already includes the card).
- */
+/** Android cannot hit-test overlays beyond their parent's bounds; render its expanded card in-flow. */
 const EXPANDED_CARD_IS_OVERLAY = Platform.OS === "ios";
 
-const CARD_LAYOUT_TRANSITION = LinearTransition.duration(200);
+function proseDirectionStyle(text: string, setDirection: TextDirection | undefined) {
+  const direction = textDirection(text);
+  return {
+    ...(direction ? { direction, writingDirection: direction } : null),
+    textAlign: (direction === "rtl") === (setDirection === "rtl") ? "left" : "right",
+  } as const;
+}
+
+function QuestionText(props: {
+  readonly markdown: string;
+  readonly environmentId: EnvironmentId;
+  readonly setDirection: TextDirection | undefined;
+}) {
+  const styles = useMarkdownPreviewStyles();
+  const markdown = useLiveThreadLinkLabels(props.markdown, props.environmentId);
+  const openLink = useOpenPullRequest();
+  return (
+    <SelectableMarkdownText
+      markdown={markdown}
+      textStyle={styles.nativeTextStyle}
+      writingDirection={markdownProseDirection(markdown)}
+      // Android's renderer aligns relative to each paragraph's direction.
+      textAlign={
+        Platform.OS === "android" ? undefined : props.setDirection === "rtl" ? "right" : "left"
+      }
+      onLinkPress={(href) => void openLink(href)}
+    />
+  );
+}
 
 export function PendingUserInputCard(props: PendingUserInputCardProps) {
-  const iconSubtle = useThemeColor("--color-icon-subtle");
   const questionCount = props.pendingUserInput.questions.length;
+  const canRespond = props.pendingUserInput.responseCapability !== "not_resumable";
+  const isResponding = props.respondingUserInputId === props.pendingUserInput.requestId;
+  const responseDisabled = !canRespond || isResponding;
+  const setDirection = markdownProseDirection(
+    props.pendingUserInput.questions
+      .flatMap((question) => [
+        question.header,
+        question.question,
+        ...question.options.flatMap((option) => [option.label, option.description ?? ""]),
+      ])
+      .join(" "),
+  );
 
   const cardCoverage = props.cardCoverage;
   const barHeightRef = useRef(0);
   const cardHeightRef = useRef(0);
-  // Measured card height, written straight from onLayout: the collapse slide
-  // distance. Not animated — it only changes on discrete relayouts.
   const cardHeight = useSharedValue(0);
-  const notifyCoverage = useCallback(() => {
+  const notifyCoverage = () => {
     if (!cardCoverage) {
       return;
     }
-    const coverage = Math.max(0, cardHeightRef.current - barHeightRef.current);
-    if (coverage === cardCoverage.value) {
-      return;
-    }
-    if (cardCoverage.value === 0) {
-      // First measurement lands while the list is doing its initial
-      // end-pin (thread opened onto a pending request); animating it from
-      // zero would move the end anchor out from under that scroll.
-      cardCoverage.value = coverage;
-      return;
-    }
-    // Animated so a coverage change at rest (discrete max-height
-    // corrections) glides the feed instead of stepping it; toggle timing is
-    // owned by the host's progress values.
-    cardCoverage.value = withTiming(coverage, {
-      duration: USER_INPUT_TOGGLE_DURATION_MS,
-      easing: Easing.out(Easing.cubic),
-    });
-  }, [cardCoverage]);
-  const handleBarLayout = useCallback(
-    (event: LayoutChangeEvent) => {
-      barHeightRef.current = event.nativeEvent.layout.height;
-      notifyCoverage();
-    },
-    [notifyCoverage],
-  );
-  const handleCardLayout = useCallback(
-    (event: LayoutChangeEvent) => {
-      cardHeightRef.current = event.nativeEvent.layout.height;
-      cardHeight.value = event.nativeEvent.layout.height;
-      notifyCoverage();
-    },
-    [cardHeight, notifyCoverage],
-  );
+    // The card resizes with the keyboard every frame, so easing each sample would leave the
+    // feed inset and floating controls trailing it.
+    cardCoverage.set(Math.max(0, cardHeightRef.current - barHeightRef.current));
+  };
+  const handleBarLayout = (event: LayoutChangeEvent) => {
+    barHeightRef.current = event.nativeEvent.layout.height;
+    notifyCoverage();
+  };
+  const handleCardLayout = (event: LayoutChangeEvent) => {
+    cardHeightRef.current = event.nativeEvent.layout.height;
+    cardHeight.set(event.nativeEvent.layout.height);
+    notifyCoverage();
+  };
   const cardProgress = props.cardProgress;
-  // No opacity: fading an opaque card over the live transcript reads as a
-  // crossfade (card text, transcript, and bar all half-visible at once).
-  // Instead the card stays opaque and slides its full height down past the
-  // clipping window's bottom edge, so the transcript is only revealed where
-  // the card has physically left.
+  const maxHeight = props.maxHeight;
   const cardAnimatedStyle = useAnimatedStyle(() => {
     const progress = cardProgress === undefined ? 1 : cardProgress.value;
     return {
+      maxHeight: maxHeight.value,
       transform: [{ translateY: (1 - progress) * cardHeight.value }],
     };
   });
+  const cardMaxHeightStyle = useAnimatedStyle(() => ({ maxHeight: maxHeight.value }));
+  const overlayHeightStyle = useAnimatedStyle(() => ({ height: maxHeight.value }));
 
-  // On iOS the card stays MOUNTED while collapsed (hidden via the animated
-  // style): expanding animates existing views on the UI thread the same
-  // frame the host starts the progress timing, instead of paying a React
-  // mount + layout before anything moves.
+  // Keep the iOS card mounted so expansion starts on the UI thread without waiting for React layout.
   const renderCard = EXPANDED_CARD_IS_OVERLAY || !props.collapsed;
   const showBar = props.collapsed || EXPANDED_CARD_IS_OVERLAY;
-  // The bar renders UNDER the card (earlier in JSX), always opaque: while
-  // expanded the opaque card covers it, and during the collapse slide the
-  // card's top edge wipes past and reveals it — no opacity handoff, so no
-  // crossfade frames.
   const bar = showBar ? (
     <View
       onLayout={handleBarLayout}
       pointerEvents={props.collapsed ? "auto" : "none"}
       accessibilityElementsHidden={!props.collapsed}
       importantForAccessibility={props.collapsed ? "auto" : "no-hide-descendants"}
-      className="flex-row items-center gap-2 rounded-full border border-neutral-200 bg-neutral-100 py-1.5 pl-4 pr-1.5 dark:border-white/6 dark:bg-neutral-900"
+      className="flex-row items-center gap-2 rounded-full border border-border bg-card-alt py-1.5 pl-4 pr-1.5"
     >
       <Pressable
         accessibilityRole="button"
@@ -173,14 +163,19 @@ export function PendingUserInputCard(props: PendingUserInputCardProps) {
         onPress={props.onToggleCollapsed}
         className="min-h-10 flex-1 flex-row items-center gap-2 active:opacity-70"
       >
-        <Text className="font-t3-bold text-2xs uppercase tracking-[1.1px] text-sky-700 dark:text-sky-300">
+        <Text className="font-t3-bold text-2xs uppercase tracking-[1.1px] text-foreground-secondary">
           User input needed
         </Text>
-        <Text className="font-sans text-xs text-neutral-500 dark:text-neutral-400">
+        <Text className="font-sans text-xs text-foreground-muted">
           {questionCount} question{questionCount === 1 ? "" : "s"}
         </Text>
         <View className="flex-1" />
-        <SymbolView name="chevron.up" size={12} tintColor={iconSubtle} type="monochrome" />
+        <SymbolView
+          name="chevron.up"
+          size={12}
+          tintColorClassName={"accent-icon-subtle"}
+          type="monochrome"
+        />
       </Pressable>
       {props.onStopThread ? (
         <ControlPill
@@ -188,15 +183,13 @@ export function PendingUserInputCard(props: PendingUserInputCardProps) {
           icon="stop.fill"
           variant="danger"
           className="h-9 w-9"
+          disabled={!props.canOperateThread}
           onPress={props.onStopThread}
         />
       ) : null}
     </View>
   ) : null;
   const card = renderCard ? (
-    // The surface is opaque on purpose: the card floats over the thread
-    // feed with no blur behind it, so a translucent background renders
-    // the questions on top of whatever message happens to sit underneath.
     <Animated.View
       onLayout={handleCardLayout}
       pointerEvents={props.collapsed ? "none" : "auto"}
@@ -212,13 +205,8 @@ export function PendingUserInputCard(props: PendingUserInputCardProps) {
           ? undefined
           : FadeOutDown.duration(USER_INPUT_TOGGLE_DURATION_MS).easing(Easing.out(Easing.cubic))
       }
-      layout={CARD_LAYOUT_TRANSITION}
-      className="overflow-hidden gap-2.5 rounded-[20px] border border-neutral-200 bg-neutral-100 p-4 dark:border-white/6 dark:bg-neutral-900"
-      style={
-        EXPANDED_CARD_IS_OVERLAY
-          ? [{ maxHeight: props.maxHeight }, cardAnimatedStyle]
-          : { maxHeight: props.maxHeight }
-      }
+      className="overflow-hidden gap-2.5 rounded-[20px] border border-border bg-card-alt p-4"
+      style={EXPANDED_CARD_IS_OVERLAY ? cardAnimatedStyle : cardMaxHeightStyle}
     >
       <Pressable
         accessibilityRole="button"
@@ -227,15 +215,18 @@ export function PendingUserInputCard(props: PendingUserInputCardProps) {
         className="flex-row items-start gap-2"
       >
         <View className="flex-1 gap-2.5">
-          <Text className="font-t3-bold text-2xs uppercase tracking-[1.1px] text-sky-700 dark:text-sky-300">
+          <Text className="font-t3-bold text-2xs uppercase tracking-[1.1px] text-foreground-secondary">
             User input needed
           </Text>
-          <Text className="font-t3-bold text-lg text-neutral-950 dark:text-neutral-50">
-            Fill in the pending answers
-          </Text>
+          <Text className="font-t3-bold text-lg text-foreground">Fill in the pending answers</Text>
         </View>
-        <View className="h-8 w-8 items-center justify-center rounded-full bg-neutral-200/70 dark:bg-white/8">
-          <SymbolView name="chevron.down" size={13} tintColor={iconSubtle} type="monochrome" />
+        <View className="h-8 w-8 items-center justify-center rounded-full bg-subtle-strong">
+          <SymbolView
+            name="chevron.down"
+            size={13}
+            tintColorClassName={"accent-icon-subtle"}
+            type="monochrome"
+          />
         </View>
       </Pressable>
       <ScrollView
@@ -247,93 +238,125 @@ export function PendingUserInputCard(props: PendingUserInputCardProps) {
         showsVerticalScrollIndicator
         style={{ flexShrink: 1 }}
       >
+        {!canRespond ? (
+          <Text className="font-sans text-sm leading-5 text-foreground-muted">
+            The provider process for this request is no longer available. Interrupt or restart the
+            run to continue.
+          </Text>
+        ) : null}
         {props.pendingUserInput.questions.map((question) => {
           const draft = props.drafts[question.id];
           return (
             <View key={question.id} className="gap-2 pt-1">
-              <Text className="font-t3-bold text-xs uppercase tracking-[1px] text-neutral-500 dark:text-neutral-500">
+              <Text
+                className="font-t3-bold text-xs uppercase tracking-[1px] text-foreground-muted"
+                style={proseDirectionStyle(question.header, setDirection)}
+              >
                 {question.header}
               </Text>
-              <Text className="font-sans text-base leading-snug text-neutral-950 dark:text-neutral-50">
-                {question.question}
-              </Text>
-              <View className="flex-row flex-wrap gap-2.5">
+              <QuestionText
+                markdown={question.question}
+                environmentId={props.environmentId}
+                setDirection={setDirection}
+              />
+              <View className="gap-2">
                 {question.options.map((option) => {
-                  const selected = isPendingUserInputOptionSelected(draft, option.label);
+                  const optionValue = option.value ?? option.label.trim();
+                  const selected = isPendingUserInputOptionSelected(question, draft, optionValue);
+                  const description =
+                    option.description !== option.label ? option.description : undefined;
                   return (
                     <Pressable
-                      key={option.label}
+                      key={optionValue}
+                      accessibilityRole={question.multiSelect ? "checkbox" : "radio"}
+                      accessibilityState={{ checked: selected, disabled: responseDisabled }}
+                      disabled={responseDisabled}
                       className={cn(
-                        "rounded-full border px-3 py-2.5 ",
-                        selected
-                          ? "border-blue-300/50 bg-blue-50 dark:border-blue-400/28 dark:bg-blue-400/14"
-                          : "border-neutral-200 bg-white dark:border-white/6 dark:bg-neutral-950/70",
+                        "min-h-12 w-full rounded-2xl border px-3.5 py-3",
+                        selected ? "border-primary bg-primary/10" : "border-border bg-input",
                       )}
                       onPress={() =>
                         props.onSelectOption(
                           props.pendingUserInput.requestId,
                           question,
-                          option.label,
+                          optionValue,
                         )
                       }
                     >
-                      <Text
-                        className={cn(
-                          "font-t3-bold text-sm",
-                          selected
-                            ? "text-sky-700 dark:text-sky-300"
-                            : "text-neutral-600 dark:text-neutral-300",
-                        )}
-                      >
-                        {option.label}
-                      </Text>
+                      <View className="min-w-0 flex-1 gap-0.5">
+                        <Text
+                          className={cn(
+                            "font-t3-bold text-sm",
+                            selected ? "text-foreground" : "text-foreground-secondary",
+                          )}
+                          style={proseDirectionStyle(option.label, setDirection)}
+                        >
+                          {option.label}
+                        </Text>
+                        {description ? (
+                          <Text
+                            className="font-sans text-sm leading-5 text-foreground-muted"
+                            style={proseDirectionStyle(description, setDirection)}
+                          >
+                            {description}
+                          </Text>
+                        ) : null}
+                      </View>
                     </Pressable>
                   );
                 })}
               </View>
-              <TextInput
-                value={draft?.customAnswer ?? ""}
-                onChangeText={(value) =>
-                  props.onChangeCustomAnswer(props.pendingUserInput.requestId, question.id, value)
-                }
-                onFocus={() => props.onInputFocusChange?.(true)}
-                onBlur={() => props.onInputFocusChange?.(false)}
-                placeholder="Or type a custom answer"
-                className="min-h-[54px] rounded-2xl border border-neutral-200 bg-white px-3.5 py-3 font-sans text-base text-neutral-950 dark:border-white/8 dark:bg-neutral-950/70 dark:text-neutral-50"
-              />
+              {question.allowCustomAnswer !== false ? (
+                <QuestionAttachments
+                  key={`${props.pendingUserInput.requestId}:${question.id}`}
+                  requestId={props.pendingUserInput.requestId}
+                  question={question}
+                  questions={props.pendingUserInput.questions}
+                  disabled={responseDisabled}
+                  value={draft?.customAnswer ?? ""}
+                  onChangeText={(value) =>
+                    props.onChangeCustomAnswer(props.pendingUserInput.requestId, question.id, value)
+                  }
+                  onInputFocusChange={props.onInputFocusChange}
+                />
+              ) : null}
             </View>
           );
         })}
       </ScrollView>
-      <Pressable
-        className={cn(
-          "items-center justify-center rounded-2xl px-4 py-3.5",
-          props.answers ? "bg-blue-500" : "bg-neutral-200 dark:bg-neutral-700/60",
-        )}
-        disabled={
-          props.answers === null || props.respondingUserInputId === props.pendingUserInput.requestId
-        }
+      <Button
+        label="Submit answers"
+        fullWidth
+        tone={props.answers ? "primary" : "secondary"}
+        disabled={!props.canOperateThread || responseDisabled || props.answers === null}
         onPress={() => void props.onSubmit()}
-      >
-        <Text className="font-t3-extrabold text-sm text-white">Submit answers</Text>
-      </Pressable>
+      />
+      {props.pendingUserInput.dismissible ? (
+        <Button
+          label="Dismiss without answering"
+          tone="text"
+          disabled={isResponding}
+          onPress={() => void props.onDismiss()}
+        />
+      ) : null}
+      {!props.canOperateThread ? (
+        <Text className="font-sans text-xs text-foreground-tertiary">
+          This connection cannot submit answers.
+        </Text>
+      ) : null}
     </Animated.View>
   ) : null;
   return (
     <View className="relative">
       {bar}
       {EXPANDED_CARD_IS_OVERLAY ? (
-        // Clipping window for the collapse slide: same footprint as the
-        // expanded card, bottom edge on the bar's bottom edge. The sliding
-        // card exits through the bottom edge instead of drawing over the
-        // composer area, wiping the bar (and the transcript) into view.
-        <View
+        <Animated.View
           pointerEvents={props.collapsed ? "none" : "box-none"}
           className="absolute inset-x-0 bottom-0 justify-end overflow-hidden"
-          style={{ height: props.maxHeight }}
+          style={overlayHeightStyle}
         >
           {card}
-        </View>
+        </Animated.View>
       ) : (
         card
       )}

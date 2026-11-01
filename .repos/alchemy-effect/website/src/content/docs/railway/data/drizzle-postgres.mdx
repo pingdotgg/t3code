@@ -1,0 +1,152 @@
+---
+title: Drizzle Postgres on Railway
+description: Query Railway Postgres from an Effect-native Service and apply reviewed Drizzle migrations separately.
+---
+
+Run Drizzle in a Railway container beside [Railway Postgres](/railway/data/postgres). Start with [Railway setup](/railway/setup), the [Service tutorial](/railway/tutorial/part-2), and a `src/schema.ts` exporting `Users` from the [Postgres client guide](/sql/drizzle/postgres).
+
+## Install the database dependencies
+
+```sh
+pnpm add drizzle-orm@1.0.0-rc.5-ab785fc @effect/sql-pg pg
+pnpm add -D drizzle-kit@1.0.0-rc.5-ab785fc
+```
+
+The Drizzle versions match the repository's Effect integration.
+
+## Configure migrations
+
+```typescript
+// drizzle.config.ts
+import { defineConfig } from "drizzle-kit";
+
+export default defineConfig({
+  dialect: "postgresql",
+  schema: "./src/schema.ts",
+  out: "./drizzle",
+  dbCredentials: { url: process.env.DATABASE_URL! },
+});
+```
+
+`DATABASE_URL` here belongs to your migration runner; the deployed Service receives its own private connection through a binding.
+
+## Generate after changing the schema
+
+```sh
+pnpm exec drizzle-kit generate
+```
+
+Review the generated SQL and snapshots, including any rename decisions, before applying them.
+
+## Commit the migration
+
+```sh
+git add src/schema.ts drizzle.config.ts drizzle
+git diff --cached
+```
+
+```sh
+git commit -m "Add users migration"
+```
+
+Commit the schema, SQL, and snapshots together rather than generating migrations during deployment.
+
+## Declare Postgres
+
+```typescript
+// src/db.ts
+import * as Railway from "alchemy/Railway";
+import { Site } from "./project.ts";
+
+export const Db = Railway.Postgres("Db", { project: Site });
+```
+
+Use the same Project and environment as the Service; omitting `environment` on both selects the Project's primary environment.
+
+## Install the driver in the Service image
+
+```diff lang="typescript"
+ // src/api.ts
+ {
+   project: Site,
+   main: import.meta.url,
++  build: { install: ["pg"] },
+ }
+```
+
+Use `Railway.Service`, whose image can install `pg`, rather than assuming the single-file Canvas `Railway.Function` has the same packaging support.
+
+## Bind Postgres
+
+```diff lang="typescript"
++import { Db } from "./db.ts";
+
+ Effect.gen(function* () {
++  const conn = yield* Railway.ConnectPostgres(Db);
+   return {
+     fetch: Effect.succeed(HttpServerResponse.text("Hello from Railway!")),
+   };
+-}),
++}).pipe(Effect.provide(Railway.ConnectPostgresHttp)),
+```
+
+The binding injects the private URI into the Service environment; `conn.connectionString` is an Effect yielding a redacted URL, not a query client. These excerpts use the tutorial's minimal text handler until the database is migrated.
+
+## Provision before the first migration
+
+```sh
+pnpm alchemy deploy
+```
+
+Keep `yield* Api` in the tutorial's Stack with `Railway.providers()`. This initial deployment provisions Postgres while the handler still avoids application tables.
+
+## Apply the committed SQL
+
+```sh
+pnpm exec drizzle-kit migrate
+```
+
+For an external CI runner, supply the database's `publicConnectionUri` as secret `DATABASE_URL`; the default `public: true` creates that TCP proxy. With `public: false`, run migrations inside the same Railway environment using `connectionUri` instead.
+
+## Review public TLS
+
+The generated Railway Postgres URLs currently include `sslmode=no-verify`; a public TCP proxy does not provide certificate verification. For production, configure a verifiable server certificate and migration-client trust, or run migrations within the private environment.
+
+## Open the runtime client
+
+```diff lang="typescript"
++import * as Drizzle from "alchemy/Drizzle/Postgres";
+
+ const conn = yield* Railway.ConnectPostgres(Db);
++const db = yield* Drizzle.Postgres(conn.connectionString);
+```
+
+Runtime traffic stays on Railway's private network, regardless of whether a public migration endpoint exists.
+
+## Query from the Service
+
+```diff lang="typescript"
++import { Users } from "./schema.ts";
+
+ return {
+-  fetch: Effect.succeed(HttpServerResponse.text("Hello from Railway!")),
++  fetch: Effect.gen(function* () {
++    const users = yield* db.select().from(Users).pipe(Effect.orDie);
++    return yield* HttpServerResponse.json({ users });
++  }),
+ };
+```
+
+The request opens the pool lazily and closes it when its scope ends.
+
+## Deploy the application
+
+```sh
+pnpm alchemy deploy
+```
+
+For later changes, generate, review, and commit the schema, SQL, and snapshots before running migrations and deploying compatible code. `Railway.Postgres` has no `migrations` prop, so deployment does not replace `drizzle-kit migrate`.
+
+## Continue
+
+See the [SQL database comparison](/sql/databases), [Postgres client guide](/sql/drizzle/postgres), and [migration workflow](/sql/drizzle/migrations). The [railway-service example](https://github.com/alchemy-run/alchemy/tree/main/examples/railway-service) contains the Service, `pg` installation, and Postgres binding used here.

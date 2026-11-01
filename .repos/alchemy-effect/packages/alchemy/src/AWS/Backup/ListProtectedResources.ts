@@ -9,14 +9,15 @@ import * as Binding from "../../Binding.ts";
  * Lists the resources successfully backed up by AWS Backup — each entry
  * carries the resource ARN, type, and last-backup time. Provide the
  * implementation with `Effect.provide(AWS.Backup.ListProtectedResourcesHttp)`.
- * @binding
- * @section Protected Resources
- * @example List Protected Resources
+ * ### Protected Resources
+ * **Example:** List Protected Resources
  * ```typescript
  * const listProtectedResources = yield* AWS.Backup.ListProtectedResources();
  *
  * const page = yield* listProtectedResources({ MaxResults: 25 });
  * ```
+ *
+ * @binding
  */
 export interface ListProtectedResources extends Binding.Service<
   ListProtectedResources,

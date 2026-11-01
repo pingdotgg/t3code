@@ -2,8 +2,8 @@ import * as AWS from "@/AWS/index.ts";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import * as HttpClient from "effect/unstable/http/HttpClient";
-import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
+import * as HttpClient from "effect/http/HttpClient";
+import * as HttpServerResponse from "effect/http/HttpServerResponse";
 
 /**
  * A service whose Layer performs real async I/O during the sandbox's init
@@ -46,7 +46,7 @@ export default class InitIOProbe extends AWS.Lambda.Function<InitIOProbe>()(
   "InitIOProbe",
   {
     main: import.meta.url,
-    url: true,
+    functionUrl: true,
   },
   Effect.gen(function* () {
     const config = yield* TraceConfig;

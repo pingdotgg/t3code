@@ -1,29 +1,29 @@
 /**
- * The `OpenRouterClient` module provides an Effect service for calling
- * OpenRouter's chat completions API. It wraps the generated OpenRouter HTTP
- * client with Effect-native constructors, layers, authentication and optional
- * site ranking headers, typed errors, and streaming support.
+ * HTTP client for OpenRouter's chat completions and alpha Decisions APIs,
+ * with authentication, site ranking headers, typed errors, and chat streaming.
  *
+ * @stability unstable
  * @since 4.0.0
  */
+import * as AiError from "effect/ai/AiError"
 import type * as Config from "effect/Config"
 import * as Context from "effect/Context"
 import * as Effect from "effect/Effect"
+import * as Sse from "effect/encoding/Sse"
 import { identity } from "effect/Function"
+import * as HttpBody from "effect/http/HttpBody"
+import * as HttpClient from "effect/http/HttpClient"
+import * as HttpClientRequest from "effect/http/HttpClientRequest"
+import * as HttpClientResponse from "effect/http/HttpClientResponse"
 import * as Layer from "effect/Layer"
 import * as Predicate from "effect/Predicate"
 import type * as Redacted from "effect/Redacted"
 import * as Schema from "effect/Schema"
 import * as Stream from "effect/Stream"
-import type * as AiError from "effect/unstable/ai/AiError"
-import * as Sse from "effect/unstable/encoding/Sse"
-import * as HttpBody from "effect/unstable/http/HttpBody"
-import * as HttpClient from "effect/unstable/http/HttpClient"
-import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest"
-import type * as HttpClientResponse from "effect/unstable/http/HttpClientResponse"
 import * as Generated from "./Generated.ts"
 import * as Errors from "./internal/errors.ts"
 import { OpenRouterConfig } from "./OpenRouterConfig.ts"
+import * as OpenRouterSchema from "./OpenRouterSchema.ts"
 
 // =============================================================================
 // Service Interface
@@ -37,11 +37,19 @@ import { OpenRouterConfig } from "./OpenRouterConfig.ts"
  * Provides methods for interacting with OpenRouter's Chat Completions API,
  * including both synchronous and streaming message creation.
  *
- * @category models
+ * @stability unstable
+ * @category services
  * @since 4.0.0
  */
 export interface Service {
   readonly client: Generated.OpenRouterClient
+
+  readonly createDecisions: (
+    options: typeof OpenRouterSchema.DecisionsRequest.Encoded
+  ) => Effect.Effect<
+    [body: typeof OpenRouterSchema.DecisionsResponse.Type, response: HttpClientResponse.HttpClientResponse],
+    AiError.AiError
+  >
 
   readonly createChatCompletion: (
     options: typeof Generated.ChatRequest.Encoded
@@ -69,6 +77,7 @@ export interface Service {
  * The payload contains streamed choices, model metadata, optional usage, and may
  * include an OpenRouter error object for a streamed response.
  *
+ * @stability unstable
  * @category models
  * @since 4.0.0
  */
@@ -90,6 +99,7 @@ export type ChatStreamingResponseChunkData = typeof Generated.ChatStreamingRespo
  * @see {@link layer} for providing a client from explicit options
  * @see {@link layerConfig} for providing a client from `Config`
  *
+ * @stability unstable
  * @category services
  * @since 4.0.0
  */
@@ -105,12 +115,17 @@ export class OpenRouterClient extends Context.Service<
 /**
  * Configuration for creating an OpenRouter client.
  *
+ * @stability unstable
  * @category options
  * @since 4.0.0
  */
 export type Options = {
   readonly apiKey?: Redacted.Redacted<string> | undefined
 
+  /**
+   * Base URL for the versioned API. Decisions replace a trailing "/v1" with
+   * "/alpha/decisions"; otherwise they append "/alpha/decisions" to this URL.
+   */
   readonly apiUrl?: string | undefined
 
   /**
@@ -140,10 +155,6 @@ export type Options = {
 /**
  * Creates an OpenRouter client service from explicit options.
  *
- * **When to use**
- *
- * Use when you need the OpenRouter client service value inside an effect.
- *
  * **Details**
  *
  * The returned service uses the current `HttpClient`, prepends `apiUrl` or
@@ -151,15 +162,13 @@ export type Options = {
  * `HTTP-Referer` and `X-Title` headers, accepts JSON responses, and applies
  * `transformClient` when provided.
  *
- * **Gotchas**
- *
  * Scoped `OpenRouterConfig.withClientTransform` applies to generated client
- * request methods. Streaming chat completion requests are sent directly by this
- * module and do not read that scoped transform.
+ * methods and alpha Decisions requests, but not streaming chat completions.
  *
  * @see {@link layer} for providing this client from explicit options
  * @see {@link layerConfig} for loading client settings from `Config`
  *
+ * @stability unstable
  * @category constructors
  * @since 4.0.0
  */
@@ -167,20 +176,54 @@ export const make = Effect.fnUntraced(
   function*(options: Options): Effect.fn.Return<Service, never, HttpClient.HttpClient> {
     const baseClient = yield* HttpClient.HttpClient
 
-    const httpClient = baseClient.pipe(
-      HttpClient.mapRequest((request) =>
-        request.pipe(
-          HttpClientRequest.prependUrl(options.apiUrl ?? "https://openrouter.ai/api/v1"),
-          options.apiKey ? HttpClientRequest.bearerToken(options.apiKey) : identity,
-          options.siteReferrer ? HttpClientRequest.setHeader("HTTP-Referer", options.siteReferrer) : identity,
-          options.siteTitle ? HttpClientRequest.setHeader("X-Title", options.siteTitle) : identity,
-          HttpClientRequest.acceptJson
-        )
-      ),
-      options.transformClient ?? identity
-    )
+    const makeHttpClient = (baseUrl: string) =>
+      baseClient.pipe(
+        HttpClient.mapRequest((request) =>
+          request.pipe(
+            HttpClientRequest.prependUrl(baseUrl),
+            options.apiKey ? HttpClientRequest.bearerToken(options.apiKey) : identity,
+            options.siteReferrer ? HttpClientRequest.setHeader("HTTP-Referer", options.siteReferrer) : identity,
+            options.siteTitle ? HttpClientRequest.setHeader("X-Title", options.siteTitle) : identity,
+            HttpClientRequest.acceptJson
+          )
+        ),
+        options.transformClient ?? identity
+      )
 
+    const httpClient = makeHttpClient(options.apiUrl ?? "https://openrouter.ai/api/v1")
     const httpClientOk = HttpClient.filterStatusOk(httpClient)
+
+    // Remove the version suffix for alpha requests, preserving proxy prefixes.
+    const decisionsClient = makeHttpClient(
+      (options.apiUrl ?? "https://openrouter.ai/api/v1").replace(/\/v1\/?$/, "")
+    )
+    const createDecisions: Service["createDecisions"] = Effect.fnUntraced(
+      function*(payload) {
+        const config = yield* OpenRouterConfig.getOrUndefined
+        const client = HttpClient.filterStatusOk(
+          config?.transformClient ? config.transformClient(decisionsClient) : decisionsClient
+        )
+        const request = yield* HttpClientRequest.bodyJson(HttpClientRequest.post("/alpha/decisions"), payload).pipe(
+          Effect.mapError((error) =>
+            AiError.make({
+              module: "OpenRouterClient",
+              method: "createDecisions",
+              reason: new AiError.InvalidRequestError({ description: String(error) })
+            })
+          )
+        )
+        const response = yield* client.execute(request)
+        const body = yield* HttpClientResponse.schemaBodyJson(OpenRouterSchema.DecisionsResponse)(response)
+        return [body, response] as [
+          typeof OpenRouterSchema.DecisionsResponse.Type,
+          HttpClientResponse.HttpClientResponse
+        ]
+      },
+      Effect.catchTags({
+        HttpClientError: (error) => Errors.mapHttpClientError(error, "createDecisions"),
+        SchemaError: (error) => Effect.fail(Errors.mapSchemaError(error, "createDecisions"))
+      })
+    )
 
     const client = Generated.make(httpClient, {
       transformClient: Effect.fnUntraced(function*(client) {
@@ -228,6 +271,7 @@ export const make = Effect.fnUntraced(
         Stream.catchTags({
           // TODO: handle SSE retries
           Retry: (error) => Stream.die(error),
+          SseError: (error) => Stream.fail(Errors.mapSseError(error, "createChatCompletionStream")),
           HttpClientError: (error) => Stream.fromEffect(Errors.mapHttpClientError(error, "createChatCompletionStream")),
           SchemaError: (error) => Stream.fail(Errors.mapSchemaError(error, "createChatCompletionStream"))
         })
@@ -254,6 +298,7 @@ export const make = Effect.fnUntraced(
 
     return OpenRouterClient.of({
       client,
+      createDecisions,
       createChatCompletion,
       createChatCompletionStream
     })
@@ -275,6 +320,7 @@ export const make = Effect.fnUntraced(
  * @see {@link make} for constructing the client service effectfully
  * @see {@link layerConfig} for loading client settings from `Config`
  *
+ * @stability unstable
  * @category layers
  * @since 4.0.0
  */
@@ -298,6 +344,7 @@ export const layer = (options: Options): Layer.Layer<OpenRouterClient, never, Ht
  * @see {@link make} for constructing the client service effectfully
  * @see {@link layer} for providing the client from already-resolved options
  *
+ * @stability unstable
  * @category layers
  * @since 4.0.0
  */

@@ -97,9 +97,8 @@ export interface Monitor extends Resource<
  * city-networks (`maxCityNetworksToMonitor`) or the percentage of traffic
  * monitored (`trafficPercentageToMonitor`).
  *
- * @resource
- * @section Creating a Monitor
- * @example Monitor for a VPC
+ * ### Creating a Monitor
+ * **Example:** Monitor for a VPC
  * ```typescript
  * import * as InternetMonitor from "alchemy/AWS/InternetMonitor";
  *
@@ -109,7 +108,7 @@ export interface Monitor extends Resource<
  * });
  * ```
  *
- * @example Monitor a percentage of traffic
+ * **Example:** Monitor a percentage of traffic
  * ```typescript
  * const monitor = yield* InternetMonitor.Monitor("AppMonitor", {
  *   resources: [cloudfrontDistributionArn],
@@ -117,8 +116,8 @@ export interface Monitor extends Resource<
  * });
  * ```
  *
- * @section Health Events
- * @example Custom health-event thresholds
+ * ### Health Events
+ * **Example:** Custom health-event thresholds
  * ```typescript
  * const monitor = yield* InternetMonitor.Monitor("AppMonitor", {
  *   resources: [vpcArn],
@@ -130,8 +129,8 @@ export interface Monitor extends Resource<
  * });
  * ```
  *
- * @section Log Delivery
- * @example Publish measurements to S3
+ * ### Log Delivery
+ * **Example:** Publish measurements to S3
  * ```typescript
  * const monitor = yield* InternetMonitor.Monitor("AppMonitor", {
  *   resources: [vpcArn],
@@ -144,6 +143,8 @@ export interface Monitor extends Resource<
  *   },
  * });
  * ```
+ *
+ * @resource
  */
 export const Monitor = Resource<Monitor>("AWS.InternetMonitor.Monitor");
 

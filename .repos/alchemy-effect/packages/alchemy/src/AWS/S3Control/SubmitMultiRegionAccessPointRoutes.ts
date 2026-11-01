@@ -12,9 +12,8 @@ import type { MultiRegionAccessPoint } from "./MultiRegionAccessPoint.ts";
  * health-check Lambda that dials a degraded region to 0. Requests are
  * routed to the `us-west-2` MRAP control plane. Provide the implementation
  * with `Effect.provide(AWS.S3Control.SubmitMultiRegionAccessPointRoutesHttp)`.
- * @binding
- * @section Controlling Multi-Region Failover
- * @example Fail Traffic Away from a Region
+ * ### Controlling Multi-Region Failover
+ * **Example:** Fail Traffic Away from a Region
  * ```typescript
  * // init — bind the operation to the Multi-Region Access Point
  * const submitRoutes =
@@ -28,6 +27,8 @@ import type { MultiRegionAccessPoint } from "./MultiRegionAccessPoint.ts";
  *   ],
  * });
  * ```
+ *
+ * @binding
  */
 export interface SubmitMultiRegionAccessPointRoutes extends Binding.Service<
   SubmitMultiRegionAccessPointRoutes,

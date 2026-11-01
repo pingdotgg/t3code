@@ -88,11 +88,8 @@ export type Reserve = Resource<
  *
  * Only one `Reserve` resource per zone makes sense — two instances
  * managing the same zone would fight over the singleton.
- * @resource
- * @product Cache
- * @category Performance & Reliability
- * @section Managing Cache Reserve
- * @example Enable Cache Reserve on a zone
+ * ### Managing Cache Reserve
+ * **Example:** Enable Cache Reserve on a zone
  * ```typescript
  * const zone = yield* Cloudflare.Zone.Zone("Site", { name: "example.com" });
  *
@@ -101,7 +98,7 @@ export type Reserve = Resource<
  * });
  * ```
  *
- * @example Clear stored data when the resource is destroyed
+ * **Example:** Clear stored data when the resource is destroyed
  * ```typescript
  * yield* Cloudflare.Cache.Reserve("Reserve", {
  *   zoneId: zone.zoneId,
@@ -110,6 +107,10 @@ export type Reserve = Resource<
  * ```
  *
  * @see https://developers.cloudflare.com/cache/advanced-configuration/cache-reserve/
+ *
+ * @resource
+ * @product Cache
+ * @category Performance & Reliability
  */
 export const Reserve = Resource<Reserve>(TypeId, {
   aliases: ["Cloudflare.Cache.CacheReserve"],
@@ -236,7 +237,7 @@ export const ReserveProvider = () =>
       // Optionally clear data already stored in reserve — an async
       // operation that we kick off and poll to completion (bounded).
       if (olds?.clearOnDelete === true) {
-        yield* cache.clearCacheReserve({ zoneId, body: {} });
+        yield* cache.clearCacheReserve({ zoneId });
         yield* cache.statusCacheReserve({ zoneId }).pipe(
           Effect.repeat({
             schedule: Schedule.spaced("5 seconds"),

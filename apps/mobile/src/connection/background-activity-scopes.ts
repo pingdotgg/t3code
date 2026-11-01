@@ -15,9 +15,7 @@ function notify(): void {
   for (const listener of listeners) {
     try {
       listener();
-    } catch {
-      // A failing observer must not corrupt retained-scope lifetime.
-    }
+    } catch {}
   }
 }
 
@@ -45,7 +43,8 @@ function scopeForSubscription(
   if (observation.method !== WS_METHODS.subscribeVcsStatus) {
     return null;
   }
-  const input = observation.input as { readonly cwd?: unknown };
+  const input = observation.input as { readonly cwd?: unknown; readonly includeRemote?: unknown };
+  if (input.includeRemote === false) return null;
   return typeof input.cwd === "string" ? { type: "vcs-status", cwd: input.cwd } : null;
 }
 

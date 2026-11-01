@@ -1,0 +1,241 @@
+// @effect-diagnostics nodeBuiltinImport:off -- Isolated config fixtures, never the user's desktop.
+import * as NodeFSP from "node:fs/promises";
+import * as NodePath from "node:path";
+import * as NodeOS from "node:os";
+import { afterEach, beforeEach, expect, it as test, vi } from "vite-plus/test";
+import { CaptureShortcutConfig } from "./CaptureShortcutConfig.ts";
+import { captureConfigBinding } from "./captureConfigEdit.ts";
+
+// oxlint-disable-next-line t3code/no-global-process-runtime -- Test collection checks the host before starting these Linux-native filesystem tests.
+const it = test.runIf(process.platform === "linux");
+let directory: string;
+let path: string;
+let setup: CaptureShortcutConfig;
+const tools = {
+  validateNiri: vi.fn<(path: string) => Promise<void>>(),
+  hyprlandBindings:
+    vi.fn<() => Promise<{ modmask: number; key: string; dispatcher: string; arg: string }[]>>(),
+  reloadHyprland: vi.fn<() => Promise<void>>(),
+};
+const appId = "com.t3tools.T3Code";
+const install = { operation: "install", chooseFile: false } as const;
+const target = () => ({ desktop: "niri" as const, path, appId });
+beforeEach(async () => {
+  directory = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "t3-capture-config-"));
+  path = NodePath.join(directory, "config.kdl");
+  await NodeFSP.writeFile(path, "binds {\n    Mod+Q { quit; }\n}\n", { mode: 0o640 });
+  tools.validateNiri.mockReset().mockResolvedValue(undefined);
+  tools.hyprlandBindings.mockReset().mockResolvedValue([]);
+  tools.reloadHyprland.mockReset().mockResolvedValue(undefined);
+  setup = new CaptureShortcutConfig(NodeOS.homedir(), tools);
+});
+afterEach(async () => {
+  await NodeFSP.rm(directory, { recursive: true, force: true });
+});
+
+it("reads without writing, then applies only the approved diff with a backup", async () => {
+  const before = await NodeFSP.readFile(path, "utf8");
+  const preview = await setup.preview(target(), install);
+  expect(await NodeFSP.readFile(path, "utf8")).toBe(before);
+  expect(await NodeFSP.readdir(directory)).toEqual(["config.kdl"]);
+  expect(tools.validateNiri).not.toHaveBeenCalled();
+  expect(preview.before).toBe(before);
+  expect(preview.after).toContain("Ctrl+Shift+2");
+  const applied = await setup.apply(preview.id, "niri");
+  expect(await NodeFSP.readFile(path, "utf8")).toBe(preview.after);
+  expect(await NodeFSP.readFile(applied.backupPath!, "utf8")).toBe(before);
+  expect((await NodeFSP.stat(path)).mode & 0o777).toBe(0o640);
+  expect(tools.validateNiri).toHaveBeenCalledOnce();
+  await expect(setup.apply(preview.id, "niri")).rejects.toThrow("expired");
+});
+it("rechecks Hyprland conflicts before writing", async () => {
+  const hypr = {
+    ...target(),
+    desktop: "hyprland" as const,
+    path: NodePath.join(directory, "hyprland.conf"),
+  };
+  await NodeFSP.writeFile(hypr.path, "# unchanged\n");
+  const preview = await setup.preview(hypr, install);
+  tools.hyprlandBindings.mockResolvedValue([
+    { modmask: 5, key: "2", dispatcher: "exec", arg: "kitty" },
+  ]);
+  await expect(setup.apply(preview.id, "hyprland")).rejects.toThrow("already used");
+  expect(await NodeFSP.readFile(hypr.path, "utf8")).toBe(preview.before);
+});
+it("notices an optional include created while the diff is open", async () => {
+  await NodeFSP.appendFile(path, 'include optional=true "later.kdl"\n');
+  const preview = await setup.preview(target(), install);
+  await NodeFSP.writeFile(
+    NodePath.join(directory, "later.kdl"),
+    "binds {\n Ctrl+Shift+2 { quit; }\n}\n",
+  );
+  await expect(setup.apply(preview.id, "niri")).rejects.toThrow("changed since");
+  expect(await NodeFSP.readFile(path, "utf8")).toBe(preview.before);
+});
+it("does not overwrite edits made after preview", async () => {
+  const preview = await setup.preview(target(), install);
+  await NodeFSP.appendFile(path, "// edited elsewhere\n");
+  await expect(setup.apply(preview.id, "niri")).rejects.toThrow("changed since");
+  expect(await NodeFSP.readFile(path, "utf8")).toBe(preview.before + "// edited elsewhere\n");
+  expect(await NodeFSP.readdir(directory)).toEqual(["config.kdl"]);
+});
+it("rechecks after validation and cleans the staged file on concurrent edits", async () => {
+  const preview = await setup.preview(target(), install);
+  tools.validateNiri.mockImplementation(async () => {
+    await NodeFSP.appendFile(path, "// keep this\n");
+  });
+  await expect(setup.apply(preview.id, "niri")).rejects.toThrow("changed since");
+  expect(await NodeFSP.readdir(directory)).toEqual(["config.kdl"]);
+  expect(await NodeFSP.readFile(path, "utf8")).toContain("keep this");
+});
+it("preserves symlink-managed dotfiles and identifies their actual target", async () => {
+  const link = NodePath.join(directory, "linked.kdl");
+  await NodeFSP.symlink(path, link);
+  const preview = await setup.preview({ ...target(), path: link }, install);
+  expect(preview.path).toBe(link);
+  expect(preview.resolvedPath).toBe(path);
+  await setup.apply(preview.id, "niri");
+  expect((await NodeFSP.lstat(link)).isSymbolicLink()).toBe(true);
+  expect(await NodeFSP.readFile(link, "utf8")).toBe(preview.after);
+});
+it("refuses a symlink retargeted since preview", async () => {
+  const link = NodePath.join(directory, "linked.kdl");
+  const other = NodePath.join(directory, "other.kdl");
+  await NodeFSP.writeFile(other, "binds {}\n");
+  await NodeFSP.symlink(path, link);
+  const preview = await setup.preview({ ...target(), path: link }, install);
+  await NodeFSP.unlink(link);
+  await NodeFSP.symlink(other, link);
+  await expect(setup.apply(preview.id, "niri")).rejects.toThrow("changed since");
+  expect(await NodeFSP.readFile(other, "utf8")).toBe("binds {}\n");
+});
+it("validates symlinked configs from their original directory so relative includes stay valid", async () => {
+  const active = NodePath.join(directory, "active");
+  await NodeFSP.mkdir(active);
+  const link = NodePath.join(active, "config.kdl");
+  await NodeFSP.symlink(path, link);
+  await NodeFSP.appendFile(path, 'include "keys.kdl"\n');
+  await NodeFSP.writeFile(NodePath.join(active, "keys.kdl"), "binds {}\n");
+  tools.validateNiri.mockImplementation(async (file) => {
+    expect(NodePath.dirname(file)).toBe(active);
+    expect(await NodeFSP.readFile(file, "utf8")).toContain("Ctrl+Shift+2");
+    expect(await NodeFSP.readFile(NodePath.join(NodePath.dirname(file), "keys.kdl"), "utf8")).toBe(
+      "binds {}\n",
+    );
+  });
+  const preview = await setup.preview({ ...target(), path: link }, install);
+  await setup.apply(preview.id, "niri");
+  expect((await NodeFSP.readdir(active)).sort()).toEqual(["config.kdl", "keys.kdl"]);
+  expect((await NodeFSP.lstat(link)).isSymbolicLink()).toBe(true);
+});
+it("does not apply invalid Niri configs", async () => {
+  const preview = await setup.preview(target(), install);
+  tools.validateNiri.mockRejectedValue(new Error("Invalid config"));
+  await expect(setup.apply(preview.id, "niri")).rejects.toThrow("Invalid config");
+  expect(await NodeFSP.readFile(path, "utf8")).toBe(preview.before);
+  expect(await NodeFSP.readdir(directory)).toEqual(["config.kdl"]);
+});
+it("leaves already configured files unchanged, without creating a backup", async () => {
+  await NodeFSP.writeFile(path, `binds { ${captureConfigBinding("niri", appId, "Ctrl+Alt+Y")} }`);
+  const preview = await setup.preview(target(), install);
+  expect(preview.after).toBe(preview.before);
+  expect(preview.shortcut).toBe("Ctrl+Alt+Y");
+  expect(await setup.apply(preview.id, "niri")).toEqual({ backupPath: null, warning: null });
+  expect(await NodeFSP.readdir(directory)).toEqual(["config.kdl"]);
+});
+it("accepts an unchanged capture shortcut reported as a Lua callback", async () => {
+  const hypr = {
+    ...target(),
+    desktop: "hyprland" as const,
+    path: NodePath.join(directory, "bindings.lua"),
+  };
+  const before = `${captureConfigBinding("hyprland-lua", appId, "Ctrl+Shift+2")}\n`;
+  await NodeFSP.writeFile(hypr.path, before);
+  tools.hyprlandBindings.mockResolvedValue([
+    { modmask: 5, key: "2", dispatcher: "__lua", arg: "92" },
+  ]);
+
+  const preview = await setup.preview(hypr, install);
+  expect(preview.after).toBe(before);
+  expect(preview.shortcut).toBe("Ctrl+Shift+2");
+  expect(await setup.apply(preview.id, "hyprland")).toEqual({ backupPath: null, warning: null });
+  expect(await NodeFSP.readFile(hypr.path, "utf8")).toBe(before);
+  expect((await NodeFSP.readdir(directory)).sort()).toEqual(["bindings.lua", "config.kdl"]);
+  expect(tools.reloadHyprland).not.toHaveBeenCalled();
+
+  const unchanged = await setup.preview(hypr, install);
+  await NodeFSP.appendFile(hypr.path, "-- edited elsewhere\n");
+  await expect(setup.apply(unchanged.id, "hyprland")).rejects.toThrow("changed since");
+  expect(await NodeFSP.readFile(hypr.path, "utf8")).toBe(before + "-- edited elsewhere\n");
+});
+it.each(["preview", "apply"] as const)(
+  "checks unchanged Hyprland .conf shortcuts for conflicts during %s",
+  async (stage) => {
+    const hypr = {
+      ...target(),
+      desktop: "hyprland" as const,
+      path: NodePath.join(directory, "hyprland.conf"),
+    };
+    const before = `${captureConfigBinding("hyprland", appId, "Ctrl+Shift+2")}\n`;
+    await NodeFSP.writeFile(hypr.path, before);
+    const ownBinding = {
+      modmask: 5,
+      key: "2",
+      dispatcher: "global",
+      arg: `${appId}:capture-window`,
+    };
+    tools.hyprlandBindings.mockResolvedValue([ownBinding]);
+    const unchanged = await setup.preview(hypr, install);
+    expect(unchanged.after).toBe(before);
+    expect(await setup.apply(unchanged.id, "hyprland")).toEqual({
+      backupPath: null,
+      warning: null,
+    });
+
+    const preview = stage === "apply" ? await setup.preview(hypr, install) : undefined;
+    tools.hyprlandBindings.mockResolvedValue([
+      ownBinding,
+      { modmask: 5, key: "2", dispatcher: "exec", arg: "kitty" },
+    ]);
+    await expect(
+      preview ? setup.apply(preview.id, "hyprland") : setup.preview(hypr, install),
+    ).rejects.toThrow("already used");
+    expect(await NodeFSP.readFile(hypr.path, "utf8")).toBe(before);
+    expect((await NodeFSP.readdir(directory)).sort()).toEqual(["config.kdl", "hyprland.conf"]);
+    expect(tools.reloadHyprland).not.toHaveBeenCalled();
+  },
+);
+it("rejects changing an existing capture shortcut to keys used by another Lua callback", async () => {
+  const hypr = {
+    ...target(),
+    desktop: "hyprland" as const,
+    path: NodePath.join(directory, "bindings.lua"),
+  };
+  const before = `${captureConfigBinding("hyprland-lua", appId, "Ctrl+Alt+Y")}\n`;
+  await NodeFSP.writeFile(hypr.path, before);
+  const request = { ...install, shortcut: "Ctrl+Shift+2" };
+  const occupied = [{ modmask: 5, key: "2", dispatcher: "__lua", arg: "93" }];
+  tools.hyprlandBindings.mockResolvedValue(occupied);
+  await expect(setup.preview(hypr, request)).rejects.toThrow("already used");
+
+  tools.hyprlandBindings.mockResolvedValue([]);
+  const preview = await setup.preview(hypr, request);
+  tools.hyprlandBindings.mockResolvedValue(occupied);
+  await expect(setup.apply(preview.id, "hyprland")).rejects.toThrow("already used");
+  expect(await NodeFSP.readFile(hypr.path, "utf8")).toBe(before);
+});
+it("detects conflicts in included Niri configs without changing either file", async () => {
+  await NodeFSP.appendFile(path, 'include "keys.kdl"\n');
+  await NodeFSP.writeFile(NodePath.join(directory, "keys.kdl"), "binds { Shift+Ctrl+2 { quit; } }");
+  await expect(setup.preview(target(), install)).rejects.toThrow("already used");
+  expect((await NodeFSP.readdir(directory)).sort()).toEqual(["config.kdl", "keys.kdl"]);
+});
+it("does not edit Omarchy's shipped defaults", async () => {
+  const defaults = NodePath.join(directory, "omarchy", "default", "hypr");
+  await NodeFSP.mkdir(defaults, { recursive: true });
+  const file = NodePath.join(defaults, "bindings.conf");
+  await NodeFSP.writeFile(file, "# defaults\n");
+  await expect(
+    setup.preview({ ...target(), desktop: "hyprland", path: file }, install),
+  ).rejects.toThrow("not system or Omarchy");
+});

@@ -9,9 +9,8 @@ import * as Binding from "../../Binding.ts";
  *
  * Provide the implementation with
  * `Effect.provide(AWS.Inspector2.GetConfigurationHttp)`.
- * @binding
- * @section Account Settings & Usage
- * @example Read Scan Settings
+ * ### Account Settings & Usage
+ * **Example:** Read Scan Settings
  * ```typescript
  * // init
  * const getConfiguration = yield* AWS.Inspector2.GetConfiguration();
@@ -19,6 +18,8 @@ import * as Binding from "../../Binding.ts";
  * // runtime
  * const { ecrConfiguration, ec2Configuration } = yield* getConfiguration();
  * ```
+ *
+ * @binding
  */
 export interface GetConfiguration extends Binding.Service<
   GetConfiguration,

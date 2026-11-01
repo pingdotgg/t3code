@@ -1,36 +1,86 @@
+import { SourceControlProviderKind } from "@t3tools/contracts";
 import { assert, it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as DateTime from "effect/DateTime";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
-import { ChildProcessSpawner } from "effect/unstable/process";
-import { VcsRepositoryDetectionError } from "@t3tools/contracts";
+import * as PlatformError from "effect/PlatformError";
+import * as PubSub from "effect/PubSub";
+import * as Schema from "effect/Schema";
+import * as Stream from "effect/Stream";
+import * as TestClock from "effect/testing/TestClock";
+import {
+  DEFAULT_SERVER_SETTINGS,
+  VcsProcessSpawnError,
+  VcsProcessTimeoutError,
+} from "@t3tools/contracts";
+import type {
+  SourceControlCliDiscoverySpec,
+  SourceControlManagedCliDiscoverySpec,
+  SourceControlProviderDiscoverySpec,
+} from "@t3tools/source-control-core/server/discovery";
+import type * as SourceControlHost from "@t3tools/source-control-core/server/SourceControlHost";
+import { fakeSourceControlProvider } from "@t3tools/source-control-testing/fakeSourceControlDriver";
+import * as TestSourceControlHost from "@t3tools/source-control-testing/TestSourceControlHost";
 
+import * as ServerSettings from "../serverSettings.ts";
 import * as ServerConfig from "../config.ts";
 import type * as VcsDriver from "../vcs/VcsDriver.ts";
 import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
-import * as VcsProcess from "../vcs/VcsProcess.ts";
-import * as AzureDevOpsCli from "./AzureDevOpsCli.ts";
-import * as BitbucketApi from "./BitbucketApi.ts";
-import * as GitHubCli from "./GitHubCli.ts";
-import * as GitLabCli from "./GitLabCli.ts";
 import * as SourceControlProviderRegistry from "./SourceControlProviderRegistry.ts";
 
 const TEST_EPOCH = DateTime.makeUnsafe("1970-01-01T00:00:00.000Z");
+const kind = SourceControlProviderKind.make;
 
-const processOutput = (
-  stdout: string,
-  options?: {
-    readonly stderr?: string;
-    readonly exitCode?: ChildProcessSpawner.ExitCode;
-  },
-): VcsProcess.VcsProcessOutput => ({
-  exitCode: options?.exitCode ?? ChildProcessSpawner.ExitCode(0),
-  stdout,
-  stderr: options?.stderr ?? "",
-  stdoutTruncated: false,
-  stderrTruncated: false,
+class NotAnswered extends Schema.TaggedError<NotAnswered>()("NotAnswered", {}) {}
+
+const linkSubject = (host: string) => () =>
+  Effect.succeed({ title: `${host} subject`, body: null });
+
+/** Only GitHub and GitLab read linked subjects, as in production. */
+const PROVIDERS = [
+  fakeSourceControlProvider("github", { resolveLink: linkSubject("github") }),
+  fakeSourceControlProvider("gitlab", { resolveLink: linkSubject("gitlab") }),
+  fakeSourceControlProvider("forgejo"),
+  fakeSourceControlProvider("bitbucket"),
+  fakeSourceControlProvider("azure-devops"),
+];
+
+/** A host CLI that claims every server it is signed in to, as `glab` does. */
+const claimingCli = (claims: string): SourceControlCliDiscoverySpec => ({
+  type: "cli",
+  kind: kind(claims),
+  label: claims,
+  installHint: `Install ${claims}.`,
+  executable: `${claims}-cli`,
+  versionArgs: ["--version"],
+  authArgs: ["auth", "status"],
+  remoteRefinementArgs: ({ provider }) => ["auth", "status", "--hostname", provider.name],
+  parseAuth: () => ({
+    status: "unknown",
+    account: Option.none(),
+    host: Option.none(),
+    detail: Option.none(),
+  }),
+  refineUnknownRemote: ({ context, auth }) =>
+    auth.stdout.includes(`Logged in to ${context.provider.name}`)
+      ? { kind: kind(claims), name: `${claims} Self-Hosted`, baseUrl: context.provider.baseUrl }
+      : null,
+});
+
+const managedCli = (
+  claims: string,
+  refine: SourceControlManagedCliDiscoverySpec["refineUnknownRemote"],
+): SourceControlManagedCliDiscoverySpec => ({
+  type: "managed-cli",
+  kind: kind(claims),
+  label: claims,
+  installHint: `Install ${claims}.`,
+  probe: () => Effect.die("unused"),
+  refineUnknownRemote: refine,
 });
 
 function makeRegistry(input: {
@@ -38,8 +88,9 @@ function makeRegistry(input: {
     readonly name: string;
     readonly url: string;
   }>;
-  readonly process?: Partial<VcsProcess.VcsProcess["Service"]>;
-  readonly resolve?: VcsDriverRegistry.VcsDriverRegistry["Service"]["resolve"];
+  readonly discovery?: ReadonlyArray<SourceControlProviderDiscoverySpec>;
+  readonly run?: SourceControlHost.SourceControlHost["Service"]["process"]["run"];
+  readonly settings?: Partial<ServerSettings.ServerSettingsService["Service"]>;
 }) {
   const driver = {
     listRemotes: () =>
@@ -57,41 +108,52 @@ function makeRegistry(input: {
       }),
   } satisfies Partial<VcsDriver.VcsDriver["Service"]>;
 
-  const registryLayer = Layer.mock(VcsDriverRegistry.VcsDriverRegistry)({
-    get: () => Effect.succeed(driver as unknown as VcsDriver.VcsDriver["Service"]),
-    resolve:
-      input.resolve ??
-      (() =>
-        Effect.succeed({
-          kind: "git",
-          repository: {
-            kind: "git",
-            rootPath: "/repo",
-            metadataPath: null,
-            freshness: {
-              source: "live-local" as const,
-              observedAt: TEST_EPOCH,
-              expiresAt: Option.none(),
-            },
-          },
-          driver: driver as unknown as VcsDriver.VcsDriver["Service"],
-        })),
-  });
-
-  const processLayer = Layer.mock(VcsProcess.VcsProcess)({
-    run: () => Effect.succeed(processOutput("")),
-    ...input.process,
-  });
-
-  return SourceControlProviderRegistry.make.pipe(
+  const discovery = input.discovery ?? [claimingCli("gitlab")];
+  return SourceControlProviderRegistry.makeWithProviders(
+    PROVIDERS.map((provider) => ({
+      kind: provider.kind,
+      provider,
+      discovery: discovery.find((spec) => spec.kind === provider.kind) ?? {
+        type: "api",
+        kind: provider.kind,
+        label: provider.kind,
+        installHint: "unused",
+        probeAuth: Effect.succeed({
+          status: "unknown",
+          account: Option.none(),
+          host: Option.none(),
+          detail: Option.none(),
+        }),
+      },
+    })),
+  ).pipe(
     Effect.provide(
       Layer.mergeAll(
-        registryLayer,
-        processLayer,
-        Layer.mock(AzureDevOpsCli.AzureDevOpsCli)({}),
-        Layer.mock(BitbucketApi.BitbucketApi)({}),
-        Layer.mock(GitHubCli.GitHubCli)({}),
-        Layer.mock(GitLabCli.GitLabCli)({}),
+        Layer.mock(VcsDriverRegistry.VcsDriverRegistry)({
+          resolve: () =>
+            Effect.succeed({
+              kind: "git",
+              repository: {
+                kind: "git",
+                rootPath: "/repo",
+                metadataPath: null,
+                freshness: {
+                  source: "live-local" as const,
+                  observedAt: TEST_EPOCH,
+                  expiresAt: Option.none(),
+                },
+              },
+              driver: driver as unknown as VcsDriver.VcsDriver["Service"],
+            }),
+        }),
+        TestSourceControlHost.layer({
+          process: {
+            run: input.run ?? (() => Effect.succeed(TestSourceControlHost.processOutput(""))),
+          },
+        }),
+        input.settings
+          ? Layer.mock(ServerSettings.ServerSettingsService)(input.settings)
+          : ServerSettings.ServerSettingsService.layerTest(),
         ServerConfig.layerTest(process.cwd(), {
           prefix: "t3-source-control-registry-test-",
         }).pipe(Layer.provide(NodeServices.layer)),
@@ -100,106 +162,40 @@ function makeRegistry(input: {
   );
 }
 
-it.effect("routes GitHub remotes to the GitHub provider", () =>
+const signedIn = (host: string) => () =>
+  Effect.succeed(TestSourceControlHost.processOutput(`  ✓ Logged in to ${host} as user\n`));
+
+it.effect("routes an unknown remote to the integration that claims its server", () =>
   Effect.gen(function* () {
+    const asked: Array<string> = [];
     const registry = yield* makeRegistry({
-      remotes: [{ name: "origin", url: "git@github.com:pingdotgg/t3code.git" }],
-    });
-
-    const provider = yield* registry.resolve({ cwd: "/repo" });
-
-    assert.strictEqual(provider.kind, "github");
-  }),
-);
-
-it.effect("routes directly by provider kind for remote-first workflows", () =>
-  Effect.gen(function* () {
-    const registry = yield* makeRegistry({
-      remotes: [],
-    });
-
-    const provider = yield* registry.get("github");
-
-    assert.strictEqual(provider.kind, "github");
-  }),
-);
-
-it.effect("includes the request cwd when an unregistered provider is used", () =>
-  Effect.gen(function* () {
-    const registry = yield* makeRegistry({ remotes: [] });
-    const provider = yield* registry.get("unknown");
-
-    const error = yield* provider
-      .getChangeRequest({ cwd: "/repo", reference: "#42" })
-      .pipe(Effect.flip);
-
-    assert.strictEqual(error.provider, "unknown");
-    assert.strictEqual(error.operation, "getChangeRequest");
-    assert.strictEqual(error.cwd, "/repo");
-    assert.strictEqual(error.reference, "#42");
-  }),
-);
-
-it.effect("retains VCS detection failures with structured cwd context", () =>
-  Effect.gen(function* () {
-    const cause = new VcsRepositoryDetectionError({
-      operation: "resolve",
-      cwd: "/repo",
-      detail: "raw VCS detection failure",
-      cause: new Error("raw nested failure"),
-    });
-    const registry = yield* makeRegistry({
-      remotes: [],
-      resolve: () => Effect.fail(cause),
-    });
-
-    const error = yield* registry.resolve({ cwd: "/repo" }).pipe(Effect.flip);
-
-    assert.strictEqual(error.provider, "unknown");
-    assert.strictEqual(error.operation, "detectProvider");
-    assert.strictEqual(error.cwd, "/repo");
-    assert.strictEqual(error.detail, "Failed to detect source control provider.");
-    assert.strictEqual(error.cause, cause);
-    assert.equal(error.message.includes(cause.message), false);
-  }),
-);
-
-it.effect("routes GitLab remotes to the GitLab provider", () =>
-  Effect.gen(function* () {
-    const registry = yield* makeRegistry({
-      remotes: [{ name: "origin", url: "git@gitlab.com:group/project.git" }],
-    });
-
-    const provider = yield* registry.resolve({ cwd: "/repo" });
-
-    assert.strictEqual(provider.kind, "gitlab");
-  }),
-);
-
-it.effect("routes authenticated self-hosted GitLab remotes without relying on host naming", () =>
-  Effect.gen(function* () {
-    const registry = yield* makeRegistry({
-      remotes: [{ name: "origin", url: "https://self-hosted.example.test/group/project.git" }],
-      process: {
-        run: () =>
-          Effect.succeed(
-            processOutput(
-              `gitlab.com
-  x gitlab.com: API call failed: 401 Unauthorized
-  ! No token found
-self-hosted.example.test
-  ✓ Logged in to self-hosted.example.test as gitlab-user
-  ✓ Token found: ******
-`,
-              { exitCode: ChildProcessSpawner.ExitCode(1) },
-            ),
-          ),
+      remotes: [{ name: "origin", url: "git@self-hosted.example.test:group/project.git" }],
+      run: (input) => {
+        asked.push([input.command, ...input.args].join(" "));
+        return signedIn("self-hosted.example.test")();
       },
     });
 
-    const provider = yield* registry.resolve({ cwd: "/repo" });
+    const handle = yield* registry.resolveHandle({ cwd: "/repo" });
 
-    assert.strictEqual(provider.kind, "gitlab");
+    assert.strictEqual(handle.provider.kind, "gitlab");
+    assert.deepStrictEqual(handle.context?.provider, {
+      kind: kind("gitlab"),
+      name: "gitlab Self-Hosted",
+      baseUrl: "https://self-hosted.example.test",
+    });
+    assert.deepStrictEqual(asked, ["gitlab-cli auth status --hostname self-hosted.example.test"]);
+  }),
+);
+
+it.effect("leaves a remote no integration claims unknown, with its server's address", () =>
+  Effect.gen(function* () {
+    const registry = yield* makeRegistry({
+      remotes: [{ name: "origin", url: "git@code.example.test:team/project.git" }],
+    });
+    const handle = yield* registry.resolveHandle({ cwd: "/repo" });
+    assert.strictEqual(handle.provider.kind, kind("unknown"));
+    assert.strictEqual(handle.context?.provider.baseUrl, "https://code.example.test");
   }),
 );
 
@@ -207,21 +203,14 @@ it.effect("refines the caller-selected remote instead of choosing another config
   Effect.gen(function* () {
     const registry = yield* makeRegistry({
       remotes: [{ name: "origin", url: "git@github.com:fork/project.git" }],
-      process: {
-        run: () =>
-          Effect.succeed(
-            processOutput(`self-hosted.example.test
-  ✓ Logged in to self-hosted.example.test as gitlab-user
-`),
-          ),
-      },
+      run: signedIn("self-hosted.example.test"),
     });
 
     const handle = yield* registry.resolveHandle({
       cwd: "/repo",
       context: {
         provider: {
-          kind: "unknown",
+          kind: kind("unknown"),
           name: "self-hosted.example.test",
           baseUrl: "https://self-hosted.example.test",
         },
@@ -235,53 +224,6 @@ it.effect("refines the caller-selected remote instead of choosing another config
   }),
 );
 
-it.effect("routes authenticated self-hosted GitLab remotes on non-standard ports", () =>
-  Effect.gen(function* () {
-    const registry = yield* makeRegistry({
-      remotes: [{ name: "origin", url: "https://self-hosted.example.test:8443/group/project.git" }],
-      process: {
-        run: () =>
-          Effect.succeed(
-            processOutput(
-              `self-hosted.example.test:8443
-  ✓ Logged in to self-hosted.example.test:8443 as gitlab-user
-  ✓ Token found: ******
-`,
-            ),
-          ),
-      },
-    });
-
-    const provider = yield* registry.resolve({ cwd: "/repo" });
-
-    assert.strictEqual(provider.kind, "gitlab");
-  }),
-);
-
-it.effect("routes Bitbucket remotes to the Bitbucket provider", () =>
-  Effect.gen(function* () {
-    const registry = yield* makeRegistry({
-      remotes: [{ name: "origin", url: "git@bitbucket.org:pingdotgg/t3code.git" }],
-    });
-
-    const provider = yield* registry.resolve({ cwd: "/repo" });
-
-    assert.strictEqual(provider.kind, "bitbucket");
-  }),
-);
-
-it.effect("routes Azure DevOps remotes to the Azure DevOps provider", () =>
-  Effect.gen(function* () {
-    const registry = yield* makeRegistry({
-      remotes: [{ name: "origin", url: "https://dev.azure.com/acme/project/_git/repo" }],
-    });
-
-    const provider = yield* registry.resolve({ cwd: "/repo" });
-
-    assert.strictEqual(provider.kind, "azure-devops");
-  }),
-);
-
 it.effect("falls back to a non-origin remote when origin is not configured", () =>
   Effect.gen(function* () {
     const registry = yield* makeRegistry({
@@ -291,5 +233,240 @@ it.effect("falls back to a non-origin remote when origin is not configured", () 
     const provider = yield* registry.resolve({ cwd: "/repo" });
 
     assert.strictEqual(provider.kind, "azure-devops");
+  }),
+);
+
+it.effect(
+  "routes linked subjects to the host that serves them, independently of the checkout",
+  () =>
+    Effect.gen(function* () {
+      const registry = yield* makeRegistry({
+        remotes: [{ name: "origin", url: "https://github.com/unrelated/checkout.git" }],
+      });
+      for (const [url, host] of [
+        ["https://github.com/team/project/issues/1", "github"],
+        ["https://gitlab.com/team/sub/project/-/merge_requests/2", "gitlab"],
+      ] as const) {
+        const lookup = registry.resolveLink({ cwd: "/unrelated", url: new URL(url) });
+        assert.ok(lookup);
+        assert.deepStrictEqual(yield* lookup, { title: `${host} subject`, body: null });
+      }
+      for (const url of [
+        "https://example.test/team/project/issues/1",
+        "https://codeberg.org/team/project/issues/1",
+        "https://bitbucket.org/team/project/pull-requests/1",
+        "https://dev.azure.com/org/project/_git/repo/pullrequest/1",
+        "http://github.com/team/project/issues/1",
+        "https://user:secret@github.com/team/project/issues/1",
+      ]) {
+        assert.strictEqual(
+          registry.resolveLink({ cwd: "/unrelated", url: new URL(url) }),
+          undefined,
+          url,
+        );
+      }
+    }).pipe(Effect.scoped),
+);
+
+it.effect("does not refine a context whose server address is empty", () =>
+  Effect.gen(function* () {
+    let asked = 0;
+    const remoteUrl = "git@githubenterprise.dev.example.com:team/workspace.git";
+    const registry = yield* makeRegistry({
+      remotes: [{ name: "origin", url: remoteUrl }],
+      discovery: [
+        managedCli("github", ({ context }) => {
+          asked += 1;
+          return Effect.succeed(
+            context.provider.baseUrl === ""
+              ? null
+              : { kind: kind("github"), name: "GitHub", baseUrl: context.provider.baseUrl },
+          );
+        }),
+      ],
+    });
+    const context = {
+      provider: { kind: kind("unknown"), name: "Unknown", baseUrl: "" },
+      remoteName: "origin",
+      remoteUrl,
+    };
+    assert.deepStrictEqual(
+      (yield* registry.resolveHandle({ cwd: "/repo", context })).context,
+      context,
+    );
+
+    const resolved = yield* registry.resolveHandle({ cwd: "/repo" });
+    assert.strictEqual(resolved.provider.kind, "github");
+    assert.strictEqual(
+      resolved.context?.provider.baseUrl,
+      "https://githubenterprise.dev.example.com",
+    );
+    assert.strictEqual(asked, 2);
+  }),
+);
+
+const notFound = (command: string, cwd: string) =>
+  new VcsProcessSpawnError({
+    operation: "test",
+    command,
+    cwd,
+    cause: PlatformError.systemError({ _tag: "NotFound", module: "ChildProcess", method: "spawn" }),
+  });
+
+const resolveUnknown = (
+  registry: SourceControlProviderRegistry.SourceControlProviderRegistry["Service"],
+  repository: string,
+) =>
+  registry.resolveHandle({
+    cwd: `/${repository}`,
+    context: {
+      provider: {
+        kind: kind("unknown"),
+        name: "git.example.internal",
+        baseUrl: "https://git.example.internal",
+      },
+      remoteName: "origin",
+      remoteUrl: `git@Git.Example.Internal:team/${repository}.git`,
+    },
+  });
+
+it.effect("asks once for every checkout of a server no integration claims", () =>
+  Effect.gen(function* () {
+    const asked: Array<string> = [];
+    const release = yield* Deferred.make<void>();
+    const registry = yield* makeRegistry({
+      remotes: [],
+      discovery: [
+        claimingCli("gitlab"),
+        managedCli("github", ({ context }) => {
+          asked.push(`managed ${context.provider.name}`);
+          return Effect.succeed(null);
+        }),
+      ],
+      run: ({ command, args, cwd }) => {
+        asked.push([command, ...args].join(" "));
+        return Deferred.await(release).pipe(Effect.andThen(Effect.fail(notFound(command, cwd))));
+      },
+    });
+
+    const started = yield* Effect.forEach(["a", "b", "c"], () => Deferred.make<void>());
+    const callers = yield* Effect.forEach(
+      ["a", "b", "c"],
+      (repository, index) =>
+        Deferred.succeed(started[index]!, undefined).pipe(
+          Effect.andThen(resolveUnknown(registry, repository)),
+        ),
+      { concurrency: "unbounded" },
+    ).pipe(Effect.forkChild);
+    yield* Effect.forEach(started, Deferred.await);
+    yield* Deferred.succeed(release, undefined);
+    const handles = yield* Fiber.join(callers);
+    yield* resolveUnknown(registry, "d");
+    assert.deepStrictEqual(
+      handles.map((handle) => handle.provider.kind),
+      ["unknown", "unknown", "unknown"],
+    );
+    const once = asked.slice();
+    assert.sameMembers(once, [
+      "managed git.example.internal",
+      "gitlab-cli auth status --hostname git.example.internal",
+    ]);
+
+    yield* TestClock.adjust("5 minutes");
+    yield* resolveUnknown(registry, "a");
+    assert.deepStrictEqual(asked, [...once, ...once]);
+  }),
+);
+
+it.effect("asks again after a check that could not answer", () =>
+  Effect.gen(function* () {
+    let asks = 0;
+    let managedAsks = 0;
+    const registry = yield* makeRegistry({
+      remotes: [],
+      discovery: [
+        claimingCli("gitlab"),
+        managedCli("github", () => {
+          managedAsks += 1;
+          return Effect.fail(new NotAnswered());
+        }),
+      ],
+      run: ({ command, cwd }) => {
+        asks += 1;
+        return Effect.fail(
+          new VcsProcessTimeoutError({ operation: "test", command, cwd, timeoutMs: 1 }),
+        );
+      },
+    });
+    yield* resolveUnknown(registry, "a");
+    yield* resolveUnknown(registry, "b");
+    assert.strictEqual(asks, 2);
+    assert.strictEqual(managedAsks, 2);
+  }),
+);
+
+it.effect("asks again once Settings change", () =>
+  Effect.gen(function* () {
+    const changes = yield* PubSub.unbounded<typeof DEFAULT_SERVER_SETTINGS>();
+    const handled = yield* Deferred.make<void>();
+    let claims = false;
+    const registry = yield* makeRegistry({
+      remotes: [],
+      settings: {
+        subscribeChanges: PubSub.subscribe(changes).pipe(
+          Effect.map((subscription) =>
+            Stream.fromSubscription(subscription).pipe(
+              Stream.flatMap((settings) =>
+                Stream.concat(
+                  Stream.make(settings),
+                  Stream.fromEffectDrain(Deferred.succeed(handled, undefined)),
+                ),
+              ),
+            ),
+          ),
+        ),
+      },
+      discovery: [
+        managedCli("github", ({ context }) =>
+          Effect.succeed(
+            claims
+              ? { kind: kind("github"), name: "GitHub", baseUrl: context.provider.baseUrl }
+              : null,
+          ),
+        ),
+      ],
+    });
+    assert.strictEqual((yield* resolveUnknown(registry, "a")).provider.kind, "unknown");
+    claims = true;
+    assert.strictEqual((yield* resolveUnknown(registry, "b")).provider.kind, "unknown");
+
+    yield* PubSub.publish(changes, DEFAULT_SERVER_SETTINGS);
+    yield* Deferred.await(handled);
+    assert.strictEqual((yield* resolveUnknown(registry, "c")).provider.kind, "github");
+  }),
+);
+
+it.effect("answers discovery without waiting on a hosting API that stalls", () =>
+  Effect.gen(function* () {
+    const registry = yield* makeRegistry({
+      remotes: [],
+      discovery: [
+        claimingCli("gitlab"),
+        {
+          type: "api",
+          kind: kind("bitbucket"),
+          label: "Bitbucket",
+          installHint: "unused",
+          probeAuth: Effect.never,
+        },
+      ],
+    });
+    const discovering = yield* registry.discover.pipe(Effect.forkChild);
+    yield* TestClock.adjust("3 seconds");
+    const items = yield* Fiber.join(discovering);
+    const bitbucket = items.find((item) => item.kind === "bitbucket");
+    assert.strictEqual(bitbucket?.status, "available");
+    assert.strictEqual(bitbucket?.auth.status, "unknown");
+    assert.strictEqual(items.find((item) => item.kind === "gitlab")?.status, "available");
   }),
 );

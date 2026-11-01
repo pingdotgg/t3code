@@ -91,9 +91,8 @@ export interface MultiRegionAccessPoint extends Resource<
  * submits the request and waits until the access point reaches `READY`.
  * All control-plane requests are routed through `us-west-2`, as required
  * by the Multi-Region Access Point API.
- * @resource
- * @section Creating Multi-Region Access Points
- * @example Route between two regional buckets
+ * ### Creating Multi-Region Access Points
+ * **Example:** Route between two regional buckets
  * ```typescript
  * import * as S3Control from "alchemy/AWS/S3Control";
  *
@@ -105,12 +104,14 @@ export interface MultiRegionAccessPoint extends Resource<
  * });
  * ```
  *
- * @example Single-region Multi-Region Access Point
+ * **Example:** Single-region Multi-Region Access Point
  * ```typescript
  * const mrap = yield* S3Control.MultiRegionAccessPoint("global", {
  *   regions: [{ bucket: bucket.bucketName }],
  * });
  * ```
+ *
+ * @resource
  */
 export const MultiRegionAccessPoint = Resource<MultiRegionAccessPoint>(
   "AWS.S3Control.MultiRegionAccessPoint",

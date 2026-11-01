@@ -23,6 +23,8 @@ export class GhosttyRuntime {
   readonly memory: WebAssembly.Memory;
   readonly layouts: TypeLayouts;
   private readonly exports: WebAssembly.Exports;
+  private memoryView: DataView;
+  private memoryU8: Uint8Array;
   private readonly ptyWriters = new Map<number, (data: string) => void>();
   private nextPtyWriterId = 1;
   private writePtyFunctionIndex = 0;
@@ -34,6 +36,8 @@ export class GhosttyRuntime {
       throw new Error("libghostty-vt did not export WebAssembly memory");
     }
     this.memory = memory;
+    this.memoryView = new DataView(memory.buffer);
+    this.memoryU8 = new Uint8Array(memory.buffer);
     const jsonPointer = this.call("ghostty_type_json");
     const bytes = new Uint8Array(memory.buffer);
     let end = jsonPointer;
@@ -66,11 +70,15 @@ export class GhosttyRuntime {
   }
 
   call(name: string, ...args: Array<number | bigint>): number {
+    return this.fn(name)(...args);
+  }
+
+  fn(name: string): WasmFunction {
     const fn = this.exports[name];
     if (typeof fn !== "function") {
       throw new Error(`libghostty-vt export is unavailable: ${name}`);
     }
-    return (fn as WasmFunction)(...args);
+    return fn as WasmFunction;
   }
 
   layout(name: string): TypeLayout {
@@ -93,8 +101,7 @@ export class GhosttyRuntime {
   allocOpaque(): number {
     const pointer = this.call("ghostty_wasm_alloc_opaque");
     if (pointer === 0) throw new Error("libghostty-vt failed to allocate an opaque pointer");
-    // The slot is uninitialized until a *_new call writes it; zero it so dispose
-    // paths that run after a partial initialization never free a garbage pointer.
+    // Zero before *_new so partial-initialization cleanup cannot free a garbage pointer.
     new DataView(this.memory.buffer).setUint32(pointer, 0, true);
     return pointer;
   }
@@ -104,7 +111,7 @@ export class GhosttyRuntime {
   }
 
   readPointer(slot: number): number {
-    return new DataView(this.memory.buffer).getUint32(slot, true);
+    return this.memoryDataView().getUint32(slot, true);
   }
 
   attachPtyWriter(terminal: number, writer: (data: string) => void): number {
@@ -125,34 +132,53 @@ export class GhosttyRuntime {
   }
 
   view(pointer: number, size?: number): DataView {
-    return new DataView(this.memory.buffer, pointer, size);
+    return new DataView(this.memoryDataView().buffer, pointer, size);
   }
 
   bytes(pointer: number, size: number): Uint8Array {
-    return new Uint8Array(this.memory.buffer, pointer, size);
+    return new Uint8Array(this.memoryDataView().buffer, pointer, size);
+  }
+
+  memoryDataView(): DataView {
+    this.refreshMemoryViews();
+    return this.memoryView;
+  }
+
+  memoryBytes(): Uint8Array {
+    this.refreshMemoryViews();
+    return this.memoryU8;
+  }
+
+  private refreshMemoryViews(): void {
+    // Growing memory detaches the old buffer. Reading `memory.buffer` costs far more than this check.
+    if (this.memoryU8.byteLength === 0) {
+      this.memoryView = new DataView(this.memory.buffer);
+      this.memoryU8 = new Uint8Array(this.memory.buffer);
+    }
   }
 
   setField(pointer: number, structName: string, fieldName: string, value: number): void {
     const field = this.layout(structName).fields[fieldName];
     if (!field) throw new Error(`libghostty-vt field is unavailable: ${structName}.${fieldName}`);
-    const view = this.view(pointer + field.offset, field.size);
+    const view = this.memoryDataView();
+    const offset = pointer + field.offset;
     switch (field.type) {
       case "bool":
       case "u8":
-        view.setUint8(0, value);
+        view.setUint8(offset, value);
         return;
       case "u16":
-        view.setUint16(0, value, true);
+        view.setUint16(offset, value, true);
         return;
       case "i32":
-        view.setInt32(0, value, true);
+        view.setInt32(offset, value, true);
         return;
       case "u32":
       case "enum":
-        view.setUint32(0, value, true);
+        view.setUint32(offset, value, true);
         return;
       case "u64":
-        view.setBigUint64(0, BigInt(value), true);
+        view.setBigUint64(offset, BigInt(value), true);
         return;
       default:
         throw new Error(`Unsupported libghostty-vt field type: ${field.type}`);
@@ -162,20 +188,21 @@ export class GhosttyRuntime {
   readField(pointer: number, structName: string, fieldName: string): number {
     const field = this.layout(structName).fields[fieldName];
     if (!field) throw new Error(`libghostty-vt field is unavailable: ${structName}.${fieldName}`);
-    const view = this.view(pointer + field.offset, field.size);
+    const view = this.memoryDataView();
+    const offset = pointer + field.offset;
     switch (field.type) {
       case "bool":
       case "u8":
-        return view.getUint8(0);
+        return view.getUint8(offset);
       case "u16":
-        return view.getUint16(0, true);
+        return view.getUint16(offset, true);
       case "i32":
-        return view.getInt32(0, true);
+        return view.getInt32(offset, true);
       case "u32":
       case "enum":
-        return view.getUint32(0, true);
+        return view.getUint32(offset, true);
       case "u64":
-        return Number(view.getBigUint64(0, true));
+        return Number(view.getBigUint64(offset, true));
       default:
         throw new Error(`Unsupported libghostty-vt field type: ${field.type}`);
     }
@@ -201,9 +228,7 @@ export class GhosttyRuntime {
       throw new Error("libghostty-vt did not expose its callback table");
     }
     const index = table.length;
-    // grow-then-set instead of grow(1, fn): WebKit stores a grow init value
-    // with broken type information and every later call_indirect through the
-    // entry traps with a signature mismatch. table.set canonicalizes correctly.
+    // WebKit grow(1, fn) stores broken type info and traps on call_indirect; table.set canonicalizes it.
     table.grow(1);
     table.set(index, trampoline);
     this.writePtyFunctionIndex = index;

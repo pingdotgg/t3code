@@ -72,5 +72,5 @@ test.provider(
       yield* stack.destroy();
       yield* assertDomainDeleted(outputs.domain.domain);
     }),
-  { timeout: 180_000 },
+  { tags: ["provider:aws", "provider:aws:cognito", "live"], timeout: 180_000 },
 );

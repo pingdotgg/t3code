@@ -1,5 +1,5 @@
 import * as Alchemy from "alchemy";
-import * as Cloudflare from "alchemy/Cloudflare";
+import * as Cloudflare from "@alchemy.run/cloudflare";
 import * as Crypto from "effect/Crypto";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
@@ -25,7 +25,7 @@ import {
 } from "./apnsDeliveryJobs.ts";
 import * as RelayConfiguration from "../Config.ts";
 
-export class ApnsDeliveryQueueSendError extends Schema.TaggedErrorClass<ApnsDeliveryQueueSendError>()(
+export class ApnsDeliveryQueueSendError extends Schema.TaggedError<ApnsDeliveryQueueSendError>()(
   "ApnsDeliveryQueueSendError",
   {
     operation: Schema.Literals(["generate-job-id", "send"]),
@@ -76,7 +76,7 @@ export class ApnsDeliveryQueue extends Context.Service<
   }
 >()("t3code-relay/agentActivity/ApnsDeliveryQueue") {}
 
-export const make = Effect.gen(function* () {
+const make = Effect.gen(function* () {
   const sender = yield* ApnsDeliveryQueueSender;
   const crypto = yield* Crypto.Crypto;
   const config = yield* RelayConfiguration.RelayConfiguration;
@@ -89,7 +89,7 @@ export const make = Effect.gen(function* () {
           "relay.delivery.kind": input.kind,
         });
         const now = yield* DateTime.now;
-        const jobId = yield* crypto.randomUUIDv4.pipe(
+        const jobId = yield* crypto.randomUUIDv4().pipe(
           Effect.mapError(
             (cause) =>
               new ApnsDeliveryQueueSendError({
@@ -148,7 +148,7 @@ export const make = Effect.gen(function* () {
           "relay.thread_id": input.notification.threadId,
         });
         const now = yield* DateTime.now;
-        const jobId = yield* crypto.randomUUIDv4.pipe(
+        const jobId = yield* crypto.randomUUIDv4().pipe(
           Effect.mapError(
             (cause) =>
               new ApnsDeliveryQueueSendError({
@@ -217,10 +217,12 @@ export const layerCloudflareQueues = (
       Layer.succeed(
         ApnsDeliveryQueueSender,
         ApnsDeliveryQueueSender.of({
-          send: (body) =>
-            sender
-              .send(body)
-              .pipe(Effect.provideService(Alchemy.RuntimeContext, alchemyRuntimeContext)),
+          send: Effect.fn("ApnsDeliveryQueueSender.send")(
+            function* (body) {
+              return yield* sender.send(body);
+            },
+            Effect.provideService(Alchemy.RuntimeContext, alchemyRuntimeContext),
+          ),
         }),
       ),
     ),

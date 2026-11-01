@@ -34,9 +34,8 @@ export interface InvokeEndpointWithResponseStreamRequest extends Omit<
  * `sagemaker:InvokeEndpoint` (the IAM action the streaming operation
  * authorizes against) scoped to exactly those endpoint ARNs.
  *
- * @binding
- * @section Streaming an Endpoint Response
- * @example Aggregate Streamed Payload Parts
+ * ### Streaming an Endpoint Response
+ * **Example:** Aggregate Streamed Payload Parts
  * ```typescript
  * // init
  * const invokeStream = yield* AWS.SageMakerRuntime.InvokeEndpointWithResponseStream(
@@ -51,6 +50,8 @@ export interface InvokeEndpointWithResponseStreamRequest extends Omit<
  * const events = yield* Stream.runCollect(result.Body);
  * // each PayloadPart's Bytes is a model-specific chunk
  * ```
+ *
+ * @binding
  */
 export interface InvokeEndpointWithResponseStream extends Binding.Service<
   InvokeEndpointWithResponseStream,

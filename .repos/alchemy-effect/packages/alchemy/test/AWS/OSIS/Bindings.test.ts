@@ -5,8 +5,8 @@ import { describe, expect } from "alchemy-test";
 import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
 import * as Schedule from "effect/Schedule";
-import * as HttpClient from "effect/unstable/http/HttpClient";
-import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
+import * as HttpClient from "effect/http/HttpClient";
+import * as HttpClientRequest from "effect/http/HttpClientRequest";
 import OsisTestFunctionLive, { OsisTestFunction } from "./handler";
 
 const testOptions = { providers: AWS.providers() };
@@ -57,105 +57,117 @@ const getJson = (path: string) =>
     Effect.flatMap((r) => r.json),
   );
 
-describe.sequential("OSIS Bindings", () => {
-  beforeAll(
-    Effect.gen(function* () {
-      yield* Effect.logInfo("OSIS test setup: destroying previous resources");
-      yield* sharedStack.destroy();
+describe.sequential(
+  "OSIS Bindings",
+  {
+    tags: ["provider:aws", "provider:aws:lambda", "provider:aws:osis", "live"],
+  },
+  () => {
+    beforeAll(
+      Effect.gen(function* () {
+        yield* Effect.logInfo("OSIS test setup: destroying previous resources");
+        yield* sharedStack.destroy();
 
-      yield* Effect.logInfo("OSIS test setup: deploying fixture");
-      const attrs = yield* sharedStack.deploy(
-        Effect.gen(function* () {
-          return yield* OsisTestFunction;
-        }).pipe(Effect.provide(OsisTestFunctionLive)),
-      );
+        yield* Effect.logInfo("OSIS test setup: deploying fixture");
+        const attrs = yield* sharedStack.deploy(
+          Effect.gen(function* () {
+            return yield* OsisTestFunction;
+          }).pipe(Effect.provide(OsisTestFunctionLive)),
+        );
 
-      expect(attrs.functionUrl).toBeTruthy();
-      baseUrl = attrs.functionUrl!.replace(/\/+$/, "");
+        expect(attrs.functionUrl).toBeTruthy();
+        baseUrl = attrs.functionUrl!.replace(/\/+$/, "");
 
-      const readinessUrl = `${baseUrl}/bindings`;
-      yield* Effect.logInfo(
-        `OSIS test setup: probing readiness at ${readinessUrl}`,
-      );
-      yield* HttpClient.get(readinessUrl).pipe(
-        Effect.flatMap((response) =>
-          response.status === 200
-            ? Effect.succeed(response)
-            : Effect.fail(new Error(`Function not ready: ${response.status}`)),
-        ),
-        Effect.tapError((error) =>
-          Effect.logWarning(
-            `OSIS test setup: fixture not ready yet (${String(error)})`,
+        const readinessUrl = `${baseUrl}/bindings`;
+        yield* Effect.logInfo(
+          `OSIS test setup: probing readiness at ${readinessUrl}`,
+        );
+        yield* HttpClient.get(readinessUrl).pipe(
+          Effect.flatMap((response) =>
+            response.status === 200
+              ? Effect.succeed(response)
+              : Effect.fail(
+                  new Error(`Function not ready: ${response.status}`),
+                ),
           ),
-        ),
-        Effect.retry({ schedule: readinessPolicy }),
+          Effect.tapError((error) =>
+            Effect.logWarning(
+              `OSIS test setup: fixture not ready yet (${String(error)})`,
+            ),
+          ),
+          Effect.retry({ schedule: readinessPolicy }),
+        );
+      }),
+      { timeout: 240_000 },
+    );
+
+    afterAll(sharedStack.destroy(), { timeout: 120_000 });
+
+    describe("binding registration", () => {
+      test.provider(
+        "all four capabilities initialize in the runtime",
+        (_stack) =>
+          Effect.gen(function* () {
+            const response = (yield* getJson("/bindings")) as {
+              bound: string[];
+            };
+            expect(response.bound).toHaveLength(4);
+          }),
       );
-    }),
-    { timeout: 240_000 },
-  );
+    });
 
-  afterAll(sharedStack.destroy(), { timeout: 120_000 });
-
-  describe("binding registration", () => {
-    test.provider("all four capabilities initialize in the runtime", (_stack) =>
-      Effect.gen(function* () {
-        const response = (yield* getJson("/bindings")) as { bound: string[] };
-        expect(response.bound).toHaveLength(4);
-      }),
-    );
-  });
-
-  describe("ValidatePipeline", () => {
-    test.provider("accepts a valid configuration body", (_stack) =>
-      Effect.gen(function* () {
-        const response = (yield* getJson("/validate-good")) as {
-          isValid: boolean;
-          errors: string[];
-        };
-        expect(response.isValid).toBe(true);
-        expect(response.errors).toHaveLength(0);
-      }),
-    );
-
-    test.provider("rejects an unknown sink plugin", (_stack) =>
-      Effect.gen(function* () {
-        const response = (yield* getJson("/validate-bad")) as {
-          isValid: boolean;
-          errors: string[];
-        };
-        expect(response.isValid).toBe(false);
-        expect(response.errors.length).toBeGreaterThan(0);
-      }),
-    );
-  });
-
-  describe("ListPipelineBlueprints + GetPipelineBlueprint", () => {
-    test.provider(
-      "lists the blueprint catalog and fetches one template",
-      (_stack) =>
+    describe("ValidatePipeline", () => {
+      test.provider("accepts a valid configuration body", (_stack) =>
         Effect.gen(function* () {
-          const { names } = (yield* getJson("/blueprints")) as {
-            names: string[];
+          const response = (yield* getJson("/validate-good")) as {
+            isValid: boolean;
+            errors: string[];
           };
-          expect(names.length).toBeGreaterThan(0);
-
-          const response = (yield* getJson(
-            `/blueprint?name=${encodeURIComponent(names[0]!)}`,
-          )) as { name: string; hasBody: boolean };
-          expect(response.name).toBe(names[0]);
-          expect(response.hasBody).toBe(true);
+          expect(response.isValid).toBe(true);
+          expect(response.errors).toHaveLength(0);
         }),
-    );
-  });
+      );
 
-  describe("ListPipelineEndpointConnections", () => {
-    test.provider("enumerates the account's endpoint connections", (_stack) =>
-      Effect.gen(function* () {
-        const response = (yield* getJson("/endpoint-connections")) as {
-          count: number;
-        };
-        expect(response.count).toBeGreaterThanOrEqual(0);
-      }),
-    );
-  });
-});
+      test.provider("rejects an unknown sink plugin", (_stack) =>
+        Effect.gen(function* () {
+          const response = (yield* getJson("/validate-bad")) as {
+            isValid: boolean;
+            errors: string[];
+          };
+          expect(response.isValid).toBe(false);
+          expect(response.errors.length).toBeGreaterThan(0);
+        }),
+      );
+    });
+
+    describe("ListPipelineBlueprints + GetPipelineBlueprint", () => {
+      test.provider(
+        "lists the blueprint catalog and fetches one template",
+        (_stack) =>
+          Effect.gen(function* () {
+            const { names } = (yield* getJson("/blueprints")) as {
+              names: string[];
+            };
+            expect(names.length).toBeGreaterThan(0);
+
+            const response = (yield* getJson(
+              `/blueprint?name=${encodeURIComponent(names[0]!)}`,
+            )) as { name: string; hasBody: boolean };
+            expect(response.name).toBe(names[0]);
+            expect(response.hasBody).toBe(true);
+          }),
+      );
+    });
+
+    describe("ListPipelineEndpointConnections", () => {
+      test.provider("enumerates the account's endpoint connections", (_stack) =>
+        Effect.gen(function* () {
+          const response = (yield* getJson("/endpoint-connections")) as {
+            count: number;
+          };
+          expect(response.count).toBeGreaterThanOrEqual(0);
+        }),
+      );
+    });
+  },
+);

@@ -46,9 +46,8 @@ export interface SigningCertificate extends Resource<
  *
  * `SigningCertificate` uploads an X.509 signing certificate for legacy
  * IAM-integrated workflows that still depend on user-scoped certificates.
- * @resource
- * @section Managing User Certificates
- * @example Upload a Signing Certificate
+ * ### Managing User Certificates
+ * **Example:** Upload a Signing Certificate
  * ```typescript
  * const user = yield* User("Signer", {
  *   userName: "build-signer",
@@ -59,6 +58,8 @@ export interface SigningCertificate extends Resource<
  *   certificateBody: "-----BEGIN CERTIFICATE-----\n...\n-----END CERTIFICATE-----",
  * });
  * ```
+ *
+ * @resource
  */
 export const SigningCertificate = Resource<SigningCertificate>(
   "AWS.IAM.SigningCertificate",

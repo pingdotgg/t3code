@@ -49,5 +49,8 @@ test.provider(
       });
       expect(gone.MetricAlarms ?? []).toEqual([]);
     }),
-  { timeout: 120_000 },
+  {
+    tags: ["provider:aws", "provider:aws:cloudwatch", "live"],
+    timeout: 120_000,
+  },
 );

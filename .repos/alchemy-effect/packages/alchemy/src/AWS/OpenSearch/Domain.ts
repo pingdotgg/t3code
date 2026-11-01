@@ -269,15 +269,14 @@ export interface Domain extends Resource<
  * Domains take roughly 15-25 minutes to provision (and about as long for
  * blue/green configuration changes) and are billed per instance-hour while
  * they exist. Destroy domains you are not using.
- * @resource
- * @section Creating a Domain
- * @example Minimal Domain
+ * ### Creating a Domain
+ * **Example:** Minimal Domain
  * ```typescript
  * // A single t3.small.search node with 10 GiB of gp3 EBS storage.
  * const domain = yield* Domain("Search", {});
  * ```
  *
- * @example Encrypted Domain with Access Policy
+ * **Example:** Encrypted Domain with Access Policy
  * ```typescript
  * const domain = yield* Domain("Search", {
  *   engineVersion: "OpenSearch_2.19",
@@ -303,8 +302,8 @@ export interface Domain extends Resource<
  * });
  * ```
  *
- * @section Multi-AZ Cluster
- * @example Zone-Aware Cluster
+ * ### Multi-AZ Cluster
+ * **Example:** Zone-Aware Cluster
  * ```typescript
  * const domain = yield* Domain("Search", {
  *   clusterConfig: {
@@ -315,6 +314,8 @@ export interface Domain extends Resource<
  *   },
  * });
  * ```
+ *
+ * @resource
  */
 export const Domain = Resource<Domain>("AWS.OpenSearch.Domain");
 

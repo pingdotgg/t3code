@@ -1,13 +1,4 @@
-import type { ProviderOptionDescriptor, RuntimeMode } from "@t3tools/contracts";
-
-/**
- * Desktop-oriented effort keywords that don't belong in the phone picker.
- * Prompt-injected values (ultrathink and friends) are filtered from the
- * descriptor metadata; ultracode is a real option but a workflow trigger, not
- * a reasoning level. A value set elsewhere still displays, it just isn't
- * offered.
- */
-const HIDDEN_EFFORT_OPTION_IDS: ReadonlySet<string> = new Set(["ultracode"]);
+import type { RuntimeMode } from "@t3tools/contracts";
 
 export const RUNTIME_MODE_CHOICES: ReadonlyArray<{
   readonly mode: RuntimeMode;
@@ -36,11 +27,21 @@ export const RUNTIME_MODE_CHOICES: ReadonlyArray<{
   },
 ];
 
-export function selectableChoices(
-  descriptor: Extract<ProviderOptionDescriptor, { type: "select" }>,
+export function runtimeModeChoicesForSupportedModes(
+  supportedRuntimeModes: ReadonlyArray<RuntimeMode> | undefined,
 ) {
-  const injected = new Set(descriptor.promptInjectedValues ?? []);
-  return descriptor.options.filter(
-    (option) => !injected.has(option.id) && !HIDDEN_EFFORT_OPTION_IDS.has(option.id),
-  );
+  return supportedRuntimeModes && supportedRuntimeModes.length > 0
+    ? RUNTIME_MODE_CHOICES.filter((choice) => supportedRuntimeModes.includes(choice.mode))
+    : RUNTIME_MODE_CHOICES;
 }
+
+export function compatibleRuntimeModeForChoices(
+  runtimeMode: RuntimeMode,
+  choices: ReadonlyArray<{ readonly mode: RuntimeMode }>,
+): RuntimeMode {
+  return choices.some((choice) => choice.mode === runtimeMode)
+    ? runtimeMode
+    : (choices[0]?.mode ?? runtimeMode);
+}
+
+export { selectableProviderOptionChoices as selectableChoices } from "@t3tools/client-runtime/model-traits";

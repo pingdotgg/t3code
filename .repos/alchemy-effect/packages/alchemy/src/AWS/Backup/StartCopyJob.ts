@@ -30,9 +30,8 @@ export interface StartCopyJobRequest extends Omit<
  * **copy role** (its trust policy must allow `backup.amazonaws.com`); the
  * destination vault ARN is a runtime request field. Provide the
  * implementation with `Effect.provide(AWS.Backup.StartCopyJobHttp)`.
- * @binding
- * @section Copying Recovery Points
- * @example Copy A Recovery Point To A DR Vault
+ * ### Copying Recovery Points
+ * **Example:** Copy A Recovery Point To A DR Vault
  * ```typescript
  * const startCopyJob = yield* AWS.Backup.StartCopyJob(vault, backupRole);
  *
@@ -42,6 +41,8 @@ export interface StartCopyJobRequest extends Omit<
  * });
  * yield* Effect.log(`copy job ${job.CopyJobId} started`);
  * ```
+ *
+ * @binding
  */
 export interface StartCopyJob extends Binding.Service<
   StartCopyJob,

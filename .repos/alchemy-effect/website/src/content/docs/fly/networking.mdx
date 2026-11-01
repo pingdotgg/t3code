@@ -1,0 +1,278 @@
+---
+title: IPs & certificates
+description: Public and private Fly Services, App addresses, and certificates for your own hostname.
+---
+
+A [Service](/fly/compute/services) owns its App and manages that
+App's addresses. It is public by default and reachable only inside
+your organization with `public: false`. Fly's proxy load-balances
+`{app}.fly.dev` across Machines that publish a proxy service.
+
+IPs and certificates you declare yourself attach to a
+[`Fly.App`](/fly/compute/apps): use them for Machines, for Services
+grouped in one App, and for your own domain.
+
+## Public Services
+
+A Service with `port` listens inside the Machine. Alchemy publishes
+HTTP 80 and HTTPS 443 on the Fly proxy in front of it, and allocates
+a shared IPv4 and an IPv6 on the Service's App. Both are free.
+
+```typescript
+export default class Api extends Fly.Service<Api>()(
+  "Api",
+  { main: import.meta.url, region: "iad", port: 3000 },
+  Effect.gen(function* () {
+    return {
+      fetch: Effect.succeed(HttpServerResponse.text("hello")),
+    };
+  }),
+) {}
+```
+
+Yield the Service in the Stack. `api.url` is
+`https://{appName}.fly.dev`.
+
+```typescript
+export default Alchemy.Stack(
+  "MyApp",
+  { providers: Fly.providers(), state: Alchemy.localState() },
+  Effect.gen(function* () {
+    const api = yield* Api;
+    return { url: api.url };
+  }),
+);
+```
+
+Fly's proxy terminates TLS on 443. The Service still listens on
+`port` inside the Machine.
+
+## Private Services with Flycast
+
+`public: false` keeps a Service off the internet. Its App gets only a
+free Flycast address, which Fly's proxy serves inside your
+organization's private network.
+
+```diff lang="typescript"
+export default class Api extends Fly.Service<Api>()(
+  "Api",
+-  { main: import.meta.url, region: "iad", port: 3000 },
++  { main: import.meta.url, region: "iad", port: 3000, public: false },
+```
+
+Fly issues no TLS certificate for `.flycast`, so a private Service
+publishes plain HTTP on port 80. `url` is `undefined` and
+`privateUrl` is `http://{appName}.flycast`.
+
+Other Services call it by binding it with `Fly.bindService`, which
+returns a typed client for its methods — see
+[Call one Service from another](/fly/compute/services#call-one-service-from-another).
+Bound calls go to `privateUrl` through Fly's proxy, so service checks,
+`autostart`, and the traffic switch of a
+[blue/green deployment](/fly/compute/deployments) apply. Only Services
+that bind the target receive its caller token, and the target checks
+Fly's `Fly-Src` signature, so a method answers only bound callers on
+Fly's private network. The traffic is plain HTTP inside Fly's
+WireGuard-encrypted network.
+
+Turning `public` on or off updates the Service in place. Its App and
+hostname stay the same.
+
+## Restrict private Services to the stack
+
+Fly's default private network spans the organization, so every App in
+the org can call a private Service. Set `network: yield* Fly.stackNetwork`
+on each Service to put them on a network unique to the stack and
+stage. Services on it bind each other; Apps on any other network,
+including the default one, get `bad address` for the `.flycast` and
+`.internal` names, and binding across networks fails the caller's
+deploy with `Fly.ServiceUnreachable`. A public Service on the network
+still serves `url`, so it becomes the stack's single entry point.
+[Connect Services](/fly/compute/connecting-services) walks through it.
+
+## Addresses for a shared App
+
+A [Machine](/fly/compute/machines), or a Service that joins a
+`Fly.App` with [`app`](/fly/compute/services#group-services-in-one-app),
+uses the addresses on that App. Alchemy manages none for it.
+`{app}.fly.dev` does not answer over IPv4 until the App has an
+[`IpAssignment`](/providers/fly/ipassignment). Allocate a shared
+Anycast IPv4:
+
+```typescript
+export const Site = Fly.App("Site");
+
+export const PublicIp = Fly.IpAssignment("Shared", {
+  app: Site,
+  type: "shared_v4",
+});
+```
+
+Yield it next to the resources in the App.
+
+```diff lang="typescript"
+Effect.gen(function* () {
+  const api = yield* Api;
++  const ip = yield* PublicIp;
+  return { url: api.url, ip: ip.ip };
+}),
+```
+
+`v6` is free dedicated IPv6. `v4` is billed dedicated IPv4 and may
+400 if the org has no quota. Prefer `shared_v4` or `v6` in tests.
+
+`private_v6` is a free Flycast address that is not reachable from the
+internet. Allocate only `private_v6` on an App to keep everything in
+it private:
+
+```typescript
+export const Backend = Fly.App("Backend");
+
+export const BackendIp = Fly.IpAssignment("Flycast", {
+  app: Backend,
+  type: "private_v6",
+});
+```
+
+Resources in the App still publish a port for the proxy to forward
+to. Publish plain HTTP on port 80 without `forceHttps`:
+
+```typescript
+export default class Worker extends Fly.Service<Worker>()(
+  "Worker",
+  {
+    app: Backend,
+    main: import.meta.url,
+    port: 3000,
+    services: [{
+      protocol: "tcp",
+      internalPort: 3000,
+      ports: [{ port: 80, handlers: ["http"] }],
+    }],
+  },
+  /* ... */
+) {}
+```
+
+Other Apps on the App's network reach it at `http://{appName}.flycast`.
+A Service in the App is also [bindable](/fly/compute/services#bind-a-service-in-a-shared-app):
+its deploy adds the Flycast address itself.
+
+`network` places the address on a named private network instead of the
+organization default. The network must already exist: an App created with
+the same `network` creates it, and an unknown name fails with
+`NetworkNotFound`. Changing `network` replaces the assignment.
+
+## Use your own hostname
+
+A Certificate covers a hostname on a `Fly.App`. It cannot target a
+Service's own App yet, so run the Service in that App with
+[`app: Site`](/fly/compute/services#group-services-in-one-app) and
+allocate its addresses there. Default `kind` is `"acme"` (Let's
+Encrypt).
+
+```typescript
+export const V6 = Fly.IpAssignment("V6", {
+  app: Site,
+  type: "v6",
+});
+
+export const Www = Fly.Certificate("Www", {
+  app: Site,
+  hostname: "www.example.com",
+  kind: "acme",
+});
+```
+
+Yield `Www` in the Stack. Point DNS at the App. An A record for
+`www` to `PublicIp.ip`. An AAAA record to `V6.ip`. Plus whatever
+`Www.dnsRequirements` lists for the ACME challenge.
+
+Fly's proxy terminates TLS on 443 once the certificate is
+`configured`.
+
+`"custom"` uploads a PEM (`fullchain` + `privateKey`). Hostname is
+the identity. Changing `app`, `hostname`, or `kind` replaces.
+
+## Issue a certificate independently
+
+Use `alchemy/ACME` when you want to choose the certificate authority or
+issue a wildcard with DNS-01. The account and certificate are independent
+of Fly; this example uploads the result to a Fly App.
+
+```typescript
+import * as ACME from "alchemy/ACME";
+import * as Cloudflare from "alchemy/Cloudflare";
+import * as Fly from "alchemy/Fly";
+import * as Layer from "effect/Layer";
+
+const providers = Layer.mergeAll(
+  ACME.providers(),
+  Cloudflare.providers(),
+  Fly.providers(),
+);
+```
+
+Use `providers` in the Stack configuration. Inside the Stack's Effect,
+resolve your existing Cloudflare `Zone` and Fly `Site`, then issue and upload:
+
+```typescript
+const zone = yield* Zone;
+const site = yield* Site;
+const account = yield* ACME.Account("LetsEncrypt", {
+  ca: ACME.LetsEncrypt,
+  contact: ["mailto:ops@example.com"],
+  termsOfServiceAgreed: true,
+});
+const certificate = yield* ACME.Certificate("Wildcard", {
+  account,
+  identifiers: ["*.example.com"],
+  solver: Cloudflare.DNS.AcmeSolver(zone),
+});
+yield* Fly.Certificate("WildcardUpload", {
+  app: site,
+  hostname: "*.example.com",
+  kind: "custom",
+  fullchain: certificate.chain,
+  privateKey: certificate.privateKey,
+});
+```
+
+The DNS solver publishes and removes the challenge TXT records. Cloudflare's
+solver waits 60 seconds before validation so cached challenge values can expire.
+Start with `ACME.LetsEncryptStaging` while developing; its certificates are not
+trusted by browsers.
+
+Renewal is evaluated when you deploy, with a default threshold of 30 days before
+expiry. Schedule deployments if you need automatic renewal. Account and
+certificate private keys are persisted in stack state as redacted values;
+protect the state backend as secret material. Redaction alone is not encryption.
+
+## Manage certificates at runtime
+
+A Service can bind `Fly.WriteCertificates(Site)` to request, upload, inspect,
+check, and remove certificates without redeploying. Provide
+`Fly.WriteCertificatesHttp` on the Service Effect. For runtime issuance,
+`ACME.IssueCertificate` and `ACME.IssueCertificateHttp` bind an existing account;
+pass a runtime DNS solver to each issuance call.
+
+Runtime operations do not become stack resources. Your application owns renewal
+scheduling, revocation, and removal of certificates it creates this way. Verify
+that the chosen certificate authority is reachable from your runtime.
+
+Follow [Runtime issuance](/acme/runtime) for an authenticated Worker example,
+[Using certificates](/acme/using-certificates) for Fly uploads, and
+[Renewal & revocation](/acme/renewal) for scheduling and deletion policies.
+The [`IssueCertificate`](/providers/acme/issuecertificate) and
+[`WriteCertificates`](/providers/fly/writecertificates) references document the
+binding methods.
+
+## Where next
+
+The [tutorial](/fly/tutorial/part-1) deploys a public Service.
+[Connect Services](/fly/compute/connecting-services) binds private
+Services to each other on a stack network.
+[Services](/fly/compute/services) covers private Services and grouping
+Services in one [App](/fly/compute/apps). See the
+[`IpAssignment`](/providers/fly/ipassignment) and
+[`Certificate`](/providers/fly/certificate) references.

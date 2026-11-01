@@ -2,8 +2,8 @@ import * as Glacier from "@/AWS/Glacier";
 import * as Lambda from "@/AWS/Lambda";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import { HttpServerRequest } from "effect/unstable/http/HttpServerRequest";
-import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
+import { HttpServerRequest } from "effect/http/HttpServerRequest";
+import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import path from "pathe";
 
 const main = path.resolve(import.meta.dirname, "bindings-handler.ts");
@@ -19,7 +19,7 @@ export class GlacierBindingsFunction extends Lambda.Function<Lambda.Function>()(
 export default GlacierBindingsFunction.make(
   {
     main,
-    url: true,
+    functionUrl: true,
   },
   Effect.gen(function* () {
     const vault = yield* Glacier.Vault("BindingsVault");

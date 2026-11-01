@@ -1,0 +1,1551 @@
+import type { ProviderUserInputAnswers, UserInputQuestion } from "@t3tools/contracts";
+import * as Cause from "effect/Cause";
+import * as Deferred from "effect/Deferred";
+import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
+import * as Ref from "effect/Ref";
+import * as Schema from "effect/Schema";
+import * as EffectAcpErrors from "effect-acp/errors";
+import type * as EffectAcpSchema from "effect-acp/compat";
+
+import type * as AcpSessionRuntime from "@t3tools/provider-acp/server/AcpSessionRuntime";
+import type { AcpToolCallState } from "@t3tools/provider-acp/server/runtimeModel";
+
+export const xAiRateLimitedErrorCode = -32003;
+const completedXAiPromptIdLimit = 128;
+
+const XAiPromptCompleteNotification = Schema.Struct({
+  sessionId: Schema.String,
+  promptId: Schema.optional(Schema.String),
+  stopReason: Schema.optional(Schema.String),
+  agentResult: Schema.optional(Schema.NullOr(Schema.Unknown)),
+});
+
+type XAiPromptCompleteNotification = typeof XAiPromptCompleteNotification.Type;
+
+const XAiSessionUpdateNotification = Schema.Struct({
+  sessionId: Schema.String,
+  update: Schema.Struct({
+    sessionUpdate: Schema.String,
+    prompt_id: Schema.optional(Schema.String),
+    promptId: Schema.optional(Schema.String),
+    stop_reason: Schema.optional(Schema.String),
+    stopReason: Schema.optional(Schema.String),
+    agent_result: Schema.optional(Schema.NullOr(Schema.Unknown)),
+    child_session_id: Schema.optional(Schema.String),
+    status: Schema.optional(Schema.String),
+    output: Schema.optional(Schema.NullOr(Schema.String)),
+    error: Schema.optional(Schema.NullOr(Schema.String)),
+  }),
+  _meta: Schema.optional(Schema.Unknown),
+});
+
+type XAiSessionUpdateNotification = typeof XAiSessionUpdateNotification.Type;
+
+const decodeXAiSessionUpdateNotification = Schema.decodeUnknownEffect(XAiSessionUpdateNotification);
+
+const xAiSessionNotificationMethods = [
+  "x.ai/session_notification",
+  "_x.ai/session_notification",
+  "_x.ai/session/update",
+] as const;
+
+const XAI_TASK_COMPLETED_PROMPT_ID_PREFIX = "task-completed-";
+
+export function xAiPromptCompleteFromSessionUpdate(
+  notification: XAiSessionUpdateNotification,
+): XAiPromptCompleteNotification | null {
+  const update = notification.update;
+  if (update.sessionUpdate !== "turn_completed") {
+    return null;
+  }
+  const promptId = nonEmptyString(update.prompt_id) ?? nonEmptyString(update.promptId);
+  // Require prompt identity to avoid matching background completions or unrelated turns.
+  if (promptId === undefined || promptId.startsWith(XAI_TASK_COMPLETED_PROMPT_ID_PREFIX)) {
+    return null;
+  }
+  const stopReason = nonEmptyString(update.stop_reason) ?? nonEmptyString(update.stopReason);
+  return {
+    sessionId: notification.sessionId,
+    promptId,
+    ...(stopReason === undefined ? {} : { stopReason }),
+    ...(update.agent_result === undefined ? {} : { agentResult: update.agent_result }),
+  };
+}
+
+/** Background command wakes use their own task-completed-* prompt IDs. */
+export function isXAiTaskCompletedWakeNotification(
+  notification: EffectAcpSchema.SessionNotification,
+): boolean {
+  const promptId = notification._meta?.promptId;
+  return typeof promptId === "string" && promptId.startsWith(XAI_TASK_COMPLETED_PROMPT_ID_PREFIX);
+}
+
+interface PendingXAiPromptCompletion {
+  readonly sessionId: string;
+  readonly promptId: string;
+  readonly deferred: Deferred.Deferred<
+    EffectAcpSchema.PromptResponse,
+    EffectAcpErrors.AcpRequestError
+  >;
+}
+
+export interface XAiAcpSubagentUpdate {
+  readonly nativeTaskId: string;
+  readonly prompt: string;
+  readonly title: string | null;
+  readonly model: string | null;
+  readonly status: "running" | "completed" | "failed";
+  readonly childSessionId: string | null;
+  readonly result: string | null;
+  /** Defaults to true; false also projects a normal tool item for hydration. */
+  readonly suppressNormalTool?: boolean;
+}
+
+export interface XAiAcpBackgroundToolMutation {
+  readonly taskId: string;
+  readonly status: "running" | "completed" | "failed";
+  readonly appendOutput: string;
+}
+
+export interface XAiAcpSubagentEndNotice {
+  readonly childSessionId: string;
+  readonly status: "completed" | "failed";
+}
+
+const XAI_UUID_RE = "[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}";
+
+function unknownRecord(value: unknown): Record<string, unknown> | undefined {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : undefined;
+}
+
+function nonEmptyString(value: unknown): string | undefined {
+  return typeof value === "string" && value.trim().length > 0 ? value.trim() : undefined;
+}
+
+function titleKey(toolCall: AcpToolCallState): string {
+  return (toolCall.title ?? "").trim().toLowerCase();
+}
+
+function decodeByteText(value: unknown): string | undefined {
+  if (typeof value === "string") return nonEmptyString(value);
+  if (!Array.isArray(value)) return undefined;
+  if (value.length === 0) return undefined;
+  if (!value.every((entry) => typeof entry === "number")) return undefined;
+  try {
+    return nonEmptyString(new TextDecoder().decode(Uint8Array.from(value as number[])));
+  } catch {
+    return undefined;
+  }
+}
+
+function xAiToolOutputText(toolCall: AcpToolCallState): string | undefined {
+  const rawOutput = unknownRecord(toolCall.data.rawOutput);
+  if (rawOutput !== undefined) {
+    const direct =
+      nonEmptyString(rawOutput.text) ??
+      nonEmptyString(rawOutput.output_for_prompt) ??
+      decodeByteText(rawOutput.output);
+    if (direct !== undefined) return direct;
+    const result = unknownRecord(rawOutput.Result) ?? unknownRecord(rawOutput.result);
+    if (result !== undefined) {
+      const nested =
+        nonEmptyString(result.output) ??
+        nonEmptyString(result.text) ??
+        decodeByteText(result.output);
+      if (nested !== undefined) return nested;
+    }
+  }
+  if (typeof toolCall.data.rawOutput === "string") {
+    return nonEmptyString(toolCall.data.rawOutput);
+  }
+  const content = toolCall.data.content;
+  if (!Array.isArray(content)) return undefined;
+  const text = content
+    .flatMap((entry) => {
+      const record = unknownRecord(entry);
+      const nested = unknownRecord(record?.content);
+      return nonEmptyString(nested?.text) ?? nonEmptyString(record?.text) ?? [];
+    })
+    .join("\n")
+    .trim();
+  return text.length > 0 ? text : undefined;
+}
+
+function firstUuidMatch(text: string, pattern: RegExp): string | undefined {
+  const match = pattern.exec(text);
+  return match?.[1];
+}
+
+function extractXAiChildSessionId(output: string | undefined): string | null {
+  if (output === undefined) return null;
+  return (
+    firstUuidMatch(output, new RegExp(`(?:^|\\n)\\s*Agent ID:\\s*(${XAI_UUID_RE})\\b`, "i")) ??
+    firstUuidMatch(output, new RegExp(`(?:^|\\n)\\s*subagent_id:\\s*(${XAI_UUID_RE})\\b`, "i")) ??
+    firstUuidMatch(output, new RegExp(`===\\s*Task\\s+(${XAI_UUID_RE})\\s*===`, "i")) ??
+    null
+  );
+}
+
+function isXAiAsyncSpawnAck(output: string | undefined): boolean {
+  if (output === undefined) return false;
+  if (/subagent started in background/i.test(output)) return true;
+  return (
+    new RegExp(`subagent_id:\\s*${XAI_UUID_RE}`, "i").test(output) &&
+    /get_command_or_subagent_output/i.test(output)
+  );
+}
+
+function isXAiMonitorStartAck(output: string | undefined): boolean {
+  if (output === undefined) return false;
+  return /monitor started\s*\(\s*task\s+/i.test(output);
+}
+
+function isXAiSpawnOrTaskTool(
+  toolCall: AcpToolCallState,
+  rawInput: Record<string, unknown> | undefined,
+): boolean {
+  const title = titleKey(toolCall);
+  if (title === "task" || title === "spawn_subagent" || title.includes("spawn subagent")) {
+    return true;
+  }
+  const variant = nonEmptyString(rawInput?.variant)?.toLowerCase();
+  if (variant === "cursortask" || variant === "task" || variant === "spawn_subagent") {
+    return true;
+  }
+  if (nonEmptyString(rawInput?.subagent_type) !== undefined) return true;
+  if (nonEmptyString(rawInput?.subagentType) !== undefined) return true;
+  return false;
+}
+
+function isXAiGetSubagentOutputTool(
+  toolCall: AcpToolCallState,
+  rawInput: Record<string, unknown> | undefined,
+): boolean {
+  const title = titleKey(toolCall);
+  if (
+    title === "get_command_or_subagent_output" ||
+    title.includes("get_command_or_subagent_output") ||
+    title === "wait_commands_or_subagents"
+  ) {
+    return true;
+  }
+  const variant = nonEmptyString(rawInput?.variant)?.toLowerCase();
+  if (variant === "taskoutput" || variant === "task_output") return true;
+  const rawOutput = unknownRecord(toolCall.data.rawOutput);
+  const outputType = nonEmptyString(rawOutput?.type)?.toLowerCase();
+  if (outputType === "taskoutput" || outputType === "task_output") return true;
+  if (title.startsWith("[subagent:") && Array.isArray(rawInput?.task_ids)) return true;
+  return false;
+}
+
+export function isXAiMonitorTool(toolCall: AcpToolCallState): boolean {
+  const title = titleKey(toolCall);
+  if (title === "monitor" || title.startsWith("monitor ")) return true;
+  const rawInput = unknownRecord(toolCall.data.rawInput);
+  const variant = nonEmptyString(rawInput?.variant)?.toLowerCase();
+  if (variant === "monitor") return true;
+  // Start ACK titles can be generic; the structured Monitor envelope remains authoritative.
+  const rawOutput = unknownRecord(toolCall.data.rawOutput);
+  const outputType = nonEmptyString(rawOutput?.type)?.toLowerCase();
+  if (outputType === "monitor") return true;
+  // Older clients send plain Text ACKs; these still identify the monitor after title rewrites.
+  return isXAiMonitorStartAck(xAiToolOutputText(toolCall));
+}
+
+/**
+ * BackgroundTaskStarted completes the tool call while the shell process still runs.
+ * The task ends on a completion notification or completed TaskOutput for its task id.
+ */
+export function xAiBackgroundShellTaskId(toolCall: AcpToolCallState): string | undefined {
+  const rawOutput = unknownRecord(toolCall.data.rawOutput);
+  return nonEmptyString(rawOutput?.type) === "BackgroundTaskStarted"
+    ? nonEmptyString(rawOutput?.task_id)
+    : undefined;
+}
+
+export function extractXAiMonitorTaskId(toolCall: AcpToolCallState): string | undefined {
+  const backgroundShellTaskId = xAiBackgroundShellTaskId(toolCall);
+  if (backgroundShellTaskId !== undefined) return backgroundShellTaskId;
+  if (!isXAiMonitorTool(toolCall)) return undefined;
+  const rawOutput = unknownRecord(toolCall.data.rawOutput);
+  if (rawOutput !== undefined && nonEmptyString(rawOutput.type)?.toLowerCase() === "monitor") {
+    const structured = nonEmptyString(rawOutput.taskId) ?? nonEmptyString(rawOutput.task_id);
+    if (structured !== undefined) return structured;
+  }
+  const output = xAiToolOutputText(toolCall);
+  if (output !== undefined) {
+    const fromAck = firstUuidMatch(
+      output,
+      new RegExp(`monitor started\\s*\\(\\s*task\\s+(${XAI_UUID_RE})\\b`, "i"),
+    );
+    if (fromAck !== undefined) return fromAck;
+  }
+  const rawInput = unknownRecord(toolCall.data.rawInput);
+  return (
+    nonEmptyString(rawInput?.task_id) ??
+    nonEmptyString(rawInput?.taskId) ??
+    (Array.isArray(rawInput?.task_ids) ? nonEmptyString(rawInput.task_ids[0]) : undefined)
+  );
+}
+
+/** Persistent monitors must not hold root-turn deferred finalize. */
+export function isXAiPersistentMonitor(toolCall: AcpToolCallState): boolean {
+  if (!isXAiMonitorTool(toolCall)) return false;
+  const rawOutput = unknownRecord(toolCall.data.rawOutput);
+  if (rawOutput !== undefined && nonEmptyString(rawOutput.type)?.toLowerCase() === "monitor") {
+    return rawOutput.persistent === true;
+  }
+  const rawInput = unknownRecord(toolCall.data.rawInput);
+  return rawInput?.persistent === true;
+}
+
+export function extractXAiBackgroundTaskCompletion(toolCall: AcpToolCallState): ReadonlyArray<{
+  readonly taskId: string;
+  readonly status: "running" | "completed" | "failed";
+  readonly appendOutput: string;
+}> {
+  const rawInput = unknownRecord(toolCall.data.rawInput);
+  if (!isXAiGetSubagentOutputTool(toolCall, rawInput)) return [];
+  const text = xAiToolOutputText(toolCall);
+  const status = statusFromGetOutputTool(toolCall, text);
+  const appendOutput = resultFromGetOutputTool(toolCall, text) ?? "";
+  // Prefer the completed identity from the result/header over the request list
+  // (one call can poll multiple task_ids).
+  // Command task ids can be `call-<uuid>-<index>`; subagent ids stay UUID-only.
+  const resultTaskId =
+    structuredTaskIdFromGetOutputTool(toolCall) ?? resultTaskIdFromGetOutputTool(toolCall, text);
+  if (resultTaskId !== undefined) {
+    return [{ taskId: resultTaskId, status, appendOutput }];
+  }
+  const requestIds: string[] = [];
+  const push = (value: unknown) => {
+    const id = nonEmptyString(value);
+    if (id !== undefined && new RegExp(`^${XAI_UUID_RE}$`, "i").test(id)) {
+      requestIds.push(id);
+    }
+  };
+  if (Array.isArray(rawInput?.task_ids)) {
+    for (const entry of rawInput.task_ids) push(entry);
+  }
+  push(rawInput?.task_id);
+  push(rawInput?.taskId);
+  const unique = [...new Set(requestIds)];
+  return unique.map((taskId) => ({ taskId, status, appendOutput }));
+}
+
+/**
+ * A finished kill_command_or_subagent call is the genuine end signal for every
+ * task id it names, even without a separate `x.ai/task_completed` notification.
+ * A failed kill is not proof the target stopped, so leave the existing
+ * task state unchanged until a genuine terminal signal arrives.
+ */
+export function extractXAiKilledBackgroundTasks(toolCall: AcpToolCallState): ReadonlyArray<{
+  readonly taskId: string;
+  readonly status: "running" | "completed" | "failed";
+  readonly appendOutput: string;
+}> {
+  const title = titleKey(toolCall);
+  const rawInput = unknownRecord(toolCall.data.rawInput);
+  const rawOutput = unknownRecord(toolCall.data.rawOutput);
+  const variant = nonEmptyString(rawInput?.variant)?.toLowerCase();
+  const legacy = title.includes("kill_command_or_subagent") || variant === "kill";
+  if (!legacy && variant !== "killtask" && rawOutput?.type !== "KillTask") return [];
+  if (toolCall.status !== "completed") return [];
+  // Grok nests the outcome under Result; only a missing, killed or already_exited one ends the task.
+  const outcome = rawOutput?.outcome ?? unknownRecord(rawOutput?.Result)?.outcome;
+  if (!legacy && outcome !== undefined && outcome !== "killed" && outcome !== "already_exited")
+    return [];
+  const taskIds: string[] = [];
+  const push = (value: unknown) => {
+    const id = nonEmptyString(value);
+    if (id !== undefined) taskIds.push(id);
+  };
+  if (Array.isArray(rawInput?.task_ids)) {
+    for (const entry of rawInput.task_ids) push(entry);
+  }
+  push(rawInput?.task_id);
+  push(rawInput?.taskId);
+  return [...new Set(taskIds)].map((taskId) => ({
+    taskId,
+    status: "completed" as const,
+    appendOutput: "",
+  }));
+}
+
+const XAiTaskLifecycleNotification = Schema.Struct({
+  sessionId: Schema.String,
+  update: Schema.Struct({
+    sessionUpdate: Schema.String,
+    task_id: Schema.optional(Schema.String),
+    tool_call_id: Schema.optional(Schema.String),
+    command: Schema.optional(Schema.String),
+    description: Schema.optional(Schema.NullOr(Schema.String)),
+    monitor_description: Schema.optional(Schema.NullOr(Schema.String)),
+    task_snapshot: Schema.optional(
+      Schema.Struct({
+        task_id: Schema.optional(Schema.String),
+        output: Schema.optional(Schema.String),
+        exit_code: Schema.optional(Schema.NullOr(Schema.Number)),
+        command: Schema.optional(Schema.String),
+        display_command: Schema.optional(Schema.NullOr(Schema.String)),
+        description: Schema.optional(Schema.NullOr(Schema.String)),
+        kind: Schema.optional(Schema.String),
+      }),
+    ),
+  }),
+  _meta: Schema.optional(Schema.Unknown),
+});
+
+type XAiTaskLifecycleNotification = typeof XAiTaskLifecycleNotification.Type;
+
+export interface XAiBackgroundTaskLifecycleMutation {
+  readonly sessionId: string;
+  readonly taskId: string;
+  readonly status: "running" | "completed" | "failed";
+  readonly output?: string;
+  readonly report?:
+    | { readonly kind: "command"; readonly label?: string; readonly exitCode?: number }
+    | { readonly kind: "monitor"; readonly label?: string };
+}
+
+function xAiBackgroundTaskReport(
+  update: XAiTaskLifecycleNotification["update"],
+): XAiBackgroundTaskLifecycleMutation["report"] {
+  const snapshot = update.task_snapshot;
+  const monitorDescription = nonEmptyString(update.monitor_description ?? undefined);
+  const displayCommand = nonEmptyString(snapshot?.display_command ?? undefined);
+  const isMonitor =
+    snapshot?.kind === "monitor" ||
+    monitorDescription !== undefined ||
+    displayCommand?.startsWith("[monitor]") === true;
+  const isCommand =
+    snapshot?.kind === "bash" || snapshot?.command !== undefined || update.command !== undefined;
+  if (!isMonitor && !isCommand) return undefined;
+  const label =
+    monitorDescription ??
+    nonEmptyString(snapshot?.description ?? undefined) ??
+    nonEmptyString(update.description ?? undefined) ??
+    displayCommand?.replace(/^\[monitor\]\s*/, "") ??
+    nonEmptyString(snapshot?.command) ??
+    nonEmptyString(update.command);
+  const named = label === undefined ? {} : { label };
+  if (isMonitor) return { kind: "monitor", ...named };
+  const exitCode = snapshot?.exit_code;
+  return { kind: "command", ...named, ...(typeof exitCode === "number" ? { exitCode } : {}) };
+}
+
+export function xAiBackgroundTaskLifecycleMutation(
+  notification: XAiTaskLifecycleNotification,
+  status: "running" | "completed",
+): XAiBackgroundTaskLifecycleMutation | null {
+  const update = notification.update;
+  const taskId =
+    nonEmptyString(update.task_snapshot?.task_id) ??
+    nonEmptyString(update.task_id) ??
+    nonEmptyString(update.tool_call_id);
+  if (taskId === undefined) return null;
+  const exitCode = update.task_snapshot?.exit_code;
+  const output = update.task_snapshot?.output;
+  const report = xAiBackgroundTaskReport(update);
+  return {
+    sessionId: notification.sessionId,
+    taskId,
+    status:
+      status === "completed" && typeof exitCode === "number" && exitCode !== 0 ? "failed" : status,
+    ...(output === undefined ? {} : { output }),
+    ...(report === undefined ? {} : { report }),
+  };
+}
+
+/** Track both x.ai/task_* and legacy _x.ai/task_*; background tasks can survive cancellation. */
+export const registerXAiBackgroundTaskTracking = (
+  runtime: Pick<AcpSessionRuntime.AcpSessionRuntime["Service"], "handleExtNotification">,
+  apply: (mutation: XAiBackgroundTaskLifecycleMutation) => Effect.Effect<void>,
+): Effect.Effect<void, EffectAcpErrors.AcpError> =>
+  Effect.forEach(
+    [
+      ["x.ai/task_backgrounded", "running"],
+      ["_x.ai/task_backgrounded", "running"],
+      ["x.ai/task_completed", "completed"],
+      ["_x.ai/task_completed", "completed"],
+    ] as const,
+    ([method, status]) =>
+      runtime.handleExtNotification(method, XAiTaskLifecycleNotification, (notification) => {
+        const mutation = xAiBackgroundTaskLifecycleMutation(notification, status);
+        return mutation === null ? Effect.void : apply(mutation);
+      }),
+    { discard: true },
+  );
+
+/** Sent on the parent session; will_wake means a subagent-completed-<id> turn follows. */
+export interface XAiSubagentFinishedNotice {
+  readonly sessionId: string;
+  readonly childSessionId: string;
+  readonly status: "completed" | "failed" | "cancelled";
+  readonly result: string | null;
+}
+
+export function xAiSubagentFinishedNotice(
+  notification: XAiSessionUpdateNotification,
+): XAiSubagentFinishedNotice | null {
+  const update = notification.update;
+  const childSessionId = nonEmptyString(update.child_session_id);
+  if (update.sessionUpdate !== "subagent_finished" || childSessionId === undefined) return null;
+  const status = update.status;
+  if (status !== "completed" && status !== "failed" && status !== "cancelled") return null;
+  const text = status === "completed" ? update.output : update.error;
+  return {
+    sessionId: notification.sessionId,
+    childSessionId,
+    status,
+    result: nonEmptyString(text ?? undefined) ?? null,
+  };
+}
+
+export const registerXAiSubagentFinished = (
+  runtime: Pick<AcpSessionRuntime.AcpSessionRuntime["Service"], "handleExtNotification">,
+  finish: (notice: XAiSubagentFinishedNotice) => Effect.Effect<void>,
+): Effect.Effect<void> =>
+  Effect.forEach(
+    xAiSessionNotificationMethods,
+    (method) =>
+      runtime.handleExtNotification(method, XAiSessionUpdateNotification, (notification) => {
+        const notice = xAiSubagentFinishedNotice(notification);
+        return notice === null ? Effect.void : finish(notice);
+      }),
+    { discard: true },
+  );
+
+function isGenericAcpToolTitle(title: string | undefined): boolean {
+  const key = (title ?? "").trim().toLowerCase();
+  return key.length === 0 || key === "tool" || key === "tool call" || key === "terminal";
+}
+
+function resolveXAiAcpToolTitle(toolCall: AcpToolCallState): string | undefined {
+  if (!isGenericAcpToolTitle(toolCall.title)) {
+    return nonEmptyString(toolCall.title);
+  }
+  const rawInput = unknownRecord(toolCall.data.rawInput);
+  const description = nonEmptyString(rawInput?.description);
+  const variant = nonEmptyString(rawInput?.variant)?.toLowerCase();
+  if (description !== undefined) {
+    if (variant === "monitor" && !description.toLowerCase().startsWith("monitor")) {
+      return `Monitor: ${description}`;
+    }
+    return description;
+  }
+  if (variant === "monitor") return "Monitor";
+  if (variant === "task" || variant === "cursortask" || variant === "spawn_subagent") {
+    return "Task";
+  }
+  if (variant === "taskoutput" || variant === "task_output") return "Task output";
+  if (variant !== undefined) {
+    return variant;
+  }
+  const command =
+    nonEmptyString(rawInput?.command) ??
+    nonEmptyString(unknownRecord(toolCall.data.rawOutput)?.command);
+  if (command !== undefined) {
+    return command.length > 80 ? `${command.slice(0, 77)}...` : command;
+  }
+  return nonEmptyString(toolCall.title);
+}
+
+/** Grok 1.0.41 monitor ticks report exit_code 0 before ending via _x.ai/task_completed. */
+export function normalizeXAiAcpToolCallState(toolCall: AcpToolCallState): AcpToolCallState {
+  const resolvedTitle = resolveXAiAcpToolTitle(toolCall);
+  const withTitle =
+    resolvedTitle !== undefined && resolvedTitle !== toolCall.title
+      ? { ...toolCall, title: resolvedTitle }
+      : toolCall;
+
+  const rawOutput = unknownRecord(withTitle.data.rawOutput);
+  const outputType = nonEmptyString(rawOutput?.type)?.toLowerCase();
+  const reportedRunning = withTitle.status === "inProgress" || withTitle.status === "pending";
+  if (outputType === "bash" && !reportedRunning) {
+    // Keep exit-code keys aligned with adapter commandExitCode.
+    const exitCode = ["exit_code", "exitCode", "code"]
+      .map((key) => rawOutput?.[key])
+      .find((value) => typeof value === "number" && Number.isInteger(value));
+    if (typeof exitCode === "number") {
+      if (exitCode === 0 && (xAiToolOutputText(withTitle)?.trim().length ?? 0) === 0) {
+        return { ...withTitle, status: "inProgress" };
+      }
+      return {
+        ...withTitle,
+        status: exitCode === 0 ? "completed" : "failed",
+      };
+    }
+  }
+  if (xAiBackgroundShellTaskId(withTitle) !== undefined) {
+    return { ...withTitle, status: "inProgress" };
+  }
+  if (!isXAiMonitorTool(withTitle)) {
+    return withTitle;
+  }
+  if (outputType === "monitor") {
+    return { ...withTitle, status: "inProgress" };
+  }
+  const output = xAiToolOutputText(withTitle);
+  if (withTitle.status === "completed" && isXAiMonitorStartAck(output)) {
+    return { ...withTitle, status: "inProgress" };
+  }
+  return withTitle;
+}
+
+export function extractXAiAcpBackgroundToolMutation(
+  text: string,
+): ReadonlyArray<XAiAcpBackgroundToolMutation> {
+  const mutations: XAiAcpBackgroundToolMutation[] = [];
+
+  const eventRe = new RegExp(
+    `<monitor-event\\s+task_id=["']?(${XAI_UUID_RE})["']?\\s*>\\s*([\\s\\S]*?)\\s*</monitor-event>`,
+    "gi",
+  );
+  for (const eventMatch of text.matchAll(eventRe)) {
+    if (eventMatch[1] === undefined) continue;
+    const line = (eventMatch[2] ?? "").trim();
+    mutations.push({
+      taskId: eventMatch[1],
+      status: "running",
+      appendOutput: line.length > 0 ? `${line}\n` : "",
+    });
+  }
+
+  const batchedRe = new RegExp(
+    `<monitor\\s[^>]*task_id=["']?(${XAI_UUID_RE})["']?[^>]*>\\s*([\\s\\S]*?)\\s*</monitor>`,
+    "gi",
+  );
+  for (const batchedMatch of text.matchAll(batchedRe)) {
+    if (batchedMatch[1] === undefined) continue;
+    const lines = (batchedMatch[2] ?? "").trim();
+    mutations.push({
+      taskId: batchedMatch[1],
+      status: "running",
+      appendOutput: lines.length > 0 ? `${lines}\n` : "",
+    });
+  }
+
+  const endedRe = new RegExp(`Monitor\\s+["']?(${XAI_UUID_RE})["']?\\s+ended`, "gi");
+  for (const endedMatch of text.matchAll(endedRe)) {
+    if (endedMatch[1] === undefined) continue;
+    // Only the monitor header describes outcome; output can contain error words without failure.
+    const outcomeClause = (endedMatch[0] ?? "").trim();
+    const afterHeader = text.slice((endedMatch.index ?? 0) + endedMatch[0].length);
+    const outcomeTail = afterHeader.split(/\n/)[0] ?? "";
+    const outcome = `${outcomeClause}${outcomeTail}`;
+    const summary = text.replace(/<\/?system-reminder>/gi, "").trim();
+    mutations.push({
+      taskId: endedMatch[1],
+      status:
+        /exited\s*\(\s*code\s*0\s*\)/i.test(outcome) || /ended cleanly/i.test(outcome)
+          ? "completed"
+          : /exited|failed|error|signal/i.test(outcome)
+            ? "failed"
+            : "completed",
+      appendOutput: summary.length > 0 ? `${summary}\n` : "Monitor ended.\n",
+    });
+  }
+
+  return mutations;
+}
+
+function stripLeadingBalancedParenGroup(text: string): string {
+  const trimmed = text.replace(/^\s+/, "");
+  if (!trimmed.startsWith("(")) return trimmed;
+  let depth = 0;
+  for (let index = 0; index < trimmed.length; index += 1) {
+    const char = trimmed[index];
+    if (char === "(") depth += 1;
+    else if (char === ")") {
+      depth -= 1;
+      if (depth === 0) return trimmed.slice(index + 1).replace(/^\s+/, "");
+    }
+  }
+  return trimmed;
+}
+
+export function extractXAiAcpSubagentEndNotice(text: string): XAiAcpSubagentEndNotice | undefined {
+  const match = text.match(new RegExp(`Background subagent\\s+["']?(${XAI_UUID_RE})["']?`, "i"));
+  if (match?.[1] === undefined) return undefined;
+  // Skip balanced descriptor parentheses so nested titles cannot supply false outcome verbs.
+  const tail = stripLeadingBalancedParenGroup(text.slice((match.index ?? 0) + match[0].length));
+  if (/completed successfully/i.test(tail)) {
+    return { childSessionId: match[1], status: "completed" };
+  }
+  if (/\b(failed|errored|error|crashed|cancelled|canceled|interrupted|timed out)\b/i.test(tail)) {
+    return { childSessionId: match[1], status: "failed" };
+  }
+  if (/\b(completed|finished|ended)\b/i.test(tail)) {
+    return { childSessionId: match[1], status: "completed" };
+  }
+  return undefined;
+}
+
+function taskIdsFromGetOutputTool(
+  toolCall: AcpToolCallState,
+  rawInput: Record<string, unknown> | undefined,
+): ReadonlyArray<string> {
+  const ids: string[] = [];
+  const push = (value: unknown) => {
+    const text = nonEmptyString(value);
+    if (text !== undefined && new RegExp(`^${XAI_UUID_RE}$`, "i").test(text)) {
+      ids.push(text);
+    }
+  };
+  if (Array.isArray(rawInput?.task_ids)) {
+    for (const entry of rawInput.task_ids) push(entry);
+  }
+  push(rawInput?.task_id);
+  push(rawInput?.taskId);
+  const resultId = resultTaskIdFromGetOutputTool(toolCall, xAiToolOutputText(toolCall));
+  if (resultId !== undefined) ids.push(resultId);
+  return [...new Set(ids)];
+}
+
+function structuredTaskIdFromGetOutputTool(toolCall: AcpToolCallState): string | undefined {
+  const rawOutput = unknownRecord(toolCall.data.rawOutput);
+  const result = unknownRecord(rawOutput?.Result) ?? unknownRecord(rawOutput?.result);
+  return (
+    nonEmptyString(result?.task_id) ??
+    nonEmptyString(result?.taskId) ??
+    nonEmptyString(rawOutput?.task_id) ??
+    nonEmptyString(rawOutput?.taskId)
+  );
+}
+
+function resultTaskIdFromGetOutputTool(
+  toolCall: AcpToolCallState,
+  output: string | undefined,
+): string | undefined {
+  const structured = structuredTaskIdFromGetOutputTool(toolCall);
+  if (structured !== undefined && new RegExp(`^${XAI_UUID_RE}$`, "i").test(structured)) {
+    return structured;
+  }
+  if (output === undefined) return undefined;
+  const taskHeader = firstUuidMatch(
+    output,
+    new RegExp(`===\\s*Task\\s+(${XAI_UUID_RE})\\s*===`, "i"),
+  );
+  return taskHeader;
+}
+
+function resultFromGetOutputTool(
+  toolCall: AcpToolCallState,
+  output: string | undefined,
+): string | null {
+  const rawOutput = unknownRecord(toolCall.data.rawOutput);
+  const result = unknownRecord(rawOutput?.Result) ?? unknownRecord(rawOutput?.result);
+  const structured =
+    nonEmptyString(result?.output) ??
+    nonEmptyString(result?.text) ??
+    decodeByteText(result?.output);
+  if (structured !== undefined) {
+    const cleaned = structured
+      .replace(/<subagent_meta>[\s\S]*?<\/subagent_meta>/gi, "")
+      .replace(/<subagent_result>[\s\S]*?<\/subagent_result>/gi, "")
+      .trim();
+    if (cleaned.length > 0) return cleaned;
+    return null;
+  }
+  if (output === undefined) return null;
+  const marker = output.match(/=== Output ===\s*([\s\S]*)$/i);
+  const body = (marker?.[1] ?? output).trim();
+  return body.length > 0 ? body : null;
+}
+
+function statusFromGetOutputTool(
+  toolCall: AcpToolCallState,
+  output: string | undefined,
+): "running" | "completed" | "failed" {
+  if (toolCall.status === "failed") return "failed";
+  const rawOutput = unknownRecord(toolCall.data.rawOutput);
+  const result = unknownRecord(rawOutput?.Result) ?? unknownRecord(rawOutput?.result);
+  const structuredStatus = nonEmptyString(result?.status)?.toLowerCase();
+  if (structuredStatus === "completed" || structuredStatus === "success") return "completed";
+  if (structuredStatus === "failed" || structuredStatus === "error") return "failed";
+  if (structuredStatus === "running" || structuredStatus === "pending") return "running";
+  if (typeof result?.exit_code === "number") {
+    return result.exit_code === 0 ? "completed" : "failed";
+  }
+  if (output !== undefined) {
+    if (/Status:\s*failed/i.test(output) || /Exit Code:\s*-?(?!0\b)\d+/i.test(output)) {
+      return "failed";
+    }
+    if (/Status:\s*completed/i.test(output) || /Status:\s*success/i.test(output)) {
+      return "completed";
+    }
+    if (/Status:\s*running/i.test(output) || /Status:\s*pending/i.test(output)) {
+      return "running";
+    }
+  }
+  // A completed poll RPC does not end its task without task-level status or exit code.
+  return "running";
+}
+
+/** Spawn ACKs return immediately; keep subagents running until a child or hydration terminal. */
+export function extractXAiAcpSubagentUpdate(
+  toolCall: AcpToolCallState,
+): XAiAcpSubagentUpdate | undefined {
+  const rawInput = unknownRecord(toolCall.data.rawInput);
+  const output = xAiToolOutputText(toolCall);
+
+  if (isXAiGetSubagentOutputTool(toolCall, rawInput)) {
+    const structuredTaskId = structuredTaskIdFromGetOutputTool(toolCall);
+    if (
+      structuredTaskId !== undefined &&
+      !new RegExp(`^${XAI_UUID_RE}$`, "i").test(structuredTaskId)
+    ) {
+      return undefined;
+    }
+    const taskIds = taskIdsFromGetOutputTool(toolCall, rawInput);
+    const childSessionId =
+      resultTaskIdFromGetOutputTool(toolCall, output) ??
+      taskIds[0] ??
+      extractXAiChildSessionId(output);
+    if (childSessionId === null) return undefined;
+    return {
+      nativeTaskId: toolCall.toolCallId,
+      prompt: "",
+      title: null,
+      model: null,
+      status: statusFromGetOutputTool(toolCall, output),
+      childSessionId,
+      result: resultFromGetOutputTool(toolCall, output),
+      suppressNormalTool: true,
+    };
+  }
+
+  if (!isXAiSpawnOrTaskTool(toolCall, rawInput)) return undefined;
+
+  const childSessionId = extractXAiChildSessionId(output);
+  const asyncSpawnAck = isXAiAsyncSpawnAck(output);
+  const legacyResult =
+    output
+      ?.replace(new RegExp(`(?:^|\\n)\\s*Agent ID:\\s*${XAI_UUID_RE}[^\\n]*(?:\\n|$)`, "gi"), "\n")
+      .replace(
+        new RegExp(`(?:^|\\n)\\s*subagent_id:\\s*${XAI_UUID_RE}[^\\n]*(?:\\n|$)`, "gi"),
+        "\n",
+      )
+      .trim() || null;
+
+  let status: "running" | "completed" | "failed";
+  if (toolCall.status === "failed") {
+    status = "failed";
+  } else if (asyncSpawnAck) {
+    status = "running";
+  } else if (toolCall.status === "completed") {
+    status = "completed";
+  } else {
+    status = "running";
+  }
+
+  return {
+    nativeTaskId: toolCall.toolCallId,
+    prompt: nonEmptyString(rawInput?.prompt) ?? "",
+    title: nonEmptyString(rawInput?.description) ?? null,
+    model: nonEmptyString(rawInput?.model) ?? null,
+    status,
+    childSessionId,
+    result: asyncSpawnAck ? null : legacyResult,
+    suppressNormalTool: true,
+  };
+}
+
+const XAiAskUserQuestionOption = Schema.Struct({
+  label: Schema.String,
+  description: Schema.optional(Schema.String),
+  preview: Schema.optional(Schema.String),
+  id: Schema.optional(Schema.String),
+});
+
+const XAiAskUserQuestion = Schema.Struct({
+  id: Schema.optional(Schema.String),
+  question: Schema.String,
+  options: Schema.Array(XAiAskUserQuestionOption),
+  multiSelect: Schema.optional(Schema.NullOr(Schema.Boolean)),
+});
+
+const XAiAskUserQuestionParams = Schema.Struct({
+  sessionId: Schema.String,
+  toolCallId: Schema.String,
+  questions: Schema.Array(XAiAskUserQuestion),
+  mode: Schema.Literals(["default", "plan"]),
+});
+
+const XAiWrappedAskUserQuestionParams = Schema.Struct({
+  method: Schema.Literals(["x.ai/ask_user_question", "_x.ai/ask_user_question"]),
+  params: XAiAskUserQuestionParams,
+});
+
+export const XAiAskUserQuestionRequest = Schema.Union([
+  XAiAskUserQuestionParams,
+  XAiWrappedAskUserQuestionParams,
+]);
+
+type XAiAskUserQuestionRequestParams = typeof XAiAskUserQuestionParams.Type;
+type XAiAskUserQuestionRequest = typeof XAiAskUserQuestionRequest.Type;
+
+const XAiExitPlanModeParams = Schema.Struct({
+  sessionId: Schema.String,
+  toolCallId: Schema.String,
+  planContent: Schema.optional(Schema.NullOr(Schema.String)),
+});
+
+const XAiWrappedExitPlanModeParams = Schema.Struct({
+  method: Schema.Literals(["x.ai/exit_plan_mode", "_x.ai/exit_plan_mode"]),
+  params: XAiExitPlanModeParams,
+});
+
+export const XAiExitPlanModeRequest = Schema.Union([
+  XAiExitPlanModeParams,
+  XAiWrappedExitPlanModeParams,
+]);
+
+type XAiExitPlanModeRequestParams = typeof XAiExitPlanModeParams.Type;
+type XAiExitPlanModeRequest = typeof XAiExitPlanModeRequest.Type;
+
+function unwrapExitPlanModeParams(params: XAiExitPlanModeRequest): XAiExitPlanModeRequestParams {
+  return "params" in params ? params.params : params;
+}
+
+export const XAI_EMPTY_PLAN_MARKDOWN =
+  "# No plan written yet\n\n(The agent exited plan mode without writing a plan.)";
+
+export function extractXAiExitPlanMarkdown(
+  params: XAiExitPlanModeRequest,
+  fallback?: string | null,
+): string {
+  const content = unwrapExitPlanModeParams(params).planContent;
+  const fromRequest = typeof content === "string" ? trimmed(content) : undefined;
+  if (fromRequest) {
+    return fromRequest;
+  }
+  const fromFallback = fallback?.trim();
+  if (fromFallback && fromFallback.length > 0) {
+    return fromFallback;
+  }
+  return XAI_EMPTY_PLAN_MARKDOWN;
+}
+
+export type XAiExitPlanModeOutcome = "approved" | "abandoned" | "request_changes";
+
+export interface XAiExitPlanModeResponse {
+  readonly outcome: XAiExitPlanModeOutcome;
+  readonly feedback?: string;
+}
+
+/** Abandon the native approval gate after T3 captures the plan; implementation uses T3 UI. */
+export function makeXAiExitPlanModeCapturedResponse(feedback?: string): XAiExitPlanModeResponse {
+  return {
+    outcome: "abandoned",
+    feedback:
+      feedback ??
+      "The client captured your proposed plan. Stop here and wait for the user's feedback or implementation request in a later turn.",
+  };
+}
+
+function normalizeFsPath(value: string): string {
+  return value.trim().replace(/\\/g, "/").replace(/\/+$/, "");
+}
+
+function pathHasTraversalSegment(normalized: string): boolean {
+  return normalized.split("/").includes("..");
+}
+
+function addGrokSessionPrefix(
+  prefixes: Set<string>,
+  homeOrRoot: string,
+  nestedGrokDir: boolean,
+): void {
+  const root = normalizeFsPath(homeOrRoot);
+  if (!root) {
+    return;
+  }
+  prefixes.add(nestedGrokDir ? `${root}/.grok/sessions/` : `${root}/sessions/`);
+}
+
+export interface GrokPlanPathHost {
+  readonly platform: NodeJS.Platform;
+  readonly environment: NodeJS.ProcessEnv;
+  readonly homeDirectory: string;
+}
+
+function grokPlanSessionPrefixes(host: GrokPlanPathHost): ReadonlySet<string> {
+  const { environment } = host;
+  const prefixes = new Set<string>();
+  addGrokSessionPrefix(prefixes, host.homeDirectory, true);
+  addGrokSessionPrefix(prefixes, "~", true);
+  addGrokSessionPrefix(prefixes, environment.HOME ?? "", true);
+  addGrokSessionPrefix(prefixes, environment.USERPROFILE ?? "", true);
+  // ACP mock and isolated Grok spawns use a HOME that is not the server process home.
+  addGrokSessionPrefix(prefixes, "/tmp/mock-home", true);
+  const grokHome = environment.GROK_HOME ?? "";
+  addGrokSessionPrefix(prefixes, grokHome, false);
+  addGrokSessionPrefix(prefixes, grokHome, true);
+  return prefixes;
+}
+
+const CANONICAL_HOME_GROK_SESSION_PATH =
+  /^(?:\/home\/[^/]+|\/Users\/[^/]+|[a-zA-Z]:\/Users\/[^/]+)\/\.grok\/sessions\/(?:[^/]+\/)+plan\.md$/;
+const CASE_INSENSITIVE_CANONICAL_HOME_GROK_SESSION_PATH = new RegExp(
+  CANONICAL_HOME_GROK_SESSION_PATH.source,
+  "i",
+);
+
+export function isGrokPlanMarkdownPath(
+  path: string | undefined | null,
+  host: GrokPlanPathHost,
+): boolean {
+  if (typeof path !== "string") {
+    return false;
+  }
+  const normalized = path.trim().replace(/\\/g, "/");
+  const win32 = host.platform === "win32";
+  const haystack = win32 ? normalized.toLowerCase() : normalized;
+  if (
+    normalized.length === 0 ||
+    !haystack.endsWith("/plan.md") ||
+    pathHasTraversalSegment(normalized)
+  ) {
+    return false;
+  }
+  for (const prefix of grokPlanSessionPrefixes(host)) {
+    const needle = win32 ? prefix.toLowerCase() : prefix;
+    if (!haystack.startsWith(needle)) {
+      continue;
+    }
+    const rest = haystack.slice(needle.length);
+    if (rest !== "plan.md" && rest.endsWith("plan.md")) {
+      return true;
+    }
+  }
+  return (
+    win32 ? CASE_INSENSITIVE_CANONICAL_HOME_GROK_SESSION_PATH : CANONICAL_HOME_GROK_SESSION_PATH
+  ).test(haystack);
+}
+
+export function extractGrokPlanMarkdownFromToolCallData(
+  data: Record<string, unknown> | undefined,
+  host: GrokPlanPathHost,
+): string | undefined {
+  if (!data) {
+    return undefined;
+  }
+
+  let sawPlanWrite = false;
+  const takePlanText = (
+    value: string | undefined,
+    filePath: string | undefined,
+  ): string | undefined => {
+    if (!isGrokPlanMarkdownPath(filePath, host) || value === undefined) {
+      return undefined;
+    }
+    sawPlanWrite = true;
+    const trimmed = value.trim();
+    return trimmed.length > 0 ? trimmed : undefined;
+  };
+
+  const rawInput = data.rawInput;
+  if (isRecord(rawInput)) {
+    const filePath =
+      (typeof rawInput.file_path === "string" ? rawInput.file_path : undefined) ??
+      (typeof rawInput.path === "string" ? rawInput.path : undefined);
+    const content = typeof rawInput.content === "string" ? rawInput.content : undefined;
+    const fromRaw = takePlanText(content, filePath);
+    if (fromRaw !== undefined) {
+      return fromRaw;
+    }
+  }
+
+  const content = data.content;
+  if (Array.isArray(content)) {
+    for (const block of content) {
+      if (!isRecord(block) || block.type !== "diff") {
+        continue;
+      }
+      const path = typeof block.path === "string" ? block.path : undefined;
+      const newText = typeof block.newText === "string" ? block.newText : undefined;
+      const fromDiff = takePlanText(newText, path);
+      if (fromDiff !== undefined) {
+        return fromDiff;
+      }
+    }
+  }
+
+  return sawPlanWrite ? "" : undefined;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function trimmed(value: string | undefined): string | undefined {
+  const text = value?.trim();
+  return text && text.length > 0 ? text : undefined;
+}
+
+function unwrapAskUserQuestionParams(
+  params: XAiAskUserQuestionRequest,
+): XAiAskUserQuestionRequestParams {
+  return "params" in params ? params.params : params;
+}
+
+export function extractXAiAskUserQuestions(
+  params: XAiAskUserQuestionRequest,
+): ReadonlyArray<UserInputQuestion> {
+  return unwrapAskUserQuestionParams(params).questions.map((question) => ({
+    id: question.id ?? question.question,
+    header: "Question",
+    question: question.question,
+    multiSelect: question.multiSelect === true,
+    options:
+      question.options.length > 0
+        ? question.options.map((option) => ({
+            label: option.label,
+            description: option.description ?? option.label,
+          }))
+        : [{ label: "OK", description: "Continue" }],
+  }));
+}
+
+export function extractXAiAskUserQuestionIdentity(params: XAiAskUserQuestionRequest): {
+  readonly sessionId: string;
+  readonly toolCallId: string;
+} {
+  const unwrapped = unwrapAskUserQuestionParams(params);
+  return {
+    sessionId: unwrapped.sessionId,
+    toolCallId: unwrapped.toolCallId,
+  };
+}
+
+interface XAiAskUserQuestionAnnotation {
+  readonly preview?: string;
+  readonly notes?: string;
+}
+
+interface XAiAskUserQuestionAcceptedResponse {
+  readonly outcome: "accepted";
+  readonly answers: Record<string, ReadonlyArray<string>>;
+  readonly annotations?: Record<string, XAiAskUserQuestionAnnotation>;
+}
+
+interface XAiAskUserQuestionCancelledResponse {
+  readonly outcome: "cancelled";
+}
+
+interface NormalizedXAiAnswer {
+  readonly questionText: string;
+  readonly selectedLabels: ReadonlyArray<string>;
+  readonly annotation?: XAiAskUserQuestionAnnotation;
+}
+
+function answerValues(answer: unknown): ReadonlyArray<string> {
+  if (Array.isArray(answer)) {
+    return answer.flatMap((entry) => {
+      const text = typeof entry === "string" ? trimmed(entry) : undefined;
+      return text ? [text] : [];
+    });
+  }
+  const text = typeof answer === "string" ? trimmed(answer) : undefined;
+  return text ? [text] : [];
+}
+
+function normalizeAnswerForXAi(
+  question: XAiAskUserQuestionRequestParams["questions"][number],
+  answer: unknown,
+): NormalizedXAiAnswer | undefined {
+  const values = answerValues(answer);
+  if (values.length === 0) {
+    return undefined;
+  }
+
+  const optionByLabel = new Map(question.options.map((option) => [option.label, option]));
+  const resolvedValues = values.map((value) => ({
+    value,
+    option: optionByLabel.get(value),
+  }));
+  const selectedLabels = resolvedValues.flatMap(({ option }) => (option ? [option.label] : []));
+  const notes = resolvedValues.flatMap(({ option, value }) => (option ? [] : [value]));
+  const preview =
+    question.multiSelect === true
+      ? undefined
+      : resolvedValues.map(({ option }) => trimmed(option?.preview)).find((value) => value);
+
+  const annotation =
+    preview || notes.length > 0
+      ? {
+          ...(preview ? { preview } : {}),
+          ...(notes.length > 0 ? { notes: notes.join("\n") } : {}),
+        }
+      : undefined;
+
+  return {
+    questionText: question.question,
+    selectedLabels: selectedLabels.length > 0 ? selectedLabels : ["Other"],
+    ...(annotation ? { annotation } : {}),
+  };
+}
+
+function findQuestionAnswer(
+  answers: ProviderUserInputAnswers,
+  question: XAiAskUserQuestionRequestParams["questions"][number],
+): unknown {
+  const key = question.id ?? question.question;
+  return answers[key] ?? answers[question.question];
+}
+
+export function makeXAiAskUserQuestionResponse(
+  params: XAiAskUserQuestionRequest,
+  answers: ProviderUserInputAnswers,
+): XAiAskUserQuestionAcceptedResponse {
+  const questions = unwrapAskUserQuestionParams(params).questions;
+  const normalized = questions.flatMap((question) => {
+    const entry = normalizeAnswerForXAi(question, findQuestionAnswer(answers, question));
+    return entry ? [entry] : [];
+  });
+  const annotations = Object.fromEntries(
+    normalized.flatMap((entry) =>
+      entry.annotation ? [[entry.questionText, entry.annotation] as const] : [],
+    ),
+  );
+
+  return {
+    outcome: "accepted",
+    answers: Object.fromEntries(
+      normalized.map((entry) => [entry.questionText, entry.selectedLabels]),
+    ),
+    ...(Object.keys(annotations).length > 0 ? { annotations } : {}),
+  };
+}
+
+export function makeXAiAskUserQuestionCancelledResponse(): XAiAskUserQuestionCancelledResponse {
+  return { outcome: "cancelled" };
+}
+
+function promptIdFromResponse(response: EffectAcpSchema.PromptResponse): string | undefined {
+  const meta = response._meta;
+  if (meta === null || typeof meta !== "object") {
+    return undefined;
+  }
+  const promptId = meta.promptId ?? meta.requestId;
+  return typeof promptId === "string" && promptId.length > 0 ? promptId : undefined;
+}
+
+function normalizeXAiStopReason(value: string | undefined): EffectAcpSchema.StopReason {
+  switch (value) {
+    case "cancelled":
+    case "end_turn":
+    case "max_tokens":
+    case "max_turn_requests":
+    case "refusal":
+      return value;
+    default:
+      return "end_turn";
+  }
+}
+
+function promptResponseFromXAi(
+  notification: XAiPromptCompleteNotification,
+): EffectAcpSchema.PromptResponse {
+  const stopReason = normalizeXAiStopReason(notification.stopReason);
+  const meta: Record<string, Schema.Json> = {
+    sessionId: notification.sessionId,
+  };
+  if (notification.promptId !== undefined) {
+    meta.promptId = notification.promptId;
+    meta.requestId = notification.promptId;
+  }
+  if (notification.agentResult !== undefined) {
+    meta.agentResult = notification.agentResult as Schema.Json;
+  }
+  return {
+    stopReason,
+    _meta: meta,
+  };
+}
+
+// Grok completion can beat the prompt RPC error; carry its agentResult failure.
+function xAiPromptFailure(
+  notification: XAiPromptCompleteNotification,
+): EffectAcpErrors.AcpRequestError | null {
+  if (notification.stopReason === "rate_limit") {
+    return new EffectAcpErrors.AcpRequestError({
+      code: xAiRateLimitedErrorCode,
+      errorMessage: "Grok usage limit reached. Try again later.",
+    });
+  }
+  if (notification.stopReason === "error") {
+    const agentResult = nonEmptyString(notification.agentResult);
+    return new EffectAcpErrors.AcpRequestError({
+      code: -32603,
+      errorMessage: "Grok ended the turn with an error.",
+      operation: "receive-response",
+      ...(agentResult === undefined ? {} : { cause: new XAiPromptFailureText(agentResult) }),
+    });
+  }
+  return null;
+}
+
+/** Keep unbounded provider text out of structured attributes; read only at presentation. */
+export class XAiPromptFailureText extends Error {}
+
+const registerXAiPromptCompletionFallback = (
+  pendingRef: Ref.Ref<ReadonlyArray<PendingXAiPromptCompletion>>,
+  sessionId: string,
+  promptId: string,
+) =>
+  Deferred.make<EffectAcpSchema.PromptResponse, EffectAcpErrors.AcpRequestError>().pipe(
+    Effect.tap((deferred) =>
+      Ref.update(pendingRef, (pending) => [...pending, { sessionId, promptId, deferred }]),
+    ),
+    Effect.map((deferred) => ({ deferred, promptId })),
+  );
+
+const unregisterXAiPromptCompletionFallback = (
+  pendingRef: Ref.Ref<ReadonlyArray<PendingXAiPromptCompletion>>,
+  deferred: Deferred.Deferred<EffectAcpSchema.PromptResponse, EffectAcpErrors.AcpRequestError>,
+) => Ref.update(pendingRef, (pending) => pending.filter((entry) => entry.deferred !== deferred));
+
+const abortPendingPromptCompletions = (
+  pendingRef: Ref.Ref<ReadonlyArray<PendingXAiPromptCompletion>>,
+  sessionId?: string,
+) =>
+  Ref.modify(pendingRef, (pending) => {
+    const [toAbort, remaining] = pending.reduce<
+      [ReadonlyArray<PendingXAiPromptCompletion>, ReadonlyArray<PendingXAiPromptCompletion>]
+    >(
+      ([aborting, kept], entry) =>
+        sessionId === undefined || entry.sessionId === sessionId
+          ? [[...aborting, entry], kept]
+          : [aborting, [...kept, entry]],
+      [[], []],
+    );
+    if (toAbort.length === 0) {
+      return [Effect.void, pending] as const;
+    }
+    return [
+      Effect.forEach(
+        toAbort,
+        (entry) =>
+          Deferred.succeed(
+            entry.deferred,
+            promptResponseFromXAi({
+              sessionId: entry.sessionId,
+              promptId: entry.promptId,
+              stopReason: "cancelled",
+              agentResult: null,
+            }),
+          ),
+        { concurrency: "unbounded" },
+      ).pipe(Effect.asVoid),
+      remaining,
+    ] as const;
+  }).pipe(Effect.flatten);
+
+const resolveXAiPromptCompletionFallback = ({
+  pendingRef,
+  completedPromptIdsRef,
+  notification,
+}: {
+  readonly pendingRef: Ref.Ref<ReadonlyArray<PendingXAiPromptCompletion>>;
+  readonly completedPromptIdsRef: Ref.Ref<ReadonlyArray<string>>;
+  readonly notification: XAiPromptCompleteNotification;
+}) =>
+  Ref.get(completedPromptIdsRef).pipe(
+    Effect.flatMap((completedPromptIds) => {
+      if (
+        notification.promptId !== undefined &&
+        completedPromptIds.includes(notification.promptId)
+      ) {
+        return Effect.void;
+      }
+      return Ref.modify(pendingRef, (pending) => {
+        const index =
+          notification.promptId !== undefined
+            ? pending.findIndex(
+                (entry) =>
+                  entry.sessionId === notification.sessionId &&
+                  entry.promptId === notification.promptId,
+              )
+            : (() => {
+                const sessionPendingIndexes = pending.flatMap((entry, entryIndex) =>
+                  entry.sessionId === notification.sessionId ? [entryIndex] : [],
+                );
+                if (sessionPendingIndexes.length !== 1) {
+                  return -1;
+                }
+                return sessionPendingIndexes[0] ?? -1;
+              })();
+        if (index < 0) {
+          return [Effect.void, pending] as const;
+        }
+        const entry = pending[index];
+        if (!entry) {
+          return [Effect.void, pending] as const;
+        }
+        const failure = xAiPromptFailure(notification);
+        const settle =
+          failure !== null
+            ? Deferred.fail(entry.deferred, failure).pipe(Effect.asVoid)
+            : Deferred.succeed(entry.deferred, promptResponseFromXAi(notification)).pipe(
+                Effect.asVoid,
+              );
+        return [settle, [...pending.slice(0, index), ...pending.slice(index + 1)]] as const;
+      }).pipe(Effect.flatten);
+    }),
+  );
+
+const rememberCompletedXAiPromptId = (
+  completedPromptIdsRef: Ref.Ref<ReadonlyArray<string>>,
+  response: EffectAcpSchema.PromptResponse,
+  fallbackPromptId: string,
+) => {
+  const promptId = promptIdFromResponse(response) ?? fallbackPromptId;
+  if (promptId.length === 0) {
+    return Effect.void;
+  }
+  return Ref.update(completedPromptIdsRef, (completedPromptIds) => {
+    if (completedPromptIds.includes(promptId)) {
+      return completedPromptIds;
+    }
+    return [...completedPromptIds, promptId].slice(-completedXAiPromptIdLimit);
+  });
+};
+
+export const makeXAiPromptCompletionRuntime = Effect.fn("makeXAiPromptCompletionRuntime")(
+  function* (runtime: AcpSessionRuntime.AcpSessionRuntime["Service"]) {
+    // Grok multiplexes session updates on extension methods that permit only one handler.
+    const sessionNotificationHandlers = new Map<
+      string,
+      (params: unknown) => Effect.Effect<void, EffectAcpErrors.AcpError>
+    >();
+    let nextPromptFallbackId = 0;
+    const allocatePromptFallbackId = Effect.sync(() => {
+      nextPromptFallbackId += 1;
+      return `t3-xai-prompt-${nextPromptFallbackId}`;
+    });
+    const pendingXAiPromptCompletionsRef = yield* Ref.make<
+      ReadonlyArray<PendingXAiPromptCompletion>
+    >([]);
+    const completedXAiPromptIdsRef = yield* Ref.make<ReadonlyArray<string>>([]);
+
+    const settleFromPromptComplete = (notification: XAiPromptCompleteNotification) =>
+      resolveXAiPromptCompletionFallback({
+        pendingRef: pendingXAiPromptCompletionsRef,
+        completedPromptIdsRef: completedXAiPromptIdsRef,
+        notification,
+      }).pipe(Effect.ignore);
+
+    yield* Effect.forEach(
+      ["x.ai/session/prompt_complete", "_x.ai/session/prompt_complete"] as const,
+      (method) =>
+        runtime.handleExtNotification(
+          method,
+          XAiPromptCompleteNotification,
+          settleFromPromptComplete,
+        ),
+      { discard: true },
+    );
+
+    yield* Effect.forEach(
+      xAiSessionNotificationMethods,
+      (method) =>
+        runtime.handleExtNotification(method, Schema.Unknown, (params) =>
+          decodeXAiSessionUpdateNotification(params).pipe(
+            Effect.flatMap((notification) => {
+              const complete = xAiPromptCompleteFromSessionUpdate(notification);
+              return complete === null ? Effect.void : settleFromPromptComplete(complete);
+            }),
+            Effect.ignore,
+            Effect.andThen(
+              Effect.suspend(
+                () => sessionNotificationHandlers.get(method)?.(params) ?? Effect.void,
+              ),
+            ),
+          ),
+        ),
+      { discard: true },
+    );
+
+    return {
+      ...runtime,
+      handleExtNotification: (method, payload, handler) =>
+        xAiSessionNotificationMethods.some((owned) => owned === method)
+          ? Effect.sync(() => {
+              sessionNotificationHandlers.set(method, (params) =>
+                Schema.decodeUnknownEffect(payload)(params).pipe(
+                  Effect.mapError((error) =>
+                    EffectAcpErrors.AcpProtocolParseError.fromSchemaError(
+                      "decode-notification-payload",
+                      method,
+                      error,
+                    ),
+                  ),
+                  Effect.flatMap(handler),
+                ),
+              );
+            })
+          : runtime.handleExtNotification(method, payload, handler),
+      prompt: Effect.fn("xaiAcpExtension.prompt")(function* (payload, promptOptions?) {
+        const started = yield* runtime.start();
+        const promptId = yield* allocatePromptFallbackId;
+        const fallback = yield* registerXAiPromptCompletionFallback(
+          pendingXAiPromptCompletionsRef,
+          started.sessionId,
+          promptId,
+        );
+        const cancelledResponse = promptResponseFromXAi({
+          sessionId: started.sessionId,
+          promptId: fallback.promptId,
+          stopReason: "cancelled",
+          agentResult: null,
+        });
+        const promptRpcFiber = yield* runtime
+          .prompt(
+            {
+              ...payload,
+              _meta: {
+                ...payload._meta,
+                promptId: fallback.promptId,
+                requestId: fallback.promptId,
+              },
+            },
+            promptOptions,
+          )
+          .pipe(Effect.forkChild);
+        return yield* Effect.raceFirst(
+          Fiber.join(promptRpcFiber).pipe(
+            Effect.catchCauseIf(
+              (cause) => Cause.hasInterruptsOnly(cause),
+              (_cause) => Effect.succeed(cancelledResponse),
+            ),
+          ),
+          Deferred.await(fallback.deferred),
+        ).pipe(
+          Effect.tap((response) =>
+            rememberCompletedXAiPromptId(completedXAiPromptIdsRef, response, fallback.promptId),
+          ),
+          Effect.ensuring(
+            Effect.gen(function* () {
+              yield* Fiber.interrupt(promptRpcFiber).pipe(Effect.ignore);
+              yield* unregisterXAiPromptCompletionFallback(
+                pendingXAiPromptCompletionsRef,
+                fallback.deferred,
+              );
+            }),
+          ),
+        );
+      }),
+      cancel: Effect.gen(function* () {
+        // Cancellation must bypass start so it can reach a stalled runtime.
+        yield* abortPendingPromptCompletions(pendingXAiPromptCompletionsRef);
+        yield* runtime.cancel;
+      }),
+    } satisfies AcpSessionRuntime.AcpSessionRuntime["Service"];
+  },
+);

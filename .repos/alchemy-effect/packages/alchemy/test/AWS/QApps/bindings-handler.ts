@@ -1,8 +1,8 @@
 import * as AWS from "@/AWS";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import { HttpServerRequest } from "effect/unstable/http/HttpServerRequest";
-import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
+import { HttpServerRequest } from "effect/http/HttpServerRequest";
+import * as HttpServerResponse from "effect/http/HttpServerResponse";
 
 export class QAppsTestFunction extends AWS.Lambda.Function<AWS.Lambda.Function>()(
   "QAppsTestFunction",
@@ -35,7 +35,7 @@ const QUERY_CARD_ID = "22222222-2222-4222-8222-222222222222";
  * QApp resource itself cannot exist without an entitled Q Business instance.
  */
 export default QAppsTestFunction.make(
-  { main: import.meta.url, url: true },
+  { main: import.meta.url, functionUrl: true },
   Effect.gen(function* () {
     const instanceId = yield* Effect.sync(
       () => process.env.QAPPS_INSTANCE_ID ?? "",

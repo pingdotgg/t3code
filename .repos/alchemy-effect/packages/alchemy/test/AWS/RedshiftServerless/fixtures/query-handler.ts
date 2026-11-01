@@ -3,8 +3,8 @@ import * as RedshiftData from "@/AWS/RedshiftData";
 import * as RedshiftServerless from "@/AWS/RedshiftServerless";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
-import { HttpServerRequest } from "effect/unstable/http/HttpServerRequest";
-import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
+import { HttpServerRequest } from "effect/http/HttpServerRequest";
+import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import path from "pathe";
 
 const main = path.resolve(import.meta.dirname, "query-handler.ts");
@@ -16,7 +16,7 @@ export class RedshiftQueryFunction extends Lambda.Function<Lambda.Function>()(
 export default RedshiftQueryFunction.make(
   {
     main,
-    url: true,
+    functionUrl: true,
     // Redshift Data statements are submitted then polled — allow generous
     // time for the composite query to finish.
     timeout: Duration.seconds(120),

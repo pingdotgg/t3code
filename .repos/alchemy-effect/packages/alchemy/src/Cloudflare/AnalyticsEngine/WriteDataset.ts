@@ -12,15 +12,16 @@ import type { Dataset as AnalyticsEngineDatasetLike } from "./Dataset.ts";
  * Context tag, its type, and the callable —
  * `yield* Cloudflare.AnalyticsEngine.WriteDataset(dataset)`.
  *
- * @binding
- * @product Analytics Engine
- * @category Observability & Analytics
  *
- * @example Write a data point inside a Worker
+ * **Example:** Write a data point inside a Worker
  * ```typescript
  * const analytics = yield* Cloudflare.AnalyticsEngine.WriteDataset(Dataset);
  * yield* analytics.writeDataPoint({ blobs: ["signup"] });
  * ```
+ *
+ * @binding
+ * @product Analytics Engine
+ * @category Observability & Analytics
  */
 export interface WriteDataset extends Binding.Service<
   WriteDataset,

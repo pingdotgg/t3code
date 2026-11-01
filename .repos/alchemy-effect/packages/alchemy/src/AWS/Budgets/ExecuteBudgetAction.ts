@@ -20,9 +20,8 @@ export interface ExecuteBudgetActionRequest extends Omit<
  * approves a pending kill-switch, or an automated recovery that reverses it
  * at the start of a new period. Provide the implementation with
  * `Effect.provide(AWS.Budgets.ExecuteBudgetActionHttp)`.
- * @binding
- * @section Executing Budget Actions
- * @example Approve a Pending Action
+ * ### Executing Budget Actions
+ * **Example:** Approve a Pending Action
  * ```typescript
  * // init — bind the operation to the action
  * const execute = yield* AWS.Budgets.ExecuteBudgetAction(action);
@@ -31,10 +30,12 @@ export interface ExecuteBudgetActionRequest extends Omit<
  * yield* execute({ ExecutionType: "APPROVE_BUDGET_ACTION" });
  * ```
  *
- * @example Reverse an Executed Action
+ * **Example:** Reverse an Executed Action
  * ```typescript
  * yield* execute({ ExecutionType: "REVERSE_BUDGET_ACTION" });
  * ```
+ *
+ * @binding
  */
 export interface ExecuteBudgetAction extends Binding.Service<
   ExecuteBudgetAction,

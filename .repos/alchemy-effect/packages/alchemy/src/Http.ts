@@ -2,18 +2,23 @@ import * as Cause from "effect/Cause";
 import * as Config from "effect/Config";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
+import * as ErrorReporter from "effect/ErrorReporter";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
-import type { Scope } from "effect/Scope";
-import type { HttpBodyError } from "effect/unstable/http/HttpBody";
-import type { HttpServerError } from "effect/unstable/http/HttpServerError";
-import { HttpServerRequest } from "effect/unstable/http/HttpServerRequest";
-import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
+import * as Scope from "effect/Scope";
+import type { HttpBodyError } from "effect/http/HttpBody";
+import {
+  causeResponse,
+  type HttpServerError,
+} from "effect/http/HttpServerError";
+import { HttpServerRequest } from "effect/http/HttpServerRequest";
+import * as HttpServerResponse from "effect/http/HttpServerResponse";
+import { ManagedHttpShutdown } from "./Runtime/Bootstrap/ManagedHttpShutdown.ts";
 
 export type HttpEffect<Req = never> = Effect.Effect<
   HttpServerResponse.HttpServerResponse,
   HttpServerError | HttpBodyError,
-  HttpServerRequest | Scope | Req
+  HttpServerRequest | Scope.Scope | Req
 >;
 
 /**
@@ -25,13 +30,13 @@ export type HttpEffect<Req = never> = Effect.Effect<
  */
 const scopeEjected = Symbol.for("effect/http/HttpEffect/scopeEjected");
 
-export const isScopeEjected = (scope: Scope) => scopeEjected in scope;
+export const isScopeEjected = (scope: Scope.Scope) => scopeEjected in scope;
 
 export const serve = <Req = never>(
   handler: Effect.Effect<
     HttpServerResponse.HttpServerResponse,
     HttpServerError | HttpBodyError,
-    HttpServerRequest | Scope | Req
+    HttpServerRequest | Scope.Scope | Req
   >,
 ) =>
   Effect.serviceOption(HttpServer).pipe(
@@ -62,7 +67,11 @@ export class HttpServer extends Context.Service<
       options?: {
         port?: number;
       },
-    ) => Effect.Effect<void, never, Exclude<Req, HttpServerRequest> | Scope>;
+    ) => Effect.Effect<
+      void,
+      never,
+      Exclude<Req, HttpServerRequest> | Scope.Scope
+    >;
   }
 >()("HttpServer") {}
 
@@ -71,7 +80,7 @@ export const safeHttpEffect = <Req = never>(
 ): Effect.Effect<
   HttpServerResponse.HttpServerResponse,
   never,
-  Req | HttpServerRequest | Scope
+  Req | HttpServerRequest | Scope.Scope
 > =>
   Effect.catchCause(
     handler.pipe(
@@ -82,33 +91,66 @@ export const safeHttpEffect = <Req = never>(
           : response,
       ),
     ) as any as HttpEffect<Req>,
-    (cause) => {
-      // ClientAbort interrupts are not real failures — the client closed
-      // the connection. Skip logging and respond with 499 if applicable.
-      if (Cause.hasInterruptsOnly(cause)) {
-        return Effect.succeed(HttpServerResponse.empty({ status: 499 }));
-      }
-      // Log the full cause server-side so operators can debug, but return
-      // a generic 500 to the client. Causes can contain sensitive data
-      // (prompt contents, API keys baked into error messages, internal
-      // file paths) and should never be echoed back to the network.
-      return Effect.logError("HTTP handler failed", cause).pipe(
-        Effect.as(
-          HttpServerResponse.text("Internal Server Error", {
-            status: 500,
-            statusText: "Internal Server Error",
-          }),
+    (cause) =>
+      // `causeResponse` is effect's native failure boundary: Respondable
+      // failures keep their intended response (e.g. RouteNotFound -> 404),
+      // client aborts map to 499, and everything else becomes an empty 500 —
+      // the cause is never echoed to the network, as it can contain sensitive
+      // data (prompt contents, API keys baked into error messages, internal
+      // file paths).
+      causeResponse(cause).pipe(
+        Effect.flatMap(([response, reportableCause]) =>
+          Effect.withFiber((fiber) =>
+            fiber.getRef(ErrorReporter.CurrentErrorReporters).size > 0
+              ? ErrorReporter.report(reportableCause)
+              : logUnreportedCause(reportableCause),
+          ).pipe(Effect.as(response)),
         ),
-      );
-    },
+      ),
   );
+
+/**
+ * No `ErrorReporter` is registered by default, so without a fallback a defect
+ * in a deployed Function/Worker would produce a bare 500 and vanish without a
+ * trace. Log the cause server-side so operators can debug, applying the same
+ * filtering `ErrorReporter.make` reporters do: interrupts (client aborts) and
+ * `ErrorReporter.ignore`-annotated values (Respondable errors like
+ * RouteNotFound, and the response `causeResponse` appends) are not failures
+ * and are skipped.
+ */
+const logUnreportedCause = (cause: Cause.Cause<unknown>) => {
+  const failures = cause.reasons.filter(
+    (reason) =>
+      reason._tag !== "Interrupt" &&
+      !ErrorReporter.isIgnored(
+        reason._tag === "Fail" ? reason.error : reason.defect,
+      ),
+  );
+  return failures.length === 0
+    ? Effect.void
+    : Effect.logError("HTTP handler failed", Cause.fromReasons(failures));
+};
 
 export const resolvePort = (options: { port?: number } | undefined) =>
   options?.port !== undefined
     ? Effect.succeed(options.port)
-    : Config.number("PORT").pipe(Config.withDefault(3000));
+    : Config.Number("PORT").pipe(Config.withDefault(3000));
 
-export const BunHttpServer = () =>
+export interface BunHttpServerOptions {
+  /**
+   * Network interface on which the Bun HTTP server listens.
+   *
+   * Always passed explicitly to `Bun.serve` so container bootstraps bind a
+   * predictable IPv4 wildcard regardless of the platform default
+   * (`@effect/platform-bun` ≥ 4.0.0-rc.115 defaults to `::`; rc.113/114
+   * crash-looped on the omitted-hostname case).
+   *
+   * @default "0.0.0.0"
+   */
+  hostname?: string;
+}
+
+export const BunHttpServer = (serverOptions?: BunHttpServerOptions) =>
   Layer.effect(
     HttpServer,
     Effect.gen(function* () {
@@ -119,14 +161,26 @@ export const BunHttpServer = () =>
         serve: (handler, options) =>
           Effect.gen(function* () {
             const port = yield* resolvePort(options);
-            const server = yield* BunHttpServerPlatform.make({ port });
+            const server = yield* BunHttpServerPlatform.make({
+              port,
+              hostname: serverOptions?.hostname ?? "0.0.0.0",
+            });
             yield* server.serve(safeHttpEffect(handler));
           }).pipe(Effect.orDie),
       };
     }),
   );
 
-export const NodeHttpServer = () =>
+export interface NodeHttpServerOptions {
+  /**
+   * Address the Node HTTP server binds. Fly / Hetzner / Railway machines
+   * need `0.0.0.0`; omit to use that default.
+   * @default "0.0.0.0"
+   */
+  hostname?: string;
+}
+
+export const NodeHttpServer = (serverOptions?: NodeHttpServerOptions) =>
   Layer.effect(
     HttpServer,
     Effect.gen(function* () {
@@ -138,11 +192,40 @@ export const NodeHttpServer = () =>
         serve: (handler, options) =>
           Effect.gen(function* () {
             const port = yield* resolvePort(options);
-            const server = yield* NodeHttpServerPlatform.make(
-              NodeHttp.createServer,
-              { port },
-            );
-            yield* server.serve(safeHttpEffect(handler));
+            const shutdown = yield* Effect.serviceOption(ManagedHttpShutdown);
+            const managed = Option.getOrUndefined(shutdown);
+            if (managed?.isStopping()) return yield* Effect.interrupt;
+            const serve = Effect.gen(function* () {
+              const server = yield* NodeHttpServerPlatform.make(
+                () => {
+                  const server = NodeHttp.createServer();
+                  managed?.servers.add(server);
+                  server.once("close", () => managed?.servers.delete(server));
+                  return server;
+                },
+                {
+                  port,
+                  host: serverOptions?.hostname ?? "0.0.0.0",
+                  gracefulShutdownTimeout: managed?.drainTimeoutMs,
+                },
+              );
+              // The Node bridge masks interruption, including streaming writes.
+              yield* managed
+                ? server.serve(safeHttpEffect(handler), (handled) =>
+                    Effect.withFiber((fiber) => {
+                      // Observe outside the adapter's request-scope finalization.
+                      managed.observeRequest(fiber);
+                      return Effect.interruptible(handled);
+                    }),
+                  )
+                : server.serve(safeHttpEffect(handler));
+            });
+            if (managed) {
+              const scope = yield* Scope.fork(managed.scope);
+              yield* serve.pipe(Scope.provide(scope));
+            } else {
+              yield* serve;
+            }
           }).pipe(Effect.orDie),
       };
     }),

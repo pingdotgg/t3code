@@ -143,7 +143,15 @@ test.provider(
   // client-cert API plus a ~90s spaced revoke poll — under a full concurrent
   // `./test/Cloudflare` run this contends with sibling cert suites, so give
   // headroom while staying bounded.
-  { timeout: 240_000 },
+  {
+    tags: [
+      "provider:cloudflare",
+      "provider:cloudflare:clientcertificate",
+      "provider:cloudflare:zone",
+      "live",
+    ],
+    timeout: 240_000,
+  },
 );
 
 test.provider(
@@ -215,7 +223,15 @@ test.provider(
   // of three serialized client-cert mutations. Under a full concurrent
   // `./test/Cloudflare` run this far exceeds the default 120s, so give real
   // headroom while every poll stays bounded.
-  { timeout: 300_000 },
+  {
+    tags: [
+      "provider:cloudflare",
+      "provider:cloudflare:clientcertificate",
+      "provider:cloudflare:zone",
+      "live",
+    ],
+    timeout: 300_000,
+  },
 );
 
 test.provider(
@@ -263,9 +279,20 @@ test.provider(
       expect(found).toBeDefined();
       expect(found?.zoneId).toEqual(zoneId);
       expect(found?.status).not.toEqual("revoked");
-    }).pipe(Effect.ensuring(stack.destroy().pipe(Effect.ignore)), logLevel),
+    }).pipe(
+      Effect.ensuring(stack.destroy().pipe(Effect.orDie).pipe(Effect.ignore)),
+      logLevel,
+    ),
   // `list()` fans out over every zone in the account and exhaustively
   // paginates each, plus a deploy on the per-zone-serialized client-cert API
   // — give headroom under a full concurrent `./test/Cloudflare` run.
-  { timeout: 180_000 },
+  {
+    tags: [
+      "provider:cloudflare",
+      "provider:cloudflare:clientcertificate",
+      "provider:cloudflare:zone",
+      "live",
+    ],
+    timeout: 180_000,
+  },
 );

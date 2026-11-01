@@ -1,0 +1,217 @@
+import { settlePromise, squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
+import { AsyncResult } from "effect/reactivity";
+import * as Dialog from "../../components/ui/Dialog";
+import { TextInputWrapper } from "expo-paste-input";
+import { AppTextInput as TextInput } from "../../components/ui/AppText";
+import { useNativePaste } from "../../lib/useNativePaste";
+import { convertPastedImagesToAttachments } from "../../lib/composerImages";
+import { PROVIDER_SEND_TURN_MAX_ATTACHMENTS, type UserInputQuestion } from "@t3tools/contracts";
+import { useAtomValue } from "@effect/atom-react";
+import { View } from "react-native";
+import { useEffect, useEffectEvent, useRef, useState } from "react";
+import { ComposerAttachmentButton } from "./ComposerAttachmentButton";
+import { ComposerAttachmentStrip } from "../../components/ComposerAttachmentStrip";
+import { pickComposerFiles, pickComposerMedia } from "../../lib/composerImages";
+import { useThreadSelection } from "../../state/use-thread-selection";
+import { useNavigation } from "@react-navigation/native";
+import { FilePreviewModal, type FilePreviewSource } from "../../components/FilePreviewModal";
+import { VideoPreviewModal, type VideoPreviewSource } from "../../components/VideoPreviewModal";
+import { useServerConfigs } from "../../state/entities";
+import { appAtomRegistry } from "../../state/atom-registry";
+import {
+  appendComposerDraftAttachments,
+  composerDraftsAtom,
+  removeComposerDraftAttachment,
+  releaseUnusedComposerAttachmentFiles,
+} from "../../state/use-composer-drafts";
+import {
+  changeQuestionAttachmentPreparation,
+  questionAttachmentDraftKey,
+  questionAttachmentPreparationAtom,
+} from "../../state/question-attachments";
+
+export function QuestionAttachments(props: {
+  requestId: string;
+  question: UserInputQuestion;
+  questions: ReadonlyArray<UserInputQuestion>;
+  disabled: boolean;
+  value: string;
+  onChangeText: (value: string) => void;
+  onInputFocusChange?: ((focused: boolean) => void) | undefined;
+}) {
+  const { selectedThread } = useThreadSelection();
+  const navigation = useNavigation();
+  const [previewFile, setPreviewFile] = useState<FilePreviewSource | null>(null);
+  const [previewVideo, setPreviewVideo] = useState<VideoPreviewSource | null>(null);
+  const configs = useServerConfigs();
+  const drafts = useAtomValue(composerDraftsAtom);
+  const focusedRef = useRef(false);
+  const onInputFocusChange = props.onInputFocusChange;
+  // The caller keys this component by request and question, so unmounting ends any open
+  // picker's scope.
+  const pickerScope = useRef<{ active: boolean }>({ active: false });
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- opens a scope that native picker and paste callbacks check, and closes it on unmount
+  useEffect(() => {
+    const scope = { active: true };
+    pickerScope.current = scope;
+    return () => {
+      scope.active = false;
+    };
+  }, []);
+  // Unmounted inputs never emit onBlur; explicitly release keyboard ownership.
+  const releaseFocus = useEffectEvent(() => {
+    if (focusedRef.current) onInputFocusChange?.(false);
+  });
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- releases keyboard ownership on unmount, since an unmounted native input never emits blur
+  useEffect(() => () => releaseFocus(), []);
+  const append = (
+    key: string,
+    attachments: Parameters<typeof appendComposerDraftAttachments>[1],
+  ) => {
+    if (!selectedThread) return 0;
+    const current = appAtomRegistry.get(composerDraftsAtom);
+    const otherCount = props.questions.reduce((count, question) => {
+      const target = questionAttachmentDraftKey(
+        selectedThread.environmentId,
+        selectedThread.id,
+        props.requestId,
+        question.id,
+      );
+      return target === key ? count : count + (current[target]?.attachments.length ?? 0);
+    }, 0);
+    return appendComposerDraftAttachments(key, attachments, {
+      maxAttachments: Math.max(0, PROVIDER_SEND_TURN_MAX_ATTACHMENTS - otherCount),
+    });
+  };
+  const paste = useNativePaste((uris) => {
+    const scope = pickerScope.current;
+    if (!selectedThread || props.disabled || !configs.get(selectedThread.environmentId)) return;
+    const key = questionAttachmentDraftKey(
+      selectedThread.environmentId,
+      selectedThread.id,
+      props.requestId,
+      props.question.id,
+    );
+    changeQuestionAttachmentPreparation(key, 1);
+    void convertPastedImagesToAttachments({
+      uris,
+      existingCount: appAtomRegistry.get(composerDraftsAtom)[key]?.attachments.length ?? 0,
+    })
+      .then(async (images) => {
+        if (
+          scope.active &&
+          (appAtomRegistry.get(questionAttachmentPreparationAtom)[key] ?? 0) > 0
+        ) {
+          if (append(key, images) > 0)
+            Dialog.alert("Could not paste image", "Too many attachments.");
+        } else await releaseUnusedComposerAttachmentFiles(images);
+      })
+      .catch((error) =>
+        Dialog.alert(
+          "Could not paste image",
+          error instanceof Error ? error.message : "Try again.",
+        ),
+      )
+      .finally(() => changeQuestionAttachmentPreparation(key, -1));
+  });
+  if (!selectedThread || props.question.allowCustomAnswer === false) return null;
+  const { environmentId, id: threadId } = selectedThread;
+  const capabilities = configs.get(environmentId)?.environment.capabilities;
+  const canAttach = capabilities !== undefined;
+  const key = questionAttachmentDraftKey(
+    environmentId,
+    threadId,
+    props.requestId,
+    props.question.id,
+  );
+  const attachments = drafts[key]?.attachments ?? [];
+  const pick = async (kind: "media" | "files") => {
+    const scope = pickerScope.current;
+    changeQuestionAttachmentPreparation(key, 1);
+    const picked = await settlePromise(async () => {
+      const existingCount = appAtomRegistry.get(composerDraftsAtom)[key]?.attachments.length ?? 0;
+      const result =
+        kind === "files"
+          ? await pickComposerFiles({
+              existingCount,
+              maxBytes: capabilities?.fileAttachments?.maxUploadBytes,
+            })
+          : await pickComposerMedia({
+              existingCount,
+              maxVideoBytes: capabilities?.fileAttachments?.maxUploadBytes,
+            });
+      const picked = "files" in result ? result.files : result.attachments;
+      // Resolution on another client clears the reservation while the picker is open.
+      if (
+        !scope.active ||
+        (appAtomRegistry.get(questionAttachmentPreparationAtom)[key] ?? 0) === 0
+      ) {
+        await releaseUnusedComposerAttachmentFiles(picked);
+        return;
+      }
+      const rejected = append(key, picked);
+      if (result.error || rejected > 0)
+        Dialog.alert("Could not attach file", result.error ?? "Too many attachments.");
+    });
+    changeQuestionAttachmentPreparation(key, -1);
+    if (AsyncResult.isFailure(picked)) {
+      const error = squashAtomCommandFailure(picked);
+      Dialog.alert("Could not attach file", error instanceof Error ? error.message : "Try again.");
+    }
+  };
+  return (
+    <View className="gap-2">
+      {canAttach ? (
+        <ComposerAttachmentButton
+          disabled={props.disabled}
+          supportsFiles
+          onPickMedia={() => pick("media")}
+          onPickFiles={() => pick("files")}
+        />
+      ) : null}
+      <ComposerAttachmentStrip
+        environmentId={environmentId}
+        attachments={attachments}
+        onRemove={(id) => {
+          if (!props.disabled) removeComposerDraftAttachment(key, id);
+        }}
+        onPressPreview={setPreviewFile}
+        onPressVideo={(attachment, sourceIdentifier) =>
+          setPreviewVideo({ type: "local", attachment, sourceIdentifier })
+        }
+        onPressDocument={(attachment) =>
+          navigation.navigate("ThreadAttachment", {
+            environmentId: String(environmentId),
+            threadId: String(threadId),
+            attachmentId: attachment.id,
+            name: attachment.name,
+            mimeType: attachment.mimeType,
+            sizeBytes: String(attachment.sizeBytes),
+            draftKey: key,
+          })
+        }
+      />
+      <FilePreviewModal source={previewFile} onRequestClose={() => setPreviewFile(null)} />
+      <VideoPreviewModal source={previewVideo} onRequestClose={() => setPreviewVideo(null)} />
+      <TextInputWrapper onPaste={paste}>
+        <TextInput
+          value={props.value}
+          multiline={props.question.initialAnswer !== undefined}
+          submitBehavior={props.question.initialAnswer !== undefined ? "newline" : undefined}
+          editable={!props.disabled}
+          onChangeText={props.onChangeText}
+          onFocus={() => {
+            focusedRef.current = true;
+            onInputFocusChange?.(true);
+          }}
+          onBlur={() => {
+            focusedRef.current = false;
+            onInputFocusChange?.(false);
+          }}
+          placeholder="Or type a custom answer"
+          className="min-h-[54px] rounded-2xl border border-input-border bg-input px-3.5 py-3 font-sans text-base text-foreground"
+        />
+      </TextInputWrapper>
+    </View>
+  );
+}

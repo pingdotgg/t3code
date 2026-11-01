@@ -1,0 +1,215 @@
+---
+title: Drizzle + Aurora PostgreSQL
+description: Drizzle on Lambda with private Aurora PostgreSQL, IAM authentication, verified TLS, and reviewed SQL migrations.
+---
+
+[Runnable example](https://github.com/alchemy-run/alchemy/tree/main/examples/aws-aurora-drizzle) · [AWS setup](/aws/setup) · [Aurora DSQL instead](/aws/data/drizzle-dsql)
+
+## Prerequisites
+
+```sh
+git clone https://github.com/alchemy-run/alchemy.git
+cd alchemy
+pnpm install
+cd examples/aws-aurora-drizzle
+```
+
+The example uses `us-west-2`, Aurora PostgreSQL 17.5, and Node.js 22. Change both subnet availability zones if you change region. Application queries use Effect-native Drizzle over `pg`, not the RDS Data API driver; [SQL databases](/sql/databases) compares the integrations.
+
+:::caution
+Aurora is billable until destroyed. This example is disposable: destroy deletes its database data.
+:::
+
+## Provision a private database
+
+```typescript
+const aurora = yield* AWS.RDS.Aurora("Database", {
+  databaseName: "app",
+  engine: "aurora-postgresql",
+  engineVersion: "17.5",
+  subnetIds,
+  securityGroupIds: [dbSecurityGroup.groupId],
+  secret: { username: "dbadmin" },
+  dataApi: true,
+  cluster: {
+    enableIAMDatabaseAuthentication: true,
+    serverlessV2ScalingConfiguration: { MinCapacity: 0.5, MaxCapacity: 1 },
+  },
+  instance: { dbInstanceClass: "db.serverless", publiclyAccessible: false },
+});
+```
+
+[Network setup](https://github.com/alchemy-run/alchemy/blob/main/examples/aws-aurora-drizzle/src/database.ts) allows port 5432 only from the Lambda's security group. [Aurora options](/aws/data/rds).
+
+## Initialize the schema during deployment
+
+```typescript
+import { bootstrap } from "./bootstrap.ts";
+
+const schemaVersion = yield* bootstrap;
+```
+
+The [deployment Action](https://github.com/alchemy-run/alchemy/blob/main/examples/aws-aurora-drizzle/src/bootstrap.ts) creates `todos` and the restricted `app_iam` login through the Data API. This is initial setup only, not a versioned migration runner. The application role gets table CRUD but cannot create objects in `public`.
+
+## Bind the application identity
+
+```typescript
+const connect = yield* AWS.RDS.Connect(aurora.cluster, {
+  auth: "iam",
+  username: "app_iam",
+  database: "app",
+  subnetIds,
+  securityGroupIds: [lambdaSecurityGroup.groupId],
+});
+```
+
+Provide `AWS.RDS.ConnectHttp` on the Lambda Effect. The binding attaches Lambda to the VPC and grants `rds-db:connect` for `app_iam`; runtime authentication signs an IAM token rather than reading the administrator secret. [Complete handler](https://github.com/alchemy-run/alchemy/blob/main/examples/aws-aurora-drizzle/src/Api.ts).
+
+## Verify the database certificate
+
+Set the Lambda environment:
+
+```typescript
+env: { NODE_EXTRA_CA_CERTS: "/var/runtime/ca-cert.pem" }
+```
+
+The RDS binding currently emits `sslmode=no-verify`. Override it to require certificate and hostname verification:
+
+```typescript
+import * as Drizzle from "alchemy/Drizzle/Postgres";
+import * as Effect from "effect/Effect";
+import * as Redacted from "effect/Redacted";
+
+const db = yield* Drizzle.Postgres(
+  connect.pipe(
+    Effect.map((connection) => {
+      const url = new URL(Redacted.value(connection.url));
+      url.searchParams.set("sslmode", "verify-full");
+      return Redacted.make(url.toString());
+    }),
+  ),
+);
+```
+
+The CA path is specific to [managed Lambda Node.js runtimes](https://docs.aws.amazon.com/lambda/latest/dg/lambda-nodejs.html#nodejs-certificate-loading). The connection stays lazy: the first query resolves the redacted URL and opens a pool scoped to that invocation, which closes when its scope ends.
+
+## Package the driver
+
+```sh
+pnpm add alchemy effect@4.0.0-rc.115 @effect/sql-pg@4.0.0-rc.115 \
+  drizzle-orm@1.0.0-rc.5-ab785fc pg
+pnpm add -D @types/pg
+```
+
+```typescript
+build: { install: ["pg"] }
+```
+
+`build.install` keeps the CommonJS `pg` package intact in the Lambda artifact.
+
+## Query with Drizzle
+
+```typescript
+const rows = yield* db.select().from(todos);
+```
+
+[Schema and queries](/sql/drizzle/postgres) · [Connection lifecycle](/sql/effect-sql/lifecycle)
+
+## Deploy and invoke
+
+```sh
+pnpm deploy --profile testing --stage aurora-example
+aws lambda invoke --region us-west-2 \
+  --function-name '<functionName>' \
+  --cli-binary-format raw-in-base64-out \
+  --payload file://health-event.json response.json
+```
+
+Use the printed function name. The Function URL requires [SigV4-signed requests](https://github.com/alchemy-run/alchemy/blob/main/examples/aws-aurora-drizzle/test/integ.test.ts).
+
+## Evolve the schema
+
+The example's bootstrap does not alter existing tables or maintain Drizzle migration history. Before adopting generated migrations for an already-bootstrapped database, establish a reviewed baseline matching the existing schema; do not replay an initial `CREATE TABLE` migration over it.
+
+### Configure SQL generation
+
+```sh
+pnpm add -D drizzle-kit@1.0.0-rc.5-ab785fc
+```
+
+```typescript
+// drizzle.config.ts
+import { defineConfig } from "drizzle-kit";
+
+export default defineConfig({
+  dialect: "postgresql",
+  schema: "./src/schema.ts",
+  out: "./migrations",
+});
+```
+
+Generation compares the [schema module](https://github.com/alchemy-run/alchemy/blob/main/examples/aws-aurora-drizzle/src/schema.ts) with local snapshots and does not need a database connection.
+
+### Generate after a schema change
+
+```sh
+pnpm exec drizzle-kit generate --config=drizzle.config.ts
+```
+
+Run this whenever `src/schema.ts` changes, before deployment. Do not put SQL generation in a deploy hook.
+
+### Review and commit the migration
+
+```sh
+git add src/schema.ts drizzle.config.ts migrations/
+git diff --cached -- src/schema.ts drizzle.config.ts migrations/
+git commit -m "feat(db): update Aurora schema and migration"
+```
+
+Review the staged SQL, snapshots, destructive operations, and rename decisions before committing. Commit the entire generated migration directory with the schema. The release process consumes committed SQL; deployment must not generate or silently rewrite it.
+
+### Configure the migration connection
+
+```typescript
+// drizzle.migrate.config.ts
+import { defineConfig } from "drizzle-kit";
+import config from "./drizzle.config.ts";
+
+const url = process.env.DATABASE_URL;
+if (!url) throw new Error("DATABASE_URL is required for migrations");
+
+export default defineConfig({
+  ...config,
+  dbCredentials: { url },
+});
+```
+
+Inject a migration-role PostgreSQL URL for the `app` database through the runner's secret store, using `sslmode=verify-full` and the RDS CA trust bundle. The runner needs its own network route and security-group access to the private cluster; Lambda's binding grants neither to a laptop or CI job. Keep this DDL-capable identity separate from `app_iam`.
+
+### Apply the committed SQL
+
+```sh
+pnpm exec drizzle-kit migrate --config=drizzle.migrate.config.ts
+```
+
+Run from the authorized migration runner before releasing code that requires the new schema. Keep an existing `drizzle-kit migrate` workflow; `alchemy deploy` is not its replacement. Neither `AWS.RDS.Aurora` nor `AWS.RDS.DBCluster` accepts a `migrations` prop, and the example's Action only performs its explicit bootstrap SQL.
+
+## Run the integration test
+
+```sh
+AWS_TEST_SLOW=1 ALCHEMY_PROFILE=testing bun test test/integ.test.ts
+```
+
+This deploys real AWS resources and destroys them afterward; provisioning and cleanup take several minutes.
+
+## Clean up
+
+```sh
+pnpm destroy --profile testing --stage aurora-example
+```
+
+Wait for deletion to finish. Reuse the same profile and stage if cleanup is interrupted.
+
+## Next steps
+
+[SQL databases](/sql/databases) · [Aurora configuration](/aws/data/rds) · [Lambda](/aws/compute/lambda)

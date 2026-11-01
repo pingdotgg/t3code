@@ -19,6 +19,7 @@ export const createPhysicalName = Effect.fn(function* ({
   maxLength = 64,
   delimiter = "-",
   lowercase = false,
+  forbiddenPrefixes = [],
 }: {
   id: string;
   /**
@@ -46,6 +47,14 @@ export const createPhysicalName = Effect.fn(function* ({
   delimiter?: string;
   /** Whether to lowercase the physical name. @default false */
   lowercase?: boolean;
+  /**
+   * Service-reserved name prefixes (matched case-insensitively). When the
+   * generated prefix would start with one of these — e.g. a stack named
+   * `aws-*` colliding with S3 Tables' reserved `aws` bucket prefix — a safe
+   * `x${delimiter}` is prepended so the name stays valid. Names that don't
+   * collide are unaffected, so existing deployments never rename.
+   */
+  forbiddenPrefixes?: string[];
 }) {
   // Always generate DNS-compatible names (letters, numbers, and hyphens only).
   // This ensures physical names work across all services including S3 buckets.
@@ -56,8 +65,15 @@ export const createPhysicalName = Effect.fn(function* ({
     );
   const stack = yield* Stack;
   const stage = yield* Stage;
-  const prefix =
+  let prefix =
     _prefix ?? `${stack.name}${delimiter}${id}${delimiter}${stage}${delimiter}`;
+  if (
+    forbiddenPrefixes.some((forbidden) =>
+      prefix.toLowerCase().startsWith(forbidden.toLowerCase()),
+    )
+  ) {
+    prefix = `x${delimiter}${prefix}`;
+  }
   const randomId = base32(
     Buffer.from(instanceId ?? (yield* InstanceId), "hex"),
   );

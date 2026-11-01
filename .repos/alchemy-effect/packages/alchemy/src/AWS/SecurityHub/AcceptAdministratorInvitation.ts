@@ -9,9 +9,8 @@ import * as Binding from "../../Binding.ts";
  * Account-level operation — invoked with the caller's request as-is.
  * Provide the implementation with
  * `Effect.provide(AWS.SecurityHub.AcceptAdministratorInvitationHttp)`.
- * @binding
- * @section Members & Organization
- * @example Accept an Administrator Invitation
+ * ### Members & Organization
+ * **Example:** Accept an Administrator Invitation
  * ```typescript
  * // init — account-level binding, no resource argument
  * const acceptAdministratorInvitation = yield* AWS.SecurityHub.AcceptAdministratorInvitation();
@@ -22,6 +21,8 @@ import * as Binding from "../../Binding.ts";
  *   InvitationId: invitationId,
  * });
  * ```
+ *
+ * @binding
  */
 export interface AcceptAdministratorInvitation extends Binding.Service<
   AcceptAdministratorInvitation,

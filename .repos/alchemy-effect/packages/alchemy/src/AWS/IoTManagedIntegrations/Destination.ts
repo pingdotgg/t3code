@@ -71,9 +71,8 @@ export interface Destination extends Resource<
  * IoT Managed Integrations is a regional service available in a limited set
  * of regions (e.g. `eu-west-1`, `ca-central-1`).
  *
- * @resource
- * @section Creating Destinations
- * @example Kinesis Destination
+ * ### Creating Destinations
+ * **Example:** Kinesis Destination
  * ```typescript
  * const stream = yield* Kinesis.Stream("Events", {});
  * const role = yield* IAM.Role("DeliveryRole", {
@@ -94,6 +93,8 @@ export interface Destination extends Resource<
  *   description: "Managed integrations device events",
  * });
  * ```
+ *
+ * @resource
  */
 export const Destination = Resource<Destination>(
   "AWS.IoTManagedIntegrations.Destination",

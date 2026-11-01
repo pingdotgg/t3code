@@ -21,9 +21,8 @@ export interface SendTextMessageRequest extends Omit<
  * the runtime half injects its ARN as the request's `OriginationIdentity`.
  * Provide the implementation with
  * `Effect.provide(AWS.PinpointSMSVoiceV2.SendTextMessageHttp)`.
- * @binding
- * @section Sending Text Messages
- * @example Send an SMS from a Lambda
+ * ### Sending Text Messages
+ * **Example:** Send an SMS from a Lambda
  * ```typescript
  * // init — lease a number and bind the send operation
  * const number = yield* AWS.PinpointSMSVoiceV2.PhoneNumber("Sender", {
@@ -41,6 +40,8 @@ export interface SendTextMessageRequest extends Omit<
  *   MessageType: "TRANSACTIONAL",
  * });
  * ```
+ *
+ * @binding
  */
 export interface SendTextMessage extends Binding.Service<
   SendTextMessage,

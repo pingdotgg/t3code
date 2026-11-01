@@ -80,11 +80,8 @@ export type Snippet = Resource<
  * state, `read` looks the snippet up by name and reports an existing match
  * as `Unowned`, so the engine refuses to take it over unless `--adopt`
  * (or `adopt(true)`) is set.
- * @resource
- * @product Snippets
- * @category Rules & Configuration
- * @section Creating a Snippet
- * @example Add a response header
+ * ### Creating a Snippet
+ * **Example:** Add a response header
  * ```typescript
  * const snippet = yield* Cloudflare.Snippets.Snippet("HeaderSnippet", {
  *   zoneId: zone.zoneId,
@@ -101,8 +98,8 @@ export type Snippet = Resource<
  * });
  * ```
  *
- * @section Activating with Snippet Rules
- * @example Route traffic through the snippet
+ * ### Activating with Snippet Rules
+ * **Example:** Route traffic through the snippet
  * ```typescript
  * yield* Cloudflare.Snippets.SnippetRules("Rules", {
  *   zoneId: zone.zoneId,
@@ -114,6 +111,10 @@ export type Snippet = Resource<
  *   ],
  * });
  * ```
+ *
+ * @resource
+ * @product Snippets
+ * @category Rules & Configuration
  */
 export const Snippet = Resource<Snippet>("Cloudflare.Snippets.Snippet");
 
@@ -139,18 +140,16 @@ export const SnippetProvider = () =>
             Stream.runCollect,
             Effect.map((chunk) =>
               Array.from(chunk).flatMap((page) =>
-                (page.result ?? []).map(
-                  (s): SnippetAttributes => ({
-                    name: s.snippetName,
-                    zoneId: zone.id,
-                    // The list response carries no main module; snippets
-                    // upload under the engine default and `read` falls
-                    // back to it too, so report the same here.
-                    mainModule: DEFAULT_MAIN_MODULE,
-                    createdOn: s.createdOn,
-                    modifiedOn: s.modifiedOn ?? undefined,
-                  }),
-                ),
+                (page.result ?? []).map((s): SnippetAttributes => ({
+                  name: s.snippetName,
+                  zoneId: zone.id,
+                  // The list response carries no main module; snippets
+                  // upload under the engine default and `read` falls
+                  // back to it too, so report the same here.
+                  mainModule: DEFAULT_MAIN_MODULE,
+                  createdOn: s.createdOn,
+                  modifiedOn: s.modifiedOn ?? undefined,
+                })),
               ),
             ),
             // Plan-gated / partial-permission zones reject the route; skip.

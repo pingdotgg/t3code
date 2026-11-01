@@ -1,17 +1,26 @@
-import type { EnvironmentId, VcsRef, ProjectId } from "@t3tools/contracts";
+import type {
+  EnvironmentId,
+  EnvironmentMachineKind,
+  VcsRef,
+  ProjectId,
+  WorktreeSubmodules,
+} from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
-import { toSortableTimestamp } from "../lib/threadSort";
-export {
-  dedupeRemoteBranchesWithLocalMatches,
-  deriveLocalBranchNameFromRemoteRef,
-} from "@t3tools/shared/git";
+import { sanitizeNewRefName } from "@t3tools/shared/git";
+import { toSortableTimestamp } from "@t3tools/client-runtime/state/thread-sort";
+export { deriveLocalBranchNameFromRemoteRef, sanitizeNewRefName } from "@t3tools/shared/git";
 
 export interface EnvironmentOption {
   environmentId: EnvironmentId;
-  projectId: ProjectId;
+  projectId: ProjectId | null;
   label: string;
   isPrimary: boolean;
+  machine: EnvironmentMachineKind;
 }
+
+/** "Add to another machine" stays muted until hovered: easy to find, quieter than the machines. */
+export const ADD_TO_MACHINE_LABEL_CLASS =
+  "flex min-w-0 items-center gap-1.5 opacity-55 in-data-highlighted:opacity-100 in-data-popup-open:opacity-100";
 
 export const EnvMode = Schema.Literals(["local", "worktree"]);
 export type EnvMode = typeof EnvMode.Type;
@@ -43,9 +52,6 @@ export function resolveEnvironmentOptionLabel(input: {
   return runtimeLabel ?? savedLabel ?? input.environmentId;
 }
 
-// A remote (non-primary) environment is always surfaced, even when it is the
-// only environment available: with a single connected machine there is nothing
-// to pick, but the user still needs to see where the project runs.
 export function shouldShowEnvironmentIndicator(input: {
   activeEnvironment: Pick<EnvironmentOption, "isPrimary"> | null;
   canPickEnvironment: boolean;
@@ -55,23 +61,53 @@ export function shouldShowEnvironmentIndicator(input: {
 }
 
 export function shouldShowComposerContextStrip(input: {
+  isDraftHeroState: boolean;
+  persistInActiveThreads: boolean;
   hasActiveProject: boolean;
   isGitRepo: boolean;
   showEnvironmentIndicator: boolean;
 }): boolean {
-  return input.hasActiveProject && (input.isGitRepo || input.showEnvironmentIndicator);
+  // A new thread always shows the strip, since it names the permissions the first send uses.
+  return (
+    input.hasActiveProject &&
+    (input.isDraftHeroState ||
+      (input.persistInActiveThreads && (input.isGitRepo || input.showEnvironmentIndicator)))
+  );
+}
+
+// Hysteresis prevents labels and icons from flapping at the width boundary.
+const CONTEXT_STRIP_COMPACT_EXPAND_HYSTERESIS_PX = 16;
+
+export function resolveContextStripLabelsCompact(input: {
+  compact: boolean;
+  neededWidth: number;
+  availableWidth: number;
+}): boolean {
+  return input.compact
+    ? input.neededWidth > input.availableWidth - CONTEXT_STRIP_COMPACT_EXPAND_HYSTERESIS_PX
+    : input.neededWidth > input.availableWidth;
 }
 
 export function resolveEnvModeLabel(mode: EnvMode): string {
   return mode === "worktree" ? "New worktree" : "Current checkout";
 }
 
+export const WORKTREE_SUBMODULES_LABELS: Record<WorktreeSubmodules, string> = {
+  recursive: "Recursive",
+  "top-level": "Top level only",
+  none: "Skip",
+};
+
 export function resolveCurrentWorkspaceLabel(activeWorktreePath: string | null): string {
   return activeWorktreePath ? "Current worktree" : resolveEnvModeLabel("local");
 }
 
-export function resolveLockedWorkspaceLabel(activeWorktreePath: string | null): string {
-  return activeWorktreePath ? "Worktree" : "Local checkout";
+export function resolveLockedWorkspaceLabel(
+  activeWorktreePath: string | null,
+  effectiveEnvMode: EnvMode,
+): string {
+  if (activeWorktreePath) return "Worktree";
+  return effectiveEnvMode === "worktree" ? resolveEnvModeLabel("worktree") : "Local checkout";
 }
 
 export interface PreviousWorktreeSeed {
@@ -79,11 +115,6 @@ export interface PreviousWorktreeSeed {
   worktreePath: string;
 }
 
-// The most recently touched worktree in the project that the composer isn't
-// already pointing at. Backs the "Previous worktree" entry in the workspace
-// selector so a follow-up thread can hop back into the worktree you just
-// worked in without hunting for its branch. Archived threads don't compete —
-// the rest of the UI hides them, so their worktrees shouldn't resurface here.
 export function resolvePreviousWorktreeSeed(input: {
   threads: ReadonlyArray<{
     branch: string | null;
@@ -125,15 +156,16 @@ export function resolveEffectiveEnvMode(input: {
   activeWorktreePath: string | null;
   hasServerThread: boolean;
   draftThreadEnvMode: EnvMode | undefined;
+  preparingWorktree?: boolean;
 }): EnvMode {
-  const { activeWorktreePath, hasServerThread, draftThreadEnvMode } = input;
+  const { activeWorktreePath, hasServerThread, draftThreadEnvMode, preparingWorktree } = input;
   if (!hasServerThread) {
     if (activeWorktreePath) {
       return "local";
     }
     return draftThreadEnvMode === "worktree" ? "worktree" : "local";
   }
-  return activeWorktreePath ? "worktree" : "local";
+  return activeWorktreePath || preparingWorktree ? "worktree" : "local";
 }
 
 export function resolveDraftEnvModeAfterBranchChange(input: {
@@ -182,11 +214,10 @@ export function resolveBranchTriggerLabel(input: {
     return "Select ref";
   }
   if (effectiveEnvMode === "worktree" && !activeWorktreePath) {
-    const baseRef =
-      startFromOrigin && resolvedActiveBranchIsRemote === false
-        ? `origin/${resolvedActiveBranch}`
-        : resolvedActiveBranch;
-    return `From ${baseRef}`;
+    // Only the server can determine a local branch's configured remote.
+    return startFromOrigin && resolvedActiveBranchIsRemote === false
+      ? `From ${resolvedActiveBranch} (remote)`
+      : `From ${resolvedActiveBranch}`;
   }
   return resolvedActiveBranch;
 }
@@ -243,19 +274,6 @@ export function resolveBranchSelectionTarget(input: {
   };
 }
 
-// Git rejects ASCII space and the ASCII control characters (tab, newline and
-// friends) in ref names, so the picker's "Create new ref" entry can only fail
-// for a typed name like "new branch". Replacing runs of those with a dash makes
-// the name usable without reimplementing check-ref-format: names invalid for
-// other reasons still surface the git error. Only the whitespace git actually
-// rejects is replaced — git accepts U+00A0 and friends, and rewriting those
-// would silently create a ref the user never asked for. Case and existing
-// dashes are left alone, since ref names are case sensitive and consecutive
-// dashes are valid.
-export function sanitizeNewRefName(rawName: string): string {
-  return rawName.trim().replace(/[ \t\n\r\f\v]+/g, "-");
-}
-
 export function shouldIncludeBranchPickerItem(input: {
   itemValue: string;
   normalizedQuery: string;
@@ -281,9 +299,6 @@ export function shouldIncludeBranchPickerItem(input: {
     return true;
   }
 
-  // A query containing whitespace can only ever match a ref under its sanitized
-  // name, because that is the name such a ref would have been created with.
-  // Without this, typing "new branch" hides an existing "new-branch".
   const sanitizedQuery = sanitizeNewRefName(normalizedQuery);
   return (
     sanitizedQuery.length > 0 &&

@@ -1,49 +1,53 @@
+import { RefreshIcon } from "~/components/ui/refresh-icon";
 import type {
   ContextMenuItem as TreeContextMenuItem,
   ContextMenuOpenContext as TreeContextMenuOpenContext,
 } from "@pierre/trees";
 import type { EnvironmentId, ProjectEntry } from "@t3tools/contracts";
-import { FileTree, useFileTree, useFileTreeSearch } from "@pierre/trees/react";
+import { FileTree, useFileTree, useFileTreeSearch, useFileTreeSelector } from "@pierre/trees/react";
+import { settlePromise } from "@t3tools/client-runtime/state/runtime";
 import { serializeComposerFileLink } from "@t3tools/shared/composerTrigger";
-import { RotateCw } from "lucide-react";
-import { useEffect, useMemo, useRef } from "react";
+import * as AsyncResult from "effect/reactivity/AsyncResult";
+import * as Cause from "effect/Cause";
+import { ChevronsDownUp, ChevronsUpDown } from "lucide";
+import { useEffect, useRef, useState } from "react";
 
 import { Button } from "~/components/ui/button";
 import { InputGroup, InputGroupInput } from "~/components/ui/input-group";
+import { MorphIcon } from "~/components/MorphIcon";
 import { toastManager } from "~/components/ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
 import { useComposerHandleContext } from "~/composerHandleContext";
 import { writeTextToClipboard } from "~/hooks/useCopyToClipboard";
+import { useStableCallback } from "~/hooks/useStableCallback";
 import { useTheme } from "~/hooks/useTheme";
-import { cn } from "~/lib/utils";
+import { useWorkspaceMutationRefresh } from "~/hooks/useWorkspaceMutationRefresh";
+import { useFileContextMenu, type FileContextMenuAction } from "~/fileContextMenu";
 import { readLocalApi } from "~/localApi";
 import { T3_PIERRE_ICONS } from "~/pierre-icons";
+import { PIERRE_TREE_UNSAFE_CSS, pierreTreeStyle } from "~/pierre-tree-theme";
 
+import { joinHostPath } from "./filePath";
 import { createFileTreeDragMentionController } from "./fileTreeDragMention";
-import { useProjectEntriesQuery } from "./projectFilesQueryState";
+import { areAllDirectoriesExpanded, setAllDirectoriesExpanded } from "./fileTreeExpansion";
+import { buildFileTreePathUpdates } from "./fileTreePathReconciliation";
+import { loadFileAncestors } from "./loadFileAncestors";
+import { useDirectoryEntries } from "./useDirectoryEntries";
+import { useProjectPathSearch } from "~/state/queries";
 
 interface FileBrowserPanelProps {
   environmentId: EnvironmentId;
   cwd: string;
   projectName: string;
-  /** File currently open in the preview pane; revealed and selected in the tree. */
   selectedPath: string | null;
-  /** Bumped when the same path should be revealed again (e.g. re-opened from search). */
   selectedPathRevealId: number;
   onOpenFile: (relativePath: string) => void;
+  /** Host-folder entries use absolute paths. Avoid full traversal: disable expand-all and search only
+   * loaded folders. */
+  hostFolder?: boolean;
+  onRefreshSelectedFile?: () => void;
+  workspaceMutationId: string | null;
 }
-
-const TREE_UNSAFE_CSS = `
-  :host {
-    --trees-bg-override: transparent;
-    --trees-selected-bg-override: color-mix(in srgb, currentColor 12%, transparent);
-    --trees-hover-bg-override: color-mix(in srgb, currentColor 7%, transparent);
-    --trees-border-color-override: color-mix(in srgb, currentColor 14%, transparent);
-    --trees-font-family-override: var(--font-sans);
-    --trees-font-size-override: 12px;
-  }
-  button[data-type='item'] { border-radius: 5px; }
-`;
 
 function treePath(entry: ProjectEntry): string {
   return entry.kind === "directory" ? `${entry.path}/` : entry.path;
@@ -63,7 +67,7 @@ function RefreshFilesButton(props: { isPending: boolean; onRefresh: () => void }
           />
         }
       >
-        <RotateCw className={cn(props.isPending && "animate-spin")} />
+        <RefreshIcon refreshing={props.isPending} />
       </TooltipTrigger>
       <TooltipPopup>{props.isPending ? "Refreshing…" : "Refresh files"}</TooltipPopup>
     </Tooltip>
@@ -86,6 +90,7 @@ function FileSearchField(props: {
         value={props.value}
         aria-label={props.ariaLabel}
         placeholder="Search files"
+        data-workspace-focus-default
         spellCheck={false}
         onChange={(event) => props.onValueChange(event.target.value)}
         onKeyDown={(event) => {
@@ -98,6 +103,36 @@ function FileSearchField(props: {
   );
 }
 
+function buildTreeEntries(
+  directoryEntries: readonly ProjectEntry[],
+  searchEntries: readonly ProjectEntry[],
+  searchPending: boolean,
+  query: string,
+) {
+  const result = new Map(directoryEntries.map((entry) => [entry.path, entry]));
+  if (query.trim() && !searchPending) {
+    for (const entry of searchEntries) {
+      if (!result.has(entry.path)) result.set(entry.path, entry);
+      const segments = entry.path.split("/");
+      for (let index = 1; index < segments.length; index++) {
+        const path = segments.slice(0, index).join("/");
+        if (!result.has(path)) result.set(path, { path, kind: "directory" });
+      }
+    }
+  }
+  const entries = [...result.values()];
+  const entryKinds: ReadonlyMap<string, ProjectEntry["kind"]> = new Map(
+    entries.map((entry) => [entry.path, entry.kind] as const),
+  );
+  const treePaths = entries.map(treePath);
+  const directories = entries.filter((entry) => entry.kind === "directory");
+  const directoryPaths = directories.map(treePath);
+  // Expanding a folder lists it, and an ignored one such as `node_modules` can hold tens of
+  // thousands, so expand all skips ignored folders. They still open by hand.
+  const expandableDirectoryPaths = directories.filter((entry) => !entry.ignored).map(treePath);
+  return { entries, entryKinds, treePaths, directoryPaths, expandableDirectoryPaths };
+}
+
 export default function FileBrowserPanel({
   environmentId,
   cwd,
@@ -105,186 +140,300 @@ export default function FileBrowserPanel({
   selectedPath,
   selectedPathRevealId,
   onOpenFile,
+  onRefreshSelectedFile,
+  workspaceMutationId,
+  hostFolder = false,
 }: FileBrowserPanelProps) {
+  const panelPath = (relativePath: string) =>
+    hostFolder ? joinHostPath(cwd, relativePath) : relativePath;
   const { resolvedTheme } = useTheme();
   const composerRef = useComposerHandleContext();
-  const entriesQuery = useProjectEntriesQuery(environmentId, cwd);
-  const entries = entriesQuery.data?.entries ?? [];
-  const entryKinds = useMemo(
-    () => new Map(entries.map((entry) => [entry.path, entry.kind] as const)),
-    [entries],
+  const fileContextMenu = useFileContextMenu(environmentId);
+  const {
+    entries: directoryEntries,
+    load,
+    refresh,
+    ready,
+    error,
+    isPending,
+    loadingDirectories,
+  } = useDirectoryEntries(environmentId, cwd);
+  const [query, setQuery] = useState("");
+  const [expandAll, setExpandAll] = useState(false);
+  const pathSearch = useProjectPathSearch(
+    { environmentId, cwd: hostFolder ? null : cwd, query: query.slice(0, 256) },
+    200,
   );
-  const entryKindsRef = useRef<ReadonlyMap<string, ProjectEntry["kind"]>>(entryKinds);
-  const treePaths = useMemo(() => entries.map(treePath), [entries]);
-  const previousTreePathsRef = useRef<readonly string[]>([]);
+  const { entries, entryKinds, treePaths, directoryPaths, expandableDirectoryPaths } =
+    buildTreeEntries(directoryEntries, pathSearch.entries, pathSearch.isPending, query);
+  const entryKindsRef = useRef(entryKinds);
+  const previousTreePathsRef = useRef<readonly string[] | null>(null);
   const syncingSelectionRef = useRef(false);
   const treeSelectionPathRef = useRef<string | null>(null);
   const handledRevealRef = useRef<{ path: string; revealId: number } | null>(null);
 
-  // The tree renders rows in shadow DOM and its anchor rect is unreliable, so
-  // capture the right-click position ourselves; contextmenu is a composed
-  // event, so a capture-phase listener sees it with viewport coordinates.
+  // Shadow-DOM row rects are unreliable; capture the composed contextmenu event's viewport position.
   const contextMenuPointerRef = useRef<{ x: number; y: number; at: number } | null>(null);
-  useEffect(() => {
-    const capturePointer = (event: MouseEvent) => {
-      contextMenuPointerRef.current = { x: event.clientX, y: event.clientY, at: event.timeStamp };
-    };
-    document.addEventListener("contextmenu", capturePointer, true);
-    return () => document.removeEventListener("contextmenu", capturePointer, true);
-  }, []);
 
-  const showEntryContextMenu = async (
-    item: TreeContextMenuItem,
-    context: TreeContextMenuOpenContext,
-  ) => {
-    const api = readLocalApi();
-    if (!api) {
-      context.close();
-      return;
-    }
-    const relativePath = item.path.replace(/\/$/, "");
-    const mention = serializeComposerFileLink(relativePath);
-    const pointer = contextMenuPointerRef.current;
-    const pointerIsFresh = pointer !== null && performance.now() - pointer.at < 1000;
-    const anchorRect = context.anchorElement.getBoundingClientRect();
-    const position = pointerIsFresh
-      ? { x: pointer.x, y: pointer.y }
-      : { x: anchorRect.left, y: anchorRect.bottom };
-    try {
-      const clicked = await api.contextMenu.show(
-        [
-          { id: "copy-mention", label: "Copy mention" },
-          { id: "add-to-chat", label: "Add to chat" },
-        ],
-        position,
-      );
-      if (clicked === "copy-mention") {
-        try {
-          await writeTextToClipboard(mention);
-          toastManager.add({ type: "success", title: "Mention copied", description: relativePath });
-        } catch (error) {
-          toastManager.add({
-            type: "error",
-            title: "Failed to copy mention",
-            description: error instanceof Error ? error.message : "An error occurred.",
-          });
-        }
+  const showEntryContextMenu = useStableCallback(
+    (item: TreeContextMenuItem, context: TreeContextMenuOpenContext) => {
+      const api = readLocalApi();
+      if (!api) {
+        context.close();
         return;
       }
-      if (clicked === "add-to-chat") {
-        const composer = composerRef?.current;
-        if (!composer) {
-          toastManager.add({
-            type: "error",
-            title: "Unable to add to chat",
-            description: "Open a chat for this project and try again.",
-          });
+      const relativePath = item.path.replace(/\/$/, "");
+      const mention = serializeComposerFileLink(panelPath(relativePath));
+      const pointer = contextMenuPointerRef.current;
+      const pointerIsFresh = pointer !== null && performance.now() - pointer.at < 1000;
+      const anchorRect = context.anchorElement.getBoundingClientRect();
+      const position = pointerIsFresh
+        ? { x: pointer.x, y: pointer.y }
+        : { x: anchorRect.left, y: anchorRect.bottom };
+      const fileTarget = { environmentId, filePath: relativePath, workspaceRoot: cwd };
+      const fileMenuItems = fileContextMenu.buildItems(fileTarget);
+      // The app menu owns focus; the tree's outside-click handler would dismiss it before click.
+      context.close({ restoreFocus: !pointerIsFresh });
+      void settlePromise(async () => {
+        const clicked = await api.contextMenu.show(
+          [
+            ...fileMenuItems,
+            { id: "copy-mention", label: "Copy mention" },
+            { id: "add-to-chat", label: "Add to chat" },
+          ],
+          position,
+        );
+        if (clicked === null) return;
+        // Open-with submenu ids are absent from the top-level item list.
+        const isFileMenuAction =
+          fileMenuItems.some((entry) => entry.id === clicked) || clicked.startsWith("editor:");
+        if (isFileMenuAction) {
+          await fileContextMenu.activate(clicked as FileContextMenuAction, fileTarget);
           return;
         }
-        const inserted = composer.insertTextAtEnd(`${mention} `, { ensureLeadingBoundary: true });
-        if (!inserted) {
-          toastManager.add({
-            type: "error",
-            title: "Unable to add to chat",
-            description: "The chat isn't ready to accept input right now.",
-          });
+        if (clicked === "copy-mention") {
+          try {
+            await writeTextToClipboard(mention);
+            toastManager.add({
+              type: "success",
+              title: "Mention copied",
+              description: relativePath,
+            });
+          } catch (error) {
+            toastManager.add({
+              type: "error",
+              title: "Failed to copy mention",
+              description: error instanceof Error ? error.message : "An error occurred.",
+            });
+          }
+          return;
         }
-      }
-    } finally {
-      context.close();
-    }
-  };
-  const showEntryContextMenuRef = useRef(showEntryContextMenu);
-  useEffect(() => {
-    showEntryContextMenuRef.current = showEntryContextMenu;
-  });
+        if (clicked === "add-to-chat") {
+          const composer = composerRef?.current;
+          if (!composer) {
+            toastManager.add({
+              type: "error",
+              title: "Unable to add to chat",
+              description: "Open a chat for this project and try again.",
+            });
+            return;
+          }
+          const inserted = composer.insertTextAtEnd(`${mention} `, { ensureLeadingBoundary: true });
+          if (!inserted) {
+            toastManager.add({
+              type: "error",
+              title: "Unable to add to chat",
+              description: "The chat isn't ready to accept input right now.",
+            });
+          }
+        }
+      }).then((result) => {
+        if (!AsyncResult.isSuccess(result)) throw Cause.squash(result.cause);
+      });
+    },
+  );
 
-  const treeModelRef = useRef<ReturnType<typeof useFileTree>["model"] | null>(null);
-  const dragMention = useMemo(
-    () =>
-      createFileTreeDragMentionController({
-        deselect: (path) => treeModelRef.current?.getItem(path)?.deselect(),
-      }),
-    [],
+  const loadingDirectoriesRef = useRef(loadingDirectories);
+  const dragMention = createFileTreeDragMentionController(
+    hostFolder ? { mentionPath: (path: string) => joinHostPath(cwd, path) } : {},
   );
   const { model } = useFileTree({
     composition: {
       contextMenu: {
         triggerMode: "right-click",
         onOpen: (item, context) => {
-          void showEntryContextMenuRef.current(item, context);
+          showEntryContextMenu(item, context);
         },
       },
     },
-    // Rows only need to be draggable so entries can be dropped into the chat
-    // composer; rearranging files inside the tree stays off.
     dragAndDrop: { canDrop: () => false },
     density: "compact",
     fileTreeSearchMode: "hide-non-matches",
     flattenEmptyDirectories: true,
-    initialExpansion: 1,
+    initialExpansion: "closed",
     icons: T3_PIERRE_ICONS,
     onSelectionChange: (selectedPaths) => {
-      // The drag controller's selection cache must track every change,
-      // including reveal-driven ones, or drags act on a stale selection.
+      // Update drag selection even for reveals so subsequent drags cannot use stale paths.
       dragMention.handleSelectionChange(selectedPaths);
-      // Selection changes driven by the reveal sync below are echoes of an
-      // already-open file, not a request to open it again.
       if (syncingSelectionRef.current) return;
-      // Starting a drag selects the dragged row; that selection is a side
-      // effect of the gesture, not a request to open the file.
       if (dragMention.isDragInProgress()) {
         return;
       }
       const selectedPath = selectedPaths.at(-1)?.replace(/\/$/, "");
       if (selectedPath && entryKindsRef.current.get(selectedPath) === "file") {
         treeSelectionPathRef.current = selectedPath;
-        onOpenFile(selectedPath);
+        onOpenFile(panelPath(selectedPath));
       }
     },
     paths: [],
+    renderRowDecoration: ({ item, row }) =>
+      row.kind === "directory" &&
+      row.isExpanded &&
+      loadingDirectoriesRef.current.has(item.path.replace(/\/$/, ""))
+        ? { icon: "t3-tree-icon-loading", title: "Loading…" }
+        : null,
     search: false,
-    unsafeCSS: TREE_UNSAFE_CSS,
+    onSearchChange: (value) => setQuery(value ?? ""),
+    unsafeCSS: PIERRE_TREE_UNSAFE_CSS,
   });
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- makes the Pierre tree model re-render row decorations when loading directories change
+  useEffect(() => {
+    if (loadingDirectoriesRef.current === loadingDirectories) return;
+    loadingDirectoriesRef.current = loadingDirectories;
+    model.setComposition(model.getComposition());
+  }, [loadingDirectories, model]);
   const search = useFileTreeSearch(model);
+  // Pierre restores the unfiltered tree when a search has no matches.
+  const hasNoSearchMatches = search.value.trim().length > 0 && search.matchingPaths.length === 0;
+  const allDirectoriesExpanded = useFileTreeSelector(model, (currentModel) =>
+    areAllDirectoriesExpanded(currentModel, expandableDirectoryPaths),
+  );
+  const toggleAllDirectories = () => {
+    const expanded = !(expandAll || allDirectoriesExpanded);
+    setExpandAll(expanded);
+    setAllDirectoriesExpanded(
+      model,
+      expanded ? expandableDirectoryPaths : directoryPaths,
+      expanded,
+    );
+  };
+  const closeSearch = () => {
+    setQuery("");
+    search.close();
+  };
+  const expandedPathsRef = useRef(new Set<string>());
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- subscribes to the Pierre tree model to load directories as they are expanded
+  useEffect(() => {
+    const currentPaths = new Set(directoryPaths);
+    for (const path of expandedPathsRef.current) {
+      if (!currentPaths.has(path)) expandedPathsRef.current.delete(path);
+    }
+    const loadExpanded = () => {
+      if (model.isSearchOpen()) return;
+      for (const path of directoryPaths) {
+        const item = model.getItem(path);
+        if (item?.isDirectory() && "isExpanded" in item && item.isExpanded()) {
+          if (!expandedPathsRef.current.has(path)) {
+            expandedPathsRef.current.add(path);
+            void load(path.replace(/\/$/, ""));
+          }
+        } else {
+          if (item?.isDirectory() && expandedPathsRef.current.has(path)) setExpandAll(false);
+          expandedPathsRef.current.delete(path);
+        }
+      }
+    };
+    loadExpanded();
+    return model.subscribe(loadExpanded);
+  }, [directoryPaths, load, model]);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- pushes ignored-file status into the imperative Pierre tree model
+  useEffect(() => {
+    model.setGitStatus(
+      entries
+        .filter((entry) => entry.ignored)
+        .map((entry) => ({
+          path: treePath(entry),
+          status: "ignored",
+        })),
+    );
+  }, [entries, model]);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- loads the selected file's ancestor directories and aborts on cleanup
+  useEffect(() => {
+    if (!selectedPath) return;
+    const controller = new AbortController();
+    void loadFileAncestors(selectedPath, load, { signal: controller.signal });
+    return () => {
+      controller.abort();
+    };
+  }, [load, selectedPath]);
   const handleSearchValueChange = (value: string) => {
+    setQuery(value);
     if (value.trim().length === 0) {
       search.close();
       return;
     }
     search.setValue(value);
   };
+  const handleRefresh = () => {
+    refresh();
+    if (query.trim()) pathSearch.refresh();
+    onRefreshSelectedFile?.();
+  };
+  useWorkspaceMutationRefresh({
+    mutationId: workspaceMutationId,
+    refresh: () => {
+      refresh();
+      if (query.trim()) pathSearch.refresh();
+    },
+    resourceKey: `files:${environmentId}:${cwd}`,
+  });
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- applies tree path changes to the imperative Pierre tree model as a reset or batch update
   useEffect(() => {
+    if (!ready) return;
     if (previousTreePathsRef.current === treePaths) return;
     entryKindsRef.current = entryKinds;
+    const previousTreePaths = previousTreePathsRef.current;
     previousTreePathsRef.current = treePaths;
-    model.resetPaths(treePaths);
-  }, [entryKinds, model, treePaths]);
+    if (previousTreePaths === null) {
+      model.resetPaths(treePaths);
+      return;
+    }
+    const updates = buildFileTreePathUpdates(previousTreePaths, treePaths);
+    if (updates.length > 0) model.batch(updates);
+  }, [ready, entryKinds, model, treePaths]);
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- expands every directory in the Pierre tree model while expand-all is on and no search is active
+  useEffect(() => {
+    if (expandAll && !query.trim())
+      setAllDirectoriesExpanded(model, expandableDirectoryPaths, true);
+  }, [expandableDirectoryPaths, expandAll, model, query]);
+
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- reveals an externally selected path in the Pierre tree model by expanding, selecting and scrolling
   useEffect(() => {
     if (!selectedPath) {
       handledRevealRef.current = null;
       return;
     }
+    const selectedKind = entryKinds.get(selectedPath);
+    if (selectedKind === undefined) {
+      handledRevealRef.current = null;
+      return;
+    }
     const revealRequest = { path: selectedPath, revealId: selectedPathRevealId };
     const handledReveal = handledRevealRef.current;
-    // Entry refreshes rebuild treePaths while the same preview stays open.
-    // Replaying a handled reveal would close an active tree search and steal focus.
+    // Refresh rebuilds treePaths; replaying handled reveals would close search and steal focus.
     if (
       handledReveal?.path === revealRequest.path &&
       handledReveal.revealId === revealRequest.revealId
     ) {
       return;
     }
-    if (entryKinds.get(selectedPath) !== "file") return;
-    const selectedItem = model.getItem(selectedPath);
+    const selectedTreePath = selectedKind === "directory" ? `${selectedPath}/` : selectedPath;
+    const selectedItem = model.getItem(selectedTreePath);
     if (!selectedItem) return;
 
-    // A selection that originated inside the tree (clicking a row, possibly
-    // in an active tree search) is already visible; re-revealing it would
-    // close the search and clobber the user's context. Only sync external
-    // opens (file picker, content search, chat links).
+    // Reveal only external selections; tree selections are visible and re-revealing would close search.
     const selectedInTree = model
       .getSelectedPaths()
       .some((path) => path.replace(/\/$/, "") === selectedPath);
@@ -297,13 +446,13 @@ export default function FileBrowserPanel({
     handledRevealRef.current = revealRequest;
 
     syncingSelectionRef.current = true;
+    setQuery("");
     model.closeSearch();
     for (const path of model.getSelectedPaths()) {
       model.getItem(path)?.deselect();
     }
 
-    // Directory rows are registered with a trailing slash (see treePath), so
-    // ancestor lookups must use the same form to expand them.
+    // Directory paths include trailing slashes; ancestor lookups must match.
     const segments = selectedPath.split("/");
     let ancestorPath = "";
     for (const segment of segments.slice(0, -1)) {
@@ -312,68 +461,107 @@ export default function FileBrowserPanel({
       if (item && "expand" in item) item.expand();
     }
 
+    if ("expand" in selectedItem) selectedItem.expand();
     selectedItem.select();
-    model.scrollToPath(selectedPath, { focus: true, offset: "center" });
+    model.scrollToPath(selectedTreePath, {
+      focus: true,
+      offset: "center",
+    });
     queueMicrotask(() => {
       syncingSelectionRef.current = false;
     });
-  }, [entryKinds, model, selectedPath, selectedPathRevealId, treePaths]);
-
-  // Tag tree drags with the composer mention payload. The row is read from
-  // the composed event path (the tree's shadow root is open), so this does
-  // not depend on running after the tree's own dragstart handler; the drag
-  // data store is writable for every dragstart listener in the dispatch.
-  // The capture phase runs before the tree's own dragstart handler selects
-  // the dragged row, so the drag flag is up before that selection emits.
-  const panelRef = useRef<HTMLDivElement | null>(null);
-  useEffect(() => {
-    treeModelRef.current = model;
-  }, [model]);
-  useEffect(() => {
-    const panel = panelRef.current;
-    if (panel === null) {
-      return;
-    }
-    const handleDragStart = (event: DragEvent) => dragMention.handleDragStart(event);
-    const handleDragEnd = () => dragMention.handleDragEnd();
-    panel.addEventListener("dragstart", handleDragStart, true);
-    panel.addEventListener("dragend", handleDragEnd);
-    return () => {
-      panel.removeEventListener("dragstart", handleDragStart, true);
-      panel.removeEventListener("dragend", handleDragEnd);
-    };
-  }, [dragMention]);
+  }, [entryKinds, model, selectedPath, selectedPathRevealId]);
 
   return (
     <div
-      ref={panelRef}
       className="flex min-h-0 flex-1 flex-col bg-background"
       data-file-browser-panel={`${environmentId}:${cwd}`}
+      // Capture runs before the tree's shadow-internal row handler opens the menu.
+      onContextMenuCapture={(event) => {
+        contextMenuPointerRef.current = { x: event.clientX, y: event.clientY, at: event.timeStamp };
+      }}
+      // Capture dragstart before the tree selects the row so selection sees the drag flag.
+      onDragStartCapture={(event) => dragMention.handleDragStart(event.nativeEvent)}
+      onDragEnd={() => dragMention.handleDragEnd((path) => model.getItem(path)?.deselect())}
     >
       <div
-        className="flex h-10 min-h-10 shrink-0 items-center gap-1 border-b border-border/60 bg-background px-2 in-data-[preview-panel-mode=inline]:mb-3 in-data-[preview-panel-mode=inline]:h-7 in-data-[preview-panel-mode=inline]:min-h-7 in-data-[preview-panel-mode=inline]:border-b-transparent"
+        className="flex h-10 min-h-10 shrink-0 items-center gap-1 border-b border-border/60 bg-background px-2 in-data-[preview-panel-mode=inline]:mb-1 in-data-[preview-panel-mode=inline]:h-9 in-data-[preview-panel-mode=inline]:min-h-9 in-data-[preview-panel-mode=inline]:border-b-transparent"
         data-surface-subheader
       >
-        <RefreshFilesButton isPending={entriesQuery.isPending} onRefresh={entriesQuery.refresh} />
+        <RefreshFilesButton isPending={isPending} onRefresh={handleRefresh} />
         <FileSearchField
           name="project-files-search"
           ariaLabel={`Search ${projectName} files`}
           value={search.value}
           onValueChange={handleSearchValueChange}
-          onClose={search.close}
+          onClose={closeSearch}
         />
+        {directoryPaths.length > 0 && !hostFolder ? (
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <Button
+                  type="button"
+                  size="icon-xs"
+                  variant="ghost"
+                  aria-label={
+                    expandAll || allDirectoriesExpanded
+                      ? "Collapse all folders"
+                      : "Expand all folders"
+                  }
+                  onClick={toggleAllDirectories}
+                />
+              }
+            >
+              <MorphIcon
+                className="size-3.5"
+                icon={allDirectoriesExpanded ? ChevronsDownUp : ChevronsUpDown}
+              />
+            </TooltipTrigger>
+            <TooltipPopup>
+              {expandAll || allDirectoriesExpanded ? "Collapse all folders" : "Expand all folders"}
+            </TooltipPopup>
+          </Tooltip>
+        ) : null}
       </div>
-      {entriesQuery.error && entriesQuery.data === null ? (
-        <div className="p-4 text-xs leading-relaxed text-destructive">{entriesQuery.error}</div>
+      {error || pathSearch.error ? (
+        <button
+          type="button"
+          onClick={handleRefresh}
+          className="p-4 text-left text-xs leading-relaxed text-destructive"
+        >
+          {error ?? pathSearch.error} Click to retry.
+        </button>
+      ) : null}
+      {query.trim() && pathSearch.truncated && !pathSearch.isPending ? (
+        <div className="px-3 py-1 text-xs text-muted-foreground">
+          More matches available. Refine your search.
+        </div>
+      ) : null}
+      {(!ready || pathSearch.isPending) && (
+        <div
+          role="status"
+          className={
+            entries.length > 0 && !hasNoSearchMatches
+              ? "sr-only"
+              : "px-3 py-1 text-xs text-muted-foreground"
+          }
+        >
+          Loading files…
+        </div>
+      )}
+      {hasNoSearchMatches ? (
+        ready && !isPending && !pathSearch.isPending && !error && !pathSearch.error ? (
+          <div role="status" className="px-3 py-4 text-xs text-muted-foreground">
+            No matching files.
+          </div>
+        ) : null
       ) : (
         <FileTree
           model={model}
           aria-label={`${projectName} files`}
           className="min-h-0 flex-1 overflow-hidden"
-          style={{
-            colorScheme: resolvedTheme,
-            ["--trees-fg-override" as string]: "var(--foreground)",
-          }}
+          style={pierreTreeStyle(resolvedTheme)}
         />
       )}
     </div>

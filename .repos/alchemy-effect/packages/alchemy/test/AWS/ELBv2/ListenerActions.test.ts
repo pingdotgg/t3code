@@ -276,7 +276,10 @@ test.provider(
         );
       expect(after).toBe(0);
     }).pipe(logLevel),
-  { timeout: 600_000 },
+  {
+    tags: ["provider:aws", "provider:aws:ec2", "provider:aws:elbv2", "live"],
+    timeout: 600_000,
+  },
 );
 
 // Live-verifies the audited prop conversions on the authenticate-oidc action:
@@ -388,5 +391,14 @@ test.provider(
         Effect.ensuring(deleteCertBestEffort(certArn)),
       );
     }).pipe(logLevel),
-  { timeout: 600_000 },
+  {
+    tags: [
+      "provider:aws",
+      "provider:aws:acm",
+      "provider:aws:ec2",
+      "provider:aws:elbv2",
+      "live",
+    ],
+    timeout: 600_000,
+  },
 );

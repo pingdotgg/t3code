@@ -88,8 +88,8 @@ export interface StackEventSourceProps extends EventRouteProps {
  * Provide the host-specific implementation layer
  * (e.g. `AWS.Lambda.EventSource`) on the Function effect.
  *
- * @section Consuming Stack Events
- * @example Alert On Failed Stack Operations
+ * ### Consuming Stack Events
+ * **Example:** Alert On Failed Stack Operations
  * ```typescript
  * import * as AWS from "alchemy/AWS";
  *

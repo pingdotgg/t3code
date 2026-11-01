@@ -10,14 +10,14 @@
  *
  * @since 4.0.0
  */
-import type * as Types from "effect/Types"
 import type {
   OpenAPISecurityRequirement,
   OpenAPISpecExternalDocs,
   OpenAPISpecLicense,
-  OpenAPISpecMethodName,
   OpenAPISpecServer
-} from "effect/unstable/httpapi/OpenApi"
+} from "effect/http-api/OpenApi"
+import type { HttpMethod } from "effect/http/HttpMethod"
+import type * as Types from "effect/Types"
 
 /**
  * Root OpenAPI metadata preserved for generated client and HttpApi output.
@@ -177,6 +177,22 @@ export interface ParsedOperationResponse {
 export type ParsedOperationSecurityRequirement = Readonly<OpenAPISecurityRequirement>
 
 /**
+ * Response state used only by the generated HttpClient renderers.
+ *
+ * @category models
+ * @since 4.0.0
+ */
+export interface ParsedOperationHttpClientResponses {
+  readonly successSchemas: ReadonlyMap<string, string>
+  readonly errorSchemas: ReadonlyMap<string, string>
+  readonly voidSuccessStatuses: ReadonlySet<string>
+  readonly voidErrorStatuses: ReadonlySet<string>
+  readonly sseSchema?: string
+  readonly sseSchemaMode: "data" | "event"
+  readonly binarySuccessStatuses: ReadonlySet<string>
+}
+
+/**
  * Normalized operation model shared by all OpenAPI generator backends.
  *
  * @category models
@@ -186,7 +202,7 @@ export interface ParsedOperation {
   readonly id: string
   readonly operationId: string | undefined
   readonly path: string
-  readonly method: OpenAPISpecMethodName
+  readonly method: Lowercase<HttpMethod>
   readonly tags: ReadonlyArray<string>
   readonly metadata: ParsedOperationMetadata
   readonly parameters: {
@@ -216,13 +232,7 @@ export interface ParsedOperation {
   readonly requestBodyRepresentable: ReadonlyArray<ParsedOperationMediaTypeSchema>
   readonly pathIds: ReadonlyArray<string>
   readonly pathTemplate: string
-  readonly successSchemas: ReadonlyMap<string, string>
-  readonly errorSchemas: ReadonlyMap<string, string>
-  readonly voidSchemas: ReadonlySet<string>
-  // SSE streaming response schema (text/event-stream)
-  readonly sseSchema?: string
-  // Binary stream response (application/octet-stream)
-  readonly binaryResponse: boolean
+  readonly httpClientResponses: ParsedOperationHttpClientResponses
 }
 
 /**
@@ -233,7 +243,7 @@ export interface ParsedOperation {
  */
 export const makeDeepMutable = (options: {
   readonly id: string
-  readonly method: OpenAPISpecMethodName
+  readonly method: Lowercase<HttpMethod>
   readonly pathIds: Array<string>
   readonly pathTemplate: string
   readonly description: string | undefined
@@ -269,9 +279,13 @@ export const makeDeepMutable = (options: {
   headersSchema: undefined,
   headersSchemaOptional: true,
   requestBodyRepresentable: [],
-  successSchemas: new Map(),
-  errorSchemas: new Map(),
-  voidSchemas: new Set(),
-  paramsOptional: true,
-  binaryResponse: false
+  httpClientResponses: {
+    successSchemas: new Map(),
+    errorSchemas: new Map(),
+    voidSuccessStatuses: new Set(),
+    voidErrorStatuses: new Set(),
+    sseSchemaMode: "data",
+    binarySuccessStatuses: new Set()
+  },
+  paramsOptional: true
 })

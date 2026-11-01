@@ -1,20 +1,19 @@
-import { EnvironmentId, type DesktopSshEnvironmentTarget } from "@t3tools/contracts";
-import { RelayEnvironmentConnectScope } from "@t3tools/contracts/relay";
-import { RelayClientTracer } from "@t3tools/shared/relayTracing";
+import {
+  EnvironmentId,
+  ORCHESTRATION_PROTOCOL_VERSION,
+  type DesktopSshEnvironmentTarget,
+} from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
-import * as Tracer from "effect/Tracer";
 
-import * as ManagedRelay from "../relay/managedRelay.ts";
 import * as ConnectionResolver from "./resolver.ts";
 import * as ClientCapabilities from "../platform/capabilities.ts";
 import * as RemoteEnvironmentAuthorization from "../authorization/service.ts";
 import {
   BearerConnectionCredential,
-  BearerConnectionProfile,
   type ConnectionCatalogEntry,
   SshConnectionProfile,
   type ConnectionCredential,
@@ -22,20 +21,23 @@ import {
 } from "./catalog.ts";
 import * as ConnectionCredentialStore from "./credentialStore.ts";
 import {
-  BearerConnectionTarget,
   ConnectionTransientError,
   PrimaryConnectionTarget,
-  RelayConnectionTarget,
   SshConnectionTarget,
   type ConnectionTarget,
 } from "./model.ts";
 import * as ConnectionProfileStore from "./profileStore.ts";
+import * as RpcHttp from "../rpc/http.ts";
+import {
+  PullRequestRoutingPermissions,
+  pullRequestRoutingConnectionKey,
+  makePullRequestRoutingPermissions,
+} from "./pullRequestRoutingPermissions.ts";
 
 const ENVIRONMENT_ID = EnvironmentId.make("environment-1");
 const ENDPOINT = {
   httpBaseUrl: "https://environment.example.test",
   wsBaseUrl: "wss://environment.example.test",
-  providerKind: "cloudflare_tunnel" as const,
 };
 const SSH_TARGET: DesktopSshEnvironmentTarget = {
   alias: "development",
@@ -48,55 +50,18 @@ function catalogEntry(
   target: ConnectionTarget,
   profile: Option.Option<ConnectionProfile> = Option.none(),
 ): ConnectionCatalogEntry {
-  return { target, profile };
-}
-
-function unsupported<A>(name: string): Effect.Effect<A> {
-  return Effect.die(new Error(`Unexpected relay call: ${name}`));
-}
-
-function collectingTracer(spans: Array<string>): Tracer.Tracer {
-  return Tracer.make({
-    span: (options) => {
-      const span = new Tracer.NativeSpan(options);
-      const end = span.end.bind(span);
-      span.end = (endTime, exit) => {
-        end(endTime, exit);
-        spans.push(span.name);
-      };
-      return span;
-    },
-  });
-}
-
-function relayClient(
-  connectEnvironment: ManagedRelay.ManagedRelayClient["Service"]["connectEnvironment"],
-) {
-  return ManagedRelay.ManagedRelayClient.of({
-    relayUrl: "https://relay.example.test",
-    listEnvironments: () => unsupported("listEnvironments"),
-    listDevices: () => unsupported("listDevices"),
-    createEnvironmentLinkChallenge: () => unsupported("createEnvironmentLinkChallenge"),
-    linkEnvironment: () => unsupported("linkEnvironment"),
-    unlinkEnvironment: () => unsupported("unlinkEnvironment"),
-    getEnvironmentStatus: () => unsupported("getEnvironmentStatus"),
-    connectEnvironment,
-    registerDevice: () => unsupported("registerDevice"),
-    unregisterDevice: () => unsupported("unregisterDevice"),
-    registerLiveActivity: () => unsupported("registerLiveActivity"),
-    getAgentActivitySnapshot: () => unsupported("getAgentActivitySnapshot"),
-    resetTokenCache: Effect.void,
-  });
+  return { target, profile, enabled: true };
 }
 
 const makeDependencies = Effect.fn("TestConnectionResolver.makeDependencies")((options?: {
   readonly profiles?: ReadonlyArray<ConnectionProfile>;
+  readonly profileStore?: ConnectionProfileStore.ConnectionProfileStore["Service"];
   readonly credentials?: ReadonlyArray<readonly [string, ConnectionCredential]>;
-  readonly connectEnvironment?: ManagedRelay.ManagedRelayClient["Service"]["connectEnvironment"];
   readonly authorizeBearer?: RemoteEnvironmentAuthorization.RemoteEnvironmentAuthorization["Service"]["authorizeBearer"];
   readonly authorizeDpop?: RemoteEnvironmentAuthorization.RemoteEnvironmentAuthorization["Service"]["authorizeDpop"];
   readonly primaryBearerToken?: string;
   readonly prepareSsh?: ClientCapabilities.SshEnvironmentGateway["Service"]["prepare"];
+  readonly descriptorProtocolVersion?: number | null | undefined;
 }) => {
   const profiles = new Map(
     (options?.profiles ?? []).map((profile) => [profile.connectionId, profile]),
@@ -131,18 +96,19 @@ const makeDependencies = Effect.fn("TestConnectionResolver.makeDependencies")((o
     authorizeDpop:
       options?.authorizeDpop ??
       ((input) =>
-        input.obtainBootstrap.pipe(
-          Effect.as({
-            environmentId: input.expectedEnvironmentId,
-            label: "Authorized relay environment",
-            httpBaseUrl: ENDPOINT.httpBaseUrl,
-            socketUrl: "wss://authorized.example.test/ws?wsTicket=dpop",
-            httpAuthorization: {
-              _tag: "Dpop" as const,
-              accessToken: "dpop-access-token",
-            },
-          }),
-        )),
+        Effect.succeed({
+          environmentId: input.expectedEnvironmentId,
+          label: "Authorized relay environment",
+          httpBaseUrl: ENDPOINT.httpBaseUrl,
+          socketUrl: "wss://authorized.example.test/ws?wsTicket=dpop",
+          httpAuthorization: {
+            _tag: "Dpop" as const,
+            accessToken: "dpop-access-token",
+            expiresAtEpochMs: Number.MAX_SAFE_INTEGER,
+          },
+        })),
+    authorizeDpopHttp: () => Effect.die("unused"),
+    renewDpopBeforeExpiry: () => Effect.die("unused"),
   });
   const ssh = ClientCapabilities.SshEnvironmentGateway.of({
     provision: () => Effect.die("unused"),
@@ -161,13 +127,27 @@ const makeDependencies = Effect.fn("TestConnectionResolver.makeDependencies")((o
     disconnect: () => Effect.void,
   });
 
-  const dependencies = Layer.mergeAll(
-    Layer.succeed(ConnectionProfileStore.ConnectionProfileStore, profileStore),
-    Layer.succeed(ConnectionCredentialStore.ConnectionCredentialStore, credentialStore),
+  const layerDependencies = Layer.mergeAll(
+    RpcHttp.layerRemoteHttpClient((() =>
+      Promise.resolve(
+        Response.json({
+          environmentId: ENVIRONMENT_ID,
+          label: "Compatible environment",
+          platform: { os: "linux", arch: "x64" },
+          serverVersion: "0.0.0-test",
+          ...(options?.descriptorProtocolVersion === undefined
+            ? { orchestrationProtocolVersion: ORCHESTRATION_PROTOCOL_VERSION }
+            : options.descriptorProtocolVersion === null
+              ? {}
+              : { orchestrationProtocolVersion: options.descriptorProtocolVersion }),
+          capabilities: { repositoryIdentity: true },
+        }),
+      )) satisfies typeof fetch),
     Layer.succeed(
-      ClientCapabilities.CloudSession,
-      ClientCapabilities.CloudSession.of({ clerkToken: Effect.succeed("clerk-session") }),
+      ConnectionProfileStore.ConnectionProfileStore,
+      options?.profileStore ?? profileStore,
     ),
+    Layer.succeed(ConnectionCredentialStore.ConnectionCredentialStore, credentialStore),
     Layer.succeed(
       ClientCapabilities.PrimaryEnvironmentAuth,
       ClientCapabilities.PrimaryEnvironmentAuth.of({
@@ -175,36 +155,41 @@ const makeDependencies = Effect.fn("TestConnectionResolver.makeDependencies")((o
       }),
     ),
     Layer.succeed(
-      ClientCapabilities.RelayDeviceIdentity,
-      ClientCapabilities.RelayDeviceIdentity.of({
-        deviceId: Effect.succeed(Option.some("device-1")),
+      ClientCapabilities.ClientPresentation,
+      ClientCapabilities.ClientPresentation.of({
+        metadata: { label: "Test Client", deviceType: "desktop", surface: "web" },
       }),
     ),
     Layer.succeed(RemoteEnvironmentAuthorization.RemoteEnvironmentAuthorization, remote),
     Layer.succeed(ClientCapabilities.SshEnvironmentGateway, ssh),
-    Layer.succeed(
-      ManagedRelay.ManagedRelayClient,
-      relayClient(
-        options?.connectEnvironment ??
-          ((input) =>
-            Effect.succeed({
-              environmentId: input.environmentId,
-              endpoint: ENDPOINT,
-              credential: "relay-bootstrap",
-              expiresAt: "2026-06-06T00:00:00.000Z",
-            })),
-      ),
-    ),
   );
 
-  return Effect.succeed(ConnectionResolver.layer.pipe(Layer.provide(dependencies)));
+  return Effect.succeed(ConnectionResolver.layer.pipe(Layer.provide(layerDependencies)));
 });
 
 describe("ConnectionResolver", () => {
+  it.effect("blocks an old host during discovery before opening orchestration RPC", () =>
+    Effect.gen(function* () {
+      const layerBroker = yield* makeDependencies({ descriptorProtocolVersion: null });
+      const broker = yield* ConnectionResolver.ConnectionResolver.pipe(Effect.provide(layerBroker));
+      const target = new PrimaryConnectionTarget({
+        environmentId: ENVIRONMENT_ID,
+        label: "Primary",
+        httpBaseUrl: "http://127.0.0.1:3777",
+        wsBaseUrl: "ws://127.0.0.1:3777",
+      });
+
+      const error = yield* Effect.flip(broker.prepare(catalogEntry(target)));
+
+      expect(error).toMatchObject({ reason: "unsupported" });
+      expect(error.message).toContain("Update T3 Code on Compatible environment");
+    }),
+  );
+
   it.effect("prepares a primary environment without remote capabilities", () =>
     Effect.gen(function* () {
-      const brokerLayer = yield* makeDependencies();
-      const broker = yield* ConnectionResolver.ConnectionResolver.pipe(Effect.provide(brokerLayer));
+      const layerBroker = yield* makeDependencies();
+      const broker = yield* ConnectionResolver.ConnectionResolver.pipe(Effect.provide(layerBroker));
       const target = new PrimaryConnectionTarget({
         environmentId: ENVIRONMENT_ID,
         label: "Primary",
@@ -216,194 +201,17 @@ describe("ConnectionResolver", () => {
         environmentId: ENVIRONMENT_ID,
         label: "Primary",
         httpBaseUrl: "http://127.0.0.1:3777",
-        socketUrl: "ws://127.0.0.1:3777/ws",
+        socketUrl:
+          "ws://127.0.0.1:3777/ws?clientSurface=web&clientDeviceType=desktop&connectionMethod=direct&orchestrationProtocol=2",
         httpAuthorization: null,
         target,
       });
     }),
   );
 
-  it.effect("authorizes a desktop primary environment with its platform bearer token", () =>
+  it.effect("offers the saved SSH token on each connect and saves the one it gets back", () =>
     Effect.gen(function* () {
-      const bearerInputs = yield* Ref.make<ReadonlyArray<string>>([]);
-      const brokerLayer = yield* makeDependencies({
-        primaryBearerToken: "desktop-bearer",
-        authorizeBearer: (input) =>
-          Ref.update(bearerInputs, (values) => [...values, input.bearerToken]).pipe(
-            Effect.as({
-              environmentId: input.expectedEnvironmentId,
-              label: "Primary",
-              httpBaseUrl: input.httpBaseUrl,
-              socketUrl: "ws://127.0.0.1:3777/ws?wsTicket=desktop",
-              httpAuthorization: {
-                _tag: "Bearer" as const,
-                token: input.bearerToken,
-              },
-            }),
-          ),
-      });
-      const broker = yield* ConnectionResolver.ConnectionResolver.pipe(Effect.provide(brokerLayer));
-      const target = new PrimaryConnectionTarget({
-        environmentId: ENVIRONMENT_ID,
-        label: "Primary",
-        httpBaseUrl: "http://127.0.0.1:3777",
-        wsBaseUrl: "ws://127.0.0.1:3777",
-      });
-
-      expect(yield* broker.prepare(catalogEntry(target))).toMatchObject({
-        socketUrl: "ws://127.0.0.1:3777/ws?wsTicket=desktop",
-        httpAuthorization: { _tag: "Bearer", token: "desktop-bearer" },
-        target,
-      });
-      expect(yield* Ref.get(bearerInputs)).toEqual(["desktop-bearer"]);
-    }),
-  );
-
-  it.effect("uses the registered bearer profile without re-reading the profile store", () =>
-    Effect.gen(function* () {
-      const bearerInputs = yield* Ref.make<ReadonlyArray<string>>([]);
-      const target = new BearerConnectionTarget({
-        environmentId: ENVIRONMENT_ID,
-        label: "Saved",
-        connectionId: "saved-1",
-      });
-      const profile = new BearerConnectionProfile({
-        connectionId: "saved-1",
-        environmentId: ENVIRONMENT_ID,
-        label: "Saved",
-        httpBaseUrl: ENDPOINT.httpBaseUrl,
-        wsBaseUrl: ENDPOINT.wsBaseUrl,
-      });
-      const brokerLayer = yield* makeDependencies({
-        credentials: [["saved-1", new BearerConnectionCredential({ token: "secret-bearer" })]],
-        authorizeBearer: (input) =>
-          Ref.update(bearerInputs, (values) => [...values, input.bearerToken]).pipe(
-            Effect.as({
-              environmentId: input.expectedEnvironmentId,
-              label: "Saved",
-              httpBaseUrl: input.httpBaseUrl,
-              socketUrl: "wss://environment.example.test/ws?wsTicket=ticket",
-              httpAuthorization: {
-                _tag: "Bearer" as const,
-                token: input.bearerToken,
-              },
-            }),
-          ),
-      });
-      const broker = yield* ConnectionResolver.ConnectionResolver.pipe(Effect.provide(brokerLayer));
-
-      expect(
-        (yield* broker.prepare(catalogEntry(target, Option.some(profile)))).socketUrl,
-      ).toContain("wsTicket=ticket");
-      expect(yield* Ref.get(bearerInputs)).toEqual(["secret-bearer"]);
-    }),
-  );
-
-  it.effect("brokers relay credentials with the current cloud session and device identity", () =>
-    Effect.gen(function* () {
-      const relayInputs = yield* Ref.make<
-        ReadonlyArray<{
-          readonly clerkToken: string;
-          readonly scopes: ReadonlyArray<string>;
-          readonly deviceId?: string;
-        }>
-      >([]);
-      const bootstrapCredentials = yield* Ref.make<ReadonlyArray<string>>([]);
-      const target = new RelayConnectionTarget({
-        environmentId: ENVIRONMENT_ID,
-        label: "Cloud",
-      });
-      const brokerLayer = yield* makeDependencies({
-        connectEnvironment: (input) =>
-          Ref.update(relayInputs, (values) => [
-            ...values,
-            {
-              clerkToken: input.clerkToken,
-              scopes: input.scopes,
-              ...(input.deviceId ? { deviceId: input.deviceId } : {}),
-            },
-          ]).pipe(
-            Effect.as({
-              environmentId: input.environmentId,
-              endpoint: ENDPOINT,
-              credential: "relay-bootstrap",
-              expiresAt: "2026-06-06T00:00:00.000Z",
-            }),
-          ),
-        authorizeDpop: (input) =>
-          input.obtainBootstrap.pipe(
-            Effect.tap((bootstrap) =>
-              Ref.update(bootstrapCredentials, (values) => [...values, bootstrap.credential]),
-            ),
-            Effect.as({
-              environmentId: input.expectedEnvironmentId,
-              label: "Cloud",
-              httpBaseUrl: ENDPOINT.httpBaseUrl,
-              socketUrl: "wss://environment.example.test/ws?wsTicket=dpop",
-              httpAuthorization: {
-                _tag: "Dpop" as const,
-                accessToken: "dpop-access-token",
-              },
-            }),
-          ),
-      });
-      const broker = yield* ConnectionResolver.ConnectionResolver.pipe(Effect.provide(brokerLayer));
-
-      expect((yield* broker.prepare(catalogEntry(target))).socketUrl).toContain("wsTicket=dpop");
-      expect(yield* Ref.get(relayInputs)).toEqual([
-        {
-          clerkToken: "clerk-session",
-          scopes: [RelayEnvironmentConnectScope],
-          deviceId: "device-1",
-        },
-      ]);
-      expect(yield* Ref.get(bootstrapCredentials)).toEqual(["relay-bootstrap"]);
-    }),
-  );
-
-  it.effect("exports the complete relay authorization flow through the product tracer", () =>
-    Effect.gen(function* () {
-      const userSpans: Array<string> = [];
-      const productSpans: Array<string> = [];
-      const target = new RelayConnectionTarget({
-        environmentId: ENVIRONMENT_ID,
-        label: "Cloud",
-      });
-      const brokerLayer = yield* makeDependencies({
-        authorizeDpop: (input) =>
-          input.obtainBootstrap.pipe(
-            Effect.as({
-              environmentId: input.expectedEnvironmentId,
-              label: "Cloud",
-              httpBaseUrl: ENDPOINT.httpBaseUrl,
-              socketUrl: "wss://environment.example.test/ws?wsTicket=dpop",
-              httpAuthorization: {
-                _tag: "Dpop" as const,
-                accessToken: "dpop-access-token",
-              },
-            }),
-            Effect.withSpan("test.remote.authorizeDpop"),
-          ),
-      });
-      const broker = yield* ConnectionResolver.ConnectionResolver.pipe(Effect.provide(brokerLayer));
-
-      yield* broker
-        .prepare(catalogEntry(target))
-        .pipe(
-          Effect.provideService(RelayClientTracer, Option.some(collectingTracer(productSpans))),
-          Effect.withTracer(collectingTracer(userSpans)),
-        );
-
-      expect(productSpans).toContain("clientRuntime.connection.broker.relay");
-      expect(productSpans).toContain("test.remote.authorizeDpop");
-      expect(userSpans).toContain("clientRuntime.connection.broker.prepare");
-      expect(userSpans).not.toContain("test.remote.authorizeDpop");
-    }),
-  );
-
-  it.effect("delegates SSH launch to the platform gateway before remote authorization", () =>
-    Effect.gen(function* () {
-      const preparedTargets = yield* Ref.make<ReadonlyArray<DesktopSshEnvironmentTarget>>([]);
+      const offeredTokens = yield* Ref.make<ReadonlyArray<string | undefined>>([]);
       const target = new SshConnectionTarget({
         environmentId: ENVIRONMENT_ID,
         label: "SSH",
@@ -415,9 +223,11 @@ describe("ConnectionResolver", () => {
         label: "SSH",
         target: SSH_TARGET,
       });
-      const brokerLayer = yield* makeDependencies({
+      const layerBroker = yield* makeDependencies({
+        credentials: [["ssh-1", new BearerConnectionCredential({ token: "revoked-token" })]],
+        // The host accepts only the token it paired last; anything else pairs again.
         prepareSsh: (input) =>
-          Ref.update(preparedTargets, (values) => [...values, input.target]).pipe(
+          Ref.update(offeredTokens, (tokens) => [...tokens, input.bearerToken]).pipe(
             Effect.as({
               bootstrap: {
                 target: input.target,
@@ -425,40 +235,115 @@ describe("ConnectionResolver", () => {
                 wsBaseUrl: "ws://127.0.0.1:4010",
                 pairingToken: null,
               },
-              bearerToken: "ssh-bearer",
+              bearerToken: "paired-token",
             }),
           ),
       });
-      const broker = yield* ConnectionResolver.ConnectionResolver.pipe(Effect.provide(brokerLayer));
+      const broker = yield* ConnectionResolver.ConnectionResolver.pipe(Effect.provide(layerBroker));
+      const entry = catalogEntry(target, Option.some(profile));
 
-      expect(
-        (yield* broker.prepare(catalogEntry(target, Option.some(profile)))).socketUrl,
-      ).toContain("wsTicket=bearer");
-      expect(yield* Ref.get(preparedTargets)).toEqual([SSH_TARGET]);
+      const first = yield* broker.prepare(entry);
+      const second = yield* broker.prepare(entry);
+
+      expect(yield* Ref.get(offeredTokens)).toEqual(["revoked-token", "paired-token"]);
+      expect(first.httpAuthorization).toMatchObject({ token: "paired-token" });
+      expect(second.httpAuthorization).toMatchObject({ token: "paired-token" });
     }),
   );
 
-  it.effect("classifies relay request timeouts as retryable connection failures", () =>
-    Effect.gen(function* () {
-      const target = new RelayConnectionTarget({
-        environmentId: ENVIRONMENT_ID,
-        label: "Cloud",
-      });
-      const brokerLayer = yield* makeDependencies({
-        connectEnvironment: () =>
-          Effect.fail(
-            new ManagedRelay.ManagedRelayRequestTimeoutError({
-              activity: "Relay environment connection",
-              timeoutMs: ManagedRelay.MANAGED_RELAY_REQUEST_TIMEOUT_MS,
-              traceId: null,
+  it.effect.each(["unchanged", "changed", "revocation-failed"] as const)(
+    "handles %s SSH routing consent before saving or authorizing",
+    (scenario) =>
+      Effect.gen(function* () {
+        const calls: string[] = [];
+        const target = new SshConnectionTarget({
+          environmentId: ENVIRONMENT_ID,
+          label: "SSH",
+          connectionId: "ssh-1",
+        });
+        const profile = new SshConnectionProfile({
+          connectionId: target.connectionId,
+          environmentId: ENVIRONMENT_ID,
+          label: "SSH",
+          target: SSH_TARGET,
+        });
+        const entry = catalogEntry(target, Option.some(profile));
+        const preparedTarget =
+          scenario === "unchanged"
+            ? SSH_TARGET
+            : { ...SSH_TARGET, hostname: "replacement.example.test" };
+        const failure = new ConnectionTransientError({
+          reason: "remote-unavailable",
+          detail: "Could not persist routing consent.",
+        });
+        const permissions = yield* makePullRequestRoutingPermissions({
+          read: Effect.succeed([
+            {
+              environmentId: ENVIRONMENT_ID,
+              connectionKey: pullRequestRoutingConnectionKey(entry)!,
+              permission: "read-write",
+            },
+          ]),
+          write: () =>
+            Effect.sync(() => {
+              calls.push("revoke");
+            }).pipe(
+              Effect.andThen(scenario === "revocation-failed" ? Effect.fail(failure) : Effect.void),
+            ),
+        });
+        let savedProfile: ConnectionProfile = profile;
+        const layerBroker = yield* makeDependencies({
+          profileStore: {
+            get: () => Effect.sync(() => Option.some(savedProfile)),
+            put: (value) =>
+              Effect.sync(() => {
+                calls.push("profile");
+                savedProfile = value;
+              }),
+            remove: () => Effect.die("unused"),
+          },
+          prepareSsh: () =>
+            Effect.succeed({
+              bootstrap: {
+                target: preparedTarget,
+                httpBaseUrl: "http://127.0.0.1:4010",
+                wsBaseUrl: "ws://127.0.0.1:4010",
+                pairingToken: null,
+              },
+              bearerToken: "ssh-bearer",
             }),
-          ),
-      });
-      const broker = yield* ConnectionResolver.ConnectionResolver.pipe(Effect.provide(brokerLayer));
-      const error = yield* Effect.flip(broker.prepare(catalogEntry(target)));
-
-      expect(error).toBeInstanceOf(ConnectionTransientError);
-      expect(error).toMatchObject({ reason: "timeout" });
-    }),
+          authorizeBearer: (input) =>
+            Effect.sync(() => {
+              calls.push("authorize");
+              return {
+                environmentId: input.expectedEnvironmentId,
+                label: "SSH",
+                httpBaseUrl: input.httpBaseUrl,
+                socketUrl: "ws://127.0.0.1:4010/ws?wsTicket=ssh",
+                httpAuthorization: { _tag: "Bearer" as const, token: input.bearerToken },
+              };
+            }),
+        });
+        const broker = yield* ConnectionResolver.ConnectionResolver.pipe(
+          Effect.provide(layerBroker),
+        );
+        const prepare = broker
+          .prepare(entry)
+          .pipe(Effect.provideService(PullRequestRoutingPermissions, permissions));
+        if (scenario === "revocation-failed") {
+          expect(yield* Effect.flip(prepare)).toBe(failure);
+          expect(savedProfile).toBe(profile);
+          expect(calls).toEqual(["revoke"]);
+        } else {
+          expect((yield* prepare).socketUrl).toContain("wsTicket=ssh");
+          expect(savedProfile).toMatchObject({ target: preparedTarget });
+          expect(calls).toEqual(
+            scenario === "unchanged"
+              ? ["profile", "authorize"]
+              : ["revoke", "profile", "authorize"],
+          );
+        }
+        expect(yield* permissions.get(entry)).toBe(scenario === "changed" ? "off" : "read-write");
+      }),
   );
 });

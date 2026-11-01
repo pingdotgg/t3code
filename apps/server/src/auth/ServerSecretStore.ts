@@ -16,7 +16,7 @@ const secretStoreErrorContext = {
   cause: Schema.Defect(),
 };
 
-export class SecretStoreSecureError extends Schema.TaggedErrorClass<SecretStoreSecureError>()(
+export class SecretStoreSecureError extends Schema.TaggedError<SecretStoreSecureError>()(
   "SecretStoreSecureError",
   {
     ...secretStoreErrorContext,
@@ -27,7 +27,7 @@ export class SecretStoreSecureError extends Schema.TaggedErrorClass<SecretStoreS
   }
 }
 
-export class SecretStoreReadError extends Schema.TaggedErrorClass<SecretStoreReadError>()(
+export class SecretStoreReadError extends Schema.TaggedError<SecretStoreReadError>()(
   "SecretStoreReadError",
   {
     ...secretStoreErrorContext,
@@ -38,7 +38,7 @@ export class SecretStoreReadError extends Schema.TaggedErrorClass<SecretStoreRea
   }
 }
 
-export class SecretStoreTemporaryPathError extends Schema.TaggedErrorClass<SecretStoreTemporaryPathError>()(
+export class SecretStoreTemporaryPathError extends Schema.TaggedError<SecretStoreTemporaryPathError>()(
   "SecretStoreTemporaryPathError",
   {
     ...secretStoreErrorContext,
@@ -49,7 +49,7 @@ export class SecretStoreTemporaryPathError extends Schema.TaggedErrorClass<Secre
   }
 }
 
-export class SecretStorePersistError extends Schema.TaggedErrorClass<SecretStorePersistError>()(
+export class SecretStorePersistError extends Schema.TaggedError<SecretStorePersistError>()(
   "SecretStorePersistError",
   {
     ...secretStoreErrorContext,
@@ -60,7 +60,7 @@ export class SecretStorePersistError extends Schema.TaggedErrorClass<SecretStore
   }
 }
 
-export class SecretStoreRandomGenerationError extends Schema.TaggedErrorClass<SecretStoreRandomGenerationError>()(
+export class SecretStoreRandomGenerationError extends Schema.TaggedError<SecretStoreRandomGenerationError>()(
   "SecretStoreRandomGenerationError",
   {
     ...secretStoreErrorContext,
@@ -71,7 +71,7 @@ export class SecretStoreRandomGenerationError extends Schema.TaggedErrorClass<Se
   }
 }
 
-export class SecretStoreConcurrentReadError extends Schema.TaggedErrorClass<SecretStoreConcurrentReadError>()(
+export class SecretStoreConcurrentReadError extends Schema.TaggedError<SecretStoreConcurrentReadError>()(
   "SecretStoreConcurrentReadError",
   {
     resource: Schema.String,
@@ -82,7 +82,7 @@ export class SecretStoreConcurrentReadError extends Schema.TaggedErrorClass<Secr
   }
 }
 
-export class SecretStoreRemoveError extends Schema.TaggedErrorClass<SecretStoreRemoveError>()(
+export class SecretStoreRemoveError extends Schema.TaggedError<SecretStoreRemoveError>()(
   "SecretStoreRemoveError",
   {
     ...secretStoreErrorContext,
@@ -93,7 +93,7 @@ export class SecretStoreRemoveError extends Schema.TaggedErrorClass<SecretStoreR
   }
 }
 
-export class SecretStoreDecodeError extends Schema.TaggedErrorClass<SecretStoreDecodeError>()(
+export class SecretStoreDecodeError extends Schema.TaggedError<SecretStoreDecodeError>()(
   "SecretStoreDecodeError",
   {
     ...secretStoreErrorContext,
@@ -104,7 +104,7 @@ export class SecretStoreDecodeError extends Schema.TaggedErrorClass<SecretStoreD
   }
 }
 
-export class SecretStoreEncodeError extends Schema.TaggedErrorClass<SecretStoreEncodeError>()(
+export class SecretStoreEncodeError extends Schema.TaggedError<SecretStoreEncodeError>()(
   "SecretStoreEncodeError",
   {
     ...secretStoreErrorContext,
@@ -138,6 +138,7 @@ export const isSecretAlreadyExistsError = (error: SecretStoreError): boolean =>
 export class ServerSecretStore extends Context.Service<
   ServerSecretStore,
   {
+    readonly directory?: string;
     readonly get: (name: string) => Effect.Effect<Option.Option<Uint8Array>, SecretStoreError>;
     readonly set: (name: string, value: Uint8Array) => Effect.Effect<void, SecretStoreError>;
     readonly create: (name: string, value: Uint8Array) => Effect.Effect<void, SecretStoreError>;
@@ -149,6 +150,7 @@ export class ServerSecretStore extends Context.Service<
   }
 >()("t3/auth/ServerSecretStore") {}
 
+/** @public */
 export const make = Effect.gen(function* () {
   const crypto = yield* Crypto.Crypto;
   const fileSystem = yield* FileSystem.FileSystem;
@@ -173,7 +175,7 @@ export const make = Effect.gen(function* () {
       Effect.map((bytes) => Option.some(Uint8Array.from(bytes))),
       Effect.catch((cause) =>
         cause.reason._tag === "NotFound"
-          ? Effect.succeed(Option.none())
+          ? Effect.succeedNone
           : Effect.fail(
               new SecretStoreReadError({
                 resource: `secret ${name}`,
@@ -186,7 +188,7 @@ export const make = Effect.gen(function* () {
 
   const set: ServerSecretStore["Service"]["set"] = (name, value) => {
     const secretPath = resolveSecretPath(name);
-    return crypto.randomUUIDv4.pipe(
+    return crypto.randomUUIDv4().pipe(
       Effect.mapError(
         (cause) =>
           new SecretStoreTemporaryPathError({
@@ -221,26 +223,41 @@ export const make = Effect.gen(function* () {
     );
   };
 
+  // `link` publishes the fully written temp file under the final name, or fails with
+  // AlreadyExists, so a concurrent reader never observes a partially written secret.
   const create: ServerSecretStore["Service"]["create"] = (name, value) => {
     const secretPath = resolveSecretPath(name);
-    return Effect.scoped(
-      Effect.gen(function* () {
-        const file = yield* fileSystem.open(secretPath, {
-          flag: "wx",
-          mode: 0o600,
-        });
-        yield* file.writeAll(value);
-        yield* file.sync;
-        yield* fileSystem.chmod(secretPath, 0o600);
-      }),
-    ).pipe(
+    return crypto.randomUUIDv4().pipe(
       Effect.mapError(
         (cause) =>
-          new SecretStorePersistError({
+          new SecretStoreTemporaryPathError({
             resource: `secret ${name}`,
             cause,
           }),
       ),
+      Effect.flatMap((uuid) => {
+        const tempPath = `${secretPath}.${uuid}.tmp`;
+        return Effect.gen(function* () {
+          yield* Effect.scoped(
+            Effect.gen(function* () {
+              const file = yield* fileSystem.open(tempPath, { flag: "wx", mode: 0o600 });
+              yield* file.writeAll(value);
+              yield* file.sync;
+            }),
+          );
+          yield* fileSystem.chmod(tempPath, 0o600);
+          yield* fileSystem.link(tempPath, secretPath);
+        }).pipe(
+          Effect.ensuring(fileSystem.remove(tempPath).pipe(Effect.ignore)),
+          Effect.mapError(
+            (cause) =>
+              new SecretStorePersistError({
+                resource: `secret ${name}`,
+                cause,
+              }),
+          ),
+        );
+      }),
     );
   };
 
@@ -302,6 +319,7 @@ export const make = Effect.gen(function* () {
     );
 
   return ServerSecretStore.of({
+    directory: serverConfig.secretsDir,
     get,
     set,
     create,

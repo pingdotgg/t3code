@@ -65,9 +65,8 @@ export interface User extends Resource<
  * (`MessageAction: SUPPRESS`) — declaratively managed users never trigger
  * invite emails/SMS; set a permanent `password` to make the account usable
  * immediately.
- * @resource
- * @section Creating Users
- * @example Basic User
+ * ### Creating Users
+ * **Example:** Basic User
  * ```typescript
  * import * as Cognito from "alchemy/AWS/Cognito";
  *
@@ -78,7 +77,7 @@ export interface User extends Resource<
  * });
  * ```
  *
- * @example Confirmed User with a Permanent Password
+ * **Example:** Confirmed User with a Permanent Password
  * ```typescript
  * import * as Redacted from "effect/Redacted";
  *
@@ -90,6 +89,8 @@ export interface User extends Resource<
  * });
  * // user.userStatus === "CONFIRMED"
  * ```
+ *
+ * @resource
  */
 export const User = Resource<User>("AWS.Cognito.User");
 

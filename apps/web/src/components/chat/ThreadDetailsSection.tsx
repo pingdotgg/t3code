@@ -1,0 +1,49 @@
+import type { ComponentProps, ReactNode } from "react";
+
+import { cn } from "../../lib/utils";
+
+export function ThreadDetailsSection({
+  headingId,
+  title,
+  actions,
+  separated = true,
+  showHeading = true,
+  children,
+  ...props
+}: Omit<ComponentProps<"section">, "className" | "style" | "title" | "aria-labelledby"> & {
+  headingId: string;
+  title: string;
+  actions?: ReactNode;
+  separated?: boolean;
+  showHeading?: boolean;
+}) {
+  return (
+    <section
+      {...props}
+      aria-labelledby={showHeading ? headingId : undefined}
+      aria-label={showHeading ? undefined : title}
+      // A row can still render nothing (a fresh draft quiets Git actions), so an empty section
+      // collapses, and a divider only follows a section that has content.
+      className={cn(
+        "px-2 pt-2 pb-2.5 has-[>div:last-child:empty]:hidden",
+        separated && "border-border/65 [section:not(:has(>div:last-child:empty))~&]:border-t",
+      )}
+    >
+      <div
+        className={cn(
+          "mb-1 flex min-h-8 min-w-0 items-center justify-between gap-2 px-2.5",
+          !showHeading && "hidden",
+        )}
+      >
+        <h3
+          id={headingId}
+          className="min-w-0 truncate text-2xs font-medium text-muted-foreground select-none"
+        >
+          {title}
+        </h3>
+        {actions ? <div className="flex shrink-0 items-center gap-1">{actions}</div> : null}
+      </div>
+      {children}
+    </section>
+  );
+}

@@ -6,8 +6,8 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Result from "effect/Result";
 import * as Stream from "effect/Stream";
-import { HttpServerRequest } from "effect/unstable/http/HttpServerRequest";
-import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
+import { HttpServerRequest } from "effect/http/HttpServerRequest";
+import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import path from "pathe";
 
 const main = path.resolve(import.meta.dirname, "handler.ts");
@@ -27,7 +27,7 @@ const MISSING_JOB_ID = "00000000-0000-4000-8000-000000000000";
 export default LocationTestFunction.make(
   {
     main,
-    url: true,
+    functionUrl: true,
     // Place-index and route-calculator calls fan out to upstream data
     // providers and can exceed Lambda's 3s default.
     timeout: Duration.seconds(30),

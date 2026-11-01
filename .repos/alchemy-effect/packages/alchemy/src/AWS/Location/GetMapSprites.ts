@@ -19,15 +19,16 @@ export interface GetMapSpritesRequest extends Omit<
  * `geo:GetMapSprites`), scoped to one {@link LocationMap | Map}. Provide the implementation with
  * `Effect.provide(AWS.Location.GetMapSpritesHttp)`.
  *
- * @binding
- * @section Serving Map Assets
- * @example Serve the Sprite Index
+ * ### Serving Map Assets
+ * **Example:** Serve the Sprite Index
  * ```typescript
  * const getSprites = yield* Location.GetMapSprites(map);
  *
  * const sprites = yield* getSprites({ FileName: "sprites.json" });
  * // sprites.Blob → sprite index JSON bytes
  * ```
+ *
+ * @binding
  */
 export interface GetMapSprites extends Binding.Service<
   GetMapSprites,

@@ -5,9 +5,9 @@ import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
 import { MinimumLogLevel } from "effect/References";
 import * as Schedule from "effect/Schedule";
-import * as HttpClient from "effect/unstable/http/HttpClient";
-import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
-import type * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
+import * as HttpClient from "effect/http/HttpClient";
+import * as HttpClientRequest from "effect/http/HttpClientRequest";
+import type * as HttpClientResponse from "effect/http/HttpClientResponse";
 import Stack from "./fixtures/stack.ts";
 
 /**
@@ -29,7 +29,8 @@ const { test, beforeAll, afterAll, deploy, destroy } = Test.make({
 });
 
 const HOOK_TIMEOUT = 300_000;
-const TEST_TIMEOUT = 120_000;
+// Must cover the ~150s `ready` readiness budget plus the round-trip itself.
+const TEST_TIMEOUT = 240_000;
 
 const logLevel = Effect.provideService(
   MinimumLogLevel,
@@ -39,11 +40,16 @@ const logLevel = Effect.provideService(
 class WorkerNotReady extends Data.TaggedError("WorkerNotReady")<{
   status: number;
   body: string;
-}> {}
+}> {
+  override get message() {
+    return `status=${this.status} body=${this.body.slice(0, 500)}`;
+  }
+}
 
 // Bounded spaced schedule — caps total cold-start wait so a real failure
-// surfaces fast instead of riding to the vitest timeout.
-const ready = Schedule.max([Schedule.spaced("2 seconds"), Schedule.recurs(30)]);
+// surfaces fast instead of riding to the test timeout. ~150s: fresh
+// workers.dev URLs 404 well past a minute under full-suite deploy load.
+const ready = Schedule.max([Schedule.spaced("2 seconds"), Schedule.recurs(75)]);
 
 /** Retry an HTTP call until it returns 200 (rides out cold-start 404s). */
 const untilOk = <E, R>(
@@ -113,6 +119,14 @@ const exercise = (label: string, base: string) =>
   Effect.gen(function* () {
     const repo = `${label}-repo`;
 
+    // Pre-clean: an interrupted earlier run can leave the deterministic
+    // repo behind (Artifacts repos live outside the account nuke's view),
+    // and a leaked repo makes create fail "already exists" forever after.
+    // getRepo also rides out worker cold-start via its readiness retry.
+    if ((yield* getRepo(base, repo)).found) {
+      yield* deleteRepo(base, repo);
+    }
+
     const created = yield* createRepo(base, repo);
     expect(created.name).toBe(repo);
     expect(created.defaultBranch).toBe("main");
@@ -150,7 +164,15 @@ test.skipIf(!ARTIFACTS_ENABLED)(
     const out = yield* stack;
     yield* exercise("effect", out.effectWorkerUrl);
   }).pipe(logLevel),
-  { timeout: TEST_TIMEOUT },
+  {
+    tags: [
+      "provider:cloudflare",
+      "provider:cloudflare:artifacts",
+      "provider:cloudflare:worker",
+      "live",
+    ],
+    timeout: TEST_TIMEOUT,
+  },
 );
 
 // Async worker: namespace declared on `env: { REPOS }`, used from plain async fetch.
@@ -160,5 +182,13 @@ test.skipIf(!ARTIFACTS_ENABLED)(
     const out = yield* stack;
     yield* exercise("async", out.asyncWorkerUrl);
   }).pipe(logLevel),
-  { timeout: TEST_TIMEOUT },
+  {
+    tags: [
+      "provider:cloudflare",
+      "provider:cloudflare:artifacts",
+      "provider:cloudflare:worker",
+      "live",
+    ],
+    timeout: TEST_TIMEOUT,
+  },
 );

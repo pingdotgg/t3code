@@ -18,8 +18,14 @@ import {
   WorkerTypeId,
   deferredExecutionContext,
   type WorkerEvent,
-} from "./Worker.ts";
+} from "./WorkerRuntime.ts";
 import type { WorkflowExport } from "../Workflows/Workflow.ts";
+import type { SqlMigrationsExport } from "./SqlMigrationsRuntime.ts";
+
+export type WorkerExport =
+  | DurableObjectExport
+  | WorkflowExport
+  | SqlMigrationsExport;
 
 export interface WorkerRuntimeContext extends Serverless.FunctionContext {
   export(name: string, value: any): Effect.Effect<void>;
@@ -28,7 +34,7 @@ export interface WorkerRuntimeContext extends Serverless.FunctionContext {
 
 export const makeWorkerRuntimeContext = (id: string): WorkerRuntimeContext => {
   const listeners: Effect.Effect<Serverless.FunctionListener>[] = [];
-  const exports: Record<string, DurableObjectExport | WorkflowExport> = {};
+  const exports: Record<string, WorkerExport> = {};
   const env: Record<string, any> = {};
   let userShape: Record<string, unknown> | undefined;
 
@@ -42,7 +48,7 @@ export const makeWorkerRuntimeContext = (id: string): WorkerRuntimeContext => {
         Effect.map(Option.getOrUndefined),
         // Key is already canonical (see RuntimeContext.sanitizeKey). Read
         // straight from `WorkerEnvironment` — see `unpackEnvValue` for why
-        // this must never resolve through `Config.string`.
+        // this must never resolve through `Config.String`.
         Effect.map((env) => unpackEnvValue(env?.[key])),
       ) as any,
     set: (key: string, output: Output.Output) =>
@@ -114,10 +120,14 @@ export const makeWorkerRuntimeContext = (id: string): WorkerRuntimeContext => {
           }
           if (effects.length > 1) {
             return [
-              Effect.all(effects, {
-                concurrency: "unbounded",
-                discard: true,
-              }),
+              Effect.all(effects, { concurrency: "unbounded" }).pipe(
+                Effect.map((results) => {
+                  for (const result of results) {
+                    if (result instanceof Response) return result;
+                  }
+                  return results[results.length - 1];
+                }),
+              ),
               services,
             ];
           }

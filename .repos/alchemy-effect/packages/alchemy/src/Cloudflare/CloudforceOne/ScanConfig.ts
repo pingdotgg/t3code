@@ -74,11 +74,8 @@ export type ScanConfig = Resource<
  * Requires the `cfone.port_scan` entitlement (Cloudforce One subscription) —
  * accounts without it receive an `Unauthorized` error for every scan-config
  * operation.
- * @resource
- * @product Cloudforce One
- * @category Observability & Analytics
- * @section Creating a Scan Config
- * @example One-off scan of a single address
+ * ### Creating a Scan Config
+ * **Example:** One-off scan of a single address
  * ```typescript
  * const scan = yield* Cloudflare.CloudforceOne.ScanConfig("edge-scan", {
  *   ips: ["203.0.113.7/32"],
@@ -86,7 +83,7 @@ export type ScanConfig = Resource<
  * });
  * ```
  *
- * @example Weekly scan of a CIDR block on specific ports
+ * **Example:** Weekly scan of a CIDR block on specific ports
  * ```typescript
  * const scan = yield* Cloudflare.CloudforceOne.ScanConfig("perimeter", {
  *   ips: ["203.0.113.0/24"],
@@ -95,8 +92,8 @@ export type ScanConfig = Resource<
  * });
  * ```
  *
- * @section Updating
- * @example Change the schedule and port list in place
+ * ### Updating
+ * **Example:** Change the schedule and port list in place
  * ```typescript
  * const scan = yield* Cloudflare.CloudforceOne.ScanConfig("perimeter", {
  *   ips: ["203.0.113.0/24"],
@@ -106,6 +103,10 @@ export type ScanConfig = Resource<
  * ```
  *
  * @see https://developers.cloudflare.com/security-center/intel-apis/attack-surface-scans/
+ *
+ * @resource
+ * @product Cloudforce One
+ * @category Observability & Analytics
  */
 export const ScanConfig = Resource<ScanConfig>(TypeId);
 

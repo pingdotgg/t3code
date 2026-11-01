@@ -59,5 +59,8 @@ test.provider(
         );
       expect(after).toBeUndefined();
     }),
-  { timeout: 120_000 },
+  {
+    tags: ["provider:aws", "provider:aws:codeconnections", "live"],
+    timeout: 120_000,
+  },
 );

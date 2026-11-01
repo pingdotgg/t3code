@@ -1,7 +1,7 @@
 import * as Effect from "effect/Effect";
 import type * as Redacted from "effect/Redacted";
 import * as Stream from "effect/Stream";
-import type * as HttpClient from "effect/unstable/http/HttpClient";
+import type * as HttpClient from "effect/http/HttpClient";
 import { Self } from "../../Self.ts";
 import type { RuntimeContext } from "../../RuntimeContext.ts";
 import { AccountApiToken } from "../ApiToken/AccountApiToken.ts";

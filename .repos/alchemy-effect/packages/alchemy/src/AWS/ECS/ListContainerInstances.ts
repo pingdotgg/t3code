@@ -16,15 +16,16 @@ export interface ListContainerInstancesRequest extends Omit<
  * cluster (EC2/EXTERNAL launch types). The cluster ARN is injected
  * automatically and the host is granted `ecs:ListContainerInstances` on the
  * cluster.
- * @binding
- * @section Container Instances
- * @example List ACTIVE Container Instances
+ * ### Container Instances
+ * **Example:** List ACTIVE Container Instances
  * ```typescript
  * const listContainerInstances = yield* AWS.ECS.ListContainerInstances(cluster);
  *
  * const response = yield* listContainerInstances({ status: "ACTIVE" });
  * const instanceArns = response.containerInstanceArns ?? [];
  * ```
+ *
+ * @binding
  */
 export interface ListContainerInstances extends Binding.Service<
   ListContainerInstances,

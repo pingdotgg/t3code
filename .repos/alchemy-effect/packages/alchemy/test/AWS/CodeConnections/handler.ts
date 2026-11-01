@@ -2,8 +2,8 @@ import * as CodeConnections from "@/AWS/CodeConnections";
 import * as Lambda from "@/AWS/Lambda";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import { HttpServerRequest } from "effect/unstable/http/HttpServerRequest";
-import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
+import { HttpServerRequest } from "effect/http/HttpServerRequest";
+import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import path from "pathe";
 
 const main = path.resolve(import.meta.dirname, "handler.ts");
@@ -18,7 +18,7 @@ export class CodeConnectionsTestFunction extends Lambda.Function<Lambda.Function
 export default CodeConnectionsTestFunction.make(
   {
     main,
-    url: true,
+    functionUrl: true,
   },
   Effect.gen(function* () {
     // The fixture connection stays PENDING (its OAuth handshake is a manual

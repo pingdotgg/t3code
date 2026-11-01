@@ -1,0 +1,153 @@
+---
+title: MySQL
+description: Provider-neutral MySQL schemas, Effect-native Drizzle queries, and connection configuration.
+---
+
+import { Code, Tabs, TabItem } from "@astrojs/starlight/components";
+
+export const deps = `drizzle-orm@1.0.0-rc.5-ab785fc @effect/sql-mysql2 mysql2`;
+export const devDeps = `drizzle-kit@1.0.0-rc.5-ab785fc`;
+
+`Drizzle.MySQL` provides typed, Effect-native queries for compatible MySQL databases, independently of where your application runs. Choose a database in [SQL databases](/sql/databases) and supply its connection through your runtime's binding or configuration.
+
+Install the optional dependencies:
+
+<Tabs syncKey="pkgManager">
+  <TabItem label="bun" icon="bun">
+    <Code code={`bun add ${deps}\nbun add -d ${devDeps}`} lang="sh" />
+  </TabItem>
+  <TabItem label="npm" icon="npm">
+    <Code code={`npm install ${deps}\nnpm install -D ${devDeps}`} lang="sh" />
+  </TabItem>
+  <TabItem label="pnpm" icon="pnpm">
+    <Code code={`pnpm add ${deps}\npnpm add -D ${devDeps}`} lang="sh" />
+  </TabItem>
+  <TabItem label="yarn" icon="seti:yarn">
+    <Code code={`yarn add ${deps}\nyarn add -D ${devDeps}`} lang="sh" />
+  </TabItem>
+</Tabs>
+
+## Define the schema
+
+Drizzle schemas are plain TypeScript modules using the `mysql-core`
+column builders:
+
+```typescript
+// src/schema.ts
+import { defineRelations } from "drizzle-orm";
+import { int, mysqlTable, varchar } from "drizzle-orm/mysql-core";
+
+export const Users = mysqlTable("users", {
+  id: int("id").primaryKey().autoincrement(),
+  email: varchar("email", { length: 255 }).notNull().unique(),
+  name: varchar("name", { length: 255 }).notNull(),
+});
+
+export const Posts = mysqlTable("posts", {
+  id: int("id").primaryKey().autoincrement(),
+  userId: int("user_id").notNull(),
+  title: varchar("title", { length: 255 }).notNull(),
+});
+
+export const relations = defineRelations({ Users, Posts }, (t) => ({
+  Users: { posts: t.many.Posts() },
+  Posts: {
+    user: t.one.Users({ from: t.Posts.userId, to: t.Users.id }),
+  },
+}));
+```
+
+## Connect
+
+```typescript
+// src/queries.ts
+import * as Drizzle from "alchemy/Drizzle/MySQL";
+import * as Effect from "effect/Effect";
+import type * as Redacted from "effect/Redacted";
+import { relations, Users } from "./schema.ts";
+
+export const makeQueries = <E, R>(
+  connectionString: Effect.Effect<Redacted.Redacted<string>, E, R>,
+) =>
+  Effect.gen(function* () {
+    const db = yield* Drizzle.MySQL(connectionString, { relations });
+    return {
+      listUsers: () => db.select().from(Users),
+    };
+  });
+```
+
+Pass an Effect that resolves a redacted URL, such as `Config.Redacted("DATABASE_URL")` or a runtime binding's `connectionString`; wrap an already resolved redacted URL with `Effect.succeed(url)`. Call `listUsers()` inside a request or an explicit `Effect.scoped` block so the pool follows the [connection lifecycle](/sql/effect-sql/lifecycle).
+
+## Configure the driver
+
+```typescript
+const db = yield* Drizzle.MySQL(connectionString, {
+  relations,
+  client: { poolConfig: { ssl: { rejectUnauthorized: true } } },
+});
+```
+
+Pass pool options through `config.client`, including TLS settings for direct connections. Explicit options override the driver's detected defaults.
+
+## Connect in a Worker
+
+The [Cloudflare walkthrough](/cloudflare/data/drizzle#use-planetscale-instead) supplies Hyperdrive's connection string; [PlanetScale](/planetscale/guides/drizzle) owns database and password configuration. On Workers, the client selects text-protocol queries and eval-free row parsers; see [Workers defaults](/sql/effect-sql/mysql#workers-defaults).
+
+## Queries are Effects
+
+Every builder yields directly, with `SqlError` in the typed error
+channel. MySQL has no `RETURNING` clause — inserts report generated
+ids via `$returningId()`, and upserts use `onDuplicateKeyUpdate`:
+
+```typescript
+import { eq } from "drizzle-orm";
+
+const [{ id }] = yield* db
+  .insert(Users)
+  .values({ name, email })
+  .$returningId();
+
+yield* db
+  .insert(Users)
+  .values({ id, name, email })
+  .onDuplicateKeyUpdate({ set: { name } });
+
+yield* db.delete(Users).where(eq(Users.id, id));
+```
+
+Because `relations` was passed to `Drizzle.MySQL`, the typed
+`db.query.*` API is available:
+
+```typescript
+const user = yield* db.query.Users.findFirst({
+  where: { id },
+  with: { posts: true },
+});
+```
+
+## Generate and review migrations
+
+```typescript
+// drizzle.config.ts
+import { defineConfig } from "drizzle-kit";
+
+export default defineConfig({
+  schema: "./src/schema.ts",
+  out: "./migrations",
+  dialect: "mysql",
+});
+```
+
+```sh
+bunx drizzle-kit generate
+git add src/schema.ts drizzle.config.ts migrations
+git diff --cached
+git commit -m "Add database migration"
+```
+
+Generate on each schema change, stage and review the schema, SQL, and snapshots, then commit them before application. Apply the committed migrations with your existing runner before deploying code that needs the new schema. [Migrations](/sql/drizzle/migrations) covers application ownership: [`Drizzle.Schema`](/providers/drizzle/schema) is optional, and `alchemy deploy` does not replace an existing `drizzle-kit migrate` workflow.
+
+## Where next
+
+Choose a MySQL-compatible database and deployment guide in [SQL databases](/sql/databases). For tagged-template queries without an ORM, use [Effect SQL: MySQL](/sql/effect-sql/mysql).

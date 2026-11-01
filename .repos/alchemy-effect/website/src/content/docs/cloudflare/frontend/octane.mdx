@@ -1,0 +1,233 @@
+---
+title: Octane
+description: Deploy an OctaneJS fullstack app to Cloudflare Workers with Cloudflare.Website.Octane — native Octane and Vite configuration, no hosting adapter or Wrangler file required.
+sidebar:
+  order: 13
+---
+
+import { Code, Tabs, TabItem } from "@astrojs/starlight/components";
+
+export const devDeps = "@alchemy.run/frontend-frameworks";
+
+`Cloudflare.Website.Octane` builds and deploys an [OctaneJS](https://octanejs.dev)
+fullstack app as a Cloudflare Worker. Alchemy preserves Octane's native
+compiler and client build, builds the server for Workers, and generates
+the Worker entry. No hosting adapter, Wrangler file, or separate build
+command is required.
+
+Your `vite.config.ts` and `octane.config.ts` load without being rewritten.
+Keep the native `octane()` plugin, Tailwind, other Vite plugins, and your
+application routes and callbacks. By default, `dist/server/worker.js`
+deploys as the Worker script and `dist/client` deploys as static assets;
+custom Octane `build.outDir` values are also supported.
+
+## Install
+
+Keep `octane` and `@octanejs/vite-plugin` in your existing Octane project.
+Add `@alchemy.run/frontend-frameworks` as a dev dependency; Alchemy loads
+its Octane integration at deploy time. `@octanejs/adapter-cloudflare` is
+optional:
+
+<Tabs syncKey="pkgManager">
+  <TabItem label="bun" icon="bun">
+    <Code code={`bun add -d ${devDeps}`} lang="sh" />
+  </TabItem>
+  <TabItem label="npm" icon="npm">
+    <Code code={`npm install -D ${devDeps}`} lang="sh" />
+  </TabItem>
+  <TabItem label="pnpm" icon="pnpm">
+    <Code code={`pnpm add -D ${devDeps}`} lang="sh" />
+  </TabItem>
+  <TabItem label="yarn" icon="seti:yarn">
+    <Code code={`yarn add -D ${devDeps}`} lang="sh" />
+  </TabItem>
+</Tabs>
+
+## Configure Octane
+
+Define application routes in `octane.config.ts`.
+`Cloudflare.Website.Octane` selects the Worker build, so this file does
+not need an `adapter` declaration:
+
+```typescript
+// octane.config.ts
+import { defineConfig, RenderRoute } from "@octanejs/vite-plugin";
+
+export default defineConfig({
+  router: {
+    routes: [new RenderRoute({ path: "/", entry: ["App", "/src/App.tsx"] })],
+  },
+});
+```
+
+## Existing Cloudflare adapter configurations
+
+Existing `adapter: cloudflare()` declarations remain supported; migration
+is optional. To remove the adapter, delete its import and declaration:
+
+```diff lang="typescript"
+// octane.config.ts
+-import { cloudflare } from "@octanejs/adapter-cloudflare";
+import { defineConfig, RenderRoute } from "@octanejs/vite-plugin";
+
+export default defineConfig({
+-  adapter: cloudflare(),
+  router: {
+    routes: [new RenderRoute({ path: "/", entry: ["App", "/src/App.tsx"] })],
+  },
+});
+```
+
+You can then uninstall `@octanejs/adapter-cloudflare` if nothing else in
+your project uses it. Keep `octane()`, Tailwind, and other native plugins
+in `vite.config.ts`. An adapter for a different hosting target is rejected
+rather than silently overridden.
+
+## Declare the Website
+
+Declare the site as a module-level const (rather than inline in the
+Stack) and derive the typed shape of its bindings from it:
+
+```typescript
+// alchemy.run.ts
+import * as Cloudflare from "alchemy/Cloudflare";
+
+export const Website = Cloudflare.Website.Octane("Website");
+
+export type WebsiteEnv = Cloudflare.InferEnv<typeof Website>;
+```
+
+`WebsiteEnv` is the typed shape of the Worker's bindings, derived
+from the class — you'll import it into your Octane code in
+[Read bindings in server code](#read-bindings-in-server-code).
+
+## Add it to the Stack
+
+Yield the class from your Stack and return its URL:
+
+```typescript
+// alchemy.run.ts
+import * as Alchemy from "alchemy";
+import * as Effect from "effect/Effect";
+
+export default Alchemy.Stack(
+  "MyOctaneSite",
+  {
+    providers: Cloudflare.providers(),
+    state: Cloudflare.state(),
+  },
+  Effect.gen(function* () {
+    const site = yield* Website;
+    return { url: site.url };
+  }),
+);
+```
+
+Octane's server runtime uses synchronous SHA-256 and
+`AsyncLocalStorage`, which need the `nodejs_compat` compatibility flag —
+it is enabled by default for every Worker, so there is nothing to pass.
+
+See
+[examples/cloudflare-octane](https://github.com/alchemy-run/alchemy/tree/main/examples/cloudflare-octane)
+for the checked-in example.
+
+## Add bindings
+
+The resource returns a plain `Worker`, so `env` accepts the full binding
+vocabulary — KV namespaces, R2 buckets, secrets:
+
+```diff lang="typescript"
+// alchemy.run.ts
++import * as Config from "effect/Config";
+
++export const Cache = Cloudflare.KV.Namespace("Cache");
+
+export const Website = Cloudflare.Website.Octane("Website", {
++  env: {
++    CACHE: Cache,
++    API_KEY: Config.Redacted("API_KEY"),
++  },
+});
+```
+
+`Cache` is a description, not a deploy — Alchemy provisions the real
+namespace because the Website binds it. `Config.Redacted` reads
+`API_KEY` from your environment at deploy time and binds it as a
+Worker secret — see [Secrets & env](/cloudflare/security/secrets-env).
+
+## Read bindings in server code
+
+Octane middleware and `ServerRoute` handlers read bindings through
+`context.platform`, which the generated Worker entry supplies as the Cloudflare
+`{ env, ctx }` pair. Type it with the inferred env type — `env` and
+`ctx` are optional because Octane's dev server supplies no platform
+(see [Local dev](#local-dev)):
+
+```typescript
+// octane.config.ts
+import type { WebsiteEnv } from "./alchemy.run.ts";
+
+interface Platform {
+  readonly env?: WebsiteEnv;
+  readonly ctx?: { waitUntil(promise: Promise<unknown>): void };
+}
+
+new ServerRoute({
+  path: "/api/visits",
+  methods: ["GET"],
+  handler: async (context) => {
+    const platform = context.platform as Platform | undefined;
+    const cache = platform?.env?.CACHE;
+    if (cache === undefined) {
+      return Response.json({ visits: null, dev: true });
+    }
+    const visits = Number((await cache.get("visits")) ?? "0") + 1;
+    platform?.ctx?.waitUntil(cache.put("visits", String(visits)));
+    return Response.json({ visits });
+  },
+});
+```
+
+`platform.env.CACHE` is typed as a KV namespace and `.API_KEY` as a
+string — renaming a binding in `alchemy.run.ts` is a type error in
+your handlers.
+
+## Asset routing
+
+Octane's intended setup is asset-first with SSR on miss: exact files in
+`dist/client` serve without invoking the Worker, and every miss reaches
+Octane SSR. That is the default — leave `assets.notFoundHandling` unset.
+Both `"single-page-application"` and `"404-page"` would stop
+browser-navigation misses from reaching SSR.
+
+## Octane SPAs use `Vite` instead
+
+A client-only Octane app (no `octane.config.ts` routes) is a plain Vite
+SPA — the `octane()` compiler plugin composes with the Cloudflare Vite
+plugin, so deploy it with
+[`Cloudflare.Website.Vite`](/cloudflare/frontend/vite):
+
+```typescript
+export const OctaneApp = Cloudflare.Website.Vite("Octane", {
+  assets: {
+    notFoundHandling: "single-page-application",
+  },
+});
+```
+
+## Local dev
+
+```sh
+bun alchemy dev
+```
+
+`alchemy dev` runs Octane's own Vite dev server — the plugin's
+in-process SSR middleware serves rendering, server routes, and RPC with
+full HMR.
+
+One limitation, inherited from Octane itself: the dev middleware
+supplies no request-scoped `context.platform`, so bindings are not
+observable from dev-mode app code — write handlers to tolerate an
+`undefined` platform, or pipe the site through `Alchemy.remote()` to
+deploy the real Worker during dev. Bindings are fully live in deployed
+Workers and previews.

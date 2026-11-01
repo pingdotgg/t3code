@@ -1,0 +1,13 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "include": ["alchemy.run.ts", "src/**/*.ts", "test/**/*.ts"],
+  "compilerOptions": {
+    "noEmit": true,
+    "rootDir": ".",
+    "module": "Preserve",
+    "moduleResolution": "Bundler",
+    "customConditions": ["bun"],
+    "target": "ESNext"
+  },
+  "references": [{ "path": "../../packages/alchemy/tsconfig.json" }]
+}

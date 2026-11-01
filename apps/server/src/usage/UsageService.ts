@@ -1,44 +1,46 @@
-/**
- * UsageService - scans provider transcripts and returns priced usage buckets.
- *
- * The scan reads the provider CLIs' own session files rather than T3 Code's
- * orchestration projections, so usage covers turns driven outside T3 Code too.
- * This is the approach `ccusage` takes.
- *
- * Transcripts are append-only, so parsed records are memoised per file by
- * `(size, mtime)`. A cold 30-day scan of ~1.4 GB lands around 2-3 seconds; warm
- * scans only reparse files that changed.
- *
- * @module UsageService
- */
-import * as NodeOS from "node:os";
-
 import {
+  type ProviderInstanceConfig,
+  ProviderInstanceId,
   USAGE_CONTRACT_VERSION,
+  type ServerSettings as ServerSettingsValue,
   type UsageProviderKind,
   type UsageSource,
+  type UsagePricing,
   type UsageSummary,
   type UsageSummaryInput,
   UsageReadError,
 } from "@t3tools/contracts";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
+import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
-import { HttpClient, HttpClientResponse } from "effect/unstable/http";
+import * as Semaphore from "effect/Semaphore";
+import { HttpClient, HttpClientResponse } from "effect/http";
 
-import { ServerConfig } from "../config.ts";
+import { writeFileStringAtomically } from "@t3tools/shared/atomicWrite";
+import { formatMalformedUsageWarning } from "@t3tools/shared/usageFormat";
+import * as ServerConfig from "../config.ts";
 import * as ServerSettings from "../serverSettings.ts";
-import { resolveClaudeHomePath } from "../provider/Drivers/ClaudeHome.ts";
-import { resolveCodexHomeLayout } from "../provider/Drivers/CodexHomeLayout.ts";
-import { UsageAggregator } from "./usageAggregation.ts";
-import { parseRateTable, type RateTable } from "./usagePricing.ts";
+import { BUILT_IN_USAGE_DRIVERS, type BuiltInUsageReadersEnv } from "../provider/builtInDrivers.ts";
+import type { ProviderDriver } from "@t3tools/provider-core/server/driver";
+import { mergeProviderInstanceEnvironment } from "@t3tools/provider-core/server/instanceEnvironment";
+import type {
+  ProviderUsageInstance,
+  TranscriptUsageFormat,
+  UsageRecord,
+} from "@t3tools/provider-core/server/usage";
+import { resolveModelAliases, UsageAggregator } from "./usageAggregation.ts";
+import { createOverrideRateTable, parseRateTable, type RateTable } from "./usagePricing.ts";
 import {
   listTranscriptFiles,
   readDirectoryVolumeId,
@@ -47,100 +49,195 @@ import {
 import {
   decodeScanCache,
   dedupeWithinFile,
-  encodeScanCache,
+  LEGACY_SCAN_CACHE_FILE_NAMES,
+  makeScanCacheWriter,
   pruneScanCache,
+  SCAN_CACHE_FILE_NAME,
+  type CachedFile,
   type ScanCache,
 } from "./usageScanCache.ts";
-import type { UsageRecord } from "./usageTranscripts.ts";
 
 const LITELLM_RATES_URL =
   "https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json";
+const LITELLM_RATES_API_URL =
+  "https://api.github.com/repos/BerriAI/litellm/contents/model_prices_and_context_window.json?ref=main";
 
-/** Rates move rarely; a day-old table keeps the page working offline. */
 const RATES_TTL_MS = 24 * 60 * 60 * 1000;
 
-/**
- * Files are filtered by mtime before opening. The slack covers a session whose
- * last write lands just before local midnight on the window's first day.
- */
+const RATES_REFRESH_FLOOR_MS = 60 * 1000;
+
+// mtime slack includes writes just before local midnight on the window's first day.
 const MTIME_SLACK_MS = 36 * 60 * 60 * 1000;
 const MAX_HOURLY_WINDOW_MS = 24 * 60 * 60 * 1000;
 
-/** Longest window the UI offers, plus slack. Older entries are pruned. */
-const CACHE_RETENTION_DAYS = 90;
+const CACHE_RETENTION_DAYS = 92;
 
-/** On-disk shape of the rate snapshot. */
+const TRANSCRIPT_READ_CONCURRENCY = 4;
+
+const transcriptReaders = BUILT_IN_USAGE_DRIVERS.flatMap((driver) =>
+  driver.usage?.kind === "transcripts" ? [{ driver, reader: driver.usage }] : [],
+);
+
+const scanReaders = BUILT_IN_USAGE_DRIVERS.flatMap((driver) =>
+  driver.usage?.kind === "scan" ? [{ driver, reader: driver.usage }] : [],
+);
+
+const transcriptFormats = new Map(
+  transcriptReaders.map(({ reader }) => [reader.provider, reader.format] as const),
+);
+
+interface TranscriptSource {
+  readonly provider: UsageProviderKind;
+  readonly format: TranscriptUsageFormat<unknown>;
+  readonly dir: string;
+  readonly volumeId: string;
+  readonly fileName?: string;
+}
+
 const RatesCacheFile = Schema.Struct({
   fetchedAtMs: Schema.Number,
   document: Schema.Unknown,
 });
-const decodeRatesCache = Schema.decodeUnknownEffect(
-  Schema.fromJsonString(RatesCacheFile as unknown as Schema.Codec<typeof RatesCacheFile.Type>),
-);
-const encodeRatesCache = Schema.encodeEffect(
-  Schema.fromJsonString(RatesCacheFile as unknown as Schema.Codec<typeof RatesCacheFile.Type>),
+const decodeRatesCache = Schema.decodeUnknownEffect(Schema.fromJsonString(RatesCacheFile));
+const encodeRatesCache = Schema.encodeEffect(Schema.fromJsonString(RatesCacheFile));
+
+const ScanCacheJson = Schema.fromJsonString(Schema.Unknown);
+const decodeScanCacheFile = Schema.decodeUnknownEffect(ScanCacheJson);
+const encodeUsageRecordKey = Schema.encodeSync(ScanCacheJson);
+const CachedSource = Schema.Struct({ dir: Schema.String, volumeId: Schema.String });
+
+function isLaterRead(a: CachedFile, b: CachedFile): boolean {
+  return a.mtimeMs > b.mtimeMs || (a.mtimeMs === b.mtimeMs && a.size > b.size);
+}
+
+const sharedSessionProviders: ReadonlySet<UsageProviderKind> = new Set(
+  transcriptReaders.flatMap(({ reader }) =>
+    reader.format.sharedSessionsAcrossFiles ? [reader.provider] : [],
+  ),
 );
 
-/** The scan cache is narrowed by hand in `usageScanCache`, so JSON is enough here. */
-const ScanCacheJson = Schema.fromJsonString(Schema.Unknown as unknown as Schema.Codec<unknown>);
-const decodeScanCacheFile = Schema.decodeUnknownEffect(ScanCacheJson);
-const encodeScanCacheFile = Schema.encodeEffect(ScanCacheJson);
+// Only shared sessions need cross-file dedupe; per-file occurrence counts make other keys unique.
+function sharedSessions(
+  files: readonly { readonly records: readonly UsageRecord[] }[],
+): ReadonlySet<string> {
+  const firstFile = new Map<string, number>();
+  const shared = new Set<string>();
+  for (const [index, file] of files.entries()) {
+    let previous = "";
+    for (const { provider, sessionId } of file.records) {
+      if (!sharedSessionProviders.has(provider) || sessionId === previous || sessionId.length === 0)
+        continue;
+      previous = sessionId;
+      const first = firstFile.get(sessionId);
+      if (first === undefined) firstFile.set(sessionId, index);
+      else if (first !== index) shared.add(sessionId);
+    }
+  }
+  return shared;
+}
+const decodeCachedSources = Schema.decodeUnknownOption(
+  Schema.Struct({ sources: Schema.Record(Schema.String, CachedSource) }),
+);
 
 export class UsageService extends Context.Service<
   UsageService,
   {
     readonly readSummary: (input: UsageSummaryInput) => Effect.Effect<UsageSummary, UsageReadError>;
+    readonly refreshRates: Effect.Effect<UsagePricing>;
   }
 >()("t3/usage/UsageService") {}
-
-/** Empty summary, for suites that only need the RPC surface to resolve. */
-export const layerTest = Layer.succeed(
-  UsageService,
-  UsageService.of({
-    readSummary: (input) =>
-      Effect.succeed({
-        contractVersion: USAGE_CONTRACT_VERSION,
-        readAt: "1970-01-01T00:00:00.000Z",
-        timeZone: input.timeZone,
-        sinceDay: input.sinceDay,
-        untilDay: input.untilDay,
-        buckets: [],
-        sources: [],
-        pricing: {
-          status: "unavailable",
-          source: LITELLM_RATES_URL,
-          fetchedAt: null,
-          knownModels: 0,
-        },
-        scanDurationMs: 0,
-      }),
-  }),
-);
 
 export const make = Effect.gen(function* () {
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const config = yield* ServerConfig;
+  const config = yield* ServerConfig.ServerConfig;
   const settingsService = yield* ServerSettings.ServerSettingsService;
   const httpClient = yield* HttpClient.HttpClient;
+  const hostEnvironment = yield* HostProcess.Environment;
+  const hostname = yield* HostProcess.Hostname;
+  const readerContext = yield* Effect.context<BuiltInUsageReadersEnv>();
 
   const fileCache: ScanCache = new Map();
+  // Reads from concurrent windows can still hold the original record after it is corrected.
+  const resolvedRecords = new WeakMap<UsageRecord, UsageRecord>();
+  const correctedRecord = (record: UsageRecord) => resolvedRecords.get(record) ?? record;
+  const correctedBatch = (records: readonly UsageRecord[]) =>
+    records.some((record) => resolvedRecords.has(record)) ? records.map(correctedRecord) : records;
+  const sourceCache = new Map<string, typeof CachedSource.Type>();
   let cacheDirty = false;
+  const isWithinDirectory = (filePath: string, dir: string) => {
+    const relative = path.relative(dir, filePath);
+    return relative !== ".." && !relative.startsWith(".." + path.sep) && !path.isAbsolute(relative);
+  };
 
   const ratesCachePath = path.join(config.stateDir, "usage-model-rates.json");
-  const scanCachePath = path.join(config.stateDir, "usage-scan-cache.json");
+  const scanCachePath = path.join(config.stateDir, SCAN_CACHE_FILE_NAME);
+  const writeCacheFile = (filePath: string, contents: string) =>
+    writeFileStringAtomically({ filePath, contents }).pipe(
+      Effect.provideService(FileSystem.FileSystem, fileSystem),
+      Effect.provideService(Path.Path, path),
+    );
+  const hostIdPath = path.join(config.baseDir, "usage-host-id");
+  const explicitHostId = hostEnvironment["T3CODE_HOST_ID"]?.trim();
+  const hostId =
+    explicitHostId ||
+    (yield* fileSystem.readFileString(hostIdPath).pipe(
+      Effect.catchIf(
+        (error) => error.reason._tag === "NotFound",
+        () =>
+          Effect.scoped(
+            Effect.gen(function* () {
+              yield* fileSystem.makeDirectory(config.baseDir, { recursive: true });
+              const tempDirectory = yield* fileSystem.makeTempDirectoryScoped({
+                directory: config.baseDir,
+                prefix: "usage-host-id.",
+              });
+              const tempFile = path.join(tempDirectory, "identity");
+              yield* fileSystem.writeFileString(tempFile, `${hostname}\n`);
+              // Publish complete contents without replacing another initializer's identity.
+              yield* fileSystem.link(tempFile, hostIdPath).pipe(
+                Effect.catchIf(
+                  (error) => error.reason._tag === "AlreadyExists",
+                  () => Effect.void,
+                ),
+              );
+              return yield* fileSystem.readFileString(hostIdPath);
+            }),
+          ),
+      ),
+      Effect.map((value) => value.trim() || hostname),
+      Effect.orElseSucceed(() => hostname),
+    ));
   let rates: RateTable = new Map();
   let ratesFetchedAtMs: number | null = null;
-  let ratesStatus: UsageSummary["pricing"]["status"] = "unavailable";
+  let ratesLastFailedAtMs: number | null = null;
+  let ratesStatus: UsagePricing["status"] = "unavailable";
+  const ratesLock = yield* Semaphore.make(1);
 
-  /**
-   * Loads the LiteLLM rate table, preferring a fresh copy and falling back to
-   * the on-disk snapshot. With neither, every model reports as unpriced rather
-   * than the page failing.
-   */
-  const ensureRates = Effect.fn("UsageService.ensureRates")(function* () {
+  const pricing = (): UsagePricing => ({
+    status: ratesStatus,
+    source: LITELLM_RATES_URL,
+    fetchedAt:
+      ratesFetchedAtMs === null ? null : DateTime.formatIso(DateTime.makeUnsafe(ratesFetchedAtMs)),
+    knownModels: rates.size,
+  });
+
+  const fetchRates = (url: string, accept = "application/json") =>
+    httpClient.get(url, { headers: { accept } }).pipe(
+      Effect.flatMap(HttpClientResponse.filterStatusOk),
+      Effect.flatMap((response) => response.json),
+      Effect.map((document) => {
+        const parsed = parseRateTable(document);
+        return parsed.size > 0 ? { document, parsed } : null;
+      }),
+      Effect.timeout(10_000),
+      Effect.catchCause(() => Effect.succeed(null)),
+    );
+
+  const loadRates = Effect.fn("UsageService.loadRates")(function* (force: boolean) {
     const now = yield* Clock.currentTimeMillis;
-    if (ratesFetchedAtMs !== null && now - ratesFetchedAtMs < RATES_TTL_MS) return;
+    const maxAgeMs = force ? RATES_REFRESH_FLOOR_MS : RATES_TTL_MS;
+    if (ratesFetchedAtMs !== null && now - ratesFetchedAtMs < maxAgeMs) return;
 
     if (ratesFetchedAtMs === null) {
       const fromDisk = yield* fileSystem.readFileString(ratesCachePath).pipe(
@@ -153,144 +250,417 @@ export const make = Effect.gen(function* () {
           rates = parsed;
           ratesFetchedAtMs = fromDisk.fetchedAtMs;
           ratesStatus = "cached";
-          if (now - fromDisk.fetchedAtMs < RATES_TTL_MS) return;
+          if (now - fromDisk.fetchedAtMs < maxAgeMs) return;
         }
       }
     }
 
-    const fetched = yield* httpClient.get(LITELLM_RATES_URL).pipe(
-      Effect.flatMap(HttpClientResponse.filterStatusOk),
-      Effect.flatMap((response) => response.json),
-      Effect.timeout(10_000),
-      Effect.catchCause(() => Effect.succeed(null)),
-    );
+    if (ratesLastFailedAtMs !== null && now - ratesLastFailedAtMs < RATES_REFRESH_FLOOR_MS) return;
+
+    let fetched = yield* fetchRates(LITELLM_RATES_URL);
     if (fetched === null) {
-      // The refresh failed; whatever we are serving is now past its TTL and
-      // must not keep claiming to be fresh.
+      fetched = yield* fetchRates(LITELLM_RATES_API_URL, "application/vnd.github.raw+json");
+    }
+    if (fetched === null) {
+      ratesLastFailedAtMs = yield* Clock.currentTimeMillis;
       if (rates.size > 0) ratesStatus = "cached";
       return;
     }
 
-    const parsed = parseRateTable(fetched);
-    if (parsed.size === 0) return;
-
-    rates = parsed;
+    rates = fetched.parsed;
     ratesFetchedAtMs = now;
+    ratesLastFailedAtMs = null;
     ratesStatus = "fresh";
 
-    yield* encodeRatesCache({ fetchedAtMs: now, document: fetched }).pipe(
-      Effect.flatMap((serialized) => fileSystem.writeFileString(ratesCachePath, serialized)),
-      Effect.catchCause(() => Effect.void),
+    yield* encodeRatesCache({ fetchedAtMs: now, document: fetched.document }).pipe(
+      Effect.flatMap((contents) => writeCacheFile(ratesCachePath, contents)),
+      Effect.ignoreCause,
     );
   });
 
-  /**
-   * Claude's config dir is the home itself when overridden, but a default
-   * install nests transcripts under `~/.claude/projects`. Probe both.
-   */
-  const resolveClaudeTranscriptDir = (homePath: string) =>
-    Effect.gen(function* () {
-      const nested = path.join(homePath, ".claude", "projects");
-      const nestedExists = yield* fileSystem
-        .exists(nested)
-        .pipe(Effect.catchCause(() => Effect.succeed(false)));
-      return nestedExists ? nested : path.join(homePath, "projects");
-    });
+  const ensureRates = (force: boolean) => ratesLock.withPermit(loadRates(force));
 
-  /** Resolves the transcript directory for each provider. */
-  const resolveTranscriptDirs = Effect.fn("UsageService.resolveTranscriptDirs")(function* () {
-    // A settings failure must surface as an error: swallowing it here would
-    // present "zero usage from every provider" as a valid answer.
-    const settings = yield* settingsService.getSettings.pipe(
-      Effect.catchCause(
-        (cause) =>
-          new UsageReadError({
-            reason: "scanFailed",
-            // Bounded description; the squashed failure travels as the cause.
-            // Squashed, not the Cause tree: a full tree in a Defect field is
-            // the unbounded wire payload the bounded detail exists to avoid.
-            detail: "Server settings could not be read.",
-            cause: Cause.squash(cause),
-          }),
-      ),
+  const refreshRates = ensureRates(true).pipe(
+    Effect.map(pricing),
+    Effect.withSpan("UsageService.refreshRates"),
+  );
+
+  const readSettings = settingsService.getSettings.pipe(
+    Effect.catchCause(
+      (cause) =>
+        new UsageReadError({
+          reason: "scanFailed",
+          detail: "Server settings could not be read.",
+          cause: Cause.squash(cause),
+        }),
+    ),
+  );
+
+  const usageInstances = Effect.fn("UsageService.usageInstances")(function* <Config>(
+    driver: ProviderDriver<Config, unknown, unknown>,
+    settings: ServerSettingsValue,
+  ) {
+    const entries: Array<
+      readonly [ProviderInstanceId, Pick<ProviderInstanceConfig, "config" | "environment">, boolean]
+    > = Object.entries(settings.providerInstances)
+      .filter(([, instance]) => instance.driver === driver.driverKind)
+      .map(([id, instance]) => [ProviderInstanceId.make(id), instance, true] as const);
+    if (!Object.hasOwn(settings.providerInstances, driver.driverKind)) {
+      entries.push([ProviderInstanceId.make(driver.driverKind), {}, false]);
+    }
+    const decodeConfig = Schema.decodeUnknownOption(driver.configSchema);
+    return yield* Effect.forEach(
+      entries,
+      Effect.fnUntraced(function* ([instanceId, instance, configured]) {
+        const instanceConfig: ProviderUsageInstance<Config> = {
+          instanceId,
+          config: Option.getOrUndefined(decodeConfig(instance.config ?? {})),
+          environment: yield* mergeProviderInstanceEnvironment(
+            instance.environment,
+            hostEnvironment,
+          ),
+          configured,
+        };
+        return instanceConfig;
+      }),
     );
-
-    const claudeHome = yield* resolveClaudeHomePath(settings.providers.claudeAgent);
-    const claudeDir = yield* resolveClaudeTranscriptDir(claudeHome);
-    const codexLayout = yield* resolveCodexHomeLayout(settings.providers.codex);
-
-    return [
-      { provider: "claude" as const, dir: claudeDir },
-      { provider: "codex" as const, dir: path.join(codexLayout.sharedHomePath, "sessions") },
-    ];
   });
 
-  /**
-   * Loads the persisted scan cache exactly once per process.
-   *
-   * `Effect.cached` makes concurrent first readers await the same load rather
-   * than each seeing a "loaded" flag set before the read finished and cold
-   * scanning against an empty cache.
-   */
+  const resolveTranscriptDirs = Effect.fn("UsageService.resolveTranscriptDirs")(function* (
+    settings: ServerSettingsValue,
+    retentionCutoffMs: number,
+  ) {
+    const dirs: Array<TranscriptSource> = [];
+    const seen = new Set<string>();
+    for (const { driver, reader } of transcriptReaders) {
+      const { provider, format } = reader;
+      const directories = yield* Effect.forEach(
+        yield* usageInstances(driver, settings),
+        (instance) => reader.directories(instance),
+      );
+      for (const { dir: directory, fileName } of directories.flat()) {
+        const sourceKey = provider + "\0" + directory;
+        const previous = sourceCache.get(sourceKey);
+        const dir = yield* fileSystem
+          .realPath(directory)
+          .pipe(Effect.orElseSucceed(() => previous?.dir ?? directory));
+        const currentVolumeId = yield* Effect.promise(() => readDirectoryVolumeId(dir));
+        const hasRetainedHistory = fileCache
+          .entries()
+          .some(
+            ([filePath, entry]) =>
+              entry.provider === provider &&
+              entry.mtimeMs >= retentionCutoffMs &&
+              (entry.records.length + entry.tailRecords.length > 0 || entry.malformedRecords > 0) &&
+              isWithinDirectory(filePath, dir),
+          );
+        const volumeId =
+          previous?.dir === dir && (hasRetainedHistory || !currentVolumeId)
+            ? previous.volumeId || currentVolumeId
+            : currentVolumeId;
+        if (previous?.dir !== dir || previous.volumeId !== volumeId) {
+          sourceCache.set(sourceKey, { dir, volumeId });
+          cacheDirty = true;
+        }
+        const key = `${provider}\0${dir}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        dirs.push({
+          provider,
+          format,
+          dir,
+          volumeId,
+          ...(fileName === undefined ? {} : { fileName }),
+        });
+      }
+    }
+    return dirs;
+  });
+
+  // Share first loads so concurrent readers cannot scan against a still-empty cache.
   const ensureScanCacheLoaded = yield* Effect.cached(
     Effect.gen(function* () {
-      const document = yield* fileSystem.readFileString(scanCachePath).pipe(
-        Effect.flatMap((raw) => decodeScanCacheFile(raw)),
-        Effect.catchCause(() => Effect.succeed(null)),
-      );
+      const readDocument = (filePath: string) =>
+        fileSystem.readFileString(filePath).pipe(
+          Effect.flatMap((raw) => decodeScanCacheFile(raw)),
+          Effect.catchCause(() => Effect.succeed(null)),
+        );
+      let document = yield* readDocument(scanCachePath);
+      for (const fileName of LEGACY_SCAN_CACHE_FILE_NAMES) {
+        if (document !== null) break;
+        document = yield* readDocument(path.join(config.stateDir, fileName));
+        cacheDirty = document !== null;
+      }
       if (document === null) return;
-      for (const [path, entry] of decodeScanCache(document)) fileCache.set(path, entry);
+      for (const [path, entry] of decodeScanCache(document, transcriptFormats)) {
+        fileCache.set(path, entry);
+      }
+      const sources = decodeCachedSources(document);
+      if (Option.isSome(sources)) {
+        for (const [key, source] of Object.entries(sources.value.sources))
+          sourceCache.set(key, source);
+      }
     }),
   );
 
-  const persistScanCache = Effect.fn("UsageService.persistScanCache")(function* () {
-    if (!cacheDirty) return;
-    // Cleared only after the write lands, so a failed persist is retried on
-    // the next scan instead of leaving disk permanently stale.
-    yield* encodeScanCacheFile(encodeScanCache(fileCache)).pipe(
-      Effect.flatMap((serialized) => fileSystem.writeFileString(scanCachePath, serialized)),
-      Effect.map(() => {
-        cacheDirty = false;
-      }),
-      // A cache we cannot write is a slower next start, not a failed read.
-      Effect.catchCause(() => Effect.void),
-    );
-  });
+  const writeScanCache = makeScanCacheWriter();
+  // Serialize writes so concurrently finished window scans cannot overwrite newer snapshots.
+  const persistLock = yield* Semaphore.make(1);
 
-  /** Parses one transcript, reusing the cached result when it is unchanged. */
-  const readFileRecords = (
+  // Clear dirty before encoding to retain concurrent changes; restore it on failure for retry.
+  const persistCaches = Effect.gen(function* () {
+    if (cacheDirty) {
+      cacheDirty = false;
+      yield* Effect.sync(() =>
+        writeScanCache(fileCache, { sources: Object.fromEntries(sourceCache) }),
+      ).pipe(
+        Effect.flatMap((contents) => writeCacheFile(scanCachePath, contents)),
+        Effect.catchCause(() =>
+          Effect.sync(() => {
+            cacheDirty = true;
+          }),
+        ),
+      );
+    }
+  }).pipe(persistLock.withPermit, Effect.withSpan("UsageService.persistCaches"));
+
+  const pendingPersists = new Set<Fiber.Fiber<void>>();
+  const schedulePersist = Effect.forkDetach(persistCaches).pipe(
+    Effect.map((fiber) => {
+      pendingPersists.add(fiber);
+      fiber.addObserver(() => pendingPersists.delete(fiber));
+    }),
+  );
+  const awaitPersisted = Effect.suspend(() => Fiber.awaitAll([...pendingPersists])).pipe(
+    Effect.asVoid,
+  );
+  yield* Effect.addFinalizer(() => awaitPersisted);
+
+  /**
+   * Reads run concurrently, and the caller stores updates in walk order rather
+   * than completion order: saved records of deleted transcripts aggregate in
+   * cache order, where the first copy of a duplicate wins.
+   */
+  const readFileRecords = Effect.fn("UsageService.readFileRecords")(function* (
     filePath: string,
     size: number,
     mtimeMs: number,
     provider: UsageProviderKind,
-  ): Effect.Effect<readonly UsageRecord[]> =>
-    Effect.gen(function* () {
-      const cached = fileCache.get(filePath);
-      // Provider is part of the identity: if both providers were ever pointed
-      // at one directory, a hit parsed by the other parser must not be reused.
-      if (
-        cached &&
-        cached.size === size &&
-        cached.mtimeMs === mtimeMs &&
-        cached.provider === provider
-      ) {
-        return cached.records;
+    format: TranscriptUsageFormat<unknown>,
+  ): Effect.fn.Return<{
+    readonly records: readonly UsageRecord[];
+    readonly malformedRecords: number;
+    readonly failed?: true;
+    readonly update?: { readonly entry: CachedFile; readonly replaces: CachedFile | undefined };
+  }> {
+    const cached = fileCache.get(filePath);
+    // Provider is part of the identity: if both providers were ever pointed
+    // at one directory, a hit parsed by the other parser must not be reused.
+    if (
+      cached &&
+      cached.size === size &&
+      cached.mtimeMs === mtimeMs &&
+      cached.provider === provider
+    ) {
+      return {
+        records:
+          cached.tailRecords.length === 0
+            ? cached.records
+            : [...cached.records, ...cached.tailRecords],
+        malformedRecords: cached.malformedRecords,
+      };
+    }
+
+    // Only a strictly grown file may resume. Same size with a new mtime, or
+    // a shrunken file, means rewritten content; re-parse it whole.
+    const resumeFrom =
+      cached !== undefined && cached.provider === provider && size > cached.size
+        ? cached.position
+        : undefined;
+
+    const parsed = yield* Effect.promise(() => readTranscriptRecords(filePath, format, resumeFrom));
+    // A read failure is not an empty transcript: caching it under this
+    // (size, mtime) would silently drop the file's usage until it changes.
+    if (parsed === null)
+      return {
+        records: cached?.provider === provider ? [...cached.records, ...cached.tailRecords] : [],
+        malformedRecords: cached?.provider === provider ? cached.malformedRecords : 0,
+        failed: true,
+      };
+
+    if (parsed.resumed && cached !== undefined && cached.tailRecords.length > 0) {
+      // Completing a tentative line reparses it. Reuse its saved correction only when the
+      // same usage is emitted again, without putting inferred tiers in the parser state.
+      const reparsed = [...parsed.records, ...parsed.tailRecords];
+      const identity = (record: UsageRecord) =>
+        encodeUsageRecordKey([
+          record.provider,
+          record.sessionId,
+          record.timestampMs,
+          record.model,
+          record.rateModel,
+          record.totals,
+          record.reportedCostUsd,
+          record.dedupeKey,
+        ]);
+      for (const [index, previous] of cached.tailRecords.entries()) {
+        const record = reparsed[index];
+        const corrected = correctedRecord(previous);
+        if (
+          record?.unresolvedServiceTierTurnId !== undefined &&
+          corrected.unresolvedServiceTierTurnId === undefined &&
+          identity(record) === identity(corrected)
+        ) {
+          resolvedRecords.set(record, corrected);
+        }
       }
+    }
+    const base = parsed.resumed && cached !== undefined ? cached.records : [];
+    const seen = new Set<string>();
+    const records = dedupeWithinFile([...base, ...parsed.records], seen);
+    const tailRecords = dedupeWithinFile(parsed.tailRecords, seen);
 
-      const parsed = yield* Effect.promise(() => readTranscriptRecords(filePath, provider));
-      // A read failure is not an empty transcript: caching it under this
-      // (size, mtime) would silently drop the file's usage until it changes.
-      if (parsed === null) return [];
-      // Stored already de-duplicated within the file, which is 99% of all
-      // duplicates. The aggregator still runs the cross-file dedupe pass.
-      const records = dedupeWithinFile(parsed);
+    return {
+      records: tailRecords.length === 0 ? records : [...records, ...tailRecords],
+      malformedRecords: parsed.malformedRecords,
+      update: {
+        entry: {
+          size,
+          mtimeMs,
+          provider,
+          records,
+          tailRecords,
+          malformedRecords: parsed.malformedRecords,
+          position: parsed.position,
+        },
+        replaces: cached,
+      },
+    };
+  });
 
-      fileCache.set(filePath, { size, mtimeMs, provider, records });
-      cacheDirty = true;
-      return records;
+  interface ScannedDir {
+    readonly provider: UsageProviderKind;
+    readonly dir: string;
+    readonly volumeId: string;
+    readonly hostId?: string;
+    readonly status?: UsageSource["status"];
+    readonly message?: string;
+    readonly action?: UsageSource["action"];
+    readonly files:
+      | readonly {
+          readonly path: string;
+          readonly records: readonly UsageRecord[];
+          readonly malformedRecords: number;
+        }[]
+      | null;
+    readonly refreshing?: true;
+  }
+
+  const scanTranscriptDir = Effect.fn("UsageService.scanTranscriptDir")(function* (
+    source: TranscriptSource,
+    windowStartMs: number,
+  ) {
+    const { provider, format, dir, volumeId, fileName } = source;
+    const exists = yield* fileSystem
+      .exists(dir)
+      .pipe(Effect.catchCause(() => Effect.succeed(false)));
+    if (!exists) return { provider, dir, volumeId, files: null } satisfies ScannedDir;
+    const { files, failedPaths } = yield* Effect.promise(() =>
+      listTranscriptFiles(dir, windowStartMs, fileName === undefined ? undefined : { fileName }),
+    );
+    const read = yield* Effect.forEach(
+      files,
+      (file) =>
+        readFileRecords(file.path, file.size, file.mtimeMs, provider, format).pipe(
+          Effect.map((result) => ({ path: file.path, ...result })),
+        ),
+      { concurrency: TRANSCRIPT_READ_CONCURRENCY },
+    );
+    const parsedFiles = read.map(({ path, records, malformedRecords, update }) => {
+      if (update === undefined) return { path, records, malformedRecords };
+      // A scan of another window may have cached its own read of this file
+      // meanwhile. Then keep whichever read saw the later file, so a slower
+      // scan never replaces newer usage with older.
+      const current = fileCache.get(path);
+      if (
+        current === update.replaces ||
+        current === undefined ||
+        isLaterRead(update.entry, current)
+      ) {
+        fileCache.set(path, {
+          ...update.entry,
+          records: correctedBatch(update.entry.records),
+          tailRecords: correctedBatch(update.entry.tailRecords),
+        });
+        cacheDirty = true;
+      }
+      return { path, records, malformedRecords };
     });
+    const unread = failedPaths + read.filter((file) => file.failed).length;
+    return {
+      provider,
+      dir,
+      volumeId,
+      files: parsedFiles,
+      ...(unread > 0
+        ? {
+            status: "partial",
+            message: `${unread} transcript path(s) could not be read; usage may be incomplete.`,
+          }
+        : {}),
+    } satisfies ScannedDir;
+  });
 
-  const readSummary = Effect.fn("UsageService.readSummary")(function* (input: UsageSummaryInput) {
+  const collectDirs = Effect.fn("UsageService.collectDirs")(function* (
+    windowStartMs: number,
+    settings: ServerSettingsValue,
+    retentionCutoffMs: number,
+    awaitRefresh: boolean,
+  ) {
+    const dirs = yield* resolveTranscriptDirs(settings, retentionCutoffMs).pipe(
+      Effect.provideContext(readerContext),
+    );
+
+    const scans = Effect.forEach(
+      scanReaders,
+      ({ driver, reader }) =>
+        usageInstances(driver, settings).pipe(
+          Effect.flatMap((instances) =>
+            reader.scan({ instances, settings, windowStartMs, retentionCutoffMs, awaitRefresh }),
+          ),
+          Effect.flatMap((sources) =>
+            Effect.forEach(sources, ({ volumeId, ...source }) =>
+              Effect.map(
+                volumeId === undefined
+                  ? Effect.promise(() => readDirectoryVolumeId(source.dir))
+                  : Effect.succeed(volumeId),
+                (resolved): ScannedDir => ({
+                  ...source,
+                  files: source.files?.map((file) => ({ ...file, malformedRecords: 0 })) ?? null,
+                  provider: reader.provider,
+                  volumeId: resolved,
+                }),
+              ),
+            ),
+          ),
+          Effect.provideContext(readerContext),
+        ),
+      { concurrency: "unbounded" },
+    );
+
+    // Scan independent sources together, directories sequentially to bound open files; preserve order for first-copy dedupe.
+    const [transcripts, scanDirs] = yield* Effect.all(
+      [Effect.forEach(dirs, (dir) => scanTranscriptDir(dir, windowStartMs)), scans],
+      { concurrency: "unbounded" },
+    );
+    const scanned: readonly ScannedDir[] = [...transcripts, ...scanDirs.flat()];
+    return scanned;
+  });
+
+  const scanSummary = Effect.fn("UsageService.scanSummary")(function* (
+    input: UsageSummaryInput,
+    settings: ServerSettingsValue,
+  ) {
     if (input.sinceDay > input.untilDay) {
       return yield* new UsageReadError({
         reason: "invalidWindow",
@@ -323,13 +693,8 @@ export const make = Effect.gen(function* () {
     }
 
     const startedAtMs = yield* Clock.currentTimeMillis;
-    yield* ensureRates();
     yield* ensureScanCacheLoaded;
 
-    const hostId = NodeOS.hostname();
-    // The home resolvers ask for `Path` themselves; satisfy them from the
-    // instance we already hold so `readSummary` stays context-free.
-    const dirs = yield* resolveTranscriptDirs().pipe(Effect.provideService(Path.Path, path));
     const windowStart = DateTime.make(`${input.sinceDay}T00:00:00Z`);
     if (Option.isNone(windowStart)) {
       return yield* new UsageReadError({
@@ -340,6 +705,16 @@ export const make = Effect.gen(function* () {
     const windowStartMs =
       (hourlyWindow?.sinceTimeMs ?? DateTime.toEpochMillis(windowStart.value)) - MTIME_SLACK_MS;
 
+    const retentionCutoffMs = startedAtMs - CACHE_RETENTION_DAYS * 24 * 60 * 60 * 1000;
+
+    const [, scannedDirs] = yield* Effect.all(
+      [
+        ensureRates(false),
+        collectDirs(windowStartMs, settings, retentionCutoffMs, input.awaitRefresh === true),
+      ],
+      { concurrency: 2 },
+    );
+
     const aggregator = new UsageAggregator({
       timeZone: input.timeZone,
       sinceDay: input.sinceDay,
@@ -347,75 +722,151 @@ export const make = Effect.gen(function* () {
       resolution: input.resolution ?? "day",
       ...hourlyWindow,
       rates,
+      priceOverrides: createOverrideRateTable(settings.usagePriceOverrides),
+      modelAliases: resolveModelAliases(settings.usageModelAliases),
     });
 
     const sources: UsageSource[] = [];
-    const livePaths = new Set<string>();
-    const walkedRoots: string[] = [];
 
-    for (const { provider, dir } of dirs) {
-      const volumeId = yield* Effect.promise(() => readDirectoryVolumeId(dir));
-      const exists = yield* fileSystem
-        .exists(dir)
-        .pipe(Effect.catchCause(() => Effect.succeed(false)));
-
-      if (!exists) {
-        sources.push({
-          fingerprint: { hostId, provider, resolvedHomePath: dir, volumeId },
-          status: "missing",
-          scannedFiles: 0,
-          skippedFiles: 0,
-          malformedRecords: 0,
-          distinctSessions: 0,
-          message: "No transcript directory on this environment.",
+    // Deleted transcripts' saved usage still aggregates and deduplicates normally.
+    const retainedSinceMs = Math.max(windowStartMs, retentionCutoffMs);
+    const filesByDir = scannedDirs.map(({ provider, dir, files }) => {
+      const retainedFiles = [...(files ?? [])];
+      const livePaths = new Set(retainedFiles.map((file) => file.path));
+      for (const [filePath, entry] of fileCache) {
+        if (
+          entry.provider !== provider ||
+          entry.mtimeMs < retainedSinceMs ||
+          livePaths.has(filePath) ||
+          !isWithinDirectory(filePath, dir)
+        )
+          continue;
+        retainedFiles.push({
+          path: filePath,
+          records: [...entry.records, ...entry.tailRecords],
+          malformedRecords: entry.malformedRecords,
         });
-        continue;
       }
+      return retainedFiles;
+    });
+    const windowEndMs =
+      hourlyWindow?.untilTimeMs ??
+      Date.parse(`${input.untilDay}T00:00:00Z`) + 86400000 + MTIME_SLACK_MS;
+    let resolvedAny = false;
+    for (const { reader } of transcriptReaders) {
+      if (reader.resolveServiceTiers === undefined) continue;
+      const pending = new Set<UsageRecord>();
+      for (const [index, files] of filesByDir.entries()) {
+        if (scannedDirs[index]?.provider !== reader.provider) continue;
+        for (const file of files) {
+          for (const raw of file.records) {
+            const record = correctedRecord(raw);
+            if (
+              record.provider === reader.provider &&
+              record.unresolvedServiceTierTurnId !== undefined &&
+              record.timestampMs >= windowStartMs &&
+              record.timestampMs < windowEndMs
+            ) {
+              pending.add(record);
+            }
+          }
+        }
+      }
+      if (pending.size === 0) continue;
+      const resolved = yield* reader
+        .resolveServiceTiers([...pending])
+        .pipe(Effect.provideContext(readerContext));
+      for (const [record, speed] of resolved) {
+        const { unresolvedServiceTierTurnId: _turnId, ...rest } = record;
+        resolvedRecords.set(record, { ...rest, speed });
+        resolvedAny = true;
+      }
+    }
+    if (resolvedAny) {
+      for (const [filePath, entry] of fileCache) {
+        const records = correctedBatch(entry.records);
+        const tailRecords = correctedBatch(entry.tailRecords);
+        if (records === entry.records && tailRecords === entry.tailRecords) continue;
+        // Update the current entry by identity; a slow resolver cannot restore an older file.
+        fileCache.set(filePath, { ...entry, records, tailRecords });
+        cacheDirty = true;
+      }
+    }
+    const crossFileSessions = sharedSessions(filesByDir.flat());
 
-      walkedRoots.push(dir);
-      const files = yield* Effect.promise(() => listTranscriptFiles(dir, windowStartMs));
+    for (const [
+      index,
+      { provider, dir, volumeId, files, status, message, action, refreshing, hostId: sourceHostId },
+    ] of scannedDirs.entries()) {
       let scannedFiles = 0;
       let skippedFiles = 0;
+      let malformedRecords = 0;
       // Distinct per directory. Buckets carry per-cell session counts, but a
       // session spans days and models, so clients total this figure instead.
       const sessionIds = new Set<string>();
 
-      for (const file of files) {
-        livePaths.add(file.path);
-        const records = yield* readFileRecords(file.path, file.size, file.mtimeMs, provider);
-        if (records.length === 0) {
+      for (const file of filesByDir[index] ?? []) {
+        malformedRecords += file.malformedRecords;
+        if (file.records.length === 0) {
           skippedFiles += 1;
           continue;
         }
         scannedFiles += 1;
-        for (const record of records) {
-          // Only sessions that contributed in-window count: the mtime slack
-          // admits boundary files whose records fall outside the range.
-          if (aggregator.add(record) && record.sessionId.length > 0) {
+        const eventOccurrences = new Map<string, number>();
+        for (const rawRecord of file.records) {
+          const record = correctedRecord(rawRecord);
+          let usageRecord = record;
+          if (
+            sharedSessionProviders.has(record.provider) &&
+            crossFileSessions.has(record.sessionId)
+          ) {
+            // Dedupe moved copies but retain repeated equal events within a file, including second-precision timestamps.
+            const key = encodeUsageRecordKey([
+              record.provider,
+              record.sessionId,
+              record.timestampMs,
+              record.model,
+              record.totals,
+            ]);
+            const occurrence = (eventOccurrences.get(key) ?? 0) + 1;
+            eventOccurrences.set(key, occurrence);
+            usageRecord = { ...record, dedupeKey: key + ":" + occurrence };
+          }
+          if (aggregator.add(usageRecord, dir) && record.sessionId.length > 0) {
             sessionIds.add(record.sessionId);
           }
         }
       }
 
+      const sourceMessage =
+        message ?? (files === null ? "No transcript directory on this environment." : null);
       sources.push({
-        fingerprint: { hostId, provider, resolvedHomePath: dir, volumeId },
-        status: "ok",
+        fingerprint: { hostId: sourceHostId ?? hostId, provider, resolvedHomePath: dir, volumeId },
+        status:
+          files === null && scannedFiles === 0
+            ? "missing"
+            : malformedRecords > 0
+              ? status === undefined || status === "ok"
+                ? "partial"
+                : status
+              : (status ?? "ok"),
         scannedFiles,
         skippedFiles,
-        malformedRecords: 0,
+        malformedRecords,
         distinctSessions: sessionIds.size,
-        message: null,
+        message:
+          malformedRecords > 0
+            ? [sourceMessage, formatMalformedUsageWarning(malformedRecords)]
+                .filter(Boolean)
+                .join(" ")
+            : sourceMessage,
+        ...(action ? { action } : {}),
+        ...(refreshing ? { refreshing } : {}),
       });
     }
 
-    const pruned = pruneScanCache(fileCache, {
-      livePaths,
-      walkedRoots,
-      windowStartMs,
-      retentionCutoffMs: startedAtMs - CACHE_RETENTION_DAYS * 24 * 60 * 60 * 1000,
-    });
+    const pruned = pruneScanCache(fileCache, retentionCutoffMs);
     if (pruned > 0) cacheDirty = true;
-    yield* persistScanCache();
 
     const aggregated = aggregator.finish();
     const readAt = yield* DateTime.now;
@@ -429,20 +880,54 @@ export const make = Effect.gen(function* () {
       untilDay: input.untilDay,
       buckets: aggregated.buckets,
       sources,
-      pricing: {
-        status: ratesStatus,
-        source: LITELLM_RATES_URL,
-        fetchedAt:
-          ratesFetchedAtMs === null
-            ? null
-            : DateTime.formatIso(DateTime.makeUnsafe(ratesFetchedAtMs)),
-        knownModels: rates.size,
-      },
+      pricing: pricing(),
       scanDurationMs: Math.max(0, finishedAtMs - startedAtMs),
     } satisfies UsageSummary;
   });
 
-  return { readSummary } as const;
+  const inflightScans = new Map<string, Deferred.Deferred<UsageSummary, UsageReadError>>();
+
+  const scanKey = (input: UsageSummaryInput, settings: ServerSettingsValue): string =>
+    JSON.stringify([
+      input.timeZone,
+      input.sinceDay,
+      input.untilDay,
+      input.resolution ?? "day",
+      input.sinceTime ?? null,
+      input.untilTime ?? null,
+      settings,
+      input.awaitRefresh === true,
+    ]);
+
+  const readSummary = Effect.fn("UsageService.readSummary")(function* (input: UsageSummaryInput) {
+    const settings = yield* readSettings;
+    const key = scanKey(input, settings);
+    const deferred = yield* Effect.uninterruptible(
+      Effect.gen(function* () {
+        const existing = inflightScans.get(key);
+        if (existing !== undefined) return existing;
+
+        // Register and fork atomically so cancellation cannot leave a Deferred without a scan.
+        const created = Deferred.makeUnsafe<UsageSummary, UsageReadError>();
+        inflightScans.set(key, created);
+        // Detach so caller departure cannot cancel shared scans; finished scans warm the cache.
+        // Register writes before releasing waiters, but start writing after delivering their summary.
+        yield* scanSummary(input, settings).pipe(
+          Effect.onExit((exit) =>
+            Effect.sync(() => inflightScans.delete(key)).pipe(
+              Effect.andThen(Exit.isSuccess(exit) ? schedulePersist : Effect.void),
+              Effect.andThen(Deferred.done(created, exit)),
+            ),
+          ),
+          Effect.forkDetach,
+        );
+        return created;
+      }),
+    );
+    return yield* Deferred.await(deferred);
+  });
+
+  return { readSummary, refreshRates, awaitPersisted } as const;
 });
 
 export const layer = Layer.effect(UsageService, make);

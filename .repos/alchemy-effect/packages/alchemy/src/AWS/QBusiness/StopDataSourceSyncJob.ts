@@ -19,14 +19,15 @@ export interface StopDataSourceSyncJobRequest extends Omit<
  * Provide the implementation with
  * `Effect.provide(AWS.QBusiness.StopDataSourceSyncJobHttp)`.
  *
- * @binding
- * @section Data Source Sync
- * @example Stop the Running Sync Job
+ * ### Data Source Sync
+ * **Example:** Stop the Running Sync Job
  * ```typescript
  * const stopSync = yield* AWS.QBusiness.StopDataSourceSyncJob(source);
  *
  * yield* stopSync();
  * ```
+ *
+ * @binding
  */
 export interface StopDataSourceSyncJob extends Binding.Service<
   StopDataSourceSyncJob,

@@ -1,8 +1,8 @@
 import * as Schema from "effect/Schema";
 import { ForwardCompatibleArray, TrimmedString } from "./baseSchemas.ts";
 
-export const MAX_KEYBINDING_VALUE_LENGTH = 64;
-export const MAX_KEYBINDING_WHEN_LENGTH = 256;
+const MAX_KEYBINDING_VALUE_LENGTH = 64;
+const MAX_KEYBINDING_WHEN_LENGTH = 256;
 export const MAX_WHEN_EXPRESSION_DEPTH = 64;
 export const MAX_SCRIPT_ID_LENGTH = 24;
 export const MAX_KEYBINDINGS_COUNT = 256;
@@ -34,28 +34,44 @@ export const MODEL_PICKER_JUMP_KEYBINDING_COMMANDS = [
 export type ModelPickerJumpKeybindingCommand =
   (typeof MODEL_PICKER_JUMP_KEYBINDING_COMMANDS)[number];
 
-export const THREAD_KEYBINDING_COMMANDS = [
+const THREAD_KEYBINDING_COMMANDS = [
+  "thread.stop",
+  "thread.steerQueuedMessage",
+  "thread.editQueuedMessage",
   "thread.previous",
   "thread.next",
+  "thread.copyReference",
+  "thread.settle",
+  "thread.pin",
+  "thread.undo",
   ...THREAD_JUMP_KEYBINDING_COMMANDS,
 ] as const;
-export type ThreadKeybindingCommand = (typeof THREAD_KEYBINDING_COMMANDS)[number];
 
-export const MODEL_PICKER_KEYBINDING_COMMANDS = [
+const MODEL_PICKER_KEYBINDING_COMMANDS = [
   "modelPicker.toggle",
+  "modelPicker.previousProvider",
+  "modelPicker.nextProvider",
   ...MODEL_PICKER_JUMP_KEYBINDING_COMMANDS,
 ] as const;
-export type ModelPickerKeybindingCommand = (typeof MODEL_PICKER_KEYBINDING_COMMANDS)[number];
 
 export const STATIC_KEYBINDING_COMMANDS = [
+  "workspace.focusNext",
+  "workspace.focusPrevious",
   "sidebar.toggle",
+  "navigation.back",
+  "navigation.forward",
   "terminal.toggle",
   "terminal.split",
   "terminal.splitVertical",
   "terminal.new",
   "terminal.close",
   "rightPanel.toggle",
+  "rightPanel.new",
+  "threadPanel.toggle",
   "rightPanel.toggleMaximized",
+  "rightPanel.close",
+  "view.reopenClosed",
+  "pullRequest.copyNumber",
   "diff.toggle",
   "preview.toggle",
   "preview.refresh",
@@ -66,11 +82,35 @@ export const STATIC_KEYBINDING_COMMANDS = [
   "commandPalette.toggle",
   "filePicker.toggle",
   "projectSearch.toggle",
+  "usage.open",
+  "theme.select",
+  "appearance.cycle",
   "themeEditor.toggle",
   "composer.stash",
+  "composer.sendAlternate",
+  "composer.sendBackground",
+  "composer.sendAndNewThread",
+  "composer.host",
+  "composer.cycleHost",
+  "composer.effort",
+  "composer.increaseEffort",
+  "composer.decreaseEffort",
+  "composer.mode",
+  "composer.workspace",
+  "composer.previousWorktree",
+  "composer.branch",
   "chat.new",
   "chat.newLocal",
+  "chat.newWithoutProject",
+  "chat.find",
   "editor.openFavorite",
+  "usage.cost",
+  "usage.tokens",
+  "usage.limits",
+  "usage.period.day",
+  "usage.period.week",
+  "usage.period.month",
+  "usage.period.quarter",
   ...MODEL_PICKER_KEYBINDING_COMMANDS,
   ...THREAD_KEYBINDING_COMMANDS,
 ] as const;
@@ -121,6 +161,12 @@ export const KeybindingShortcut = Schema.Struct({
 });
 export type KeybindingShortcut = typeof KeybindingShortcut.Type;
 
+export const PreviewForwardedShortcut = Schema.Struct({
+  command: KeybindingCommand,
+  shortcut: KeybindingShortcut,
+});
+export type PreviewForwardedShortcut = typeof PreviewForwardedShortcut.Type;
+
 const KeybindingWhenNodeRef = Schema.suspend(
   (): Schema.Codec<KeybindingWhenNode> => KeybindingWhenNode,
 );
@@ -157,19 +203,13 @@ export const ResolvedKeybindingRule = Schema.Struct({
 }).annotate({ parseOptions: { onExcessProperty: "ignore" } });
 export type ResolvedKeybindingRule = typeof ResolvedKeybindingRule.Type;
 
-/**
- * The command set grows over time, so a client may receive rules it cannot
- * represent (a command or `when` node added after that client shipped).
- * Decoding drops those rules instead of failing the whole payload —
- * rejecting the config would take down the connection over a shortcut the
- * client couldn't dispatch anyway.
- */
+/** Drops undecodable rules without failing the connection. */
 export const ResolvedKeybindingsConfig = ForwardCompatibleArray(ResolvedKeybindingRule).check(
   Schema.isMaxLength(MAX_KEYBINDINGS_COUNT),
 );
 export type ResolvedKeybindingsConfig = typeof ResolvedKeybindingsConfig.Type;
 
-export class KeybindingsConfigError extends Schema.TaggedErrorClass<KeybindingsConfigError>()(
+export class KeybindingsConfigError extends Schema.TaggedError<KeybindingsConfigError>()(
   "KeybindingsConfigParseError",
   {
     configPath: Schema.String,

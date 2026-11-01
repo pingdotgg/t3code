@@ -9,9 +9,8 @@ import * as Binding from "../../Binding.ts";
  * description and the parameters targets of that type accept (e.g.
  * `aws:ec2:instance`). Provide the implementation with
  * `Effect.provide(AWS.FIS.GetTargetResourceTypeHttp)`.
- * @binding
- * @section Browsing the Action Catalog
- * @example Inspect a Target Resource Type
+ * ### Browsing the Action Catalog
+ * **Example:** Inspect a Target Resource Type
  * ```typescript
  * // init — account-level binding, no resource argument
  * const getTargetResourceType = yield* AWS.FIS.GetTargetResourceType();
@@ -22,6 +21,8 @@ import * as Binding from "../../Binding.ts";
  * });
  * console.log(targetResourceType?.description);
  * ```
+ *
+ * @binding
  */
 export interface GetTargetResourceType extends Binding.Service<
   GetTargetResourceType,

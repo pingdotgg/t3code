@@ -4,6 +4,7 @@
 
 export {
   /**
+   * @stability unstable
    * @since 4.0.0
    */
   TYPES as MssqlTypes
@@ -22,11 +23,13 @@ export * as MssqlClient from "./MssqlClient.ts"
 export * as MssqlMigrator from "./MssqlMigrator.ts"
 
 /**
+ * @stability unstable
  * @since 4.0.0
  */
 export * as Parameter from "./Parameter.ts"
 
 /**
+ * @stability unstable
  * @since 4.0.0
  */
 export * as Procedure from "./Procedure.ts"

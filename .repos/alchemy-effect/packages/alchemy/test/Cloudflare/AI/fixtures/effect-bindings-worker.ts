@@ -1,8 +1,8 @@
 import * as Cloudflare from "@/Cloudflare/index.ts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import { HttpServerRequest } from "effect/unstable/http/HttpServerRequest";
-import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
+import { HttpServerRequest } from "effect/http/HttpServerRequest";
+import * as HttpServerResponse from "effect/http/HttpServerResponse";
 
 /**
  * Effect-native Worker fixture exercising the Effect-first AI Search bindings:
@@ -24,7 +24,9 @@ export default class AiSearchEffectBindingsWorker extends Cloudflare.Worker<AiSe
     main: import.meta.url,
   },
   Effect.gen(function* () {
-    const bucket = yield* Cloudflare.R2.Bucket("AiSearchEffectBindingBucket");
+    const bucket = yield* Cloudflare.R2.Bucket("AiSearchEffectBindingBucket", {
+      forceDestroy: true,
+    });
     const namespace = yield* Cloudflare.AI.SearchNamespace(
       "AiSearchEffectBindingNs",
     );

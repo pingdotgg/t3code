@@ -1,3 +1,8 @@
+import {
+  buildEnvironmentCaptureCommand,
+  listLoginShellCandidates,
+  setWindowsPath,
+} from "@t3tools/shared/shell";
 import * as Context from "effect/Context";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -5,8 +10,9 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
-import * as ChildProcess from "effect/unstable/process/ChildProcess";
-import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
+import * as Stream from "effect/Stream";
+import * as ChildProcess from "effect/process/ChildProcess";
+import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
 import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
 
@@ -15,7 +21,6 @@ type EnvironmentPatch = Record<string, string>;
 interface ShellEnvironmentConfig {
   readonly env: NodeJS.ProcessEnv;
   readonly platform: NodeJS.Platform;
-  readonly userShell: Option.Option<string>;
 }
 
 interface WindowsProbeOptions {
@@ -36,7 +41,7 @@ const desktopShellEnvironmentCommandFields = {
   argumentCount: Schema.Number,
 };
 
-export class DesktopShellEnvironmentCommandError extends Schema.TaggedErrorClass<DesktopShellEnvironmentCommandError>()(
+export class DesktopShellEnvironmentCommandError extends Schema.TaggedError<DesktopShellEnvironmentCommandError>()(
   "DesktopShellEnvironmentCommandError",
   {
     ...desktopShellEnvironmentCommandFields,
@@ -48,7 +53,7 @@ export class DesktopShellEnvironmentCommandError extends Schema.TaggedErrorClass
   }
 }
 
-export class DesktopShellEnvironmentCommandTimeoutError extends Schema.TaggedErrorClass<DesktopShellEnvironmentCommandTimeoutError>()(
+export class DesktopShellEnvironmentCommandTimeoutError extends Schema.TaggedError<DesktopShellEnvironmentCommandTimeoutError>()(
   "DesktopShellEnvironmentCommandTimeoutError",
   {
     ...desktopShellEnvironmentCommandFields,
@@ -63,7 +68,8 @@ export class DesktopShellEnvironmentCommandTimeoutError extends Schema.TaggedErr
 export class DesktopShellEnvironment extends Context.Service<
   DesktopShellEnvironment,
   {
-    readonly installIntoProcess: Effect.Effect<void>;
+    // Reuses the installation result; false leaves server hydration enabled.
+    readonly installIntoProcess: Effect.Effect<boolean>;
   }
 >()("@t3tools/desktop/shell/DesktopShellEnvironment") {}
 
@@ -85,6 +91,12 @@ const LOGIN_SHELL_ENV_NAMES = [
   "XDG_SESSION_DESKTOP",
   "XDG_SESSION_TYPE",
   "WAYLAND_DISPLAY",
+  "SSL_CERT_FILE",
+  "SSL_CERT_DIR",
+  "NODE_EXTRA_CA_CERTS",
+  "T3CODE_TELEMETRY_ENABLED",
+  "T3CODE_GITHUB_APP_CLIENT_ID",
+  "__MISE_DIFF",
 ] as const;
 const WINDOWS_PROFILE_ENV_NAMES = ["PATH", "FNM_DIR", "FNM_MULTISHELL_PATH"] as const;
 const LOCALE_ENV_NAMES = ["LANG", "LC_ALL", "LC_CTYPE"] as const;
@@ -122,34 +134,13 @@ const linuxRuntimeDirCandidates = (
   return candidates.filter((candidate) => candidate.length > 0);
 };
 
-function resolveDefaultLinuxDbusSessionBusPath(input: {
-  readonly env: NodeJS.ProcessEnv;
-  readonly uid: number | undefined;
-  readonly exists?: (path: string) => boolean;
-}): string | null {
-  for (const runtimeDir of linuxRuntimeDirCandidates(input.env, input.uid)) {
-    const busPath = `${runtimeDir}/bus`;
-    if (input.exists === undefined || input.exists(busPath)) {
-      return busPath;
-    }
-  }
-
-  return null;
-}
-
-export function resolveDefaultLinuxDbusSessionBusAddress(input: {
-  readonly env: NodeJS.ProcessEnv;
-  readonly exists: (path: string) => boolean;
-  readonly uid: number | undefined;
-}): string | null {
-  const busPath = resolveDefaultLinuxDbusSessionBusPath(input);
-  return busPath !== null && input.exists(busPath) ? `unix:path=${busPath}` : null;
-}
-
 const pathComparisonKey = (entry: string, platform: NodeJS.Platform) => {
   const normalized = entry.trim().replace(/^"+|"+$/g, "");
   return platform === "win32" ? normalized.toLowerCase() : normalized;
 };
+
+const sanitizePathEntry = (entry: string, platform: NodeJS.Platform) =>
+  platform === "win32" ? entry.replaceAll('"', "") : entry;
 
 const mergePaths = (
   platform: NodeJS.Platform,
@@ -163,37 +154,18 @@ const mergePaths = (
     if (Option.isNone(value)) continue;
 
     for (const entry of value.value.split(delimiter)) {
-      const trimmed = entry.trim();
-      if (trimmed.length === 0) continue;
+      const sanitized = sanitizePathEntry(entry.trim(), platform);
+      if (sanitized.length === 0) continue;
 
-      const key = pathComparisonKey(trimmed, platform);
+      const key = pathComparisonKey(sanitized, platform);
       if (key.length === 0 || seen.has(key)) continue;
 
       seen.add(key);
-      entries.push(trimmed);
+      entries.push(sanitized);
     }
   }
 
   return entries.length > 0 ? Option.some(entries.join(delimiter)) : Option.none();
-};
-
-const listLoginShellCandidates = (config: ShellEnvironmentConfig): ReadonlyArray<string> => {
-  const fallback =
-    config.platform === "darwin" ? "/bin/zsh" : config.platform === "linux" ? "/bin/bash" : "";
-  const seen = new Set<string>();
-  const candidates: string[] = [];
-
-  for (const candidate of [
-    trimNonEmpty(config.env.SHELL),
-    config.userShell,
-    trimNonEmpty(fallback),
-  ]) {
-    if (Option.isNone(candidate) || seen.has(candidate.value)) continue;
-    seen.add(candidate.value);
-    candidates.push(candidate.value);
-  }
-
-  return candidates;
 };
 
 const knownWindowsCliDirs = (env: NodeJS.ProcessEnv): ReadonlyArray<string> => [
@@ -231,17 +203,6 @@ const logShellEnvironmentCommandError = (
       error,
     }),
   );
-
-const capturePosixEnvironmentCommand = (names: ReadonlyArray<string>) =>
-  names
-    .map((name) => {
-      return [
-        `printf '%s\\n' '${startMarker(name)}'`,
-        `printenv ${name} || true`,
-        `printf '%s\\n' '${endMarker(name)}'`,
-      ].join("; ");
-    })
-    .join("; ");
 
 const captureWindowsEnvironmentCommand = (names: ReadonlyArray<string>) =>
   [
@@ -287,33 +248,49 @@ const runCommandOutput = Effect.fn("desktop.shellEnvironment.runCommandOutput")(
   readonly shell?: boolean;
 }): Effect.fn.Return<string, never, ChildProcessSpawner.ChildProcessSpawner> {
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-  const output = yield* spawner
-    .string(
-      ChildProcess.make(input.command, input.args, {
-        shell: input.shell ?? false,
-        stdin: "ignore",
-        stdout: "pipe",
-        stderr: "pipe",
-        killSignal: "SIGTERM",
-        forceKillAfter: PROCESS_TERMINATE_GRACE,
-      }),
-    )
-    .pipe(
-      Effect.mapError(
-        (cause) =>
-          new DesktopShellEnvironmentCommandError({
-            probe: input.probe,
-            executable: executableName(input.command),
-            argumentCount: input.args.length,
-            cause,
-          }),
-      ),
-      Effect.catchTags({
-        DesktopShellEnvironmentCommandError: (error) =>
-          logShellEnvironmentCommandError(error).pipe(Effect.as("")),
-      }),
-      Effect.timeoutOption(input.timeout),
-    );
+  const output = yield* Effect.scoped(
+    Effect.gen(function* () {
+      const child = yield* spawner.spawn(
+        ChildProcess.make(input.command, input.args, {
+          shell: input.shell ?? false,
+          stdin: "ignore",
+          stdout: "pipe",
+          stderr: "ignore",
+          killSignal: "SIGTERM",
+          forceKillAfter: PROCESS_TERMINATE_GRACE,
+        }),
+      );
+      return yield* Effect.all([Stream.mkString(Stream.decodeText(child.stdout)), child.exitCode], {
+        concurrency: 2,
+      });
+    }),
+  ).pipe(
+    Effect.mapError(
+      (cause) =>
+        new DesktopShellEnvironmentCommandError({
+          probe: input.probe,
+          executable: executableName(input.command),
+          argumentCount: input.args.length,
+          cause,
+        }),
+    ),
+    Effect.filterOrFail(
+      ([, exitCode]) => exitCode === 0,
+      ([, exitCode]) =>
+        new DesktopShellEnvironmentCommandError({
+          probe: input.probe,
+          executable: executableName(input.command),
+          argumentCount: input.args.length,
+          cause: { exitCode },
+        }),
+    ),
+    Effect.map(([stdout]) => stdout),
+    Effect.catchTags({
+      DesktopShellEnvironmentCommandError: (error) =>
+        logShellEnvironmentCommandError(error).pipe(Effect.as("")),
+    }),
+    Effect.timeoutOption(input.timeout),
+  );
   if (Option.isSome(output)) {
     return output.value;
   }
@@ -337,7 +314,7 @@ const readLoginShellEnvironment = (
     : runCommandOutput({
         probe: "login-shell",
         command: shell,
-        args: ["-ilc", capturePosixEnvironmentCommand(names)],
+        args: ["-ilc", buildEnvironmentCaptureCommand(shell, names)],
         timeout: LOGIN_SHELL_TIMEOUT,
       }).pipe(Effect.map((output) => extractEnvironment(output, names)));
 
@@ -383,12 +360,7 @@ const readWindowsEnvironment = Effect.fn("desktop.shellEnvironment.readWindowsEn
 const installWindowsEnvironment = Effect.fn("desktop.shellEnvironment.installWindowsEnvironment")(
   function* (
     config: ShellEnvironmentConfig,
-  ): Effect.fn.Return<void, never, ChildProcessSpawner.ChildProcessSpawner> {
-    // Concurrent, not sequential: these two probes are independent (only their
-    // results are combined below) and each spawns its own PowerShell. Run in
-    // series they sit at offset 0 of desktop.startup, before anything else, and
-    // launch traces measured them at 2718ms then 2066ms — the entire 4.8s
-    // startup span, of which desktop.bootstrap is ~30ms.
+  ): Effect.fn.Return<boolean, never, ChildProcessSpawner.ChildProcessSpawner> {
     const [noProfile, profile] = yield* Effect.all(
       [
         readWindowsEnvironment(["PATH"], { loadProfile: false }),
@@ -404,7 +376,7 @@ const installWindowsEnvironment = Effect.fn("desktop.shellEnvironment.installWin
     ]);
 
     if (Option.isSome(mergedPath)) {
-      config.env.PATH = mergedPath.value;
+      setWindowsPath(config.env, mergedPath.value);
     }
     if (!config.env.FNM_DIR && profile.FNM_DIR) {
       config.env.FNM_DIR = profile.FNM_DIR;
@@ -412,6 +384,7 @@ const installWindowsEnvironment = Effect.fn("desktop.shellEnvironment.installWin
     if (!config.env.FNM_MULTISHELL_PATH && profile.FNM_MULTISHELL_PATH) {
       config.env.FNM_MULTISHELL_PATH = profile.FNM_MULTISHELL_PATH;
     }
+    return Boolean(noProfile.PATH && profile.PATH);
   },
 );
 
@@ -419,14 +392,14 @@ const installPosixEnvironment = Effect.fn("desktop.shellEnvironment.installPosix
   function* (
     config: ShellEnvironmentConfig,
   ): Effect.fn.Return<
-    void,
+    boolean,
     never,
     ChildProcessSpawner.ChildProcessSpawner | FileSystem.FileSystem
   > {
     const fileSystem = yield* FileSystem.FileSystem;
     const shellEnvironment: EnvironmentPatch = {};
 
-    for (const shell of listLoginShellCandidates(config)) {
+    for (const shell of listLoginShellCandidates(config.platform, config.env.SHELL)) {
       Object.assign(
         shellEnvironment,
         yield* readLoginShellEnvironment(shell, LOGIN_SHELL_ENV_NAMES),
@@ -455,6 +428,8 @@ const installPosixEnvironment = Effect.fn("desktop.shellEnvironment.installPosix
       "XDG_CURRENT_DESKTOP",
       "XDG_SESSION_DESKTOP",
       "XDG_SESSION_TYPE",
+      // Forward mise's PATH delta too, or mise x can rebuild PATH into a recursive same-named wrapper.
+      "__MISE_DIFF",
     ] as const;
     for (const name of shellPreferredEnvNames) {
       if (shellEnvironment[name]) {
@@ -471,14 +446,19 @@ const installPosixEnvironment = Effect.fn("desktop.shellEnvironment.installPosix
       "XDG_DATA_HOME",
       "XDG_RUNTIME_DIR",
       "WAYLAND_DISPLAY",
+      // Shell CA settings are required by Node/OpenSSL builds without bundled roots for registry TLS.
+      "SSL_CERT_FILE",
+      "SSL_CERT_DIR",
+      "NODE_EXTRA_CA_CERTS",
+      "T3CODE_TELEMETRY_ENABLED",
+      "T3CODE_GITHUB_APP_CLIENT_ID",
     ] as const) {
       if (!config.env[name] && shellEnvironment[name]) {
         config.env[name] = shellEnvironment[name];
       }
     }
 
-    // Locale variables form one precedence group: LC_ALL can override an inherited
-    // LANG or LC_CTYPE, so only hydrate the group when the process has none of them.
+    // Hydrate locale variables together; inherited LC_ALL can override LANG or LC_CTYPE.
     if (
       config.platform === "darwin" &&
       LOCALE_ENV_NAMES.every((name) => Option.isNone(trimNonEmpty(config.env[name])))
@@ -490,11 +470,7 @@ const installPosixEnvironment = Effect.fn("desktop.shellEnvironment.installPosix
         }
       }
 
-      // GUI launches inherit no locale from launchd, so spawned agents land in the C
-      // locale and pbcopy decodes their UTF-8 output as MacRoman. Older supported
-      // macOS releases do not provide C.UTF-8, so set only LC_CTYPE to a UTF-8 locale
-      // available on those releases. Leaving LANG unset keeps C-stable collation and
-      // formatting, so output parsing is unaffected.
+      // launchd lacks locale; UTF-8 LC_CTYPE fixes pbcopy's MacRoman decoding without changing C formatting or collation.
       if (LOCALE_ENV_NAMES.every((name) => Option.isNone(trimNonEmpty(config.env[name])))) {
         config.env.LC_CTYPE = FALLBACK_LC_CTYPE;
       }
@@ -515,34 +491,42 @@ const installPosixEnvironment = Effect.fn("desktop.shellEnvironment.installPosix
         }
       }
     }
+
+    return Option.isSome(trimNonEmpty(shellEnvironment.PATH));
   },
 );
 
 const installShellEnvironment = (
   config: ShellEnvironmentConfig,
-): Effect.Effect<void, never, ChildProcessSpawner.ChildProcessSpawner | FileSystem.FileSystem> => {
+): Effect.Effect<
+  boolean,
+  never,
+  ChildProcessSpawner.ChildProcessSpawner | FileSystem.FileSystem
+> => {
   if (config.platform === "win32") {
     return installWindowsEnvironment(config);
   }
   if (config.platform === "darwin" || config.platform === "linux") {
     return installPosixEnvironment(config);
   }
-  return Effect.void;
+  return Effect.succeed(false);
 };
 
+/** @public */
 export const make = Effect.gen(function* () {
   const environment = yield* DesktopEnvironment.DesktopEnvironment;
   const fileSystem = yield* FileSystem.FileSystem;
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const installIntoProcess: DesktopShellEnvironment["Service"]["installIntoProcess"] =
-    installShellEnvironment({
-      env: process.env,
-      platform: environment.platform,
-      userShell: Option.none(),
-    }).pipe(
-      Effect.provideService(FileSystem.FileSystem, fileSystem),
-      Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
-      Effect.withSpan("desktop.shellEnvironment.installIntoProcess"),
+    yield* Effect.cached(
+      installShellEnvironment({
+        env: process.env,
+        platform: environment.platform,
+      }).pipe(
+        Effect.provideService(FileSystem.FileSystem, fileSystem),
+        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+        Effect.withSpan("desktop.shellEnvironment.installIntoProcess"),
+      ),
     );
 
   return DesktopShellEnvironment.of({ installIntoProcess });

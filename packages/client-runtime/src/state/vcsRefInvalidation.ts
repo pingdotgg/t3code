@@ -1,10 +1,10 @@
 import type { EnvironmentId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as PartitionedSemaphore from "effect/PartitionedSemaphore";
-import { Atom, type AtomRegistry } from "effect/unstable/reactivity";
+import { Atom, type AtomRegistry } from "effect/reactivity";
 
 import { safeErrorLogAttributes } from "../errors/safeLog.ts";
-import { EnvironmentCacheStore } from "../platform/persistence.ts";
+import * as Persistence from "../platform/persistence.ts";
 
 export interface VcsRefsInvalidationTarget {
   readonly environmentId: EnvironmentId;
@@ -50,17 +50,15 @@ export function withVcsRefsPersistenceLock<A, E, R>(
 }
 
 /**
- * Clears persisted snapshots and then restarts live ref streams while holding
- * the same lock used by generation-checked refresh writes. Clearing first
- * prevents the restarted stream from rehydrating the invalidated snapshot. A
- * refresh that wins the lock is cleared afterward; one that loses observes the
- * new revision and cannot repersist its pre-mutation result.
+ * Clearing first prevents the restarted stream from rehydrating the invalidated
+ * snapshot. A refresh that wins the lock is cleared afterward; one that loses
+ * observes the new revision and cannot repersist its pre-mutation result.
  */
 export const invalidateCachedVcsRefs = Effect.fn("VcsRefsState.invalidateCached")(function* (
   registry: AtomRegistry.AtomRegistry,
   target: CachedVcsRefsInvalidationTarget,
 ) {
-  const cache = yield* EnvironmentCacheStore;
+  const cache = yield* Persistence.EnvironmentCacheStore;
   yield* withVcsRefsPersistenceLock(
     target.environmentId,
     Effect.gen(function* () {

@@ -19,9 +19,14 @@ export interface GetSecretValueRequest extends Omit<
  *
  * Secret values are sensitive: `SecretString` / `SecretBinary` may be handed
  * back wrapped in `Redacted` — unwrap with `Redacted.value` before use.
- * @binding
- * @section Reading Secret Values
- * @example Read the Current Secret Value
+ *
+ * AWS lists `secretsmanager:GetSecretValue` as the required permission for
+ * retrieving the value; `DescribeSecret` is metadata-only and is not needed.
+ * If the secret uses a customer-managed KMS key, the caller additionally
+ * needs `kms:Decrypt` for that key. See the [GetSecretValue API](https://docs.aws.amazon.com/secretsmanager/latest/apireference/API_GetSecretValue.html)
+ * and [Secrets Manager authorization reference](https://docs.aws.amazon.com/service-authorization/latest/reference/list_secretsmanager.html).
+ * ### Reading Secret Values
+ * **Example:** Read the Current Secret Value
  * ```typescript
  * // init — bind the operation to the secret
  * const secret = yield* AWS.SecretsManager.Secret("DbPassword", {
@@ -36,6 +41,11 @@ export interface GetSecretValueRequest extends Omit<
  *     ? result.SecretString
  *     : Redacted.value(result.SecretString!);
  * ```
+ *
+ * @see https://docs.aws.amazon.com/secretsmanager/latest/apireference/API_GetSecretValue.html
+ * @see https://docs.aws.amazon.com/service-authorization/latest/reference/list_secretsmanager.html
+ *
+ * @binding
  */
 export interface GetSecretValue extends Binding.Service<
   GetSecretValue,

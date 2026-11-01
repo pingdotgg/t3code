@@ -3,8 +3,8 @@ import * as Console from "effect/Console";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Stream from "effect/Stream";
-import { HttpServerRequest } from "effect/unstable/http/HttpServerRequest";
-import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
+import { HttpServerRequest } from "effect/http/HttpServerRequest";
+import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import * as Layer from "effect/Layer";
 import path from "pathe";
 
@@ -24,7 +24,7 @@ export class MetricSinkFunction extends AWS.Lambda.Function<AWS.Lambda.Function>
 export const MetricSinkFunctionLive = MetricSinkFunction.make(
   {
     main,
-    url: true,
+    functionUrl: true,
     // Streaming >1000 datums makes 2 sequential PutMetricData calls; give
     // cold starts + both calls comfortable headroom over Lambda's 3s default.
     timeout: Duration.seconds(30),

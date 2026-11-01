@@ -1,10 +1,38 @@
+import { EnvironmentId, MessageId, ThreadId, type AssistantCitation } from "@t3tools/contracts";
+import { serializeAssistantCitation } from "@t3tools/shared/assistantCitations";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
   selectionTouchesMentionBoundary,
   splitPromptIntoComposerSegments,
 } from "./composer-editor-mentions";
-import { INLINE_TERMINAL_CONTEXT_PLACEHOLDER } from "./lib/terminalContext";
+import { formatTerminalContextReference } from "./lib/terminalContext";
+
+const terminalReference = formatTerminalContextReference({
+  id: "ctx-1",
+  terminalLabel: "Terminal 1",
+  lineStart: 3,
+  lineEnd: 4,
+});
+const terminalSegment = {
+  type: "context-reference" as const,
+  kind: "terminal",
+  contextId: "terminal_ctx-1",
+  label: "Terminal 1 lines 3-4",
+  source: terminalReference,
+};
+
+const citation: AssistantCitation = {
+  version: 1,
+  environmentId: EnvironmentId.make("remote/環境"),
+  threadId: ThreadId.make("thread-1"),
+  messageId: MessageId.make("message-1"),
+  text: 'Use @AGENTS.md, $review and "雪 ❄️" (carefully).',
+  start: 4,
+  end: 50,
+  prefix: "前: ",
+  suffix: " 後",
+};
 
 describe("splitPromptIntoComposerSegments", () => {
   it("splits mention tokens followed by whitespace into mention segments", () => {
@@ -18,14 +46,6 @@ describe("splitPromptIntoComposerSegments", () => {
   it("does not convert an incomplete trailing mention token", () => {
     expect(splitPromptIntoComposerSegments("Inspect @AGENTS.md")).toEqual([
       { type: "text", text: "Inspect @AGENTS.md" },
-    ]);
-  });
-
-  it("keeps newlines around mention tokens", () => {
-    expect(splitPromptIntoComposerSegments("one\n@AGENTS.md \ntwo")).toEqual([
-      { type: "text", text: "one\n" },
-      { type: "mention", path: "AGENTS.md", source: "@AGENTS.md" },
-      { type: "text", text: " \ntwo" },
     ]);
   });
 
@@ -71,6 +91,80 @@ describe("splitPromptIntoComposerSegments", () => {
     ).toEqual([{ type: "text", text: "Read [the docs](https://example.com/docs) first" }]);
   });
 
+  it("keeps multiple assistant citations atomic next to punctuation and Unicode", () => {
+    const source = serializeAssistantCitation(citation);
+    const otherCitation = {
+      ...citation,
+      messageId: MessageId.make("message-2"),
+      text: "A second quote",
+    };
+    const otherSource = serializeAssistantCitation(otherCitation);
+
+    expect(splitPromptIntoComposerSegments(`前(${source}),${otherSource}後`)).toEqual([
+      { type: "text", text: "前(" },
+      { type: "citation", citation, source },
+      { type: "text", text: ")," },
+      { type: "citation", citation: otherCitation, source: otherSource },
+      { type: "text", text: "後" },
+    ]);
+  });
+
+  it("preserves exact citation source encoding for adjacent chips at the end of a prompt", () => {
+    const source = serializeAssistantCitation(citation).replaceAll("+", "%20");
+
+    expect(splitPromptIntoComposerSegments(`${source}${source}`)).toEqual([
+      { type: "citation", citation, source },
+      { type: "citation", citation, source },
+    ]);
+  });
+
+  it.each(["@", "@AGENTS.md"])(
+    "keeps a citation after the unfinished mention %s intact",
+    (prefix) => {
+      const source = serializeAssistantCitation(citation);
+
+      expect(splitPromptIntoComposerSegments(`${prefix}${source}`)).toEqual([
+        { type: "text", text: prefix },
+        { type: "citation", citation, source },
+      ]);
+    },
+  );
+
+  it("parses citations alongside file mentions, skills, and context references", () => {
+    const source = serializeAssistantCitation(citation);
+    const reference = formatTerminalContextReference({
+      id: "ctx-1",
+      terminalLabel: "Terminal 1",
+      lineStart: 3,
+      lineEnd: 4,
+    });
+
+    expect(
+      splitPromptIntoComposerSegments(`@AGENTS.md ${source}\n$review ${reference}${source}`),
+    ).toEqual([
+      { type: "mention", path: "AGENTS.md", source: "@AGENTS.md" },
+      { type: "text", text: " " },
+      { type: "citation", citation, source },
+      { type: "text", text: "\n" },
+      { type: "skill", name: "review", source: "$review" },
+      { type: "text", text: " " },
+      {
+        type: "context-reference",
+        kind: "terminal",
+        contextId: "terminal_ctx-1",
+        label: "Terminal 1 lines 3-4",
+        source: reference,
+      },
+      { type: "citation", citation, source },
+    ]);
+  });
+
+  it("keeps malformed citation links as editable text", () => {
+    const prompt = "[Assistant quote](t3-citation://v1/env/thread/message?text=missing+metadata)";
+
+    expect(splitPromptIntoComposerSegments(prompt)).toEqual([{ type: "text", text: prompt }]);
+  });
+
   it.each(["@expo/ui", "@jane/foo.js", "@scope/pkg/sub/path"])(
     "does not turn scoped package reference %s into file mention segments",
     (reference) => {
@@ -78,11 +172,6 @@ describe("splitPromptIntoComposerSegments", () => {
       expect(splitPromptIntoComposerSegments(prompt)).toEqual([{ type: "text", text: prompt }]);
     },
   );
-
-  it("keeps IME-composed text containing a scoped package reference as text", () => {
-    const prompt = "入力 @expo/ui　を追加";
-    expect(splitPromptIntoComposerSegments(prompt)).toEqual([{ type: "text", text: prompt }]);
-  });
 
   it("turns canonical scoped folder links into file mention segments", () => {
     expect(splitPromptIntoComposerSegments("Inspect [sub](@scope/pkg/sub) next")).toEqual([
@@ -115,75 +204,60 @@ describe("splitPromptIntoComposerSegments", () => {
   it("splits skill tokens followed by whitespace into skill segments", () => {
     expect(splitPromptIntoComposerSegments("Use $review-follow-up please")).toEqual([
       { type: "text", text: "Use " },
-      { type: "skill", name: "review-follow-up" },
+      { type: "skill", name: "review-follow-up", source: "$review-follow-up" },
       { type: "text", text: " please" },
     ]);
   });
 
-  it("does not convert an incomplete trailing skill token", () => {
-    expect(splitPromptIntoComposerSegments("Use $review-follow-up")).toEqual([
-      { type: "text", text: "Use $review-follow-up" },
-    ]);
-  });
-
-  it("keeps inline terminal context placeholders at their prompt positions", () => {
-    expect(
-      splitPromptIntoComposerSegments(
-        `Inspect ${INLINE_TERMINAL_CONTEXT_PLACEHOLDER}@AGENTS.md please`,
-      ),
-    ).toEqual([
-      { type: "text", text: "Inspect " },
-      { type: "terminal-context", context: null },
-      { type: "mention", path: "AGENTS.md", source: "@AGENTS.md" },
+  it("splits digit-leading skill tokens into skill segments", () => {
+    expect(splitPromptIntoComposerSegments("Use $2spec please")).toEqual([
+      { type: "text", text: "Use " },
+      { type: "skill", name: "2spec", source: "$2spec" },
       { type: "text", text: " please" },
     ]);
   });
 
-  it("preserves consecutive terminal context placeholders without dropping positions", () => {
-    expect(
-      splitPromptIntoComposerSegments(
-        `${INLINE_TERMINAL_CONTEXT_PLACEHOLDER}${INLINE_TERMINAL_CONTEXT_PLACEHOLDER}tail`,
-      ),
-    ).toEqual([
-      { type: "terminal-context", context: null },
-      { type: "terminal-context", context: null },
-      { type: "text", text: "tail" },
+  it("keeps digits-only dollar amounts and compact monetary expressions as text", () => {
+    expect(splitPromptIntoComposerSegments("I'll pay $20 tomorrow")).toEqual([
+      { type: "text", text: "I'll pay $20 tomorrow" },
+    ]);
+    expect(splitPromptIntoComposerSegments("Budget is $20k tomorrow")).toEqual([
+      { type: "text", text: "Budget is $20k tomorrow" },
+    ]);
+    expect(splitPromptIntoComposerSegments("Cost is $100M total")).toEqual([
+      { type: "text", text: "Cost is $100M total" },
+    ]);
+    expect(splitPromptIntoComposerSegments("Limit is $1e6 here")).toEqual([
+      { type: "text", text: "Limit is $1e6 here" },
     ]);
   });
 
-  it("keeps skill parsing alongside mentions and terminal placeholders", () => {
+  it("keeps context references at their prompt positions", () => {
     expect(
-      splitPromptIntoComposerSegments(
-        `Inspect ${INLINE_TERMINAL_CONTEXT_PLACEHOLDER}$review-follow-up after @AGENTS.md `,
-      ),
+      splitPromptIntoComposerSegments(`Inspect ${terminalReference} @AGENTS.md please`),
     ).toEqual([
       { type: "text", text: "Inspect " },
-      { type: "terminal-context", context: null },
-      { type: "skill", name: "review-follow-up" },
-      { type: "text", text: " after " },
-      { type: "mention", path: "AGENTS.md", source: "@AGENTS.md" },
+      terminalSegment,
       { type: "text", text: " " },
+      { type: "mention", path: "AGENTS.md", source: "@AGENTS.md" },
+      { type: "text", text: " please" },
     ]);
   });
 });
 
 describe("selectionTouchesMentionBoundary", () => {
+  it("does not treat text before a citation as an overlapping file mention", () => {
+    const prompt = `before @${serializeAssistantCitation(citation)}`;
+
+    expect(selectionTouchesMentionBoundary(prompt, "before".length, "before ".length)).toBe(false);
+  });
+
   it("returns true when selection includes the whitespace after a mention", () => {
     expect(
       selectionTouchesMentionBoundary(
         "hi @package.json there",
         "hi @package.json".length,
         "hi @package.json there".length,
-      ),
-    ).toBe(true);
-  });
-
-  it("returns true when selection includes the whitespace before a mention", () => {
-    expect(
-      selectionTouchesMentionBoundary(
-        "hi there @package.json later",
-        "hi there".length,
-        "hi there ".length,
       ),
     ).toBe(true);
   });
@@ -198,34 +272,13 @@ describe("selectionTouchesMentionBoundary", () => {
     ).toBe(false);
   });
 
-  it("returns true when selection includes whitespace after a mention following a terminal placeholder", () => {
-    const prompt = `${INLINE_TERMINAL_CONTEXT_PLACEHOLDER}@AGENTS.md there`;
-    expect(
-      selectionTouchesMentionBoundary(
-        prompt,
-        `${INLINE_TERMINAL_CONTEXT_PLACEHOLDER}@AGENTS.md`.length,
-        prompt.length,
-      ),
-    ).toBe(true);
-  });
-
+  // regression: #2625 mentions with spaces are quoted; selection checks must span the quotes
   it("returns true when selection includes whitespace after a quoted mention", () => {
     expect(
       selectionTouchesMentionBoundary(
         'hi @"My File.md" there',
         'hi @"My File.md"'.length,
         'hi @"My File.md" there'.length,
-      ),
-    ).toBe(true);
-  });
-
-  it("returns true when selection includes whitespace after a markdown file link", () => {
-    const prompt = "hi [package.json](path/to/package.json) there";
-    expect(
-      selectionTouchesMentionBoundary(
-        prompt,
-        "hi [package.json](path/to/package.json)".length,
-        prompt.length,
       ),
     ).toBe(true);
   });

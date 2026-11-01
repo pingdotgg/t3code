@@ -117,9 +117,8 @@ export interface Namespace extends Resource<
  * the namespace. Creating a namespace is quick (~1 minute); the provider
  * waits (bounded) for it to become `AVAILABLE`.
  *
- * @resource
- * @section Creating a Namespace
- * @example Inline Admin Credentials
+ * ### Creating a Namespace
+ * **Example:** Inline Admin Credentials
  * ```typescript
  * const namespace = yield* RedshiftServerless.Namespace("Analytics", {
  *   dbName: "analytics",
@@ -128,7 +127,7 @@ export interface Namespace extends Resource<
  * });
  * ```
  *
- * @example Secrets-Manager-Managed Admin Password
+ * **Example:** Secrets-Manager-Managed Admin Password
  * ```typescript
  * const namespace = yield* RedshiftServerless.Namespace("Analytics", {
  *   dbName: "analytics",
@@ -138,8 +137,8 @@ export interface Namespace extends Resource<
  * // namespace.adminPasswordSecretArn -> the generated secret's ARN
  * ```
  *
- * @section IAM Roles and Encryption
- * @example Default Role and Customer KMS Key
+ * ### IAM Roles and Encryption
+ * **Example:** Default Role and Customer KMS Key
  * ```typescript
  * const namespace = yield* RedshiftServerless.Namespace("Analytics", {
  *   dbName: "analytics",
@@ -149,6 +148,8 @@ export interface Namespace extends Resource<
  *   logExports: ["userlog", "connectionlog"],
  * });
  * ```
+ *
+ * @resource
  */
 export const Namespace = Resource<Namespace>(
   "AWS.RedshiftServerless.Namespace",

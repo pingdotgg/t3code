@@ -16,9 +16,8 @@ export interface StartVariantImportJobRequest extends Omit<
  * automatically as `destinationName` and the action is granted on the bound
  * resource (with `iam:PassRole` for the HealthOmics service role). Provide the
  * implementation with `Effect.provide(AWS.Omics.StartVariantImportJobHttp)`.
- * @binding
- * @section Variant Imports
- * @example Bind StartVariantImportJob to a VariantStore
+ * ### Variant Imports
+ * **Example:** Bind StartVariantImportJob to a VariantStore
  * ```typescript
  * // init
  * const startImport = yield* AWS.Omics.StartVariantImportJob(store);
@@ -28,6 +27,8 @@ export interface StartVariantImportJobRequest extends Omit<
  *   items: [{ source: "s3://my-bucket/variants.vcf" }],
  * });
  * ```
+ *
+ * @binding
  */
 export interface StartVariantImportJob extends Binding.Service<
   StartVariantImportJob,

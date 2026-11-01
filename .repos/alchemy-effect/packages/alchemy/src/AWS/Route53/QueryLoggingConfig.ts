@@ -56,9 +56,8 @@ export interface QueryLoggingConfig extends Resource<
  *
  * A hosted zone can have at most one query logging configuration, and the
  * configuration is immutable — changing either property replaces it.
- * @resource
- * @section Enabling Query Logging
- * @example Log Queries for a Hosted Zone
+ * ### Enabling Query Logging
+ * **Example:** Log Queries for a Hosted Zone
  * ```typescript
  * // Both the log group and the resource policy must live in us-east-1.
  * const policy = yield* Logs.ResourcePolicy("Route53QueryLogging", {
@@ -81,6 +80,8 @@ export interface QueryLoggingConfig extends Resource<
  *   cloudWatchLogsLogGroupArn: logGroup.logGroupArn,
  * });
  * ```
+ *
+ * @resource
  */
 export const QueryLoggingConfig = Resource<QueryLoggingConfig>(
   "AWS.Route53.QueryLoggingConfig",

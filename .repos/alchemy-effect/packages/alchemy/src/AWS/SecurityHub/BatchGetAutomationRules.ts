@@ -9,9 +9,8 @@ import * as Binding from "../../Binding.ts";
  * Account-level operation — invoked with the caller's request as-is.
  * Provide the implementation with
  * `Effect.provide(AWS.SecurityHub.BatchGetAutomationRulesHttp)`.
- * @binding
- * @section Custom Actions, Automation Rules & Aggregation
- * @example Hydrate Automation Rules
+ * ### Custom Actions, Automation Rules & Aggregation
+ * **Example:** Hydrate Automation Rules
  * ```typescript
  * // init — account-level binding, no resource argument
  * const batchGetAutomationRules = yield* AWS.SecurityHub.BatchGetAutomationRules();
@@ -21,6 +20,8 @@ import * as Binding from "../../Binding.ts";
  *   AutomationRulesArns: [rule.ruleArn],
  * });
  * ```
+ *
+ * @binding
  */
 export interface BatchGetAutomationRules extends Binding.Service<
   BatchGetAutomationRules,

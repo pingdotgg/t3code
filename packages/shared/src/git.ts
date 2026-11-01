@@ -1,6 +1,6 @@
 import type {
+  BranchNamingOptions,
   VcsRef,
-  SourceControlProviderInfo,
   VcsStatusLocalResult,
   VcsStatusRemoteResult,
   VcsStatusResult,
@@ -8,23 +8,19 @@ import type {
 } from "@t3tools/contracts";
 import * as Arr from "effect/Array";
 import * as Result from "effect/Result";
-import { detectSourceControlProviderFromRemoteUrl } from "./sourceControl.ts";
 
-export const WORKTREE_BRANCH_PREFIX = "t3code";
-// Canonical form is `t3code/<8 hex>`. Older mobile builds generated `t3code/<uuid>`
-// via Crypto.randomUUID() (always RFC 4122 v4), so the matcher also accepts exactly
-// that shape — version nibble `4`, variant nibble `[89ab]` — to keep those threads
-// eligible for branch regeneration without loosening beyond what was ever generated.
+export const WORKTREE_BRANCH_PREFIX = "t3";
+const TEMP_WORKTREE_HEX_TOKEN = "[0-9a-f]{8}";
+const TEMP_WORKTREE_UUID_V4_TOKEN =
+  "[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}";
 const TEMP_WORKTREE_BRANCH_PATTERN = new RegExp(
-  `^${WORKTREE_BRANCH_PREFIX}\\/(?:[0-9a-f]{8}|[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})$`,
+  `^(?:${WORKTREE_BRANCH_PREFIX}[-/]${TEMP_WORKTREE_HEX_TOKEN}|t3code(?:[-/]${TEMP_WORKTREE_HEX_TOKEN}|\\/${TEMP_WORKTREE_UUID_V4_TOKEN}))$`,
 );
 
-/**
- * Sanitize an arbitrary string into a valid, lowercase git refName fragment.
- * Strips quotes, collapses separators, limits to 64 chars.
- */
 export function sanitizeBranchFragment(raw: string): string {
   const normalized = raw
+    .normalize("NFKD")
+    .replace(/[̀-ͯ]/g, "")
     .trim()
     .toLowerCase()
     .replace(/['"`]/g, "")
@@ -41,24 +37,30 @@ export function sanitizeBranchFragment(raw: string): string {
   return branchFragment.length > 0 ? branchFragment : "update";
 }
 
-/**
- * Sanitize a string into a `feature/…` refName name.
- * Preserves an existing `feature/` prefix or slash-separated namespace.
- */
+export function formatGeneratedBranchName(raw: string, naming?: BranchNamingOptions): string {
+  if (naming?.mode === "custom") return raw.trim();
+  const branch = sanitizeBranchFragment(raw);
+  if (naming?.mode !== "static") return branch;
+  const prefix = naming.prefix
+    .split("/")
+    .map((part) =>
+      part
+        .replace(/[^a-zA-Z0-9_-]+/g, "-")
+        .replace(/-+/g, "-")
+        .replace(/^-+|-+$/g, ""),
+    )
+    .filter(Boolean)
+    .join("/");
+  return prefix ? `${prefix}/${branch}` : branch;
+}
+
 export function sanitizeFeatureBranchName(raw: string): string {
   const sanitized = sanitizeBranchFragment(raw);
-  if (sanitized.includes("/")) {
-    return sanitized.startsWith("feature/") ? sanitized : `feature/${sanitized}`;
-  }
-  return `feature/${sanitized}`;
+  return sanitized.includes("/") ? sanitized : `feature/${sanitized}`;
 }
 
 const AUTO_FEATURE_BRANCH_FALLBACK = "feature/update";
 
-/**
- * Resolve a unique `feature/…` refName name that doesn't collide with
- * any existing refName. Appends a numeric suffix when needed.
- */
 export function resolveAutoFeatureBranchName(
   existingBranchNames: readonly string[],
   preferredBranch?: string,
@@ -67,23 +69,29 @@ export function resolveAutoFeatureBranchName(
   const resolvedBase = sanitizeFeatureBranchName(
     preferred && preferred.length > 0 ? preferred : AUTO_FEATURE_BRANCH_FALLBACK,
   );
-  const existingNames = new Set(existingBranchNames.map((refName) => refName.toLowerCase()));
+  const existingNames = existingBranchNames.map((refName) => refName.toLowerCase());
+  const existingRefs = new Set(existingNames);
+  const parts = resolvedBase.split("/");
+  let resolved = "";
 
-  if (!existingNames.has(resolvedBase)) {
-    return resolvedBase;
+  for (const [index, part] of parts.entries()) {
+    const base = resolved ? `${resolved}/${part}` : part;
+    let candidate = base;
+    let suffix = 2;
+    while (
+      existingRefs.has(candidate) ||
+      (index === parts.length - 1 &&
+        existingNames.some((refName) => refName.startsWith(`${candidate}/`)))
+    ) {
+      candidate = `${base}-${suffix}`;
+      suffix += 1;
+    }
+    resolved = candidate;
   }
 
-  let suffix = 2;
-  while (existingNames.has(`${resolvedBase}-${suffix}`)) {
-    suffix += 1;
-  }
-
-  return `${resolvedBase}-${suffix}`;
+  return resolved;
 }
 
-/**
- * Strip the remote prefix from a remote ref such as `origin/feature/demo`.
- */
 export function deriveLocalBranchNameFromRemoteRef(branchName: string): string {
   const firstSeparatorIndex = branchName.indexOf("/");
   if (firstSeparatorIndex <= 0 || firstSeparatorIndex === branchName.length - 1) {
@@ -95,8 +103,6 @@ export function deriveLocalBranchNameFromRemoteRef(branchName: string): string {
 export function buildTemporaryWorktreeBranchName(
   randomHex: (byteLength: number) => string,
 ): string {
-  // Normalize to exactly 8 lowercase hex chars so a UUID-shaped callback
-  // still produces the canonical temporary branch form.
   const token = randomHex(4)
     .toLowerCase()
     .replace(/[^0-9a-f]/g, "")
@@ -104,60 +110,136 @@ export function buildTemporaryWorktreeBranchName(
   return `${WORKTREE_BRANCH_PREFIX}/${token}`;
 }
 
+/** Flatten temporary t3/<hex> refs because an existing t3 branch blocks nested refs. */
+export function flattenTemporaryWorktreeBranchName(refName: string): string {
+  const normalized = refName.trim().toLowerCase();
+  const tokenStart = normalized.search(/[-/]/) + 1;
+  const token = normalized.slice(tokenStart, tokenStart + 8);
+  return `${WORKTREE_BRANCH_PREFIX}-${token}`;
+}
+
 export function isTemporaryWorktreeBranch(refName: string): boolean {
   return TEMP_WORKTREE_BRANCH_PATTERN.test(refName.trim().toLowerCase());
 }
 
-/**
- * Normalize a git remote URL into a stable comparison key.
- */
-export function normalizeGitRemoteUrl(value: string): string {
-  const normalized = value
+function lowerCaseRemote(value: string): string {
+  return value
     .trim()
     .replace(/\/+$/g, "")
     .replace(/\.git$/i, "")
     .toLowerCase();
+}
+
+/**
+ * The host and repository path a remote names, lower case and without a port, or null for a
+ * remote that names no host, such as a local path.
+ */
+export function parseGitRemoteRepository(
+  value: string,
+): { readonly host: string; readonly path: string } | null {
+  const normalized = lowerCaseRemote(value);
 
   if (/^(?:ssh|https?|git):\/\//i.test(normalized)) {
     try {
       const url = new URL(normalized);
-      const repositoryPath = url.pathname
-        .split("/")
-        .filter((segment) => segment.length > 0)
-        .join("/");
-      if (url.hostname && repositoryPath.includes("/")) {
-        return `${url.hostname}/${repositoryPath}`;
+      const repositorySegments = url.pathname.split("/").filter((segment) => segment.length > 0);
+      if (url.hostname && repositorySegments.length > 1) {
+        return { host: url.hostname, path: repositorySegments.join("/") };
       }
     } catch {
-      return normalized;
+      return null;
     }
   }
 
-  const scpStyleHostAndPath = /^[a-zA-Z0-9._-]+@([^:/\s]+):([^/\s]+(?:\/[^/\s]+)+)$/i.exec(
-    normalized,
-  );
-  if (scpStyleHostAndPath?.[1] && scpStyleHostAndPath[2]) {
-    return `${scpStyleHostAndPath[1]}/${scpStyleHostAndPath[2]}`;
-  }
-
-  return normalized;
+  // A userless one-letter prefix is a Windows drive, not an SCP host.
+  const scpStyleHostAndPath = /^[a-z]:/i.test(normalized)
+    ? null
+    : /^(?:[a-zA-Z0-9._-]+@)?([^@:/\\\s]+):\/?([^/\s]+(?:\/[^/\s]+)+)$/i.exec(normalized);
+  const scpHost = scpStyleHostAndPath?.[1];
+  const scpPath = scpStyleHostAndPath?.[2];
+  return scpHost && scpPath ? { host: scpHost, path: scpPath } : null;
 }
 
 /**
- * Best-effort parse of a GitHub `owner/repo` identifier from common remote URL shapes.
+ * `host/path` for a remote that names a host, otherwise the remote itself, lower case. A host that
+ * spells repositories differently over SSH has its source control registry's
+ * `repositoryKeyFromRemote` rewrite this, so persisted keys come from that, not from here.
  */
-export function parseGitHubRepositoryNameWithOwnerFromRemoteUrl(url: string | null): string | null {
-  const trimmed = url?.trim() ?? "";
-  if (trimmed.length === 0) {
-    return null;
-  }
+export function normalizeGitRemoteUrl(value: string): string {
+  const repository = parseGitRemoteRepository(value);
+  return repository === null ? lowerCaseRemote(value) : `${repository.host}/${repository.path}`;
+}
 
-  const match =
-    /^(?:git@github\.com:|ssh:\/\/git@github\.com\/|https:\/\/github\.com\/|git:\/\/github\.com\/)([^/\s]+\/[^/\s]+?)(?:\.git)?\/?$/i.exec(
-      trimmed,
-    );
-  const repositoryNameWithOwner = match?.[1]?.trim() ?? "";
-  return repositoryNameWithOwner.length > 0 ? repositoryNameWithOwner : null;
+function parseGitConfigValue(raw: string): string {
+  let out = "";
+  let quoted = false;
+  for (let index = 0; index < raw.length; index += 1) {
+    const char = raw[index]!;
+    if (char === "\\" && index + 1 < raw.length) {
+      out += raw[index + 1];
+      index += 1;
+      continue;
+    }
+    if (char === '"') {
+      quoted = !quoted;
+      continue;
+    }
+    if (!quoted && (char === "#" || char === ";")) break;
+    out += char;
+  }
+  return out.trim();
+}
+
+export function isBareGitConfig(configText: string): boolean {
+  let inCore = false;
+  let bare = false;
+  for (const rawLine of configText.split(/\r?\n/)) {
+    let line = rawLine.trim();
+    // Git accepts the first setting on the section header's own line.
+    const header = /^\[\s*([^\]]*?)\s*\](.*)$/.exec(line);
+    if (header !== null) {
+      inCore = header[1]!.toLowerCase() === "core";
+      line = header[2]!.trim();
+    }
+    if (!inCore) continue;
+    const match = /^bare\s*(?:=(.*)|[#;].*)?$/i.exec(line);
+    if (match === null) continue;
+    const value = match[1] === undefined ? "true" : parseGitConfigValue(match[1]).toLowerCase();
+    bare = value === "true" || value === "yes" || value === "on" || value === "1";
+  }
+  return bare;
+}
+
+export function parseOriginUrlFromGitConfig(configText: string): string | null {
+  let section: string | null = null;
+  let originUrl: string | null = null;
+  let firstRemoteUrl: string | null = null;
+  const joined = configText.replace(/\\\r?\n[ \t]*/g, "");
+  for (const rawLine of joined.split(/\r?\n/)) {
+    let line = rawLine.trim();
+    if (line.length === 0 || line.startsWith("#") || line.startsWith(";")) continue;
+    // Git preserves case in quoted remote subsections but lowercases legacy dotted ones,
+    // and accepts the first setting on the section header's own line.
+    const header = /^\[\s*remote(?:\s+"([^"]+)"|\.([^\]\s]+))\s*\](.*)$/i.exec(line);
+    if (header) {
+      section = header[1] ?? header[2]?.toLowerCase() ?? null;
+      line = header[3]!.trim();
+    } else if (line.startsWith("[")) {
+      section = null;
+      continue;
+    }
+    if (section === null) continue;
+    const match = /^url\s*=\s*(.*)$/i.exec(line);
+    if (!match) continue;
+    const url = parseGitConfigValue(match[1] ?? "");
+    if (url.length === 0) continue;
+    if (section === "origin") {
+      originUrl ??= url;
+    } else {
+      firstRemoteUrl ??= url;
+    }
+  }
+  return originUrl ?? firstRemoteUrl;
 }
 
 function deriveLocalBranchNameCandidatesFromRemoteRef(
@@ -180,9 +262,11 @@ function deriveLocalBranchNameCandidatesFromRemoteRef(
   return [...candidates];
 }
 
-/**
- * Hide `origin/*` remote refs when a matching local refName already exists.
- */
+// Replace only Git-rejected whitespace; nonbreaking spaces are valid ref characters.
+export function sanitizeNewRefName(rawName: string): string {
+  return rawName.trim().replace(/[ \t\n\r\f\v]+/g, "-");
+}
+
 export function dedupeRemoteBranchesWithLocalMatches(
   refs: ReadonlyArray<VcsRef>,
 ): ReadonlyArray<VcsRef> {
@@ -207,12 +291,6 @@ export function dedupeRemoteBranchesWithLocalMatches(
     );
     return !localBranchCandidates.some((candidate) => localBranchNames.has(candidate));
   });
-}
-
-export function detectSourceControlProviderFromGitRemoteUrl(
-  remoteUrl: string,
-): SourceControlProviderInfo | null {
-  return detectSourceControlProviderFromRemoteUrl(remoteUrl);
 }
 
 const EMPTY_GIT_STATUS_REMOTE: VcsStatusRemoteResult = {
@@ -256,6 +334,7 @@ function toLocalStatusPart(status: VcsStatusResult): VcsStatusLocalResult {
     refName: status.refName,
     hasWorkingTreeChanges: status.hasWorkingTreeChanges,
     workingTree: status.workingTree,
+    ...(status.branchChanges ? { branchChanges: status.branchChanges } : {}),
   };
 }
 

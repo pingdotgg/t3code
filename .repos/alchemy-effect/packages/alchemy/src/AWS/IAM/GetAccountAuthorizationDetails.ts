@@ -12,9 +12,8 @@ import * as Binding from "../../Binding.ts";
  * `iam:GetAccountAuthorizationDetails` on `*`. Provide the implementation
  * with `Effect.provide(AWS.IAM.GetAccountAuthorizationDetailsHttp)`.
  *
- * @binding
- * @section Account Auditing
- * @example Snapshot Roles and Their Policies
+ * ### Account Auditing
+ * **Example:** Snapshot Roles and Their Policies
  * ```typescript
  * // init
  * const getAuthorizationDetails = yield* IAM.GetAccountAuthorizationDetails();
@@ -26,6 +25,8 @@ import * as Binding from "../../Binding.ts";
  * });
  * const roles = page.RoleDetailList ?? [];
  * ```
+ *
+ * @binding
  */
 export interface GetAccountAuthorizationDetails extends Binding.Service<
   GetAccountAuthorizationDetails,

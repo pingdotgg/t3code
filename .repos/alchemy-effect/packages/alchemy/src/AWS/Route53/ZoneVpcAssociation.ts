@@ -58,9 +58,8 @@ export interface ZoneVpcAssociation extends Resource<
  *
  * The initial VPC of a private zone cannot be modeled with this resource —
  * Route 53 refuses to disassociate the last VPC from a private zone.
- * @resource
- * @section Associating VPCs
- * @example Attach a Second VPC
+ * ### Associating VPCs
+ * **Example:** Attach a Second VPC
  * ```typescript
  * const zone = yield* HostedZone("InternalZone", {
  *   name: "internal.example.com",
@@ -74,6 +73,8 @@ export interface ZoneVpcAssociation extends Resource<
  *   vpcRegion: "us-west-2",
  * });
  * ```
+ *
+ * @resource
  */
 export const ZoneVpcAssociation = Resource<ZoneVpcAssociation>(
   "AWS.Route53.ZoneVpcAssociation",

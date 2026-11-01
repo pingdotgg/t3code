@@ -69,7 +69,10 @@ export const makeNotificationsHttpBinding = <
       return Effect.fn(`AWS.Notifications.${options.capability}`)(function* (
         request?: I,
       ) {
-        return yield* op((request ?? {}) as I);
+        // The region must also be pinned at the call site: the yield-time
+        // snapshot is only a fallback — the calling fiber's ambient Region
+        // (the host Function's own region) wins over it.
+        return yield* pinNotificationsRegion(op((request ?? {}) as I));
       });
     });
   });
@@ -121,10 +124,13 @@ export const makeNotificationConfigurationHttpBinding = <
       return Effect.fn(
         `AWS.Notifications.${options.capability}(${configuration.LogicalId})`,
       )(function* (request?: Omit<I, "notificationConfigurationArn">) {
-        return yield* op({
-          ...request,
-          notificationConfigurationArn: yield* configurationArn,
-        } as I);
+        // Call-site region pin — see makeNotificationsHttpBinding above.
+        return yield* pinNotificationsRegion(
+          op({
+            ...request,
+            notificationConfigurationArn: yield* configurationArn,
+          } as I),
+        );
       });
     });
   });

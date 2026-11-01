@@ -3,15 +3,17 @@ import * as S3 from "@/AWS/S3";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Stream from "effect/Stream";
-import { HttpServerRequest } from "effect/unstable/http/HttpServerRequest";
-import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
+import { HttpServerRequest } from "effect/http/HttpServerRequest";
+import * as HttpServerResponse from "effect/http/HttpServerResponse";
 
-// Keys written by the `fetch` route live under `incoming/`; the subscription
-// only listens to that prefix and writes its derived object under `processed/`.
-// Without the prefix filter the `processed/` write would itself trigger the
-// subscription, which writes another object, and so on — a runaway train.
+// Derived writes stay outside the watched prefix to avoid recursive events.
 const INCOMING_PREFIX = "incoming/";
 const PROCESSED_PREFIX = "processed/";
+
+const recordKey = (key: string, eventName: string, versionId: string) => {
+  const path = [key, eventName, versionId].map(encodeURIComponent).join("/");
+  return `${PROCESSED_PREFIX}${path}.json`;
+};
 
 export class BucketEventSourceFunction extends Lambda.Function<BucketEventSourceFunction>()(
   "BucketEventSourceFunction",
@@ -20,37 +22,69 @@ export class BucketEventSourceFunction extends Lambda.Function<BucketEventSource
 export default BucketEventSourceFunction.make(
   {
     main: import.meta.url,
-    url: true,
+    functionUrl: true,
   },
   Effect.gen(function* () {
     const bucket = yield* S3.Bucket("EventSourceBucket", {
       forceDestroy: true,
+      versioning: "Enabled",
     });
 
     const putObject = yield* S3.PutObject(bucket);
     const getObject = yield* S3.GetObject(bucket);
     const BucketName = yield* bucket.bucketName;
 
-    // Subscribe to object-created events under `incoming/`. Each notification
-    // writes a derived object under `processed/<name>` recording the event.
     yield* S3.consumeBucketEvents(
       bucket,
       {
-        events: ["s3:ObjectCreated:*"],
+        events: ["s3:ObjectCreated:*", "s3:ObjectRemoved:*"],
         prefix: INCOMING_PREFIX,
       },
       (stream) =>
         stream.pipe(
           Stream.runForEach((event) =>
             Effect.gen(function* () {
-              const name = event.key.slice(INCOMING_PREFIX.length);
-              yield* putObject({
-                Key: `${PROCESSED_PREFIX}${name}`,
-                Body: JSON.stringify({
+              const versionId = event.versionId;
+              if (!versionId) {
+                return yield* Effect.fail(
+                  new Error("Versioned bucket notification omitted versionId"),
+                );
+              }
+              const key = yield* Effect.sync(() =>
+                recordKey(event.key, event.type, versionId),
+              );
+              // Redelivery can arrive after the source version was deleted.
+              const recorded = yield* getObject({ Key: key }).pipe(
+                Effect.flatMap(({ Body }) => Stream.runDrain(Body!)),
+                Effect.as(true),
+                Effect.catchTag("NoSuchKey", () => Effect.succeed(false)),
+              );
+              if (recorded) return;
+              const object = event.type.startsWith("s3:ObjectCreated:")
+                ? yield* getObject({
+                    Key: event.key,
+                    VersionId: versionId,
+                  })
+                : undefined;
+              const content = object
+                ? yield* Stream.mkString(Stream.decodeText(object.Body!))
+                : undefined;
+              const body = yield* Effect.sync(() =>
+                JSON.stringify({
+                  bucket: event.bucket,
                   key: event.key,
+                  eventName: event.type,
+                  versionId,
+                  sequencer: event.sequencer,
                   size: event.size,
                   eTag: event.eTag,
+                  content,
+                  readVersionId: object?.VersionId,
                 }),
+              );
+              yield* putObject({
+                Key: key,
+                Body: body,
                 ContentType: "application/json",
               });
             }).pipe(Effect.orDie),
@@ -61,7 +95,7 @@ export default BucketEventSourceFunction.make(
     return {
       fetch: Effect.gen(function* () {
         const request = yield* HttpServerRequest;
-        const url = new URL(request.originalUrl);
+        const url = yield* Effect.sync(() => new URL(request.originalUrl));
         const pathname = url.pathname;
 
         if (request.method === "GET" && pathname === "/bucket-name") {
@@ -79,25 +113,37 @@ export default BucketEventSourceFunction.make(
 
         if (request.method === "POST" && pathname === "/put") {
           const body = (yield* request.json) as { key: string; value: string };
-          yield* putObject({
+          const result = yield* putObject({
             Key: `${INCOMING_PREFIX}${body.key}`,
             Body: body.value,
             ContentType: "text/plain",
           });
-          return yield* HttpServerResponse.json({ ok: true });
+          return yield* HttpServerResponse.json({
+            ok: true,
+            versionId: result.VersionId,
+          });
         }
 
         if (request.method === "GET" && pathname === "/processed") {
           const key = url.searchParams.get("key");
-          if (!key) {
-            return HttpServerResponse.text("Missing key", { status: 400 });
+          const eventName = url.searchParams.get("eventName");
+          const versionId = url.searchParams.get("versionId");
+          if (!key || !eventName || !versionId) {
+            return HttpServerResponse.text(
+              "Missing key, eventName, or versionId",
+              { status: 400 },
+            );
           }
-          return yield* getObject({ Key: `${PROCESSED_PREFIX}${key}` }).pipe(
+          const storedKey = yield* Effect.sync(() =>
+            recordKey(key, eventName, versionId),
+          );
+          return yield* getObject({ Key: storedKey }).pipe(
             Effect.flatMap((result) =>
               Stream.mkString(Stream.decodeText(result.Body!)),
             ),
-            Effect.flatMap((text) =>
-              HttpServerResponse.json({ processed: JSON.parse(text) }),
+            Effect.flatMap((text) => Effect.try(() => JSON.parse(text))),
+            Effect.flatMap((processed) =>
+              HttpServerResponse.json({ processed }),
             ),
             // Object not written yet — the test polls until it appears.
             Effect.catchTag("NoSuchKey", () =>

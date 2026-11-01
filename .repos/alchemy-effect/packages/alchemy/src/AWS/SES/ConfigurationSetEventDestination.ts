@@ -91,9 +91,8 @@ export interface ConfigurationSetEventDestination extends Resource<
  * An event destination on an SES v2 configuration set — streams
  * send/delivery/bounce/complaint (and open/click) events to SNS,
  * EventBridge, or CloudWatch.
- * @resource
- * @section Creating Event Destinations
- * @example Publish Bounce and Complaint Events to SNS
+ * ### Creating Event Destinations
+ * **Example:** Publish Bounce and Complaint Events to SNS
  * ```typescript
  * import * as SES from "alchemy/AWS/SES";
  * import * as SNS from "alchemy/AWS/SNS";
@@ -108,7 +107,7 @@ export interface ConfigurationSetEventDestination extends Resource<
  * });
  * ```
  *
- * @example Publish Metrics to CloudWatch
+ * **Example:** Publish Metrics to CloudWatch
  * ```typescript
  * const metrics = yield* SES.ConfigurationSetEventDestination("Metrics", {
  *   configurationSetName: configSet.configurationSetName,
@@ -124,6 +123,8 @@ export interface ConfigurationSetEventDestination extends Resource<
  *   },
  * });
  * ```
+ *
+ * @resource
  */
 export const ConfigurationSetEventDestination =
   Resource<ConfigurationSetEventDestination>(

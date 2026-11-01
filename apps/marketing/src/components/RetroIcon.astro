@@ -1,0 +1,57 @@
+---
+interface Props {
+  name: "computer" | "disk" | "globe" | "bin" | "folder" | "cursor";
+  size?: number;
+}
+
+const { name, size = 32 } = Astro.props;
+---
+
+<svg width={size} height={size} viewBox="0 0 32 32" fill="none" shape-rendering="crispEdges" aria-hidden="true">
+  {name === "computer" && <>
+    <path fill="#000" d="M3 2h25v22H3zM10 24h11v3h7v4H3v-4h7z" />
+    <path fill="#c0c0c0" d="M3 2h23v20H3zM12 22h7v5h7v2H4v-2h8z" />
+    <path fill="#fff" d="M3 2h23v2H5v18H3zM4 27h22v1H4z" />
+    <path fill="#808080" d="M6 5h17v14H6zM5 20h20v2H5z" />
+    <path fill="#000080" d="M8 7h15v10H8z" />
+    <path fill="#51e5cf" d="M9 8h13v2H9zM9 11h5v4H9z" />
+    <path fill="#fff" d="M16 11h5v1h-5zM16 14h4v1h-4z" />
+    <path fill="#baff00" d="M21 20h2v1h-2z" />
+  </>}
+  {name === "disk" && <>
+    <path fill="#000" d="M3 2h23l4 4v24H3z" />
+    <path fill="#4747b8" d="M3 2h22l3 3v23H3z" />
+    <path fill="#9c9cff" d="M3 2h2v26H3zM5 2h20v2H5z" />
+    <path fill="#c0c0c0" d="M8 3h14v9H8z" />
+    <path fill="#fff" d="M8 3h2v9H8z" />
+    <path fill="#000" d="M17 4h4v6h-4z" />
+    <path fill="#fff" d="M7 16h17v12H7z" />
+    <path fill="#ff65b3" d="M7 16h17v3H7z" />
+    <path fill="#808080" d="M10 21h11v1H10zM10 24h8v1h-8z" />
+  </>}
+  {name === "globe" && <>
+    <path fill="#000" d="M11 1h10v2h5v5h3v16h-4v5h-5v2H10v-3H5v-5H2V10h3V5h6z" />
+    <path fill="#5353dd" d="M11 2h9v2h5v5h3v13h-4v5h-5v3h-8v-3H6v-5H3V11h3V6h5z" />
+    <path fill="#80ffff" d="M11 3h8v2h-7v3H8v5H5v-3h2V6h4z" />
+    <path fill="#00ba80" d="M14 5h7v4h4v5h-6v-3h-5zM7 13h7v3h6v4h-4v6h-5v-5H7zM23 21h3v3h-3z" />
+    <path fill="#baff00" d="M14 5h6v2h-6zM7 13h6v2H7z" />
+  </>}
+  {name === "bin" && <>
+    <path fill="#000" d="M6 8h21v3h-2v18H8V11H6zM10 3h12v3h5v3H5V6h5z" />
+    <path fill="#c0c0c0" d="M7 10h17v18H9V13H7zM7 6h17v3H7zM12 3h7v3h-7z" />
+    <path fill="#fff" d="M9 11h2v15H9zM7 6h17v1H7zM13 12h2v13h-2zM18 12h2v13h-2z" />
+    <path fill="#808080" d="M15 12h2v13h-2zM20 12h2v13h-2zM11 27h13v2H11z" />
+    <path fill="#2f986b" d="M13 15h7v2h-4v2h-3zM12 20h3v2h5v2h-8zM20 18h2v4h-2z" />
+  </>}
+  {name === "folder" && <>
+    <path fill="#000" d="M2 6h12v3h15v20H2z" />
+    <path fill="#e3ba3f" d="M2 6h11v3h14v18H2z" />
+    <path fill="#fff4a0" d="M2 6h11v2H4v18H2z" />
+    <path fill="#fff4a0" d="M5 13h25v3h-2v6h-2v5H3v-8h2z" />
+    <path fill="#e3ba3f" d="M6 15h23v1h-2v6h-2v4H5v-7h1z" />
+  </>}
+  {name === "cursor" && <>
+    <path fill="#000" d="M5 1h3v3h3v3h3v3h3v3h3v3h3v3h3v4H16l5 8h-7l-5-9-4 4z" />
+    <path fill="#fff" d="M7 5v16l4-4 6 12h2l-6-12h10z" />
+  </>}
+</svg>

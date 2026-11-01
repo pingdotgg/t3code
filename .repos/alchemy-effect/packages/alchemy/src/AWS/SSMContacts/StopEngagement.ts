@@ -11,9 +11,8 @@ import * as Binding from "../../Binding.ts";
  * binding is account-scoped.
  * Provide the implementation with
  * `Effect.provide(AWS.SSMContacts.StopEngagementHttp)`.
- * @binding
- * @section Managing Engagements
- * @example Stop an Engagement After Resolution
+ * ### Managing Engagements
+ * **Example:** Stop an Engagement After Resolution
  * ```typescript
  * const stopEngagement = yield* AWS.SSMContacts.StopEngagement();
  *
@@ -22,6 +21,8 @@ import * as Binding from "../../Binding.ts";
  *   Reason: "incident resolved",
  * });
  * ```
+ *
+ * @binding
  */
 export interface StopEngagement extends Binding.Service<
   StopEngagement,

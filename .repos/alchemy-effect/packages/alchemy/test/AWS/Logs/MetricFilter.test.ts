@@ -146,5 +146,5 @@ test.provider(
         replaced.filterName,
       );
     }).pipe(Effect.onError(() => stack.destroy().pipe(Effect.ignore))),
-  { timeout: 120_000 },
+  { tags: ["provider:aws", "provider:aws:logs", "live"], timeout: 120_000 },
 );

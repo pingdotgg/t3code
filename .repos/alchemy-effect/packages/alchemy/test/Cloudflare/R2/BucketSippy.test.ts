@@ -44,7 +44,9 @@ const getSippy = (accountId: string, bucketName: string) =>
 
 const program = (opts: { sippy: boolean }) =>
   Effect.gen(function* () {
-    const bucket = yield* Cloudflare.R2.Bucket("SippyBucket");
+    const bucket = yield* Cloudflare.R2.Bucket("SippyBucket", {
+      forceDestroy: true,
+    });
     const sippy = opts.sippy
       ? yield* Cloudflare.R2.BucketSippy("Sippy", {
           bucketName: bucket.bucketName,
@@ -135,7 +137,10 @@ test.provider(
       // Destroy again — engine-level delete must be idempotent.
       yield* stack.destroy();
     }).pipe(logLevel),
-  { timeout: 120_000 },
+  {
+    tags: ["provider:cloudflare", "provider:cloudflare:r2", "live"],
+    timeout: 120_000,
+  },
 );
 
 // list() — parent fan-out singleton. Ungated path: without external creds
@@ -161,7 +166,10 @@ test.provider(
 
       yield* stack.destroy();
     }).pipe(logLevel),
-  { timeout: 120_000 },
+  {
+    tags: ["provider:cloudflare", "provider:cloudflare:r2", "live"],
+    timeout: 120_000,
+  },
 );
 
 // Gated list() — with real creds the enabled bucket must appear in the
@@ -185,7 +193,10 @@ test.provider.skipIf(!sippyCreds)(
 
       yield* stack.destroy();
     }).pipe(logLevel),
-  { timeout: 300_000 },
+  {
+    tags: ["provider:cloudflare", "provider:cloudflare:r2", "live"],
+    timeout: 300_000,
+  },
 );
 
 // Full lifecycle — requires env-supplied AWS source + R2 destination
@@ -236,5 +247,8 @@ test.provider.skipIf(!sippyCreds)(
       ).pipe(Effect.flip);
       expect(goneError._tag).toEqual("NoSuchBucket");
     }).pipe(logLevel),
-  { timeout: 300_000 },
+  {
+    tags: ["provider:cloudflare", "provider:cloudflare:r2", "live"],
+    timeout: 300_000,
+  },
 );

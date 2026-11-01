@@ -7,8 +7,8 @@ import { describe, expect } from "alchemy-test";
 import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
 import * as Schedule from "effect/Schedule";
-import * as HttpClient from "effect/unstable/http/HttpClient";
-import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
+import * as HttpClient from "effect/http/HttpClient";
+import * as HttpClientRequest from "effect/http/HttpClientRequest";
 import LicenseManagerTestFunctionLive, {
   LicenseManagerTestFunction,
 } from "./handler";
@@ -142,215 +142,407 @@ describeCreateLifecycle.sequential("LicenseManager Bindings", () => {
 
   afterAll(sharedStack.destroy(), { timeout: 120_000 });
 
-  describe("binding registration", () => {
-    test.provider("all 23 capabilities initialize in the runtime", (_stack) =>
-      Effect.gen(function* () {
-        const response = yield* getJson("/bindings");
-        expect((response as any).bound).toHaveLength(23);
-      }),
-    );
-  });
-
-  describe("GetLicenseConfiguration", () => {
-    test.provider(
-      "reads the bound configuration (proving ARN injection + the scoped grant)",
-      (_stack) =>
+  describe(
+    "binding registration",
+    {
+      tags: [
+        "provider:aws",
+        "provider:aws:iam",
+        "provider:aws:lambda",
+        "provider:aws:licensemanager",
+        "live",
+      ],
+    },
+    () => {
+      test.provider("all 23 capabilities initialize in the runtime", (_stack) =>
         Effect.gen(function* () {
-          const response = (yield* getJson("/configuration")) as any;
-          expect(response.countingType).toBe("vCPU");
-          expect(response.licenseCount).toBe(5);
-          expect(response.name).toBeTruthy();
+          const response = yield* getJson("/bindings");
+          expect((response as any).bound).toHaveLength(23);
         }),
-      { timeout: 60_000 },
-    );
-  });
+      );
+    },
+  );
 
-  describe("ListAssociationsForLicenseConfiguration", () => {
-    test.provider(
-      "lists the configuration's associations",
-      (_stack) =>
-        Effect.gen(function* () {
-          const response = (yield* getJson("/associations")) as any;
-          expect(response.count).toBe(0);
-        }),
-      { timeout: 60_000 },
-    );
-  });
+  describe(
+    "GetLicenseConfiguration",
+    {
+      tags: [
+        "provider:aws",
+        "provider:aws:iam",
+        "provider:aws:lambda",
+        "provider:aws:licensemanager",
+        "live",
+      ],
+    },
+    () => {
+      test.provider(
+        "reads the bound configuration (proving ARN injection + the scoped grant)",
+        (_stack) =>
+          Effect.gen(function* () {
+            const response = (yield* getJson("/configuration")) as any;
+            expect(response.countingType).toBe("vCPU");
+            expect(response.licenseCount).toBe(5);
+            expect(response.name).toBeTruthy();
+          }),
+        { timeout: 60_000 },
+      );
+    },
+  );
 
-  describe("ListUsageForLicenseConfiguration", () => {
-    test.provider(
-      "lists per-resource usage",
-      (_stack) =>
-        Effect.gen(function* () {
-          const response = (yield* getJson("/usage")) as any;
-          expect(response.count).toBe(0);
-        }),
-      { timeout: 60_000 },
-    );
-  });
+  describe(
+    "ListAssociationsForLicenseConfiguration",
+    {
+      tags: [
+        "provider:aws",
+        "provider:aws:iam",
+        "provider:aws:lambda",
+        "provider:aws:licensemanager",
+        "live",
+      ],
+    },
+    () => {
+      test.provider(
+        "lists the configuration's associations",
+        (_stack) =>
+          Effect.gen(function* () {
+            const response = (yield* getJson("/associations")) as any;
+            expect(response.count).toBe(0);
+          }),
+        { timeout: 60_000 },
+      );
+    },
+  );
 
-  describe("ListFailuresForLicenseConfigurationOperations", () => {
-    test.provider(
-      "lists failed license operations",
-      (_stack) =>
-        Effect.gen(function* () {
-          const response = (yield* getJson("/failures")) as any;
-          expect(response.count).toBe(0);
-        }),
-      { timeout: 60_000 },
-    );
-  });
+  describe(
+    "ListUsageForLicenseConfiguration",
+    {
+      tags: [
+        "provider:aws",
+        "provider:aws:iam",
+        "provider:aws:lambda",
+        "provider:aws:licensemanager",
+        "live",
+      ],
+    },
+    () => {
+      test.provider(
+        "lists per-resource usage",
+        (_stack) =>
+          Effect.gen(function* () {
+            const response = (yield* getJson("/usage")) as any;
+            expect(response.count).toBe(0);
+          }),
+        { timeout: 60_000 },
+      );
+    },
+  );
 
-  describe("ListLicenses", () => {
-    test.provider(
-      "lists owned seller licenses",
-      (_stack) =>
-        Effect.gen(function* () {
-          const response = (yield* getJson("/licenses")) as any;
-          expect(response.count).toBeGreaterThanOrEqual(0);
-        }),
-      { timeout: 60_000 },
-    );
-  });
+  describe(
+    "ListFailuresForLicenseConfigurationOperations",
+    {
+      tags: [
+        "provider:aws",
+        "provider:aws:iam",
+        "provider:aws:lambda",
+        "provider:aws:licensemanager",
+        "live",
+      ],
+    },
+    () => {
+      test.provider(
+        "lists failed license operations",
+        (_stack) =>
+          Effect.gen(function* () {
+            const response = (yield* getJson("/failures")) as any;
+            expect(response.count).toBe(0);
+          }),
+        { timeout: 60_000 },
+      );
+    },
+  );
 
-  describe("ListReceivedLicenses", () => {
-    test.provider(
-      "lists received licenses",
-      (_stack) =>
-        Effect.gen(function* () {
-          const response = (yield* getJson("/received-licenses")) as any;
-          expect(response.count).toBeGreaterThanOrEqual(0);
-        }),
-      { timeout: 60_000 },
-    );
-  });
+  describe(
+    "ListLicenses",
+    {
+      tags: [
+        "provider:aws",
+        "provider:aws:iam",
+        "provider:aws:lambda",
+        "provider:aws:licensemanager",
+        "live",
+      ],
+    },
+    () => {
+      test.provider(
+        "lists owned seller licenses",
+        (_stack) =>
+          Effect.gen(function* () {
+            const response = (yield* getJson("/licenses")) as any;
+            expect(response.count).toBeGreaterThanOrEqual(0);
+          }),
+        { timeout: 60_000 },
+      );
+    },
+  );
 
-  describe("ListReceivedGrants", () => {
-    test.provider(
-      "lists received grants",
-      (_stack) =>
-        Effect.gen(function* () {
-          const response = (yield* getJson("/received-grants")) as any;
-          expect(response.count).toBeGreaterThanOrEqual(0);
-        }),
-      { timeout: 60_000 },
-    );
-  });
+  describe(
+    "ListReceivedLicenses",
+    {
+      tags: [
+        "provider:aws",
+        "provider:aws:iam",
+        "provider:aws:lambda",
+        "provider:aws:licensemanager",
+        "live",
+      ],
+    },
+    () => {
+      test.provider(
+        "lists received licenses",
+        (_stack) =>
+          Effect.gen(function* () {
+            const response = (yield* getJson("/received-licenses")) as any;
+            expect(response.count).toBeGreaterThanOrEqual(0);
+          }),
+        { timeout: 60_000 },
+      );
+    },
+  );
 
-  describe("ListDistributedGrants", () => {
-    test.provider(
-      "lists distributed grants",
-      (_stack) =>
-        Effect.gen(function* () {
-          const response = (yield* getJson("/distributed-grants")) as any;
-          expect(response.count).toBeGreaterThanOrEqual(0);
-        }),
-      { timeout: 60_000 },
-    );
-  });
+  describe(
+    "ListReceivedGrants",
+    {
+      tags: [
+        "provider:aws",
+        "provider:aws:iam",
+        "provider:aws:lambda",
+        "provider:aws:licensemanager",
+        "live",
+      ],
+    },
+    () => {
+      test.provider(
+        "lists received grants",
+        (_stack) =>
+          Effect.gen(function* () {
+            const response = (yield* getJson("/received-grants")) as any;
+            expect(response.count).toBeGreaterThanOrEqual(0);
+          }),
+        { timeout: 60_000 },
+      );
+    },
+  );
 
-  describe("ListResourceInventory", () => {
-    test.provider(
-      "lists the resource inventory (or the typed SSM dependency rejection)",
-      (_stack) =>
-        Effect.gen(function* () {
-          const response = (yield* getJson("/inventory")) as any;
-          expect(["Ok", "FailedDependencyException"]).toContain(response.tag);
-          expect(response.count).toBeGreaterThanOrEqual(0);
-        }),
-      { timeout: 60_000 },
-    );
-  });
+  describe(
+    "ListDistributedGrants",
+    {
+      tags: [
+        "provider:aws",
+        "provider:aws:iam",
+        "provider:aws:lambda",
+        "provider:aws:licensemanager",
+        "live",
+      ],
+    },
+    () => {
+      test.provider(
+        "lists distributed grants",
+        (_stack) =>
+          Effect.gen(function* () {
+            const response = (yield* getJson("/distributed-grants")) as any;
+            expect(response.count).toBeGreaterThanOrEqual(0);
+          }),
+        { timeout: 60_000 },
+      );
+    },
+  );
 
-  describe("GetServiceSettings", () => {
-    test.provider(
-      "reads the account's service settings",
-      (_stack) =>
-        Effect.gen(function* () {
-          const response = (yield* getJson("/service-settings")) as any;
-          expect(response.tag).toBe("Ok");
-          expect(typeof response.hasSnsTopic).toBe("boolean");
-        }),
-      { timeout: 60_000 },
-    );
-  });
+  describe(
+    "ListResourceInventory",
+    {
+      tags: [
+        "provider:aws",
+        "provider:aws:iam",
+        "provider:aws:lambda",
+        "provider:aws:licensemanager",
+        "live",
+      ],
+    },
+    () => {
+      test.provider(
+        "lists the resource inventory (or the typed SSM dependency rejection)",
+        (_stack) =>
+          Effect.gen(function* () {
+            const response = (yield* getJson("/inventory")) as any;
+            expect(["Ok", "FailedDependencyException"]).toContain(response.tag);
+            expect(response.count).toBeGreaterThanOrEqual(0);
+          }),
+        { timeout: 60_000 },
+      );
+    },
+  );
 
-  describe("CheckoutLicense", () => {
-    test.provider(
-      "surfaces a typed rejection for a nonexistent product SKU (proving the grant)",
-      (_stack) =>
-        Effect.gen(function* () {
-          const response = (yield* getJson("/checkout-invalid")) as any;
-          expect([
-            "ResourceNotFoundException",
-            "NoEntitlementsAllowedException",
-            "InvalidParameterValueException",
-            "ValidationException",
-          ]).toContain(response.tag);
-        }),
-      { timeout: 60_000 },
-    );
-  });
+  describe(
+    "GetServiceSettings",
+    {
+      tags: [
+        "provider:aws",
+        "provider:aws:iam",
+        "provider:aws:lambda",
+        "provider:aws:licensemanager",
+        "live",
+      ],
+    },
+    () => {
+      test.provider(
+        "reads the account's service settings",
+        (_stack) =>
+          Effect.gen(function* () {
+            const response = (yield* getJson("/service-settings")) as any;
+            expect(response.tag).toBe("Ok");
+            expect(typeof response.hasSnsTopic).toBe("boolean");
+          }),
+        { timeout: 60_000 },
+      );
+    },
+  );
 
-  describe("GetAccessToken", () => {
-    test.provider(
-      "surfaces a typed rejection for a malformed refresh token (proving the grant)",
-      (_stack) =>
-        Effect.gen(function* () {
-          const response = (yield* getJson("/access-token-invalid")) as any;
-          expect([
-            "InvalidParameterValueException",
-            "ValidationException",
-            "AuthorizationException",
-          ]).toContain(response.tag);
-        }),
-      { timeout: 60_000 },
-    );
-  });
+  describe(
+    "CheckoutLicense",
+    {
+      tags: [
+        "provider:aws",
+        "provider:aws:iam",
+        "provider:aws:lambda",
+        "provider:aws:licensemanager",
+        "live",
+      ],
+    },
+    () => {
+      test.provider(
+        "surfaces a typed rejection for a nonexistent product SKU (proving the grant)",
+        (_stack) =>
+          Effect.gen(function* () {
+            const response = (yield* getJson("/checkout-invalid")) as any;
+            expect([
+              "ResourceNotFoundException",
+              "NoEntitlementsAllowedException",
+              "InvalidParameterValueException",
+              "ValidationException",
+            ]).toContain(response.tag);
+          }),
+        { timeout: 60_000 },
+      );
+    },
+  );
 
-  describe("GetLicense", () => {
-    test.provider(
-      "surfaces a typed rejection for a nonexistent license ARN (proving the grant)",
-      (_stack) =>
-        Effect.gen(function* () {
-          const response = (yield* getJson("/license-invalid")) as any;
-          expect([
-            "ResourceNotFoundException",
-            "InvalidParameterValueException",
-            "ValidationException",
-          ]).toContain(response.tag);
-        }),
-      { timeout: 60_000 },
-    );
-  });
+  describe(
+    "GetAccessToken",
+    {
+      tags: [
+        "provider:aws",
+        "provider:aws:iam",
+        "provider:aws:lambda",
+        "provider:aws:licensemanager",
+        "live",
+      ],
+    },
+    () => {
+      test.provider(
+        "surfaces a typed rejection for a malformed refresh token (proving the grant)",
+        (_stack) =>
+          Effect.gen(function* () {
+            const response = (yield* getJson("/access-token-invalid")) as any;
+            expect([
+              "InvalidParameterValueException",
+              "ValidationException",
+              "AuthorizationException",
+            ]).toContain(response.tag);
+          }),
+        { timeout: 60_000 },
+      );
+    },
+  );
 
-  describe("GetGrant", () => {
-    test.provider(
-      "surfaces a typed rejection for a nonexistent grant ARN (proving the grant)",
-      (_stack) =>
-        Effect.gen(function* () {
-          const response = (yield* getJson("/grant-invalid")) as any;
-          expect([
-            "ResourceNotFoundException",
-            "InvalidParameterValueException",
-            "ValidationException",
-          ]).toContain(response.tag);
-        }),
-      { timeout: 60_000 },
-    );
-  });
+  describe(
+    "GetLicense",
+    {
+      tags: [
+        "provider:aws",
+        "provider:aws:iam",
+        "provider:aws:lambda",
+        "provider:aws:licensemanager",
+        "live",
+      ],
+    },
+    () => {
+      test.provider(
+        "surfaces a typed rejection for a nonexistent license ARN (proving the grant)",
+        (_stack) =>
+          Effect.gen(function* () {
+            const response = (yield* getJson("/license-invalid")) as any;
+            expect([
+              "ResourceNotFoundException",
+              "InvalidParameterValueException",
+              "ValidationException",
+            ]).toContain(response.tag);
+          }),
+        { timeout: 60_000 },
+      );
+    },
+  );
 
-  describe("ListLicenseSpecificationsForResource", () => {
-    test.provider(
-      "surfaces an empty list or the typed rejection for a bogus resource ARN",
-      (_stack) =>
-        Effect.gen(function* () {
-          const response = (yield* getJson("/specifications-invalid")) as any;
-          expect(["Ok", "InvalidParameterValueException"]).toContain(
-            response.tag,
-          );
-        }),
-      { timeout: 60_000 },
-    );
-  });
+  describe(
+    "GetGrant",
+    {
+      tags: [
+        "provider:aws",
+        "provider:aws:iam",
+        "provider:aws:lambda",
+        "provider:aws:licensemanager",
+        "live",
+      ],
+    },
+    () => {
+      test.provider(
+        "surfaces a typed rejection for a nonexistent grant ARN (proving the grant)",
+        (_stack) =>
+          Effect.gen(function* () {
+            const response = (yield* getJson("/grant-invalid")) as any;
+            expect([
+              "ResourceNotFoundException",
+              "InvalidParameterValueException",
+              "ValidationException",
+            ]).toContain(response.tag);
+          }),
+        { timeout: 60_000 },
+      );
+    },
+  );
+
+  describe(
+    "ListLicenseSpecificationsForResource",
+    {
+      tags: [
+        "provider:aws",
+        "provider:aws:iam",
+        "provider:aws:lambda",
+        "provider:aws:licensemanager",
+        "live",
+      ],
+    },
+    () => {
+      test.provider(
+        "surfaces an empty list or the typed rejection for a bogus resource ARN",
+        (_stack) =>
+          Effect.gen(function* () {
+            const response = (yield* getJson("/specifications-invalid")) as any;
+            expect(["Ok", "InvalidParameterValueException"]).toContain(
+              response.tag,
+            );
+          }),
+        { timeout: 60_000 },
+      );
+    },
+  );
 });

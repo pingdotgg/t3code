@@ -5,7 +5,7 @@ import type {
 } from "@t3tools/contracts";
 import { WS_METHODS } from "@t3tools/contracts";
 import * as Stream from "effect/Stream";
-import { Atom } from "effect/unstable/reactivity";
+import { Atom } from "effect/reactivity";
 
 import type { EnvironmentRegistry } from "../connection/registry.ts";
 import { subscribe } from "../rpc/client.ts";
@@ -61,7 +61,7 @@ export function applyAuthAccessStreamEvent(
   }
 }
 
-export function projectAuthAccessSnapshot(
+function projectAuthAccessSnapshot(
   current: AuthAccessSnapshot,
   event: AuthAccessStreamEvent,
 ): readonly [AuthAccessSnapshot, ReadonlyArray<AuthAccessStreamEvent>] {

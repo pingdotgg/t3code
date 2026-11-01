@@ -18,7 +18,7 @@ function isIpLiteral(host: string): boolean {
   }
 }
 
-export class PairingQrPayloadEmptyError extends Schema.TaggedErrorClass<PairingQrPayloadEmptyError>()(
+export class PairingQrPayloadEmptyError extends Schema.TaggedError<PairingQrPayloadEmptyError>()(
   "PairingQrPayloadEmptyError",
   {},
 ) {
@@ -84,9 +84,7 @@ export function extractPairingUrlFromQrPayload(payload: string): string {
         return pairingUrl;
       }
     }
-  } catch {
-    // Treat non-URL payloads as raw pairing-url text so the normal input validation can decide.
-  }
+  } catch {}
 
   return trimmed;
 }

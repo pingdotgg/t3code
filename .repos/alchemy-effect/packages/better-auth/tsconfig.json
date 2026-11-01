@@ -5,7 +5,10 @@
     "composite": true,
     "noEmit": false,
     "outDir": "./lib",
-    "rootDir": "./src"
+    "rootDir": "./src",
+    "paths": {
+      "@/*": ["./src/*"]
+    }
   },
   "references": [
     {

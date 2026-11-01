@@ -19,14 +19,15 @@ export interface BatchDeleteDevicePositionHistoryRequest extends Omit<
  * `geo:BatchDeleteDevicePositionHistory`), scoped to one {@link Tracker}. Provide the implementation with
  * `Effect.provide(AWS.Location.BatchDeleteDevicePositionHistoryHttp)`.
  *
- * @binding
- * @section Updating Device Positions
- * @example Purge a Device's Position History
+ * ### Updating Device Positions
+ * **Example:** Purge a Device's Position History
  * ```typescript
  * const deleteHistory = yield* Location.BatchDeleteDevicePositionHistory(tracker);
  *
  * yield* deleteHistory({ DeviceIds: ["vehicle-1"] });
  * ```
+ *
+ * @binding
  */
 export interface BatchDeleteDevicePositionHistory extends Binding.Service<
   BatchDeleteDevicePositionHistory,

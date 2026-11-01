@@ -60,11 +60,8 @@ export type PrefixDelegation = Resource<
  *
  * Delegations are create/delete only — every prop change forces a
  * replacement.
- * @resource
- * @product Addressing
- * @category Network
- * @section Delegating a Prefix
- * @example Delegate a /26 to another account
+ * ### Delegating a Prefix
+ * **Example:** Delegate a /26 to another account
  * ```typescript
  * const delegation = yield* Cloudflare.Addressing.PrefixDelegation("share", {
  *   prefixId: prefix.prefixId,
@@ -74,6 +71,10 @@ export type PrefixDelegation = Resource<
  * ```
  *
  * @see https://developers.cloudflare.com/byoip/
+ *
+ * @resource
+ * @product Addressing
+ * @category Network
  */
 export const PrefixDelegation = Resource<PrefixDelegation>(TypeId);
 

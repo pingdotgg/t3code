@@ -1,0 +1,35 @@
+{
+  "name": "neon-website-octane",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "dev": "alchemy dev",
+    "build": "vite build",
+    "deploy": "alchemy deploy",
+    "destroy": "alchemy destroy",
+    "test": "bun test"
+  },
+  "dependencies": {
+    "@alchemy.run/frontend-frameworks": "workspace:*",
+    "@octanejs/vite-plugin": "catalog:",
+    "alchemy": "workspace:*",
+    "effect": "catalog:",
+    "octane": "catalog:",
+    "vite": "catalog:"
+  },
+  "engines": {
+    "node": ">=24"
+  },
+  "devDependencies": {
+    "@tailwindcss/vite": "catalog:",
+    "tailwindcss": "catalog:",
+    "@vercel/nft": "catalog:",
+    "@effect/platform-node": "catalog:",
+    "typescript": "catalog:"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/alchemy-run/alchemy.git",
+    "directory": "examples/neon-website-octane"
+  }
+}

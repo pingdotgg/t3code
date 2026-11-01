@@ -19,15 +19,16 @@ export interface DeleteAccessControlConfigurationRequest extends Omit<
  * Provide the implementation with
  * `Effect.provide(AWS.Kendra.DeleteAccessControlConfigurationHttp)`.
  *
- * @binding
- * @section Access Control Configurations
- * @example Delete a Runtime ACL
+ * ### Access Control Configurations
+ * **Example:** Delete a Runtime ACL
  * ```typescript
  * const deleteAcl =
  *   yield* AWS.Kendra.DeleteAccessControlConfiguration(index);
  *
  * yield* deleteAcl({ Id: configurationId });
  * ```
+ *
+ * @binding
  */
 export interface DeleteAccessControlConfiguration extends Binding.Service<
   DeleteAccessControlConfiguration,

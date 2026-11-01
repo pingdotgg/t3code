@@ -23,9 +23,8 @@ export interface UpdateTableMetadataLocationRequest extends Omit<
  * A stale token fails with the typed `ConflictException` (another writer
  * committed first). Provide the implementation with
  * `Effect.provide(AWS.S3Tables.UpdateTableMetadataLocationHttp)`.
- * @binding
- * @section The Iceberg Commit Protocol
- * @example Commit a new metadata file
+ * ### The Iceberg Commit Protocol
+ * **Example:** Commit a new metadata file
  * ```typescript
  * const getTableMetadataLocation =
  *   yield* AWS.S3Tables.GetTableMetadataLocation(table);
@@ -40,6 +39,8 @@ export interface UpdateTableMetadataLocationRequest extends Omit<
  *   metadataLocation: `${warehouseLocation}/metadata/00001-….metadata.json`,
  * });
  * ```
+ *
+ * @binding
  */
 export interface UpdateTableMetadataLocation extends Binding.Service<
   UpdateTableMetadataLocation,

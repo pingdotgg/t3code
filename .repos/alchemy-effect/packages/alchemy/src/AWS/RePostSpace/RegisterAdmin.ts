@@ -16,14 +16,15 @@ export interface RegisterAdminRequest extends Omit<
  * administrator of the bound {@link Space}.
  * Provide the implementation with
  * `Effect.provide(AWS.RePostSpace.RegisterAdminHttp)`.
- * @binding
- * @section Managing Admins
- * @example Register a space administrator
+ * ### Managing Admins
+ * **Example:** Register a space administrator
  * ```typescript
  * const registerAdmin = yield* AWS.RePostSpace.RegisterAdmin(space);
  *
  * yield* registerAdmin({ adminId: "94682c8d-1234-5678-9abc-e001c76e2c44" });
  * ```
+ *
+ * @binding
  */
 export interface RegisterAdmin extends Binding.Service<
   RegisterAdmin,

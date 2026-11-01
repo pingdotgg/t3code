@@ -19,14 +19,18 @@
       "types": "./src/protocol.ts",
       "import": "./src/protocol.ts"
     },
+    "./replay": {
+      "types": "./src/replay.ts",
+      "import": "./src/replay.ts"
+    },
     "./errors": {
       "types": "./src/errors.ts",
       "import": "./src/errors.ts"
     }
   },
   "scripts": {
-    "typecheck": "tsgo --noEmit",
-    "test": "vp test run",
+    "typecheck": "tsc --noEmit",
+    "test": "vp test run --config ../../vite.config.ts --dir .",
     "generate": "node scripts/generate.ts",
     "probe": "node test/examples/codex-app-server-probe.ts"
   },

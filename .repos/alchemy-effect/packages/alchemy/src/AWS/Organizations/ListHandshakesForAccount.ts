@@ -9,9 +9,8 @@ import * as Binding from "../../Binding.ts";
  * Account-level operation — Organizations is a management-account-scoped
  * global service, so the binding takes no resource argument. Provide the
  * implementation with `Effect.provide(AWS.Organizations.ListHandshakesForAccountHttp)`.
- * @binding
- * @section Handshakes & Invitations
- * @example List the Account's Handshakes
+ * ### Handshakes & Invitations
+ * **Example:** List the Account's Handshakes
  * ```typescript
  * // init — account-level binding, no resource argument
  * const listHandshakesForAccount = yield* AWS.Organizations.ListHandshakesForAccount();
@@ -19,6 +18,8 @@ import * as Binding from "../../Binding.ts";
  * // runtime
  * const { Handshakes } = yield* listHandshakesForAccount();
  * ```
+ *
+ * @binding
  */
 export interface ListHandshakesForAccount extends Binding.Service<
   ListHandshakesForAccount,

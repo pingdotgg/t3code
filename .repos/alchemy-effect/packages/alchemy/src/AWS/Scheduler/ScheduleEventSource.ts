@@ -116,6 +116,7 @@ export interface ScheduleDescriptor {
  * provisions the backing `Schedule` (plus the synthesized execution role that
  * lets Scheduler invoke the host) and registers the runtime handler with a
  * typed event guard.
+ *
  * @binding
  */
 export interface ScheduleEventSource extends Binding.Service<
@@ -220,6 +221,7 @@ export const createScheduleRouteId = (
  * Deploy-time half of `consumeSchedule`: synthesize the execution role that
  * lets EventBridge Scheduler invoke the host Function and create the backing
  * `Schedule` whose `Input` template carries the typed event envelope.
+ *
  * @binding
  */
 export const createScheduleRoute = (

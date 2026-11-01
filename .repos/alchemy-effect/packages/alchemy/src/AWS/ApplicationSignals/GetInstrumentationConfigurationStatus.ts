@@ -27,9 +27,8 @@ export interface GetInstrumentationConfigurationStatusRequest extends Omit<
  * instrumented SDK agents reported for the bound configuration during a
  * time range. Provide the implementation with
  * `Effect.provide(AWS.ApplicationSignals.GetInstrumentationConfigurationStatusHttp)`.
- * @binding
- * @section Monitoring Instrumentation
- * @example Check Whether the Probe Applied
+ * ### Monitoring Instrumentation
+ * **Example:** Check Whether the Probe Applied
  * ```typescript
  * // init — bind the operation to the configuration
  * const getStatus =
@@ -39,6 +38,8 @@ export interface GetInstrumentationConfigurationStatusRequest extends Omit<
  * const result = yield* getStatus({ Status: "ACTIVE" });
  * yield* Effect.log(`${result.Events.length} ACTIVE events`);
  * ```
+ *
+ * @binding
  */
 export interface GetInstrumentationConfigurationStatus extends Binding.Service<
   GetInstrumentationConfigurationStatus,

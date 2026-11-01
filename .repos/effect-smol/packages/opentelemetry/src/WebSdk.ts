@@ -7,6 +7,7 @@
  * enables only the signal types that have processors or readers configured.
  * `layerTracerProvider` creates a scoped `WebTracerProvider`.
  *
+ * @stability unstable
  * @since 4.0.0
  */
 import type * as Otel from "@opentelemetry/api"
@@ -27,6 +28,7 @@ import * as Resource from "./Resource.ts"
 /**
  * Configuration for the Web OpenTelemetry layer, including resource metadata and optional tracing, metrics, and logging settings.
  *
+ * @stability unstable
  * @category models
  * @since 4.0.0
  */
@@ -48,6 +50,7 @@ export interface Configuration {
 /**
  * Creates a scoped Web OpenTelemetry tracer provider from one or more span processors and shuts it down when the layer is released.
  *
+ * @stability unstable
  * @category layers
  * @since 4.0.0
  */
@@ -69,8 +72,9 @@ export const layerTracerProvider = (
           return provider
         }),
         (provider) =>
-          Effect.ignore(
-            Effect.promise(() => provider.forceFlush().then(() => provider.shutdown()))
+          Effect.promise(() => provider.forceFlush()).pipe(
+            Effect.ensuring(Effect.promise(() => provider.shutdown())),
+            Effect.ignore
           )
       )
     })
@@ -96,6 +100,7 @@ export const layerTracerProvider = (
  * OpenTelemetry environment variables. Empty processor or reader arrays are
  * treated as not configured.
  *
+ * @stability unstable
  * @category layers
  * @since 4.0.0
  */
@@ -111,30 +116,30 @@ export const layer: {
         ? evaluate as Effect.Effect<Configuration>
         : Effect.sync(evaluate)
 
-      const ResourceLive = Resource.layer(config.resource)
+      const ResourceLayer = Resource.layer(config.resource)
 
-      const TracerLive = isNonEmpty(config.spanProcessor)
+      const TracerLayer = isNonEmpty(config.spanProcessor)
         ? Layer.provide(
           Tracer.layer,
           layerTracerProvider(config.spanProcessor, config.tracerConfig)
         )
         : Layer.empty
 
-      const LoggerLive = isNonEmpty(config.logRecordProcessor)
+      const LoggerLayer = isNonEmpty(config.logRecordProcessor)
         ? Layer.provide(
           Logger.layer({ mergeWithExisting: config.loggerMergeWithExisting }),
           Logger.layerLoggerProvider(config.logRecordProcessor, config.loggerProviderConfig)
         )
         : Layer.empty
 
-      const MetricsLive = isNonEmpty(config.metricReader)
+      const MetricsLayer = isNonEmpty(config.metricReader)
         ? Metrics.layer(constant(config.metricReader), {
           temporality: config.metricTemporality
         })
         : Layer.empty
 
-      return Layer.mergeAll(TracerLive, MetricsLive, LoggerLive).pipe(
-        Layer.provideMerge(ResourceLive)
+      return Layer.mergeAll(TracerLayer, MetricsLayer, LoggerLayer).pipe(
+        Layer.provideMerge(ResourceLayer)
       )
     })
   )

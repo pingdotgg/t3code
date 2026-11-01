@@ -4,7 +4,7 @@ import { isResolved } from "../../Diff.ts";
 import * as Provider from "../../Provider.ts";
 import { Resource } from "../../Resource.ts";
 import type { Providers } from "../Providers.ts";
-import { collectPages, retryOrganizations } from "./common.ts";
+import { collectPages, retryOrganizations, unredact } from "./common.ts";
 
 export interface DelegatedAdministratorProps {
   /**
@@ -32,11 +32,11 @@ export interface DelegatedAdministrator extends Resource<
     /**
      * Friendly name of the delegated administrator account.
      */
-    accountName: organizations.DelegatedAdministrator["Name"] | undefined;
+    accountName: string | undefined;
     /**
      * Email address of the delegated administrator account.
      */
-    accountEmail: organizations.DelegatedAdministrator["Email"] | undefined;
+    accountEmail: string | undefined;
     /**
      * Service principal delegated to the account.
      */
@@ -58,9 +58,8 @@ export interface DelegatedAdministrator extends Resource<
  * Requires trusted access for the same service principal (see
  * {@link TrustedServiceAccess}). Existence-only resource: changing
  * `accountId` or `servicePrincipal` replaces the registration.
- * @resource
- * @section Delegating Administration
- * @example Delegate GuardDuty to a Security Account
+ * ### Delegating Administration
+ * **Example:** Delegate GuardDuty to a Security Account
  * ```typescript
  * const security = yield* Account("Security", {
  *   name: "security",
@@ -77,6 +76,8 @@ export interface DelegatedAdministrator extends Resource<
  *   servicePrincipal: guardDutyAccess.servicePrincipal,
  * });
  * ```
+ *
+ * @resource
  */
 export const DelegatedAdministrator = Resource<DelegatedAdministrator>(
   "AWS.Organizations.DelegatedAdministrator",
@@ -178,8 +179,8 @@ export const DelegatedAdministratorProvider = () =>
                           ({
                             accountId: admin.Id,
                             accountArn: admin.Arn,
-                            accountName: admin.Name,
-                            accountEmail: admin.Email,
+                            accountName: unredact(admin.Name),
+                            accountEmail: unredact(admin.Email),
                             servicePrincipal: service.ServicePrincipal,
                             delegationEnabledDate:
                               service.DelegationEnabledDate ??
@@ -288,8 +289,8 @@ const readDelegatedAdministrator = Effect.fn(function* ({
     ? ({
         accountId,
         accountArn: account.Arn,
-        accountName: account.Name,
-        accountEmail: account.Email,
+        accountName: unredact(account.Name),
+        accountEmail: unredact(account.Email),
         servicePrincipal,
         delegationEnabledDate:
           service.DelegationEnabledDate ?? account.DelegationEnabledDate,

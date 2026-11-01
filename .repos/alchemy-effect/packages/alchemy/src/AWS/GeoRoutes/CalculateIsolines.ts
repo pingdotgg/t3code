@@ -12,13 +12,12 @@ import * as Binding from "../../Binding.ts";
  * `geo-routes:CalculateIsolines`. Requests and responses are raw distilled
  * types (`Origin` is a `[longitude, latitude]` pair).
  *
- * @binding
- * @section Calculating Isolines
+ * ### Calculating Isolines
  * Provide the `CalculateIsolinesHttp` implementation layer on the Function
  * effect (`.pipe(Effect.provide(AWS.GeoRoutes.CalculateIsolinesHttp))`), bind
  * in the init phase, then call the client at runtime.
  *
- * @example Calculate a 10-minute drive-time isoline
+ * **Example:** Calculate a 10-minute drive-time isoline
  * ```typescript
  * // init
  * const calculateIsolines = yield* AWS.GeoRoutes.CalculateIsolines();
@@ -31,6 +30,8 @@ import * as Binding from "../../Binding.ts";
  * });
  * const polygons = result.Isolines[0]?.Geometries;
  * ```
+ *
+ * @binding
  */
 export interface CalculateIsolines extends Binding.Service<
   CalculateIsolines,

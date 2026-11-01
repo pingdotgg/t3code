@@ -65,6 +65,59 @@ const charged = yield* Cloudflare.Workflows.task("charge-card", chargeCard, {
 Inside a step, `yield* Cloudflare.Workflows.WorkflowStepContext`
 exposes the current attempt number and resolved config.
 
+## Failures and retries
+
+Tasks and workflow bodies accept fallible Effects. `Effect.fail(error)` uses
+Cloudflare's configured step retry policy; catching the failure **outside** the
+task runs after that policy is exhausted:
+
+```typescript
+const receipt = yield* Cloudflare.Workflows.task("charge", chargeCard, {
+  retries: { limit: 2, delay: "1 second", backoff: "constant" },
+}).pipe(
+  Effect.catchTag("CardDeclined", (error) =>
+    Effect.succeed({ declined: error.reason }),
+  ),
+);
+```
+
+`Effect.die(error)` and `Effect.orDie` are terminal for that step: they do not
+retry and are not caught by `catchTag`. The bridge privately translates these
+defects to Cloudflare's built-in `NonRetryableError`. Rollback callbacks follow
+the same failure/defect distinction with their own retry configuration.
+
+### Application errors across replay
+
+The bridge privately encodes application failures because native error persistence
+does not preserve arbitrary custom fields. `catchTag` can recover the serialized
+error data even when Cloudflare replays a cached rejection without running the
+callback again. During the active invocation the original Cause and error identity
+are retained. After replay, use tags and data fields—not custom prototype methods,
+`instanceof` checks against your error class, or object identity.
+
+As with task results, durable error handling requires serializable data. Error
+fields support primitives (including `undefined`, bigint, and non-finite numbers),
+dense arrays, records, errors with their own fields and `cause`, `Date`, `Uint8Array`,
+`ArrayBuffer`, `Map`, and `Set`. Custom error classes are reconstructed as errors
+with data fields, not instances of the original class. Error data must form a tree:
+shared object references are rejected, including an object also used as a `Map`
+key or `Set` member. Inherited string tags are retained without invoking getters.
+Effect's internal error metadata is not application data.
+
+:::caution[Serialization limits]
+The encoded failure is limited to **16 KiB** and **64 nesting levels**, independently
+of Cloudflare's task-result limits. Functions, symbols and symbol-keyed fields,
+cycles, shared object references, sparse arrays, accessors, custom properties on
+serialized built-ins, and unsupported class instances are rejected explicitly as terminal serialization
+defects. An own function-valued error field is not silently dropped; inherited
+prototype methods are not serialized. Keep large diagnostic payloads in storage
+and put a reference in the error instead.
+
+Native timeout, validation, pause, and abort rejections remain native defects.
+Malformed private failure payloads also fail explicitly rather than becoming
+application errors. No public transport wrapper is exposed.
+:::
+
 ## Sleep between steps
 
 `sleep` parks the instance for a duration; `sleepUntil` parks it
@@ -117,7 +170,7 @@ exactly once. Outside a task it runs on every replay.
 
 ## Use bindings inside tasks
 
-Bind a resource in the outer init phase to get a typed client, then
+Bind a resource in the outer Construction phase to get a typed client, then
 use it inside a step — here a [KV](/cloudflare/data/kv) namespace:
 
 ```typescript
@@ -131,7 +184,7 @@ Effect.gen(function* () {
         const key = `workflow:${input.roomId}`;
         yield* kv.put(key, input.message);
         return yield* kv.get(key);
-      }).pipe(Effect.orDie),
+      }),
     );
   });
 });
@@ -142,34 +195,74 @@ automatically — no extra plumbing inside the step.
 
 ## Run scope
 
-Each run-invocation of the body gets a **fresh `Scope`**, threaded
-into every `task` step and closed when the invocation settles (the
-workflow runtime has no `waitUntil`, so it settles inline). Because
-a workflow can hibernate between steps — a `sleep`, a
-`waitForEvent` — an instance may span several run-invocations, each
-with its own scope; completed tasks replay from the journal, so
-scoped resources are only re-acquired by steps that actually
-execute.
+Each invocation has a scope for the workflow body and telemetry.
+**Every task attempt and rollback handler gets its own fresh scope.**
+Resources close before the callback completes or retries. Completed
+tasks replay from the journal without acquiring those resources again.
 
-Per-run resources like `Drizzle.Postgres` pools follow this: the
-pool opens on the first query inside a step, is reused by every
-later step in the same invocation, and closes when the invocation
-settles (the [SQL connection lifecycle](/sql/effect-sql/lifecycle)
-in workflow terms). The workflow's init closure shares the isolate-lifetime
-layer build with the hosting Worker — pure assembly, no cleanup; see
-[Instance scope vs request scope](/infrastructure-as-effects/functions-and-servers#instance-scope-vs-request-scope).
+A `Drizzle.Postgres` pool opens on the first query of an attempt and
+closes when that attempt finishes; it is not shared across steps or
+retries. See the [SQL connection lifecycle](/sql/effect-sql/lifecycle).
+
+Interrupting a task's Effect interrupts its active callback and waits
+for cleanup, without waiting through Cloudflare's native retry delays.
+The constructor remains isolate-scoped; see
+[Instance scope vs request scope](/infrastructure-as-effects/runtime#instance-scope-vs-request-scope).
+
+## Schedule a Workflow
+
+Attach cron expressions to the Workflow itself to create a new instance
+on each match — no Worker Cron Trigger and no `scheduled` handler
+that calls `workflow.create()`.
+
+```typescript
+export default class HourlyWorkflow extends Cloudflare.Workflow<HourlyWorkflow>()(
+  "HourlyWorkflow",
+  { schedules: ["0 * * * *"] },
+  Effect.gen(function* () {
+    return Effect.fn(function* () {
+      const event = yield* Cloudflare.Workflows.WorkflowEvent;
+      if (event.schedule) {
+        // Matching cron and the fire time (ms since epoch).
+        return { cron: event.schedule.cron, at: event.schedule.scheduledTime };
+      }
+      return {};
+    });
+  }),
+) {}
+```
+
+The same `schedules` array is wrangler-compatible on the async
+reference form:
+
+```typescript
+export const Worker = Cloudflare.Worker("Worker", {
+  main: "./src/worker.ts",
+  env: {
+    HOURLY: Cloudflare.Workflow("HourlyWorkflow", {
+      className: "HourlyWorkflow",
+      schedules: ["0 * * * *"],
+    }),
+  },
+});
+```
+
+Pass `schedules: []` to remove them. Cloudflare caps the account at
+100 cron expressions across all Workflows. Use a Worker
+[cron](/cloudflare/messaging/cron) only when you need custom logic
+before deciding whether to create an instance.
 
 ## Trigger from a Worker
 
-Yield the workflow class in a Worker's init phase to get a typed
+Yield the workflow class in a Worker's Construction phase to get a typed
 handle:
 
 ```typescript
 // src/worker.ts
 import * as Cloudflare from "alchemy/Cloudflare";
 import * as Effect from "effect/Effect";
-import { HttpServerRequest } from "effect/unstable/http/HttpServerRequest";
-import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
+import { HttpServerRequest } from "effect/http/HttpServerRequest";
+import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import MyWorkflow from "./workflow.ts";
 
 export default Cloudflare.Worker(
@@ -262,6 +355,57 @@ Add `scriptName` to bind a workflow hosted by another Worker script
 — bindings only, so deploy the host first. The full async-handler
 example lives in the API reference.
 
+## Send lifecycle events to a Queue
+
+Pass a Workflow binding from the declared Worker's `env` directly to
+`Queues.Subscription`:
+
+```typescript
+const worker = yield* Worker;
+const queue = yield* Cloudflare.Queues.Queue("WorkflowEventsQueue");
+
+yield* Cloudflare.Queues.Subscription("WorkflowEvents", {
+  source: worker.env.MY_WORKFLOW,
+  events: ["instance.completed", "instance.errored"],
+  queueId: queue.queueId,
+});
+```
+
+The binding's physical name is an `Output`, so the subscription waits for
+the Workflow on its first deployment and follows later renames. Only
+`{ type: "workflows.workflow", workflowName }` is persisted as the source;
+binding metadata such as `className` and `scriptName` is not stored.
+
+For an already-deployed Workflow, use its resource reference directly:
+
+```typescript
+yield* Cloudflare.Queues.Subscription("WorkflowEvents", {
+  source: yield* Cloudflare.Workflow.ref("MyWorkflow"),
+  events: ["instance.completed", "instance.errored"],
+  queueId: queue.queueId,
+});
+```
+
+`Workflow.ref` delegates to `Workflows.WorkflowResource.ref`: it reads
+persisted resource attributes, not a runtime Workflow handle. Pass the logical
+ID (including any namespace), not the env key or physical name. It defaults to
+the current stack and stage; pass `{ stack: "workflow-host", stage: "production" }`
+as the second argument to reference another deployment. Deploy the host first.
+The reference does not register a Workflow or transfer ownership, so destroying
+the subscription's stack leaves a separately managed host intact.
+
+For a Workflow referenced by physical name, the explicit descriptor is
+still supported:
+
+```typescript
+source: { type: "workflows.workflow", workflowName: "existing-ingestion" }
+```
+
+A cross-script Workflow binding can also be passed directly; the
+subscription does not take ownership of the foreign Workflow. Attach a
+[Queue consumer](/cloudflare/messaging/queues) to process the lifecycle events.
+Cloudflare permits one subscription per source per account.
+
 ## Where next
 
 The full walkthrough:
@@ -275,8 +419,8 @@ Related:
   workflows call into.
 - [Queues](/cloudflare/messaging/queues) — when buffered messages are enough
   (no checkpointed steps).
-- [Cron triggers](/cloudflare/messaging/cron) — trigger workflows on a
-  schedule.
+- [Cron triggers](/cloudflare/messaging/cron) — Worker-level schedules;
+  prefer native Workflow `schedules` when the job *is* the Workflow.
 
 Reference:
 

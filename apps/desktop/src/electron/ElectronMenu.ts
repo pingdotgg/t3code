@@ -1,5 +1,5 @@
 import type { ContextMenuItem } from "@t3tools/contracts";
-import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -22,6 +22,7 @@ export interface ElectronMenuContextInput {
 export interface ElectronMenuTemplateInput {
   readonly window: Electron.BrowserWindow;
   readonly template: readonly Electron.MenuItemConstructorOptions[];
+  readonly frame?: Electron.WebFrameMain;
 }
 
 const ElectronMenuOperation = Schema.Literals([
@@ -30,7 +31,7 @@ const ElectronMenuOperation = Schema.Literals([
   "show-context-menu",
 ]);
 
-export class ElectronMenuOperationError extends Schema.TaggedErrorClass<ElectronMenuOperationError>()(
+export class ElectronMenuOperationError extends Schema.TaggedError<ElectronMenuOperationError>()(
   "ElectronMenuOperationError",
   {
     operation: ElectronMenuOperation,
@@ -67,8 +68,7 @@ function normalizeContextMenuItems(source: readonly ContextMenuItem[]): ContextM
       continue;
     }
 
-    // Header items are decorative section labels for the web fallback only —
-    // Electron's native menu has no equivalent affordance, so we skip them.
+    // Native menus cannot display the web fallback's decorative headers.
     if (sourceItem.header === true) {
       continue;
     }
@@ -78,6 +78,8 @@ function normalizeContextMenuItems(source: readonly ContextMenuItem[]): ContextM
       label: sourceItem.label,
       destructive: sourceItem.destructive === true,
       disabled: sourceItem.disabled === true,
+      ...(sourceItem.separatorBefore === true ? { separatorBefore: true } : {}),
+      ...(typeof sourceItem.checked === "boolean" ? { checked: sourceItem.checked } : {}),
     };
 
     if (sourceItem.children) {
@@ -94,9 +96,7 @@ function normalizeContextMenuItems(source: readonly ContextMenuItem[]): ContextM
   return normalizedItems;
 }
 
-// Renderer positions arrive in CSS pixels; popup() expects window points, so
-// page zoom must be factored in or menus drift proportionally to their
-// distance from the window origin.
+// popup() takes window points; renderer CSS coordinates must account for page zoom.
 const normalizePosition = (
   position: Option.Option<ElectronMenuPosition>,
   zoomFactor: number,
@@ -109,8 +109,9 @@ const normalizePosition = (
     Option.map(({ x, y }) => ({ x: Math.floor(x * zoomFactor), y: Math.floor(y * zoomFactor) })),
   );
 
+/** @public */
 export const make = Effect.gen(function* () {
-  const platform = yield* HostProcessPlatform;
+  const platform = yield* HostProcess.Platform;
   let destructiveMenuIconCache: Option.Option<Electron.NativeImage> | undefined;
 
   const getDestructiveMenuIcon = (): Option.Option<Electron.NativeImage> => {
@@ -141,16 +142,31 @@ export const make = Effect.gen(function* () {
   ): Electron.MenuItemConstructorOptions[] => {
     const template: Electron.MenuItemConstructorOptions[] = [];
     let hasInsertedDestructiveSeparator = false;
+    let sectionStartedByExplicitSeparator = false;
+    const appendSeparator = () => {
+      if (template.length === 0 || template.at(-1)?.type === "separator") return;
+      template.push({ type: "separator" });
+    };
 
     for (const item of entries) {
-      if (item.destructive && !hasInsertedDestructiveSeparator && template.length > 0) {
-        template.push({ type: "separator" });
+      if (item.separatorBefore) {
+        appendSeparator();
+        sectionStartedByExplicitSeparator = true;
+      }
+      if (
+        item.destructive &&
+        !hasInsertedDestructiveSeparator &&
+        !sectionStartedByExplicitSeparator &&
+        template.length > 0
+      ) {
+        appendSeparator();
         hasInsertedDestructiveSeparator = true;
       }
 
       const itemOption: Electron.MenuItemConstructorOptions = {
         label: item.label,
         enabled: !item.disabled,
+        ...(typeof item.checked === "boolean" ? { type: "checkbox", checked: item.checked } : {}),
       };
       if (item.children && item.children.length > 0) {
         itemOption.submenu = buildTemplate(item.children, complete);
@@ -171,8 +187,8 @@ export const make = Effect.gen(function* () {
   };
 
   return ElectronMenu.of({
-    setApplicationMenu: (template) =>
-      Effect.try({
+    setApplicationMenu: Effect.fn("ElectronMenu.setApplicationMenu")(function (template) {
+      return Effect.try({
         try: () => {
           Electron.Menu.setApplicationMenu(Electron.Menu.buildFromTemplate([...template]));
         },
@@ -184,14 +200,16 @@ export const make = Effect.gen(function* () {
             itemCount: template.length,
             cause,
           }),
-      }).pipe(Effect.orDie),
-    popupTemplate: (input) =>
-      input.template.length === 0
+      }).pipe(Effect.orDie);
+    }),
+    popupTemplate: Effect.fn("ElectronMenu.popupTemplate")(function (input) {
+      return input.template.length === 0
         ? Effect.void
         : Effect.try({
             try: () =>
               Electron.Menu.buildFromTemplate([...input.template]).popup({
                 window: input.window,
+                ...(input.frame ? { frame: input.frame } : {}),
               }),
             catch: (cause) =>
               new ElectronMenuOperationError({
@@ -201,12 +219,13 @@ export const make = Effect.gen(function* () {
                 itemCount: input.template.length,
                 cause,
               }),
-          }).pipe(Effect.orDie),
-    showContextMenu: (input) =>
-      Effect.callback<Option.Option<string>>((resume) => {
+          }).pipe(Effect.orDie);
+    }),
+    showContextMenu: Effect.fn("ElectronMenu.showContextMenu")(function (input) {
+      return Effect.callback<Option.Option<string>>((resume) => {
         const normalizedItems = normalizeContextMenuItems(input.items);
         if (normalizedItems.length === 0) {
-          resume(Effect.succeed(Option.none()));
+          resume(Effect.succeedNone);
           return;
         }
 
@@ -255,7 +274,8 @@ export const make = Effect.gen(function* () {
             ),
           );
         }
-      }),
+      });
+    }),
   });
 });
 

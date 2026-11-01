@@ -1,0 +1,21 @@
+---
+// Injected by the `fixture-user-integration` integration declared in
+// astro.config.mjs (NOT a src/pages file) — this page existing at
+// /user-integration proves the user's config file was loaded natively.
+// On-demand (output: "server" default), so it renders through the worker in
+// both dev and live.
+const defineValue = __USER_VITE_DEFINE__;
+---
+
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>User Integration — Astro Fixture</title>
+  </head>
+  <body>
+    <h1 id="user-integration">injected-by-user-integration</h1>
+    <p id="vite-define">{defineValue}</p>
+    <p><a href="/">home</a></p>
+  </body>
+</html>

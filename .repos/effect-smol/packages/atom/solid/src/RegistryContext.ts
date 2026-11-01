@@ -6,8 +6,8 @@
  *
  * @since 4.0.0
  */
-import type * as Atom from "effect/unstable/reactivity/Atom"
-import * as AtomRegistry from "effect/unstable/reactivity/AtomRegistry"
+import type * as Atom from "effect/reactivity/Atom"
+import * as AtomRegistry from "effect/reactivity/AtomRegistry"
 import type { JSX } from "solid-js"
 import { createComponent, createContext, onCleanup } from "solid-js"
 
@@ -68,7 +68,7 @@ export const RegistryProvider = (options: {
     scheduleTask: options.scheduleTask,
     initialValues: options.initialValues,
     timeoutResolution: options.timeoutResolution,
-    defaultIdleTTL: options.defaultIdleTTL ?? 400
+    defaultIdleTTL: options.defaultIdleTTL
   })
   onCleanup(() => registry.dispose())
   return createComponent(RegistryContext.Provider, {

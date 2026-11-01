@@ -19,20 +19,23 @@ const { test } = Test.make({ providers: AWS.providers() });
 // isn't an org management/delegated account, which `list()` catches and maps to
 // `[]`. So this case passes on any account — it just returns `[]` when the
 // account can't enumerate trusted service access.
-test.provider("list enumerates trusted service access", () =>
-  Effect.gen(function* () {
-    const provider = yield* Provider.findProvider(TrustedServiceAccess);
-    const all = yield* provider.list();
+test.provider(
+  "list enumerates trusted service access",
+  () =>
+    Effect.gen(function* () {
+      const provider = yield* Provider.findProvider(TrustedServiceAccess);
+      const all = yield* provider.list();
 
-    expect(Array.isArray(all)).toBe(true);
+      expect(Array.isArray(all)).toBe(true);
 
-    for (const item of all) {
-      expect(typeof item.servicePrincipal).toBe("string");
-      if (item.dateEnabled !== undefined) {
-        expect(item.dateEnabled).toBeInstanceOf(Date);
+      for (const item of all) {
+        expect(typeof item.servicePrincipal).toBe("string");
+        if (item.dateEnabled !== undefined) {
+          expect(item.dateEnabled).toBeInstanceOf(Date);
+        }
       }
-    }
-  }),
+    }),
+  { tags: ["provider:aws", "provider:aws:organizations", "live"] },
 );
 
 // Full lifecycle list test — requires an org MANAGEMENT account. Gate behind an
@@ -65,6 +68,7 @@ test.provider.skipIf(!process.env.AWS_ORG_MANAGEMENT_ACCOUNT)(
 
       yield* stack.destroy();
     }),
+  { tags: ["provider:aws", "provider:aws:organizations", "live"] },
 );
 
 // Regression test for https://github.com/alchemy-run/alchemy/issues/736.
@@ -105,7 +109,7 @@ test.provider.skipIf(!process.env.AWS_ORG_MANAGEMENT_ACCOUNT)(
       // `readTrustedServiceAccess` is list-and-find; the crash this fix
       // guards is the `olds!` deref on a row with no props at all).
       const state = yield* yield* State;
-      const stage = "test"; // scratch stacks default to the "test" stage
+      const stage = stack.stage;
       const fqns = yield* state.list({ stack: stack.name, stage });
       const rows = yield* Effect.forEach(fqns, (fqn) =>
         state
@@ -149,5 +153,8 @@ test.provider.skipIf(!process.env.AWS_ORG_MANAGEMENT_ACCOUNT)(
 
       yield* stack.destroy();
     }),
-  { timeout: 240_000 },
+  {
+    tags: ["provider:aws", "provider:aws:organizations", "live"],
+    timeout: 240_000,
+  },
 );

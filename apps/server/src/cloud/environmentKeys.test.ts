@@ -9,7 +9,7 @@ import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import * as ServerConfig from "../config.ts";
 import { getOrCreateEnvironmentKeyPairFromSecretStore } from "./environmentKeys.ts";
 
-const makeServerSecretStoreLayer = () =>
+const layerServerSecretStore = () =>
   ServerSecretStore.layer.pipe(
     Layer.provide(ServerConfig.layerTest(process.cwd(), { prefix: "t3-environment-keys-test-" })),
   );
@@ -28,7 +28,7 @@ it.layer(NodeServices.layer)("getOrCreateEnvironmentKeyPairFromSecretStore", (it
       assert.isTrue(Option.isSome(yield* secretStore.get("cloud-link-ed25519-key-pair")));
       assert.isTrue(Option.isNone(yield* secretStore.get("cloud-link-ed25519-private-key")));
       assert.isTrue(Option.isNone(yield* secretStore.get("cloud-link-ed25519-public-key")));
-    }).pipe(Effect.provide(makeServerSecretStoreLayer())),
+    }).pipe(Effect.provide(layerServerSecretStore())),
   );
 
   it.effect("migrates a legacy keypair into the atomic secret", () =>
@@ -42,7 +42,7 @@ it.layer(NodeServices.layer)("getOrCreateEnvironmentKeyPairFromSecretStore", (it
         publicKey: "public",
       });
       assert.isTrue(Option.isSome(yield* secretStore.get("cloud-link-ed25519-key-pair")));
-    }).pipe(Effect.provide(makeServerSecretStoreLayer())),
+    }).pipe(Effect.provide(layerServerSecretStore())),
   );
 
   it.effect("uses the persisted keypair when a concurrent creator wins", () =>

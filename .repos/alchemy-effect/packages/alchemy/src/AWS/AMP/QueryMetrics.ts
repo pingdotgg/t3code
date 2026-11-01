@@ -1,4 +1,5 @@
 import type * as Credentials from "@distilled.cloud/aws/Credentials";
+import type * as SigV4 from "@distilled.cloud/aws/SigV4";
 import type * as Duration from "effect/Duration";
 import type * as Effect from "effect/Effect";
 import * as Binding from "../../Binding.ts";
@@ -43,14 +44,14 @@ export interface QueryMetricsClient {
     request: QueryMetricsRequest,
   ): Effect.Effect<
     PrometheusInstantResult,
-    PrometheusApiError | Credentials.CredentialsError
+    PrometheusApiError | Credentials.CredentialsError | SigV4.SigningError
   >;
   /** Evaluate a PromQL expression over a time range (`api/v1/query_range`). */
   queryRange(
     request: QueryRangeRequest,
   ): Effect.Effect<
     PrometheusRangeResult,
-    PrometheusApiError | Credentials.CredentialsError
+    PrometheusApiError | Credentials.CredentialsError | SigV4.SigningError
   >;
 }
 
@@ -59,9 +60,8 @@ export interface QueryMetricsClient {
  * {@link Workspace}'s Prometheus-compatible query API (`api/v1/query` and
  * `api/v1/query_range`), SigV4-signed with the host Function's credentials.
  *
- * @binding
- * @section Querying Metrics
- * @example Instant Query
+ * ### Querying Metrics
+ * **Example:** Instant Query
  * ```typescript
  * const metrics = yield* AMP.QueryMetrics(workspace);
  *
@@ -73,7 +73,7 @@ export interface QueryMetricsClient {
  * }
  * ```
  *
- * @example Range Query
+ * **Example:** Range Query
  * ```typescript
  * const result = yield* metrics.queryRange({
  *   query: "rate(http_requests_total[5m])",
@@ -82,6 +82,8 @@ export interface QueryMetricsClient {
  *   step: "30 seconds",
  * });
  * ```
+ *
+ * @binding
  */
 export interface QueryMetrics extends Binding.Service<
   QueryMetrics,

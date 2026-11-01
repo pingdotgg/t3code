@@ -19,9 +19,8 @@ export interface RerankRequest extends bedrock.RerankRequest {}
  * against `*`) plus `bedrock:InvokeModel` scoped to exactly the bound
  * models.
  *
- * @binding
- * @section Reranking Documents
- * @example Rerank Inline Text Documents
+ * ### Reranking Documents
+ * **Example:** Rerank Inline Text Documents
  * ```typescript
  * // init
  * const rerank = yield* Bedrock.Rerank("amazon.rerank-v1:0");
@@ -44,6 +43,8 @@ export interface RerankRequest extends bedrock.RerankRequest {}
  * });
  * const best = result.results[0]; // { index, relevanceScore }
  * ```
+ *
+ * @binding
  */
 export interface Rerank extends Binding.Service<
   Rerank,

@@ -1,3 +1,4 @@
+import type { HighlightedToken } from "../../lib/highlights";
 import { buildNativeSourceRows } from "./nativeSourceFileAdapter";
 
 const MAX_CACHED_DOCUMENTS = 8;
@@ -51,4 +52,17 @@ export function prepareSourceFileDocument(contents: string): SourceFileDocument 
   }
 
   return document;
+}
+
+// Virtualization prevents document-wide selection; cap spans and fall back to a fully selectable string.
+export function boundedSelectableSourceTokens(
+  tokens: ReadonlyArray<ReadonlyArray<HighlightedToken>> | null,
+): typeof tokens {
+  if (!tokens) return null;
+  let spans = tokens.length;
+  for (const line of tokens) {
+    spans += line.length;
+    if (spans > 2_000) return null;
+  }
+  return tokens;
 }

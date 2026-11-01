@@ -5,7 +5,7 @@ import {
   BackingPersistence,
   PersistenceError,
   type BackingPersistenceStore,
-} from "effect/unstable/persistence/Persistence";
+} from "effect/persistence/Persistence";
 import { RuntimeContext } from "../../RuntimeContext.ts";
 import { DurableObjectState } from "./DurableObjectState.ts";
 
@@ -26,12 +26,9 @@ import { DurableObjectState } from "./DurableObjectState.ts";
  * a periodic `clear`.
  * :::
  *
- * @binding
- * @product Workers
- * @category Workers & Compute
  *
- * @section Wiring it into a chat-backing DO
- * @example Persisted chat history per DO instance
+ * ### Wiring it into a chat-backing DO
+ * **Example:** Persisted chat history per DO instance
  * `Persistence.layerResultPersisted({ storeId })` is the seam Effect
  * AI exposes for cached/replayable AI calls. Layer
  * `DurableObjectChatPersistence` underneath and every entry is stored
@@ -40,8 +37,8 @@ import { DurableObjectState } from "./DurableObjectState.ts";
  * import * as Cloudflare from "alchemy/Cloudflare";
  * import * as Effect from "effect/Effect";
  * import * as Layer from "effect/Layer";
- * import { Chat, LanguageModel } from "effect/unstable/ai";
- * import { Persistence } from "effect/unstable/persistence";
+ * import { Chat, LanguageModel } from "effect/ai";
+ * import { Persistence } from "effect/persistence";
  *
  * export default class ChatBackend extends Cloudflare.DurableObject<ChatBackend>()(
  *   "ChatBackend",
@@ -60,8 +57,8 @@ import { DurableObjectState } from "./DurableObjectState.ts";
  * ) {}
  * ```
  *
- * @section Multiple stores in the same DO
- * @example Separate `storeId`s coexist
+ * ### Multiple stores in the same DO
+ * **Example:** Separate `storeId`s coexist
  * Different `storeId`s namespace their keys with `${storeId}:`, so
  * one DO can keep, say, chat history *and* an audit log in separate
  * stores without colliding.
@@ -74,6 +71,10 @@ import { DurableObjectState } from "./DurableObjectState.ts";
  *   storeId: "alchemy.audit",
  * }).pipe(Layer.provide(Cloudflare.AI.DurableObjectChatPersistence));
  * ```
+ *
+ * @binding
+ * @product Workers
+ * @category Workers & Compute
  */
 export const DurableObjectChatPersistence = Layer.effect(BackingPersistence)(
   Effect.gen(function* () {

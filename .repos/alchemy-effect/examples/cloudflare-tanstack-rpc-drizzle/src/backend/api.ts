@@ -1,9 +1,9 @@
 import * as Cloudflare from "alchemy/Cloudflare";
-import * as Drizzle from "alchemy/Drizzle";
+import * as Drizzle from "alchemy/Drizzle/Postgres";
 import { eq } from "drizzle-orm";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import { RpcSerialization, RpcServer } from "effect/unstable/rpc";
+import { RpcSerialization, RpcServer } from "effect/rpc";
 import { Hyperdrive } from "./database.ts";
 import { Todo, TodoNotFound, TodoRpcs } from "./rpc.ts";
 import { relations, Todos } from "./schema.ts";
@@ -19,7 +19,7 @@ export default class Backend extends Cloudflare.Workers.RpcWorker<Backend>()(
   "Backend",
   {
     main: import.meta.filename,
-    url: false, // disable workers.dev URL; we use the service binding instead
+    workersDev: false, // no workers.dev URL; we use the service binding instead
     schema: TodoRpcs,
   },
   Effect.gen(function* () {

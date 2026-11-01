@@ -1,5 +1,7 @@
+import * as Dialog from "../../components/ui/Dialog";
 import Constants from "expo-constants";
 import * as Crypto from "expo-crypto";
+import { EnvironmentId, PROVIDER_SEND_TURN_MAX_FILE_BYTES } from "@t3tools/contracts";
 import {
   clearSharedPayloads,
   getResolvedSharedPayloadsAsync,
@@ -7,37 +9,44 @@ import {
   type ResolvedSharePayload,
   type SharePayload,
 } from "expo-sharing";
-import React, { useCallback, useEffect, useEffectEvent, useMemo, useRef, useState } from "react";
-import { Alert, AppState, Platform } from "react-native";
+import { useSyncExternalStore } from "react";
+import { Platform } from "react-native";
+import { CommonActions } from "@react-navigation/native";
 
 import {
   buildIncomingShareDraft,
+  isShareFileUriUnderOwnedRoots,
+  selectIncomingShareAttachmentsForServer,
   type IncomingShareDestination,
   type IncomingShareDraft,
 } from "./incoming-share-model";
 import { createIncomingSharePayloadReader } from "./incoming-share-native";
 import { IncomingShareInbox } from "./incoming-share-inbox";
+import { persistComposerAttachmentFile } from "../../lib/composerImages";
+import { subscribeAppActive } from "../../lib/appState";
+import { coalescedRun } from "../../lib/coalescedRun";
+import { rootNavigationRef } from "../../lib/rootNavigation";
+import { selectWorkspaceDetail } from "../workspace/workspace-detail-selection";
+import { isDraftThreadRoute } from "../threads/thread-route-state";
+import { makeIncomingShareImports } from "../threads/incomingShareImport";
+import { liveNewTaskFlowKeys } from "../threads/new-task-flow-state";
+import { appAtomRegistry } from "../../state/atom-registry";
+import { serverEnvironment } from "../../state/server";
+import {
+  getComposerDraftSnapshot,
+  mergeComposerDraftContent,
+  scheduleUnusedComposerAttachmentCleanup,
+  undoComposerDraftMerge,
+} from "../../state/use-composer-drafts";
+import {
+  EMPTY_INCOMING_SHARE_PRESENTATION_STATE,
+  transitionIncomingSharePresentation,
+} from "./incoming-share-presentation";
 import {
   loadIncomingShareDrafts,
   removeIncomingShareDraft,
   writeIncomingShareDraft,
 } from "./incoming-share-storage";
-
-type IncomingShareContextValue = {
-  readonly pendingShare: IncomingShareDraft | null;
-  readonly isLoading: boolean;
-  readonly error: Error | null;
-  readonly getShare: (shareId: string) => IncomingShareDraft | null;
-  readonly reserveShare: (shareId: string, destination: IncomingShareDestination) => Promise<void>;
-  readonly releaseShareReservation: (
-    shareId: string,
-    expectedDestination: IncomingShareDestination,
-  ) => Promise<void>;
-  readonly consumeShare: (shareId: string) => Promise<void>;
-  readonly refresh: () => Promise<void>;
-};
-
-const IncomingShareContext = React.createContext<IncomingShareContextValue | null>(null);
 
 function receiveSharingEnabled(): boolean {
   if (Platform.OS === "android") {
@@ -54,14 +63,11 @@ const getIncomingSharePayloads = createIncomingSharePayloadReader({
   readPayloads: getSharedPayloads,
 });
 
-async function resolvedPayloadsForImages(): Promise<ReadonlyArray<ResolvedSharePayload>> {
+async function resolvedPayloadsForFiles(): Promise<ReadonlyArray<ResolvedSharePayload>> {
   try {
     return await getResolvedSharedPayloadsAsync();
   } catch (error) {
-    // iOS already gives the containing app a copied file:// URL, so raw
-    // payloads remain usable. Android normally resolves content:// into a
-    // private cache file; its modern File API can still read the raw URI when
-    // resolution fails.
+    // Raw iOS copied file URLs remain usable; Android's File API can read content URIs when resolution fails.
     console.warn("[incoming-share] could not resolve shared file metadata", error);
     return [];
   }
@@ -84,12 +90,26 @@ async function readBase64(uri: string): Promise<string> {
   return new File(uri).base64();
 }
 
+async function readFileSize(uri: string): Promise<number | null> {
+  const { File } = await import("expo-file-system");
+  return new File(uri).size ?? null;
+}
+
 async function removeOwnedFile(uri: string): Promise<void> {
   if (!uri.startsWith("file:")) {
     return;
   }
   try {
-    const { File } = await import("expo-file-system");
+    const { File, Paths } = await import("expo-file-system");
+    // Delete only app-owned files; iOS open-in-place shares can reference the sender's original.
+    const ownedRootUris = [
+      Paths.document.uri,
+      Paths.cache.uri,
+      ...Object.values(Paths.appleSharedContainers ?? {}).map((directory) => directory.uri),
+    ];
+    if (!isShareFileUriUnderOwnedRoots(uri, ownedRootUris)) {
+      return;
+    }
     const file = new File(uri);
     if (file.exists) {
       file.delete();
@@ -99,30 +119,30 @@ async function removeOwnedFile(uri: string): Promise<void> {
   }
 }
 
-async function removeReplayedImagePayloadFiles(
-  payloads: ReadonlyArray<SharePayload>,
-): Promise<void> {
+async function removeReplayedPayloadFiles(payloads: ReadonlyArray<SharePayload>): Promise<void> {
   const uris = new Set<string>();
   for (const payload of payloads) {
-    if (payload.shareType === "image") {
+    if (["image", "file", "audio", "video"].includes(payload.shareType)) {
       uris.add(payload.value);
     }
   }
   if (uris.size === 0) {
     return;
   }
-  const resolvedPayloads = await resolvedPayloadsForImages();
+  const resolvedPayloads = payloads.some((payload) =>
+    ["file", "audio", "video"].includes(payload.shareType),
+  )
+    ? []
+    : await resolvedPayloadsForFiles();
   for (const payload of resolvedPayloads) {
-    if (payload.shareType === "image" && payload.contentUri) {
+    if (["image", "file", "audio", "video"].includes(payload.shareType) && payload.contentUri) {
       uris.add(payload.contentUri);
     }
   }
   await Promise.all([...uris].map(removeOwnedFile));
 }
 
-// Keep one operation queue across provider remounts (including development
-// Strict Mode remounts) so two app lifecycle notifications cannot ingest the
-// same native handoff independently.
+// Share the queue across remounts so lifecycle notifications cannot ingest one handoff twice.
 const incomingShareInbox = new IncomingShareInbox({
   loadDrafts: loadIncomingShareDrafts,
   writeDraft: writeIncomingShareDraft,
@@ -131,14 +151,29 @@ const incomingShareInbox = new IncomingShareInbox({
   clearPayloads: clearSharedPayloads,
   buildDraft: async ({ payloads, id, createdAt }) => {
     const cleanupUris = new Set<string>();
-    const resolvedPayloads = payloads.some((payload) => payload.shareType === "image")
-      ? await resolvedPayloadsForImages()
-      : [];
+    const persistedUris = new Set<string>();
+    const hasGenericFilePayload = payloads.some((payload) =>
+      ["file", "audio", "video"].includes(payload.shareType),
+    );
+    const resolvedPayloads =
+      !hasGenericFilePayload && payloads.some((payload) => payload.shareType === "image")
+        ? await resolvedPayloadsForFiles()
+        : [];
     const draft = await buildIncomingShareDraft({
       payloads,
       resolvedPayloads,
       fileReader: {
         readBase64,
+        persistFile: async (uri, name) => {
+          const persistedUri = await persistComposerAttachmentFile(
+            uri,
+            name,
+            PROVIDER_SEND_TURN_MAX_FILE_BYTES,
+          );
+          persistedUris.add(persistedUri);
+          return persistedUri;
+        },
+        readSize: readFileSize,
         removeOwnedFile: (uri) => {
           cleanupUris.add(uri);
         },
@@ -151,9 +186,12 @@ const incomingShareInbox = new IncomingShareInbox({
       cleanup: async () => {
         await Promise.all([...cleanupUris].map(removeOwnedFile));
       },
+      rollback: async () => {
+        await Promise.all([...persistedUris].map(removeOwnedFile));
+      },
     };
   },
-  cleanupReplayedPayloads: removeReplayedImagePayloadFiles,
+  cleanupReplayedPayloads: removeReplayedPayloadFiles,
   idForPayloads: incomingShareIdForPayloads,
   now: () => new Date().toISOString(),
   onClearError: (error) => {
@@ -164,153 +202,173 @@ const incomingShareInbox = new IncomingShareInbox({
   },
 });
 
-export function IncomingShareProvider(props: React.PropsWithChildren) {
+interface IncomingShareSnapshot {
+  readonly drafts: ReadonlyArray<IncomingShareDraft>;
+  readonly isLoading: boolean;
+}
+
+let snapshot: IncomingShareSnapshot = { drafts: [], isLoading: true };
+const snapshotListeners = new Set<() => void>();
+let presentation = EMPTY_INCOMING_SHARE_PRESENTATION_STATE;
+
+function publish(drafts: ReadonlyArray<IncomingShareDraft>) {
+  snapshot = { drafts, isLoading: false };
+  for (const listener of snapshotListeners) listener();
+  presentPendingIncomingShare();
+}
+
+function subscribeIncomingShares(onChange: () => void) {
+  snapshotListeners.add(onChange);
+  return () => {
+    snapshotListeners.delete(onChange);
+  };
+}
+
+function getIncomingShareSnapshot() {
+  return snapshot;
+}
+
+function reportRefreshFailure(cause: unknown) {
+  console.warn(
+    "[incoming-share] refresh failed",
+    cause,
+    cause instanceof Error ? cause.cause : null,
+  );
+  const error = cause instanceof Error ? cause : new Error("Could not import shared content.");
+  Dialog.alert("Could not import shared content", error.message, [
+    { text: "Dismiss", style: "cancel" },
+    { text: "Retry", onPress: () => void refreshIncomingShares() },
+  ]);
+}
+
+// A resume while a refresh runs may carry a native handoff that refresh already
+// passed, so it queues one more refresh instead of joining the running one.
+const refreshIncomingShares = coalescedRun(async () => {
   const enabled = receiveSharingEnabled();
-  const [drafts, setDrafts] = useState<ReadonlyArray<IncomingShareDraft>>([]);
-  const [isLoading, setIsLoading] = useState(true);
-  const [error, setError] = useState<Error | null>(null);
-  const refreshPromiseRef = useRef<Promise<void> | null>(null);
-  const mountedRef = useRef(false);
+  try {
+    publish(await incomingShareInbox.refresh({ ingestNative: enabled }));
+  } catch (cause) {
+    const persisted = await incomingShareInbox.refresh({ ingestNative: false }).catch(() => null);
+    publish(persisted ?? snapshot.drafts);
+    reportRefreshFailure(cause);
+  }
+});
 
-  useEffect(() => {
-    mountedRef.current = true;
-    return () => {
-      mountedRef.current = false;
-    };
-  }, []);
-
-  const refresh = useCallback(async () => {
-    if (refreshPromiseRef.current) {
-      return refreshPromiseRef.current;
-    }
-
-    const operation = (async () => {
-      try {
-        const snapshot = await incomingShareInbox.refresh({ ingestNative: enabled });
-        if (mountedRef.current) {
-          setDrafts(snapshot);
-          setError(null);
-        }
-      } catch (cause) {
-        const persisted = await incomingShareInbox
-          .refresh({ ingestNative: false })
-          .catch(() => null);
-        if (mountedRef.current) {
-          if (persisted) {
-            setDrafts(persisted);
-          }
-          setError(cause instanceof Error ? cause : new Error("Could not import shared content."));
-        }
-      }
-    })().finally(() => {
-      refreshPromiseRef.current = null;
-    });
-
-    refreshPromiseRef.current = operation;
-    return operation;
-  }, [enabled]);
-
-  useEffect(() => {
-    void refresh().finally(() => {
-      if (mountedRef.current) {
-        setIsLoading(false);
-      }
-    });
-  }, [refresh]);
-
-  const refreshOnAppActive = useEffectEvent(() => {
-    void refresh();
+/**
+ * Opens the oldest pending share as a new-task draft unless the user already
+ * dismissed it. Runs whenever the inbox or the root navigation state changes.
+ */
+export function presentPendingIncomingShare(): void {
+  if (!rootNavigationRef.isReady()) return;
+  const state = rootNavigationRef.getRootState();
+  if (!state) return;
+  const transition = transitionIncomingSharePresentation(presentation, {
+    isShareSheetPresented: isDraftThreadRoute(state.routes[state.index]),
+    pendingShareId: snapshot.drafts[0]?.id ?? null,
   });
-
-  useEffect(() => {
-    if (!enabled) {
-      return;
-    }
-    const subscription = AppState.addEventListener("change", (state) => {
-      if (state === "active") {
-        refreshOnAppActive();
-      }
-    });
-    return () => subscription.remove();
-  }, [enabled]);
-
-  useEffect(() => {
-    if (!error) {
-      return;
-    }
-    Alert.alert("Could not import shared content", error.message, [
-      { text: "Dismiss", style: "cancel", onPress: () => setError(null) },
-      {
-        text: "Retry",
-        onPress: () => {
-          setError(null);
-          void refresh();
-        },
-      },
-    ]);
-  }, [error, refresh]);
-
-  const consumeShare = useCallback(async (shareId: string) => {
-    const snapshot = await incomingShareInbox.consume(shareId);
-    if (mountedRef.current) {
-      setDrafts(snapshot);
-    }
-  }, []);
-  const reserveShare = useCallback(
-    async (shareId: string, destination: IncomingShareDestination) => {
-      const snapshot = await incomingShareInbox.reserve(shareId, destination);
-      if (mountedRef.current) {
-        setDrafts(snapshot);
-      }
-    },
-    [],
-  );
-  const releaseShareReservation = useCallback(
-    async (shareId: string, expectedDestination: IncomingShareDestination) => {
-      const snapshot = await incomingShareInbox.releaseReservation(shareId, expectedDestination);
-      if (mountedRef.current) {
-        setDrafts(snapshot);
-      }
-    },
-    [],
-  );
-  const getShare = useCallback(
-    (shareId: string) => drafts.find((draft) => draft.id === shareId) ?? null,
-    [drafts],
-  );
-
-  const value = useMemo<IncomingShareContextValue>(
-    () => ({
-      pendingShare: drafts[0] ?? null,
-      isLoading,
-      error,
-      getShare,
-      releaseShareReservation,
-      reserveShare,
-      consumeShare,
-      refresh,
+  presentation = transition.state;
+  if (!transition.shareIdToPresent) return;
+  rootNavigationRef.dispatch(
+    selectWorkspaceDetail({
+      name: "Thread",
+      params: { draft: { incomingShareId: transition.shareIdToPresent } },
     }),
-    [
-      consumeShare,
-      drafts,
-      error,
-      getShare,
-      isLoading,
-      refresh,
-      releaseShareReservation,
-      reserveShare,
-    ],
-  );
-
-  return (
-    <IncomingShareContext.Provider value={value}>{props.children}</IncomingShareContext.Provider>
   );
 }
 
-export function useIncomingShare(): IncomingShareContextValue {
-  const value = React.use(IncomingShareContext);
-  if (value === null) {
-    throw new Error("useIncomingShare must be used within IncomingShareProvider.");
-  }
-  return value;
+/** App-lifetime: loads the inbox and re-ingests native handoffs on every resume. */
+export function startIncomingShareInbox(): () => void {
+  void refreshIncomingShares();
+  return receiveSharingEnabled()
+    ? subscribeAppActive(() => void refreshIncomingShares())
+    : () => {};
+}
+
+async function consumeShare(shareId: string) {
+  publish(await incomingShareInbox.consume(shareId));
+}
+
+async function reserveShare(shareId: string, destination: IncomingShareDestination) {
+  publish(await incomingShareInbox.reserve(shareId, destination));
+}
+
+async function releaseShareReservation(
+  shareId: string,
+  expectedDestination: IncomingShareDestination,
+) {
+  publish(await incomingShareInbox.releaseReservation(shareId, expectedDestination));
+}
+
+/** Moves shares into new-task drafts; see makeIncomingShareImports. */
+export const incomingShareImports = makeIncomingShareImports({
+  registry: appAtomRegistry,
+  getShare: (shareId) => snapshot.drafts.find((draft) => draft.id === shareId) ?? null,
+  reserve: reserveShare,
+  release: releaseShareReservation,
+  consume: consumeShare,
+  readDraft: getComposerDraftSnapshot,
+  undoMerge: undoComposerDraftMerge,
+  mergeIntoDraft: mergeComposerDraftContent,
+  selectAttachments: (share, environmentId) =>
+    selectIncomingShareAttachmentsForServer({
+      attachments: share.attachments,
+      serverConfig: appAtomRegistry.get(
+        serverEnvironment.configValueAtom(EnvironmentId.make(environmentId)),
+      ),
+    }),
+  releaseUnusedAttachments: scheduleUnusedComposerAttachmentCleanup,
+  onWarnings: (warnings) => {
+    Dialog.alert("Some shared content was skipped", warnings.join("\n"));
+  },
+  onImportFailure: (target, error) => {
+    Dialog.alert(
+      "Could not import shared content",
+      error instanceof Error ? error.message : "The shared content could not be saved.",
+      [
+        {
+          text: "Cancel import",
+          style: "cancel",
+          onPress: () => void incomingShareImports.cancel(target),
+        },
+        { text: "Retry", onPress: () => incomingShareImports.retry(target) },
+      ],
+      { cancelable: false },
+    );
+  },
+  onCancelFailure: (target, error) => {
+    Dialog.alert(
+      "Could not cancel import",
+      error instanceof Error ? error.message : "The shared content could not be restored safely.",
+      [
+        { text: "Retry import", onPress: () => incomingShareImports.retry(target) },
+        { text: "Retry cancel", onPress: () => void incomingShareImports.cancel(target) },
+      ],
+      { cancelable: false },
+    );
+  },
+  leave: (target) => {
+    rootNavigationRef.dispatch({
+      ...CommonActions.goBack(),
+      source: target.routeKey,
+      target: rootNavigationRef.getRootState()?.key,
+    });
+  },
+});
+
+/** Abandons the share imports of draft routes that left the stack. */
+export function pruneIncomingShareImports(state: Parameters<typeof liveNewTaskFlowKeys>[0]) {
+  void incomingShareImports.prune(liveNewTaskFlowKeys(state));
+}
+
+export function useIncomingShare() {
+  const { drafts, isLoading } = useSyncExternalStore(
+    subscribeIncomingShares,
+    getIncomingShareSnapshot,
+  );
+  return {
+    pendingShare: drafts[0] ?? null,
+    isLoading,
+    getShare: (shareId: string) => drafts.find((draft) => draft.id === shareId) ?? null,
+    releaseShareReservation,
+  };
 }

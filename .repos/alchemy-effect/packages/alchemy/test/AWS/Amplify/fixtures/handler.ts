@@ -4,8 +4,8 @@ import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Stream from "effect/Stream";
-import { HttpServerRequest } from "effect/unstable/http/HttpServerRequest";
-import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
+import { HttpServerRequest } from "effect/http/HttpServerRequest";
+import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import path from "pathe";
 
 const main = path.resolve(import.meta.dirname, "handler.ts");
@@ -17,7 +17,7 @@ export class AmplifyTestFunction extends Lambda.Function<Lambda.Function>()(
 export default AmplifyTestFunction.make(
   {
     main,
-    url: true,
+    functionUrl: true,
     // GenerateAccessLogs can take longer than Lambda's 3s default while
     // Amplify prepares the pre-signed archive URL. Keep the invocation alive
     // long enough for the handler to return either the typed service result or

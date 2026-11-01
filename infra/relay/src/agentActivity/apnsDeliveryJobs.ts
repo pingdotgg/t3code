@@ -1,9 +1,9 @@
+// @effect-diagnostics-next-line nodeBuiltinImport:off -- Effect's Crypto has no createHmac or timingSafeEqual.
 import * as NodeCrypto from "node:crypto";
 
 import {
   RelayAgentActivityAggregateState,
   RelayAgentAwarenessPhase,
-  type RelayDeliveryKind,
 } from "@t3tools/contracts/relay";
 import { stableStringify } from "@t3tools/shared/relaySigning";
 import * as DateTime from "effect/DateTime";
@@ -12,23 +12,15 @@ import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
 
 const MAX_JOB_AGE_MS = 10 * 60 * 1_000;
-export const APNS_DELIVERY_JOB_SIGNING_ALGORITHM = "hmac-sha256";
+const APNS_DELIVERY_JOB_SIGNING_ALGORITHM = "hmac-sha256";
 
 const ApnsDeliveryKindSchema = Schema.Literals([
-  "live_activity_start",
   "live_activity_update",
   "live_activity_end",
   "push_notification",
 ]);
-const LiveActivityStartOrUpdateKindSchema = Schema.Literals([
-  "live_activity_start",
-  "live_activity_update",
-]);
-const LiveActivityKindSchema = Schema.Literals([
-  "live_activity_start",
-  "live_activity_update",
-  "live_activity_end",
-]);
+const LiveActivityStartOrUpdateKindSchema = Schema.Literals(["live_activity_update"]);
+const LiveActivityKindSchema = Schema.Literals(["live_activity_update", "live_activity_end"]);
 
 const ApnsDeliveryJobContext = {
   jobId: Schema.String,
@@ -42,17 +34,11 @@ export const ApnsNotificationPayload = Schema.Struct({
   environmentId: Schema.String,
   threadId: Schema.String,
   deepLink: Schema.String,
-  // Optional so delivery jobs queued by older relay builds still decode.
-  // New jobs use these fields to avoid delivering a stale Done/attention
-  // notification after the thread has moved to another phase.
   phase: Schema.optional(RelayAgentAwarenessPhase),
   updatedAt: Schema.optional(Schema.String),
 });
 export type ApnsNotificationPayload = typeof ApnsNotificationPayload.Type;
 
-// Alert copy attached to a Live Activity update/end push. Its presence makes
-// the update "alerting": iOS wakes the screen, plays the haptic, and briefly
-// expands the Dynamic Island instead of silently redrawing.
 export const ApnsLiveActivityAlert = Schema.Struct({
   title: Schema.String,
   body: Schema.String,
@@ -67,14 +53,11 @@ export const ApnsDeliveryJobPayload = Schema.Struct({
     userId: Schema.String,
     deviceId: Schema.String,
     token: Schema.String,
-    // Per-device APNs routing; absent on jobs queued by older relay builds,
-    // which fall back to the configured defaults.
     bundleId: Schema.optional(Schema.NullOr(Schema.String)),
     apsEnvironment: Schema.optional(Schema.NullOr(Schema.Literals(["sandbox", "production"]))),
   }),
   aggregate: Schema.NullOr(RelayAgentActivityAggregateState),
   notification: Schema.NullOr(ApnsNotificationPayload),
-  // Optional so jobs queued by older relay builds still decode.
   alert: Schema.optional(Schema.NullOr(ApnsLiveActivityAlert)),
   createdAt: Schema.String,
   expiresAt: Schema.String,
@@ -88,7 +71,7 @@ export const SignedApnsDeliveryJob = Schema.Struct({
 });
 export type SignedApnsDeliveryJob = typeof SignedApnsDeliveryJob.Type;
 
-export class ApnsDeliveryJobQueuePayloadInvalid extends Schema.TaggedErrorClass<ApnsDeliveryJobQueuePayloadInvalid>()(
+export class ApnsDeliveryJobQueuePayloadInvalid extends Schema.TaggedError<ApnsDeliveryJobQueuePayloadInvalid>()(
   "ApnsDeliveryJobQueuePayloadInvalid",
   {
     receivedType: Schema.String,
@@ -100,7 +83,7 @@ export class ApnsDeliveryJobQueuePayloadInvalid extends Schema.TaggedErrorClass<
   }
 }
 
-export class ApnsDeliveryJobLiveActivityAggregateMissing extends Schema.TaggedErrorClass<ApnsDeliveryJobLiveActivityAggregateMissing>()(
+export class ApnsDeliveryJobLiveActivityAggregateMissing extends Schema.TaggedError<ApnsDeliveryJobLiveActivityAggregateMissing>()(
   "ApnsDeliveryJobLiveActivityAggregateMissing",
   {
     ...ApnsDeliveryJobContext,
@@ -112,7 +95,7 @@ export class ApnsDeliveryJobLiveActivityAggregateMissing extends Schema.TaggedEr
   }
 }
 
-export class ApnsDeliveryJobLiveActivityNotificationUnexpected extends Schema.TaggedErrorClass<ApnsDeliveryJobLiveActivityNotificationUnexpected>()(
+export class ApnsDeliveryJobLiveActivityNotificationUnexpected extends Schema.TaggedError<ApnsDeliveryJobLiveActivityNotificationUnexpected>()(
   "ApnsDeliveryJobLiveActivityNotificationUnexpected",
   {
     ...ApnsDeliveryJobContext,
@@ -124,7 +107,7 @@ export class ApnsDeliveryJobLiveActivityNotificationUnexpected extends Schema.Ta
   }
 }
 
-export class ApnsDeliveryJobPushNotificationMissing extends Schema.TaggedErrorClass<ApnsDeliveryJobPushNotificationMissing>()(
+export class ApnsDeliveryJobPushNotificationMissing extends Schema.TaggedError<ApnsDeliveryJobPushNotificationMissing>()(
   "ApnsDeliveryJobPushNotificationMissing",
   ApnsDeliveryJobContext,
 ) {
@@ -133,7 +116,7 @@ export class ApnsDeliveryJobPushNotificationMissing extends Schema.TaggedErrorCl
   }
 }
 
-export class ApnsDeliveryJobPushNotificationAggregateUnexpected extends Schema.TaggedErrorClass<ApnsDeliveryJobPushNotificationAggregateUnexpected>()(
+export class ApnsDeliveryJobPushNotificationAggregateUnexpected extends Schema.TaggedError<ApnsDeliveryJobPushNotificationAggregateUnexpected>()(
   "ApnsDeliveryJobPushNotificationAggregateUnexpected",
   ApnsDeliveryJobContext,
 ) {
@@ -142,7 +125,7 @@ export class ApnsDeliveryJobPushNotificationAggregateUnexpected extends Schema.T
   }
 }
 
-export class ApnsDeliveryJobCreatedAtInvalid extends Schema.TaggedErrorClass<ApnsDeliveryJobCreatedAtInvalid>()(
+export class ApnsDeliveryJobCreatedAtInvalid extends Schema.TaggedError<ApnsDeliveryJobCreatedAtInvalid>()(
   "ApnsDeliveryJobCreatedAtInvalid",
   {
     ...ApnsDeliveryJobContext,
@@ -155,7 +138,7 @@ export class ApnsDeliveryJobCreatedAtInvalid extends Schema.TaggedErrorClass<Apn
   }
 }
 
-export class ApnsDeliveryJobExpiresAtInvalid extends Schema.TaggedErrorClass<ApnsDeliveryJobExpiresAtInvalid>()(
+export class ApnsDeliveryJobExpiresAtInvalid extends Schema.TaggedError<ApnsDeliveryJobExpiresAtInvalid>()(
   "ApnsDeliveryJobExpiresAtInvalid",
   {
     ...ApnsDeliveryJobContext,
@@ -168,7 +151,7 @@ export class ApnsDeliveryJobExpiresAtInvalid extends Schema.TaggedErrorClass<Apn
   }
 }
 
-export class ApnsDeliveryJobTimeWindowInvalid extends Schema.TaggedErrorClass<ApnsDeliveryJobTimeWindowInvalid>()(
+export class ApnsDeliveryJobTimeWindowInvalid extends Schema.TaggedError<ApnsDeliveryJobTimeWindowInvalid>()(
   "ApnsDeliveryJobTimeWindowInvalid",
   {
     ...ApnsDeliveryJobContext,
@@ -182,7 +165,7 @@ export class ApnsDeliveryJobTimeWindowInvalid extends Schema.TaggedErrorClass<Ap
   }
 }
 
-export class ApnsDeliveryJobTimeWindowTooLong extends Schema.TaggedErrorClass<ApnsDeliveryJobTimeWindowTooLong>()(
+export class ApnsDeliveryJobTimeWindowTooLong extends Schema.TaggedError<ApnsDeliveryJobTimeWindowTooLong>()(
   "ApnsDeliveryJobTimeWindowTooLong",
   {
     ...ApnsDeliveryJobContext,
@@ -196,7 +179,7 @@ export class ApnsDeliveryJobTimeWindowTooLong extends Schema.TaggedErrorClass<Ap
   }
 }
 
-export class ApnsDeliveryJobSignatureInvalid extends Schema.TaggedErrorClass<ApnsDeliveryJobSignatureInvalid>()(
+export class ApnsDeliveryJobSignatureInvalid extends Schema.TaggedError<ApnsDeliveryJobSignatureInvalid>()(
   "ApnsDeliveryJobSignatureInvalid",
   {
     ...ApnsDeliveryJobContext,
@@ -222,7 +205,7 @@ export const ApnsDeliveryJobInvalid = Schema.Union([
 ]);
 export type ApnsDeliveryJobInvalid = typeof ApnsDeliveryJobInvalid.Type;
 
-export class ApnsDeliveryJobExpired extends Schema.TaggedErrorClass<ApnsDeliveryJobExpired>()(
+export class ApnsDeliveryJobExpired extends Schema.TaggedError<ApnsDeliveryJobExpired>()(
   "ApnsDeliveryJobExpired",
   {
     ...ApnsDeliveryJobContext,
@@ -244,7 +227,7 @@ export type ApnsDeliveryJobVerificationError = typeof ApnsDeliveryJobVerificatio
 export const isApnsDeliveryJobVerificationError = Schema.is(ApnsDeliveryJobVerificationError);
 
 export function makeApnsDeliveryJobPayload(input: {
-  readonly kind: RelayDeliveryKind;
+  readonly kind: ApnsDeliveryJobPayload["kind"];
   readonly userId: string;
   readonly deviceId: string;
   readonly token: string;
@@ -270,8 +253,7 @@ export function makeApnsDeliveryJobPayload(input: {
     },
     aggregate: input.aggregate,
     notification: input.notification ?? null,
-    // Omitted (not null) when absent so signatures stay identical to jobs from
-    // relay builds that predate the field.
+    // Omit absent fields to preserve signatures from older relay builds.
     ...(input.alert ? { alert: input.alert } : {}),
     createdAt: input.createdAt,
     expiresAt: input.expiresAt,
@@ -284,7 +266,6 @@ export function expiresAtForJob(createdAtMs: number): string {
 
 function validatePayloadShape(payload: ApnsDeliveryJobPayload): ApnsDeliveryJobInvalid | null {
   switch (payload.kind) {
-    case "live_activity_start":
     case "live_activity_update":
       if (payload.aggregate === null) {
         return new ApnsDeliveryJobLiveActivityAggregateMissing({

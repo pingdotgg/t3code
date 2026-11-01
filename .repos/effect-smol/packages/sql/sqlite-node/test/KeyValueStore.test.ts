@@ -1,9 +1,9 @@
 import { NodeFileSystem } from "@effect/platform-node"
 import { SqliteClient } from "@effect/sql-sqlite-node"
 import { Effect, FileSystem, Layer } from "effect"
-import * as KeyValueStoreTest from "effect-test/unstable/persistence/KeyValueStoreTest"
-import * as KeyValueStore from "effect/unstable/persistence/KeyValueStore"
-import { Reactivity } from "effect/unstable/reactivity"
+import * as KeyValueStoreTest from "effect-test/persistence/KeyValueStoreTest"
+import * as KeyValueStore from "effect/persistence/KeyValueStore"
+import { Reactivity } from "effect/reactivity"
 
 const ClientLayer = Effect.gen(function*() {
   const fs = yield* FileSystem.FileSystem

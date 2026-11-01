@@ -9,9 +9,8 @@ import * as Binding from "../../Binding.ts";
  * Account-level operation — invoked with the caller's request as-is.
  * Provide the implementation with
  * `Effect.provide(AWS.Macie2.CreateMemberHttp)`.
- * @binding
- * @section Organization & Members
- * @example Associate a Member Account
+ * ### Organization & Members
+ * **Example:** Associate a Member Account
  * ```typescript
  * // init — account-level binding, no resource argument
  * const createMember = yield* AWS.Macie2.CreateMember();
@@ -19,6 +18,8 @@ import * as Binding from "../../Binding.ts";
  * // runtime
  * yield* createMember({ account: { accountId, email } });
  * ```
+ *
+ * @binding
  */
 export interface CreateMember extends Binding.Service<
   CreateMember,

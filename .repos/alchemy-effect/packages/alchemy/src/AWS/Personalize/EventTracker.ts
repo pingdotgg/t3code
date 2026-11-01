@@ -66,17 +66,16 @@ export interface EventTracker extends Resource<
  * tracker yields a `trackingId` that the {@link PutEvents} data-plane binding
  * uses to record events in real time.
  *
- * @resource
- * @section Creating an Event Tracker
- * @example Track Events for a Dataset Group
+ * ### Creating an Event Tracker
+ * **Example:** Track Events for a Dataset Group
  * ```typescript
  * const tracker = yield* Personalize.EventTracker("Tracker", {
  *   datasetGroupArn: group.datasetGroupArn,
  * });
  * ```
  *
- * @section Streaming Events
- * @example Record Click Events from a Lambda
+ * ### Streaming Events
+ * **Example:** Record Click Events from a Lambda
  * ```typescript
  * // init
  * const putEvents = yield* Personalize.PutEvents(tracker);
@@ -88,6 +87,8 @@ export interface EventTracker extends Resource<
  *   eventList: [{ eventType: "click", itemId: "item-42", sentAt: new Date() }],
  * });
  * ```
+ *
+ * @resource
  */
 export const EventTracker = Resource<EventTracker>(
   "AWS.Personalize.EventTracker",

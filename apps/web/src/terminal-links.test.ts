@@ -1,12 +1,10 @@
+import { resolvePathLinkTarget } from "@t3tools/shared/fileLinks";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
   collectWrappedTerminalLinkLine,
   extractTerminalLinks,
-  isTerminalLinkActivation,
-  resolvePathLinkTarget,
-  resolveWrappedTerminalLinkRange,
-  wrappedTerminalLinkRangeIntersectsBufferLine,
+  isTerminalUrl,
   type TerminalBufferLineLike,
 } from "./terminal-links";
 
@@ -18,23 +16,89 @@ function createBufferLine(text: string, isWrapped = false): TerminalBufferLineLi
 }
 
 describe("extractTerminalLinks", () => {
-  it("finds http urls and path tokens", () => {
-    const line =
-      "failed at https://example.com/docs and src/components/ThreadTerminalDrawer.tsx:42";
-    expect(extractTerminalLinks(line)).toEqual([
-      {
-        kind: "url",
-        text: "https://example.com/docs",
-        start: 10,
-        end: 34,
-      },
-      {
-        kind: "path",
-        text: "src/components/ThreadTerminalDrawer.tsx:42",
-        start: 39,
-        end: 81,
-      },
+  it.each([
+    String.raw`C:\dev\ai-test\dir 1`,
+    String.raw`C:\dev\ai-test\dir 1\test`,
+    "C:\\",
+    String.raw`\\server\my share\dir 1`,
+    "/home/Jane Doe/project",
+    String.raw`C:\dev\folder (draft)\name!`,
+  ])("keeps the full PowerShell prompt path %s in one link", (path) => {
+    expect(extractTerminalLinks(`PS ${path}> `)).toEqual([
+      { kind: "path", text: path, start: 3, end: 3 + path.length },
     ]);
+  });
+
+  it("keeps links in a command separate from the PowerShell prompt path", () => {
+    const path = String.raw`C:\dev\dir 1\test`;
+    const prompt = `PS ${path}> `;
+    const url = "https://example.com";
+    expect(extractTerminalLinks(`${prompt}echo ${url}`)).toEqual([
+      { kind: "path", text: path, start: 3, end: 3 + path.length },
+      { kind: "url", text: url, start: prompt.length + 5, end: prompt.length + 5 + url.length },
+    ]);
+  });
+
+  it("does not extend ordinary output paths through trailing prose", () => {
+    const path = String.raw`C:\dev\project`;
+    expect(extractTerminalLinks(`see ${path} for details`)).toEqual([
+      { kind: "path", text: path, start: 4, end: 4 + path.length },
+    ]);
+  });
+
+  it.each([
+    String.raw`src\index.ts:12`,
+    String.raw`.\src\index.ts:12:7`,
+    String.raw`..\src\index.ts:12`,
+    String.raw`C:\Users\Jane\project\index.ts:12`,
+    String.raw`\\server\share\index.ts:12`,
+  ])("finds Windows path %s", (text) => {
+    const line = `error at ${text}: failed`;
+    expect(extractTerminalLinks(line)).toEqual([
+      { kind: "path", text, start: 9, end: 9 + text.length },
+    ]);
+  });
+
+  it.each(['"', "'", "`"])("finds paths containing spaces enclosed in %s", (quote) => {
+    const text = String.raw`C:\Users\Jane Doe\project\index.ts:12:7`;
+    expect(extractTerminalLinks(`see ${quote}${text}${quote}.`)).toEqual([
+      { kind: "path", text, start: 5, end: 5 + text.length },
+    ]);
+  });
+
+  it.each([
+    String.raw`src\my folder\index.ts`,
+    "./my folder/index.ts",
+    "/home/Jane Doe/index.ts",
+    "/home/Jane Doe/file)",
+    String.raw`\\server\my share\index.ts`,
+  ])("keeps positions outside quotes on %s", (path) => {
+    expect(extractTerminalLinks(`"${path}":12:7: error`)).toEqual([
+      { kind: "path", text: `${path}:12:7`, start: 1, end: path.length + 7 },
+    ]);
+  });
+
+  it("does not treat quoted prose as a path", () => {
+    expect(extractTerminalLinks('error: "something went wrong"')).toEqual([]);
+    expect(extractTerminalLinks('error: "something went wrong."')).toEqual([]);
+  });
+
+  it("keeps quoted paths and URLs separate without duplicate partial paths", () => {
+    const path = String.raw`C:\Jane Doe\index.ts:12`;
+    const url = "https://example.com/docs";
+    const line = `"${path}" ${url} src/index.ts`;
+    expect(extractTerminalLinks(line)).toEqual([
+      { kind: "path", text: path, start: 1, end: 1 + path.length },
+      { kind: "url", text: url, start: path.length + 3, end: path.length + 3 + url.length },
+      { kind: "path", text: "src/index.ts", start: line.length - 12, end: line.length },
+    ]);
+  });
+
+  it("classifies uppercase schemes as URLs at activation time too", () => {
+    expect(isTerminalUrl("HTTPS://example.com/docs")).toBe(true);
+    expect(isTerminalUrl("Http://example.com")).toBe(true);
+    expect(isTerminalUrl("src/components/main.ts")).toBe(false);
+    expect(isTerminalUrl("httpsdocs/readme.md")).toBe(false);
   });
 
   it("trims trailing punctuation from links", () => {
@@ -55,6 +119,18 @@ describe("extractTerminalLinks", () => {
     ]);
   });
 
+  it.each([
+    "src/żółć.ts:12:7",
+    "żółć/main.ts:12",
+    String.raw`żółć\main.ts:12`,
+    "src/cafe\u0301.ts:12",
+    "src/𐐀.ts:12",
+  ])("keeps the complete Unicode relative path %s", (text) => {
+    expect(extractTerminalLinks(`see ${text} for details`)).toEqual([
+      { kind: "path", text, start: 4, end: 4 + text.length },
+    ]);
+  });
+
   it("finds Windows absolute paths with forward slashes", () => {
     const line = "see C:/Users/someone/project/src/file.ts:42 for details";
     const path = "C:/Users/someone/project/src/file.ts:42";
@@ -69,15 +145,71 @@ describe("extractTerminalLinks", () => {
     ]);
   });
 
-  it("trims trailing punctuation from Windows forward-slash paths", () => {
-    const line = "(C:/tmp/x.ts).";
+  it("keeps a trailing colon on URLs", () => {
+    expect(extractTerminalLinks("GET https://example.test/items/foo:")).toEqual([
+      { kind: "url", text: "https://example.test/items/foo:", start: 4, end: 35 },
+    ]);
+  });
+
+  it.each([
+    ["./main.go:10:5: undefined: x", "./main.go:10:5"],
+    ["/home/dev/app/src/main.c:10:5: error: expected ';'", "/home/dev/app/src/main.c:10:5"],
+    ["C:\\dev\\app\\src\\main.c:10:5: error: expected ';'", "C:\\dev\\app\\src\\main.c:10:5"],
+    ["wrote ./out/report.txt:", "./out/report.txt"],
+  ])("drops the colon that ends a compiler diagnostic location in %s", (line, text) => {
+    const start = line.indexOf(text);
     expect(extractTerminalLinks(line)).toEqual([
-      {
-        kind: "path",
-        text: "C:/tmp/x.ts",
-        start: 1,
-        end: 12,
-      },
+      { kind: "path", text, start, end: start + text.length },
+    ]);
+  });
+
+  it.each([
+    " GET /api/trpc/post.list,user.me?batch=1&input=%7B%220%22%3A%7B%22json%22%3Anull%7D%7D 200 in 35ms",
+    "GET /api?+debug 200",
+    'Started GET "/posts?page=2" for ::1',
+    "proxying api/trpc/post.list?batch=1 to the backend",
+  ])("does not turn a logged request route into an editor link: %s", (line) => {
+    expect(extractTerminalLinks(line)).toEqual([]);
+  });
+
+  it("keeps file and URL links before and after a logged request route", () => {
+    const before = "src/server.ts:12";
+    const after = "/app/bin/server:3:7";
+    const url = "https://example.com/api/users?id=42";
+    const line = `${before} GET /api/users?id=42 200 ${after} ${url}`;
+    const afterStart = line.indexOf(after);
+    const urlStart = line.indexOf(url);
+
+    expect(extractTerminalLinks(line)).toEqual([
+      { kind: "path", text: before, start: 0, end: before.length },
+      { kind: "path", text: after, start: afterStart, end: afterStart + after.length },
+      { kind: "url", text: url, start: urlStart, end: urlStart + url.length },
+    ]);
+  });
+
+  it.each([
+    "connected to redis://127.0.0.1:6379/0",
+    "connected to postgres://localhost:5432/app",
+    "uploaded s3://bucket/reports/today.csv",
+    "    at main (file:///Users/jane/app/src/index.mjs:3:7)",
+    "+redis://localhost:6379/0",
+    "-redis://localhost:6379/0",
+  ])("does not turn part of a non-web URL into an editor link: %s", (line) => {
+    expect(extractTerminalLinks(line)).toEqual([]);
+  });
+
+  it("keeps file links beside a non-web URL", () => {
+    const line = "src/db.ts:4 redis://localhost:6379/0 C:/app/src/db.ts:9";
+    expect(extractTerminalLinks(line)).toEqual([
+      { kind: "path", text: "src/db.ts:4", start: 0, end: 11 },
+      { kind: "path", text: "C:/app/src/db.ts:9", start: 37, end: 55 },
+    ]);
+  });
+
+  it("keeps a question mark inside a filesystem path", () => {
+    const path = "/tmp/report?draft";
+    expect(extractTerminalLinks(`wrote ${path}`)).toEqual([
+      { kind: "path", text: path, start: 6, end: 6 + path.length },
     ]);
   });
 });
@@ -135,60 +267,12 @@ describe("collectWrappedTerminalLinkLine", () => {
   });
 });
 
-describe("resolveWrappedTerminalLinkRange", () => {
-  it("maps wrapped URL matches back to the correct buffer rows", () => {
-    const prefix = "see ";
-    const firstSegment = `${prefix}https://example.com/a`;
-    const secondSegment = "/bc?x=1";
-    const lines = [
-      createBufferLine("prompt> "),
-      createBufferLine(firstSegment),
-      createBufferLine(secondSegment, true),
-    ];
-    const wrappedLine = collectWrappedTerminalLinkLine(2, (index) => lines[index]);
-
-    expect(wrappedLine).not.toBeNull();
-    if (!wrappedLine) {
-      throw new Error("Expected wrapped terminal line to be present.");
-    }
-
-    const [match] = extractTerminalLinks(wrappedLine.text);
-    expect(match).toEqual({
-      kind: "url",
-      text: "https://example.com/a/bc?x=1",
-      start: prefix.length,
-      end: firstSegment.length + secondSegment.length,
-    });
-    if (!match) {
-      throw new Error("Expected wrapped URL match to be present.");
-    }
-
-    const range = resolveWrappedTerminalLinkRange(wrappedLine, match);
-
-    expect(range).toEqual({
-      start: { x: prefix.length + 1, y: 2 },
-      end: { x: secondSegment.length, y: 3 },
-    });
-    expect(wrappedTerminalLinkRangeIntersectsBufferLine(range, 2)).toBe(true);
-    expect(wrappedTerminalLinkRangeIntersectsBufferLine(range, 3)).toBe(true);
-    expect(wrappedTerminalLinkRangeIntersectsBufferLine(range, 4)).toBe(false);
-  });
-});
-
 describe("resolvePathLinkTarget", () => {
-  it("resolves relative paths against cwd", () => {
-    expect(
-      resolvePathLinkTarget(
-        "src/components/ThreadTerminalDrawer.tsx:42:7",
-        "/Users/julius/project",
-      ),
-    ).toBe("/Users/julius/project/src/components/ThreadTerminalDrawer.tsx:42:7");
-  });
-
-  it("keeps absolute paths unchanged", () => {
-    expect(
-      resolvePathLinkTarget("/Users/julius/project/src/main.ts:12", "/Users/julius/project"),
-    ).toBe("/Users/julius/project/src/main.ts:12");
+  it("resolves a quoted terminal link against a Windows environment", () => {
+    const [link] = extractTerminalLinks(String.raw`error at "src\my folder\index.ts":12:7`);
+    expect(resolvePathLinkTarget(link?.text ?? "", String.raw`C:\Users\Jane Doe\project`)).toBe(
+      String.raw`C:\Users\Jane Doe\project\src\my folder\index.ts:12:7`,
+    );
   });
 
   it("keeps Windows absolute paths with forward slashes unchanged", () => {
@@ -196,48 +280,12 @@ describe("resolvePathLinkTarget", () => {
       resolvePathLinkTarget("C:/Users/julius/project/src/main.ts:12", "C:\\Users\\julius\\project"),
     ).toBe("C:/Users/julius/project/src/main.ts:12");
   });
-});
 
-describe("isTerminalLinkActivation", () => {
-  it("requires cmd on macOS", () => {
-    expect(
-      isTerminalLinkActivation(
-        {
-          metaKey: true,
-          ctrlKey: false,
-        },
-        "MacIntel",
-      ),
-    ).toBe(true);
-    expect(
-      isTerminalLinkActivation(
-        {
-          metaKey: false,
-          ctrlKey: true,
-        },
-        "MacIntel",
-      ),
-    ).toBe(false);
-  });
-
-  it("requires ctrl on non-macOS", () => {
-    expect(
-      isTerminalLinkActivation(
-        {
-          metaKey: false,
-          ctrlKey: true,
-        },
-        "Win32",
-      ),
-    ).toBe(true);
-    expect(
-      isTerminalLinkActivation(
-        {
-          metaKey: true,
-          ctrlKey: false,
-        },
-        "Linux",
-      ),
-    ).toBe(false);
+  // regression: #13408 terminal links kept a trailing colon
+  it("keeps the line and column of a compiler diagnostic", () => {
+    const [link] = extractTerminalLinks("/Users/julius/project/main.c:10:5: error: expected ';'");
+    expect(resolvePathLinkTarget(link?.text ?? "", "/Users/julius/project")).toBe(
+      "/Users/julius/project/main.c:10:5",
+    );
   });
 });

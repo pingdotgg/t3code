@@ -1,13 +1,15 @@
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import { FileSystem } from "effect/FileSystem";
+import * as Option from "effect/Option";
 import type { Path } from "effect/Path";
 import type { Stdio } from "effect/Stdio";
 import type { Terminal } from "effect/Terminal";
-import type { ChildProcessSpawner } from "effect/unstable/process/ChildProcessSpawner";
+import type { ChildProcessSpawner } from "effect/process/ChildProcessSpawner";
 import type { HttpEffect } from "../Http.ts";
 import * as Http from "../Http.ts";
 import * as Output from "../Output.ts";
+import { ManagedHttpShutdown } from "../Runtime/Bootstrap/ManagedHttpShutdown.ts";
 import {
   packEnvValue,
   unpackEnvValue,
@@ -62,7 +64,12 @@ export interface HostRuntimeContext extends ProcessContext {
  * resource `type`. Both `run` (background loops) and `serve` (HTTP handlers)
  * append to a single list of runners; `exports.program` runs them all
  * concurrently. This is the shared host context used by `AWS.EC2.Instance` and
- * `AWS.ECS.Task`.
+ * `AWS.ECS.Task`. Managed Fly shutdown gives each runner a sequential resource
+ * scope; runner scopes close concurrently while HTTP and shared dependencies live.
+ * A shutdown signal starts an independent deadline, including for application-owned
+ * scopes. Without a signal, a nested `Effect.scoped` runner must finish its own
+ * finalizers before the host can observe completion or failure. Applications must
+ * bound that cleanup; the host cannot observe an opaque scope's earlier body exit.
  */
 export const createHostRuntimeContext =
   (type: string) =>
@@ -84,7 +91,7 @@ export const createHostRuntimeContext =
         }),
       get: <T>(key: string) =>
         // Read straight from `process.env` — see `unpackEnvValue` for why
-        // this must never resolve through `Config.string`.
+        // this must never resolve through `Config.String`.
         Effect.sync(() => unpackEnvValue<T>(process.env[key]) as T),
       run: (effect: Effect.Effect<void, never, any>) =>
         Effect.sync(() => {
@@ -98,7 +105,65 @@ export const createHostRuntimeContext =
           runners.push(Http.serve(handler as HttpEffect<any>));
         })) as HostRuntimeContext["serve"],
       exports: Effect.sync(() => ({
-        program: Effect.all(runners, { concurrency: "unbounded" }),
+        program: Effect.serviceOption(ManagedHttpShutdown).pipe(
+          Effect.flatMap((managed) => {
+            let remaining = runners.length;
+            return Effect.all(
+              Option.isSome(managed)
+                ? runners.map((runner) =>
+                    runner.pipe(
+                      Effect.onExit((exit) =>
+                        Effect.sync(() =>
+                          managed.value.runnerFinished(exit, --remaining === 0),
+                        ),
+                      ),
+                      Effect.scoped,
+                      // Parent interruption may discard child finalizer defects.
+                      Effect.onExit((exit) =>
+                        Effect.sync(() =>
+                          managed.value.runnerFinished(exit, false),
+                        ),
+                      ),
+                    ),
+                  )
+                : runners,
+              { concurrency: "unbounded" },
+            );
+          }),
+        ),
       })),
     } satisfies HostRuntimeContext;
+  };
+
+/**
+ * Host runtime context for container platforms (`AWS.ECS.Task`,
+ * `AWS.ECS.Service`, `Docker.Service`): extends the shared process host
+ * context so an impl shape's `run` effect is registered as a one-shot runner
+ * (the container exits when it completes) and the HTTP server only boots when
+ * the impl actually declares a `fetch` handler.
+ */
+export const createContainerRuntimeContext =
+  (type: string) =>
+  (id: string): HostRuntimeContext => {
+    const base = createHostRuntimeContext(type)(id);
+    // Capture the host serve BEFORE Object.assign overwrites `base.serve`
+    // with the wrapper below — calling `base.serve` inside the wrapper would
+    // resolve to the wrapper itself (property lookup happens at call time)
+    // and recurse without bound the moment an impl declares `fetch`.
+    const serveBase = base.serve;
+    const serve: HostRuntimeContext["serve"] = (handler, options) =>
+      Effect.gen(function* () {
+        const shape = options?.shape;
+        const run = shape?.run;
+        if (Effect.isEffect(run)) {
+          yield* base.run(run as Effect.Effect<void, never, any>);
+        }
+        // Boot the HTTP server only for an impl that declared `fetch` — a
+        // pure one-shot `{ run }` program must exit when `run` completes
+        // rather than parking behind the 404 fallback server forever.
+        if (shape === undefined || shape.fetch !== undefined) {
+          yield* serveBase(handler, options);
+        }
+      }) as Effect.Effect<void, never, never>;
+    return Object.assign(base, { serve });
   };

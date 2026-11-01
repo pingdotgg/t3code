@@ -1,8 +1,37 @@
 import { assert, describe, it } from "@effect/vitest"
 import { Cache, Context, Data, Deferred, Duration, Effect, Exit, Fiber, Latch, MutableHashMap, Option } from "effect"
+import { Persistable, PersistedCache, Persistence } from "effect/persistence"
 import { TestClock } from "effect/testing"
+import { collectGarbage } from "./utils/gc.ts"
 
 describe("Cache", () => {
+  it.effect.skipIf(process.versions.bun !== undefined || process.versions.deno !== undefined)(
+    "does not retain prior equal object keys on cache hits",
+    () =>
+      Effect.gen(function*() {
+        const references: Array<WeakRef<object>> = []
+        const control = new WeakRef({})
+        let lookups = 0
+        const cache = yield* Cache.make({
+          capacity: 16,
+          lookup: (_key: { readonly region: string }) => Effect.sync(() => ++lookups)
+        })
+        for (let i = 0; i < 10; i++) {
+          const key = { region: "us-east-1" }
+          references.push(new WeakRef(key))
+          assert.strictEqual(yield* Cache.get(cache, key), 1)
+        }
+        assert.strictEqual(lookups, 1)
+        assert.strictEqual(yield* Cache.size(cache), 1)
+        // The last key may still be held by the cache.
+        references.pop()
+        yield* collectGarbage
+        assert.isUndefined(control.deref())
+        for (const reference of references) assert.isUndefined(reference.deref())
+        assert.strictEqual(yield* Cache.size(cache), 1)
+      })
+  )
+
   describe("constructors", () => {
     it.effect("make - creates cache with fixed capacity", () =>
       Effect.gen(function*() {
@@ -40,6 +69,19 @@ describe("Cache", () => {
         assert.isTrue(yield* Cache.has(cache, "test"))
 
         yield* TestClock.adjust("31 minutes")
+        assert.isFalse(yield* Cache.has(cache, "test"))
+      }))
+
+    it.effect("make - uses a numeric zero TTL", () =>
+      Effect.gen(function*() {
+        const cache = yield* Cache.make<string, number>({
+          capacity: 10,
+          lookup: (key) => Effect.succeed(key.length),
+          timeToLive: 0
+        })
+
+        yield* Cache.get(cache, "test")
+
         assert.isFalse(yield* Cache.has(cache, "test"))
       }))
 
@@ -152,6 +194,113 @@ describe("Cache", () => {
 
   describe("basic operations", () => {
     describe("get", () => {
+      it.effect("does not retain a synchronous zero-TTL lookup", () =>
+        Effect.gen(function*() {
+          const cache = yield* Cache.makeWith(
+            (_key: string) => Effect.succeed(42),
+            { capacity: 1, timeToLive: () => Duration.zero }
+          )
+
+          assert.strictEqual(yield* Cache.get(cache, "key"), 42)
+          assert.strictEqual(yield* Cache.size(cache), 0)
+        }))
+
+      it.effect("removes a suspended zero-TTL lookup after completion", () =>
+        Effect.gen(function*() {
+          const started = yield* Latch.make()
+          const gate = yield* Deferred.make<number>()
+          const cache = yield* Cache.makeWith(
+            (_key: string) => started.open.pipe(Effect.andThen(Deferred.await(gate))),
+            { capacity: 1, timeToLive: () => Duration.zero }
+          )
+
+          const getter = yield* Cache.get(cache, "key").pipe(Effect.forkChild({ startImmediately: true }))
+          yield* started.await
+          assert.strictEqual(yield* Cache.size(cache), 1)
+
+          yield* Deferred.succeed(gate, 42)
+          assert.strictEqual(yield* Fiber.join(getter), 42)
+          assert.strictEqual(yield* Cache.size(cache), 0)
+        }))
+
+      it.effect("zero-TTL failure does not evict a live entry at capacity", () =>
+        Effect.gen(function*() {
+          const cache = yield* Cache.makeWith(
+            (key: string) => key === "bad" ? Effect.fail("error") : Effect.succeed(key.length),
+            { capacity: 2, timeToLive: (exit) => Exit.isFailure(exit) ? Duration.zero : Duration.hours(1) }
+          )
+
+          yield* Cache.get(cache, "a")
+          assert.deepStrictEqual(yield* Effect.exit(Cache.get(cache, "bad")), Exit.fail("error"))
+          assert.strictEqual(yield* Cache.size(cache), 1)
+          // Do not enumerate keys here: that would prune the expired entry and hide the eviction.
+          yield* Cache.get(cache, "b")
+
+          assert.deepStrictEqual(yield* Cache.getSuccess(cache, "a"), Option.some(1))
+          assert.deepStrictEqual(yield* Cache.getSuccess(cache, "b"), Option.some(1))
+          assert.strictEqual(yield* Cache.size(cache), 2)
+        }))
+
+      it.effect("zero-TTL lookup after expiration does not evict a live entry", () =>
+        Effect.gen(function*() {
+          let kLookups = 0
+          const cache = yield* Cache.makeWith(
+            (key: string) => key === "k" && ++kLookups === 2 ? Effect.fail("error") : Effect.succeed(1),
+            {
+              capacity: 2,
+              timeToLive: (exit, key) =>
+                Exit.isFailure(exit) ? Duration.zero : key === "k" ? Duration.minutes(1) : Duration.hours(1)
+            }
+          )
+
+          yield* Cache.get(cache, "a")
+          yield* Cache.get(cache, "k")
+          yield* TestClock.adjust("2 minutes")
+          assert.deepStrictEqual(yield* Effect.exit(Cache.get(cache, "k")), Exit.fail("error"))
+          // Do not enumerate keys: that would prune the stale entry and hide the eviction.
+          yield* Cache.get(cache, "b")
+
+          assert.deepStrictEqual(yield* Cache.getSuccess(cache, "a"), Option.some(1))
+          assert.deepStrictEqual(yield* Cache.getSuccess(cache, "b"), Option.some(1))
+          assert.strictEqual(yield* Cache.size(cache), 2)
+        }))
+
+      it.effect("zero-TTL completion does not remove a newer set value", () =>
+        Effect.gen(function*() {
+          const started = yield* Latch.make()
+          const gate = yield* Deferred.make<number, string>()
+          const cache = yield* Cache.makeWith(
+            (_key: string) => started.open.pipe(Effect.andThen(Deferred.await(gate))),
+            { capacity: 1, timeToLive: (exit) => Exit.isFailure(exit) ? Duration.zero : Duration.hours(1) }
+          )
+
+          const getter = yield* Cache.get(cache, "key").pipe(
+            Effect.exit,
+            Effect.forkChild({ startImmediately: true })
+          )
+          yield* started.await
+          yield* Cache.set(cache, "key", 99)
+          yield* Deferred.fail(gate, "error")
+
+          assert.deepStrictEqual(yield* Fiber.join(getter), Exit.fail("error"))
+          assert.deepStrictEqual(yield* Cache.getSuccess(cache, "key"), Option.some(99))
+          assert.strictEqual(yield* Cache.size(cache), 1)
+        }))
+
+      it.effect("does not retain synchronously interrupted lookups", () =>
+        Effect.gen(function*() {
+          let calls = 0
+          const cache = yield* Cache.make<string, number>({
+            capacity: 1,
+            lookup: () => Effect.suspend(() => ++calls > 1 ? Effect.succeed(42) : Effect.interrupt)
+          })
+
+          yield* Effect.exit(Cache.get(cache, "key"))
+          const second = yield* Effect.exit(Cache.get(cache, "key"))
+
+          assert.deepStrictEqual(second, Exit.succeed(42))
+        }))
+
       it.effect("cache hit - returns existing cached value", () =>
         Effect.gen(function*() {
           const { cache, lookupCount, setLookupResult } = yield* makeTestCache(10)
@@ -311,6 +460,35 @@ describe("Cache", () => {
           assert.deepStrictEqual(yield* Fiber.await(third), Exit.succeed(42))
         }))
 
+      it.effect("interrupting a getOption waiter keeps the shared lookup available", () =>
+        Effect.gen(function*() {
+          const started = yield* Latch.make()
+          const finish = yield* Latch.make()
+          let lookups = 0
+          const cache = yield* Cache.make<string, number>({
+            capacity: 10,
+            lookup: () =>
+              Effect.gen(function*() {
+                lookups++
+                yield* started.open
+                yield* finish.await
+                return 42
+              })
+          })
+
+          const first = yield* Cache.get(cache, "key").pipe(Effect.forkChild({ startImmediately: true }))
+          yield* started.await
+          const waiter = yield* Cache.getOption(cache, "key").pipe(Effect.forkChild({ startImmediately: true }))
+          const second = yield* Cache.get(cache, "key").pipe(Effect.forkChild({ startImmediately: true }))
+          yield* Fiber.interrupt(waiter)
+          yield* finish.open
+
+          assert.deepStrictEqual(yield* Fiber.await(first), Exit.succeed(42))
+          assert.deepStrictEqual(yield* Fiber.await(second), Exit.succeed(42))
+          assert.deepStrictEqual(yield* Cache.getOption(cache, "key"), Option.some(42))
+          assert.strictEqual(lookups, 1)
+        }))
+
       it.effect("concurrent access - interrupting the last consumer interrupts the lookup", () =>
         Effect.gen(function*() {
           let lookupCount = 0
@@ -335,6 +513,59 @@ describe("Cache", () => {
 
           yield* lookupInterrupted.await
           assert.strictEqual(yield* Cache.get(cache, "K1"), 42)
+        }))
+
+      it.effect("concurrent access - interrupted lookup does not remove a newer set value", () =>
+        Effect.gen(function*() {
+          const lookupStarted = yield* Latch.make()
+          const lookupInterrupted = yield* Latch.make()
+          const cache = yield* Cache.make<string, number>({
+            capacity: 1,
+            lookup: () =>
+              Effect.onInterrupt(
+                lookupStarted.open.pipe(Effect.andThen(Effect.never)),
+                () => lookupInterrupted.open
+              )
+          })
+
+          const getter = yield* Cache.get(cache, "key").pipe(Effect.forkChild({ startImmediately: true }))
+          yield* lookupStarted.await
+          yield* Cache.set(cache, "key", 99)
+          yield* Fiber.interrupt(getter)
+          yield* lookupInterrupted.await
+
+          assert.deepStrictEqual(yield* Cache.getSuccess(cache, "key"), Option.some(99))
+        }))
+
+      it.effect("concurrent access - a get made while an abandoned lookup is finalizing starts a new lookup", () =>
+        Effect.gen(function*() {
+          let lookups = 0
+          const started = yield* Latch.make()
+          const finalizing = yield* Latch.make()
+          const finishFinalizer = yield* Latch.make()
+          const cache = yield* Cache.make<string, number>({
+            capacity: 10,
+            lookup: () =>
+              Effect.suspend(() => {
+                if (++lookups > 1) return Effect.succeed(lookups)
+                return started.open.pipe(
+                  Effect.andThen(Effect.never),
+                  Effect.onInterrupt(() => finalizing.open.pipe(Effect.andThen(finishFinalizer.await)))
+                )
+              })
+          })
+
+          const getter = yield* Cache.get(cache, "key").pipe(Effect.forkChild({ startImmediately: true }))
+          yield* started.await
+          const interruptGetter = yield* Fiber.interrupt(getter).pipe(Effect.forkChild({ startImmediately: true }))
+          yield* finalizing.await
+          const fresh = yield* Cache.get(cache, "key").pipe(Effect.forkChild({ startImmediately: true }))
+          yield* finishFinalizer.open
+          yield* Fiber.join(interruptGetter)
+
+          assert.deepStrictEqual(yield* Fiber.await(fresh), Exit.succeed(2))
+          assert.strictEqual(yield* Cache.get(cache, "key"), 2)
+          assert.strictEqual(lookups, 2)
         }))
     })
 
@@ -615,6 +846,39 @@ describe("Cache", () => {
     })
 
     describe("invalidateWhen", () => {
+      it.effect.each([Exit.succeed(1), Exit.fail("error")])(
+        "preserves a newer set value after an old lookup completes (%#)",
+        (exit) =>
+          Effect.gen(function*() {
+            const gate = yield* Deferred.make<number, string>()
+            const values: Array<number> = []
+            const cache = yield* Cache.make<string, number, string>({
+              capacity: 1,
+              lookup: () => Deferred.await(gate)
+            })
+            const lookup = yield* Cache.get(cache, "key").pipe(
+              Effect.exit,
+              Effect.forkChild({ startImmediately: true })
+            )
+            const invalidator = yield* Cache.invalidateWhen(cache, "key", (value) => {
+              values.push(value)
+              return value === 1
+            }).pipe(
+              Effect.forkChild({ startImmediately: true })
+            )
+
+            yield* Cache.set(cache, "key", 99)
+            yield* Deferred.done(gate, exit)
+            const original = yield* Fiber.join(lookup)
+            const invalidated = yield* Fiber.join(invalidator)
+
+            assert.deepStrictEqual(original, exit)
+            assert.deepStrictEqual(values, Exit.isSuccess(exit) ? [1] : [])
+            assert.isFalse(invalidated)
+            assert.deepStrictEqual(yield* Cache.getSuccess(cache, "key"), Option.some(99))
+          })
+      )
+
       it.effect("invalidates when predicate matches", () =>
         Effect.gen(function*() {
           const cache = yield* Cache.make<string, number>({
@@ -684,17 +948,113 @@ describe("Cache", () => {
           assert.strictEqual(result, 2)
         }))
 
-      it.effect("refresh non-existent key invokes lookup", () =>
+      it.effect("refresh non-existent key invokes lookup and enforces capacity", () =>
         Effect.gen(function*() {
           let counter = 0
           const cache = yield* Cache.make<string, number>({
-            capacity: 10,
+            capacity: 1,
             lookup: (_key) => Effect.sync(() => ++counter)
           })
 
+          yield* Cache.set(cache, "other", 99)
           const result = yield* Cache.refresh(cache, "test")
 
           assert.strictEqual(result, 1)
+          assert.strictEqual(yield* Cache.size(cache), 1)
+          assert.deepStrictEqual(Array.from(yield* Cache.keys(cache)), ["test"])
+        }))
+
+      it.effect("refresh enforces capacity when the existing key is evicted during lookup", () =>
+        Effect.gen(function*() {
+          const started = yield* Deferred.make<void>()
+          const result = yield* Deferred.make<number>()
+          const cache = yield* Cache.make<string, number>({
+            capacity: 1,
+            lookup: () => Deferred.succeed(started, void 0).pipe(Effect.andThen(Deferred.await(result)))
+          })
+
+          yield* Cache.set(cache, "a", 1)
+          const refresh = yield* Cache.refresh(cache, "a").pipe(Effect.forkChild({ startImmediately: true }))
+          yield* Deferred.await(started)
+          yield* Cache.set(cache, "b", 99)
+          assert.isFalse(yield* Cache.has(cache, "a"))
+
+          yield* Deferred.succeed(result, 2)
+          assert.strictEqual(yield* Fiber.join(refresh), 2)
+          assert.deepStrictEqual({
+            size: yield* Cache.size(cache),
+            keys: Array.from(yield* Cache.keys(cache)).sort()
+          }, { size: 1, keys: ["a"] })
+          assert.deepStrictEqual(yield* Cache.getSuccess(cache, "a"), Option.some(2))
+        }))
+
+      it.effect("repro: interrupting a missing-key refresh does not remove a newer set value", () =>
+        Effect.gen(function*() {
+          const lookupStarted = yield* Latch.make()
+          const cache = yield* Cache.make<string, number>({
+            capacity: 1,
+            lookup: () => lookupStarted.open.pipe(Effect.andThen(Effect.never))
+          })
+
+          const refresh = yield* Cache.refresh(cache, "key").pipe(Effect.forkChild({ startImmediately: true }))
+          yield* lookupStarted.await
+          yield* Cache.set(cache, "key", 99)
+          assert.deepStrictEqual(yield* Cache.getSuccess(cache, "key"), Option.some(99))
+
+          yield* Fiber.interrupt(refresh)
+
+          assert.deepStrictEqual(yield* Cache.getSuccess(cache, "key"), Option.some(99))
+        }))
+
+      it.effect("interrupting a missing-key refresh removes its pending entry", () =>
+        Effect.gen(function*() {
+          const lookupStarted = yield* Latch.make()
+          const cache = yield* Cache.make<string, number>({
+            capacity: 1,
+            lookup: () => lookupStarted.open.pipe(Effect.andThen(Effect.never))
+          })
+
+          const refresh = yield* Cache.refresh(cache, "key").pipe(Effect.forkChild({ startImmediately: true }))
+          yield* lookupStarted.await
+          assert.isTrue(yield* Cache.has(cache, "key"))
+
+          yield* Fiber.interrupt(refresh)
+
+          assert.isFalse(yield* Cache.has(cache, "key"))
+        }))
+
+      it.effect.each([false, true])(
+        "zero-TTL refresh with replacement (existing: %s)",
+        (existing) =>
+          Effect.gen(function*() {
+            const gate = yield* Deferred.make<number, string>()
+            const cache = yield* Cache.makeWith((_key: string) => Deferred.await(gate), {
+              capacity: 1,
+              timeToLive: (exit) => Exit.isFailure(exit) ? 0 : "1 hour"
+            })
+            if (existing) yield* Cache.set(cache, "key", 1)
+
+            const refresh = yield* Cache.refresh(cache, "key").pipe(Effect.forkChild({ startImmediately: true }))
+            yield* Cache.set(cache, "key", 99)
+            yield* Deferred.fail(gate, "error")
+
+            assert.deepStrictEqual(yield* Fiber.await(refresh), Exit.fail("error"))
+            assert.deepStrictEqual(
+              yield* Cache.getSuccess(cache, "key"),
+              existing ? Option.none() : Option.some(99)
+            )
+          })
+      )
+
+      it.effect("zero-TTL refresh removes its own entry", () =>
+        Effect.gen(function*() {
+          const cache = yield* Cache.makeWith((_key: string) => Effect.fail("error"), {
+            capacity: 1,
+            timeToLive: () => 0
+          })
+
+          assert.deepStrictEqual(yield* Effect.exit(Cache.refresh(cache, "key")), Exit.fail("error"))
+          assert.isFalse(yield* Cache.has(cache, "key"))
         }))
 
       it.effect("refresh updates TTL", () =>
@@ -1447,6 +1807,30 @@ describe("Cache", () => {
         assert.strictEqual(yield* Cache.get(cache, key3), "test-1") // Uses cached value
       }))
   })
+})
+
+describe("PersistedCache", () => {
+  it.effect("persists synchronous lookup defects", () =>
+    Effect.gen(function*() {
+      class LookupRequest extends Persistable.Class()("LookupRequest", {
+        primaryKey: () => "lookup"
+      }) {}
+
+      let calls = 0
+      const lookup = (_key: LookupRequest): Effect.Effect<void> => {
+        calls++
+        throw new Error("lookup defect")
+      }
+      const options = { storeId: "synchronous-lookup-defect", timeToLive: () => "1 hour" as const }
+      const key = new LookupRequest()
+
+      const cache = yield* PersistedCache.make(lookup, options)
+      yield* Effect.exit(cache.get(key))
+      const recreated = yield* PersistedCache.make(lookup, options)
+      yield* Effect.exit(recreated.get(key))
+
+      assert.strictEqual(calls, 1)
+    }).pipe(Effect.provide(Persistence.layerMemory)))
 })
 
 const makeTestCache = (capacity: number, ttl?: Duration.Input) =>

@@ -73,5 +73,8 @@ test.provider(
       expect(yield* describeQueue).toBeUndefined();
       expect(yield* describeCe).toBeUndefined();
     }),
-  { timeout: 240_000 },
+  {
+    tags: ["provider:aws", "provider:aws:batch", "provider:aws:ec2", "live"],
+    timeout: 240_000,
+  },
 );

@@ -1,5 +1,5 @@
 import * as AWS from "@/AWS";
-import type { ScopedPlanStatusSession } from "@/Cli/Cli.ts";
+import type { ScopedPlanStatusSession } from "@/Report.ts";
 import * as Provider from "@/Provider";
 import { Vpc } from "@/AWS/EC2";
 import { normalizePolicyDocument } from "@/AWS/IAM/Policy.ts";
@@ -120,7 +120,10 @@ test.provider(
       yield* stack.destroy();
       yield* assertServiceNetworkDeleted(network.serviceNetworkId);
     }),
-  { timeout: 180_000 },
+  {
+    tags: ["provider:aws", "provider:aws:vpclattice", "live"],
+    timeout: 180_000,
+  },
 );
 
 test.provider(
@@ -168,7 +171,10 @@ test.provider(
 
       yield* stack.destroy();
     }),
-  { timeout: 180_000 },
+  {
+    tags: ["provider:aws", "provider:aws:vpclattice", "live"],
+    timeout: 180_000,
+  },
 );
 
 test.provider(
@@ -269,7 +275,15 @@ test.provider(
       yield* stack.destroy();
       yield* assertServiceNetworkDeleted(first.network.serviceNetworkId);
     }),
-  { timeout: 240_000 },
+  {
+    tags: [
+      "provider:aws",
+      "provider:aws:iam",
+      "provider:aws:vpclattice",
+      "live",
+    ],
+    timeout: 240_000,
+  },
 );
 
 test.provider(
@@ -308,7 +322,15 @@ test.provider(
       yield* assertAssociationDeleted(association.associationId);
       yield* assertServiceNetworkDeleted(network.serviceNetworkId);
     }),
-  { timeout: 240_000 },
+  {
+    tags: [
+      "provider:aws",
+      "provider:aws:ec2",
+      "provider:aws:vpclattice",
+      "live",
+    ],
+    timeout: 240_000,
+  },
 );
 
 test.provider(
@@ -426,5 +448,13 @@ test.provider(
       // delete is idempotent and must clean that state without another API error.
       yield* stack.destroy();
     }),
-  { timeout: 180_000 },
+  {
+    tags: [
+      "provider:aws",
+      "provider:aws:ec2",
+      "provider:aws:vpclattice",
+      "live",
+    ],
+    timeout: 180_000,
+  },
 );

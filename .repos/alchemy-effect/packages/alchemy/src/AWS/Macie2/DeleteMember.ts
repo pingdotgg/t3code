@@ -9,9 +9,8 @@ import * as Binding from "../../Binding.ts";
  * Account-level operation — invoked with the caller's request as-is.
  * Provide the implementation with
  * `Effect.provide(AWS.Macie2.DeleteMemberHttp)`.
- * @binding
- * @section Organization & Members
- * @example Delete a Member Association
+ * ### Organization & Members
+ * **Example:** Delete a Member Association
  * ```typescript
  * // init — account-level binding, no resource argument
  * const deleteMember = yield* AWS.Macie2.DeleteMember();
@@ -19,6 +18,8 @@ import * as Binding from "../../Binding.ts";
  * // runtime
  * yield* deleteMember({ id: accountId });
  * ```
+ *
+ * @binding
  */
 export interface DeleteMember extends Binding.Service<
   DeleteMember,

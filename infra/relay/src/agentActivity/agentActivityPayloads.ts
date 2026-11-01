@@ -12,42 +12,42 @@ export function isTerminalPhase(state: RelayAgentActivityState): boolean {
   return state.phase === "completed" || state.phase === "failed";
 }
 
-// Rows are only removed when their environment publishes a terminal state. An
-// environment that dies mid-run (machine off, process killed) never does, so
-// without an age cutoff its threads inflate activeCount forever. Actively
-// running phases expire quickly; waiting phases can legitimately sit for hours
-// while a user ignores an approval prompt, so they get a longer window. The
-// underlying database row is left in place: a late publish for the thread
-// refreshes updatedAt and the row becomes visible again.
+// Dead environments never publish terminal states; expire their rows so activeCount cannot remain inflated.
 const RUNNING_AGENT_ACTIVITY_ROW_TTL_MS = 2 * 60 * 60 * 1_000;
 const WAITING_AGENT_ACTIVITY_ROW_TTL_MS = 24 * 60 * 60 * 1_000;
 
-export function isExpiredAgentActivityState(
-  state: RelayAgentActivityState,
-  nowMs: number,
-): boolean {
+export function agentActivityExpiresAt(
+  state: Pick<RelayAgentActivityState, "phase" | "updatedAt">,
+): number {
   const updatedAtMs = Option.match(DateTime.make(state.updatedAt), {
     onNone: () => Number.NaN,
     onSome: (dt) => dt.epochMilliseconds,
   });
   if (Number.isNaN(updatedAtMs)) {
-    return true;
+    return Number.NaN;
   }
   const ttlMs =
     state.phase === "running" || state.phase === "starting"
       ? RUNNING_AGENT_ACTIVITY_ROW_TTL_MS
       : WAITING_AGENT_ACTIVITY_ROW_TTL_MS;
-  return nowMs - updatedAtMs > ttlMs;
+  return updatedAtMs + ttlMs;
 }
 
-const MAX_SUMMARY_TEXT_LENGTH = 120;
+export function isExpiredAgentActivityState(
+  state: RelayAgentActivityState,
+  nowMs: number,
+): boolean {
+  const expiresAt = agentActivityExpiresAt(state);
+  return !Number.isFinite(expiresAt) || nowMs > expiresAt;
+}
+
+export const MAX_SUMMARY_TEXT_LENGTH = 120;
 const MAX_STATUS_TEXT_LENGTH = 40;
 const MAX_DEEP_LINK_LENGTH = 512;
-// The Live Activity banner (lock screen / Notification Center) renders up to
-// five rows; the expanded Dynamic Island shows the top three of these.
+// Banners render five rows; the expanded Dynamic Island shows the top three.
 export const MAX_ACTIVITY_ROWS = 5;
 
-function truncateText(value: string, maxLength: number): string {
+export function truncateText(value: string, maxLength: number): string {
   const trimmed = value.trim();
   if (trimmed.length <= maxLength) {
     return trimmed;
@@ -63,7 +63,7 @@ function sanitizeDeepLink(value: string): string {
   return truncateText(trimmed, MAX_DEEP_LINK_LENGTH);
 }
 
-export function sanitizeAgentActivityAggregateRow(
+function sanitizeAgentActivityAggregateRow(
   row: RelayAgentActivityAggregateRow,
 ): RelayAgentActivityAggregateRow {
   return {
@@ -98,4 +98,19 @@ export function sanitizeApnsNotificationPayload(
     body: truncateText(notification.body, MAX_SUMMARY_TEXT_LENGTH),
     deepLink: sanitizeDeepLink(notification.deepLink),
   };
+}
+
+export function notificationForActivity(
+  row: RelayAgentActivityAggregateRow,
+): ApnsNotificationPayload {
+  const activity = sanitizeAgentActivityAggregateRow(row);
+  return sanitizeApnsNotificationPayload({
+    title: activity.threadTitle,
+    body: `${activity.status}: ${activity.projectTitle}`,
+    environmentId: activity.environmentId,
+    threadId: activity.threadId,
+    deepLink: activity.deepLink,
+    phase: activity.phase,
+    updatedAt: activity.updatedAt,
+  });
 }

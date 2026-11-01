@@ -14,13 +14,12 @@ export interface StartJobRunRequest extends Omit<
  * Grants `glue:StartJobRun` and `glue:GetJobRun` on the bound job. Returns the
  * `JobRunId`; poll `getJobRun` for the run's terminal state (`SUCCEEDED`,
  * `FAILED`, `TIMEOUT`, …).
- * @binding
- * @section Running Jobs
+ * ### Running Jobs
  * Provide the `StartJobRunHttp` implementation layer on the Function effect
  * (`.pipe(Effect.provide(AWS.Glue.StartJobRunHttp))`), bind the job in the
  * init phase, then start runs at runtime.
  *
- * @example Start a job run from a handler
+ * **Example:** Start a job run from a handler
  * ```typescript
  * // init
  * const startJobRun = yield* AWS.Glue.StartJobRun(job);
@@ -35,6 +34,8 @@ export interface StartJobRunRequest extends Omit<
  *   }),
  * };
  * ```
+ *
+ * @binding
  */
 export interface StartJobRun extends Binding.Service<
   StartJobRun,

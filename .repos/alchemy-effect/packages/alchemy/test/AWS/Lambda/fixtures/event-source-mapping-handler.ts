@@ -3,7 +3,7 @@ import * as SQS from "@/AWS/SQS";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Stream from "effect/Stream";
-import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
+import * as HttpServerResponse from "effect/http/HttpServerResponse";
 
 // Minimal host Function for the EventSourceMapping `list()` test: it owns an
 // SQS Queue and subscribes to it via `consumeQueueMessages(queue, ...)`, which
@@ -17,7 +17,7 @@ export class EventSourceMappingFunction extends Lambda.Function<EventSourceMappi
 export default EventSourceMappingFunction.make(
   {
     main: import.meta.url,
-    url: false,
+    functionUrl: false,
   },
   Effect.gen(function* () {
     const queue = yield* SQS.Queue("EventSourceMappingQueue");

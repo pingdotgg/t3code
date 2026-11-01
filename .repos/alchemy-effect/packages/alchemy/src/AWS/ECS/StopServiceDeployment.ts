@@ -14,9 +14,8 @@ export interface StopServiceDeploymentRequest
  * either abandoning it or rolling back to the last completed revision.
  * The host is granted `ecs:StopServiceDeployment` on the service's
  * deployments.
- * @binding
- * @section Service Deployments
- * @example Roll Back a Bad Deployment
+ * ### Service Deployments
+ * **Example:** Roll Back a Bad Deployment
  * ```typescript
  * const stopServiceDeployment = yield* AWS.ECS.StopServiceDeployment(service);
  *
@@ -25,6 +24,8 @@ export interface StopServiceDeploymentRequest
  *   stopType: "ROLLBACK",
  * });
  * ```
+ *
+ * @binding
  */
 export interface StopServiceDeployment extends Binding.Service<
   StopServiceDeployment,

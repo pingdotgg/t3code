@@ -10,9 +10,8 @@ import * as Binding from "../../Binding.ts";
  * `polly:GetSpeechSynthesisTask`. Provide the implementation with
  * `Effect.provide(AWS.Polly.GetSpeechSynthesisTaskHttp)`.
  *
- * @binding
- * @section Asynchronous Synthesis
- * @example Poll a synthesis task until it completes
+ * ### Asynchronous Synthesis
+ * **Example:** Poll a synthesis task until it completes
  * ```typescript
  * // init
  * const getSpeechSynthesisTask = yield* AWS.Polly.GetSpeechSynthesisTask();
@@ -28,6 +27,8 @@ import * as Binding from "../../Binding.ts";
  *   }),
  * );
  * ```
+ *
+ * @binding
  */
 export interface GetSpeechSynthesisTask extends Binding.Service<
   GetSpeechSynthesisTask,

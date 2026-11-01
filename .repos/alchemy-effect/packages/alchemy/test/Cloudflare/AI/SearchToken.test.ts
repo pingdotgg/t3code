@@ -121,7 +121,15 @@ test.provider(
       // Destroy again — delete must be idempotent (already gone).
       yield* stack.destroy();
     }).pipe(logLevel),
-  { timeout: 240_000 },
+  {
+    tags: [
+      "provider:cloudflare",
+      "provider:cloudflare:ai",
+      "provider:cloudflare:apitoken",
+      "live",
+    ],
+    timeout: 240_000,
+  },
 );
 
 test.provider(
@@ -161,7 +169,15 @@ test.provider(
 
       yield* expectGone(accountId, healed.token.id);
     }).pipe(logLevel),
-  { timeout: 240_000 },
+  {
+    tags: [
+      "provider:cloudflare",
+      "provider:cloudflare:ai",
+      "provider:cloudflare:apitoken",
+      "live",
+    ],
+    timeout: 240_000,
+  },
 );
 
 test.provider(
@@ -188,7 +204,15 @@ test.provider(
 
       yield* expectGone(accountId, deployed.token.id);
     }).pipe(logLevel),
-  { timeout: 240_000 },
+  {
+    tags: [
+      "provider:cloudflare",
+      "provider:cloudflare:ai",
+      "provider:cloudflare:apitoken",
+      "live",
+    ],
+    timeout: 240_000,
+  },
 );
 
 test.provider(
@@ -204,7 +228,9 @@ test.provider(
       const deployed = yield* stack.deploy(
         Effect.gen(function* () {
           const { apiToken, token } = yield* program(accountId);
-          const bucket = yield* Cloudflare.R2.Bucket("AiSearchTokenSource", {});
+          const bucket = yield* Cloudflare.R2.Bucket("AiSearchTokenSource", {
+            forceDestroy: true,
+          });
           const instance = yield* Cloudflare.AI.Search("Search", {
             // Pass the Bucket resource (not `bucket.bucketName`) so the
             // construct selects the R2 source path; a bare string is treated
@@ -238,5 +264,14 @@ test.provider(
   // legitimately ride the provider's `InvalidTokenCredentials` propagation
   // window (~2 min under full-suite parallel load) before the deploy even
   // returns — 240s leaves no room for the destroy + gone-poll that follow.
-  { timeout: 360_000 },
+  {
+    tags: [
+      "provider:cloudflare",
+      "provider:cloudflare:ai",
+      "provider:cloudflare:apitoken",
+      "provider:cloudflare:r2",
+      "live",
+    ],
+    timeout: 360_000,
+  },
 );

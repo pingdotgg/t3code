@@ -102,9 +102,8 @@ export interface ScalingPolicy extends Resource<
  * the (`serviceNamespace`, `resourceId`, `scalableDimension`) triple, which
  * must be registered (see {@link ScalableTarget}) before the policy is
  * created — pass the target's outputs so deployment orders correctly.
- * @resource
- * @section Target Tracking
- * @example Track ECS Service CPU
+ * ### Target Tracking
+ * **Example:** Track ECS Service CPU
  * ```typescript
  * const target = yield* ScalableTarget("ApiScaling", {
  *   serviceNamespace: "ecs",
@@ -129,7 +128,7 @@ export interface ScalingPolicy extends Resource<
  * });
  * ```
  *
- * @example Track a Customized Metric
+ * **Example:** Track a Customized Metric
  * ```typescript
  * yield* ScalingPolicy("QueueDepthPolicy", {
  *   serviceNamespace: target.serviceNamespace,
@@ -147,8 +146,8 @@ export interface ScalingPolicy extends Resource<
  * });
  * ```
  *
- * @section Step Scaling
- * @example Step Adjustments
+ * ### Step Scaling
+ * **Example:** Step Adjustments
  * ```typescript
  * yield* ScalingPolicy("ApiStepPolicy", {
  *   serviceNamespace: target.serviceNamespace,
@@ -164,6 +163,8 @@ export interface ScalingPolicy extends Resource<
  *   },
  * });
  * ```
+ *
+ * @resource
  */
 export const ScalingPolicy = Resource<ScalingPolicy>(
   "AWS.ApplicationAutoScaling.ScalingPolicy",
@@ -200,6 +201,11 @@ export const ScalingPolicyProvider = () =>
           ? Effect.succeed(props.policyName)
           : createPhysicalName({ id, maxLength: 255 });
 
+      // Narrow by the target triple only when it is complete: the API rejects
+      // a ScalableDimension without a ResourceId ("Scalable dimension cannot
+      // be provided without a resource ID"), and a row persisted by an
+      // interrupted create can carry one without the other — which would
+      // wedge `read` and therefore every destroy of the stack.
       const describe = (props: {
         serviceNamespace: aas.ServiceNamespace;
         policyName: string;
@@ -210,8 +216,13 @@ export const ScalingPolicyProvider = () =>
           .describeScalingPolicies({
             ServiceNamespace: props.serviceNamespace,
             PolicyNames: [props.policyName],
-            ResourceId: props.resourceId,
-            ScalableDimension: props.scalableDimension,
+            ...(props.resourceId !== undefined &&
+            props.scalableDimension !== undefined
+              ? {
+                  ResourceId: props.resourceId,
+                  ScalableDimension: props.scalableDimension,
+                }
+              : {}),
           })
           .pipe(
             Effect.map((res) =>
@@ -342,7 +353,7 @@ export const ScalingPolicyProvider = () =>
           if (policy === undefined) {
             return yield* Effect.fail(
               new aas.ObjectNotFoundException({
-                Message: `Scaling policy '${policyName}' was not readable after PutScalingPolicy`,
+                message: `Scaling policy '${policyName}' was not readable after PutScalingPolicy`,
               }),
             );
           }
@@ -354,27 +365,42 @@ export const ScalingPolicyProvider = () =>
         // Deleting the parent scalable target implicitly deletes its
         // policies, so a policy that is already gone (typed
         // `ObjectNotFoundException`) is success.
-        delete: Effect.fn(function* ({ output }) {
-          yield* aas
-            .deleteScalingPolicy({
-              PolicyName: output.policyName,
-              ServiceNamespace: output.serviceNamespace,
-              ResourceId: output.resourceId,
-              ScalableDimension: output.scalableDimension,
-            })
-            .pipe(
-              Effect.catchTag("ObjectNotFoundException", () => Effect.void),
-            );
+        delete: Effect.fn(function* ({ olds, output }) {
+          // Observe before deleting: resolve the live policy by name (a row
+          // persisted by an interrupted create can lack the target triple)
+          // and delete with ITS triple; a policy that no longer exists is
+          // already gone.
+          const policy = yield* describe({
+            serviceNamespace: output.serviceNamespace,
+            policyName: output.policyName,
+            resourceId: output.resourceId ?? olds?.resourceId,
+            scalableDimension:
+              output.scalableDimension ?? olds?.scalableDimension,
+          });
+          if (policy?.ResourceId && policy.ScalableDimension) {
+            yield* aas
+              .deleteScalingPolicy({
+                PolicyName: output.policyName,
+                ServiceNamespace: output.serviceNamespace,
+                ResourceId: policy.ResourceId,
+                ScalableDimension: policy.ScalableDimension,
+              })
+              .pipe(
+                Effect.catchTag("ObjectNotFoundException", () => Effect.void),
+              );
+          }
           // Reap the managed CloudWatch alarms of a target tracking policy.
           // Application Auto Scaling deletes them asynchronously (and not at
           // all when the policy went away via target deregistration), so an
           // explicit delete keeps teardown deterministic. DeleteAlarms
           // ignores names that no longer exist.
-          if (output.alarms.length > 0) {
+          const alarms = [
+            ...(output.alarms ?? []).map((alarm) => alarm.alarmName),
+            ...(policy?.Alarms ?? []).map((alarm) => alarm.AlarmName),
+          ].filter((name, i, all) => all.indexOf(name) === i);
+          if (alarms.length > 0) {
             yield* cloudwatch
-              .deleteAlarms({
-                AlarmNames: output.alarms.map((alarm) => alarm.alarmName),
-              })
+              .deleteAlarms({ AlarmNames: alarms })
               .pipe(Effect.catchTag("ResourceNotFound", () => Effect.void));
           }
         }),

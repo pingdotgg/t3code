@@ -1,6 +1,10 @@
 import * as Cause from "effect/Cause"
 import * as Context from "effect/Context"
+import * as Effect from "effect/Effect"
+import * as Equal from "effect/Equal"
+import * as Exit from "effect/Exit"
 import { pipe } from "effect/Function"
+import * as Hash from "effect/Hash"
 import * as Option from "effect/Option"
 import * as Result from "effect/Result"
 import assert from "node:assert/strict"
@@ -297,27 +301,35 @@ describe("Cause", () => {
   })
 
   describe("squash", () => {
-    it("returns the first Fail error", () => {
-      assert.strictEqual(Cause.squash(Cause.fail("error")), "error")
+    it("returns the first Fail even after an interrupt and a defect", () => {
+      const cause = Cause.fromReasons([
+        Cause.makeInterruptReason(1),
+        Cause.makeDieReason("defect"),
+        Cause.makeFailReason("first"),
+        Cause.makeFailReason("second")
+      ])
+      assert.strictEqual(Cause.squash(cause), "first")
     })
 
-    it("returns the first Die defect when no Fail", () => {
-      assert.strictEqual(Cause.squash(Cause.die("defect")), "defect")
+    it("returns the first Die when there are no Fails", () => {
+      const cause = Cause.fromReasons([
+        Cause.makeInterruptReason(1),
+        Cause.makeDieReason("first"),
+        Cause.makeDieReason("second")
+      ])
+      assert.strictEqual(Cause.squash(cause), "first")
     })
 
-    it("returns an Error for interrupt-only cause", () => {
+    it("reports an interrupt-only cause", () => {
       const result = Cause.squash(Cause.interrupt(1))
       assert.ok(result instanceof Error)
+      assert.strictEqual(result.message, "All fibers interrupted without error")
     })
 
-    it("returns an Error for empty cause", () => {
+    it("reports an empty cause", () => {
       const result = Cause.squash(Cause.empty)
       assert.ok(result instanceof Error)
-    })
-
-    it("prefers Fail over Die", () => {
-      const combined = Cause.combine(Cause.die("defect"), Cause.fail("error"))
-      assert.strictEqual(Cause.squash(combined), "error")
+      assert.strictEqual(result.message, "Empty cause")
     })
   })
 
@@ -494,6 +506,33 @@ describe("Cause", () => {
   })
 
   describe("combine", () => {
+    it("preserves unequal reasons with colliding hashes while removing duplicates", () => {
+      class Collision implements Equal.Equal {
+        constructor(readonly value: string) {}
+        [Hash.symbol](): number {
+          return 0
+        }
+        [Equal.symbol](that: Equal.Equal): boolean {
+          return that instanceof Collision && this.value === that.value
+        }
+      }
+
+      const first = Cause.makeFailReason(new Collision("first"))
+      const second = Cause.makeFailReason(new Collision("second"))
+      const duplicate = Cause.makeFailReason(new Collision("first"))
+      assert.strictEqual(Hash.hash(first), Hash.hash(second))
+      assert.strictEqual(Equal.equals(first, second), false)
+
+      const combined = Cause.combine(
+        Cause.fromReasons([first, second, first]),
+        Cause.fromReasons([duplicate, second])
+      )
+      assert.strictEqual(combined.reasons.length, 2)
+      assert.strictEqual(combined.reasons[0], first)
+      assert.strictEqual(combined.reasons[1], second)
+      assert.strictEqual(Cause.combine(combined, Cause.fromReasons([duplicate])), combined)
+    })
+
     it("merges two causes (data-first)", () => {
       const combined = Cause.combine(Cause.fail("a"), Cause.fail("b"))
       assert.strictEqual(combined.reasons.length, 2)
@@ -555,6 +594,18 @@ describe("Cause", () => {
       const errors = Cause.prettyErrors(Cause.empty)
       assert.ok(Array.isArray(errors))
     })
+
+    it("restores Error.stackTraceLimit when formatting a reason throws", () => {
+      const limit = Error.stackTraceLimit
+      const error = new Error("boom")
+      Object.defineProperty(error, "stack", {
+        get() {
+          throw new Error("stack getter")
+        }
+      })
+      assert.throws(() => Cause.prettyErrors(Cause.fail(error)), /stack getter/)
+      assert.strictEqual(Error.stackTraceLimit, limit)
+    })
   })
 
   describe("pretty", () => {
@@ -575,6 +626,47 @@ describe("Cause", () => {
     it("returns a string for empty cause", () => {
       const rendered = Cause.pretty(Cause.empty)
       assert.strictEqual(typeof rendered, "string")
+    })
+
+    it("cuts the stack of a defect at the internal frame that called user code", async () => {
+      const render = async (effect: Effect.Effect<unknown, unknown>): Promise<string> => {
+        const exit = await Effect.runPromiseExit(effect)
+        assert.ok(Exit.isFailure(exit))
+        return Cause.pretty(exit.cause)
+      }
+      for (
+        const effect of [
+          Effect.try({ try: userCode, catch: userCode }),
+          // the catcher runs outside the run loop, so it relies on the marker frame
+          Effect.tryPromise({ try: () => Promise.reject(1), catch: userCode })
+        ]
+      ) {
+        const rendered = await render(effect)
+        assert.match(rendered, /at userCode /)
+        assert.doesNotMatch(rendered, /~effect\/Utils\/internal/)
+      }
+    })
+
+    const userCode = (): never => {
+      throw new Error("boom")
+    }
+    const assertCleanStack = (effect: Effect.Effect<unknown, unknown>): void => {
+      const exit = Effect.runSyncExit(effect)
+      assert.ok(Exit.isFailure(exit))
+      const rendered = Cause.pretty(exit.cause)
+      assert.match(rendered, /\buserCode \(/)
+      assert.doesNotMatch(rendered, /\/src\/internal\/|~effect\/Utils\/internal/)
+    }
+
+    it("does not render internal frames from match and matchCause handlers", () => {
+      for (const source of [Effect.succeed(1), Effect.fail("error")]) {
+        assertCleanStack(Effect.match(source, { onSuccess: userCode, onFailure: userCode }))
+        assertCleanStack(Effect.matchCause(source, { onSuccess: userCode, onFailure: userCode }))
+      }
+    })
+
+    it("does not render internal frames from map", () => {
+      assertCleanStack(Effect.map(Effect.succeed(1), userCode))
     })
   })
 

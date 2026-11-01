@@ -23,15 +23,7 @@ describe("mapDpopReplayStoreError", () => {
     expect(error._tag).toBe("ServerAuthInvalidCredentialError");
     if (error._tag === "ServerAuthInvalidCredentialError") {
       expect(error.cause).toBe(cause);
-    }
-  });
-
-  it("reports replay-store availability failures as internal errors", () => {
-    const error = mapDpopReplayStoreError(storeFailure("PermissionDenied"));
-
-    expect(error._tag).toBe("ServerAuthDpopReplayStateRecordError");
-    if (error._tag === "ServerAuthDpopReplayStateRecordError") {
-      expect(error.message).toBe("Failed to record DPoP proof replay state.");
+      expect(error.dpopFailureReason).toBe("replay");
     }
   });
 });

@@ -1,2 +1,2 @@
 export * from "./VpcService.ts";
-export * from "./VpcServiceRef.ts";
+export * from "./VpcServiceLookup.ts";

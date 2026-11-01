@@ -4,7 +4,7 @@ import * as incidents from "@distilled.cloud/aws/ssm-incidents";
 import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
 import * as Schedule from "effect/Schedule";
-import type { HttpClient } from "effect/unstable/http/HttpClient";
+import type { HttpClient } from "effect/http/HttpClient";
 import { Unowned } from "../../AdoptPolicy.ts";
 import * as Provider from "../../Provider.ts";
 import { Resource } from "../../Resource.ts";
@@ -75,13 +75,13 @@ export interface ReplicationSet extends Resource<
  * capture-and-restore singleton: adopting a pre-existing replication set that
  * Alchemy did not create requires `--adopt`.
  *
- * @section Onboarding Incident Manager
- * @example Replication set in the current Region
+ * ### Onboarding Incident Manager
+ * **Example:** Replication set in the current Region
  * ```typescript
  * const replicationSet = yield* SSMIncidents.ReplicationSet("Incidents", {});
  * ```
  *
- * @example Multi-Region replication with a KMS key
+ * **Example:** Multi-Region replication with a KMS key
  * ```typescript
  * const replicationSet = yield* SSMIncidents.ReplicationSet("Incidents", {
  *   regions: {

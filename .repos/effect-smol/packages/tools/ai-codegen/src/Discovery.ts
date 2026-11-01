@@ -19,13 +19,23 @@ import * as Glob from "./Glob.ts"
  *
  * **Example** (Inspecting a discovered provider)
  *
- * ```ts
+ * ```ts import.meta.vitest
+ * import * as Config from "@effect/ai-codegen/Config"
  * import type * as Discovery from "@effect/ai-codegen/Discovery"
  *
- * declare const provider: Discovery.DiscoveredProvider
+ * const provider: Discovery.DiscoveredProvider = {
+ *   name: "openai",
+ *   packagePath: "packages/ai/openai",
+ *   config: new Config.CodegenConfig({
+ *     spec: "https://example.com/openapi.json",
+ *     output: "Generated.ts"
+ *   }),
+ *   specSource: Config.SpecSource.Url("https://example.com/openapi.json"),
+ *   outputPath: "packages/ai/openai/src/Generated.ts"
+ * }
  *
- * console.log(provider.name) // "openai"
- * console.log(provider.specSource._tag) // "Url" | "File"
+ * provider.name // => "openai"
+ * provider.specSource._tag // => "Url"
  * ```
  *
  * @category models
@@ -42,7 +52,7 @@ export interface DiscoveredProvider {
 /**
  * Service for discovering AI provider configurations.
  *
- * @category models
+ * @category services
  * @since 4.0.0
  */
 export interface ProviderDiscovery {
@@ -73,13 +83,16 @@ export const ProviderDiscovery: Context.Service<ProviderDiscovery, ProviderDisco
  *
  * **Example** (Creating a discovery error)
  *
- * ```ts
+ * ```ts import.meta.vitest
  * import * as Discovery from "@effect/ai-codegen/Discovery"
  *
  * const error = new Discovery.DiscoveryError({
  *   message: "Failed to parse config",
  *   cause: new Error("Invalid JSON")
  * })
+ *
+ * error._tag // => "DiscoveryError"
+ * error.message // => "Failed to parse config"
  * ```
  *
  * @category errors
@@ -95,13 +108,16 @@ export class DiscoveryError extends Data.TaggedError("DiscoveryError")<{
  *
  * **Example** (Creating a provider not found error)
  *
- * ```ts
+ * ```ts import.meta.vitest
  * import * as Discovery from "@effect/ai-codegen/Discovery"
  *
  * const error = new Discovery.ProviderNotFoundError({
  *   provider: "openai",
  *   available: ["anthropic", "google"]
  * })
+ *
+ * error.provider // => "openai"
+ * error.available // => ["anthropic", "google"]
  * ```
  *
  * @category errors

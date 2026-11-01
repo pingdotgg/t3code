@@ -79,7 +79,10 @@ test.provider(
 
       yield* stack.destroy();
     }).pipe(logLevel),
-  { timeout: 120_000 },
+  {
+    tags: ["provider:cloudflare", "provider:cloudflare:realtimekit", "live"],
+    timeout: 120_000,
+  },
 );
 
 test.provider(
@@ -148,7 +151,10 @@ test.provider(
 
       yield* stack.destroy();
     }).pipe(logLevel),
-  { timeout: 120_000 },
+  {
+    tags: ["provider:cloudflare", "provider:cloudflare:realtimekit", "live"],
+    timeout: 120_000,
+  },
 );
 
 test.provider(
@@ -187,5 +193,8 @@ test.provider(
       // subsequent list() would still observe it. That's the expected residue.
       yield* stack.destroy();
     }).pipe(logLevel),
-  { timeout: 120_000 },
+  {
+    tags: ["provider:cloudflare", "provider:cloudflare:realtimekit", "live"],
+    timeout: 120_000,
+  },
 );

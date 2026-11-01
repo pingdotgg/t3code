@@ -4,8 +4,8 @@ import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Stream from "effect/Stream";
-import { HttpServerRequest } from "effect/unstable/http/HttpServerRequest";
-import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
+import { HttpServerRequest } from "effect/http/HttpServerRequest";
+import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import { getDefaultVpc } from "../DefaultVpc.ts";
 
 export class KafkaTestFunction extends AWS.Lambda.Function<AWS.Lambda.Function>()(
@@ -58,7 +58,7 @@ export const FixtureClusterLive = Layer.effect(
 );
 
 export default KafkaTestFunction.make(
-  { main: import.meta.url, url: true },
+  { main: import.meta.url, functionUrl: true },
   Effect.gen(function* () {
     const { cluster } = yield* FixtureCluster;
 

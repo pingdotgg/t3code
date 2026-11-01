@@ -111,9 +111,8 @@ export interface ApiKey extends Resource<
  * `AccessDeniedException` regardless of IAM policy. Accounts onboarded to
  * Location before the V2 split can create keys normally.
  *
- * @resource
- * @section Creating API Keys
- * @example Map-Rendering Key for Browsers
+ * ### Creating API Keys
+ * **Example:** Map-Rendering Key for Browsers
  * ```typescript
  * import * as Location from "alchemy/AWS/Location";
  *
@@ -130,7 +129,7 @@ export interface ApiKey extends Resource<
  * // Redacted.value(key.key) → "v1.public.…" — append as ?key=… to tile URLs
  * ```
  *
- * @example Key with Referer Restrictions and Expiry
+ * **Example:** Key with Referer Restrictions and Expiry
  * ```typescript
  * const key = yield* Location.ApiKey("WebKey", {
  *   restrictions: {
@@ -141,6 +140,8 @@ export interface ApiKey extends Resource<
  *   expireTime: "2027-01-01T00:00:00Z",
  * });
  * ```
+ *
+ * @resource
  */
 export const ApiKey = Resource<ApiKey>("AWS.Location.ApiKey");
 

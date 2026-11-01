@@ -50,6 +50,7 @@ test.provider(
         error._tag,
       );
     }),
+  { tags: ["provider:aws", "provider:aws:iotfleetwise", "live"] },
 );
 
 // Same ungated probe for the state-template API — proves the typed tags the
@@ -69,6 +70,7 @@ test.provider(
         error._tag,
       );
     }),
+  { tags: ["provider:aws", "provider:aws:iotfleetwise", "live"] },
 );
 
 // Typed wait-until-gone for the gated lifecycle teardown.
@@ -252,5 +254,13 @@ test.provider.skipIf(!process.env.AWS_TEST_IOTFLEETWISE)(
       yield* stack.destroy();
       yield* assertCatalogGone(deployed.catalog.signalCatalogName);
     }),
-  { timeout: 600_000 },
+  {
+    tags: [
+      "provider:aws",
+      "provider:aws:iotfleetwise",
+      "provider:aws:s3",
+      "live",
+    ],
+    timeout: 600_000,
+  },
 );

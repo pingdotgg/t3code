@@ -1,72 +1,44 @@
-import { useEffect } from "react";
 import { View } from "react-native";
-import Animated, {
-  cancelAnimation,
-  Easing,
-  useAnimatedStyle,
-  useSharedValue,
-  withRepeat,
-  withTiming,
-} from "react-native-reanimated";
 
 import type { RemoteClientConnectionState } from "../../lib/connection";
+import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
+import { themeColorWithAlpha, type MobileThemeVariables } from "../../lib/mobileTheme";
 
 export type ConnectionStatusDotState = RemoteClientConnectionState;
 
-function statusDotTone(state: ConnectionStatusDotState): {
+function statusDotTone(
+  state: ConnectionStatusDotState,
+  theme: MobileThemeVariables,
+  dark: boolean,
+): {
   readonly dotColor: string;
   readonly haloColor: string;
 } {
   switch (state) {
     case "available":
+    case "unsupported":
       return {
-        dotColor: "#9ca3af",
-        haloColor: "rgba(156,163,175,0.42)",
+        dotColor: theme["--color-icon-muted"],
+        haloColor: themeColorWithAlpha(theme["--color-icon-muted"], 0.42),
       };
     case "connected":
       return {
-        dotColor: "#34d399",
-        haloColor: "rgba(52,211,153,0.48)",
+        dotColor: dark ? "#34d399" : "#059669",
+        haloColor: themeColorWithAlpha(dark ? "#34d399" : "#059669", 0.48),
       };
     case "connecting":
     case "reconnecting":
       return {
-        dotColor: "#f59e0b",
-        haloColor: "rgba(245,158,11,0.5)",
+        dotColor: theme["--color-warning-foreground"],
+        haloColor: themeColorWithAlpha(theme["--color-warning-foreground"], 0.5),
       };
     case "offline":
     case "error":
       return {
-        dotColor: "#ef4444",
-        haloColor: "rgba(239,68,68,0.48)",
+        dotColor: theme["--color-danger-foreground"],
+        haloColor: themeColorWithAlpha(theme["--color-danger-foreground"], 0.48),
       };
   }
-}
-
-function usePulseAnimation(pulse: boolean) {
-  const pulseProgress = useSharedValue(0);
-
-  useEffect(() => {
-    if (pulse) {
-      pulseProgress.value = withRepeat(
-        withTiming(1, {
-          duration: 1100,
-          easing: Easing.out(Easing.cubic),
-        }),
-        -1,
-        false,
-      );
-      return;
-    }
-
-    cancelAnimation(pulseProgress);
-    pulseProgress.value = withTiming(0, {
-      duration: 180,
-      easing: Easing.out(Easing.quad),
-    });
-  }, [pulse, pulseProgress]);
-
-  return pulseProgress;
 }
 
 export function ConnectionStatusDot(props: {
@@ -74,16 +46,11 @@ export function ConnectionStatusDot(props: {
   readonly pulse: boolean;
   readonly size?: number;
 }) {
-  const pulseProgress = usePulseAnimation(props.pulse);
-  const tone = statusDotTone(props.state);
+  const { themeAppearance, themeVariables } = useAppearancePreferences();
+  const tone = statusDotTone(props.state, themeVariables, themeAppearance === "dark");
   const dotSize = props.size ?? 10;
   const haloSize = dotSize + 4;
   const containerSize = haloSize + 4;
-
-  const haloStyle = useAnimatedStyle(() => ({
-    opacity: props.pulse ? 0.14 + (1 - pulseProgress.value) * 0.3 : 0,
-    transform: [{ scale: 0.78 + pulseProgress.value * 1.16 }],
-  }));
 
   return (
     <View
@@ -94,18 +61,19 @@ export function ConnectionStatusDot(props: {
         justifyContent: "center",
       }}
     >
-      <Animated.View
-        style={[
-          haloStyle,
-          {
+      {/* Looping Reanimated updates can starve React commits while commit pausing is disabled. */}
+      {props.pulse ? (
+        <View
+          style={{
             position: "absolute",
             width: haloSize,
             height: haloSize,
             borderRadius: haloSize / 2,
             backgroundColor: tone.haloColor,
-          },
-        ]}
-      />
+            opacity: 0.3,
+          }}
+        />
+      ) : null}
       <View
         style={{
           width: dotSize,

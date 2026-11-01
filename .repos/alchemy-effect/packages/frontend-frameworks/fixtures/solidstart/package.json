@@ -1,0 +1,28 @@
+{
+  "name": "@fixtures/solidstart",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "bun run ../../../cloudflare-test-tools/src/e2e/Cli.ts dev",
+    "build": "bun run ../../../cloudflare-test-tools/src/e2e/Cli.ts build",
+    "preview": "bun run ../../../cloudflare-test-tools/src/e2e/Cli.ts preview",
+    "test": "playwright test",
+    "test:update-snapshots": "playwright test --update-snapshots",
+    "pretest": "playwright install chromium"
+  },
+  "dependencies": {
+    "@solidjs/meta": "catalog:",
+    "@solidjs/router": "catalog:",
+    "@solidjs/start": "catalog:",
+    "@solidjs/vite-plugin-nitro-2": "catalog:",
+    "solid-js": "catalog:",
+    "vite": "catalog:"
+  },
+  "devDependencies": {
+    "@alchemy.run/cloudflare-test-tools": "workspace:*",
+    "@playwright/test": "catalog:"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}

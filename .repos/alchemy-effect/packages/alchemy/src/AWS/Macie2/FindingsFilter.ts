@@ -85,8 +85,8 @@ export interface FindingsFilter extends Resource<
  * be enabled for the account (see `Macie2.Session`). Name, description,
  * action, position, and criteria are all updatable in place.
  *
- * @section Filtering findings
- * @example Suppress low-severity findings
+ * ### Filtering findings
+ * **Example:** Suppress low-severity findings
  * ```typescript
  * const filter = yield* Macie2.FindingsFilter("LowSeverity", {
  *   action: "ARCHIVE",
@@ -97,7 +97,7 @@ export interface FindingsFilter extends Resource<
  * });
  * ```
  *
- * @example Keep a named filter for the console
+ * **Example:** Keep a named filter for the console
  * ```typescript
  * const filter = yield* Macie2.FindingsFilter("ProdBuckets", {
  *   name: "prod-buckets-only",

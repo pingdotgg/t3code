@@ -17,15 +17,16 @@ export interface ListPackagesRequest extends Omit<
  *
  * Lists the packages stored in the bound repository. Provide the implementation with
  * `Effect.provide(AWS.CodeArtifact.ListPackagesHttp)`.
- * @binding
- * @section Browsing Packages
- * @example List Packages by Prefix
+ * ### Browsing Packages
+ * **Example:** List Packages by Prefix
  * ```typescript
  * const listPackages = yield* AWS.CodeArtifact.ListPackages(repo);
  *
  * const res = yield* listPackages({ packagePrefix: "my-" });
  * for (const pkg of res.packages ?? []) console.log(pkg.package);
  * ```
+ *
+ * @binding
  */
 export interface ListPackages extends Binding.Service<
   ListPackages,

@@ -92,9 +92,8 @@ export interface User extends Resource<
  * A user of an AWS Transfer Family server (service-managed identity
  * provider). Users are free configuration objects attached to a
  * {@link Server}; the server itself is what incurs hourly cost.
- * @resource
- * @section Creating a User
- * @example Service-Managed SFTP User
+ * ### Creating a User
+ * **Example:** Service-Managed SFTP User
  * ```typescript
  * const user = yield* User("Alice", {
  *   serverId: server.serverId,
@@ -104,6 +103,8 @@ export interface User extends Resource<
  *   sshPublicKeyBody: "ssh-ed25519 AAAA...",
  * });
  * ```
+ *
+ * @resource
  */
 export const User = Resource<User>("AWS.Transfer.User");
 

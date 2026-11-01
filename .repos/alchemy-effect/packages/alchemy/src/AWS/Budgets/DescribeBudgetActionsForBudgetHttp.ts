@@ -9,8 +9,5 @@ export const DescribeBudgetActionsForBudgetHttp = Layer.effect(
     tag: "AWS.Budgets.DescribeBudgetActionsForBudget",
     actions: ["budgets:DescribeBudgetActionsForBudget"],
     operation: budgets.describeBudgetActionsForBudget,
-    // Authorizes on the budgetAction resource type; action IDs are
-    // unknowable at deploy time.
-    actionWildcard: true,
   }),
 );

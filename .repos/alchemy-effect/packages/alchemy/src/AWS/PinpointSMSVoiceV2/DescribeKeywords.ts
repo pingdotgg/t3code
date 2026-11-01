@@ -20,9 +20,8 @@ export interface DescribeKeywordsRequest extends Omit<
  * continue). The deploy-time half grants `sms-voice:DescribeKeywords` on
  * the number. Provide the implementation with
  * `Effect.provide(AWS.PinpointSMSVoiceV2.DescribeKeywordsHttp)`.
- * @binding
- * @section Managing Keywords
- * @example List the Number's Keywords
+ * ### Managing Keywords
+ * **Example:** List the Number's Keywords
  * ```typescript
  * // init
  * const describeKeywords =
@@ -32,6 +31,8 @@ export interface DescribeKeywordsRequest extends Omit<
  * const { Keywords } = yield* describeKeywords({});
  * const info = (Keywords ?? []).find((k) => k.Keyword === "INFO");
  * ```
+ *
+ * @binding
  */
 export interface DescribeKeywords extends Binding.Service<
   DescribeKeywords,

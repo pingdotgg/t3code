@@ -34,11 +34,39 @@ export const onRequest = defineRouteMiddleware(async (context, next) => {
 
   const links = flattenLinks(group.entries);
   const index = links.findIndex((link) => link.isCurrent);
+  const { prev, next: nextLink } = starlightRoute.entry.data;
   starlightRoute.pagination = {
-    prev: index > 0 ? links[index - 1] : undefined,
-    next: index !== -1 ? links[index + 1] : undefined,
+    prev: override(prev, index > 0 ? links[index - 1] : undefined),
+    next: override(nextLink, index !== -1 ? links[index + 1] : undefined),
   };
 });
+
+/**
+ * Apply a page's `prev` / `next` frontmatter to the sidebar-derived link, the
+ * same way Starlight's own pagination does: `false` removes the link, a
+ * string relabels it, and `{ link, label }` replaces it outright.
+ */
+function override(
+  config: StarlightRouteData["entry"]["data"]["prev"],
+  link: SidebarLink | undefined,
+): SidebarLink | undefined {
+  if (config === undefined || config === true) return link;
+  if (config === false) return undefined;
+  if (typeof config === "string") {
+    return link ? { ...link, label: config } : undefined;
+  }
+  const href = config.link ?? link?.href;
+  const label = config.label ?? link?.label;
+  if (!href || !label) return link;
+  return {
+    type: "link",
+    label,
+    href,
+    isCurrent: false,
+    badge: undefined,
+    attrs: {},
+  };
+}
 
 function flattenLinks(items: SidebarItem[]): SidebarLink[] {
   const links: SidebarLink[] = [];

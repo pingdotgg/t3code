@@ -18,9 +18,8 @@ export interface StartTransformerJobRequest extends Omit<
  * locations with its service principal, so the buckets need a bucket policy
  * granting `b2bi.amazonaws.com` read/write access. Provide the
  * implementation with `Effect.provide(AWS.B2BI.StartTransformerJobHttp)`.
- * @binding
- * @section Running Transformer Jobs
- * @example Transform an EDI Document in S3
+ * ### Running Transformer Jobs
+ * **Example:** Transform an EDI Document in S3
  * ```typescript
  * // init — grants b2bi:StartTransformerJob on the transformer
  * const startTransformerJob = yield* AWS.B2BI.StartTransformerJob(transformer);
@@ -31,6 +30,8 @@ export interface StartTransformerJobRequest extends Omit<
  *   outputLocation: { bucketName: "my-edi-bucket", key: "output/" },
  * });
  * ```
+ *
+ * @binding
  */
 export interface StartTransformerJob extends Binding.Service<
   StartTransformerJob,

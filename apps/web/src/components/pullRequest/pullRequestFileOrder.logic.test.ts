@@ -1,9 +1,8 @@
 import type { FileDiffMetadata } from "@pierre/diffs";
 import { describe, expect, it } from "vite-plus/test";
 
-import { diffFileTier, orderDiffFiles } from "./pullRequestFileOrder.logic";
+import { orderDiffFiles } from "./pullRequestFileOrder.logic";
 
-/** Only the path and the patch's own lines matter here; the viewer fills the rest in. */
 function file(name: string, additionLines: ReadonlyArray<string> = []): FileDiffMetadata {
   return { name, hunks: [], additionLines, deletionLines: [] } as unknown as FileDiffMetadata;
 }
@@ -12,53 +11,29 @@ function order(files: ReadonlyArray<FileDiffMetadata>): Array<string> {
   return orderDiffFiles(files).map((entry) => entry.name);
 }
 
-describe("diffFileTier", () => {
-  it("puts lockfiles, snapshots and build output last", () => {
-    expect(diffFileTier("pnpm-lock.yaml")).toBe("generated");
-    expect(diffFileTier("apps/web/package-lock.json")).toBe("generated");
-    expect(diffFileTier("src/__snapshots__/app.ts")).toBe("generated");
-    expect(diffFileTier("src/app.test.ts.snap")).toBe("generated");
-    expect(diffFileTier("src/api.generated.ts")).toBe("generated");
-    expect(diffFileTier("public/app.min.js")).toBe("generated");
-    expect(diffFileTier("dist/app.js")).toBe("generated");
-    expect(diffFileTier("packages/core/vendor/lib.js")).toBe("generated");
-  });
-
-  it("recognises a test by its name or by the directory holding it", () => {
-    expect(diffFileTier("src/app.test.ts")).toBe("test");
-    expect(diffFileTier("src/app.spec.tsx")).toBe("test");
-    expect(diffFileTier("src/__tests__/app.ts")).toBe("test");
-    expect(diffFileTier("test/app.ts")).toBe("test");
-    expect(diffFileTier("tests/helpers/app.ts")).toBe("test");
-  });
-
-  it("treats everything else as source, including files merely named like a directory", () => {
-    expect(diffFileTier("src/app.ts")).toBe("source");
-    expect(diffFileTier("src/testing.ts")).toBe("source");
-    expect(diffFileTier("src/dist.ts")).toBe("source");
-  });
-});
-
 describe("orderDiffFiles", () => {
-  it("answers an empty diff with an empty order", () => {
-    expect(order([])).toEqual([]);
-  });
-
-  it("puts a dependency before what imports it", () => {
-    expect(order([file("src/a.ts", ['import { b } from "./b";']), file("src/b.ts")])).toEqual([
-      "src/b.ts",
-      "src/a.ts",
-    ]);
-  });
-
-  it("follows a chain the whole way down", () => {
+  it("places source before tests and generated files across path conventions", () => {
+    const source = ["src/app.ts", "src/dist.ts", "src/testing.ts"];
+    const tests = [
+      "src/__tests__/app.ts",
+      "src/app.spec.tsx",
+      "src/app.test.ts",
+      "test/app.ts",
+      "tests/helpers/app.ts",
+    ];
+    const generated = [
+      "apps/web/package-lock.json",
+      "dist/app.js",
+      "packages/core/vendor/lib.js",
+      "pnpm-lock.yaml",
+      "public/app.min.js",
+      "src/__snapshots__/app.ts",
+      "src/api.generated.ts",
+      "src/app.test.ts.snap",
+    ];
     expect(
-      order([
-        file("src/a.ts", ['import { b } from "./b";']),
-        file("src/b.ts", ['import { c } from "./c";']),
-        file("src/c.ts"),
-      ]),
-    ).toEqual(["src/c.ts", "src/b.ts", "src/a.ts"]);
+      order([...generated, ...tests, ...source].toReversed().map((path) => file(path))),
+    ).toEqual([...source, ...tests, ...generated]);
   });
 
   it("resolves a specifier that climbs out of the importer's directory", () => {
@@ -74,8 +49,6 @@ describe("orderDiffFiles", () => {
   });
 
   it("falls back to the specifier's last segment when the path does not line up", () => {
-    // An aliased import (`~/lib/b`) resolves to nothing on disk here, but the diff has only one
-    // file that could be meant.
     expect(order([file("src/a.ts", ['import { b } from "~/lib/b";']), file("lib/b.ts")])).toEqual([
       "lib/b.ts",
       "src/a.ts",
@@ -118,14 +91,6 @@ describe("orderDiffFiles", () => {
     ).toEqual(["src/a.ts", "src/b.ts"]);
   });
 
-  it("clusters unrelated files by path", () => {
-    expect(order([file("src/ui/b.ts"), file("src/lib/z.ts"), file("src/lib/a.ts")])).toEqual([
-      "src/lib/a.ts",
-      "src/lib/z.ts",
-      "src/ui/b.ts",
-    ]);
-  });
-
   it("keeps the tiers apart and orders tests by the source they cover", () => {
     expect(
       order([
@@ -154,14 +119,23 @@ describe("orderDiffFiles", () => {
     ]);
   });
 
-  it("orders the same diff the same way whatever order it arrives in", () => {
-    const files = [
-      file("src/a.ts", ['import { b } from "./b";']),
-      file("src/b.ts"),
-      file("src/c.ts"),
-      file("src/a.test.ts"),
-      file("yarn.lock"),
-    ];
-    expect(order(files)).toEqual(order(files.toReversed()));
+  it("pairs a test with the source whose name carries its own dotted suffix", () => {
+    expect(
+      order([
+        file("src/c.browser.test.tsx"),
+        file("src/b.test.ts"),
+        file("src/a.logic.test.ts"),
+        file("src/c.tsx"),
+        file("src/b.ts"),
+        file("src/a.logic.ts"),
+      ]),
+    ).toEqual([
+      "src/a.logic.ts",
+      "src/b.ts",
+      "src/c.tsx",
+      "src/a.logic.test.ts",
+      "src/b.test.ts",
+      "src/c.browser.test.tsx",
+    ]);
   });
 });

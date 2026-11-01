@@ -13,30 +13,14 @@ function makeSkill(input: Partial<ServerProviderSkill> & Pick<ServerProviderSkil
 }
 
 describe("searchProviderSkills", () => {
-  it("moves exact ui matches ahead of broader ui matches", () => {
-    const skills = [
-      makeSkill({
-        name: "agent-browser",
-        displayName: "Agent Browser",
-        shortDescription: "Browser automation CLI for AI agents",
-      }),
-      makeSkill({
-        name: "building-native-ui",
-        displayName: "Building Native Ui",
-        shortDescription: "Complete guide for building beautiful apps with Expo Router",
-      }),
-      makeSkill({
-        name: "ui",
-        displayName: "Ui",
-        shortDescription: "Explore, build, and refine UI.",
-      }),
-    ];
-
-    expect(searchProviderSkills(skills, "ui").map((skill) => skill.name)).toEqual([
-      "ui",
-      "building-native-ui",
-    ]);
-  });
+  // regression: #12098 unicode currency symbols must work as skill aliases
+  it.each(["$", "€", "£", "¥", "₹", "₩", "₿", "𑿝"])(
+    "searches skills with a %s prefix",
+    (prefix) => {
+      const skill = makeSkill({ name: "review" });
+      expect(searchProviderSkills([skill], `${prefix}review`)).toEqual([skill]);
+    },
+  );
 
   it("uses fuzzy ranking for abbreviated queries", () => {
     const skills = [
@@ -48,12 +32,16 @@ describe("searchProviderSkills", () => {
     expect(searchProviderSkills(skills, "gfc").map((skill) => skill.name)).toEqual(["gh-fix-ci"]);
   });
 
-  it("omits disabled skills from results", () => {
+  it("returns the first enabled definition for each skill name", () => {
     const skills = [
-      makeSkill({ name: "ui", displayName: "Ui", enabled: false }),
-      makeSkill({ name: "frontend-design", displayName: "Frontend Design" }),
+      makeSkill({ name: "branch-audit", path: "/Users/matt/.codex/skills/branch-audit/SKILL.md" }),
+      makeSkill({ name: "browser" }),
+      makeSkill({ name: "branch-audit", path: "/Users/matt/.agents/skills/branch-audit/SKILL.md" }),
     ];
 
-    expect(searchProviderSkills(skills, "ui").map((skill) => skill.name)).toEqual([]);
+    expect(searchProviderSkills(skills, "").map((skill) => skill.path)).toEqual([
+      "/Users/matt/.codex/skills/branch-audit/SKILL.md",
+      "/tmp/browser/SKILL.md",
+    ]);
   });
 });

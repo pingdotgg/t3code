@@ -7,8 +7,8 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Redacted from "effect/Redacted";
 import * as Schedule from "effect/Schedule";
-import { HttpServerRequest } from "effect/unstable/http/HttpServerRequest";
-import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
+import { HttpServerRequest } from "effect/http/HttpServerRequest";
+import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import * as Stream from "effect/Stream";
 import path from "pathe";
 
@@ -41,7 +41,7 @@ export class EcrTestFunction extends Lambda.Function<Lambda.Function>()(
 export default EcrTestFunction.make(
   {
     main,
-    url: true,
+    functionUrl: true,
     // A push fans out several registry calls; AWS's 3s default would
     // intermittently time out.
     timeout: Duration.seconds(60),

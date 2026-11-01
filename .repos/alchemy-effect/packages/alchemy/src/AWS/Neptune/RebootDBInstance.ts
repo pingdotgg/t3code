@@ -11,9 +11,8 @@ import type { DBInstance } from "./DBInstance.ts";
  * change from an ops function. The instance identifier is injected from the
  * binding. Provide the implementation with
  * `Effect.provide(AWS.Neptune.RebootDBInstanceHttp)`.
- * @binding
- * @section Operating a Cluster
- * @example Reboot an Instance
+ * ### Operating a Cluster
+ * **Example:** Reboot an Instance
  * ```typescript
  * // init — bind the operation to the instance
  * const rebootDBInstance = yield* AWS.Neptune.RebootDBInstance(instance);
@@ -21,6 +20,8 @@ import type { DBInstance } from "./DBInstance.ts";
  * // runtime
  * yield* rebootDBInstance();
  * ```
+ *
+ * @binding
  */
 export interface RebootDBInstance extends Binding.Service<
   RebootDBInstance,

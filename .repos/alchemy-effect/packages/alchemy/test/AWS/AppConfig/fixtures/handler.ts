@@ -5,8 +5,8 @@ import * as Cause from "effect/Cause";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import { HttpServerRequest } from "effect/unstable/http/HttpServerRequest";
-import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
+import { HttpServerRequest } from "effect/http/HttpServerRequest";
+import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import path from "pathe";
 
 const main = path.resolve(import.meta.dirname, "handler.ts");
@@ -20,7 +20,7 @@ export class AppConfigTestFunction extends Lambda.Function<Lambda.Function>()(
 export default AppConfigTestFunction.make(
   {
     main,
-    url: true,
+    functionUrl: true,
     // Starting a configuration session + fetching config fans out two SDK
     // calls; AWS's 3s default intermittently times out on a cold start.
     timeout: Duration.seconds(30),

@@ -1,0 +1,15 @@
+import { describe, expect, it } from "vite-plus/test";
+import { Cookies, HttpClientRequest, HttpClientResponse } from "effect/http";
+
+describe("React Native HTTP responses", () => {
+  it("can inspect a rejected response when native Headers has no getSetCookie", () => {
+    const response = new Response("Registration rejected", { status: 400 });
+    Object.defineProperty(response.headers, "getSetCookie", { value: undefined });
+    const result = HttpClientResponse.fromWeb(
+      HttpClientRequest.post("https://relay.example.test/v1/mobile/devices"),
+      response,
+    );
+    expect(result.cookies).toEqual(Cookies.empty);
+    expect(result.status).toBe(400);
+  });
+});

@@ -17,14 +17,15 @@ export interface ListDeviceDiscoveriesRequest
  * {@link GetDeviceDiscovery}. Provide the implementation with
  * `Effect.provide(AWS.IoTManagedIntegrations.ListDeviceDiscoveriesHttp)`.
  *
- * @binding
- * @section Discovering Devices
- * @example List Running Discovery Scans
+ * ### Discovering Devices
+ * **Example:** List Running Discovery Scans
  * ```typescript
  * const listDiscoveries = yield* IoTManagedIntegrations.ListDeviceDiscoveries();
  *
  * const { Items } = yield* listDiscoveries({ StatusFilter: "RUNNING" });
  * ```
+ *
+ * @binding
  */
 export interface ListDeviceDiscoveries extends Binding.Service<
   ListDeviceDiscoveries,

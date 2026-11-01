@@ -1,12 +1,28 @@
-import * as ops from "@distilled.cloud/planetscale/Operations";
+import * as ps from "@distilled.cloud/planetscale";
 import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
 import * as Redacted from "effect/Redacted";
 import * as Schedule from "effect/Schedule";
-import { createConnection, type Connection } from "mysql2/promise";
-import { listSqlFiles, readSqlFile, type SqlFile } from "../../SQL/SqlFile.ts";
+import type { Connection } from "mysql2/promise";
+import {
+  makeMySQLMigrationExecutor,
+  runMigrations,
+  type NormalizedMigrationsInput,
+  type StampedMigrationsState,
+} from "../../SQL/Migrations/index.ts";
+import { readSqlFile, splitSqlStatements } from "../../SQL/SqlFile.ts";
 
 const MIGRATION_PASSWORD_TTL_SECONDS = 600;
+
+// `mysql2` is an optional peer dependency — loaded lazily so importing the
+// Planetscale provider never requires the driver unless migrations run.
+const importMysql = () =>
+  import("mysql2/promise").catch((cause) => {
+    throw new Error(
+      "Failed to load the 'mysql2' driver. Install the optional peer dependency 'mysql2' to run Planetscale MySQL migrations.",
+      { cause },
+    );
+  });
 
 export class MySQLMigrationError extends Data.TaggedError(
   "Planetscale::MySQLMigrationError",
@@ -21,23 +37,22 @@ export interface MySQLMigrationTarget {
   branch: string;
 }
 
+/**
+ * PlanetScale MySQL's migration adaptation is exactly this: the shared
+ * pipeline with a temp-password-scoped mysql2 connection as its executor.
+ */
 export const runMySQLMigrations = (
   target: MySQLMigrationTarget,
-  migrationsDir: string,
-  migrationsTable: string,
+  input: NormalizedMigrationsInput,
+  stamped: StampedMigrationsState,
 ) =>
-  Effect.gen(function* () {
-    const files = yield* listSqlFiles(migrationsDir);
-    if (files.length > 0) {
-      yield* applyMySQLMigrations({
-        target,
-        migrationsTable,
-        migrationsFiles: files,
-      });
-    }
-    const hashes: Record<string, string> = {};
-    for (const file of files) hashes[file.id] = file.hash;
-    return hashes;
+  runMigrations({
+    input,
+    stamped,
+    withExecutor: (apply) =>
+      withMySQLConnection(target, (connection) =>
+        apply(makeMySQLMigrationExecutor(connection)),
+      ),
   });
 
 export const runMySQLImports = (
@@ -64,90 +79,12 @@ export const runMySQLImports = (
     return hashes;
   });
 
-interface ApplyMigrationsOptions {
-  target: MySQLMigrationTarget;
-  migrationsTable: string;
-  migrationsFiles: ReadonlyArray<SqlFile>;
-}
-
-const applyMySQLMigrations = (options: ApplyMigrationsOptions) =>
-  withMySQLConnection(options.target, (connection) =>
-    Effect.gen(function* () {
-      const table = quoteMySQLIdentifier(options.migrationsTable);
-      yield* mysqlQuery(
-        connection,
-        `CREATE TABLE IF NOT EXISTS ${table} (
-           id varchar(255) NOT NULL PRIMARY KEY,
-           name varchar(1024) NOT NULL,
-           applied_at timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP
-         );`,
-      );
-
-      const applied = yield* mysqlQueryRows<{ name: string }>(
-        connection,
-        `SELECT name FROM ${table};`,
-      ).pipe(Effect.map((rows) => new Set(rows.map((row) => row.name))));
-      let nextSeq = yield* getNextMySQLSeq(connection, table);
-
-      for (const file of options.migrationsFiles) {
-        if (applied.has(file.id)) continue;
-        const migrationId = nextSeq.toString().padStart(5, "0");
-        nextSeq += 1;
-        yield* Effect.gen(function* () {
-          yield* mysqlQuery(connection, "START TRANSACTION");
-          for (const statement of splitMySQLStatements(file.sql)) {
-            yield* mysqlQuery(connection, statement);
-          }
-          yield* mysqlExecute(
-            connection,
-            `INSERT INTO ${table} (id, name) VALUES (?, ?);`,
-            [migrationId, file.id],
-          );
-          yield* mysqlQuery(connection, "COMMIT");
-        }).pipe(
-          Effect.catch((error) =>
-            mysqlQuery(connection, "ROLLBACK").pipe(
-              Effect.catch(() => Effect.void),
-              Effect.andThen(Effect.fail(error)),
-            ),
-          ),
-        );
-      }
-    }),
-  );
-
 const runMySQLSql = (target: MySQLMigrationTarget, sql: string) =>
   withMySQLConnection(target, (connection) =>
     Effect.gen(function* () {
-      for (const statement of splitMySQLStatements(sql)) {
+      for (const statement of splitSqlStatements(sql)) {
         yield* mysqlQuery(connection, statement);
       }
-    }),
-  );
-
-// Drizzle (and other migration tools) emit `--> statement-breakpoint` as a
-// separator between statements. PlanetScale's Vitess parser rejects the `-->`
-// token ("syntax error at position 2") because MySQL line comments require
-// whitespace after `--`. Split on the marker and run each statement
-// individually so the connector never sees the breakpoint comment.
-const STATEMENT_BREAKPOINT = /\r?\n\s*-->\s*statement-breakpoint\s*\r?\n?/g;
-
-const splitMySQLStatements = (sql: string): string[] =>
-  sql
-    .split(STATEMENT_BREAKPOINT)
-    .map((s) => s.trim())
-    .filter((s) => s.length > 0);
-
-const getNextMySQLSeq = (connection: Connection, table: string) =>
-  mysqlQueryRows<{ id: string }>(connection, `SELECT id FROM ${table};`).pipe(
-    Effect.map((rows) => {
-      let max = 0;
-      for (const { id } of rows) {
-        if (/^\d+$/.test(String(id))) {
-          max = Math.max(max, Number.parseInt(String(id), 10));
-        }
-      }
-      return max + 1;
     }),
   );
 
@@ -158,15 +95,17 @@ const withMySQLConnection = <A, E, R>(
   withTemporaryMySQLPassword(target, (password) =>
     Effect.acquireUseRelease(
       Effect.tryPromise({
-        try: () =>
-          createConnection({
+        try: async () => {
+          const { createConnection } = await importMysql();
+          return createConnection({
             host: password.host,
             user: password.username,
             password: Redacted.value(password.password),
             database: target.database,
             multipleStatements: true,
             ssl: { rejectUnauthorized: true },
-          }),
+          });
+        },
         catch: toMigrationError,
       }),
       use,
@@ -189,7 +128,7 @@ const withTemporaryMySQLPassword = <A, E, R>(
 ) =>
   Effect.acquireUseRelease(
     Effect.gen(function* () {
-      const created = yield* ops.createPassword({
+      const created = yield* ps.createPassword({
         organization: target.organization,
         database: target.database,
         branch: target.branch,
@@ -206,7 +145,7 @@ const withTemporaryMySQLPassword = <A, E, R>(
     }),
     use,
     (password) =>
-      ops
+      ps
         .deletePassword({
           organization: target.organization,
           database: target.database,
@@ -243,30 +182,8 @@ const mysqlQuery = (connection: Connection, sql: string) =>
     catch: toMigrationError,
   });
 
-const mysqlExecute = (
-  connection: Connection,
-  sql: string,
-  values?: ReadonlyArray<string>,
-) =>
-  Effect.tryPromise({
-    try: () =>
-      connection
-        .execute(sql, values ? [...values] : undefined)
-        .then(() => undefined),
-    catch: toMigrationError,
-  });
-
-const mysqlQueryRows = <A>(connection: Connection, sql: string) =>
-  Effect.tryPromise({
-    try: () => connection.query(sql).then(([rows]) => rows as A[]),
-    catch: toMigrationError,
-  });
-
 const toMigrationError = (cause: unknown) =>
   new MySQLMigrationError({
     message: cause instanceof Error ? cause.message : String(cause),
     cause,
   });
-
-const quoteMySQLIdentifier = (identifier: string) =>
-  `\`${identifier.replaceAll("`", "``")}\``;

@@ -1,46 +1,57 @@
 import { useAuth } from "@clerk/expo";
-import { AuthView, UserProfileView } from "@clerk/expo/native";
-import { StackActions, useNavigation } from "@react-navigation/native";
-import { useCallback, useEffect, useLayoutEffect, useRef } from "react";
+import {
+  AuthView,
+  type UserProfileCustomPage,
+  UserProfileView,
+} from "@clerk/expo/native-components";
+import { useNavigation } from "@react-navigation/native";
+import { useEffect, useState } from "react";
 import { View } from "react-native";
 
 import { hasCloudPublicConfig } from "../cloud/publicConfig";
+import { T3ConnectProfilePage } from "../cloud/T3ConnectProfilePage";
 
+const USER_PROFILE_CUSTOM_PAGES = [
+  {
+    path: "t3-connect",
+    label: "T3 Connect",
+    icon: "globe",
+    content: <T3ConnectProfilePage />,
+  },
+] satisfies UserProfileCustomPage[];
+
+// Without cloud config the app has no entry point here and appLinking drops the deep link.
 export function SettingsAuthRouteScreen() {
-  const navigation = useNavigation();
-
-  useLayoutEffect(() => {
-    if (!hasCloudPublicConfig()) {
-      navigation.dispatch(StackActions.replace("SettingsContent"));
-    }
-  }, [navigation]);
-
   return hasCloudPublicConfig() ? <ConfiguredSettingsAuthRouteScreen /> : null;
 }
 
 function ConfiguredSettingsAuthRouteScreen() {
   const { isLoaded, isSignedIn } = useAuth({ treatPendingAsSignedOut: false });
   const navigation = useNavigation();
-  const handleHostBack = useCallback(
-    () => navigation.dispatch(StackActions.popTo("SettingsContent")),
-    [navigation],
-  );
-  const hasBeenSignedIn = useRef(isSignedIn);
-  if (isSignedIn) {
-    hasBeenSignedIn.current = true;
-  }
+  const handleHostBack = () => navigation.goBack();
+  // Once signed in, stay on the profile view so signing out pops back instead of
+  // flashing the sign-in form.
+  const [hasBeenSignedIn, setHasBeenSignedIn] = useState(isSignedIn === true);
+  if (isSignedIn && !hasBeenSignedIn) setHasBeenSignedIn(true);
 
+  // Clerk reports sign-out only through its auth store (the native profile view
+  // and the T3 Connect page can both sign out), so this follows that store.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- pops the navigator when Clerk's auth store reports a sign-out from the profile view or Connect page
   useEffect(() => {
-    if (hasBeenSignedIn.current && isLoaded && isSignedIn === false) {
-      navigation.dispatch(StackActions.popTo("SettingsContent"));
+    if (hasBeenSignedIn && isLoaded && isSignedIn === false) {
+      navigation.goBack();
     }
-  }, [isLoaded, isSignedIn, navigation]);
+  }, [hasBeenSignedIn, isLoaded, isSignedIn, navigation]);
 
   return (
     <View collapsable={false} className="flex-1 overflow-hidden bg-sheet">
       {isLoaded ? (
-        hasBeenSignedIn.current ? (
-          <UserProfileView isDismissible={false} onHostBack={handleHostBack} />
+        hasBeenSignedIn ? (
+          <UserProfileView
+            customPages={USER_PROFILE_CUSTOM_PAGES}
+            isDismissible={false}
+            onHostBack={handleHostBack}
+          />
         ) : (
           <AuthView isDismissible={false} onHostBack={handleHostBack} />
         )

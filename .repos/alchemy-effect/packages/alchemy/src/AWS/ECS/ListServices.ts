@@ -14,15 +14,16 @@ export interface ListServicesRequest extends Omit<
  * Bind this operation to a `Cluster` inside a function runtime to get a
  * callable that lists service ARNs in the bound cluster. The cluster ARN is
  * injected automatically and the grant is conditioned on the bound cluster.
- * @binding
- * @section Listing Services
- * @example List Fargate Services
+ * ### Listing Services
+ * **Example:** List Fargate Services
  * ```typescript
  * const listServices = yield* AWS.ECS.ListServices(cluster);
  *
  * const response = yield* listServices({ launchType: "FARGATE" });
  * const serviceArns = response.serviceArns ?? [];
  * ```
+ *
+ * @binding
  */
 export interface ListServices extends Binding.Service<
   ListServices,

@@ -3,19 +3,18 @@ import { SQSQueueEventSource } from "alchemy/Server/SQSQueueEventSource";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Stream from "effect/Stream";
-import * as HttpServerRequest from "effect/unstable/http/HttpServerRequest";
-import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
+import * as HttpServerRequest from "effect/http/HttpServerRequest";
+import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import { Network, NetworkLive } from "./Network.ts";
 
 export default class Server extends AWS.EC2.Instance<Server>()(
   "ServerInstance",
   Effect.gen(function* () {
-    const imageId = yield* AWS.EC2.amazonLinux();
     const network = yield* Network;
 
     return {
       main: import.meta.url,
-      imageId,
+      imageId: AWS.EC2.amazonLinux(),
       instanceType: "t3.small",
       subnetId: network.publicSubnetIds[0],
       securityGroupIds: [network.appSecurityGroupId],

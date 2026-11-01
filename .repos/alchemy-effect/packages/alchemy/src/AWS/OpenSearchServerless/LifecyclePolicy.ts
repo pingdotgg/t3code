@@ -78,9 +78,8 @@ export interface LifecyclePolicy extends Resource<
  * indexes by resource pattern (e.g. `index/my-collection/*`) — the collection
  * does not need to exist when the policy is created.
  *
- * @resource
- * @section Creating Lifecycle Policies
- * @example Retain Log Indexes for 30 Days
+ * ### Creating Lifecycle Policies
+ * **Example:** Retain Log Indexes for 30 Days
  * ```typescript
  * import * as AWS from "alchemy/AWS";
  *
@@ -98,7 +97,7 @@ export interface LifecyclePolicy extends Resource<
  * });
  * ```
  *
- * @example Unlimited Retention for Specific Indexes
+ * **Example:** Unlimited Retention for Specific Indexes
  * ```typescript
  * const keepForever = yield* AWS.OpenSearchServerless.LifecyclePolicy("KeepForever", {
  *   policyName: "audit-retention",
@@ -113,6 +112,8 @@ export interface LifecyclePolicy extends Resource<
  *   },
  * });
  * ```
+ *
+ * @resource
  */
 export const LifecyclePolicy = Resource<LifecyclePolicy>(
   "AWS.OpenSearchServerless.LifecyclePolicy",

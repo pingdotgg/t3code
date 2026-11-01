@@ -133,183 +133,223 @@ const expectAccountRuleGone = (accountId: string, ruleId: string) =>
     }),
   );
 
-test.provider("create and delete a zone-scoped ip rule", (stack) =>
-  Effect.gen(function* () {
-    const { accountId } = yield* yield* CloudflareEnvironment;
-    const zoneId = yield* resolveZoneId;
+test.provider(
+  "create and delete a zone-scoped ip rule",
+  (stack) =>
+    Effect.gen(function* () {
+      const { accountId } = yield* yield* CloudflareEnvironment;
+      const zoneId = yield* resolveZoneId;
 
-    yield* stack.destroy();
-    yield* purgeRules({ zoneId }, IP_DEFAULT);
+      yield* stack.destroy();
+      yield* purgeRules({ zoneId }, IP_DEFAULT);
 
-    const rule = yield* stack.deploy(
-      Effect.gen(function* () {
-        return yield* Cloudflare.Firewall.AccessRule("DefaultRule", {
-          zoneId,
-          configuration: { target: "ip", value: IP_DEFAULT },
-          mode: "challenge",
-          notes: "alchemy firewall test (default)",
-        }).pipe(adopt(true));
-      }),
-    );
+      const rule = yield* stack.deploy(
+        Effect.gen(function* () {
+          return yield* Cloudflare.Firewall.AccessRule("DefaultRule", {
+            zoneId,
+            configuration: { target: "ip", value: IP_DEFAULT },
+            mode: "challenge",
+            notes: "alchemy firewall test (default)",
+          }).pipe(adopt(true));
+        }),
+      );
 
-    expect(rule.ruleId).toBeDefined();
-    expect(rule.zoneId).toEqual(zoneId);
-    expect(rule.accountId).toEqual(accountId);
-    expect(rule.configuration).toEqual({ target: "ip", value: IP_DEFAULT });
-    expect(rule.mode).toEqual("challenge");
-    expect(rule.notes).toEqual("alchemy firewall test (default)");
-    expect(rule.allowedModes).toContain("block");
+      expect(rule.ruleId).toBeDefined();
+      expect(rule.zoneId).toEqual(zoneId);
+      expect(rule.accountId).toEqual(accountId);
+      expect(rule.configuration).toEqual({ target: "ip", value: IP_DEFAULT });
+      expect(rule.mode).toEqual("challenge");
+      expect(rule.notes).toEqual("alchemy firewall test (default)");
+      expect(rule.allowedModes).toContain("block");
 
-    const live = yield* getZoneRule(zoneId, rule.ruleId);
-    expect(live.id).toEqual(rule.ruleId);
-    expect(live.configuration.value).toEqual(IP_DEFAULT);
-    expect(live.mode).toEqual("challenge");
+      const live = yield* getZoneRule(zoneId, rule.ruleId);
+      expect(live.id).toEqual(rule.ruleId);
+      expect(live.configuration.value).toEqual(IP_DEFAULT);
+      expect(live.mode).toEqual("challenge");
 
-    yield* stack.destroy();
+      yield* stack.destroy();
 
-    yield* expectZoneRuleGone(zoneId, rule.ruleId);
-  }).pipe(logLevel),
+      yield* expectZoneRuleGone(zoneId, rule.ruleId);
+    }).pipe(logLevel),
+  {
+    tags: [
+      "provider:cloudflare",
+      "provider:cloudflare:firewall",
+      "provider:cloudflare:zone",
+      "live",
+    ],
+  },
 );
 
-test.provider("update mode and notes in place (same ruleId)", (stack) =>
-  Effect.gen(function* () {
-    const zoneId = yield* resolveZoneId;
+test.provider(
+  "update mode and notes in place (same ruleId)",
+  (stack) =>
+    Effect.gen(function* () {
+      const zoneId = yield* resolveZoneId;
 
-    yield* stack.destroy();
-    yield* purgeRules({ zoneId }, IP_UPDATE);
+      yield* stack.destroy();
+      yield* purgeRules({ zoneId }, IP_UPDATE);
 
-    const initial = yield* stack.deploy(
-      Effect.gen(function* () {
-        return yield* Cloudflare.Firewall.AccessRule("UpdateRule", {
-          zoneId,
-          configuration: { target: "ip", value: IP_UPDATE },
-          mode: "challenge",
-          notes: "v1",
-        }).pipe(adopt(true));
-      }),
-    );
+      const initial = yield* stack.deploy(
+        Effect.gen(function* () {
+          return yield* Cloudflare.Firewall.AccessRule("UpdateRule", {
+            zoneId,
+            configuration: { target: "ip", value: IP_UPDATE },
+            mode: "challenge",
+            notes: "v1",
+          }).pipe(adopt(true));
+        }),
+      );
 
-    expect(initial.mode).toEqual("challenge");
-    expect(initial.notes).toEqual("v1");
+      expect(initial.mode).toEqual("challenge");
+      expect(initial.notes).toEqual("v1");
 
-    const updated = yield* stack.deploy(
-      Effect.gen(function* () {
-        return yield* Cloudflare.Firewall.AccessRule("UpdateRule", {
-          zoneId,
-          configuration: { target: "ip", value: IP_UPDATE },
-          mode: "managed_challenge",
-          notes: "v2",
-        }).pipe(adopt(true));
-      }),
-    );
+      const updated = yield* stack.deploy(
+        Effect.gen(function* () {
+          return yield* Cloudflare.Firewall.AccessRule("UpdateRule", {
+            zoneId,
+            configuration: { target: "ip", value: IP_UPDATE },
+            mode: "managed_challenge",
+            notes: "v2",
+          }).pipe(adopt(true));
+        }),
+      );
 
-    // Same rule patched in place — not a replacement.
-    expect(updated.ruleId).toEqual(initial.ruleId);
-    expect(updated.mode).toEqual("managed_challenge");
-    expect(updated.notes).toEqual("v2");
+      // Same rule patched in place — not a replacement.
+      expect(updated.ruleId).toEqual(initial.ruleId);
+      expect(updated.mode).toEqual("managed_challenge");
+      expect(updated.notes).toEqual("v2");
 
-    const live = yield* getZoneRule(zoneId, updated.ruleId);
-    expect(live.mode).toEqual("managed_challenge");
-    expect(live.notes).toEqual("v2");
+      const live = yield* getZoneRule(zoneId, updated.ruleId);
+      expect(live.mode).toEqual("managed_challenge");
+      expect(live.notes).toEqual("v2");
 
-    // Redeploying identical props is a no-op (still the same rule).
-    const noop = yield* stack.deploy(
-      Effect.gen(function* () {
-        return yield* Cloudflare.Firewall.AccessRule("UpdateRule", {
-          zoneId,
-          configuration: { target: "ip", value: IP_UPDATE },
-          mode: "managed_challenge",
-          notes: "v2",
-        }).pipe(adopt(true));
-      }),
-    );
-    expect(noop.ruleId).toEqual(initial.ruleId);
+      // Redeploying identical props is a no-op (still the same rule).
+      const noop = yield* stack.deploy(
+        Effect.gen(function* () {
+          return yield* Cloudflare.Firewall.AccessRule("UpdateRule", {
+            zoneId,
+            configuration: { target: "ip", value: IP_UPDATE },
+            mode: "managed_challenge",
+            notes: "v2",
+          }).pipe(adopt(true));
+        }),
+      );
+      expect(noop.ruleId).toEqual(initial.ruleId);
 
-    yield* stack.destroy();
+      yield* stack.destroy();
 
-    yield* expectZoneRuleGone(zoneId, initial.ruleId);
-  }).pipe(logLevel),
+      yield* expectZoneRuleGone(zoneId, initial.ruleId);
+    }).pipe(logLevel),
+  {
+    tags: [
+      "provider:cloudflare",
+      "provider:cloudflare:firewall",
+      "provider:cloudflare:zone",
+      "live",
+    ],
+  },
 );
 
-test.provider("changing the configuration triggers replacement", (stack) =>
-  Effect.gen(function* () {
-    const zoneId = yield* resolveZoneId;
+test.provider(
+  "changing the configuration triggers replacement",
+  (stack) =>
+    Effect.gen(function* () {
+      const zoneId = yield* resolveZoneId;
 
-    yield* stack.destroy();
-    yield* purgeRules({ zoneId }, IP_REPLACE_OLD);
-    yield* purgeRules({ zoneId }, IP_REPLACE_NEW);
+      yield* stack.destroy();
+      yield* purgeRules({ zoneId }, IP_REPLACE_OLD);
+      yield* purgeRules({ zoneId }, IP_REPLACE_NEW);
 
-    const initial = yield* stack.deploy(
-      Effect.gen(function* () {
-        return yield* Cloudflare.Firewall.AccessRule("ReplaceRule", {
-          zoneId,
-          configuration: { target: "ip", value: IP_REPLACE_OLD },
-          mode: "challenge",
-        }).pipe(adopt(true));
-      }),
-    );
+      const initial = yield* stack.deploy(
+        Effect.gen(function* () {
+          return yield* Cloudflare.Firewall.AccessRule("ReplaceRule", {
+            zoneId,
+            configuration: { target: "ip", value: IP_REPLACE_OLD },
+            mode: "challenge",
+          }).pipe(adopt(true));
+        }),
+      );
 
-    expect(initial.configuration.value).toEqual(IP_REPLACE_OLD);
+      expect(initial.configuration.value).toEqual(IP_REPLACE_OLD);
 
-    const replaced = yield* stack.deploy(
-      Effect.gen(function* () {
-        return yield* Cloudflare.Firewall.AccessRule("ReplaceRule", {
-          zoneId,
-          configuration: { target: "ip", value: IP_REPLACE_NEW },
-          mode: "challenge",
-        }).pipe(adopt(true));
-      }),
-    );
+      const replaced = yield* stack.deploy(
+        Effect.gen(function* () {
+          return yield* Cloudflare.Firewall.AccessRule("ReplaceRule", {
+            zoneId,
+            configuration: { target: "ip", value: IP_REPLACE_NEW },
+            mode: "challenge",
+          }).pipe(adopt(true));
+        }),
+      );
 
-    // The configuration is the rule's identity — a new physical rule exists.
-    expect(replaced.ruleId).not.toEqual(initial.ruleId);
-    expect(replaced.configuration.value).toEqual(IP_REPLACE_NEW);
+      // The configuration is the rule's identity — a new physical rule exists.
+      expect(replaced.ruleId).not.toEqual(initial.ruleId);
+      expect(replaced.configuration.value).toEqual(IP_REPLACE_NEW);
 
-    // The old rule was deleted as part of the replacement.
-    yield* expectZoneRuleGone(zoneId, initial.ruleId);
+      // The old rule was deleted as part of the replacement.
+      yield* expectZoneRuleGone(zoneId, initial.ruleId);
 
-    const live = yield* getZoneRule(zoneId, replaced.ruleId);
-    expect(live.configuration.value).toEqual(IP_REPLACE_NEW);
+      const live = yield* getZoneRule(zoneId, replaced.ruleId);
+      expect(live.configuration.value).toEqual(IP_REPLACE_NEW);
 
-    yield* stack.destroy();
+      yield* stack.destroy();
 
-    yield* expectZoneRuleGone(zoneId, replaced.ruleId);
-  }).pipe(logLevel),
+      yield* expectZoneRuleGone(zoneId, replaced.ruleId);
+    }).pipe(logLevel),
+  {
+    tags: [
+      "provider:cloudflare",
+      "provider:cloudflare:firewall",
+      "provider:cloudflare:zone",
+      "live",
+    ],
+  },
 );
 
-test.provider("list enumerates the deployed zone-scoped rule", (stack) =>
-  Effect.gen(function* () {
-    const zoneId = yield* resolveZoneId;
+test.provider(
+  "list enumerates the deployed zone-scoped rule",
+  (stack) =>
+    Effect.gen(function* () {
+      const zoneId = yield* resolveZoneId;
 
-    yield* stack.destroy();
-    yield* purgeRules({ zoneId }, IP_LIST);
+      yield* stack.destroy();
+      yield* purgeRules({ zoneId }, IP_LIST);
 
-    const rule = yield* stack.deploy(
-      Effect.gen(function* () {
-        return yield* Cloudflare.Firewall.AccessRule("ListRule", {
-          zoneId,
-          configuration: { target: "ip", value: IP_LIST },
-          mode: "challenge",
-          notes: "alchemy firewall test (list)",
-        }).pipe(adopt(true));
-      }),
-    );
+      const rule = yield* stack.deploy(
+        Effect.gen(function* () {
+          return yield* Cloudflare.Firewall.AccessRule("ListRule", {
+            zoneId,
+            configuration: { target: "ip", value: IP_LIST },
+            mode: "challenge",
+            notes: "alchemy firewall test (list)",
+          }).pipe(adopt(true));
+        }),
+      );
 
-    const provider = yield* Provider.findProvider(
-      Cloudflare.Firewall.AccessRule,
-    );
-    const all = yield* provider.list();
+      const provider = yield* Provider.findProvider(
+        Cloudflare.Firewall.AccessRule,
+      );
+      const all = yield* provider.list();
 
-    const found = all.find((r) => r.ruleId === rule.ruleId);
-    expect(found).toBeDefined();
-    expect(found?.zoneId).toEqual(zoneId);
-    expect(found?.configuration).toEqual({ target: "ip", value: IP_LIST });
-    expect(found?.mode).toEqual("challenge");
+      const found = all.find((r) => r.ruleId === rule.ruleId);
+      expect(found).toBeDefined();
+      expect(found?.zoneId).toEqual(zoneId);
+      expect(found?.configuration).toEqual({ target: "ip", value: IP_LIST });
+      expect(found?.mode).toEqual("challenge");
 
-    yield* stack.destroy();
+      yield* stack.destroy();
 
-    yield* expectZoneRuleGone(zoneId, rule.ruleId);
-  }).pipe(logLevel),
+      yield* expectZoneRuleGone(zoneId, rule.ruleId);
+    }).pipe(logLevel),
+  {
+    tags: [
+      "provider:cloudflare",
+      "provider:cloudflare:firewall",
+      "provider:cloudflare:zone",
+      "live",
+    ],
+  },
 );
 
 test.provider(
@@ -361,4 +401,5 @@ test.provider(
 
       yield* expectAccountRuleGone(accountId, rule.ruleId);
     }).pipe(logLevel),
+  { tags: ["provider:cloudflare", "provider:cloudflare:firewall", "live"] },
 );

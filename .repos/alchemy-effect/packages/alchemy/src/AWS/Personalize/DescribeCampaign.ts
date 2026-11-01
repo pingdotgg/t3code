@@ -8,9 +8,8 @@ import * as Binding from "../../Binding.ts";
  * Provide the implementation with
  * `Effect.provide(AWS.Personalize.DescribeCampaignHttp)`.
  *
- * @binding
- * @section Retraining Loop
- * @example Poll a Campaign Update
+ * ### Retraining Loop
+ * **Example:** Poll a Campaign Update
  * ```typescript
  * // init
  * const describeCampaign = yield* Personalize.DescribeCampaign();
@@ -18,6 +17,8 @@ import * as Binding from "../../Binding.ts";
  * const { campaign } = yield* describeCampaign({ campaignArn });
  * const live = campaign?.status === "ACTIVE";
  * ```
+ *
+ * @binding
  */
 export interface DescribeCampaign extends Binding.Service<
   DescribeCampaign,

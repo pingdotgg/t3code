@@ -5,7 +5,7 @@ import * as data from "@distilled.cloud/aws/redshift-data";
 import { describe, expect } from "alchemy-test";
 import * as Effect from "effect/Effect";
 import * as Schedule from "effect/Schedule";
-import * as HttpClient from "effect/unstable/http/HttpClient";
+import * as HttpClient from "effect/http/HttpClient";
 import RedshiftDataApiFunctionLive, {
   RedshiftDataApiFunction,
 } from "./fixtures/data-api-handler";
@@ -32,6 +32,7 @@ test.provider(
         error._tag,
       );
     }),
+  { tags: ["provider:aws", "provider:aws:redshiftdata", "live"] },
 );
 
 test.provider(
@@ -50,6 +51,7 @@ test.provider(
         "DatabaseConnectionException",
       ]).toContain(error._tag);
     }),
+  { tags: ["provider:aws", "provider:aws:redshiftdata", "live"] },
 );
 
 // ---------------------------------------------------------------------------
@@ -83,120 +85,132 @@ const get = (route: string) =>
     Effect.flatMap((res) => res.json),
   );
 
-describe.skipIf(!process.env.AWS_TEST_SLOW)("RedshiftData client", () => {
-  beforeAll(
-    Effect.gen(function* () {
-      yield* Effect.logInfo(
-        "RedshiftData client setup: destroying previous run",
-      );
-      yield* sharedStack.destroy();
+describe.skipIf(!process.env.AWS_TEST_SLOW)(
+  "RedshiftData client",
+  {
+    tags: [
+      "provider:aws",
+      "provider:aws:lambda",
+      "provider:aws:redshiftdata",
+      "provider:aws:redshiftserverless",
+      "live",
+    ],
+  },
+  () => {
+    beforeAll(
+      Effect.gen(function* () {
+        yield* Effect.logInfo(
+          "RedshiftData client setup: destroying previous run",
+        );
+        yield* sharedStack.destroy();
 
-      yield* Effect.logInfo("RedshiftData client setup: deploying fixture");
-      const { functionUrl } = yield* sharedStack.deploy(
+        yield* Effect.logInfo("RedshiftData client setup: deploying fixture");
+        const { functionUrl } = yield* sharedStack.deploy(
+          Effect.gen(function* () {
+            return yield* RedshiftDataApiFunction;
+          }).pipe(Effect.provide(RedshiftDataApiFunctionLive)),
+        );
+
+        expect(functionUrl).toBeTruthy();
+        baseUrl = functionUrl!.replace(/\/+$/, "");
+        yield* Effect.logInfo(
+          `RedshiftData client setup: function URL ready (${functionUrl})`,
+        );
+      }),
+      // namespace (~1 min) + workgroup create (~2-5 min) + Lambda deploy.
+      { timeout: 900_000 },
+    );
+
+    afterAll(sharedStack.destroy(), { timeout: 600_000 });
+
+    test.provider(
+      "query: execute + describe + getResult round-trip",
+      (_stack) =>
         Effect.gen(function* () {
-          return yield* RedshiftDataApiFunction;
-        }).pipe(Effect.provide(RedshiftDataApiFunctionLive)),
-      );
+          const body = (yield* get("/query")) as {
+            columns: (string | undefined)[];
+            records: { longValue?: number }[][];
+            totalNumRows: number;
+          };
+          expect(body.records).toHaveLength(1);
+          expect(body.records[0][0]).toMatchObject({ longValue: 1 });
+        }),
+      { timeout: 240_000 },
+    );
 
-      expect(functionUrl).toBeTruthy();
-      baseUrl = functionUrl!.replace(/\/+$/, "");
-      yield* Effect.logInfo(
-        `RedshiftData client setup: function URL ready (${functionUrl})`,
-      );
-    }),
-    // namespace (~1 min) + workgroup create (~2-5 min) + Lambda deploy.
-    { timeout: 900_000 },
-  );
+    test.provider(
+      "executeBatch: runs sub-statements and fetches a sub-statement result",
+      (_stack) =>
+        Effect.gen(function* () {
+          const body = (yield* get("/batch")) as {
+            status: string;
+            subStatementCount: number;
+            secondRecords: { longValue?: number }[][] | undefined;
+          };
+          expect(body.status).toBe("FINISHED");
+          expect(body.subStatementCount).toBe(2);
+          expect(body.secondRecords?.[0]?.[0]).toMatchObject({ longValue: 2 });
+        }),
+      { timeout: 240_000 },
+    );
 
-  afterAll(sharedStack.destroy(), { timeout: 600_000 });
+    test.provider(
+      "metadata: listDatabases + listSchemas + listTables + describeTable",
+      (_stack) =>
+        Effect.gen(function* () {
+          const body = (yield* get("/metadata")) as {
+            databases: string[];
+            schemas: string[];
+            tables: string[];
+            columnCount: number;
+          };
+          expect(body.databases).toContain("dev");
+          expect(body.schemas).toContain("pg_catalog");
+          expect(body.tables).toContain("pg_class");
+          expect(body.columnCount).toBeGreaterThan(0);
+        }),
+      { timeout: 240_000 },
+    );
 
-  test.provider(
-    "query: execute + describe + getResult round-trip",
-    (_stack) =>
-      Effect.gen(function* () {
-        const body = (yield* get("/query")) as {
-          columns: (string | undefined)[];
-          records: { longValue?: number }[][];
-          totalNumRows: number;
-        };
-        expect(body.records).toHaveLength(1);
-        expect(body.records[0][0]).toMatchObject({ longValue: 1 });
-      }),
-    { timeout: 240_000 },
-  );
+    test.provider(
+      "listStatements: sees the caller's submitted statement",
+      (_stack) =>
+        Effect.gen(function* () {
+          const body = (yield* get("/statements")) as {
+            count: number;
+            hasSubmitted: boolean;
+          };
+          expect(body.count).toBeGreaterThan(0);
+          expect(body.hasSubmitted).toBe(true);
+        }),
+      { timeout: 240_000 },
+    );
 
-  test.provider(
-    "executeBatch: runs sub-statements and fetches a sub-statement result",
-    (_stack) =>
-      Effect.gen(function* () {
-        const body = (yield* get("/batch")) as {
-          status: string;
-          subStatementCount: number;
-          secondRecords: { longValue?: number }[][] | undefined;
-        };
-        expect(body.status).toBe("FINISHED");
-        expect(body.subStatementCount).toBe(2);
-        expect(body.secondRecords?.[0]?.[0]).toMatchObject({ longValue: 2 });
-      }),
-    { timeout: 240_000 },
-  );
+    test.provider(
+      "cancel: cancellation request round-trips",
+      (_stack) =>
+        Effect.gen(function* () {
+          const body = (yield* get("/cancel")) as { canceled: boolean };
+          // Cancellation races completion; either outcome proves the wiring.
+          expect(typeof body.canceled).toBe("boolean");
+        }),
+      { timeout: 240_000 },
+    );
 
-  test.provider(
-    "metadata: listDatabases + listSchemas + listTables + describeTable",
-    (_stack) =>
-      Effect.gen(function* () {
-        const body = (yield* get("/metadata")) as {
-          databases: string[];
-          schemas: string[];
-          tables: string[];
-          columnCount: number;
-        };
-        expect(body.databases).toContain("dev");
-        expect(body.schemas).toContain("pg_catalog");
-        expect(body.tables).toContain("pg_class");
-        expect(body.columnCount).toBeGreaterThan(0);
-      }),
-    { timeout: 240_000 },
-  );
-
-  test.provider(
-    "listStatements: sees the caller's submitted statement",
-    (_stack) =>
-      Effect.gen(function* () {
-        const body = (yield* get("/statements")) as {
-          count: number;
-          hasSubmitted: boolean;
-        };
-        expect(body.count).toBeGreaterThan(0);
-        expect(body.hasSubmitted).toBe(true);
-      }),
-    { timeout: 240_000 },
-  );
-
-  test.provider(
-    "cancel: cancellation request round-trips",
-    (_stack) =>
-      Effect.gen(function* () {
-        const body = (yield* get("/cancel")) as { canceled: boolean };
-        // Cancellation races completion; either outcome proves the wiring.
-        expect(typeof body.canceled).toBe("boolean");
-      }),
-    { timeout: 240_000 },
-  );
-
-  test.provider(
-    "getResultV2: CSV result format round-trips",
-    (_stack) =>
-      Effect.gen(function* () {
-        const body = (yield* get("/result-v2")) as {
-          status: string;
-          resultFormat: string | undefined;
-          records: { CSVRecords?: string }[];
-        };
-        expect(body.status).toBe("FINISHED");
-        expect(body.records.length).toBeGreaterThan(0);
-        expect(body.records[0]?.CSVRecords).toContain("7");
-      }),
-    { timeout: 240_000 },
-  );
-});
+    test.provider(
+      "getResultV2: CSV result format round-trips",
+      (_stack) =>
+        Effect.gen(function* () {
+          const body = (yield* get("/result-v2")) as {
+            status: string;
+            resultFormat: string | undefined;
+            records: { CSVRecords?: string }[];
+          };
+          expect(body.status).toBe("FINISHED");
+          expect(body.records.length).toBeGreaterThan(0);
+          expect(body.records[0]?.CSVRecords).toContain("7");
+        }),
+      { timeout: 240_000 },
+    );
+  },
+);

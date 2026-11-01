@@ -8,11 +8,12 @@ import * as Ref from "effect/Ref";
 
 import * as Electron from "electron";
 
-import { DEFAULT_CLIENT_SETTINGS } from "@t3tools/contracts";
+import { type DesktopSnapShotEvent, DEFAULT_CLIENT_SETTINGS } from "@t3tools/contracts";
 
 import * as DesktopAssets from "../app/DesktopAssets.ts";
 import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
 import { makeComponentLogger } from "../app/DesktopObservability.ts";
+import * as DesktopState from "../app/DesktopState.ts";
 import * as ElectronMenu from "../electron/ElectronMenu.ts";
 import { getDesktopUrl } from "../electron/ElectronProtocol.ts";
 import * as ElectronShell from "../electron/ElectronShell.ts";
@@ -21,35 +22,46 @@ import * as ElectronWindow from "../electron/ElectronWindow.ts";
 import {
   MENU_ACTION_CHANNEL,
   QUIT_SHORTCUT_CHANNEL,
+  SNAP_SHOT_EVENT_CHANNEL,
+  TRACKPAD_SCROLL_BEGIN_CHANNEL,
+  TRACKPAD_SCROLL_END_CHANNEL,
   WINDOW_FULLSCREEN_STATE_CHANNEL,
 } from "../ipc/channels.ts";
+import { PASSKEY_BRIDGE_ARGUMENT } from "../preview/GuestProtocol.ts";
 import * as PreviewManager from "../preview/Manager.ts";
+import * as PreviewPasskeys from "../preview/Passkeys.ts";
 import * as DesktopAppSettings from "../settings/DesktopAppSettings.ts";
 import * as DesktopClientSettings from "../settings/DesktopClientSettings.ts";
 import * as ElectronApp from "../electron/ElectronApp.ts";
-import { makeQuitHoldHandler } from "./QuitHold.ts";
+import * as DesktopRendererHistory from "../telemetry/DesktopRendererHistory.ts";
+import { makeQuitShortcutHandler } from "./QuitHold.ts";
+import { copyContextMenuImage } from "./ContextMenuImage.ts";
 
 const TITLEBAR_HEIGHT = 40;
+// Match --workspace-topbar-height in apps/web/src/index.css; native macOS buttons stay 14 points at any zoom.
+const MACOS_WORKSPACE_TOPBAR_HEIGHT = 52;
+const MACOS_WINDOW_BUTTON_RADIUS = 7;
+
+function syncMacosWindowButtons(window: Electron.BrowserWindow): void {
+  if (window.isDestroyed() || window.isFullScreen()) return;
+  window.setWindowButtonPosition({
+    x: 16,
+    y: Math.round(
+      (MACOS_WORKSPACE_TOPBAR_HEIGHT * window.webContents.getZoomFactor()) / 2 -
+        MACOS_WINDOW_BUTTON_RADIUS,
+    ),
+  });
+}
+
 const TITLEBAR_COLOR = "#01000000"; // #00000000 does not work correctly on Linux
 const TITLEBAR_LIGHT_SYMBOL_COLOR = "#1f2937";
 const TITLEBAR_DARK_SYMBOL_COLOR = "#f8fafc";
 const MAIN_WINDOW_BOUNDS_PERSIST_DEBOUNCE_MS = 500;
 const DEVELOPMENT_LOAD_RETRY_DELAYS_MS = [100, 250, 500, 1_000, 2_000] as const;
-// Renderer crash (usually V8 OOM on long sessions) recovery: reload after a
-// short delay, at most MAX_ATTEMPTS times per rolling WINDOW so a renderer
-// that dies on boot cannot reload-loop forever.
 const RENDERER_RECOVERY_RELOAD_DELAY_MS = 500;
 const RENDERER_RECOVERY_MAX_ATTEMPTS = 3;
 const RENDERER_RECOVERY_WINDOW_MS = 60_000;
-const DEVELOPMENT_RETRYABLE_LOAD_ERROR_CODES = new Set([
-  -2, // ERR_FAILED
-  -7, // ERR_TIMED_OUT
-  -9, // ERR_UNEXPECTED (custom protocol handler rejected)
-  -102, // ERR_CONNECTION_REFUSED
-  -105, // ERR_NAME_NOT_RESOLVED
-  -106, // ERR_INTERNET_DISCONNECTED
-  -118, // ERR_CONNECTION_TIMED_OUT
-]);
+const DEVELOPMENT_RETRYABLE_LOAD_ERROR_CODES = new Set([-2, -7, -9, -102, -105, -106, -118]);
 
 type WindowTitleBarOptions = Pick<
   Electron.BrowserWindowConstructorOptions,
@@ -58,6 +70,7 @@ type WindowTitleBarOptions = Pick<
 
 type DesktopWindowRuntimeServices =
   | DesktopEnvironment.DesktopEnvironment
+  | DesktopState.DesktopState
   | DesktopAssets.DesktopAssets
   | DesktopAppSettings.DesktopAppSettings
   | DesktopClientSettings.DesktopClientSettings
@@ -66,6 +79,7 @@ type DesktopWindowRuntimeServices =
   | ElectronShell.ElectronShell
   | ElectronTheme.ElectronTheme
   | ElectronWindow.ElectronWindow
+  | DesktopRendererHistory.DesktopRendererHistory
   | PreviewManager.PreviewManager;
 
 export type DesktopWindowError =
@@ -73,6 +87,7 @@ export type DesktopWindowError =
   | PreviewManager.PreviewManagerError;
 
 export type MainWindowZoomDirection = "in" | "out" | "reset";
+export type MainWindowContentsCommand = "reload" | "forceReload" | "toggleDevTools";
 
 export class DesktopWindow extends Context.Service<
   DesktopWindow,
@@ -82,30 +97,21 @@ export class DesktopWindow extends Context.Service<
     readonly revealOrCreateMain: Effect.Effect<Electron.BrowserWindow, DesktopWindowError>;
     readonly activate: Effect.Effect<void, DesktopWindowError>;
     readonly createMainIfBackendReady: Effect.Effect<void, DesktopWindowError>;
-    // Show a lightweight "Connecting to WSL" splash window immediately (wsl-only
-    // mode), before the WSL backend that serves the renderer is ready. It is
-    // dismissed automatically once the real main window reveals.
     readonly showConnectingSplash: Effect.Effect<void>;
-    // Marks the primary backend as ready so `createMainIfBackendReady` and the
-    // macOS "activate without windows" path may open the real main window. The
-    // renderer now always loads the local client URL (getDesktopUrl) and connects
-    // to the backend through the connection layer, so the reported httpBaseUrl is
-    // no longer used to point the window at the backend — it is kept only for the
-    // readiness log and to preserve the callback contract the backend pool drives.
     readonly handleBackendReady: (httpBaseUrl: URL) => Effect.Effect<void, DesktopWindowError>;
-    // Called when the backend transitions back to "not ready" (clean stop,
-    // restart, crash). Clears the latch that lets `activate` auto-create a
-    // window so a "macOS dock click" while the backend is down doesn't
-    // produce a stranded window pointing at nothing.
     readonly handleBackendNotReady: Effect.Effect<void>;
     readonly flushMainWindowBounds: Effect.Effect<void>;
-    readonly dispatchMenuAction: (action: string) => Effect.Effect<void, DesktopWindowError>;
-    // Zooms the main window's own webContents. The Electron `zoomIn`/`zoomOut`
-    // menu roles act on whichever webContents has keyboard focus, so with an
-    // embedded preview WebContentsView (or DevTools) focused they zoom the
-    // guest page instead of the app UI. The menu routes here to always target
-    // the main window.
+    readonly prepareCaptureReveal: Effect.Effect<void>;
+    readonly dispatchMenuAction: (
+      action: string,
+      options?: { readonly reveal?: boolean },
+    ) => Effect.Effect<void, DesktopWindowError>;
+    readonly dispatchSnapShotEvent: (
+      event: DesktopSnapShotEvent,
+    ) => Effect.Effect<void, DesktopWindowError>;
+    // Electron zoom roles target focused guests; zoomMain must always target the app.
     readonly zoomMain: (direction: MainWindowZoomDirection) => Effect.Effect<void>;
+    readonly runMainContentsCommand: (command: MainWindowContentsCommand) => Effect.Effect<void>;
     readonly syncAppearance: Effect.Effect<void>;
   }
 >()("@t3tools/desktop/window/DesktopWindow") {}
@@ -117,7 +123,7 @@ function getIconOption(
   iconPaths: DesktopAssets.DesktopIconPaths,
   platform: NodeJS.Platform,
 ): { icon: string } | Record<string, never> {
-  if (platform === "darwin") return {}; // macOS uses .icns from app bundle
+  if (platform === "darwin") return {};
   const ext = platform === "win32" ? "ico" : "png";
   return Option.match(iconPaths[ext], {
     onNone: () => ({}),
@@ -126,7 +132,7 @@ function getIconOption(
 }
 
 function getInitialWindowBackgroundColor(shouldUseDarkColors: boolean): string {
-  return shouldUseDarkColors ? "#0a0a0a" : "#ffffff";
+  return shouldUseDarkColors ? "#000000" : "#ffffff";
 }
 
 type DisplayBounds = Pick<Electron.Rectangle, "x" | "y" | "width" | "height">;
@@ -168,9 +174,6 @@ export function resolveInitialMainWindowBounds(
   return DesktopAppSettings.DEFAULT_MAIN_WINDOW_SIZE;
 }
 
-// A self-contained "Connecting to WSL" splash, shown immediately in wsl-only
-// mode while the WSL backend (which serves the renderer) cold-boots. Inlined as
-// a data URL so it needs no bundled asset and no backend — pure CSS, no JS.
 function buildConnectingSplashDataUrl(shouldUseDarkColors: boolean): string {
   const background = getInitialWindowBackgroundColor(shouldUseDarkColors);
   const label = shouldUseDarkColors ? "#9ca3af" : "#6b7280";
@@ -185,13 +188,20 @@ export function isSameOriginRendererNavigation(input: {
   readonly navigationUrl: string;
 }): boolean {
   try {
-    return new URL(input.applicationUrl).origin === new URL(input.navigationUrl).origin;
+    const applicationUrl = new URL(input.applicationUrl);
+    const navigationUrl = new URL(input.navigationUrl);
+    // Node serializes custom-scheme origins as "null", even for different hosts and schemes.
+    return (
+      applicationUrl.host !== "" &&
+      navigationUrl.protocol === applicationUrl.protocol &&
+      navigationUrl.host === applicationUrl.host
+    );
   } catch {
     return false;
   }
 }
 
-export function isRetryableDevelopmentRendererLoadFailure(input: {
+function isRetryableDevelopmentRendererLoadFailure(input: {
   readonly applicationUrl: string;
   readonly errorCode: number;
   readonly isMainFrame: boolean;
@@ -207,6 +217,20 @@ export function isRetryableDevelopmentRendererLoadFailure(input: {
   );
 }
 
+function concealPendingQuitWindow(
+  window: Pick<
+    Electron.BrowserWindow,
+    "isDestroyed" | "isFullScreen" | "setFullScreen" | "setOpacity"
+  >,
+): void {
+  if (window.isDestroyed()) return;
+  if (window.isFullScreen()) {
+    window.setFullScreen(false);
+  }
+  // Linux lacks Electron window opacity; release-gated quits remain visible there.
+  window.setOpacity(0);
+}
+
 function getWindowTitleBarOptions(
   shouldUseDarkColors: boolean,
   platform: NodeJS.Platform,
@@ -214,7 +238,10 @@ function getWindowTitleBarOptions(
   if (platform === "darwin") {
     return {
       titleBarStyle: "hiddenInset",
-      trafficLightPosition: { x: 16, y: 18 },
+      trafficLightPosition: {
+        x: 16,
+        y: MACOS_WORKSPACE_TOPBAR_HEIGHT / 2 - MACOS_WINDOW_BUTTON_RADIUS,
+      },
     };
   }
 
@@ -263,25 +290,22 @@ function bindFirstRevealTrigger(
   }
 }
 
+/** @public */
 export const make = Effect.gen(function* () {
   const environment = yield* DesktopEnvironment.DesktopEnvironment;
+  const desktopState = yield* DesktopState.DesktopState;
   const assets = yield* DesktopAssets.DesktopAssets;
   const electronMenu = yield* ElectronMenu.ElectronMenu;
   const electronShell = yield* ElectronShell.ElectronShell;
   const electronTheme = yield* ElectronTheme.ElectronTheme;
   const electronWindow = yield* ElectronWindow.ElectronWindow;
   const previewManager = yield* PreviewManager.PreviewManager;
+  const previewPasskeys = yield* PreviewPasskeys.PreviewPasskeys;
   const desktopSettings = yield* DesktopAppSettings.DesktopAppSettings;
   const clientSettings = yield* DesktopClientSettings.DesktopClientSettings;
   const electronApp = yield* ElectronApp.ElectronApp;
-  // Window-side latch for the primary backend's readiness. Set by
-  // handleBackendReady (driven by the pool's onReady callback), cleared
-  // by handleBackendNotReady (driven by onShutdown). Only consumed by
-  // createMainIfBackendReady, which gates the post-readiness window
-  // open in development and the macOS "activate without windows" path.
+  const rendererHistory = yield* DesktopRendererHistory.DesktopRendererHistory;
   const backendReadyRef = yield* Ref.make(false);
-  // The transient "Connecting to WSL" splash window, tracked separately so it
-  // is never mistaken for the real main window.
   const splashWindowRef = yield* Ref.make<Option.Option<Electron.BrowserWindow>>(Option.none());
   const context = yield* Effect.context<DesktopWindowRuntimeServices>();
   const runFork = Effect.runForkWith(context);
@@ -295,13 +319,7 @@ export const make = Effect.gen(function* () {
     }
   });
 
-  // currentMainOrFirst / focusedMainOrFirst fall back to "any first window",
-  // which during WSL-only boot is the connecting splash. The splash is never
-  // registered via setMain, so it must be treated as "no real main window" --
-  // otherwise ensureMain/activate/dispatchMenuAction latch onto it and never
-  // open (or retry) the real main. That is the failure the pool's swallowed
-  // post-readiness window-open error would otherwise strand the user in:
-  // splash up, backend ready, no main, and activation only re-reveals splash.
+  // Electron's first-window fallback can select the unregistered connecting splash; exclude it so main creation retries.
   const withoutSplash = (window: Option.Option<Electron.BrowserWindow>) =>
     Ref.get(splashWindowRef).pipe(
       Effect.map((splash) =>
@@ -314,10 +332,24 @@ export const make = Effect.gen(function* () {
   const currentMainWindow = electronWindow.currentMainOrFirst.pipe(Effect.flatMap(withoutSplash));
   const focusedMainWindow = electronWindow.focusedMainOrFirst.pipe(Effect.flatMap(withoutSplash));
 
+  const zoomWindow = Effect.fn("desktop.window.zoomWindow")(function* (
+    window: Electron.BrowserWindow,
+    direction: MainWindowZoomDirection,
+  ) {
+    const webContents = window.webContents;
+    webContents.setZoomLevel(
+      direction === "reset" ? 0 : webContents.getZoomLevel() + (direction === "in" ? 0.5 : -0.5),
+    );
+    if (environment.platform === "darwin") syncMacosWindowButtons(window);
+    // App zoom propagates to guests; restore each preview's own zoom.
+    yield* previewManager.reapplyZoom();
+  });
+
   const createWindow = Effect.fn("desktop.window.createWindow")(function* (): Effect.fn.Return<
-    Electron.BrowserWindow,
+    Option.Option<Electron.BrowserWindow>,
     DesktopWindowError
   > {
+    if (yield* Ref.get(desktopState.quitting)) return Option.none();
     yield* previewManager.getBrowserSession();
     const applicationUrl = getDesktopUrl(environment.isDevelopment);
     const iconPaths = yield* assets.iconPaths;
@@ -346,6 +378,7 @@ export const make = Effect.gen(function* () {
     if (persistedBounds !== null && initialBounds === DesktopAppSettings.DEFAULT_MAIN_WINDOW_SIZE) {
       yield* logWindowWarning("saved main window bounds could not be restored; using defaults");
     }
+    if (yield* Ref.get(desktopState.quitting)) return Option.none();
     const window = yield* electronWindow.create({
       ...initialBounds,
       minWidth: 840,
@@ -359,14 +392,22 @@ export const make = Effect.gen(function* () {
       ...getWindowTitleBarOptions(shouldUseDarkColors, environment.platform),
       webPreferences: {
         preload: environment.preloadPath,
+        // Hidden-renderer throttling stalls first paint; re-enable it after the first reveal.
         backgroundThrottling: false,
         contextIsolation: true,
         nodeIntegration: false,
         sandbox: true,
         webviewTag: true,
+        // Guest fullscreen propagates to the embedder; both must opt out to keep it inside the webview.
+        disableHtmlFullscreenWindowResize: true,
       },
     });
+    if (yield* Ref.get(desktopState.quitting)) {
+      yield* electronWindow.destroyAll;
+      return Option.none();
+    }
 
+    yield* rendererHistory.register(window.webContents, { surface: "main" });
     if (environment.platform === "darwin") {
       window.setAutoHideCursor(false);
     }
@@ -458,6 +499,10 @@ export const make = Effect.gen(function* () {
     flushMainWindowBounds = flushBoundsPersist;
 
     yield* previewManager.setMainWindow(window);
+    if (yield* Ref.get(desktopState.quitting)) {
+      yield* electronWindow.destroyAll;
+      return Option.none();
+    }
     window.webContents.on("will-attach-webview", (event, webPreferences, params) => {
       if (
         typeof params.partition !== "string" ||
@@ -470,54 +515,94 @@ export const make = Effect.gen(function* () {
       webPreferences.nodeIntegration = false;
       webPreferences.nodeIntegrationInSubFrames = false;
       webPreferences.contextIsolation = false;
+      webPreferences.disableHtmlFullscreenWindowResize = true;
+      if (previewPasskeys.bridgeEnabled) {
+        webPreferences.additionalArguments = [
+          ...(webPreferences.additionalArguments ?? []),
+          PASSKEY_BRIDGE_ARGUMENT,
+        ];
+      }
     });
 
-    window.webContents.on("context-menu", (event, params) => {
-      event.preventDefault();
+    const contextMenuContents = new WeakSet<Electron.WebContents>();
+    const installContextMenu = (
+      ownerWindow: Electron.BrowserWindow,
+      contents: Electron.WebContents,
+    ): void => {
+      if (contextMenuContents.has(contents)) return;
+      contextMenuContents.add(contents);
+      contents.on("context-menu", (event, params) => {
+        event.preventDefault();
+        if (contents.isDestroyed() || ownerWindow.isDestroyed()) return;
+        // Right-clicking a guest may leave native editing roles targeting the host renderer.
+        contents.focus();
 
-      const menuTemplate: Electron.MenuItemConstructorOptions[] = [];
+        const menuTemplate: Electron.MenuItemConstructorOptions[] = [];
 
-      if (params.misspelledWord) {
-        for (const suggestion of params.dictionarySuggestions.slice(0, 5)) {
-          menuTemplate.push({
-            label: suggestion,
-            click: () => window.webContents.replaceMisspelling(suggestion),
-          });
+        if (params.misspelledWord) {
+          for (const suggestion of params.dictionarySuggestions.slice(0, 5)) {
+            menuTemplate.push({
+              label: suggestion,
+              click: () => {
+                if (!contents.isDestroyed()) contents.replaceMisspelling(suggestion);
+              },
+            });
+          }
+          if (params.dictionarySuggestions.length === 0) {
+            menuTemplate.push({ label: "No suggestions", enabled: false });
+          }
+          menuTemplate.push({ type: "separator" });
         }
-        if (params.dictionarySuggestions.length === 0) {
-          menuTemplate.push({ label: "No suggestions", enabled: false });
-        }
-        menuTemplate.push({ type: "separator" });
-      }
 
-      if (Option.isSome(ElectronShell.parseSafeExternalUrl(params.linkURL))) {
-        menuTemplate.push(
-          {
-            label: "Copy Link",
-            click: () => {
-              void runPromise(electronShell.copyText(params.linkURL));
+        if (Option.isSome(ElectronShell.parseSafeExternalUrl(params.linkURL))) {
+          menuTemplate.push(
+            {
+              label: "Copy Link",
+              click: () => {
+                void runPromise(electronShell.copyText(params.linkURL));
+              },
             },
-          },
-          { type: "separator" },
+            { type: "separator" },
+          );
+        }
+
+        if (params.mediaType === "image") {
+          menuTemplate.push({
+            label: "Copy Image",
+            click: () => {
+              void runPromise(
+                Effect.tryPromise(() => copyContextMenuImage(contents, params)).pipe(
+                  Effect.catch(() => logWindowWarning("failed to copy context-menu image")),
+                ),
+              );
+            },
+          });
+          menuTemplate.push({ type: "separator" });
+        }
+
+        menuTemplate.push(
+          { role: "cut", enabled: params.editFlags.canCut },
+          { role: "copy", enabled: params.editFlags.canCopy },
+          { role: "paste", enabled: params.editFlags.canPaste },
+          { role: "selectAll", enabled: params.editFlags.canSelectAll },
         );
-      }
 
-      if (params.mediaType === "image") {
-        menuTemplate.push({
-          label: "Copy Image",
-          click: () => window.webContents.copyImageAt(params.x, params.y),
-        });
-        menuTemplate.push({ type: "separator" });
-      }
-
-      menuTemplate.push(
-        { role: "cut", enabled: params.editFlags.canCut },
-        { role: "copy", enabled: params.editFlags.canCopy },
-        { role: "paste", enabled: params.editFlags.canPaste },
-        { role: "selectAll", enabled: params.editFlags.canSelectAll },
-      );
-
-      void runPromise(electronMenu.popupTemplate({ window, template: menuTemplate }));
+        void runPromise(
+          electronMenu.popupTemplate({
+            window: ownerWindow,
+            template: menuTemplate,
+            ...(params.frame ? { frame: params.frame } : {}),
+          }),
+        );
+      });
+      contents.on("did-create-window", (popup) => {
+        installContextMenu(popup, popup.webContents);
+      });
+    };
+    installContextMenu(window, window.webContents);
+    window.webContents.on("did-attach-webview", (_event, contents) => {
+      installContextMenu(window, contents);
+      void runPromise(previewManager.prepareWebview(contents));
     });
 
     window.webContents.setWindowOpenHandler(({ url }) => {
@@ -542,16 +627,9 @@ export const make = Effect.gen(function* () {
       }
     });
 
-    // Electron's windowMenu close role owns CmdOrCtrl+W. Holding the
-    // close-terminal shortcut can outlive the terminal that handled its first
-    // press, so reject repeats before they reach the native window accelerator.
-    // Deliberate presses still flow through the renderer or native menu.
-    // Chrome-style hold-to-quit: intercept the quit accelerator before the
-    // native menu sees it and only quit after the shortcut is held. The
-    // renderer shows the "Hold to Quit" hint via QUIT_SHORTCUT_CHANNEL.
-    const quitHoldHandler = makeQuitHoldHandler({
+    const quitShortcutHandler = makeQuitShortcutHandler({
       platform: environment.platform,
-      isEnabled: () =>
+      getMode: () =>
         runPromise(
           Effect.map(
             clientSettings.get,
@@ -561,22 +639,37 @@ export const make = Effect.gen(function* () {
             }),
           ),
         ),
-      notify: (state) => {
+      notify: (hint) => {
         if (!window.isDestroyed()) {
-          window.webContents.send(QUIT_SHORTCUT_CHANNEL, state);
+          window.webContents.send(QUIT_SHORTCUT_CHANNEL, hint);
         }
       },
+      // Hold focus until shortcut release so remaining repeats cannot reach the next app.
+      concealWindow: () => concealPendingQuitWindow(window),
       quit: () => {
         void runPromise(electronApp.quit);
       },
     });
     window.webContents.on("before-input-event", (event, input) => {
-      quitHoldHandler(event, input);
+      quitShortcutHandler(event, input);
+      // A held Cmd/Ctrl+W closes one tab or terminal, not each one behind it.
       if (input.type !== "keyDown" || !input.isAutoRepeat) return;
       const modifier = environment.platform === "darwin" ? input.meta : input.control;
       if (modifier && !input.alt && !input.shift && input.key.toLowerCase() === "w") {
         event.preventDefault();
       }
+    });
+    window.webContents.on("input-event", (_event, input) => {
+      if (input.type === "gestureScrollBegin") {
+        window.webContents.send(TRACKPAD_SCROLL_BEGIN_CHANNEL);
+      } else if (input.type === "gestureScrollEnd") {
+        window.webContents.send(TRACKPAD_SCROLL_END_CHANNEL);
+      }
+    });
+    // Ctrl+wheel bypasses menus; guest contents emit their own zoom-changed event.
+    window.webContents.on("zoom-changed", (_event, direction) => {
+      if (window.isDestroyed()) return;
+      runFork(zoomWindow(window, direction));
     });
 
     window.on("page-title-updated", (event) => {
@@ -592,10 +685,17 @@ export const make = Effect.gen(function* () {
     });
 
     if (environment.platform === "darwin") {
+      // Mouse drivers can deliver Back/Forward as macOS swipe gestures instead of buttons.
+      window.on("swipe", (_event, direction) => {
+        const history = window.webContents.navigationHistory;
+        if (direction === "left" && history.canGoBack()) history.goBack();
+        else if (direction === "right" && history.canGoForward()) history.goForward();
+      });
       window.on("enter-full-screen", () => {
         window.webContents.send(WINDOW_FULLSCREEN_STATE_CHANNEL, true);
       });
       window.on("leave-full-screen", () => {
+        syncMacosWindowButtons(window);
         window.webContents.send(WINDOW_FULLSCREEN_STATE_CHANNEL, false);
       });
     }
@@ -656,6 +756,7 @@ export const make = Effect.gen(function* () {
       clearDevelopmentLoadRetry();
       developmentLoadRetryIndex = 0;
       window.setTitle(environment.displayName);
+      if (environment.platform === "darwin") syncMacosWindowButtons(window);
     });
     window.webContents.on(
       "did-fail-load",
@@ -687,13 +788,9 @@ export const make = Effect.gen(function* () {
       const recoverable =
         details.reason === "crashed" ||
         details.reason === "oom" ||
+        details.reason === "killed" ||
         details.reason === "abnormal-exit";
-      // Long sessions can OOM the renderer (V8 heap exhaustion from
-      // accumulated thread state). Without a reload the user is left staring
-      // at a dead white window while agents keep running invisibly, so
-      // recover by reloading — the renderer rehydrates from the backend,
-      // which is unaffected. Recovery attempts are bounded so a renderer
-      // that dies immediately on boot cannot reload-loop forever.
+
       runFork(
         Effect.gen(function* () {
           const now = yield* Clock.currentTimeMillis;
@@ -726,8 +823,9 @@ export const make = Effect.gen(function* () {
       revealSubscribers.push((fire) => window.webContents.once("did-finish-load", fire));
     }
     bindFirstRevealTrigger(revealSubscribers, () => {
-      // Reveal the real window, then close the connecting splash (if any) so the
-      // two don't overlap and there's no blank gap between them.
+      if (!window.isDestroyed()) {
+        window.webContents.setBackgroundThrottling(true);
+      }
       if (persistedSettings.mainWindowMaximized) {
         window.maximize();
       }
@@ -745,46 +843,61 @@ export const make = Effect.gen(function* () {
       void runPromise(electronWindow.clearMain(Option.some(window)));
     });
 
-    return window;
+    return Option.some(window);
   });
 
   const createMain = Effect.gen(function* () {
     const window = yield* createWindow();
-    yield* electronWindow.setMain(window);
-    yield* logWindowInfo("main window created");
+    if (Option.isSome(window)) {
+      yield* electronWindow.setMain(window.value);
+      yield* logWindowInfo("main window created");
+    }
     return window;
   }).pipe(Effect.withSpan("desktop.window.createMain"));
 
   const ensureMain = Effect.gen(function* () {
+    if (yield* Ref.get(desktopState.quitting)) return Option.none<Electron.BrowserWindow>();
     const existingWindow = yield* currentMainWindow;
     if (Option.isSome(existingWindow)) {
-      return existingWindow.value;
+      return existingWindow;
     }
     return yield* createMain;
   }).pipe(Effect.withSpan("desktop.window.ensureMain"));
 
+  const requireWindow = (window: Option.Option<Electron.BrowserWindow>) =>
+    Option.match(window, {
+      onNone: () => Effect.interrupt,
+      onSome: Effect.succeed,
+    });
+
   const revealOrCreateMain = Effect.gen(function* () {
-    const window = yield* ensureMain;
+    const window = yield* ensureMain.pipe(Effect.flatMap(requireWindow));
     yield* electronWindow.reveal(window);
     return window;
   }).pipe(Effect.withSpan("desktop.window.revealOrCreateMain"));
 
+  const waitingForBackend = Effect.gen(function* () {
+    if (yield* Ref.get(backendReadyRef)) return false;
+    return (yield* desktopSettings.get).localEnvironmentEnabled;
+  });
+
   const createMainIfBackendReady = Effect.gen(function* () {
-    const backendReady = yield* Ref.get(backendReadyRef);
-    if (!backendReady) return;
+    if (yield* Ref.get(desktopState.quitting)) return;
+    if (yield* waitingForBackend) return;
     const existingWindow = yield* currentMainWindow;
     if (Option.isSome(existingWindow)) return;
     yield* createMain;
   }).pipe(Effect.withSpan("desktop.window.createMainIfBackendReady"));
 
   const showConnectingSplash = Effect.gen(function* () {
-    // Only when nothing is shown yet: no real window, no existing splash.
+    if (yield* Ref.get(desktopState.quitting)) return;
     const existingSplash = yield* Ref.get(splashWindowRef);
     if (Option.isSome(existingSplash)) return;
     const existingWindow = yield* electronWindow.currentMainOrFirst;
     if (Option.isSome(existingWindow)) return;
 
     const shouldUseDarkColors = yield* electronTheme.shouldUseDarkColors;
+    if (yield* Ref.get(desktopState.quitting)) return;
     const splash = yield* electronWindow.create({
       width: 360,
       height: 220,
@@ -804,6 +917,11 @@ export const make = Effect.gen(function* () {
         sandbox: true,
       },
     });
+    if (yield* Ref.get(desktopState.quitting)) {
+      yield* electronWindow.destroyAll;
+      return;
+    }
+    yield* rendererHistory.register(splash.webContents, { surface: "splash" });
     yield* Ref.set(splashWindowRef, Option.some(splash));
     splash.once("closed", () => {
       void runPromise(Ref.set(splashWindowRef, Option.none()));
@@ -816,28 +934,54 @@ export const make = Effect.gen(function* () {
     void splash.loadURL(buildConnectingSplashDataUrl(shouldUseDarkColors));
     yield* logWindowInfo("connecting splash shown");
   }).pipe(
-    // The splash is best-effort UX — never let it fail startup.
     Effect.catch((error) =>
       logWindowWarning("failed to show connecting splash", { message: error.message }),
     ),
     Effect.withSpan("desktop.window.showConnectingSplash"),
   );
 
+  const dispatchRendererEvent = Effect.fn("desktop.window.dispatchRendererEvent")(function* (
+    channel: string,
+    payload: unknown,
+    { reveal = true }: { readonly reveal?: boolean } = {},
+  ) {
+    if (yield* Ref.get(desktopState.quitting)) return;
+    const existingWindow = yield* reveal ? focusedMainWindow : electronWindow.main;
+    if (Option.isNone(existingWindow) && (!reveal || (yield* waitingForBackend))) return;
+    const window = Option.isSome(existingWindow) ? existingWindow : yield* ensureMain;
+    if (Option.isNone(window) || window.value.isDestroyed()) return;
+    const targetWindow = window.value;
+    const send = Effect.sync(() => {
+      if (!targetWindow.isDestroyed()) targetWindow.webContents.send(channel, payload);
+    });
+    // Send before best-effort reveal; another process may refuse to yield foreground focus.
+    const dispatch = reveal
+      ? send.pipe(Effect.andThen(electronWindow.reveal(targetWindow).pipe(Effect.ignoreCause)))
+      : send;
+    if (targetWindow.webContents.isLoadingMainFrame()) {
+      targetWindow.webContents.once("did-finish-load", () => void runPromise(dispatch));
+      return;
+    }
+    yield* dispatch;
+  });
+
   return DesktopWindow.of({
-    createMain,
-    ensureMain,
+    createMain: createMain.pipe(Effect.flatMap(requireWindow)),
+    ensureMain: ensureMain.pipe(Effect.flatMap(requireWindow)),
     revealOrCreateMain,
+    prepareCaptureReveal: Effect.gen(function* () {
+      const existingWindow = yield* currentMainWindow;
+      if (Option.isSome(existingWindow)) {
+        yield* electronWindow.prepareReveal(existingWindow.value);
+      }
+    }),
     activate: Effect.gen(function* () {
+      if (yield* Ref.get(desktopState.quitting)) return;
       const existingWindow = yield* currentMainWindow;
       if (Option.isSome(existingWindow)) {
         yield* electronWindow.reveal(existingWindow.value);
         return;
       }
-      // No real main window yet. While the backend is still cold-booting,
-      // re-reveal the connecting splash so taskbar/dock activation brings it
-      // back instead of doing nothing. Once the backend is ready we fall
-      // through to (re)create the real main -- including retrying a previously
-      // failed open the pool swallowed -- rather than latching onto the splash.
       const backendReady = yield* Ref.get(backendReadyRef);
       if (!backendReady) {
         const splash = yield* Ref.get(splashWindowRef);
@@ -861,42 +1005,36 @@ export const make = Effect.gen(function* () {
     flushMainWindowBounds: Effect.suspend(() => flushMainWindowBounds).pipe(
       Effect.withSpan("desktop.window.flushMainWindowBounds"),
     ),
-    dispatchMenuAction: Effect.fn("desktop.window.dispatchMenuAction")(function* (action) {
+    dispatchMenuAction: Effect.fn("desktop.window.dispatchMenuAction")(function* (action, options) {
       yield* Effect.annotateCurrentSpan({ action });
-      const existingWindow = yield* focusedMainWindow;
-      if (Option.isNone(existingWindow) && !(yield* Ref.get(backendReadyRef))) {
-        return;
-      }
-      const targetWindow = Option.isSome(existingWindow) ? existingWindow.value : yield* ensureMain;
-
-      const send = () => {
-        if (targetWindow.isDestroyed()) return;
-        targetWindow.webContents.send(MENU_ACTION_CHANNEL, action);
-        void runPromise(electronWindow.reveal(targetWindow));
-      };
-
-      if (targetWindow.webContents.isLoadingMainFrame()) {
-        targetWindow.webContents.once("did-finish-load", send);
-        return;
-      }
-
-      send();
+      yield* dispatchRendererEvent(MENU_ACTION_CHANNEL, action, options);
+    }),
+    dispatchSnapShotEvent: Effect.fn("desktop.window.dispatchSnapShotEvent")(function* (event) {
+      yield* Effect.annotateCurrentSpan({
+        event: event.type,
+        captureId: "id" in event ? (event.id ?? null) : null,
+      });
+      yield* dispatchRendererEvent(SNAP_SHOT_EVENT_CHANNEL, event, {
+        reveal: event.type === "started",
+      });
     }),
     zoomMain: Effect.fn("desktop.window.zoomMain")(function* (direction) {
       yield* Effect.annotateCurrentSpan({ direction });
-      const window = yield* focusedMainWindow;
+      const window = yield* electronWindow.main;
       if (Option.isNone(window) || window.value.isDestroyed()) {
         return;
       }
+      yield* zoomWindow(window.value, direction);
+    }),
+    runMainContentsCommand: Effect.fn("desktop.window.runMainContentsCommand")(function* (command) {
+      yield* Effect.annotateCurrentSpan({ command });
+      // A focused OAuth popup must not receive the app's Reload command.
+      const window = yield* electronWindow.main;
+      if (Option.isNone(window) || window.value.isDestroyed()) return;
       const webContents = window.value.webContents;
-      // Same step size as the Electron zoomIn/zoomOut menu roles.
-      webContents.setZoomLevel(
-        direction === "reset" ? 0 : webContents.getZoomLevel() + (direction === "in" ? 0.5 : -0.5),
-      );
-      // Chromium pushes the new level down to embedded guests, which would zoom
-      // the previewed page along with the app UI. The preview browser keeps its
-      // own zoom, so put each guest back where the preview left it.
-      yield* previewManager.reapplyZoom();
+      if (command === "reload") webContents.reload();
+      else if (command === "forceReload") webContents.reloadIgnoringCache();
+      else webContents.toggleDevTools();
     }),
     syncAppearance: Effect.gen(function* () {
       const shouldUseDarkColors = yield* electronTheme.shouldUseDarkColors;

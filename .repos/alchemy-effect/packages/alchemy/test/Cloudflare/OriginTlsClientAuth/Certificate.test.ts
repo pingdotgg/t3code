@@ -138,144 +138,170 @@ const purgeCertificates = (zoneId: string) =>
 // delete lifecycle is eventually consistent, so two cases uploading the same
 // `CERT_1` concurrently churn each other (collisions + stale list views).
 // Run the cases one at a time so each owns its certificate content.
-describe.sequential("Certificate", () => {
-  test.provider(
-    "uploads and deletes a zone client certificate",
-    (stack) =>
-      Effect.gen(function* () {
-        const zoneId = yield* resolveZoneId;
+describe.sequential(
+  "Certificate",
+  {
+    tags: [
+      "provider:cloudflare",
+      "provider:cloudflare:origintlsclientauth",
+      "provider:cloudflare:zone",
+      "live",
+    ],
+  },
+  () => {
+    test.provider(
+      "uploads and deletes a zone client certificate",
+      (stack) =>
+        Effect.gen(function* () {
+          const zoneId = yield* resolveZoneId;
 
-        yield* stack.destroy();
-        yield* purgeCertificates(zoneId);
+          yield* stack.destroy();
+          yield* purgeCertificates(zoneId);
 
-        const cert = yield* stack.deploy(
-          Cloudflare.OriginTlsClientAuth.Certificate("AopCert", {
-            zoneId,
-            certificate: CERT_1,
-            privateKey: Redacted.make(KEY_1),
-          }),
-        );
+          const cert = yield* stack.deploy(
+            Cloudflare.OriginTlsClientAuth.Certificate("AopCert", {
+              zoneId,
+              certificate: CERT_1,
+              privateKey: Redacted.make(KEY_1),
+            }),
+          );
 
-        expect(cert.certificateId).toBeDefined();
-        expect(cert.zoneId).toEqual(zoneId);
-        expect(cert.status).toBeDefined();
-        expect(cert.expiresOn).toBeDefined();
-        expect(cert.issuer).toContain("Alchemy AOP Test Cert 1");
+          expect(cert.certificateId).toBeDefined();
+          expect(cert.zoneId).toEqual(zoneId);
+          expect(cert.status).toBeDefined();
+          expect(cert.expiresOn).toBeDefined();
+          expect(cert.issuer).toContain("Alchemy AOP Test Cert 1");
 
-        const actual = yield* getCertificate(zoneId, cert.certificateId);
-        expect(actual.id).toEqual(cert.certificateId);
-        expect(actual.status).not.toEqual("deleted");
-        expect(actual.status).not.toEqual("pending_deletion");
+          const actual = yield* getCertificate(zoneId, cert.certificateId);
+          expect(actual.id).toEqual(cert.certificateId);
+          expect(actual.status).not.toEqual("deleted");
+          expect(actual.status).not.toEqual("pending_deletion");
 
-        yield* stack.destroy();
+          yield* stack.destroy();
 
-        yield* waitForGone(zoneId, cert.certificateId);
-      }).pipe(Effect.ensuring(stack.destroy().pipe(Effect.ignore)), logLevel),
-    { timeout: 200_000 },
-  );
-
-  test.provider(
-    "replaces the certificate when the PEM changes",
-    (stack) =>
-      Effect.gen(function* () {
-        const zoneId = yield* resolveZoneId;
-
-        yield* stack.destroy();
-        yield* purgeCertificates(zoneId);
-
-        const original = yield* stack.deploy(
-          Cloudflare.OriginTlsClientAuth.Certificate("ReplaceCert", {
-            zoneId,
-            certificate: CERT_1,
-            privateKey: Redacted.make(KEY_1),
-          }),
-        );
-
-        const replaced = yield* stack.deploy(
-          Cloudflare.OriginTlsClientAuth.Certificate("ReplaceCert", {
-            zoneId,
-            certificate: CERT_2,
-            privateKey: Redacted.make(KEY_2),
-          }),
-        );
-
-        expect(replaced.certificateId).toBeDefined();
-        expect(replaced.certificateId).not.toEqual(original.certificateId);
-        expect(replaced.issuer).toContain("Alchemy AOP Test Cert 2");
-
-        // The old certificate must be gone after the replacement completes.
-        yield* waitForGone(zoneId, original.certificateId);
-
-        const actual = yield* getCertificate(zoneId, replaced.certificateId);
-        expect(actual.id).toEqual(replaced.certificateId);
-
-        yield* stack.destroy();
-
-        yield* waitForGone(zoneId, replaced.certificateId);
-      }).pipe(Effect.ensuring(stack.destroy().pipe(Effect.ignore)), logLevel),
-    { timeout: 200_000 },
-  );
-
-  // Canonical `list()` test (zone-scoped collection): `list()` fans out over
-  // every zone via `listAllZones` and enumerates the per-zone certificate store,
-  // hydrating each into the same `read` Attributes shape. Deploy a certificate
-  // to the standing test zone and assert it appears in the exhaustive result.
-  test.provider(
-    "list enumerates the deployed zone client certificate",
-    (stack) =>
-      Effect.gen(function* () {
-        const zoneId = yield* resolveZoneId;
-
-        yield* stack.destroy();
-        yield* purgeCertificates(zoneId);
-
-        const cert = yield* stack.deploy(
-          Cloudflare.OriginTlsClientAuth.Certificate("ListCert", {
-            zoneId,
-            // Dedicated PEM (see fixtures/certs.ts): keeps this certificate out
-            // of the upload/delete churn the sibling tests put CERT_1 through,
-            // so it appears in the eventually-consistent list promptly.
-            certificate: CERT_7,
-            privateKey: Redacted.make(KEY_7),
-          }),
-        );
-
-        const provider = yield* Provider.findProvider(
-          Cloudflare.OriginTlsClientAuth.Certificate,
-        );
-        // A freshly uploaded certificate can lag the zone list endpoint by tens
-        // of seconds — especially when the same PEM was recently deleted and
-        // re-created (the sibling tests churn CERT_1), so the list endpoint
-        // keeps serving the stale "gone" view for a while. Poll list() until it
-        // appears, bounded to ~60s, rather than asserting on a single read.
-        const found = yield* provider.list().pipe(
-          Effect.map((all) =>
-            all.find((c) => c.certificateId === cert.certificateId),
+          yield* waitForGone(zoneId, cert.certificateId);
+        }).pipe(
+          Effect.ensuring(
+            stack.destroy().pipe(Effect.orDie).pipe(Effect.ignore),
           ),
-          Effect.flatMap((match) =>
-            match
-              ? Effect.succeed(match)
-              : Effect.fail({ _tag: "CertificateNotListed" } as const),
+          logLevel,
+        ),
+      { timeout: 200_000 },
+    );
+
+    test.provider(
+      "replaces the certificate when the PEM changes",
+      (stack) =>
+        Effect.gen(function* () {
+          const zoneId = yield* resolveZoneId;
+
+          yield* stack.destroy();
+          yield* purgeCertificates(zoneId);
+
+          const original = yield* stack.deploy(
+            Cloudflare.OriginTlsClientAuth.Certificate("ReplaceCert", {
+              zoneId,
+              certificate: CERT_1,
+              privateKey: Redacted.make(KEY_1),
+            }),
+          );
+
+          const replaced = yield* stack.deploy(
+            Cloudflare.OriginTlsClientAuth.Certificate("ReplaceCert", {
+              zoneId,
+              certificate: CERT_2,
+              privateKey: Redacted.make(KEY_2),
+            }),
+          );
+
+          expect(replaced.certificateId).toBeDefined();
+          expect(replaced.certificateId).not.toEqual(original.certificateId);
+          expect(replaced.issuer).toContain("Alchemy AOP Test Cert 2");
+
+          // The old certificate must be gone after the replacement completes.
+          yield* waitForGone(zoneId, original.certificateId);
+
+          const actual = yield* getCertificate(zoneId, replaced.certificateId);
+          expect(actual.id).toEqual(replaced.certificateId);
+
+          yield* stack.destroy();
+
+          yield* waitForGone(zoneId, replaced.certificateId);
+        }).pipe(
+          Effect.ensuring(
+            stack.destroy().pipe(Effect.orDie).pipe(Effect.ignore),
           ),
-          Effect.retry({
-            while: (e) => e._tag === "CertificateNotListed",
-            schedule: Schedule.spaced("3 seconds"),
-            times: 20,
-          }),
-        );
-        expect(found.zoneId).toEqual(zoneId);
+          logLevel,
+        ),
+      { timeout: 200_000 },
+    );
 
-        yield* stack.destroy();
+    // Canonical `list()` test (zone-scoped collection): `list()` fans out over
+    // every zone via `listAllZones` and enumerates the per-zone certificate store,
+    // hydrating each into the same `read` Attributes shape. Deploy a certificate
+    // to the standing test zone and assert it appears in the exhaustive result.
+    test.provider(
+      "list enumerates the deployed zone client certificate",
+      (stack) =>
+        Effect.gen(function* () {
+          const zoneId = yield* resolveZoneId;
 
-        yield* waitForGone(zoneId, cert.certificateId);
-      }).pipe(Effect.ensuring(stack.destroy().pipe(Effect.ignore)), logLevel),
-    // With the poll backoffs now CAPPED (steady cadence, see
-    // `waitForGone`/`forbiddenRetrySchedule`), this test's three sequential
-    // eventual-consistency waits are each bounded to ~60s — the list-appear
-    // poll, the destroy's pending-deployment delete retry, and `waitForGone` —
-    // for a deterministic worst case of ~200s. The timeout matches that bound;
-    // 120s was below the legitimate maximum (the acute flake was the old
-    // uncapped exponential sleeping past the deadline, now fixed).
-    { timeout: 240_000 },
-  );
-});
+          yield* stack.destroy();
+          yield* purgeCertificates(zoneId);
+
+          const cert = yield* stack.deploy(
+            Cloudflare.OriginTlsClientAuth.Certificate("ListCert", {
+              zoneId,
+              // Dedicated PEM (see fixtures/certs.ts): keeps this certificate out
+              // of the upload/delete churn the sibling tests put CERT_1 through,
+              // so it appears in the eventually-consistent list promptly.
+              certificate: CERT_7,
+              privateKey: Redacted.make(KEY_7),
+            }),
+          );
+
+          const provider = yield* Provider.findProvider(
+            Cloudflare.OriginTlsClientAuth.Certificate,
+          );
+          // A freshly uploaded certificate can lag the zone list endpoint by tens
+          // of seconds — especially when the same PEM was recently deleted and
+          // re-created (the sibling tests churn CERT_1), so the list endpoint
+          // keeps serving the stale "gone" view for a while. Poll list() until it
+          // appears, bounded to ~60s, rather than asserting on a single read.
+          const found = yield* provider.list().pipe(
+            Effect.map((all) =>
+              all.find((c) => c.certificateId === cert.certificateId),
+            ),
+            Effect.flatMap((match) =>
+              match
+                ? Effect.succeed(match)
+                : Effect.fail({ _tag: "CertificateNotListed" } as const),
+            ),
+            Effect.retry({
+              while: (e) => e._tag === "CertificateNotListed",
+              schedule: Schedule.spaced("3 seconds"),
+              times: 20,
+            }),
+          );
+          expect(found.zoneId).toEqual(zoneId);
+
+          yield* stack.destroy();
+
+          yield* waitForGone(zoneId, cert.certificateId);
+        }).pipe(
+          Effect.ensuring(
+            stack.destroy().pipe(Effect.orDie).pipe(Effect.ignore),
+          ),
+          logLevel,
+        ),
+      // With the poll backoffs now CAPPED (steady cadence, see
+      // `waitForGone`/`forbiddenRetrySchedule`), this test's three sequential
+      // eventual-consistency waits are each bounded to ~60s — the list-appear
+      // poll, the destroy's pending-deployment delete retry, and `waitForGone` —
+      // for a deterministic worst case of ~200s. The timeout matches that bound;
+      // 120s was below the legitimate maximum (the acute flake was the old
+      // uncapped exponential sleeping past the deadline, now fixed).
+      { timeout: 240_000 },
+    );
+  },
+);

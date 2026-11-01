@@ -6,25 +6,57 @@ import * as NodePath from "node:path";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  chatAttachmentStableKey,
   createAttachmentId,
+  createDeterministicAttachmentId,
+  createPendingAttachmentId,
+  parseAttachmentUuid,
+  planAttachmentClaim,
   parseThreadSegmentFromAttachmentId,
-  resolveAttachmentPathById,
+  sweepStalePendingAttachments,
+  threadHtmlRenderAttachmentIds,
 } from "./attachmentStore.ts";
 
 describe("attachmentStore", () => {
-  it("sanitizes thread ids when creating attachment ids", () => {
-    const attachmentId = createAttachmentId("thread.folder/unsafe space");
-    expect(attachmentId).toBeTruthy();
-    if (!attachmentId) {
-      return;
-    }
+  it("derives stable attachment ids for idempotent message retries", () => {
+    const first = createDeterministicAttachmentId("thread-1", "message-1:0");
+    const retry = createDeterministicAttachmentId("thread-1", "message-1:0");
+    const next = createDeterministicAttachmentId("thread-1", "message-1:1");
 
-    const threadSegment = parseThreadSegmentFromAttachmentId(attachmentId);
-    expect(threadSegment).toBeTruthy();
-    expect(threadSegment).toMatch(/^[a-z0-9_-]+$/i);
-    expect(threadSegment).not.toContain(".");
-    expect(threadSegment).not.toContain("%");
-    expect(threadSegment).not.toContain("/");
+    expect(first).toBe(retry);
+    expect(next).not.toBe(first);
+    expect(first && parseThreadSegmentFromAttachmentId(first)).toBe("thread-1");
+  });
+
+  it("gives a queued edit's new image its own id instead of an earlier image's", () => {
+    const imageA = new Uint8Array([1, 2, 3]);
+    const imageB = new Uint8Array([4, 5, 6]);
+    const sent = createDeterministicAttachmentId(
+      "thread-1",
+      chatAttachmentStableKey("message-1", 0, imageA),
+    );
+    const retried = createDeterministicAttachmentId(
+      "thread-1",
+      chatAttachmentStableKey("message-1", 0, imageA),
+    );
+    const edited = createDeterministicAttachmentId(
+      "thread-1",
+      chatAttachmentStableKey("message-1", 0, imageB),
+    );
+
+    expect(retried).toBe(sent);
+    expect(edited).not.toBe(sent);
+  });
+
+  it("keeps deterministic ids distinct when sanitized thread segments collide", () => {
+    const dotted = createDeterministicAttachmentId("thread.a", "message-1:0");
+    const dashed = createDeterministicAttachmentId("thread-a", "message-1:0");
+
+    expect(dotted).toBeTruthy();
+    expect(dashed).toBeTruthy();
+    expect(dotted).not.toBe(dashed);
+    expect(dotted && parseThreadSegmentFromAttachmentId(dotted)).toBe("thread-a");
+    expect(dashed && parseThreadSegmentFromAttachmentId(dashed)).toBe("thread-a");
   });
 
   it("parses exact thread segments from attachment ids without prefix collisions", () => {
@@ -35,46 +67,132 @@ describe("attachmentStore", () => {
     expect(parseThreadSegmentFromAttachmentId(fooBarId)).toBe("foo-bar");
   });
 
-  it("normalizes created thread segments to lowercase", () => {
-    const attachmentId = createAttachmentId("Thread.Foo");
-    expect(attachmentId).toBeTruthy();
-    if (!attachmentId) {
-      return;
-    }
-    expect(parseThreadSegmentFromAttachmentId(attachmentId)).toBe("thread-foo");
+  it("reserves the pending attachment segment", () => {
+    const pendingId = createPendingAttachmentId();
+    expect(parseThreadSegmentFromAttachmentId(pendingId)).toBe("pending");
+    expect(parseAttachmentUuid(pendingId)).toMatch(/^[a-f0-9-]{36}$/);
+    expect(parseThreadSegmentFromAttachmentId(createAttachmentId("pending")!)).toBe("_pending");
+    expect(parseThreadSegmentFromAttachmentId(createAttachmentId("pending_thread")!)).toBe(
+      "pending_thread",
+    );
   });
 
-  it("resolves attachment path by id using the extension that exists on disk", () => {
+  it("plans pending attachment claims with direct filename lookups", () => {
     const attachmentsDir = NodeFS.mkdtempSync(
-      NodePath.join(NodeOS.tmpdir(), "t3code-attachment-store-"),
+      NodePath.join(NodeOS.tmpdir(), "t3code-attachment-claim-"),
     );
     try {
-      const attachmentId = "thread-1-attachment";
-      const pngPath = NodePath.join(attachmentsDir, `${attachmentId}.png`);
-      NodeFS.writeFileSync(pngPath, Buffer.from("hello"));
+      const uuid = "00000000-0000-4000-8000-000000000001";
+      const pendingPath = NodePath.join(attachmentsDir, `pending-${uuid}.png`);
+      NodeFS.writeFileSync(pendingPath, Buffer.from("pixels"));
 
-      const resolved = resolveAttachmentPathById({
+      const claim = planAttachmentClaim({
         attachmentsDir,
-        attachmentId,
+        threadId: "thread-1",
+        attachmentId: `pending-${uuid}`,
       });
-      expect(resolved).toBe(pngPath);
+      expect(claim).toMatchObject({
+        ok: true,
+        currentPath: pendingPath,
+      });
+      if (!claim.ok) {
+        return;
+      }
+      expect(parseThreadSegmentFromAttachmentId(claim.finalId)).toBe("thread-1");
+      expect(parseAttachmentUuid(claim.finalId)).not.toBe(uuid);
+      expect(claim.finalPath).toBe(NodePath.join(attachmentsDir, `${claim.finalId}.png`));
     } finally {
       NodeFS.rmSync(attachmentsDir, { recursive: true, force: true });
     }
   });
 
-  it("returns null when no attachment file exists for the id", () => {
+  it("rejects thread-owned attachments even when thread segments collide", () => {
     const attachmentsDir = NodeFS.mkdtempSync(
-      NodePath.join(NodeOS.tmpdir(), "t3code-attachment-store-"),
+      NodePath.join(NodeOS.tmpdir(), "t3code-attachment-ownership-"),
     );
     try {
-      const resolved = resolveAttachmentPathById({
-        attachmentsDir,
-        attachmentId: "thread-1-missing",
+      const attachmentId = "a-b-00000000-0000-4000-8000-000000000003";
+      NodeFS.writeFileSync(NodePath.join(attachmentsDir, `${attachmentId}.png`), "pixels");
+
+      expect(planAttachmentClaim({ attachmentsDir, threadId: "a b", attachmentId })).toEqual({
+        ok: false,
+        reason: "attachment must be a pending upload",
       });
-      expect(resolved).toBeNull();
     } finally {
       NodeFS.rmSync(attachmentsDir, { recursive: true, force: true });
     }
+  });
+
+  it("removes expired pending and partial files without touching thread attachments", () => {
+    const attachmentsDir = NodeFS.mkdtempSync(
+      NodePath.join(NodeOS.tmpdir(), "t3code-attachment-sweep-"),
+    );
+    try {
+      const now = 1_800_000_000_000;
+      const oldTimeSeconds = (now - 2 * 24 * 60 * 60 * 1000) / 1000;
+      const uuid = "00000000-0000-4000-8000-000000000002";
+      const pendingPath = NodePath.join(attachmentsDir, `pending-${uuid}.png`);
+      const pendingFilePath = NodePath.join(attachmentsDir, `pending-${uuid}-pdf.pdf`);
+      const sidecarPath = `${pendingFilePath}.txt`;
+      const threadPath = NodePath.join(attachmentsDir, `thread-1-${uuid}.png`);
+      const partialPath = NodePath.join(attachmentsDir, `${uuid}.part`);
+      for (const filePath of [pendingPath, pendingFilePath, sidecarPath, threadPath, partialPath]) {
+        NodeFS.writeFileSync(filePath, Buffer.from("pixels"));
+        NodeFS.utimesSync(filePath, oldTimeSeconds, oldTimeSeconds);
+      }
+
+      expect(sweepStalePendingAttachments({ attachmentsDir, nowMs: now })).toEqual({ deleted: 4 });
+      expect(NodeFS.existsSync(pendingPath)).toBe(false);
+      expect(NodeFS.existsSync(pendingFilePath)).toBe(false);
+      expect(NodeFS.existsSync(sidecarPath)).toBe(false);
+      expect(NodeFS.existsSync(partialPath)).toBe(false);
+      expect(NodeFS.existsSync(threadPath)).toBe(true);
+    } finally {
+      NodeFS.rmSync(attachmentsDir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("threadHtmlRenderAttachmentIds", () => {
+  it("returns pages this thread published and skips other threads' and failed calls", () => {
+    const own = createAttachmentId("thread-a", "html")!;
+    const other = createAttachmentId("thread-b", "html")!;
+    const render = (attachmentId: string, extra = {}) => ({
+      toolName: "mcp__t3-code__html_render",
+      output: [
+        {
+          type: "text",
+          text: JSON.stringify({ htmlRender: { attachmentId, title: "x", height: 300 }, ...extra }),
+        },
+      ],
+    });
+    expect(
+      threadHtmlRenderAttachmentIds("thread-a", [
+        render(own),
+        render(other),
+        render(createAttachmentId("thread-a", "html")!, { isError: true }),
+        { toolName: "mcp__t3-code__html_preview", output: render(own).output },
+      ]),
+    ).toEqual([own]);
+  });
+
+  it("includes captured MCP App documents from any tool", () => {
+    const app = createAttachmentId("thread-a", "html")!;
+    expect(
+      threadHtmlRenderAttachmentIds("thread-a", [
+        {
+          toolName: "weather.get_weather",
+          output: {
+            t3McpApp: {
+              attachmentId: app,
+              server: "weather",
+              tool: "get_weather",
+              resourceUri: "ui://weather/dashboard",
+            },
+            result: { content: [] },
+          },
+        },
+      ]),
+    ).toEqual([app]);
   });
 });

@@ -4,63 +4,69 @@
 import * as Cause from "effect/Cause"
 import * as Effect from "effect/Effect"
 import * as Exit from "effect/Exit"
-import type * as AsyncResult from "effect/unstable/reactivity/AsyncResult"
-import type * as Atom from "effect/unstable/reactivity/Atom"
-import type * as AtomRef from "effect/unstable/reactivity/AtomRef"
-import * as AtomRegistry from "effect/unstable/reactivity/AtomRegistry"
+import type * as AsyncResult from "effect/reactivity/AsyncResult"
+import type * as Atom from "effect/reactivity/Atom"
+import type * as AtomRef from "effect/reactivity/AtomRef"
+import * as AtomRegistry from "effect/reactivity/AtomRegistry"
 import { computed, type ComputedRef, inject, type InjectionKey, type Ref, shallowRef, watchEffect } from "vue"
 
 /**
- * @since 4.0.0
- * @category modules
- */
-export * as AtomRegistry from "effect/unstable/reactivity/AtomRegistry"
-
-/**
- * @since 4.0.0
- * @category modules
- */
-export * as AsyncResult from "effect/unstable/reactivity/AsyncResult"
-
-/**
- * @since 4.0.0
- * @category modules
- */
-export * as Atom from "effect/unstable/reactivity/Atom"
-
-/**
- * @since 4.0.0
- * @category modules
- */
-export * as AtomRef from "effect/unstable/reactivity/AtomRef"
-
-/**
+ * @stability unstable
  * @since 4.0.0
  * @category re-exports
  */
-export * as AtomHttpApi from "effect/unstable/reactivity/AtomHttpApi"
+export * as AtomRegistry from "effect/reactivity/AtomRegistry"
 
 /**
+ * @stability unstable
  * @since 4.0.0
- * @category modules
+ * @category re-exports
  */
-export * as AtomRpc from "effect/unstable/reactivity/AtomRpc"
+export * as AsyncResult from "effect/reactivity/AsyncResult"
+
+/**
+ * @stability unstable
+ * @since 4.0.0
+ * @category re-exports
+ */
+export * as Atom from "effect/reactivity/Atom"
+
+/**
+ * @stability unstable
+ * @since 4.0.0
+ * @category re-exports
+ */
+export * as AtomRef from "effect/reactivity/AtomRef"
+
+/**
+ * @stability unstable
+ * @since 4.0.0
+ * @category re-exports
+ */
+export * as AtomHttpApi from "effect/reactivity/AtomHttpApi"
+
+/**
+ * @stability unstable
+ * @since 4.0.0
+ * @category re-exports
+ */
+export * as AtomRpc from "effect/reactivity/AtomRpc"
 
 /**
  * @since 4.0.0
- * @category registry
+ * @category symbols
  */
 export const registryKey = Symbol.for("@effect/atom-vue/registryKey") as InjectionKey<AtomRegistry.AtomRegistry>
 
 /**
  * @since 4.0.0
- * @category registry
+ * @category constants
  */
 export const defaultRegistry: AtomRegistry.AtomRegistry = AtomRegistry.make()
 
 /**
  * @since 4.0.0
- * @category registry
+ * @category accessors
  */
 export const injectRegistry = (): AtomRegistry.AtomRegistry => {
   return inject(registryKey, defaultRegistry)
@@ -206,6 +212,7 @@ export const useAtomRef = <A>(atomRef: () => AtomRef.ReadonlyRef<A>): Readonly<R
     onCleanup(ref.subscribe((next: A) => {
       value.value = next
     }))
+    value.value = ref.value
   })
   return value as Readonly<Ref<A>>
 }

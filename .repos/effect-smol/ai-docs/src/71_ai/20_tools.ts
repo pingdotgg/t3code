@@ -6,8 +6,8 @@
  */
 import { OpenAiClient, OpenAiLanguageModel, OpenAiTool } from "@effect/ai-openai"
 import { Config, Context, Effect, Layer, Schema } from "effect"
-import { AiError, LanguageModel, Tool, Toolkit } from "effect/unstable/ai"
-import { FetchHttpClient } from "effect/unstable/http"
+import { AiError, LanguageModel, Tool, Toolkit } from "effect/ai"
+import { FetchHttpClient } from "effect/http"
 
 // ---------------------------------------------------------------------------
 // 1. Defining tools
@@ -101,10 +101,10 @@ const ProductToolkitLayer = ProductToolkit.toLayer(Effect.gen(function*() {
 
 // Provider setup (same pattern as the language-model example).
 const OpenAiClientLayer = OpenAiClient.layerConfig({
-  apiKey: Config.redacted("OPENAI_API_KEY")
+  apiKey: Config.Redacted("OPENAI_API_KEY")
 }).pipe(Layer.provide(FetchHttpClient.layer))
 
-export class ProductAssistantError extends Schema.TaggedErrorClass<ProductAssistantError>()(
+export class ProductAssistantError extends Schema.TaggedError<ProductAssistantError>()(
   "ProductAssistantError",
   { reason: AiError.AiErrorReason }
 ) {}

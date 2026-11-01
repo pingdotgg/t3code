@@ -9,9 +9,8 @@ import * as Binding from "../../Binding.ts";
  * filtered by stream health. This is an account-level operation — no
  * channel is bound, and the grant is on `*`. Provide the implementation
  * with `Effect.provide(AWS.IVS.ListStreamsHttp)`.
- * @binding
- * @section Monitoring Live Streams
- * @example Count Live Streams
+ * ### Monitoring Live Streams
+ * **Example:** Count Live Streams
  * ```typescript
  * // init — account-level, no resource to bind
  * const listStreams = yield* AWS.IVS.ListStreams();
@@ -20,6 +19,8 @@ import * as Binding from "../../Binding.ts";
  * const { streams } = yield* listStreams();
  * yield* Effect.log(`${streams.length} live streams`);
  * ```
+ *
+ * @binding
  */
 export interface ListStreams extends Binding.Service<
   ListStreams,

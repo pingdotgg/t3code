@@ -1,0 +1,92 @@
+---
+title: Vocs
+description: Package Vocs documentation and its Waku RSC handler for Neon Functions.
+sidebar:
+  order: 12
+---
+
+`Neon.Website.Vocs` builds documentation assets and the Waku RSC handler into a
+Node 24 Fetch artifact for Neon Functions. It is not an assets-only S3 deployment,
+a container, or a listening Bun server.
+
+## Prepare the app
+
+Use a compatible Vocs app or the
+[runnable Vocs example](https://github.com/alchemy-run/alchemy/tree/main/examples/neon-website-vocs).
+Install Vocs with its matching Waku, React, and RSC peers; the linked example's
+manifest records the workspace dependency set. Configure
+[deployment credentials](/neon/setup), then add the integration in the app directory:
+
+Install [Alchemy and its matching Effect dependencies](/getting-started) first;
+use Node 24 for this build toolchain.
+
+```sh
+pnpm add -D @alchemy.run/frontend-frameworks @vercel/nft
+```
+
+Keep documentation, navigation, and theme configuration in `vocs.config.*`.
+The integration manages the Node/Waku target and the Neon Fetch wrapper.
+
+## Define the stack
+
+```typescript
+// alchemy.run.ts
+import * as Alchemy from "alchemy";
+import * as Neon from "alchemy/Neon";
+import * as Effect from "effect/Effect";
+
+export default Alchemy.Stack(
+  "NeonVocs",
+  { providers: Neon.providers(), state: Alchemy.localState() },
+  Effect.gen(function* () {
+    const site = yield* Neon.Website.Vocs("Web", {
+      rootDir: ".",
+    });
+    return { url: site.url };
+  }),
+);
+```
+
+`outDir` defaults to `"dist"`; if customized, it must match the output in
+`vocs.config.*`. Static pages use extensionless HTML lookup; other requests reach
+the RSC handler. Keep secrets out of rendered documentation, client-component
+props, and public build variables, even if their input was `Redacted`.
+
+## Develop and deploy
+
+```sh
+pnpm exec alchemy dev
+pnpm exec alchemy deploy
+pnpm exec alchemy destroy
+```
+
+Run separately, destroying when finished. The dev implementation uses Vocs's own
+Vite instance in an isolated process and returns a local URL, without an implicit
+Project or Function. Append `.pipe(Alchemy.remote())` to the Website Effect to
+use live deployment during dev; this does not bypass packaging validation.
+
+Live deploy creates an Ohio Project if no scope is supplied. Pass either
+`project` or `branch` for an existing backend; choose Ohio when adding storage.
+See [scope and credentials](/neon/frontend/vite#scope-and-credentials).
+
+The runnable example passes deployment through the packaged framework integration,
+with live desktop/mobile counter hydration and guide navigation, JSON GET/HEAD,
+and generated `/llms.txt`. The fresh Vocs artifact lifecycle test also passes
+homepage, guide, and JavaScript/CSS asset checks and verifies teardown. These
+checks cover Vocs, not the full framework matrix.
+
+Packaging rejects traced `.env`, `.alchemy`, and private-key files, including
+symlink targets, and reports sanitized workspace-relative filenames. Keep runtime
+source dependencies outside those sensitive locations; do not bypass the check.
+A historical `artifact-browser` rejection could not be attributed to a filename
+from its retained log and was not reproduced by the actual example deployment.
+
+There is no added CDN or durable framework cache. Neon probes have served old
+code/env after deployment metadata updates, and domain registration does not
+validate TLS. See the
+[shared deployment limits](/neon/frontend/vite#environment-and-deployment-limits).
+
+## Reference
+
+- [Vocs API](/providers/neon/website/vocs)
+- [Runnable Vocs example](https://github.com/alchemy-run/alchemy/tree/main/examples/neon-website-vocs)

@@ -1,5 +1,5 @@
 import { assert, describe, it } from "@effect/vitest"
-import { Schema, SchemaRepresentation } from "effect"
+import { Brand, Schema, SchemaRepresentation } from "effect"
 import { throws } from "../../utils/assert.ts"
 
 const filterId = "acme/schema/minLength"
@@ -133,17 +133,19 @@ describe("SchemaRepresentation.fromRepresentation", () => {
     assert.isFalse(Schema.is(schema)("other"))
   })
 
-  it("revives ambiguous Enum values without changing their type", () => {
-    const schema = assertRepresentationRoundtrip(Schema.Enum({
-      StringNaN: "NaN",
-      NumberNaN: Number.NaN,
-      StringInfinity: "Infinity",
-      NumberInfinity: Number.POSITIVE_INFINITY
-    }))
-    assert.isTrue(Schema.is(schema)("NaN"))
-    assert.isTrue(Schema.is(schema)(Number.NaN))
-    assert.isTrue(Schema.is(schema)("Infinity"))
-    assert.isTrue(Schema.is(schema)(Number.POSITIVE_INFINITY))
+  it("rejects non-finite numeric Enum values", () => {
+    throws(
+      () =>
+        SchemaRepresentation.fromRepresentation({
+          representation: {
+            _tag: "Enum",
+            enums: [["NumberNaN", Number.NaN]],
+            checks: []
+          },
+          references: {}
+        }, { revivers: [] }),
+      new Error("A numeric enum value must be finite, got NaN")
+    )
   })
 
   it("revives TemplateLiteral", () => {
@@ -228,9 +230,28 @@ describe("SchemaRepresentation.fromRepresentation", () => {
     assert.isFalse(Schema.is(schema)(true))
   })
 
+  it("revives Union options through live and JSON representation roundtrips", () => {
+    const representation = {
+      _tag: "Union",
+      types: [{ _tag: "String", checks: [] }, { _tag: "Number", checks: [] }],
+      options: { mode: "oneOf" },
+      checks: []
+    } as const satisfies SchemaRepresentation.Representation
+    const document = { representation, references: {} }
+    const revived = SchemaRepresentation.fromRepresentation(document, { revivers: [] })
+    assert.strictEqual(revived.ast._tag, "Union")
+    if (revived.ast._tag === "Union") assert.deepStrictEqual(revived.ast.options, representation.options)
+    const fromJson = SchemaRepresentation.fromRepresentation(
+      SchemaRepresentation.fromJson(SchemaRepresentation.toJson(document)),
+      { revivers: [] }
+    )
+    assert.strictEqual(fromJson.ast._tag, "Union")
+    if (fromJson.ast._tag === "Union") assert.deepStrictEqual(fromJson.ast.options, representation.options)
+  })
+
   it("revives an empty Union as Never", () => {
     const schema = SchemaRepresentation.fromRepresentation({
-      representation: { _tag: "Union", types: [], mode: "anyOf", checks: [] },
+      representation: { _tag: "Union", types: [], options: { mode: "anyOf" }, checks: [] },
       references: {}
     }, { revivers: [] })
     assert.isFalse(Schema.is(schema)(undefined))
@@ -305,8 +326,23 @@ describe("SchemaRepresentation.fromRepresentation", () => {
     }
   })
 
-  it("restores brands", () => {
-    assertRepresentationRoundtrip(Schema.String.pipe(Schema.brand("A"), Schema.brand("B")))
+  it("restores checks added by fromBrand", () => {
+    type Int = number & Brand.Brand<"Int">
+    const Int = Brand.check<Int>(Schema.isInt())
+    type Positive = number & Brand.Brand<"Positive">
+    const Positive = Brand.check<Positive>(Schema.isGreaterThan(0))
+    const schema = Schema.Number.pipe(
+      Schema.fromBrand("Int", Int),
+      Schema.fromBrand("Positive", Positive)
+    )
+
+    const restored = assertRepresentationRoundtrip(schema, [
+      SchemaRepresentation.isIntReviver,
+      SchemaRepresentation.isGreaterThanReviver
+    ])
+    assert.isTrue(Schema.is(restored)(1))
+    assert.isFalse(Schema.is(restored)(1.2))
+    assert.isFalse(Schema.is(restored)(-1))
   })
 
   it("restores a node representation annotation without schema dependencies", () => {

@@ -23,9 +23,8 @@ export interface StartDeploymentRequest extends Omit<
  * Provide `AppConfig.StartDeploymentHttp` on the hosting function's Effect to
  * implement the binding.
  *
- * @binding
- * @section Deploying Configuration at Runtime
- * @example Roll out a configuration version
+ * ### Deploying Configuration at Runtime
+ * **Example:** Roll out a configuration version
  * ```typescript
  * const startDeployment = yield* AppConfig.StartDeployment(
  *   app,
@@ -38,6 +37,8 @@ export interface StartDeploymentRequest extends Omit<
  * });
  * // deployment.DeploymentNumber, deployment.State ("DEPLOYING", ...)
  * ```
+ *
+ * @binding
  */
 export interface StartDeployment extends Binding.Service<
   StartDeployment,

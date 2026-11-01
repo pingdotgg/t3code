@@ -1,5 +1,5 @@
 import { type Brand, type DateTime, Schema } from "effect"
-import { Model, VariantSchema } from "effect/unstable/schema"
+import { Model, VariantSchema } from "effect/schema"
 import { describe, expect, it } from "tstyche"
 
 describe("VariantSchema", () => {
@@ -26,9 +26,13 @@ describe("VariantSchema", () => {
     const second = Test.Struct({
       value: Test.FieldOnly(["a", "b"])(Schema.Number)
     })
+    const union = Test.Union([first, second])
 
     expect(Test.Union).type.toBeCallableWith([first, second])
     expect(Test.Union).type.not.toBeCallableWith(first, second)
+    expect<Schema.Schema.Type<typeof union>>().type.toBe<
+      { readonly value: string } | { readonly value: number }
+    >()
   })
 
   it("Class preserves constructor and variant schema types", () => {

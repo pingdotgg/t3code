@@ -18,13 +18,14 @@ export interface ListJobsRequest extends Omit<
  * service-scoped; the queue anchors the binding and is injected as the
  * `jobQueue` selector.
  *
- * @binding
- * @section Listing Jobs
- * @example List runnable jobs in the queue
+ * ### Listing Jobs
+ * **Example:** List runnable jobs in the queue
  * ```typescript
  * const listJobs = yield* Batch.ListJobs(queue);
  * const { jobSummaryList } = yield* listJobs({ jobStatus: "RUNNABLE" });
  * ```
+ *
+ * @binding
  */
 export interface ListJobs extends Binding.Service<
   ListJobs,

@@ -79,9 +79,8 @@ export interface JobQueue extends Resource<
  * An AWS Batch job queue. Jobs submitted to the queue are scheduled onto its
  * associated compute environments in preference order.
  *
- * @resource
- * @section Creating Job Queues
- * @example Queue on a Fargate Compute Environment
+ * ### Creating Job Queues
+ * **Example:** Queue on a Fargate Compute Environment
  * ```typescript
  * const ce = yield* Batch.ComputeEnvironment("JobsCE", {});
  * const queue = yield* Batch.JobQueue("JobsQueue", {
@@ -89,13 +88,15 @@ export interface JobQueue extends Resource<
  * });
  * ```
  *
- * @example Prioritized queue
+ * **Example:** Prioritized queue
  * ```typescript
  * const critical = yield* Batch.JobQueue("CriticalQueue", {
  *   priority: 10,
  *   computeEnvironments: [ce.computeEnvironmentArn],
  * });
  * ```
+ *
+ * @resource
  */
 export const JobQueue = Resource<JobQueue>("AWS.Batch.JobQueue");
 

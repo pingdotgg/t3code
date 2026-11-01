@@ -159,12 +159,28 @@ describe("Array", () => {
         return String(n)
       })
     )).type.toBe<Record<string, [number, ...Array<number>]>>()
+    const bySingleKey = Array.groupBy([1, 2, 3], () => "key" as const)
+    expect(bySingleKey).type.toBe<Partial<Record<"key", [number, ...Array<number>]>>>()
+    expect(bySingleKey.key).type.toBe<[number, ...Array<number>] | undefined>()
+    // @ts-expect-error Property 'other' does not exist
+    void bySingleKey.other
+    const bySign = Array.groupBy(
+      [1, 2, 3],
+      (n) => n > 0 ? "positive" as const : "negative" as const
+    )
+    expect(bySign).type.toBe<Partial<Record<"positive" | "negative", [number, ...Array<number>]>>>()
     expect(
-      Array.groupBy([1, 2, 3], (n) => n > 0 ? "positive" as const : "negative" as const)
-    ).type.toBe<Record<string, [number, ...Array<number>]>>()
+      pipe(
+        [1, 2, 3],
+        Array.groupBy((n) => n > 0 ? "positive" as const : "negative" as const)
+      )
+    ).type.toBe<Partial<Record<"positive" | "negative", [number, ...Array<number>]>>>()
     expect(Array.groupBy(["a", "b"], Symbol.for)).type.toBe<Record<symbol, [string, ...Array<string>]>>()
     expect(Array.groupBy(["a", "b"], (s) => s === "a" ? symA : s === "b" ? symB : symC)).type.toBe<
-      Record<symbol, [string, ...Array<string>]>
+      Partial<Record<typeof symA | typeof symB | typeof symC, [string, ...Array<string>]>>
+    >()
+    expect(Array.groupBy(["a", "b"], (s) => s === "a" ? "a" as const : symA)).type.toBe<
+      Partial<Record<"a" | typeof symA, [string, ...Array<string>]>>
     >()
   })
 
@@ -318,7 +334,7 @@ describe("Array", () => {
       expect(item).type.toBe<string | number>()
       expect(i).type.toBe<number>()
       return typeof item === "number" ? Result.succeed(item + i) : Result.fail(item)
-    })).type.toBe<[excluded: Array<string>, satisfying: Array<number>]>()
+    })).type.toBe<[passes: Array<number>, fails: Array<string>]>()
     expect(pipe(
       numbersOrStrings,
       Array.partition((item, i) => {
@@ -326,7 +342,7 @@ describe("Array", () => {
         expect(i).type.toBe<number>()
         return typeof item === "number" ? Result.succeed(item + i) : Result.fail(item)
       })
-    )).type.toBe<[excluded: Array<string>, satisfying: Array<number>]>()
+    )).type.toBe<[passes: Array<number>, fails: Array<string>]>()
 
     expect(Array.partition).type.not.toBeCallableWith(
       numbersOrStrings,
@@ -1037,17 +1053,17 @@ describe("Array", () => {
 
   it("separate", () => {
     expect(Array.separate([])).type.toBe<[Array<unknown>, Array<unknown>]>()
-    expect(Array.separate([Result.succeed(1)])).type.toBe<[Array<never>, Array<number>]>()
-    expect(Array.separate([Result.fail("a")])).type.toBe<[Array<string>, Array<never>]>()
-    expect(Array.separate([Result.fail("a"), Result.succeed(1)])).type.toBe<[Array<string>, Array<number>]>()
-    expect(Array.separate(hole<Array<Result.Result<number, string>>>())).type.toBe<[Array<string>, Array<number>]>()
-    expect(Array.separate(hole<Iterable<Result.Result<number, string>>>())).type.toBe<[Array<string>, Array<number>]>()
+    expect(Array.separate([Result.succeed(1)])).type.toBe<[Array<number>, Array<never>]>()
+    expect(Array.separate([Result.fail("a")])).type.toBe<[Array<never>, Array<string>]>()
+    expect(Array.separate([Result.fail("a"), Result.succeed(1)])).type.toBe<[Array<number>, Array<string>]>()
+    expect(Array.separate(hole<Array<Result.Result<number, string>>>())).type.toBe<[Array<number>, Array<string>]>()
+    expect(Array.separate(hole<Iterable<Result.Result<number, string>>>())).type.toBe<[Array<number>, Array<string>]>()
     expect(Array.separate(
       hole<Iterable<Result.Result<number, string> | Result.Result<boolean, Date>>>()
-    )).type.toBe<[Array<string | Date>, Array<number | boolean>]>()
+    )).type.toBe<[Array<number | boolean>, Array<string | Date>]>()
     expect(Array.separate(
       hole<Iterable<Result.Result<number, string>> | Iterable<Result.Result<boolean, Date>>>()
-    )).type.toBe<[Array<string | Date>, Array<number | boolean>]>()
+    )).type.toBe<[Array<number | boolean>, Array<string | Date>]>()
   })
 
   it("getSuccesses", () => {
@@ -1242,6 +1258,12 @@ describe("Array", () => {
       expect(Array.window(iterableString, negativeOne)).type.toBe<Array<never>>()
       expect(pipe(iterableString, Array.window(negativeOne))).type.toBe<Array<never>>()
       expect(Array.window(negativeOne)(iterableString)).type.toBe<Array<never>>()
+    })
+
+    it("n: fractional literal", () => {
+      expect(Array.window(iterableString, 1.5)).type.toBe<Array<Array<string>>>()
+      expect(pipe(iterableString, Array.window(1.5))).type.toBe<Array<Array<string>>>()
+      expect(Array.window(1.5)(iterableString)).type.toBe<Array<Array<string>>>()
     })
   })
 

@@ -14,16 +14,6 @@ import {
 
 it.layer(NodeServices.layer)("ClaudeHome", (it) => {
   describe("Claude home resolution", () => {
-    it.effect("uses the process home when no Claude home override is configured", () =>
-      Effect.gen(function* () {
-        const path = yield* Path.Path;
-        const resolved = path.resolve(NodeOS.homedir());
-
-        expect(yield* resolveClaudeHomePath({ homePath: "" })).toBe(resolved);
-        expect(yield* makeClaudeEnvironment({ homePath: "" })).toBe(process.env);
-      }),
-    );
-
     it.effect("resolves configured Claude HOME and stamps continuation/cache keys with it", () =>
       Effect.gen(function* () {
         const path = yield* Path.Path;
@@ -39,23 +29,30 @@ it.layer(NodeServices.layer)("ClaudeHome", (it) => {
       }),
     );
 
+    it.effect("uses inherited CLAUDE_CONFIG_DIR when homePath is empty", () =>
+      Effect.gen(function* () {
+        const path = yield* Path.Path;
+        const inherited = path.resolve("/tmp/claude-inherited");
+        const environment = { CLAUDE_CONFIG_DIR: inherited };
+
+        expect(yield* resolveClaudeHomePath({ homePath: "" }, environment)).toBe(inherited);
+        expect(yield* makeClaudeContinuationGroupKey({ homePath: "" }, environment)).toBe(
+          `claude:home:${inherited}`,
+        );
+
+        const explicit = path.resolve(NodeOS.homedir(), ".claude-work");
+        expect(yield* resolveClaudeHomePath({ homePath: "~/.claude-work" }, environment)).toBe(
+          explicit,
+        );
+      }),
+    );
+
     it.effect("separates capability probes by cwd", () =>
       Effect.gen(function* () {
         const config = { binaryPath: "claude", homePath: "" };
         const first = yield* makeClaudeCapabilitiesCacheKey(config, "/repo-a");
         const second = yield* makeClaudeCapabilitiesCacheKey(config, "/repo-b");
         expect(first).not.toBe(second);
-      }),
-    );
-
-    it.effect("keeps continuation compatible across instances with the same Claude HOME", () =>
-      Effect.gen(function* () {
-        const path = yield* Path.Path;
-        const resolved = path.resolve(NodeOS.homedir());
-
-        expect(yield* makeClaudeContinuationGroupKey({ homePath: "" })).toBe(
-          `claude:home:${resolved}`,
-        );
       }),
     );
   });

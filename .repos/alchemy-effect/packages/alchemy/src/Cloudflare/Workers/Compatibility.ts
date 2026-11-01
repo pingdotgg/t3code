@@ -1,8 +1,10 @@
-import { isPythonMain } from "./PythonWorkerBundle.ts";
+import {
+  DEFAULT_COMPATIBILITY_DATE,
+  NODEJS_COMPAT_DEFAULT_ON,
+  withDefaultFlags,
+} from "@alchemy.run/cloudflare-runtime/core/internal/constants";
+import { isPythonMain } from "./Sources/Python.ts";
 import type { WorkerProps } from "./Worker.ts";
-
-// TODO: figure out why the later one from workerd breaks
-const DEFAULT_COMPATIBILITY_DATE = "2026-03-17";
 
 /**
  * The Effect worker bridge builds its layer stack once per isolate and shares
@@ -19,10 +21,28 @@ const DEFAULT_COMPATIBILITY_DATE = "2026-03-17";
 const CROSS_REQUEST_PROMISE_RESOLUTION =
   "handle_cross_request_promise_resolution";
 
-// The date the flag became default-on. Cloudflare rejects a script that
-// specifies a flag its compatibility date already defaults on ("does not
-// need to be specified anymore"), so it is only appended for older dates.
-const CROSS_REQUEST_PROMISE_RESOLUTION_DEFAULT_ON = "2024-10-14";
+/**
+ * Compatibility settings passed to build tools and framework adapters.
+ * Cloudflare rejects a redundant `nodejs_compat` flag after its default-on
+ * date, but downstream tools may still detect Node support from the explicit
+ * flag only, so internal build configuration materializes the effective flag.
+ */
+export const getToolingCompatibility = (
+  compatibility: { date: string; flags: string[] },
+  main: unknown,
+) => ({
+  date: compatibility.date,
+  // TODO: Stop materializing `nodejs_compat` once supported downstream tools
+  // consistently derive the default from the compatibility date.
+  flags:
+    isPythonMain(main) ||
+    compatibility.date < NODEJS_COMPAT_DEFAULT_ON ||
+    compatibility.flags.includes("nodejs_compat") ||
+    compatibility.flags.includes("nodejs_compat_v2") ||
+    compatibility.flags.includes("no_nodejs_compat")
+      ? compatibility.flags
+      : [...compatibility.flags, "nodejs_compat"],
+});
 
 export const getCompatibility = (props: WorkerProps) => {
   const userFlags = props.compatibility?.flags ?? [];
@@ -49,20 +69,11 @@ export const getCompatibility = (props: WorkerProps) => {
   const date = props.compatibility?.date ?? DEFAULT_COMPATIBILITY_DATE;
   return {
     date,
-    flags: [
-      ...userFlags,
-      // Required while Python Workers are in open beta — the upload API
-      // rejects Python modules without it.
-      ...(python ? ["python_workers"] : []),
-      ...(props.isExternal
-        ? []
-        : [
-            "nodejs_compat",
-            // ISO dates compare lexically.
-            ...(date < CROSS_REQUEST_PROMISE_RESOLUTION_DEFAULT_ON
-              ? [CROSS_REQUEST_PROMISE_RESOLUTION]
-              : []),
-          ]),
-    ].filter((value, index, self) => self.indexOf(value) === index),
+    flags: withDefaultFlags(props.compatibility?.flags, {
+      date,
+      python,
+      isExternal: props.isExternal ?? false,
+      bundle: props.bundle,
+    }),
   };
 };

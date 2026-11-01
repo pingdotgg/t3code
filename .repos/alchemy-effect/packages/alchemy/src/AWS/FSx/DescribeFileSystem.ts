@@ -11,9 +11,8 @@ import type { FileSystem } from "./FileSystem.ts";
  * storage capacity, DNS name, engine configuration — from inside a function
  * runtime. Useful for storage dashboards and capacity monitors. Provide the
  * implementation with `Effect.provide(AWS.FSx.DescribeFileSystemHttp)`.
- * @binding
- * @section Inspecting File Systems
- * @example Read the file system's state and capacity
+ * ### Inspecting File Systems
+ * **Example:** Read the file system's state and capacity
  * ```typescript
  * // init — bind the operation to the file system
  * const describeFileSystem = yield* AWS.FSx.DescribeFileSystem(files);
@@ -23,6 +22,8 @@ import type { FileSystem } from "./FileSystem.ts";
  * const fs = response.FileSystems?.[0];
  * yield* Effect.log(`${fs?.Lifecycle}: ${fs?.StorageCapacity} GiB`);
  * ```
+ *
+ * @binding
  */
 export interface DescribeFileSystem extends Binding.Service<
   DescribeFileSystem,

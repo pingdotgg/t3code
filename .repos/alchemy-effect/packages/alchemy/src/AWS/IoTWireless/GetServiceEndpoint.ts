@@ -7,13 +7,12 @@ import * as Binding from "../../Binding.ts";
  * account's CUPS or LNS endpoint (and its server trust certificate) from a
  * deployed Lambda or Task. Useful for gateway provisioning flows.
  *
- * @binding
- * @section Reading the Service Endpoint
+ * ### Reading the Service Endpoint
  * Provide the `GetServiceEndpointHttp` implementation layer on the Function
  * effect, bind the capability in the init phase, then call the returned
  * client at runtime.
  *
- * @example Read the LNS Endpoint
+ * **Example:** Read the LNS Endpoint
  * ```typescript
  * // init
  * const getEndpoint = yield* AWS.IoTWireless.GetServiceEndpoint();
@@ -23,6 +22,8 @@ import * as Binding from "../../Binding.ts";
  * // on the Function effect:
  * // .pipe(Effect.provide(AWS.IoTWireless.GetServiceEndpointHttp))
  * ```
+ *
+ * @binding
  */
 export interface GetServiceEndpoint extends Binding.Service<
   GetServiceEndpoint,

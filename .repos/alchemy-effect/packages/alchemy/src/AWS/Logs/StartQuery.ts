@@ -15,9 +15,8 @@ export interface StartQueryRequest extends Omit<
  * callable that starts an Insights query scoped to the group, automatically
  * injecting the log group name. Pair with
  * {@link import("./GetQueryResults.ts").GetQueryResults} to poll for results.
- * @binding
- * @section Logs Insights
- * @example Start an Insights Query
+ * ### Logs Insights
+ * **Example:** Start an Insights Query
  * ```typescript
  * const startQuery = yield* AWS.Logs.StartQuery(logGroup);
  *
@@ -28,12 +27,12 @@ export interface StartQueryRequest extends Omit<
  * });
  * ```
  *
- * @example Wire into a Lambda Function
+ * **Example:** Wire into a Lambda Function
  * ```typescript
  * // Insights queries are asynchronous: start one, then poll with the
  * // GetQueryResults binding. Provide both HTTP layers with Layer.mergeAll.
  * export default InsightsFunction.make(
- *   { main: import.meta.url, url: true },
+ *   { main: import.meta.url, functionUrl: true },
  *   Effect.gen(function* () {
  *     const logGroup = yield* AWS.Logs.LogGroup("AppLogs", {});
  *     const startQuery = yield* AWS.Logs.StartQuery(logGroup);
@@ -56,6 +55,8 @@ export interface StartQueryRequest extends Omit<
  *   ),
  * );
  * ```
+ *
+ * @binding
  */
 export interface StartQuery extends Binding.Service<
   StartQuery,

@@ -1,0 +1,162 @@
+---
+title: Secondary storage
+description: Supply a strongly consistent session and rate-limit store through an Effect layer.
+---
+
+## Implement the complete storage contract
+
+```typescript
+// storage.ts
+import {
+  BetterAuthStorageError,
+  SecondaryStorage,
+} from "@alchemy.run/better-auth";
+import { Redis } from "@upstash/redis";
+import * as Config from "effect/Config";
+import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
+import * as Redacted from "effect/Redacted";
+
+const incrementScript = `
+local count = redis.call("INCR", KEYS[1])
+if count == 1 then
+  redis.call("EXPIRE", KEYS[1], ARGV[1])
+end
+return count
+`;
+
+export const RedisStorage = Layer.effect(
+  SecondaryStorage,
+  Effect.gen(function* () {
+    const url = yield* Config.String("REDIS_REST_URL");
+    const token = yield* Config.Redacted("REDIS_REST_TOKEN");
+    const run = <A>(operation: (redis: Redis) => Promise<A>) =>
+      Effect.tryPromise({
+        try: (signal) => operation(new Redis({
+          url,
+          token: Redacted.value(token),
+          automaticDeserialization: false,
+          enableAutoPipelining: false,
+          retry: false,
+          signal,
+        })),
+        catch: (cause) => new BetterAuthStorageError({
+          message: "Secondary storage operation failed",
+          cause,
+        }),
+      });
+    const keyFor = (key: string) => `better-auth:${key}`;
+    return SecondaryStorage.of({
+      get: (key) => run((redis) => redis.get<string>(keyFor(key))),
+      set: (key, value, ttlSeconds) => run((redis) =>
+        ttlSeconds === undefined
+          ? redis.set(keyFor(key), value)
+          : redis.set(keyFor(key), value, { ex: ttlSeconds }),
+      ).pipe(Effect.asVoid),
+      delete: (key) => run((redis) => redis.del(keyFor(key))).pipe(Effect.asVoid),
+      getAndDelete: (key) => run((redis) => redis.getdel<string>(keyFor(key))),
+      increment: (key, ttlSeconds) => run((redis) =>
+        redis.eval<[number], number>(incrementScript, [keyFor(key)], [ttlSeconds]),
+      ),
+    });
+  }),
+);
+```
+
+The external backend must offer strongly consistent reads and writes through a Redis REST endpoint compatible with `@upstash/redis`, including `GETDEL` and `EVAL`. Use a dedicated database and credential for each environment; an eventually consistent read replica or Cloudflare KV does not satisfy this contract.
+
+Install `@upstash/redis` and provide the endpoint's `REDIS_REST_URL` and protected `REDIS_REST_TOKEN` at deployment. The wrapper exports the Effect service, not a built-in Redis implementation; this file supplies the adapter.
+
+Automatic JSON deserialization is disabled because Better Auth stores strings, including serialized JSON. Automatic retries are also disabled: replaying an increment or consume-once operation after an ambiguous network failure can change its meaning.
+
+## Preserve all five operations
+
+`get` returns a string or `null` only when a key is missing or expired. Connection and command failures become `BetterAuthStorageError`, never a missing value.
+
+`set` writes a value with its optional TTL in **seconds**, using one expiring command when a TTL is supplied. A separate write and expiry could leave a non-expiring credential behind if the second command failed.
+
+`delete` succeeds for an already-missing key but still reports backend failures. `getAndDelete` uses atomic `GETDEL`, so two concurrent consumers cannot both receive the credential.
+
+`increment` creates an absent counter at `1` with its initial TTL, or increments it without extending the original expiration. The Lua script executes both initialization and expiry as one server operation; rate-limit windows are fixed, not sliding.
+
+## Provide storage before constructing Better Auth
+
+```typescript
+// worker.ts
+import { BetterAuth } from "@alchemy.run/better-auth";
+import { CloudflareD1 } from "@alchemy.run/better-auth/CloudflareD1";
+import * as Cloudflare from "alchemy/Cloudflare";
+import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
+import { RedisStorage } from "./storage.ts";
+
+const AuthDb = Cloudflare.D1.Database("AuthDb");
+
+export default class AuthApi extends Cloudflare.Worker<AuthApi>()(
+  "AuthApi",
+  { main: import.meta.url, compatibility: { flags: ["nodejs_compat"] } },
+  Effect.gen(function* () {
+    const auth = yield* BetterAuth({
+      basePath: "/api/auth",
+      emailAndPassword: { enabled: true },
+      session: { storeSessionInDatabase: true },
+      rateLimit: {
+        enabled: true,
+        storage: "secondary-storage",
+        window: 60,
+        max: 100,
+      },
+    });
+    return { fetch: auth.fetch };
+  }).pipe(
+    Effect.provide(Layer.merge(CloudflareD1(AuthDb), RedisStorage)),
+  ),
+) {}
+```
+
+The optional service must be present when `BetterAuth` is constructed; providing it only to a later request is too late. Users and linked accounts still need D1, while sessions, rate limiting, and some verification or OAuth state use secondary storage according to the configured options.
+
+`storeSessionInDatabase: true` retains a database copy but is not an outage fallback: Better Auth still reads sessions from secondary storage. Losing or evicting keys can sign users out, and changing stores is an operational migration rather than automatic session copying.
+
+The explicit limiter also runs in development, with a 60-second window and a maximum of 100 requests before endpoint-specific limits. It protects Better Auth's routes, not unrelated application endpoints.
+
+## Run the standalone host
+
+```typescript
+// alchemy.run.ts
+import * as Alchemy from "alchemy";
+import * as Cloudflare from "alchemy/Cloudflare";
+import * as Effect from "effect/Effect";
+import AuthApi from "./worker.ts";
+
+export default Alchemy.Stack(
+  "AuthStorage",
+  { providers: Cloudflare.providers(), state: Alchemy.localState() },
+  Effect.gen(function* () {
+    const api = yield* AuthApi;
+    return { url: api.url };
+  }),
+);
+```
+
+Use Bun, matching `alchemy` and `@alchemy.run/better-auth` releases, Better Auth 1.7.5, Effect 4, and `kysely`, in addition to the Redis SDK. Configure Cloudflare credentials and the external storage inputs before deployment; this stack provisions D1 and a stable signing secret, not the Redis service.
+
+```sh
+bunx alchemy deploy
+```
+
+Preserve the local Alchemy state and use the printed URL. A local run must use a separate storage database from production because the REST store is external, not emulated by `alchemy dev`.
+
+## Keep I/O request-scoped
+
+The layer captures only configuration; each operation creates its own REST client and request with Effect's abort signal. Auto-pipelining is disabled so no pending batch can span Worker events; the wrapper runs each operation in the captured `Alchemy.RuntimeContext`.
+
+A socket-based adapter must instead acquire disposable connections lazily within the request scope and release them there. Do not retain an open connection, response, or in-flight promise across Worker events.
+
+## Verify against the actual backend
+
+Send concurrent increments to one fresh test key and verify the results are exactly `1` through the number of calls. Increment again before expiry and verify expiration remains relative to the first increment, not the last.
+
+Write one value and issue concurrent `getAndDelete` calls: exactly one should receive the value and the others should receive `null`. Also verify seconds-based expiry, idempotent deletion, and failed Effects during an outage.
+
+Run these checks against the deployed backend rather than an in-memory substitute, then exercise real sign-in and sign-out. An atomic command does not compensate for eventually consistent reads elsewhere in the service.

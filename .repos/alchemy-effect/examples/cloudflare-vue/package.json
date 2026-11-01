@@ -8,25 +8,28 @@
     "build": "vite build",
     "preview": "vite preview",
     "deploy": "alchemy deploy",
-    "destroy": "alchemy destroy"
+    "destroy": "alchemy destroy",
+    "test": "bun test"
   },
   "dependencies": {
-    "vue": "beta",
-    "vue-router": "^5.0.4"
+    "vue": "catalog:",
+    "vue-router": "catalog:"
   },
   "devDependencies": {
-    "@tsconfig/node24": "^24.0.4",
-    "@types/node": "^24.12.0",
-    "@vitejs/plugin-vue": "^6.0.5",
-    "@vue/tsconfig": "^0.9.1",
-    "npm-run-all2": "^8.0.4",
-    "oxfmt": "^0.42.0",
-    "typescript": "~6.0.0",
-    "vite": "^8.0.3",
-    "vite-plugin-vue-devtools": "^8.1.1",
+    "@tailwindcss/vite": "catalog:",
+    "@tsconfig/node24": "catalog:",
+    "@types/node": "catalog:node24",
+    "@vitejs/plugin-vue": "catalog:",
+    "@vue/tsconfig": "catalog:",
     "alchemy": "workspace:*",
     "effect": "catalog:",
-    "vue-tsc": "^3.2.6"
+    "npm-run-all2": "catalog:",
+    "oxfmt": "catalog:",
+    "tailwindcss": "catalog:",
+    "typescript": "catalog:",
+    "vite": "catalog:",
+    "vite-plugin-vue-devtools": "catalog:",
+    "vue-tsc": "catalog:"
   },
   "engines": {
     "node": "^20.19.0 || >=22.12.0"

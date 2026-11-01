@@ -91,30 +91,37 @@ test.provider(
       const gone = yield* inspector2.listFilters({ arns: [created.arn] });
       expect(gone.filters).toHaveLength(0);
     }),
-  { timeout: 120_000 },
+  {
+    tags: ["provider:aws", "provider:aws:inspector2", "live"],
+    timeout: 120_000,
+  },
 );
 
 // The CIS scan APIs are hard-gated on Inspector enablement — a disabled
 // account gets a typed AccessDeniedException ("Invoking account is not
 // enabled."). This ungated probe pins that behavior; the full lifecycle
 // below only runs against an Inspector-enabled account.
-test.provider("CIS scan APIs reject a non-enabled account (typed)", () =>
-  Effect.gen(function* () {
-    const account = (yield* inspector2.batchGetAccountStatus({})).accounts?.[0];
-    if (account?.state?.status === "ENABLED") {
-      yield* Effect.logInfo(
-        "Inspector is enabled in this account — CIS APIs are accessible, probe not applicable",
+test.provider(
+  "CIS scan APIs reject a non-enabled account (typed)",
+  () =>
+    Effect.gen(function* () {
+      const account = (yield* inspector2.batchGetAccountStatus({}))
+        .accounts?.[0];
+      if (account?.state?.status === "ENABLED") {
+        yield* Effect.logInfo(
+          "Inspector is enabled in this account — CIS APIs are accessible, probe not applicable",
+        );
+        return;
+      }
+      const result = yield* Effect.result(
+        inspector2.listCisScanConfigurations({}),
       );
-      return;
-    }
-    const result = yield* Effect.result(
-      inspector2.listCisScanConfigurations({}),
-    );
-    expect(Result.isFailure(result)).toBe(true);
-    if (Result.isFailure(result)) {
-      expect(result.failure._tag).toBe("AccessDeniedException");
-    }
-  }),
+      expect(Result.isFailure(result)).toBe(true);
+      if (Result.isFailure(result)) {
+        expect(result.failure._tag).toBe("AccessDeniedException");
+      }
+    }),
+  { tags: ["provider:aws", "provider:aws:inspector2", "live"] },
 );
 
 // Full CIS scan configuration lifecycle — requires Inspector to be enabled
@@ -197,5 +204,8 @@ test.provider.skipIf(!process.env.INSPECTOR2_TEST_CIS)(
       yield* stack.destroy();
       expect(yield* byArn()).toBeUndefined();
     }),
-  { timeout: 120_000 },
+  {
+    tags: ["provider:aws", "provider:aws:inspector2", "live"],
+    timeout: 120_000,
+  },
 );

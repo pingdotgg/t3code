@@ -1,17 +1,22 @@
 import type { EnvironmentId as EnvironmentIdType } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
-import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
-import { AsyncResult, Atom } from "effect/unstable/reactivity";
+import { AsyncResult, Atom } from "effect/reactivity";
 
 import * as EnvironmentRegistry from "../connection/registry.ts";
 import type { ConnectionCatalogEntry } from "../connection/catalog.ts";
 import { AVAILABLE_CONNECTION_STATE } from "../connection/model.ts";
 import * as EnvironmentSupervisor from "../connection/supervisor.ts";
 import {
+  PullRequestRoutingPermissions,
+  type PullRequestRoutingPermission,
+  type StoredPullRequestRoutingPermission,
+} from "../connection/pullRequestRoutingPermissions.ts";
+import {
   createAtomCommandScheduler,
   createRuntimeCommand,
+  environmentSessionGenerationAtom,
   followStreamInEnvironment,
 } from "./runtime.ts";
 
@@ -20,7 +25,17 @@ export interface EnvironmentCatalogState {
   readonly entries: ReadonlyMap<EnvironmentIdType, ConnectionCatalogEntry>;
 }
 
-export const EMPTY_ENVIRONMENT_CATALOG_STATE: EnvironmentCatalogState = Object.freeze({
+export function* enabledEnvironmentIds(
+  catalog: EnvironmentCatalogState,
+): Generator<EnvironmentIdType> {
+  for (const [environmentId, entry] of catalog.entries) {
+    if (entry.enabled && entry.unsupportedReason === undefined) {
+      yield environmentId;
+    }
+  }
+}
+
+const EMPTY_ENVIRONMENT_CATALOG_STATE: EnvironmentCatalogState = Object.freeze({
   isReady: false,
   entries: new Map(),
 });
@@ -47,8 +62,36 @@ export function createEnvironmentCatalogAtoms<R, E>(
   );
 
   const catalogValueAtom = Atom.make((get) =>
-    Option.getOrElse(AsyncResult.value(get(catalogAtom)), () => EMPTY_ENVIRONMENT_CATALOG_STATE),
+    AsyncResult.getOrElse(get(catalogAtom), () => EMPTY_ENVIRONMENT_CATALOG_STATE),
   ).pipe(Atom.withLabel("environment-catalog-value"));
+
+  const pullRequestRoutingPermissionsAtom = runtime.atom(
+    Stream.unwrap(
+      PullRequestRoutingPermissions.pipe(Effect.map((permissions) => permissions.changes)),
+    ),
+    { initialValue: [] as ReadonlyArray<StoredPullRequestRoutingPermission> },
+  );
+  const pullRequestRoutingPermissionsValueAtom = Atom.make((get) =>
+    AsyncResult.getOrElse(get(pullRequestRoutingPermissionsAtom), () => []),
+  ).pipe(Atom.withLabel("environment-pull-request-routing-permissions"));
+  const setPullRequestRoutingPermission = createRuntimeCommand(runtime, {
+    label: "environment-catalog:pull-request-routing-permission",
+    scheduler: commandScheduler,
+    concurrency: serial,
+    execute: Effect.fn(function* (input: {
+      readonly environmentId: EnvironmentIdType;
+      readonly permission: PullRequestRoutingPermission;
+    }) {
+      const registry = yield* EnvironmentRegistry.EnvironmentRegistry;
+      const entry = (yield* SubscriptionRef.get(registry.entries)).get(input.environmentId);
+      if (entry === undefined)
+        return yield* new EnvironmentRegistry.EnvironmentNotRegisteredError({
+          environmentId: input.environmentId,
+        });
+      const permissions = yield* PullRequestRoutingPermissions;
+      yield* permissions.set(entry, input.permission);
+    }),
+  });
 
   const networkStatusAtom = runtime.atom(
     Stream.unwrap(
@@ -60,7 +103,7 @@ export function createEnvironmentCatalogAtoms<R, E>(
   );
 
   const networkStatusValueAtom = Atom.make((get) =>
-    Option.getOrElse(AsyncResult.value(get(networkStatusAtom)), () => "unknown" as const),
+    AsyncResult.getOrElse(get(networkStatusAtom), () => "unknown" as const),
   ).pipe(Atom.withLabel("environment-network-status-value"));
 
   const stateAtom = Atom.family((environmentId: EnvironmentIdType) =>
@@ -76,6 +119,9 @@ export function createEnvironmentCatalogAtoms<R, E>(
       { initialValue: AVAILABLE_CONNECTION_STATE },
     ),
   );
+
+  const sessionGenerationAtom = (environmentId: EnvironmentIdType) =>
+    environmentSessionGenerationAtom(runtime, environmentId);
 
   const register = createRuntimeCommand(runtime, {
     label: "environment-catalog:register",
@@ -106,6 +152,36 @@ export function createEnvironmentCatalogAtoms<R, E>(
         Effect.flatMap((registry) => registry.removeRelayEnvironments()),
       ),
   });
+  const setEnabled = createRuntimeCommand(runtime, {
+    label: "environment-catalog:set-enabled",
+    scheduler: commandScheduler,
+    concurrency: serial,
+    execute: (input: { readonly environmentId: EnvironmentIdType; readonly enabled: boolean }) =>
+      EnvironmentRegistry.EnvironmentRegistry.pipe(
+        Effect.flatMap((registry) => registry.setEnabled(input.environmentId, input.enabled)),
+      ),
+  });
+  const removeRoute = createRuntimeCommand(runtime, {
+    label: "environment-catalog:remove-route",
+    scheduler: commandScheduler,
+    concurrency: serial,
+    execute: (input: { readonly environmentId: EnvironmentIdType; readonly routeId: string }) =>
+      EnvironmentRegistry.EnvironmentRegistry.pipe(
+        Effect.flatMap((registry) => registry.removeRoute(input.environmentId, input.routeId)),
+      ),
+  });
+  const reorderRoutes = createRuntimeCommand(runtime, {
+    label: "environment-catalog:reorder-routes",
+    scheduler: commandScheduler,
+    concurrency: serial,
+    execute: (input: {
+      readonly environmentId: EnvironmentIdType;
+      readonly routeIds: ReadonlyArray<string>;
+    }) =>
+      EnvironmentRegistry.EnvironmentRegistry.pipe(
+        Effect.flatMap((registry) => registry.reorderRoutes(input.environmentId, input.routeIds)),
+      ),
+  });
   const retryNow = createRuntimeCommand(runtime, {
     label: "environment-catalog:retry-now",
     scheduler: commandScheduler,
@@ -119,12 +195,18 @@ export function createEnvironmentCatalogAtoms<R, E>(
   return {
     catalogAtom,
     catalogValueAtom,
+    pullRequestRoutingPermissionsValueAtom,
+    setPullRequestRoutingPermission,
     networkStatusAtom,
     networkStatusValueAtom,
     stateAtom,
+    sessionGenerationAtom,
     register,
     remove,
+    removeRoute,
+    reorderRoutes,
     removeRelayEnvironments,
     retryNow,
+    setEnabled,
   };
 }

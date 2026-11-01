@@ -38,8 +38,7 @@ export interface SecretsProps {
  *
  * Each entry in `secrets` becomes one `GitHub.Secret` resource, using the
  * map key as both the alchemy logical id and the secret name.
- * @resource
- * @example
+ * **Example:** Example
  * ```ts
  * yield* GitHub.Secrets({
  *   owner: "my-org",
@@ -50,6 +49,9 @@ export interface SecretsProps {
  *   },
  * });
  * ```
+ *
+ * @resource
+ * @product Actions
  */
 export const Secrets = ({
   owner,

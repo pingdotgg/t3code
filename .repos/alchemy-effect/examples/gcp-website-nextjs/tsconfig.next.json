@@ -1,0 +1,16 @@
+// The tsconfig `next build` type-checks with (see typescript.tsconfigPath in
+// next.config.mjs). It scopes the check to the Next app code only:
+// alchemy.run.ts and test/ import the `alchemy` workspace package, whose
+// types resolve from packages/alchemy's built lib/ — not available in a
+// source-only checkout. Those files are still type-checked by the repo-wide
+// `tsc -b` (the root tsconfig references this example's tsconfig.json).
+{
+  "extends": "./tsconfig.json",
+  "include": [
+    "next-env.d.ts",
+    "app/**/*",
+    ".next/types/**/*.ts",
+    ".next/dev/types/**/*.ts"
+  ],
+  "exclude": ["node_modules"]
+}

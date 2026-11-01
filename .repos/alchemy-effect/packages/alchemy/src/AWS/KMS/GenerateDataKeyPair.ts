@@ -22,9 +22,8 @@ export interface GenerateDataKeyPairRequest extends Omit<
  * never leaks into logs — unwrap with `Redacted.value(...)` at the point of
  * use and discard it as soon as the local operation is done.
  *
- * @binding
- * @section Data Key Pairs
- * @example Generate an RSA Key Pair
+ * ### Data Key Pairs
+ * **Example:** Generate an RSA Key Pair
  * ```typescript
  * const generateDataKeyPair = yield* AWS.KMS.GenerateDataKeyPair(key);
  *
@@ -33,6 +32,8 @@ export interface GenerateDataKeyPairRequest extends Omit<
  * // pair.PrivateKeyPlaintext  — Redacted; use locally then discard
  * // pair.PrivateKeyCiphertextBlob — persist; recover via the Decrypt binding
  * ```
+ *
+ * @binding
  */
 export interface GenerateDataKeyPair extends Binding.Service<
   GenerateDataKeyPair,

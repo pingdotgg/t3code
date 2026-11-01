@@ -57,7 +57,9 @@ const etl = (creds: {
   secretAccessKey: Redacted.Redacted<string>;
 }) =>
   Effect.gen(function* () {
-    const bucket = yield* Cloudflare.R2.Bucket("SinkBucket", {});
+    const bucket = yield* Cloudflare.R2.Bucket("SinkBucket", {
+      forceDestroy: true,
+    });
     const stream = yield* Cloudflare.Pipelines.Stream("Stream", {});
     const sink = yield* Cloudflare.Pipelines.Sink("Sink", {
       type: "r2",
@@ -100,5 +102,13 @@ test.provider(
 
       yield* stack.destroy();
     }).pipe(logLevel),
-  { timeout: 600_000 },
+  {
+    tags: [
+      "provider:cloudflare",
+      "provider:cloudflare:pipelines",
+      "provider:cloudflare:r2",
+      "live",
+    ],
+    timeout: 600_000,
+  },
 );

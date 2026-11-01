@@ -4,7 +4,7 @@ import * as ec2 from "@distilled.cloud/aws/ec2";
 import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
 import * as Schedule from "effect/Schedule";
-import type { HttpClient } from "effect/unstable/http/HttpClient";
+import type { HttpClient } from "effect/http/HttpClient";
 
 // Explicitly-typed pipeable retry helpers. Inlining `Effect.retry` in a
 // provider lifecycle op leaks `Retry.Return`'s conditional into declaration
@@ -26,7 +26,7 @@ const retryWhileIncorrectState = <A, E extends { readonly _tag: string }, R>(
     schedule: Schedule.max([Schedule.fixed(2000), Schedule.recurs(10)]),
   });
 
-import type { ScopedPlanStatusSession } from "../../Cli/Cli.ts";
+import type { ScopedPlanStatusSession } from "../../Report.ts";
 import { isResolved } from "../../Diff.ts";
 import * as Provider from "../../Provider.ts";
 import { Resource } from "../../Resource.ts";
@@ -99,9 +99,8 @@ export interface VolumeAttachment extends Resource<
  * `volumeId`/`instanceId`/`device` triple. Changing any of them replaces the
  * attachment.
  *
- * @resource
- * @section Attaching a Volume
- * @example Attach a Volume to an Instance
+ * ### Attaching a Volume
+ * **Example:** Attach a Volume to an Instance
  * ```typescript
  * const attachment = yield* AWS.EC2.VolumeAttachment("DataAttachment", {
  *   volumeId: volume.volumeId,
@@ -113,6 +112,8 @@ export interface VolumeAttachment extends Resource<
  * The volume appears to the instance as a block device at `device`. On modern
  * Linux AMIs the kernel may rename `/dev/sdf` to `/dev/xvdf` — check
  * `lsblk` inside the instance. The volume and instance must share an AZ.
+ *
+ * @resource
  */
 export const VolumeAttachment = Resource<VolumeAttachment>(
   "AWS.EC2.VolumeAttachment",

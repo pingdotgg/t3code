@@ -8,8 +8,8 @@ import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Stream from "effect/Stream";
-import { HttpServerRequest } from "effect/unstable/http/HttpServerRequest";
-import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
+import { HttpServerRequest } from "effect/http/HttpServerRequest";
+import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import path from "pathe";
 import {
   HELLO_PNG_BASE64,
@@ -30,7 +30,7 @@ export class AICapabilitiesTestFunction extends Lambda.Function<Lambda.Function>
 export default AICapabilitiesTestFunction.make(
   {
     main,
-    url: true,
+    functionUrl: true,
     // Vision/speech inference regularly exceeds Lambda's 3s default timeout.
     timeout: Duration.seconds(30),
   },

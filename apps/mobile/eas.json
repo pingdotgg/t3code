@@ -13,7 +13,17 @@
       },
       "channel": "development",
       "developmentClient": true,
-      "distribution": "internal"
+      "distribution": "internal",
+      "ios": {
+        "image": "macos-tahoe-26.6-xcode-27.1"
+      }
+    },
+    "development-simulator": {
+      "extends": "development",
+      "ios": {
+        "simulator": true,
+        "image": "macos-tahoe-26.6-xcode-27.1"
+      }
     },
     "preview": {
       "corepack": true,
@@ -23,7 +33,10 @@
       },
       "channel": "preview",
       "environment": "preview",
-      "distribution": "internal"
+      "distribution": "internal",
+      "ios": {
+        "image": "macos-tahoe-26.6-xcode-27.1"
+      }
     },
     "preview:dev": {
       "corepack": true,
@@ -38,20 +51,36 @@
       "distribution": "internal",
       "android": {
         "buildType": "apk"
+      },
+      "ios": {
+        "image": "macos-tahoe-26.6-xcode-27.1"
+      }
+    },
+    "testflight": {
+      "extends": "production",
+      "env": {
+        "T3CODE_MOBILE_VERSION": "3.0.0"
       }
     },
     "production": {
       "corepack": true,
       "env": {
         "APP_VARIANT": "production",
-        "NODE_OPTIONS": "--max-old-space-size=4096"
+        "NODE_OPTIONS": "--max-old-space-size=4096",
+        "SOURCEMAP_FILE": "/tmp/t3code-ios-main.jsbundle.map"
       },
       "channel": "production",
       "environment": "production",
-      "autoIncrement": true
+      "autoIncrement": true,
+      "ios": {
+        "image": "macos-tahoe-26.6-xcode-27.1"
+      }
     }
   },
   "submit": {
+    "testflight": {
+      "extends": "production"
+    },
     "production": {
       "ios": {
         "ascAppId": "6787819824"

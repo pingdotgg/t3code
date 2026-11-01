@@ -58,9 +58,8 @@ export interface Group extends Resource<
  * cross-Region canaries) so you can view aggregated run results and manage
  * them as a unit. A group can hold as many as 10 canaries, and an account
  * can have as many as 20 groups.
- * @resource
- * @section Creating Groups
- * @example Group of Canaries
+ * ### Creating Groups
+ * **Example:** Group of Canaries
  * ```typescript
  * import * as Synthetics from "alchemy/AWS/Synthetics";
  *
@@ -69,12 +68,14 @@ export interface Group extends Resource<
  * });
  * ```
  *
- * @example Empty Group with Tags
+ * **Example:** Empty Group with Tags
  * ```typescript
  * const group = yield* Synthetics.Group("Fleet", {
  *   tags: { team: "platform" },
  * });
  * ```
+ *
+ * @resource
  */
 export const Group = Resource<Group>("AWS.Synthetics.Group");
 

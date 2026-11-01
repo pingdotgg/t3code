@@ -1,45 +1,61 @@
+import { settlePromise } from "@t3tools/client-runtime/state/runtime";
 import { useAtomValue } from "@effect/atom-react";
-import { AsyncResult } from "effect/unstable/reactivity";
+import { AsyncResult } from "effect/reactivity";
 import type { ComponentType } from "react";
-import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { FlatList, ScrollView, Text as NativeText, useWindowDimensions, View } from "react-native";
-
-import { AppText as Text } from "../../components/AppText";
-import { LoadingStrip } from "../../components/LoadingStrip";
+import { useLayoutEffect, useRef, useState } from "react";
+import {
+  FlatList,
+  Platform,
+  RefreshControl,
+  ScrollView,
+  Text as NativeText,
+  useWindowDimensions,
+  View,
+} from "react-native";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { AppText as Text } from "../../components/ui/AppText";
+import { LoadingStrip } from "../../components/ui/LoadingStrip";
+import { useNativeColumnLayoutMetrics } from "../../native/native-layout-metrics";
 import {
   type NativeReviewDiffViewProps,
   resolveNativeReviewDiffView,
 } from "../diffs/nativeReviewDiffSurface";
 import { createNativeReviewDiffTheme } from "../review/nativeReviewDiffAdapter";
 import { REVIEW_MONO_FONT_FAMILY, renderVisibleWhitespace } from "../review/reviewDiffRendering";
-import type { ReviewHighlightedToken } from "../review/shikiReviewHighlighter";
+import type { HighlightedToken } from "../../lib/highlights";
 import { cn } from "../../lib/cn";
 import type { ResolvedMobileCodeSurface } from "../../lib/appearancePreferences";
 import { useAppearanceCodeSurface } from "../settings/appearance/useAppearanceCodeSurface";
 import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
+import { useUniwindTheme } from "../../lib/useUniwindTheme";
 import {
   buildNativeSourceTokens,
   NATIVE_SOURCE_CONTENT_WIDTH,
   nativeSourceRowId,
 } from "./nativeSourceFileAdapter";
-import { prepareSourceFileDocument } from "./source-file-document";
+import { SourceText } from "@t3tools/mobile-source-text";
+
+import { boundedSelectableSourceTokens, prepareSourceFileDocument } from "./source-file-document";
 import { sourceHighlightAtom } from "./sourceHighlightingState";
+import { createSourceLineScroll } from "./source-file-scroll";
 
 interface SourceFileSurfaceProps {
   readonly contents: string;
   readonly path: string;
+  readonly embedded?: boolean;
   readonly initialLine?: number | null;
-  /** Enables native pull-to-refresh on the source surface. */
+  readonly headerInsetTop?: number;
+  readonly selectable?: boolean;
   readonly onRefresh?: () => Promise<void> | void;
 }
 
 type SourceHighlightStatus = "highlighting" | "ready" | "error";
 
-const HighlightedSourceLine = memo(function HighlightedSourceLine(props: {
+const HighlightedSourceLine = function HighlightedSourceLine(props: {
   readonly codeSurface: ResolvedMobileCodeSurface;
   readonly index: number;
   readonly line: string;
-  readonly tokens: ReadonlyArray<ReviewHighlightedToken> | null;
+  readonly tokens: ReadonlyArray<HighlightedToken> | null;
   readonly highlighted: boolean;
   readonly wordBreak: boolean;
 }) {
@@ -61,6 +77,7 @@ const HighlightedSourceLine = memo(function HighlightedSourceLine(props: {
       </NativeText>
       <NativeText
         selectable
+        selectionColorClassName={Platform.OS === "android" ? "accent-focus/32" : undefined}
         numberOfLines={props.wordBreak ? undefined : 1}
         className="flex-1 font-normal text-foreground"
         style={{
@@ -90,6 +107,9 @@ const HighlightedSourceLine = memo(function HighlightedSourceLine(props: {
                   <NativeText
                     key={`${start}:${token.content.length}:${token.color ?? ""}`}
                     selectable
+                    selectionColorClassName={
+                      Platform.OS === "android" ? "accent-focus/32" : undefined
+                    }
                     style={{
                       color: token.color ?? undefined,
                       fontFamily: REVIEW_MONO_FONT_FAMILY,
@@ -106,20 +126,21 @@ const HighlightedSourceLine = memo(function HighlightedSourceLine(props: {
       </NativeText>
     </View>
   );
-});
+};
 
 function useSourceFileModel(props: SourceFileSurfaceProps) {
   const { themeAppearance: theme } = useAppearancePreferences();
-  const document = useMemo(() => prepareSourceFileDocument(props.contents), [props.contents]);
+  const document = prepareSourceFileDocument(props.contents);
   const { contents: normalizedContents, lines, rowsJson } = document;
   const targetIndex =
     props.initialLine !== null && props.initialLine !== undefined && props.initialLine > 0
       ? Math.min(Math.floor(props.initialLine) - 1, Math.max(0, lines.length - 1))
       : null;
-  const highlightAtom = useMemo(
-    () => sourceHighlightAtom({ path: props.path, contents: normalizedContents, theme }),
-    [normalizedContents, props.path, theme],
-  );
+  const highlightAtom = sourceHighlightAtom({
+    path: props.path,
+    contents: normalizedContents,
+    theme,
+  });
   const highlightResult = useAtomValue(highlightAtom);
   const tokens = AsyncResult.isSuccess(highlightResult) ? highlightResult.value : null;
   const status: SourceHighlightStatus = AsyncResult.isFailure(highlightResult)
@@ -128,7 +149,7 @@ function useSourceFileModel(props: SourceFileSurfaceProps) {
       ? "ready"
       : "highlighting";
 
-  return { lines, rowsJson, status, targetIndex, theme, tokens };
+  return { normalizedContents, lines, rowsJson, status, targetIndex, theme, tokens };
 }
 
 function SourceHighlightStatusView(props: { readonly status: SourceHighlightStatus }) {
@@ -145,38 +166,41 @@ function SourceHighlightStatusView(props: { readonly status: SourceHighlightStat
   return null;
 }
 
+function useSourceFileRefresh(onRefresh: SourceFileSurfaceProps["onRefresh"]) {
+  const [isPullRefreshing, setIsPullRefreshing] = useState(false);
+  const handlePullToRefresh = async () => {
+    if (!onRefresh) {
+      return;
+    }
+    setIsPullRefreshing(true);
+    // RefreshControl only needs the spinner cleared; the caller surfaces its own errors.
+    await settlePromise(async () => onRefresh());
+    setIsPullRefreshing(false);
+  };
+  return { isPullRefreshing, handlePullToRefresh };
+}
+
 function NativeSourceFileSurface(
   props: SourceFileSurfaceProps & {
     readonly NativeView: ComponentType<NativeReviewDiffViewProps>;
   },
 ) {
   const { NativeView, onRefresh } = props;
+  const insets = useSafeAreaInsets();
+  const columnMetrics = useNativeColumnLayoutMetrics();
+  const safeArea = columnMetrics?.safeArea ?? insets;
   const { codeSurface, codeWordBreak, nativeSourceStyle } = useAppearanceCodeSurface();
   const { themeAppearance, themeId } = useAppearancePreferences();
+  const appTheme = useUniwindTheme();
   const { width: viewportWidth } = useWindowDimensions();
   const { rowsJson, status, targetIndex, tokens } = useSourceFileModel(props);
-  const [isPullRefreshing, setIsPullRefreshing] = useState(false);
-  const handlePullToRefresh = useCallback(async () => {
-    if (!onRefresh) {
-      return;
-    }
-    setIsPullRefreshing(true);
-    try {
-      await onRefresh();
-    } finally {
-      setIsPullRefreshing(false);
-    }
-  }, [onRefresh]);
-  const tokensJson = useMemo(() => JSON.stringify(buildNativeSourceTokens(tokens)), [tokens]);
-  const selectedRowIdsJson = useMemo(
-    () => JSON.stringify(targetIndex === null ? [] : [nativeSourceRowId(targetIndex)]),
-    [targetIndex],
+  const { isPullRefreshing, handlePullToRefresh } = useSourceFileRefresh(onRefresh);
+  const tokensJson = JSON.stringify(buildNativeSourceTokens(tokens));
+  const selectedRowIdsJson = JSON.stringify(
+    targetIndex === null ? [] : [nativeSourceRowId(targetIndex)],
   );
-  const themeJson = useMemo(
-    () => JSON.stringify(createNativeReviewDiffTheme(themeAppearance, themeId)),
-    [themeAppearance, themeId],
-  );
-  const styleJson = useMemo(() => JSON.stringify(nativeSourceStyle), [nativeSourceStyle]);
+  const themeJson = JSON.stringify(createNativeReviewDiffTheme(themeAppearance, themeId, appTheme));
+  const styleJson = JSON.stringify(nativeSourceStyle);
   const contentWidth = codeWordBreak
     ? Math.max(240, viewportWidth - codeSurface.gutterWidth - 24)
     : NATIVE_SOURCE_CONTENT_WIDTH;
@@ -191,6 +215,8 @@ function NativeSourceFileSurface(
         appearanceScheme={themeAppearance}
         contentResetKey={props.path}
         contentWidth={contentWidth}
+        contentInsetTop={props.embedded ? 0 : (props.headerInsetTop ?? safeArea.top)}
+        contentInsetBottom={props.embedded ? 0 : safeArea.bottom + 8}
         initialRowIndex={targetIndex ?? -1}
         rowHeight={nativeSourceStyle.rowHeight ?? codeSurface.rowHeight}
         rowsJson={rowsJson}
@@ -210,37 +236,98 @@ function NativeSourceFileSurface(
 }
 
 function JavaScriptSourceFileSurface(props: SourceFileSurfaceProps) {
+  const usesAutomaticInsets = Platform.OS === "ios" && !props.embedded;
+  const foreground = useUniwindTheme()["--color-foreground"];
   const { codeSurface, codeWordBreak } = useAppearanceCodeSurface();
-  const { lines, status, targetIndex, tokens } = useSourceFileModel(props);
+  const { normalizedContents, lines, status, targetIndex, tokens } = useSourceFileModel(props);
+  const selectableTokens = props.selectable ? boundedSelectableSourceTokens(tokens) : null;
   const listRef = useRef<FlatList<string>>(null);
+  const [lineScroll] = useState(createSourceLineScroll);
+  const { isPullRefreshing, handlePullToRefresh } = useSourceFileRefresh(props.onRefresh);
+  const refreshControl = props.onRefresh ? (
+    <RefreshControl refreshing={isPullRefreshing} onRefresh={() => void handlePullToRefresh()} />
+  ) : undefined;
 
-  useEffect(() => {
+  // Layout effect so a pending jump is cancelled in the commit that swaps the file.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- scrolls the FlatList to the target line and cancels a pending jump when the file changes
+  useLayoutEffect(() => {
     if (targetIndex === null) {
       return;
     }
-    const frame = requestAnimationFrame(() => {
-      listRef.current?.scrollToIndex({ index: targetIndex, animated: false, viewPosition: 0.3 });
-    });
-    return () => cancelAnimationFrame(frame);
-  }, [props.path, targetIndex]);
+    lineScroll.scrollToLine(listRef.current, targetIndex);
+    return lineScroll.cancel;
+    // oxlint-disable-next-line react/exhaustive-effect-dependencies -- Opening another file at the same line index scrolls the new file to it.
+  }, [lineScroll, props.path, targetIndex]);
 
-  const renderLine = useCallback(
-    ({ item, index }: { item: string; index: number }) => (
-      <HighlightedSourceLine
-        codeSurface={codeSurface}
-        index={index}
-        line={item}
-        tokens={tokens?.[index] ?? null}
-        highlighted={index === targetIndex}
-        wordBreak={codeWordBreak}
-      />
-    ),
-    [codeSurface, codeWordBreak, targetIndex, tokens],
+  const renderLine = ({ item, index }: { item: string; index: number }) => (
+    <HighlightedSourceLine
+      codeSurface={codeSurface}
+      index={index}
+      line={item}
+      tokens={tokens?.[index] ?? null}
+      highlighted={index === targetIndex}
+      wordBreak={codeWordBreak}
+    />
   );
+
+  // One native text view permits document-wide selection; virtualized rows cannot.
+  const selectableBlock = props.selectable ? (
+    <SourceText
+      selectable
+      selectionColorClassName={Platform.OS === "android" ? "accent-focus/32" : undefined}
+      style={{
+        color: foreground,
+        fontFamily: REVIEW_MONO_FONT_FAMILY,
+        fontSize: codeSurface.fontSize,
+        lineHeight: codeSurface.rowHeight,
+      }}
+    >
+      {selectableTokens
+        ? lines.map(
+            (
+              line,
+              index,
+            ) => /* oxlint-disable react/no-array-index-key -- Source lines and highlight tokens are stateless positions within the loaded file. */ {
+                const lineTokens = selectableTokens[index] ?? null;
+                const body =
+                  lineTokens && lineTokens.length > 0
+                    ? lineTokens.map((token, tokenIndex) => (
+                        <SourceText
+                          key={`${index}:${tokenIndex}`}
+                          style={{
+                            color: token.color ?? foreground,
+                            fontWeight:
+                              token.fontStyle !== null && (token.fontStyle & 2) === 2
+                                ? "700"
+                                : "400",
+                            fontStyle:
+                              token.fontStyle !== null && (token.fontStyle & 1) === 1
+                                ? "italic"
+                                : "normal",
+                          }}
+                        >
+                          {token.content}
+                        </SourceText>
+                      ))
+                    : line;
+                return (
+                  <SourceText key={index}>
+                    {body}
+                    {index < lines.length - 1 ? "\n" : ""}
+                  </SourceText>
+                );
+              } /* oxlint-enable react/no-array-index-key */,
+          )
+        : normalizedContents}
+    </SourceText>
+  ) : null;
 
   const list = (
     <FlatList
       ref={listRef}
+      contentInsetAdjustmentBehavior={usesAutomaticInsets ? "automatic" : "never"}
+      automaticallyAdjustsScrollIndicatorInsets={usesAutomaticInsets}
+      refreshControl={refreshControl}
       data={lines}
       keyExtractor={(_line, index) => String(index)}
       initialNumToRender={80}
@@ -261,17 +348,44 @@ function JavaScriptSourceFileSurface(props: SourceFileSurfaceProps) {
         paddingTop: 8,
       }}
       renderItem={renderLine}
+      onScrollToIndexFailed={lineScroll.onScrollToIndexFailed}
+      onScrollBeginDrag={lineScroll.cancel}
     />
+  );
+
+  const usesLineList = !props.selectable;
+  const padded = (
+    <ScrollView
+      refreshControl={refreshControl}
+      className="flex-1"
+      contentInsetAdjustmentBehavior={usesAutomaticInsets ? "automatic" : "never"}
+      automaticallyAdjustsScrollIndicatorInsets={usesAutomaticInsets}
+      contentContainerStyle={{
+        paddingBottom: codeSurface.rowHeight,
+        paddingHorizontal: 12,
+        paddingTop: 8,
+      }}
+    >
+      {selectableBlock}
+    </ScrollView>
   );
 
   return (
     <View className="relative flex-1 bg-sheet">
       <SourceHighlightStatusView status={status} />
-      {codeWordBreak ? (
-        list
+      {usesLineList ? (
+        codeWordBreak ? (
+          list
+        ) : (
+          <ScrollView horizontal bounces={false} className="flex-1">
+            {list}
+          </ScrollView>
+        )
+      ) : codeWordBreak ? (
+        padded
       ) : (
         <ScrollView horizontal bounces={false} className="flex-1">
-          {list}
+          {padded}
         </ScrollView>
       )}
     </View>
@@ -280,9 +394,12 @@ function JavaScriptSourceFileSurface(props: SourceFileSurfaceProps) {
 
 export function SourceFileSurface(props: SourceFileSurfaceProps) {
   const NativeView = resolveNativeReviewDiffView();
-  return NativeView ? (
-    <NativeSourceFileSurface {...props} NativeView={NativeView} />
-  ) : (
-    <JavaScriptSourceFileSurface {...props} />
-  );
+  const { codeWordBreak } = useAppearanceCodeSurface();
+  const surface =
+    NativeView && !codeWordBreak && !props.selectable ? (
+      <NativeSourceFileSurface {...props} NativeView={NativeView} />
+    ) : (
+      <JavaScriptSourceFileSurface {...props} />
+    );
+  return surface;
 }

@@ -15,9 +15,8 @@ export interface GetCanaryRequest extends Omit<
  *
  * Provide `Synthetics.GetCanaryHttp` on the hosting Lambda Function to
  * satisfy the requirement.
- * @binding
- * @section Reading Canary Status
- * @example Read the Canary's Current State
+ * ### Reading Canary Status
+ * **Example:** Read the Canary's Current State
  * ```typescript
  * // init — grants synthetics:GetCanary on the canary
  * const getCanary = yield* AWS.Synthetics.GetCanary(canary);
@@ -26,6 +25,8 @@ export interface GetCanaryRequest extends Omit<
  * const { Canary } = yield* getCanary();
  * const state = Canary?.Status?.State;
  * ```
+ *
+ * @binding
  */
 export interface GetCanary extends Binding.Service<
   GetCanary,

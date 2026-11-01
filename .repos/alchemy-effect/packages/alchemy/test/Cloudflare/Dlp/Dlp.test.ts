@@ -55,7 +55,10 @@ test.provider.skipIf(entitled)(
 
       yield* stack.destroy();
     }).pipe(logLevel),
-  { timeout: 90_000 },
+  {
+    tags: ["provider:cloudflare", "provider:cloudflare:dlp", "live"],
+    timeout: 90_000,
+  },
 );
 
 test.provider.skipIf(!entitled)(
@@ -132,5 +135,8 @@ test.provider.skipIf(!entitled)(
         .pipe(Effect.flip);
       expect(gone._tag).toEqual("DlpProfileNotFound");
     }).pipe(logLevel),
-  { timeout: 90_000 },
+  {
+    tags: ["provider:cloudflare", "provider:cloudflare:dlp", "live"],
+    timeout: 90_000,
+  },
 );

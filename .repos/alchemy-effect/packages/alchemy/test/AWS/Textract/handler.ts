@@ -5,8 +5,8 @@ import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schedule from "effect/Schedule";
-import { HttpServerRequest } from "effect/unstable/http/HttpServerRequest";
-import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
+import { HttpServerRequest } from "effect/http/HttpServerRequest";
+import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import path from "pathe";
 import { HELLO_PNG_BASE64 } from "./constants.ts";
 
@@ -25,7 +25,7 @@ export class TextractTestFunction extends Lambda.Function<Lambda.Function>()(
 export default TextractTestFunction.make(
   {
     main,
-    url: true,
+    functionUrl: true,
     // Each sync analysis inference takes a few seconds; routes run several.
     timeout: Duration.seconds(60),
     // The bundled Textract schema graph is large — give headroom over the

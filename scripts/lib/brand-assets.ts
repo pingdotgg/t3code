@@ -41,10 +41,6 @@ export function resolveWebAssetBrandForChannel(channel: WebAssetChannel): WebAss
   return channel === "nightly" ? "nightly" : "production";
 }
 
-export function resolveWebAssetBrandForPackageVersion(version: string): WebAssetBrand {
-  return version.includes("-nightly.") ? "nightly" : "production";
-}
-
 export interface IconOverride {
   readonly sourceRelativePath: string;
   readonly targetRelativePath: string;

@@ -1,8 +1,7 @@
 /**
- * Satori template for Open Graph cards. Consumed only by the static
+ * Takumi template for Open Graph cards. Consumed only by the static
  * `og/[...slug].png.ts` endpoint at build time — never shipped to the
- * browser. The JSX is interpreted by satori, which supports a Flexbox
- * subset and inline `style` props (no CSS classes).
+ * browser. The element tree is rendered directly to PNG by Takumi.
  *
  * Two visual variants:
  *
@@ -17,11 +16,11 @@
  *     `excerpt` in frontmatter.
  *
  * Title and description are rendered verbatim from the source page's
- * frontmatter — no splitting, truncation, or glyph workarounds. The
- * full unsubsetted variable TTFs loaded by the endpoint cover every
- * Unicode codepoint we use.
+ * frontmatter. Fonts come from npm bundles, with variable Source Serif for
+ * optical sizing and JetBrains Mono for programming ligatures.
  */
 
+import type { ReactNode } from "react";
 import { yantraSvg } from "./yantra";
 
 const COLORS = {
@@ -38,38 +37,14 @@ const COLORS = {
   darkFg2: "#bdb09a",
   darkFg3: "#7d705c",
   darkAccent: "#a8c47a",
-  // Dark-mode yantra — lifted moss stroke + terracotta bindu dot, mirroring
-  // the runtime tokens (--alc-accent / --alc-yantra-dot in the .dark block).
-  darkYantraStroke: "#7a9a5e",
-  darkYantraDot: "#c56e3c",
   darkHairline: "rgba(245,239,227,0.12)",
 } as const;
 
 export type OgCardKind = "marketing" | "doc" | "blog";
 
-/**
- * One styled segment of a structured title — mirrors the way the
- * homepage hero declares its own emphasis with explicit `<span>` markup.
- * Pages that want the accent treatment supply an array; doc pages pass
- * a plain string and get plain text.
- */
-export interface TitlePart {
-  text: string;
-  italic?: boolean;
-  /** Render this part in the deep-moss accent color. */
-  accent?: boolean;
-  /**
-   * Override the font family for this part. Use `"tinos"` for glyphs
-   * that should render from the TNR-equivalent face (the marketing
-   * arrow `→` — mirrors the website's font stack falling through to
-   * Times New Roman for U+2192). Default: Source Serif 4 Display.
-   */
-  font?: "tinos";
-}
-
 export interface OgCardProps {
-  title: string | TitlePart[];
-  description?: string;
+  title: ReactNode;
+  description?: ReactNode;
   /** Drives the eyebrow label (e.g. "guide", "concept", "blog"). */
   eyebrow?: string;
   kind?: OgCardKind;
@@ -80,9 +55,74 @@ export interface OgCardProps {
 const W = 1200;
 const H = 630;
 
+/**
+ * Sri Yantra geometry for the card backgrounds, echoing the landing page's
+ * hero rings and section patterns: concentric rings, a lotus of 16 petals,
+ * and nine interlocking triangles (four apex-up, five apex-down) around a
+ * bindu. Returned as an SVG data URL so Takumi can draw it as an <img>.
+ */
+function yantraField(stroke: string, opacity: number): string {
+  const c = 500;
+  const circle = (r: number) => `<circle cx="${c}" cy="${c}" r="${r}"/>`;
+  const tri = (r: number, down: boolean, dy: number) => {
+    const pts = [0, 1, 2]
+      .map((k) => {
+        const a = (((down ? 90 : -90) + 120 * k) * Math.PI) / 180;
+        return `${(c + r * Math.cos(a)).toFixed(1)},${(c + dy + r * Math.sin(a)).toFixed(1)}`;
+      })
+      .join(" ");
+    return `<polygon points="${pts}"/>`;
+  };
+  const petals = Array.from({ length: 16 }, (_, k) => {
+    const a = (2 * Math.PI * k) / 16;
+    const h = (Math.PI / 16) * 0.6;
+    const p = (r: number, t: number) =>
+      `${(c + r * Math.cos(t)).toFixed(1)},${(c + r * Math.sin(t)).toFixed(1)}`;
+    return `<path d="M${p(330, a - h)} Q${p(395, a - h * 1.1)} ${p(420, a)} Q${p(395, a + h * 1.1)} ${p(330, a + h)}"/>`;
+  }).join("");
+  const r = 250;
+  const shapes = [
+    ...[90, 170, 330, 425, 470, 495].map(circle),
+    petals,
+    tri(r, false, -0.1 * r),
+    tri(r * 0.8, false, -0.02 * r),
+    tri(r * 0.6, false, 0.06 * r),
+    tri(r * 0.4, false, 0.12 * r),
+    tri(r, true, 0.1 * r),
+    tri(r * 0.84, true, 0.03 * r),
+    tri(r * 0.68, true, -0.04 * r),
+    tri(r * 0.5, true, -0.1 * r),
+    tri(r * 0.32, true, -0.02 * r),
+    `<circle cx="${c}" cy="${c}" r="5" fill="${stroke}"/>`,
+  ].join("");
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 1000" fill="none" stroke="${stroke}" stroke-width="1.6" stroke-linejoin="round" opacity="${opacity}">${shapes}</svg>`;
+  return `data:image/svg+xml;base64,${Buffer.from(svg).toString("base64")}`;
+}
+
+/** The geometry, large and bleeding off the card's right edge. */
+function Field({
+  stroke,
+  opacity,
+  right = -250,
+}: {
+  stroke: string;
+  opacity: number;
+  right?: number;
+}) {
+  return (
+    <img
+      src={yantraField(stroke, opacity)}
+      width={820}
+      height={820}
+      style={{ position: "absolute", right, top: -95, display: "flex" }}
+    />
+  );
+}
+
 export function OgCard(props: OgCardProps): any {
   const kind = props.kind ?? "doc";
   if (kind === "blog") return BlogCard(props);
+  if (kind === "marketing") return MarketingCard(props);
   return DocCard(props);
 }
 
@@ -90,149 +130,207 @@ export function OgCard(props: OgCardProps): any {
 // Doc / marketing variant — parchment hero.
 // ────────────────────────────────────────────────────────────────────────────
 
-function DocCard({ title, description, eyebrow, kind }: OgCardProps): any {
+function DocCard({ title, description, eyebrow, kind }: OgCardProps) {
   const eyebrowText = (eyebrow ?? defaultEyebrow(kind ?? "doc")).toUpperCase();
-  const yantraDataUrl = yantraImage(COLORS.accentDeep);
 
-  return {
-    type: "div",
-    key: null,
-    props: {
-      style: {
+  return (
+    <div
+      style={{
         width: W,
         height: H,
         display: "flex",
         flexDirection: "column",
         backgroundColor: COLORS.bg,
         padding: "56px 64px",
-        fontFamily: "Source Serif 4",
+        fontFamily: "'Source Serif 4'",
         color: COLORS.fg1,
         position: "relative",
-      },
-      children: [
-        // Eyebrow row — yantra mark + monospace label.
-        {
-          type: "div",
-          key: "top",
-          props: {
-            style: { display: "flex", alignItems: "center", gap: 18 },
-            children: [
-              {
-                type: "img",
-                key: "y",
-                props: {
-                  src: yantraDataUrl,
-                  width: 56,
-                  height: 56,
-                  style: { display: "flex" },
-                },
-              },
-              {
-                type: "div",
-                key: "eb",
-                props: {
-                  style: {
-                    fontFamily: "JetBrains Mono",
-                    fontSize: 18,
-                    letterSpacing: 3,
-                    color: COLORS.accentDeep,
-                    fontWeight: 400,
-                  },
-                  children: eyebrowText,
-                },
-              },
-            ],
-          },
-        },
-        // Title.
-        {
-          type: "div",
-          key: "title",
-          props: {
-            style: {
-              display: "flex",
-              flexWrap: "wrap",
-              alignItems: "baseline",
-              marginTop: 56,
-              fontFamily: "Source Serif 4 Display",
-              fontWeight: 600,
-              fontSize: 110,
-              lineHeight: 1.02,
-              letterSpacing: -2,
-              color: COLORS.fg1,
-            },
-            children: renderTitle(title, COLORS.fg1, COLORS.accentDeep),
-          },
-        },
-        description
-          ? {
-              type: "div",
-              key: "desc",
-              props: {
-                style: {
-                  display: "flex",
-                  marginTop: 36,
-                  fontSize: 26,
-                  lineHeight: 1.45,
-                  color: COLORS.fg2,
-                  maxWidth: 980,
-                },
-                children: description,
-              },
-            }
-          : null,
-        // Spacer pushes the footer to the bottom.
-        {
-          type: "div",
-          key: "spacer",
-          props: { style: { display: "flex", flexGrow: 1 } },
-        },
-        // Footer — hairline + wordmark + hand-drawn URL.
-        {
-          type: "div",
-          key: "footer",
-          props: {
-            style: {
-              display: "flex",
-              alignItems: "flex-end",
-              justifyContent: "space-between",
-              borderTop: `1px solid ${COLORS.hairline}`,
-              paddingTop: 24,
-            },
-            children: [
-              {
-                type: "div",
-                key: "wm",
-                props: {
-                  style: {
-                    fontFamily: "Source Serif 4",
-                    fontStyle: "italic",
-                    fontWeight: 400,
-                    fontSize: 32,
-                    color: COLORS.fg1,
-                  },
-                  children: "alchemy",
-                },
-              },
-              {
-                type: "div",
-                key: "url",
-                props: {
-                  style: {
-                    fontFamily: "Caveat",
-                    fontWeight: 400,
-                    fontSize: 36,
-                    color: COLORS.accentDeep,
-                  },
-                  children: "alchemy.run",
-                },
-              },
-            ],
-          },
-        },
-      ].filter(Boolean),
-    },
-  };
+      }}
+    >
+      <Field stroke={COLORS.accentDeep} opacity={0.16} />
+      <div style={{ display: "flex", alignItems: "center", gap: 18 }}>
+        <img
+          src={yantraSvg({
+            size: 96,
+            theme: "light",
+            output: "url",
+          })}
+          width={56}
+          height={56}
+          style={{ display: "flex" }}
+        />
+        <div
+          style={{
+            fontFamily: "JetBrains Mono",
+            fontSize: 18,
+            letterSpacing: 3,
+            color: COLORS.accentDeep,
+            fontWeight: 400,
+          }}
+        >
+          {eyebrowText}
+        </div>
+      </div>
+      <div
+        style={{
+          display: "flex",
+          flexWrap: "wrap",
+          alignItems: "baseline",
+          marginTop: 56,
+          fontFamily: "'Source Serif 4'",
+          fontVariationSettings: "'opsz' 60",
+          fontWeight: 500,
+          fontSize: 110,
+          lineHeight: 1.02,
+          letterSpacing: -2,
+          color: COLORS.fg1,
+        }}
+      >
+        {title}
+      </div>
+      {description ? (
+        <div
+          style={{
+            display: "flex",
+            marginTop: 36,
+            fontSize: 26,
+            lineHeight: 1.45,
+            color: COLORS.fg2,
+            maxWidth: 980,
+          }}
+        >
+          {description}
+        </div>
+      ) : null}
+      <div style={{ display: "flex", flexGrow: 1 }} />
+
+      <div
+        style={{
+          display: "flex",
+          alignItems: "flex-end",
+          justifyContent: "space-between",
+          borderTop: `1px solid ${COLORS.hairline}`,
+          paddingTop: 24,
+        }}
+      >
+        <div
+          style={{
+            fontFamily: "'Source Serif 4'",
+            fontStyle: "italic",
+            fontWeight: 400,
+            fontSize: 32,
+            color: COLORS.fg1,
+          }}
+        >
+          alchemy
+        </div>
+        <div
+          style={{
+            fontFamily: "Caveat",
+            fontWeight: 400,
+            fontSize: 36,
+            color: COLORS.accentDeep,
+          }}
+        >
+          alchemy.run
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// Marketing variant — the dark hero: mark, headline, subtitle, and the
+// yantra rings glowing behind it.
+// ────────────────────────────────────────────────────────────────────────────
+
+function MarketingCard({ title, description, eyebrow }: OgCardProps) {
+  return (
+    <div
+      style={{
+        width: W,
+        height: H,
+        display: "flex",
+        flexDirection: "column",
+        backgroundColor: COLORS.darkBg,
+        padding: "60px 72px",
+        fontFamily: "'Source Serif 4'",
+        color: COLORS.darkFg1,
+        position: "relative",
+      }}
+    >
+      <Field stroke={COLORS.darkAccent} opacity={0.3} right={-360} />
+      <div style={{ display: "flex", alignItems: "center", gap: 18 }}>
+        <img
+          src={yantraSvg({ size: 96, theme: "dark", output: "url" })}
+          width={60}
+          height={60}
+          style={{ display: "flex" }}
+        />
+        <div
+          style={{
+            fontFamily: "JetBrains Mono",
+            fontSize: 18,
+            letterSpacing: 3,
+            color: COLORS.darkAccent,
+          }}
+        >
+          {(eyebrow ?? defaultEyebrow("marketing")).toUpperCase()}
+        </div>
+      </div>
+      <div
+        style={{
+          display: "flex",
+          flexWrap: "wrap",
+          marginTop: 48,
+          maxWidth: 820,
+          fontVariationSettings: "'opsz' 60",
+          fontWeight: 500,
+          fontSize: 96,
+          lineHeight: 1.02,
+          letterSpacing: -2,
+        }}
+      >
+        {title}
+      </div>
+      {description ? (
+        <div
+          style={{
+            display: "flex",
+            marginTop: 26,
+            maxWidth: 740,
+            fontSize: 28,
+            lineHeight: 1.4,
+            color: COLORS.darkFg2,
+          }}
+        >
+          {description}
+        </div>
+      ) : null}
+      <div style={{ display: "flex", flexGrow: 1 }} />
+      <div
+        style={{
+          display: "flex",
+          alignItems: "flex-end",
+          justifyContent: "space-between",
+          borderTop: `1px solid ${COLORS.darkHairline}`,
+          paddingTop: 22,
+        }}
+      >
+        <div style={{ fontStyle: "italic", fontSize: 32 }}>alchemy</div>
+        <div
+          style={{
+            fontFamily: "JetBrains Mono",
+            fontSize: 20,
+            letterSpacing: 2,
+            color: COLORS.darkAccent,
+          }}
+        >
+          alchemy.run
+        </div>
+      </div>
+    </div>
+  );
 }
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -240,172 +338,101 @@ function DocCard({ title, description, eyebrow, kind }: OgCardProps): any {
 // ────────────────────────────────────────────────────────────────────────────
 
 function BlogCard({ title, description, date }: OgCardProps): any {
-  const yantraDataUrl = yantraImage(
-    COLORS.darkYantraStroke,
-    COLORS.darkYantraDot,
-  );
-
-  return {
-    type: "div",
-    key: null,
-    props: {
-      style: {
+  return (
+    <div
+      style={{
         width: W,
         height: H,
         display: "flex",
         flexDirection: "column",
         backgroundColor: COLORS.darkBg,
         padding: "72px 80px",
-        fontFamily: "Source Serif 4",
+        fontFamily: "'Source Serif 4'",
         color: COLORS.darkFg1,
-      },
-      children: [
-        // Title — large, top-anchored. Plain string for blog posts.
-        {
-          type: "div",
-          key: "title",
-          props: {
-            style: {
-              display: "flex",
-              flexWrap: "wrap",
-              fontFamily: "Source Serif 4 Display",
-              fontWeight: 600,
-              fontSize: 84,
-              lineHeight: 1.05,
-              letterSpacing: -1.5,
-              color: COLORS.darkFg1,
-            },
-            children: renderTitle(title, COLORS.darkFg1, COLORS.darkAccent),
-          },
-        },
-        // Description — fills the body. Larger maxWidth than doc cards
-        // so multi-sentence excerpts wrap to 4–6 lines.
-        description
-          ? {
-              type: "div",
-              key: "desc",
-              props: {
-                style: {
-                  display: "flex",
-                  marginTop: 32,
-                  fontSize: 28,
-                  lineHeight: 1.5,
-                  color: COLORS.darkFg2,
-                  maxWidth: 1040,
-                },
-                children: description,
-              },
-            }
-          : null,
-        // Spacer pushes the footer to the bottom.
-        {
-          type: "div",
-          key: "spacer",
-          props: { style: { display: "flex", flexGrow: 1 } },
-        },
-        // Footer — date on the left, yantra mark on the right.
-        {
-          type: "div",
-          key: "footer",
-          props: {
-            style: {
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "space-between",
-              borderTop: `1px solid ${COLORS.darkHairline}`,
-              paddingTop: 28,
-            },
-            children: [
-              {
-                type: "div",
-                key: "date",
-                props: {
-                  style: {
-                    display: "flex",
-                    flexDirection: "column",
-                    gap: 4,
-                  },
-                  children: [
-                    {
-                      type: "div",
-                      key: "d",
-                      props: {
-                        style: {
-                          fontFamily: "Source Serif 4",
-                          fontSize: 24,
-                          color: COLORS.darkFg2,
-                        },
-                        children: formatDate(date),
-                      },
-                    },
-                    {
-                      type: "div",
-                      key: "wm",
-                      props: {
-                        style: {
-                          fontFamily: "JetBrains Mono",
-                          fontSize: 16,
-                          letterSpacing: 3,
-                          color: COLORS.darkFg3,
-                        },
-                        children: "ALCHEMY.RUN",
-                      },
-                    },
-                  ],
-                },
-              },
-              {
-                type: "img",
-                key: "y",
-                props: {
-                  src: yantraDataUrl,
-                  width: 72,
-                  height: 72,
-                  style: { display: "flex" },
-                },
-              },
-            ],
-          },
-        },
-      ].filter(Boolean),
-    },
-  };
+        position: "relative",
+      }}
+    >
+      <Field stroke={COLORS.darkAccent} opacity={0.12} />
+      <div
+        style={{
+          display: "flex",
+          flexWrap: "wrap",
+          fontFamily: "'Source Serif 4'",
+          fontVariationSettings: "'opsz' 60",
+          fontWeight: 500,
+          fontSize: 84,
+          lineHeight: 1.05,
+          letterSpacing: -1.5,
+          color: COLORS.darkFg1,
+        }}
+      >
+        <span style={{ color: COLORS.darkAccent }}>{title}</span>
+      </div>
+      {description ? (
+        <div
+          style={{
+            display: "flex",
+            marginTop: 32,
+            fontSize: 28,
+            lineHeight: 1.5,
+            color: COLORS.darkFg2,
+            maxWidth: 1040,
+          }}
+        >
+          {description}
+        </div>
+      ) : null}
+      <div style={{ display: "flex", flexGrow: 1 }} />
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          borderTop: `1px solid ${COLORS.darkHairline}`,
+          paddingTop: 28,
+        }}
+      >
+        <div
+          style={{
+            display: "flex",
+            flexDirection: "column",
+            gap: 4,
+          }}
+        >
+          <div
+            style={{
+              fontFamily: "'Source Serif 4'",
+              fontSize: 24,
+              color: COLORS.darkFg2,
+            }}
+          >
+            {formatDate(date)}
+          </div>
+          <div
+            style={{
+              fontFamily: "JetBrains Mono",
+              fontSize: 16,
+              letterSpacing: 3,
+              color: COLORS.darkFg3,
+            }}
+          >
+            ALCHEMY.RUN
+          </div>
+        </div>
+        <img
+          src={yantraSvg({ size: 96, theme: "dark", output: "url" })}
+          width={72}
+          height={72}
+          style={{ display: "flex" }}
+        />
+      </div>
+    </div>
+  );
 }
 
 // ────────────────────────────────────────────────────────────────────────────
 // Helpers
 // ────────────────────────────────────────────────────────────────────────────
-
-function yantraImage(stroke: string, dot: string = stroke): string {
-  const svg = yantraSvg({
-    size: 96,
-    stroke,
-    dot,
-    strokeWidth: 0.7,
-  });
-  return `data:image/svg+xml;base64,${Buffer.from(svg).toString("base64")}`;
-}
-
-function renderTitle(
-  title: string | TitlePart[],
-  fg: string,
-  accent: string,
-): any {
-  if (!Array.isArray(title)) return title;
-  return title.map((part, i) => ({
-    type: "span",
-    key: `tp${i}`,
-    props: {
-      style: {
-        fontFamily: part.font === "tinos" ? "Tinos" : "Source Serif 4 Display",
-        fontStyle: part.italic ? "italic" : "normal",
-        color: part.accent ? accent : fg,
-        fontWeight: part.font === "tinos" ? 400 : 600,
-      },
-      children: part.text,
-    },
-  }));
-}
 
 const MONTHS = [
   "January",
@@ -436,7 +463,7 @@ function formatDate(iso: string | undefined): string {
 function defaultEyebrow(kind: OgCardKind): string {
   switch (kind) {
     case "marketing":
-      return "alchemy · zero to production";
+      return "infrastructure as effects";
     case "blog":
       return "blog · alchemy.run";
     case "doc":

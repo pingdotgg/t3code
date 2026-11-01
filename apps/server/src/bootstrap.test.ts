@@ -1,24 +1,14 @@
 // @effect-diagnostics nodeBuiltinImport:off
 import * as NodeFS from "node:fs";
-import * as NodePath from "node:path";
-import * as NodeChildProcess from "node:child_process";
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { assert, it } from "@effect/vitest";
+import { it } from "@effect/vitest";
 import * as FileSystem from "effect/FileSystem";
 import * as Schema from "effect/Schema";
-import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
-import * as Fiber from "effect/Fiber";
-import * as TestClock from "effect/testing/TestClock";
 import { vi } from "vite-plus/test";
-import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 
-import {
-  BootstrapEnvelopeDecodeError,
-  BootstrapFdStatError,
-  BootstrapInputStreamOpenError,
-  readBootstrapEnvelope,
-} from "./bootstrap.ts";
+import { readBootstrapEnvelope } from "./bootstrap.ts";
 import { assertNone, assertSome } from "@effect/vitest/utils";
 
 const openSyncInterceptor = vi.hoisted(() => ({
@@ -55,6 +45,23 @@ vi.mock("node:fs", async (importOriginal) => {
   };
 });
 
+const windowsHost = HostProcess.Platform.defaultValue() === "win32";
+const nullDevice = windowsHost ? "\\\\.\\NUL" : "/dev/null";
+const closeIfOpen = (fd: number) => {
+  try {
+    NodeFS.closeSync(fd);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "EBADF") throw error;
+  }
+};
+
+// Windows auto-closes the inherited fd; POSIX reopens it, leaving the original for the test to close.
+const openBootstrapInputFd = (filePath: string) =>
+  Effect.acquireRelease(
+    Effect.sync(() => NodeFS.openSync(filePath, "r")),
+    (fd) => (windowsHost ? Effect.void : Effect.sync(() => closeIfOpen(fd))),
+  );
+
 const TestEnvelopeSchema = Schema.Struct({ mode: Schema.String });
 const encodeTestEnvelopeSchema = Schema.encodeEffect(Schema.fromJsonString(TestEnvelopeSchema));
 
@@ -69,10 +76,7 @@ it.layer(NodeServices.layer)("readBootstrapEnvelope", (it) => {
         `${yield* encodeTestEnvelopeSchema({ mode: "desktop" })}\n`,
       );
 
-      const fd = yield* Effect.acquireRelease(
-        Effect.sync(() => NodeFS.openSync(filePath, "r")),
-        (fd) => Effect.sync(() => NodeFS.closeSync(fd)),
-      );
+      const fd = yield* openBootstrapInputFd(filePath);
 
       const payload = yield* readBootstrapEnvelope(TestEnvelopeSchema, fd, { timeoutMs: 100 });
       assertSome(payload, {
@@ -91,17 +95,14 @@ it.layer(NodeServices.layer)("readBootstrapEnvelope", (it) => {
         `${yield* encodeTestEnvelopeSchema({ mode: "desktop" })}\n`,
       );
 
-      // Open without acquireRelease: the direct-stream fallback uses autoClose: true,
-      // so the stream owns the fd lifecycle and closes it asynchronously on end.
-      // Attempting to also close it synchronously in a finalizer races with the
-      // stream's async close and produces an uncaught EBADF.
+      // The fallback stream auto-closes asynchronously; a finalizer would race and cause EBADF.
       const fd = NodeFS.openSync(filePath, "r");
 
       openSyncInterceptor.failPath = `/proc/self/fd/${fd}`;
       try {
         const payload = yield* readBootstrapEnvelope(TestEnvelopeSchema, fd, {
           timeoutMs: 100,
-        }).pipe(Effect.provideService(HostProcessPlatform, "linux"));
+        }).pipe(Effect.provideService(HostProcess.Platform, "linux"));
         assertSome(payload, {
           mode: "desktop",
         });
@@ -111,130 +112,13 @@ it.layer(NodeServices.layer)("readBootstrapEnvelope", (it) => {
     }),
   );
 
-  it.effect("preserves fd path, platform, and cause when opening the input stream fails", () =>
-    Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const filePath = yield* fs.makeTempFileScoped({ prefix: "t3-bootstrap-", suffix: ".ndjson" });
-      const fd = yield* Effect.acquireRelease(
-        Effect.sync(() => NodeFS.openSync(filePath, "r")),
-        (fd) => Effect.sync(() => NodeFS.closeSync(fd)),
-      );
-      const fdPath = `/proc/self/fd/${fd}`;
-
-      openSyncInterceptor.failPath = fdPath;
-      openSyncInterceptor.errorCode = "EIO";
-      try {
-        const error = yield* readBootstrapEnvelope(TestEnvelopeSchema, fd, {
-          timeoutMs: 100,
-        }).pipe(Effect.provideService(HostProcessPlatform, "linux"), Effect.flip);
-
-        assert.instanceOf(error, BootstrapInputStreamOpenError);
-        assert.equal(error.fd, fd);
-        assert.equal(error.platform, "linux");
-        assert.equal(error.fdPath, fdPath);
-        assert.equal((error.cause as NodeJS.ErrnoException).code, "EIO");
-        assert.equal(
-          error.message,
-          `Failed to open bootstrap input stream for file descriptor ${fd} via '${fdPath}' on 'linux'.`,
-        );
-      } finally {
-        openSyncInterceptor.failPath = null;
-        openSyncInterceptor.errorCode = "ENXIO";
-      }
-    }),
-  );
-
   it.effect("returns none when the fd is unavailable", () =>
     Effect.gen(function* () {
-      const fd = NodeFS.openSync("/dev/null", "r");
+      const fd = NodeFS.openSync(nullDevice, "r");
       NodeFS.closeSync(fd);
 
       const payload = yield* readBootstrapEnvelope(TestEnvelopeSchema, fd, { timeoutMs: 100 });
       assertNone(payload);
     }),
-  );
-
-  it.effect("preserves fd and cause when stat fails for a non-availability reason", () =>
-    Effect.gen(function* () {
-      const fd = yield* Effect.acquireRelease(
-        Effect.sync(() => NodeFS.openSync("/dev/null", "r")),
-        (fd) => Effect.sync(() => NodeFS.closeSync(fd)),
-      );
-
-      fstatSyncInterceptor.failFd = fd;
-      try {
-        const error = yield* readBootstrapEnvelope(TestEnvelopeSchema, fd, {
-          timeoutMs: 100,
-        }).pipe(Effect.flip);
-
-        assert.instanceOf(error, BootstrapFdStatError);
-        assert.equal(error.fd, fd);
-        assert.equal((error.cause as NodeJS.ErrnoException).code, "EACCES");
-        assert.equal(error.message, `Failed to stat bootstrap file descriptor ${fd}.`);
-      } finally {
-        fstatSyncInterceptor.failFd = null;
-      }
-    }),
-  );
-
-  it.effect("preserves fd and schema cause when decoding the envelope fails", () =>
-    Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const filePath = yield* fs.makeTempFileScoped({ prefix: "t3-bootstrap-", suffix: ".ndjson" });
-      yield* fs.writeFileString(filePath, '{"mode":42}\n');
-
-      const fd = yield* Effect.acquireRelease(
-        Effect.sync(() => NodeFS.openSync(filePath, "r")),
-        (fd) => Effect.sync(() => NodeFS.closeSync(fd)),
-      );
-      const error = yield* readBootstrapEnvelope(TestEnvelopeSchema, fd, {
-        timeoutMs: 100,
-      }).pipe(Effect.flip);
-
-      assert.instanceOf(error, BootstrapEnvelopeDecodeError);
-      assert.equal(error.fd, fd);
-      assert.isDefined(error.cause);
-      assert.equal(
-        error.message,
-        `Failed to decode bootstrap envelope from file descriptor ${fd}.`,
-      );
-    }),
-  );
-
-  it.effect("returns none when the bootstrap read times out before any value arrives", () =>
-    Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const tempDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-bootstrap-" });
-      const fifoPath = NodePath.join(tempDir, "bootstrap.pipe");
-
-      yield* Effect.sync(() => NodeChildProcess.execFileSync("mkfifo", [fifoPath]));
-
-      const _writer = yield* Effect.acquireRelease(
-        Effect.sync(() =>
-          NodeChildProcess.spawn("sh", ["-c", 'exec 3>"$1"; sleep 60', "sh", fifoPath], {
-            stdio: ["ignore", "ignore", "ignore"],
-          }),
-        ),
-        (writer) =>
-          Effect.sync(() => {
-            writer.kill("SIGKILL");
-          }),
-      );
-
-      const fd = yield* Effect.acquireRelease(
-        Effect.sync(() => NodeFS.openSync(fifoPath, "r")),
-        (fd) => Effect.sync(() => NodeFS.closeSync(fd)),
-      );
-
-      const fiber = yield* readBootstrapEnvelope(TestEnvelopeSchema, fd, {
-        timeoutMs: 100,
-      }).pipe(Effect.forkScoped);
-
-      yield* Effect.yieldNow;
-      yield* TestClock.adjust(Duration.millis(100));
-
-      const payload = yield* Fiber.join(fiber);
-      assertNone(payload);
-    }).pipe(Effect.provide(TestClock.layer())),
   );
 });

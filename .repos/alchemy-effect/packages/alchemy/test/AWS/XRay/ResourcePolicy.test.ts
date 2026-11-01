@@ -106,5 +106,5 @@ test.provider(
         stack.destroy().pipe(Effect.catchCause(() => Effect.void)),
       ),
     ),
-  { timeout: 120_000 },
+  { tags: ["provider:aws", "provider:aws:xray", "live"], timeout: 120_000 },
 );

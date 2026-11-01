@@ -4,8 +4,8 @@ import * as MediaLive from "@/AWS/MediaLive";
 import type * as medialive from "@distilled.cloud/aws/medialive";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import { HttpServerRequest } from "effect/unstable/http/HttpServerRequest";
-import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
+import { HttpServerRequest } from "effect/http/HttpServerRequest";
+import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import path from "pathe";
 
 const main = path.resolve(import.meta.dirname, "channel-handler.ts");
@@ -67,7 +67,7 @@ export class MediaLiveChannelTestFunction extends Lambda.Function<Lambda.Functio
 export default MediaLiveChannelTestFunction.make(
   {
     main,
-    url: true,
+    functionUrl: true,
   },
   Effect.gen(function* () {
     const role = yield* IAM.Role("ChannelBindingRole", {

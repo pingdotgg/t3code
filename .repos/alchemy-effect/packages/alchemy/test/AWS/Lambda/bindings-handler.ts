@@ -3,8 +3,8 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Redacted from "effect/Redacted";
 import * as Stream from "effect/Stream";
-import { HttpServerRequest } from "effect/unstable/http/HttpServerRequest";
-import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
+import { HttpServerRequest } from "effect/http/HttpServerRequest";
+import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import path from "pathe";
 
 const main = path.resolve(import.meta.dirname, "bindings-handler.ts");
@@ -17,7 +17,7 @@ export class LambdaBindingsTestFunction extends Lambda.Function<Lambda.Function>
 export default LambdaBindingsTestFunction.make(
   {
     main,
-    url: true,
+    functionUrl: true,
     // Resolve distilled from `src/*.ts` (the `bun` export condition — same
     // as vitest) so distilled source changes are test-visible in the
     // deployed bundle without a `lib/` rebuild.
@@ -30,7 +30,7 @@ export default LambdaBindingsTestFunction.make(
       main: targetMain,
       handler: "handler",
       isExternal: true,
-      url: false,
+      functionUrl: false,
     });
 
     const invokeFunction = yield* Lambda.InvokeFunction(target);

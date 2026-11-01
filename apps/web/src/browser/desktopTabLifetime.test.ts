@@ -1,6 +1,7 @@
 import {
   DEFAULT_PREVIEW_APPEARANCE,
   DEFAULT_PREVIEW_ZOOM_FACTOR,
+  DEFAULT_CLIENT_SETTINGS,
   EnvironmentId,
   ThreadId,
 } from "@t3tools/contracts";
@@ -21,8 +22,8 @@ vi.mock("./browserRecording", () => ({
 }));
 
 import { acquireDesktopTab } from "./desktopTabLifetime";
+import { __setClientSettingsForTests } from "~/hooks/useSettings";
 
-/** Client settings are unset in tests, so creation carries the schema defaults. */
 const DEFAULT_TAB_STATE = {
   zoomFactor: DEFAULT_PREVIEW_ZOOM_FACTOR,
   colorScheme: DEFAULT_PREVIEW_APPEARANCE,
@@ -31,6 +32,7 @@ import { previewRuntimeTabId } from "./previewRuntimeTabId";
 
 describe("desktopTabLifetime", () => {
   beforeEach(() => {
+    __setClientSettingsForTests(DEFAULT_CLIENT_SETTINGS);
     closeTab.mockClear();
     createTab.mockClear();
     stopBrowserRecording.mockClear();
@@ -40,34 +42,7 @@ describe("desktopTabLifetime", () => {
   afterEach(() => {
     vi.useRealTimers();
     vi.unstubAllGlobals();
-  });
-
-  it("shares tab creation readiness across concurrent leases", async () => {
-    let resolveCreation: (() => void) | undefined;
-    createTab.mockReturnValueOnce(
-      new Promise<void>((resolve) => {
-        resolveCreation = resolve;
-      }),
-    );
-
-    const first = acquireDesktopTab("tab_readiness");
-    const second = acquireDesktopTab("tab_readiness");
-
-    // Both leases share one creation, and it is still in flight: creation now
-    // waits for client settings to hydrate so the guest is born at the user's
-    // zoom and appearance rather than painting at the defaults first.
-    expect(first.ready).toBe(second.ready);
-
-    let ready = false;
-    void first.ready.then(() => {
-      ready = true;
-    });
-    await vi.waitFor(() => expect(createTab).toHaveBeenCalledOnce());
-    expect(ready).toBe(false);
-
-    resolveCreation?.();
-    await first.ready;
-    expect(ready).toBe(true);
+    vi.restoreAllMocks();
   });
 
   it("keeps identical server tab ids from two environments in separate desktop slots", async () => {

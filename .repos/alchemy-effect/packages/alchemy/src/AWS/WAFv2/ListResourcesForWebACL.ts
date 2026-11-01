@@ -15,9 +15,8 @@ export interface ListResourcesForWebACLRequest extends Omit<
  *
  * Provide `WAFv2.ListResourcesForWebACLHttp` on the hosting Lambda Function
  * to satisfy the requirement.
- * @binding
- * @section Inspecting Associations
- * @example List Protected Resources
+ * ### Inspecting Associations
+ * **Example:** List Protected Resources
  * ```typescript
  * // init — grants wafv2:ListResourcesForWebACL on the web ACL
  * const listResources = yield* AWS.WAFv2.ListResourcesForWebACL(acl);
@@ -25,6 +24,8 @@ export interface ListResourcesForWebACLRequest extends Omit<
  * // runtime
  * const { ResourceArns } = yield* listResources();
  * ```
+ *
+ * @binding
  */
 export interface ListResourcesForWebACL extends Binding.Service<
   ListResourcesForWebACL,

@@ -65,9 +65,8 @@ export interface Database extends Resource<
  * An AWS Glue Data Catalog database — the top-level container for Glue tables
  * that Athena, EMR, Redshift Spectrum, and Glue jobs query. Databases are free
  * and instant to create.
- * @resource
- * @section Creating Databases
- * @example Basic Database
+ * ### Creating Databases
+ * **Example:** Basic Database
  * ```typescript
  * import * as AWS from "alchemy/AWS";
  *
@@ -76,7 +75,7 @@ export interface Database extends Resource<
  * });
  * ```
  *
- * @example Database with a Default S3 Location
+ * **Example:** Database with a Default S3 Location
  * ```typescript
  * const database = yield* AWS.Glue.Database("Analytics", {
  *   databaseName: "analytics",
@@ -85,6 +84,8 @@ export interface Database extends Resource<
  *   parameters: { classification: "parquet" },
  * });
  * ```
+ *
+ * @resource
  */
 export const Database = Resource<Database>("AWS.Glue.Database");
 

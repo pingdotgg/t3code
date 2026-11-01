@@ -11,9 +11,8 @@ import * as Binding from "../../Binding.ts";
  * caller supplies the core device thing name at runtime. Provide the
  * implementation with
  * `Effect.provide(AWS.GreengrassV2.ListInstalledComponentsHttp)`.
- * @binding
- * @section Managing Core Devices
- * @example Audit A Device's Installed Components
+ * ### Managing Core Devices
+ * **Example:** Audit A Device's Installed Components
  * ```typescript
  * // init — account-level binding, no resource argument
  * const listInstalledComponents = yield* AWS.GreengrassV2.ListInstalledComponents();
@@ -23,6 +22,8 @@ import * as Binding from "../../Binding.ts";
  *   coreDeviceThingName: "MyCore",
  * });
  * ```
+ *
+ * @binding
  */
 export interface ListInstalledComponents extends Binding.Service<
   ListInstalledComponents,

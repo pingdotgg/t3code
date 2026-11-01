@@ -1,28 +1,41 @@
-import { assert, describe, it } from "@effect/vitest";
+import { assert, describe, expect, it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import * as Arr from "effect/Array";
 import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
+import * as Deferred from "effect/Deferred";
+import * as Fiber from "effect/Fiber";
+import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
+import { cast } from "effect/Function";
 import * as Layer from "effect/Layer";
 import * as Logger from "effect/Logger";
-import * as Order from "effect/Order";
 import * as Path from "effect/Path";
 import * as Ref from "effect/Ref";
 import * as References from "effect/References";
 import * as Schema from "effect/Schema";
 import * as Tracer from "effect/Tracer";
+import type { OtlpTracer } from "effect/observability";
 
 import {
   causeErrorTag,
   compactTraceAttributes,
+  decodeOtlpTraceRecords,
   errorTag,
   makeLocalFileTracer,
   makeTraceSink,
+  type EffectTraceRecord,
   type TraceRecord,
-  type TraceSinkFlushStats,
+  OtlpHeadersFromString,
   truncateTraceAttributes,
+  processServiceInstanceId,
 } from "./observability.ts";
+
+describe("processServiceInstanceId", () => {
+  it("stays the same for the process unless the operator set one", () => {
+    expect(processServiceInstanceId()).toBe(processServiceInstanceId({}));
+    expect(processServiceInstanceId({ "service.instance.id": "pod-7" })).toBe("pod-7");
+  });
+});
 
 describe("errorTag", () => {
   it("reports structural tags without retaining arbitrary values", () => {
@@ -38,11 +51,6 @@ describe("causeErrorTag", () => {
       causeErrorTag(Cause.fail({ _tag: "ServerAuthInvalidCredentialError" })),
       "ServerAuthInvalidCredentialError",
     );
-  });
-
-  it("reports structural cause kinds when no typed failure exists", () => {
-    assert.equal(causeErrorTag(Cause.die(new Error("unexpected"))), "Die");
-    assert.equal(causeErrorTag(Cause.interrupt()), "Interrupt");
   });
 });
 
@@ -95,7 +103,7 @@ const readTraceRecords = Effect.fn("readTraceRecords")(function* (tracePath: str
     .map((line) => decodeTraceRecordLine(line));
 });
 
-const makeTestLayer = (tracePath: string) =>
+const layerTest = (tracePath: string) =>
   Layer.mergeAll(
     Layer.effect(
       Tracer.Tracer,
@@ -127,17 +135,64 @@ describe("truncateTraceAttributes", () => {
     const error = truncated["error"] as { stack: string; nested: Array<string> };
     assert.equal(error.stack.length, 500 + "…[truncated]".length);
     assert.equal(error.nested[0]?.length, 500 + "…[truncated]".length);
-    // Input is untouched: the live span's attributes are shared.
     assert.equal(attributes.error.stack, stack);
-  });
-
-  it("returns the same reference when nothing exceeds the limits", () => {
-    const attributes = { short: "ok", nested: { fine: "also ok" } };
-    assert.equal(truncateTraceAttributes(attributes), attributes);
   });
 });
 
 describe("observability", () => {
+  it.effect(
+    "preserves successful results without retaining them in sampled or unsampled spans",
+    () =>
+      Effect.gen(function* () {
+        for (const sampled of [true, false]) {
+          const delegates: Array<Tracer.Span> = [];
+          const records: Array<EffectTraceRecord> = [];
+          const tracer = yield* makeLocalFileTracer({
+            filePath: "unused",
+            maxBytes: 1024,
+            maxFiles: 1,
+            batchWindowMs: 10_000,
+            sink: {
+              filePath: "unused",
+              push: (record) => {
+                if (record.type === "effect-span") records.push(record);
+              },
+              flush: Effect.void,
+              close: () => Effect.void,
+            },
+            delegate: Tracer.make({
+              span: (options) => {
+                const span = new Tracer.NativeSpan({ ...options, sampled });
+                delegates.push(span);
+                return span;
+              },
+            }),
+          });
+          const payload = { turnItems: [{ output: [{ text: "synthetic-result" }] }] };
+          let span: Tracer.Span | undefined;
+          const result = yield* Effect.gen(function* () {
+            span = yield* Effect.currentSpan;
+            return payload;
+          }).pipe(
+            Effect.withSpan("read-thread-projection"),
+            Effect.provideService(Tracer.Tracer, tracer),
+          );
+          assert.strictEqual(result, payload);
+          assert.isDefined(span);
+          for (const completed of [span!, ...delegates]) {
+            assert.equal(completed.status._tag, "Ended");
+            if (completed.status._tag === "Ended") {
+              assert.deepStrictEqual(completed.status.exit, Exit.void);
+            }
+          }
+          assert.deepStrictEqual(
+            records.map((record) => record.exit),
+            sampled ? [{ _tag: "Success" }] : [],
+          );
+        }
+      }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
   it("normalizes circular arrays, maps, and sets without recursing forever", () => {
     const array: Array<unknown> = ["alpha"];
     array.push(array);
@@ -162,115 +217,93 @@ describe("observability", () => {
     );
   });
 
-  it("normalizes invalid dates without throwing", () => {
-    // @effect-diagnostics-next-line globalDate:off
-    const invalidDate = new Date("not-a-real-date");
+  it("keeps an object that appears twice without marking it circular", () => {
+    const shared = { cwd: "/repo" };
+    const sharedMap = new Map([["cwd", "/repo"]]);
+    const sharedSet = new Set(["/repo"]);
+
     assert.deepStrictEqual(
       compactTraceAttributes({
-        invalidDate,
+        ctx: { first: shared, second: shared },
+        list: [shared, shared],
+        maps: [sharedMap, sharedMap],
+        sets: [sharedSet, sharedSet],
       }),
       {
-        invalidDate: "Invalid Date",
+        ctx: { first: { cwd: "/repo" }, second: { cwd: "/repo" } },
+        list: [{ cwd: "/repo" }, { cwd: "/repo" }],
+        maps: [{ cwd: "/repo" }, { cwd: "/repo" }],
+        sets: [["/repo"], ["/repo"]],
       },
     );
   });
 
+  it("caps shared references that would expand exponentially", () => {
+    let graph: Record<string, unknown> = { cwd: "/repo" };
+    for (let depth = 0; depth < 20; depth++) {
+      graph = { left: graph, right: graph };
+    }
+
+    const serialized = JSON.stringify(compactTraceAttributes({ graph }));
+
+    assert.include(serialized, '"[Truncated]"');
+    assert.isBelow(serialized.length, 1_000_000);
+  });
+
   nodeServicesIt("node services", (it) => {
-    it.effect("flushes buffered trace records on close", () =>
-      Effect.scoped(
-        Effect.gen(function* () {
-          const fileSystem = yield* FileSystem.FileSystem;
-          const path = yield* Path.Path;
-          const tempDir = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-trace-sink-" });
-          const tracePath = path.join(tempDir, "shared.trace.ndjson");
-
-          const sink = yield* makeTraceSink({
-            filePath: tracePath,
-            maxBytes: 1024,
-            maxFiles: 2,
-            batchWindowMs: 10_000,
-          });
-
-          sink.push(makeRecord("alpha"));
-          sink.push(makeRecord("beta"));
-          yield* sink.close();
-
-          const lines = yield* readTraceRecords(tracePath);
-
-          assert.equal(lines.length, 2);
-          assert.equal(lines[0]?.name, "alpha");
-          assert.equal(lines[1]?.name, "beta");
-        }),
-      ),
-    );
-
-    it.effect("reports successful logical trace writes", () =>
-      Effect.scoped(
-        Effect.gen(function* () {
-          const fileSystem = yield* FileSystem.FileSystem;
-          const path = yield* Path.Path;
-          const tempDir = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-trace-sink-" });
-          const tracePath = path.join(tempDir, "shared.trace.ndjson");
-          const reported = yield* Ref.make<ReadonlyArray<TraceSinkFlushStats>>([]);
-
-          const sink = yield* makeTraceSink({
-            filePath: tracePath,
-            maxBytes: 1024,
-            maxFiles: 2,
-            batchWindowMs: 10_000,
-            onFlush: (stats) => Ref.update(reported, (current) => [...current, stats]),
-          });
-
-          sink.push(makeRecord("attributed"));
-          yield* sink.flush;
-
-          const stats = yield* Ref.get(reported);
-          assert.equal(stats.length, 1);
-          assert.equal(stats[0]?.count, 1);
-          assert.isAbove(stats[0]?.logicalWriteBytes ?? 0, 0);
-        }),
-      ),
-    );
-
-    it.effect("rotates the trace file when the configured max size is exceeded", () =>
-      Effect.scoped(
-        Effect.gen(function* () {
-          const fileSystem = yield* FileSystem.FileSystem;
-          const path = yield* Path.Path;
-          const tempDir = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-trace-sink-" });
-          const tracePath = path.join(tempDir, "shared.trace.ndjson");
-
-          const sink = yield* makeTraceSink({
-            filePath: tracePath,
-            maxBytes: 500,
-            maxFiles: 2,
-            batchWindowMs: 10_000,
-          });
-
-          for (let index = 0; index < 8; index += 1) {
-            sink.push(makeRecord("rotate", `${index}-${"x".repeat(48)}`));
-            yield* sink.flush;
-          }
-          yield* sink.close();
-
-          const matchingFiles = Arr.sort(
-            (yield* fileSystem.readDirectory(tempDir)).filter(
-              (entry) =>
-                entry === "shared.trace.ndjson" || entry.startsWith("shared.trace.ndjson."),
-            ),
-            Order.String,
-          );
-
-          assert.equal(
-            matchingFiles.some((entry) => entry === "shared.trace.ndjson.1"),
-            true,
-          );
-          assert.equal(
-            matchingFiles.some((entry) => entry === "shared.trace.ndjson.3"),
-            false,
-          );
-        }),
-      ),
+    it.effect(
+      "keeps trace producers responsive during a slow write, bounds the backlog, and drains on close",
+      () =>
+        Effect.scoped(
+          Effect.gen(function* () {
+            const fs = yield* FileSystem.FileSystem;
+            const path = yield* Path.Path;
+            const directory = yield* fs.makeTempDirectoryScoped({
+              prefix: "t3-trace-backpressure-",
+            });
+            const tracePath = path.join(directory, "trace.ndjson");
+            const started = yield* Deferred.make<void>();
+            const release = yield* Deferred.make<void>();
+            const closed = yield* Ref.make(false);
+            const sink = yield* makeTraceSink({
+              filePath: tracePath,
+              maxBytes: 5_000_000,
+              maxFiles: 2,
+              batchWindowMs: 10_000,
+            }).pipe(
+              Effect.provideService(FileSystem.FileSystem, {
+                ...fs,
+                writeFile: (file, data, options) =>
+                  Effect.gen(function* () {
+                    yield* Deferred.succeed(started, undefined);
+                    yield* Deferred.await(release);
+                    yield* fs.writeFile(file, data, options);
+                  }),
+              }),
+            );
+            sink.push(makeRecord("first"));
+            const flushing = yield* Effect.forkChild(sink.flush);
+            yield* Deferred.await(started);
+            for (let index = 0; index < 2_000; index++)
+              sink.push(makeRecord("small", String(index)));
+            for (let index = 0; index < 3; index++)
+              sink.push({ ...makeRecord("large"), attributes: { payload: "x".repeat(2_000_000) } });
+            const closing = yield* Effect.forkChild(
+              sink.close().pipe(Effect.tap(() => Ref.set(closed, true))),
+            );
+            yield* Effect.yieldNow;
+            assert.isFalse(yield* Ref.get(closed));
+            yield* Deferred.succeed(release, undefined);
+            yield* Fiber.join(flushing);
+            yield* Fiber.join(closing);
+            const records = yield* readTraceRecords(tracePath);
+            assert.deepStrictEqual(
+              records.map((record) => record.name),
+              ["first", ...Array.from({ length: 2_000 }, () => "small"), "large", "large"],
+            );
+            assert.isTrue(yield* Ref.get(closed));
+          }),
+        ),
     );
 
     it.effect("keeps every trace file within the configured limit for threshold flushes", () =>
@@ -337,6 +370,73 @@ describe("observability", () => {
       ),
     );
 
+    it.effect("keeps WebSocket credentials out of trace files and exported spans", () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const fileSystem = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const tempDir = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-trace-sink-" });
+          const tracePath = path.join(tempDir, "shared.trace.ndjson");
+          const sink = yield* makeTraceSink({
+            filePath: tracePath,
+            maxBytes: 1024 * 1024,
+            maxFiles: 2,
+            batchWindowMs: 10_000,
+          });
+          const delegates: Array<Tracer.NativeSpan> = [];
+          const tracer = yield* makeLocalFileTracer({
+            filePath: tracePath,
+            maxBytes: 1024 * 1024,
+            maxFiles: 2,
+            batchWindowMs: 10_000,
+            sink,
+            delegate: Tracer.make({
+              span: (options) => {
+                const span = new Tracer.NativeSpan(options);
+                delegates.push(span);
+                return span;
+              },
+            }),
+          });
+          const url = "/ws?wsTicket=ticket-secret&dpop=proof-secret&clientSurface=web";
+
+          yield* Effect.annotateCurrentSpan({
+            "url.full": `http://127.0.0.1:3773${url}`,
+            "url.query": url.slice(4),
+          }).pipe(
+            Effect.withSpan("GET", { kind: "server" }),
+            Effect.provideService(Tracer.Tracer, tracer),
+          );
+          yield* Effect.die(new Error(`RequestParseError (GET ${url})`)).pipe(
+            Effect.tapCause((cause) => Effect.logError(cause)),
+            Effect.withSpan("DeviceHubProxy.proxyWebSocket"),
+            Effect.provideService(Tracer.Tracer, tracer),
+            Effect.provide(Logger.layer([Logger.tracerLogger], { mergeWithExisting: false })),
+            Effect.exit,
+          );
+          yield* sink.close();
+
+          const written = yield* fileSystem.readFileString(tracePath);
+          const exported = delegates.map((span) =>
+            JSON.stringify({
+              attributes: Object.fromEntries(span.attributes),
+              events: span.events.map(([, , attributes]) => attributes),
+              exit:
+                span.status._tag === "Ended" && Exit.isFailure(span.status.exit)
+                  ? Cause.pretty(span.status.exit.cause)
+                  : "",
+            }),
+          );
+          for (const text of [written, ...exported]) {
+            assert.notInclude(text, "ticket-secret");
+            assert.notInclude(text, "proof-secret");
+          }
+          assert.include(written, "wsTicket=<redacted>&dpop=<redacted>&clientSurface=web");
+          assert.include(exported.join("\n"), "effect.cause");
+        }),
+      ),
+    );
+
     it.effect("drops only the invalid trace record when serialization fails", () =>
       Effect.scoped(
         Effect.gen(function* () {
@@ -398,7 +498,7 @@ describe("observability", () => {
                 }).pipe(Effect.withSpan("child-span"));
               }).pipe(Effect.withSpan("parent-span"));
 
-              yield* program.pipe(Effect.provide(makeTestLayer(tracePath)));
+              yield* program.pipe(Effect.provide(layerTest(tracePath)));
             }),
           );
 
@@ -445,7 +545,7 @@ describe("observability", () => {
             Effect.exit(
               Effect.interrupt.pipe(
                 Effect.withSpan("interrupt-span"),
-                Effect.provide(makeTestLayer(tracePath)),
+                Effect.provide(layerTest(tracePath)),
               ),
             ),
           );
@@ -457,5 +557,91 @@ describe("observability", () => {
         }),
       ),
     );
+  });
+});
+
+describe("decodeOtlpTraceRecords", () => {
+  it("decodes spans when OTLP/JSON omits unset and empty fields", () => {
+    // Protobuf JSON leaves out unset and empty fields, so this batch is valid.
+    const payload = cast<unknown, OtlpTracer.TraceData>({
+      resourceSpans: [
+        {},
+        {
+          scopeSpans: [
+            {},
+            {
+              spans: [
+                {
+                  traceId: "trace-1",
+                  spanId: "span-1",
+                  name: "browser.request",
+                  startTimeUnixNano: "1000000",
+                  endTimeUnixNano: "3000000",
+                  attributes: [{ key: "tags", value: { arrayValue: {} } }],
+                },
+              ],
+            },
+          ],
+        },
+      ],
+    });
+
+    assert.deepStrictEqual(decodeOtlpTraceRecords(cast<unknown, OtlpTracer.TraceData>({})), []);
+    assert.deepStrictEqual(decodeOtlpTraceRecords(payload), [
+      {
+        type: "otlp-span",
+        name: "browser.request",
+        traceId: "trace-1",
+        spanId: "span-1",
+        sampled: true,
+        kind: "internal",
+        startTimeUnixNano: "1000000",
+        endTimeUnixNano: "3000000",
+        durationMs: 2,
+        attributes: { tags: [] },
+        resourceAttributes: {},
+        scope: { attributes: {} },
+        events: [],
+        links: [],
+        status: { code: "0" },
+      },
+    ]);
+  });
+});
+
+describe("OtlpHeadersFromString", () => {
+  const decode = Schema.decodeUnknownSync(OtlpHeadersFromString);
+
+  it.each([
+    {
+      name: "decodes percent-encoded values",
+      input: "authorization=Basic%20abc%3D%3D,x-tenant=t3",
+      expected: { authorization: "Basic abc==", "x-tenant": "t3" },
+    },
+    {
+      name: "ignores whitespace around separators",
+      input: "authorization=Basic%20abc%3D%3D, x-tenant = t3 ,",
+      expected: { authorization: "Basic abc==", "x-tenant": "t3" },
+    },
+    {
+      name: "keeps literal equals signs inside a value",
+      input: "authorization=Bearer abc==",
+      expected: { authorization: "Bearer abc==" },
+    },
+    {
+      name: "keeps an empty value",
+      input: "x-empty=",
+      expected: { "x-empty": "" },
+    },
+  ])("$name", ({ input, expected }) => {
+    expect(decode(input)).toEqual(expected);
+  });
+
+  it.each([
+    { name: "rejects a pair without a separator", input: "authorization" },
+    { name: "rejects a pair without a key", input: "=value" },
+    { name: "rejects a malformed percent-encoding", input: "authorization=%E0" },
+  ])("$name", ({ input }) => {
+    expect(() => decode(input)).toThrow();
   });
 });

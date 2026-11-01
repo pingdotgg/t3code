@@ -96,8 +96,8 @@ export interface ProtectionGroup extends Resource<
  * commitment); without one every call fails with the typed
  * `SubscriptionNotFound` error.
  *
- * @section Grouping Protections
- * @example Group All Protected Resources
+ * ### Grouping Protections
+ * **Example:** Group All Protected Resources
  * ```typescript
  * const group = yield* Shield.ProtectionGroup("AllResources", {
  *   aggregation: "SUM",
@@ -105,7 +105,7 @@ export interface ProtectionGroup extends Resource<
  * });
  * ```
  *
- * @example Group by Resource Type
+ * **Example:** Group by Resource Type
  * ```typescript
  * const group = yield* Shield.ProtectionGroup("Distributions", {
  *   aggregation: "MAX",
@@ -114,7 +114,7 @@ export interface ProtectionGroup extends Resource<
  * });
  * ```
  *
- * @example Arbitrary Member List
+ * **Example:** Arbitrary Member List
  * ```typescript
  * const group = yield* Shield.ProtectionGroup("Fleet", {
  *   aggregation: "MEAN",

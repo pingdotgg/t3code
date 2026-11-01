@@ -20,9 +20,8 @@ export interface ListNamespacesRequest extends Omit<
  * databases. Useful for compute that discovers tables dynamically at
  * runtime. Provide the implementation with
  * `Effect.provide(AWS.S3Tables.ListNamespacesHttp)`.
- * @binding
- * @section Discovering Namespaces and Tables
- * @example List the bucket's namespaces
+ * ### Discovering Namespaces and Tables
+ * **Example:** List the bucket's namespaces
  * ```typescript
  * const listNamespaces = yield* AWS.S3Tables.ListNamespaces(bucket);
  *
@@ -31,6 +30,8 @@ export interface ListNamespacesRequest extends Omit<
  *   yield* Effect.log(`namespace: ${ns.namespace[0]}`);
  * }
  * ```
+ *
+ * @binding
  */
 export interface ListNamespaces extends Binding.Service<
   ListNamespaces,

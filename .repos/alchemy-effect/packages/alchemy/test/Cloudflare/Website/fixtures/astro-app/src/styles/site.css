@@ -1,0 +1,13 @@
+/*
+ * Imported by `about.astro`. With `build.inlineStylesheets: "never"` this
+ * emits as a hashed `/_astro/*.css` asset, which the live test fetches to
+ * pin the `_headers`-driven immutable Cache-Control on hashed assets.
+ */
+body {
+  font-family: system-ui, sans-serif;
+  margin: 2rem;
+}
+
+h1 {
+  color: rebeccapurple;
+}

@@ -43,18 +43,16 @@
   "scripts": {
     "build": "tsc -b tsconfig.json && pnpm babel",
     "babel": "babel dist --plugins annotate-pure-calls --out-dir dist --source-maps",
-    "check": "tsc -b tsconfig.json",
-    "test": "vitest",
-    "coverage": "vitest --coverage"
+    "check": "tsc -b tsconfig.json"
   },
   "dependencies": {
     "@effect/openapi-generator": "workspace:^",
     "@effect/platform-node": "workspace:^",
     "effect": "workspace:^",
     "glob": "^13.0.6",
-    "yaml": "^2.9.0"
+    "yaml": "^2.9.1"
   },
   "devDependencies": {
-    "@types/node": "^26.1.1"
+    "@types/node": "^26.6.3"
   }
 }

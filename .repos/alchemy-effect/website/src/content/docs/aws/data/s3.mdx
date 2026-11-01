@@ -23,7 +23,7 @@ least-privilege IAM policy from the bindings you actually use.
 S3 buckets are canonical Alchemy resources, so you create them
 the same way as the Lambda — yield the resource inside an Effect
 and the Stack captures it. Open `src/api.ts` and add a bucket in
-the outer init:
+the constructor:
 
 ```diff lang="typescript"
 // src/api.ts
@@ -31,14 +31,14 @@ import * as AWS from "alchemy/AWS";
 +import * as S3 from "alchemy/AWS/S3";
 import { Stack } from "alchemy/Stack";
 import * as Effect from "effect/Effect";
-+import { HttpServerRequest } from "effect/unstable/http/HttpServerRequest";
-import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
++import { HttpServerRequest } from "effect/http/HttpServerRequest";
+import * as HttpServerResponse from "effect/http/HttpServerResponse";
 
 export default class Api extends AWS.Lambda.Function<Api>()(
   "Api",
   Stack.useSync((stack) => ({
     main: import.meta.url,
-    url: true,
+    functionUrl: true,
     memory: stack.stage === "prod" ? 1024 : 512,
   })),
   Effect.gen(function* () {
@@ -65,7 +65,7 @@ as **bindings**. A binding is two things:
 2. An IAM policy statement that gets attached to the function
    role automatically — scoped to the exact bucket ARN.
 
-Bind them in the outer init, alongside the bucket:
+Bind them in the constructor, alongside the bucket:
 
 ```diff lang="typescript"
 Effect.gen(function* () {
@@ -263,8 +263,8 @@ import * as AWS from "alchemy/AWS";
 import * as Test from "alchemy/Test/Bun";
 import { expect } from "bun:test";
 import * as Effect from "effect/Effect";
-import * as HttpBody from "effect/unstable/http/HttpBody";
-import * as HttpClient from "effect/unstable/http/HttpClient";
+import * as HttpBody from "effect/http/HttpBody";
+import * as HttpClient from "effect/http/HttpClient";
 import Stack from "../alchemy.run.ts";
 
 const { test, beforeAll, deploy } = Test.make({

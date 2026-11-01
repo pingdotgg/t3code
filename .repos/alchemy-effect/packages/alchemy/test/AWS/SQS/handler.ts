@@ -4,8 +4,8 @@ import * as Cause from "effect/Cause";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import { HttpServerRequest } from "effect/unstable/http/HttpServerRequest";
-import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
+import { HttpServerRequest } from "effect/http/HttpServerRequest";
+import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import path from "pathe";
 
 const main = path.resolve(import.meta.dirname, "handler.ts");
@@ -19,7 +19,7 @@ export class SQSTestFunction extends Lambda.Function<Lambda.Function>()(
 export default SQSTestFunction.make(
   {
     main,
-    url: true,
+    functionUrl: true,
     // The /receive route long-polls SQS (WaitTimeSeconds up to 2s); AWS's 3s
     // default function timeout intermittently kills the invocation AFTER SQS
     // has consumed the message server-side, trapping it invisible for the

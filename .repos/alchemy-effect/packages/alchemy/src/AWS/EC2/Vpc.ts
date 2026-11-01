@@ -4,7 +4,7 @@ import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
 import * as Schedule from "effect/Schedule";
 import * as Stream from "effect/Stream";
-import type { ScopedPlanStatusSession } from "../../Cli/Cli.ts";
+import type { ScopedPlanStatusSession } from "../../Report.ts";
 import { isResolved, somePropsAreDifferent } from "../../Diff.ts";
 import * as Provider from "../../Provider.ts";
 import { Resource } from "../../Resource.ts";
@@ -174,13 +174,12 @@ export interface Vpc extends Resource<
  * Changing the `cidrBlock`, `instanceTenancy`, or an IPAM/IPv6 pool replaces
  * the VPC.
  *
- * @resource
- * @section Creating a VPC
+ * ### Creating a VPC
  * A VPC is defined by a private IPv4 address range (`cidrBlock`). Pick a block
  * from the RFC 1918 private space (e.g. `10.0.0.0/16`) that is large enough to
  * subdivide into subnets across your Availability Zones.
  *
- * @example Basic VPC
+ * **Example:** Basic VPC
  * ```typescript
  * const vpc = yield* AWS.EC2.Vpc("MyVpc", {
  *   cidrBlock: "10.0.0.0/16",
@@ -191,7 +190,7 @@ export interface Vpc extends Resource<
  * for a multi-AZ, multi-tier network. This is the minimal config every other
  * networking resource builds on.
  *
- * @example Allocating IPv4 from an IPAM pool
+ * **Example:** Allocating IPv4 from an IPAM pool
  * ```typescript
  * const vpc = yield* AWS.EC2.Vpc("MyVpc", {
  *   ipv4IpamPoolId: "ipam-pool-0123456789abcdef0",
@@ -203,12 +202,12 @@ export interface Vpc extends Resource<
  * range of the requested size. Use this when an organization centrally manages
  * address space to avoid CIDR collisions between accounts.
  *
- * @section DNS Resolution
+ * ### DNS Resolution
  * Two independent toggles control DNS behavior inside the VPC. `enableDnsSupport`
  * lets instances resolve names via the Amazon DNS server; `enableDnsHostnames`
  * additionally assigns public DNS hostnames to instances with public IPs.
  *
- * @example Enable DNS support and hostnames
+ * **Example:** Enable DNS support and hostnames
  * ```typescript
  * const vpc = yield* AWS.EC2.Vpc("MyVpc", {
  *   cidrBlock: "10.0.0.0/16",
@@ -220,8 +219,8 @@ export interface Vpc extends Resource<
  * Enable both when instances need public DNS names or when you rely on private
  * hosted zones and VPC endpoints, which require DNS resolution to function.
  *
- * @section Instance Tenancy
- * @example Dedicated tenancy
+ * ### Instance Tenancy
+ * **Example:** Dedicated tenancy
  * ```typescript
  * const vpc = yield* AWS.EC2.Vpc("MyVpc", {
  *   cidrBlock: "10.0.0.0/16",
@@ -234,13 +233,13 @@ export interface Vpc extends Resource<
  * expensive than the `"default"` shared tenancy. This property cannot be
  * changed after creation without replacing the VPC.
  *
- * @section IPv6 Addressing
+ * ### IPv6 Addressing
  * A VPC can carry an IPv6 `/56` block alongside its IPv4 range. The block can
  * come from Amazon's pool, an IPAM pool, or your own BYOIP pool
  * (`ipv6CidrBlock` + `ipv6Pool`, optionally scoped to a
  * `ipv6CidrBlockNetworkBorderGroup`).
  *
- * @example Amazon-provided IPv6 block
+ * **Example:** Amazon-provided IPv6 block
  * ```typescript
  * const vpc = yield* AWS.EC2.Vpc("MyVpc", {
  *   cidrBlock: "10.0.0.0/16",
@@ -252,7 +251,7 @@ export interface Vpc extends Resource<
  * dual-stack. Pair it with IPv6-enabled subnets and an egress-only internet
  * gateway for outbound-only IPv6 connectivity.
  *
- * @example IPv6 from an IPAM pool
+ * **Example:** IPv6 from an IPAM pool
  * ```typescript
  * const vpc = yield* AWS.EC2.Vpc("MyVpc", {
  *   cidrBlock: "10.0.0.0/16",
@@ -264,8 +263,8 @@ export interface Vpc extends Resource<
  * Draws the IPv6 block from a centrally-managed IPAM pool instead of Amazon's
  * pool, giving you deterministic, organization-governed IPv6 ranges.
  *
- * @section Composing a Network
- * @example VPC with a subnet
+ * ### Composing a Network
+ * **Example:** VPC with a subnet
  * ```typescript
  * const vpc = yield* AWS.EC2.Vpc("MyVpc", {
  *   cidrBlock: "10.0.0.0/16",
@@ -285,8 +284,8 @@ export interface Vpc extends Resource<
  * subnet's CIDR must fall within the VPC's `cidrBlock`. Add route tables,
  * gateways, and security groups the same way.
  *
- * @section Tagging
- * @example Tagging a VPC
+ * ### Tagging
+ * **Example:** Tagging a VPC
  * ```typescript
  * const vpc = yield* AWS.EC2.Vpc("MyVpc", {
  *   cidrBlock: "10.0.0.0/16",
@@ -300,6 +299,8 @@ export interface Vpc extends Resource<
  * User tags are merged with alchemy's auto-tags (`alchemy::stack`,
  * `alchemy::stage`, `alchemy::id`), which brand the VPC as managed by your
  * stack. The `Name` tag is what surfaces in the EC2 console.
+ *
+ * @resource
  */
 export const Vpc = Resource<Vpc>("AWS.EC2.VPC");
 
@@ -408,27 +409,41 @@ export const VpcProvider = () =>
           }
 
           if (vpc === undefined) {
-            const createResult = yield* ec2.createVpc({
-              // TODO(sam): add all properties
-              AmazonProvidedIpv6CidrBlock: news.amazonProvidedIpv6CidrBlock,
-              InstanceTenancy: news.instanceTenancy,
-              CidrBlock: news.cidrBlock,
-              Ipv4IpamPoolId: news.ipv4IpamPoolId,
-              Ipv4NetmaskLength: news.ipv4NetmaskLength,
-              Ipv6Pool: news.ipv6Pool,
-              Ipv6CidrBlock: news.ipv6CidrBlock,
-              Ipv6IpamPoolId: news.ipv6IpamPoolId,
-              Ipv6NetmaskLength: news.ipv6NetmaskLength,
-              Ipv6CidrBlockNetworkBorderGroup:
-                news.ipv6CidrBlockNetworkBorderGroup,
-              TagSpecifications: [
-                {
-                  ResourceType: "vpc",
-                  Tags: createTagsList(desiredTags),
-                },
-              ],
-              DryRun: false,
-            });
+            const createResult = yield* ec2
+              .createVpc({
+                // TODO(sam): add all properties
+                AmazonProvidedIpv6CidrBlock: news.amazonProvidedIpv6CidrBlock,
+                InstanceTenancy: news.instanceTenancy,
+                CidrBlock: news.cidrBlock,
+                Ipv4IpamPoolId: news.ipv4IpamPoolId,
+                Ipv4NetmaskLength: news.ipv4NetmaskLength,
+                Ipv6Pool: news.ipv6Pool,
+                Ipv6CidrBlock: news.ipv6CidrBlock,
+                Ipv6IpamPoolId: news.ipv6IpamPoolId,
+                Ipv6NetmaskLength: news.ipv6NetmaskLength,
+                Ipv6CidrBlockNetworkBorderGroup:
+                  news.ipv6CidrBlockNetworkBorderGroup,
+                TagSpecifications: [
+                  {
+                    ResourceType: "vpc",
+                    Tags: createTagsList(desiredTags),
+                  },
+                ],
+                DryRun: false,
+              })
+              .pipe(
+                // The per-region VPC quota (default 5) is a shared pool;
+                // concurrent deploys transiently exhaust it while their VPCs
+                // are being torn down. Ride out the burst with a bounded
+                // spaced retry (~90s) before surfacing the quota error.
+                Effect.retry({
+                  while: (e) => e._tag === "VpcLimitExceeded",
+                  schedule: Schedule.max([
+                    Schedule.spaced("10 seconds"),
+                    Schedule.recurs(9),
+                  ]),
+                }),
+              );
             const newVpcId = createResult.Vpc!.VpcId! as VpcId;
             yield* session.note(`VPC created: ${newVpcId}`);
             vpc = yield* waitForVpcAvailable(newVpcId, session);
@@ -553,15 +568,8 @@ export const VpcProvider = () =>
                       e.message?.includes("DependencyViolation"))
                   );
                 },
-                // Use fixed 5s delay instead of exponential to avoid very long waits
-                schedule: Schedule.max([
-                  Schedule.fixed(5000),
-                  // A dependency that has not drained within ~50s is a real
-                  // cleanup defect. Preserve state and fail promptly so a
-                  // subsequent destroy/nuke can retry after fixing the child,
-                  // rather than hanging this resource for five minutes.
-                  Schedule.recurs(10),
-                ]).pipe(
+                schedule: Schedule.fixed(5000).pipe(
+                  Schedule.upTo({ duration: "5 minutes" }),
                   Schedule.tap(({ attempt }) =>
                     session.note(
                       `Waiting for dependencies to clear... (attempt ${attempt})`,
@@ -593,7 +601,12 @@ class VpcPending extends Data.TaggedError("VpcPending")<{
 // Retryable error: VPC still exists during deletion
 class VpcStillExists extends Data.TaggedError("VpcStillExists")<{
   vpcId: string;
-}> {}
+  state: string | undefined;
+}> {
+  get message() {
+    return `VPC ${this.vpcId} is still ${this.state ?? "present"} after deletion`;
+  }
+}
 
 /**
  * Wait for VPC to be in available state
@@ -649,11 +662,12 @@ const waitForVpcDeleted = (vpcId: string, session: ScopedPlanStatusSession) =>
     }
 
     // Still exists - this is the only retryable case
-    return yield* new VpcStillExists({ vpcId });
+    return yield* new VpcStillExists({ vpcId, state: result.Vpcs[0]?.State });
   }).pipe(
     Effect.retry({
       while: (e) => e instanceof VpcStillExists,
-      schedule: Schedule.max([Schedule.fixed(2000), Schedule.recurs(15)]).pipe(
+      schedule: Schedule.fixed(2000).pipe(
+        Schedule.upTo({ duration: "5 minutes" }),
         Schedule.tap(({ attempt }) =>
           session.note(`Waiting for VPC deletion... (${attempt * 2}s)`),
         ),

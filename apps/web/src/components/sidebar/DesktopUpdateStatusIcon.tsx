@@ -1,7 +1,6 @@
-import { CheckIcon, DownloadIcon, RefreshCwIcon, RotateCwIcon } from "lucide-react";
+import { RefreshIcon } from "~/components/ui/refresh-icon";
+import { CheckIcon, CircleArrowUpIcon, DownloadIcon, RotateCwIcon } from "lucide-react";
 import type { AnimationEventHandler } from "react";
-
-import { cn } from "../../lib/utils";
 
 const DOWNLOAD_PROGRESS_RADIUS = 14;
 const DOWNLOAD_PROGRESS_CIRCUMFERENCE = 2 * Math.PI * DOWNLOAD_PROGRESS_RADIUS;
@@ -11,7 +10,8 @@ export type DesktopUpdateStatusIconState =
   | "checking"
   | "available"
   | "downloading"
-  | "downloaded";
+  | "downloaded"
+  | "everything";
 
 function normalizeDesktopUpdateDownloadPercent(percent: number | null): number {
   if (percent === null || !Number.isFinite(percent)) return 0;
@@ -46,7 +46,7 @@ function DesktopUpdateAvailableIcon() {
       <DownloadIcon className="size-4" />
       <span
         aria-hidden="true"
-        className="absolute -top-0.5 -right-0.5 size-1.5 rounded-full bg-update-foreground ring-2 ring-update-surface"
+        className="absolute -top-0.5 -right-0.5 size-1.5 rounded-full bg-current ring-2 ring-sidebar-control-surface"
       />
     </span>
   );
@@ -68,7 +68,7 @@ function DesktopUpdateDownloadingIcon({ percent }: { readonly percent: number | 
           cy="16"
           r={DOWNLOAD_PROGRESS_RADIUS}
           fill="none"
-          stroke="color-mix(in srgb, currentColor 22%, transparent)"
+          className="stroke-current/22"
           strokeWidth="1.5"
         />
         <circle
@@ -93,7 +93,7 @@ function DesktopUpdateDownloadedIcon() {
   return (
     <span className="relative grid size-4 place-items-center">
       <RotateCwIcon className="size-4" />
-      <span className="absolute -right-1 -bottom-1 grid size-2.5 place-items-center rounded-full bg-update-foreground text-background ring-2 ring-background">
+      <span className="absolute -right-1 -bottom-1 grid size-2.5 place-items-center rounded-full bg-foreground text-background ring-2 ring-background">
         <CheckIcon className="size-2" strokeWidth={3} />
       </span>
     </span>
@@ -116,10 +116,12 @@ export function DesktopUpdateStatusIcon({
     return <DesktopUpdateDownloadingIcon percent={downloadPercent ?? null} />;
   }
   if (status === "downloaded") return <DesktopUpdateDownloadedIcon />;
+  if (status === "everything") return <CircleArrowUpIcon className="size-4" />;
 
   return (
-    <RefreshCwIcon
-      className={cn("size-4", status === "checking" && isCheckAnimating && "animate-spin")}
+    <RefreshIcon
+      className="size-4"
+      refreshing={status === "checking" && isCheckAnimating === true}
       onAnimationIteration={onCheckAnimationIteration}
     />
   );

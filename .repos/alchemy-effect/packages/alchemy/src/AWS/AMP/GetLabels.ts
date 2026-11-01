@@ -1,4 +1,5 @@
 import type * as Credentials from "@distilled.cloud/aws/Credentials";
+import type * as SigV4 from "@distilled.cloud/aws/SigV4";
 import type * as Effect from "effect/Effect";
 import * as Binding from "../../Binding.ts";
 import type { PrometheusApiError, PrometheusTime } from "./PrometheusTypes.ts";
@@ -22,11 +23,17 @@ export interface GetLabelsClient {
   /** List label names (`api/v1/labels`). */
   labelNames(
     request?: GetLabelsRequest,
-  ): Effect.Effect<string[], PrometheusApiError | Credentials.CredentialsError>;
+  ): Effect.Effect<
+    string[],
+    PrometheusApiError | Credentials.CredentialsError | SigV4.SigningError
+  >;
   /** List the values of one label (`api/v1/label/{name}/values`). */
   labelValues(
     request: GetLabelValuesRequest,
-  ): Effect.Effect<string[], PrometheusApiError | Credentials.CredentialsError>;
+  ): Effect.Effect<
+    string[],
+    PrometheusApiError | Credentials.CredentialsError | SigV4.SigningError
+  >;
 }
 
 /**
@@ -34,18 +41,19 @@ export interface GetLabelsClient {
  * from an AMP {@link Workspace}'s Prometheus-compatible query API,
  * SigV4-signed with the host Function's credentials.
  *
- * @binding
- * @section Exploring Labels
- * @example List Label Names
+ * ### Exploring Labels
+ * **Example:** List Label Names
  * ```typescript
  * const labels = yield* AMP.GetLabels(workspace);
  * const names = yield* labels.labelNames();
  * ```
  *
- * @example List Metric Names
+ * **Example:** List Metric Names
  * ```typescript
  * const metricNames = yield* labels.labelValues({ label: "__name__" });
  * ```
+ *
+ * @binding
  */
 export interface GetLabels extends Binding.Service<
   GetLabels,

@@ -29,6 +29,7 @@ test.provider(
       );
       expect(error._tag).toBe("ResourceNotFoundException");
     }),
+  { tags: ["provider:aws", "provider:aws:rolesanywhere", "live"] },
 );
 
 const trustPolicy: AWS.IAM.PolicyDocument = {
@@ -324,5 +325,13 @@ test.provider(
         ),
       );
     }),
-  { timeout: 180_000 },
+  {
+    tags: [
+      "provider:aws",
+      "provider:aws:iam",
+      "provider:aws:rolesanywhere",
+      "live",
+    ],
+    timeout: 180_000,
+  },
 );

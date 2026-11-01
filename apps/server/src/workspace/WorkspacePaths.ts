@@ -1,13 +1,3 @@
-/**
- * WorkspacePaths - Effect service contract for workspace path handling.
- *
- * Owns normalization and validation of workspace roots plus safe resolution of
- * workspace-root-relative paths.
- *
- * @module WorkspacePaths
- */
-import * as NodeOS from "node:os";
-
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -15,7 +5,10 @@ import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 
-export class WorkspaceRootNotExistsError extends Schema.TaggedErrorClass<WorkspaceRootNotExistsError>()(
+import { expandHomePath } from "@t3tools/provider-core/server/pathExpansion";
+import * as HostProcess from "@t3tools/shared/HostProcess";
+
+export class WorkspaceRootNotExistsError extends Schema.TaggedError<WorkspaceRootNotExistsError>()(
   "WorkspaceRootNotExistsError",
   {
     workspaceRoot: Schema.String,
@@ -27,7 +20,7 @@ export class WorkspaceRootNotExistsError extends Schema.TaggedErrorClass<Workspa
   }
 }
 
-export class WorkspaceRootCreateFailedError extends Schema.TaggedErrorClass<WorkspaceRootCreateFailedError>()(
+export class WorkspaceRootCreateFailedError extends Schema.TaggedError<WorkspaceRootCreateFailedError>()(
   "WorkspaceRootCreateFailedError",
   {
     workspaceRoot: Schema.String,
@@ -40,7 +33,7 @@ export class WorkspaceRootCreateFailedError extends Schema.TaggedErrorClass<Work
   }
 }
 
-export class WorkspaceRootStatFailedError extends Schema.TaggedErrorClass<WorkspaceRootStatFailedError>()(
+export class WorkspaceRootStatFailedError extends Schema.TaggedError<WorkspaceRootStatFailedError>()(
   "WorkspaceRootStatFailedError",
   {
     workspaceRoot: Schema.String,
@@ -54,7 +47,7 @@ export class WorkspaceRootStatFailedError extends Schema.TaggedErrorClass<Worksp
   }
 }
 
-export class WorkspaceRootNotDirectoryError extends Schema.TaggedErrorClass<WorkspaceRootNotDirectoryError>()(
+export class WorkspaceRootNotDirectoryError extends Schema.TaggedError<WorkspaceRootNotDirectoryError>()(
   "WorkspaceRootNotDirectoryError",
   {
     workspaceRoot: Schema.String,
@@ -66,7 +59,7 @@ export class WorkspaceRootNotDirectoryError extends Schema.TaggedErrorClass<Work
   }
 }
 
-export class WorkspacePathOutsideRootError extends Schema.TaggedErrorClass<WorkspacePathOutsideRootError>()(
+export class WorkspacePathOutsideRootError extends Schema.TaggedError<WorkspacePathOutsideRootError>()(
   "WorkspacePathOutsideRootError",
   {
     workspaceRoot: Schema.String,
@@ -87,11 +80,9 @@ export const WorkspacePathsError = Schema.Union([
 ]);
 export type WorkspacePathsError = typeof WorkspacePathsError.Type;
 
-/** Service tag for workspace path normalization and resolution. */
 export class WorkspacePaths extends Context.Service<
   WorkspacePaths,
   {
-    /** Normalize a user-provided workspace root and verify it exists as a directory. */
     readonly normalizeWorkspaceRoot: (
       workspaceRoot: string,
       options?: { readonly createIfMissing?: boolean },
@@ -102,11 +93,6 @@ export class WorkspacePaths extends Context.Service<
       | WorkspaceRootStatFailedError
       | WorkspaceRootNotDirectoryError
     >;
-    /**
-     * Resolve a relative path within a validated workspace root.
-     *
-     * Rejects absolute paths and traversal attempts outside the workspace root.
-     */
     readonly resolveRelativePathWithinRoot: (input: {
       workspaceRoot: string;
       relativePath: string;
@@ -117,21 +103,7 @@ export class WorkspacePaths extends Context.Service<
   }
 >()("t3/workspace/WorkspacePaths") {}
 
-function toPosixRelativePath(input: string): string {
-  return input.replaceAll("\\", "/");
-}
-
-function expandHomePath(input: string, path: Path.Path): string {
-  if (input === "~") {
-    return NodeOS.homedir();
-  }
-  if (input.startsWith("~/") || input.startsWith("~\\")) {
-    return path.join(NodeOS.homedir(), input.slice(2));
-  }
-  return input;
-}
-
-export const make = Effect.gen(function* () {
+const make = Effect.gen(function* () {
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
 
@@ -161,7 +133,9 @@ export const make = Effect.gen(function* () {
   const normalizeWorkspaceRoot: WorkspacePaths["Service"]["normalizeWorkspaceRoot"] = Effect.fn(
     "WorkspacePaths.normalizeWorkspaceRoot",
   )(function* (workspaceRoot, options) {
-    const normalizedWorkspaceRoot = path.resolve(expandHomePath(workspaceRoot.trim(), path));
+    const normalizedWorkspaceRoot = path.resolve(
+      expandHomePath(workspaceRoot.trim(), yield* HostProcess.HomeDirectory),
+    );
     let workspaceStat = yield* statWorkspaceRoot(
       workspaceRoot,
       normalizedWorkspaceRoot,
@@ -210,7 +184,10 @@ export const make = Effect.gen(function* () {
       }
 
       const absolutePath = path.resolve(input.workspaceRoot, normalizedInputPath);
-      const relativeToRoot = toPosixRelativePath(path.relative(input.workspaceRoot, absolutePath));
+      // Only the host separator becomes `/`: on POSIX `\` is a file name character.
+      const relativeToRoot = path
+        .relative(input.workspaceRoot, absolutePath)
+        .replaceAll(path.sep, "/");
       if (
         relativeToRoot.length === 0 ||
         relativeToRoot === "." ||

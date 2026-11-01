@@ -6,9 +6,9 @@ import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schedule from "effect/Schedule";
-import * as HttpClient from "effect/unstable/http/HttpClient";
-import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
-import type * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
+import * as HttpClient from "effect/http/HttpClient";
+import * as HttpClientRequest from "effect/http/HttpClientRequest";
+import type * as HttpClientResponse from "effect/http/HttpClientResponse";
 import Stack from "./fixtures/drizzle-stack.ts";
 
 const { test, beforeAll, afterAll, deploy, destroy } = Test.make({
@@ -125,5 +125,13 @@ test(
     };
     expect(rows.map((r) => r.email)).toContain("alice@example.com");
   }),
-  { timeout: TEST_TIMEOUT },
+  {
+    tags: [
+      "provider:cloudflare",
+      "provider:cloudflare:d1",
+      "provider:cloudflare:worker",
+      "live",
+    ],
+    timeout: TEST_TIMEOUT,
+  },
 );

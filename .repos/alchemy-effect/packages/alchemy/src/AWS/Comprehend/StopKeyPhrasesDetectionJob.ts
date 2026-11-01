@@ -11,9 +11,8 @@ import * as Binding from "../../Binding.ts";
  * The binding takes no arguments and grants the action on `*` (job APIs
  * have no resource-level IAM).
  *
- * @binding
- * @section Stopping Analysis Jobs
- * @example Stop a Running KeyPhrasesDetection Job
+ * ### Stopping Analysis Jobs
+ * **Example:** Stop a Running KeyPhrasesDetection Job
  * ```typescript
  * // init
  * const stopKeyPhrasesDetectionJob = yield* AWS.Comprehend.StopKeyPhrasesDetectionJob();
@@ -22,6 +21,8 @@ import * as Binding from "../../Binding.ts";
  * const result = yield* stopKeyPhrasesDetectionJob({ JobId: jobId });
  * // result.JobStatus === "STOP_REQUESTED"
  * ```
+ *
+ * @binding
  */
 export interface StopKeyPhrasesDetectionJob extends Binding.Service<
   StopKeyPhrasesDetectionJob,

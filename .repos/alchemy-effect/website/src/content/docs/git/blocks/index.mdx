@@ -1,0 +1,112 @@
+---
+title: Overview
+description: One layer graph, provided once, builds the Worker and every Durable Object behind it. Each line is a decision with implementations you choose or write.
+---
+
+The examples use `Authentication` from
+[Getting Started](/git/getting-started): the application's request middleware.
+
+A git host is six decisions: what serves HTTP and who may call it,
+where refs and objects live, how names resolve, where bulk bytes go,
+what verifies a push, and which refs may move. Each is a
+[Layer](/infrastructure-as-effects/layers), and you make them in one
+graph:
+
+```typescript
+const GitLive = Git.ApiLive.pipe(
+  Layer.provide(Git.ApiHandlersLive),
+  Layer.provide(Authentication.layer),
+  Layer.provide(Git.ReposDurableObject),
+  Layer.provide(Git.RegistryDurableObject),
+  Layer.provide(Git.HasherInline),
+  Layer.provide(Git.BlobStoreR2(GitObjects)),
+);
+```
+
+One graph, one `Effect.provide`. Build it with `Layer.*` and provide it
+once.
+
+## Two runtimes, one graph
+
+A repository needs one place where a ref moves atomically. On
+Cloudflare that is a Durable Object, and the code that moves refs runs
+inside it. The graph does not know this. You write it once, the Worker
+builds its side of it at cold start, and each Durable Object builds its
+own on its first request:
+
+```
+                        GitLive
+             ┌─────────────┴──────────────┐
+         Worker                    Repo Durable Object
+   wire, REST, GitHub facade      refs, objects, pull requests
+   your middleware and policies         push commit, jobs
+   BlobStore: clone bundles       BlobStore: packs, spilled pushes
+```
+
+`Git.BlobStoreR2(GitObjects)` appears once and serves both sides: the
+Worker streaming a clone bundle and the Durable Object writing a pack.
+Your middleware and application policies run in the Worker request. They can
+use the same user and database services.
+
+## The blocks
+
+| Block | Decides | Ships with |
+| --- | --- | --- |
+| [HTTP routes](/git/blocks/server) | the HTTP surface: every plane as one `HttpApi` of routes you can replace, behind your middleware | `ApiHandlersLive`, `ApiLive`, `InternalApiLive` |
+| [Repository](/git/blocks/repositories) | where refs and objects live, the jobs that keep a repository small | `ReposDurableObject` |
+| [Registry](/git/blocks/registry) | how `owner/name` resolves, and listings | `RegistryDurableObject`, `RegistryD1` |
+| [Blob Store](/git/blocks/blob-store) | where packs, bundles, and large pushes go | `BlobStoreR2`, `BlobStoreS3` |
+| [Hasher](/git/blocks/hasher) | what verifies a push, and on which compute | `HasherInline`, `HasherWorkerLoader`, `HasherLambda` |
+| [Engine](/git/blocks/engine) | repository operations and scoped prepare/commit | `EngineLive` |
+| [Auth](/git/blocks/auth) | application middleware and policy functions | native Effect HTTP middleware |
+
+## Replacing a block
+
+Every block is a `Context.Service`. Swap the Layer and nothing else in
+the graph knows:
+
+```diff lang="typescript"
+const GitLive = Git.ApiLive.pipe(
+  Layer.provide(Git.ApiHandlersLive),
+  Layer.provide(Authentication.layer),
+  Layer.provide(Git.ReposDurableObject),
+-  Layer.provide(Git.RegistryDurableObject),
++  Layer.provide(Git.RegistryD1(RepoIndex)),
+  Layer.provide(Git.HasherInline),
+  Layer.provide(Git.BlobStoreR2(GitObjects)),
+);
+```
+
+Leave one out and the Worker does not compile. The graph still requires
+the service, and the compiler says which:
+
+```typescript
+const GitLive = Git.ApiLive.pipe(
+  Layer.provide(Git.ApiHandlersLive),
+  Layer.provide(Authentication.layer),
+  Layer.provide(Git.ReposDurableObject),
+  Layer.provide(Git.RegistryDurableObject),
+  Layer.provide(Git.HasherInline),
+);
+// Layer<Server, never, BlobStore>
+//                      ^ still required; providing it to the Worker is a type error
+```
+
+Writing your own is implementing the contract. Each block's page shows
+it, and the shape is always the same:
+
+```typescript
+const BlobStoreMine = Layer.effect(
+  Git.BlobStore,
+  Effect.gen(function* () {
+    // return a Git.BlobStoreShape
+  }),
+);
+```
+
+## Where next
+
+- [HTTP routes](/git/blocks/server) — the three planes as one `HttpApi`,
+  and replacing a route.
+- [Recipes](/git/recipes) — which lines change for which
+  requirements.

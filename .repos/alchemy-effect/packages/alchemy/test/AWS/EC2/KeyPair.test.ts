@@ -51,25 +51,29 @@ test.provider(
         );
       expect(after.KeyPairs ?? []).toHaveLength(0);
     }),
+  { tags: ["provider:aws", "provider:aws:ec2", "live"] },
 );
 
 // `list()` enumerates branded key pairs in the account.
-test.provider("list enumerates the deployed key pair", (stack) =>
-  Effect.gen(function* () {
-    yield* stack.destroy();
+test.provider(
+  "list enumerates the deployed key pair",
+  (stack) =>
+    Effect.gen(function* () {
+      yield* stack.destroy();
 
-    const keyPair = yield* stack.deploy(
-      Effect.gen(function* () {
-        return yield* KeyPair("ListKey", {});
-      }),
-    );
+      const keyPair = yield* stack.deploy(
+        Effect.gen(function* () {
+          return yield* KeyPair("ListKey", {});
+        }),
+      );
 
-    const provider = yield* Provider.findProvider(KeyPair);
-    const all = yield* provider.list();
-    expect(all.some((k) => k.keyPairId === keyPair.keyPairId)).toBe(true);
+      const provider = yield* Provider.findProvider(KeyPair);
+      const all = yield* provider.list();
+      expect(all.some((k) => k.keyPairId === keyPair.keyPairId)).toBe(true);
 
-    yield* stack.destroy();
+      yield* stack.destroy();
 
-    yield* assertKeyPairGone(keyPair.keyPairId);
-  }),
+      yield* assertKeyPairGone(keyPair.keyPairId);
+    }),
+  { tags: ["provider:aws", "provider:aws:ec2", "live"] },
 );

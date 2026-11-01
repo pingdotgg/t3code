@@ -60,9 +60,8 @@ export interface AccountAssignment extends Resource<
 /**
  * Assigns an IAM Identity Center permission set to a user or group in an AWS
  * account.
- * @resource
- * @section Creating Assignments
- * @example Assign A Group To A Workload Account
+ * ### Creating Assignments
+ * **Example:** Assign A Group To A Workload Account
  * ```typescript
  * const assignment = yield* AccountAssignment("ProdAdminAssignment", {
  *   permissionSetArn: admin.permissionSetArn,
@@ -71,6 +70,8 @@ export interface AccountAssignment extends Resource<
  *   targetId: prod.accountId,
  * });
  * ```
+ *
+ * @resource
  */
 export const AccountAssignment = Resource<AccountAssignment>(
   "AWS.IdentityCenter.AccountAssignment",
@@ -329,6 +330,13 @@ const readAssignment = Effect.fn(function* ({
   principalType,
   targetId,
 }: AccountAssignmentProps) {
+  // A `creating` row can serialize without resolved Outputs (`targetId`
+  // from `account.accountId`, etc.). Distilled `ListAccountAssignments`
+  // then fails with `ParseError: Expected string at ["AccountId"]`.
+  if (!targetId || !permissionSetArn || !principalId) {
+    return undefined;
+  }
+
   const instance = yield* resolveInstance(instanceArn);
   const assignments = yield* ssoAdmin.listAccountAssignments
     .items({

@@ -9,7 +9,7 @@
 import * as Context from "effect/Context"
 import * as Effect from "effect/Effect"
 import { dual } from "effect/Function"
-import type { HttpClient } from "effect/unstable/http/HttpClient"
+import type { HttpClient } from "effect/http/HttpClient"
 
 /**
  * Service tag for Anthropic client configuration overrides, such as transformations applied to the generated HTTP client.
@@ -35,7 +35,7 @@ export class AnthropicConfig extends Context.Service<
    */
   static readonly getOrUndefined: Effect.Effect<typeof AnthropicConfig.Service | undefined> = Effect.map(
     Effect.context<never>(),
-    (services) => services.mapUnsafe.get(AnthropicConfig.key)
+    Context.getOrUndefined(AnthropicConfig)
   )
 }
 
@@ -52,7 +52,7 @@ export declare namespace AnthropicConfig {
    *
    * Use `transformClient` to wrap or replace the `HttpClient` used by generated Anthropic API requests.
    *
-   * @category models
+   * @category services
    * @since 4.0.0
    */
   export interface Service {

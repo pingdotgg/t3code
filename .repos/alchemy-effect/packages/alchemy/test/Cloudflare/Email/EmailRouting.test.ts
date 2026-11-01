@@ -8,6 +8,7 @@ import { describe, expect } from "alchemy-test";
 import * as Effect from "effect/Effect";
 import { MinimumLogLevel } from "effect/References";
 import * as Schedule from "effect/Schedule";
+import { emailRoutingScoped } from "./scope.ts";
 const { test } = Test.make({ providers: Cloudflare.providers() });
 
 const logLevel = Effect.provideService(
@@ -47,8 +48,8 @@ const getEmailRouting = (zoneId: string) =>
 
 const setEnabled = (zoneId: string, enabled: boolean) =>
   (enabled
-    ? emailRouting.enableEmailRouting({ zoneId, body: {} })
-    : emailRouting.disableEmailRouting({ zoneId, body: {} })
+    ? emailRouting.enableEmailRouting({ zoneId })
+    : emailRouting.disableEmailRouting({ zoneId })
   ).pipe(
     Effect.retry({
       while: (e) => e._tag === "Forbidden",
@@ -57,33 +58,44 @@ const setEnabled = (zoneId: string, enabled: boolean) =>
     }),
   );
 
-describe.sequential("EmailRouting", () => {
-  // Canonical `list()` test (zone-scoped singleton): there is no account-wide
-  // API for these per-zone settings, so `list()` enumerates every zone via
-  // `listAllZones` and reads the singleton in each. Assert the result is
-  // non-empty and contains the standing test zone. Capture-and-restore the
-  // zone's `enabled` state so the run leaves no residue.
-  test.provider("list enumerates email routing across all zones", (stack) =>
-    Effect.gen(function* () {
-      const zoneId = yield* resolveZoneId;
+describe.sequential.skipIf(!emailRoutingScoped)(
+  "EmailRouting",
+  {
+    tags: [
+      "provider:cloudflare",
+      "provider:cloudflare:email",
+      "provider:cloudflare:zone",
+      "live",
+    ],
+  },
+  () => {
+    // Canonical `list()` test (zone-scoped singleton): there is no account-wide
+    // API for these per-zone settings, so `list()` enumerates every zone via
+    // `listAllZones` and reads the singleton in each. Assert the result is
+    // non-empty and contains the standing test zone. Capture-and-restore the
+    // zone's `enabled` state so the run leaves no residue.
+    test.provider("list enumerates email routing across all zones", (stack) =>
+      Effect.gen(function* () {
+        const zoneId = yield* resolveZoneId;
 
-      yield* stack.destroy();
+        yield* stack.destroy();
 
-      // Capture the pre-test enabled state to restore at the end.
-      const before = yield* getEmailRouting(zoneId);
+        // Capture the pre-test enabled state to restore at the end.
+        const before = yield* getEmailRouting(zoneId);
 
-      const provider = yield* Provider.findProvider(Cloudflare.Email.Routing);
-      const all = yield* provider.list();
+        const provider = yield* Provider.findProvider(Cloudflare.Email.Routing);
+        const all = yield* provider.list();
 
-      expect(all.length).toBeGreaterThan(0);
-      const entry = all.find((r) => r.zoneId === zoneId);
-      expect(entry).toBeDefined();
-      expect(entry!.name).toEqual(zoneName);
+        expect(all.length).toBeGreaterThan(0);
+        const entry = all.find((r) => r.zoneId === zoneId);
+        expect(entry).toBeDefined();
+        expect(entry!.name).toEqual(zoneName);
 
-      // Restore the captured state.
-      yield* setEnabled(zoneId, before.enabled);
+        // Restore the captured state.
+        yield* setEnabled(zoneId, before.enabled);
 
-      yield* stack.destroy();
-    }).pipe(logLevel),
-  );
-});
+        yield* stack.destroy();
+      }).pipe(logLevel),
+    );
+  },
+);

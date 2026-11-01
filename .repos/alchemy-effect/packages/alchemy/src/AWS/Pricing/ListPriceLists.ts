@@ -18,9 +18,8 @@ export interface ListPriceListsRequest extends pricing.ListPriceListsRequest {}
  * List API. Provide the implementation with
  * `Effect.provide(AWS.Pricing.ListPriceListsHttp)`.
  *
- * @binding
- * @section Listing Price List Files
- * @example List EC2 Price Lists for us-east-1
+ * ### Listing Price List Files
+ * **Example:** List EC2 Price Lists for us-east-1
  * ```typescript
  * // init
  * const listPriceLists = yield* AWS.Pricing.ListPriceLists();
@@ -34,6 +33,8 @@ export interface ListPriceListsRequest extends pricing.ListPriceListsRequest {}
  * });
  * const arns = (result.PriceLists ?? []).map((p) => p.PriceListArn);
  * ```
+ *
+ * @binding
  */
 export interface ListPriceLists extends Binding.Service<
   ListPriceLists,

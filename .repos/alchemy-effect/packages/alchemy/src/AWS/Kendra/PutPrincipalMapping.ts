@@ -21,9 +21,8 @@ export interface PutPrincipalMappingRequest extends Omit<
  * Provide the implementation with
  * `Effect.provide(AWS.Kendra.PutPrincipalMappingHttp)`.
  *
- * @binding
- * @section Principal Mapping
- * @example Map Users to a Group
+ * ### Principal Mapping
+ * **Example:** Map Users to a Group
  * ```typescript
  * const putPrincipalMapping = yield* AWS.Kendra.PutPrincipalMapping(index);
  *
@@ -34,6 +33,8 @@ export interface PutPrincipalMappingRequest extends Omit<
  *   },
  * });
  * ```
+ *
+ * @binding
  */
 export interface PutPrincipalMapping extends Binding.Service<
   PutPrincipalMapping,

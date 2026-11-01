@@ -205,7 +205,7 @@ export const DatabaseAurora = Layer.effect(
 ```
 
 `yield* AWS.RDS.Connect(db.cluster, ...)` runs in the function's
-init phase and returns an inner Effect; each `yield*` of that
+Construction phase and returns an inner Effect; each `yield*` of that
 inner Effect at runtime resolves fresh `ConnectionInfo` from the
 secret. `Network` here is the same network from the prerequisite
 section, wrapped in its own layer (see the
@@ -221,7 +221,7 @@ HTTP:
 import * as AWS from "alchemy/AWS";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
+import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import { Database, DatabaseAurora } from "./database.ts";
 import { NetworkLive } from "./network.ts";
 
@@ -287,7 +287,7 @@ default, and the `AWS.RDSData` bindings expose it the same way
 as any other capability:
 
 ```typescript
-// init
+// Construction
 const execute = yield* AWS.RDSData.ExecuteStatement(db.cluster, {
   secret: db.secret,
   database: "app",
@@ -307,6 +307,14 @@ Transactions and batches follow the same shape:
 and `RollbackTransaction`, each with a matching `*Http` layer.
 
 ## Where next
+
+- [Drizzle + Aurora PostgreSQL](/aws/data/drizzle-aurora) — a standalone Lambda
+  application with IAM database authentication, verified TLS, and controlled schema setup.
+- [Drizzle + Aurora DSQL](/aws/data/drizzle-dsql) — a different database with a
+  public IAM-authenticated endpoint, no Aurora PostgreSQL cluster or VPC required.
+
+- [SQL databases](/sql/databases) — database engines, connection paths, and client choices.
+
 
 - [VPC & networking](/aws/networking) — the `Network` helper and
   the primitives underneath it.

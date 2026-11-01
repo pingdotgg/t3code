@@ -1,0 +1,122 @@
+---
+title: Migrations
+description: Apply Better Auth schema changes at deploy, or manage the schema yourself.
+---
+
+## Deploy an additional field
+
+```typescript
+// worker.ts
+import { BetterAuth } from "@alchemy.run/better-auth";
+import { CloudflareD1 } from "@alchemy.run/better-auth/CloudflareD1";
+import * as Cloudflare from "alchemy/Cloudflare";
+import * as Effect from "effect/Effect";
+
+const AuthDb = Cloudflare.D1.Database("AuthDb");
+
+export default class AuthApi extends Cloudflare.Worker<AuthApi>()(
+  "AuthApi",
+  { main: import.meta.url, compatibility: { flags: ["nodejs_compat"] } },
+  Effect.gen(function* () {
+    const auth = yield* BetterAuth({
+      basePath: "/api/auth",
+      emailAndPassword: { enabled: true },
+      user: {
+        additionalFields: {
+          timezone: { type: "string", required: false },
+        },
+      },
+    });
+    return { fetch: auth.fetch };
+  }).pipe(Effect.provide(CloudflareD1(AuthDb))),
+) {}
+```
+
+This auth-only Worker declares an optional `timezone` column on the user model. The database layer supplies both the runtime binding and the deploy-time migration connection.
+
+```typescript
+// alchemy.run.ts
+import * as Alchemy from "alchemy";
+import * as Cloudflare from "alchemy/Cloudflare";
+import * as Effect from "effect/Effect";
+import AuthApi from "./worker.ts";
+
+export default Alchemy.Stack(
+  "AuthMigrations",
+  { providers: Cloudflare.providers(), state: Alchemy.localState() },
+  Effect.gen(function* () {
+    const api = yield* AuthApi;
+    return { url: api.url };
+  }),
+);
+```
+
+Use Bun, matching `alchemy` and `@alchemy.run/better-auth` releases, Better Auth 1.7.5, Effect 4, and `kysely`, with Cloudflare credentials configured. This standalone stack creates a new database; applying a change to an existing installation requires retaining its stack, stage, resource identities, and state.
+
+```sh
+bunx alchemy deploy
+```
+
+The migration action applies missing tables, columns, and indexes before the updated host deploys, while existing instances may still serve traffic. Migration code does not run on incoming requests or during planning.
+
+## Repeat or force a deployment
+
+```sh
+bunx alchemy deploy
+```
+
+An unchanged schema, database identity, and dialect skip the migration action. Plugin fields, model names, and indexes participate in the schema fingerprint.
+
+```sh
+bunx alchemy deploy --force
+```
+
+Force reapplies the deployment, including its migration action; an already-current schema remains a no-op. It does not override migration safety checks, merge users, or rewrite account identities.
+
+## Handle existing data safely
+
+Back up the database, rehearse on a copy, and resolve incompatible data before production deployment. Unsafe schema changes fail with `BetterAuthMigrationError`; repeatedly forcing deployment does not make them safe.
+
+Use a maintenance window for changes incompatible with running instances. Rolling back application code does not undo database changes, and automatic additive migrations are not a data-conversion or rename plan.
+
+## Choose the migration transport
+
+| Database layer | Migration connection |
+| --- | --- |
+| D1 | D1 HTTP API, or the local simulator |
+| Neon | Serverless driver and supplied connection URL |
+| Aurora Data API | RDS Data API with deployment credentials |
+| Hyperdrive | Origin connection supplied to the layer |
+| Postgres / MySQL | Connection URL, or a separate migration connection |
+| SQLite | Same local database file |
+| Drizzle | Application-owned migration tooling |
+| Memory | No SQL migration |
+
+Runtime connectivity does not prove deploy-time connectivity. In particular, Hyperdrive migrations need access to the origin database rather than the Worker's runtime binding.
+
+## Opt out only when another process owns the schema
+
+In `worker.ts` above, replace the `BetterAuth` call with:
+
+```typescript
+const auth = yield* BetterAuth({
+  basePath: "/api/auth",
+  migrate: false,
+  emailAndPassword: { enabled: true },
+  user: {
+    additionalFields: {
+      timezone: { type: "string", required: false },
+    },
+  },
+});
+```
+
+With `migrate: false`, your schema pipeline must create the matching tables, columns, and indexes before deployment. Do not use it to hide a failed migration; requesting `migrate: true` with Memory or Drizzle fails because those layers do not support automatic migrations.
+
+Upstream schema generation needs a separate, CLI-loadable Better Auth configuration using the upstream database or adapter, not an Alchemy stack. The exact configuration depends on your externally managed database and migration tooling; no external CLI configuration is assumed by the automatic example above.
+
+## Separate multiple auth instances
+
+Distinct `id` values give multiple Better Auth instances separate migration actions and generated secrets. They do not isolate tables: use separate databases or explicit model names when isolation is required.
+
+Changing IDs or creating a new stage is not an upgrade of an existing installation. For an existing 1.6 database, follow the [1.6 to 1.7 upgrade guide](/better-auth/upgrades/from-1-6-to-1-7) before deployment.

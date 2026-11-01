@@ -11,9 +11,8 @@ import * as Binding from "../../Binding.ts";
  * expose a shared dataset. The account id is resolved once via
  * `sts:GetCallerIdentity`. Provide the implementation with
  * `Effect.provide(AWS.S3Control.ListAccessPointsHttp)`.
- * @binding
- * @section Listing Access Points
- * @example List the Access Points on a Bucket
+ * ### Listing Access Points
+ * **Example:** List the Access Points on a Bucket
  * ```typescript
  * // init — account-level binding, no resource argument
  * const listAccessPoints = yield* AWS.S3Control.ListAccessPoints();
@@ -22,6 +21,8 @@ import * as Binding from "../../Binding.ts";
  * const page = yield* listAccessPoints({ Bucket: bucketName });
  * // page.AccessPointList?.map((ap) => ap.Name)
  * ```
+ *
+ * @binding
  */
 export interface ListAccessPoints extends Binding.Service<
   ListAccessPoints,

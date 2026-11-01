@@ -28,6 +28,7 @@ function isLegacyBackendCategory(category: ResourceTelemetryProcessCategory): bo
   );
 }
 
+/** @public */
 export const make = Effect.fn("makeProcessResourceMonitor")(function* () {
   const telemetry = yield* ResourceTelemetry.ResourceTelemetry;
   const readHistory: ProcessResourceMonitor["Service"]["readHistory"] = (input) =>

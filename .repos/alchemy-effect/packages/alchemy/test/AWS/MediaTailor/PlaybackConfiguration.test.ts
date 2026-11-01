@@ -51,6 +51,7 @@ test.provider(
       );
       expect(error._tag).toBe("PlaybackConfigurationNotFound");
     }),
+  { tags: ["provider:aws", "provider:aws:mediatailor", "live"] },
 );
 
 test.provider(
@@ -133,7 +134,10 @@ test.provider(
       yield* stack.destroy();
       yield* assertConfigurationDeleted(config.name);
     }),
-  { timeout: 120_000 },
+  {
+    tags: ["provider:aws", "provider:aws:mediatailor", "live"],
+    timeout: 120_000,
+  },
 );
 
 test.provider(
@@ -180,5 +184,8 @@ test.provider(
       yield* stack.destroy();
       yield* assertConfigurationDeleted("alchemy-test-playback-config-b");
     }),
-  { timeout: 120_000 },
+  {
+    tags: ["provider:aws", "provider:aws:mediatailor", "live"],
+    timeout: 120_000,
+  },
 );

@@ -9,9 +9,8 @@ import * as Binding from "../../Binding.ts";
  * Provide the implementation with
  * `Effect.provide(AWS.Personalize.CreateSolutionVersionHttp)`.
  *
- * @binding
- * @section Retraining Loop
- * @example Retrain a Solution
+ * ### Retraining Loop
+ * **Example:** Retrain a Solution
  * ```typescript
  * // init
  * const createSolutionVersion = yield* Personalize.CreateSolutionVersion();
@@ -21,6 +20,8 @@ import * as Binding from "../../Binding.ts";
  *   trainingMode: "UPDATE",
  * });
  * ```
+ *
+ * @binding
  */
 export interface CreateSolutionVersion extends Binding.Service<
   CreateSolutionVersion,

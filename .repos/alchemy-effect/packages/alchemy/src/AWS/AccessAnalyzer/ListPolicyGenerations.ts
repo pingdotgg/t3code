@@ -8,14 +8,15 @@ import * as Binding from "../../Binding.ts";
  * Lists the account's recent policy-generation jobs. Provide the
  * implementation with
  * `Effect.provide(AWS.AccessAnalyzer.ListPolicyGenerationsHttp)`.
- * @binding
- * @section Policy Generation
- * @example List Policy Generations
+ * ### Policy Generation
+ * **Example:** List Policy Generations
  * ```typescript
  * const listGenerations =
  *   yield* AWS.AccessAnalyzer.ListPolicyGenerations();
  * const page = yield* listGenerations();
  * ```
+ *
+ * @binding
  */
 export interface ListPolicyGenerations extends Binding.Service<
   ListPolicyGenerations,

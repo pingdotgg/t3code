@@ -8,9 +8,8 @@ import * as Binding from "../../Binding.ts";
  * Unlinks a Microsoft Teams user identity from its AWS user identity — the
  * write half of identity offboarding automation. Provide the implementation
  * with `Effect.provide(AWS.Chatbot.DeleteMicrosoftTeamsUserIdentityHttp)`.
- * @binding
- * @section Microsoft Teams Identity Management
- * @example Unlink a Teams user identity
+ * ### Microsoft Teams Identity Management
+ * **Example:** Unlink a Teams user identity
  * ```typescript
  * const deleteMicrosoftTeamsUserIdentity =
  *   yield* AWS.Chatbot.DeleteMicrosoftTeamsUserIdentity();
@@ -19,6 +18,8 @@ import * as Binding from "../../Binding.ts";
  *   UserId: "0a1b2c3d-4e5f-1a2b-3c4d-0a1b2c3d4e5f",
  * });
  * ```
+ *
+ * @binding
  */
 export interface DeleteMicrosoftTeamsUserIdentity extends Binding.Service<
   DeleteMicrosoftTeamsUserIdentity,

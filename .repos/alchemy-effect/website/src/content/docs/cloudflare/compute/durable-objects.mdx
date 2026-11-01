@@ -16,7 +16,9 @@ a [Worker](/cloudflare/compute/workers), and every method you return becomes
 a typed RPC method — no schemas, no serialization boilerplate. This
 page builds one from scratch: a `Counter` that keeps a per-key count
 in transactional storage, exposes RPC methods, and streams a
-sequence of numbers back to the caller.
+sequence of numbers back to the caller. It also shows how to
+[schedule durable callbacks](#create-an-object-for-scheduled-work)
+atomically with application writes.
 
 ## Create the Counter file
 
@@ -35,7 +37,7 @@ import * as Effect from "effect/Effect";
 export default class Counter extends Cloudflare.DurableObject<Counter>()(
   "Counter",
   Effect.gen(function* () {
-    // Outer (init): resolve the instance state and shared
+    // Outer (Construction): resolve the instance state and shared
     // dependencies here.
     return Effect.gen(function* () {
       // Inner: return the public API for this instance.
@@ -55,7 +57,7 @@ ceremony — the rest of your DO code looks completely normal.
 
 Each DO instance has its own key/value storage, backed by SQLite.
 Resolve `Cloudflare.DurableObjectState` in the **outer** Effect,
-then pull the current count out of storage in the inner init so it
+then pull the current count out of storage in the inner constructor so it
 survives restarts and hibernation:
 
 ```diff lang="typescript"
@@ -73,12 +75,34 @@ Cloudflare exposes for `storage`, `setAlarm`, `acceptWebSocket`,
 and friends. We'll use it more in the next part for WebSockets.
 
 :::note
-You resolve the *reference* to `state` in the outer (init) Effect,
+You resolve the *reference* to `state` in the outer (Construction) Effect,
 but its methods — like `storage.get` — are
-[colored with `RuntimeContext`](/infrastructure-as-effects/layers#runtime-as-a-colored-function),
+[colored with `RuntimeContext`](/infrastructure-as-effects/layers#the-types-hold-the-boundary),
 so you can only *use* them in the inner (runtime) Effect. That's why
 `state` is yielded above but `state.storage.get(...)` lives below.
 :::
+
+## SQL migrations
+
+For objects that use SQL tables, generate and commit migration files with your
+schema changes before deploying. Load them in the outer Effect and apply them
+in the inner Effect:
+
+```typescript
+Effect.gen(function* () {
+  const migrations = yield* Cloudflare.SqlMigrations("./drizzle");
+
+  return Effect.gen(function* () {
+    yield* migrations.apply().pipe(Effect.orDie);
+    return {};
+  });
+});
+```
+
+Pending SQL runs when each object activates, before its public methods are
+available. See [SQL migrations](/sql/effect-sql/migrations#durable-object-migrations)
+for the full setup, or pass the same `migrations` to
+[`Drizzle.DurableObject({ migrations, relations })`](/sql/drizzle/migrations#durable-object-migrations).
 
 ## Add `increment` and `get`
 
@@ -111,14 +135,14 @@ fully type-checked through the Cloudflare RPC machinery.
 
 ## Bind the DO to the Worker
 
-Yield the `Counter` class in your Worker's init phase to get a
+Yield the `Counter` class in your Worker's Construction phase to get a
 namespace handle:
 
 ```diff lang="typescript"
 // src/worker.ts
 import * as Cloudflare from "alchemy/Cloudflare";
 import * as Effect from "effect/Effect";
-import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
+import * as HttpServerResponse from "effect/http/HttpServerResponse";
 +import Counter from "./counter.ts";
 
 export default Cloudflare.Worker(
@@ -136,7 +160,7 @@ export default Cloudflare.Worker(
 );
 ```
 
-`yield* Counter` in init registers the DO with the Worker
+`yield* Counter` in the constructor registers the DO with the Worker
 (binding + class-migration metadata) and hands you the namespace.
 
 ## Call the DO from `fetch`
@@ -149,8 +173,8 @@ by calling `getByName(...)` to obtain a typed stub, then invoking
 // src/worker.ts
 import * as Cloudflare from "alchemy/Cloudflare";
 import * as Effect from "effect/Effect";
-+import { HttpServerRequest } from "effect/unstable/http/HttpServerRequest";
-import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
++import { HttpServerRequest } from "effect/http/HttpServerRequest";
+import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import Counter from "./counter.ts";
 
 export default Cloudflare.Worker(
@@ -200,7 +224,7 @@ import * as Cloudflare from "alchemy/Cloudflare";
 import * as Test from "alchemy/Test/Bun";
 import { expect } from "bun:test";
 import * as Effect from "effect/Effect";
-import * as HttpClient from "effect/unstable/http/HttpClient";
+import * as HttpClient from "effect/http/HttpClient";
 import Stack from "../alchemy.run.ts";
 
 const { test, beforeAll, deploy } = Test.make({
@@ -281,8 +305,8 @@ Forward the stream from the Worker's `fetch` handler. Use
 import * as Cloudflare from "alchemy/Cloudflare";
 import * as Effect from "effect/Effect";
 +import * as Stream from "effect/Stream";
-import { HttpServerRequest } from "effect/unstable/http/HttpServerRequest";
-import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
+import { HttpServerRequest } from "effect/http/HttpServerRequest";
+import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import Counter from "./counter.ts";
 
 export default Cloudflare.Worker(
@@ -328,7 +352,7 @@ import * as Test from "alchemy/Test/Bun";
 import { expect } from "bun:test";
 import * as Effect from "effect/Effect";
 +import * as Stream from "effect/Stream";
-import * as HttpClient from "effect/unstable/http/HttpClient";
+import * as HttpClient from "effect/http/HttpClient";
 import Stack from "../alchemy.run.ts";
 
 const { test, beforeAll, deploy } = Test.make({
@@ -444,7 +468,7 @@ ignored — placement is only observable once deployed.
 ## Call scope vs isolate scope
 
 A Durable Object shares its isolate's layer build with the Worker
-that hosts it — the entrypoint's init runs **once per isolate**, and
+that hosts it — the entrypoint's constructor runs **once per isolate**, and
 every DO activation (including hibernatable-WebSocket wakes, which
 re-run the constructor) reuses it. Each method call, `fetch`,
 `alarm`, or WebSocket event then runs with a **fresh `Scope`**,
@@ -454,12 +478,197 @@ returned, and a returned `Stream` keeps the scope alive until it
 finishes draining.
 
 As everywhere on workerd, there is no isolate-teardown hook: cleanup
-belongs in methods (call scope), not in the constructor or init.
+belongs in methods (call scope), not in the class constructor or the Construction phase.
 Per-call resources like `Drizzle.Postgres` pools open lazily inside
 the method and close with its scope (see the
 [SQL connection lifecycle](/sql/effect-sql/lifecycle)). See
-[Instance scope vs request scope](/infrastructure-as-effects/functions-and-servers#instance-scope-vs-request-scope)
+[Instance scope vs request scope](/infrastructure-as-effects/runtime#instance-scope-vs-request-scope)
 for the model across all runtimes.
+
+## Create an object for scheduled work
+
+Use `Alchemy.makeCallback` when work must survive the request and run
+later. Durable Objects persist these jobs in SQLite and deliver them
+through native alarms; a timer or a forked fiber does not provide that
+persistence.
+
+For this example, create a `Document` object that will save its current
+body and schedule a revision snapshot:
+
+```typescript
+// src/document.ts
+import * as Cloudflare from "alchemy/Cloudflare";
+import * as Effect from "effect/Effect";
+
+export default class Document extends Cloudflare.DurableObject<Document>()(
+  "Document",
+  Effect.gen(function* () {
+    const state = yield* Cloudflare.DurableObjectState;
+    return Effect.gen(function* () {
+      return {};
+    });
+  }),
+) {}
+```
+
+Each named `Document` has its own storage and pending jobs, just as each
+named `Counter` has its own count. Bind it to a Worker by yielding the
+`Document` class in the Worker's Construction phase.
+
+## Register a durable callback
+
+Register the handler in the **inner, per-instance Effect**, before
+returning the public methods:
+
+```diff lang="typescript"
+// src/document.ts
++import * as Alchemy from "alchemy";
+import * as Cloudflare from "alchemy/Cloudflare";
+import * as Effect from "effect/Effect";
+
+// Inside Document's outer Effect:
+const state = yield* Cloudflare.DurableObjectState;
+return Effect.gen(function* () {
++  const onSnapshot = yield* Alchemy.makeCallback(
++    "snapshot",
++    Effect.fn(function* (payload: { revision: string; body: string }) {
++      yield* state.storage.put(`revisions:${payload.revision}`, payload.body);
++    }),
++  );
+  return {};
+});
+```
+
+`onSnapshot` is a typed scheduling handle, not an RPC method. Alchemy
+re-registers its handler whenever the instance is reconstructed. The
+public API is `Alchemy.makeCallback`; Cloudflare Durable Objects are its
+first supported host. Registration in a Worker, in the outer Construction
+Effect, or later inside an RPC method is unsupported.
+
+Payloads must be JSON values: objects, arrays, strings, finite numbers,
+booleans, or `null`. Values such as `Date`, `undefined`, and `BigInt` are
+rejected when scheduling, even if the handler's TypeScript type accepts
+them. Encode dates as strings or timestamps before scheduling.
+
+## Save and schedule atomically
+
+Add a method that writes the document and schedules its snapshot in the
+same storage transaction:
+
+```diff lang="typescript"
+-return {};
++return {
++  save: Effect.fn(function* (revision: string, body: string) {
++    yield* state.storage.transaction(
++      Effect.gen(function* () {
++        yield* state.storage.put("document", { revision, body });
++        yield* onSnapshot.schedule(revision, {
++          after: "30 seconds",
++          payload: { revision, body },
++        });
++      }),
++    );
++  }),
++};
+```
+
+The application write, pending callback, and native alarm update commit
+or roll back together. This works for SQLite and key/value writes on the
+**same Durable Object**. The handler runs later; external HTTP calls,
+R2 writes, and other objects' storage are outside this transaction.
+
+The existing `storage.transaction((txn) => effect)` overload remains
+supported. Nested transactions on the same fiber join the active
+transaction rather than create a savepoint. Keep transactional operations
+on that fiber: sibling-fiber storage access is rejected, as are further
+writes after `txn.rollback()`. Storage rollback does not undo assignments
+to JavaScript variables.
+
+## Replace a pending callback
+
+Within the same instance, the callback name and job ID identify a pending
+job. Scheduling the same pair again replaces its payload and due time.
+Use `at` instead of `after` for an absolute time:
+
+```typescript
+// Inside a Document method; revision and body are method arguments.
+yield* onSnapshot.schedule(revision, {
+  at: new Date("2026-12-01T09:00:00Z"),
+  payload: { revision, body },
+});
+```
+
+Pass exactly one of `at` or `after`. IDs are independent across callback
+names and across Durable Object instances. Replacing a pending job does
+not interrupt an invocation that is already running.
+
+## Cancel a pending callback
+
+Cancel from existing application logic; no additional RPC method is needed:
+
+```typescript
+yield* onSnapshot.cancel(revision);
+```
+
+Cancellation joins an active storage transaction, succeeds for absent IDs,
+and does not interrupt a running handler. Failures use `Alchemy.CallbackError`.
+
+## Retry failed callbacks
+
+Delivery is **at least once**, not exactly once. A failed or interrupted
+handler leaves its job pending. The default recovery delay is 30 seconds;
+set a finite, positive delay when registering the handler:
+
+```diff lang="typescript"
+const onSnapshot = yield* Alchemy.makeCallback(
+  "snapshot",
+  Effect.fn(function* (payload: { revision: string; body: string }) {
+    yield* state.storage.put(`revisions:${payload.revision}`, payload.body);
+  }),
++  { retry: { delay: "10 seconds" } },
+);
+```
+
+Alchemy persists a recovery wake before invoking the handler and
+acknowledges the job only after success. A crash between an external write
+and acknowledgement can repeat that write, so use idempotency keys for
+external operations. This example can repeat safely because it writes the
+same revision key and body. Each invocation receives a fresh Effect scope.
+Delivery times are earliest eligible times, not exact execution deadlines.
+
+:::caution[Keep native alarm retries enabled]
+Automatic recovery from instance termination relies on Cloudflare's
+native alarm retries. `state.abort(reason, { retryAlarm: false })` removes
+that guarantee: pending jobs remain stored, but Cloudflare may suppress
+the replacement wake until the native alarm is explicitly rearmed.
+:::
+
+## Upgrade existing schedules
+
+Existing `scheduleEvent` jobs stay in `alchemy_scheduled_events`, with
+their IDs, timestamps, repeat intervals, and JSON payloads intact. Alchemy
+atomically adds separate callback and schema-version tables to the
+previously unversioned database. It rejects an unsupported newer schema
+without modifying its data.
+
+**Keep the existing `alarm` handler**, its `Cloudflare.processScheduledEvents`
+call, and its application-specific dispatch for pending legacy jobs.
+Those jobs are not converted into `makeCallback` registrations, even if
+their payload contains a field named `callback`. Repeating legacy jobs
+continue to repeat until explicitly cancelled.
+
+Legacy events and callbacks share the object's single native alarm;
+Alchemy coordinates the earliest pending timestamp across both queues.
+A callback-only object does not need an `alarm` handler. Avoid manually
+setting or deleting the native alarm while either scheduler owns pending
+work.
+
+Callback names and payload formats are also persisted contracts. Keep
+old registrations while their jobs are pending, and keep new handlers
+compatible with old JSON payloads. Unknown callback names remain pending;
+renaming a handler does not migrate those jobs. TypeScript payload types
+do not validate data stored by an earlier deployment, so decode evolving
+payloads explicitly with a schema when needed.
 
 ## Where next
 
@@ -479,6 +688,8 @@ Related:
 
 - [Workers](/cloudflare/compute/workers) — the runtime every DO is reached
   through.
+- [Drizzle migrations](/sql/drizzle/migrations#durable-object-migrations) —
+  run drizzle-kit's `durable-sqlite` migrations inside the object in the constructor.
 
 Reference:
 

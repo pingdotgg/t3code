@@ -8,9 +8,8 @@ import * as Binding from "../../Binding.ts";
  *
  * Lists the instance types (and their capabilities — encryption, warm storage, app logs) supported by an engine version, e.g. to validate a resize before applying it. Provide the implementation with
  * `Effect.provide(AWS.OpenSearch.ListInstanceTypeDetailsHttp)`.
- * @binding
- * @section Engine Catalog
- * @example List Instance Types for a Version
+ * ### Engine Catalog
+ * **Example:** List Instance Types for a Version
  * ```typescript
  * const listInstanceTypeDetails = yield* OpenSearch.ListInstanceTypeDetails();
  *
@@ -19,6 +18,8 @@ import * as Binding from "../../Binding.ts";
  * });
  * // result.InstanceTypeDetails → supported instance types
  * ```
+ *
+ * @binding
  */
 export interface ListInstanceTypeDetails extends Binding.Service<
   ListInstanceTypeDetails,

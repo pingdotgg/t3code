@@ -172,8 +172,19 @@ test.provider(
       yield* stack.destroy();
 
       yield* waitForGone(zoneId, cert.certificateId);
-    }).pipe(Effect.ensuring(stack.destroy().pipe(Effect.ignore)), logLevel),
-  { timeout: 120_000 },
+    }).pipe(
+      Effect.ensuring(stack.destroy().pipe(Effect.orDie).pipe(Effect.ignore)),
+      logLevel,
+    ),
+  {
+    tags: [
+      "provider:cloudflare",
+      "provider:cloudflare:origintlsclientauth",
+      "provider:cloudflare:zone",
+      "live",
+    ],
+    timeout: 120_000,
+  },
 );
 
 test.provider(
@@ -214,8 +225,19 @@ test.provider(
       yield* stack.destroy();
 
       yield* waitForGone(zoneId, replaced.certificateId);
-    }).pipe(Effect.ensuring(stack.destroy().pipe(Effect.ignore)), logLevel),
-  { timeout: 120_000 },
+    }).pipe(
+      Effect.ensuring(stack.destroy().pipe(Effect.orDie).pipe(Effect.ignore)),
+      logLevel,
+    ),
+  {
+    tags: [
+      "provider:cloudflare",
+      "provider:cloudflare:origintlsclientauth",
+      "provider:cloudflare:zone",
+      "live",
+    ],
+    timeout: 120_000,
+  },
 );
 
 test.provider(
@@ -246,7 +268,7 @@ test.provider(
       // leaves behind when `certificate` was Output-valued: `creating`, no
       // attributes, and the certificate lost in the round-trip (#736).
       const state = yield* yield* State;
-      const stage = "test"; // scratch stacks default to the "test" stage
+      const stage = stack.stage;
       const fqns = yield* state.list({ stack: stack.name, stage });
       const rows = yield* Effect.forEach(fqns, (fqn) =>
         state
@@ -287,8 +309,19 @@ test.provider(
       yield* stack.destroy();
 
       yield* waitForGone(zoneId, recovered.certificateId);
-    }).pipe(Effect.ensuring(stack.destroy().pipe(Effect.ignore)), logLevel),
-  { timeout: 120_000 },
+    }).pipe(
+      Effect.ensuring(stack.destroy().pipe(Effect.orDie).pipe(Effect.ignore)),
+      logLevel,
+    ),
+  {
+    tags: [
+      "provider:cloudflare",
+      "provider:cloudflare:origintlsclientauth",
+      "provider:cloudflare:zone",
+      "live",
+    ],
+    timeout: 120_000,
+  },
 );
 
 test.provider(
@@ -339,6 +372,17 @@ test.provider(
       yield* stack.destroy();
 
       yield* waitForGone(zoneId, cert.certificateId);
-    }).pipe(Effect.ensuring(stack.destroy().pipe(Effect.ignore)), logLevel),
-  { timeout: 120_000 },
+    }).pipe(
+      Effect.ensuring(stack.destroy().pipe(Effect.orDie).pipe(Effect.ignore)),
+      logLevel,
+    ),
+  {
+    tags: [
+      "provider:cloudflare",
+      "provider:cloudflare:origintlsclientauth",
+      "provider:cloudflare:zone",
+      "live",
+    ],
+    timeout: 120_000,
+  },
 );

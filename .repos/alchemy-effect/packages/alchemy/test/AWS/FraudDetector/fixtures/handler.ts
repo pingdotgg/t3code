@@ -5,8 +5,8 @@ import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Redacted from "effect/Redacted";
-import { HttpServerRequest } from "effect/unstable/http/HttpServerRequest";
-import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
+import { HttpServerRequest } from "effect/http/HttpServerRequest";
+import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import path from "pathe";
 
 const main = path.resolve(import.meta.dirname, "handler.ts");
@@ -25,7 +25,7 @@ export class FraudDetectorTestFunction extends Lambda.Function<Lambda.Function>(
 export default FraudDetectorTestFunction.make(
   {
     main,
-    url: true,
+    functionUrl: true,
     // getEventPrediction fans out over the detector's active version; give it
     // headroom over the 3s default.
     timeout: Duration.seconds(30),

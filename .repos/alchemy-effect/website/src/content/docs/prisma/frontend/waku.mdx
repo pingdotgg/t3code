@@ -1,0 +1,149 @@
+---
+title: Waku
+description: Deploy Waku to Prisma Compute with Prisma.Website.Waku — React Server Components and static pages on Bun, with Waku's native dev server locally.
+sidebar:
+  order: 13
+---
+
+import { Code, Tabs, TabItem } from "@astrojs/starlight/components";
+
+export const devDeps = "@alchemy.run/frontend-frameworks @vercel/nft";
+
+`Prisma.Website.Waku` builds a [Waku](https://waku.gg) React Server
+Components app with the shared Node target. Its RSC server, client
+assets, and SSG pages run on **Bun in Prisma Compute** after a `tar.gz`
+upload. There is no Docker image or registry.
+
+## Install
+
+Install the build-time integration in your project; the resource loads
+its `/waku` and `/waku/node` exports:
+
+<Tabs syncKey="pkgManager">
+  <TabItem label="bun" icon="bun"><Code code={`bun add -d ${devDeps}`} lang="sh" /></TabItem>
+  <TabItem label="npm" icon="npm"><Code code={`npm install -D ${devDeps}`} lang="sh" /></TabItem>
+  <TabItem label="pnpm" icon="pnpm"><Code code={`pnpm add -D ${devDeps}`} lang="sh" /></TabItem>
+  <TabItem label="yarn" icon="seti:yarn"><Code code={`yarn add -D ${devDeps}`} lang="sh" /></TabItem>
+</Tabs>
+
+## Configure Waku
+
+A fresh project needs no deployment config. If present,
+`waku.config.ts` loads natively, including plugins in its `vite` field:
+
+```typescript
+// waku.config.ts
+import tailwindcss from "@tailwindcss/vite";
+import { defineConfig } from "waku/config";
+
+export default defineConfig({
+  basePath: "/",
+  vite: { plugins: [tailwindcss()] },
+});
+```
+
+Waku does not load a standalone `vite.config.ts`. Put Vite config in
+`waku.config.ts`. Don't set `unstable_adapter`: the shared Node target
+owns it and rejects a conflicting adapter.
+
+The resource's `waku` bag overrides `srcDir`, `distDir`, or `basePath`
+from the file:
+
+```typescript
+export const Website = Prisma.Website.Waku("Website", {
+  waku: { basePath: "/docs/" },
+});
+```
+
+## Declare the Website
+
+```typescript
+// alchemy.run.ts
+import * as Prisma from "alchemy/Prisma";
+
+export const Website = Prisma.Website.Waku("Website");
+```
+
+`rootDir` defaults to `"."`. A live deployment creates a database-less
+Prisma project if `project` is omitted; pass an existing project to
+share it with other apps.
+
+## Add it to the Stack
+
+```typescript
+// alchemy.run.ts
+import * as Alchemy from "alchemy";
+import * as Effect from "effect/Effect";
+
+export default Alchemy.Stack(
+  "MyWakuSite",
+  { providers: Prisma.providers(), state: Alchemy.localState() },
+  Effect.gen(function* () {
+    const site = yield* Website;
+    return { url: site.url };
+  }),
+);
+```
+
+Pages configured with `render: "static"` are generated at build time
+and served at extensionless URLs such as `/about`. Dynamic pages and
+API routes run in Compute. `site.url` is the live endpoint.
+
+## Add environment variables
+
+```diff lang="typescript"
+export const Website = Prisma.Website.Waku("Website", {
++  env: {
++    GREETING: "Hello from Alchemy!",
++    API_BASE: "https://api.example.com",
++  },
+});
+```
+
+`env` accepts strings or `Redacted` values. It is applied before build
+and dev, and passed to Compute. Client inlining follows the framework's
+rules; do not expose secrets in public keys.
+
+## Read the environment in server code
+
+```typescript
+// src/pages/index.tsx
+export default async function HomePage() {
+  return <h1>{process.env.GREETING ?? "hello"}</h1>;
+}
+
+export const getConfig = async () => ({ render: "dynamic" }) as const;
+```
+
+The RSC server runs on Bun. Server components and API routes can read
+`process.env`; static pages capture those values during prerendering.
+
+## Local dev
+
+`bun alchemy dev` runs Waku's own server with HMR instead of deploying.
+The Website creates no Prisma resources. Opt into the live path with:
+
+```typescript
+export const Website = Prisma.Website.Waku("Website").pipe(
+  Alchemy.remote(),
+);
+```
+
+## Custom domain
+
+```typescript
+const site = yield* Prisma.Website.Waku("Web", {
+  domain: "app.example.com",
+});
+```
+
+`domain` creates `Prisma.CustomDomain` and makes `site.url` the HTTPS
+hostname. The app must be on the project's current default branch.
+Configure returned DNS records yourself and verify status before cutover;
+see [Custom domains](/prisma/frontend/websites#custom-domains).
+
+## Where next
+
+- [Waku API](/providers/prisma/website/waku).
+- [Waku example](https://github.com/alchemy-run/alchemy/tree/main/examples/prisma-website-waku).
+- [Websites](/prisma/frontend/websites) and [Compute apps](/prisma/compute/apps).

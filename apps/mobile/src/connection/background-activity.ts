@@ -14,7 +14,7 @@ import * as Queue from "effect/Queue";
 import * as Schedule from "effect/Schedule";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
-import { AppState, type AppStateStatus } from "react-native";
+import { AppState } from "react-native";
 
 import * as MobileStorage from "../persistence/mobile-storage";
 import {
@@ -28,22 +28,22 @@ const LEASE_TTL_MS = 45_000;
 const BASELINE_SCOPES: ReadonlyArray<BackgroundScope> = [{ type: "provider-status" }];
 
 function normalizeAppState(
-  state: AppStateStatus,
+  state: string | null | undefined,
 ): NonNullable<ClientActivityReportInput["appState"]> {
   if (state === "active" || state === "inactive" || state === "background") return state;
   return "unknown";
 }
 
-export const mobileBackgroundActivityObserverLayer = Layer.succeed(
+export const layerObserver = Layer.succeed(
   EnvironmentRpcSubscriptionObserver,
   EnvironmentRpcSubscriptionObserver.of({
     observe: observeMobileBackgroundActivitySubscription,
   }),
 );
 
-export const mobileBackgroundActivityReporterLayer = Layer.effectDiscard(
+export const layerReporter = Layer.effectDiscard(
   Effect.gen(function* () {
-    const registry = yield* EnvironmentRegistry;
+    const registry = yield* EnvironmentRegistry.EnvironmentRegistry;
     const storage = yield* MobileStorage.MobileStorage;
     const clientId = yield* storage.loadOrCreateAgentAwarenessDeviceId.pipe(
       Effect.map((deviceId) => `mobile-${deviceId}`),
@@ -79,7 +79,9 @@ export const mobileBackgroundActivityReporterLayer = Layer.effectDiscard(
                 observedAt: DateTime.makeUnsafe(observedAtMs),
               }),
             )
-            .pipe(Effect.ignore),
+            // Not `ignore`: tearing down an environment mid-request interrupts its report,
+            // and an interrupt leaking out here would end the reporting loop for good.
+            .pipe(Effect.ignoreCause),
         { concurrency: "unbounded", discard: true },
       );
     }).pipe(Effect.withSpan("mobile.backgroundActivity.report"));

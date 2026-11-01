@@ -1,18 +1,18 @@
 <div align="center">
 
 <a href="https://alchemy.run">
-  <img src="./images/readme-hero.png" alt="Alchemy — Infrastructure as Effects" width="360" />
+  <img src="https://raw.githubusercontent.com/alchemy-run/alchemy/main/images/readme-hero.webp" alt="Alchemy — Infrastructure as Effects" width="360" />
 </a>
 
 <br />
 
 [![npm](https://img.shields.io/npm/v/alchemy?style=flat-square&color=3f5a2a&label=alchemy)](https://www.npmjs.com/package/alchemy)
 [![license](https://img.shields.io/badge/license-Apache%202.0-3f5a2a?style=flat-square)](./LICENSE)
-[![discord](https://img.shields.io/badge/discord-join-3f5a2a?style=flat-square&logo=discord&logoColor=white)](https://discord.gg/jwKw8dBJdN)
+[![discord](https://img.shields.io/badge/discord-join-3f5a2a?style=flat-square&logo=discord&logoColor=white)](https://alchemy.run/discord)
 
 **Infrastructure-as-Effects** — cloud infrastructure and application logic as a single, type-safe [Effect](https://effect.website) program.
 
-[Docs](https://alchemy.run) · [Tutorial](https://alchemy.run/tutorial/part-1) · [Examples](./examples) · [Discord](https://discord.gg/jwKw8dBJdN)
+[Docs](https://alchemy.run) · [Tutorial](https://alchemy.run/tutorial/part-1) · [Examples](./examples) · [Discord](https://alchemy.run/discord)
 
 </div>
 
@@ -50,7 +50,7 @@ One `ReadWriteBucket(Bucket)` call wires the binding, env var, and typed client 
 - **Same code, every stage.** Local dev, `plan` / `deploy`, smoke tests, and CI all share one mental model.
 
 ```sh
-bun add alchemy@next effect@next
+bun add alchemy@latest effect@rc
 ```
 
 ## GitHub Action
@@ -93,8 +93,16 @@ dependencies or breaking conventions.
 - [Examples](./examples) — runnable projects on AWS and Cloudflare
 - [llms.txt](https://alchemy.run/llms.txt) — agent-ready documentation index
 
-> **alchemy** is in alpha. Expect breaking changes. Come hang in our [Discord](https://discord.gg/jwKw8dBJdN).
+> **alchemy** is in alpha. Expect breaking changes. Come hang in our [Discord](https://alchemy.run/discord).
+
+## Credits
+
+### Blacksmith
+
+Thanks to [Blacksmith](https://blacksmith.sh/?ref=alchemy.run) for sponsoring our CI runners. Their fast Linux, macOS, and Windows runners help us test our packages across platforms and deploy our content-heavy website in mere minutes.
 
 ## License
 
-Apache-2.0
+Licensed under the [Apache License 2.0](./LICENSE). See
+[Third-Party Licenses](./THIRD_PARTY_LICENSES.md) for code incorporated from
+upstream projects.

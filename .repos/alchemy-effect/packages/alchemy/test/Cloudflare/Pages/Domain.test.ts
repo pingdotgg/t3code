@@ -98,123 +98,133 @@ const purgeProject = (accountId: string, projectName: string) =>
     Effect.retry(forbiddenRetry),
   );
 
-test.provider("attach and detach a custom domain", (stack) =>
-  Effect.gen(function* () {
-    const { accountId } = yield* yield* CloudflareEnvironment;
+test.provider(
+  "attach and detach a custom domain",
+  (stack) =>
+    Effect.gen(function* () {
+      const { accountId } = yield* yield* CloudflareEnvironment;
 
-    yield* stack.destroy();
-    yield* purgeProject(accountId, PROJECT_CRUD);
+      yield* stack.destroy();
+      yield* purgeProject(accountId, PROJECT_CRUD);
 
-    const { project, domain } = yield* stack.deploy(
-      Effect.gen(function* () {
-        const project = yield* Cloudflare.Pages.Project("DomainCrudProject", {
-          name: PROJECT_CRUD,
-        }).pipe(adopt(true));
-        const domain = yield* Cloudflare.Pages.Domain("CrudDomain", {
-          projectName: project.name,
-          name: DOMAIN_CRUD,
-        }).pipe(adopt(true));
-        return { project, domain };
-      }),
-    );
+      const { project, domain } = yield* stack.deploy(
+        Effect.gen(function* () {
+          const project = yield* Cloudflare.Pages.Project("DomainCrudProject", {
+            name: PROJECT_CRUD,
+          }).pipe(adopt(true));
+          const domain = yield* Cloudflare.Pages.Domain("CrudDomain", {
+            projectName: project.name,
+            name: DOMAIN_CRUD,
+          }).pipe(adopt(true));
+          return { project, domain };
+        }),
+      );
 
-    expect(domain.domainId).toBeDefined();
-    expect(domain.accountId).toEqual(accountId);
-    expect(domain.projectName).toEqual(project.name);
-    expect(domain.name).toEqual(DOMAIN_CRUD);
-    // Certificate issuance is asynchronous — the domain legitimately stays
-    // `initializing`/`pending` (the cert authority, validation/verification
-    // blocks and zone tag fill in over time). This test exercises CRUD, not
-    // certificate issuance, so only assert the attachment exists with a
-    // status, never a terminal `active`.
-    expect(domain.status).toBeTruthy();
-    expect(domain.createdOn).toBeTruthy();
+      expect(domain.domainId).toBeDefined();
+      expect(domain.accountId).toEqual(accountId);
+      expect(domain.projectName).toEqual(project.name);
+      expect(domain.name).toEqual(DOMAIN_CRUD);
+      // Certificate issuance is asynchronous — the domain legitimately stays
+      // `initializing`/`pending` (the cert authority, validation/verification
+      // blocks and zone tag fill in over time). This test exercises CRUD, not
+      // certificate issuance, so only assert the attachment exists with a
+      // status, never a terminal `active`.
+      expect(domain.status).toBeTruthy();
+      expect(domain.createdOn).toBeTruthy();
 
-    // The attachment propagates a beat after `create` returns — poll until
-    // it is observable rather than asserting it is immediately readable.
-    const live = yield* waitForDomain(accountId, project.name, DOMAIN_CRUD);
-    expect(live.domainId).toEqual(domain.domainId);
-    expect(live.name).toEqual(DOMAIN_CRUD);
-    expect(live.status).toBeTruthy();
+      // The attachment propagates a beat after `create` returns — poll until
+      // it is observable rather than asserting it is immediately readable.
+      const live = yield* waitForDomain(accountId, project.name, DOMAIN_CRUD);
+      expect(live.domainId).toEqual(domain.domainId);
+      expect(live.name).toEqual(DOMAIN_CRUD);
+      expect(live.status).toBeTruthy();
 
-    // Redeploying identical props is a no-op (same attachment).
-    const noop = yield* stack.deploy(
-      Effect.gen(function* () {
-        const project = yield* Cloudflare.Pages.Project("DomainCrudProject", {
-          name: PROJECT_CRUD,
-        }).pipe(adopt(true));
-        const domain = yield* Cloudflare.Pages.Domain("CrudDomain", {
-          projectName: project.name,
-          name: DOMAIN_CRUD,
-        }).pipe(adopt(true));
-        return { project, domain };
-      }),
-    );
-    expect(noop.domain.domainId).toEqual(domain.domainId);
+      // Redeploying identical props is a no-op (same attachment).
+      const noop = yield* stack.deploy(
+        Effect.gen(function* () {
+          const project = yield* Cloudflare.Pages.Project("DomainCrudProject", {
+            name: PROJECT_CRUD,
+          }).pipe(adopt(true));
+          const domain = yield* Cloudflare.Pages.Domain("CrudDomain", {
+            projectName: project.name,
+            name: DOMAIN_CRUD,
+          }).pipe(adopt(true));
+          return { project, domain };
+        }),
+      );
+      expect(noop.domain.domainId).toEqual(domain.domainId);
 
-    yield* stack.destroy();
+      yield* stack.destroy();
 
-    yield* expectDomainGone(accountId, PROJECT_CRUD, DOMAIN_CRUD);
-  }).pipe(
-    logLevel,
-    // Guarantee teardown even if an assertion throws mid-test, so a failed
-    // run never leaves a dangling Pages.Domain / Pages.Project behind.
-    // `stack.destroy()` tears down everything in the scratch stack (domain
-    // then project); the next run's start-of-test purge is the backstop.
-    Effect.ensuring(stack.destroy().pipe(Effect.ignore)),
-  ),
+      yield* expectDomainGone(accountId, PROJECT_CRUD, DOMAIN_CRUD);
+    }).pipe(
+      logLevel,
+      // Guarantee teardown even if an assertion throws mid-test, so a failed
+      // run never leaves a dangling Pages.Domain / Pages.Project behind.
+      // `stack.destroy()` tears down everything in the scratch stack (domain
+      // then project); the next run's start-of-test purge is the backstop.
+      Effect.ensuring(stack.destroy().pipe(Effect.orDie).pipe(Effect.ignore)),
+    ),
+  { tags: ["provider:cloudflare", "provider:cloudflare:pages", "live"] },
 );
 
-test.provider("changing the domain name triggers replacement", (stack) =>
-  Effect.gen(function* () {
-    const { accountId } = yield* yield* CloudflareEnvironment;
+test.provider(
+  "changing the domain name triggers replacement",
+  (stack) =>
+    Effect.gen(function* () {
+      const { accountId } = yield* yield* CloudflareEnvironment;
 
-    yield* stack.destroy();
-    yield* purgeProject(accountId, PROJECT_REPLACE);
+      yield* stack.destroy();
+      yield* purgeProject(accountId, PROJECT_REPLACE);
 
-    const initial = yield* stack.deploy(
-      Effect.gen(function* () {
-        const project = yield* Cloudflare.Pages.Project("DomainReplProject", {
-          name: PROJECT_REPLACE,
-        }).pipe(adopt(true));
-        const domain = yield* Cloudflare.Pages.Domain("ReplaceDomain", {
-          projectName: project.name,
-          name: DOMAIN_REPLACE_A,
-        }).pipe(adopt(true));
-        return domain;
-      }),
-    );
+      const initial = yield* stack.deploy(
+        Effect.gen(function* () {
+          const project = yield* Cloudflare.Pages.Project("DomainReplProject", {
+            name: PROJECT_REPLACE,
+          }).pipe(adopt(true));
+          const domain = yield* Cloudflare.Pages.Domain("ReplaceDomain", {
+            projectName: project.name,
+            name: DOMAIN_REPLACE_A,
+          }).pipe(adopt(true));
+          return domain;
+        }),
+      );
 
-    expect(initial.name).toEqual(DOMAIN_REPLACE_A);
+      expect(initial.name).toEqual(DOMAIN_REPLACE_A);
 
-    const replaced = yield* stack.deploy(
-      Effect.gen(function* () {
-        const project = yield* Cloudflare.Pages.Project("DomainReplProject", {
-          name: PROJECT_REPLACE,
-        }).pipe(adopt(true));
-        const domain = yield* Cloudflare.Pages.Domain("ReplaceDomain", {
-          projectName: project.name,
-          name: DOMAIN_REPLACE_B,
-        }).pipe(adopt(true));
-        return domain;
-      }),
-    );
+      const replaced = yield* stack.deploy(
+        Effect.gen(function* () {
+          const project = yield* Cloudflare.Pages.Project("DomainReplProject", {
+            name: PROJECT_REPLACE,
+          }).pipe(adopt(true));
+          const domain = yield* Cloudflare.Pages.Domain("ReplaceDomain", {
+            projectName: project.name,
+            name: DOMAIN_REPLACE_B,
+          }).pipe(adopt(true));
+          return domain;
+        }),
+      );
 
-    // The domain name is the attachment's identity — a new physical
-    // attachment exists.
-    expect(replaced.domainId).not.toEqual(initial.domainId);
-    expect(replaced.name).toEqual(DOMAIN_REPLACE_B);
+      // The domain name is the attachment's identity — a new physical
+      // attachment exists.
+      expect(replaced.domainId).not.toEqual(initial.domainId);
+      expect(replaced.name).toEqual(DOMAIN_REPLACE_B);
 
-    // The old domain was detached as part of the replacement.
-    yield* expectDomainGone(accountId, PROJECT_REPLACE, DOMAIN_REPLACE_A);
+      // The old domain was detached as part of the replacement.
+      yield* expectDomainGone(accountId, PROJECT_REPLACE, DOMAIN_REPLACE_A);
 
-    const live = yield* getDomain(accountId, PROJECT_REPLACE, DOMAIN_REPLACE_B);
-    expect(live.domainId).toEqual(replaced.domainId);
+      const live = yield* getDomain(
+        accountId,
+        PROJECT_REPLACE,
+        DOMAIN_REPLACE_B,
+      );
+      expect(live.domainId).toEqual(replaced.domainId);
 
-    yield* stack.destroy();
+      yield* stack.destroy();
 
-    yield* expectDomainGone(accountId, PROJECT_REPLACE, DOMAIN_REPLACE_B);
-  }).pipe(logLevel),
+      yield* expectDomainGone(accountId, PROJECT_REPLACE, DOMAIN_REPLACE_B);
+    }).pipe(logLevel),
+  { tags: ["provider:cloudflare", "provider:cloudflare:pages", "live"] },
 );
 
 // Canonical `list()` test (parent fan-out): domains have no account-wide
@@ -267,4 +277,5 @@ test.provider.skipIf(!process.env.CLOUDFLARE_TEST_PAGES_LIST)(
 
       yield* expectDomainGone(accountId, PROJECT_LIST, DOMAIN_LIST);
     }).pipe(logLevel),
+  { tags: ["provider:cloudflare", "provider:cloudflare:pages", "live"] },
 );

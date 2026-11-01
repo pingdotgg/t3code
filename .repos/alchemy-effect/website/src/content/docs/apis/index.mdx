@@ -4,7 +4,7 @@ description: Every Function and Server returns { fetch, ...rpcs } — schemaless
 ---
 
 Every Function and Server in alchemy returns `{ fetch, ...rpcs }` from its
-[Effectful Constructor](/infrastructure-as-effects/functions-and-servers#the-effectful-constructor-pattern) —
+[Effectful Constructor](/infrastructure-as-effects/runtime#the-effectful-constructor) —
 you already saw the "return what you expose" half. The `rpcs` are the other
 half: plain functions returning `Effect` or `Stream`, no schema, no
 decorators:
@@ -12,7 +12,7 @@ decorators:
 ```typescript
 import * as Cloudflare from "alchemy/Cloudflare";
 import * as Effect from "effect/Effect";
-import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
+import * as HttpServerResponse from "effect/http/HttpServerResponse";
 
 export default class BindingTargetWorker extends Cloudflare.Worker<BindingTargetWorker>()(
   "BindingTargetWorker",

@@ -7,15 +7,14 @@ import * as PlatformError from "effect/PlatformError";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
-import * as ChildProcess from "effect/unstable/process/ChildProcess";
-import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
-import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import * as ChildProcess from "effect/process/ChildProcess";
+import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
 import {
   collectUint8StreamText,
   decodeUtf8,
   type CollectedUint8StreamText,
-} from "./stream/collectUint8StreamText.ts";
+} from "@t3tools/provider-core/server/collectStreamText";
 
 export interface ProcessRunInput {
   readonly command: string;
@@ -25,13 +24,12 @@ export interface ProcessRunInput {
   readonly timeout?: Duration.Input | undefined;
   readonly env?: NodeJS.ProcessEnv | undefined;
   readonly stdin?: string | undefined;
+  /** Receives every stdout chunk, including bytes beyond the buffered output limit. */
+  readonly onStdoutChunk?: ((chunk: Uint8Array) => void) | undefined;
   readonly maxOutputBytes?: number | undefined;
   readonly outputMode?: "error" | "truncate" | undefined;
   readonly truncatedMarker?: string | undefined;
-  /**
-   * On timeout, return a synthetic timedOut result.
-   * Partial stdout/stderr are not preserved.
-   */
+  /** Timed-out results discard partial stdout/stderr. */
   readonly timeoutBehavior?: "error" | "timedOutResult" | undefined;
 }
 
@@ -64,7 +62,7 @@ const formatProcessInvocation = (input: {
     : `'${input.command}' in '${executionCwd}'`;
 };
 
-export class ProcessSpawnError extends Schema.TaggedErrorClass<ProcessSpawnError>()(
+export class ProcessSpawnError extends Schema.TaggedError<ProcessSpawnError>()(
   "ProcessSpawnError",
   {
     ...ProcessInvocationFields,
@@ -79,7 +77,7 @@ export class ProcessSpawnError extends Schema.TaggedErrorClass<ProcessSpawnError
   }
 }
 
-export class ProcessStdinError extends Schema.TaggedErrorClass<ProcessStdinError>()(
+export class ProcessStdinError extends Schema.TaggedError<ProcessStdinError>()(
   "ProcessStdinError",
   {
     ...ProcessInvocationFields,
@@ -92,7 +90,7 @@ export class ProcessStdinError extends Schema.TaggedErrorClass<ProcessStdinError
   }
 }
 
-export class ProcessOutputLimitError extends Schema.TaggedErrorClass<ProcessOutputLimitError>()(
+export class ProcessOutputLimitError extends Schema.TaggedError<ProcessOutputLimitError>()(
   "ProcessOutputLimitError",
   {
     ...ProcessInvocationFields,
@@ -106,20 +104,17 @@ export class ProcessOutputLimitError extends Schema.TaggedErrorClass<ProcessOutp
   }
 }
 
-export class ProcessReadError extends Schema.TaggedErrorClass<ProcessReadError>()(
-  "ProcessReadError",
-  {
-    ...ProcessInvocationFields,
-    stream: Schema.Literals(["stdout", "stderr", "exitCode"]),
-    cause: Schema.Defect(),
-  },
-) {
+export class ProcessReadError extends Schema.TaggedError<ProcessReadError>()("ProcessReadError", {
+  ...ProcessInvocationFields,
+  stream: Schema.Literals(["stdout", "stderr", "exitCode"]),
+  cause: Schema.Defect(),
+}) {
   override get message(): string {
     return `Failed to read ${this.stream} for process ${formatProcessInvocation(this)}`;
   }
 }
 
-export class ProcessTimeoutError extends Schema.TaggedErrorClass<ProcessTimeoutError>()(
+export class ProcessTimeoutError extends Schema.TaggedError<ProcessTimeoutError>()(
   "ProcessTimeoutError",
   {
     ...ProcessInvocationFields,
@@ -148,31 +143,11 @@ export class ProcessRunner extends Context.Service<
 >()("t3/processRunner") {}
 
 const DEFAULT_TIMEOUT = "60 seconds";
+// Keep SIGTERM-ignoring helpers from blocking timeouts or graceful shutdown.
+const FORCE_KILL_AFTER = "1 second";
 const DEFAULT_MAX_OUTPUT_BYTES = 8 * 1024 * 1024;
 
-const WINDOWS_COMMAND_NOT_FOUND_PATTERNS = [
-  /is not recognized as an internal or external command/i,
-  /n.o . reconhecido como um comando interno/i,
-  /non . riconosciuto come comando interno o esterno/i,
-  /n.est pas reconnu en tant que commande interne/i,
-  /no se reconoce como un comando interno o externo/i,
-  /wird nicht als interner oder externer befehl/i,
-] as const;
-
-function hasWindowsCommandNotFoundMessage(output: string): boolean {
-  return WINDOWS_COMMAND_NOT_FOUND_PATTERNS.some((pattern) => pattern.test(output));
-}
-
-export const isWindowsCommandNotFound = Effect.fn("processRunner.isWindowsCommandNotFound")(
-  function* (code: number | null, stderr: string) {
-    const platform = yield* HostProcessPlatform;
-    if (platform !== "win32") return false;
-    if (code === 9009) return true;
-    return hasWindowsCommandNotFoundMessage(stderr);
-  },
-);
-
-const collectText = Effect.fn("processRunner.collectText")(function* (input: {
+const collectText = Effect.fnUntraced(function* (input: {
   readonly command: string;
   readonly args: ReadonlyArray<string>;
   readonly cwd?: string | undefined;
@@ -239,13 +214,11 @@ const collectText = Effect.fn("processRunner.collectText")(function* (input: {
         });
       },
     ),
-    Effect.map(
-      (state): CollectedUint8StreamText => ({
-        ...decodeUtf8(Buffer.concat(state.chunks, state.bytes)),
-        bytes: state.bytes,
-        truncated: false,
-      }),
-    ),
+    Effect.map((state): CollectedUint8StreamText => ({
+      ...decodeUtf8(Buffer.concat(state.chunks, state.bytes)),
+      bytes: state.bytes,
+      truncated: false,
+    })),
   );
 });
 
@@ -288,10 +261,13 @@ function finalizeRunProcess<R>(
   );
 }
 
+const commandName = (command: string) => command.replace(/^.*[\\/]/, "");
+
 const runProcessCore = Effect.fn("processRunner.runProcessCore")(function* (
   spawner: ChildProcessSpawner.ChildProcessSpawner["Service"],
   input: ProcessRunInput,
 ): Effect.fn.Return<ProcessRunOutput, ProcessRunError, Scope.Scope> {
+  yield* Effect.annotateCurrentSpan("process.command", commandName(input.command));
   const maxOutputBytes = input.maxOutputBytes ?? DEFAULT_MAX_OUTPUT_BYTES;
   const outputMode = input.outputMode ?? "error";
   const truncatedMarker = input.truncatedMarker ?? "";
@@ -301,6 +277,18 @@ const runProcessCore = Effect.fn("processRunner.runProcessCore")(function* (
     input.args,
     input.env === undefined ? {} : { env: input.env, extendEnv },
   );
+
+  const toSpawnError = (cause: unknown) =>
+    new ProcessSpawnError({
+      command: input.command,
+      argumentCount: input.args.length,
+      cwd: input.cwd,
+      spawnCwd: input.spawnCwd,
+      resolvedCommand: spawnCommand.command,
+      resolvedArgumentCount: spawnCommand.args.length,
+      shell: spawnCommand.shell,
+      cause,
+    });
 
   const child = yield* spawner
     .spawn(
@@ -313,25 +301,17 @@ const runProcessCore = Effect.fn("processRunner.runProcessCore")(function* (
             }
           : {}),
         shell: spawnCommand.shell,
+        forceKillAfter: FORCE_KILL_AFTER,
       }),
     )
     .pipe(
-      Effect.mapError(
-        (cause) =>
-          new ProcessSpawnError({
-            command: input.command,
-            argumentCount: input.args.length,
-            cwd: input.cwd,
-            spawnCwd: input.spawnCwd,
-            resolvedCommand: spawnCommand.command,
-            resolvedArgumentCount: spawnCommand.args.length,
-            shell: spawnCommand.shell,
-            cause,
-          }),
-      ),
+      Effect.mapError(toSpawnError),
+      // Synchronous spawn throws arrive as defects; recover them too so callers see typed spawn failures.
+      Effect.catchDefect((cause) => Effect.fail(toSpawnError(cause))),
     );
 
   const stdin = input.stdin;
+  const onStdoutChunk = input.onStdoutChunk;
   const writeStdin =
     stdin === undefined
       ? Effect.void
@@ -357,7 +337,9 @@ const runProcessCore = Effect.fn("processRunner.runProcessCore")(function* (
         cwd: input.cwd,
         spawnCwd: input.spawnCwd,
         streamName: "stdout",
-        stream: child.stdout,
+        stream: onStdoutChunk
+          ? child.stdout.pipe(Stream.tap((chunk) => Effect.sync(() => onStdoutChunk(chunk))))
+          : child.stdout,
         maxOutputBytes,
         outputMode,
         truncatedMarker,
@@ -404,6 +386,7 @@ const runProcessCore = Effect.fn("processRunner.runProcessCore")(function* (
   } satisfies ProcessRunOutput;
 });
 
+/** @public */
 export const make = Effect.fn("ProcessRunner.make")(function* () {
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
 

@@ -14,9 +14,8 @@ export interface GetMetadataGenerationRunRequest extends Omit<
  * Reads the status of a metadata generation run in the bound domain. The domain id is injected from the binding.
  * Provide the implementation with
  * `Effect.provide(AWS.DataZone.GetMetadataGenerationRunHttp)`.
- * @binding
- * @section Metadata Generation
- * @example Check a Generation Run
+ * ### Metadata Generation
+ * **Example:** Check a Generation Run
  * ```typescript
  * // init — bind the operation to the domain
  * const getMetadataGenerationRun = yield* AWS.DataZone.GetMetadataGenerationRun(domain);
@@ -24,6 +23,8 @@ export interface GetMetadataGenerationRunRequest extends Omit<
  * // runtime
  * const run = yield* getMetadataGenerationRun({ identifier: runId });
  * ```
+ *
+ * @binding
  */
 export interface GetMetadataGenerationRun extends Binding.Service<
   GetMetadataGenerationRun,

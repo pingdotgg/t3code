@@ -2,15 +2,21 @@ import type * as cf from "@cloudflare/workers-types";
 
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import * as HttpClient from "effect/unstable/http/HttpClient";
+import * as HttpClient from "effect/http/HttpClient";
 import {
   RpcClient,
   RpcSerialization,
   type Rpc,
   type RpcGroup,
-} from "effect/unstable/rpc";
-import type * as RpcClientError from "effect/unstable/rpc/RpcClientError";
-import { asEffectOrStream, decodeRpcResult, RpcCallError } from "../../Rpc.ts";
+} from "effect/rpc";
+import type * as RpcClientError from "effect/rpc/RpcClientError";
+import {
+  asEffectOrStream,
+  decodeRpcResult,
+  makeRpcErrorReviver,
+  RpcCallError,
+  type RpcErrorClass,
+} from "../../Rpc.ts";
 import { isYieldableEffect } from "../../Util/effect.ts";
 import { fromCloudflareFetcher } from "../Fetcher.ts";
 
@@ -34,12 +40,21 @@ export * from "../../Rpc.ts";
  */
 export const makeRpcStub = <Shape>(
   stubSource: unknown | Effect.Effect<unknown, never, never>,
+  options?: {
+    /**
+     * Declared error classes (see {@link RpcErrorClass}): failed method
+     * results whose `_tag` matches one are reconstructed as real class
+     * instances instead of the plain objects RPC serialization produces.
+     */
+    readonly errors?: ReadonlyArray<RpcErrorClass> | undefined;
+  },
 ): Shape => {
   const isLazy = isYieldableEffect(stubSource);
   const eagerFetcher = isLazy
     ? undefined
     : fromCloudflareFetcher(stubSource as cf.Fetcher);
   const proxyTarget: object = eagerFetcher ?? {};
+  const revive = makeRpcErrorReviver(options?.errors);
 
   return new Proxy(proxyTarget, {
     get: (target: any, prop) => {
@@ -57,7 +72,7 @@ export const makeRpcStub = <Shape>(
               try: () => (stub as any)[prop](...args),
               catch: (cause) =>
                 new RpcCallError({ method: String(prop), cause }),
-            }).pipe(Effect.flatMap(decodeRpcResult));
+            }).pipe(Effect.flatMap((value) => decodeRpcResult(value, revive)));
           }),
         );
     },

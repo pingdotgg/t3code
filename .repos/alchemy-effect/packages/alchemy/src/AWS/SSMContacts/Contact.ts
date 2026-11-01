@@ -93,8 +93,8 @@ export interface Contact extends Resource<
  * Requires the account's Incident Manager replication set
  * (`SSMIncidents.ReplicationSet`) to exist.
  *
- * @section Creating Contacts
- * @example Personal contact
+ * ### Creating Contacts
+ * **Example:** Personal contact
  * ```typescript
  * const oncall = yield* SSMContacts.Contact("Oncall", {
  *   type: "PERSONAL",
@@ -102,7 +102,7 @@ export interface Contact extends Resource<
  * });
  * ```
  *
- * @example Contact with an inline engagement plan
+ * **Example:** Contact with an inline engagement plan
  * ```typescript
  * const channel = yield* SSMContacts.ContactChannel("Email", {
  *   contactId: oncall.contactArn,

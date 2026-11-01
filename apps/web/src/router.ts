@@ -7,6 +7,7 @@ export function getRouter(history: RouterHistory) {
     routeTree,
     history,
     context: {},
+    defaultPreload: "intent",
   });
 }
 

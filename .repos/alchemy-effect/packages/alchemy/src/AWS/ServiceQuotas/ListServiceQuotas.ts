@@ -6,9 +6,8 @@ import * as Binding from "../../Binding.ts";
  * Runtime binding for `servicequotas:ListServiceQuotas` — list the applied
  * quota values for a service from inside a Function.
  *
- * @binding
- * @section Listing Quotas
- * @example List VPC quotas
+ * ### Listing Quotas
+ * **Example:** List VPC quotas
  * ```typescript
  * // init
  * const listServiceQuotas = yield* AWS.ServiceQuotas.ListServiceQuotas();
@@ -19,6 +18,8 @@ import * as Binding from "../../Binding.ts";
  *   MaxResults: 50,
  * });
  * ```
+ *
+ * @binding
  */
 export interface ListServiceQuotas extends Binding.Service<
   ListServiceQuotas,

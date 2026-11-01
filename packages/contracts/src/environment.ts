@@ -1,7 +1,19 @@
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 
-import { EnvironmentId, ProjectId, ThreadId, TrimmedNonEmptyString } from "./baseSchemas.ts";
+import {
+  EnvironmentId,
+  ForwardCompatibleOptional,
+  ProjectId,
+  ThreadId,
+  TrimmedNonEmptyString,
+} from "./baseSchemas.ts";
+import { SourceControlProviderKind } from "./sourceControl.ts";
+
+export const ORCHESTRATION_PROTOCOL_VERSION = 2;
+export const ORCHESTRATION_PROTOCOL_VERSION_TEXT = "2";
+export const ORCHESTRATION_PROTOCOL_QUERY_PARAM = "orchestrationProtocol";
+export const ORCHESTRATION_PROTOCOL_HEADER = "x-t3-orchestration-protocol";
 
 export const ExecutionEnvironmentPlatformOs = Schema.Literals([
   "darwin",
@@ -14,30 +26,42 @@ export type ExecutionEnvironmentPlatformOs = typeof ExecutionEnvironmentPlatform
 export const ExecutionEnvironmentPlatformArch = Schema.Literals(["arm64", "x64", "other"]);
 export type ExecutionEnvironmentPlatformArch = typeof ExecutionEnvironmentPlatformArch.Type;
 
+export const ENVIRONMENT_MACHINE_KINDS = [
+  "server",
+  "cloud",
+  "linux",
+  "desktop",
+  "laptop",
+  "mac-mini",
+  "mac-studio",
+] as const;
+export const EnvironmentMachineKind = Schema.Literals(ENVIRONMENT_MACHINE_KINDS);
+export type EnvironmentMachineKind = typeof EnvironmentMachineKind.Type;
+export const isEnvironmentMachineKind = Schema.is(EnvironmentMachineKind);
+
 export const ExecutionEnvironmentPlatform = Schema.Struct({
   os: ExecutionEnvironmentPlatformOs,
   arch: ExecutionEnvironmentPlatformArch,
+  machine: ForwardCompatibleOptional(EnvironmentMachineKind),
 });
 
-/**
- * Where a new thread runs: the project's current checkout ("local") or a
- * fresh git worktree ("worktree"). Lives here (not settings.ts) so
- * orchestration contracts can reference it without an import cycle.
- */
+// Kept outside settings.ts to avoid an orchestration import cycle.
 export const ThreadEnvMode = Schema.Literals(["local", "worktree"]);
 export type ThreadEnvMode = typeof ThreadEnvMode.Type;
+
+export const WorktreeSubmodules = Schema.Literals(["recursive", "top-level", "none"]);
+export type WorktreeSubmodules = typeof WorktreeSubmodules.Type;
 export type ExecutionEnvironmentPlatform = typeof ExecutionEnvironmentPlatform.Type;
 
-/** How a server can replace itself with another version when asked over RPC.
-    New servers only advertise the stable launcher-backed "boot-service" path;
-    "respawn" remains decodable for compatibility with older servers. */
-export const ServerSelfUpdateMethod = Schema.Literals(["boot-service", "respawn"]);
+export const ServerSelfUpdateMethod = Schema.Literals(["boot-service", "respawn", "desktop-app"]);
 export type ServerSelfUpdateMethod = typeof ServerSelfUpdateMethod.Type;
 
-/** What update path a client should offer for a server: one of the RPC
-    self-update methods above, or "desktop-managed" when the backend's
-    version belongs to the T3 Code desktop app supervising it — updating the
-    app on that machine is the only way to update the server. */
+export const ServerInstallation = Schema.Union([
+  Schema.Struct({ kind: Schema.Literals(["npx", "pnpm-dlx", "bunx"]) }),
+  Schema.Struct({ kind: Schema.Literal("npm-global"), prefix: TrimmedNonEmptyString }),
+]);
+export type ServerInstallation = typeof ServerInstallation.Type;
+
 export const ServerSelfUpdateCapability = Schema.Literals([
   "boot-service",
   "respawn",
@@ -48,38 +72,97 @@ export type ServerSelfUpdateCapability = typeof ServerSelfUpdateCapability.Type;
 export const ExecutionEnvironmentCapabilities = Schema.Struct({
   repositoryIdentity: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   connectionProbe: Schema.optionalKey(Schema.Boolean),
-  /** Server exposes the pull-request list, detail, activity, diff, and mutation APIs. Absent on
-      servers from before the pull-request workspace shipped, so clients must not probe them. */
+  attachmentUploads: Schema.optionalKey(Schema.Boolean),
+  questionAttachments: Schema.optionalKey(Schema.Boolean),
+  fileAttachments: Schema.optionalKey(
+    Schema.Struct({
+      maxUploadBytes: Schema.Int.check(Schema.isGreaterThanOrEqualTo(1)),
+    }),
+  ),
   pullRequests: Schema.optionalKey(Schema.Boolean),
-  /** Server understands thread.settle / thread.unsettle commands. Absent on
-      pre-settlement servers, so clients treat missing as unsupported and
-      never send the commands under version skew. */
+  pullRequestChecks: Schema.optionalKey(Schema.Boolean),
+  /** Side chats: hidden `lineage.sideChat` forks. Older servers ignore the fork flag. */
+  sideChats: Schema.optionalKey(Schema.Boolean),
+  /** Every protocol-2 server sends this; older mobile builds still read it. */
+  inlineMessageContext: Schema.optionalKey(Schema.Boolean),
+  requiredWorktreeBootstrap: Schema.optionalKey(Schema.Boolean),
   threadSettlement: Schema.optionalKey(Schema.Boolean),
-  /** Server understands thread.snooze / thread.unsnooze commands. Same
-      version-skew contract as threadSettlement. */
+  threadAutoSettlement: Schema.optionalKey(Schema.Boolean),
+  storageCleanup: Schema.optionalKey(Schema.Boolean),
+  storageCleanupRun: Schema.optionalKey(Schema.Boolean),
+  databaseStorage: Schema.optionalKey(Schema.Boolean),
+  otlpEndpointCheck: Schema.optionalKey(Schema.Boolean),
+  projectWorktreeCleanup: Schema.optionalKey(Schema.Boolean),
+  settledWorktreeCleanup: Schema.optionalKey(Schema.Boolean),
+  worktreesDirectory: Schema.optionalKey(Schema.Boolean),
+  threadAutoSettlementScope: Schema.optionalKey(Schema.Boolean),
+  threadRestartContinuation: Schema.optionalKey(Schema.Boolean),
+  projectSettingsOverrides: Schema.optionalKey(Schema.Boolean),
+  /** Hide the switch when absent; older servers silently drop per-project provider patches. */
+  projectProviderInstanceOverrides: Schema.optionalKey(Schema.Boolean),
   threadSnooze: Schema.optionalKey(Schema.Boolean),
-  /** Server understands thread.pin / thread.unpin commands. Same
-      version-skew contract as threadSettlement. */
+  /** Serves `orchestration.forceStopThread`; hide Force stop where it is absent. */
+  threadForceStop: Schema.optionalKey(Schema.Boolean),
+  /** Every protocol-2 server sends this; older mobile builds still read it. */
+  environmentThemes: Schema.optionalKey(Schema.Boolean),
+  usageLimitSources: Schema.optionalKey(Schema.Boolean),
+  /** Honors `workspaceSnapshotsOnDemand`; older servers send every snapshot and drop them in the stream. */
+  providerWorkspaceSnapshotsOnDemand: Schema.optionalKey(Schema.Boolean),
+  usagePriceOverrides: Schema.optionalKey(Schema.Boolean),
+  usageModelAliases: Schema.optionalKey(Schema.Boolean),
   threadPinning: Schema.optionalKey(Schema.Boolean),
-  /** Server understands thread.pin.reorder (and orderKey on thread.pin).
-      Same version-skew contract as threadSettlement. */
   threadPinReorder: Schema.optionalKey(Schema.Boolean),
-  /** Server understands regenerateTitle on thread.meta.update. Absent on
-      older servers, so clients hide the action instead of sending it. */
+  threadActiveReorder: Schema.optionalKey(Schema.Boolean),
+  threadAutoSettleOptOut: Schema.optionalKey(Schema.Boolean),
+  threadProjectFromScratch: Schema.optionalKey(Schema.Boolean),
   threadTitleRegeneration: Schema.optionalKey(Schema.Boolean),
-  /** The update path clients should offer for this server. Absent on
-      servers that must be relaunched manually (dev checkouts, Windows
-      foreground runs, pre-update servers). */
+  threadVisitedTracking: Schema.optionalKey(Schema.Boolean),
+  threadPullRequestLinking: Schema.optionalKey(Schema.Boolean),
+  serverResolvedCommandContext: Schema.optionalKey(Schema.Boolean),
+  threadStop: Schema.optionalKey(Schema.Boolean),
+  /** Absent on older servers and on Windows hosts, which cannot stop a discovered server. */
+  localServerStop: Schema.optionalKey(Schema.Boolean),
+  threadPullRequests: Schema.optionalKey(Schema.Boolean),
+  threadPullRequestWatch: Schema.optionalKey(Schema.Boolean),
+  pullRequestStackActions: Schema.optionalKey(Schema.Boolean),
   serverSelfUpdate: Schema.optionalKey(ServerSelfUpdateCapability),
-  /** Server can stream self-update progress before acknowledging the
-      restart. Clients fall back to server.updateServer when absent. */
+  /** Server answers server.getNpmRelease using its configured npm registry. */
+  npmReleaseLookup: Schema.optionalKey(Schema.Boolean),
+  /** Manual commands must update this install, not the host's default global prefix. */
+  serverInstallation: ForwardCompatibleOptional(ServerInstallation),
   serverSelfUpdateProgress: Schema.optionalKey(Schema.Boolean),
-  /** Agent-activity publishes (push notifications and Live Activities)
-      currently leave this environment: the publish opt-in is enabled and the
-      relay link credentials exist. Clients skip seeding a Live Activity when
-      this is false — no update would ever repaint it. Absent on older
-      servers, which may still publish, so only an explicit false skips. */
+  serverUpdateThreadContinuation: Schema.optionalKey(Schema.Boolean),
+  /** Only explicit false skips Live Activity seeding; older servers may still publish. */
   agentActivityPublishing: Schema.optionalKey(Schema.Boolean),
+  projectCloneTracking: Schema.optionalKey(Schema.Boolean),
+  /** Server keeps `pinned` and `archived` from project.update. Older servers drop them. */
+  projectOrganization: Schema.optionalKey(Schema.Boolean),
+  /** Server answers projects.listIgnoredFiles. */
+  ignoredFileListing: Schema.optionalKey(Schema.Boolean),
+  environmentIcon: Schema.optionalKey(Schema.Boolean),
+  desktopAppUpdate: Schema.optionalKey(Schema.Boolean),
+  /** The desktop app switches update tracks when a server update request names one. */
+  desktopAppChannelSwitch: Schema.optionalKey(Schema.Boolean),
+  /** Subscribe to command output only when advertised; older servers never send it. */
+  commandOutputStreaming: Schema.optionalKey(Schema.Boolean),
+  /** Hosts headless Chromium tabs streamed over /api/preview-stream for clients without a local runtime. */
+  serverBrowser: Schema.optionalKey(Schema.Boolean),
+  /** Server links to other environments (`PeerLink`) and its agents can work
+      in them. Absent on servers from before linking, which clients must not
+      offer linking for. */
+  peerLinks: Schema.optionalKey(Schema.Boolean),
+  /** Server's `/mcp` narrows an OAuth client's modes from `T3-Mode-Limit`, so
+      a linked environment's calls keep its agent's limits. Another environment
+      links to this one only when it is set. */
+  mcpModeLimitHeader: Schema.optionalKey(Schema.Boolean),
+  /** Work a linked environment starts here stays within its link
+      (`linkOrigin`). Another environment links to this one only when it is
+      set, since without it that work could change the user's own threads. */
+  linkFence: Schema.optionalKey(Schema.Boolean),
+  /** Server answers server.prepareTriage. */
+  triage: Schema.optionalKey(Schema.Boolean),
+  /** Server accepts `{ type: "once" }` scheduled tasks; older servers reject them on save. */
+  oneTimeSchedules: Schema.optionalKey(Schema.Boolean),
 });
 export type ExecutionEnvironmentCapabilities = typeof ExecutionEnvironmentCapabilities.Type;
 
@@ -88,17 +171,12 @@ export const ExecutionEnvironmentDescriptor = Schema.Struct({
   label: TrimmedNonEmptyString,
   platform: ExecutionEnvironmentPlatform,
   serverVersion: TrimmedNonEmptyString,
+  orchestrationProtocolVersion: Schema.optionalKey(Schema.Int),
+  /** Highest migration this server's database holds; absent on older servers. */
+  databaseMigration: Schema.optionalKey(Schema.Int),
   capabilities: ExecutionEnvironmentCapabilities,
 });
 export type ExecutionEnvironmentDescriptor = typeof ExecutionEnvironmentDescriptor.Type;
-
-export const EnvironmentConnectionState = Schema.Literals([
-  "connecting",
-  "connected",
-  "disconnected",
-  "error",
-]);
-export type EnvironmentConnectionState = typeof EnvironmentConnectionState.Type;
 
 export const RepositoryIdentityLocator = Schema.Struct({
   source: Schema.Literal("git-remote"),
@@ -107,16 +185,36 @@ export const RepositoryIdentityLocator = Schema.Struct({
 });
 export type RepositoryIdentityLocator = typeof RepositoryIdentityLocator.Type;
 
+export const RepositoryOrigin = Schema.Struct({
+  canonicalKey: TrimmedNonEmptyString,
+  remoteUrl: Schema.optionalKey(TrimmedNonEmptyString),
+  displayName: Schema.optionalKey(TrimmedNonEmptyString),
+});
+export type RepositoryOrigin = typeof RepositoryOrigin.Type;
+
 export const RepositoryIdentity = Schema.Struct({
   canonicalKey: TrimmedNonEmptyString,
   locator: RepositoryIdentityLocator,
+  webUrl: Schema.optionalKey(TrimmedNonEmptyString),
+  /** Work tree root, or the git dir for a bare repository. */
   rootPath: Schema.optionalKey(TrimmedNonEmptyString),
   displayName: Schema.optionalKey(TrimmedNonEmptyString),
-  provider: Schema.optionalKey(TrimmedNonEmptyString),
+  provider: Schema.optionalKey(SourceControlProviderKind),
   owner: Schema.optionalKey(TrimmedNonEmptyString),
   name: Schema.optionalKey(TrimmedNonEmptyString),
+  origin: Schema.optionalKey(RepositoryOrigin),
 });
 export type RepositoryIdentity = typeof RepositoryIdentity.Type;
+
+export function repositoryGroupingKeyOf(identity: RepositoryIdentity): string {
+  return identity.origin?.canonicalKey ?? identity.canonicalKey;
+}
+
+export function repositoryGroupingDisplayNameOf(identity: RepositoryIdentity): string | undefined {
+  return identity.origin
+    ? (identity.origin.displayName ?? identity.origin.canonicalKey)
+    : identity.displayName;
+}
 
 export const ScopedProjectRef = Schema.Struct({
   environmentId: EnvironmentId,
@@ -129,9 +227,3 @@ export const ScopedThreadRef = Schema.Struct({
   threadId: ThreadId,
 });
 export type ScopedThreadRef = typeof ScopedThreadRef.Type;
-
-export const ScopedThreadSessionRef = Schema.Struct({
-  environmentId: EnvironmentId,
-  threadId: ThreadId,
-});
-export type ScopedThreadSessionRef = typeof ScopedThreadSessionRef.Type;

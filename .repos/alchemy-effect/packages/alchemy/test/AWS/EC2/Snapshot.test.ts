@@ -54,7 +54,7 @@ test.provider(
       yield* stack.destroy();
       yield* assertSnapshotDeleted(snapshot.snapshotId);
     }).pipe(logLevel),
-  { timeout: 180_000 },
+  { tags: ["provider:aws", "provider:aws:ec2", "live"], timeout: 180_000 },
 );
 
 const assertSnapshotDeleted = Effect.fn(function* (snapshotId: string) {

@@ -1,4 +1,5 @@
 import type * as Credentials from "@distilled.cloud/aws/Credentials";
+import type * as SigV4 from "@distilled.cloud/aws/SigV4";
 import type * as Effect from "effect/Effect";
 import * as Binding from "../../Binding.ts";
 import type { OpenSearchApiError } from "./DataPlaneTypes.ts";
@@ -27,7 +28,10 @@ export interface ReadWriteDomainClient
       /** JSON body (sent as `application/json`). */
       body?: unknown;
     },
-  ): Effect.Effect<unknown, OpenSearchApiError | Credentials.CredentialsError>;
+  ): Effect.Effect<
+    unknown,
+    OpenSearchApiError | Credentials.CredentialsError | SigV4.SigningError
+  >;
 }
 
 /**
@@ -41,9 +45,8 @@ export interface ReadWriteDomainClient
  * least-privilege `DomainRead` / `DomainWrite` bindings when one direction
  * suffices. Provide the implementation with
  * `Effect.provide(AWS.OpenSearch.DomainReadWriteHttp)`.
- * @binding
- * @section Reading and Writing a Domain
- * @example Index Then Search
+ * ### Reading and Writing a Domain
+ * **Example:** Index Then Search
  * ```typescript
  * // init — grants es:ESHttp* on the domain
  * const client = yield* AWS.OpenSearch.DomainReadWrite(domain);
@@ -60,12 +63,14 @@ export interface ReadWriteDomainClient
  * });
  * ```
  *
- * @example Create an Index With Explicit Mappings
+ * **Example:** Create an Index With Explicit Mappings
  * ```typescript
  * yield* client.request("PUT", "songs", {
  *   body: { mappings: { properties: { title: { type: "text" } } } },
  * });
  * ```
+ *
+ * @binding
  */
 export interface DomainReadWrite extends Binding.Service<
   DomainReadWrite,

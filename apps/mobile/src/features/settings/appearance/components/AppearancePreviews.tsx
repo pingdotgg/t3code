@@ -1,11 +1,10 @@
 import { Platform, ScrollView, type StyleProp, type TextStyle, View } from "react-native";
 
-import { AppText as Text } from "../../../../components/AppText";
+import { AppText as Text } from "../../../../components/ui/AppText";
 import {
   resolveMarkdownFontSizes,
   resolveMobileCodeSurface,
 } from "../../../../lib/appearancePreferences";
-import { useThemeColor } from "../../../../lib/useThemeColor";
 import { getMobileTerminalTheme } from "../../../terminal/terminalTheme";
 import { useAppearancePreferences } from "../AppearancePreferencesProvider";
 
@@ -15,12 +14,10 @@ const CODE_FONT_FAMILY = Platform.select({
   default: "monospace",
 });
 
-/** Hairline between a section's preview surface and its control rows. */
 export function AppearancePreviewSeparator() {
   return <View className="h-px bg-separator" />;
 }
 
-/** Live sample of body text rendered at the chosen base font size. */
 export function TextAppearancePreview(props: { readonly fontSize: number }) {
   const sizes = resolveMarkdownFontSizes(props.fontSize);
 
@@ -42,22 +39,15 @@ export function TextAppearancePreview(props: { readonly fontSize: number }) {
   );
 }
 
-/**
- * Live terminal sample using the real terminal theme's text colors and font,
- * on the shared card background so it reads like the other previews.
- */
 export function TerminalAppearancePreview(props: { readonly fontSize: number }) {
   const { themeAppearance: scheme, themeId } = useAppearancePreferences();
   const theme = getMobileTerminalTheme(themeId, scheme);
   const lineHeight = Math.round(props.fontSize * 1.6);
   const lineStyle = {
-    fontFamily: "Menlo",
+    fontFamily: Platform.OS === "android" ? "monospace" : "Menlo",
     fontSize: props.fontSize,
     lineHeight,
   } as const;
-  // AppText stamps the sans font on every node, so nested spans must
-  // re-apply the terminal font instead of relying on inheritance, exactly
-  // like the code preview's tokens below.
   const span = (color: string, extra?: TextStyle): StyleProp<TextStyle> => [
     lineStyle,
     { color, ...extra },
@@ -128,25 +118,17 @@ const CODE_PREVIEW_LINES: ReadonlyArray<CodePreviewLine> = [
   { id: "close", tokens: [{ text: "}" }] },
 ];
 
-/**
- * Live code sample matching the code & diff surface metrics. Long lines wrap
- * when word break is on and scroll horizontally when it is off, mirroring the
- * real code surface.
- */
 export function CodeAppearancePreview(props: {
   readonly fontSize: number;
   readonly wordBreak: boolean;
 }) {
   const surface = resolveMobileCodeSurface(props.fontSize);
-  const lineNumberColor = useThemeColor("--color-icon-subtle");
-  const keywordColor = useThemeColor("--color-md-link");
 
   const lineNumber = (line: CodePreviewLine, index: number) => (
     <Text
-      className="text-right"
+      className="text-right text-icon-subtle"
       key={line.id}
       style={{
-        color: lineNumberColor,
         fontFamily: CODE_FONT_FAMILY,
         fontSize: surface.lineNumberFontSize,
         lineHeight: surface.rowHeight,
@@ -171,8 +153,8 @@ export function CodeAppearancePreview(props: {
       {line.tokens.map((token) => (
         <Text
           key={token.text}
+          className={token.keyword ? "text-md-link" : undefined}
           style={{
-            color: token.keyword ? keywordColor : undefined,
             fontFamily: CODE_FONT_FAMILY,
             fontSize: surface.fontSize,
             lineHeight: surface.rowHeight,

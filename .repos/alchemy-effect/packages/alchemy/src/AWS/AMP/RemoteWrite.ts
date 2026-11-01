@@ -1,4 +1,5 @@
 import type * as Credentials from "@distilled.cloud/aws/Credentials";
+import type * as SigV4 from "@distilled.cloud/aws/SigV4";
 import type * as Effect from "effect/Effect";
 import * as Binding from "../../Binding.ts";
 import type { PrometheusApiError } from "./PrometheusTypes.ts";
@@ -36,9 +37,8 @@ export interface RemoteWriteRequest {
  * The protobuf + snappy remote-write body is encoded internally — callers
  * pass plain metric names, labels, and samples.
  *
- * @binding
- * @section Writing Metrics
- * @example Push a Counter Sample
+ * ### Writing Metrics
+ * **Example:** Push a Counter Sample
  * ```typescript
  * const remoteWrite = yield* AMP.RemoteWrite(workspace);
  *
@@ -51,7 +51,7 @@ export interface RemoteWriteRequest {
  * });
  * ```
  *
- * @example Backfill Samples with Explicit Timestamps
+ * **Example:** Backfill Samples with Explicit Timestamps
  * ```typescript
  * yield* remoteWrite({
  *   timeseries: [{
@@ -64,6 +64,8 @@ export interface RemoteWriteRequest {
  *   }],
  * });
  * ```
+ *
+ * @binding
  */
 export interface RemoteWrite extends Binding.Service<
   RemoteWrite,
@@ -73,7 +75,10 @@ export interface RemoteWrite extends Binding.Service<
   ) => Effect.Effect<
     (
       request: RemoteWriteRequest,
-    ) => Effect.Effect<void, PrometheusApiError | Credentials.CredentialsError>
+    ) => Effect.Effect<
+      void,
+      PrometheusApiError | Credentials.CredentialsError | SigV4.SigningError
+    >
   >
 > {}
 export const RemoteWrite = Binding.Service<RemoteWrite>("AWS.AMP.RemoteWrite");

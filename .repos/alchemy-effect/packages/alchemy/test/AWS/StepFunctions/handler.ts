@@ -6,8 +6,8 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Redacted from "effect/Redacted";
 import * as Stream from "effect/Stream";
-import { HttpServerRequest } from "effect/unstable/http/HttpServerRequest";
-import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
+import { HttpServerRequest } from "effect/http/HttpServerRequest";
+import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import path from "pathe";
 
 const main = path.resolve(import.meta.dirname, "handler.ts");
@@ -28,7 +28,7 @@ export class SFNTestFunction extends Lambda.Function<Lambda.Function>()(
 export default SFNTestFunction.make(
   {
     main,
-    url: true,
+    functionUrl: true,
     // routes long-poll SQS/GetActivityTask (up to 60s when no task is
     // scheduled) and round-trip whole workflows — AWS's 3s default
     // intermittently times out under cold starts

@@ -1,55 +1,250 @@
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
+import * as SchemaGetter from "effect/SchemaGetter";
 import * as SchemaTransformation from "effect/SchemaTransformation";
+
+// Hermes copies the string on every `trim()`, even when nothing changes.
+// Returning the original keeps repeated IDs shared after decode.
+const trim = (value: string) => {
+  const trimmed = value.trim();
+  return trimmed.length === value.length ? value : trimmed;
+};
 
 export const TrimmedString = Schema.String.pipe(
   Schema.decodeTo(
     Schema.String,
-    SchemaTransformation.transformOrFail({
-      decode: (value) => Effect.succeed(value.trim()),
-      encode: (value) => Effect.succeed(value.trim()),
+    SchemaTransformation.transformEffect({
+      decode: (value) => Effect.succeed(trim(value)),
+      encode: (value) => Effect.succeed(trim(value)),
     }),
   ),
 );
-export const TrimmedNonEmptyString = TrimmedString.check(Schema.isNonEmpty());
+// `make` and encode see untrimmed values; `isNonEmpty` would accept whitespace that encodes to an invalid empty string.
+const isNonBlank = Schema.makeFilter((value: string) => value.trim().length > 0, {
+  expected: "a non-blank string",
+  toJsonSchema: () => [{ minLength: 1 }, true],
+  arbitraryConstraint: { minLength: 1 },
+});
+export const TrimmedNonEmptyString = TrimmedString.check(isNonBlank);
 
 export const NonNegativeInt = Schema.Int.check(Schema.isGreaterThanOrEqualTo(0));
 export const PositiveInt = Schema.Int.check(Schema.isGreaterThanOrEqualTo(1));
 export const PortSchema = Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 65535 }));
 
+export const DpopFailureReason = Schema.Literals([
+  "time_window",
+  "key_mismatch",
+  "request_mismatch",
+  "token_mismatch",
+  "replay",
+  "invalid_proof",
+]);
+export type DpopFailureReason = typeof DpopFailureReason.Type;
+
 export const IsoDateTime = Schema.String;
 export type IsoDateTime = typeof IsoDateTime.Type;
 
-/**
- * Wire codec for server→client arrays whose element unions grow over time
- * (new literal members, new struct variants). Decoding drops elements the
- * current build cannot decode instead of failing the whole payload — a client
- * has to keep decoding configs sent by servers newer than itself, and
- * rejecting the payload would take down the connection over data the client
- * couldn't act on anyway. Encoding is the plain array encoding.
- */
-export const ForwardCompatibleArray = <Element extends Schema.Top>(element: Element) => {
-  const decodeElement = Schema.decodeUnknownOption(element as never);
-  return Schema.Array(Schema.Unknown).pipe(
+export const ForwardCompatibleOptional = <Value extends Schema.Top>(value: Value) => {
+  const decodeValue = Schema.decodeUnknownOption(value as never);
+  return Schema.optionalKey(
+    Schema.Unknown.pipe(
+      Schema.decodeTo(
+        Schema.UndefinedOr(value),
+        SchemaTransformation.transform<Value["Encoded"] | undefined, unknown>({
+          decode: (raw) =>
+            Option.isSome(decodeValue(raw)) ? (raw as Value["Encoded"]) : undefined,
+          encode: (raw) => raw,
+        }),
+      ),
+    ),
+  );
+};
+
+export const ForwardCompatibleNullable = <Value extends Schema.Top>(value: Value) => {
+  const decodeValue = Schema.decodeUnknownOption(value as never);
+  return Schema.Unknown.pipe(
     Schema.decodeTo(
-      Schema.Array(element),
-      SchemaTransformation.transform<ReadonlyArray<Element["Encoded"]>, ReadonlyArray<unknown>>({
-        decode: (values) =>
-          values.filter((value) => Option.isSome(decodeElement(value))) as ReadonlyArray<
-            Element["Encoded"]
-          >,
-        encode: (values) => values,
+      Schema.NullOr(value),
+      SchemaTransformation.transform<Value["Encoded"] | null, unknown>({
+        decode: (raw) => (Option.isSome(decodeValue(raw)) ? (raw as Value["Encoded"]) : null),
+        encode: (raw) => raw,
       }),
     ),
   );
 };
 
-/**
- * Construct a branded identifier. Enforces non-empty trimmed strings
- */
-const makeEntityId = <Brand extends string>(brand: Brand) => {
-  return TrimmedNonEmptyString.pipe(Schema.brand(brand));
+/** Missing or unknown values decode to null; null encodes as absent for older clients requiring a literal. */
+export const OmittedWhenNull = <Value extends Schema.Top>(value: Value) => {
+  const decodeValue = Schema.decodeUnknownOption(value as never);
+  return Schema.optionalKey(Schema.Unknown).pipe(
+    Schema.decodeTo(
+      Schema.NullOr(value),
+      SchemaTransformation.transformOptional<Value["Encoded"] | null, unknown>({
+        decode: (raw) =>
+          Option.some(
+            Option.isSome(raw) && Option.isSome(decodeValue(raw.value))
+              ? (raw.value as Value["Encoded"])
+              : null,
+          ),
+        encode: (raw) =>
+          Option.isSome(raw) && raw.value !== null ? Option.some(raw.value) : Option.none(),
+      }),
+    ),
+  );
+};
+
+/** Prefer {@link ForwardCompatibleUnion} for tagged unions so malformed known members still fail. */
+export const ForwardCompatibleArray = <Element extends Schema.Top>(element: Element) =>
+  Schema.Array(
+    Schema.UndefinedOr(element).pipe(
+      Schema.catchDecoding(() => Effect.succeedSome(undefined)),
+      Schema.catchEncoding(() => Effect.succeedSome(undefined)),
+    ),
+  ).pipe(
+    Schema.decodeTo(
+      Schema.Array(
+        Schema.UndefinedOr(Schema.toType(element)).pipe(
+          Schema.catchEncoding(() => Effect.succeedSome(undefined)),
+        ),
+      ).check(
+        // Schema.is/make must reject holes; abort before later array checks.
+        Schema.makeFilter(
+          (values) => {
+            // Every index, not `every`, which skips the holes of a sparse array.
+            for (let index = 0; index < values.length; index++) {
+              if (values[index] === undefined) return false;
+            }
+            return true;
+          },
+          { expected: "an array without holes" },
+          true,
+        ),
+      ),
+      SchemaTransformation.transform<
+        ReadonlyArray<Element["Type"]>,
+        ReadonlyArray<Element["Type"] | undefined>
+      >({
+        decode: (values) => values.filter((value) => value !== undefined),
+        encode: (values) => values.filter((value) => value !== undefined),
+      }),
+    ),
+  ) as unknown as ForwardCompatibleArray<Element>;
+export type ForwardCompatibleArray<Element extends Schema.Top> = Schema.Codec<
+  ReadonlyArray<Element["Type"]>,
+  ReadonlyArray<Element["Encoded"]>,
+  Element["DecodingServices"],
+  Element["EncodingServices"]
+>;
+
+/** Class identity prevents decoded payloads from impersonating unknown members. */
+export class UnknownUnionMember<Tag extends string = string> {
+  readonly tag: Tag;
+  readonly value: string;
+  constructor(tag: Tag, value: string) {
+    this.tag = tag;
+    this.value = value;
+  }
+}
+
+/** Unknown members are decode-only; encoding one fails. */
+export const ForwardCompatibleUnion = <
+  const Members extends ReadonlyArray<Schema.Top & { readonly fields: object }>,
+  const Tag extends string,
+>(
+  members: Members,
+  tag: Tag,
+) => {
+  const known = knownTags(members, tag);
+  const unknownMember = Schema.Struct({
+    [tag]: Schema.String.check(
+      Schema.makeFilter(
+        (value: string) => !known.has(value) || `A known ${tag} must decode in full.`,
+      ),
+    ),
+  } as Record<Tag, Schema.String>).pipe(
+    Schema.decodeTo(Schema.instanceOf(UnknownUnionMember<Tag>), {
+      decode: SchemaGetter.transform(
+        (raw: Record<string, string>) => new UnknownUnionMember(tag, raw[tag]!),
+      ),
+      encode: SchemaGetter.forbidden(() => `Unknown ${tag} values are never sent.`),
+    }),
+  );
+  return Schema.Union([...members, unknownMember]) as unknown as ForwardCompatibleUnion<
+    Members,
+    Tag
+  >;
+};
+export type ForwardCompatibleUnion<
+  Members extends ReadonlyArray<Schema.Top>,
+  Tag extends string,
+> = Schema.Codec<
+  Members[number]["Type"] | UnknownUnionMember<Tag>,
+  Members[number]["Encoded"],
+  Members[number]["DecodingServices"],
+  Members[number]["EncodingServices"]
+>;
+
+export const hasUnknownUnionTag = (
+  members: ReadonlyArray<Schema.Top & { readonly fields: object }>,
+  tag: string,
+): ((value: unknown) => boolean) => {
+  const known = knownTags(members, tag);
+  return (value) =>
+    typeof value === "object" &&
+    value !== null &&
+    tag in value &&
+    !known.has((value as Record<string, unknown>)[tag] as string);
+};
+
+export const isUnknownUnionMember = <A>(
+  value: A,
+): value is Extract<A, UnknownUnionMember<string>> => value instanceof UnknownUnionMember;
+
+export const ForwardCompatibleUnionArray = <
+  const Members extends ReadonlyArray<Schema.Top & { readonly fields: object }>,
+  const Tag extends string,
+>(
+  members: Members,
+  tag: Tag,
+) =>
+  Schema.Array(ForwardCompatibleUnion(members, tag)).pipe(
+    Schema.decodeTo(
+      Schema.Array(Schema.toType(Schema.Union(members))),
+      SchemaTransformation.transform<
+        ReadonlyArray<Members[number]["Type"]>,
+        ReadonlyArray<Members[number]["Type"] | UnknownUnionMember<Tag>>
+      >({
+        decode: (values) =>
+          values.filter((value) => !isUnknownUnionMember(value)) as ReadonlyArray<
+            Members[number]["Type"]
+          >,
+        encode: (values) => values,
+      }),
+    ),
+  );
+
+const knownTags = (
+  members: ReadonlyArray<Schema.Top & { readonly fields: object }>,
+  tag: string,
+): ReadonlySet<string> => {
+  const tags = new Set<string>();
+  for (const member of members) {
+    const field = (member.fields as Record<string, unknown>)[tag] as
+      | { readonly literal?: unknown; readonly literals?: ReadonlyArray<unknown> }
+      | undefined;
+    for (const literal of field?.literals ?? [field?.literal]) {
+      if (typeof literal !== "string") {
+        throw new Error(`Every ForwardCompatibleUnion member needs a string literal ${tag}.`);
+      }
+      tags.add(literal);
+    }
+  }
+  return tags;
+};
+
+const makeEntityId = <Brand extends string>(brand: Parameters<typeof Schema.brand<Brand>>[0]) => {
+  return TrimmedNonEmptyString.pipe(Schema.brand<Brand>(brand));
 };
 
 export const ThreadId = makeEntityId("ThreadId");
@@ -66,22 +261,75 @@ export const MessageId = makeEntityId("MessageId");
 export type MessageId = typeof MessageId.Type;
 export const TurnId = makeEntityId("TurnId");
 export type TurnId = typeof TurnId.Type;
+export const RunId = makeEntityId("RunId");
+export type RunId = typeof RunId.Type;
+export const RunAttemptId = makeEntityId("RunAttemptId");
+export type RunAttemptId = typeof RunAttemptId.Type;
+export const NodeId = makeEntityId("NodeId");
+export type NodeId = typeof NodeId.Type;
+export const GuestShareId = makeEntityId("GuestShareId");
+export type GuestShareId = typeof GuestShareId.Type;
+export const GuestMessageId = makeEntityId("GuestMessageId");
+export type GuestMessageId = typeof GuestMessageId.Type;
 export const AuthSessionId = makeEntityId("AuthSessionId");
 export type AuthSessionId = typeof AuthSessionId.Type;
 export const RpcClientId = NonNegativeInt.pipe(Schema.brand("RpcClientId"));
 export type RpcClientId = typeof RpcClientId.Type;
 
+export const ClientSurface = Schema.Literals(["web", "desktop", "mobile", "cli"]);
+export type ClientSurface = typeof ClientSurface.Type;
+
+export const ClientOs = Schema.Literals([
+  "macOS",
+  "Windows",
+  "Linux",
+  "iOS",
+  "Android",
+  "ChromeOS",
+  "other",
+  "unknown",
+]);
+export type ClientOs = typeof ClientOs.Type;
+
+export const ClientDeviceType = Schema.Literals(["desktop", "phone", "tablet", "unknown"]);
+export type ClientDeviceType = typeof ClientDeviceType.Type;
+
+export const ClientWebDeployment = Schema.Literals(["hosted", "server"]);
+export type ClientWebDeployment = typeof ClientWebDeployment.Type;
+
+export const ClientConnectionMethod = Schema.Literals(["direct", "ssh", "relay", "unknown"]);
+export type ClientConnectionMethod = typeof ClientConnectionMethod.Type;
+
 export const ProviderItemId = makeEntityId("ProviderItemId");
 export type ProviderItemId = typeof ProviderItemId.Type;
-export const RuntimeSessionId = makeEntityId("RuntimeSessionId");
-export type RuntimeSessionId = typeof RuntimeSessionId.Type;
-export const RuntimeItemId = makeEntityId("RuntimeItemId");
-export type RuntimeItemId = typeof RuntimeItemId.Type;
+export const ProviderSessionId = makeEntityId("ProviderSessionId");
+export type ProviderSessionId = typeof ProviderSessionId.Type;
+export const ProviderThreadId = makeEntityId("ProviderThreadId");
+export type ProviderThreadId = typeof ProviderThreadId.Type;
+export const ProviderTurnId = makeEntityId("ProviderTurnId");
+export type ProviderTurnId = typeof ProviderTurnId.Type;
+export const TurnItemId = makeEntityId("TurnItemId");
+export type TurnItemId = typeof TurnItemId.Type;
 export const RuntimeRequestId = makeEntityId("RuntimeRequestId");
 export type RuntimeRequestId = typeof RuntimeRequestId.Type;
-export const RuntimeTaskId = makeEntityId("RuntimeTaskId");
-export type RuntimeTaskId = typeof RuntimeTaskId.Type;
+export const ScheduledTaskId = makeEntityId("ScheduledTaskId");
+/** A one-use handle to a secret the user entered for an agent; the agent never sees the value. */
+export const SecretRef = makeEntityId("SecretRef");
+export type SecretRef = typeof SecretRef.Type;
+export type ScheduledTaskId = typeof ScheduledTaskId.Type;
 export const ApprovalRequestId = makeEntityId("ApprovalRequestId");
 export type ApprovalRequestId = typeof ApprovalRequestId.Type;
 export const CheckpointRef = makeEntityId("CheckpointRef");
 export type CheckpointRef = typeof CheckpointRef.Type;
+export const CheckpointId = makeEntityId("CheckpointId");
+export type CheckpointId = typeof CheckpointId.Type;
+export const CheckpointScopeId = makeEntityId("CheckpointScopeId");
+export type CheckpointScopeId = typeof CheckpointScopeId.Type;
+export const ContextHandoffId = makeEntityId("ContextHandoffId");
+export type ContextHandoffId = typeof ContextHandoffId.Type;
+export const ContextTransferId = makeEntityId("ContextTransferId");
+export type ContextTransferId = typeof ContextTransferId.Type;
+export const RawEventId = makeEntityId("RawEventId");
+export type RawEventId = typeof RawEventId.Type;
+export const PlanId = makeEntityId("PlanId");
+export type PlanId = typeof PlanId.Type;

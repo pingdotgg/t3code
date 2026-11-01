@@ -1,16 +1,14 @@
-"use client";
-
 import { Menu as MenuPrimitive } from "@base-ui/react/menu";
-import { ChevronRightIcon } from "lucide-react";
+import { CheckIcon, ChevronRightIcon, SearchIcon } from "lucide-react";
 import type * as React from "react";
 
 import { cn } from "~/lib/utils";
-
-const MenuCreateHandle = MenuPrimitive.createHandle;
+import { buttonVariants } from "./button";
+import { renderClosingPositioner } from "./closing-positioner";
+import { Input, type InputProps } from "./input";
+import { Spinner } from "./spinner";
 
 const Menu = MenuPrimitive.Root;
-
-const MenuPortal = MenuPrimitive.Portal;
 
 function MenuTrigger({ className, children, ...props }: MenuPrimitive.Trigger.Props) {
   return (
@@ -27,37 +25,42 @@ function MenuPopup({
   align = "center",
   alignOffset,
   side = "bottom",
+  collisionAvoidance,
   anchor,
+  keepMounted = false,
+  width = "default",
   ...props
 }: MenuPrimitive.Popup.Props & {
   align?: MenuPrimitive.Positioner.Props["align"];
   sideOffset?: MenuPrimitive.Positioner.Props["sideOffset"];
   alignOffset?: MenuPrimitive.Positioner.Props["alignOffset"];
   side?: MenuPrimitive.Positioner.Props["side"];
+  collisionAvoidance?: MenuPrimitive.Positioner.Props["collisionAvoidance"];
   anchor?: MenuPrimitive.Positioner.Props["anchor"];
+  keepMounted?: boolean;
+  width?: "default" | "content";
 }) {
-  const hasExplicitWidthClass =
-    typeof className === "string" &&
-    className.split(/\s+/).some((classToken) => {
-      const utility = classToken.split(":").at(-1) ?? classToken;
-      return /^(?:min-|max-)?w-/.test(utility);
-    });
-
   return (
-    <MenuPrimitive.Portal>
+    <MenuPrimitive.Portal keepMounted={keepMounted}>
       <MenuPrimitive.Positioner
         align={align}
         alignOffset={alignOffset}
         anchor={anchor}
+        collisionAvoidance={collisionAvoidance}
         className="z-[130]"
         data-slot="menu-positioner"
+        render={renderClosingPositioner}
         side={side}
         sideOffset={sideOffset}
       >
         <MenuPrimitive.Popup
           className={cn(
             "dropdown-glass relative flex origin-(--transform-origin) rounded-lg shadow-[0_16px_40px_-18px_rgb(0_0_0/55%)] outline-none focus:outline-none dark:shadow-[0_18px_44px_-18px_rgb(0_0_0/80%)]",
-            !hasExplicitWidthClass && "min-w-32",
+            // Electron drag hit-testing ignores z-index; opt portaled menus out to keep overlapping rows
+            // hoverable.
+            "[-webkit-app-region:no-drag]",
+            "max-w-[calc(100vw-2rem)]",
+            width === "content" ? "w-max min-w-0" : "min-w-[min(10rem,calc(100vw-2rem))]",
             className,
           )}
           data-slot="menu-popup"
@@ -70,6 +73,44 @@ function MenuPopup({
   );
 }
 
+/** A menu's filter field, drawn like `ComboboxSearchInput` so every searchable popup matches. */
+function MenuSearchInput({
+  busy = false,
+  onKeyDown,
+  ...props
+}: Omit<InputProps, "className" | "size" | "unstyled" | "nativeInput"> & { busy?: boolean }) {
+  return (
+    <div className="min-w-0 shrink-0 px-2 pt-1.5 pb-1">
+      <div className="relative -translate-y-px border-b border-border/70 pb-1.5 transition-colors focus-within:border-ring">
+        {busy ? (
+          <Spinner
+            aria-hidden="true"
+            size="md"
+            tone="muted"
+            className="pointer-events-none absolute top-1.5 left-0"
+          />
+        ) : (
+          <SearchIcon
+            aria-hidden="true"
+            className="pointer-events-none absolute top-1.5 left-0 size-4 shrink-0 text-muted-foreground/55"
+          />
+        )}
+        <Input
+          {...props}
+          className="rounded-none bg-transparent text-sm [&_input]:h-6.5 [&_input]:ps-5 [&_input]:font-sans [&_input]:leading-6.5"
+          size="sm"
+          unstyled
+          onKeyDown={(event) => {
+            // Menu typeahead would otherwise take the letters; arrows still reach the items.
+            if (event.key !== "ArrowDown" && event.key !== "Escape") event.stopPropagation();
+            onKeyDown?.(event);
+          }}
+        />
+      </div>
+    </div>
+  );
+}
+
 function MenuGroup(props: MenuPrimitive.Group.Props) {
   return <MenuPrimitive.Group data-slot="menu-group" {...props} />;
 }
@@ -77,21 +118,44 @@ function MenuGroup(props: MenuPrimitive.Group.Props) {
 function MenuItem({
   className,
   inset,
+  density = "default",
   variant = "default",
   ...props
 }: MenuPrimitive.Item.Props & {
   inset?: boolean;
-  variant?: "default" | "destructive";
+  density?: "default" | "touch";
+  variant?: "default" | "destructive" | "ghost";
 }) {
   return (
     <MenuPrimitive.Item
       className={cn(
         "[&>svg]:-mx-0.5 flex min-h-8 cursor-pointer select-none items-center gap-2 rounded-sm px-2 py-1 text-base text-foreground outline-none data-disabled:pointer-events-none data-disabled:cursor-not-allowed data-highlighted:bg-accent data-inset:ps-8 data-[variant=destructive]:text-destructive-foreground data-highlighted:text-accent-foreground data-disabled:opacity-64 sm:min-h-7 sm:text-sm [&>svg:not([class*='opacity-'])]:opacity-80 [&>svg:not([class*='size-'])]:size-4.5 sm:[&>svg:not([class*='size-'])]:size-4 [&>svg:not([class*='text-'])]:text-muted-foreground data-[variant=destructive]:[&>svg:not([class*='text-'])]:text-current [&>svg]:pointer-events-none [&>svg]:shrink-0",
+        variant === "ghost" &&
+          buttonVariants({
+            variant: "ghost",
+            size: "compact",
+            className: "h-auto min-h-7 w-full sm:text-xs",
+          }),
+        density === "touch" && "min-h-10 sm:min-h-10",
         className,
       )}
+      data-density={density}
       data-inset={inset}
       data-slot="menu-item"
       data-variant={variant}
+      {...props}
+    />
+  );
+}
+
+function MenuItemLabel({ className, ...props }: React.ComponentProps<"span">) {
+  return (
+    <span
+      data-slot="menu-item-label"
+      className={cn(
+        "min-w-0 truncate in-data-[density=touch]:[text-box:trim-both_cap_alphabetic] supports-[text-box:trim-both_cap_alphabetic]:in-data-[density=touch]:py-[0.5em]",
+        className,
+      )}
       {...props}
     />
   );
@@ -104,14 +168,17 @@ function MenuCheckboxItem({
   variant = "default",
   ...props
 }: MenuPrimitive.CheckboxItem.Props & {
-  variant?: "default" | "switch";
+  variant?: "default" | "icon" | "switch";
 }) {
   return (
     <MenuPrimitive.CheckboxItem
       checked={checked}
       className={cn(
         "grid min-h-8 in-data-[side=none]:min-w-[calc(var(--anchor-width)+1.25rem)] cursor-pointer items-center gap-2 rounded-sm py-1 ps-2 text-base text-foreground outline-none data-disabled:pointer-events-none data-disabled:cursor-not-allowed data-highlighted:bg-accent data-highlighted:text-accent-foreground data-disabled:opacity-64 sm:min-h-7 sm:text-sm [&_svg:not([class*='size-'])]:size-4.5 sm:[&_svg:not([class*='size-'])]:size-4 [&_svg]:pointer-events-none [&_svg]:shrink-0",
-        variant === "switch" ? "grid-cols-[1fr_auto] gap-4 pe-1.5" : "grid-cols-[1rem_1fr] pe-4",
+        variant === "switch"
+          ? "grid-cols-[1fr_auto] gap-4 pe-1.5"
+          : "grid-cols-[1rem_minmax(0,1fr)] pe-4",
+        variant === "icon" && "grid-cols-[0.625rem_minmax(0,1fr)]",
         className,
       )}
       data-slot="menu-checkbox-item"
@@ -121,22 +188,25 @@ function MenuCheckboxItem({
         <>
           <span className="col-start-1">{children}</span>
           <MenuPrimitive.CheckboxItemIndicator
-            className="inset-shadow-[0_1px_--theme(--color-black/4%)] inline-flex h-[calc(var(--thumb-size)+2px)] w-[calc(var(--thumb-size)*2-2px)] shrink-0 items-center rounded-full p-px outline-none transition-[background-color,box-shadow] duration-200 [--thumb-size:--spacing(4)] focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background data-checked:bg-primary data-unchecked:bg-input data-disabled:opacity-64 sm:[--thumb-size:--spacing(3)]"
+            className="inset-shadow-[0_1px_--theme(--color-black/4%)] inline-flex h-[calc(var(--thumb-size)+2px)] w-[calc(var(--thumb-size)*2-2px)] shrink-0 items-center rounded-full p-px outline-none transition-[background-color,box-shadow] duration-200 [--thumb-size:--spacing(4)] focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background data-checked:bg-primary data-unchecked:bg-input data-disabled:opacity-64 sm:[--thumb-size:--spacing(3)]"
             keepMounted
           >
-            <span className="pointer-events-none block aspect-square h-full in-[[data-slot=menu-checkbox-item][data-checked]]:origin-[var(--thumb-size)_50%] origin-left in-[[data-slot=menu-checkbox-item][data-checked]]:translate-x-[calc(var(--thumb-size)-4px)] in-[[data-slot=menu-checkbox-item]:active]:not-data-disabled:scale-x-110 in-[[data-slot=menu-checkbox-item]:active]:rounded-[var(--thumb-size)/calc(var(--thumb-size)*1.10)] rounded-(--thumb-size) bg-background shadow-sm/5 will-change-transform [transition:translate_.15s,border-radius_.15s,scale_.1s_.1s,transform-origin_.15s]" />
+            <span className="pointer-events-none block aspect-square h-full in-[[data-slot=menu-checkbox-item][data-checked]]:origin-[var(--thumb-size)_50%] origin-left in-[[data-slot=menu-checkbox-item][data-checked]]:translate-x-[calc(var(--thumb-size)-4px)] in-[[data-slot=menu-checkbox-item]:active]:not-data-disabled:scale-x-110 in-[[data-slot=menu-checkbox-item]:active]:rounded-[var(--thumb-size)/calc(var(--thumb-size)*1.10)] rounded-(--thumb-size) bg-background shadow-sm/5 [transition:translate_.15s,border-radius_.15s,scale_.1s_.1s,transform-origin_.15s]" />
           </MenuPrimitive.CheckboxItemIndicator>
         </>
       ) : (
         <>
-          <MenuPrimitive.CheckboxItemIndicator className="col-start-1">
+          <MenuPrimitive.CheckboxItemIndicator
+            className={cn("col-start-1", variant === "icon" && "-mx-0.5")}
+          >
             <svg
+              className={variant === "icon" ? "size-3.5" : undefined}
               fill="none"
               height="24"
               stroke="currentColor"
               strokeLinecap="round"
               strokeLinejoin="round"
-              strokeWidth="2"
+              strokeWidth="1.75"
               viewBox="0 0 24 24"
               width="24"
               xmlns="http://www.w3.org/2000/svg"
@@ -174,6 +244,23 @@ function MenuRadioItem({
     >
       <span className="min-w-0 flex-1">{children}</span>
     </MenuPrimitive.RadioItem>
+  );
+}
+
+function MenuRadioItemIndicator({
+  className,
+  children,
+  ...props
+}: MenuPrimitive.RadioItemIndicator.Props) {
+  return (
+    <MenuPrimitive.RadioItemIndicator
+      aria-hidden
+      className={cn("flex shrink-0", className)}
+      data-slot="menu-radio-item-indicator"
+      {...props}
+    >
+      {children ?? <CheckIcon className="size-3.5" />}
+    </MenuPrimitive.RadioItemIndicator>
   );
 }
 
@@ -227,17 +314,22 @@ function MenuSub(props: MenuPrimitive.SubmenuRoot.Props) {
 function MenuSubTrigger({
   className,
   inset,
+  density = "default",
   children,
   ...props
 }: MenuPrimitive.SubmenuTrigger.Props & {
   inset?: boolean;
+  density?: "default" | "touch";
 }) {
   return (
     <MenuPrimitive.SubmenuTrigger
       className={cn(
-        "flex min-h-8 items-center gap-2 rounded-sm px-2 py-1 text-base text-foreground outline-none data-disabled:pointer-events-none data-highlighted:bg-accent data-popup-open:bg-accent data-inset:ps-8 data-highlighted:text-accent-foreground data-popup-open:text-accent-foreground data-disabled:opacity-64 sm:min-h-7 sm:text-sm [&_svg:not([class*='size-'])]:size-4.5 sm:[&_svg:not([class*='size-'])]:size-4 [&_svg:not([class*='text-'])]:text-muted-foreground [&_svg]:pointer-events-none",
+        // Exclude the last SVG so leading-icon margin rules cannot remove the chevron's ms-auto alignment.
+        "[&>svg:not(:last-child)]:-mx-0.5 flex min-h-8 cursor-pointer items-center gap-2 rounded-sm px-2 py-1 text-base text-foreground outline-none data-disabled:cursor-not-allowed data-disabled:pointer-events-none data-highlighted:bg-accent data-popup-open:bg-accent data-inset:ps-8 data-highlighted:text-accent-foreground data-popup-open:text-accent-foreground data-disabled:opacity-64 sm:min-h-7 sm:text-sm [&_svg:not([class*='size-'])]:size-4.5 sm:[&_svg:not([class*='size-'])]:size-4 [&_svg:not([class*='text-'])]:text-muted-foreground [&>svg:not(:last-child):not([class*='opacity-'])]:opacity-80 [&_svg]:pointer-events-none [&>svg]:shrink-0",
+        density === "touch" && "min-h-10 sm:min-h-10",
         className,
       )}
+      data-density={density}
       data-inset={inset}
       data-slot="menu-sub-trigger"
       {...props}
@@ -275,19 +367,17 @@ function MenuSubPopup({
 }
 
 export {
-  MenuCreateHandle,
-  MenuCreateHandle as DropdownMenuCreateHandle,
   Menu,
   Menu as DropdownMenu,
-  MenuPortal,
-  MenuPortal as DropdownMenuPortal,
   MenuTrigger,
   MenuTrigger as DropdownMenuTrigger,
   MenuPopup,
   MenuPopup as DropdownMenuContent,
+  MenuSearchInput,
   MenuGroup,
   MenuGroup as DropdownMenuGroup,
   MenuItem,
+  MenuItemLabel,
   MenuItem as DropdownMenuItem,
   MenuCheckboxItem,
   MenuCheckboxItem as DropdownMenuCheckboxItem,
@@ -295,6 +385,7 @@ export {
   MenuRadioGroup as DropdownMenuRadioGroup,
   MenuRadioItem,
   MenuRadioItem as DropdownMenuRadioItem,
+  MenuRadioItemIndicator,
   MenuGroupLabel,
   MenuGroupLabel as DropdownMenuLabel,
   MenuSeparator,

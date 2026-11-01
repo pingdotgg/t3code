@@ -11,13 +11,14 @@ export interface CheckIfPhoneNumberIsOptedOutRequest
  * An account-scoped operation — reports whether SMS delivery to a phone
  * number is blocked because its owner opted out.
  * Provide the `CheckIfPhoneNumberIsOptedOutHttp` layer on the Function to implement the binding.
- * @binding
- * @section SMS Opt-Out Management
- * @example Check an Opt-Out
+ * ### SMS Opt-Out Management
+ * **Example:** Check an Opt-Out
  * ```typescript
  * const checkOptOut = yield* SNS.CheckIfPhoneNumberIsOptedOut();
  * const { isOptedOut } = yield* checkOptOut({ phoneNumber: "+15555550123" });
  * ```
+ *
+ * @binding
  */
 export interface CheckIfPhoneNumberIsOptedOut extends Binding.Service<
   CheckIfPhoneNumberIsOptedOut,

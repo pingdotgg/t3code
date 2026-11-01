@@ -10,9 +10,8 @@ import * as Binding from "../../Binding.ts";
  * flow.
  * Provide the implementation with
  * `Effect.provide(AWS.DataExchange.GetJobHttp)`.
- * @binding
- * @section Import & Export Jobs
- * @example Poll A Job Until It Completes
+ * ### Import & Export Jobs
+ * **Example:** Poll A Job Until It Completes
  * ```typescript
  * const getJob = yield* AWS.DataExchange.GetJob();
  *
@@ -25,6 +24,8 @@ import * as Binding from "../../Binding.ts";
  *   }),
  * );
  * ```
+ *
+ * @binding
  */
 export interface GetJob extends Binding.Service<
   GetJob,

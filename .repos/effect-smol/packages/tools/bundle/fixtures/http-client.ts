@@ -1,6 +1,6 @@
 import * as Effect from "effect/Effect"
-import * as FetchHttpClient from "effect/unstable/http/FetchHttpClient"
-import * as HttpClient from "effect/unstable/http/HttpClient"
+import * as FetchHttpClient from "effect/http/FetchHttpClient"
+import * as HttpClient from "effect/http/HttpClient"
 
 Effect.gen(function*() {
   const client = yield* HttpClient.HttpClient

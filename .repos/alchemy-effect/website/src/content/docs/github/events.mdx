@@ -31,7 +31,7 @@ yield* GitHub.Webhook("ci-webhook", {
 
 `events` defaults to `["push"]`; pass `["*"]` to receive every event
 GitHub emits. The `secret` (a `Redacted` string, e.g. from
-`Config.redacted` — see [Secrets & env](/cloudflare/security/secrets-env))
+`Config.Redacted` — see [Secrets & env](/cloudflare/security/secrets-env))
 makes GitHub sign each delivery with `HMAC-SHA256` in the
 `X-Hub-Signature-256` header so your receiver can verify the payload
 came from GitHub.

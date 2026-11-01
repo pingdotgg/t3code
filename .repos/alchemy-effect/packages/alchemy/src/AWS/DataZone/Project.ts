@@ -56,9 +56,8 @@ export interface Project extends Resource<
  * projects do not support resource tags, so ownership is tracked purely by
  * identity.
  *
- * @resource
- * @section Creating Projects
- * @example Minimal Project
+ * ### Creating Projects
+ * **Example:** Minimal Project
  * ```typescript
  * import * as DataZone from "alchemy/AWS/DataZone";
  *
@@ -70,7 +69,7 @@ export interface Project extends Resource<
  * });
  * ```
  *
- * @example Project with an Explicit Name
+ * **Example:** Project with an Explicit Name
  * ```typescript
  * const project = yield* DataZone.Project("analytics", {
  *   domainId: domain.domainId,
@@ -78,6 +77,8 @@ export interface Project extends Resource<
  *   glossaryTerms: [term.id],
  * });
  * ```
+ *
+ * @resource
  */
 export const Project = Resource<Project>("AWS.DataZone.Project");
 

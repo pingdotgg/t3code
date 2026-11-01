@@ -222,12 +222,15 @@ const categories = [...new Set(more.map((tab) => tab.category))];
   }
   .alc-tabs__menu-item {
     display: flex;
-    align-items: center;
+    align-items: flex-start;
     gap: 10px;
     padding: 6px 14px;
     font-size: 13px;
     color: var(--alc-fg-2);
     text-decoration: none;
+  }
+  .alc-tabs__menu-item > .alc-tabs__icon {
+    margin-block-start: calc((1lh - 14px) / 2);
   }
   .alc-tabs__menu-item:hover {
     color: var(--alc-accent-deep);

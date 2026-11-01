@@ -118,7 +118,7 @@ test.provider(
       const after = yield* waitUntilGone(lexiconName);
       expect(after).toBeUndefined();
     }),
-  { timeout: 180_000 },
+  { tags: ["provider:aws", "provider:aws:polly", "live"], timeout: 180_000 },
 );
 
 test.provider(
@@ -142,5 +142,5 @@ test.provider(
       const after = yield* waitUntilGone(deployed.lexiconName);
       expect(after).toBeUndefined();
     }),
-  { timeout: 180_000 },
+  { tags: ["provider:aws", "provider:aws:polly", "live"], timeout: 180_000 },
 );

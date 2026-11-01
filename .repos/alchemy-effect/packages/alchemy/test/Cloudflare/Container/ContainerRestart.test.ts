@@ -4,8 +4,8 @@ import { describe, expect } from "alchemy-test";
 import * as Effect from "effect/Effect";
 import { MinimumLogLevel } from "effect/References";
 import * as Schedule from "effect/Schedule";
-import * as HttpClient from "effect/unstable/http/HttpClient";
-import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
+import * as HttpClient from "effect/http/HttpClient";
+import * as HttpClientRequest from "effect/http/HttpClientRequest";
 import RestartStack from "./fixtures/restart/stack.ts";
 
 const { test, beforeAll, afterAll, deploy, destroy } = Test.make({
@@ -96,58 +96,69 @@ const waitRunning = (baseUrl: string, name: string, want: boolean) =>
  * never re-probed and `ensureRunning` was skipped, so a stopped container was
  * never restarted.
  */
-describe("container auto-restart", () => {
-  const stack = beforeAll(deploy(RestartStack), { timeout: HOOK_TIMEOUT });
-  afterAll.skipIf(!!process.env.NO_DESTROY)(destroy(RestartStack), {
-    timeout: HOOK_TIMEOUT,
-  });
+describe(
+  "container auto-restart",
+  {
+    tags: [
+      "provider:cloudflare",
+      "provider:cloudflare:container",
+      "provider:cloudflare:worker",
+      "live",
+    ],
+  },
+  () => {
+    const stack = beforeAll(deploy(RestartStack), { timeout: HOOK_TIMEOUT });
+    afterAll.skipIf(!!process.env.NO_DESTROY)(destroy(RestartStack), {
+      timeout: HOOK_TIMEOUT,
+    });
 
-  test(
-    "restarts the container after it is stopped (destroy)",
-    Effect.gen(function* () {
-      const { url } = yield* stack;
-      const name = "stop";
+    test(
+      "restarts the container after it is stopped (destroy)",
+      Effect.gen(function* () {
+        const { url } = yield* stack;
+        const name = "stop";
 
-      // Start + confirm up.
-      expect(yield* fetchReady(`${url}/ping?name=${name}`, "pong")).toContain(
-        "pong",
-      );
+        // Start + confirm up.
+        expect(yield* fetchReady(`${url}/ping?name=${name}`, "pong")).toContain(
+          "pong",
+        );
 
-      // Hard-stop it, then confirm it is actually down before re-pinging — so
-      // the next ping must go through the restart path.
-      yield* hit(`${url}/stop?name=${name}`);
-      yield* waitRunning(url, name, false);
+        // Hard-stop it, then confirm it is actually down before re-pinging — so
+        // the next ping must go through the restart path.
+        yield* hit(`${url}/stop?name=${name}`);
+        yield* waitRunning(url, name, false);
 
-      // Next request transparently restarts it.
-      expect(yield* fetchReady(`${url}/ping?name=${name}`, "pong")).toContain(
-        "pong",
-      );
-      expect(yield* waitRunning(url, name, true)).toBe(true);
-    }).pipe(logLevel),
-    { timeout: TEST_TIMEOUT },
-  );
+        // Next request transparently restarts it.
+        expect(yield* fetchReady(`${url}/ping?name=${name}`, "pong")).toContain(
+          "pong",
+        );
+        expect(yield* waitRunning(url, name, true)).toBe(true);
+      }).pipe(logLevel),
+      { timeout: TEST_TIMEOUT },
+    );
 
-  test(
-    "restarts the container after it crashes (non-zero exit)",
-    Effect.gen(function* () {
-      const { url } = yield* stack;
-      const name = "crash";
+    test(
+      "restarts the container after it crashes (non-zero exit)",
+      Effect.gen(function* () {
+        const { url } = yield* stack;
+        const name = "crash";
 
-      expect(yield* fetchReady(`${url}/ping?name=${name}`, "pong")).toContain(
-        "pong",
-      );
+        expect(yield* fetchReady(`${url}/ping?name=${name}`, "pong")).toContain(
+          "pong",
+        );
 
-      // Make the container process exit on its own, then wait for the monitor
-      // to observe the exit (running === false).
-      yield* hit(`${url}/crash?name=${name}`);
-      yield* waitRunning(url, name, false);
+        // Make the container process exit on its own, then wait for the monitor
+        // to observe the exit (running === false).
+        yield* hit(`${url}/crash?name=${name}`);
+        yield* waitRunning(url, name, false);
 
-      // Next request transparently restarts it.
-      expect(yield* fetchReady(`${url}/ping?name=${name}`, "pong")).toContain(
-        "pong",
-      );
-      expect(yield* waitRunning(url, name, true)).toBe(true);
-    }).pipe(logLevel),
-    { timeout: TEST_TIMEOUT },
-  );
-});
+        // Next request transparently restarts it.
+        expect(yield* fetchReady(`${url}/ping?name=${name}`, "pong")).toContain(
+          "pong",
+        );
+        expect(yield* waitRunning(url, name, true)).toBe(true);
+      }).pipe(logLevel),
+      { timeout: TEST_TIMEOUT },
+    );
+  },
+);

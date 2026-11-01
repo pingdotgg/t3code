@@ -24,8 +24,8 @@ import * as ec2 from "@distilled.cloud/aws/ec2";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import { HttpServerRequest } from "effect/unstable/http/HttpServerRequest";
-import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
+import { HttpServerRequest } from "effect/http/HttpServerRequest";
+import * as HttpServerResponse from "effect/http/HttpServerResponse";
 
 /**
  * An RFC1918 IP outside the default VPC's CIDR. RegisterTargets accepts
@@ -143,7 +143,7 @@ export const BindingsFleetLive = Layer.effect(
 export default ElbBindingsFunction.make(
   {
     main: import.meta.url,
-    url: true,
+    functionUrl: true,
   },
   Effect.gen(function* () {
     const { targetGroup, loadBalancer, trustStore } = yield* BindingsFleet;

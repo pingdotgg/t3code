@@ -23,7 +23,7 @@ A Docker daemon reachable from the `docker` CLI is the only
 requirement. The provider shells out through the **active Docker CLI
 context**, so whatever `docker ps` talks to — Docker Desktop, a
 remote Docker host, an SSH context, a CI runner's daemon — is what
-alchemy provisions against. There is no `alchemy login` step and no
+alchemy provisions against. There is no login step and no
 stored token: this provider has no credentials of its own.
 
 ## Binary override
@@ -50,7 +50,7 @@ const image = yield* Docker.Image("app", {
   registry: {
     server: "ghcr.io",
     username: "octocat",
-    password: Config.redacted("GITHUB_TOKEN"),
+    password: Config.Redacted("GITHUB_TOKEN"),
   },
 });
 ```

@@ -5,8 +5,8 @@ import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Stream from "effect/Stream";
-import { HttpServerRequest } from "effect/unstable/http/HttpServerRequest";
-import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
+import { HttpServerRequest } from "effect/http/HttpServerRequest";
+import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import path from "pathe";
 
 const main = path.resolve(import.meta.dirname, "handler.ts");
@@ -29,7 +29,7 @@ const tagOf = <A extends object, E extends { _tag: string; message?: string }>(
 export default RGTestFunction.make(
   {
     main,
-    url: true,
+    functionUrl: true,
     timeout: Duration.seconds(30),
   },
   Effect.gen(function* () {
@@ -53,9 +53,11 @@ export default RGTestFunction.make(
       ],
     });
 
-    // Role a tag-sync task would run as (tag-sync itself is gated on
-    // application groups, which cannot be created via CreateGroup — the
-    // /start-tag-sync route asserts the typed rejection).
+    // Role a tag-sync task would run as (tag-sync itself is gated: it is
+    // part of Group Lifecycle Events, in maintenance mode since 2026-07-30
+    // and closed to new customers, and even entitled accounts need an
+    // application group which CreateGroup cannot make — the /start-tag-sync
+    // route asserts the typed rejection).
     const syncRole = yield* IAM.Role("BindingsTagSyncRole", {
       assumeRolePolicyDocument: {
         Version: "2012-10-17",

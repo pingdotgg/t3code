@@ -5,8 +5,8 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Result from "effect/Result";
 import * as Schedule from "effect/Schedule";
-import { HttpServerRequest } from "effect/unstable/http/HttpServerRequest";
-import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
+import { HttpServerRequest } from "effect/http/HttpServerRequest";
+import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import path from "pathe";
 
 const main = path.resolve(import.meta.dirname, "lake-handler.ts");
@@ -35,7 +35,7 @@ export class CloudTrailLakeTestFunction extends Lambda.Function<Lambda.Function>
 export default CloudTrailLakeTestFunction.make(
   {
     main,
-    url: true,
+    functionUrl: true,
     // A fresh store settles through CREATED/STARTING_INGESTION before the
     // first query is accepted; the /query/run retry must fit the invocation.
     timeout: Duration.seconds(60),

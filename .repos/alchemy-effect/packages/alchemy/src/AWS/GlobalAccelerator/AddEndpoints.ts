@@ -14,9 +14,8 @@ import type { EndpointGroup } from "./EndpointGroup.ts";
  * endpoint group ARN is injected from the binding. Provide the
  * implementation with
  * `Effect.provide(AWS.GlobalAccelerator.AddEndpointsHttp)`.
- * @binding
- * @section Managing Endpoints
- * @example Register an Endpoint Dynamically
+ * ### Managing Endpoints
+ * **Example:** Register an Endpoint Dynamically
  * ```typescript
  * // init — bind the operation to the endpoint group
  * const addEndpoints = yield* AWS.GlobalAccelerator.AddEndpoints(group);
@@ -26,6 +25,8 @@ import type { EndpointGroup } from "./EndpointGroup.ts";
  *   EndpointConfigurations: [{ EndpointId: allocationId, Weight: 128 }],
  * });
  * ```
+ *
+ * @binding
  */
 export interface AddEndpoints extends Binding.Service<
   AddEndpoints,

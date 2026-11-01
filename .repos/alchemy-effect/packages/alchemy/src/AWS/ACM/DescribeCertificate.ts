@@ -11,9 +11,8 @@ import type { Certificate } from "./Certificate.ts";
  * summary, expiry — from inside a function runtime. Useful for expiry
  * monitors and issuance dashboards. Provide the implementation with
  * `Effect.provide(AWS.ACM.DescribeCertificateHttp)`.
- * @binding
- * @section Inspecting Certificates
- * @example Read a Certificate's Status and Expiry
+ * ### Inspecting Certificates
+ * **Example:** Read a Certificate's Status and Expiry
  * ```typescript
  * // init — bind the operation to the certificate
  * const describeCertificate = yield* AWS.ACM.DescribeCertificate(certificate);
@@ -23,6 +22,8 @@ import type { Certificate } from "./Certificate.ts";
  * const status = detail?.Status;
  * const notAfter = detail?.NotAfter;
  * ```
+ *
+ * @binding
  */
 export interface DescribeCertificate extends Binding.Service<
   DescribeCertificate,

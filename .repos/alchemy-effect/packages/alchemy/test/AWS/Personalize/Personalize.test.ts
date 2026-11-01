@@ -62,6 +62,7 @@ test.provider(
         ),
       ).toBe(true);
     }),
+  { tags: ["provider:aws", "provider:aws:personalize", "live"] },
 );
 
 // Personalize schemas, dataset groups, datasets, and event trackers are
@@ -202,5 +203,8 @@ test.provider(
       );
       expect(trackerError._tag).toBe("ResourceNotFoundException");
     }),
-  { timeout: 480_000 },
+  {
+    tags: ["provider:aws", "provider:aws:personalize", "live"],
+    timeout: 480_000,
+  },
 );

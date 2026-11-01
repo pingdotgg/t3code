@@ -9,9 +9,8 @@ import type { Archive } from "./Archive.ts";
  * Fetches the parameters and status of an archive search (by
  * `SearchId`). IAM access is granted on the bound archive's ARN. Provide the implementation with
  * `Effect.provide(AWS.MailManager.GetArchiveSearchHttp)`.
- * @binding
- * @section Searching the Archive
- * @example Poll a Search Until It Completes
+ * ### Searching the Archive
+ * **Example:** Poll a Search Until It Completes
  * ```typescript
  * const getSearch = yield* MailManager.GetArchiveSearch(archive);
  *
@@ -24,6 +23,8 @@ import type { Archive } from "./Archive.ts";
  *   }),
  * );
  * ```
+ *
+ * @binding
  */
 export interface GetArchiveSearch extends Binding.Service<
   GetArchiveSearch,

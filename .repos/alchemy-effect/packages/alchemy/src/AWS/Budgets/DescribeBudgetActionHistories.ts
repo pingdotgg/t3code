@@ -20,9 +20,8 @@ export interface DescribeBudgetActionHistoriesRequest extends Omit<
  * when a kill-switch fired and whether it succeeded. Provide the
  * implementation with
  * `Effect.provide(AWS.Budgets.DescribeBudgetActionHistoriesHttp)`.
- * @binding
- * @section Reading Budget Actions
- * @example Read an Action's Event History
+ * ### Reading Budget Actions
+ * **Example:** Read an Action's Event History
  * ```typescript
  * // init — bind the operation to the action
  * const histories = yield* AWS.Budgets.DescribeBudgetActionHistories(action);
@@ -33,6 +32,8 @@ export interface DescribeBudgetActionHistoriesRequest extends Omit<
  *   (h) => h.EventType === "EXECUTE_ACTION",
  * );
  * ```
+ *
+ * @binding
  */
 export interface DescribeBudgetActionHistories extends Binding.Service<
   DescribeBudgetActionHistories,

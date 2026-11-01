@@ -20,14 +20,15 @@ export interface AssociateVehicleFleetRequest extends Omit<
  * Lambda enrolling freshly-registered vehicles. Provide the implementation
  * with `Effect.provide(AWS.IoTFleetWise.AssociateVehicleFleetHttp)`.
  *
- * @binding
- * @section Fleet Membership
- * @example Enroll a Vehicle into the Fleet
+ * ### Fleet Membership
+ * **Example:** Enroll a Vehicle into the Fleet
  * ```typescript
  * const associateVehicleFleet = yield* IoTFleetWise.AssociateVehicleFleet(fleet);
  *
  * yield* associateVehicleFleet({ vehicleName: "vin-1HGBH41JXMN109186" });
  * ```
+ *
+ * @binding
  */
 export interface AssociateVehicleFleet extends Binding.Service<
   AssociateVehicleFleet,

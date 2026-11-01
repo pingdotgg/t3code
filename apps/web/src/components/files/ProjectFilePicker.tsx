@@ -1,5 +1,5 @@
 import { useAtomValue } from "@effect/atom-react";
-import { useMemo, useState, type ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 
 import { useActiveProjectTarget, type ActiveProjectTarget } from "~/hooks/useActiveProjectTarget";
 import { useTheme } from "~/hooks/useTheme";
@@ -80,38 +80,31 @@ function OpenProjectFilePicker(props: ProjectFilePickerProps & { target: ActiveP
   );
   const { resolvedTheme } = useTheme();
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
-  const matches = useMemo(
-    () => getProjectFilePickerMatches(result.entries, result.matchedQuery),
-    [result.entries, result.matchedQuery],
-  );
+  const matches = getProjectFilePickerMatches(result.entries, result.matchedQuery);
   const hasMatchedQuery = /\S/.test(result.matchedQuery);
-  const items = useMemo<CommandPaletteActionItem[]>(
-    () =>
-      matches.map((match) => ({
-        kind: "action",
-        value: `file:${match.path}`,
-        searchTerms: [match.name, match.path],
-        title: (
-          <HighlightedFuzzyText
-            active={hasMatchedQuery}
-            value={match.name}
-            indices={match.nameMatchIndices}
-          />
-        ),
-        description: (
-          <HighlightedFuzzyText
-            active={hasMatchedQuery}
-            value={match.path}
-            indices={match.pathMatchIndices}
-          />
-        ),
-        icon: <PierreEntryIcon pathValue={match.path} kind="file" theme={resolvedTheme} />,
-        run: async () => {
-          useRightPanelStore.getState().openFile(target.threadRef, match.path);
-        },
-      })),
-    [hasMatchedQuery, matches, resolvedTheme, target.threadRef],
-  );
+  const items: CommandPaletteActionItem[] = matches.map((match) => ({
+    kind: "action",
+    value: `file:${match.path}`,
+    searchTerms: [match.name, match.path],
+    title: (
+      <HighlightedFuzzyText
+        active={hasMatchedQuery}
+        value={match.name}
+        indices={match.nameMatchIndices}
+      />
+    ),
+    description: (
+      <HighlightedFuzzyText
+        active={hasMatchedQuery}
+        value={match.path}
+        indices={match.pathMatchIndices}
+      />
+    ),
+    icon: <PierreEntryIcon pathValue={match.path} kind="file" theme={resolvedTheme} />,
+    run: async () => {
+      useRightPanelStore.getState().openFile(target.threadRef, match.path);
+    },
+  }));
 
   const emptyStateMessage = getEmptyStateMessage(query, result.error, result.isPending);
 
@@ -130,7 +123,7 @@ function OpenProjectFilePicker(props: ProjectFilePickerProps & { target: ActiveP
         setHighlightedItemValue(null);
         setQuery(value);
       }}
-      panelClassName="max-h-[min(34rem,76vh)]"
+      panelSize="tall-list"
       testId="project-file-picker"
       value={query}
     >

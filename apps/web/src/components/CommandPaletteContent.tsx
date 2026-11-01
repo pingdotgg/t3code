@@ -1,8 +1,25 @@
 import { ArrowDownIcon, ArrowUpIcon } from "lucide-react";
-import type { ComponentProps, ReactNode } from "react";
+import { type ComponentProps, type ReactNode } from "react";
 
 import { Command, CommandFooter, CommandInput, CommandPanel } from "./ui/command";
 import { Kbd, KbdGroup } from "./ui/kbd";
+
+/**
+ * A view replacing another inside an open dialog mounts with focus on the body,
+ * left there by the removed input. Claim it so typing cannot reach the composer
+ * behind the modal. On first open the dialog's own initial focus handles it.
+ */
+function claimFocusInOpenDialog(input: HTMLInputElement | null) {
+  if (!input) return;
+  const active = input.ownerDocument.activeElement;
+  if (
+    active === null ||
+    active === input.ownerDocument.body ||
+    input.closest('[role="dialog"]')?.contains(active)
+  ) {
+    input.focus();
+  }
+}
 
 type CommandPaletteContentProps = Omit<ComponentProps<typeof Command>, "children"> & {
   readonly children: ReactNode;
@@ -11,16 +28,11 @@ type CommandPaletteContentProps = Omit<ComponentProps<typeof Command>, "children
   readonly footerTrailing?: ReactNode;
   readonly inputAccessory?: ReactNode;
   readonly inputProps: ComponentProps<typeof CommandInput>;
-  readonly panelClassName?: string;
+  readonly panelSize?: "list" | "tall-list" | "fill";
   readonly showBackHint?: boolean;
   readonly testId?: string;
 };
 
-/**
- * Shared command palette chrome. Palette modes provide their query behavior,
- * results, and optional input accessory while retaining one input, panel, and
- * keyboard-hint gutter.
- */
 export function CommandPaletteContent({
   children,
   escapeLabel = "Close",
@@ -28,7 +40,7 @@ export function CommandPaletteContent({
   footerTrailing,
   inputAccessory,
   inputProps,
-  panelClassName,
+  panelSize = "list",
   showBackHint,
   testId,
   ...commandProps
@@ -37,13 +49,23 @@ export function CommandPaletteContent({
     <div className="contents" data-testid={testId}>
       <Command {...commandProps}>
         <div className="relative">
-          <CommandInput {...inputProps} />
+          <CommandInput autoFocus={false} {...inputProps} ref={claimFocusInOpenDialog} />
           {inputAccessory}
         </div>
-        <CommandPanel className={panelClassName}>{children}</CommandPanel>
-        <CommandFooter className="gap-3 max-sm:flex-col max-sm:items-start">
+        <CommandPanel
+          className={
+            panelSize === "fill"
+              ? "flex min-h-0 flex-1 flex-col"
+              : panelSize === "tall-list"
+                ? "max-h-[min(34rem,76vh)]"
+                : "flex max-h-[min(28rem,70vh)] min-h-0 flex-col"
+          }
+        >
+          {children}
+        </CommandPanel>
+        <CommandFooter className="max-sm:flex-col max-sm:items-start">
           <div className="flex items-center gap-3">
-            <KbdGroup className="items-center gap-1.5">
+            <KbdGroup>
               <Kbd>
                 <ArrowUpIcon />
               </Kbd>
@@ -53,18 +75,18 @@ export function CommandPaletteContent({
               <span>Navigate</span>
             </KbdGroup>
             {footerActionLabel !== undefined ? (
-              <KbdGroup className="items-center gap-1.5">
+              <KbdGroup>
                 <Kbd>Enter</Kbd>
                 <span>{footerActionLabel}</span>
               </KbdGroup>
             ) : null}
             {showBackHint ? (
-              <KbdGroup className="items-center gap-1.5">
+              <KbdGroup>
                 <Kbd>Backspace</Kbd>
                 <span>Back</span>
               </KbdGroup>
             ) : null}
-            <KbdGroup className="items-center gap-1.5">
+            <KbdGroup>
               <Kbd>Esc</Kbd>
               <span>{escapeLabel}</span>
             </KbdGroup>

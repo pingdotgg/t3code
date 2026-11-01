@@ -120,11 +120,26 @@ export const makeEcsClusterHttpBinding = <
   });
 
 /**
+ * Strip the revision suffix from a task-definition ARN. The bound
+ * `taskDefinitionArn` attribute pins whatever revision existed when the
+ * HOST was reconciled — for a circularly-bound task that is the pre-create
+ * STUB revision, not the real one registered afterwards. Launching by
+ * family makes ECS resolve the latest ACTIVE revision, which is the
+ * binding's intended semantics (like invoking a Lambda by name).
+ */
+const revisionlessTaskDefinitionArn = (arn: string) => arn.replace(/:\d+$/, "");
+
+/** The task-definition family name from its (possibly revisioned) ARN. */
+const taskDefinitionFamilyOf = (arn: string) =>
+  revisionlessTaskDefinitionArn(arn).split("/").pop()!;
+
+/**
  * Build the impl Effect for a task-launch operation (`RunTask`/`StartTask`):
  * the runtime callable injects the bound {@link Cluster}'s ARN as `cluster`
- * and the bound {@link Task}'s definition ARN as `taskDefinition`; the
- * deploy-time half grants `actions` on the task definition plus
- * `iam:PassRole` on the task and execution roles.
+ * and the bound {@link Task}'s definition family (revision-less ARN) as
+ * `taskDefinition`; the deploy-time half grants `actions` on every revision
+ * of the task definition plus `iam:PassRole` on the task and execution
+ * roles.
  */
 export const makeEcsTaskLaunchHttpBinding = <
   I extends { cluster?: string; taskDefinition: string },
@@ -154,7 +169,14 @@ export const makeEcsTaskLaunchHttpBinding = <
                 {
                   Effect: "Allow",
                   Action: [...options.actions],
-                  Resource: [task.taskDefinitionArn],
+                  // All revisions: the launch resolves the latest ACTIVE
+                  // revision, which may be registered after this grant.
+                  Resource: [
+                    Output.map(
+                      task.taskDefinitionArn,
+                      (arn) => `${revisionlessTaskDefinitionArn(arn)}:*`,
+                    ),
+                  ],
                 },
                 {
                   Effect: "Allow",
@@ -172,7 +194,8 @@ export const makeEcsTaskLaunchHttpBinding = <
         return yield* op({
           ...request,
           cluster: yield* ClusterArn,
-          taskDefinition: yield* TaskDefinitionArn,
+          // Family, not the pinned ARN: resolves the latest ACTIVE revision.
+          taskDefinition: taskDefinitionFamilyOf(yield* TaskDefinitionArn),
         } as I);
       });
     });

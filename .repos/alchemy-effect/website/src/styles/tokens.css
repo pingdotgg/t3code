@@ -4,28 +4,16 @@
    terracotta accents, walnut browns. Light mode, earthy, calm.
    ============================================================ */
 
-@import url("https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Source+Serif+4:opsz,wght@8..60,400;8..60,500;8..60,600;8..60,700&family=JetBrains+Mono:wght@400;500;600&family=Caveat:wght@500;600;700&display=swap");
-
-/* Tinos (Apache 2.0, Steve Matteson / Ascender / Google) — metrically
-   compatible with Times New Roman. Self-hosted because we use it as a
-   pinned target for specific glyphs (currently just the marketing
-   arrow `→` U+2192). The OG image renderer reads the same TTF from
-   `assets/fonts/Tinos-Regular.ttf` so the website and the OG card
-   render that glyph from the same face. unicode-range scopes the
-   download so it only fires when a Tinos glyph actually appears. */
-@font-face {
-  font-family: "Tinos";
-  font-style: normal;
-  font-weight: 400;
-  font-display: swap;
-  src: url("/fonts/Tinos-Regular.ttf") format("truetype");
-  unicode-range: U+2192; /* → only — keep payload focused */
-}
+@import "@fontsource-variable/inter";
+@import "@fontsource-variable/source-serif-4/opsz.css";
+@import "@fontsource-variable/source-serif-4/opsz-italic.css";
+@import "@fontsource-variable/jetbrains-mono";
+@import "@fontsource-variable/caveat";
 
 :root {
   /* ---------- Brand: muted forest greens ---------- */
   --alc-accent: #5c7a3e; /* moss — primary brand */
-  --alc-accent-deep: #3f5a2a; /* deep forest — pressed/emphasis */
+  --alc-accent-deep: #38511f; /* deep forest — pressed/emphasis (AAA ≥7:1 on parchment) */
   --alc-accent-warm: #7a9a5e; /* sage — lighter, sunny */
   --alc-accent-bright: #8fb15e; /* lit leaves — accents on cream */
   /* Translucent so surfaces using `accent-soft` (hero CTA cards, asides,
@@ -36,10 +24,9 @@
   --alc-accent-40: color-mix(in srgb, #5c7a3e 40%, transparent);
   --alc-accent-12: color-mix(in srgb, #5c7a3e 12%, transparent);
 
-  /* Bindu (yantra centroid dot) — deep moss in light mode. The dark
-     block overrides this to terracotta so the brand mark gets a warm
-     focal point against the dark page. */
-  --alc-yantra-dot: #3f5a2a;
+  /* Bindu (yantra centroid dot). Kept in sync with YANTRA_THEMES in
+     src/brand/yantra.ts, which paints the generated favicons and app icons. */
+  --alc-yantra-dot: #9a4f27;
 
   /* ---------- Secondary: warm terracotta ---------- */
   --alc-terracotta: #c56e3c;
@@ -70,8 +57,8 @@
   /* ---------- Text ---------- */
   --alc-fg-1: #2a2620; /* primary — walnut */
   --alc-fg-2: #4e402c; /* body — deep tan */
-  --alc-fg-3: #85714f; /* muted — mushroom */
-  --alc-fg-4: #a89572; /* tertiary / captions */
+  --alc-fg-3: #52442e; /* muted — dark mushroom (AAA ≥7:1 incl. footer bg) */
+  --alc-fg-4: #564733; /* tertiary / captions (AAA ≥7:1 incl. footer bg) */
   --alc-fg-invert: #fbf6ea; /* on dark (code/term) */
   --alc-fg-on-accent: #fbf6ea; /* on moss */
 
@@ -98,14 +85,15 @@
 
   /* ---------- Type ---------- */
   --alc-font-sans:
-    "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+    "Inter Variable", ui-sans-serif, system-ui, -apple-system, "Segoe UI",
+    sans-serif;
   --alc-font-serif:
-    "Source Serif 4", "Tinos", "Source Serif Pro", Georgia, "Times New Roman",
+    "Source Serif 4 Variable", "Source Serif Pro", Georgia, "Times New Roman",
     serif;
   --alc-font-mono:
-    "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+    "JetBrains Mono Variable", ui-monospace, SFMono-Regular, Menlo, monospace;
   --alc-font-hand:
-    "Caveat", "Comic Sans MS", cursive; /* hand-drawn diagram labels */
+    "Caveat Variable", "Comic Sans MS", cursive; /* hand-drawn diagram labels */
 
   /* ---------- Radius ---------- */
   --alc-radius-xs: 2px;
@@ -159,8 +147,8 @@
   --alc-accent-40: color-mix(in srgb, #a3c473 40%, transparent);
   --alc-accent-12: color-mix(in srgb, #a3c473 18%, transparent);
 
-  /* Bindu pops in terracotta against the dark page. */
-  --alc-yantra-dot: #c56e3c;
+  /* Bindu, lifted for the dark page. */
+  --alc-yantra-dot: #d8835a;
 
   /* Secondary: warm terracotta — lifted */
   --alc-terracotta: #d8835a;
@@ -180,8 +168,8 @@
   /* Text — cream scale */
   --alc-fg-1: #faf6ec; /* primary — parchment */
   --alc-fg-2: #e2d7bc; /* body — washed parchment */
-  --alc-fg-3: #a89572; /* muted — walnut-400 still reads */
-  --alc-fg-4: #85714f; /* tertiary / captions */
+  --alc-fg-3: #c0af89; /* muted — lifted walnut (AAA ≥7:1 on elevated cards) */
+  --alc-fg-4: #b9a881; /* tertiary / captions (AAA ≥7:1 on elevated cards) */
   /* `--alc-fg-invert` is text on the dark code surface, which stays dark in
      both modes — so this token is the same in light and dark. */
   --alc-fg-invert: #fbf6ea;
@@ -360,4 +348,37 @@ body.alc-root,
 ::selection {
   background: var(--alc-accent-soft);
   color: var(--alc-fg-1);
+}
+
+/* Code surfaces stay dark walnut in BOTH themes, but the global selection
+   foreground follows the page (--alc-fg-1 is dark walnut in light mode) —
+   selecting code text would paint dark-on-dark. Pin selection inside code
+   surfaces to the dark-surface palette instead. */
+.expressive-code ::selection,
+.alc-term ::selection,
+.alc-code::selection,
+.alc-code ::selection {
+  background: #5c7a3e66; /* editor.selectionBackground from the walnut EC theme */
+  color: var(--alc-code-var);
+}
+
+/* ---------- Reduced motion (site-wide) ----------
+   Visitors who ask for less motion get every CSS animation and transition
+   jumped to its end state (entrance animations land on their final frame,
+   looping pulses and spinners stop) and instant scrolling. Canvas and
+   scripted demos check the same media query in JS. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-delay: 0s !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    transition-delay: 0s !important;
+  }
+  html,
+  * {
+    scroll-behavior: auto !important;
+  }
 }

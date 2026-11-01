@@ -11,7 +11,7 @@
  */
 import type { Equivalence } from "./Equivalence.ts"
 import * as Hash from "./Hash.ts"
-import { byReferenceInstances, getAllObjectKeys } from "./internal/equal.ts"
+import { byReferenceInstances, getAllObjectKeys, viewBytes } from "./internal/equal.ts"
 import { hasProperty } from "./Predicate.ts"
 
 /**
@@ -28,7 +28,7 @@ import { hasProperty } from "./Predicate.ts"
  *
  * **Example** (Implementing Equal on a class)
  *
- * ```ts
+ * ```ts import.meta.vitest
  * import { Equal, Hash } from "effect"
  *
  * class UserId implements Equal.Equal {
@@ -42,6 +42,9 @@ import { hasProperty } from "./Predicate.ts"
  *     return Hash.string(this.id)
  *   }
  * }
+ *
+ * Equal.equals(new UserId("1"), new UserId("1")) // => true
+ * Equal.equals(new UserId("1"), new UserId("2")) // => false
  * ```
  *
  * @see {@link Equal} — the interface that uses this symbol
@@ -49,7 +52,7 @@ import { hasProperty } from "./Predicate.ts"
  * @category symbols
  * @since 2.0.0
  */
-export const symbol = "~effect/interfaces/Equal"
+export const symbol = "~effect/Equal"
 
 /**
  * The interface for types that define their own equality logic.
@@ -76,7 +79,7 @@ export const symbol = "~effect/interfaces/Equal"
  *
  * **Example** (Comparing coordinates by value)
  *
- * ```ts
+ * ```ts import.meta.vitest
  * import { Equal, Hash } from "effect"
  *
  * class Coordinate implements Equal.Equal {
@@ -93,8 +96,8 @@ export const symbol = "~effect/interfaces/Equal"
  *   }
  * }
  *
- * console.log(Equal.equals(new Coordinate(1, 2), new Coordinate(1, 2))) // true
- * console.log(Equal.equals(new Coordinate(1, 2), new Coordinate(3, 4))) // false
+ * Equal.equals(new Coordinate(1, 2), new Coordinate(1, 2)) // => true
+ * Equal.equals(new Coordinate(1, 2), new Coordinate(3, 4)) // => false
  * ```
  *
  * @see {@link symbol} — the property key used by the equality method
@@ -125,7 +128,7 @@ export interface Equal extends Hash.Hash {
  * arrays compare element-by-element, Maps and Sets compare entries
  * order-independently, and plain objects compare enumerable keys recursively.
  * Functions without an `Equal` implementation compare by reference. Circular
- * references are handled when both structures are circular at the same depth.
+ * structures use coinductive equality.
  *
  * Hash values are checked first as a fast-path rejection. The function also
  * supports dual data-last usage: call it with one argument to get a curried
@@ -133,36 +136,32 @@ export interface Equal extends Hash.Hash {
  *
  * **Gotchas**
  *
- * - Results are cached per object pair in a WeakMap. **Objects must not be
- *   mutated after their first comparison.**
- * - Map and Set comparisons are O(n²) in size.
+ * - Object-pair results are cached in a WeakMap. **Objects must not be
+ *   be mutated after their first comparison.**
+ * - Map and Set entries are matched within groups of equal hashes, so they
+ *   are O(n) for well-distributed hashes and O(n²) when every hash collides.
  *
  * **Example** (Comparing values)
  *
- * ```ts
+ * ```ts import.meta.vitest
  * import { Equal } from "effect"
  *
- * // Primitives
- * console.log(Equal.equals(1, 1))         // true
- * console.log(Equal.equals(NaN, NaN))     // true
- * console.log(Equal.equals("a", "b"))     // false
+ * Equal.equals(1, 1) // => true
+ * Equal.equals(NaN, NaN) // => true
+ * Equal.equals("a", "b") // => false
  *
- * // Objects and arrays
- * console.log(Equal.equals({ a: 1, b: 2 }, { a: 1, b: 2 })) // true
- * console.log(Equal.equals([1, [2, 3]], [1, [2, 3]]))         // true
+ * Equal.equals({ a: 1, b: 2 }, { a: 1, b: 2 }) // => true
+ * Equal.equals([1, [2, 3]], [1, [2, 3]]) // => true
  *
- * // Dates
- * console.log(Equal.equals(new Date("2024-01-01"), new Date("2024-01-01"))) // true
+ * Equal.equals(new Date("2024-01-01"), new Date("2024-01-01")) // => true
  *
- * // Maps (order-independent)
  * const m1 = new Map([["a", 1], ["b", 2]])
  * const m2 = new Map([["b", 2], ["a", 1]])
- * console.log(Equal.equals(m1, m2)) // true
+ * Equal.equals(m1, m2) // => true
  *
- * // Curried form
  * const is5 = Equal.equals(5)
- * console.log(is5(5)) // true
- * console.log(is5(3)) // false
+ * is5(5) // => true
+ * is5(3) // => false
  * ```
  *
  * @see {@link Equal} — the interface for custom equality
@@ -199,109 +198,87 @@ function compareBoth(self: unknown, that: unknown): boolean {
     return false
   }
 
-  // For objects and functions, use cached comparison
-  return withCache(self, that, compareObjects)
+  return compareObjects(self, that)
 }
 
-/** Helper to run comparison with proper visited tracking */
-function withVisitedTracking(
-  self: object,
-  that: object,
-  fn: () => boolean
-): boolean {
-  const hasLeft = visitedLeft.has(self)
-  const hasRight = visitedRight.has(that)
-  // Check for circular references before adding
-  if (hasLeft && hasRight) {
-    return true // Both are circular at the same level
+function compareObjects(self: object, that: object): boolean {
+  const depth = pathLeft.length
+  // A repeated pair closes a cycle under coinductive equality.
+  for (let i = depth; i-- > 0;) {
+    if (pathLeft[i] === self && pathRight[i] === that) return true
   }
-  if (hasLeft || hasRight) {
-    return false // Only one is circular
-  }
-  visitedLeft.add(self)
-  visitedRight.add(that)
-  const result = fn()
-  visitedLeft.delete(self)
-  visitedRight.delete(that)
+  if (depth) return compareOnPath(self, that)
+  // Only outermost results are independent of path assumptions.
+  let known = results.get(self)
+  if (!known) results.set(self, known = new WeakMap())
+  let result = known.get(that)
+  if (result === undefined) known.set(that, result = compareOnPath(self, that))
   return result
 }
 
-const visitedLeft = new WeakSet<object>()
-const visitedRight = new WeakSet<object>()
+function compareOnPath(self: object, that: object): boolean {
+  pathLeft.push(self)
+  pathRight.push(that)
+  try {
+    return compareStructure(self, that)
+  } finally {
+    pathLeft.pop()
+    pathRight.pop()
+  }
+}
 
-/** Helper to perform cached object comparison */
-function compareObjects(self: object, that: object): boolean {
+// The pairs on the current comparison's path (the coinductive assumptions).
+const pathLeft: Array<object> = []
+const pathRight: Array<object> = []
+const results = new WeakMap<object, WeakMap<object, boolean>>()
+
+function compareStructure(self: object, that: object): boolean {
   if (Hash.hash(self) !== Hash.hash(that)) {
     return false
   } else if (self instanceof Date) {
     if (!(that instanceof Date)) return false
-    return self.toISOString() === that.toISOString()
+    const selfTime = self.getTime()
+    const thatTime = that.getTime()
+    return selfTime === thatTime || (Number.isNaN(selfTime) && Number.isNaN(thatTime))
   } else if (self instanceof RegExp) {
-    if (!(that instanceof RegExp)) return false
-    return self.toString() === that.toString()
+    return that instanceof RegExp && self.toString() === that.toString()
   }
-  const selfIsEqual = isEqual(self)
-  const thatIsEqual = isEqual(that)
-  if (selfIsEqual !== thatIsEqual) return false
-  const bothEquals = selfIsEqual && thatIsEqual
-  if (typeof self === "function" && !bothEquals) {
+  const bothEquals = isEqual(self)
+  if (bothEquals !== isEqual(that) || (typeof self === "function" && !bothEquals)) {
     return false
-  }
-  return withVisitedTracking(self, that, () => {
-    if (bothEquals) {
-      return (self as any)[symbol](that)
-    } else if (Array.isArray(self)) {
-      if (!Array.isArray(that) || self.length !== that.length) {
-        return false
-      }
-      return compareArrays(self, that)
-    } else if (ArrayBuffer.isView(self)) {
-      if (!ArrayBuffer.isView(that) || self.byteLength !== that.byteLength) {
-        return false
-      }
-      return compareTypedArrays(self as Uint8Array, that as Uint8Array)
-    } else if (self instanceof Map) {
-      if (!(that instanceof Map) || self.size !== that.size) {
-        return false
-      }
-      return compareMaps(self, that)
-    } else if (self instanceof Set) {
-      if (!(that instanceof Set) || self.size !== that.size) {
-        return false
-      }
-      return compareSets(self, that)
+  } else if (bothEquals) {
+    return (self as Equal)[symbol](that as Equal)
+  } else if (Array.isArray(self)) {
+    if (!Array.isArray(that) || self.length !== that.length) {
+      return false
     }
-    return compareRecords(self as any, that as any)
-  })
-}
-
-function withCache(self: object, that: object, f: (a: any, b: any) => boolean): boolean {
-  // Check cache first
-  let selfMap = equalityCache.get(self)
-  if (!selfMap) {
-    selfMap = new WeakMap()
-    equalityCache.set(self, selfMap)
-  } else if (selfMap.has(that)) {
-    return selfMap.get(that)!
+    return compareArrays(self, that)
+  } else if (ArrayBuffer.isView(self)) {
+    const selfIsDataView = self instanceof DataView
+    if (
+      !ArrayBuffer.isView(that) ||
+      self.byteLength !== that.byteLength ||
+      selfIsDataView !== (that instanceof DataView)
+    ) {
+      return false
+    }
+    if (selfIsDataView) {
+      return compareTypedArrays(viewBytes(self), viewBytes(that as DataView))
+    }
+    return compareTypedArrays(self as Uint8Array, that as Uint8Array)
+  } else if (self instanceof Map) {
+    if (!(that instanceof Map) || self.size !== that.size) {
+      return false
+    }
+    return compareHashed(self, that, entryHash, equalEntries)
+  } else if (self instanceof Set) {
+    if (!(that instanceof Set) || self.size !== that.size) {
+      return false
+    }
+    return compareHashed(self, that, Hash.hash, compareBoth)
   }
-
-  // Perform the comparison
-  const result = f(self, that)
-
-  // Cache the result bidirectionally
-  selfMap.set(that, result)
-
-  let thatMap = equalityCache.get(that)
-  if (!thatMap) {
-    thatMap = new WeakMap()
-    equalityCache.set(that, thatMap)
-  }
-  thatMap.set(self, result)
-
-  return result
+  return compareRecords(self as any, that as any)
 }
-
-const equalityCache = new WeakMap<object, WeakMap<object, boolean>>()
 
 function compareArrays(self: Array<unknown>, that: Array<unknown>): boolean {
   for (let i = 0; i < self.length; i++) {
@@ -345,49 +322,56 @@ function compareRecords(
   return true
 }
 
-/** @internal */
-export function makeCompareMap<K, V>(keyEquivalence: Equivalence<K>, valueEquivalence: Equivalence<V>) {
-  return function compareMaps(self: Iterable<[K, V]>, that: Iterable<[K, V]>): boolean {
-    for (const [selfKey, selfValue] of self) {
-      let found = false
-      for (const [thatKey, thatValue] of that) {
-        if (keyEquivalence(selfKey, thatKey) && valueEquivalence(selfValue, thatValue)) {
-          found = true
-          break
+// Match items one-to-one within equal-hash groups.
+function compareHashed<A>(
+  self: Iterable<A>,
+  that: Iterable<A>,
+  hashOf: (item: A) => number,
+  equivalent: (self: A, that: A) => boolean
+): boolean {
+  const groups = new Map<number, Array<A>>()
+  for (const item of that) {
+    const h = hashOf(item)
+    const group = groups.get(h)
+    if (group) group.push(item)
+    else groups.set(h, [item])
+  }
+  outer: for (const item of self) {
+    const group = groups.get(hashOf(item))
+    if (group) {
+      for (let i = 0; i < group.length; i++) {
+        if (equivalent(item, group[i])) {
+          group[i] = group[group.length - 1]
+          group.pop()
+          continue outer
         }
       }
-      if (!found) {
-        return false
-      }
     }
-
-    return true
+    return false
   }
+  return true
 }
 
-const compareMaps = makeCompareMap(compareBoth, compareBoth)
+const entryHash = (entry: readonly [unknown, unknown]): number => Hash.hash(entry[0])
+
+const equalEntries = <K, V>(self: readonly [K, V], that: readonly [K, V]): boolean =>
+  compareBoth(self[0], that[0]) && compareBoth(self[1], that[1])
+
+const sameGroup = (): number => 0
+
+/** @internal */
+export function makeCompareMap<K, V>(keyEquivalence: Equivalence<K>, valueEquivalence: Equivalence<V>) {
+  return makeCompareSet<readonly [K, V]>((self, that) =>
+    keyEquivalence(self[0], that[0]) && valueEquivalence(self[1], that[1])
+  )
+}
 
 /** @internal */
 export function makeCompareSet<A>(equivalence: Equivalence<A>) {
   return function compareSets(self: Iterable<A>, that: Iterable<A>): boolean {
-    for (const selfValue of self) {
-      let found = false
-      for (const thatValue of that) {
-        if (equivalence(selfValue, thatValue)) {
-          found = true
-          break
-        }
-      }
-      if (!found) {
-        return false
-      }
-    }
-
-    return true
+    return compareHashed(self, that, sameGroup, equivalence)
   }
 }
-
-const compareSets = makeCompareSet(compareBoth)
 
 /**
  * Checks whether a value implements the {@link Equal} interface.
@@ -406,7 +390,7 @@ const compareSets = makeCompareSet(compareBoth)
  *
  * **Example** (Checking Equal values)
  *
- * ```ts
+ * ```ts import.meta.vitest
  * import { Equal, Hash } from "effect"
  *
  * class Token implements Equal.Equal {
@@ -419,9 +403,9 @@ const compareSets = makeCompareSet(compareBoth)
  *   }
  * }
  *
- * console.log(Equal.isEqual(new Token("abc"))) // true
- * console.log(Equal.isEqual({ x: 1 }))         // false
- * console.log(Equal.isEqual(42))                // false
+ * Equal.isEqual(new Token("abc")) // => true
+ * Equal.isEqual({ x: 1 }) // => false
+ * Equal.isEqual(42) // => false
  * ```
  *
  * @see {@link Equal} — the interface being checked
@@ -447,12 +431,10 @@ export const isEqual = (u: unknown): u is Equal => hasProperty(u, symbol)
  *
  * **Example** (Deduplicating with Equal semantics)
  *
- * ```ts
+ * ```ts import.meta.vitest
  * import { Array, Equal } from "effect"
  *
- * const eq = Equal.asEquivalence<number>()
- * const result = Array.dedupeWith([1, 2, 2, 3, 1], eq)
- * console.log(result) // [1, 2, 3]
+ * Array.dedupeWith([1, 2, 2, 3, 1], Equal.asEquivalence<number>()) // => [1, 2, 3]
  * ```
  *
  * @see {@link equals} — the underlying comparison function
@@ -481,18 +463,18 @@ export const asEquivalence: <A>() => Equivalence<A> = () => equals
  *
  * **Example** (Opting out of structural equality)
  *
- * ```ts
+ * ```ts import.meta.vitest
  * import { Equal } from "effect"
  *
  * const a = { x: 1 }
  * const b = { x: 1 }
  *
- * console.log(Equal.equals(a, b)) // true  (structural)
+ * Equal.equals(a, b) // => true
  *
  * const aRef = Equal.byReference(a)
- * console.log(Equal.equals(aRef, b))    // false (reference)
- * console.log(Equal.equals(aRef, aRef)) // true  (same reference)
- * console.log(aRef.x)                   // 1     (proxy reads through)
+ * Equal.equals(aRef, b) // => false
+ * Equal.equals(aRef, aRef) // => true
+ * aRef.x // => 1
  * ```
  *
  * @see {@link byReferenceUnsafe} — same effect without a proxy (mutates the
@@ -526,17 +508,17 @@ export const byReference = <T extends object>(obj: T): T => byReferenceUnsafe(ne
  *
  * **Example** (Marking an object for reference equality)
  *
- * ```ts
+ * ```ts import.meta.vitest
  * import { Equal } from "effect"
  *
  * const obj1 = { a: 1, b: 2 }
  * const obj2 = { a: 1, b: 2 }
  *
- * Equal.byReferenceUnsafe(obj1)
+ * const marked = Equal.byReferenceUnsafe(obj1)
  *
- * console.log(Equal.equals(obj1, obj2))   // false (reference)
- * console.log(Equal.equals(obj1, obj1))   // true  (same reference)
- * console.log(obj1 === Equal.byReferenceUnsafe(obj1)) // true (same object)
+ * Equal.equals(obj1, obj2) // => false
+ * Equal.equals(obj1, obj1) // => true
+ * marked === obj1 // => true
  * ```
  *
  * @see {@link byReference} — safer alternative that creates a proxy

@@ -1,0 +1,472 @@
+import * as Dialog from "../../components/ui/Dialog";
+import { AuthRelayWriteScope } from "@t3tools/contracts";
+import { readEnvironmentScope } from "../../state/session";
+import { ScreenScrollView as ScrollView } from "../../components/ui/ScreenScrollView";
+import { useAuth } from "@clerk/expo";
+import { useAtomSet, useAtomValue } from "@effect/atom-react";
+import * as Notifications from "expo-notifications";
+import { useNavigation } from "@react-navigation/native";
+import * as Effect from "effect/Effect";
+import { AsyncResult } from "effect/reactivity";
+import { useRef, useState, useSyncExternalStore } from "react";
+import { Linking, Platform } from "react-native";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
+
+import { AppText as Text } from "../../components/ui/AppText";
+import {
+  isAtomCommandInterrupted,
+  reportAtomCommandResult,
+  settleAsyncResult,
+  settlePromise,
+  squashAtomCommandFailure,
+} from "@t3tools/client-runtime/state/runtime";
+import { supportsAgentAwarenessPush } from "../agent-awareness/capabilities";
+import {
+  openAndroidLiveUpdateSettings,
+  supportsAndroidLiveUpdateSettings,
+} from "../agent-awareness/androidNotifications";
+import { setLiveActivityUpdatesEnabled } from "../agent-awareness/liveActivityPreferences";
+import { requestAgentNotificationPermission } from "../agent-awareness/notificationPermissions";
+import {
+  getAgentAwarenessRegistrationStatus,
+  refreshAgentAwarenessRegistration,
+  subscribeAgentAwarenessRegistrationStatus,
+} from "../agent-awareness/remoteRegistration";
+import { refreshManagedRelayEnvironments } from "../cloud/managedRelayState";
+import { hasCloudPublicConfig, resolveRelayClerkTokenOptions } from "../cloud/publicConfig";
+import { makePermissionStatusAtom } from "../../lib/permissionStatusAtom";
+import { runtime } from "../../lib/runtime";
+import { mobilePreferencesAtom, updateMobilePreferencesAtom } from "../../state/preferences";
+import { useSavedRemoteConnections } from "../../state/use-remote-environment-registry";
+import { SettingsRow } from "./components/SettingsRow";
+import { SettingsSection } from "./components/SettingsSection";
+import { SettingsSwitchRow } from "./components/SettingsSwitchRow";
+import { SettingsScreen } from "./components/SettingsScreen";
+import { resolveAgentAwarenessPlatformPresentation } from "./SettingsRouteScreen.logic";
+
+type NotificationStatus = "checking" | "enabled" | "disabled" | "unsupported";
+type LiveActivityStatus = "checking" | "enabled" | "disabled" | "signed-out" | "linking";
+
+const notificationStatusAtom = makePermissionStatusAtom<NotificationStatus>({
+  label: "mobile:notification-permission",
+  initial: "checking",
+  read: async () => {
+    if (Platform.OS !== "ios" && Platform.OS !== "android") return "unsupported";
+    const result = await settlePromise(() => Notifications.getPermissionsAsync());
+    if (result._tag === "Failure") {
+      reportAtomCommandResult(result, { label: "notification permission refresh" });
+      return "disabled";
+    }
+    return result.value.granted ? "enabled" : "disabled";
+  },
+});
+
+type LiveActivityBasis = {
+  readonly isLoaded: boolean;
+  readonly isSignedIn: boolean | undefined;
+  readonly preferencesResult: unknown;
+};
+
+function liveActivityStatusFrom(
+  isLoaded: boolean,
+  isSignedIn: boolean | undefined,
+  preferencesResult: AsyncResult.AsyncResult<{ readonly liveActivitiesEnabled?: boolean }, unknown>,
+): LiveActivityStatus {
+  if (!isLoaded) return "checking";
+  if (!isSignedIn) return "signed-out";
+  if (AsyncResult.isFailure(preferencesResult)) return "enabled";
+  if (!AsyncResult.isSuccess(preferencesResult)) return "checking";
+  return preferencesResult.value.liveActivitiesEnabled === false ? "disabled" : "enabled";
+}
+
+function useDeviceRegistered(): boolean {
+  const status = useSyncExternalStore(
+    subscribeAgentAwarenessRegistrationStatus,
+    getAgentAwarenessRegistrationStatus,
+    () => "unknown" as const,
+  );
+  return status === "registered";
+}
+
+export function SettingsNotificationsRouteScreen() {
+  if (!hasCloudPublicConfig()) {
+    return (
+      <SettingsScreen title="Notifications">
+        <ScrollView
+          contentInsetAdjustmentBehavior="automatic"
+          contentContainerClassName="px-5 pt-4"
+        >
+          <Text className="text-base text-foreground-muted">
+            Notifications require T3 Connect in this app build.
+          </Text>
+        </ScrollView>
+      </SettingsScreen>
+    );
+  }
+
+  return <ConfiguredSettingsNotificationsRouteScreen />;
+}
+
+function ConfiguredSettingsNotificationsRouteScreen() {
+  const preferencesResult = useAtomValue(mobilePreferencesAtom);
+  const savePreferences = useAtomSet(updateMobilePreferencesAtom);
+  const agentAwarenessPushAvailable = supportsAgentAwarenessPush();
+  const agentAwarenessPlatform = resolveAgentAwarenessPlatformPresentation(Platform.OS);
+  const agentAwarenessSubtitle =
+    Platform.OS === "android" && !agentAwarenessPushAvailable
+      ? "Install a newer app build to enable notifications"
+      : agentAwarenessPlatform.subtitle;
+  const insets = useSafeAreaInsets();
+  const navigation = useNavigation();
+  const { getToken, isLoaded, isSignedIn } = useAuth({ treatPendingAsSignedOut: false });
+  const { savedConnectionsById } = useSavedRemoteConnections();
+  const notificationStatus = useAtomValue(notificationStatusAtom);
+  const setNotificationStatus = useAtomSet(notificationStatusAtom);
+  // A write in progress or a failed one shows its own status until the auth or
+  // preference state it was based on changes.
+  const [liveActivityOverride, setLiveActivityOverride] = useState<{
+    readonly status: LiveActivityStatus;
+    readonly basis: LiveActivityBasis;
+  } | null>(null);
+  const liveActivityBasis: LiveActivityBasis = { isLoaded, isSignedIn, preferencesResult };
+  const liveActivityStatus =
+    liveActivityOverride !== null &&
+    liveActivityOverride.basis.isLoaded === isLoaded &&
+    liveActivityOverride.basis.isSignedIn === isSignedIn &&
+    liveActivityOverride.basis.preferencesResult === preferencesResult
+      ? liveActivityOverride.status
+      : liveActivityStatusFrom(isLoaded, isSignedIn, preferencesResult);
+  const setLiveActivityStatus = (status: LiveActivityStatus) =>
+    setLiveActivityOverride({ status, basis: liveActivityBasis });
+  const liveActivityWriteInFlight = useRef(false);
+  const deviceRegistered = useDeviceRegistered();
+  const liveActivitiesPreferenceEnabled = AsyncResult.isSuccess(preferencesResult)
+    ? preferencesResult.value.liveActivitiesEnabled !== false
+    : true;
+  const canClearLiveActivitiesPreference =
+    AsyncResult.isSuccess(preferencesResult) &&
+    preferencesResult.value.liveActivitiesEnabled !== false;
+
+  const connections = Object.values(savedConnectionsById);
+  const environmentCount = connections.length;
+
+  const requestNotifications = async () => {
+    const result = await settleAsyncResult(() =>
+      runtime.runPromiseExit(
+        requestAgentNotificationPermission.pipe(
+          Effect.tap((permission) =>
+            permission.type === "granted" ? refreshAgentAwarenessRegistration() : Effect.void,
+          ),
+        ),
+      ),
+    );
+    if (result._tag === "Failure") {
+      if (!isAtomCommandInterrupted(result)) {
+        const error = squashAtomCommandFailure(result);
+        Dialog.alert(
+          "Notifications unavailable",
+          error instanceof Error ? error.message : "Could not request notification permission.",
+        );
+      }
+      return;
+    }
+    if (result.value.type === "granted") {
+      setNotificationStatus("enabled");
+      if (getAgentAwarenessRegistrationStatus() === "registered") {
+        Dialog.alert("Notifications enabled", "Agent notifications are enabled for this device.");
+      } else {
+        Dialog.alert(
+          "Couldn't finish enabling notifications",
+          "Notification access was granted, but this device could not be registered with T3 Connect. Notifications will start once registration succeeds.",
+        );
+      }
+      return;
+    }
+    if (result.value.type === "unsupported") {
+      setNotificationStatus("unsupported");
+      Dialog.alert(
+        "Notifications unavailable",
+        "Agent notifications are unavailable on this platform.",
+      );
+      return;
+    }
+    setNotificationStatus("disabled");
+    if (result.value.canAskAgain) {
+      Dialog.alert("Notifications disabled", "Notifications were not enabled.");
+      return;
+    }
+    Dialog.alert(
+      "Notifications disabled",
+      "Notifications were denied for this app. Open Settings to enable them.",
+      [
+        { text: "Cancel", style: "cancel" },
+        { text: "Open Settings", onPress: () => void Linking.openSettings() },
+      ],
+    );
+  };
+
+  const promptSignIn = () => {
+    Dialog.alert(
+      "Sign in to T3 Connect",
+      "Live Activity updates require T3 Connect so relay can deliver updates to this device.",
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Continue",
+          onPress: () => navigation.navigate("SettingsAuth"),
+        },
+      ],
+    );
+  };
+
+  const linkEnvironments = async () => {
+    if (!isSignedIn) {
+      promptSignIn();
+      return;
+    }
+
+    setLiveActivityStatus("linking");
+    if (Platform.OS === "android") {
+      const permission = await settleAsyncResult(() =>
+        runtime.runPromiseExit(requestAgentNotificationPermission),
+      );
+      if (permission._tag === "Failure") {
+        setLiveActivityStatus("disabled");
+        const error = squashAtomCommandFailure(permission);
+        Dialog.alert(
+          "Ongoing activity unavailable",
+          error instanceof Error ? error.message : "Could not enable agent notifications.",
+        );
+        return;
+      }
+      if (permission.value.type !== "granted") {
+        setLiveActivityStatus("disabled");
+        Dialog.alert(
+          "Notification permission needed",
+          "Enable notifications in system Settings to show ongoing agent activity.",
+          [
+            { text: "Cancel", style: "cancel" },
+            { text: "Open Settings", onPress: () => void Linking.openSettings() },
+          ],
+        );
+        return;
+      }
+      setNotificationStatus("enabled");
+    }
+    const tokenResult = await settlePromise(() => getToken(resolveRelayClerkTokenOptions()));
+    if (tokenResult._tag === "Failure") {
+      setLiveActivityStatus("disabled");
+      const error = squashAtomCommandFailure(tokenResult);
+      Dialog.alert(
+        Platform.OS === "android" ? "Ongoing activity unavailable" : "Live Activities unavailable",
+        error instanceof Error ? error.message : "Could not enable agent activity updates.",
+      );
+      return;
+    }
+    if (!tokenResult.value) {
+      promptSignIn();
+      setLiveActivityStatus("signed-out");
+      return;
+    }
+
+    const updateResult = await settleAsyncResult(() =>
+      runtime.runPromiseExit(
+        setLiveActivityUpdatesEnabled({
+          canConfigureEnvironment: (environmentId) =>
+            readEnvironmentScope(environmentId, AuthRelayWriteScope),
+          enabled: true,
+          previousEnabled: liveActivitiesPreferenceEnabled,
+          clerkToken: tokenResult.value,
+          connections,
+        }),
+      ),
+    );
+    if (updateResult._tag === "Failure") {
+      setLiveActivityStatus("disabled");
+      if (!isAtomCommandInterrupted(updateResult)) {
+        const error = squashAtomCommandFailure(updateResult);
+        Dialog.alert(
+          Platform.OS === "android"
+            ? "Ongoing activity unavailable"
+            : "Live Activities unavailable",
+          error instanceof Error ? error.message : "Could not enable agent activity updates.",
+        );
+      }
+      return;
+    }
+
+    savePreferences({ liveActivitiesEnabled: true });
+    refreshManagedRelayEnvironments();
+    setLiveActivityStatus("enabled");
+    // Environment linking can precede device registration; only registered devices can receive Live Activities.
+    if (getAgentAwarenessRegistrationStatus() === "registered") {
+      Dialog.alert(
+        Platform.OS === "android" ? "Ongoing activity enabled" : "Live Activities enabled",
+        environmentCount > 0
+          ? "Agent activity updates are enabled for environments this connection can configure."
+          : "Agent activity updates are enabled. Add an environment to start receiving updates.",
+      );
+    } else {
+      Dialog.alert(
+        "Couldn't finish enabling activity updates",
+        "This device could not be registered with T3 Connect, so activity updates won't appear yet. They'll start once registration succeeds.",
+      );
+    }
+  };
+
+  const handleDeviceNotificationsChange = (enabled: boolean) => {
+    if (enabled) {
+      if (!isSignedIn) {
+        promptSignIn();
+        return;
+      }
+      void requestNotifications();
+      return;
+    }
+
+    Dialog.alert(
+      "Disable notifications",
+      "Open system Settings to disable notifications for T3 Code.",
+      [
+        { text: "Cancel", style: "cancel" },
+        { text: "Open Settings", onPress: () => void Linking.openSettings() },
+      ],
+    );
+  };
+
+  async function disableLiveActivities() {
+    let token: string | null = null;
+    if (isSignedIn) {
+      const tokenResult = await settlePromise(() => getToken(resolveRelayClerkTokenOptions()));
+      if (tokenResult._tag === "Failure") {
+        setLiveActivityStatus("enabled");
+        reportAtomCommandResult(tokenResult, {
+          label: "live activity disable token lookup",
+        });
+        return;
+      }
+      token = tokenResult.value;
+    }
+
+    const updateResult = await settleAsyncResult(() =>
+      runtime.runPromiseExit(
+        setLiveActivityUpdatesEnabled({
+          canConfigureEnvironment: (environmentId) =>
+            readEnvironmentScope(environmentId, AuthRelayWriteScope),
+          enabled: false,
+          previousEnabled: liveActivitiesPreferenceEnabled,
+          clerkToken: token,
+          connections,
+        }),
+      ),
+    );
+    if (updateResult._tag === "Failure") {
+      setLiveActivityStatus(isSignedIn ? "enabled" : "signed-out");
+      reportAtomCommandResult(updateResult, {
+        label: "live activity disable",
+      });
+      return;
+    }
+    savePreferences({ liveActivitiesEnabled: false });
+    refreshManagedRelayEnvironments();
+    setLiveActivityStatus("disabled");
+  }
+
+  // Both writers settle their own failures, so awaiting them never throws.
+  const handleLiveActivitiesChange = async (enabled: boolean) => {
+    if (liveActivityWriteInFlight.current) return;
+    if (!enabled) {
+      liveActivityWriteInFlight.current = true;
+      setLiveActivityStatus("linking");
+      await disableLiveActivities();
+      liveActivityWriteInFlight.current = false;
+      return;
+    }
+
+    if (!isSignedIn) {
+      promptSignIn();
+      return;
+    }
+
+    liveActivityWriteInFlight.current = true;
+    await linkEnvironments();
+    liveActivityWriteInFlight.current = false;
+  };
+
+  return (
+    <SettingsScreen title="Notifications">
+      <ScrollView
+        contentInsetAdjustmentBehavior="automatic"
+        showsVerticalScrollIndicator={false}
+        className="flex-1"
+        contentContainerClassName="gap-6 px-5 pt-4"
+        contentContainerStyle={{
+          paddingBottom: Math.max(insets.bottom, 18) + 18,
+        }}
+      >
+        <SettingsSection title="Agent activity">
+          <SettingsSwitchRow
+            icon="bell.badge"
+            label="Device Notifications"
+            disabled={
+              !agentAwarenessPlatform.supported ||
+              !agentAwarenessPushAvailable ||
+              notificationStatus === "checking" ||
+              notificationStatus === "unsupported"
+            }
+            subtitle={agentAwarenessSubtitle}
+            value={
+              agentAwarenessPushAvailable && notificationStatus === "enabled" && deviceRegistered
+            }
+            onValueChange={handleDeviceNotificationsChange}
+          />
+          <SettingsSwitchRow
+            disabled={
+              !agentAwarenessPlatform.supported ||
+              !agentAwarenessPushAvailable ||
+              !isLoaded ||
+              liveActivityStatus === "checking" ||
+              liveActivityStatus === "linking"
+            }
+            icon="bolt.circle"
+            label={
+              Platform.OS === "android"
+                ? supportsAndroidLiveUpdateSettings()
+                  ? "Agent Live Updates"
+                  : "Ongoing Agent Activity"
+                : "Live Activity Updates"
+            }
+            subtitle={agentAwarenessSubtitle}
+            value={
+              agentAwarenessPushAvailable &&
+              (liveActivityStatus === "enabled" || liveActivityStatus === "linking") &&
+              deviceRegistered
+            }
+            onValueChange={(enabled) => void handleLiveActivitiesChange(enabled)}
+          />
+          {liveActivityStatus === "signed-out" && canClearLiveActivitiesPreference ? (
+            <SettingsRow
+              icon="bolt.circle"
+              label="Turn off Live Activity preference"
+              onPress={() => void handleLiveActivitiesChange(false)}
+            />
+          ) : null}
+          {supportsAndroidLiveUpdateSettings() ? (
+            <SettingsRow
+              icon="bolt.circle"
+              label="Live Update Settings"
+              onPress={() => {
+                void openAndroidLiveUpdateSettings().catch(() => {
+                  Dialog.alert(
+                    "Couldn't open Settings",
+                    "Open Android Settings, select T3 Code, then enable Live Updates in Notifications.",
+                  );
+                });
+              }}
+            />
+          ) : null}
+        </SettingsSection>
+      </ScrollView>
+    </SettingsScreen>
+  );
+}

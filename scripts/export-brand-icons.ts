@@ -2,7 +2,7 @@
 
 import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { HostProcessEnvironment } from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Console from "effect/Console";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -10,8 +10,8 @@ import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
-import { Command, Flag } from "effect/unstable/cli";
-import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
+import { Command, Flag } from "effect/cli";
+import { ChildProcess, ChildProcessSpawner } from "effect/process";
 
 import { BRAND_ASSET_PATHS, DEVELOPMENT_PUBLIC_ICON_OVERRIDES } from "./lib/brand-assets.ts";
 import { encodePngIco, readPngDimensions, WINDOWS_ICON_SIZES } from "./lib/icon-export.ts";
@@ -73,7 +73,7 @@ interface CommandResult {
   readonly exitCode: number;
 }
 
-export class IconExportFileSystemError extends Schema.TaggedErrorClass<IconExportFileSystemError>()(
+export class IconExportFileSystemError extends Schema.TaggedError<IconExportFileSystemError>()(
   "IconExportFileSystemError",
   {
     operation: Schema.Literals([
@@ -96,7 +96,7 @@ export class IconExportFileSystemError extends Schema.TaggedErrorClass<IconExpor
   }
 }
 
-export class IconExportProcessError extends Schema.TaggedErrorClass<IconExportProcessError>()(
+export class IconExportProcessError extends Schema.TaggedError<IconExportProcessError>()(
   "IconExportProcessError",
   {
     operation: Schema.Literals(["spawn", "collect-stdout", "collect-stderr", "wait-for-exit"]),
@@ -110,7 +110,7 @@ export class IconExportProcessError extends Schema.TaggedErrorClass<IconExportPr
   }
 }
 
-export class IconExportCommandFailedError extends Schema.TaggedErrorClass<IconExportCommandFailedError>()(
+export class IconExportCommandFailedError extends Schema.TaggedError<IconExportCommandFailedError>()(
   "IconExportCommandFailedError",
   {
     command: Schema.String,
@@ -127,7 +127,7 @@ export class IconExportCommandFailedError extends Schema.TaggedErrorClass<IconEx
   }
 }
 
-export class IconExportToolResolutionError extends Schema.TaggedErrorClass<IconExportToolResolutionError>()(
+export class IconExportToolResolutionError extends Schema.TaggedError<IconExportToolResolutionError>()(
   "IconExportToolResolutionError",
   {
     reason: Schema.Literals(["configured-invalid", "configured-outdated", "not-found"]),
@@ -148,7 +148,7 @@ export class IconExportToolResolutionError extends Schema.TaggedErrorClass<IconE
   }
 }
 
-export class IconExportSourceMissingError extends Schema.TaggedErrorClass<IconExportSourceMissingError>()(
+export class IconExportSourceMissingError extends Schema.TaggedError<IconExportSourceMissingError>()(
   "IconExportSourceMissingError",
   {
     sourcePath: Schema.String,
@@ -159,7 +159,7 @@ export class IconExportSourceMissingError extends Schema.TaggedErrorClass<IconEx
   }
 }
 
-export class IconExportRenditionError extends Schema.TaggedErrorClass<IconExportRenditionError>()(
+export class IconExportRenditionError extends Schema.TaggedError<IconExportRenditionError>()(
   "IconExportRenditionError",
   {
     sourcePath: Schema.String,
@@ -179,7 +179,7 @@ export class IconExportRenditionError extends Schema.TaggedErrorClass<IconExport
   }
 }
 
-export class IconExportEncodingError extends Schema.TaggedErrorClass<IconExportEncodingError>()(
+export class IconExportEncodingError extends Schema.TaggedError<IconExportEncodingError>()(
   "IconExportEncodingError",
   {
     variant: Schema.String,
@@ -191,7 +191,7 @@ export class IconExportEncodingError extends Schema.TaggedErrorClass<IconExportE
   }
 }
 
-export class IconExportAssetsStaleError extends Schema.TaggedErrorClass<IconExportAssetsStaleError>()(
+export class IconExportAssetsStaleError extends Schema.TaggedError<IconExportAssetsStaleError>()(
   "IconExportAssetsStaleError",
   {
     paths: Schema.Array(Schema.String),
@@ -246,14 +246,6 @@ const ICON_VARIANTS = [
     },
   },
 ] as const satisfies ReadonlyArray<IconVariant>;
-
-const MACOS_EXPORT_CODEX_PROMPT = [
-  "Use [@Computer](plugin://computer-use@openai-bundled) and the Icon Composer app to export the three macOS app icons in this repository.",
-  "For each project below, use Platform: macOS pre-Tahoe, Appearance: Default, Size: 1024pt, and Scale: 1×, then save the PNG to the exact destination:",
-  ...ICON_VARIANTS.map((variant) => `- ${variant.source} -> ${variant.outputs.macos}`),
-  "Do not resize, composite, or otherwise post-process the exported PNGs.",
-  "Verify every result is 1024×1024 and has the classic macOS safe area: an 824×824 opaque body inset 100px on every side, with only Icon Composer's native shadow extending beyond it.",
-];
 
 const RepositoryRoot = Effect.service(Path.Path).pipe(
   Effect.flatMap((path) => path.fromFileUrl(new URL("..", import.meta.url))),
@@ -408,7 +400,7 @@ const probeIconComposerTool = Effect.fn("iconExport.probeIconComposerTool")(func
 
 const resolveIconComposerTool = Effect.fn("iconExport.resolveIconComposerTool")(function* () {
   const path = yield* Path.Path;
-  const environment = yield* HostProcessEnvironment;
+  const environment = yield* HostProcess.Environment;
   const configuredTool = environment.ICON_COMPOSER_TOOL?.trim();
   if (configuredTool) {
     const tool = yield* probeIconComposerTool(configuredTool);
@@ -607,24 +599,6 @@ const renderVariant = Effect.fn("iconExport.renderVariant")(function* (
   ]);
 });
 
-const logManualMacOsExportInstructions = Effect.fn("iconExport.logManualMacOsExportInstructions")(
-  function* () {
-    yield* Console.warn(
-      [
-        "macOS icons require Icon Composer's GUI-only pre-Tahoe preset and were not changed.",
-        "Export each source with Platform: macOS pre-Tahoe, Appearance: Default, Size: 1024pt, Scale: 1×:",
-        ...ICON_VARIANTS.map((variant) => `- ${variant.source} -> ${variant.outputs.macos}`),
-        "See assets/README.md for the complete workflow.",
-        "",
-        "Copy/paste this prompt into Codex to perform the native exports:",
-        "---",
-        ...MACOS_EXPORT_CODEX_PROMPT,
-        "---",
-      ].join("\n"),
-    );
-  },
-);
-
 const writeAtomically = Effect.fn("iconExport.writeAtomically")(function* (
   repositoryRoot: string,
   relativePath: string,
@@ -774,7 +748,6 @@ export const exportBrandIcons = Effect.fn("exportBrandIcons")(function* (checkOn
       });
     }
     yield* Console.log(`All ${generated.size} generated icon assets are current.`);
-    yield* logManualMacOsExportInstructions();
     return;
   }
 
@@ -784,13 +757,12 @@ export const exportBrandIcons = Effect.fn("exportBrandIcons")(function* (checkOn
     { concurrency: 1, discard: true },
   );
   yield* Console.log(`Updated ${generated.size} generated icon assets.`);
-  yield* logManualMacOsExportInstructions();
 });
 
 export const exportBrandIconsCommand = Command.make(
   "export-brand-icons",
   {
-    check: Flag.boolean("check").pipe(
+    check: Flag.Boolean("check").pipe(
       Flag.withDescription("Verify generated icon assets without modifying files."),
       Flag.withDefault(false),
     ),

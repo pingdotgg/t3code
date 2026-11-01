@@ -17,9 +17,8 @@ export interface BatchDeleteImageRequest extends Omit<
  * reported in the response's `failures` list, not as errors. Provide the
  * implementation with `Effect.provide(AWS.ECRPublic.BatchDeleteImageHttp)`.
  *
- * @binding
- * @section Deleting Images
- * @example Delete An Image By Tag
+ * ### Deleting Images
+ * **Example:** Delete An Image By Tag
  * ```typescript
  * // init
  * const batchDeleteImage = yield* AWS.ECRPublic.BatchDeleteImage(repository);
@@ -29,6 +28,8 @@ export interface BatchDeleteImageRequest extends Omit<
  *   imageIds: [{ imageTag: "stale" }],
  * });
  * ```
+ *
+ * @binding
  */
 export interface BatchDeleteImage extends Binding.Service<
   BatchDeleteImage,

@@ -1,0 +1,153 @@
+---
+title: "Part 4: Install a Helm Chart"
+description: Install metrics-server from its Helm chart with Kubernetes.HelmChart, pass chart values, and check pod metrics with kubectl top.
+sidebar:
+  order: 4
+---
+
+import Terminal from "../../../../components/Terminal.astro";
+import { Code, Tabs, TabItem } from "@astrojs/starlight/components";
+
+In [Part 3](/kubernetes/tutorial/part-3) you ran your own Effect
+programs as Jobs. Now you'll install third-party software from a
+Helm chart, which is how most clusters get it.
+
+The chart is [metrics-server](https://github.com/kubernetes-sigs/metrics-server),
+which collects CPU and memory usage from each node and powers
+`kubectl top`. Local kind clusters don't ship with it.
+
+## Install helm
+
+`Kubernetes.HelmChart` renders charts with the `helm` CLI on your
+machine. If you haven't installed it, follow the
+[instructions](https://helm.sh/docs/intro/install/). For example:
+
+```sh
+brew install helm
+```
+
+## Add the chart
+
+```diff lang="typescript"
++const metricsServer = yield* Kubernetes.HelmChart("MetricsServer", {
++  cluster,
++  chart: "metrics-server",
++  repo: "https://kubernetes-sigs.github.io/metrics-server/",
++  version: "3.14.0",
++  namespace: "kube-system",
++});
+```
+
+`chart` and `repo` name a chart in a classic Helm repository. `chart`
+also accepts an `oci://` reference or a local chart directory.
+`version` pins the chart so every deploy renders the same objects.
+Cluster add-ons conventionally live in `kube-system`, which already
+exists, so no Namespace resource is needed.
+
+## Name the release
+
+```diff lang="typescript"
+version: "3.14.0",
++releaseName: "metrics-server",
+namespace: "kube-system",
+```
+
+Charts name their objects after the Helm release name. Without
+`releaseName`, Alchemy generates one from the stack, stage, and
+logical ID, and the chart's Deployment ends up with a long generated
+name. Choose the release name before the first deploy. Changing it
+later replaces the whole chart.
+
+## Pass chart values
+
+kind's kubelets serve self-signed certificates, so metrics-server
+must skip verifying them. Charts take their configuration as
+**values**, in the same shape as a `values.yaml` file:
+
+```diff lang="typescript"
+  namespace: "kube-system",
++  values: {
++    args: ["--kubelet-insecure-tls"],
++  },
+});
+```
+
+## Deploy
+
+<Tabs syncKey="pkgManager">
+  <TabItem label="bun" icon="bun">
+    <Code code="bun alchemy deploy" lang="sh" />
+  </TabItem>
+  <TabItem label="npm" icon="npm">
+    <Code code="npm run alchemy deploy" lang="sh" />
+  </TabItem>
+  <TabItem label="pnpm" icon="pnpm">
+    <Code code="pnpm alchemy deploy" lang="sh" />
+  </TabItem>
+  <TabItem label="yarn" icon="seti:yarn">
+    <Code code="yarn alchemy deploy" lang="sh" />
+  </TabItem>
+</Tabs>
+
+<Terminal content={`[u]Plan[/u]: [g]1 to create[/g]
+
+[g]+[/g] [b]MetricsServer[/b] [d](Kubernetes.HelmChart)[/d]
+
+Proceed?
+◉ Yes ○ No
+[d]Rendering Helm chart metrics-server@3.14.0...[/d]
+[d]Applying 9 objects from metrics-server...[/d]
+[g]✓[/g] [b]MetricsServer[/b] [d](Kubernetes.HelmChart)[/d] [g]created[/g]`} />
+
+Alchemy ran `helm template` locally and applied the nine rendered
+objects through the same server-side apply path as a Manifest. They
+include a Deployment, a Service, RBAC roles and bindings, and the
+`APIService` that registers the metrics API. There is no
+`helm install` and no release record in the cluster, so
+`helm list -A` shows nothing. Alchemy owns the objects directly.
+
+## Verify it worked
+
+Wait for metrics-server to roll out, give it a minute to collect its
+first samples, then ask for pod usage:
+
+```sh
+kubectl --context kind-alchemy -n kube-system rollout status deployment/metrics-server
+kubectl --context kind-alchemy top pods -n my-app
+```
+
+```text
+NAME                  CPU(cores)   MEMORY(bytes)
+web-c65f4dd44-h8d8d   1m           16Mi
+web-c65f4dd44-rw7jm   1m           16Mi
+```
+
+## Change a value
+
+Values are part of the chart's identity. If you change one, for
+example to run two replicas, the next deploy re-renders the chart and
+applies the difference:
+
+```diff lang="typescript"
+values: {
+  args: ["--kubelet-insecure-tls"],
++  replicas: 2,
+},
+```
+
+If a new render leaves out an object that the previous render
+contained, Alchemy deletes it from the cluster.
+
+## Recap
+
+You now have a complete stack on your local cluster:
+
+- A podinfo Deployment in its own Namespace, configured from
+  TypeScript
+- An Effect smoke test that re-runs when it changes, and the same
+  program on a schedule
+- metrics-server installed from a pinned Helm chart, with Alchemy
+  owning every rendered object
+
+In [Part 5](/kubernetes/tutorial/part-5), you'll point this stack at a
+cluster of your own.

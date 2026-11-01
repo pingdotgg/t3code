@@ -1,141 +1,107 @@
 # Codex
 
-This guide is for people who want to use more than one Codex account in T3 Code. For Claude, see
-[Claude](./providers-claude.md). For first-time setup, see [Install T3 Code](./install.md).
+Use your ChatGPT plan or an existing Codex CLI login to code in T3 Code.
 
-Common reasons:
+## Connect with ChatGPT
 
-- use a work account for work projects
-- use a personal account for personal projects
-- switch to another account when one account hits limits
-- keep one shared Codex history instead of maintaining two separate Codex setups
+Connect during onboarding or in **Settings → Providers**. For a remote machine,
+select that environment first. T3 Code handles Codex installation; sign in on
+OpenAI and allow sharing of your ChatGPT plan.
 
-## I Only Use One Codex Account
+Manage shared usage and credits in ChatGPT through **Manage usage** in T3 Code.
+If a request uses a feature that ChatGPT sharing does not support, use another
+provider for that request.
 
-Use the default provider.
+When reconnecting, choose the same account in T3 Code and on OpenAI's sign-in
+page. Disconnecting stops running threads but keeps their history and lets you
+reconnect later.
 
-In Settings, your Codex provider can stay like this:
+If remote sign-in cannot return automatically, paste the full URL from the final
+localhost page into the sign-in panel, even if that page could not load.
 
-```text
-Display name: Codex
-CODEX_HOME path: ~/.codex
-Shadow home path: empty
-```
+## Use an existing Codex login
 
-Log in with Codex normally:
+T3 Code can use your installed Codex and its existing login. Run `codex login`
+on the environment's machine to sign in. [Provider setup](./install.md#providers)
+covers installation and custom configuration.
 
-```bash
-codex login
-```
+## Use multiple accounts
 
-## I Want Work And Personal Codex Accounts
+Add another ChatGPT account in **Settings → Providers**, then select the account
+from the thread's model picker. Compatible accounts can continue the same thread.
+Connecting accounts through T3 Code leaves your CLI login unchanged.
 
-Use one real Codex home and one shadow home.
+### Multiple CLI logins
 
-Recommended setup:
+A shared Codex home with a shadow home lets work and personal accounts continue
+the same threads. The accounts share Codex sessions and configuration while keeping
+their own login and available models.
 
-```text
-~/.codex      shared Codex home
-~/.codex_p    second account auth
-```
-
-The idea is:
-
-- both accounts can see the same T3/Codex sessions
-- each account keeps its own login
-- existing threads can continue with either account
-
-### Set Up The First Account
-
-Log in normally:
+Keep your first account in `~/.codex`. On the environment's machine, sign the
+second account into a fresh directory:
 
 ```bash
-codex login
+mkdir -p ~/.codex_personal
+CODEX_HOME=~/.codex_personal codex login
 ```
 
-This is the account used by `~/.codex`.
+Then add a second Codex instance in **Settings > Providers**:
 
-In T3 Code Settings, name it something obvious:
+| Instance       | CODEX_HOME path | Shadow home path    |
+| -------------- | --------------- | ------------------- |
+| Codex Work     | `~/.codex`      | Leave empty         |
+| Codex Personal | `~/.codex`      | `~/.codex_personal` |
 
-```text
-Display name: Codex Work
-CODEX_HOME path: ~/.codex
-Shadow home path: empty
-```
+Both instances must use the same **CODEX_HOME path**. T3 Code prepares the shared
+state in the shadow directory; do not populate it by copying your whole Codex
+home.
 
-### Set Up The Second Account
+The shadow account needs its own `auth.json` file. If Codex uses an OS credential
+store, configure file storage for this setup. See
+[OpenAI's credential storage guide](https://learn.chatgpt.com/docs/auth#credential-storage).
 
-Log in with a separate Codex home:
+Use a completely separate **CODEX_HOME path**, with no shadow home, when you want
+separate Codex sessions and configuration. That instance cannot continue threads
+from the other home.
 
-```bash
-mkdir -p ~/.codex_p
-CODEX_HOME=~/.codex_p codex login
-```
+## Switch accounts in an existing thread
 
-In T3 Code Settings, add another Codex provider:
+Choose the other account from the thread's model picker. T3 Code offers compatible
+Codex instances that share the thread's **CODEX_HOME path**. Changing accounts does
+not move the conversation into a separate Codex home.
 
-```text
-Display name: Codex Personal
-CODEX_HOME path: ~/.codex
-Shadow home path: ~/.codex_p
-```
+If the account is missing from the picker, compare the home paths in provider
+settings. If two instances show the same unexpected account or models, check their
+reported accounts, refresh provider status, and confirm the second instance has
+its own shadow path and login. A shadow-home conflict usually means the directory
+contains a copied Codex setup. Use a fresh shadow directory and sign in again.
 
-The important part is that both providers use the same `CODEX_HOME path`, but only the second one
-has a `Shadow home path`.
+## Answer questions while Codex works
 
-## Which Account Am I Using?
+Codex can ask a question and keep working. Answer it in the thread's question
+panel. The answer becomes a new message: it reaches the active turn, or starts
+another turn if Codex has finished. Unanswered questions survive reconnects.
+If you do not want to answer, dismiss the question from its panel. Dismissing
+closes it without sending anything to Codex. This requires a Codex version that
+supports async questions.
 
-Open Settings and look at the provider row.
+## Approve app access
 
-T3 Code shows the authenticated email for providers that report one. Emails are blurred by default;
-click the blurred email to reveal it.
+Codex tools can request access to another app. Respond to the named app's request
+in the thread on web, desktop, or mobile. Some tools offer access for one request,
+the current session, or permanently. See [Permission modes](./permission-modes.md)
+for command and file approvals.
 
-Use display names and accent colors to make accounts easy to tell apart in the model picker.
+## Codex says I hit a usage limit
 
-## I Need A Different API Key Or Endpoint
+When Codex stops on a usage limit, the thread names the window that ran out and
+when it resets, when Codex reports them. Send the message again after the reset. On a workspace plan the
+message also says whether your workspace owner needs to add credits or raise the
+spend limit to continue sooner.
 
-Use the provider's Environment variables section in Settings.
+## Send feedback to OpenAI
 
-This is useful when a Codex-compatible setup needs account-specific variables. Add the variables to
-the provider instance that should receive them, and mark API keys or tokens as sensitive. Sensitive
-values are stored as server secrets and are not sent back to the app after saving.
-
-## Can I Switch Accounts In An Existing Thread?
-
-Yes, when both Codex providers share the same `CODEX_HOME path`.
-
-For example:
-
-```text
-Codex Work      CODEX_HOME path: ~/.codex
-Codex Personal  CODEX_HOME path: ~/.codex, Shadow home path: ~/.codex_p
-```
-
-Those two providers are considered compatible for continuation, so the locked model picker can show
-both.
-
-If you add a third Codex provider with a completely different `CODEX_HOME path`, T3 Code treats it
-as a different workspace. It will not be offered for existing threads created under `~/.codex`.
-
-## If Both Accounts Look The Same
-
-If two Codex providers show the same account or the same unexpected model list:
-
-1. Check the email in Settings.
-2. Refresh provider status.
-3. Confirm the second provider has `Shadow home path` set.
-4. Confirm the shadow directory has its own `auth.json`.
-5. If you copied `~/.codex` into the shadow directory, remove everything except `auth.json`.
-
-Example cleanup:
-
-```bash
-find ~/.codex_p -mindepth 1 ! -name auth.json -exec rm -rf {} +
-```
-
-## When To Use A Separate CODEX_HOME
-
-Use a totally separate `CODEX_HOME path` only when you want a separate Codex workspace.
-
-That means separate sessions and less account switching inside old threads. Most dual-account users
-should use the shared-home plus shadow-home setup instead.
+In an existing Codex thread, send `/feedback` with an optional description, for
+example `/feedback The agent stopped before finishing the tests`. This uploads
+the conversation and Codex logs to OpenAI. The returned thread ID can be shared
+with OpenAI support.

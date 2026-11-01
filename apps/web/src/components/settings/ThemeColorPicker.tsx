@@ -1,7 +1,8 @@
-import type { KeyboardEvent, PointerEvent } from "react";
-import { memo, useCallback, useEffect, useRef, useState } from "react";
+import { memo, useEffect, useRef, useState } from "react";
 import { isThemeColor, themeColorToHex, type ThemeColorRole } from "../../themePalette";
 import { cn } from "../../lib/utils";
+import { hexToHsv, hsvToHex, type HsvColor } from "../../lib/color";
+import { ColorHueSlider, ColorSaturationValuePlane } from "../ui/color-picker";
 import { Input } from "../ui/input";
 import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
@@ -27,21 +28,6 @@ export function getThemeRoleLabel(role: ThemeColorRole): string {
   return role.replace(/([A-Z])/g, " $1").replace(/^./, (character) => character.toUpperCase());
 }
 
-type ThemeColorHsv = {
-  h: number;
-  s: number;
-  v: number;
-};
-
-function clampThemeColor(value: number, min = 0, max = 1) {
-  return Math.min(max, Math.max(min, value));
-}
-
-/**
- * The picker remains an sRGB/hex adapter over the OKLCH palette engine. Alpha
- * is preserved separately and re-attached on commit so adjusting hue or
- * brightness cannot change transparency.
- */
 function themePickerAlphaSuffix(value: string): string {
   const normalized = themeColorToHex(value) ?? "";
   const alpha = normalized.length === 9 ? normalized.slice(7) : "";
@@ -50,63 +36,6 @@ function themePickerAlphaSuffix(value: string): string {
 
 function normalizeThemePickerColor(value: string): string {
   return (themeColorToHex(value) ?? "#000000").slice(0, 7);
-}
-
-function themeHexToHsv(hex: string): ThemeColorHsv {
-  const normalized = normalizeThemePickerColor(hex);
-  const numeric = Number.parseInt(normalized.slice(1), 16);
-  const red = ((numeric >> 16) & 255) / 255;
-  const green = ((numeric >> 8) & 255) / 255;
-  const blue = (numeric & 255) / 255;
-  const max = Math.max(red, green, blue);
-  const min = Math.min(red, green, blue);
-  const delta = max - min;
-
-  let hue = 0;
-  if (delta !== 0) {
-    if (max === red) {
-      hue = ((green - blue) / delta) % 6;
-    } else if (max === green) {
-      hue = (blue - red) / delta + 2;
-    } else {
-      hue = (red - green) / delta + 4;
-    }
-    hue *= 60;
-    if (hue < 0) hue += 360;
-  }
-
-  return {
-    h: hue,
-    s: max === 0 ? 0 : delta / max,
-    v: max,
-  };
-}
-
-function themeHsvToHex(hue: number, saturation: number, value: number) {
-  const normalizedHue = ((hue % 360) + 360) % 360;
-  const chroma = value * saturation;
-  const x = chroma * (1 - Math.abs(((normalizedHue / 60) % 2) - 1));
-  const match = value - chroma;
-  const [red, green, blue] =
-    normalizedHue < 60
-      ? [chroma, x, 0]
-      : normalizedHue < 120
-        ? [x, chroma, 0]
-        : normalizedHue < 180
-          ? [0, chroma, x]
-          : normalizedHue < 240
-            ? [0, x, chroma]
-            : normalizedHue < 300
-              ? [x, 0, chroma]
-              : [chroma, 0, x];
-
-  return `#${[red, green, blue]
-    .map((channel) =>
-      Math.round((channel + match) * 255)
-        .toString(16)
-        .padStart(2, "0"),
-    )
-    .join("")}`;
 }
 
 function themeHexToRgb(hex: string) {
@@ -137,145 +66,82 @@ function themeRgbValue(hex: string) {
   return themeHexToRgb(hex).join(", ");
 }
 
+// Local state updates immediately for a smooth thumb; the parent commit
+// (which can regenerate a whole guided palette) is batched to one call per
+// animation frame. The popover flushes it on close, the drag surfaces on
+// release, and the picker on unmount, so the final frame is never lost.
+function createFrameCommitter() {
+  let pending: { readonly color: string; readonly commit: (color: string) => void } | null = null;
+  let frame: number | null = null;
+  const flush = () => {
+    if (frame !== null) {
+      cancelAnimationFrame(frame);
+      frame = null;
+    }
+    const next = pending;
+    pending = null;
+    next?.commit(next.color);
+  };
+  return {
+    schedule(color: string, commit: (color: string) => void) {
+      pending = { color, commit };
+      if (frame !== null) return;
+      frame = requestAnimationFrame(() => {
+        frame = null;
+        flush();
+      });
+    },
+    flush,
+  };
+}
+
+type FrameCommitter = ReturnType<typeof createFrameCommitter>;
+
 function ThemeColorPickerPanel({
   label,
   value,
+  committer,
   onChange,
 }: {
   label: string;
   value: string;
+  committer: FrameCommitter;
   onChange: (value: string) => void;
 }) {
   const normalizedValue = normalizeThemePickerColor(value);
   const alphaSuffix = themePickerAlphaSuffix(value);
-  const [hsv, setHsv] = useState(() => themeHexToHsv(normalizedValue));
+  const [hsv, setHsv] = useState(() => hexToHsv(normalizedValue));
   const [hexDraft, setHexDraft] = useState(normalizedValue);
   const [rgbDraft, setRgbDraft] = useState(() => themeRgbValue(normalizedValue));
-  const [isDragging, setIsDragging] = useState(false);
-  const isEditingTextRef = useRef(false);
-  const currentColor = themeHsvToHex(hsv.h, hsv.s, hsv.v);
+  const [isEditingText, setIsEditingText] = useState(false);
+  const [syncedValue, setSyncedValue] = useState(normalizedValue);
+  const currentColor = hsvToHex(hsv.h, hsv.s, hsv.v);
   const currentRgb = themeRgbValue(currentColor);
 
-  useEffect(() => {
-    // While a text field is focused, the incoming value may be the guided
-    // editor's readability-adjusted echo of what is being typed; rewriting the
-    // draft would fight the keystrokes. The swatch still tracks via hsv.
-    if (!isEditingTextRef.current) {
+  if (syncedValue !== normalizedValue) {
+    setSyncedValue(normalizedValue);
+    // Ignore readability-adjusted echoes while typing so drafts keep keystrokes; hsv still updates the
+    // swatch.
+    if (!isEditingText) {
       setHexDraft(normalizedValue);
       setRgbDraft(themeRgbValue(normalizedValue));
     }
-    // Keep the current hue/saturation when the incoming value is just our own
-    // change echoed back; hex → HSV is lossy for greys, white, and black.
-    setHsv((current) =>
-      themeHsvToHex(current.h, current.s, current.v) === normalizedValue
-        ? current
-        : themeHexToHsv(normalizedValue),
-    );
-  }, [normalizedValue]);
+    // Preserve hue/saturation for echoed changes; hex-to-HSV loses them for greys, white, and black.
+    if (currentColor !== normalizedValue) setHsv(hexToHsv(normalizedValue));
+  }
 
-  // Local state updates immediately for a smooth thumb; the parent commit
-  // (which can regenerate a whole guided palette) is batched to one call per
-  // animation frame.
-  const onChangeRef = useRef(onChange);
-  onChangeRef.current = onChange;
-  const pendingCommitRef = useRef<string | null>(null);
-  const commitFrameRef = useRef<number | null>(null);
-  // The final drag frame must not be lost when the popover closes or the
-  // pointer lifts before the animation frame fires.
-  const flushPendingCommit = useCallback(() => {
-    if (commitFrameRef.current !== null) {
-      cancelAnimationFrame(commitFrameRef.current);
-      commitFrameRef.current = null;
-    }
-    const pending = pendingCommitRef.current;
-    pendingCommitRef.current = null;
-    if (pending !== null) onChangeRef.current(pending);
-  }, []);
-  useEffect(() => () => flushPendingCommit(), [flushPendingCommit]);
-  const scheduleCommit = useCallback((color: string) => {
-    pendingCommitRef.current = color;
-    commitFrameRef.current ??= requestAnimationFrame(() => {
-      commitFrameRef.current = null;
-      const pending = pendingCommitRef.current;
-      pendingCommitRef.current = null;
-      if (pending !== null) onChangeRef.current(pending);
-    });
-  }, []);
-
-  const commitHsv = useCallback(
-    (nextHsv: ThemeColorHsv) => {
-      setHsv(nextHsv);
-      const nextColor = themeHsvToHex(nextHsv.h, nextHsv.s, nextHsv.v);
-      setHexDraft(nextColor);
-      setRgbDraft(themeRgbValue(nextColor));
-      scheduleCommit(nextColor + alphaSuffix);
-    },
-    [alphaSuffix, scheduleCommit],
-  );
-
-  const updateFromPlane = useCallback(
-    (event: PointerEvent<HTMLDivElement>) => {
-      const bounds = event.currentTarget.getBoundingClientRect();
-      const saturation = clampThemeColor((event.clientX - bounds.left) / bounds.width);
-      const value = 1 - clampThemeColor((event.clientY - bounds.top) / bounds.height);
-      commitHsv({ ...hsv, s: saturation, v: value });
-    },
-    [commitHsv, hsv],
-  );
-
-  const updateFromHue = useCallback(
-    (event: PointerEvent<HTMLDivElement>) => {
-      const bounds = event.currentTarget.getBoundingClientRect();
-      const hue = clampThemeColor((event.clientX - bounds.left) / bounds.width) * 360;
-      commitHsv({ ...hsv, h: hue });
-    },
-    [commitHsv, hsv],
-  );
-
-  const handleHueKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
-    const step = event.shiftKey ? 10 : 1;
-    const direction = event.key === "ArrowRight" || event.key === "ArrowUp" ? 1 : -1;
-    if (!["ArrowDown", "ArrowLeft", "ArrowRight", "ArrowUp"].includes(event.key)) return;
-    event.preventDefault();
-    commitHsv({ ...hsv, h: (hsv.h + direction * step + 360) % 360 });
+  const commitHsv = (nextHsv: HsvColor) => {
+    setHsv(nextHsv);
+    const nextColor = hsvToHex(nextHsv.h, nextHsv.s, nextHsv.v);
+    setHexDraft(nextColor);
+    setRgbDraft(themeRgbValue(nextColor));
+    committer.schedule(nextColor + alphaSuffix, onChange);
   };
-
-  const handlePlaneKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
-    if (!["ArrowDown", "ArrowLeft", "ArrowRight", "ArrowUp"].includes(event.key)) return;
-    event.preventDefault();
-    const step = event.shiftKey ? 0.1 : 0.02;
-    const nextHsv = { ...hsv };
-    if (event.key === "ArrowLeft") nextHsv.s = clampThemeColor(hsv.s - step);
-    if (event.key === "ArrowRight") nextHsv.s = clampThemeColor(hsv.s + step);
-    if (event.key === "ArrowUp") nextHsv.v = clampThemeColor(hsv.v + step);
-    if (event.key === "ArrowDown") nextHsv.v = clampThemeColor(hsv.v - step);
-    commitHsv(nextHsv);
-  };
-
-  const handlePointerDown = (handler: (event: PointerEvent<HTMLDivElement>) => void) => {
-    return (event: PointerEvent<HTMLDivElement>) => {
-      event.currentTarget.setPointerCapture(event.pointerId);
-      setIsDragging(true);
-      handler(event);
-    };
-  };
-
-  const stopDragging = () => {
-    setIsDragging(false);
-    flushPendingCommit();
-  };
-
-  // Thumbs travel inside the control by half their own size so they never
-  // clip at the extremes; movement only animates for keyboard steps and
-  // click-to-jump, never while dragging.
-  const thumbTransition = isDragging
-    ? undefined
-    : "left 80ms linear, top 80ms linear, background-color 80ms linear";
 
   const handleHexChange = (nextValue: string) => {
     setHexDraft(nextValue);
     if (!/^#[0-9a-f]{6}$/i.test(nextValue)) return;
-    const nextHsv = themeHexToHsv(nextValue);
+    const nextHsv = hexToHsv(nextValue);
     setHsv(nextHsv);
     setRgbDraft(themeRgbValue(nextValue));
     onChange(nextValue.toLowerCase());
@@ -285,19 +151,17 @@ function ThemeColorPickerPanel({
     setRgbDraft(nextValue);
     const nextColor = themeRgbToHex(nextValue);
     if (!nextColor) return;
-    setHsv(themeHexToHsv(nextColor));
+    setHsv(hexToHsv(nextColor));
     setHexDraft(nextColor);
-    // RGB cannot express alpha, so a commit keeps the incoming suffix just
-    // like the plane and hue controls do.
     onChange(nextColor + alphaSuffix);
   };
 
   return (
-    <div className="w-72 bg-popover">
+    <div className="w-72">
       <div className="flex items-center justify-between border-b border-border/70 px-4 py-3">
         <div className="min-w-0">
           <p className="truncate text-xs font-semibold text-foreground">{label}</p>
-          <p className="text-[11px] text-muted-foreground">Choose a color</p>
+          <p className="text-2xs text-muted-foreground">Choose a color</p>
         </div>
         <span
           className="size-7 shrink-0 rounded-full shadow-sm"
@@ -305,71 +169,21 @@ function ThemeColorPickerPanel({
         />
       </div>
       <div className="grid gap-3 px-3 pb-3 pt-3">
-        <div
-          aria-label={`${label} saturation and brightness`}
-          aria-valuetext={`saturation ${Math.round(hsv.s * 100)}%, brightness ${Math.round(hsv.v * 100)}%`}
-          className="relative h-32 cursor-crosshair touch-none overflow-hidden rounded-lg outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-popover"
-          role="slider"
-          style={{
-            backgroundColor: `hsl(${hsv.h} 100% 50%)`,
-            backgroundImage:
-              "linear-gradient(to top, #000, transparent), linear-gradient(to right, #fff, transparent)",
-          }}
-          tabIndex={0}
-          onKeyDown={handlePlaneKeyDown}
-          onLostPointerCapture={stopDragging}
-          onPointerDown={handlePointerDown(updateFromPlane)}
-          onPointerMove={(event) => {
-            if (event.currentTarget.hasPointerCapture(event.pointerId)) updateFromPlane(event);
-          }}
-          onPointerUp={stopDragging}
-        >
-          <span
-            className="pointer-events-none absolute size-3 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-white shadow-[0_0_0_1px_rgb(0_0_0/0.4)]"
-            style={{
-              left: `calc(${hsv.s} * (100% - 0.75rem) + 0.375rem)`,
-              top: `calc(${1 - hsv.v} * (100% - 0.75rem) + 0.375rem)`,
-              transition: thumbTransition,
-            }}
-          />
-        </div>
-        <div
-          aria-label={`${label} hue`}
-          aria-valuemax={360}
-          aria-valuemin={0}
-          aria-valuenow={Math.round(hsv.h)}
-          className="relative flex h-6 cursor-pointer touch-none items-center rounded-full outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-popover"
-          role="slider"
-          tabIndex={0}
-          onKeyDown={handleHueKeyDown}
-          onLostPointerCapture={stopDragging}
-          onPointerDown={handlePointerDown(updateFromHue)}
-          onPointerMove={(event) => {
-            if (event.currentTarget.hasPointerCapture(event.pointerId)) updateFromHue(event);
-          }}
-          onPointerUp={stopDragging}
-        >
-          <span
-            aria-hidden
-            className="h-2.5 w-full rounded-full shadow-[inset_0_0_0_1px_rgb(0_0_0_/_12%)]"
-            style={{
-              background: "linear-gradient(to right, #f00, #ff0, #0f0, #0ff, #00f, #f0f, #f00)",
-            }}
-          />
-          <span
-            className="pointer-events-none absolute top-1/2 size-4 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-white shadow-[0_0_0_1px_rgb(0_0_0/0.4)]"
-            style={{
-              left: `calc(${hsv.h / 360} * (100% - 1rem) + 0.5rem)`,
-              // The ball shows the pure hue so it stays visually anchored to
-              // the track; the header swatch carries the full current color.
-              backgroundColor: `hsl(${hsv.h} 100% 50%)`,
-              transition: thumbTransition,
-            }}
-          />
-        </div>
+        <ColorSaturationValuePlane
+          label={label}
+          value={hsv}
+          onChange={commitHsv}
+          onInteractionEnd={committer.flush}
+        />
+        <ColorHueSlider
+          label={`${label} hue`}
+          value={hsv.h}
+          onChange={(h) => commitHsv({ ...hsv, h })}
+          onInteractionEnd={committer.flush}
+        />
         <div className="grid grid-cols-[1fr_1.2fr] gap-2">
           <label className="grid min-w-0 gap-1">
-            <span className="px-1 text-[10px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">
+            <span className="px-1 text-3xs font-semibold uppercase tracking-widest text-muted-foreground">
               HEX
             </span>
             <span className="flex min-w-0 items-center gap-2 rounded-lg border border-input bg-background px-2 focus-within:border-ring">
@@ -381,13 +195,13 @@ function ThemeColorPickerPanel({
                 aria-label={`${label} picker hex value`}
                 className="h-8 min-w-0 flex-1 bg-transparent font-mono text-xs text-foreground outline-none"
                 onBlur={() => {
-                  isEditingTextRef.current = false;
+                  setIsEditingText(false);
                   setHexDraft(currentColor);
                   setRgbDraft(currentRgb);
                 }}
                 onChange={(event) => handleHexChange(event.currentTarget.value)}
                 onFocus={() => {
-                  isEditingTextRef.current = true;
+                  setIsEditingText(true);
                 }}
                 spellCheck={false}
                 value={hexDraft}
@@ -395,7 +209,7 @@ function ThemeColorPickerPanel({
             </span>
           </label>
           <label className="grid min-w-0 gap-1">
-            <span className="px-1 text-[10px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">
+            <span className="px-1 text-3xs font-semibold uppercase tracking-widest text-muted-foreground">
               RGB
             </span>
             <span className="flex min-w-0 items-center rounded-lg border border-input bg-background px-2 focus-within:border-ring">
@@ -403,13 +217,13 @@ function ThemeColorPickerPanel({
                 aria-label={`${label} picker RGB value`}
                 className="h-8 min-w-0 flex-1 bg-transparent font-mono text-xs text-foreground outline-none"
                 onBlur={() => {
-                  isEditingTextRef.current = false;
+                  setIsEditingText(false);
                   setHexDraft(currentColor);
                   setRgbDraft(currentRgb);
                 }}
                 onChange={(event) => handleRgbChange(event.currentTarget.value)}
                 onFocus={() => {
-                  isEditingTextRef.current = true;
+                  setIsEditingText(true);
                 }}
                 spellCheck={false}
                 value={rgbDraft}
@@ -426,15 +240,36 @@ function ThemeColorPicker({
   label,
   value,
   onChange,
+  onEditStart,
+  onEditCancel,
   onInteract,
 }: {
   label: string;
   value: string;
   onChange: (value: string) => void;
+  onEditStart?: () => void;
+  onEditCancel?: () => void;
   onInteract?: () => void;
 }) {
+  const [committer] = useState(createFrameCommitter);
+  // Escape reverts the edit, so commits after it (the pending frame flushed on close, or a drag
+  // still firing through the exit animation) are dropped instead of landing on the restored colors.
+  const cancelledRef = useRef(false);
+  // Unmounting with the popover open (the editor closes mid-drag) never fires onOpenChange.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- flushes the frame committer on unmount, since an open popover never fires onOpenChange
+  useEffect(() => committer.flush, [committer]);
   return (
-    <Popover>
+    <Popover
+      onOpenChange={(open, eventDetails) => {
+        cancelledRef.current = !open && eventDetails.reason === "escape-key";
+        if (open) {
+          onEditStart?.();
+          return;
+        }
+        committer.flush();
+        if (cancelledRef.current) onEditCancel?.();
+      }}
+    >
       <Tooltip>
         <TooltipTrigger
           render={
@@ -442,7 +277,7 @@ function ThemeColorPicker({
               render={
                 <button
                   aria-label={`Choose ${label} color`}
-                  className="relative flex size-6 shrink-0 cursor-pointer items-center justify-center rounded-full border border-foreground/30 transition-transform hover:scale-105 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
+                  className="relative flex size-6 shrink-0 cursor-pointer items-center justify-center rounded-full border border-foreground/30 transition-transform hover:scale-105 focus-visible:outline-2 focus-visible:outline-solid focus-visible:-outline-offset-2 focus-visible:outline-ring"
                   onFocus={onInteract}
                   onPointerDown={onInteract}
                   type="button"
@@ -460,12 +295,19 @@ function ThemeColorPicker({
       </Tooltip>
       <PopoverPopup
         align="end"
-        className="overflow-hidden rounded-2xl border border-border/70 p-0 shadow-2xl [--viewport-inline-padding:0px] [&_[data-slot=popover-viewport]]:p-0"
+        padding="none"
         data-theme-editor-panel=""
         side="bottom"
         sideOffset={10}
       >
-        <ThemeColorPickerPanel label={label} onChange={onChange} value={value} />
+        <ThemeColorPickerPanel
+          committer={committer}
+          label={label}
+          onChange={(nextValue) => {
+            if (!cancelledRef.current) onChange(nextValue);
+          }}
+          value={value}
+        />
       </PopoverPopup>
     </Popover>
   );
@@ -475,6 +317,8 @@ export const ThemeColorField = memo(function ThemeColorField({
   role,
   value,
   onChange,
+  onEditStart,
+  onEditCancel,
   onSelect,
   onToggleSelected,
   selected = false,
@@ -483,6 +327,8 @@ export const ThemeColorField = memo(function ThemeColorField({
   role: ThemeColorRole;
   value: string;
   onChange: (role: ThemeColorRole, value: string) => void;
+  onEditStart?: (role: ThemeColorRole) => void;
+  onEditCancel?: (role: ThemeColorRole) => void;
   onSelect?: (role: ThemeColorRole) => void;
   onToggleSelected?: (role: ThemeColorRole) => void;
   selected?: boolean;
@@ -499,7 +345,7 @@ export const ThemeColorField = memo(function ThemeColorField({
     <div
       className={cn(
         "flex min-h-11 min-w-0 items-center gap-2 rounded-lg px-2 py-1.5 transition-[background-color,box-shadow]",
-        selected && "bg-accent/60 shadow-[inset_0_0_0_1px_var(--ring)]",
+        selected && "bg-accent/60 inset-ring inset-ring-ring",
       )}
       data-theme-color-role={role}
     >
@@ -509,7 +355,7 @@ export const ThemeColorField = memo(function ThemeColorField({
             <button
               aria-label={`${selected ? "Hide" : "Show"} ${label} usage`}
               aria-pressed={selected}
-              className="flex min-w-0 flex-1 cursor-pointer items-center rounded-md text-left text-sm text-muted-foreground outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
+              className="flex min-w-0 flex-1 cursor-pointer items-center rounded-md text-left text-sm text-muted-foreground outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
               onClick={() => onToggleSelected?.(role)}
               type="button"
             >
@@ -523,20 +369,22 @@ export const ThemeColorField = memo(function ThemeColorField({
         <ThemeColorPicker
           label={label}
           onChange={(nextValue) => onChange(role, nextValue)}
+          onEditCancel={() => onEditCancel?.(role)}
+          onEditStart={() => onEditStart?.(role)}
           onInteract={() => onSelect?.(role)}
           value={swatchValue}
         />
         <Input
           aria-invalid={!isColorValue}
           aria-label={`${label} hex value`}
-          className="w-28 shrink-0 rounded-md border-0 bg-black/10 font-mono text-xs text-foreground shadow-none focus-within:bg-black/15 focus-within:ring-0 dark:bg-black/20 dark:focus-within:bg-black/25 [&_[data-slot=input]]:text-right"
+          className="w-28 shrink-0"
+          font="mono"
           id={`${role}-hex`}
           nativeInput
           onChange={(event) => onChange(role, event.currentTarget.value)}
           onFocus={() => onSelect?.(role)}
           onPointerDown={() => onSelect?.(role)}
-          size="sm"
-          unstyled
+          size="compact"
           value={editorValue}
         />
       </div>

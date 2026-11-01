@@ -38,9 +38,8 @@ export interface LoggingConfiguration extends Resource<
  *
  * A firewall has exactly one logging configuration; deleting this resource
  * resets it to no logging.
- * @resource
- * @section Configuring Logging
- * @example Flow logs to CloudWatch Logs
+ * ### Configuring Logging
+ * **Example:** Flow logs to CloudWatch Logs
  * ```typescript
  * import * as Logs from "alchemy/AWS/Logs";
  * import * as NetworkFirewall from "alchemy/AWS/NetworkFirewall";
@@ -59,7 +58,7 @@ export interface LoggingConfiguration extends Resource<
  * });
  * ```
  *
- * @example Alert logs to S3
+ * **Example:** Alert logs to S3
  * ```typescript
  * yield* NetworkFirewall.LoggingConfiguration("Logging", {
  *   firewallArn: firewall.firewallArn,
@@ -72,6 +71,8 @@ export interface LoggingConfiguration extends Resource<
  *   ],
  * });
  * ```
+ *
+ * @resource
  */
 export const LoggingConfiguration = Resource<LoggingConfiguration>(
   "AWS.NetworkFirewall.LoggingConfiguration",

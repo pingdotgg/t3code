@@ -14,9 +14,8 @@ export interface FilterLogEventsRequest extends Omit<
  * Bind this operation to a `LogGroup` inside a function runtime to get a
  * callable that searches log events across all streams of the group,
  * automatically injecting the log group name.
- * @binding
- * @section Reading Logs
- * @example Search for a Marker
+ * ### Reading Logs
+ * **Example:** Search for a Marker
  * ```typescript
  * const filterLogEvents = yield* AWS.Logs.FilterLogEvents(logGroup);
  *
@@ -26,11 +25,11 @@ export interface FilterLogEventsRequest extends Omit<
  * });
  * ```
  *
- * @example Wire into a Lambda Function
+ * **Example:** Wire into a Lambda Function
  * ```typescript
  * // Provide the FilterLogEventsHttp layer on the Function's init Effect.
  * export default SearchFunction.make(
- *   { main: import.meta.url, url: true },
+ *   { main: import.meta.url, functionUrl: true },
  *   Effect.gen(function* () {
  *     const logGroup = yield* AWS.Logs.LogGroup("AppLogs", {});
  *     const filterLogEvents = yield* AWS.Logs.FilterLogEvents(logGroup);
@@ -43,6 +42,8 @@ export interface FilterLogEventsRequest extends Omit<
  *   }).pipe(Effect.provide(AWS.Logs.FilterLogEventsHttp)),
  * );
  * ```
+ *
+ * @binding
  */
 export interface FilterLogEvents extends Binding.Service<
   FilterLogEvents,

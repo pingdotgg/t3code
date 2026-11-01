@@ -19,9 +19,8 @@ export interface CheckDomainTransferabilityRequest
  * Provide the implementation with
  * `Effect.provide(AWS.Route53Domains.CheckDomainTransferabilityHttp)`.
  *
- * @binding
- * @section Checking Domain Transferability
- * @example Check Whether a Domain Can Be Transferred In
+ * ### Checking Domain Transferability
+ * **Example:** Check Whether a Domain Can Be Transferred In
  * ```typescript
  * // init
  * const checkDomainTransferability =
@@ -35,6 +34,8 @@ export interface CheckDomainTransferabilityRequest
  *   // domain can be transferred to Route 53
  * }
  * ```
+ *
+ * @binding
  */
 export interface CheckDomainTransferability extends Binding.Service<
   CheckDomainTransferability,

@@ -205,9 +205,8 @@ export interface DBCluster extends Resource<
  * immutable fields (`engine`, `dbSubnetGroupName`, `storageEncrypted`,
  * `kmsKeyId`, `globalClusterIdentifier`, `availabilityZones`,
  * `masterUsername`) force a replacement.
- * @resource
- * @section Creating a Cluster
- * @example DocumentDB cluster with a managed master secret
+ * ### Creating a Cluster
+ * **Example:** DocumentDB cluster with a managed master secret
  * ```typescript
  * const cluster = yield* DBCluster("Docs", {
  *   dbSubnetGroupName: subnetGroup.dbSubnetGroupName,
@@ -219,8 +218,8 @@ export interface DBCluster extends Resource<
  * });
  * ```
  *
- * @section Logs & Encryption
- * @example Export audit logs and encrypt storage
+ * ### Logs & Encryption
+ * **Example:** Export audit logs and encrypt storage
  * ```typescript
  * const cluster = yield* DBCluster("Docs", {
  *   dbSubnetGroupName: subnetGroup.dbSubnetGroupName,
@@ -230,6 +229,8 @@ export interface DBCluster extends Resource<
  *   enableCloudwatchLogsExports: ["audit", "profiler"],
  * });
  * ```
+ *
+ * @resource
  */
 export const DBCluster = Resource<DBCluster>("AWS.DocDB.DBCluster");
 

@@ -1,5 +1,3 @@
-"use client";
-
 import {
   PREVIEW_VIEWPORT_MAX_AREA,
   PREVIEW_VIEWPORT_MAX_DIMENSION,
@@ -53,6 +51,7 @@ export function BrowserDeviceToolbar({
   const [customSize, setCustomSize] = useState<{
     readonly width: string;
     readonly height: string;
+    readonly axis?: "width" | "height";
   } | null>(null);
   const presentedSize = customSize ?? {
     width: String(setting.width),
@@ -63,15 +62,25 @@ export function BrowserDeviceToolbar({
     PREVIEW_VIEWPORT_PRESETS.some((preset) => preset.id === setting.presetId)
       ? setting.presetId
       : RESPONSIVE_VALUE;
-  const customWidth = Number(presentedSize.width);
-  const customHeight = Number(presentedSize.height);
+  const typedWidth = Number(presentedSize.width);
+  const typedHeight = Number(presentedSize.height);
+  const { width: customWidth, height: customHeight } =
+    aspectRatio === null || customSize?.axis === undefined
+      ? { width: typedWidth, height: typedHeight }
+      : resizeFreeformViewport(
+          { width: typedWidth, height: typedHeight },
+          { x: 0, y: 0 },
+          1,
+          customSize?.axis === "height" ? "south" : "east",
+          aspectRatio,
+        );
   const customValid =
-    Number.isInteger(customWidth) &&
-    Number.isInteger(customHeight) &&
-    customWidth >= PREVIEW_VIEWPORT_MIN_DIMENSION &&
-    customWidth <= PREVIEW_VIEWPORT_MAX_DIMENSION &&
-    customHeight >= PREVIEW_VIEWPORT_MIN_DIMENSION &&
-    customHeight <= PREVIEW_VIEWPORT_MAX_DIMENSION &&
+    Number.isInteger(typedWidth) &&
+    Number.isInteger(typedHeight) &&
+    typedWidth >= PREVIEW_VIEWPORT_MIN_DIMENSION &&
+    typedWidth <= PREVIEW_VIEWPORT_MAX_DIMENSION &&
+    typedHeight >= PREVIEW_VIEWPORT_MIN_DIMENSION &&
+    typedHeight <= PREVIEW_VIEWPORT_MAX_DIMENSION &&
     customWidth * customHeight <= PREVIEW_VIEWPORT_MAX_AREA;
 
   const apply = (next: PreviewViewportSetting, nextAspectRatio = aspectRatio) => {
@@ -98,6 +107,7 @@ export function BrowserDeviceToolbar({
       const next = {
         width: axis === "width" ? value : (current?.width ?? String(setting.width)),
         height: axis === "height" ? value : (current?.height ?? String(setting.height)),
+        axis,
       };
       const numeric = Number(value);
       if (
@@ -117,7 +127,11 @@ export function BrowserDeviceToolbar({
         axis === "width" ? "east" : "south",
         aspectRatio,
       );
-      return { width: String(resized.width), height: String(resized.height) };
+      return {
+        ...next,
+        width: axis === "width" ? value : String(resized.width),
+        height: axis === "height" ? value : String(resized.height),
+      };
     });
   };
 
@@ -175,7 +189,7 @@ export function BrowserDeviceToolbar({
       }}
     >
       {width >= 560 ? (
-        <span className="mr-0.5 shrink-0 text-[11px] font-medium text-muted-foreground">
+        <span className="mr-0.5 shrink-0 text-2xs font-medium text-muted-foreground">
           Dimensions
         </span>
       ) : null}
@@ -189,15 +203,12 @@ export function BrowserDeviceToolbar({
         <SelectTrigger
           variant="ghost"
           size="xs"
-          className={cn(
-            "shrink-0 justify-between px-1.5 font-medium",
-            width >= 440 ? "w-36" : "w-24",
-          )}
+          className={cn("shrink-0 justify-between", width >= 440 ? "w-36" : "w-24")}
           aria-label="Browser device preset"
         >
           <SelectValue />
         </SelectTrigger>
-        <SelectPopup align="start" alignItemWithTrigger={false} className="min-w-64">
+        <SelectPopup align="start" alignItemWithTrigger={false}>
           <SelectItem value={RESPONSIVE_VALUE}>Responsive</SelectItem>
           <SelectGroup>
             <SelectGroupLabel>Standard</SelectGroupLabel>
@@ -227,7 +238,8 @@ export function BrowserDeviceToolbar({
           nativeInput
           type="number"
           inputMode="numeric"
-          size="sm"
+          size="compact"
+          font="mono"
           min={PREVIEW_VIEWPORT_MIN_DIMENSION}
           max={PREVIEW_VIEWPORT_MAX_DIMENSION}
           value={presentedSize.width}
@@ -244,17 +256,15 @@ export function BrowserDeviceToolbar({
           onChange={(event) => updateCustomDimension("width", event.target.value)}
           aria-label="Viewport width"
           aria-invalid={!customValid}
-          className={cn(
-            "h-6 rounded-md text-center tabular-nums [&_[data-slot=input]]:h-full [&_[data-slot=input]]:px-1 [&_[data-slot=input]]:text-xs [&_[data-slot=input]]:leading-none [&_[data-slot=input]::-webkit-inner-spin-button]:appearance-none [&_[data-slot=input]]:[appearance:textfield]",
-            width >= 360 ? "w-14" : "w-11",
-          )}
+          className={width >= 360 ? "w-14" : "w-13"}
         />
         <span className="text-xs text-muted-foreground">×</span>
         <Input
           nativeInput
           type="number"
           inputMode="numeric"
-          size="sm"
+          size="compact"
+          font="mono"
           min={PREVIEW_VIEWPORT_MIN_DIMENSION}
           max={PREVIEW_VIEWPORT_MAX_DIMENSION}
           value={presentedSize.height}
@@ -271,10 +281,7 @@ export function BrowserDeviceToolbar({
           onChange={(event) => updateCustomDimension("height", event.target.value)}
           aria-label="Viewport height"
           aria-invalid={!customValid}
-          className={cn(
-            "h-6 rounded-md text-center tabular-nums [&_[data-slot=input]]:h-full [&_[data-slot=input]]:px-1 [&_[data-slot=input]]:text-xs [&_[data-slot=input]]:leading-none [&_[data-slot=input]::-webkit-inner-spin-button]:appearance-none [&_[data-slot=input]]:[appearance:textfield]",
-            width >= 360 ? "w-14" : "w-11",
-          )}
+          className={width >= 360 ? "w-14" : "w-13"}
         />
       </form>
 
@@ -282,14 +289,13 @@ export function BrowserDeviceToolbar({
         <TooltipTrigger
           render={
             <Button
-              variant="ghost"
+              variant={aspectRatio === null ? "ghost" : "secondary"}
               size="icon-xs"
               type="button"
               aria-label={
                 aspectRatio === null ? "Lock viewport aspect ratio" : "Unlock viewport aspect ratio"
               }
               aria-pressed={aspectRatio !== null}
-              className={cn(aspectRatio !== null && "bg-accent text-foreground")}
               disabled={pending || !customValid}
               onPointerDown={(event) => event.preventDefault()}
               onClick={toggleAspectRatio}
@@ -316,19 +322,20 @@ export function BrowserDeviceToolbar({
       >
         <ScreenRotationIcon />
       </Button>
-      <Button
-        variant="ghost"
-        size="icon-xs"
-        type="button"
-        aria-label="Close device toolbar"
-        className="sticky right-0 ml-auto bg-background/95"
-        disabled={pending}
-        onClick={() => {
-          apply({ _tag: "fill" }, null);
-        }}
-      >
-        <X />
-      </Button>
+      <span className="sticky right-0 ml-auto flex bg-background/95">
+        <Button
+          variant="ghost"
+          size="icon-xs"
+          type="button"
+          aria-label="Close device toolbar"
+          disabled={pending}
+          onClick={() => {
+            apply({ _tag: "fill" }, null);
+          }}
+        >
+          <X />
+        </Button>
+      </span>
     </div>
   );
 }

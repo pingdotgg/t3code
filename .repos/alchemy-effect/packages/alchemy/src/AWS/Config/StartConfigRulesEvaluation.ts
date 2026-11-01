@@ -11,9 +11,8 @@ import type { ConfigRule } from "./ConfigRule.ts";
  *
  * Provide `Config.StartConfigRulesEvaluationHttp` on the hosting Lambda
  * Function to satisfy the requirement.
- * @binding
- * @section Rule Evaluation Status
- * @example Re-Evaluate a Rule On Demand
+ * ### Rule Evaluation Status
+ * **Example:** Re-Evaluate a Rule On Demand
  * ```typescript
  * // init — grants config:StartConfigRulesEvaluation
  * const startRulesEvaluation =
@@ -22,6 +21,8 @@ import type { ConfigRule } from "./ConfigRule.ts";
  * // runtime
  * yield* startRulesEvaluation();
  * ```
+ *
+ * @binding
  */
 export interface StartConfigRulesEvaluation extends Binding.Service<
   StartConfigRulesEvaluation,

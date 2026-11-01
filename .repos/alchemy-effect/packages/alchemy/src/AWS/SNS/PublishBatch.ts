@@ -18,9 +18,8 @@ export interface PublishBatchRequest extends Omit<
  *
  * For an unbounded stream of messages with automatic batching and bounded
  * retry of transient per-entry failures, prefer {@link TopicSink}.
- * @binding
- * @section Publishing Message Batches
- * @example Publish a Batch of Messages
+ * ### Publishing Message Batches
+ * **Example:** Publish a Batch of Messages
  * ```typescript
  * // init (provide SNS.PublishBatchHttp on the Function)
  * const publishBatch = yield* SNS.PublishBatch(topic);
@@ -34,6 +33,8 @@ export interface PublishBatchRequest extends Omit<
  * });
  * // response.Successful / response.Failed
  * ```
+ *
+ * @binding
  */
 export interface PublishBatch extends Binding.Service<
   PublishBatch,

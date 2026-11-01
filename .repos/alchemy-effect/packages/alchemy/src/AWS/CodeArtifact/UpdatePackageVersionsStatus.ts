@@ -17,9 +17,8 @@ export interface UpdatePackageVersionsStatusRequest extends Omit<
  *
  * Transitions package versions between statuses (e.g. `Unfinished` → `Published`, or `Published` → `Archived` to hide them from installs). Provide the implementation with
  * `Effect.provide(AWS.CodeArtifact.UpdatePackageVersionsStatusHttp)`.
- * @binding
- * @section Managing Version Status
- * @example Publish an Unfinished Version
+ * ### Managing Version Status
+ * **Example:** Publish an Unfinished Version
  * ```typescript
  * const updateStatus = yield* AWS.CodeArtifact.UpdatePackageVersionsStatus(repo);
  *
@@ -32,6 +31,8 @@ export interface UpdatePackageVersionsStatusRequest extends Omit<
  * });
  * console.log(res.successfulVersions);
  * ```
+ *
+ * @binding
  */
 export interface UpdatePackageVersionsStatus extends Binding.Service<
   UpdatePackageVersionsStatus,

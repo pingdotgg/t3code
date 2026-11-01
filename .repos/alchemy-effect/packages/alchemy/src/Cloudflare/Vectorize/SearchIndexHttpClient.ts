@@ -1,7 +1,7 @@
 import type * as runtime from "@cloudflare/workers-types";
 import * as vectorize from "@distilled.cloud/cloudflare/vectorize";
 import * as Effect from "effect/Effect";
-import type * as HttpClient from "effect/unstable/http/HttpClient";
+import type * as HttpClient from "effect/http/HttpClient";
 import type { Credentials } from "../Credentials.ts";
 import type { SearchIndexClient } from "./SearchIndex.ts";
 
@@ -61,7 +61,7 @@ export const makeHttpSearchIndexClient = (
     describe: () =>
       local((name) =>
         vectorize
-          .infoIndex({ accountId, indexName: name })
+          .getIndexInfo({ accountId, indexName: name })
           .pipe(Effect.map(toIndexInfo)),
       ),
     query: (vector, options) =>
@@ -161,7 +161,7 @@ const toMutation = (r: {
 }): runtime.VectorizeAsyncMutation => ({ mutationId: r.mutationId ?? "" });
 
 const toIndexInfo = (
-  r: vectorize.InfoIndexResponse,
+  r: vectorize.GetIndexInfoResponse,
 ): runtime.VectorizeIndexInfo =>
   ({
     vectorCount: r.vectorCount ?? 0,

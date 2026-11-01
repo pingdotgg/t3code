@@ -1,143 +1,83 @@
-/** `id` is positional on purpose: the same attachment can be embedded twice in one body. */
-export type PullRequestBodySegment =
-  | { readonly id: string; readonly kind: "markdown"; readonly text: string }
-  | {
-      readonly id: string;
-      readonly kind: "attachment";
-      readonly url: string;
-      /**
-       * What the reader can be told the upload is. The uuid says nothing on its own — the type
-       * only appears in the signed redirect GitHub answers with — but the shape does: GitHub
-       * writes a dropped image into the body as an `<img>` tag, so a bare attachment link on its
-       * own line is what it does with a video. Anything else keeps the neutral name.
-       */
-      readonly media: "video" | "unknown";
-    };
+import { changeRequestReferenceAutolinker } from "@t3tools/client-runtime/pull-request-markdown";
+import {
+  sourceControlClients,
+  type ReferenceAutolink,
+} from "@t3tools/client-runtime/source-control-clients";
+import type { PluggableList } from "unified";
 
-const FENCE_PATTERN = /^\s{0,3}((?:`{3,})|(?:~{3,}))(.*)$/u;
-/**
- * How far a `<video>` tag may reach for its closing tag. Real embeds are one to three lines,
- * and the bound keeps an unclosed tag from making each one rescan the rest of the body.
- */
-const VIDEO_TAG_MAX_LINES = 8;
-/** Four spaces open an indented code block, so its contents stay verbatim markdown. */
-const INDENTED_CODE_PATTERN = /^(?: {4}|\t)/u;
-const BARE_URL_PATTERN = /^<?(https?:\/\/\S+?)>?$/u;
-const VIDEO_EXTENSION_PATTERN = /\.(?:mp4|webm|mov|m4v|ogv)(?:$|[?#])/iu;
-/** A dropped video becomes a bare asset link; a dropped image becomes an `<img>` tag. */
-const GITHUB_ASSET_PATTERN = /^https:\/\/github\.com\/user-attachments\/assets\/[\w-]+$/iu;
-const VIDEO_TAG_SRC_PATTERN = /<(?:video|source)\b[^>]*\bsrc\s*=\s*["']([^"']+)["']/iu;
-/** Only a tag that owns its line is an embed; inline, it is prose the renderer should keep. */
-const STANDALONE_VIDEO_TAG_PATTERN = /^\s*<video\b/iu;
-const VIDEO_TAG_END_PATTERN = /<\/video>\s*$/iu;
+export {
+  splitPullRequestBody,
+  type PullRequestBodySegment,
+} from "@t3tools/client-runtime/pull-request-markdown";
 
-/** Anything else — `javascript:`, `data:`, a relative path — is not an upload to link out to. */
-function isWebUrl(url: string): boolean {
-  try {
-    const parsed = new URL(url);
-    return parsed.protocol === "https:" || parsed.protocol === "http:";
-  } catch {
-    return false;
-  }
-}
+type MarkdownNode = {
+  type: string;
+  value?: string;
+  children?: MarkdownNode[];
+  url?: string;
+  data?: unknown;
+};
 
-function attachmentFromLine(line: string): { url: string; media: "video" | "unknown" } | null {
-  const url = BARE_URL_PATTERN.exec(line.trim())?.[1];
-  if (url === undefined || !isWebUrl(url)) return null;
-  if (VIDEO_EXTENSION_PATTERN.test(url) || GITHUB_ASSET_PATTERN.test(url)) {
-    return { url, media: "video" };
-  }
-  return null;
-}
+const AUTOLINK_IGNORED_TYPES = new Set(["link", "linkReference"]);
 
-/**
- * Splits a pull request body into markdown runs and the uploads embedded in it, which the
- * markdown renderer drops: `<video>` is not in its sanitizer's schema, and a bare attachment
- * link arrives as prose. Two shapes are recognised, both of which GitHub produces itself: a
- * `<video>` (or `<source>`) tag, and a bare link on its own line to a video file or an
- * uploaded attachment. Fenced code is copied through untouched so a snippet that happens to
- * contain a link is never lifted out of it.
- */
-export function splitPullRequestBody(body: string): ReadonlyArray<PullRequestBodySegment> {
-  const segments: PullRequestBodySegment[] = [];
-  const markdown: string[] = [];
-  let openFence: string | null = null;
-
-  // Blank lines around a run are dropped, but never leading spaces: four of them open an
-  // indented code block, so trimming a run would silently turn code into prose.
-  const flushMarkdown = () => {
-    const text = markdown.join("\n").replace(/^\n+/u, "").replace(/\s+$/u, "");
-    markdown.length = 0;
-    if (text.trim().length > 0) {
-      segments.push({ id: `markdown:${segments.length}`, kind: "markdown", text });
+export function remarkPullRequestAutolinks(options: {
+  readonly autolinks: (text: string) => ReadonlyArray<ReferenceAutolink>;
+}) {
+  const visit = (node: MarkdownNode): void => {
+    const children = node.children;
+    if (children === undefined) return;
+    for (let index = 0; index < children.length; index += 1) {
+      const child = children[index]!;
+      if (AUTOLINK_IGNORED_TYPES.has(child.type)) continue;
+      if (child.type !== "text" || child.value === undefined) {
+        visit(child);
+        continue;
+      }
+      const value = child.value;
+      const links = options.autolinks(value);
+      if (links.length === 0) continue;
+      const replacements: MarkdownNode[] = [];
+      let start = 0;
+      for (const link of links) {
+        if (start < link.index) {
+          replacements.push({ type: "text", value: value.slice(start, link.index) });
+        }
+        replacements.push({
+          type: "link",
+          url: link.url,
+          data: { hProperties: { dataPullRequestAutolink: link.kind } },
+          children: [{ type: "text", value: link.label }],
+        });
+        start = link.index + link.text.length;
+      }
+      if (start < value.length) replacements.push({ type: "text", value: value.slice(start) });
+      children.splice(index, 1, ...replacements);
+      index += replacements.length - 1;
     }
   };
+  return (tree: MarkdownNode) => visit(tree);
+}
 
-  const lines = body.split("\n");
-  for (let index = 0; index < lines.length; index += 1) {
-    const line = lines[index]!;
-    const fenceMatch = FENCE_PATTERN.exec(line);
-    if (fenceMatch !== null) {
-      const fence = fenceMatch[1]!;
-      // A fence closes only on the same marker, at least as long as the one that opened it,
-      // and with nothing after it: `~~~` cannot end a ``` block, and ```` ```ts ```` is an
-      // info string opening a nested fence, not a close.
-      const closes =
-        openFence !== null &&
-        fence[0] === openFence[0] &&
-        fence.length >= openFence.length &&
-        fenceMatch[2]!.trim().length === 0;
-      if (openFence === null) {
-        openFence = fence;
-      } else if (closes) {
-        openFence = null;
-      }
-      markdown.push(line);
-      continue;
-    }
-    if (openFence !== null || INDENTED_CODE_PATTERN.test(line)) {
-      markdown.push(line);
-      continue;
-    }
+const NO_AUTOLINK_PLUGINS: PluggableList = [];
+const autolinkPlugins = new Map<string, PluggableList>();
 
-    const bareAttachment = attachmentFromLine(line);
-    if (bareAttachment !== null) {
-      flushMarkdown();
-      segments.push({ id: `attachment:${segments.length}`, kind: "attachment", ...bareAttachment });
-      continue;
-    }
-
-    if (!STANDALONE_VIDEO_TAG_PATTERN.test(line)) {
-      markdown.push(line);
-      continue;
-    }
-    // A tag can span lines, so look ahead for its close — bounded, and without building the
-    // joined text until one is actually found.
-    const lastCandidate = Math.min(index + VIDEO_TAG_MAX_LINES, lines.length) - 1;
-    let cursor = index;
-    while (cursor < lastCandidate && !VIDEO_TAG_END_PATTERN.test(lines[cursor]!)) {
-      cursor += 1;
-    }
-    const source = VIDEO_TAG_END_PATTERN.test(lines[cursor]!)
-      ? VIDEO_TAG_SRC_PATTERN.exec(lines.slice(index, cursor + 1).join("\n"))?.[1]
-      : undefined;
-    if (source !== undefined && isWebUrl(source)) {
-      flushMarkdown();
-      segments.push({
-        id: `attachment:${segments.length}`,
-        kind: "attachment",
-        url: source,
-        // The author wrote the tag, so this one is a video whatever the URL looks like.
-        media: "video",
-      });
-      index = cursor;
-    } else {
-      // Unclosed, or nothing linkable in it: prose. Only this line is consumed, so the
-      // lines that were looked at are still parsed on their own terms.
-      markdown.push(line);
-    }
+/**
+ * One plugin list per repository, so every comment of a pull request shares one markdown
+ * renderer and its parse cache instead of parsing again on each render.
+ */
+export function pullRequestAutolinkPlugins(
+  changeRequest: { readonly provider: string; readonly url: string } | null,
+): PluggableList {
+  if (changeRequest === null) return NO_AUTOLINK_PLUGINS;
+  const repositoryUrl = sourceControlClients.parseChangeRequestUrl(changeRequest.url)?.link
+    .repositoryUrl;
+  if (repositoryUrl === undefined) return NO_AUTOLINK_PLUGINS;
+  const key = `${changeRequest.provider}\u0000${repositoryUrl}`;
+  let plugins = autolinkPlugins.get(key);
+  if (plugins === undefined) {
+    const autolinks = changeRequestReferenceAutolinker(changeRequest);
+    plugins = autolinks ? [[remarkPullRequestAutolinks, { autolinks }]] : NO_AUTOLINK_PLUGINS;
+    autolinkPlugins.set(key, plugins);
   }
-
-  flushMarkdown();
-  return segments;
+  return plugins;
 }

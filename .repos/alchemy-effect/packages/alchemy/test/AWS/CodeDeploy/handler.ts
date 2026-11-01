@@ -5,8 +5,8 @@ import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Stream from "effect/Stream";
-import { HttpServerRequest } from "effect/unstable/http/HttpServerRequest";
-import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
+import { HttpServerRequest } from "effect/http/HttpServerRequest";
+import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import path from "pathe";
 
 const main = path.resolve(import.meta.dirname, "handler.ts");
@@ -39,13 +39,15 @@ const errorTagged = <A, E extends { _tag: string }, R>(
 ): Effect.Effect<A | { errorTag: string }, never, R> =>
   effect.pipe(
     Effect.map((a): A | { errorTag: string } => a),
-    Effect.catch((e) => Effect.succeed({ errorTag: e._tag })),
+    Effect.catch((e) =>
+      Effect.logError(e).pipe(Effect.as({ errorTag: e._tag })),
+    ),
   );
 
 export default CodeDeployTestFunction.make(
   {
     main,
-    url: true,
+    functionUrl: true,
     // Deployment ops fan out SDK calls — AWS's 3s default intermittently
     // times out under cold starts.
     timeout: Duration.seconds(30),

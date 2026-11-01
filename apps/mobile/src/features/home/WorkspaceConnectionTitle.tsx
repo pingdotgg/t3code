@@ -1,61 +1,76 @@
-import type {
-  NativeStackHeaderItem,
-  NativeStackNavigationOptions,
-} from "@react-navigation/native-stack";
-import { useEffect, useRef, useState, type ReactNode } from "react";
-import { ActivityIndicator, Animated, Platform, Pressable, View } from "react-native";
+import type { NativeStackNavigationOptions } from "@react-navigation/native-stack";
+import { createContext, use, useEffect, useState, type ReactNode } from "react";
+import { Animated, Platform, Pressable, View } from "react-native";
 
-import { SymbolView } from "../../components/AppSymbol";
-import { AppText as Text } from "../../components/AppText";
-import { brandTitleOffset, CompactBrandTitle } from "../../components/CompactBrandTitle";
-import { useThemeColor } from "../../lib/useThemeColor";
-import { NATIVE_LIQUID_GLASS_SUPPORTED } from "../../native/native-glass";
+import { AppActivityIndicator } from "../../components/ui/AppActivityIndicator";
+import { SymbolView } from "../../components/ui/AppSymbol";
+import { AppText as Text } from "../../components/ui/AppText";
+import { useAndroidControlSizing } from "../../components/ui/useAndroidControlSizing";
+import {
+  brandTitleOffset,
+  CompactBrandTitle,
+  getCompactBrandHeaderOptions,
+} from "../../components/CompactBrandTitle";
+import { useDeadlinePassed } from "../../lib/clock";
 import { useWorkspaceState } from "../../state/workspace";
 import {
   workspaceConnectionStatusPresentation,
   type WorkspaceConnectionStatusPresentation,
 } from "./workspace-connection-status";
 
-/**
- * Delay before a connection interruption surfaces in the title slot. Sub-second
- * blips (the common reconnect case) resolve without any UI at all.
- */
 const STATUS_SHOW_DELAY_MS = 800;
 const FADE_IN_MS = 250;
 
+type ConnectionStatus = WorkspaceConnectionStatusPresentation & {
+  /** Only while the status first appears. A header that shows it later shows it at once. */
+  readonly fadeIn: boolean;
+};
+
+const ConnectionStatusContext = createContext<ConnectionStatus | null>(null);
+
 /**
- * Connection status presentation, debounced for display: null until the
- * workspace has been in a non-connected state for STATUS_SHOW_DELAY_MS,
- * then live-updating until the workspace reconnects (null again immediately).
+ * The delay hides brief reconnects, so it is the workspace's, not each header's: every header
+ * shows the status from the same moment. Headers read it from context instead of subscribing
+ * themselves, because a hidden Android tab drops its subscriptions and showed a stale status for
+ * a moment when it came back, while context still reaches it.
  */
-function useDelayedConnectionStatus(): WorkspaceConnectionStatusPresentation | null {
+export function WorkspaceConnectionStatusProvider(props: { readonly children: ReactNode }) {
   const { state } = useWorkspaceState();
   const presentation = workspaceConnectionStatusPresentation(state);
   const hasStatus = presentation !== null;
-  const [visible, setVisible] = useState(false);
+  // When the current status run began; a gap in the status restarts the delay.
+  const [statusSince, setStatusSince] = useState(() => (hasStatus ? Date.now() : null));
+  if (hasStatus !== (statusSince !== null)) {
+    // oxlint-disable-next-line react/purity -- Reads the clock only in the render-phase adjustment that runs when the status appears.
+    setStatusSince(hasStatus ? Date.now() : null);
+  }
+  const since = hasStatus ? statusSince : null;
+  const fadeStarted = useDeadlinePassed(since === null ? null : since + STATUS_SHOW_DELAY_MS);
+  const fadeEnded = useDeadlinePassed(
+    since === null ? null : since + STATUS_SHOW_DELAY_MS + FADE_IN_MS,
+  );
 
-  useEffect(() => {
-    if (!hasStatus) {
-      setVisible(false);
-      return;
-    }
-    const timer = setTimeout(() => setVisible(true), STATUS_SHOW_DELAY_MS);
-    return () => clearTimeout(timer);
-  }, [hasStatus]);
-
-  return visible ? presentation : null;
+  const label = presentation?.label;
+  const showsProgress = presentation?.showsProgress ?? false;
+  const status =
+    label === undefined || since === null || !fadeStarted
+      ? null
+      : { label, showsProgress, fadeIn: !fadeEnded };
+  return <ConnectionStatusContext value={status}>{props.children}</ConnectionStatusContext>;
 }
 
-/**
- * One-shot entrance fade for the status label. Deliberately JS-driven: this can
- * mount inside a native header item (RNSScreenStackHeaderSubview), where
- * native-driver animated nodes blank the re-hosted view entirely. The JS driver
- * updates opacity through the ordinary style path, which those subviews handle.
- */
-function StatusFadeIn(props: { readonly children: ReactNode; readonly grow?: boolean }) {
-  const opacity = useRef(new Animated.Value(0)).current;
-
+/** Native-driver animation blanks views re-hosted in RNSScreenStackHeaderSubview; use the JS style path. */
+function StatusFadeIn(props: {
+  readonly children: ReactNode;
+  readonly animate: boolean;
+  readonly grow?: boolean;
+  readonly maxWidth?: number;
+}) {
+  const { animate } = props;
+  const [opacity] = useState(() => new Animated.Value(0));
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- runs the Animated opacity fade-in and stops it on cleanup
   useEffect(() => {
+    if (!animate) return;
     const animation = Animated.timing(opacity, {
       duration: FADE_IN_MS,
       toValue: 1,
@@ -63,12 +78,18 @@ function StatusFadeIn(props: { readonly children: ReactNode; readonly grow?: boo
     });
     animation.start();
     return () => animation.stop();
-  }, [opacity]);
+  }, [animate, opacity]);
 
   return (
     <Animated.View
       style={[
-        { alignItems: "center", flexDirection: "row", opacity },
+        {
+          alignItems: "center",
+          flexDirection: "row",
+          maxWidth: props.maxWidth,
+          // A hidden tab never runs the fade, so its value would still be 0 when the tab returns.
+          opacity: animate ? opacity : 1,
+        },
         props.grow ? { flex: 1, minWidth: 0 } : null,
       ]}
     >
@@ -77,30 +98,17 @@ function StatusFadeIn(props: { readonly children: ReactNode; readonly grow?: boo
   );
 }
 
-/**
- * Renders the brand/title slot of a thread-list surface, swapping the brand
- * for the workspace connection status while an environment is unavailable.
- *
- * Both states occupy the same slot, so connection changes never shift the
- * layout below. While connected the brand renders untouched — no wrapper —
- * keeping the native header item on the exact element tree that predates the
- * status swap. Replaces the old WorkspaceConnectionStatus pill, which inserted
- * a row above the thread list.
- */
 export function WorkspaceConnectionTitle(props: {
-  /** Content shown while connected (brand lockup or a screen title). */
   readonly brand: ReactNode;
-  /** Opens environment settings. Status is not pressable when omitted. */
   readonly onPress?: () => void;
-  /** Fill the available row width (in-flow headers) instead of hugging content (native title slots). */
   readonly grow?: boolean;
   readonly size?: "navbar" | "pageTitle";
-  /** Horizontal correction so the status aligns with the brand in native title slots. */
   readonly statusOffset?: number;
+  readonly maxWidth?: number;
 }) {
-  const iconColor = String(useThemeColor("--color-icon-muted"));
-  const status = useDelayedConnectionStatus();
+  const status = use(ConnectionStatusContext);
   const size = props.size ?? "navbar";
+  const { scale } = useAndroidControlSizing();
 
   if (status === null) {
     return props.grow ? (
@@ -113,7 +121,7 @@ export function WorkspaceConnectionTitle(props: {
   }
 
   return (
-    <StatusFadeIn grow={props.grow}>
+    <StatusFadeIn animate={status.fadeIn} grow={props.grow} maxWidth={props.maxWidth}>
       <Pressable
         accessibilityHint="Opens environment settings"
         accessibilityLabel={status.label}
@@ -122,26 +130,28 @@ export function WorkspaceConnectionTitle(props: {
         hitSlop={8}
         onPress={props.onPress}
         className="flex-row items-center gap-2"
-        style={{ marginLeft: props.statusOffset ?? 0 }}
+        style={[
+          { flexShrink: 1, marginLeft: props.statusOffset ?? 0 },
+          Platform.OS === "android" && { gap: 7 * scale },
+        ]}
       >
         {status.showsProgress ? (
-          <ActivityIndicator color={iconColor} size="small" />
+          <AppActivityIndicator
+            colorClassName={"accent-icon-muted"}
+            size={Platform.OS === "android" ? Math.round(20 * scale) : "small"}
+          />
         ) : (
           <SymbolView
             name="wifi.slash"
-            size={size === "pageTitle" ? 17 : 15}
-            tintColor={iconColor}
+            size={Math.round((size === "pageTitle" ? 17 : 15) * scale)}
+            tintColorClassName={"accent-icon-muted"}
             type="monochrome"
           />
         )}
         <Text
-          className={
-            size === "pageTitle"
-              ? "text-[20px] font-t3-bold text-foreground-muted"
-              : "text-[16px] font-t3-bold text-foreground-muted"
-          }
+          className="font-t3-bold text-foreground-muted"
           numberOfLines={1}
-          style={{ flexShrink: 1 }}
+          style={{ flexShrink: 1, fontSize: (size === "pageTitle" ? 20 : 16) * scale }}
         >
           {status.label}
         </Text>
@@ -150,45 +160,23 @@ export function WorkspaceConnectionTitle(props: {
   );
 }
 
-/**
- * getCompactBrandHeaderOptions with the brand slot upgraded to the
- * connection-status swap. Screens with an environment-settings callback apply
- * this over the static brand options at mount.
- */
 export function getConnectionAwareBrandHeaderOptions(opts: {
+  readonly headerWidth: number;
+  readonly trailingItemCount?: number;
   readonly onOpenEnvironments: () => void;
   readonly fallbackTitleStyle?: NativeStackNavigationOptions["headerTitleStyle"];
 }): NativeStackNavigationOptions {
-  if (Platform.OS === "ios" && NATIVE_LIQUID_GLASS_SUPPORTED) {
-    return {
-      headerTitle: "Threads",
-      headerTitleStyle: { color: "transparent", fontSize: 18, fontWeight: "800" },
-      title: "Threads",
-      unstable_headerLeftItems: (): NativeStackHeaderItem[] => [
-        {
-          element: (
-            <WorkspaceConnectionTitle
-              brand={<CompactBrandTitle nativeLeadingItem />}
-              onPress={opts.onOpenEnvironments}
-              statusOffset={brandTitleOffset(true)}
-            />
-          ),
-          hidesSharedBackground: true,
-          type: "custom",
-        },
-      ],
-    };
-  }
+  const maxWidth = Math.max(0, opts.headerWidth - 64 - 44 * (opts.trailingItemCount ?? 1));
 
   return {
+    ...getCompactBrandHeaderOptions(opts.fallbackTitleStyle),
     headerTitle: () => (
       <WorkspaceConnectionTitle
         brand={<CompactBrandTitle />}
+        maxWidth={maxWidth}
         onPress={opts.onOpenEnvironments}
-        statusOffset={brandTitleOffset(false)}
+        statusOffset={brandTitleOffset()}
       />
     ),
-    headerTitleStyle: opts.fallbackTitleStyle,
-    title: "Threads",
   };
 }

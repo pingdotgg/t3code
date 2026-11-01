@@ -3,8 +3,8 @@ import * as Context from "effect/Context";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import { HttpServerRequest } from "effect/unstable/http/HttpServerRequest";
-import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
+import { HttpServerRequest } from "effect/http/HttpServerRequest";
+import * as HttpServerResponse from "effect/http/HttpServerResponse";
 
 // Gated (AWS_TEST_SLOW) fixture: a single-region Multi-Region Access Point
 // plus a Lambda that exercises the two MRAP failover bindings —
@@ -34,7 +34,7 @@ export const BoundMrapLive = Layer.effect(
 export default S3ControlMrapBindingsFunction.make(
   {
     main: import.meta.url,
-    url: true,
+    functionUrl: true,
     timeout: Duration.seconds(60),
   },
   Effect.gen(function* () {

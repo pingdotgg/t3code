@@ -1,6 +1,6 @@
 // Measures builder handleAll registration across two chained batches of 250 endpoints each.
 import { Effect, Schema } from "effect"
-import { HttpApi, HttpApiBuilder, HttpApiEndpoint, HttpApiGroup } from "effect/unstable/httpapi"
+import { HttpApi, HttpApiBuilder, HttpApiEndpoint, HttpApiGroup } from "effect/http-api"
 
 Schema.String
 HttpApi.make("Api")

@@ -15,9 +15,8 @@ export interface ListEventIntegrationAssociationsRequest extends Omit<
  *
  * Provide the `ListEventIntegrationAssociationsHttp` layer on the Function
  * to satisfy the binding.
- * @binding
- * @section Listing Event Integration Associations
- * @example List an Event Integration's Associations
+ * ### Listing Event Integration Associations
+ * **Example:** List an Event Integration's Associations
  * ```typescript
  * // init (provide AWS.AppIntegrations.ListEventIntegrationAssociationsHttp on the Function)
  * const listEventIntegrationAssociations =
@@ -27,6 +26,8 @@ export interface ListEventIntegrationAssociationsRequest extends Omit<
  * const { EventIntegrationAssociations } =
  *   yield* listEventIntegrationAssociations();
  * ```
+ *
+ * @binding
  */
 export interface ListEventIntegrationAssociations extends Binding.Service<
   ListEventIntegrationAssociations,

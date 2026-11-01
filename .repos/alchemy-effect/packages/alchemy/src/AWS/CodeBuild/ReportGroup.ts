@@ -88,16 +88,15 @@ export interface ReportGroup extends Resource<
  * bindings ({@link BatchGetReports}, {@link DescribeTestCases}, …) let
  * runtime code query them.
  *
- * @resource
- * @section Creating a Report Group
- * @example Test Report Group
+ * ### Creating a Report Group
+ * **Example:** Test Report Group
  * ```typescript
  * const reports = yield* CodeBuild.ReportGroup("UnitTests", {
  *   type: "TEST",
  * });
  * ```
  *
- * @example Coverage Group Exported to S3
+ * **Example:** Coverage Group Exported to S3
  * ```typescript
  * const coverage = yield* CodeBuild.ReportGroup("Coverage", {
  *   type: "CODE_COVERAGE",
@@ -107,6 +106,8 @@ export interface ReportGroup extends Resource<
  *   },
  * });
  * ```
+ *
+ * @resource
  */
 export const ReportGroup = Resource<ReportGroup>("AWS.CodeBuild.ReportGroup");
 

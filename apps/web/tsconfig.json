@@ -7,7 +7,7 @@
     "erasableSyntaxOnly": false,
     "verbatimModuleSyntax": false,
     "jsx": "react-jsx",
-    "lib": ["ES2023", "DOM", "DOM.Iterable"],
+    "lib": ["ES2023", "ESNext.Disposable", "DOM", "DOM.Iterable"],
     "paths": {
       "~/*": ["./src/*"]
     },
@@ -27,10 +27,13 @@
   },
   "include": [
     "src",
+    "vite",
     "vite.config.ts",
     "vercel.ts",
     "test",
+    "scripts/verify-built-boot.ts",
     "scripts/warm-dep-cache.ts",
-    "../../scripts/lib/public-config.ts"
+    "../../scripts/lib/public-config.ts",
+    "../../scripts/lib/third-party-licenses.ts"
   ]
 }
