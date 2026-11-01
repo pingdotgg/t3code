@@ -670,7 +670,9 @@ export function useThreadComposerState() {
       text,
       attachments,
       context: draft.context,
-      modelSelection,
+      // Only a pick travels with the message. The thread's model is read by the server when the
+      // outbox delivers, because this client's copy of it can be stale by then.
+      ...(draft.modelSelection === undefined ? {} : { modelSelection: draft.modelSelection }),
       runtimeMode: draft.runtimeMode ?? thread.runtimeMode,
       interactionMode: resolveProviderInteractionMode(
         provider,

@@ -55,6 +55,9 @@ export const QueuedThreadMessageSchema = Schema.Struct({
   context: Schema.optional(OrchestrationMessageContext),
   attachments: Schema.Array(DraftComposerAttachmentSchema),
   modelSelection: Schema.optional(ModelSelection),
+  // Written with every stored model since follow-ups carry only the user's pick. Entries without it
+  // come from builds that stored this client's cached thread model on every follow-up.
+  modelPicked: Schema.optional(Schema.Literal(true)),
   dispatchMode: Schema.optional(Schema.Literals(["auto", "queue", "steer", "restart"])),
   runtimeMode: Schema.optional(RuntimeMode),
   interactionMode: Schema.optional(ProviderInteractionMode),
@@ -130,12 +133,16 @@ export function encodeQueuedThreadMessage(message: QueuedThreadMessage): unknown
   return encodeStoredQueuedThreadMessage({
     schemaVersion: THREAD_OUTBOX_SCHEMA_VERSION,
     ...message,
+    ...(message.modelSelection === undefined ? {} : { modelPicked: true as const }),
   });
 }
 
 export function decodeQueuedThreadMessage(value: unknown): QueuedThreadMessage {
-  const { schemaVersion: _, ...message } = decodeStoredQueuedThreadMessage(value);
-  return message;
+  const { schemaVersion: _, modelPicked, ...message } = decodeStoredQueuedThreadMessage(value);
+  if (message.creation !== undefined || modelPicked === true) return message;
+  // Possibly a stale cached model rather than a pick: let the server use the thread's own.
+  const { modelSelection: _unconfirmed, ...followUp } = message;
+  return followUp;
 }
 
 export function groupQueuedThreadMessages(
