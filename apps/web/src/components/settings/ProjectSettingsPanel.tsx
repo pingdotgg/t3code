@@ -25,6 +25,7 @@ import {
 } from "../../sidebarProjectGrouping";
 import { useEnvironments, usePrimaryEnvironmentId } from "../../state/environments";
 import { useThreadShells, waitForProjectRemoval } from "../../state/entities";
+import { refreshProjectFaviconUrl } from "../../state/assets";
 import { projectEnvironment } from "../../state/projects";
 import { ProjectFavicon } from "../ProjectFavicon";
 import { Alert, AlertDescription } from "../ui/alert";
@@ -257,7 +258,18 @@ function ProjectDetail({
     if (savingFaviconRef.current) return;
     savingFaviconRef.current = true;
     setIsSavingFavicon(true);
-    await updateAllMembers(input, "Failed to update project icon");
+    const result = await updateAllMembers(input, "Failed to update project icon");
+    if (result._tag === "Success") {
+      for (const member of group.memberProjects) {
+        const update = typeof input === "function" ? input(member) : input;
+        if (update.faviconPath === undefined || update.projectIcon) continue;
+        refreshProjectFaviconUrl({
+          environmentId: member.environmentId,
+          cwd: member.workspaceRoot,
+          faviconPath: update.faviconPath,
+        });
+      }
+    }
     savingFaviconRef.current = false;
     setIsSavingFavicon(false);
   };
