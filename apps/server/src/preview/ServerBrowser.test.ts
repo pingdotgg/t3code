@@ -757,12 +757,12 @@ it.live("enforces provider ownership and explicit targets when a session has mul
   ).pipe(Effect.provide(layer)),
 );
 
-it.effect("a viewer still that never paints does not hold up the agent's snapshot", () =>
-  Effect.scoped(
+it.effect("a viewer still that never paints does not hold up the agent's snapshot", () => {
+  const viewerStill = new AbortController();
+  const neverAborts = new AbortController().signal;
+  return Effect.scoped(
     Effect.gen(function* () {
       const { browser, broker, tabId } = yield* ready;
-      const viewerStill = new AbortController();
-      const neverAborts = new AbortController().signal;
       const timeout = vi
         .spyOn(AbortSignal, "timeout")
         .mockImplementationOnce(() => viewerStill.signal)
@@ -790,8 +790,8 @@ it.effect("a viewer still that never paints does not hold up the agent's snapsho
       expect(snapshot.accessibilityTree).toContain('button "delete"');
       yield* Fiber.join(attaching);
     }),
-  ).pipe(Effect.provide(layer)),
-);
+  ).pipe(Effect.provide(layer));
+});
 
 it.live("streams to a read-only viewer without allowing takeover, input, or viewport changes", () =>
   Effect.scoped(
