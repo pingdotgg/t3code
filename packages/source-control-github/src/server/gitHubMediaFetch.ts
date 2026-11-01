@@ -118,6 +118,7 @@ export const make = Effect.gen(function* () {
         )
         .pipe(
           Effect.provideService(FetchHttpClient.RequestInit, MANUAL_REDIRECT),
+          Effect.provideService(HttpClient.TracerDisabledWhen, () => true),
           Effect.provideService(Scope.Scope, scope),
         );
       const location = response.headers.location;

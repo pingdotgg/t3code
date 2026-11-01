@@ -1468,7 +1468,13 @@ describe("AssetAccess", () => {
   );
 
   it.effect("serves a host's credentialed media through that host's driver", () => {
-    const fetched: Array<{ url: string; headers: Readonly<Record<string, string>> }> = [];
+    let responseType: string | undefined;
+    const repositoryUrl = "https://github.com/owner/repo";
+    const fetched: Array<{
+      url: string;
+      repositoryUrl?: string;
+      headers: Readonly<Record<string, string>>;
+    }> = [];
     const url = "https://github.com/owner/repo/blob/main/docs/shot.png";
     const media = sourceControlDefinitions.mediaUrl(url)!;
     const layerDrivers = Layer.succeed(BuiltInDrivers.SourceControlDrivers, [
@@ -1481,7 +1487,13 @@ describe("AssetAccess", () => {
               fetched.push(request);
               return HttpClientResponse.fromWeb(
                 HttpClientRequest.get(request.url),
-                new Response("bytes", { status: 206, headers: { "content-length": "5" } }),
+                new Response("bytes", {
+                  status: 206,
+                  headers: {
+                    "content-length": "5",
+                    ...(responseType ? { "content-type": responseType } : {}),
+                  },
+                }),
               );
             }),
         }),
@@ -1492,7 +1504,7 @@ describe("AssetAccess", () => {
 
       // Every client and server release spells the resource this way on the wire.
       const { resource } = yield* decodeAssetCreateUrlInput({
-        resource: { _tag: "github-media", cwd: "/repo", url },
+        resource: { _tag: "github-media", cwd: "/repo", url, repositoryUrl },
       });
       const issued = yield* issueAssetUrl({ resource });
       const suffix = issued.relativeUrl.slice(`${ASSET_ROUTE_PREFIX}/`.length);
@@ -1502,6 +1514,7 @@ describe("AssetAccess", () => {
         kind: "source-control-media",
         url: media.fetchUrl,
         cwd: "/repo",
+        repositoryUrl,
         expiresAt: issued.expiresAt,
       });
       if (asset?.kind !== "source-control-media") return;
@@ -1510,11 +1523,17 @@ describe("AssetAccess", () => {
         range: "bytes=0-4",
         cookie: "session",
       });
-      expect(fetched).toEqual([{ url: media.fetchUrl, headers: { range: "bytes=0-4" } }]);
+      expect(fetched).toEqual([
+        { url: media.fetchUrl, repositoryUrl, headers: { range: "bytes=0-4" } },
+      ]);
       expect(response.status).toBe(206);
       // The upstream sent no type, so it comes from the file name the host gave the media.
       expect(response.headers["content-type"]).toBe("image/png");
       expect(response.headers["content-length"]).toBe("5");
+      for (const type of ["text/html", "application/xhtml+xml"]) {
+        responseType = type;
+        expect((yield* sourceControlMediaResponse(asset, {})).status).toBe(415);
+      }
     }).pipe(Effect.provide(Layer.merge(layerTest, layerDrivers)), Effect.scoped);
   });
 
