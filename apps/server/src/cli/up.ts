@@ -649,7 +649,7 @@ const setUp = Effect.fn("cli.up")(function* (
           switch (error._tag) {
             case "ServeRecordError":
               return upError(
-                error.reason === "unreadable"
+                error.reason === "unreadable" || error.reason === "switched"
                   ? error.message
                   : `${error.message} Then run this again, ${orDelete}`,
               );

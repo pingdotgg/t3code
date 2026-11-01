@@ -17,6 +17,7 @@ import {
   ensureTailscaleServe,
   parseTailscaleExitNode,
   parseTailscaleSshEnabled,
+  parseTailscaleProfiles,
   parseTailscaleStatus,
   parseTailscaleWhois,
   probeTailscaleHttpsEndpoint,
@@ -234,6 +235,34 @@ describe("tailscale", () => {
         peers: [],
         unidentifiedPeerAddresses: [],
         users: [],
+      });
+    }),
+  );
+
+  // `tailscale switch --list --json`, as Tailscale 1.94 prints it.
+  it.effect("parses the selected login profile and every profile's ID", () =>
+    Effect.gen(function* () {
+      const profiles = yield* parseTailscaleProfiles(
+        JSON.stringify([
+          {
+            id: "a1b2",
+            nickname: "",
+            tailnet: "example.com",
+            account: "me@example.com",
+            selected: false,
+          },
+          {
+            id: "c3d4",
+            nickname: "",
+            tailnet: "me@gmail.com",
+            account: "me@gmail.com",
+            selected: true,
+          },
+        ]),
+      );
+      assert.deepEqual(profiles, {
+        selected: { id: "c3d4", tailnet: "me@gmail.com", account: "me@gmail.com" },
+        ids: ["a1b2", "c3d4"],
       });
     }),
   );

@@ -1,6 +1,6 @@
 import {
   claimTailscaleServe,
-  readTailscaleProfile,
+  readTailscaleProfiles,
   readTailscaleStatus,
   releaseTailscaleServe,
 } from "@t3tools/tailscale";
@@ -8,7 +8,6 @@ import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
-import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as PlatformError from "effect/PlatformError";
 import * as Ref from "effect/Ref";
@@ -74,7 +73,12 @@ const ServeTarget = Schema.Struct({
 });
 type ServeTarget = typeof ServeTarget.Type;
 // Keyed by account; `label` names it for a person, such as `you@example.com on example.com`.
-const ServeRecord = Schema.Struct({ ...ServeTarget.fields, label: Schema.String });
+// `profileId` is the login profile it was made on, when Tailscale listed one.
+const ServeRecord = Schema.Struct({
+  ...ServeTarget.fields,
+  label: Schema.String,
+  profileId: Schema.optionalKey(Schema.String),
+});
 const ServeRecords = Schema.fromJsonString(Schema.Record(Schema.String, ServeRecord));
 type ServeRecords = typeof ServeRecords.Type;
 const NO_RECORDS: ServeRecords = {};
@@ -125,10 +129,8 @@ const writeRecords = Effect.fn("TailscaleServe.writeRecords")(function* (
  * to list profiles, which outlives a node ID when a device is re-added, and the node ID.
  */
 const currentAccount = Effect.fn("TailscaleServe.currentAccount")(function* () {
-  const profile = yield* readTailscaleProfile().pipe(
-    Effect.map(Option.getOrNull),
-    Effect.orElseSucceed(() => null),
-  );
+  const profiles = yield* readTailscaleProfiles().pipe(Effect.orElseSucceed(() => null));
+  const profile = profiles?.selected ?? null;
   const status = yield* readTailscaleStatus("active");
   const legacyKey =
     status.tailnetName !== null && status.selfUserId !== null
@@ -148,15 +150,30 @@ const currentAccount = Effect.fn("TailscaleServe.currentAccount")(function* () {
     null;
   const tailnet = profile?.tailnet ?? status.tailnetName;
   const label = [login, tailnet].filter((part) => part !== null).join(" on ") || key;
-  return { key, keys, label };
+  return { key, keys, label, profileId: profile?.id ?? null, profiles: profiles?.ids ?? null };
 });
 
-/** The records that belong to `account`, and the rest. */
-const splitRecords = (records: ServeRecords, account: { readonly keys: ReadonlyArray<string> }) => {
+/**
+ * The records that belong to `account`, and the rest. A record made on a login profile
+ * Tailscale no longer lists is dropped: `tailscale logout` deleted its Serve config with it.
+ */
+const splitRecords = (
+  records: ServeRecords,
+  account: {
+    readonly keys: ReadonlyArray<string>;
+    readonly profiles: ReadonlyArray<string> | null;
+  },
+) => {
   const entries = Object.entries(records);
+  const gone = ([, record]: (typeof entries)[number]) =>
+    record.profileId !== undefined &&
+    account.profiles !== null &&
+    !account.profiles.includes(record.profileId);
   return {
     ours: entries.filter(([key]) => account.keys.includes(key)).map(([, record]) => record),
-    rest: Object.fromEntries(entries.filter(([key]) => !account.keys.includes(key))),
+    rest: Object.fromEntries(
+      entries.filter((entry) => !account.keys.includes(entry[0]) && !gone(entry)),
+    ),
   };
 };
 
@@ -258,7 +275,11 @@ export const layer = (options: {
           if (ours.length > 0) yield* switchedDuring(now);
           yield* writeRecords(options.stateDir, {
             ...rest,
-            [now.key]: { ...target, label: now.label },
+            [now.key]: {
+              ...target,
+              label: now.label,
+              ...(now.profileId === null ? {} : { profileId: now.profileId }),
+            },
           });
           yield* Ref.set(account, now.key);
         }

@@ -697,28 +697,38 @@ const TailscaleProfilesJson = Schema.fromJsonString(
 );
 const decodeTailscaleProfiles = Schema.decodeUnknownEffect(TailscaleProfilesJson);
 
+/** `tailscale switch --list --json`: the selected login profile, and every profile's ID. */
+export const parseTailscaleProfiles = (stdout: string) =>
+  decodeTailscaleProfiles(stdout).pipe(
+    Effect.mapError((cause) => new TailscaleStatusParseError({ cause })),
+    Effect.map((profiles) => {
+      const selected = profiles.find((profile) => profile.selected === true);
+      return {
+        selected:
+          selected === undefined
+            ? null
+            : {
+                id: selected.id,
+                tailnet: selected.tailnet ?? null,
+                account: selected.account ?? null,
+              },
+        ids: profiles.map((profile) => profile.id),
+      };
+    }),
+  );
+
 /**
- * The login profile Tailscale is on now: one account on one tailnet. Tailscale keeps Serve
- * config per profile. None when no profile is selected.
+ * The login profiles Tailscale has: one account on one tailnet each. Tailscale keeps Serve
+ * config per profile and deletes it with the profile on `tailscale logout`.
  */
-export const readTailscaleProfile = Effect.fn("tailscale.readTailscaleProfile")(function* () {
+export const readTailscaleProfiles = Effect.fn("tailscale.readTailscaleProfiles")(function* () {
   const stdout = yield* runTailscale(
     "switch",
     ["switch", "--list", "--json"],
     TAILSCALE_STATUS_TIMEOUT,
     "active",
   );
-  const profiles = yield* decodeTailscaleProfiles(stdout).pipe(
-    Effect.mapError((cause) => new TailscaleStatusParseError({ cause })),
-  );
-  const selected = profiles.find((profile) => profile.selected === true);
-  return selected === undefined
-    ? Option.none()
-    : Option.some({
-        id: selected.id,
-        tailnet: selected.tailnet ?? null,
-        account: selected.account ?? null,
-      });
+  return yield* parseTailscaleProfiles(stdout);
 });
 
 export function buildTailscaleHttpsBaseUrl(input: {

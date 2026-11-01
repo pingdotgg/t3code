@@ -482,6 +482,37 @@ describe("TailscaleServe", () => {
     }),
   );
 
+  it.effect("drops the record of a login profile that `tailscale logout` deleted", () =>
+    Effect.gen(function* () {
+      const fake = makeFakeTailscale({ profileId: "prof2" });
+      const files = new Map([
+        [
+          CLAIM_PATH,
+          JSON.stringify({
+            prof1: {
+              localPort: 18638,
+              localHost: "127.0.0.1",
+              servePort: SERVE_PORT,
+              label: "me@example.com on example.com",
+              profileId: "prof1",
+            },
+          }),
+        ],
+      ]);
+      const scope = yield* Scope.make();
+      yield* Layer.buildWithScope(
+        TailscaleServe.layerReleaseLeftover({ stateDir: STATE_DIR }).pipe(
+          Layer.provide(fakeLayers(fake, files)),
+        ),
+        scope,
+      );
+      yield* TestClock.adjust("1 second");
+
+      assert.isFalse(files.has(CLAIM_PATH));
+      yield* Scope.close(scope, Exit.void);
+    }),
+  );
+
   it.effect(
     "keeps an older port's record when Tailscale switches accounts during its removal",
     () =>
