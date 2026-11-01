@@ -206,6 +206,14 @@ install your own copy. Then turn on
 you have not prepared use Git's normal checkout, and so does a failed fast clone that left nothing
 behind. The worktrees it makes are ordinary Git worktrees.
 
+The fast clone only works when the worktree is on the same APFS volume as git-worktree-fast's cache,
+which is in `~/Library/Caches` unless `XDG_CACHE_HOME` is set. If **Worktree location** points at
+another drive, worktrees there use Git's normal checkout. To use the fast clone on that drive, give
+T3 Code an absolute `XDG_CACHE_HOME` on it before opening the app, for example
+`launchctl setenv XDG_CACHE_HOME /Volumes/Work/.cache`. The desktop app doesn't read this variable
+from your shell profile. T3 Code terminals inherit it, so commits you prepare there use the same
+cache.
+
 ## Storage cleanup
 
 Open **Settings → Worktrees → Cleanup** to enable automatic cleanup on one machine or all connected
