@@ -75,7 +75,8 @@ export class DesktopShellEnvironmentCommandTimeoutError extends Schema.TaggedErr
 export class DesktopShellEnvironment extends Context.Service<
   DesktopShellEnvironment,
   {
-    // Desktop owns discovery, including on cache misses; the backend receives updates over fd4.
+    // Yields true only when a cached environment was applied; on a miss the backend hydrates
+    // PATH itself until desktop discovery arrives over fd4.
     readonly installIntoProcess: Effect.Effect<boolean>;
     readonly awaitDiscovery: Effect.Effect<boolean>;
     readonly updates: Stream.Stream<DesktopShellEnvironmentSnapshot>;
@@ -622,7 +623,8 @@ export const make = Effect.gen(function* () {
       const cache = yield* fileSystem
         .readFileString(cachePath)
         .pipe(Effect.flatMap(decodeCache), Effect.option);
-      if (Option.isSome(cache) && cache.value.key === key) {
+      const hit = Option.isSome(cache) && cache.value.key === key;
+      if (hit) {
         const cached = Object.fromEntries(
           CACHED_ENV_NAMES.flatMap((name) => {
             const value = cache.value.environment[name];
@@ -648,7 +650,7 @@ export const make = Effect.gen(function* () {
         );
       }
       yield* Effect.forkIn(refresh, scope);
-      return true;
+      return hit;
     }).pipe(Effect.withSpan("desktop.shellEnvironment.installIntoProcess")),
   );
   const updates = Stream.unwrap(
