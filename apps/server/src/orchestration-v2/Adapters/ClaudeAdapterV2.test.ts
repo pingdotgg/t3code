@@ -8712,6 +8712,117 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     ),
   );
 
+  it.effect("does not mark tasks owned by a foreground subagent as awaited", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const harness = yield* makeWakeHarness;
+        const now = yield* DateTime.now;
+        const awaitBackgroundTasks = harness.runtime.awaitBackgroundTasks;
+        if (awaitBackgroundTasks === undefined) {
+          throw new Error("Claude adapter runtime must expose awaitBackgroundTasks.");
+        }
+        const subagentStarted = (input: {
+          readonly taskId: string;
+          readonly toolUseId: string;
+          readonly backgrounded: boolean;
+          readonly uuid: string;
+        }) =>
+          claudeSdkFrame({
+            type: "system",
+            subtype: "task_started",
+            task_id: input.taskId,
+            tool_use_id: input.toolUseId,
+            description: input.taskId,
+            subagent_type: "general-purpose",
+            is_backgrounded: input.backgrounded,
+            task_type: "local_agent",
+            prompt: "Run a shell in the background.",
+            uuid: input.uuid,
+            session_id: WAKE_NATIVE_SESSION,
+          });
+
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now,
+            attemptId: RunAttemptId.make("attempt-claude-foreground-owner"),
+            text: "Delegate background shells.",
+            attachments: [],
+          }),
+        );
+        for (const frame of [
+          subagentStarted({
+            taskId: "agent-foreground",
+            toolUseId: "toolu_agent_foreground",
+            backgrounded: false,
+            uuid: "00000000-0000-4000-8000-000000000311",
+          }),
+          subagentStarted({
+            taskId: "agent-background",
+            toolUseId: "toolu_agent_background",
+            backgrounded: true,
+            uuid: "00000000-0000-4000-8000-000000000312",
+          }),
+          claudeSdkFrame({
+            type: "system",
+            subtype: "background_tasks_changed",
+            tasks: [
+              { task_id: "root-shell", task_type: "local_bash", description: "root" },
+              {
+                task_id: "foreground-owned-shell",
+                task_type: "local_bash",
+                description: "foreground owned",
+                parent_task_id: "agent-foreground",
+              },
+              {
+                task_id: "background-owned-shell",
+                task_type: "local_bash",
+                description: "background owned",
+                parent_task_id: "agent-background",
+              },
+            ],
+            uuid: "00000000-0000-4000-8000-000000000313",
+            session_id: WAKE_NATIVE_SESSION,
+          }),
+        ]) {
+          yield* Queue.offer(harness.sdkMessages, frame);
+        }
+        while (true) {
+          const { providerThread } = yield* Queue.take(harness.providerThreadReceipts);
+          if ((providerThread.pendingBackgroundTasks?.length ?? 0) === 3) break;
+        }
+
+        // The foreground subagent returns its result inside the launching turn, so its
+        // own background work never reaches the root thread as a wake.
+        const marked = yield* awaitBackgroundTasks({
+          providerThread: harness.providerThread,
+          taskIds: ["root-shell", "foreground-owned-shell", "background-owned-shell"],
+          awaited: true,
+        });
+        assert.deepStrictEqual(marked.matched, ["root-shell", "background-owned-shell"]);
+        while (true) {
+          const { providerThread } = yield* Queue.take(harness.providerThreadReceipts);
+          const tasks = providerThread.pendingBackgroundTasks ?? [];
+          if (!tasks.some((task) => task.awaited === true)) continue;
+          assert.deepStrictEqual(
+            tasks.map((task) => [task.taskId, task.awaited === true]),
+            [
+              ["root-shell", true],
+              ["foreground-owned-shell", false],
+              ["background-owned-shell", true],
+            ],
+          );
+          break;
+        }
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+        ),
+      ),
+    ),
+  );
+
   it.effect("keeps a running Claude monitor typed after many newer monitors end", () =>
     Effect.scoped(
       Effect.gen(function* () {

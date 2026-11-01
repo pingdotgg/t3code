@@ -11280,7 +11280,17 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 yield* Ref.get(pendingBackgroundTasksByNativeThread),
                 nativeThreadId,
               );
-              const matched = [...new Set(taskIds)].filter((taskId) => roster.has(taskId));
+              const backgroundedSubagents = yield* Ref.get(backgroundedSubagentTaskIds);
+              // A foreground subagent's background work dies with its turn and never wakes the root.
+              const matched = [...new Set(taskIds)].filter((taskId) => {
+                const task = roster.get(taskId);
+                if (task === undefined) return false;
+                return (
+                  !awaited ||
+                  task.parentTaskId === undefined ||
+                  backgroundedSubagents.has(task.parentTaskId)
+                );
+              });
               if (matched.length === 0) return { matched };
               if (awaited) {
                 yield* addTaskIdsToNativeThreadSet(
