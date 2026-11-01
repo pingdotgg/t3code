@@ -1421,6 +1421,82 @@ describe("MuseAdapterV2", () => {
     }).pipe(Effect.scoped, Effect.provide(testLayer)),
   );
 
+  it.effect("reports a steer delivered and keeps the host while Muse holds its ack", () =>
+    Effect.gen(function* () {
+      const fake = yield* makeFakeMuse();
+      const harness = yield* makeHarness(fake);
+      const turn = yield* startConversation(harness, fake);
+      const input = yield* turnInput(harness.providerThread);
+      const acknowledgement = pendingPromise<Record<string, unknown>>();
+      fake.queueResponse("turn/steer", acknowledgement.promise);
+      const steer = yield* harness.runtime.steerTurn!({
+        threadId: THREAD_ID,
+        runId: input.runId,
+        providerThread: harness.providerThread,
+        providerTurnId: turn.providerTurn.id,
+        message: { ...input.message, text: "Delegated task finished" },
+      }).pipe(Effect.forkScoped);
+      yield* fake.takeCall("turn/steer");
+      yield* TestClock.adjust("31 seconds");
+      yield* Fiber.join(steer);
+      assert.strictEqual(fake.closeCount(), 0);
+      acknowledgement.resolve({ turnId: turn.nativeId });
+      assert.strictEqual(fake.calls.filter((call) => call.method === "turn/steer").length, 1);
+
+      fake.queueResponse("turn/interrupt", pendingPromise<Record<string, unknown>>().promise);
+      const interrupt = yield* harness.runtime
+        .interruptTurn({
+          providerThread: harness.providerThread,
+          providerTurnId: turn.providerTurn.id,
+        })
+        .pipe(Effect.exit, Effect.forkScoped);
+      yield* fake.takeCall("turn/interrupt");
+      yield* TestClock.adjust("31 seconds");
+      assert.strictEqual((yield* Fiber.join(interrupt))._tag, "Failure");
+      assert.strictEqual(fake.closeCount(), 1);
+      assert.strictEqual((yield* harness.takeEvent("turn.terminal")).status, "failed");
+    }).pipe(Effect.scoped, Effect.provide(testLayer)),
+  );
+
+  it.effect("reports a steer delivered when Muse times out its own ack", () =>
+    Effect.gen(function* () {
+      const fake = yield* makeFakeMuse();
+      const harness = yield* makeHarness(fake);
+      const turn = yield* startConversation(harness, fake);
+      const input = yield* turnInput(harness.providerThread);
+      const steer = (text: string) =>
+        harness.runtime.steerTurn!({
+          threadId: THREAD_ID,
+          runId: input.runId,
+          providerThread: harness.providerThread,
+          providerTurnId: turn.providerTurn.id,
+          message: { ...input.message, text },
+        });
+      fake.queueResponse(
+        "turn/steer",
+        new MspError({
+          code: -32603,
+          message: "runtime submit failed: turn engine unavailable",
+          data: { kind: "internal", retryable: false },
+        }),
+      );
+      assert.strictEqual((yield* steer("Unrelated failure").pipe(Effect.exit))._tag, "Failure");
+      fake.queueResponse(
+        "turn/steer",
+        new MspError({
+          code: -32603,
+          message: "runtime submit failed: runtime command acknowledgement timed out after 30s",
+          data: { kind: "internal", retryable: false },
+        }),
+      );
+      yield* steer("Delegated task finished");
+      assert.strictEqual(fake.closeCount(), 0);
+
+      yield* fake.emit("turn/completed", { turnId: turn.nativeId, terminal: "completed" });
+      assert.strictEqual((yield* harness.takeEvent("turn.terminal")).status, "completed");
+    }).pipe(Effect.scoped, Effect.provide(testLayer)),
+  );
+
   it.effect("resumes the requested native session and reads the same session snapshot", () =>
     Effect.gen(function* () {
       const fake = yield* makeFakeMuse();
