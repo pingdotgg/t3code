@@ -6,6 +6,7 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Logger from "effect/Logger";
+import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
@@ -527,17 +528,12 @@ it.layer(NodeServices.layer)("keybindings", (it) => {
         const keybindings = yield* Keybindings.Keybindings;
         yield* keybindings.start;
 
-        const emitted: Keybindings.KeybindingsChangeEvent[] = [];
-        const subscription = yield* keybindings.subscribeChanges;
-        yield* Stream.runForEach(subscription, (event) =>
-          Effect.sync(() => {
-            emitted.push(event);
-          }),
-        ).pipe(Effect.forkScoped);
+        const changes = yield* keybindings.subscribeChanges;
 
-        // Revalidate when config on disk has not changed (e.g. atime bump on Windows)
+        // Revalidate when config on disk has not changed (e.g. atime bump on Windows).
+        // `revalidate` publishes before it returns, so a wrongly emitted event would be
+        // buffered in the subscription ahead of the real change observed below.
         yield* keybindings.revalidate;
-        assert.equal(emitted.length, 0);
 
         // Update the file content on disk and revalidate
         yield* writeKeybindingsConfig(keybindingsConfigPath, [
@@ -545,9 +541,16 @@ it.layer(NodeServices.layer)("keybindings", (it) => {
           { key: "mod+k", command: "threadPanel.toggle" },
         ]);
         yield* keybindings.revalidate;
-        assert.equal(emitted.length, 1);
+
+        // The first buffered event must be the real change, not the unchanged state.
+        const change = Option.getOrThrow(yield* Stream.runHead(changes));
         assert.isTrue(
-          emitted[0]?.keybindings.some((rule) => rule.command === "threadPanel.toggle"),
+          change.keybindings.some(
+            (rule) =>
+              rule.command === "threadPanel.toggle" &&
+              rule.shortcut.key === "k" &&
+              rule.shortcut.modKey,
+          ),
         );
       }).pipe(Effect.scoped, Effect.provide(layerKeybindings())),
   );
