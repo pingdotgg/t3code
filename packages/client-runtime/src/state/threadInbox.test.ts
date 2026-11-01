@@ -45,7 +45,9 @@ describe("createInboxReturnTracker", () => {
   });
   it("stamps a thread when it stops working, but never on the first observation", () => {
     const tracker = createInboxReturnTracker();
+    using stringify = vi.spyOn(JSON, "stringify");
     const first = tracker.observe([thread("a", true), thread("b", false)]);
+    expect(stringify).toHaveBeenCalledTimes(1);
     expect(first.returnedAt(thread("a", true))).toBeUndefined();
     expect(first.returnedAt(thread("b", false))).toBeUndefined();
 
