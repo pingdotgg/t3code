@@ -17,20 +17,20 @@ vi.mock("electron", () => ({
   BrowserWindow: { fromWebContents: ownerWindow },
 }));
 
+import * as DesktopConfig from "../../app/DesktopConfig.ts";
+import * as DesktopEnvironment from "../../app/DesktopEnvironment.ts";
+import * as DesktopWslEnvironment from "../../wsl/DesktopWslEnvironment.ts";
 import * as DesktopBackendConfiguration from "../../backend/DesktopBackendConfiguration.ts";
 import * as DesktopBackendManager from "../../backend/DesktopBackendManager.ts";
 import * as DesktopBackendPool from "../../backend/DesktopBackendPool.ts";
-import * as DesktopConfig from "../../app/DesktopConfig.ts";
-import * as DesktopEnvironment from "../../app/DesktopEnvironment.ts";
 import * as DesktopAppSettings from "../../settings/DesktopAppSettings.ts";
-import * as DesktopWslEnvironment from "../../wsl/DesktopWslEnvironment.ts";
 import * as ElectronDialog from "../../electron/ElectronDialog.ts";
 import * as ElectronWindow from "../../electron/ElectronWindow.ts";
 import {
   getLocalEnvironmentBootstraps,
   getRelayTelemetryEnabled,
-  pickFolder,
   pickProjectFavicon,
+  pickFolder,
   probeRemoteEditors,
 } from "./window.ts";
 
@@ -85,6 +85,87 @@ const backendConfigurationLayer = Layer.succeed(
 
 const bootstrapsLayer = (instances: ReadonlyArray<DesktopBackendManager.DesktopBackendInstance>) =>
   Layer.merge(DesktopBackendPool.layerTest([...instances]), backendConfigurationLayer);
+
+describe("pickFolder", () => {
+  const distrosWithDefault = (defaultDistro: string) =>
+    ["Ubuntu", "Debian"].map((name) => ({
+      name,
+      isDefault: name === defaultDistro,
+      version: 2 as const,
+    }));
+
+  it.effect.each([
+    {
+      name: "converts a folder in the default distro to its Linux path",
+      targetEnvironmentId: "wsl:default",
+      picked: "\\\\wsl.localhost\\Ubuntu\\home\\demo\\repo",
+      expected: "/home/demo/repo",
+    },
+    {
+      name: "keeps another distro's folder as UNC so the renderer routes it",
+      targetEnvironmentId: "wsl:Ubuntu",
+      picked: "\\\\wsl.localhost\\Debian\\home\\demo\\repo",
+      expected: "\\\\wsl.localhost\\Debian\\home\\demo\\repo",
+    },
+    {
+      name: "keeps another distro's folder when the target tracks the default distro",
+      targetEnvironmentId: "wsl:default",
+      picked: "\\\\wsl$\\debian\\home\\demo\\repo",
+      expected: "\\\\wsl$\\debian\\home\\demo\\repo",
+    },
+    {
+      name: "compares against the distro a default-tracking backend runs, not the current default",
+      targetEnvironmentId: "wsl:default",
+      windowsDefault: "Debian",
+      picked: "\\\\wsl.localhost\\Debian\\home\\demo\\repo",
+      expected: "\\\\wsl.localhost\\Debian\\home\\demo\\repo",
+    },
+    {
+      name: "compares against the distro a WSL-only primary runs",
+      targetEnvironmentId: "wsl:default",
+      backendId: DesktopBackendPool.PRIMARY_INSTANCE_ID,
+      windowsDefault: "Debian",
+      picked: "\\\\wsl.localhost\\Debian\\home\\demo\\repo",
+      expected: "\\\\wsl.localhost\\Debian\\home\\demo\\repo",
+    },
+  ])(
+    "$name",
+    ({
+      targetEnvironmentId,
+      backendId = defaultWslInstance.id,
+      windowsDefault = "Ubuntu",
+      picked,
+      expected,
+    }) =>
+      Effect.gen(function* () {
+        const result = yield* pickFolder.handler({ targetEnvironmentId });
+        assert.strictEqual(result, expected);
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            Layer.mock(ElectronDialog.ElectronDialog)({
+              pickFolder: () => Effect.succeedSome(picked),
+            }),
+            Layer.mock(ElectronWindow.ElectronWindow)({ focusedMainOrFirst: Effect.succeedNone }),
+            DesktopEnvironment.layer({
+              dirname: "/app",
+              homeDirectory: "C:\\Users\\demo",
+              platform: "win32",
+              processArch: "x64",
+              appVersion: "0.0.0",
+              appPath: "/app",
+              isPackaged: false,
+              resourcesPath: "/app/resources",
+              runningUnderArm64Translation: false,
+            }).pipe(Layer.provide(Layer.merge(NodeServices.layer, DesktopConfig.layerTest({})))),
+            DesktopAppSettings.layerTest(),
+            DesktopWslEnvironment.layerTest({ distros: distrosWithDefault(windowsDefault) }),
+            DesktopBackendPool.layerTest([{ ...defaultWslInstance, id: backendId }]),
+          ),
+        ),
+      ),
+  );
+});
 
 describe("getLocalEnvironmentBootstraps", () => {
   it.effect("hands out the current window's token to a backend launched with the secret", () =>
@@ -197,61 +278,6 @@ describe("getRelayTelemetryEnabled", () => {
           .pipe(Effect.provideService(HostProcess.Environment, {})),
       );
     }),
-  );
-});
-
-describe("pickFolder", () => {
-  const distros = [
-    { name: "Ubuntu", isDefault: true, version: 2 as const },
-    { name: "Debian", isDefault: false, version: 2 as const },
-  ];
-
-  it.effect.each([
-    {
-      name: "converts a folder in the default distro to its Linux path",
-      targetEnvironmentId: "wsl:default",
-      picked: "\\\\wsl.localhost\\Ubuntu\\home\\demo\\repo",
-      expected: "/home/demo/repo",
-    },
-    {
-      name: "keeps another distro's folder as UNC so the renderer routes it",
-      targetEnvironmentId: "wsl:Ubuntu",
-      picked: "\\\\wsl.localhost\\Debian\\home\\demo\\repo",
-      expected: "\\\\wsl.localhost\\Debian\\home\\demo\\repo",
-    },
-    {
-      name: "keeps another distro's folder when the target tracks the default distro",
-      targetEnvironmentId: "wsl:default",
-      picked: "\\\\wsl$\\debian\\home\\demo\\repo",
-      expected: "\\\\wsl$\\debian\\home\\demo\\repo",
-    },
-  ])("$name", ({ targetEnvironmentId, picked, expected }) =>
-    Effect.gen(function* () {
-      const result = yield* pickFolder.handler({ targetEnvironmentId });
-      assert.strictEqual(result, expected);
-    }).pipe(
-      Effect.provide(
-        Layer.mergeAll(
-          Layer.mock(ElectronDialog.ElectronDialog)({
-            pickFolder: () => Effect.succeedSome(picked),
-          }),
-          Layer.mock(ElectronWindow.ElectronWindow)({ focusedMainOrFirst: Effect.succeedNone }),
-          DesktopEnvironment.layer({
-            dirname: "/app",
-            homeDirectory: "C:\\Users\\demo",
-            platform: "win32",
-            processArch: "x64",
-            appVersion: "0.0.0",
-            appPath: "/app",
-            isPackaged: false,
-            resourcesPath: "/app/resources",
-            runningUnderArm64Translation: false,
-          }).pipe(Layer.provide(Layer.merge(NodeServices.layer, DesktopConfig.layerTest({})))),
-          DesktopAppSettings.layerTest(),
-          DesktopWslEnvironment.layerTest({ distros }),
-        ),
-      ),
-    ),
   );
 });
 
