@@ -62,6 +62,7 @@ type AcpAgentTerminalUpdate = Extract<
 >;
 
 const MAX_ACP_TERMINAL_OUTPUT_BYTES = 16 * 1024 * 1024;
+const ACP_TERMINAL_OUTPUT_TRIM_BYTES = 1024 * 1024;
 const MAX_ACP_TERMINAL_FRAME_BYTES = MAX_ACP_TERMINAL_OUTPUT_BYTES;
 
 function isBase64DataCode(code: number): boolean {
@@ -128,12 +129,7 @@ function decodeTerminalOutputChunk(
     : { text, pendingOutputBytes: Uint8Array.from(bytes.subarray(completeEnd)) };
 }
 
-/**
- * Appends decoded text to terminal output and keeps the newest
- * `MAX_ACP_TERMINAL_OUTPUT_BYTES`, dropping whole leading characters. Only the
- * appended text and the dropped prefix are measured, so per-chunk cost does not
- * grow with the retained output.
- */
+// Drop an extra batch at UTF-8 boundaries so flattening the retained string is amortized.
 function appendTerminalOutput(
   output: string,
   outputBytes: number,
@@ -145,7 +141,7 @@ function appendTerminalOutput(
   if (excess <= 0) return { output: combined, outputBytes: combinedBytes };
   let start = 0;
   let dropped = 0;
-  while (dropped < excess) {
+  while (dropped < excess + ACP_TERMINAL_OUTPUT_TRIM_BYTES) {
     const codePoint = combined.codePointAt(start)!;
     dropped += codePoint < 0x80 ? 1 : codePoint < 0x800 ? 2 : codePoint < 0x10000 ? 3 : 4;
     start += codePoint < 0x10000 ? 1 : 2;
@@ -522,6 +518,7 @@ function normalizeToolCallStatus(
     case "completed":
       return "completed";
     case "failed":
+    case "cancelled":
       return "failed";
     default:
       return fallback;
@@ -1179,6 +1176,29 @@ export function embeddedTerminalIdsFromSessionUpdate(
   return terminalIds.length === 0 ? undefined : { toolCallId: update.toolCallId, terminalIds };
 }
 
+/** ACP lets a permission request name its tool call by ID only; omitted (not null) fields come from the tracked call. */
+export function withTrackedPermissionToolCall(
+  params: EffectAcpSchema.RequestPermissionRequest,
+  tracked: AcpToolCallState | undefined,
+): EffectAcpSchema.RequestPermissionRequest {
+  if (tracked === undefined) return params;
+  const { title, kind, rawInput } = params.toolCall;
+  return {
+    ...params,
+    toolCall: {
+      ...params.toolCall,
+      ...(title === undefined && typeof tracked.data.title === "string"
+        ? { title: tracked.data.title }
+        : {}),
+      // Unrecognised kinds map to command approvals, so only a tracked execute kind may grant execution.
+      ...(kind === undefined && tracked.kind === "execute" ? { kind: "execute" as const } : {}),
+      ...(rawInput === undefined && tracked.data.rawInput !== undefined
+        ? { rawInput: tracked.data.rawInput }
+        : {}),
+    },
+  };
+}
+
 export function parsePermissionRequest(
   params: EffectAcpSchema.RequestPermissionRequest,
 ): AcpPermissionRequest {
@@ -1369,17 +1389,15 @@ export function parseSessionUpdateEvent(params: EffectAcpSchema.SessionNotificat
         step: entry.content.trim().length > 0 ? entry.content.trim() : `Step ${index + 1}`,
         status: normalizePlanStepStatus(entry.status),
       }));
-      if (plan.length > 0) {
-        events.push({
-          _tag: "PlanUpdated",
-          payload: {
-            nativePlanId: "legacy",
-            kind: "items",
-            plan,
-          },
-          rawPayload: params,
-        });
-      }
+      events.push({
+        _tag: "PlanUpdated",
+        payload: {
+          nativePlanId: "legacy",
+          kind: "items",
+          plan,
+        },
+        rawPayload: params,
+      });
       break;
     }
     case "plan_update": {
@@ -1528,16 +1546,6 @@ export function parseSessionUpdateEvent(params: EffectAcpSchema.SessionNotificat
       });
       if (toolCall !== undefined) {
         events.push({ _tag: "ToolCallUpdated", toolCall, rawPayload: params });
-      }
-      break;
-    }
-    case "state_update": {
-      if (upd.state === "idle" && upd.usage !== undefined && upd.usage !== null) {
-        events.push({
-          _tag: "UsageUpdated",
-          usage: { usedTokens: upd.usage.totalTokens },
-          rawPayload: params,
-        });
       }
       break;
     }
