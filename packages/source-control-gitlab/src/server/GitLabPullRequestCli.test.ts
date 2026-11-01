@@ -1015,55 +1015,64 @@ layer("GitLabPullRequestCli.layer", (it) => {
     }),
   );
 
-  it.effect("shows a failed child pipeline that left the head pipeline green", () =>
-    Effect.gen(function* () {
-      mockedExecute
-        .mockReturnValueOnce(
-          Effect.succeed(
-            output(
-              mergeRequestJson({
-                // A fork's pipeline runs in the source project, so its id is not the target's.
-                head_pipeline: {
-                  id: 31,
-                  project_id: 12,
-                  status: "success",
-                  web_url: "https://gitlab.com/bilal/web/-/pipelines/31",
-                },
-              }),
-            ),
-          ),
-        )
-        .mockReturnValueOnce(
-          Effect.succeed(
-            output(
-              JSON.stringify([
-                {
-                  name: "deploy",
-                  status: "success",
-                  downstream_pipeline: {
-                    status: "failed",
-                    web_url: "https://gitlab.com/bilal/web/-/pipelines/32",
+  it.effect.each(["running", "failed"] as const)(
+    "keeps a %s child pipeline advisory when the head pipeline is green",
+    (childStatus) =>
+      Effect.gen(function* () {
+        mockedExecute
+          .mockReturnValueOnce(
+            Effect.succeed(
+              output(
+                mergeRequestJson({
+                  // A fork's pipeline runs in the source project, so its id is not the target's.
+                  head_pipeline: {
+                    id: 31,
+                    project_id: 12,
+                    status: "success",
+                    web_url: "https://gitlab.com/bilal/web/-/pipelines/31",
                   },
-                },
-                { name: "docs", status: "created", downstream_pipeline: null },
-              ]),
+                }),
+              ),
             ),
-          ),
-        );
-      const cli = yield* GitLabPullRequestCli.GitLabPullRequestCli;
+          )
+          .mockReturnValueOnce(
+            Effect.succeed(
+              output(
+                JSON.stringify([
+                  {
+                    name: "deploy",
+                    status: "success",
+                    downstream_pipeline: {
+                      status: childStatus,
+                      web_url: "https://gitlab.com/bilal/web/-/pipelines/32",
+                    },
+                  },
+                  { name: "docs", status: "created", downstream_pipeline: null },
+                ]),
+              ),
+            ),
+          );
+        const cli = yield* GitLabPullRequestCli.GitLabPullRequestCli;
 
-      const detail = yield* cli.getMergeRequestDetail({
-        cwd: "/w",
-        repository: "acme/web",
-        number: 7,
-      });
+        const detail = yield* cli.getMergeRequestDetail({
+          cwd: "/w",
+          repository: "acme/web",
+          number: 7,
+        });
 
-      expect(detail.checks.map((check) => [check.name, check.status, check.url])).toEqual([
-        ["Pipeline", "success", "https://gitlab.com/bilal/web/-/pipelines/31"],
-        ["deploy", "failure", "https://gitlab.com/bilal/web/-/pipelines/32"],
-      ]);
-      expect(argsOfCall(1)[1]).toBe("projects/12/pipelines/31/bridges?per_page=100");
-    }),
+        expect(
+          detail.checks.map((check) => [check.name, check.status, check.url, check.required]),
+        ).toEqual([
+          ["Pipeline", "success", "https://gitlab.com/bilal/web/-/pipelines/31", true],
+          [
+            "deploy",
+            childStatus === "running" ? "pending" : "failure",
+            "https://gitlab.com/bilal/web/-/pipelines/32",
+            false,
+          ],
+        ]);
+        expect(argsOfCall(1)[1]).toBe("projects/12/pipelines/31/bridges?per_page=100");
+      }),
   );
 
   it.effect("keeps the one pipeline check when the trigger jobs cannot be read whole", () =>

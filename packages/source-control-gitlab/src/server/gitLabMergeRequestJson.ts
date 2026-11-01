@@ -283,6 +283,8 @@ function toChecks(
     {
       name: "Pipeline",
       status: toPipelineStatus(pipeline.status),
+      // GitLab folds gating downstream pipelines into the head pipeline's status.
+      required: true,
       description: trimmed(pipeline.source),
       url: trimmed(pipeline.web_url),
     },
@@ -442,6 +444,7 @@ export function decodeTriggerJobChecksJson(
       status: status === "failure" && job.value.allow_failure === true ? "neutral" : status,
       description: "Downstream pipeline",
       url: trimmed(downstream.web_url),
+      required: false,
     });
   }
   return Result.succeed({ checks, rawCount: decoded.success.length });

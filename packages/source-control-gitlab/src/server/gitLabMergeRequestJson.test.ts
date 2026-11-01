@@ -143,6 +143,7 @@ describe("decodeMergeRequestDetailJson", () => {
       {
         name: "Pipeline",
         status: "success",
+        required: true,
         description: "merge_request_event",
         url: "https://gitlab.com/acme/web/-/pipelines/9",
       },
