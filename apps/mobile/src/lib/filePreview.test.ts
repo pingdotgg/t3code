@@ -19,6 +19,7 @@ import { acquireAudioSession, activateAudioSession, releaseAudioSession } from "
 import { ThreadFeed } from "../features/threads/ThreadFeed";
 import type { ThreadFeedEntry } from "./threadActivity";
 import type { MarkdownImageRenderer } from "../native/SelectableMarkdownText";
+import { DEFAULT_FONT_SELECTIONS, resolveMobileFonts } from "./mobileFonts";
 
 const audio = vi.hoisted(() => ({
   status: {
@@ -257,7 +258,13 @@ vi.mock("../features/layout/workspace-content-width", () => ({
   useWorkspaceSettledContentWidth: () => null,
 }));
 vi.mock("../features/settings/appearance/AppearancePreferencesProvider", () => ({
-  useAppearancePreferences: () => ({ appearance: { baseFontSize: 14 }, themeAppearance: "dark" }),
+  useAppearancePreferences: () => ({
+    appearance: { baseFontSize: 14 },
+    themeAppearance: "dark",
+    fonts: resolveMobileFonts(DEFAULT_FONT_SELECTIONS, new Map(), "ios"),
+    replyFontSize: 14,
+    replyEmphasisFontFamily: "DMSans-Bold",
+  }),
 }));
 vi.mock("./useUniwindTheme", () => ({
   useUniwindTheme: () => new Proxy({}, { get: () => "#000000" }),

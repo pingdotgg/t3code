@@ -8,7 +8,6 @@ import { StackActions, useNavigation } from "@react-navigation/native";
 import { RefreshControl, ScrollView, View } from "react-native";
 
 import { tryOpenExternalUrl } from "../../lib/openExternalUrl";
-import { FONT_FAMILIES } from "../../lib/fontFamilies";
 import { resolveNativeMarkdownTypography } from "../../lib/appearancePreferences";
 import { useUniwindTheme } from "../../lib/useUniwindTheme";
 import {
@@ -39,8 +38,8 @@ interface MarkdownPreviewStyles {
 }
 
 export function useMarkdownPreviewStyles(): MarkdownPreviewStyles {
-  const { appearance } = useAppearancePreferences();
-  const nativeMarkdownTypography = resolveNativeMarkdownTypography(appearance.baseFontSize);
+  const { fonts, replyFontSize, replyEmphasisFontFamily } = useAppearancePreferences();
+  const nativeMarkdownTypography = resolveNativeMarkdownTypography(replyFontSize);
   const theme = useUniwindTheme();
   const body = theme["--color-md-body"];
   const strong = theme["--color-md-strong"];
@@ -49,8 +48,8 @@ export function useMarkdownPreviewStyles(): MarkdownPreviewStyles {
   const codeBackground = theme["--color-md-code-bg"];
   const codeText = theme["--color-md-code-text"];
   const horizontalRule = theme["--color-md-hr"];
-  const regularFontFamily = FONT_FAMILIES.regular;
-  const boldFontFamily = FONT_FAMILIES.bold;
+  const regularFontFamily = fonts.reply.regular;
+  const boldFontFamily = fonts.reply.bold;
 
   return {
     nativeTextStyle: {
@@ -68,9 +67,10 @@ export function useMarkdownPreviewStyles(): MarkdownPreviewStyles {
       fontSize: nativeMarkdownTypography.fontSize,
       lineHeight: nativeMarkdownTypography.lineHeight,
       headingFontSizes: nativeMarkdownTypography.headingFontSizes,
+      codeFontFamily: fonts.code.regular,
       fontFamily: regularFontFamily,
       headingFontFamily: boldFontFamily,
-      boldFontFamily,
+      boldFontFamily: replyEmphasisFontFamily,
     },
   };
 }

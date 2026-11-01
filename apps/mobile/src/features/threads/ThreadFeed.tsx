@@ -144,7 +144,6 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import Animated, { FadeIn, FadeInUp, type SharedValue } from "react-native-reanimated";
 import { useUniwindTheme } from "../../lib/useUniwindTheme";
 import { IOS_NAV_BAR_HEIGHT } from "../../lib/layoutMetrics";
-import { FONT_FAMILIES } from "../../lib/fontFamilies";
 import { scopedThreadKey } from "../../lib/scopedEntities";
 import { copyTextWithHaptic } from "../../lib/copyTextWithHaptic";
 import { downloadAndShareAttachment } from "../../lib/attachmentDownload";
@@ -1298,8 +1297,15 @@ function MarkdownDetailsFold(props: {
 }
 
 function useMarkdownStyles(): MarkdownStyleSets {
-  const { appearance } = useAppearancePreferences();
-  const nativeMarkdownTypography = resolveNativeMarkdownTypography(appearance.baseFontSize);
+  const { appearance, fonts, replyFontSize, replyEmphasisFontFamily } = useAppearancePreferences();
+  const replyTypography = useMemo(
+    () => resolveNativeMarkdownTypography(replyFontSize),
+    [replyFontSize],
+  );
+  const nativeMarkdownTypography = useMemo(
+    () => resolveNativeMarkdownTypography(appearance.baseFontSize),
+    [appearance.baseFontSize],
+  );
   const theme = useUniwindTheme();
   const markdownBodyColor = theme["--color-md-body"];
   const markdownStrongColor = theme["--color-md-strong"];
@@ -1319,55 +1325,81 @@ function useMarkdownStyles(): MarkdownStyleSets {
   const markdownUserCodeText = theme["--color-md-user-code-text"];
   const markdownUserInlineCodeText = theme["--color-user-bubble-foreground-muted"];
   const markdownUserFenceBg = theme["--color-md-user-fence-bg"];
-  const regularFontFamily = FONT_FAMILIES.regular;
-  const boldFontFamily = FONT_FAMILIES.bold;
+  const regularFontFamily = fonts.interface.regular;
+  const boldFontFamily = fonts.interface.bold;
 
-  return {
-    user: {
-      nativeTextStyle: {
-        color: markdownUserBodyColor,
-        strongColor: markdownUserBodyColor,
-        mutedColor: markdownUserBodyColor,
-        linkColor: markdownUserBodyColor,
-        inlineCodeColor: markdownUserInlineCodeText,
-        codeColor: markdownUserCodeText,
-        codeBackgroundColor: markdownUserCodeBg,
-        codeBlockBackgroundColor: markdownUserFenceBg,
-        fileTextColor: markdownUserBodyColor,
-        quoteMarkerColor: markdownUserBodyColor,
-        dividerColor: markdownUserBodyColor,
-        contextChipBorderColor,
-        fontSize: nativeMarkdownTypography.fontSize,
-        lineHeight: nativeMarkdownTypography.lineHeight,
-        headingFontSizes: nativeMarkdownTypography.headingFontSizes,
-        fontFamily: regularFontFamily,
-        headingFontFamily: boldFontFamily,
-        boldFontFamily,
+  return useMemo(() => {
+    return {
+      user: {
+        nativeTextStyle: {
+          color: markdownUserBodyColor,
+          strongColor: markdownUserBodyColor,
+          mutedColor: markdownUserBodyColor,
+          linkColor: markdownUserBodyColor,
+          inlineCodeColor: markdownUserInlineCodeText,
+          codeColor: markdownUserCodeText,
+          codeBackgroundColor: markdownUserCodeBg,
+          codeBlockBackgroundColor: markdownUserFenceBg,
+          fileTextColor: markdownUserBodyColor,
+          quoteMarkerColor: markdownUserBodyColor,
+          dividerColor: markdownUserBodyColor,
+          contextChipBorderColor,
+          fontSize: nativeMarkdownTypography.fontSize,
+          lineHeight: nativeMarkdownTypography.lineHeight,
+          headingFontSizes: nativeMarkdownTypography.headingFontSizes,
+          codeFontFamily: fonts.code.regular,
+          fontFamily: regularFontFamily,
+          headingFontFamily: boldFontFamily,
+          boldFontFamily,
+        },
       },
-    },
-    assistant: {
-      nativeTextStyle: {
-        color: markdownBodyColor,
-        strongColor: markdownStrongColor,
-        mutedColor: markdownBodyColor,
-        linkColor: markdownLinkColor,
-        inlineCodeColor: markdownInlineCodeText,
-        codeColor: markdownCodeText,
-        codeBackgroundColor: markdownCodeBg,
-        codeBlockBackgroundColor: markdownCodeBg,
-        fileTextColor: markdownCodeText,
-        quoteMarkerColor: markdownBlockquoteBorder,
-        dividerColor: markdownHrColor,
-        contextChipBorderColor,
-        fontSize: nativeMarkdownTypography.fontSize,
-        lineHeight: nativeMarkdownTypography.lineHeight,
-        headingFontSizes: nativeMarkdownTypography.headingFontSizes,
-        fontFamily: regularFontFamily,
-        headingFontFamily: boldFontFamily,
-        boldFontFamily,
+      assistant: {
+        nativeTextStyle: {
+          color: markdownBodyColor,
+          strongColor: markdownStrongColor,
+          mutedColor: markdownBodyColor,
+          linkColor: markdownLinkColor,
+          inlineCodeColor: markdownInlineCodeText,
+          codeColor: markdownCodeText,
+          codeBackgroundColor: markdownCodeBg,
+          codeBlockBackgroundColor: markdownCodeBg,
+          fileTextColor: markdownCodeText,
+          quoteMarkerColor: markdownBlockquoteBorder,
+          dividerColor: markdownHrColor,
+          contextChipBorderColor,
+          fontSize: replyTypography.fontSize,
+          lineHeight: replyTypography.lineHeight,
+          headingFontSizes: replyTypography.headingFontSizes,
+          codeFontFamily: fonts.code.regular,
+          fontFamily: fonts.reply.regular,
+          headingFontFamily: fonts.reply.bold,
+          boldFontFamily: replyEmphasisFontFamily,
+        },
       },
-    },
-  };
+    };
+  }, [
+    fonts.reply,
+    replyEmphasisFontFamily,
+    fonts.code.regular,
+    replyTypography,
+    boldFontFamily,
+    contextChipBorderColor,
+    markdownBlockquoteBorder,
+    markdownBodyColor,
+    markdownCodeBg,
+    markdownCodeText,
+    markdownHrColor,
+    markdownInlineCodeText,
+    markdownLinkColor,
+    markdownStrongColor,
+    markdownUserBodyColor,
+    markdownUserCodeBg,
+    markdownUserCodeText,
+    markdownUserFenceBg,
+    markdownUserInlineCodeText,
+    nativeMarkdownTypography,
+    regularFontFamily,
+  ]);
 }
 
 /** Messages from other agents fold to one line so the user's own messages stay easy to find. */
@@ -2623,11 +2655,12 @@ export const ThreadFeed = memo(function ThreadFeed({
   const userScrollSettleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const headerMaterialVisibleRef = useRef(false);
   const { width: windowWidth, fontScale } = useWindowDimensions();
-  const { appearance } = useAppearancePreferences();
+  const { appearance, fonts, replyFontSize, replyEmphasisFontFamily } = useAppearancePreferences();
   const workRowSizing = deriveThreadWorkLogSizing({
     baseFontSize: appearance.baseFontSize,
     fontScale,
   });
+  const textLayoutKey = `${workRowSizing.textSizeKey}:${replyFontSize}:${fonts.interface.regular}:${fonts.interface.bold}:${fonts.reply.regular}:${fonts.reply.bold}:${replyEmphasisFontFamily}:${fonts.code.regular}`;
   const settledPaneWidth = useWorkspaceSettledContentWidth();
   const [measuredViewportWidth, setViewportWidth] = useState(() =>
     props.layoutVariant === "split" ? 0 : windowWidth,
@@ -3563,7 +3596,7 @@ export const ThreadFeed = memo(function ThreadFeed({
   // reads getFixedItemSize only when it renders, so its size cache is cleared
   // after the commit that hands it rows at the new geometry; clearing earlier
   // re-caches old sizes.
-  const { textSizeKey } = workRowSizing;
+  const textSizeKey = textLayoutKey;
   const hasHtmlRenders = presentedFeed.some((entry) => entry.type === "html-render");
   const previousRowGeometry = useRef({ textSizeKey, contentWidth });
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- clears LegendList size caches and starts a reflow after the commit that brings new row geometry
