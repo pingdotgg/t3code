@@ -102,6 +102,12 @@ it.layer(NodeServices.layer)("LinuxHostPower", (it) => {
         ],
       });
       assert.equal((yield* LinuxHostPower.sample(sysRoot)).thermalState, "fair");
+      yield* writeZone(sysRoot, "thermal_zone8", {
+        type: "x86_pkg_temp",
+        tempMilli: 100_000,
+        trips: [{ type: "critical", tempMilli: 100_000 }],
+      });
+      assert.equal((yield* LinuxHostPower.sample(sysRoot)).thermalState, "critical");
     }).pipe(Effect.scoped),
   );
 
@@ -123,7 +129,7 @@ it.layer(NodeServices.layer)("LinuxHostPower", (it) => {
     }).pipe(Effect.scoped),
   );
 
-  it.effect("ignores unset kernel trip temps and prefers x86_pkg_temp", () =>
+  it.effect("falls back from unset package trips to usable zones", () =>
     Effect.gen(function* () {
       const sysRoot = yield* makeSysRoot;
       yield* writeZone(sysRoot, "thermal_zone2", {
@@ -136,10 +142,15 @@ it.layer(NodeServices.layer)("LinuxHostPower", (it) => {
         tempMilli: 52_000,
         trips: [
           { type: "passive", tempMilli: -274_000 },
-          { type: "passive", tempMilli: -274_000 },
+          { type: "passive", tempMilli: 0 },
         ],
       });
-      assert.equal((yield* LinuxHostPower.sample(sysRoot)).thermalState, "nominal");
+      yield* writeZone(sysRoot, "thermal_zone9", {
+        type: "acpitz",
+        tempMilli: 96_000,
+        trips: [{ type: "hot", tempMilli: 95_000 }],
+      });
+      assert.equal((yield* LinuxHostPower.sample(sysRoot)).thermalState, "serious");
     }).pipe(Effect.scoped),
   );
 
@@ -159,6 +170,7 @@ it.layer(NodeServices.layer)("LinuxHostPower", (it) => {
       yield* writeZone(sysRoot, "thermal_zone0", {
         type: "acpitz",
         tempMilli: 40_000,
+        trips: [{ type: "passive", tempMilli: 50_000 }],
       });
       assert.equal((yield* LinuxHostPower.sample(sysRoot)).thermalState, "nominal");
     }).pipe(Effect.scoped),

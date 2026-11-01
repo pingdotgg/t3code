@@ -85,8 +85,8 @@ const readTrips = Effect.fn("LinuxHostPower.readTrips")(function* (
     if (type === null) break;
     const tempMilli = yield* readInt(fileSystem, path.join(zonePath, `trip_point_${index}_temp`));
     index += 1;
-    // Kernel writes -274000 millicelsius for an unset trip.
-    if (tempMilli === null || tempMilli < 0) continue;
+    // Nonpositive trips are unset or disabled by the kernel.
+    if (tempMilli === null || tempMilli <= 0) continue;
     trips.push({ type, tempMilli });
   }
   return trips;
@@ -102,6 +102,7 @@ const thermalStateFromZone = Effect.fn("LinuxHostPower.thermalStateFromZone")(fu
   const tempMilli = yield* readInt(fileSystem, path.join(zonePath, "temp"));
   if (tempMilli === null) return null;
   const trips = yield* readTrips(fileSystem, path, zonePath);
+  if (trips.length === 0) return null;
   const crossed = (kind: string): boolean =>
     trips.some((trip) => trip.type === kind && tempMilli >= trip.tempMilli);
   if (crossed("critical")) return "critical" as const;
@@ -128,10 +129,13 @@ const sampleThermalState = Effect.fn("LinuxHostPower.sampleThermalState")(functi
     }),
   );
   for (const preferred of PREFERRED_THERMAL_TYPES) {
-    const match = zones.find((zone) => zone.type === preferred);
-    if (match === undefined) continue;
-    const state = yield* thermalStateFromZone(fileSystem, path, match.zonePath);
-    if (state !== null) return state;
+    const states = yield* Effect.forEach(
+      zones.filter((zone) => zone.type === preferred),
+      (zone) => thermalStateFromZone(fileSystem, path, zone.zonePath),
+    );
+    for (const state of ["critical", "serious", "fair", "nominal"] as const) {
+      if (states.includes(state)) return state;
+    }
   }
   for (const zone of zones) {
     if (zone.type.startsWith("iwlwifi")) continue;

@@ -165,6 +165,7 @@ export const make = Effect.fn("desktop.telemetryPublisher.make")(function* () {
     speedLimitPercent: Option.none(),
   };
   const powerState = yield* Ref.make(initialPowerState);
+  const linuxThermalState = yield* Ref.make<LinuxHostPower.LinuxThermalState>("unknown");
   const hostPowerIntervals = yield* Ref.make<HostPowerIntervals>({
     active: DEFAULT_HOST_POWER_ACTIVE_INTERVAL,
     idle: DEFAULT_HOST_POWER_IDLE_INTERVAL,
@@ -271,6 +272,7 @@ export const make = Effect.fn("desktop.telemetryPublisher.make")(function* () {
               thermalState: observedPower.thermalState,
               speedLimitPercent: Option.getOrNull(observedPower.speedLimitPercent),
             });
+        yield* Ref.set(linuxThermalState, linuxPower.thermalState);
         const nextSequence = yield* Ref.modify(sequence, (current) => [current + 1, current + 1]);
         const snapshot: DesktopHostTelemetrySnapshot = {
           version: 1,
@@ -333,7 +335,19 @@ export const make = Effect.fn("desktop.telemetryPublisher.make")(function* () {
       // @effect-diagnostics-next-line raceFirstWithSleepToTimeout:off - races a trigger queue against the interval; both arms are real outcomes, not a timeout
       const allowSuspendRecovery = yield* Effect.raceFirst(
         Queue.take(sampleTriggers).pipe(Effect.as(false)),
-        Effect.sleep(sampleInterval(currentPower, demand, intervals)).pipe(Effect.as(true)),
+        Effect.sleep(
+          sampleInterval(
+            {
+              ...currentPower,
+              thermalState:
+                currentPower.thermalState === "unknown"
+                  ? yield* Ref.get(linuxThermalState)
+                  : currentPower.thermalState,
+            },
+            demand,
+            intervals,
+          ),
+        ).pipe(Effect.as(true)),
       );
       yield* sampleOnce(allowSuspendRecovery);
     }
