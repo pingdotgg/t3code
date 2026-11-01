@@ -1,10 +1,8 @@
-import { useAtomValue } from "@effect/atom-react";
-import { useEffect, useSyncExternalStore } from "react";
-
+import { appAtomRegistry } from "../rpc/atomRegistry";
 import { primaryEnvironmentIdAtom } from "../state/primaryEnvironment";
 import { primaryServerSettingsAtom } from "../state/server";
 import { getThemeDefinition, singleAppearanceOf, subscribeToCustomThemes } from "../themePalette";
-import { useTheme } from "./useTheme";
+import { setAppearanceMode, setTheme } from "./useTheme";
 
 const APPLIED_DEFAULT_THEME_STORAGE_PREFIX = "t3code:default-theme-applied:v2:";
 
@@ -23,7 +21,9 @@ export function defaultThemeToApply(input: {
   if (input.environmentId === null || input.defaultTheme.length === 0) return null;
   const generation = defaultThemeGeneration(input.defaultTheme, input.defaultThemeSetAt);
   if (input.appliedGeneration === generation) return null;
-  // Settings and palettes arrive independently; an unresolved theme must retry when palettes arrive.
+  // The setting and the palette it names arrive independently, so an id that
+  // does not resolve yet is not a failure -- adoption re-checks when the
+  // published set changes.
   if (!input.resolves) return null;
   return generation;
 }
@@ -43,34 +43,44 @@ function writeAppliedGeneration(storageKey: string, generation: string): void {
   } catch {}
 }
 
-export function useDefaultThemeAdoption(): void {
-  const environmentId = useAtomValue(primaryEnvironmentIdAtom);
-  const settings = useAtomValue(primaryServerSettingsAtom);
-  const { defaultTheme, defaultThemeSetAt } = settings;
-  const { setTheme, setAppearanceMode } = useTheme();
-  const definition = useSyncExternalStore(
-    subscribeToCustomThemes,
-    () => getThemeDefinition(defaultTheme),
-    () => null,
-  );
+function adoptDefaultTheme(): void {
+  if (typeof window === "undefined") return;
+  const environmentId = appAtomRegistry.get(primaryEnvironmentIdAtom);
+  if (environmentId === null) return;
+  const { defaultTheme, defaultThemeSetAt } = appAtomRegistry.get(primaryServerSettingsAtom);
+  const definition = getThemeDefinition(defaultTheme);
+  const storageKey = `${APPLIED_DEFAULT_THEME_STORAGE_PREFIX}${environmentId}`;
+  const generation = defaultThemeToApply({
+    environmentId,
+    defaultTheme,
+    defaultThemeSetAt,
+    appliedGeneration: readAppliedGeneration(storageKey),
+    resolves: definition !== null,
+  });
+  if (generation === null || definition === null) return;
 
-  useEffect(() => {
-    if (typeof window === "undefined" || environmentId === null) return;
-    const storageKey = `${APPLIED_DEFAULT_THEME_STORAGE_PREFIX}${environmentId}`;
-    const generation = defaultThemeToApply({
-      environmentId,
-      defaultTheme,
-      defaultThemeSetAt,
-      appliedGeneration: readAppliedGeneration(storageKey),
-      resolves: definition !== null,
-    });
-    if (generation === null || definition === null) return;
+  // A single-appearance theme needs both preference and appearance writes to take effect.
+  if (!setTheme(defaultTheme)) return;
+  const half = singleAppearanceOf(definition);
+  // Only record adoption after both writes succeed, so an appearance failure remains retryable.
+  if (half !== null && !setAppearanceMode(half)) return;
+  writeAppliedGeneration(storageKey, generation);
+}
 
-    // A single-appearance theme needs both preference and appearance writes to take effect.
-    if (!setTheme(defaultTheme)) return;
-    const half = singleAppearanceOf(definition);
-    // Only record adoption after both writes succeed, so an appearance failure remains retryable.
-    if (half !== null && !setAppearanceMode(half)) return;
-    writeAppliedGeneration(storageKey, generation);
-  }, [environmentId, defaultTheme, defaultThemeSetAt, definition, setTheme, setAppearanceMode]);
+/**
+ * Applies the primary environment's default theme once per generation. Start it after the
+ * environment theme sync so a first-run client adopting the environment's own theme finds it
+ * already in the library; it re-checks when published or custom palettes change, so a theme
+ * that resolves late still applies.
+ */
+export function startDefaultThemeAdoption(): () => void {
+  const unsubscribes = [
+    appAtomRegistry.subscribe(primaryEnvironmentIdAtom, adoptDefaultTheme),
+    appAtomRegistry.subscribe(primaryServerSettingsAtom, adoptDefaultTheme),
+    subscribeToCustomThemes(adoptDefaultTheme),
+  ];
+  adoptDefaultTheme();
+  return () => {
+    for (const unsubscribe of unsubscribes) unsubscribe();
+  };
 }
