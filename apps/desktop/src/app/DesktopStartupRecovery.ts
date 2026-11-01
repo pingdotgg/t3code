@@ -29,7 +29,7 @@ const { logInfo, logWarning } = DesktopObservability.makeComponentLogger(
 
 export type StartupRecoveryOffer =
   | { readonly _tag: "Checking" }
-  | { readonly _tag: "Update"; readonly version: string }
+  | { readonly _tag: "Update"; readonly version: string; readonly installError?: string }
   | { readonly _tag: "Downloading"; readonly version: string; readonly percent: number | null }
   | { readonly _tag: "Reinstall"; readonly version: string }
   | { readonly _tag: "Releases" };
@@ -53,7 +53,10 @@ export function resolveStartupRecoveryOffer(
     update.downloadedVersion ?? (update.status === "available" ? update.availableVersion : null);
   // A version that already failed to apply here would loop through install and relaunch.
   if (updateVersion !== null && updateVersion !== update.notAppliedVersion) {
-    return { _tag: "Update", version: updateVersion };
+    const installError = update.errorContext === "install" ? update.message?.trim() : undefined;
+    return installError
+      ? { _tag: "Update", version: updateVersion, installError }
+      : { _tag: "Update", version: updateVersion };
   }
   if (update.enabled && (update.status === "idle" || update.status === "checking")) {
     return { _tag: "Checking" };
@@ -80,7 +83,7 @@ function describeOffer(offer: StartupRecoveryOffer): { text: string; action: str
       return { text: "Checking for a newer version…", action: "" };
     case "Update":
       return {
-        text: `Version ${offer.version} is available. It can contain a fix.`,
+        text: offer.installError ?? `Version ${offer.version} is available. It can contain a fix.`,
         action: actionLink("update", `Update to ${offer.version}`, true),
       };
     case "Downloading":

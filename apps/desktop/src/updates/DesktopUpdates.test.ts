@@ -558,6 +558,132 @@ describe("DesktopUpdates", () => {
     ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
   });
 
+  // regression: #27486 a silent NSIS update on a full volume left a half-written install that no longer launched
+  it.effect("keeps a Windows update retryable when the temp volume lacks space", () => {
+    const megabyte = 1024 * 1024;
+    const diskSpace = {
+      tempFreeBytes: 200 * megabyte,
+      installerBytes: 150 * megabyte,
+      installDirectoryBytes: 400 * megabyte,
+    };
+    const harness = makeHarness({ platform: "win32", diskSpace });
+
+    return Effect.scoped(
+      Effect.gen(function* () {
+        const desktopState = yield* DesktopState.DesktopState;
+        const pool = yield* DesktopBackendPool.DesktopBackendPool;
+        const updates = yield* DesktopUpdates.DesktopUpdates;
+        yield* updates.configure;
+        harness.emit("update-downloaded", {
+          version: "1.2.4",
+          downloadedFile: "C:\\Users\\me\\AppData\\Local\\t3code-updater\\pending\\installer.exe",
+        });
+        yield* flushCallbacks;
+
+        const result = yield* updates.install;
+        assert.equal(harness.quitAndInstalls(), 0, "the installer ran without enough disk space");
+        assert.isFalse(yield* Ref.get(desktopState.quitting));
+        assert.isTrue((yield* (yield* pool.primary).snapshot).desiredRunning);
+        assert.isFalse(result.completed);
+        assert.equal(result.state.status, "downloaded");
+        assert.equal(result.state.downloadedVersion, "1.2.4");
+        assert.equal(result.state.errorContext, "install");
+        assert.isTrue(result.state.canRetry);
+        assert.match(result.state.message ?? "", /space/i);
+
+        diskSpace.tempFreeBytes = 2000 * megabyte;
+        const retry = yield* updates.install;
+        assert.equal(harness.quitAndInstalls(), 1);
+        assert.isNull(retry.state.message, "a successful retry still reports the earlier refusal");
+      }),
+    ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
+  });
+
+  it.effect(
+    "installs a Windows update only with room for the installer, install folder and margin",
+    () => {
+      const megabyte = 1024 * 1024;
+      const requiredBytes = (150 + 400 + 128) * megabyte;
+      const installWithTempFreeBytes = (tempFreeBytes: number) => {
+        const harness = makeHarness({
+          platform: "win32",
+          diskSpace: {
+            tempFreeBytes,
+            installerBytes: 150 * megabyte,
+            installDirectoryBytes: 400 * megabyte,
+          },
+        });
+        return Effect.scoped(
+          Effect.gen(function* () {
+            const updates = yield* DesktopUpdates.DesktopUpdates;
+            yield* updates.configure;
+            harness.emit("update-downloaded", {
+              version: "1.2.4",
+              downloadedFile:
+                "C:\\Users\\me\\AppData\\Local\\t3code-updater\\pending\\installer.exe",
+            });
+            yield* flushCallbacks;
+            yield* updates.install;
+            return harness.quitAndInstalls();
+          }),
+        ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
+      };
+
+      return Effect.gen(function* () {
+        assert.equal(yield* installWithTempFreeBytes(requiredBytes - 1), 0);
+        assert.equal(yield* installWithTempFreeBytes(requiredBytes), 1);
+      });
+    },
+  );
+
+  it.effect("keeps a Windows update retryable when a separate install volume is full", () => {
+    const megabyte = 1024 * 1024;
+    const harness = makeHarness({
+      platform: "win32",
+      diskSpace: {
+        tempFreeBytes: 2000 * megabyte,
+        installFreeBytes: 5 * megabyte,
+        installerBytes: 150 * megabyte,
+        installDirectoryBytes: 400 * megabyte,
+      },
+    });
+
+    return Effect.scoped(
+      Effect.gen(function* () {
+        const updates = yield* DesktopUpdates.DesktopUpdates;
+        yield* updates.configure;
+        harness.emit("update-downloaded", {
+          version: "1.2.4",
+          downloadedFile: "C:\\Users\\me\\AppData\\Local\\t3code-updater\\pending\\installer.exe",
+        });
+        yield* flushCallbacks;
+
+        const result = yield* updates.install;
+        assert.equal(harness.quitAndInstalls(), 0);
+        assert.match(result.state.message ?? "", /space/i);
+      }),
+    ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
+  });
+
+  it.effect("installs a Windows update when disk space cannot be measured", () => {
+    const harness = makeHarness({ platform: "win32" });
+
+    return Effect.scoped(
+      Effect.gen(function* () {
+        const updates = yield* DesktopUpdates.DesktopUpdates;
+        yield* updates.configure;
+        harness.emit("update-downloaded", {
+          version: "1.2.4",
+          downloadedFile: "C:\\Users\\me\\AppData\\Local\\t3code-updater\\pending\\installer.exe",
+        });
+        yield* flushCallbacks;
+
+        yield* updates.install;
+        assert.equal(harness.quitAndInstalls(), 1, "an unmeasured volume blocked the update");
+      }),
+    ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
+  });
+
   it.effect("restores only desired-running instances after an installer error event", () => {
     const starts: string[] = [];
     const stops: string[] = [];

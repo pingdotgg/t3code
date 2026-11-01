@@ -1,5 +1,6 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import type { DesktopUpdateState } from "@t3tools/contracts";
+import * as ByteSize from "effect/ByteSize";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as PlatformError from "effect/PlatformError";
@@ -13,6 +14,7 @@ import * as ElectronUpdater from "../electron/ElectronUpdater.ts";
 import * as ElectronWindow from "../electron/ElectronWindow.ts";
 import * as DesktopAppSettings from "../settings/DesktopAppSettings.ts";
 import * as DesktopState from "../app/DesktopState.ts";
+import * as DesktopDiskSpace from "./DesktopDiskSpace.ts";
 import * as DesktopUpdates from "./DesktopUpdates.ts";
 
 export const flushCallbacks = Effect.yieldNow;
@@ -40,6 +42,13 @@ export interface UpdatesHarnessOptions {
   readonly savedChannel?: DesktopAppSettings.DesktopSettings["updateChannel"];
   /** Adds a WSL backend beside the primary, as on a Windows host with WSL enabled. */
   readonly wslBackend?: boolean;
+  /** Sizes a Windows install preflight reads, live; without `installFreeBytes` temp and install share a volume. */
+  readonly diskSpace?: {
+    tempFreeBytes: number;
+    readonly installFreeBytes?: number;
+    readonly installerBytes: number;
+    readonly installDirectoryBytes: number;
+  };
 }
 
 export function makeHarness(options: UpdatesHarnessOptions = {}) {
@@ -233,6 +242,7 @@ export function makeHarness(options: UpdatesHarnessOptions = {}) {
         } satisfies DesktopAppSettings.DesktopAppSettings["Service"])
       : DesktopAppSettings.layer;
 
+  const diskSpace = options.diskSpace;
   const updateRestartMarkers = new Set<string>();
   const installRecords = new Map<string, string>();
   let previousInstallRecord = options.installRecord;
@@ -255,6 +265,14 @@ export function makeHarness(options: UpdatesHarnessOptions = {}) {
             }),
           );
     },
+    ...(diskSpace === undefined
+      ? {}
+      : {
+          stat: () =>
+            Effect.succeed({
+              size: ByteSize.bytes(diskSpace.installerBytes),
+            } as FileSystem.File.Info),
+        }),
     makeDirectory: () => Effect.void,
     writeFileString: (path, data) =>
       Effect.sync(() => {
@@ -269,8 +287,27 @@ export function makeHarness(options: UpdatesHarnessOptions = {}) {
       }),
   });
 
+  const unmeasured = (operation: DesktopDiskSpace.DesktopDiskSpaceError["operation"]) =>
+    Effect.fail(new DesktopDiskSpace.DesktopDiskSpaceError({ operation, cause: "unmeasured" }));
+  const layerDiskSpace = Layer.succeed(DesktopDiskSpace.DesktopDiskSpace, {
+    tempDirectory: "C:\\Users\\me\\AppData\\Local\\Temp",
+    freeBytes: (path) =>
+      diskSpace === undefined
+        ? unmeasured("freeBytes")
+        : Effect.sync(() =>
+            path.startsWith("C:\\Users\\me\\AppData\\Local\\Temp")
+              ? diskSpace.tempFreeBytes
+              : (diskSpace.installFreeBytes ?? diskSpace.tempFreeBytes),
+          ),
+    directoryBytes: () =>
+      diskSpace === undefined
+        ? unmeasured("directoryBytes")
+        : Effect.succeed(diskSpace.installDirectoryBytes),
+  } satisfies DesktopDiskSpace.DesktopDiskSpace["Service"]);
+
   const layer = DesktopUpdates.layer.pipe(
     Layer.provide(layerFileSystem),
+    Layer.provide(layerDiskSpace),
     Layer.provideMerge(layerUpdater),
     Layer.provideMerge(layerWindow),
     Layer.provideMerge(layerBackend),
