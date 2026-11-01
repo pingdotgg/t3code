@@ -500,10 +500,10 @@ export const make = Effect.gen(function* () {
         .pipe(Effect.mapError((cause) => new TailnetDeviceBlockLookupError({ cause })));
       // Checked before any refusal, as a grant it suggests would not let a blocked device in.
       if (yield* isBlocked) return yield* refuse("blocked");
-      const refuseWithGrant = (reason: TailnetSignInRefusedReason) =>
+      const refuseWithGrant = (reason: TailnetSignInRefusedReason, cause?: unknown) =>
         refuse(
           reason,
-          undefined,
+          cause,
           GRANT_FIXES.has(reason)
             ? // This device on this machine only: a login or tag would cover others too.
               tailnetGrantSnippet(
@@ -530,7 +530,7 @@ export const make = Effect.gen(function* () {
           TailscaleHost.tailnetOwnerUserId(final, config.tailscaleOwnerUserId) !==
             TailscaleHost.tailnetOwnerUserId(status, config.tailscaleOwnerUserId)
         ) {
-          return yield* refuse("policy_unknown", "this host changed during sign-in");
+          return yield* refuseWithGrant("policy_unknown", "this host changed during sign-in");
         }
         if (yield* fs.exists(requireGrantPath).pipe(Effect.orElseSucceed(() => true))) {
           return yield* refuseWithGrant("no_grant");

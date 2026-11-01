@@ -1623,7 +1623,7 @@ it.layer(NodeServices.layer)("TailnetSignIn", (it) => {
       ({ change }) => {
         const tailnet = withLaptop();
         return Effect.gen(function* () {
-          // The third read is sign-in's last, after its owner-rule scan's two.
+          // The third read is sign-in's last: after its own first and its scan's final one.
           const last = (tailnet.freshReads ?? 0) + 3;
           if (change === "the host tagged") {
             tailnet.onFreshRead = (count) => {
