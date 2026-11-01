@@ -261,7 +261,12 @@ export const make = Effect.gen(function* () {
         }
         const at = yield* Clock.currentTimeMillis;
         yield* Ref.set(lastCleanScan, { account, granted: true, at });
-      }).pipe(Effect.ignore);
+      }).pipe(
+        // A later grant in the scan tries again; the status read times out, so it cannot hang.
+        Effect.tapError(() => Ref.set(grantKept, false)),
+        Effect.ignore,
+        Effect.uninterruptible,
+      );
       const { granted, unreadable } = yield* policyGrantedPeers(
         status,
         (address) => host.whois(address, { fromServer: true }),

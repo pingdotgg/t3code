@@ -1017,7 +1017,7 @@ it.layer(NodeServices.layer)("TailnetSignIn", (it) => {
       }).pipe(Effect.provide(layerTest(tailnet)));
     });
 
-    it.effect('a scan cut short while it confirms a grant leaves no older "no grants"', () => {
+    it.effect("a scan cut short while it confirms a grant still keeps it", () => {
       const tailnet = withLaptop();
       tailnet.status = hostStatus({ Peer: { ...peers, stranger: strangerPeer } });
       tailnet.devices = { ...tailnet.devices, [STRANGER_ADDRESS]: { node: stranger } };
@@ -1030,16 +1030,20 @@ it.layer(NodeServices.layer)("TailnetSignIn", (it) => {
         };
         yield* TestClock.adjust("1 minute");
         // The phone leaves while the scan confirms the laptop's grant: the sign-in's read, then
-        // the grant's.
+        // the grant's. The confirmation finishes before the scan stops.
         const started = yield* Deferred.make<void>();
         const release = yield* Deferred.make<void>();
         tailnet.holdFreshRead = { at: (tailnet.freshReads ?? 0) + 2, started, release };
         const phone = yield* signIn(makeDpopKey()).pipe(Effect.forkChild);
         yield* Deferred.await(started);
-        yield* Fiber.interrupt(phone);
-        // With the laptop unreadable, nothing proves "no grants", so the owner rule stays off.
+        const leaving = yield* Fiber.interrupt(phone).pipe(Effect.forkChild);
+        // Lets the interrupt reach the phone before the read is released.
+        yield* Effect.yieldNow;
+        yield* Deferred.succeed(release, undefined);
+        yield* Fiber.join(leaving);
+        // With the laptop unreadable, the grant kept decides, not the older "no grants".
         tailnet.devices = { ...tailnet.devices, [LAPTOP_ADDRESS]: { node: null } };
-        expect(yield* refusalOf(signIn(makeDpopKey()))).toBe("policy_unknown");
+        expect(yield* refusalOf(signIn(makeDpopKey()))).toBe("no_grant");
       }).pipe(Effect.provide(layerTest(tailnet)));
     });
 
