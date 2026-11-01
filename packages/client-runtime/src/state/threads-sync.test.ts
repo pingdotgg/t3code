@@ -755,8 +755,17 @@ describe("EnvironmentThreads", () => {
       };
       yield* Effect.scoped(
         Effect.gen(function* () {
-          const first = yield* makeHarness({ httpSnapshot: { _tag: "missing" }, resumeCache });
-          yield* TestClock.adjust("31500 millis");
+          const attempts = yield* Queue.unbounded<void>();
+          const first = yield* makeHarness({
+            resumeCache,
+            loadSnapshot: () =>
+              Queue.offer(attempts, undefined).pipe(Effect.as({ _tag: "missing" as const })),
+          });
+          yield* Queue.take(attempts);
+          for (const delay of [500, 1_000, 2_000, 4_000, 8_000, 16_000]) {
+            yield* TestClock.adjust(delay);
+            yield* Queue.take(attempts);
+          }
           yield* awaitThreadState(first.observed, (value) => Option.isSome(value.error));
         }),
       );
