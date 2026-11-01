@@ -252,6 +252,11 @@ const T3_MCP_TOOLS: Readonly<Record<string, T3McpToolDefinition>> = {
     "browser",
     "browser",
   ),
+  preview_network: tool(
+    ["Inspect", "Inspecting", "Inspected", "network requests in the preview browser"],
+    "browser",
+    "browser",
+  ),
   preview_set_appearance: tool(
     ["Set", "Setting", "Set", "preview browser appearance"],
     "browser",

@@ -23,6 +23,7 @@ import {
   type PreviewAutomationHoverInput,
   type PreviewAutomationNavigateInput,
   type PreviewAutomationNetworkEntry,
+  type PreviewAutomationNetworkInput,
   type PreviewAutomationOpenInput,
   type PreviewAutomationPressInput,
   type PreviewAutomationRequest,
@@ -81,6 +82,7 @@ import * as DesktopBrowserChannel from "./DesktopBrowserChannel.ts";
 import * as PreviewAgentActivity from "./PreviewAgentActivity.ts";
 import * as PreviewManager from "./Manager.ts";
 import * as ServerBrowserPage from "./ServerBrowserPage.ts";
+import { NetworkLog } from "./ServerBrowserNetwork.ts";
 import * as PreviewBrowser from "./PreviewBrowser.ts";
 import * as PreviewBrowserHost from "./PreviewBrowserHost.ts";
 import { presentAsChrome, ServerBrowserContexts } from "./ServerBrowserContexts.ts";
@@ -290,6 +292,7 @@ interface ServerTab {
   readonly viewers: Set<ViewerState>;
   readonly consoleEntries: Array<PreviewAutomationConsoleEntry>;
   readonly networkEntries: Array<PreviewAutomationNetworkEntry>;
+  readonly network: NetworkLog;
   readonly actionTimeline: Array<PreviewAutomationActionEvent>;
   readonly control: SessionControl;
   agentOperating: boolean;
@@ -349,7 +352,14 @@ const READ_OPERATIONS: ReadonlySet<PreviewAutomationRequest["operation"]> = new 
   "status",
   "snapshot",
   "waitFor",
+  "network",
 ]);
+
+/** One request's headers and bodies can carry what the user typed, so they need the access evaluate needs. */
+const isRead = (request: PreviewAutomationRequest) =>
+  READ_OPERATIONS.has(request.operation) &&
+  (request.operation !== "network" ||
+    (request.input as PreviewAutomationNetworkInput).requestId === undefined);
 
 const AGENT_TAB_LIMIT = 8;
 const SERVER_TAB_LIMIT = 32;
@@ -830,6 +840,7 @@ const make = Effect.gen(function* () {
       viewers: new Set(),
       consoleEntries: [],
       networkEntries: [],
+      network: new NetworkLog(),
       actionTimeline: [],
       control,
       agentOperating: false,
@@ -912,6 +923,7 @@ const make = Effect.gen(function* () {
     });
     // An adopted popup's frames may have loaded before the tab listened.
     if (adopted) for (const frame of page.frames()) void recordFrameCopies(tab, frame);
+    tab.network.record(page);
     page.on("requestfailed", (request) => {
       const errorText = request.failure()?.errorText ?? "";
       pushBounded(tab.networkEntries, {
@@ -1894,7 +1906,7 @@ const make = Effect.gen(function* () {
         "No server preview tab is open for this thread. Call preview_open first.",
       );
     }
-    if (!READ_OPERATIONS.has(request.operation) && !tab.control.agentMayAct(request.agentSessionId))
+    if (!isRead(request) && !tab.control.agentMayAct(request.agentSessionId))
       throw new BrowserControlInterrupted(
         "This tab belongs to another agent session. You can read it, but open your own tab to act.",
         "agentMismatch",
@@ -2089,7 +2101,7 @@ const make = Effect.gen(function* () {
     const agentSessionId = request.agentSessionId!;
 
     if (
-      READ_OPERATIONS.has(request.operation) &&
+      isRead(request) &&
       tab.control.agentId !== agentSessionId &&
       !tab.control.agentCanActNow(agentSessionId)
     ) {
@@ -2111,7 +2123,7 @@ const make = Effect.gen(function* () {
             "dialogPending",
           );
         const generation = tab.control.generation;
-        tab.agentOperating = !READ_OPERATIONS.has(request.operation);
+        tab.agentOperating = !isRead(request);
         updateFileChooserInterception(tab);
         try {
           return await executeTabOperation(tab, request);
@@ -2211,6 +2223,8 @@ const make = Effect.gen(function* () {
         );
       case "waitFor":
         return ServerBrowserPage.waitFor(tab.page, input as PreviewAutomationWaitForInput);
+      case "network":
+        return tab.network.query(tab.tabId, input as PreviewAutomationNetworkInput);
       case "recordingStart": {
         const recording = await startRecording(tab);
         return { tabId: tab.tabId, recording: true, startedAt: recording.startedAt };
