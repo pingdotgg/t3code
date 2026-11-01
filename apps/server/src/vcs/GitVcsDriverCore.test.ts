@@ -1602,7 +1602,7 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
         }),
     );
 
-    it.effect.each(["https", "Bearer", "-private-secret"])(
+    it.effect.each(["https", "Bearer", "-sensitive-subject"])(
       "surfaces a rejected commit hook safely (subject: %s)",
       (subject) =>
         Effect.gen(function* () {
@@ -1616,7 +1616,7 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
           yield* writeTextFile(
             cwd,
             ".git/hooks/pre-commit",
-            "#!/bin/sh\necho 'error: lint: fix formatting in README.md; https://user:private-secret@host/repo?token=query-secret; Authorization: Bearer TOKEN123; rejected commit -private-secret' >&2\nexit 1\n",
+            "#!/bin/sh\necho 'error: lint: fix formatting in README.md; https://user:private-secret@host/repo?token=query-secret; Authorization: Bearer TOKEN123; rejected commit -sensitive-subject' >&2\nexit 1\n",
           );
           yield* fs.chmod(path.join(cwd, ".git/hooks/pre-commit"), 0o755);
 
