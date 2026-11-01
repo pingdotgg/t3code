@@ -127,7 +127,6 @@ export const makeThreadLiveEventCoalescer = Effect.fn(
           }
         }),
       ),
-      Effect.catchTags({ LiveStreamBufferError: () => Effect.void }),
     );
 
   // Keep each source batch together so a synchronization marker cannot pass

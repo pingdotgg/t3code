@@ -163,11 +163,11 @@ describe("ThreadLiveEventCoalescer", () => {
         Effect.gen(function* () {
           const updates = Array.from({ length: 1_100 }, (_, index) => makeToolActivity(index + 1));
           const latest = updates.at(-1)!;
-          const coalescer = yield* makeThreadLiveEventCoalescer({
-            ...(limit === "items"
+          const coalescer = yield* makeThreadLiveEventCoalescer(
+            limit === "items"
               ? { maxItems: 1 }
-              : { maxSerializedBytes: Buffer.byteLength(encodeEvent(latest)) }),
-          });
+              : { maxSerializedBytes: Buffer.byteLength(encodeEvent(latest)) },
+          );
           yield* coalescer.offerAll(updates);
           expect(yield* coalescer.usage).toEqual({
             retainedItems: 1,
