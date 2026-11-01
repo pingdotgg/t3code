@@ -18,7 +18,6 @@ export function LabsSettingsPanel() {
       <SettingsSection id="beta" title="Beta">
         <BoringSidebarRow />
         <BoringSidebarMultilineRow />
-        <ThreadDetailsUsageRow />
         {/* Clerk is only mounted when this build has T3 Connect. */}
         {hasCloudPublicConfig() ? <GuestLinksRowWithSignIn /> : <GuestLinksRow />}
         <LinkedEnvironmentsRow />
@@ -64,26 +63,6 @@ function BoringSidebarMultilineRow() {
             updateSettings({ boringSidebarMultilineRows: Boolean(checked) })
           }
           aria-label="Two-line folder rows"
-        />
-      }
-    />
-  );
-}
-
-function ThreadDetailsUsageRow() {
-  const settings = useScopedSettings();
-  const updateSettings = useUpdateScopedSettings();
-  return (
-    <SettingsRow
-      {...searchableSetting("thread-details-usage")}
-      description="Show the current provider's usage limits and the thread's context window at the bottom of the thread details card."
-      control={
-        <Switch
-          checked={settings.threadDetailsUsageEnabled}
-          onCheckedChange={(checked) =>
-            updateSettings({ threadDetailsUsageEnabled: Boolean(checked) })
-          }
-          aria-label="Usage in thread details"
         />
       }
     />
