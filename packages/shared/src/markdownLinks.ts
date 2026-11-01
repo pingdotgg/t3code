@@ -14,14 +14,15 @@ import {
 
 const RELATIVE_PATH_PREFIX_PATTERN = /^(~\/|\.{1,2}\/)/;
 
-// Names may use any script (`線性代數/考試.pdf`). The final segment is optional so an
-// explicit folder link may end in `/` (`patches/`, `docs/My Folder/`). A bare name with no
-// slash still fails.
+// Names may use any script (`線性代數/考試.pdf`) and routing punctuation (`posts.$id.tsx`,
+// `(group)/[id]/+page.svelte`, `@scope/pkg`). The final segment is optional so an explicit
+// folder link may end in `/` (`patches/`, `docs/My Folder/`). A bare name with no slash still fails.
 const RELATIVE_FILE_PATH_PATTERN =
-  /^(?:[\p{L}\p{M}\p{N}._-]+(?: +[\p{L}\p{M}\p{N}._-]+)*\/)+(?:[\p{L}\p{M}\p{N}._-]+(?: +[\p{L}\p{M}\p{N}._-]+)*(?::\d+){0,2})?$/u;
+  /^(?:[\p{L}\p{M}\p{N}._$+@()[\]-]+(?: +[\p{L}\p{M}\p{N}._$+@()[\]-]+)*\/)+(?:[\p{L}\p{M}\p{N}._$+@()[\]-]+(?: +[\p{L}\p{M}\p{N}._$+@()[\]-]+)*(?::\d+){0,2})?$/u;
 
+// No `@` here: `me@example.com` is an address, not a file.
 const RELATIVE_FILE_NAME_PATTERN =
-  /^[\p{L}\p{M}\p{N}._-]+(?: +[\p{L}\p{M}\p{N}._-]+)*\.[\p{L}\p{M}\p{N}_-]+(?::\d+){0,2}$/u;
+  /^[\p{L}\p{M}\p{N}._$+()[\]-]+(?: +[\p{L}\p{M}\p{N}._$+()[\]-]+)*\.[\p{L}\p{M}\p{N}_-]+(?::\d+){0,2}$/u;
 
 const EXTERNAL_SCHEME_PATTERN = /^([A-Za-z][A-Za-z0-9+.-]*):(.*)$/;
 
