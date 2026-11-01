@@ -2963,7 +2963,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       let openedOptions: ClaudeAdapterV2.ClaudeAgentSdkQueryOptions | undefined;
       const adapter = yield* ClaudeAdapterV2.makeClaudeAdapterV2({
         instanceId: ClaudeAdapterV2.CLAUDE_DEFAULT_INSTANCE_ID,
-        settings: options?.settings ?? DEFAULT_CLAUDE_SETTINGS,
+        settings: options?.settings ?? { ...DEFAULT_CLAUDE_SETTINGS, homePath: attachmentsDir },
         environment: options?.environment ?? {},
         attachmentsDir,
         fileSystem,
@@ -12386,18 +12386,63 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     "requested-parent",
     "configured-default",
     "configured-extended",
+    "settings-default",
+    "settings-extended",
+    "settings-project",
+    "settings-local",
+    "settings-launch",
+    "settings-inherit",
+    "settings-callback",
   ] as const)(
     "records the subagent model from %s without inheriting the parent override",
     (source) =>
       Effect.scoped(
         Effect.gen(function* () {
+          const fileSystem = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const home = yield* fileSystem.makeTempDirectoryScoped({
+            prefix: "t3-child-model-home-",
+          });
+          const cwd = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-child-model-cwd-" });
+          if (source.startsWith("settings-")) {
+            yield* fileSystem.writeFileString(
+              path.join(home, "settings.json"),
+              JSON.stringify({
+                env: {
+                  CLAUDE_CODE_SUBAGENT_MODEL:
+                    source === "settings-extended" ? "claude-opus-4-6[1m]" : "claude-opus-4-6",
+                },
+              }),
+            );
+          }
+          if (source === "settings-local" || source === "settings-project") {
+            yield* fileSystem.makeDirectory(path.join(cwd, ".claude"));
+            yield* fileSystem.writeFileString(
+              path.join(
+                cwd,
+                ".claude",
+                source === "settings-local" ? "settings.local.json" : "settings.json",
+              ),
+              '{"env":{"CLAUDE_CODE_SUBAGENT_MODEL":"claude-opus-4-6[1m]"}}',
+            );
+          }
           const harness = yield* makeWakeHarnessWithOptions({
+            settings: {
+              ...DEFAULT_CLAUDE_SETTINGS,
+              homePath: home,
+              launchArgs:
+                source === "settings-launch" || source === "settings-inherit"
+                  ? `--settings '{"env":{"CLAUDE_CODE_SUBAGENT_MODEL":"${source === "settings-inherit" ? "inherit" : "claude-opus-4-6[1m]"}"}}'`
+                  : "",
+            },
             environment:
               source === "configured-default"
                 ? { CLAUDE_CODE_SUBAGENT_MODEL: "claude-opus-4-6" }
                 : source === "configured-extended"
                   ? { CLAUDE_CODE_SUBAGENT_MODEL: "claude-opus-4-6[1m]" }
-                  : {},
+                  : source.startsWith("settings-")
+                    ? { CLAUDE_CODE_SUBAGENT_MODEL: "haiku" }
+                    : {},
           });
           const now = yield* DateTime.now;
           const toolUseId = "toolu-subagent-model";
@@ -12413,6 +12458,10 @@ describe("ClaudeAdapterV2 background wake turns", () => {
               attemptId: RunAttemptId.make("attempt-subagent-model"),
               text: "Spawn a Haiku subagent.",
               attachments: [],
+              runtimePolicy: ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+                ...CLAUDE_TEST_RUNTIME_POLICY,
+                cwd,
+              }),
               modelSelection: {
                 ...CLAUDE_TEST_MODEL_SELECTION,
                 model: parentModel,
@@ -12423,6 +12472,25 @@ describe("ClaudeAdapterV2 background wake turns", () => {
               },
             }),
           );
+          if (source === "settings-callback") {
+            const permission = yield* Effect.promise(() =>
+              harness.getOpenedOptions()!.canUseTool!(
+                "Agent",
+                { subagent_type: "general-purpose", prompt: "Solve the puzzle." },
+                {
+                  signal: new AbortController().signal,
+                  toolUseID: toolUseId,
+                  requestId: "request-subagent-model",
+                },
+              ),
+            ).pipe(Effect.forkScoped);
+            const request = yield* Queue.take(harness.runtimeRequestReceipts);
+            yield* harness.runtime.respondToRuntimeRequest({
+              requestId: request.runtimeRequest.id,
+              decision: "accept",
+            });
+            yield* Fiber.join(permission);
+          }
           const observed = claudeSdkFrame({
             type: "assistant",
             parent_tool_use_id: toolUseId,
@@ -12455,7 +12523,9 @@ describe("ClaudeAdapterV2 background wake turns", () => {
                     input: {
                       description: "Haiku puzzle",
                       subagent_type: "general-purpose",
-                      ...(source === "unknown" || source.startsWith("configured-")
+                      ...(source === "unknown" ||
+                      source.startsWith("configured-") ||
+                      source.startsWith("settings-")
                         ? {}
                         : {
                             model:
@@ -12503,11 +12573,18 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           const initialModel =
             source === "observed-before"
               ? observedSlug
-              : source === "configured-extended"
+              : source === "configured-extended" ||
+                  source === "settings-extended" ||
+                  source === "settings-project" ||
+                  source === "settings-local" ||
+                  source === "settings-launch"
                 ? `${parentModel}[1m]`
                 : source === "inherit" ||
                     source === "requested-parent" ||
-                    source === "configured-default"
+                    source === "configured-default" ||
+                    source === "settings-default" ||
+                    source === "settings-callback" ||
+                    source === "settings-inherit"
                   ? parentModel
                   : source === "unknown"
                     ? null
@@ -12520,11 +12597,20 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           const child = harness.events.find((event) => event.type === "app_thread.created");
           assert.equal(
             child?.appThread.modelSelection?.model,
-            source === "configured-extended" ? parentModel : (initialModel ?? parentModel),
+            source === "configured-extended" || source.startsWith("settings-")
+              ? parentModel
+              : (initialModel ?? parentModel),
           );
           assert.equal(
             getModelSelectionStringOptionValue(child?.appThread.modelSelection, "contextWindow"),
-            source === "inherit" || source === "unknown" || source === "configured-extended"
+            source === "inherit" ||
+              source === "unknown" ||
+              source === "configured-extended" ||
+              source === "settings-extended" ||
+              source === "settings-project" ||
+              source === "settings-local" ||
+              source === "settings-launch" ||
+              source === "settings-inherit"
               ? "1m"
               : undefined,
           );

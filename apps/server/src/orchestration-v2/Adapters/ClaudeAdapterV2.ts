@@ -4075,6 +4075,7 @@ interface ClaudeLiveQueryContext {
   readonly nativeThreadId: string;
   readonly query: ClaudeAgentSdkQuerySession;
   readonly queryPolicyKey: string;
+  readonly subagentModel: string | undefined;
   selection: CompiledClaudeModelSelection;
   readonly closed: Deferred.Deferred<void, never>;
   lastTurn: ActiveClaudeTurnContext | null;
@@ -4600,11 +4601,11 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
     },
   );
 
-  const readToolSearchSetting = (filePath: string) =>
+  const readClaudeEnvSetting = (filePath: string, key: string) =>
     fileSystem.readFileString(filePath).pipe(
       Effect.flatMap(decodeClaudeEnvSettings),
       Effect.map((settings) => {
-        const value = settings.env?.ENABLE_TOOL_SEARCH;
+        const value = settings.env?.[key];
         return typeof value === "string" ? value : undefined;
       }),
       Effect.orElseSucceed(() => undefined),
@@ -4647,28 +4648,30 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
   // Settings env beats the process env, --settings over local over project over user, and a local
   // file an older Claude Code left in cwd applies under the root one. resolveSettings reads local
   // from cwd only.
-  const resolveToolSearchOverride = Effect.fn("ClaudeAdapterV2.resolveToolSearchOverride")(
-    function* (cwd: string | null, launchArgSettings: ClaudeSdkSettings | undefined) {
-      const launchValue = launchArgSettings?.env?.ENABLE_TOOL_SEARCH;
-      if (typeof launchValue === "string") return claudeToolSearchOverride(launchValue);
-      const localDirectory = cwd === null ? null : yield* localSettingsDirectory(cwd);
-      const settingsFiles = [
-        ...(cwd === null || localDirectory === null
-          ? []
-          : [
-              path.join(localDirectory, ".claude", "settings.local.json"),
-              ...(localDirectory === cwd ? [] : [path.join(cwd, ".claude", "settings.local.json")]),
-              path.join(cwd, ".claude", "settings.json"),
-            ]),
-        path.join(homePath, "settings.json"),
-      ];
-      for (const settingsFile of settingsFiles) {
-        const value = yield* readToolSearchSetting(settingsFile);
-        if (value !== undefined) return claudeToolSearchOverride(value);
-      }
-      return claudeToolSearchOverride(adapterOptions.environment.ENABLE_TOOL_SEARCH);
-    },
-  );
+  const resolveClaudeEnvSetting = Effect.fn("ClaudeAdapterV2.resolveEnvSetting")(function* (
+    cwd: string | null,
+    launchArgSettings: ClaudeSdkSettings | undefined,
+    key: string,
+  ) {
+    const launchValue = launchArgSettings?.env?.[key];
+    if (typeof launchValue === "string") return launchValue;
+    const localDirectory = cwd === null ? null : yield* localSettingsDirectory(cwd);
+    const settingsFiles = [
+      ...(cwd === null || localDirectory === null
+        ? []
+        : [
+            path.join(localDirectory, ".claude", "settings.local.json"),
+            ...(localDirectory === cwd ? [] : [path.join(cwd, ".claude", "settings.local.json")]),
+            path.join(cwd, ".claude", "settings.json"),
+          ]),
+      path.join(homePath, "settings.json"),
+    ];
+    for (const settingsFile of settingsFiles) {
+      const value = yield* readClaudeEnvSetting(settingsFile, key);
+      if (value !== undefined) return value;
+    }
+    return adapterOptions.environment[key];
+  });
 
   const userInvocableSkills = (cwd: string | null) =>
     discoverClaudeSkills(
@@ -9084,7 +9087,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 toolUse.id,
                 nativeToolInput,
                 parentToolUseIdFromSdkMessage(message),
-                adapterOptions.environment.CLAUDE_CODE_SUBAGENT_MODEL,
+                liveQuery.subagentModel,
               );
               continue;
             }
@@ -9659,7 +9662,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               nativeRequestId,
               nativeToolInput,
               null,
-              adapterOptions.environment.CLAUDE_CODE_SUBAGENT_MODEL,
+              (yield* Ref.get(queryContext))?.subagentModel,
             );
           } else if (startToolCall && !heldForEcho) {
             yield* ensureToolCallStarted({
@@ -10245,9 +10248,17 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             turnInput.nativeThreadHasTurns ?? turnInput.providerTurnOrdinal > 1;
           const shouldResume =
             resumeSessionAt !== undefined || openedWithResume || hasPersistedProviderTurn;
-          const toolSearchOverride = yield* resolveToolSearchOverride(
+          const toolSearchOverride = claudeToolSearchOverride(
+            yield* resolveClaudeEnvSetting(
+              turnInput.runtimePolicy.cwd,
+              launchArgSettings,
+              "ENABLE_TOOL_SEARCH",
+            ),
+          );
+          const subagentModel = yield* resolveClaudeEnvSetting(
             turnInput.runtimePolicy.cwd,
             launchArgSettings,
+            "CLAUDE_CODE_SUBAGENT_MODEL",
           );
           const queryOptions = makeClaudeQueryOptions({
             modelSelection: turnInput.modelSelection,
@@ -10327,6 +10338,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             nativeThreadId,
             query: querySession,
             queryPolicyKey,
+            subagentModel,
             selection: compiledSelection,
             closed,
             lastTurn: null,
