@@ -364,7 +364,9 @@ Pass the task in `message`. Project, model, and modes inherit when omitted;
 workspace does not. `scratch: true` launches without a project, in a folder of
 its own under the environment's Scratch project. For stacked PRs, use the parent branch as `baseRef` with
 `startFromOrigin: false`. The new thread may not run with broader runtime or
-interaction modes than the caller. Launch has no retry key, so inspect existing threads after a failed or lost response before
+interaction modes than the caller. As for `delegate_task`, a runtime mode the
+provider does not offer is refused, and an inherited or default one steps down
+to the broadest mode it offers. Launch has no retry key, so inspect existing threads after a failed or lost response before
 launching again. `create_threads` remains the batch option for a shared checkout.
 
 ### `t3_thread_list`
@@ -398,7 +400,10 @@ delegated to a linked environment name that environment. Clients open only that
 environment's thread and show its current title; a link to a thread they do not
 know renders as a label that opens nothing. Older `t3-thread://v1/<threadId>`
 links name no environment: clients resolve them in the message's environment,
-then by a unique match in another enabled environment.
+then by a unique match in another enabled environment. An outside OAuth client,
+one that is not a linked environment, cannot render `t3-thread://` links, so it
+gets a web URL on the origin it reached, `<origin>/<environmentId>/<threadId>`,
+for threads in this environment.
 
 List and read results report `snoozed` and `snoozedUntil`, and
 `t3_thread_list` filters on `snoozed`. The server's `isSnoozed` follows the

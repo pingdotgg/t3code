@@ -25,8 +25,18 @@ function providerModelPickerNaturalWidth(picker: HTMLElement): number {
   const style = getComputedStyle(picker);
   const label = picker.querySelector<HTMLElement>('[data-chat-provider-model-picker-label="true"]');
   const labelIsCollapsed = label?.clientWidth === 0 && getComputedStyle(label).flexGrow === "0";
+  // A label with its own max width, such as a long model name, never grows past it.
+  const labelMaxWidth = label ? Number.parseFloat(getComputedStyle(label).maxWidth) : Number.NaN;
   const hiddenLabelWidth =
-    label && !labelIsCollapsed ? Math.max(0, label.scrollWidth - label.clientWidth) : 0;
+    label && !labelIsCollapsed
+      ? Math.max(
+          0,
+          Math.min(
+            label.scrollWidth,
+            Number.isFinite(labelMaxWidth) ? labelMaxWidth : Number.POSITIVE_INFINITY,
+          ) - label.clientWidth,
+        )
+      : 0;
   const maxWidth = Number.parseFloat(style.maxWidth);
   const naturalWidth = Math.min(
     renderedWidth + hiddenLabelWidth,
