@@ -12,7 +12,7 @@ import { useRememberThreadProject } from "./useRememberThreadProject";
 import { scopedProjectKey } from "../../lib/scopedEntities";
 import { connectionTone } from "../connection/connectionTone";
 import { AppBar } from "../../components/ui/AppBar";
-import { ThreadId } from "@t3tools/contracts";
+import { isTriagePrompt, ThreadId } from "@t3tools/contracts";
 
 import * as Dialog from "../../components/ui/Dialog";
 import { useAtomValue } from "@effect/atom-react";
@@ -729,56 +729,68 @@ export function NewTaskDraftScreen(props: {
       The shared content is no longer in the inbox. You can continue editing this task draft.
     </Text>
   ) : null;
-  const hero = flow.isScratchDraft ? (
-    <View className="items-center gap-2 px-6" testID="new-task-hero">
-      <Text className="text-center text-2xl font-t3-medium tracking-tight text-foreground">
-        What should we work on?
-      </Text>
-      <View className="flex-row flex-wrap items-center justify-center gap-x-1">
-        <ComposerInlineControl
-          accessibilityHint="Opens the project picker"
-          accessibilityLabel="No project"
-          chevronDirection="right"
-          disabled={isComposerInteractionLocked}
-          icon="folder"
-          label="No project"
-          onPress={chooseProject}
-        />
-        {environmentControl}
-      </View>
-      {shareUnavailableNotice}
-    </View>
-  ) : (
-    <View className="items-center gap-6 px-6" testID="new-task-hero">
-      <View className="w-full items-center gap-1.5">
+  const serverVersion = selectedEnvironmentServerConfig?.environment.serverVersion;
+  const hero =
+    flow.isScratchDraft && isTriagePrompt(flow.prompt) ? (
+      <View className="items-center gap-2 px-6" testID="new-task-hero">
         <Text className="text-center text-2xl font-t3-medium tracking-tight text-foreground">
-          What should we build
+          What went wrong?
         </Text>
-        <View className="max-w-full flex-row items-center justify-center">
-          <Text className="text-2xl font-t3-medium tracking-tight text-foreground">in </Text>
-          <Pressable
-            accessibilityHint="Opens the project picker"
-            accessibilityLabel={selectedProjectLabel ?? selectedProject.title}
-            accessibilityRole="button"
-            disabled={isComposerInteractionLocked}
-            onPress={chooseProject}
-            className="min-w-0 max-w-[250px] border-b border-foreground-muted active:opacity-65"
-          >
-            <Text
-              className="text-2xl font-t3-medium tracking-tight text-foreground"
-              numberOfLines={1}
-            >
-              {selectedProjectLabel ?? selectedProject.title}
-            </Text>
-          </Pressable>
-          <Text className="text-2xl font-t3-medium tracking-tight text-foreground">?</Text>
-        </View>
+        <Text className="text-center text-sm text-foreground-muted" numberOfLines={1}>
+          <Text className="font-t3-medium text-foreground">{selectedEnvironmentLabel}</Text>
+          {serverVersion ? ` v${serverVersion}` : null}
+        </Text>
       </View>
+    ) : flow.isScratchDraft ? (
+      <View className="items-center gap-2 px-6" testID="new-task-hero">
+        <Text className="text-center text-2xl font-t3-medium tracking-tight text-foreground">
+          What should we work on?
+        </Text>
+        <View className="flex-row flex-wrap items-center justify-center gap-x-1">
+          <ComposerInlineControl
+            accessibilityHint="Opens the project picker"
+            accessibilityLabel="No project"
+            chevronDirection="right"
+            disabled={isComposerInteractionLocked}
+            icon="folder"
+            label="No project"
+            onPress={chooseProject}
+          />
+          {environmentControl}
+        </View>
+        {shareUnavailableNotice}
+      </View>
+    ) : (
+      <View className="items-center gap-6 px-6" testID="new-task-hero">
+        <View className="w-full items-center gap-1.5">
+          <Text className="text-center text-2xl font-t3-medium tracking-tight text-foreground">
+            What should we build
+          </Text>
+          <View className="max-w-full flex-row items-center justify-center">
+            <Text className="text-2xl font-t3-medium tracking-tight text-foreground">in </Text>
+            <Pressable
+              accessibilityHint="Opens the project picker"
+              accessibilityLabel={selectedProjectLabel ?? selectedProject.title}
+              accessibilityRole="button"
+              disabled={isComposerInteractionLocked}
+              onPress={chooseProject}
+              className="min-w-0 max-w-[250px] border-b border-foreground-muted active:opacity-65"
+            >
+              <Text
+                className="text-2xl font-t3-medium tracking-tight text-foreground"
+                numberOfLines={1}
+              >
+                {selectedProjectLabel ?? selectedProject.title}
+              </Text>
+            </Pressable>
+            <Text className="text-2xl font-t3-medium tracking-tight text-foreground">?</Text>
+          </View>
+        </View>
 
-      {environmentControl}
-      {shareUnavailableNotice}
-    </View>
-  );
+        {environmentControl}
+        {shareUnavailableNotice}
+      </View>
+    );
   // The nested hero scroll view does not receive UIKit's automatic navigation inset in split columns.
   const heroViewport = (headerInset: number, bottomInset: number, availableHeight: number) =>
     availableHeight < 180 ? null : (

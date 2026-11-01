@@ -332,6 +332,9 @@ export type ServerPrepareTriageResult = typeof ServerPrepareTriageResult.Type;
  */
 export const TRIAGE_PROMPT_FILE_NAME = "triage-playbook.md";
 
+/** A draft is a triage draft while its message still links the playbook file. */
+export const isTriagePrompt = (prompt: string) => prompt.includes(`[${TRIAGE_PROMPT_FILE_NAME}](`);
+
 export class ServerPrepareTriageError extends Schema.TaggedError<ServerPrepareTriageError>()(
   "ServerPrepareTriageError",
   { cause: Schema.optional(Schema.Defect()) },
