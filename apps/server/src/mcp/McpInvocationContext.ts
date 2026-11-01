@@ -153,16 +153,9 @@ export class McpInvocationContext extends Context.Service<
 >()("t3/mcp/McpInvocationContext") {}
 
 /**
- * `McpSchema.EnabledWhen` for tools a delegated child must not see or call.
+ * `McpSchema.EnabledWhen` for tools that only serve links, hidden while the beta is off.
  * EnabledWhen only receives the MCP client profile, so read the T3 caller from the request fiber.
  */
-export const hiddenFromSubagents = (): boolean => {
-  const fiber = Fiber.getCurrent();
-  const scope = fiber && Context.getOrUndefined(fiber.context, McpInvocationContext);
-  return scope?.thread?.subagent !== true;
-};
-
-/** `McpSchema.EnabledWhen` for tools that only serve links, hidden while the beta is off. */
 export const hiddenWhileLinksOff = (): boolean => {
   const fiber = Fiber.getCurrent();
   const scope = fiber && Context.getOrUndefined(fiber.context, McpInvocationContext);

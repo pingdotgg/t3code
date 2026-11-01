@@ -39,7 +39,6 @@ import {
   PullRequestNotOpenError,
   type PullRequestTargetInput,
   PullRequestWatchFailedError,
-  PullRequestWatchFromSubagentError,
   PullRequestThreadNotFoundError,
   PullRequestThreadRequiredError,
   PullRequestGuideFailedError,
@@ -271,9 +270,6 @@ const make = Effect.gen(function* () {
       threadPullRequestsOf(shell).find(
         (link) => link.source !== "stack-dismissed" && threadPullRequestKeysEqual(link, target),
       );
-    if (watching && thread.lineage.relationshipToParent === "subagent") {
-      return yield* new PullRequestWatchFromSubagentError();
-    }
     const before = watchedLink(thread);
     if (watching && before?.snapshot?.state === "merged") {
       return yield* new PullRequestNotOpenError({ state: "merged" });
