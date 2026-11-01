@@ -329,15 +329,25 @@
               in Docker; the host does not need the T3 toolchain globally.
             </li>
             <li>
-              Keep runtime state under the checkout's ignored <code>.t3</code> directory. Disable DB
-              seeding for the first start (<code>T3CODE_DEV_SEED=0</code> or <code>--no-seed</code>)
-              so no personal data is copied. Start with synthetic data and the free
-              <code>Replay (dev)</code> provider.
+              Before <code>vp run dev</code>, create a separate sanitized, ignored
+              <code>.env.local</code> for this checkout. Keep production T3 Connect tokens, provider
+              credentials, and other production secrets out of it; <code>.env.local</code> overrides
+              <code>.env</code>. Also check inherited shell variables, which override repository env
+              files.
             </li>
             <li>
-              Keep <code>.env</code>, credentials, and pairing URLs out of Git. Do not connect the
-              dev server to production T3 Connect or production credentials by default. If
-              credentials become necessary, use a separate test account and minimum scopes.
+              Keep runtime state under the checkout's ignored <code>.t3</code> directory. Disable DB
+              seeding for the first start (<code>T3CODE_DEV_SEED=0</code> or <code>--no-seed</code>)
+              so no personal data is copied. This only disables database seeding; it does not stop
+              credentials from being loaded from <code>.env</code>, <code>.env.local</code>,
+              inherited environment variables, or other configuration. Start with synthetic data and
+              the free <code>Replay (dev)</code> provider.
+            </li>
+            <li>
+              Keep <code>.env</code>, <code>.env.local</code>, credentials, and pairing URLs out of
+              Git. Do not connect the dev server to production T3 Connect or production credentials
+              by default. If credentials become necessary, use a separate test account and minimum
+              scopes.
             </li>
             <li>
               Defer host-only Electron GUI and mobile native builds; begin with web/server
@@ -353,8 +363,8 @@
           </ol>
           <p class="done">
             <strong>Done when:</strong> a fresh container starts web/server T3 with state in
-            <code>.t3</code>, requires no global Node/pnpm/vp on the host, and cannot read or mutate
-            normal T3 userdata or credentials.
+            <code>.t3</code>, requires no global Node/pnpm/vp on the host, uses a separate empty
+            database on first start, and receives no production credentials.
           </p>
         </section>
 

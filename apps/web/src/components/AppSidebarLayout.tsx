@@ -457,6 +457,7 @@ export function AppSidebarLayout({ children }: { children: ReactNode }) {
           <Sidebar
             side="left"
             collapsible="offcanvas"
+            className="bottom-7! h-[calc(100dvh-1.75rem)]!"
             data-app-sidebar=""
             {...sidebarArea}
             role="navigation"

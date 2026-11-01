@@ -5,7 +5,10 @@ import { CodexUsageStatusBar } from "./chat/CodexUsageStatusBar";
 
 export function GlobalStatusBar() {
   const providers = useAtomValue(primaryServerProvidersAtom);
-  const codex = providers.find((provider) => provider.driver === "codex");
+  const codexProviders = providers.filter((provider) => provider.driver === "codex");
+  const codex = codexProviders.find((provider) => (provider.usageLimits?.windows.length ?? 0) > 0);
+  const configuredCodex = codex ?? codexProviders[0];
+  if (!configuredCodex) return null;
   const windows = codex?.usageLimits?.windows ?? [];
 
   return (

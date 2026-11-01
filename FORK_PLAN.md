@@ -2,7 +2,7 @@
 
 **Purpose:** turn this checkout into a maintainable personal fork of T3 Code, with an isolated development setup and four focused product changes: project-first navigation, prompt-level thread navigation, inspectable subagents, and Bitbucket operations through `bkt`.
 
-**Current checkout:** `main` tracks `origin/main`, and `origin` currently points to `pingdotgg/t3code`. No personal fork remote is configured yet. The repo is a TypeScript monorepo using Vite+, pnpm, Node 26, and some Rust/native tooling. It has a Dev Container. The Python files found are utility/build scripts; there is no `pyproject.toml`, `uv.lock`, or Python application dependency set.
+**Current checkout:** work is on `fork/custom-work`, pushed to the personal fork at `origin` (`Tweetdezweet/t3code`); `upstream` points to `pingdotgg/t3code`. The repository uses TypeScript, Vite+, pnpm, Node 26, and some Rust/native tooling. It has a Dev Container. The Python files are utility/build scripts; there is no `pyproject.toml`, `uv.lock`, or Python application dependency set.
 
 ## Goals and acceptance criteria
 
@@ -26,12 +26,13 @@
 ## Phase 1 — isolate the development environment
 
 1. Use the repository's `.devcontainer` as the default. It provisions Ubuntu, Node 26, Rust and the repo's Vite+ (`vp`) tool, and installs the pnpm workspace dependencies inside the container. `node_modules` and package caches are container volumes; the host does not need the T3 toolchain installed globally.
-2. Keep T3 development state in the checkout's ignored `.t3` directory (`T3CODE_HOME` is already configured that way in the Dev Container). Explicitly disable database seeding for the first run (`T3CODE_DEV_SEED=0` or the dev runner's `--no-seed` option) so no real user data is copied. Start with an empty/synthetic development account and the free `Replay (dev)` provider.
-3. Keep `.env`, auth tokens, pairing URLs, and provider credentials out of Git. Do not connect the dev instance to production T3 Connect or use production credentials by default. If a feature later needs credentials, add a separate test account/token scoped to the minimum permissions and keep it inside the container's ignored configuration.
-4. Treat host-only Electron GUI and mobile native builds as optional later work; web/server development is the first target. The Dev Container guide documents those platform limits.
-5. Do not add `uv` just to make the JavaScript environment feel virtualized. The repository has no Python project or dependency lockfile. First inventory each Python helper's actual runtime; if a future maintained Python tool gains third-party dependencies, isolate that tool with its own `pyproject.toml`, `uv.lock`, and project-local `.venv` (or run it in the container). Keep Blender-specific asset scripts tied to their documented Blender runtime rather than pretending they are a general Python package.
+2. Before `vp run dev`, create a separate sanitized, ignored `.env.local` for this development checkout. Keep production T3 Connect tokens, provider credentials, and other production secrets out of it; `.env.local` overrides `.env`. Also check inherited shell variables, which override repository env files.
+3. Keep T3 development state in the checkout's ignored `.t3` directory (`T3CODE_HOME` is already configured that way in the Dev Container). Explicitly disable database seeding for the first run (`T3CODE_DEV_SEED=0` or the dev runner's `--no-seed` option) so no real user data is copied. This only disables database seeding; it does not stop credentials from being loaded from `.env`, `.env.local`, inherited environment variables, or other configuration. Start with an empty/synthetic development account and the free `Replay (dev)` provider.
+4. Keep `.env`, `.env.local`, auth tokens, pairing URLs, and provider credentials out of Git. Do not connect the dev instance to production T3 Connect or use production credentials by default. If a feature later needs credentials, add a separate test account/token scoped to the minimum permissions and keep it inside the container's ignored configuration.
+5. Treat host-only Electron GUI and mobile native builds as optional later work; web/server development is the first target. The Dev Container guide documents those platform limits.
+6. Do not add `uv` just to make the JavaScript environment feel virtualized. The repository has no Python project or dependency lockfile. First inventory each Python helper's actual runtime; if a future maintained Python tool gains third-party dependencies, isolate that tool with its own `pyproject.toml`, `uv.lock`, and project-local `.venv` (or run it in the container). Keep Blender-specific asset scripts tied to their documented Blender runtime rather than pretending they are a general Python package.
 
-**Done when:** a fresh container can install and run web/server T3 with state under `.t3`, no global Node/pnpm/vp install is required on the host, and the first run cannot read or mutate the normal T3 database or credentials.
+**Done when:** a fresh container can install and run web/server T3 with state under `.t3`, no global Node/pnpm/vp install is required on the host, the first run uses a separate empty database, and no production credentials are supplied to it.
 
 ## Phase 2 — project-first sidebar
 

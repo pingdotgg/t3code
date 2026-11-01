@@ -75,7 +75,7 @@ export function SidebarThreadPrompts(props: {
             role="presentation"
             className="list-none px-14 py-2 text-xs text-sidebar-muted-foreground"
           >
-            Loading prompts…
+            <span role="status">Loading prompts…</span>
           </li>
         ) : null}
         {history.error !== null ? (
@@ -83,7 +83,7 @@ export function SidebarThreadPrompts(props: {
             role="presentation"
             className="flex list-none items-center gap-2 px-14 py-2 text-xs text-destructive"
           >
-            <span>Could not load all prompts</span>
+            <span role="status">Could not load all prompts</span>
             <button
               type="button"
               data-sidebar-action-for={threadKey}
@@ -104,7 +104,7 @@ export function SidebarThreadPrompts(props: {
             role="presentation"
             className="list-none px-14 py-2 text-xs text-sidebar-muted-foreground"
           >
-            No prompts in this thread
+            <span role="status">No prompts in this thread</span>
           </li>
         ) : null}
       </ol>

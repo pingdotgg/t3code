@@ -2588,11 +2588,6 @@ code {
   min-height: 0;
 }
 
-[data-app-shell] [data-slot="sidebar-container"] {
-  bottom: 1.75rem;
-  height: calc(100svh - 1.75rem);
-}
-
 [data-app-status-bar] {
   position: relative;
   z-index: 20;

@@ -9,6 +9,7 @@ import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
 function shortLabel(window: ServerProviderUsageWindow): string {
   if (window.kind === "session" && window.windowDurationMins === 5 * 60) return "5h";
   if (window.kind === "weekly") return "Week";
+  if (window.id === "individual" || /credit limit/iu.test(window.label)) return "Credits";
   if (window.kind === "monthly") return "Month";
   return window.label;
 }
@@ -47,6 +48,9 @@ export function CodexUsageStatusBar({
 
   return (
     <Popover>
+      <span className="sr-only" role="status" aria-atomic="true">
+        Codex usage limits: {summary}
+      </span>
       <PopoverTrigger
         openOnHover
         delay={150}
