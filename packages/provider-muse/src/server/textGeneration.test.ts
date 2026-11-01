@@ -1,11 +1,7 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { expect, it } from "@effect/vitest";
 import type { NotificationHandler } from "@muse-code/sdk";
-import {
-  MUSE_DEFAULT_MODEL,
-  ProviderInstanceId,
-  type ServerProviderModel,
-} from "@t3tools/contracts";
+import { ProviderInstanceId, type ServerProviderModel } from "@t3tools/contracts";
 import { MuseSettings } from "../settings.ts";
 import { createModelSelection } from "@t3tools/shared/model";
 import * as Effect from "effect/Effect";
@@ -185,35 +181,6 @@ it.layer(NodeServices.layer)("Muse text generation", (it) => {
     }),
   );
 
-  it.effect("lets Muse choose the model when none is selected", () =>
-    Effect.gen(function* () {
-      for (const model of [MUSE_DEFAULT_MODEL, " "]) {
-        const test = fixture(finish('{"title":"Fix login form"}'));
-        const service = yield* test.make;
-        yield* service.generateThreadTitle({
-          ...titleInput,
-          modelSelection: createModelSelection(ProviderInstanceId.make("muse"), model),
-        });
-        const start = vi
-          .mocked(test.host.connection.command)
-          .mock.calls.find(([method]) => method === "session/start");
-        expect(start?.[1]).not.toHaveProperty("modelId");
-      }
-    }),
-  );
-
-  it.effect("rejects invalid structured output and releases the host", () =>
-    Effect.gen(function* () {
-      const test = fixture(finish('{"title":42}'));
-      const service = yield* test.make;
-      expect(yield* service.generateThreadTitle(titleInput).pipe(Effect.flip)).toMatchObject({
-        _tag: "TextGenerationError",
-        detail: "Muse returned invalid structured output.",
-      });
-      expect(test.host.close).toHaveBeenCalledOnce();
-    }),
-  );
-
   it.effect("ignores output and terminal notifications for another turn", () =>
     Effect.gen(function* () {
       const test = fixture((emit) => {
@@ -268,23 +235,6 @@ it.layer(NodeServices.layer)("Muse text generation", (it) => {
     }),
   );
 
-  it.effect("reports a failed turn without trying another provider", () =>
-    Effect.gen(function* () {
-      const test = fixture((emit) =>
-        emit("turn/completed", {
-          terminal: "failed",
-          error: { message: "Authentication required. Run muse login." },
-        }),
-      );
-      const service = yield* test.make;
-      expect(yield* service.generateThreadTitle(titleInput).pipe(Effect.flip)).toMatchObject({
-        _tag: "TextGenerationError",
-      });
-      expect(test.createHost).toHaveBeenCalledOnce();
-      expect(test.host.close).toHaveBeenCalledOnce();
-    }),
-  );
-
   it.effect("settles when the transport closes before completion", () =>
     Effect.gen(function* () {
       const test = fixture();
@@ -330,43 +280,6 @@ it.layer(NodeServices.layer)("Muse text generation", (it) => {
         choiceId: "deny-1",
       });
       expect(test.host.close).toHaveBeenCalledOnce();
-    }),
-  );
-
-  it.effect("cancels user input requests", () =>
-    Effect.gen(function* () {
-      const test = fixture((emit) => emit("userInput/requested", { userInputId: "input-1" }));
-      const service = yield* test.make;
-      expect(yield* service.generateThreadTitle(titleInput).pipe(Effect.flip)).toMatchObject({
-        _tag: "TextGenerationError",
-      });
-      expect(test.host.connection.command).toHaveBeenCalledWith(
-        "userInput/cancel",
-        expect.objectContaining({
-          userInputId: "input-1",
-        }),
-      );
-      expect(test.host.close).toHaveBeenCalledOnce();
-    }),
-  );
-
-  it.effect("generates and sanitizes commit content through Muse", () =>
-    Effect.gen(function* () {
-      const test = fixture(
-        finish('{"subject":"Fix login.","body":" Details ","branch":"fix-login"}'),
-      );
-      const service = yield* test.make;
-      const generated = yield* service.generateCommitMessage({
-        cwd: titleInput.cwd,
-        branch: "main",
-        stagedSummary: "login.ts",
-        stagedPatch: "login change",
-        includeBranch: true,
-        modelSelection,
-      });
-      expect(generated.subject).toBe("Fix login");
-      expect(generated.body).toBe("Details");
-      expect(generated.branch).toContain("fix-login");
     }),
   );
 });

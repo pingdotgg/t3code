@@ -8,7 +8,9 @@ interface ParsedSemver {
 const SEMVER_NUMBER_SEGMENT = /^\d+$/;
 
 export function normalizeSemverVersion(version: string): string {
-  const [main, prerelease] = version.trim().split("-", 2);
+  const [versionWithoutBuildMetadata = ""] = version.trim().split("+", 1);
+  const [main, ...prereleaseParts] = versionWithoutBuildMetadata.split("-");
+  const prerelease = prereleaseParts.join("-");
   const segments: string[] = [];
   for (const segment of (main ?? "").split(".")) {
     const trimmed = segment.trim();
@@ -17,11 +19,6 @@ export function normalizeSemverVersion(version: string): string {
     }
   }
 
-  // Pad shorthand versions ("20" or "20.1") up to three segments so major-only
-  // and minor-only inputs parse and compare numerically. This matches
-  // satisfiesSemverRange, which already treats a missing minor/patch as 0. The
-  // length > 0 guard keeps empty/garbage input empty (parseSemver still
-  // rejects it), and inputs with more than three segments are left untouched.
   while (segments.length > 0 && segments.length < 3) {
     segments.push("0");
   }
@@ -31,7 +28,8 @@ export function normalizeSemverVersion(version: string): string {
 
 export function parseSemver(value: string): ParsedSemver | null {
   const normalized = normalizeSemverVersion(value).replace(/^v/, "");
-  const [main = "", prerelease] = normalized.split("-", 2);
+  const [main = "", ...prereleaseParts] = normalized.split("-");
+  const prerelease = prereleaseParts.join("-");
   const segments = main.split(".");
   if (segments.length !== 3) {
     return null;
@@ -140,16 +138,7 @@ export function compareSemverVersions(left: string, right: string): number {
   return 0;
 }
 
-/**
- * Small semver range checker for CLI/runtime gates.
- *
- * Keep the function body valid plain JavaScript: SSH startup stringifies this
- * function and runs it on remote Node versions before TypeScript support is known.
- *
- * @param rawVersion Version string, with or without a leading `v`.
- * @param range Space-separated comparators, with `||` range groups.
- * @returns Whether `rawVersion` satisfies the supported range syntax.
- */
+/** Keep plain JavaScript: SSH startup stringifies this for remote Node versions without known TS support. */
 export const satisfiesSemverRange: (rawVersion: string, range: string) => boolean =
   function satisfiesSemverRange(rawVersion, range) {
     const normalizedVersion = String(rawVersion).trim().replace(/^v/, "");

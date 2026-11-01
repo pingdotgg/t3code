@@ -1,19 +1,9 @@
-/**
- * Reads pixel dimensions from the header bytes of a PNG, JPEG, GIF, or WebP
- * file so a client can reserve the exact box before the bytes arrive. Any
- * other format, a truncated header, or a malformed file yields null; callers
- * fall back to measuring after decode.
- */
 export interface ImageDimensions {
   readonly width: number;
   readonly height: number;
 }
 
-/**
- * Enough for every supported header. A JPEG's frame header can sit behind
- * several 64 KiB metadata segments (EXIF, an ICC profile, XMP), so allow a
- * few of them before giving up.
- */
+/** Allows several 64 KiB JPEG metadata segments before the dimensions header. */
 export const IMAGE_DIMENSIONS_HEADER_BYTES = 256 * 1024;
 
 export function readImageDimensions(bytes: Uint8Array): ImageDimensions | null {
@@ -67,21 +57,17 @@ function readWebp(bytes: Uint8Array): ImageDimensions | null {
   switch (chunk) {
     case "VP8 ":
       if (bytes.length < 30) return null;
-      // Lossy: 14-bit dimensions after the 3-byte frame tag and 3-byte start code.
       return {
         width: data.getUint16(26, true) & 0x3fff,
         height: data.getUint16(28, true) & 0x3fff,
       };
     case "VP8L": {
       if (bytes.length < 25) return null;
-      // Lossless: width-1 in bits 0-13 and height-1 in bits 14-27 of the
-      // 32 bits after the signature byte.
       const packed = data.getUint32(21, true);
       return { width: (packed & 0x3fff) + 1, height: ((packed >>> 14) & 0x3fff) + 1 };
     }
     case "VP8X":
       if (bytes.length < 30) return null;
-      // Extended: 24-bit canvas dimensions minus one.
       return {
         width: (bytes[24]! | (bytes[25]! << 8) | (bytes[26]! << 16)) + 1,
         height: (bytes[27]! | (bytes[28]! << 8) | (bytes[29]! << 16)) + 1,
@@ -99,13 +85,11 @@ function readJpeg(bytes: Uint8Array): ImageDimensions | null {
   while (offset + 9 <= bytes.length) {
     if (bytes[offset] !== 0xff) return null;
     const marker = bytes[offset + 1]!;
-    // Padding bytes between segments.
     if (marker === 0xff) {
       offset += 1;
       continue;
     }
-    // Start-of-frame markers carry the dimensions; skip the arithmetic-coding
-    // and Huffman-table markers that share the range.
+    // Exclude arithmetic-coding and Huffman-table markers from the frame-header range.
     if (marker >= 0xc0 && marker <= 0xcf && marker !== 0xc4 && marker !== 0xc8 && marker !== 0xcc) {
       const height = data.getUint16(offset + 5);
       const width = data.getUint16(offset + 7);
@@ -118,8 +102,7 @@ function readJpeg(bytes: Uint8Array): ImageDimensions | null {
       continue;
     }
     const length = data.getUint16(offset + 2);
-    // Viewers apply the EXIF orientation before display, so a phone photo
-    // stored on its side takes the swapped size on screen.
+    // EXIF rotation swaps the displayed axes.
     if (marker === 0xe1 && !rotated) {
       rotated = exifOrientationSwapsAxes(bytes, offset + 4, offset + 2 + length);
     }
@@ -128,10 +111,8 @@ function readJpeg(bytes: Uint8Array): ImageDimensions | null {
   return null;
 }
 
-/** Whether EXIF orientation 5-8 (a 90° rotation) applies. `start` is the APP1 payload. */
 function exifOrientationSwapsAxes(bytes: Uint8Array, start: number, end: number): boolean {
   end = Math.min(end, bytes.length);
-  // "Exif\0\0" then a TIFF header: byte order, 0x2a, and the IFD0 offset.
   if (end - start < 14 || String.fromCharCode(...bytes.subarray(start, start + 4)) !== "Exif") {
     return false;
   }

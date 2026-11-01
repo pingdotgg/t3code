@@ -128,6 +128,8 @@ import { skillInvocationInput } from "./skill_invocation/input.ts";
 import { assertSimpleOutput } from "./simple/codex_output.ts";
 import { assertPiSimpleOutput } from "./simple/pi_output.ts";
 import { simpleInput } from "./simple/input.ts";
+import { malformedSessionUpdateInput } from "./malformed_session_update/input.ts";
+import { assertMalformedSessionUpdateOutput } from "./malformed_session_update/output.ts";
 import { assertSubagentOutput } from "./subagent/codex_output.ts";
 import { assertClaudeSubagentOutput } from "./subagent/claude_output.ts";
 import { subagentInput } from "./subagent/input.ts";
@@ -159,6 +161,7 @@ import { assertTodoListCursorOutput } from "./todo_list/cursor_output.ts";
 import { assertTodoListGrokOutput } from "./todo_list/grok_output.ts";
 import { todoListInput } from "./todo_list/input.ts";
 import { assertToolCallDeniedWriteClaudeOutput } from "./tool_call_denied_write/claude_output.ts";
+import { assertToolCallDeniedWriteFxOutput } from "./tool_call_denied_write/fx_output.ts";
 import {
   DENIED_WRITE_POLICY,
   TOOL_CALL_DENIED_WRITE_TARGET,
@@ -172,6 +175,7 @@ import {
   assertToolCallReadOnlyOnRequestOutput,
 } from "./tool_call_read_only_on_request/output.ts";
 import { toolCallReadOnlyOnRequestInput } from "./tool_call_read_only_on_request/input.ts";
+import { assertToolCallReadOnlyOnRequestFxOutput } from "./tool_call_read_only_on_request/fx_output.ts";
 import {
   stopBackgroundWorkAfterFailedTurnInput,
   stopBackgroundWorkAfterReleaseInput,
@@ -184,8 +188,14 @@ import { assertToolCallWorkspaceNeverClaudeOutput } from "./tool_call_workspace_
 import { assertToolCallWorkspaceNeverOutput } from "./tool_call_workspace_never/codex_output.ts";
 import { toolCallWorkspaceNeverInput } from "./tool_call_workspace_never/input.ts";
 import { assertTurnInterruptClaudeOutput } from "./turn_interrupt/claude_output.ts";
+import { assertCommandOutputStreamingOutput } from "./command_output_streaming/output.ts";
+import { commandOutputStreamingInput } from "./command_output_streaming/input.ts";
 import { assertTurnInterruptOutput } from "./turn_interrupt/codex_output.ts";
 import { turnInterruptInput } from "./turn_interrupt/input.ts";
+import { fxEarlyStopInput } from "./fx_early_stop/input.ts";
+import { assertFxEarlyStopOutput } from "./fx_early_stop/fx_output.ts";
+import { fxSubagentInput } from "./fx_subagent/input.ts";
+import { assertFxSubagentOutput } from "./fx_subagent/fx_output.ts";
 import { assertTurnInterruptMidToolClaudeOutput } from "./turn_interrupt_mid_tool/claude_output.ts";
 import { assertTurnInterruptMidToolCodexOutput } from "./turn_interrupt_mid_tool/codex_output.ts";
 import { assertTurnInterruptMidToolCursorOutput } from "./turn_interrupt_mid_tool/cursor_output.ts";
@@ -201,6 +211,7 @@ import {
   CLAUDE_MODEL_SELECTION,
   CODEX_MODEL_SELECTION,
   CURSOR_MODEL_SELECTION,
+  FX_MODEL_SELECTION,
   GROK_MODEL_SELECTION,
   MUSE_MODEL_SELECTION,
   OPENCODE_MODEL_SELECTION,
@@ -581,16 +592,28 @@ export const ORCHESTRATOR_REPLAY_FIXTURES: ReadonlyArray<OrchestratorReplayFixtu
     name: "acp_elicitation",
     buildInput: planQuestionsInput,
     providers: [
-      // Grok Build still elicits with the pre-1.0 session/elicitation wire
-      // method the current spec removed; T3 supports standard ACP only, so
-      // the scenario covers the registry driver until Grok ships
-      // elicitation/create.
+      // Grok Build uses removed session/elicitation; cover the registry driver until it supports standard elicitation/create.
       {
         driver: ProviderDriverKind.make("acpRegistry"),
         transcriptFile: new URL("./acp_elicitation/registry_transcript.ndjson", import.meta.url),
         modelSelection: ACP_REGISTRY_MODEL_SELECTION,
         runtimePolicyOverride: READ_ONLY_NEVER_POLICY,
         assertOutput: assertPlanQuestionsOutput,
+      },
+    ],
+  },
+  {
+    name: "malformed_session_update",
+    buildInput: malformedSessionUpdateInput,
+    providers: [
+      {
+        driver: ProviderDriverKind.make("acpRegistry"),
+        transcriptFile: new URL(
+          "./malformed_session_update/registry_transcript.ndjson",
+          import.meta.url,
+        ),
+        modelSelection: ACP_REGISTRY_MODEL_SELECTION,
+        assertOutput: assertMalformedSessionUpdateOutput,
       },
     ],
   },
@@ -620,6 +643,12 @@ export const ORCHESTRATOR_REPLAY_FIXTURES: ReadonlyArray<OrchestratorReplayFixtu
         driver: ProviderDriverKind.make("grok"),
         transcriptFile: new URL("./simple/grok_transcript.ndjson", import.meta.url),
         modelSelection: GROK_MODEL_SELECTION,
+        assertOutput: assertSimpleOutput,
+      },
+      {
+        driver: ProviderDriverKind.make("fx"),
+        transcriptFile: new URL("./simple/fx_transcript.ndjson", import.meta.url),
+        modelSelection: FX_MODEL_SELECTION,
         assertOutput: assertSimpleOutput,
       },
       {
@@ -674,6 +703,14 @@ export const ORCHESTRATOR_REPLAY_FIXTURES: ReadonlyArray<OrchestratorReplayFixtu
         runtimePolicyOverride: DENIED_WRITE_POLICY,
         expectedAbsentWorkspacePaths: [TOOL_CALL_DENIED_WRITE_TARGET],
         assertOutput: assertToolCallDeniedWriteClaudeOutput,
+      },
+      {
+        driver: ProviderDriverKind.make("fx"),
+        transcriptFile: new URL("./tool_call_denied_write/fx_transcript.ndjson", import.meta.url),
+        modelSelection: FX_MODEL_SELECTION,
+        runtimePolicyOverride: DENIED_WRITE_POLICY,
+        expectedAbsentWorkspacePaths: [TOOL_CALL_DENIED_WRITE_TARGET],
+        assertOutput: assertToolCallDeniedWriteFxOutput,
       },
     ],
   },
@@ -750,6 +787,16 @@ export const ORCHESTRATOR_REPLAY_FIXTURES: ReadonlyArray<OrchestratorReplayFixtu
         assertOutput: assertToolCallReadOnlyOnRequestGrokOutput,
       },
       {
+        driver: ProviderDriverKind.make("fx"),
+        transcriptFile: new URL(
+          "./tool_call_read_only_on_request/fx_transcript.ndjson",
+          import.meta.url,
+        ),
+        modelSelection: FX_MODEL_SELECTION,
+        runtimePolicyOverride: READ_ONLY_ON_REQUEST_POLICY,
+        assertOutput: assertToolCallReadOnlyOnRequestFxOutput,
+      },
+      {
         driver: ProviderDriverKind.make("acpRegistry"),
         transcriptFile: new URL(
           "./tool_call_read_only_on_request/registry_transcript.ndjson",
@@ -797,8 +844,7 @@ export const ORCHESTRATOR_REPLAY_FIXTURES: ReadonlyArray<OrchestratorReplayFixtu
           "./tool_call_restricted_granular/codex_transcript.ndjson",
           import.meta.url,
         ),
-        // gpt-6 models write through the shell; gpt-5.6-terra's apply_patch raises the
-        // file-change approval this fixture covers.
+        // gpt-6 uses shell writes; gpt-5.6-terra triggers this fixture's apply_patch approval.
         modelSelection: { ...CODEX_MODEL_SELECTION, model: "gpt-5.6-terra" },
         runtimePolicyOverride: RESTRICTED_GRANULAR_POLICY,
         assertOutput: assertToolCallRestrictedGranularOutput,
@@ -926,7 +972,6 @@ export const ORCHESTRATOR_REPLAY_FIXTURES: ReadonlyArray<OrchestratorReplayFixtu
       },
     ],
   },
-  // OpenCode 2 runtime of the same driver, recorded against 2.0.18 over HTTP and SSE.
   {
     name: "opencode2_simple",
     buildInput: openCode2SimpleInput,
@@ -1126,7 +1171,6 @@ export const ORCHESTRATOR_REPLAY_FIXTURES: ReadonlyArray<OrchestratorReplayFixtu
       },
     ],
   },
-  // Recorded live against 2.0.18 on OpenRouter with the workspace's own command and skill.
   ...(
     [
       ["opencode2_command", openCode2CommandInput, assertOpenCode2CommandOutput],
@@ -1203,6 +1247,12 @@ export const ORCHESTRATOR_REPLAY_FIXTURES: ReadonlyArray<OrchestratorReplayFixtu
         driver: ProviderDriverKind.make("grok"),
         transcriptFile: new URL("./multi_turn/grok_transcript.ndjson", import.meta.url),
         modelSelection: GROK_MODEL_SELECTION,
+        assertOutput: assertMultiTurnOutput,
+      },
+      {
+        driver: ProviderDriverKind.make("fx"),
+        transcriptFile: new URL("./multi_turn/fx_transcript.ndjson", import.meta.url),
+        modelSelection: FX_MODEL_SELECTION,
         assertOutput: assertMultiTurnOutput,
       },
       {
@@ -1357,6 +1407,12 @@ export const ORCHESTRATOR_REPLAY_FIXTURES: ReadonlyArray<OrchestratorReplayFixtu
         assertOutput: assertQueuedTurnOutput,
       },
       {
+        driver: ProviderDriverKind.make("fx"),
+        transcriptFile: new URL("./queued_turn/fx_transcript.ndjson", import.meta.url),
+        modelSelection: FX_MODEL_SELECTION,
+        assertOutput: assertQueuedTurnOutput,
+      },
+      {
         driver: ProviderDriverKind.make("acpRegistry"),
         transcriptFile: new URL("./queued_turn/registry_transcript.ndjson", import.meta.url),
         modelSelection: ACP_REGISTRY_MODEL_SELECTION,
@@ -1490,6 +1546,12 @@ export const ORCHESTRATOR_REPLAY_FIXTURES: ReadonlyArray<OrchestratorReplayFixtu
         assertOutput: assertGrokMessageSteeringOutput,
       },
       {
+        driver: ProviderDriverKind.make("fx"),
+        transcriptFile: new URL("./message_steering/fx_transcript.ndjson", import.meta.url),
+        modelSelection: FX_MODEL_SELECTION,
+        assertOutput: assertGrokMessageSteeringOutput,
+      },
+      {
         driver: ProviderDriverKind.make("acpRegistry"),
         transcriptFile: new URL("./message_steering/registry_transcript.ndjson", import.meta.url),
         modelSelection: ACP_REGISTRY_MODEL_SELECTION,
@@ -1529,6 +1591,13 @@ export const ORCHESTRATOR_REPLAY_FIXTURES: ReadonlyArray<OrchestratorReplayFixtu
         assertOutput: assertTurnInterruptOutput,
       },
       {
+        driver: ProviderDriverKind.make("fx"),
+        transcriptFile: new URL("./turn_interrupt/fx_transcript.ndjson", import.meta.url),
+        modelSelection: FX_MODEL_SELECTION,
+        runtimePolicyOverride: WORKSPACE_NEVER_POLICY,
+        assertOutput: assertTurnInterruptOutput,
+      },
+      {
         driver: ProviderDriverKind.make("acpRegistry"),
         transcriptFile: new URL("./turn_interrupt/registry_transcript.ndjson", import.meta.url),
         modelSelection: ACP_REGISTRY_MODEL_SELECTION,
@@ -1547,6 +1616,56 @@ export const ORCHESTRATOR_REPLAY_FIXTURES: ReadonlyArray<OrchestratorReplayFixtu
         transcriptFile: new URL("./turn_interrupt/muse_transcript.ndjson", import.meta.url),
         modelSelection: MUSE_MODEL_SELECTION,
         assertOutput: assertMuseTurnInterruptOutput,
+      },
+    ],
+  },
+  {
+    name: "fx_early_stop",
+    buildInput: fxEarlyStopInput,
+    providers: [
+      {
+        driver: ProviderDriverKind.make("fx"),
+        transcriptFile: new URL("./fx_early_stop/fx_transcript.ndjson", import.meta.url),
+        modelSelection: FX_MODEL_SELECTION,
+        runtimePolicyOverride: WORKSPACE_NEVER_POLICY,
+        assertOutput: assertFxEarlyStopOutput,
+      },
+    ],
+  },
+  {
+    name: "fx_subagent",
+    buildInput: fxSubagentInput,
+    providers: [
+      {
+        driver: ProviderDriverKind.make("fx"),
+        transcriptFile: new URL("./fx_subagent/fx_transcript.ndjson", import.meta.url),
+        modelSelection: FX_MODEL_SELECTION,
+        assertOutput: assertFxSubagentOutput,
+      },
+    ],
+  },
+  {
+    name: "command_output_streaming",
+    buildInput: commandOutputStreamingInput,
+    providers: [
+      {
+        driver: ProviderDriverKind.make("codex"),
+        transcriptFile: new URL(
+          "./command_output_streaming/codex_transcript.ndjson",
+          import.meta.url,
+        ),
+        modelSelection: CODEX_MODEL_SELECTION,
+        runtimePolicyOverride: WORKSPACE_NEVER_POLICY,
+        assertOutput: assertCommandOutputStreamingOutput,
+      },
+      {
+        driver: ProviderDriverKind.make("claudeAgent"),
+        transcriptFile: new URL(
+          "./command_output_streaming/claude_transcript.ndjson",
+          import.meta.url,
+        ),
+        modelSelection: CLAUDE_MODEL_SELECTION,
+        assertOutput: assertCommandOutputStreamingOutput,
       },
     ],
   },
@@ -1710,13 +1829,3 @@ export const ORCHESTRATOR_REPLAY_FIXTURES: ReadonlyArray<OrchestratorReplayFixtu
     ],
   },
 ];
-
-// TODO(claude-v2/context-transfer): add provider-switch handoff and return fixtures when portable
-// context handoff is implemented. Cross-reference docs/orchestration-v2/provider-switching-and-context.md
-// and docs/orchestration-v2/thread-lineage-and-context-transfer.md. The return fixture should
-// prefer a delta handoff into an existing Claude provider thread.
-
-// TODO(claude-v2/context-transfer-fixtures): register provider-switch, merge-back, and cross-provider
-// fork fixtures after each path has a real provider transcript. Cross-reference
-// docs/orchestration-v2/provider-switching-and-context.md and
-// docs/orchestration-v2/thread-lineage-and-context-transfer.md.

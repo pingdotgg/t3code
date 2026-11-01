@@ -1,7 +1,8 @@
 import type { DeviceHubAccess } from "@t3tools/client-runtime/state/deviceHubAccess";
 import type { DevicePermission, DeviceSummary, DeviceTextSize } from "@t3tools/contracts";
 import { ChevronDown, X } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useAtomValue } from "@effect/atom-react";
+import { useState } from "react";
 
 import { Button } from "~/components/ui/button";
 import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from "~/components/ui/collapsible";
@@ -18,7 +19,7 @@ import { Switch } from "~/components/ui/switch";
 import { Toggle, ToggleGroup } from "~/components/ui/toggle-group";
 import { cn } from "~/lib/utils";
 import type { DeviceControls } from "./useDeviceControls";
-import { type DeviceEventLogEntry, subscribeDeviceEventLog } from "./deviceHubApi";
+import { deviceEventLogAtom } from "./deviceHubAtoms";
 
 const TEXT_SIZES: ReadonlyArray<{ value: DeviceTextSize; label: string }> = [
   { value: "small", label: "Small" },
@@ -75,12 +76,6 @@ const LOCATION_PRESETS = [
   { label: "Tokyo", latitude: 35.6762, longitude: 139.6503 },
 ] as const;
 
-/**
- * The Tools drawer for one open device: current settings read from the device,
- * one control per supported action, and the read-only feeds the hub exposes.
- * Every change is a `device.action` round trip; the returned detail replaces
- * local state so the controls never show a value the device did not confirm.
- */
 export function DeviceToolsPanel(props: {
   readonly controls: DeviceControls;
   readonly hostDiagnostics: string | undefined;
@@ -133,7 +128,7 @@ export function DeviceToolsPanel(props: {
 
         <Section title="App">
           <Row label="Foreground">
-            <span className="truncate font-mono text-xs">{foregroundApp?.id ?? "—"}</span>
+            <span className="truncate font-mono text-xs">{foregroundApp?.id ?? "-"}</span>
           </Row>
           {foregroundApp ? (
             <div className="flex gap-1.5">
@@ -605,31 +600,11 @@ function PermissionsSection(props: {
   );
 }
 
-const EVENT_LOG_LIMIT = 100;
-
 function EventLogSection(props: {
   readonly access: DeviceHubAccess;
   readonly device: DeviceSummary;
 }) {
   const [open, setOpen] = useState(false);
-  const [entries, setEntries] = useState<ReadonlyArray<DeviceEventLogEntry>>([]);
-
-  useEffect(() => {
-    if (!open) return;
-    const unsubscribe = subscribeDeviceEventLog(
-      { access: props.access, platform: props.device.platform, deviceId: props.device.id },
-      (incoming, reset) => {
-        setEntries((current) => {
-          const merged = reset ? [...incoming] : [...current, ...incoming];
-          return merged.length > EVENT_LOG_LIMIT ? merged.slice(-EVENT_LOG_LIMIT) : merged;
-        });
-      },
-    );
-    return () => {
-      unsubscribe();
-      setEntries([]);
-    };
-  }, [open, props.access, props.device.id, props.device.platform]);
 
   return (
     <Collapsible open={open} onOpenChange={setOpen}>
@@ -640,21 +615,36 @@ function EventLogSection(props: {
         />
       </CollapsibleTrigger>
       <CollapsiblePanel>
-        <ol className="max-h-64 overflow-y-auto px-3 py-2 font-mono text-2xs leading-relaxed">
-          {entries.length === 0 ? (
-            <li className="text-muted-foreground">No events yet.</li>
-          ) : (
-            entries.map((entry) => (
-              <li key={entry.id} className="flex gap-2">
-                <span className="shrink-0 text-muted-foreground">
-                  {entry.timestamp.slice(11, 19)}
-                </span>
-                <span className="truncate">{entry.summary}</span>
-              </li>
-            ))
-          )}
-        </ol>
+        <EventLogEntries access={props.access} device={props.device} />
       </CollapsiblePanel>
     </Collapsible>
+  );
+}
+
+// The panel unmounts while closed, so the log streams only while it is open.
+function EventLogEntries(props: {
+  readonly access: DeviceHubAccess;
+  readonly device: DeviceSummary;
+}) {
+  const entries = useAtomValue(
+    deviceEventLogAtom({
+      access: props.access,
+      platform: props.device.platform,
+      deviceId: props.device.id,
+    }),
+  );
+  return (
+    <ol className="max-h-64 overflow-y-auto px-3 py-2 font-mono text-2xs leading-relaxed">
+      {entries.length === 0 ? (
+        <li className="text-muted-foreground">No events yet.</li>
+      ) : (
+        entries.map((entry) => (
+          <li key={entry.id} className="flex gap-2">
+            <span className="shrink-0 text-muted-foreground">{entry.timestamp.slice(11, 19)}</span>
+            <span className="truncate">{entry.summary}</span>
+          </li>
+        ))
+      )}
+    </ol>
   );
 }

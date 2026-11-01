@@ -1,24 +1,12 @@
 import {
-  threadPullRequestsOf,
-  threadPullRequestKeysEqual,
-} from "@t3tools/shared/threadPullRequests";
-import {
   CommandId,
-  pullRequestHostOf,
   type OrchestrationProjectShell,
   type OrchestrationV2ThreadShell,
   type SourceControlProviderKind,
   type ThreadId,
   type ThreadPullRequestLink,
 } from "@t3tools/contracts";
-import { changeRequestUrlFor, parseChangeRequestUrl } from "@t3tools/shared/changeRequestUrl";
-import { sourceControlRepositorySelector } from "@t3tools/shared/sourceControl";
-import {
-  normalizeThreadPullRequestKey,
-  resolveThreadPullRequestChains,
-  threadPullRequestKeyOf,
-  visibleThreadPullRequests,
-} from "@t3tools/shared/threadPullRequests";
+import { canonicalizeGitCafePullRequestUrl } from "@t3tools/source-control-definitions/registry";
 import * as Cause from "effect/Cause";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
@@ -28,6 +16,15 @@ import * as Orchestrator from "../../../orchestration-v2/Orchestrator.ts";
 import * as ProjectService from "../../../project/ProjectService.ts";
 import * as PullRequestReviewGuideService from "../../../pullRequest/PullRequestReviewGuideService.ts";
 import { pullRequestSyncKey } from "../../../pullRequest/pullRequestSyncKey.ts";
+import { sourceControlDefinitions } from "../../../sourceControl/sourceControlDefinitions.ts";
+import {
+  normalizeThreadPullRequestKey,
+  resolveThreadPullRequestChains,
+  threadPullRequestKeyOf,
+  threadPullRequestKeysEqual,
+  threadPullRequestsOf,
+  visibleThreadPullRequests,
+} from "../../../sourceControl/threadPullRequests.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as McpToolAccess from "../../McpToolAccess.ts";
 import {
@@ -36,6 +33,7 @@ import {
   PullRequestUrlInvalidError,
   PullRequestTargetIncompleteError,
   PullRequestHostRequiredError,
+  PullRequestUrlUnavailableError,
   PullRequestUnlinkFailedError,
   PullRequestListFailedError,
   PullRequestNotOpenError,
@@ -48,6 +46,7 @@ import {
   PullRequestProjectNotFoundError,
   PullRequestsToolkit,
   type ThreadPullRequestEntry,
+  CHILD_PULL_REQUEST_REPORT_NEXT,
 } from "./tools.ts";
 
 interface ResolvedTarget {
@@ -57,36 +56,32 @@ interface ResolvedTarget {
   readonly url: string;
 }
 
-/** The project's host and provider supply defaults for a repository-and-number input. */
 function projectHostAndProvider(project: OrchestrationProjectShell | undefined): {
   readonly host: string | null;
   readonly kind: SourceControlProviderKind | null;
 } {
   const identity = project?.repositoryIdentity;
-  const kind = (identity?.provider as SourceControlProviderKind | undefined) ?? null;
+  const kind = identity?.provider ?? null;
   if (!identity || kind === null) return { host: null, kind: null };
   return {
-    host: pullRequestHostOf(identity, kind),
+    host: sourceControlDefinitions.changeRequestHost(identity, kind),
     kind,
   };
 }
 
-/**
- * Turns whichever shape the agent passed into one host-level identity. A URL
- * wins outright; otherwise the repository and number are completed with the
- * thread's project host, which is where an agent working in that checkout
- * almost always opened the pull request.
- */
 const resolveTarget = Effect.fn("PullRequestsToolkit.resolveTarget")(function* (
   input: PullRequestTargetInput,
   project: OrchestrationProjectShell | undefined,
 ) {
   if (input.url !== undefined) {
-    const parsed = parseChangeRequestUrl(input.url);
-    if (parsed === null) {
+    const parsed = sourceControlDefinitions.parseChangeRequestUrl(input.url)?.link;
+    if (parsed === undefined) {
       return yield* new PullRequestUrlInvalidError({});
     }
-    return { ...normalizeThreadPullRequestKey(parsed), url: input.url } satisfies ResolvedTarget;
+    return {
+      ...normalizeThreadPullRequestKey(parsed),
+      url: canonicalizeGitCafePullRequestUrl(input.url),
+    } satisfies ResolvedTarget;
   }
   if (input.repository === undefined || input.number === undefined) {
     return yield* new PullRequestTargetIncompleteError({});
@@ -97,18 +92,27 @@ const resolveTarget = Effect.fn("PullRequestsToolkit.resolveTarget")(function* (
     return yield* new PullRequestHostRequiredError({});
   }
   const repository = input.repository.toLowerCase();
+  // Without a URL, a public forge host says what shape its change request URLs take;
+  // any other host is taken to run the project's own forge.
+  const recognizedKind = sourceControlDefinitions.recognizeRemote(`https://${host}`)?.kind;
+  const kind =
+    sourceControlDefinitions.findByPublicHost(host)?.kind ??
+    (recognizedKind === "gitcafe" ? recognizedKind : projectHost.kind);
   const url =
-    changeRequestUrlFor(
-      // The project's kind only describes its own host; another host gets no URL guess.
-      host === projectHost.host ? projectHost.kind : null,
-      host,
-      repository,
-      input.number,
-      project?.repositoryIdentity?.locator.remoteUrl,
-    ) ?? `https://${host}/${repository}/pull/${input.number}`;
+    kind === null
+      ? null
+      : sourceControlDefinitions.get(kind).changeRequestUrl({
+          host,
+          repository,
+          number: input.number,
+          remoteUrl: project?.repositoryIdentity?.locator.remoteUrl,
+        });
+  if (url === null) {
+    return yield* new PullRequestUrlUnavailableError({});
+  }
   return {
     ...normalizeThreadPullRequestKey({ host, repository, number: input.number, url }),
-    url,
+    url: canonicalizeGitCafePullRequestUrl(url),
   } satisfies ResolvedTarget;
 });
 
@@ -122,7 +126,7 @@ function entryOf(
     if (chain.layers.length < 2) continue;
     const index = chain.layers.findIndex((layer) => threadPullRequestKeyOf(layer) === key);
     if (index !== -1) {
-      stack = { kind: chain.kind, position: index + 1, size: chain.layers.length };
+      stack = { kind: chain.kind, position: chain.depths[index]! + 1, size: chain.layers.length };
       break;
     }
   }
@@ -142,7 +146,6 @@ function entryOf(
   };
 }
 
-/** What the tools report from a thread shell; exported so the shape is testable without a layer. */
 export function listThreadPullRequests(
   thread: Pick<OrchestrationV2ThreadShell, "pullRequests">,
 ): ListThreadPullRequestsResult {
@@ -158,18 +161,12 @@ export function listThreadPullRequests(
   };
 }
 
-/**
- * The project a pull request is read through: the caller's own when its checkout is that
- * repository, else the first project here whose checkout is. Host reads are scoped to a project,
- * so a repository with no checkout in this environment cannot be guided from it.
- */
 function projectForPullRequest(
   projects: ReadonlyArray<OrchestrationProjectShell>,
   target: { readonly host: string; readonly repository: string },
   preferred: OrchestrationProjectShell | undefined,
 ): OrchestrationProjectShell | undefined {
-  // The same rule the guide service uses: a pull request reads through a project whose checkout
-  // names it with the same host-level key, which also maps Azure DevOps' org/project/_git/repo.
+  // Match the guide service's host-level repository key, including Azure DevOps org/project/_git/repo.
   const matches = (project: OrchestrationProjectShell) => {
     const own = pullRequestSyncKey(
       { projectId: project.id, host: target.host, repository: target.repository, number: 1 },
@@ -181,7 +178,8 @@ function projectForPullRequest(
         : pullRequestSyncKey(
             {
               projectId: project.id,
-              repository: sourceControlRepositorySelector(project.repositoryIdentity) ?? "",
+              repository:
+                sourceControlDefinitions.repositorySelector(project.repositoryIdentity) ?? "",
               number: 1,
             },
             project.repositoryIdentity,
@@ -205,7 +203,7 @@ const make = Effect.gen(function* () {
   const crypto = yield* Crypto.Crypto;
 
   const commandId = (tag: string, threadId: ThreadId) =>
-    crypto.randomUUIDv4.pipe(
+    crypto.randomUUIDv4().pipe(
       Effect.orDie,
       Effect.map((uuid) => CommandId.make(`server:${tag}:${threadId}:${uuid}`)),
     );
@@ -223,10 +221,10 @@ const make = Effect.gen(function* () {
     if (threadId === undefined) {
       return yield* new PullRequestThreadRequiredError();
     }
-    const thread = yield* engine
-      .getThreadShell(threadId)
-      .pipe(Effect.map(Option.fromNullishOr))
-      .pipe(Effect.mapError((cause) => new Failure({ cause })));
+    const thread = yield* engine.getThreadShell(threadId).pipe(
+      Effect.map(Option.fromNullishOr),
+      Effect.mapError((cause) => new Failure({ cause })),
+    );
     if (Option.isNone(thread) || thread.value.deletedAt !== null) {
       return yield* new PullRequestThreadNotFoundError({ threadId });
     }
@@ -262,10 +260,6 @@ const make = Effect.gen(function* () {
         ? Effect.failCause(cause as Cause.Cause<never>)
         : Effect.fail(new Failure({ cause }));
 
-  /**
-   * Starts or stops a watch. One command links an unlinked pull request and watches it, and the
-   * result reports the state the thread holds afterwards.
-   */
   const setWatching = Effect.fn("PullRequestsToolkit.setWatching")(function* (
     input: PullRequestTargetInput,
     watching: boolean,
@@ -281,8 +275,6 @@ const make = Effect.gen(function* () {
       return yield* new PullRequestWatchFromSubagentError();
     }
     const before = watchedLink(thread);
-    // A merged pull request cannot reopen. A closed one can, and its saved state may be stale,
-    // so the watch starts and its first read ends it if the host still says closed.
     if (watching && before?.snapshot?.state === "merged") {
       return yield* new PullRequestNotOpenError({ state: "merged" });
     }
@@ -309,10 +301,6 @@ const make = Effect.gen(function* () {
     };
   });
 
-  /**
-   * Resolves each requested pull request and the project it is read through. The caller's own
-   * project wins where it is a checkout of that repository; with no thread, any project here may.
-   */
   const locateAll = Effect.fn("PullRequestsToolkit.locateAll")(function* (
     targets: ReadonlyArray<Omit<PullRequestTargetInput, "threadId">>,
   ) {
@@ -328,9 +316,18 @@ const make = Effect.gen(function* () {
       .listShells()
       .pipe(Effect.mapError((cause) => new PullRequestListFailedError({ cause })));
     const callerProject = known.find((project) => project.id === callerThread?.projectId);
-    // Each target resolves on its own, so one bad URL in a batch is that entry's failure only.
+    // A pull request named by host and repository builds its URL through the project that holds
+    // it, which need not be the caller's.
+    const urlProject = (input: PullRequestTargetInput) =>
+      input.url === undefined && input.host !== undefined && input.repository !== undefined
+        ? (projectForPullRequest(
+            known,
+            { host: input.host, repository: input.repository },
+            callerProject,
+          ) ?? callerProject)
+        : callerProject;
     return yield* Effect.forEach(targets, (input) =>
-      resolveTarget(input, callerProject).pipe(
+      resolveTarget(input, urlProject(input)).pipe(
         Effect.map((target) => ({
           input,
           target,
@@ -344,7 +341,6 @@ const make = Effect.gen(function* () {
     );
   });
 
-  /** The service reads a pull request through one project's checkout and credentials. */
   const guideReference = (
     project: OrchestrationProjectShell,
     target: { readonly host: string; readonly repository: string; readonly number: number },
@@ -355,11 +351,9 @@ const make = Effect.gen(function* () {
     number: target.number,
   });
 
-  /** A host or service error, said as its own detail rather than its operation's wrapper. */
   const guideFailureDetail = (error: { readonly message: string }) =>
     "detail" in error && typeof error.detail === "string" ? error.detail : error.message;
 
-  /** A tool that changes `threadId`, or the caller's own thread when it is omitted. */
   const writesThread = <P extends { readonly threadId?: ThreadId | undefined }, A, E, R>(
     handle: (params: P) => Effect.Effect<A, E, R>,
   ) => McpToolAccess.writesThreads((params: P) => [params.threadId], handle);
@@ -368,13 +362,17 @@ const make = Effect.gen(function* () {
     link_pull_request: writesThread((input) =>
       Effect.gen(function* () {
         const thread = yield* requireThread(PullRequestLinkFailedError, input.threadId);
+        const next =
+          thread.lineage.relationshipToParent === "subagent"
+            ? { next: CHILD_PULL_REQUEST_REPORT_NEXT }
+            : {};
         const project = yield* projectOf(thread, PullRequestLinkFailedError);
         const target = yield* resolveTarget(input, project);
         const existing = threadPullRequestsOf(thread).find((link) =>
           threadPullRequestKeysEqual(link, target),
         );
         if (existing && existing.source !== "stack-dismissed")
-          return { ...target, alreadyLinked: true };
+          return { ...target, alreadyLinked: true, ...next };
         const alreadyLinked = yield* engine
           .dispatch({
             type: "thread.pull-request.link",
@@ -388,12 +386,10 @@ const make = Effect.gen(function* () {
           })
           .pipe(
             Effect.as(false),
-            // The decider rejects a second link of the same PR; for the agent that is
-            // the outcome it asked for, not an error.
 
             Effect.catchCause(dispatchFailure(PullRequestLinkFailedError)),
           );
-        return { ...target, alreadyLinked };
+        return { ...target, alreadyLinked, ...next };
       }),
     ),
     unlink_pull_request: writesThread((input) =>
@@ -440,7 +436,6 @@ const make = Effect.gen(function* () {
     write_pull_request_guides: McpToolAccess.writesWithCapability((input) =>
       Effect.gen(function* () {
         const located = yield* locateAll(input.pullRequests);
-        // One pull request that cannot be guided does not stop the rest; it reports why.
         const guides = yield* Effect.forEach(
           located,
           (entry) =>
