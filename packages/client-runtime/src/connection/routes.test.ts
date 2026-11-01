@@ -16,6 +16,7 @@ import {
   credentialConnectionId,
   insertRoute,
   entryWithRoutes,
+  findRouteToSameAddress,
   mergeLearnedRoutes,
   pendingRouteOrder,
   removedWithRelay,
@@ -77,6 +78,13 @@ describe("connection routes", () => {
     expect(connectionRouteLabel(RELAY)).toBe("T3 Connect");
   });
 
+  it("finds an address with or without its default port as the same", () => {
+    const saved = direct("paired", "http://100.88.1.2/");
+    expect(findRouteToSameAddress([saved], direct("signed-in", "http://100.88.1.2:80/"))).toBe(
+      saved,
+    );
+  });
+
   it("places a new route after faster kinds and ahead of T3 Connect", () => {
     expect(insertRoute([RELAY], LAN)).toEqual([LAN, RELAY]);
     expect(insertRoute([LAN, RELAY], TAILNET)).toEqual([LAN, TAILNET, RELAY]);
@@ -107,6 +115,17 @@ describe("learned routes", () => {
   const ids = (routes: ReadonlyArray<ConnectionRoute> | null) =>
     routes?.map((route) => connectionRouteId(route.target)) ?? null;
   const profileOf = (route: ConnectionRoute) => Option.getOrThrow(route.profile);
+
+  it("knows a saved address reported with or without its default port", () => {
+    const saved = direct("tailnet", "http://100.88.1.2:80/");
+    const routes = mergeLearnedRoutes({
+      entry: entryWithRoutes(relayOnly, [saved, RELAY]),
+      activeRoute: RELAY,
+      reported: [{ httpBaseUrl: "http://100.88.1.2/" }],
+      allowInsecure: true,
+    });
+    expect(ids(routes)?.some((id) => id.startsWith("learned:")) ?? false).toBe(false);
+  });
 
   it("learns a LAN address over T3 Connect, ahead of it, using the T3 Connect credential", () => {
     const routes = mergeLearnedRoutes({
@@ -239,6 +258,50 @@ describe("learned routes", () => {
     const learned = routes.find((route) => connectionRouteKind(route) === "tailnet")!;
     expect(profileOf(learned)).not.toHaveProperty("authorization");
     expect(credentialConnectionId(connectionRouteId(learned.target))).toBe("lan");
+  });
+
+  it("keeps a Tailscale sign-in on the host's tailnet and Serve routes, never its LAN", () => {
+    const pinned: ConnectionRoute = {
+      target: new BearerConnectionTarget({
+        environmentId: ENVIRONMENT_ID,
+        label: "Desk",
+        connectionId: "pinned",
+      }),
+      profile: Option.some(
+        new BearerConnectionProfile({
+          connectionId: "pinned",
+          environmentId: ENVIRONMENT_ID,
+          label: "Desk",
+          httpBaseUrl: "http://100.88.1.2:3773/",
+          wsBaseUrl: "ws://100.88.1.2:3773/",
+          authorization: "tailnet",
+          network: "tailscale",
+        }),
+      ),
+    };
+    // A LAN route learned before the upgrade borrowed the same credential.
+    const staleLan = learned(
+      `learned:${ENVIRONMENT_ID}:http://192.168.1.10:3773@pinned`,
+      "http://192.168.1.10:3773/",
+    );
+    const routes = mergeLearnedRoutes({
+      entry: entryWithRoutes(relayOnly, [staleLan, pinned]),
+      activeRoute: pinned,
+      reported: [
+        { httpBaseUrl: "http://192.168.1.10:3773/", kind: "lan" },
+        { httpBaseUrl: "http://100.88.1.2:3773/", kind: "tailnet" },
+        { httpBaseUrl: "https://desk.tail1234.ts.net/", kind: "tailnet" },
+      ],
+      allowInsecure: true,
+    })!;
+    expect(ids(routes)).toEqual([
+      "pinned",
+      `learned:${ENVIRONMENT_ID}:https://desk.tail1234.ts.net@pinned`,
+    ]);
+    expect(profileOf(routes[1]!)).toMatchObject({
+      authorization: "tailnet",
+      network: "tailscale",
+    });
   });
 
   it("keeps a token paired over HTTPS off plain HTTP addresses outside the tailnet", () => {

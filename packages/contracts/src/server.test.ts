@@ -5,6 +5,7 @@ import { ExecutionEnvironmentDescriptor } from "./environment.ts";
 import {
   OtlpEndpointCheckInput,
   resolveEnvironmentMachineKind,
+  ServerConfig,
   ServerObservability,
   ServerProvider,
   ServerProviders,
@@ -69,6 +70,27 @@ describe("server config forward compatibility", () => {
     expect(parsed.usageLimits?.windows).toEqual([
       { id: "primary", kind: "session", label: "Session", usedPercent: 12 },
     ]);
+  });
+
+  it("reads host Tailscale facts when present, and absent or unreadable ones as absent", () => {
+    const decodeTailscale = Schema.decodeUnknownSync(
+      Schema.Struct({ tailscale: ServerConfig.fields.tailscale }),
+    );
+    const facts = {
+      state: "needs_login",
+      checkedAt: "2026-10-28T00:00:00.000Z",
+      magicDnsName: null,
+      keyExpiry: null,
+      issues: [
+        { cause: "needs_login", fix: "Run `sudo tailscale up`." },
+        { cause: "some_future_cause", fix: "?" },
+      ],
+    };
+    expect(decodeTailscale({ tailscale: facts }).tailscale?.issues).toEqual([
+      { cause: "needs_login", fix: "Run `sudo tailscale up`." },
+    ]);
+    expect(decodeTailscale({})).toEqual({});
+    expect(decodeTailscale({ tailscale: { ...facts, state: "some_future_state" } })).toEqual({});
   });
 });
 

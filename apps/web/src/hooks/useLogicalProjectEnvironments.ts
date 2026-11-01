@@ -38,6 +38,7 @@ export function useLogicalProjectEnvironments(
       label: environment?.label ?? environmentId,
       isPrimary: environmentId === primaryEnvironmentId,
       machine: resolveEnvironmentMachineKind(environment?.serverConfig ?? null),
+      connection: environment?.connection.phase ?? "available",
     });
   };
   if (scratchDraft) {

@@ -4,6 +4,8 @@ import {
   type ConnectionDiagnosis,
   connectionDiagnosisText,
   connectionRoutes,
+  environmentTailscaleNotice,
+  everyTailnetRouteFailed,
   hasRelayRoute,
   presentConnectionDiagnosis,
 } from "@t3tools/client-runtime/connection";
@@ -13,9 +15,11 @@ import { ChevronRightIcon } from "lucide-react";
 
 import { APP_VERSION } from "~/branding";
 import { environmentCatalog } from "~/connection/catalog";
+import { desktopTailscaleStatusAtom, noDesktopTailscaleStatusAtom } from "~/state/desktopTailscale";
 import { type EnvironmentPresentation, useRelayEnvironmentDiscovery } from "~/state/environments";
 import { useCopyToClipboard } from "../../hooks/useCopyToClipboard";
 import { useDeadlinePassed } from "../../hooks/useDeadline";
+import { useNowMinute } from "../../hooks/useNowMinute";
 import { useNowSecond } from "../../hooks/useNowSecond";
 import { cn } from "../../lib/utils";
 import { Button } from "../ui/button";
@@ -36,19 +40,64 @@ export function useConnectionDiagnosis(environment: EnvironmentPresentation) {
   const routes = connectionRoutes(environment.entry);
   const relayOnly = routes.length === 1 && hasRelayRoute(environment.entry);
   const phase = environment.connection.phase;
-  const diagnosis =
-    environment.entry.enabled && phase !== "connected" && phase !== "unsupported"
-      ? presentConnectionDiagnosis({
-          hostLabel: environment.label,
-          state,
-          via: relayOnly ? "relay" : "direct",
-          // With a direct route as well, the relay's health says nothing about the route in use.
-          relayStatus: relayOnly ? Option.getOrNull(relayStatus ?? Option.none()) : null,
-          clientVersion: APP_VERSION,
-          serverVersion: environment.serverConfig?.environment.serverVersion,
-        })
-      : null;
+  const failing = environment.entry.enabled && phase !== "connected" && phase !== "unsupported";
+  // Spawning Tailscale can prompt on macOS, so read it only when every Tailscale route failed.
+  const localTailscale = AsyncResult.getOrElse(
+    useAtomValue(
+      failing && everyTailnetRouteFailed(state)
+        ? desktopTailscaleStatusAtom(state.attempt)
+        : noDesktopTailscaleStatusAtom,
+    ),
+    () => null,
+  );
+  const diagnosis = failing
+    ? presentConnectionDiagnosis({
+        hostLabel: environment.label,
+        state,
+        via: relayOnly ? "relay" : "direct",
+        relayStatus: hasRelayRoute(environment.entry)
+          ? Option.getOrNull(relayStatus ?? Option.none())
+          : null,
+        clientVersion: APP_VERSION,
+        serverVersion: environment.serverConfig?.environment.serverVersion,
+        localTailscale,
+        hostTailscale: environment.serverConfig?.tailscale,
+      })
+    : null;
   return { diagnosis, state, relayOnly };
+}
+
+/** The host's last reported Tailscale problem, for its row while no connection has failed. */
+export function HostTailscaleNotice({
+  environment,
+}: {
+  readonly environment: EnvironmentPresentation;
+}) {
+  return environment.serverConfig?.tailscale?.issues.length ? (
+    <HostTailscaleNoticeLines environment={environment} />
+  ) : null;
+}
+
+// Ticks once a minute, and only for hosts with a Tailscale issue, so ages and expiry stay current.
+function HostTailscaleNoticeLines({
+  environment,
+}: {
+  readonly environment: EnvironmentPresentation;
+}) {
+  const nowMinute = useNowMinute();
+  const notice = environmentTailscaleNotice({
+    hostLabel: environment.label,
+    entry: environment.entry,
+    serverConfig: environment.serverConfig,
+    now: Date.parse(`${nowMinute}:00.000Z`),
+  });
+  if (notice === null) return null;
+  return (
+    <div className="text-xs">
+      <p className="text-warning-foreground">{notice.headline}</p>
+      <p className="text-muted-foreground">{notice.fix}</p>
+    </div>
+  );
 }
 
 /** The failure headline alone, for banners outside Settings. */
@@ -165,6 +214,11 @@ export function ConnectionDiagnosisPanel({
             <li key={step}>{step}</li>
           ))}
         </ol>
+        {diagnosis.policySnippet ? (
+          <pre className="mt-1 overflow-x-auto rounded-md bg-muted/50 p-2 font-mono text-foreground select-text">
+            {diagnosis.policySnippet}
+          </pre>
+        ) : null}
         {diagnosis.moreInfoUrl ? (
           <a
             href={diagnosis.moreInfoUrl}

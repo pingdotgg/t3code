@@ -22,6 +22,7 @@ import {
   BearerConnectionProfile,
   type ConnectionCatalogEntry,
   SshConnectionProfile,
+  TailnetConnectionCredential,
 } from "./catalog.ts";
 import * as ConnectionCredentialStore from "./credentialStore.ts";
 import {
@@ -48,7 +49,8 @@ import {
   appendOrchestrationProtocol,
   orchestrationProtocolCompatibilityError,
 } from "./compatibility.ts";
-import { credentialConnectionId } from "./routes.ts";
+import { connectionRouteKind, credentialConnectionId } from "./routes.ts";
+import { supportsTailnetSignIn } from "./tailnet.ts";
 import { fetchRemoteEnvironmentDescriptor } from "../environment/descriptor.ts";
 
 export class ConnectionResolver extends Context.Service<
@@ -74,6 +76,7 @@ export class ConnectionResolver extends Context.Service<
 const isBearerProfile = Schema.is(BearerConnectionProfile);
 const isSshProfile = Schema.is(SshConnectionProfile);
 const isBearerCredential = Schema.is(BearerConnectionCredential);
+const isTailnetCredential = Schema.is(TailnetConnectionCredential);
 
 function primarySocketUrl(
   target: PrimaryConnectionTarget,
@@ -124,7 +127,82 @@ const makePrimaryBroker = Effect.fn("clientRuntime.connection.broker.makePrimary
 
 const makeBearerBroker = Effect.fn("clientRuntime.connection.broker.makeBearer")(function* () {
   const credentials = yield* ConnectionCredentialStore.ConnectionCredentialStore;
+  const profiles = yield* ConnectionProfileStore.ConnectionProfileStore;
   const remote = yield* RemoteEnvironmentAuthorization.RemoteEnvironmentAuthorization;
+  const presentation = yield* ClientCapabilities.ClientPresentation;
+  const httpClient = yield* HttpClient.HttpClient;
+
+  // An upgrade saves its profile before it connects, so a connect that fails
+  // after it leaves the caller holding the old profile.
+  const savedTailnetProfile = Effect.fnUntraced(function* (profile: BearerConnectionProfile) {
+    if (profile.authorization !== undefined) return profile;
+    const stored = Option.getOrNull(yield* profiles.get(profile.connectionId));
+    return stored !== null &&
+      isBearerProfile(stored) &&
+      stored.authorization === "tailnet" &&
+      stored.httpBaseUrl === profile.httpBaseUrl
+      ? stored
+      : profile;
+  });
+
+  /**
+   * A paired tailnet route whose session ended switches to Tailscale sign-in.
+   * A Serve pairing switches at its host-reported direct route, where renewal
+   * stays pinned. The registry picks up the profile after the next connect.
+   */
+  const upgradeToTailnet = Effect.fn("clientRuntime.connection.broker.upgradeToTailnet")(function* (
+    target: BearerConnectionTarget,
+    profile: BearerConnectionProfile,
+    ended: ConnectionAttemptError,
+  ) {
+    // A bare 100.x route reads as "vpn" until the host reports it as Tailscale.
+    const kind = connectionRouteKind({ target, profile: Option.some(profile) });
+    const tailnetRoute =
+      profile.learned === true
+        ? profile.network === "tailscale"
+        : kind === "tailnet" || kind === "vpn";
+    const canUpgrade =
+      ended._tag === "ConnectionBlockedError" &&
+      ended.reason === "authentication" &&
+      tailnetRoute &&
+      profile.httpBaseUrl.startsWith("http:") &&
+      supportsTailnetSignIn(presentation.metadata);
+    if (!canUpgrade) return yield* ended;
+    const descriptor = yield* fetchRemoteEnvironmentDescriptor({
+      httpBaseUrl: profile.httpBaseUrl,
+    }).pipe(
+      Effect.mapError(mapRemoteEnvironmentError),
+      Effect.provideService(HttpClient.HttpClient, httpClient),
+    );
+    if (
+      descriptor.environmentId !== target.environmentId ||
+      descriptor.capabilities.tailnetSignIn !== true
+    ) {
+      return yield* ended;
+    }
+    const credentialId = credentialConnectionId(target.connectionId);
+    const session = yield* remote.signInTailnet({ httpBaseUrl: profile.httpBaseUrl });
+    // Profile first: a Tailscale session under the old profile is refused on
+    // every connect, while the old token under the new one signs in again.
+    yield* profiles.put(
+      new BearerConnectionProfile({
+        connectionId: profile.connectionId,
+        environmentId: profile.environmentId,
+        label: profile.label,
+        httpBaseUrl: profile.httpBaseUrl,
+        wsBaseUrl: profile.wsBaseUrl,
+        ...(profile.learned === undefined ? {} : { learned: profile.learned }),
+        authorization: "tailnet",
+        network: "tailscale",
+      }),
+    );
+    yield* credentials.put(credentialId, session);
+    return yield* remote.authorizeTailnet({
+      expectedEnvironmentId: target.environmentId,
+      credentialId,
+      endpoint: { httpBaseUrl: profile.httpBaseUrl, wsBaseUrl: profile.wsBaseUrl },
+    });
+  });
 
   return Effect.fn("clientRuntime.connection.broker.bearer")(function* (
     entry: ConnectionCatalogEntry & { readonly target: BearerConnectionTarget },
@@ -152,7 +230,8 @@ const makeBearerBroker = Effect.fn("clientRuntime.connection.broker.makeBearer")
       });
       return { ...authorized, target } satisfies PreparedConnection;
     }
-    const credential = yield* credentials.get(credentialConnectionId(target.connectionId)).pipe(
+    const credentialId = credentialConnectionId(target.connectionId);
+    const credential = yield* credentials.get(credentialId).pipe(
       Effect.flatMap(
         Option.match({
           onNone: () => Effect.fail(credentialMissingError(target.connectionId)),
@@ -160,16 +239,35 @@ const makeBearerBroker = Effect.fn("clientRuntime.connection.broker.makeBearer")
         }),
       ),
     );
+    if (isTailnetCredential(credential)) {
+      const tailnetProfile = yield* savedTailnetProfile(profile);
+      // A Tailscale session goes only to the host's tailnet and Serve routes.
+      if (connectionRouteKind({ target, profile: Option.some(tailnetProfile) }) !== "tailnet") {
+        return yield* new ConnectionBlockedError({
+          reason: "configuration",
+          detail: "A Tailscale sign-in is only used on Tailscale addresses.",
+          hop: "device",
+        });
+      }
+      const authorized = yield* remote.authorizeTailnet({
+        expectedEnvironmentId: target.environmentId,
+        credentialId,
+        endpoint: { httpBaseUrl: tailnetProfile.httpBaseUrl, wsBaseUrl: tailnetProfile.wsBaseUrl },
+      });
+      return { ...authorized, target } satisfies PreparedConnection;
+    }
     if (!isBearerCredential(credential)) {
       return yield* credentialMissingError(target.connectionId);
     }
-    const authorized = yield* remote.authorizeBearer({
-      expectedEnvironmentId: target.environmentId,
-      httpBaseUrl: profile.httpBaseUrl,
-      wsBaseUrl: profile.wsBaseUrl,
-      bearerToken: credential.token,
-      connectionMethod: "direct",
-    });
+    const authorized = yield* remote
+      .authorizeBearer({
+        expectedEnvironmentId: target.environmentId,
+        httpBaseUrl: profile.httpBaseUrl,
+        wsBaseUrl: profile.wsBaseUrl,
+        bearerToken: credential.token,
+        connectionMethod: "direct",
+      })
+      .pipe(Effect.catch((ended) => upgradeToTailnet(target, profile, ended)));
     return {
       ...authorized,
       target,

@@ -147,6 +147,7 @@ const resolveDirectPairingBaseUrl = (state: PersistedServerRuntimeState): string
   state.devUrl ??
   resolveHeadlessConnectionString(state.host, state.port, {
     privateNetworkOnly: state.privateNetworkOnly,
+    tailscaleOnly: state.tailscaleOnly,
   });
 
 export class DevServerNotProxiableError extends Schema.TaggedError<DevServerNotProxiableError>()(
@@ -195,7 +196,7 @@ const formatPairOutput = (input: {
     "",
     `Pairing URL: ${input.pairingUrl}`,
     `App link: ${buildPairingAppLink(input.pairingUrl)}`,
-    `Token: ${input.token}`,
+    `Pairing code: ${input.token}`,
     `Expires: ${DateTime.formatIso(input.expiresAt)}`,
     ...input.notes.flatMap((note) => ["", `Note: ${note}`]),
     "",
@@ -359,7 +360,7 @@ const awaitEnvironmentDescriptor = Effect.fn(function* (baseUrl: string) {
 const resolveTailscalePairingBase = Effect.fn("pair.resolveTailscalePairingBase")(
   function* (input: { readonly target: DiscoveredPairTarget; readonly servePort: number }) {
     const notes: Array<string> = [];
-    const status = yield* readTailscaleStatus.pipe(
+    const status = yield* readTailscaleStatus("active").pipe(
       Effect.mapError((cause) => new TailscaleUnavailableError({ cause })),
     );
     if (status.magicDnsName === null) {
@@ -448,7 +449,7 @@ const mintPairingLink = Effect.fn("pair.mintPairingLink")(function* (input: {
 const ttlFlag = Flag.String("ttl").pipe(
   Flag.withSchema(DurationFromString),
   Flag.withDescription(
-    "Token TTL, for example `5m`, `1h`, or `15 minutes`. Defaults to 5 minutes.",
+    "Pairing code TTL, for example `5m`, `1h`, or `15 minutes`. Defaults to 5 minutes.",
   ),
   Flag.optional,
 );
@@ -480,7 +481,7 @@ export const pairCommand = Command.make("pair", {
   tailscaleServePort: tailscaleServePortFlag,
 }).pipe(
   Command.withDescription(
-    "Mint a pairing token for a running T3 Code server and print it as a QR code.",
+    "Mint a pairing code for a running T3 Code server and print it as a QR code.",
   ),
   Command.withHandler((flags) =>
     Effect.gen(function* () {
@@ -514,6 +515,8 @@ export const pairCommand = Command.make("pair", {
           notes.push(
             "This URL is only reachable from this machine. To reach it from your other devices, run `t3 up`, or re-run with --tailscale.",
           );
+        } else if (target.state.tailscaleOnly) {
+          notes.push("This URL works only from your tailnet.");
         } else if (target.state.privateNetworkOnly) {
           notes.push(
             "This URL works only from this machine's local network. From elsewhere, re-run with --tailscale or use T3 Connect.",

@@ -14,8 +14,11 @@ import {
   EnvironmentResourceNotFoundError,
   type EnvironmentResourceNotFoundReason,
   EnvironmentScopeRequiredError,
+  EnvironmentTailnetSignInRefusedError,
   EnvironmentAuthenticatedAuth,
   EnvironmentAuthenticatedPrincipal,
+  TAILNET_SUBJECT_PREFIX,
+  tailnetScopeDenial,
 } from "@t3tools/contracts";
 import type { AuthEnvironmentScope, DpopFailureReason } from "@t3tools/contracts";
 import { parseOAuthScope } from "@t3tools/shared/oauthScope";
@@ -32,6 +35,7 @@ import * as HttpApiBuilder from "effect/http-api/HttpApiBuilder";
 
 import * as EnvironmentAuth from "./EnvironmentAuth.ts";
 import * as SessionStore from "./SessionStore.ts";
+import * as TailnetSignIn from "./TailnetSignIn.ts";
 import { traceAuthenticatedRelayRequest, traceRelayRequest } from "../cloud/traceRelayRequest.ts";
 import { deriveAuthClientMetadata } from "./utils.ts";
 import { verifyRequestDpopProof } from "./dpop.ts";
@@ -118,13 +122,17 @@ export function failEnvironmentInvalidRequest(reason: EnvironmentRequestInvalidR
   );
 }
 
-export function failEnvironmentScopeRequired(requiredScope: AuthEnvironmentScope) {
+/** `subject` is the session's, so a Tailscale session's denial can point at its grant. */
+export function failEnvironmentScopeRequired(requiredScope: AuthEnvironmentScope, subject: string) {
   return currentEnvironmentTraceId.pipe(
     Effect.flatMap((traceId) =>
       Effect.fail(
         new EnvironmentScopeRequiredError({
           code: "insufficient_scope",
           ...authScopeRequiredResponse(requiredScope),
+          ...(subject.startsWith(TAILNET_SUBJECT_PREFIX)
+            ? { tailnetGrantFix: tailnetScopeDenial(requiredScope) }
+            : {}),
           traceId,
         }),
       ),
@@ -178,7 +186,7 @@ export const authenticateMediaRequest =
       ),
     );
     if (!session.scopes.includes(requiredScope)) {
-      return yield* failEnvironmentScopeRequired(requiredScope);
+      return yield* failEnvironmentScopeRequired(requiredScope, session.subject);
     }
     return session;
   });
@@ -219,7 +227,7 @@ export const requireEnvironmentScope = Effect.fn("environment.auth.requireScope"
 ) {
   const session = yield* EnvironmentAuthenticatedPrincipal;
   if (!session.scopes.has(scope)) {
-    return yield* failEnvironmentScopeRequired(scope);
+    return yield* failEnvironmentScopeRequired(scope, session.subject);
   }
   return session;
 });
@@ -453,7 +461,7 @@ export const layer = HttpApiBuilder.group(
             }
             for (const delegatedScope of delegatedScopes) {
               if (!session.scopes.has(delegatedScope)) {
-                return yield* failEnvironmentScopeRequired(delegatedScope);
+                return yield* failEnvironmentScopeRequired(delegatedScope, session.subject);
               }
             }
             return yield* serverAuth.issuePairingCredential(args.payload);
@@ -512,5 +520,56 @@ export const layer = HttpApiBuilder.group(
           ),
         ),
       );
+  }),
+);
+
+export const layerTailnet = HttpApiBuilder.group(
+  EnvironmentHttpApi,
+  "tailnet",
+  Effect.fnUntraced(function* (handlers) {
+    const tailnetSignIn = yield* TailnetSignIn.TailnetSignIn;
+
+    return handlers.handle(
+      "signIn",
+      Effect.fn("environment.auth.tailnetSignIn")(
+        function* (args) {
+          yield* annotateEnvironmentRequest(args.endpoint.name);
+          const request = yield* HttpServerRequest.HttpServerRequest;
+          yield* appendCredentialResponseHeaders;
+          return yield* tailnetSignIn.signIn(request);
+        },
+        Effect.catchTags({
+          TailnetSignInRefusedError: (error) =>
+            currentEnvironmentTraceId.pipe(
+              Effect.flatMap((traceId) =>
+                Effect.fail(
+                  new EnvironmentTailnetSignInRefusedError({
+                    code: "tailnet_sign_in_refused",
+                    reason: error.reason,
+                    traceId,
+                    ...(error.suggestedGrant === undefined
+                      ? {}
+                      : { suggestedGrant: error.suggestedGrant }),
+                  }),
+                ),
+              ),
+            ),
+          ServerAuthInvalidCredentialError: (error) =>
+            appendDpopChallengeHeader.pipe(
+              Effect.andThen(
+                failEnvironmentAuthInvalid(
+                  "invalid_credential",
+                  EnvironmentAuth.serverAuthDpopFailureReason(error),
+                ),
+              ),
+            ),
+          TailnetDeviceBlockLookupError: (error) =>
+            failEnvironmentInternal("internal_error", error),
+        }),
+        Effect.catchIf(EnvironmentAuth.isServerAuthInternalError, (error) =>
+          failEnvironmentInternal("pairing_credential_issuance_failed", error),
+        ),
+      ),
+    );
   }),
 );

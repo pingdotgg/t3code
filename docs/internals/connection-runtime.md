@@ -16,6 +16,10 @@ client of a restarted server reconnects in the same second; with a short cap, a
 client that can never connect retries all day. Offline states and authentication
 failures wait for a wakeup instead of spending attempts on unchanged conditions.
 
+A healthy session stays on its current route: discovery does not prove that a
+better route can establish a socket. Necessary reconnects use the latest ranked
+routes, including those learned from the current session.
+
 Foregrounding, a network change, an explicit retry, and an offline report probe
 the established session, and only a failed probe reconnects. Offline reports are
 often wrong, for example for a loopback server. The OS can kill a suspended

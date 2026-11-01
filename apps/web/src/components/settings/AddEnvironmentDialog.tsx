@@ -9,6 +9,7 @@ import {
 import {
   RelayConnectionRegistration,
   RelayConnectionTarget,
+  tailnetSignInBaseUrl,
 } from "@t3tools/client-runtime/connection";
 import {
   isAtomCommandInterrupted,
@@ -46,6 +47,7 @@ import { environmentCatalog } from "~/connection/catalog";
 import {
   connectPairing as connectPairingAtom,
   connectSshEnvironment as connectSshEnvironmentAtom,
+  connectTailnet as connectTailnetAtom,
 } from "~/connection/onboarding";
 import { useEnvironmentQuery } from "~/state/query";
 import { desktopSshHostsStateAtom, filterDiscoveredSshHosts } from "~/state/desktopSshHosts";
@@ -85,6 +87,7 @@ export function AddEnvironmentDialog({
   const desktopBridge = window.desktopBridge;
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
   const connectPairing = useAtomCommand(connectPairingAtom, { reportFailure: false });
+  const connectTailnet = useAtomCommand(connectTailnetAtom, { reportFailure: false });
   const connectSshEnvironment = useAtomCommand(connectSshEnvironmentAtom, {
     reportFailure: false,
   });
@@ -207,6 +210,32 @@ export function AddEnvironmentDialog({
 
     setIsAddingSavedBackend(true);
     onErrorChange(null);
+    // The desktop app signs in through Tailscale with no code when the machine offers it.
+    if (
+      desktopBridge !== undefined &&
+      savedBackendPairingCode.trim() === "" &&
+      tailnetSignInBaseUrl(savedBackendHost) !== null
+    ) {
+      const result = await connectTailnet({
+        address: savedBackendHost,
+        ...(routeTarget ? { expectedEnvironmentId: routeTarget.environmentId } : {}),
+      });
+      if (result._tag === "Success" && Option.isSome(result.value)) {
+        finishSavedBackend();
+        return;
+      }
+      if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
+        const error = squashAtomCommandFailure(result);
+        onErrorChange(error instanceof Error ? error.message : "Failed to add backend.");
+      }
+      if (result._tag === "Success") {
+        onErrorChange(
+          "That machine does not offer Tailscale sign-in. Paste a pairing link from it instead.",
+        );
+      }
+      setIsAddingSavedBackend(false);
+      return;
+    }
     let remotePairingInput: ReturnType<typeof parseRemotePairingFields>;
     try {
       remotePairingInput = parseRemotePairingFields({
@@ -248,6 +277,10 @@ export function AddEnvironmentDialog({
       return;
     }
 
+    finishSavedBackend();
+  };
+
+  const finishSavedBackend = () => {
     handleOpenChange(false);
     toastManager.add(
       routeTarget
@@ -415,7 +448,9 @@ export function AddEnvironmentDialog({
       </div>
       <div>
         <span className="mt-1 block text-2xs text-muted-foreground">
-          Paste a full pairing URL here to fill both fields automatically.
+          {desktopBridge
+            ? "Paste a full pairing URL here to fill both fields. On your tailnet, a machine name or 100.x address needs no code."
+            : "Paste a full pairing URL here to fill both fields automatically."}
         </span>
       </div>
     </div>
@@ -470,7 +505,7 @@ export function AddEnvironmentDialog({
         </div>
       ) : null}
       {renderRemoteFields()}
-      {error ? <p className="text-xs text-destructive">{error}</p> : null}
+      {error ? <p className="text-xs whitespace-pre-wrap text-destructive">{error}</p> : null}
       <Button
         variant="outline"
         className="w-full"

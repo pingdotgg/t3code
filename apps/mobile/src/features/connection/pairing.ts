@@ -64,7 +64,10 @@ export function parsePairingUrl(url: string): { host: string; code: string } {
     parsed.hash = "";
     parsed.search = "";
     parsed.pathname = "/";
-    return { host: parsed.toString().replace(/\/$/, ""), code };
+    // URL drops a default port, but a typed `:80` on a tailnet address is not T3 Code's 3773.
+    const typedPort = /^[a-z][a-z\d+.-]*:\/\/[^/?#]*:(\d+)(?:[/?#]|$)/iu.exec(trimmed)?.[1];
+    const host = parsed.toString().replace(/\/$/, "");
+    return { host: parsed.port === "" && typedPort ? `${host}:${typedPort}` : host, code };
   } catch {
     return { host: trimmed, code: "" };
   }

@@ -143,11 +143,21 @@ export function findRouteToSameAddress(
   return key === null ? undefined : routes.find((existing) => routeAddressKey(existing) === key);
 }
 
+// URL drops a default port, so `http://host:80/` and `http://host/` key the same.
+function httpBaseUrlKey(httpBaseUrl: string): string {
+  try {
+    const url = new URL(httpBaseUrl);
+    return `${url.protocol}//${url.host}${url.pathname}`.replace(/\/+$/, "");
+  } catch {
+    return httpBaseUrl.replace(/\/+$/, "");
+  }
+}
+
 function routeAddressKey(route: ConnectionRoute): string | null {
   const profile = Option.getOrNull(route.profile);
   switch (profile?._tag) {
     case "BearerConnectionProfile":
-      return `bearer:${profile.httpBaseUrl.replace(/\/+$/, "")}`;
+      return `bearer:${httpBaseUrlKey(profile.httpBaseUrl)}`;
     case "SshConnectionProfile":
       return `ssh:${sshTargetKey(profile.target)}`;
     default:
@@ -213,15 +223,17 @@ export function mergeLearnedRoutes(input: {
   }
   const activeProfile = Option.getOrNull(input.activeRoute.profile);
   const authorization =
-    active._tag === "RelayConnectionTarget" ||
-    (activeProfile?._tag === "BearerConnectionProfile" &&
-      activeProfile.authorization === "t3-connect")
+    active._tag === "RelayConnectionTarget"
       ? ("t3-connect" as const)
-      : undefined;
+      : activeProfile?._tag === "BearerConnectionProfile"
+        ? activeProfile.authorization
+        : undefined;
   const sharedCredential =
-    authorization === undefined && active._tag === "BearerConnectionTarget"
+    authorization !== "t3-connect" && active._tag === "BearerConnectionTarget"
       ? credentialConnectionId(active.connectionId)
       : undefined;
+  // A Tailscale session is used only on the host's tailnet and Serve routes.
+  const tailnetOnly = authorization === "tailnet";
   const reported = new Map<string, URL>();
   const tailscaleOrigins = new Set<string>();
   for (const endpoint of input.reported) {
@@ -238,7 +250,7 @@ export function mergeLearnedRoutes(input: {
     reported.set(url.origin, url);
     if (endpoint.kind === "tailnet") tailscaleOrigins.add(url.origin);
   }
-  const normalized = (url: string) => url.replace(/\/+$/, "");
+  const normalized = httpBaseUrlKey;
   const known = new Set(
     saved.flatMap((route) => {
       const url = routeHttpBaseUrl(route);
@@ -256,12 +268,20 @@ export function mergeLearnedRoutes(input: {
     }
     if (url === null || !reported.has(normalized(url)) || known.has(normalized(url))) return [];
     if (sendsTokenInClear(saved, route, tailscaleOrigins.has(normalized(url)))) return [];
+    if (
+      tailnetOnly &&
+      !tailscaleOrigins.has(normalized(url)) &&
+      credentialConnectionId(connectionRouteId(route.target)) === sharedCredential
+    ) {
+      return [];
+    }
     known.add(normalized(url));
     return [withNetwork(route, tailscaleOrigins.has(normalized(url)))];
   });
   let next: ReadonlyArray<ConnectionRoute> = kept;
   for (const url of reported.values()) {
     if (known.has(url.origin)) continue;
+    if (tailnetOnly && !tailscaleOrigins.has(url.origin)) continue;
     if (
       url.protocol === "http:" &&
       sharedCredential !== undefined &&
@@ -349,6 +369,29 @@ export function sendsTokenInClear(
 export function usableRoutes(entry: ConnectionCatalogEntry): ReadonlyArray<ConnectionRoute> {
   const routes = connectionRoutes(entry);
   return routes.filter((route) => !sendsTokenInClear(routes, route));
+}
+
+/**
+ * Whether a route shares a Tailscale sign-in it cannot use. The resolver
+ * refuses the session off the host's tailnet and Serve routes, so a connect
+ * skips them and a route list shows them as unused, not failed.
+ */
+export function unusedWithTailnetSignIn(
+  entry: ConnectionCatalogEntry,
+  route: ConnectionRoute,
+): boolean {
+  if (route.target._tag !== "BearerConnectionTarget" || connectionRouteKind(route) === "tailnet") {
+    return false;
+  }
+  const credentialId = credentialConnectionId(route.target.connectionId);
+  return connectionRoutes(entry).some((candidate) => {
+    const profile = Option.getOrNull(candidate.profile);
+    return (
+      profile?._tag === "BearerConnectionProfile" &&
+      profile.authorization === "tailnet" &&
+      credentialConnectionId(connectionRouteId(candidate.target)) === credentialId
+    );
+  });
 }
 
 export interface ReportedEndpoint {

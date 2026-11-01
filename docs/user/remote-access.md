@@ -15,8 +15,9 @@ For a command-line host, run:
 t3 up
 ```
 
-It asks how your other devices reach the machine: T3 Connect, the local network,
-or both. Choose T3 Connect and follow the sign-in instructions. On Linux and
+It asks how your other devices reach the machine: Tailscale (offered when it runs
+there), T3 Connect, the local network, or more than one. Choose T3 Connect and
+follow the sign-in instructions. On Linux and
 macOS, it then runs T3 Code as a [background service](./background-service.md).
 `t3 connect` is the same as `t3 up --connect`. Run `t3 up` again to change your
 choice, and `t3 status` to see it.
@@ -41,8 +42,8 @@ disconnect an otherwise healthy conversation.
 
 ### Scripts and agents
 
-`t3 up` asks nothing when you name a choice: `--connect`, `--lan`, or their
-`--no-` forms. Choices you do not name keep their settings, and `--yes` takes
+`t3 up` asks nothing when you name a choice: `--tailscale`, `--connect`,
+`--lan`, or their `--no-` forms. Choices you do not name keep their settings, and `--yes` takes
 the defaults. Without a terminal:
 
 - T3 Connect sign-in prints a URL and a code. Approve it on any device.
@@ -71,6 +72,8 @@ Use direct pairing when the other device can reach the host's network address.
 On a desktop host, open **Settings → Sharing & access**, enable **Network access**,
 then create a pairing link using an address the other device can reach. Changing
 network access restarts the desktop app. You can turn it off in the same place.
+Network access is off by default because it opens the port to everything on the
+LAN, and LAN traffic is not encrypted the way Tailscale traffic is.
 
 For a command-line host, choose the local network in `t3 up`, or run:
 
@@ -80,7 +83,8 @@ t3 up --lan
 
 For a server in a terminal, run `t3 serve --lan`. Either way, T3 Code then
 accepts connections from your local network and tailnet, so a pairing code is
-all that keeps other devices on them out.
+all that keeps other devices on them out, apart from
+[Tailscale sign-in](#tailscale-sign-in) for tailnet devices.
 
 If a server is already running, generate a fresh link without restarting it:
 
@@ -102,7 +106,7 @@ install that CA on Android as a **CA certificate** in its security settings; the
 Android app then trusts it.
 
 Pairing authorizes that device for future connections. Use a fresh one-time link
-for each new device; you do not need the original token to reconnect. Links
+for each new device; you do not need the original code to reconnect. Links
 created in Settings can only be copied from the client that created them while
 its Sharing & access page stays open. If you leave or reload that page, create
 another link to share.
@@ -132,13 +136,13 @@ reporting that address.
 
 T3 Code connects over the first route that answers. Away from home, a LAN
 address that does not answer is checked briefly and skipped. It is only tried
-again, after the other routes, if none of them connect. While connected over a
-later route, T3 Code checks the earlier ones when your network changes, when you
-return to the app, and every minute, and moves back as soon as one works.
+again, after the other routes, if none of them connect. A working connection
+stays on its route, even when an earlier route comes back. The route order
+applies the next time T3 Code has to reconnect.
 
 On web and desktop, select the route count under the machine's name in
-**Settings → Environments** to see its routes. Drag a route to change the order,
-or remove it. On mobile, open the machine under **Settings → Environments** and
+**Settings → Environments** to see its routes. Each route shows whether it
+answered on the last try. Drag a route to change the order, or remove it. On mobile, open the machine under **Settings → Environments** and
 choose **Edit**. Signing out of T3 Connect removes only that route; a machine
 you can still reach another way stays saved.
 
@@ -167,6 +171,142 @@ on that machine. Existing threads stay where they started. If resource checks ar
 unavailable or all eligible machines are full, choose a machine manually to continue.
 Mobile keeps its manual environment selection.
 
+### Tailscale sign-in
+
+On a personal tailnet, your own devices can connect to a machine with no pairing
+code. Run this on each machine, as the user who should own T3 Code:
+
+```bash
+npx t3 up --tailscale
+```
+
+Plain `npx t3 up` offers Tailscale too, and picks it first when Tailscale runs
+on the machine. It checks Tailscale, turns on Tailscale sign-in, installs the
+[background service](./background-service.md), and prints the machine's tailnet
+address with a QR code. Unless you also choose the local network, T3 Code
+accepts loopback and tailnet connections and refuses LAN connections; the port
+still answers on the LAN, but the connection closes before T3 Code reads it.
+`--tailscale-serve` also sets up Tailscale HTTPS.
+
+Who gets in:
+
+- **While your tailnet policy grants `t3.codes/cap/t3code` on the machine to no
+  device,** any untagged device the machine's owner has on the tailnet gets full
+  access, including terminals and files. Tagged devices, devices shared in from
+  another tailnet, other users, and subnet routers cannot sign in. Nothing to
+  set up.
+- **Once your policy grants it on the machine to any device,** the policy
+  decides: a device gets the scopes its grant names, and a device without a
+  grant cannot sign in, the owner's included. The machine notices a new grant
+  within a minute, and at once when a granted device signs in. After you remove
+  the last grant, your own untagged devices can sign in again within five
+  minutes, once the machine can read every device on your tailnet. The machine
+  sees grants through the devices they name, so the same happens when every
+  granted device leaves your tailnet; `--require-grant` keeps your untagged devices
+  out.
+- **To require a grant before you write one,** run `t3 up --require-grant` or
+  `t3 tailscale require-grant on`. `t3 tailscale require-grant` shows which rule
+  applies and why; `off` undoes `on`, but not your policy.
+
+Browsers still need a pairing code. Removing a device from your tailnet,
+changing or removing its grant, or blocking it ends its sessions within about
+30 seconds; after a change, the device signs in again with its new scopes. If
+Tailscale cannot read a device on your tailnet, the machine cannot tell whether
+your policy grants T3 Code. It reuses its last full check for up to five
+minutes, then lets in only granted devices until it can tell. Right after it
+starts, it has no check to reuse. On that machine, `t3 tailscale require-grant`
+shows why. A refused
+device shows the grant to add, for that device and this machine only. It names
+both by Tailscale address, so remove it when either leaves the tailnet: Tailscale
+can give that address to a new device.
+
+A grant goes in the `grants` section of your tailnet policy. This one lets your
+devices sign in to machines tagged `tag:t3-box`:
+
+```json
+"grants": [{
+  "src": ["you@example.com"],
+  "dst": ["tag:t3-box"],
+  "ip":  ["tcp:3773"],
+  "app": { "t3.codes/cap/t3code": [{ "scopes": ["standard"] }] }
+}]
+```
+
+`"standard"` includes agents and terminals, so a device with it can do anything
+the T3 Code user can do on that machine. It leaves out T3 Code's own access
+settings (pairing codes, sessions, blocks) and the T3 Connect link; `"admin"`
+adds those. `"read"` can view threads, terminals, and files but not change them,
+and is the only preset with no shell. You can also list single scopes, such as `"orchestration:read"`.
+A device that matches several grants gets all of their scopes. The `ip` line lets
+the device reach the port when your policy does not already allow it. Subnet
+routers never sign in, grant or not, because traffic they forward could arrive as
+them. A grant does cover VMs and containers that a granted machine NATs onto the
+tailnet, since they reach T3 Code as that machine.
+
+To connect from the desktop or mobile app, with Tailscale on:
+
+- **Desktop:** do nothing. The app finds the machines on your tailnet that offer
+  sign-in and adds them. It skips another user's untagged machine and one shared in
+  from another tailnet, so if a grant lets you into one, type its name in **Add
+  environment**.
+- **Phone:** scan the QR code from `t3 up`, or type the machine's name, MagicDNS
+  name, or `100.x` address in **Add environment** and leave the code empty. After
+  that, the phone asks the machines it is connected to for the others and adds
+  them.
+
+A machine you remove stays removed; add it again by name to bring it back. If a
+machine you already have answers at a new address, the app warns you instead of
+adding it. When this device is off Tailscale, its machines stay saved and
+reconnect when Tailscale is back.
+
+To let your phone reach your laptop the same way, turn on **Tailscale sign-in** in
+**Settings → Sharing & access**. The app restarts and listens on your tailnet at
+port 3773; unless **Network access** is on, it still refuses LAN connections. If
+that port is in use, Settings shows the port it uses, and other devices add the
+laptop by name with that port.
+
+To cut off one device on one machine, open **Settings → Environments** on a
+device that can manage access there, and **Block** it under **Tailscale devices
+on <machine>**. On that machine itself, the list is in **Settings → Sharing &
+access**. A device can manage access when its scopes include `access:write` and
+`orchestration:read`: one paired with a default `t3 pair` code, one whose grant
+includes `admin`, or your own devices while your policy grants none and
+`--require-grant` is off.
+
+A blocked device's Tailscale sessions on that machine end now, and **Unblock**
+undoes it. Sessions it made with a pairing code stay until you revoke them in
+**Settings → Sharing & access** there. A browser preview or device screen it
+already has open keeps working, clicks and typing included, until it closes. A
+device that rejoins Tailscale gets a new ID, so block it again or remove it from
+your tailnet.
+
+To turn Tailscale sign-in off, run `t3 up --no-tailscale` for the background
+service, or turn it off in **Settings → Sharing & access** in the desktop app.
+Either restarts and ends every Tailscale session and unused Tailscale sign-in
+code. A server you started by hand keeps its access until you stop it.
+
+On an untagged machine the owner is its own Tailscale user. On a tagged machine,
+`t3 up` asks for the owner's login, or takes `--owner <login>`; with
+`--require-grant` it needs no owner. Without grants, agents on any of your
+untagged machines, including their containers and VMs, can sign in to your other
+machines. Require grants, or tag the machines that run agents, to stop that.
+
+`t3 up` writes these settings to `service.env`. Use them with `t3 serve` as flags
+too:
+
+| `service.env`                   | Flag                     | Meaning                                        |
+| ------------------------------- | ------------------------ | ---------------------------------------------- |
+| `T3CODE_TAILSCALE_SIGN_IN=true` | `--tailscale-sign-in`    | Tailscale devices sign in with no code         |
+| `T3CODE_LAN=true`               | `--lan`                  | Also accept connections from the local network |
+| `T3CODE_TAILSCALE_OWNER=<id>`   | `--tailscale-owner <id>` | Owner's Tailscale user ID on a tagged host     |
+
+With Tailscale sign-in on and the local network off, T3 Code accepts only
+loopback and tailnet connections.
+
+Tailscale sign-in needs Tailscale 1.80 or newer on the machine and a Tailscale
+IPv4 address, and does not work with userspace networking, which is common in LXC
+and other containers; `t3 up` tells you when it finds any of these.
+
 ### Tailscale HTTPS
 
 Join both devices to the same tailnet. In the desktop app, enable **Tailscale
@@ -194,6 +334,23 @@ tailscale serve --https=443 off
 
 If that port is already in use, choose another with
 `--tailscale-serve-port`. See `t3 pair --help` for other pairing options.
+
+### Tailscale troubleshooting
+
+When a Tailscale route fails, the machine's row in **Settings → Environments** says
+why, using what the host last reported about its own Tailscale: signed out, off,
+waiting for approval, or a node key that has expired or expires soon. The desktop
+app also checks Tailscale on this device and whether the host is online on your
+tailnet. Online only means the host is connected to Tailscale, not that this
+device can reach it.
+
+On the host, run:
+
+```bash
+t3 tailscale status
+```
+
+It prints the same facts with a fix for each. Add `--json` for scripts.
 
 ### Hosted web app
 
@@ -366,7 +523,11 @@ fails with that reason.
 
 On the host, **Settings → Sharing & access** lets authorized administrators create
 pairing links and revoke client sessions. Revoking an unused link prevents new
-pairings; revoke a device's session to remove its existing access. Command-line
+pairings; revoke a device's session to remove its existing access. A device that
+signed in through Tailscale signs in again at once, so to keep it out, block it
+or turn [Tailscale sign-in](#tailscale-sign-in) off. Removing its grant works
+too, but removing the last grant lets your untagged devices back in unless grants
+are required or the machine is tagged with no owner. Command-line
 management is available through `t3 auth --help`.
 
 A session with an open connection stays listed after its access credential
@@ -380,7 +541,7 @@ npx t3 pair --scope orchestration:read --scope relay:read
 
 The selected scopes replace the default permissions. The same option works with
 `npx t3 auth pairing create` and `npx t3 auth session issue`; each command's
-`--help` lists the available scopes. Without `--scope`, pairing tokens and issued
+`--help` lists the available scopes. Without `--scope`, pairing codes and issued
 bearer sessions get every permission, including managing access and T3 Connect.
 A terminal or a full-access agent on the host can reach those as well, so a
 client that should not manage access also needs to go without `terminal:operate`

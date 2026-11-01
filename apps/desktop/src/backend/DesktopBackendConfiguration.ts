@@ -78,6 +78,8 @@ const DESKTOP_BACKEND_ENV_NAMES = [
   "T3CODE_DESKTOP_HTTPS_ENDPOINTS",
   "T3CODE_TAILSCALE_SERVE",
   "T3CODE_TAILSCALE_SERVE_PORT",
+  "T3CODE_TAILSCALE_SIGN_IN",
+  "T3CODE_TAILSCALE_OWNER",
 ] as const;
 
 // Windows forwards these variables into WSL only through WSLENV.
@@ -507,6 +509,8 @@ const resolvePrimaryStartConfig = Effect.fn("desktop.backendConfiguration.resolv
       shellEnvironmentPrepared: input.shellEnvironmentPrepared,
       tailscaleServeEnabled: backendExposure.tailscaleServeEnabled,
       tailscaleServePort: backendExposure.tailscaleServePort,
+      ...(backendExposure.tailscaleSignInEnabled ? { tailscaleSignInEnabled: true } : {}),
+      ...(backendExposure.tailscaleOnly ? { tailscaleOnly: true } : {}),
       desktopTelemetryFd: 4,
       desktopTelemetryControlFd: 5,
       desktopBrowserFd: 6,

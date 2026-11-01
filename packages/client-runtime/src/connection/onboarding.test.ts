@@ -3,6 +3,7 @@ import {
   EnvironmentId,
   type AuthEnvironmentScope,
   ORCHESTRATION_PROTOCOL_VERSION,
+  TailnetIpv4,
 } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
@@ -16,11 +17,15 @@ import * as RpcHttp from "../rpc/http.ts";
 import * as ClientCapabilities from "../platform/capabilities.ts";
 import * as Persistence from "../platform/persistence.ts";
 import { fetchRemoteSessionState } from "../authorization/remote.ts";
+import * as RemoteEnvironmentAuthorization from "../authorization/service.ts";
 import {
   BearerConnectionCredential,
   BearerConnectionProfile,
   BearerConnectionRegistration,
+  type ConnectionCredential,
   PrimaryConnectionRegistration,
+  TailnetConnectionCredential,
+  TailnetConnectionRegistration,
 } from "./catalog.ts";
 import * as Connectivity from "./connectivity.ts";
 import * as ConnectionCredentialStore from "./credentialStore.ts";
@@ -35,11 +40,19 @@ import {
   prepareBearerConnectionUpdate,
   preparePairingRegistration,
   prepareSshRegistration,
+  prepareTailnetRegistration,
 } from "./onboarding.ts";
 import * as EnvironmentRegistry from "./registry.ts";
 import * as ConnectionProfileStore from "./profileStore.ts";
 import { connectionRoutes, routeHttpBaseUrl } from "./routes.ts";
 import * as ConnectionWakeups from "./wakeups.ts";
+
+const TAILNET_SESSION = new TailnetConnectionCredential({
+  signInBaseUrl: "http://100.88.1.2:3773/",
+  accessToken: "tailnet-access-token",
+  expiresAtEpochMs: 3_600_000,
+  dpopThumbprint: "thumbprint-1",
+});
 
 const layerClientPresentation = Layer.succeed(
   ClientCapabilities.ClientPresentation,
@@ -48,6 +61,7 @@ const layerClientPresentation = Layer.succeed(
       label: "T3 Code Test",
       deviceType: "desktop",
       os: "Test OS",
+      surface: "desktop",
     },
   }),
 );
@@ -59,6 +73,7 @@ function layerPairingHttp(
     readonly failExchange?: boolean;
     readonly protocolVersion?: number;
     readonly selfUpdate?: boolean;
+    readonly tailnetSignIn?: boolean;
     readonly grantScopes?: ReadonlyArray<AuthEnvironmentScope>;
     readonly exchangeGate?: { readonly reached: () => void; readonly release: Promise<void> };
   },
@@ -88,6 +103,7 @@ function layerPairingHttp(
           capabilities: {
             repositoryIdentity: true,
             ...(options?.selfUpdate === true ? { serverSelfUpdate: "boot-service" } : {}),
+            ...(options?.tailnetSignIn === true ? { tailnetSignIn: true } : {}),
           },
         }),
       );
@@ -160,7 +176,13 @@ function layerPairingHttp(
 }
 
 function layerPairingOnboarding(
-  options?: Parameters<typeof layerPairingHttp>[1],
+  options?: Parameters<typeof layerPairingHttp>[1] & {
+    readonly savedCredential?: ConnectionCredential;
+    /** Saving fails, as with no OS keyring for the catalog. */
+    readonly saveFails?: boolean;
+    /** Collects each Tailscale sign-in's address. */
+    readonly signIns?: Array<string>;
+  },
   calls: Array<{ readonly url: string; readonly init: RequestInit }> = [],
 ) {
   const dependencies = Layer.mergeAll(
@@ -169,15 +191,24 @@ function layerPairingOnboarding(
     Layer.mock(Persistence.ConnectionTargetStore)({
       list: Effect.succeed([]),
       listDisabled: Effect.succeed([]),
+      listDismissed: Effect.succeed([]),
     }),
     Layer.mock(Persistence.ConnectionRegistrationStore)({
-      register: () => Effect.void,
+      register: () =>
+        options?.saveFails === true
+          ? Effect.fail(
+              new Persistence.ConnectionPersistenceError({
+                operation: "register-connection",
+                message: "No secure storage.",
+              }),
+            )
+          : Effect.void,
       setEnabled: () => Effect.void,
     }),
     Layer.mock(Persistence.EnvironmentCacheStore)({}),
     Layer.mock(ConnectionProfileStore.ConnectionProfileStore)({}),
     Layer.mock(ConnectionCredentialStore.ConnectionCredentialStore)({
-      get: () => Effect.succeedNone,
+      get: () => Effect.succeed(Option.fromUndefinedOr(options?.savedCredential)),
       put: () => Effect.void,
     }),
     Layer.mock(ClientCapabilities.SshEnvironmentGateway)({}),
@@ -193,6 +224,20 @@ function layerPairingOnboarding(
   );
   return Onboarding.layer.pipe(
     Layer.provideMerge(EnvironmentRegistry.layer.pipe(Layer.provideMerge(dependencies))),
+    Layer.provideMerge(
+      Layer.mock(RemoteEnvironmentAuthorization.RemoteEnvironmentAuthorization)({
+        // A session is pinned to the address it signed in at.
+        signInTailnet: (input) =>
+          Effect.sync(() => options?.signIns?.push(input.httpBaseUrl)).pipe(
+            Effect.as(
+              new TailnetConnectionCredential({
+                ...TAILNET_SESSION,
+                signInBaseUrl: input.httpBaseUrl,
+              }),
+            ),
+          ),
+      }),
+    ),
   );
 }
 
@@ -273,10 +318,52 @@ describe("connection onboarding", () => {
           : String(tokenRequest?.init.body);
       const tokenParams = new URLSearchParams(tokenBody);
       expect(tokenParams.get("subject_token")).toBe("pairing-token");
+      const tailnet = yield* preparePairingRegistration({
+        host: "100.88.1.2",
+        pairingCode: "pairing-token",
+      }).pipe(Effect.provide(layerPairingOnboarding()));
+      // A code is a secret, so a bare address keeps the HTTPS default, tailnet or not.
+      expect(tailnet.profile.httpBaseUrl).toBe("https://100.88.1.2/");
+      const shortName = yield* preparePairingRegistration({
+        host: "studio",
+        pairingCode: "pairing-token",
+      }).pipe(Effect.provide(layerPairingOnboarding()));
+      expect(shortName.profile.httpBaseUrl).toBe("https://studio/");
       expect(tokenParams.has("scope")).toBe(false);
       expect(tokenParams.get("client_label")).toBe("T3 Code Test");
       expect(tokenParams.get("client_device_type")).toBe("desktop");
       expect(tokenParams.get("client_os")).toBe("Test OS");
+    }),
+  );
+
+  it.effect("signs in with no code only when the machine offers Tailscale sign-in", () =>
+    Effect.gen(function* () {
+      const prepare = (tailnetSignIn: boolean) => {
+        const calls: Array<{ readonly url: string; readonly init: RequestInit }> = [];
+        return prepareTailnetRegistration({ httpBaseUrl: "http://100.88.1.2:3773/" }).pipe(
+          Effect.provide(layerPairingOnboarding({ tailnetSignIn }, calls)),
+          Effect.map((registration) => ({ registration, calls })),
+        );
+      };
+
+      const pairing = yield* prepare(false);
+      expect(pairing.registration).toEqual(Option.none());
+      expect(pairing.calls.map((call) => new URL(call.url).pathname)).toEqual([
+        "/.well-known/t3/environment",
+      ]);
+
+      const signedIn = yield* prepare(true);
+      expect(Option.getOrThrow(signedIn.registration)).toMatchObject({
+        _tag: "TailnetConnectionRegistration",
+        target: { connectionId: "tailnet:environment-paired:http://100.88.1.2:3773" },
+        profile: {
+          httpBaseUrl: "http://100.88.1.2:3773/",
+          wsBaseUrl: "ws://100.88.1.2:3773/",
+          authorization: "tailnet",
+          network: "tailscale",
+        },
+        credential: TAILNET_SESSION,
+      });
     }),
   );
 
@@ -616,6 +703,112 @@ describe("connection onboarding", () => {
       });
     }),
   );
+
+  it.effect("renames a Tailscale machine and signs in again when its address moves", () =>
+    Effect.gen(function* () {
+      const registry = yield* EnvironmentRegistry.EnvironmentRegistry;
+      const onboarding = yield* Onboarding.ConnectionOnboarding;
+      const connectionId = "tailnet:environment-paired:http://100.88.1.2:3773";
+      yield* registry.register(
+        new TailnetConnectionRegistration({
+          target: new BearerConnectionTarget({
+            environmentId: PAIRED_ENVIRONMENT_ID,
+            label: "studio",
+            connectionId,
+          }),
+          profile: new BearerConnectionProfile({
+            connectionId,
+            environmentId: PAIRED_ENVIRONMENT_ID,
+            label: "studio",
+            httpBaseUrl: "http://100.88.1.2:3773/",
+            wsBaseUrl: "ws://100.88.1.2:3773/",
+            authorization: "tailnet",
+            network: "tailscale",
+          }),
+          credential: TAILNET_SESSION,
+        }),
+      );
+      const savedProfile = SubscriptionRef.get(registry.entries).pipe(
+        Effect.map((entries) => Option.getOrThrow(entries.get(PAIRED_ENVIRONMENT_ID)!.profile)),
+      );
+
+      // The saved address typed bare, as the add form accepts it.
+      yield* onboarding.updateBearer({
+        environmentId: PAIRED_ENVIRONMENT_ID,
+        label: "Studio",
+        httpBaseUrl: "100.88.1.2",
+      });
+      expect(yield* savedProfile).toMatchObject({
+        label: "Studio",
+        httpBaseUrl: "http://100.88.1.2:3773/",
+        authorization: "tailnet",
+        network: "tailscale",
+      });
+
+      // A LAN address hides who the device is, so the session cannot move there.
+      const refused = yield* Effect.flip(
+        onboarding.updateBearer({
+          environmentId: PAIRED_ENVIRONMENT_ID,
+          label: "Studio",
+          httpBaseUrl: "http://192.168.1.10:3773/",
+        }),
+      );
+      expect(refused).toMatchObject({ _tag: "ConnectionBlockedError", reason: "configuration" });
+
+      yield* onboarding.updateBearer({
+        environmentId: PAIRED_ENVIRONMENT_ID,
+        label: "Studio",
+        httpBaseUrl: "100.88.1.3",
+      });
+      expect(yield* savedProfile).toMatchObject({
+        connectionId,
+        httpBaseUrl: "http://100.88.1.3:3773/",
+        authorization: "tailnet",
+      });
+
+      // A bare Tailscale address means port 3773, so a typed `:80` must stay in the saved URL.
+      yield* onboarding.updateBearer({
+        environmentId: PAIRED_ENVIRONMENT_ID,
+        label: "Studio",
+        httpBaseUrl: "100.88.1.4:80",
+      });
+      yield* onboarding.updateBearer({
+        environmentId: PAIRED_ENVIRONMENT_ID,
+        label: "Studio 80",
+        httpBaseUrl: "http://100.88.1.4:80/",
+      });
+      expect(yield* savedProfile).toMatchObject({
+        label: "Studio 80",
+        httpBaseUrl: "http://100.88.1.4:80/",
+        authorization: "tailnet",
+      });
+    }).pipe(
+      Effect.provide(
+        layerPairingOnboarding({ tailnetSignIn: true, savedCredential: TAILNET_SESSION }),
+      ),
+    ),
+  );
+
+  it.effect("does not sign in again to a found machine it could not save", () => {
+    const signIns: Array<string> = [];
+    return Effect.gen(function* () {
+      const onboarding = yield* Onboarding.ConnectionOnboarding;
+      const found = [
+        {
+          name: "studio",
+          magicDnsName: "studio.tail.ts.net",
+          tailnetIpv4: TailnetIpv4.make("100.88.1.2"),
+          environmentId: PAIRED_ENVIRONMENT_ID,
+        },
+      ];
+      expect((yield* onboarding.addDiscoveredTailnetMachines(found)).added).toEqual([]);
+      yield* onboarding.addDiscoveredTailnetMachines(found);
+      // Each sign-in mints a session on the host, so a save that cannot work is not retried.
+      expect(signIns).toEqual(["http://100.88.1.2:3773/"]);
+    }).pipe(
+      Effect.provide(layerPairingOnboarding({ tailnetSignIn: true, saveFails: true, signIns })),
+    );
+  });
 
   it.effect("prepares an SSH registration from the provisioned platform environment", () =>
     Effect.gen(function* () {

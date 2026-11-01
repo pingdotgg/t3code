@@ -9,6 +9,7 @@ import {
 import { AuthClientPresentationMetadata, ServerAuthDescriptor } from "./auth.ts";
 import {
   ForwardCompatibleArray,
+  ForwardCompatibleOptional,
   IsoDateTime,
   NonNegativeInt,
   PositiveInt,
@@ -28,6 +29,7 @@ import { RuntimeMode } from "./providerPolicy.ts";
 import { ProviderDriverKind, ProviderInstanceId } from "./providerInstance.ts";
 import { ServerProviderUsageLimits, UsageLimitSourceSnapshots } from "./providerUsageLimits.ts";
 import { ServerSettings } from "./settings.ts";
+import { TailscaleState } from "./tailnet.ts";
 import { DesktopUpdateChannelSchema } from "./ipc.ts";
 
 const KeybindingsMalformedConfigIssue = Schema.Struct({
@@ -606,6 +608,105 @@ export const ServerEventLoopStall = Schema.Struct({
 });
 export type ServerEventLoopStall = typeof ServerEventLoopStall.Type;
 
+export const ServerTailscaleIssueCause = Schema.Literals([
+  "not_installed",
+  "not_running",
+  "needs_login",
+  "needs_machine_approval",
+  "stopped",
+  "starting",
+  "unreadable",
+  "key_expired",
+  "key_expiring",
+  "health_warning",
+  "https_off",
+  "magic_dns_off",
+  "userspace_networking",
+  "outdated",
+  "no_ipv4",
+]);
+export type ServerTailscaleIssueCause = typeof ServerTailscaleIssueCause.Type;
+
+export const ServerTailscaleIssue = Schema.Struct({
+  cause: ServerTailscaleIssueCause,
+  /** What to do on the host, without naming it. */
+  fix: Schema.String,
+  /** Tailscale's own text, for a health warning. */
+  message: Schema.optionalKey(Schema.String),
+});
+export type ServerTailscaleIssue = typeof ServerTailscaleIssue.Type;
+
+/** The host's own Tailscale as of `checkedAt`. Clients keep the last one they saw. */
+export const ServerTailscaleStatus = Schema.Struct({
+  state: TailscaleState,
+  checkedAt: IsoDateTime,
+  magicDnsName: Schema.NullOr(Schema.String),
+  keyExpiry: Schema.NullOr(IsoDateTime),
+  /** Most urgent first. Empty when nothing needs fixing. */
+  issues: ForwardCompatibleArray(ServerTailscaleIssue),
+});
+export type ServerTailscaleStatus = typeof ServerTailscaleStatus.Type;
+
+const MINUTE_MS = 60_000;
+const HOUR_MS = 60 * MINUTE_MS;
+const DAY_MS = 24 * HOUR_MS;
+
+/** "3 days", "5h", "12m": coarse, for key expiry and how old a fact is. */
+export function formatRoughDuration(ms: number): string {
+  if (ms >= 2 * DAY_MS) return `${Math.floor(ms / DAY_MS)} days`;
+  if (ms >= DAY_MS) return "1 day";
+  if (ms >= HOUR_MS) return `${Math.floor(ms / HOUR_MS)}h`;
+  return `${Math.max(1, Math.floor(ms / MINUTE_MS))}m`;
+}
+
+/** One line for an issue, e.g. "Tailscale on studio is signed out". The CLI passes "this machine". */
+export function tailscaleIssueHeadline(
+  host: string,
+  issue: ServerTailscaleIssue,
+  keyExpiry: string | null,
+  now: number,
+): string {
+  switch (issue.cause) {
+    case "not_installed":
+      return `Tailscale is not installed on ${host}`;
+    case "not_running":
+      return `Tailscale is not running on ${host}`;
+    case "needs_login":
+      return `Tailscale on ${host} is signed out`;
+    case "needs_machine_approval":
+      return `Tailscale on ${host} is waiting for approval`;
+    case "stopped":
+      return `Tailscale is off on ${host}`;
+    case "starting":
+      return `Tailscale on ${host} is starting`;
+    case "unreadable":
+      return `T3 Code could not read the Tailscale status on ${host}`;
+    case "key_expired":
+      return `The Tailscale node key on ${host} has expired`;
+    case "key_expiring": {
+      const expiresAt = keyExpiry === null ? Number.NaN : Date.parse(keyExpiry);
+      // A cached status can outlive the expiry it warned about.
+      return Number.isNaN(expiresAt)
+        ? `The Tailscale node key on ${host} expires soon`
+        : expiresAt <= now
+          ? `The Tailscale node key on ${host} has expired`
+          : `The Tailscale node key on ${host} expires in ${formatRoughDuration(expiresAt - now)}`;
+    }
+    case "health_warning":
+      return `Tailscale on ${host} reports: ${issue.message ?? "a problem"}`;
+    case "https_off":
+      return `HTTPS certificates are off on the tailnet of ${host}`;
+    case "magic_dns_off":
+      return `MagicDNS is off on the tailnet of ${host}`;
+    case "userspace_networking":
+      return `Tailscale on ${host} uses userspace networking`;
+    case "outdated":
+      return `Tailscale on ${host} is too old for Tailscale sign-in`;
+    case "no_ipv4":
+      return `Tailscale on ${host} has no IPv4 address`;
+  }
+}
+
 export const ServerConfig = Schema.Struct({
   environment: ExecutionEnvironmentDescriptor,
   auth: ServerAuthDescriptor,
@@ -650,6 +751,8 @@ export const ServerConfig = Schema.Struct({
    * answering. Clients do not cache it, since it describes the host at connect.
    */
   lastEventLoopStall: Schema.optionalKey(ServerEventLoopStall),
+  /** Absent from older servers. A value this build cannot read decodes as absent. */
+  tailscale: ForwardCompatibleOptional(ServerTailscaleStatus),
   /**
    * Never sent in a config snapshot: the theme stream emits the current set
    * before any change, so a snapshot carrying it too would hand every
