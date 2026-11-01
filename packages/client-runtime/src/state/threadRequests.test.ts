@@ -1,5 +1,6 @@
 import {
   EnvironmentId,
+  MessageId,
   NodeId,
   ProviderSessionId,
   RuntimeRequestId,
@@ -318,6 +319,45 @@ describe("pending v2 questions", () => {
   });
 });
 
+it("does not visit ordinary row items during streaming replacements without runtime requests", () => {
+  const project = createQuestionHistoryProjector();
+  let itemVisits = 0;
+  const question = projection.turnItems.find((item) => item.type === "user_input_request")!;
+  const makeRow = (position: number, text: string) => {
+    const item = {
+      ...question,
+      id: TurnItemId.make(`assistant-${position}`),
+      type: "assistant_message" as const,
+      messageId: MessageId.make(`message-${position}`),
+      text,
+      streaming: true,
+    };
+    return {
+      get item() {
+        itemVisits++;
+        return item;
+      },
+      position,
+      sourceItemId: item.id,
+      sourceThreadId: item.threadId,
+      visibility: "local" as const,
+    };
+  };
+  let rows = Array.from({ length: 1_000 }, (_, index) => makeRow(index, "Hello"));
+  const runtimeRequests = v2Projection.runtimeRequests;
+  expect(project({ visibleTurnItems: rows, runtimeRequests })).toBe(rows);
+  const initialItemVisits = itemVisits;
+  itemVisits = 0;
+  for (let index = 0; index < 100; index++) {
+    rows = [...rows.slice(0, -1), makeRow(rows.length - 1, `Hello ${index}`)];
+    const next = { visibleTurnItems: rows, runtimeRequests };
+    expect(project(next)).toBe(rows);
+    expect(project(next)).toBe(rows);
+  }
+  expect(itemVisits).toBe(0);
+  expect(initialItemVisits).toBe(0);
+});
+
 it("restores old text answers without mutating history or replacing unchanged rows", () => {
   const project = createQuestionHistoryProjector();
   const item = projection.turnItems[0]!;
@@ -329,6 +369,9 @@ it("restores old text answers without mutating history or replacing unchanged ro
     visibility: "local" as const,
   };
   const rows = [row];
+  const empty = { visibleTurnItems: rows, runtimeRequests: [] };
+  expect(project(empty)).toBe(rows);
+  expect(project(empty)).toBe(rows);
   const pending = { visibleTurnItems: rows, runtimeRequests: projection.runtimeRequests };
   expect(project(pending)).toBe(rows);
   const answered = {
@@ -352,4 +395,22 @@ it("restores old text answers without mutating history or replacing unchanged ro
   expect(row.item).not.toHaveProperty("questionAnswer");
   expect(project(answered)).toBe(result);
   expect(project({ ...answered, visibleTurnItems: [...rows] })[0]).toBe(result[0]);
+  expect(project(empty)).toBe(rows);
+  expect(project(empty)).toBe(rows);
+
+  const changedRow = { ...row, item: { ...item, title: "Updated question" } };
+  const inserted = [changedRow, row];
+  expect(project({ ...empty, visibleTurnItems: inserted })).toBe(inserted);
+  const restored = project({ ...answered, visibleTurnItems: inserted });
+  expect(restored[0]?.item).toMatchObject({
+    title: "Updated question",
+    questionAnswer: { answers: { next: "Continue" } },
+  });
+  expect(restored[1]).toBe(result[0]);
+  expect(changedRow.item).not.toHaveProperty("questionAnswer");
+  expect(project({ ...empty, visibleTurnItems: inserted })).toBe(inserted);
+  const removed = [changedRow];
+  expect(project({ ...empty, visibleTurnItems: removed })).toBe(removed);
+  expect(project({ ...answered, visibleTurnItems: removed })[0]).toBe(restored[0]);
+  expect(project(empty)).toBe(rows);
 });
