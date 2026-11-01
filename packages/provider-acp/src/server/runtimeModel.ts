@@ -1549,16 +1549,6 @@ export function parseSessionUpdateEvent(params: EffectAcpSchema.SessionNotificat
       }
       break;
     }
-    case "state_update": {
-      if (upd.state === "idle" && upd.usage !== undefined && upd.usage !== null) {
-        events.push({
-          _tag: "UsageUpdated",
-          usage: { usedTokens: upd.usage.totalTokens },
-          rawPayload: params,
-        });
-      }
-      break;
-    }
     case "usage_update": {
       const currency = upd.cost?.currency.trim().slice(0, 32);
       events.push({
