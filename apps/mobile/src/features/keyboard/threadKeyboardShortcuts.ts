@@ -1,9 +1,10 @@
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
 import { THREAD_JUMP_KEYBINDING_COMMANDS } from "@t3tools/contracts";
+import { useEffect, useEffectEvent } from "react";
 
 import type { ThreadListV2ListItem } from "../threads/threadListV2";
 import {
-  useHardwareKeyboardCommand,
+  registerHardwareKeyboardCommand,
   type HardwareKeyboardCommand,
 } from "./hardwareKeyboardCommands";
 
@@ -30,10 +31,17 @@ export function useThreadJumpShortcuts(
   items: ReadonlyArray<ThreadShortcutListItem>,
   onSelectThread: (thread: EnvironmentThreadShell) => void,
 ) {
-  const jumpToThread = (command: HardwareKeyboardCommand) => {
+  const jumpToThread = useEffectEvent((command: HardwareKeyboardCommand) => {
     const thread = threadJumpTarget(items, command);
     if (thread !== null) onSelectThread(thread);
-    return true;
-  };
-  useHardwareKeyboardCommand(THREAD_JUMP_KEYBINDING_COMMANDS, jumpToThread);
+  });
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- registers the jump handlers in the module-level hardware keyboard command registry
+  useEffect(
+    () =>
+      registerHardwareKeyboardCommand(THREAD_JUMP_KEYBINDING_COMMANDS, (command) => {
+        jumpToThread(command);
+        return true;
+      }),
+    [],
+  );
 }
