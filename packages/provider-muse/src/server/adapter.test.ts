@@ -1737,7 +1737,7 @@ describe("MuseAdapterV2", () => {
         requestRuntimeRestart: true,
       });
       assert.isFalse(yield* harness.runtime.hasPendingBackgroundWork!);
-      const dispatched = yield* continuation.dispatchIfCurrent(Effect.void);
+      const dispatched = yield* continuation.dispatchIfCurrent!(Effect.void);
       assert.isTrue(Option.isNone(dispatched));
     }).pipe(Effect.scoped, Effect.provide(testLayer)),
   );
