@@ -15,7 +15,6 @@ import {
 } from "./fileLinks.ts";
 import {
   isMarkdownFileLinkLabel,
-  decodeMarkdownLinkEscapes,
   extractMarkdownLinkHrefs,
   extractInlineCodeSpans,
   inlineCodeFilePathCandidate,
@@ -37,6 +36,7 @@ import {
   CHAT_MARKDOWN_REHYPE_PLUGINS,
   CHAT_MARKDOWN_REMARK_PLUGINS,
   CHAT_MARKDOWN_REMARK_PLUGINS_WITH_BREAKS,
+  decodeMarkdownLinkEscapes,
 } from "./markdownPipeline.ts";
 
 // Inline wrappers (including Shiki token spans) must not split a search phrase.

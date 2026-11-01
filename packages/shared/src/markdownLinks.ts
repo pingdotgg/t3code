@@ -403,11 +403,6 @@ function markdownLinkDestinationScanner(markdown: string) {
   };
 }
 
-export function decodeMarkdownLinkEscapes(href: string): string {
-  if (isWindowsAbsolutePath(href) && !href.includes("&")) return href;
-  return href.replace(/\\([!-/:-@[-`{-~])/g, "$1");
-}
-
 export function extractMarkdownLinkHrefs(markdown: string): string[] {
   const hrefs: string[] = [];
   const scanDestination = markdownLinkDestinationScanner(markdown);

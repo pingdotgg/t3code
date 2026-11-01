@@ -2,7 +2,6 @@ import { buildFileLinkParentSuffixByPath, fileLinkLabel } from "@t3tools/shared/
 import {
   isWindowsDrivePathHref,
   normalizeMarkdownLinkDestination,
-  decodeMarkdownLinkEscapes,
   extractInlineCodeSpans,
   extractMarkdownLinkHrefs,
   inlineCodeFilePathCandidate,
@@ -18,6 +17,7 @@ import {
   CHAT_MARKDOWN_REMARK_PLUGINS,
   CHAT_MARKDOWN_REMARK_PLUGINS_WITH_BREAKS,
   CHAT_MARKDOWN_REHYPE_PLUGINS,
+  decodeMarkdownLinkEscapes,
 } from "@t3tools/shared/markdownPipeline";
 import { useAtomValue } from "@effect/atom-react";
 import {
