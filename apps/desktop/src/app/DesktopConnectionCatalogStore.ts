@@ -408,9 +408,10 @@ const decryptWithSourceBuildLinuxKey = Effect.fn(
     ),
     Effect.option,
   );
-  return Option.flatMapNullishOr(keys, (material) =>
-    decryptChromiumValue(encrypted, material, "", undefined, "linux"),
-  ).pipe(
+  return Option.flatMapNullishOr(keys, (material) => {
+    if (material.cbcV11 === undefined) return null;
+    return decryptChromiumValue(encrypted, { cbcV11: material.cbcV11 }, "", undefined, "linux");
+  }).pipe(
     Option.filter((catalog) =>
       Option.isSome(decodeRuntimeConnectionCatalogDocumentJsonOption(catalog)),
     ),

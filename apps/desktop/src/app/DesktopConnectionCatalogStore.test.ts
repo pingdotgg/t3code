@@ -41,8 +41,11 @@ const savedCatalog = JSON.stringify({
 });
 
 // Electron safeStorage v11 output on Linux, keyed by the libsecret secret.
-const encryptWithSourceBuildKey = (plaintext = savedCatalog) => {
-  const key = NodeCrypto.pbkdf2Sync(SOURCE_BUILD_SAFE_STORAGE_SECRET, "saltysalt", 1, 16, "sha1");
+const encryptWithSourceBuildKey = (
+  plaintext = savedCatalog,
+  passphrase = SOURCE_BUILD_SAFE_STORAGE_SECRET,
+) => {
+  const key = NodeCrypto.pbkdf2Sync(passphrase, "saltysalt", 1, 16, "sha1");
   const cipher = NodeCrypto.createCipheriv("aes-128-cbc", key, Buffer.alloc(16, " "));
   return Buffer.concat([Buffer.from("v11"), cipher.update(plaintext, "utf8"), cipher.final()]);
 };
@@ -442,6 +445,13 @@ describe("DesktopConnectionCatalogStore", () => {
       lookups: [SOURCE_BUILD_SAFE_STORAGE_NAME],
     },
     { label: "is unencrypted JSON", platform: "linux", body: null, lookups: [] },
+    {
+      label: "uses the fixed empty-passphrase key",
+      platform: "linux",
+      body: savedCatalog,
+      passphrase: "",
+      lookups: [SOURCE_BUILD_SAFE_STORAGE_NAME],
+    },
     { label: "is on macOS", platform: "darwin", body: savedCatalog, lookups: [] },
   ] as const)("keeps the decrypt failure and the file when the catalog $label", (row) =>
     Effect.gen(function* () {
@@ -451,7 +461,12 @@ describe("DesktopConnectionCatalogStore", () => {
       });
       const { catalogPath, contents } = yield* writeSourceBuildCatalog(
         baseDir,
-        row.body === null ? Buffer.from(savedCatalog) : encryptWithSourceBuildKey(row.body),
+        row.body === null
+          ? Buffer.from(savedCatalog)
+          : encryptWithSourceBuildKey(
+              row.body,
+              "passphrase" in row ? row.passphrase : SOURCE_BUILD_SAFE_STORAGE_SECRET,
+            ),
       );
       const lookups = yield* Ref.make<ReadonlyArray<string>>([]);
       const store = yield* DesktopConnectionCatalogStore.DesktopConnectionCatalogStore.pipe(
