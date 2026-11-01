@@ -1522,6 +1522,11 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
       return;
     }
     if (threadSearchResults.length === 0) return;
+    if (
+      (event.key === "ArrowDown" || event.key === "ArrowUp") &&
+      (event.ctrlKey || event.altKey || event.metaKey || event.shiftKey)
+    )
+      return;
     if (event.key === "ArrowDown") {
       event.preventDefault();
       moveSearchHighlight(1);
@@ -2929,7 +2934,11 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
         const searchResultKeys = isSearchingThreads ? threadSearchResultKeysRef.current : null;
         const targetKey = resolveAdjacentThreadId({
           threadIds: searchResultKeys ?? orderedThreadKeys,
-          currentThreadId: routeRowThreadKey,
+          currentThreadId:
+            searchResultKeys !== null &&
+            (routeRowThreadKey === null || !searchResultKeys.includes(routeRowThreadKey))
+              ? null
+              : routeRowThreadKey,
           direction: cycleDirection,
           wrap: true,
         });
