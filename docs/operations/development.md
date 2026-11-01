@@ -103,7 +103,10 @@ include nested `require` calls. Some ESM/CommonJS interop reports a combined sta
 The server's nested Effect and SQL spans remain in `.t3/userdata/logs/server.trace.ndjson`.
 
 The preload temporarily adds module-body timing markers and uses one automatic debugger pause
-to instrument the live Node loader. This can change compilation-cache hits and adds overhead.
+to instrument the live Node loader. The launcher adds `--no-node-snapshot` to inherited
+`NODE_OPTIONS` because Node 26's snapshotted loader cannot accept that breakpoint. Include the
+same flag when using the preload directly. This disables Node's built-in startup snapshot,
+can change compilation-cache hits, and adds overhead.
 Treat per-file captures as diagnostic runs; use uninstrumented runs for baseline startup latency.
 The first entry module can compile before loader instrumentation is installed.
 

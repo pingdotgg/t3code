@@ -98,9 +98,10 @@ export function profileStartupModules(session, events, threadId) {
           try {
             return original.call(this, url, ...args);
           } finally {
-            const pending = loaded.get(url);
+            const moduleUrl = typeof url === "string" ? url : url.url;
+            const pending = loaded.get(moduleUrl);
             if (pending && pending.start >= start)
-              record("prepare", url, pending.start, now(), {
+              record("prepare", moduleUrl, pending.start, now(), {
                 format: pending.format,
                 boundary:
                   "source-ready to loadAndTranslate return; compilation and format preparation",

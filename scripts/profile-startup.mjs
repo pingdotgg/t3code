@@ -1,4 +1,4 @@
-// Opt in with T3CODE_STARTUP_PROFILE_DIR=/absolute/path NODE_OPTIONS="--import=/absolute/path/to/this/file".
+// Opt in with T3CODE_STARTUP_PROFILE_DIR=/absolute/path NODE_OPTIONS="--no-node-snapshot --import=/absolute/path/to/this/file".
 import * as NodeFS from "node:fs";
 import * as NodeInspector from "node:inspector";
 import * as NodeChildProcess from "node:child_process";
@@ -11,7 +11,8 @@ import * as NodeURL from "node:url";
 import { profileStartupModules } from "./profile-startup-modules.mjs";
 
 const directory = process.env.T3CODE_STARTUP_PROFILE_DIR;
-if (directory) {
+const isLauncher = process.argv[1] === NodeURL.fileURLToPath(import.meta.url);
+if (directory && !isLauncher) {
   NodeFS.mkdirSync(directory, { recursive: true });
   const { threadId } = NodeWorkerThreads;
   const prefix = NodePath.join(directory, `${process.pid}-${threadId}`);
@@ -132,7 +133,7 @@ if (directory) {
   process.once("exit", finish);
 }
 
-if (process.argv[1] === NodeURL.fileURLToPath(import.meta.url)) {
+if (isLauncher) {
   const output = NodePath.resolve(
     directory ??
       NodePath.join(".t3/startup-profiles", new Date().toISOString().replaceAll(":", "-")),
@@ -146,7 +147,9 @@ if (process.argv[1] === NodeURL.fileURLToPath(import.meta.url)) {
       env: {
         ...process.env,
         T3CODE_STARTUP_PROFILE_DIR: output,
-        NODE_OPTIONS: `${process.env.NODE_OPTIONS ?? ""} --import=${import.meta.url}`.trim(),
+        // Node 26's snapshotted loader cannot accept the debugger breakpoint used by this profiler.
+        NODE_OPTIONS:
+          `${process.env.NODE_OPTIONS ?? ""} --no-node-snapshot --import=${import.meta.url}`.trim(),
       },
     },
   );

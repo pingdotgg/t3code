@@ -30,6 +30,10 @@ const decodeTrace = Schema.decodeUnknownSync(
   ),
 );
 
+const decodeRunner = Schema.decodeUnknownSync(
+  Schema.fromJsonString(Schema.Struct({ pid: Schema.Number, args: Schema.Array(Schema.String) })),
+);
+
 it("attributes ESM and CommonJS imports without changing module execution", () => {
   const directory = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-startup-profile-"));
   try {
@@ -60,6 +64,7 @@ it("attributes ESM and CommonJS imports without changing module execution", () =
     NodeChildProcess.execFileSync(
       process.execPath,
       [
+        "--no-node-snapshot",
         "--import",
         NodePath.join(import.meta.dirname, "profile-startup.mjs"),
         "--input-type=module",
@@ -96,6 +101,34 @@ it("attributes ESM and CommonJS imports without changing module execution", () =
       spans.find((span) => span.args?.url === dependency && span.args?.stage === "link")?.args
         ?.importedBy,
     ).toBe(root);
+  } finally {
+    NodeFS.rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+it("captures the dev runner without profiling the launcher when an output directory is set", () => {
+  const directory = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-startup-launcher-"));
+  try {
+    NodeFS.mkdirSync(NodePath.join(directory, "scripts"));
+    NodeFS.writeFileSync(
+      NodePath.join(directory, "scripts/dev-runner.ts"),
+      "console.log(JSON.stringify({ pid: process.pid, args: process.argv.slice(2) }));",
+    );
+    const output = NodePath.join(directory, "capture");
+    const stdout = NodeChildProcess.execFileSync(
+      process.execPath,
+      [NodePath.join(import.meta.dirname, "profile-startup.mjs"), "--no-seed"],
+      {
+        cwd: directory,
+        env: { ...process.env, NODE_OPTIONS: "", T3CODE_STARTUP_PROFILE_DIR: output },
+        encoding: "utf8",
+      },
+    );
+    const runner = decodeRunner(stdout.trim().split("\n").at(-1));
+    expect(runner.args).toEqual(["dev", "--no-seed"]);
+    expect(NodeFS.readdirSync(output).sort()).toEqual(
+      ["cpuprofile", "modules.json", "process.json"].map((suffix) => `${runner.pid}-0.${suffix}`),
+    );
   } finally {
     NodeFS.rmSync(directory, { recursive: true, force: true });
   }
