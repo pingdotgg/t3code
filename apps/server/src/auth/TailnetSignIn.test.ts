@@ -1047,6 +1047,33 @@ it.layer(NodeServices.layer)("TailnetSignIn", (it) => {
       }).pipe(Effect.provide(layerTest(tailnet)));
     });
 
+    it.effect('a failed grant confirmation leaves no older "no grants" behind', () => {
+      const tailnet = withLaptop();
+      tailnet.status = hostStatus({ Peer: { ...peers, stranger: strangerPeer } });
+      tailnet.devices = { ...tailnet.devices, [STRANGER_ADDRESS]: { node: stranger } };
+      return Effect.gen(function* () {
+        // A scan that finds no grants, from the refused stranger.
+        yield* refusalOf(signIn(makeDpopKey(), { remoteAddress: STRANGER_ADDRESS }));
+        tailnet.devices = {
+          ...tailnet.devices,
+          [LAPTOP_ADDRESS]: { node: laptop, capMap: granted({ scopes: ["read"] }) },
+        };
+        yield* TestClock.adjust("1 minute");
+        // The reads are the sign-in's, the grant's (which fails), then the account check's,
+        // during which the phone leaves.
+        const reads = tailnet.freshReads ?? 0;
+        tailnet.failFreshReadAt = reads + 2;
+        const started = yield* Deferred.make<void>();
+        tailnet.holdFreshRead = { at: reads + 3, started, release: yield* Deferred.make<void>() };
+        const phone = yield* signIn(makeDpopKey()).pipe(Effect.forkChild);
+        yield* Deferred.await(started);
+        yield* Fiber.interrupt(phone);
+        // With the laptop unreadable, nothing proves "no grants", so the owner rule stays off.
+        tailnet.devices = { ...tailnet.devices, [LAPTOP_ADDRESS]: { node: null } };
+        expect(yield* refusalOf(signIn(makeDpopKey()))).toBe("policy_unknown");
+      }).pipe(Effect.provide(layerTest(tailnet)));
+    });
+
     it.effect("a scan that saw another account while it confirmed a grant decides nothing", () => {
       const tailnet = withLaptop();
       tailnet.status = hostStatus({ Peer: { ...peers, stranger: strangerPeer } });
