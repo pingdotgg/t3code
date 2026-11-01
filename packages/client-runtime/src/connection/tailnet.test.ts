@@ -38,6 +38,8 @@ describe("tailnetSignInBaseUrl", () => {
     ["100.88.1.2:80", "http://100.88.1.2:80/"],
     // The `t3 up` QR holds a plain URL with no secret.
     ["http://100.88.1.2:3773", "http://100.88.1.2:3773/"],
+    // A saved address with no port is on port 80, so parsing it again keeps it there.
+    ["http://100.88.1.2/", "http://100.88.1.2:80/"],
     [" studio:3773 ", "http://studio:3773/"],
   ])("signs in at %s", (input, expected) => {
     expect(tailnetSignInBaseUrl(input)).toBe(expected);

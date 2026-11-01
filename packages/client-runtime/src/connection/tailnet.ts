@@ -47,9 +47,11 @@ export function tailnetSignInBaseUrl(input: string): string | null {
   if (url.pathname !== "/" || url.search !== "" || url.hash !== "") return null;
   const hostname = normalizeHostname(url.hostname);
   if (!isSharedAddressSpaceHost(hostname) && !isTailnetName(hostname)) return null;
-  // URL drops the default port, so a typed `:80` would read as no port at all.
+  // A bare host means T3 Code's port. A URL with no port means port 80, as `http://` says, so a
+  // saved address parsed again keeps its port; URL drops a typed `:80` the same way.
   const typedPort = /^(?:[a-z][a-z\d+.-]*:\/\/)?[^/?#]*:\d+(?:[/?#]|$)/iu.test(trimmed);
-  const port = url.port !== "" ? url.port : typedPort ? "80" : String(TAILNET_SIGN_IN_PORT);
+  const port =
+    url.port !== "" ? url.port : hasScheme || typedPort ? "80" : String(TAILNET_SIGN_IN_PORT);
   return `http://${hostname}:${port}/`;
 }
 
