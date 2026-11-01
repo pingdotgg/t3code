@@ -150,14 +150,10 @@ it("passes the resultSchema case only for an accepted call with the whole verdic
     .map((line) => decodeDeviceCase(line))
     .find((c) => c.id === "review-verdict-uses-result-schema");
   assert(verdictCase !== undefined);
-  const run = (resultSchema: unknown, failed: boolean): SampleRun => ({
+  const muse = { providerInstanceId: "muse", model: "muse-wonder-full" };
+  const run = (resultSchema: unknown, failed: boolean, target: object = muse): SampleRun => ({
     calls: [
-      {
-        step: 0,
-        tool: "delegate_task",
-        input: { task: "Review.", target: { model: "muse-wonder-full" }, resultSchema },
-        failed,
-      },
+      { step: 0, tool: "delegate_task", input: { task: "Review.", target, resultSchema }, failed },
     ],
     text: "",
     stopReason: "end_turn",
@@ -175,6 +171,8 @@ it("passes the resultSchema case only for an accepted call with the whole verdic
   expect(calls(run({ properties: { verdict: { description: "revise" } } }, true))).toHaveLength(1);
   expect(calls(run(verdict, true))).toHaveLength(1);
   expect(calls(run(verdict, false))).toEqual([]);
+  // The parent's own provider does not offer Muse, so T3 rejects a target without its provider.
+  expect(calls(run(verdict, false, { model: "muse-wonder-full" }))).toHaveLength(1);
 });
 
 it("passes a good run and names every rule a bad run breaks", () => {
