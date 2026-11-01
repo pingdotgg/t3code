@@ -116,6 +116,8 @@ export const UsageSummaryInput = Schema.Struct({
   resolution: Schema.optional(UsageResolution),
   sinceTime: Schema.optional(TrimmedNonEmptyString),
   untilTime: Schema.optional(TrimmedNonEmptyString),
+  /** Return saved transcript usage first; refreshing sources require an awaitRefresh read. */
+  preferCached: Schema.optional(Schema.Boolean),
   awaitRefresh: Schema.optional(Schema.Boolean),
 });
 export type UsageSummaryInput = typeof UsageSummaryInput.Type;
