@@ -18,7 +18,7 @@ import { HttpClient } from "effect/http";
 import { ChildProcessSpawner } from "effect/process";
 
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
-import { CLOUD_ENDPOINT_RUNTIME_CONFIG } from "./config.ts";
+import { CLOUD_ENDPOINT_RUNTIME_CONFIG, decodeRuntimeConfig } from "./config.ts";
 import * as ManagedEndpointRuntime from "./ManagedEndpointRuntime.ts";
 
 // cloudflared finds the edge through the SRV record `_v2-origintunneld._tcp.argotunnel.com`,
@@ -88,6 +88,7 @@ export function classifyReachability(
       checkedAt,
       readyConnections: connector.readyConnections,
       protocol: connector.protocol,
+      ...(connector.hostname ? { hostname: connector.hostname } : {}),
     };
   }
   // The edge test is TCP only. With QUIC connections up, a 502 from a working tunnel, or
@@ -174,6 +175,7 @@ function hasErrorCode(error: unknown, codes: ReadonlySet<string>): boolean {
 }
 
 const DNS_ERROR_CODES = new Set(["ENOTFOUND", "EAI_AGAIN", "EAI_NONAME"]);
+const textDecoder = new TextDecoder();
 
 const canOpenTcp = (host: string, port: number) =>
   Effect.callback<boolean>((resume) => {
@@ -202,8 +204,14 @@ const make = Effect.gen(function* () {
   const secrets = yield* ServerSecretStore.ServerSecretStore;
   const httpClient = yield* HttpClient.HttpClient;
   // `order` ranks checks by start, so a slow older one cannot replace a newer result.
+  // `tunnelConfig` is the config a result was checked against: after a relink the old
+  // result names the old tunnel's host until the new connector triggers a check.
   const latestRef = yield* Ref.make(
-    Option.none<{ readonly order: number; readonly result: EnvironmentConnectReachability }>(),
+    Option.none<{
+      readonly order: number;
+      readonly result: EnvironmentConnectReachability;
+      readonly tunnelConfig: string | null;
+    }>(),
   );
   const checkCounter = yield* Ref.make(0);
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
@@ -225,11 +233,16 @@ const make = Effect.gen(function* () {
       ),
     );
 
-  const gatherFacts = Effect.gen(function* () {
-    const managedTunnelConfigured = Option.isSome(
-      yield* secrets.get(CLOUD_ENDPOINT_RUNTIME_CONFIG).pipe(Effect.orElseSucceed(Option.none)),
-    );
-    const connector = managedTunnelConfigured ? yield* runtime.inspectConnector : null;
+  const readTunnelConfig = secrets.get(CLOUD_ENDPOINT_RUNTIME_CONFIG).pipe(
+    Effect.map(Option.match({ onNone: () => null, onSome: (bytes) => textDecoder.decode(bytes) })),
+    Effect.orElseSucceed(() => null),
+  );
+
+  // Runs only inside the `ConnectReachability.check` span.
+  const gatherFacts = Effect.fnUntraced(function* (tunnelConfig: string | null) {
+    const managedTunnelConfigured = tunnelConfig !== null;
+    const config = tunnelConfig ? Option.getOrNull(decodeRuntimeConfig(tunnelConfig)) : null;
+    const connector = config ? yield* runtime.inspectConnector(config) : null;
     const endpoint =
       connector?.hostname && connector.readyConnections !== 0
         ? yield* probeEndpoint(connector.hostname)
@@ -256,14 +269,16 @@ const make = Effect.gen(function* () {
     return { ...facts, edgeReachable: edgeResults.some(Boolean), exitNode };
   });
 
-  const check = Effect.gen(function* () {
+  const check: Effect.Effect<EnvironmentConnectReachability> = Effect.gen(function* () {
     const order = yield* Ref.updateAndGet(checkCounter, (count) => count + 1);
-    const facts = yield* gatherFacts;
+    const tunnelConfig = yield* readTunnelConfig;
+    const facts = yield* gatherFacts(tunnelConfig);
+    if ((yield* readTunnelConfig) !== tunnelConfig) return yield* check;
     const result = classifyReachability(facts, DateTime.formatIso(yield* DateTime.now));
     const previous = yield* Ref.modify(latestRef, (current) =>
       Option.isSome(current) && current.value.order > order
         ? [null, current]
-        : [current, Option.some({ order, result })],
+        : [current, Option.some({ order, result, tunnelConfig })],
     );
     if (previous === null) return result;
     const changed = Option.match(previous, {
@@ -305,7 +320,13 @@ const make = Effect.gen(function* () {
 
   return ConnectReachability.of({
     check,
-    latest: Ref.get(latestRef).pipe(Effect.map(Option.map(({ result }) => result))),
+    latest: Effect.gen(function* () {
+      const latest = yield* Ref.get(latestRef);
+      const tunnelConfig = yield* readTunnelConfig;
+      return Option.flatMap(latest, (entry) =>
+        entry.tunnelConfig === tunnelConfig ? Option.some(entry.result) : Option.none(),
+      );
+    }),
   });
 });
 

@@ -286,9 +286,9 @@ const make = Effect.gen(function* () {
       return decodeSessionClaims(base64UrlDecodeUtf8(parts.payload));
     });
 
-  const connectHostname = managedEndpoint.inspectConnector.pipe(
-    Effect.map((facts) => facts?.hostname ?? null),
-  );
+  const connectHostname = managedEndpoint
+    .inspectConnector()
+    .pipe(Effect.map((facts) => facts?.hostname ?? null));
   // A beta: while it is off, no link opens and every guest request is refused.
   const sharingEnabled = serverSettings.getSettings.pipe(
     Effect.map((settings) => settings.guestSharingEnabled),

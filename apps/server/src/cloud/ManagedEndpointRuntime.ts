@@ -59,8 +59,10 @@ export class CloudManagedEndpointRuntime extends Context.Service<
     readonly applyConfig: (
       config: RelayManagedEndpointRuntimeConfig | null,
     ) => Effect.Effect<CloudManagedEndpointRuntimeStatus>;
-    /** `null` when no connector is running. */
-    readonly inspectConnector: Effect.Effect<ConnectorFacts | null>;
+    /** `null` when no connector is running, or, given a configuration, none matches it. */
+    readonly inspectConnector: (
+      config?: RelayManagedEndpointRuntimeConfig,
+    ) => Effect.Effect<ConnectorFacts | null>;
     /** Emits when a connector registers a connection or its readiness changes. */
     readonly readinessChanged: Stream.Stream<void>;
     readonly recoveryRequests: Stream.Stream<RelayManagedEndpointRuntimeConfig>;
@@ -767,9 +769,15 @@ export const make = Effect.gen(function* () {
       Effect.orElseSucceed(() => null),
     );
 
-  const inspectConnector = Effect.gen(function* () {
+  const inspectConnector = Effect.fn("CloudManagedEndpointRuntime.inspectConnector")(function* (
+    expectedConfig?: RelayManagedEndpointRuntimeConfig,
+  ) {
     const active = yield* Ref.get(activeRef);
-    if (!active || !(yield* active.child.isRunning.pipe(Effect.orElseSucceed(() => false)))) {
+    if (
+      !active ||
+      (expectedConfig !== undefined && active.configKey !== runtimeConfigKey(expectedConfig)) ||
+      !(yield* active.child.isRunning.pipe(Effect.orElseSucceed(() => false)))
+    ) {
       return null;
     }
     const protocol = yield* Ref.get(active.protocol);
@@ -784,6 +792,12 @@ export const make = Effect.gen(function* () {
       ],
       { concurrency: 2 },
     );
+    if (
+      !(yield* active.child.isRunning.pipe(Effect.orElseSucceed(() => false))) ||
+      (yield* Ref.get(activeRef)) !== active
+    ) {
+      return null;
+    }
     return {
       readyConnections: ready?.readyConnections ?? null,
       hostname: config?.config.ingress?.find((rule) => rule.hostname)?.hostname ?? null,

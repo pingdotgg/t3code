@@ -198,7 +198,7 @@ describe("releaseManagedTunnelOnShutdown", () => {
             recoveryRequests: Stream.empty,
             requestRecovery: () => Effect.void,
             tunnelConnected: Stream.empty,
-            inspectConnector: Effect.succeed(null),
+            inspectConnector: () => Effect.succeed(null),
             readinessChanged: Stream.empty,
             withLinkStateLock: (effect) => effect,
           }),
