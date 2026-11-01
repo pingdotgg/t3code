@@ -3945,6 +3945,32 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           assert.equal((yield* Fiber.join(forwardedDecision))?.behavior, "deny");
           yield* harness.offerAndWait(frame);
         }
+        const fallbackDecision = yield* Effect.promise(() =>
+          harness.getOpenedOptions()!.canUseTool!(
+            "Bash",
+            { command: "echo checked" },
+            {
+              signal: new AbortController().signal,
+              toolUseID: "safety-check-after-downgrade",
+              requestId: "request-safety-check-after-downgrade",
+              decisionReason:
+                "Dangerous rm operation not ruled out — the shell may read this command differently than it was parsed",
+            },
+          ),
+        ).pipe(Effect.forkScoped);
+        const fallbackFirst = yield* Effect.raceFirst(
+          Queue.take(harness.runtimeRequestReceipts).pipe(
+            Effect.map((event) => ({ type: "request", event }) as const),
+          ),
+          Fiber.join(fallbackDecision).pipe(Effect.map(() => ({ type: "decision" }) as const)),
+        );
+        assert.equal(fallbackFirst.type, "request");
+        if (fallbackFirst.type !== "request") return;
+        yield* harness.runtime.respondToRuntimeRequest({
+          requestId: fallbackFirst.event.runtimeRequest.id,
+          decision: "decline",
+        });
+        assert.equal((yield* Fiber.join(fallbackDecision))?.behavior, "deny");
         yield* finish;
         const unrestrictedOptions = harness.getOpenedOptions();
         yield* start("/unrestricted");

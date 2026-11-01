@@ -9763,13 +9763,15 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             } satisfies PermissionResult;
           }
 
+          const activePermissionMode =
+            (yield* Ref.get(queryContext))?.permissionMode ?? context.queryPolicy.permissionMode;
           const safetyReason = NodeUtil.stripVTControlCharacters(
             callbackOptions.decisionReason ?? "",
           ).trim();
           // The SDK omits the CLI's dangerousRemoval discriminator, so match its removal warnings.
           if (
             toolName === "Bash" &&
-            context.queryPolicy.permissionMode === "bypassPermissions" &&
+            activePermissionMode === "bypassPermissions" &&
             callbackOptions.matchedAskRule === undefined &&
             (/^Dangerous rm(?:dir)?\b/i.test(safetyReason) ||
               safetyReason === "This shell -c script runs rm and could not be checked" ||

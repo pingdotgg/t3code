@@ -3,7 +3,8 @@ import { AuthOrchestrationOperateScope, type ScopedThreadRef } from "@t3tools/co
 import type { ChildThreadApproval } from "@t3tools/client-runtime/state/thread-requests";
 import { useState } from "react";
 import { useEnvironmentScope } from "../../state/session";
-import { View } from "react-native";
+import { ScrollView, View } from "react-native";
+import Animated, { useAnimatedStyle, type DerivedValue } from "react-native-reanimated";
 import { AppText } from "../../components/ui/AppText";
 import { childThreadApprovalsAtom, threadEnvironment } from "../../state/threads";
 import { useAtomCommand } from "../../state/use-atom-command";
@@ -37,20 +38,30 @@ function ChildApproval({ entry }: { entry: ChildThreadApproval }) {
   );
 }
 
-export function ChildThreadApprovals({ threadRef }: { threadRef: ScopedThreadRef | null }) {
+export function ChildThreadApprovals({
+  threadRef,
+  maxHeight,
+}: {
+  threadRef: ScopedThreadRef | null;
+  maxHeight: DerivedValue<number>;
+}) {
   const approvals = useAtomValue(childThreadApprovalsAtom(threadRef));
+  const heightStyle = useAnimatedStyle(() => ({ maxHeight: Math.min(320, maxHeight.value / 2) }));
+  if (approvals.length === 0) return null;
   return (
-    <>
-      {approvals.map((entry) => (
-        <ChildApproval
-          key={JSON.stringify([
-            entry.thread.environmentId,
-            entry.thread.threadId,
-            entry.approval.requestId,
-          ])}
-          entry={entry}
-        />
-      ))}
-    </>
+    <Animated.View style={heightStyle} className="overflow-hidden">
+      <ScrollView keyboardShouldPersistTaps="handled" nestedScrollEnabled style={{ flexShrink: 1 }}>
+        {approvals.map((entry) => (
+          <ChildApproval
+            key={JSON.stringify([
+              entry.thread.environmentId,
+              entry.thread.threadId,
+              entry.approval.requestId,
+            ])}
+            entry={entry}
+          />
+        ))}
+      </ScrollView>
+    </Animated.View>
   );
 }

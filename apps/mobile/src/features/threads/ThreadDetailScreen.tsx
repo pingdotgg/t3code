@@ -1529,7 +1529,10 @@ function ThreadDetailBody(props: ThreadDetailScreenProps) {
                     key={`chatgpt-limit:${props.selectedThread.latestRun?.runId}`}
                     thread={props.selectedThread}
                   />
-                  <ChildThreadApprovals threadRef={props.selectedThreadDetailRef} />
+                  <ChildThreadApprovals
+                    threadRef={props.selectedThreadDetailRef}
+                    maxHeight={pendingUserInputMaxHeight}
+                  />
                   <ThreadGuestShareBar
                     threadRef={props.selectedThreadDetailRef}
                     canOperateThread={props.canOperateThread}
