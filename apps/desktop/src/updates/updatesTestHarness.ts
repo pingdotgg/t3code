@@ -354,7 +354,12 @@ export function makeHarness(options: UpdatesHarnessOptions = {}) {
 }
 
 // Keep BaseUpdater.quitAndInstall and DebUpdater.doInstall real; stub only OS commands.
-export async function makeInstalledDebUpdater(installError?: Error) {
+export async function makeInstalledDebUpdater(installError?: Error): Promise<{
+  readonly updater: DebUpdater;
+  readonly steps: string[];
+  readonly events: NodeEvents.EventEmitter;
+  readonly restore: () => void;
+}> {
   const events = new NodeEvents.EventEmitter();
   const steps: string[] = [];
   class TestDebUpdater extends DebUpdater {
