@@ -808,9 +808,7 @@ export function NewTaskDraftScreen(props: {
             style={{ flex: 1 }}
             testID="new-task-hero-scroll"
           >
-            <View style={{ flexGrow: 1 }} />
             {hero}
-            <View style={{ flexGrow: 2 }} />
           </ScrollView>
         </View>
       </NativeScrollEdgeEffectsContext>
