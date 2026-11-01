@@ -412,6 +412,46 @@ it.layer(
     }),
   );
 
+  it.effect("decodes static file names once and rejects decoded traversal", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-static-encoded-" });
+      const staticDir = path.join(root, "static");
+      yield* fs.makeDirectory(staticDir);
+      yield* fs.writeFileString(path.join(root, "secret.txt"), "secret");
+      yield* fs.writeFileString(path.join(staticDir, "index.html"), "fallback");
+      const request = yield* makeStaticRequest(staticDir);
+
+      for (const name of ["a space.js", "日本語.js", "literal%20.js", "hash#name.js"]) {
+        const body = `// ${name}`;
+        yield* fs.writeFileString(path.join(staticDir, name), body);
+        const resource = `/${encodeURIComponent(name)}`;
+        const get = yield* request(resource);
+        expect(get.status).toBe(200);
+        expect(yield* get.text).toBe(body);
+        const head = yield* request(resource, {
+          method: "HEAD",
+          headers: { "accept-encoding": "identity" },
+        });
+        expect(head.status).toBe(200);
+        expect(head.headers["content-length"]).toBe(String(Buffer.byteLength(body)));
+        expect(yield* head.text).toBe("");
+      }
+      const index = yield* request("/");
+      expect(index.status).toBe(200);
+      expect(yield* index.text).toBe("fallback");
+      for (const resource of [
+        "/a;%ZZ.js",
+        "/%2e%2e%2fsecret.txt",
+        "/a%2f..%2f..%2fsecret.txt",
+        "/%00.js",
+      ]) {
+        expect((yield* request(resource)).status, resource).toBe(400);
+      }
+    }),
+  );
+
   it.effect("closes static descriptors after GET, HEAD, 304, and request cancellation", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
