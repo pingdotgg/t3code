@@ -680,13 +680,6 @@ function hasCompatibleOrchestrationProtocol(url: URL): boolean {
   );
 }
 
-function shouldUseBoundedThreadSnapshot(input: {
-  readonly acceptBoundedSnapshot?: boolean;
-  readonly acceptDeferredWork?: boolean;
-}): boolean {
-  return input.acceptBoundedSnapshot === true;
-}
-
 // Keep telemetry per socket; several client types can connect simultaneously.
 function readClientAnalyticsProps(request: HttpServerRequest.HttpServerRequest) {
   const url = HttpServerRequest.toURL(request);
@@ -899,7 +892,7 @@ export const subscribeOrchestrationV2Thread = Effect.fn("ws.orchestrationV2.subs
         : Stream.empty;
 
     const snapshotThenLive = Effect.fn("ws.orchestrationV2.threadSnapshotThenLive")(function* () {
-      const useBoundedSnapshot = shouldUseBoundedThreadSnapshot(input);
+      const useBoundedSnapshot = input.acceptBoundedSnapshot === true;
       const snapshot = yield* (
         useBoundedSnapshot
           ? threadManagement.getThreadSnapshotWindow(input.threadId, {
