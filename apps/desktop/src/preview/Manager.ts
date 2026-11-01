@@ -1540,7 +1540,15 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
         wc.setWindowOpenHandler((details) => {
           const action = previewWindowOpenAction(details);
           if (action === "popup") {
-            return { action: "allow", overrideBrowserWindowOptions: POPUP_WINDOW_OPTIONS };
+            return {
+              action: "allow",
+              overrideBrowserWindowOptions: {
+                ...POPUP_WINDOW_OPTIONS,
+                ...(currentMainWindow && !currentMainWindow.isDestroyed()
+                  ? { parent: currentMainWindow }
+                  : {}),
+              },
+            };
           }
           if (action === "deny") return { action: "deny" };
           if (action === "new-tab") {
