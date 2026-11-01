@@ -1979,12 +1979,11 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
               if (compactTurn !== null) compactTurn.manualCompactInFlight = false;
               if (event["success"] === true) {
                 if (
-                  pendingCompact?.kind === "turn_start" &&
                   compactTurn !== null &&
-                  compactTurn.promptMayBeCommandOnly &&
-                  !compactTurn.sawAgentActivity
+                  (compactTurn.settleWhenIdle ||
+                    (compactTurn.promptMayBeCommandOnly && !compactTurn.sawAgentActivity))
                 ) {
-                  yield* scheduleSettleProbe(compactTurn);
+                  yield* scheduleSettleProbe(compactTurn, compactTurn.settleWhenIdle);
                 }
                 return;
               }
@@ -1995,6 +1994,12 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
                 yield* Effect.logWarning("Pi rejected a compact steer.", {
                   errorLength: recordString(event, "error")?.length,
                 });
+                if (
+                  compactTurn.settleWhenIdle ||
+                  (compactTurn.promptMayBeCommandOnly && !compactTurn.sawAgentActivity)
+                ) {
+                  yield* scheduleSettleProbe(compactTurn, compactTurn.settleWhenIdle);
+                }
                 return;
               }
               if (!compactTurn.sawCompaction) {
@@ -2119,6 +2124,10 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
               return;
             }
             if (
+              turn.manualCompactInFlight ||
+              pendingCompactResponses.some(
+                (pending) => pending.providerTurnId === turn.providerTurn.id,
+              ) ||
               pendingPromptResponses.some(
                 (pending) => pending.providerTurnId === turn.providerTurn.id,
               )
@@ -2486,7 +2495,7 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
             if (state === null) {
               return yield* protocolError("Pi session has no registered thread");
             }
-            if (state.activeTurn !== null) {
+            if (state.activeTurn !== null || pendingPromptResponses.length > 0) {
               return yield* new ProviderAdapter.ProviderAdapterProtocolError({
                 driver: PI_PROVIDER,
                 detail: `Pi provider thread ${turnInput.providerThread.id} already has an active turn`,
@@ -2572,6 +2581,7 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
               if (
                 threadState !== state ||
                 state.activeTurn !== null ||
+                pendingPromptResponses.length > 0 ||
                 closed ||
                 stopRequested ||
                 rollbackBarrier !== null ||

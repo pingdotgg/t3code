@@ -66,6 +66,7 @@ const decodeUserInputQuestions = Schema.decodeUnknownSync(
   Schema.Array(OrchestrationV2UserInputQuestion),
 );
 
+const isProviderProtocolError = Schema.is(ProviderAdapter.ProviderAdapterProtocolError);
 const decodeJsonLine = Schema.decodeSync(Schema.fromJsonString(Schema.Unknown));
 const encodeJsonLine = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
 
@@ -3682,38 +3683,119 @@ describe("PiAdapterV2", () => {
     }).pipe(Effect.scoped, Effect.provide(layerTest)),
   );
 
-  it.effect("keeps a settled turn's late prompt rejection off the next turn", () =>
-    Effect.gen(function* () {
-      const fake = yield* makeFakePi;
-      const { runtime, takeEvent } = yield* openRuntime(fake);
-      const providerThread = yield* runtime.ensureThread({
-        threadId: THREAD_ID,
-        modelSelection: modelSelection("default"),
-        runtimePolicy,
-      });
-      yield* startTurn(runtime, providerThread, "default", [], "/my-command");
-      const firstPrompt = yield* fake.takeRequest("prompt");
-      yield* fake.emit({ type: "agent_start" });
-      yield* fake.emit({ type: "agent_settled" });
-      const firstTerminal = yield* takeEvent((event) => event.type === "turn.terminal");
-      assert.isTrue(firstTerminal.type === "turn.terminal" && firstTerminal.status === "completed");
+  it.effect.each(["settled", "interrupted-id", "interrupted-idless"])(
+    "keeps a settled turn's late prompt rejection off the next turn: %s",
+    (boundary) =>
+      Effect.gen(function* () {
+        const fake = yield* makeFakePi;
+        const { runtime, takeEvent } = yield* openRuntime(fake);
+        const providerThread = yield* runtime.ensureThread({
+          threadId: THREAD_ID,
+          modelSelection: modelSelection("default"),
+          runtimePolicy,
+        });
+        const interrupted = boundary !== "settled";
+        // Hold a competing start past the outer guard, before the first turn owns the session.
+        if (interrupted) fake.deferNextModelSelection();
+        const competing = interrupted
+          ? yield* startTurn(
+              runtime,
+              providerThread,
+              "default",
+              [],
+              "Competing turn",
+              modelSelection("xai/grok-4.6"),
+              2,
+            ).pipe(Effect.result, Effect.forkScoped)
+          : null;
+        const modelRequest = interrupted ? yield* fake.takeRequest("set_model") : null;
+        if (interrupted) fake.deferNextLifecycle("prompt");
+        yield* startTurn(runtime, providerThread, "default", [], "/my-command");
+        const firstPrompt = yield* fake.takeRequest("prompt");
+        const running = yield* takeEvent((event) => event.type === "provider_turn.updated");
+        assert.isTrue(running.type === "provider_turn.updated");
+        if (running.type !== "provider_turn.updated") return;
+        if (interrupted) {
+          yield* runtime.interruptTurn({ providerThread, providerTurnId: running.providerTurn.id });
+        } else {
+          yield* fake.emit({ type: "agent_start" });
+        }
+        yield* fake.emit({ type: "agent_settled" });
+        const firstTerminal = yield* takeEvent((event) => event.type === "turn.terminal");
+        assert.isTrue(
+          firstTerminal.type === "turn.terminal" &&
+            firstTerminal.status === (interrupted ? "interrupted" : "completed"),
+        );
 
-      yield* startTurn(runtime, providerThread, "default", [], "Second turn", undefined, 2);
-      yield* fake.takeRequest("prompt");
-      yield* fake.emit({
-        type: "response",
-        id: firstPrompt["id"],
-        command: "prompt",
-        success: false,
-        error: "late command rejection",
-      });
-      yield* fake.emit({ type: "agent_start" });
-      yield* fake.emit({ type: "agent_settled" });
-      const secondTerminal = yield* takeEvent((event) => event.type === "turn.terminal");
-      assert.isTrue(
-        secondTerminal.type === "turn.terminal" && secondTerminal.status === "completed",
-      );
-    }).pipe(Effect.scoped, Effect.provide(layerTest)),
+        if (competing !== null && modelRequest !== null) {
+          const blocked = yield* startTurn(
+            runtime,
+            providerThread,
+            "default",
+            [],
+            "Blocked turn",
+            undefined,
+            2,
+          ).pipe(Effect.result);
+          assert.equal(blocked._tag, "Failure");
+          assert.isTrue(
+            blocked._tag === "Failure" &&
+              isProviderProtocolError(blocked.failure.cause) &&
+              blocked.failure.cause.reason === "previous_turn_active",
+          );
+          yield* fake.emit({
+            type: "response",
+            id: modelRequest["id"],
+            command: "set_model",
+            success: true,
+            data: { provider: "xai", id: "grok-4.6" },
+          });
+          assert.equal((yield* Fiber.join(competing))._tag, "Failure");
+          assert.lengthOf(
+            fake.allRequests().filter((request) => request["type"] === "prompt"),
+            1,
+          );
+          yield* fake.emit({
+            type: "response",
+            command: "prompt",
+            success: false,
+            ...(boundary === "interrupted-idless" ? {} : { id: firstPrompt["id"] }),
+            error: "late command rejection",
+          });
+          yield* fake.emit({
+            type: "extension_ui_request",
+            id: "old-ack-barrier",
+            method: "confirm",
+            title: "Old input acknowledged",
+          });
+          const barrier = yield* takeEvent((event) => event.type === "runtime_request.updated");
+          assert.isTrue(barrier.type === "runtime_request.updated");
+          if (barrier.type !== "runtime_request.updated") return;
+          yield* runtime.respondToRuntimeRequest({
+            requestId: barrier.runtimeRequest.id,
+            decision: "decline",
+          });
+          yield* fake.takeRequest("extension_ui_response");
+        }
+
+        fake.deferNextLifecycle("prompt");
+        yield* startTurn(runtime, providerThread, "default", [], "Second turn", undefined, 2);
+        yield* fake.takeRequest("prompt");
+        yield* fake.emit({
+          type: "response",
+          id: firstPrompt["id"],
+          command: "prompt",
+          success: false,
+          error: "late command rejection",
+        });
+        yield* fake.emit({ type: "response", command: "prompt", success: true });
+        yield* fake.emit({ type: "agent_start" });
+        yield* fake.emit({ type: "agent_settled" });
+        const secondTerminal = yield* takeEvent((event) => event.type === "turn.terminal");
+        assert.isTrue(
+          secondTerminal.type === "turn.terminal" && secondTerminal.status === "completed",
+        );
+      }).pipe(Effect.scoped, Effect.provide(layerTest)),
   );
 
   it.effect("shows compaction progress and completes the same activity row", () =>
@@ -4322,6 +4404,12 @@ describe("PiAdapterV2", () => {
     { handled: true, steer: "starts" },
     { handled: true, steer: "handled" },
     { handled: true, steer: "rejected" },
+    { handled: true, steer: "compact-accepted" },
+    { handled: true, steer: "compact-rejected" },
+    { handled: false, steer: "compact-accepted" },
+    { handled: false, steer: "compact-rejected" },
+    { handled: true, steer: "compact-queued-accepted" },
+    { handled: true, steer: "compact-queued-rejected" },
   ])("ignores stale idle probes, handled=$handled steer=$steer", ({ handled, steer }) =>
     Effect.gen(function* () {
       const fake = yield* makeFakePi;
@@ -4356,26 +4444,68 @@ describe("PiAdapterV2", () => {
           : { type: "agent_settled" },
       );
       yield* fake.takeRequest("get_state");
+      const compact = steer.startsWith("compact-");
       fake.deferNextLifecycle("prompt");
-      yield* runtime.steerTurn({
+      const steerInput = {
         threadId: THREAD_ID,
         runId: RunId.make("run:thread-pi-test:1"),
         providerThread,
         providerTurnId: providerTurnId!,
         message: {
           messageId: "message:thread-pi-test:late-steer" as never,
-          text: "Continue after settlement",
+          text: compact ? "/compact" : "Continue after settlement",
           attachments: [],
           createdBy: "user",
           creationSource: "web",
         },
-      });
-      const steeredPrompt = yield* fake.takeRequest("prompt");
+      } satisfies ProviderAdapter.ProviderAdapterV2SteerInput;
+      yield* runtime.steerTurn(steerInput);
+      const steeredPrompt = yield* fake.takeRequest(compact ? "compact" : "prompt");
       yield* fake.resolveDeferredState({
         isStreaming: false,
         isCompacting: false,
         pendingMessageCount: 0,
       });
+      if (compact) {
+        if (steer.startsWith("compact-queued-")) {
+          yield* runtime.steerTurn(steerInput);
+          yield* fake.takeRequest("compact");
+          // Put a current probe before a notice in the pump, independent of fork scheduling.
+          for (const acknowledged of [false, true]) {
+            if (acknowledged) {
+              yield* fake.emit({ type: "response", command: "compact", success: true });
+              yield* fake.takeRequest("get_state");
+            }
+            yield* fake.emit({
+              type: "t3.settle_probe",
+              providerTurnId,
+              settleProbeGeneration: 2,
+              data: { isStreaming: false, isCompacting: false, pendingMessageCount: 0 },
+            });
+            yield* fake.emit({
+              type: "extension_ui_request",
+              method: "notify",
+              message: "Compact acknowledgment still pending",
+            });
+            const barrier = yield* takeEvent(
+              (event) =>
+                event.type === "turn.terminal" ||
+                (event.type === "turn_item.updated" && event.turnItem.type === "system_notice"),
+            );
+            assert.equal(barrier.type, "turn_item.updated");
+            assert.equal(runtime.providerSession.status, "running");
+          }
+        }
+        yield* fake.emit({
+          type: "response",
+          command: "compact",
+          success: !steer.endsWith("rejected"),
+          error: "Compact refused",
+        });
+        const terminal = yield* takeEvent((event) => event.type === "turn.terminal");
+        assert.isTrue(terminal.type === "turn.terminal" && terminal.status === "completed");
+        return;
+      }
       if (steer !== "starts") {
         yield* fake.emit({
           type: "response",
