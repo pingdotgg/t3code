@@ -26,6 +26,7 @@ import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Scope from "effect/Scope";
+import * as Stream from "effect/Stream";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -394,7 +395,7 @@ describe("ProviderInstanceRegistry — multi-instance codex slice", () => {
         },
       });
       expect((yield* registry.listUnavailable)[0]?.iconUrl).toBe("https://example.com/custom.png");
-    }).pipe(Effect.scoped),
+    }).pipe(Effect.provide(layerTest)),
   );
 
   it.live("treats an explicit in-config enabled:false as disabling despite the envelope", () =>
