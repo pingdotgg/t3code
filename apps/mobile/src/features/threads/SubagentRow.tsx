@@ -1,7 +1,9 @@
 import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { resolveProviderInstanceDisplayName } from "@t3tools/client-runtime/state/provider-instance-display";
 import { resolveSubagentMetadata } from "@t3tools/client-runtime/state/subagent-display";
+import { formatModelSelectionEffort } from "@t3tools/client-runtime/state/thread-execution";
 import type { EnvironmentId, OrchestrationV2Subagent } from "@t3tools/contracts";
+import { resolveSelectableModel } from "@t3tools/shared/model";
 import type { ReactNode } from "react";
 import { View } from "react-native";
 
@@ -19,6 +21,7 @@ type SubagentRowSubagent = Pick<
   | "threadId"
   | "childThreadId"
   | "model"
+  | "modelSelection"
   | "driver"
   | "providerInstanceId"
   | "title"
@@ -113,14 +116,23 @@ function SubagentMetadata(props: {
     parent ? scopeProjectRef(environmentId, parent.projectId) : null,
   );
   const childProject = useProject(child ? scopeProjectRef(environmentId, child.projectId) : null);
-  const { modelLabel, workspace } = resolveSubagentMetadata({
+  const selection = subagent.modelSelection;
+  const { modelLabel, modelSlug, workspace } = resolveSubagentMetadata({
     model: subagent.model,
+    modelSelection: selection,
     provider,
     parentThread: parent,
     childThread: child,
     parentProject,
     childProject,
   });
+  const effort =
+    provider &&
+    selection &&
+    modelSlug &&
+    resolveSelectableModel(provider.driver, selection.model, provider.models) === modelSlug
+      ? formatModelSelectionEffort({ ...selection, model: modelSlug }, provider.models)
+      : null;
   return (
     <View className="min-w-0 flex-row items-center gap-1.5">
       <ProviderIcon
@@ -131,6 +143,7 @@ function SubagentMetadata(props: {
       <Text className="min-w-0 shrink text-xs text-foreground-muted" numberOfLines={1}>
         {provider ? `${resolveProviderInstanceDisplayName(provider)} · ` : ""}
         {modelLabel}
+        {effort ? ` · ${effort}` : ""}
       </Text>
       {workspace.map(({ label, value }) => (
         // Preserve the label against flattening without making it a separate accessibility stop.

@@ -13,7 +13,9 @@ import {
   isWorkflowScriptMessage,
   projectedSubagentsToRuntime,
   resolveWorkflowOpening,
+  workflowMemberModelSelection,
 } from "./subagentRuntime.ts";
+import { resolveSubagentMetadata } from "./subagentDisplay.ts";
 
 const at = (iso: string) => DateTime.makeUnsafe(iso);
 
@@ -82,6 +84,29 @@ describe("projectedSubagentsToRuntime workflow expansion", () => {
     expect(settled?.speed).toBe("standard");
     expect(settled?.progress).toBe("Reply with exactly: A1");
     expect(settled?.usage).toEqual({ totalTokens: 71_141, toolUses: 3, durationMs: 1500 });
+    const instanceId = ProviderInstanceId.make("claudeAgent");
+    expect(workflowMemberModelSelection(settled!, instanceId)).toEqual({
+      instanceId,
+      model: "claude-opus-5[1m]",
+      options: [
+        { id: "effort", value: "xhigh" },
+        { id: "fastMode", value: false },
+      ],
+    });
+    expect(workflowMemberModelSelection({ model: null, effort: "xhigh" }, instanceId)).toBe(
+      undefined,
+    );
+  });
+
+  it("names a workflow by the model it runs on when the provider reports none", () => {
+    const [workflow] = projectedSubagentsToRuntime([subagent({ model: null })]);
+    expect(
+      resolveSubagentMetadata({
+        model: workflow!.model,
+        modelSelection: { model: "claude-opus-5-5" },
+      }).modelLabel,
+    ).toBe("Claude Opus 5.5");
+    expect(resolveSubagentMetadata({ model: workflow!.model }).modelLabel).toBe("Not reported");
   });
 
   it.each(["completed", "cancelled", "failed"] as const)(
