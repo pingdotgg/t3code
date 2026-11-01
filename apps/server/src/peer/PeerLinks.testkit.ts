@@ -152,14 +152,17 @@ export type ServedPeer = Effect.Success<ReturnType<typeof servePeer>>;
 
 /**
  * The environment that links: its own database and secret store, reaching
- * peers over plain HTTP. Provide it to anything built on its links.
+ * peers over plain HTTP. Provide it to anything built on its links. `machine`
+ * replaces what this machine provides, such as its `tailscale` or its network.
  */
 export const layerLinkingEnvironment = (
   descriptor: ExecutionEnvironmentDescriptor,
   secrets: typeof ServerSecretStore.layer = ServerSecretStore.layer,
+  machine: Layer.Layer<never> = Layer.empty,
 ) =>
   PeerMcpClient.layer.pipe(
     Layer.provideMerge(PeerLinks.layer),
+    Layer.provide(machine),
     Layer.provideMerge(ServerSettings.layerTest({ linkedEnvironmentsEnabled: true })),
     Layer.provideMerge(Sqlite.layerMemory),
     Layer.provide(Layer.mergeAll(secrets, FetchHttpClient.layer)),
