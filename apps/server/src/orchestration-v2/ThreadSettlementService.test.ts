@@ -641,6 +641,7 @@ const makeHarness = Effect.fn("makeThreadSettlementHarness")(function* (options:
     start: Effect.void,
     ready: Effect.void,
     getSettings: Ref.get(settings),
+    telemetryOptOutGeneration: Effect.succeed(0),
     updateSettings,
     updateProviderInstance: () => Effect.die("Unexpected provider mutation"),
     withSettingsSnapshot: (use) => Ref.get(settings).pipe(Effect.flatMap(use)),

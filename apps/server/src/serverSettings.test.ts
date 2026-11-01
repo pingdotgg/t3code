@@ -129,14 +129,16 @@ it.layer(NodeServices.layer)("server settings", (it) => {
       assert.deepEqual(settings.providerModelPreferences?.[provider]?.modelOrder, ["luna", "sol"]);
     }).pipe(Effect.provide(layerServerSettings())),
   );
-  it.effect("persists and broadcasts model preferences to other connected clients", () =>
+  it.effect("persists and broadcasts model preferences and analytics consent", () =>
     Effect.scoped(
       Effect.gen(function* () {
         const service = yield* ServerSettingsModule.ServerSettingsService;
         const config = yield* ServerConfig.ServerConfig;
         const fs = yield* FileSystem.FileSystem;
         const provider = ProviderInstanceId.make("codex_work");
+        assert.isTrue((yield* service.getSettings).telemetryEnabled);
         const patch = {
+          telemetryEnabled: true,
           favorites: [{ provider, model: "sol" }],
           providerModelPreferences: {
             [provider]: { hiddenModels: ["astra"], modelOrder: ["sol"] },
@@ -145,12 +147,21 @@ it.layer(NodeServices.layer)("server settings", (it) => {
         const changes = yield* service.subscribeChanges;
         yield* service.updateSettings(patch);
         const received = Option.getOrThrow(yield* Stream.runHead(changes));
+        assert.isTrue(received.telemetryEnabled);
         assert.deepEqual(received.favorites, patch.favorites);
         assert.deepEqual(received.providerModelPreferences, patch.providerModelPreferences);
         const saved = yield* decodeServerSettingsJson(
           yield* fs.readFileString(config.settingsPath),
         );
         assert.deepEqual(saved.favorites, patch.favorites);
+        assert.isTrue(saved.telemetryEnabled);
+        const generation = yield* service.telemetryOptOutGeneration;
+        yield* service.updateSettings({ telemetryEnabled: false });
+        assert.isAbove(yield* service.telemetryOptOutGeneration, generation);
+        const optedOut = yield* decodeServerSettingsJson(
+          yield* fs.readFileString(config.settingsPath),
+        );
+        assert.isFalse(optedOut.telemetryEnabled);
         assert.deepEqual(saved.providerModelPreferences, patch.providerModelPreferences);
         const hidden = yield* service.updateSettings({
           setModelsHidden: [{ provider, model: "sol", hidden: true }],
@@ -1007,6 +1018,7 @@ it.layer(NodeServices.layer)("server settings", (it) => {
       });
 
       assert.isFalse(settings.continueThreadsAfterServerUpdate);
+      assert.isFalse(settings.telemetryEnabled);
       assert.equal(yield* fileSystem.readFileString(serverConfig.settingsPath), raw);
     }).pipe(Effect.provide(layerServerSettings())),
   );

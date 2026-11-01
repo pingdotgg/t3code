@@ -13,6 +13,7 @@ import {
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import * as Cause from "effect/Cause";
 import * as Console from "effect/Console";
+import * as Config from "effect/Config";
 import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
@@ -148,6 +149,13 @@ export const makeCommandGate = Effect.gen(function* () {
 });
 
 const recordStartupHeartbeat = Effect.gen(function* () {
+  const settings = yield* ServerSettings.ServerSettingsService;
+  const consent = yield* settings.getSettings.pipe(
+    Effect.map((snapshot) => snapshot.telemetryEnabled),
+    Effect.orElseSucceed(() => false),
+  );
+  const enabled = yield* Config.Boolean("T3CODE_TELEMETRY_ENABLED").pipe(Config.withDefault(true));
+  if (!consent || !enabled) return;
   const analytics = yield* AnalyticsService.AnalyticsService;
   const projects = yield* ProjectService.ProjectService;
   const threads = yield* ThreadManagement.ThreadManagementService;

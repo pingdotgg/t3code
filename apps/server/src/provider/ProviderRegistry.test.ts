@@ -304,6 +304,7 @@ function makeMutableServerSettingsService(
           return next;
         }),
       withSettingsSnapshot: (use) => Ref.get(settingsRef).pipe(Effect.flatMap(use)),
+      telemetryOptOutGeneration: Effect.succeed(0),
       get streamChanges() {
         return Stream.fromPubSub(changes);
       },

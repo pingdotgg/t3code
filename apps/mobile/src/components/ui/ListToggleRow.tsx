@@ -7,9 +7,12 @@ import { ThemedSwitch } from "./ThemedSwitch";
 export function ListToggleRow(
   props: Omit<ListRowContentProps, "detail"> & {
     readonly value: boolean | null;
+    readonly mixedValue?: boolean;
     readonly onValueChange: (value: boolean) => void;
   },
 ) {
+  const mixedValue = props.mixedValue ?? true;
+  const mixedLabel = mixedValue ? "on" : "off";
   return (
     <ListRowLayout
       icon={props.icon}
@@ -19,15 +22,17 @@ export function ListToggleRow(
       accessory={
         props.value === null ? (
           <Pressable
-            accessibilityLabel={`Set ${props.label} on for selected environments`}
+            accessibilityLabel={`Set ${props.label} ${mixedLabel} for selected environments`}
             accessibilityRole="button"
             accessibilityHint={props.description}
             accessibilityState={{ disabled: Boolean(props.disabled) }}
             disabled={props.disabled}
             className="rounded-full bg-subtle px-3 py-2 active:opacity-70"
-            onPress={() => props.onValueChange(true)}
+            onPress={() => props.onValueChange(mixedValue)}
           >
-            <AppText className="text-sm font-t3-medium text-foreground">Mixed · Set on</AppText>
+            <AppText className="text-sm font-t3-medium text-foreground">
+              Mixed · Set {mixedLabel}
+            </AppText>
           </Pressable>
         ) : (
           <ThemedSwitch

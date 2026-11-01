@@ -21,8 +21,8 @@ const sections = [
   description="How T3 Tools, Inc. handles information when you use T3 Code, app.t3.codes, and t3.codes."
   heading="T3 Code Privacy Policy"
   lede="This Privacy Policy describes how T3 Tools, Inc. collects, uses, and shares personal information when you use the T3 Code desktop, mobile, and hosted web applications, visit the t3.codes marketing site, or use the optional T3 Connect service."
-  effectiveDate="2026-10-06"
-  lastUpdated="2026-10-06"
+  effectiveDate="2026-10-30"
+  lastUpdated="2026-10-30"
   sections={sections}
 >
   <section id="introduction">
@@ -82,9 +82,13 @@ const sections = [
               headline.
             </li>
             <li>
-              <strong>Product usage data.</strong> By default, T3 Code sends us anonymous usage
+              <strong>Product usage data.</strong> By default, T3 Code sends us usage
               data, such as which provider and model a turn used, whether it succeeded, and your app
-              version and operating system. We use it to improve the product. You can turn this off
+              version and operating system. Events carry hashed account and installation identifiers
+              that can link activity across installations, including identifiers from Codex and
+              Claude Code login files and linked T3 Connect accounts. These identifiers are pseudonymous, not
+              anonymous: someone who knows an account ID can calculate the same hash. We use this
+              data to improve the product. You can turn this off
               at any time; see “Product Usage Data” under Your Choices below.
             </li>
             <li>
@@ -163,8 +167,8 @@ const sections = [
             <li>To monitor reliability, prevent abuse, and investigate security incidents;</li>
             <li>To comply with applicable law and enforce the terms governing the Services; and</li>
             <li>
-              To analyze and improve T3 Code using product usage data and aggregated,
-              de-identified, or other anonymous operational information.
+              To analyze and improve T3 Code using product usage data and aggregated operational
+              information.
             </li>
           </ul>
 
@@ -344,9 +348,17 @@ const sections = [
 
           <h3>Product Usage Data</h3>
           <p>
-            To stop sending product usage data, set the environment variable{" "}
-            <code>T3CODE_TELEMETRY_ENABLED=false</code>{" "}where T3 Code runs, for example in your
-            shell profile, and restart T3 Code.
+            You can choose whether to share product analytics during onboarding or in
+            {" "}<strong>Settings → About → Privacy</strong>. On mobile, use
+            {" "}<strong>Settings → Maintenance → Privacy</strong>. The choice applies to everyone
+            using the selected environment. Turning it off stops collection and discards queued
+            events without restarting. It does not control relay diagnostics, mobile crash reports,
+            or your own OpenTelemetry exports. You can also set the environment variable
+            {" "}<code>T3CODE_TELEMETRY_ENABLED=false</code>{" "}where T3 Code runs and restart it;
+            this overrides the saved product analytics preference.
+            Changing the saved preference requires permission to change environment settings
+            and a server version that supports the control. If it is unavailable, ask the
+            environment administrator to change it or update the server.
           </p>
 
           <h3>Cookies and Local Data</h3>

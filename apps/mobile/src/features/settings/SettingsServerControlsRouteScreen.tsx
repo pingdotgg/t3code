@@ -266,6 +266,12 @@ function ServerSettingsDetail(props: { readonly page: SettingsPage }) {
       !PROJECT_SCOPED_SERVER_SETTING_KEYS.includes(
         key as (typeof PROJECT_SCOPED_SERVER_SETTING_KEYS)[number],
       ));
+  const analyticsSupported =
+    displayTargets.length > 0 &&
+    displayTargets.every(
+      (target) =>
+        target.environment.serverConfig?.environment.capabilities.productAnalyticsConsent === true,
+    );
 
   return (
     <>
@@ -462,6 +468,26 @@ function ServerSettingsDetail(props: { readonly page: SettingsPage }) {
 
               {props.page === "maintenance" ? (
                 <>
+                  <SettingsSection
+                    title="Privacy"
+                    footer="This applies to everyone on the selected environments. Turning it off discards queued events. Relay diagnostics, crash reports, and your OpenTelemetry exports are separate. T3CODE_TELEMETRY_ENABLED=false always overrides this switch."
+                  >
+                    <SettingsSwitchRow
+                      icon="chart.bar.xaxis"
+                      label="Share product analytics"
+                      subtitle={
+                        projectSelected
+                          ? "Environment-wide setting. Select All projects to change it."
+                          : analyticsSupported
+                            ? "Sends usage events and hashed account and installation IDs to T3 Code and PostHog. These are pseudonymous: they can link activity across installations. No prompts or file contents."
+                            : "Update the selected environment servers to control product analytics here. Older servers may collect analytics by default."
+                      }
+                      value={analyticsSupported ? uniform("telemetryEnabled") : null}
+                      mixedValue={false}
+                      disabled={!analyticsSupported || disabledFor("telemetryEnabled")}
+                      onValueChange={(value) => write({ telemetryEnabled: value })}
+                    />
+                  </SettingsSection>
                   {!projectSelected ? (
                     <DatabaseStorageNotice
                       targets={selectedTargets.filter(
