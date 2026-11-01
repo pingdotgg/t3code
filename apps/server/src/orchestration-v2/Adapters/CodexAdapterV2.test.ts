@@ -27,6 +27,7 @@ import {
   ProviderTurnId,
   RunAttemptId,
   RunId,
+  RuntimeRequestId,
   ThreadId,
   TurnItemId,
 } from "@t3tools/contracts";
@@ -1703,145 +1704,202 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         event.type === "message.updated" && event.message.role === "assistant",
     );
 
-  it.effect("keeps an asynchronous Codex question actionable after the turn completes", () =>
-    Effect.scoped(
-      Effect.gen(function* () {
-        const nativeThreadId = "async-question-thread";
-        const nativeTurnId = "async-question-turn";
-        const usage = {
-          totalTokens: 15,
-          inputTokens: 10,
-          cachedInputTokens: 2,
-          outputTokens: 5,
-          reasoningOutputTokens: 1,
-        };
-        const transcript = makeCodexReplayTranscript({
-          scenario: "async-question-and-billed-usage",
-          entries: [
-            ...codexReplayPreamble({
-              nativeThreadId,
-              nativeTurnId,
-              prompt: "Continue while I decide.",
-            }),
-            {
-              type: "emit_inbound",
-              label: "question",
-              frame: {
-                method: "item/completed",
-                params: {
-                  threadId: nativeThreadId,
-                  turnId: nativeTurnId,
-                  item: {
-                    type: "agentMessage",
-                    id: "async-question-item",
-                    text: "Which branch?",
-                    delivery: "async",
-                    questions: [{ title: "Which branch?", options: ["main", "dev"] }],
-                  },
-                },
-              },
-            },
-            {
-              type: "emit_inbound",
-              label: "usage",
-              frame: {
-                method: "thread/tokenUsage/updated",
-                params: {
-                  threadId: nativeThreadId,
-                  turnId: nativeTurnId,
-                  tokenUsage: { total: usage, last: usage, modelContextWindow: 200_000 },
-                },
-              },
-            },
-            {
-              type: "emit_inbound",
-              label: "complete",
-              frame: {
-                method: "turn/completed",
-                params: {
-                  threadId: nativeThreadId,
-                  turn: makeCodexReplayTurn({ id: nativeTurnId, status: "completed" }),
-                },
-              },
-            },
-          ],
-        });
-        const harness = yield* makeCodexReplayHarness(transcript);
-        yield* harness.runtime.startTurn(
-          makeCodexTestTurnInput({
-            threadId: harness.threadId,
-            providerThread: harness.providerThread,
-            now: yield* DateTime.now,
-            attemptId: RunAttemptId.make("async-question-attempt"),
-            text: "Continue while I decide.",
-          }),
-        );
-        yield* harness.firstTerminal;
-        const requests = harness.events.flatMap((event) =>
-          event.type === "runtime_request.updated" ? [event.runtimeRequest] : [],
-        );
-        assert.lengthOf(requests, 1);
-        assert.equal(requests[0]?.status, "pending");
-        assert.deepEqual(requests[0]?.responseCapability, { type: "message" });
-        const questionItem = harness.events.find(
-          (event) =>
-            event.type === "turn_item.updated" && event.turnItem.type === "user_input_request",
-        );
-        assert.equal(questionItem?.type, "turn_item.updated");
-        if (
-          questionItem?.type === "turn_item.updated" &&
-          questionItem.turnItem.type === "user_input_request"
-        ) {
-          assert.deepEqual(
-            questionItem.turnItem.questions[0]?.options.map((option) => option.label),
-            ["main", "dev"],
-          );
-          assert.equal(questionItem.turnItem.responseMode, "message");
-        }
-        const questionNode = harness.events.find(
-          (event) => event.type === "node.updated" && event.node.id === requests[0]?.nodeId,
-        );
-        assert.equal(
-          questionNode?.type === "node.updated" && questionNode.node.countsForRun,
-          false,
-        );
-        const contextReport = harness.events.find(
-          (event) =>
-            event.type === "provider_turn.updated" && event.providerTurn.tokenUsage !== undefined,
-        );
-        assert.equal(contextReport?.type, "provider_turn.updated");
-        if (contextReport?.type === "provider_turn.updated") {
-          assert.equal(
-            contextReport.providerTurn.runAttemptId,
-            RunAttemptId.make("async-question-attempt"),
-          );
-          assert.equal(contextReport.providerTurn.providerThreadId, harness.providerThread.id);
-          assert.equal(contextReport.providerTurn.tokenUsage?.usedTokens, 15);
-          assert.equal(contextReport.providerTurn.tokenUsage?.maxTokens, 200_000);
-        }
-        const completed = harness.events.find(
-          (event) =>
-            event.type === "provider_turn.updated" && event.providerTurn.status === "completed",
-        );
-        assert.equal(completed?.type, "provider_turn.updated");
-        if (completed?.type === "provider_turn.updated") {
-          assert.deepEqual(completed.providerTurn.turnTokenUsage, {
-            usageStatus: "complete",
-            usageScope: "main_agent",
-            hasSubagents: false,
+  it.effect.each([
+    { terminalStatus: "completed", restored: false },
+    { terminalStatus: "interrupted", restored: false },
+    { terminalStatus: "completed", restored: true },
+  ] as const)(
+    "marks an asynchronous Codex question awaited until the turn is $terminalStatus (restored: $restored)",
+    ({ terminalStatus, restored }) =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const nativeThreadId = "async-question-thread";
+          const nativeTurnId = "async-question-turn";
+          const usage = {
+            totalTokens: 15,
             inputTokens: 10,
             cachedInputTokens: 2,
             outputTokens: 5,
-            reasoningTokens: 1,
+            reasoningOutputTokens: 1,
+          };
+          const transcript = makeCodexReplayTranscript({
+            scenario: "async-question-and-billed-usage",
+            entries: [
+              ...codexReplayPreamble({
+                nativeThreadId,
+                nativeTurnId,
+                prompt: "Continue while I decide.",
+              }),
+              ...(restored
+                ? []
+                : [
+                    {
+                      type: "emit_inbound",
+                      label: "question",
+                      frame: {
+                        method: "item/completed",
+                        params: {
+                          threadId: nativeThreadId,
+                          turnId: nativeTurnId,
+                          item: {
+                            type: "agentMessage",
+                            id: "async-question-item",
+                            text: "Which branch?",
+                            delivery: "async",
+                            questions: [{ title: "Which branch?", options: ["main", "dev"] }],
+                          },
+                        },
+                      },
+                    } as const,
+                  ]),
+              // An interrupted turn ends without completing the sleep item.
+              ...(terminalStatus === "completed"
+                ? (["item/started", "item/completed"] as const)
+                : (["item/started"] as const)
+              ).map((method) => ({
+                type: "emit_inbound" as const,
+                label: `sleep ${method}`,
+                frame: {
+                  method,
+                  params: {
+                    threadId: nativeThreadId,
+                    turnId: nativeTurnId,
+                    startedAtMs: 1782622441000,
+                    completedAtMs: 1782622501000,
+                    item: { type: "sleep", id: "sleep-item", durationMs: 60_000 },
+                  },
+                },
+              })),
+              {
+                type: "emit_inbound",
+                label: "usage",
+                frame: {
+                  method: "thread/tokenUsage/updated",
+                  params: {
+                    threadId: nativeThreadId,
+                    turnId: nativeTurnId,
+                    tokenUsage: { total: usage, last: usage, modelContextWindow: 200_000 },
+                  },
+                },
+              },
+              {
+                type: "emit_inbound",
+                label: "complete",
+                frame: {
+                  method: "turn/completed",
+                  params: {
+                    threadId: nativeThreadId,
+                    turn: makeCodexReplayTurn({ id: nativeTurnId, status: terminalStatus }),
+                  },
+                },
+              },
+            ],
           });
-        }
-        assert.isEmpty(assistantMessages(harness.events));
-      }).pipe(
-        Effect.provide(
-          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+          const harness = yield* makeCodexReplayHarness(transcript);
+          const now = yield* DateTime.now;
+          const restoredRequest: OrchestrationV2RuntimeRequest = {
+            id: RuntimeRequestId.make("restored-question"),
+            nodeId: NodeId.make("restored-question-node"),
+            providerTurnId: null,
+            nativeRequestRef: {
+              driver: CodexAdapterV2.CODEX_DRIVER_KIND,
+              nativeId: "async:prior-question",
+              strength: "strong",
+            },
+            kind: "user_input",
+            status: "pending",
+            responseCapability: { type: "message" },
+            createdAt: now,
+            resolvedAt: null,
+          };
+          const turnInput = {
+            ...makeCodexTestTurnInput({
+              threadId: harness.threadId,
+              providerThread: harness.providerThread,
+              now,
+              attemptId: RunAttemptId.make("async-question-attempt"),
+              text: "Continue while I decide.",
+            }),
+            pendingUserInputRequests: restored ? [restoredRequest] : [],
+          };
+          yield* harness.runtime.startTurn(turnInput);
+          yield* harness.firstTerminal;
+          const requests = harness.events.flatMap((event) =>
+            event.type === "runtime_request.updated" ? [event.runtimeRequest] : [],
+          );
+          assert.deepEqual(
+            requests.map((request) => [request.status, request.responseCapability]),
+            restored
+              ? [
+                  ["pending", { type: "message", agentWaiting: true }],
+                  ["pending", { type: "message" }],
+                ]
+              : [
+                  ["pending", { type: "message" }],
+                  ["pending", { type: "message", agentWaiting: true }],
+                  ["pending", { type: "message" }],
+                ],
+          );
+          const questionItem = harness.events.find(
+            (event) =>
+              event.type === "turn_item.updated" && event.turnItem.type === "user_input_request",
+          );
+          assert.equal(questionItem?.type, restored ? undefined : "turn_item.updated");
+          if (
+            questionItem?.type === "turn_item.updated" &&
+            questionItem.turnItem.type === "user_input_request"
+          ) {
+            assert.deepEqual(
+              questionItem.turnItem.questions[0]?.options.map((option) => option.label),
+              ["main", "dev"],
+            );
+            assert.equal(questionItem.turnItem.responseMode, "message");
+          }
+          const questionNode = harness.events.find(
+            (event) => event.type === "node.updated" && event.node.id === requests[0]?.nodeId,
+          );
+          assert.equal(
+            questionNode?.type === "node.updated" && questionNode.node.countsForRun,
+            false,
+          );
+          const contextReport = harness.events.find(
+            (event) =>
+              event.type === "provider_turn.updated" && event.providerTurn.tokenUsage !== undefined,
+          );
+          assert.equal(contextReport?.type, "provider_turn.updated");
+          if (contextReport?.type === "provider_turn.updated") {
+            assert.equal(
+              contextReport.providerTurn.runAttemptId,
+              RunAttemptId.make("async-question-attempt"),
+            );
+            assert.equal(contextReport.providerTurn.providerThreadId, harness.providerThread.id);
+            assert.equal(contextReport.providerTurn.tokenUsage?.usedTokens, 15);
+            assert.equal(contextReport.providerTurn.tokenUsage?.maxTokens, 200_000);
+          }
+          const completed = harness.events.find(
+            (event) =>
+              event.type === "provider_turn.updated" &&
+              event.providerTurn.status === terminalStatus,
+          );
+          assert.equal(completed?.type, "provider_turn.updated");
+          if (completed?.type === "provider_turn.updated") {
+            assert.deepEqual(completed.providerTurn.turnTokenUsage, {
+              usageStatus: terminalStatus === "completed" ? "complete" : "partial",
+              usageScope: "main_agent",
+              hasSubagents: false,
+              inputTokens: 10,
+              cachedInputTokens: 2,
+              outputTokens: 5,
+              reasoningTokens: 1,
+            });
+          }
+          assert.isEmpty(assistantMessages(harness.events));
+        }).pipe(
+          Effect.provide(
+            Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+          ),
         ),
       ),
-    ),
   );
 
   it.effect("stops asking for commands the user allowed for the session", () =>

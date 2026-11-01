@@ -148,6 +148,7 @@ export interface EventSinkV2Shape {
     };
     /** Like writeWithEffects' updateDelegatedCompletionOnly, for this run's run.updated only. */
     readonly updateDelegatedCompletionOnlyRunId?: RunId;
+    readonly guardPendingUserInputCancellations?: boolean;
   }) => Effect.Effect<
     {
       readonly receipt: CommandReceiptStore.CommandReceiptV2;
@@ -284,23 +285,31 @@ const layerBase: Layer.Layer<
       });
 
     // A user can answer after terminal normalization reads the pending request.
-    // Recheck inside the write transaction so stale cleanup cannot erase answers.
+    // Recheck inside the write transaction so stale cleanup cannot erase answers,
+    // and so a provider repeating a pending question cannot reopen it.
     const guardUserInputCancellations =
       /* This helper runs for individual orchestration events; the enclosing operation owns the span. */
       Effect.fnUntraced(function* (events: ReadonlyArray<OrchestrationV2DomainEvent>) {
         const staleRequests = new Set<RuntimeRequestId>();
         const staleNodes = new Set<NodeId>();
+        const settledRequests = new Set<RuntimeRequestId>();
         for (const event of events) {
           if (
             event.type !== "runtime-request.updated" ||
             event.payload.kind !== "user_input" ||
-            event.payload.status !== "cancelled"
+            (event.payload.status !== "cancelled" && event.payload.status !== "pending")
           )
             continue;
           const current = yield* projectionStore.getRuntimeRequest(
             event.threadId,
             event.payload.id,
           );
+          if (event.payload.status === "pending") {
+            if (current !== undefined && current.status !== "pending") {
+              settledRequests.add(event.payload.id);
+            }
+            continue;
+          }
           if (
             current?.status !== "pending" ||
             current.kind !== "user_input" ||
@@ -314,7 +323,9 @@ const layerBase: Layer.Layer<
         return events.filter((event) => {
           switch (event.type) {
             case "runtime-request.updated":
-              return event.payload.status !== "cancelled" || !staleRequests.has(event.payload.id);
+              return event.payload.status === "pending"
+                ? !settledRequests.has(event.payload.id)
+                : event.payload.status !== "cancelled" || !staleRequests.has(event.payload.id);
             case "node.updated":
               return event.payload.status !== "cancelled" || !staleNodes.has(event.payload.id);
             case "turn-item.updated":
@@ -652,19 +663,24 @@ const layerBase: Layer.Layer<
           }
 
           const runId = input.updateDelegatedCompletionOnlyRunId;
-          const normalized = yield* normalizeEvents(
+          const events =
             runId === undefined
               ? input.events
-              : yield* updateDelegatedCompletionOnly(input.events, (id) => id === runId),
+              : yield* updateDelegatedCompletionOnly(input.events, (id) => id === runId);
+          const normalized = yield* normalizeEvents(
+            input.guardPendingUserInputCancellations === true
+              ? yield* guardUserInputCancellations(events)
+              : events,
           );
           const storedEvents = yield* eventStore.append({
             commandId: input.commandId,
             events: normalized,
           });
-          // A Stop that changes nothing can still queue the stop of its delegated tasks.
+          // A Stop that changes nothing can still queue the stop of its delegated tasks,
+          // and the user-input guard can drop every event.
           const sequence =
             storedEvents.at(-1)?.sequence ??
-            (input.effects.length === 0
+            (input.effects.length === 0 && input.guardPendingUserInputCancellations !== true
               ? undefined
               : yield* eventStore.latestSequence({ threadId: input.threadId }));
           if (sequence === undefined) {

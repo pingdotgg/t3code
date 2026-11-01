@@ -52,6 +52,62 @@ const layerRecoveryTest = ProviderRuntimeRecovery.layer.pipe(
   ),
   Layer.provide(ServerSettings.layerTest()),
 );
+// Answers a question right after recovery reads its thread, like a respond already in flight at shutdown.
+const layerAnswerDuringRecoveryTest = (answeredRequestId: RuntimeRequestId) =>
+  ProviderRuntimeRecovery.layer.pipe(
+    Layer.provide(
+      Layer.effect(
+        ProjectionStore.ProjectionStoreV2,
+        Effect.gen(function* () {
+          const projections = yield* ProjectionStore.ProjectionStoreV2;
+          const eventSink = yield* EventSink.EventSinkV2;
+          return ProjectionStore.ProjectionStoreV2.of({
+            ...projections,
+            getRuntimeRecoveryProjection: (threadId) =>
+              projections.getRuntimeRecoveryProjection(threadId).pipe(
+                Effect.tap((projection) =>
+                  Effect.forEach(
+                    projection.runtimeRequests.filter(
+                      (request) => request.id === answeredRequestId,
+                    ),
+                    (request) =>
+                      eventSink.write({
+                        events: [
+                          {
+                            id: EventId.make(`event:${request.id}:answered`),
+                            type: "runtime-request.updated",
+                            threadId,
+                            nodeId: request.nodeId,
+                            occurredAt: request.createdAt,
+                            payload: {
+                              ...request,
+                              status: "resolved",
+                              resolvedAt: request.createdAt,
+                            },
+                          },
+                        ],
+                      }),
+                  ).pipe(Effect.orDie),
+                ),
+              ),
+          });
+        }),
+      ),
+    ),
+    Layer.provideMerge(
+      EventSink.layer.pipe(
+        Layer.provideMerge(
+          Layer.mergeAll(
+            EventStore.layer,
+            ProjectionStore.layer,
+            EffectOutbox.layer,
+            IdAllocator.layer,
+          ).pipe(Layer.provideMerge(SqlitePersistence.layerMemory)),
+        ),
+      ),
+    ),
+    Layer.provide(ServerSettings.layerTest()),
+  );
 const providerInstanceId = ProviderInstanceId.make("codex");
 const modelSelection = { instanceId: providerInstanceId, model: "gpt-5.4" };
 const driver = ProviderDriverKind.make("codex");
@@ -208,6 +264,62 @@ it.effect.each(["startup", "shutdown"] as const)(
       }
       assert.deepEqual(yield* projections.getRecoveryThreadIds("runtime"), []);
     }).pipe(Effect.provide(layerRecoveryTest)),
+);
+
+it.effect(
+  "shutdown stops awaiting async questions without reopening one answered meanwhile",
+  () => {
+    const answeredRequestId = RuntimeRequestId.make("request:recovery:awaited-answered");
+    return Effect.gen(function* () {
+      const projections = yield* ProjectionStore.ProjectionStoreV2;
+      const eventSink = yield* EventSink.EventSinkV2;
+      const recovery = yield* ProviderRuntimeRecovery.ProviderRuntimeRecoveryService;
+      const now = yield* DateTime.now;
+      const threads = [] as Array<readonly [ThreadId, RuntimeRequestId]>;
+      for (const requestId of [
+        RuntimeRequestId.make("request:recovery:awaited"),
+        answeredRequestId,
+      ]) {
+        const threadId = yield* createThread(requestId);
+        const nodeId = NodeId.make(`node:${requestId}`);
+        yield* eventSink.write({
+          events: [
+            {
+              id: EventId.make(`event:${requestId}`),
+              type: "runtime-request.updated",
+              threadId,
+              nodeId,
+              occurredAt: now,
+              payload: {
+                id: requestId,
+                nodeId,
+                providerTurnId: null,
+                nativeRequestRef: null,
+                kind: "user_input",
+                status: "pending",
+                responseCapability: { type: "message", agentWaiting: true },
+                createdAt: now,
+                resolvedAt: null,
+              },
+            },
+          ],
+        });
+        threads.push([threadId, requestId]);
+      }
+      yield* recovery.reconcile("shutdown");
+      const requests = [] as Array<unknown>;
+      for (const [threadId, requestId] of threads) {
+        const request = (yield* projections.getThreadProjection(threadId)).runtimeRequests.find(
+          (candidate) => candidate.id === requestId,
+        );
+        requests.push([request?.status, request?.responseCapability]);
+      }
+      assert.deepEqual(requests, [
+        ["pending", { type: "message" }],
+        ["resolved", { type: "message", agentWaiting: true }],
+      ]);
+    }).pipe(Effect.provide(layerAnswerDuringRecoveryTest(answeredRequestId)));
+  },
 );
 
 it.effect("stops a session its thread detached, which kept its live status", () =>
