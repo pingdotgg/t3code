@@ -1,6 +1,8 @@
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
+import * as SchemaTransformation from "effect/SchemaTransformation";
 import { TrimmedNonEmptyString } from "./baseSchemas.ts";
+import { SecretReference } from "./secretReference.ts";
 
 const PROVIDER_SLUG_MAX_CHARS = 64;
 const PROVIDER_SLUG_PATTERN = /^[a-zA-Z][a-zA-Z0-9_-]*$/;
@@ -15,18 +17,10 @@ const slugSchema = TrimmedNonEmptyString.check(
 export const ProviderDriverKind = slugSchema.pipe(Schema.brand("ProviderDriverKind"));
 export type ProviderDriverKind = typeof ProviderDriverKind.Type;
 
-const isProviderDriverKindValue = Schema.is(ProviderDriverKind);
-export const isProviderDriverKind = (value: unknown): value is ProviderDriverKind =>
-  isProviderDriverKindValue(value);
+export const isProviderDriverKind = Schema.is(ProviderDriverKind);
 
 export const ProviderInstanceId = slugSchema.pipe(Schema.brand("ProviderInstanceId"));
 export type ProviderInstanceId = typeof ProviderInstanceId.Type;
-
-export const ProviderInstanceRef = Schema.Struct({
-  instanceId: ProviderInstanceId,
-  driver: ProviderDriverKind,
-});
-export type ProviderInstanceRef = typeof ProviderInstanceRef.Type;
 
 export const ProviderInstanceEnvironmentVariableName = TrimmedNonEmptyString.check(
   Schema.isMaxLength(ENVIRONMENT_VARIABLE_NAME_MAX_CHARS),
@@ -35,23 +29,49 @@ export const ProviderInstanceEnvironmentVariableName = TrimmedNonEmptyString.che
 export type ProviderInstanceEnvironmentVariableName =
   typeof ProviderInstanceEnvironmentVariableName.Type;
 
-export const ProviderInstanceEnvironmentVariable = Schema.Struct({
+const ProviderInstanceEnvironmentVariableValue = Schema.Struct({
+  name: ProviderInstanceEnvironmentVariableName,
+  value: Schema.Union([Schema.String, SecretReference]),
+  sensitive: Schema.Boolean,
+  valueRedacted: Schema.optionalKey(Schema.Boolean),
+});
+
+// A reference is encoded beside an empty value so older servers and clients still decode it.
+const StoredProviderInstanceEnvironmentVariable = Schema.Struct({
   name: ProviderInstanceEnvironmentVariableName,
   value: Schema.String.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
   sensitive: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   valueRedacted: Schema.optionalKey(Schema.Boolean),
+  secret: Schema.optionalKey(SecretReference),
 });
+
+export const ProviderInstanceEnvironmentVariable = StoredProviderInstanceEnvironmentVariable.pipe(
+  Schema.decodeTo(
+    Schema.toType(ProviderInstanceEnvironmentVariableValue),
+    SchemaTransformation.transform<
+      typeof ProviderInstanceEnvironmentVariableValue.Type,
+      typeof StoredProviderInstanceEnvironmentVariable.Type
+    >({
+      decode: ({ secret, ...variable }) =>
+        secret === undefined ? variable : { ...variable, value: secret },
+      encode: ({ value, ...variable }) =>
+        typeof value === "string"
+          ? { ...variable, value }
+          : { ...variable, value: "", secret: value },
+    }),
+  ),
+);
 export type ProviderInstanceEnvironmentVariable = typeof ProviderInstanceEnvironmentVariable.Type;
 
 export const ProviderInstanceEnvironment = Schema.Array(ProviderInstanceEnvironmentVariable);
 export type ProviderInstanceEnvironment = typeof ProviderInstanceEnvironment.Type;
 
-/**
- * The driver-specific config payload is left as `Schema.Unknown`; each driver
- * registers its own decoder with the runtime registry, and envelopes for
- * unknown drivers are preserved verbatim so they round-trip across version
- * changes without data loss.
- */
+/** What drivers receive: every secret reference has been read into a plain value. */
+export type ResolvedProviderInstanceEnvironment = ReadonlyArray<
+  Omit<ProviderInstanceEnvironmentVariable, "value"> & { readonly value: string }
+>;
+
+/** Drivers decode their own config; unknown-driver envelopes round-trip verbatim across versions. */
 export const ProviderInstanceConfig = Schema.Struct({
   driver: ProviderDriverKind,
   displayName: Schema.optional(TrimmedNonEmptyString),
@@ -83,11 +103,6 @@ export type ProviderInstanceMutation = typeof ProviderInstanceMutation.Type;
 export const ProviderInstanceConfigMap = Schema.Record(ProviderInstanceId, ProviderInstanceConfig);
 export type ProviderInstanceConfigMap = typeof ProviderInstanceConfigMap.Type;
 
-/**
- * The legacy single-instance-per-driver world used the driver kind itself as
- * the instance id; preserving that mapping keeps existing persisted threads,
- * bindings, and cache files routable across the migration without rewriting
- * their stored selection payloads.
- */
+/** Driver-kind ids keep stored selections routable without migration. */
 export const defaultInstanceIdForDriver = (driver: ProviderDriverKind): ProviderInstanceId =>
   ProviderInstanceId.make(driver);

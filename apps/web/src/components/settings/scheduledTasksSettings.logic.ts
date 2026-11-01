@@ -73,10 +73,7 @@ export interface DraftState {
   readonly modelKey: string;
   readonly runtimeMode: RuntimeMode;
   readonly interactionMode: ProviderInteractionMode;
-  /**
-   * The picker only edits `instanceId:model`; keeping the source object preserves provider
-   * options (reasoning, temperature, …) when the model itself is left unchanged.
-   */
+  /** Retain the source selection's provider options when the picker leaves instanceId:model unchanged. */
   readonly baseModelSelection: ModelSelection | null;
   readonly signatureEnabled: boolean;
   readonly signatureHeader: string;
@@ -110,7 +107,7 @@ export function webhookDraftErrors(draft: DraftState) {
     ];
   const errors: Array<{ title: string; description: string }> = [];
   for (const [label, value] of [
-    ["Replay key", draft.replayKey],
+    ["Duplicate request key", draft.replayKey],
     ["Coalesce key", draft.coalesceKey],
   ] as const) {
     if (value.trim() && !isWebhookDedupeTemplate(value.trim()))
@@ -287,4 +284,26 @@ export function scheduledTaskDefaultModel(
   );
   const fallback = models.find(({ model }) => model.isDefault) ?? models[0];
   return fallback ? { instanceId: fallback.instanceId, model: fallback.model.slug } : null;
+}
+
+/**
+ * A new task's project: a pinned open project, then any open one. An archived
+ * project only when Settings is scoped to it, so that scope can still save.
+ */
+export function defaultScheduledTaskProjectId<
+  TProject extends {
+    readonly id: ProjectId;
+    readonly pinnedAt?: string | null | undefined;
+    readonly archivedAt?: string | null | undefined;
+  },
+>(scopedProjects: ReadonlyArray<TProject>, scope: ResolvedSettingsScope): ProjectId | "" {
+  const open = scopedProjects.filter((project) => project.archivedAt == null);
+  const scopedToProject = scope.kind === "project" || scope.kind === "checkout";
+  return (
+    (
+      open.find((project) => project.pinnedAt != null) ??
+      open[0] ??
+      (scopedToProject ? scopedProjects[0] : undefined)
+    )?.id ?? ""
+  );
 }
