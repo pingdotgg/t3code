@@ -1,5 +1,5 @@
 diff --git a/dist/components/CodeView.d.ts b/dist/components/CodeView.d.ts
-index 234ec4baa4..274ff5e32b 100644
+index 234ec4baa4a9364088917b24a64a6377d16583f8..274ff5e32b65379b30ac645f1f64bfdc96a12da2 100644
 --- a/dist/components/CodeView.d.ts
 +++ b/dist/components/CodeView.d.ts
 @@ -158,6 +158,12 @@ interface CodeViewOptions<LAnnotation, Caret> extends CodeViewPassThroughOptions
@@ -30,7 +30,7 @@ index 234ec4baa4..274ff5e32b 100644
     * Returns the editor while this item is being edited. Partial diffs get an
     * editor after their files load; scrolling away or collapsing keeps it.
 diff --git a/dist/components/CodeView.js b/dist/components/CodeView.js
-index ee5c91c5ab..7d0a2901e4 100644
+index ee5c91c5ab44742994d900a81dbd8e9c508efb49..7d0a2901e48de0d356dd784896d7f8eb4c9ad0e8 100644
 --- a/dist/components/CodeView.js
 +++ b/dist/components/CodeView.js
 @@ -18,6 +18,7 @@ import { resolvePreferredHighlighter } from "../utils/resolvePreferredHighlighte
@@ -330,7 +330,7 @@ index ee5c91c5ab..7d0a2901e4 100644
  	if (item.type === "diff") return item.instance.updateCodeViewLayout(item.item.fileDiff, item.top, void 0, item.item.annotations ?? []);
 diff --git a/dist/components/CodeViewSearch.js b/dist/components/CodeViewSearch.js
 new file mode 100644
-index 0000000000..29370adf88
+index 0000000000000000000000000000000000000000..29370adf88299d8f7572d4054334b6ce81bdaf9e
 --- /dev/null
 +++ b/dist/components/CodeViewSearch.js
 @@ -0,0 +1,360 @@
@@ -694,8 +694,26 @@ index 0000000000..29370adf88
 +export { CodeViewSearch, collectMatches };
 +
 +//# sourceMappingURL=CodeViewSearch.js.map
+diff --git a/dist/components/FileDiff.d.ts b/dist/components/FileDiff.d.ts
+index 3dcef7068e52287fedbea64a89ea4ab677f39429..2f961dcac73b478058a4cefa68775f92642974b2 100644
+--- a/dist/components/FileDiff.d.ts
++++ b/dist/components/FileDiff.d.ts
+@@ -1,4 +1,4 @@
+-import { AppliedThemeStyleCache, BaseCodeOptions, BaseDiffOptions, CustomPreProperties, DiffLineAnnotation, ExpansionDirections, FileContents, FileDiffMetadata, HighlightedToken, HunkData, HunkSeparators, LineAnnotation, MaybeDiffFileInput, PostRenderPhase, PrePropertiesConfig, RenderHeaderFilenameSuffixCallback, RenderHeaderMetadataCallback, RenderHeaderPrefixCallback, RenderRange, SelectedLineRange, SelectionSide, ThemeTypes } from "../types.js";
++import { AppliedThemeStyleCache, BaseCodeOptions, BaseDiffOptions, CustomPreProperties, DiffLineAnnotation, ExpansionDirections, FileContents, FileDiffMetadata, HighlightedToken, HunkData, HunkExpansionRegion, HunkSeparators, LineAnnotation, MaybeDiffFileInput, PostRenderPhase, PrePropertiesConfig, RenderHeaderFilenameSuffixCallback, RenderHeaderMetadataCallback, RenderHeaderPrefixCallback, RenderRange, SelectedLineRange, SelectionSide, ThemeTypes } from "../types.js";
+ import { CapturedDiffSessionState, EditCompletionDecision, EditorActiveLineOptions, EditorChangeEvent, FileDiffEditCompleteEvent } from "../editor/types.js";
+ import { TextDocument } from "../editor/textDocument.js";
+ import { GetHoveredLineResult, GetLineIndexUtility, InteractionManager, InteractionManagerBaseOptions, SelectionWriteOptions } from "../managers/InteractionManager.js";
+@@ -206,6 +206,7 @@ declare class FileDiff<LAnnotation = undefined, Caret = undefined> {
+   onThemeChange(): void;
+   handleExpandHunk: (hunkIndex: number, direction: ExpansionDirections, expansionLineCountOverride?: number) => void;
+   expandHunk: (hunkIndex: number, direction: ExpansionDirections, expansionLineCountOverride?: number) => void;
++  getExpandedHunks(): ReadonlyMap<number, HunkExpansionRegion>;
+   protected loadFilesIfNecessary(): void;
+   /**
+    * In order to start an edit session, you must be using a `fileDiff` that
 diff --git a/dist/components/FileDiff.js b/dist/components/FileDiff.js
-index 12f4f8949f..e33a5ed319 100644
+index 12f4f8949f3a1907ac9877f83937b53a966c9411..74628c567069b06ea74aa468eba1a513769200b6 100644
 --- a/dist/components/FileDiff.js
 +++ b/dist/components/FileDiff.js
 @@ -1,6 +1,7 @@
@@ -707,7 +725,17 @@ index 12f4f8949f..e33a5ed319 100644
  import { getHighlighterIfLoaded, getSharedHighlighter } from "../highlighter/shared_highlighter.js";
  import { dequeueRender, queueRender } from "../managers/UniversalRenderingManager.js";
  import { areThemesEqual } from "../utils/areThemesEqual.js";
-@@ -724,7 +725,7 @@ var FileDiff = class {
+@@ -539,6 +540,9 @@ var FileDiff = class {
+ 		this.hunksRenderer.expandHunk(hunkIndex, direction, expansionLineCountOverride);
+ 		this.rerender();
+ 	};
++	getExpandedHunks() {
++		return this.hunksRenderer.getExpandedHunksMap();
++	}
+ 	loadFilesIfNecessary() {
+ 		const fileDiff = this.getInputDiff();
+ 		const { loadDiffFiles } = this.options;
+@@ -724,7 +728,7 @@ var FileDiff = class {
  		if (expandUnchanged) this.loadFilesIfNecessary();
  		this.hunksRenderer.setOptions(this.getHunksRendererOptions(this.options));
  		this.syncInteractionOptions();
@@ -716,7 +744,7 @@ index 12f4f8949f..e33a5ed319 100644
  		const { disableErrorHandling = false, disableFileHeader = false } = this.options;
  		if (disableFileHeader) {
  			if (this.headerElement != null) {
-@@ -740,11 +741,22 @@ var FileDiff = class {
+@@ -740,11 +744,22 @@ var FileDiff = class {
  			this.removeRenderedCode();
  			this.clearAuxiliaryNodes();
  			try {
@@ -744,7 +772,7 @@ index 12f4f8949f..e33a5ed319 100644
  			} catch (error) {
  				if (disableErrorHandling) throw error;
 diff --git a/dist/components/VirtualizedFile.d.ts b/dist/components/VirtualizedFile.d.ts
-index 90ef575932..0fd262cbb7 100644
+index 90ef575932174c3bc73e5051d2d75c3353631b75..0fd262cbb7e02aac1cf54954a9ef2438a86ba136 100644
 --- a/dist/components/VirtualizedFile.d.ts
 +++ b/dist/components/VirtualizedFile.d.ts
 @@ -50,7 +50,7 @@ declare class VirtualizedFile<LAnnotation = undefined, Caret = undefined> extend
@@ -757,7 +785,7 @@ index 90ef575932..0fd262cbb7 100644
    protected finalizeRender(): void;
    private updatePendingRender;
 diff --git a/dist/components/VirtualizedFile.js b/dist/components/VirtualizedFile.js
-index 95d4ca8fdf..24a980672d 100644
+index 95d4ca8fdf9e176e23d354094a11022eefdb2321..24a980672d06bfce2d49bf6938ec3782158c8d29 100644
 --- a/dist/components/VirtualizedFile.js
 +++ b/dist/components/VirtualizedFile.js
 @@ -23,6 +23,7 @@ var VirtualizedFile = class extends File {
@@ -823,7 +851,7 @@ index 95d4ca8fdf..24a980672d 100644
  		if (!this.isSimpleMode()) this.computeApproximateSize(true);
  		else if (shouldUpdateBuffer && previousRenderRange != null && file != null) {
 diff --git a/dist/components/VirtualizedFileDiff.js b/dist/components/VirtualizedFileDiff.js
-index eb34dd4a77..821bb0ab11 100644
+index eb34dd4a774cb06add3280fe6abd5f0dc292505e..821bb0ab114f52ec41eab54505a1eb08e511f47a 100644
 --- a/dist/components/VirtualizedFileDiff.js
 +++ b/dist/components/VirtualizedFileDiff.js
 @@ -551,7 +551,7 @@ var VirtualizedFileDiff = class extends FileDiff {
@@ -845,7 +873,7 @@ index eb34dd4a77..821bb0ab11 100644
  			workingDiff,
  			diff: pendingRenderDiff
 diff --git a/dist/components/web-components.js b/dist/components/web-components.js
-index 6e7b486a02..5b7290f181 100644
+index 6e7b486a02a0f9f9d2c57ea3d9e95b706925e72a..5b7290f1814f4883e9fd13ffdf22b9bacad461c0 100644
 --- a/dist/components/web-components.js
 +++ b/dist/components/web-components.js
 @@ -2,8 +2,17 @@ import { DIFFS_TAG_NAME } from "../constants.js";
@@ -879,7 +907,7 @@ index 6e7b486a02..5b7290f181 100644
  		connectedCallback() {
  			const shadowRoot = this.shadowRoot ?? this.attachShadow({ mode: "open" });
 diff --git a/dist/editor/editor.js b/dist/editor/editor.js
-index bf17cea32f..671e77b8cd 100644
+index bf17cea32f39ee60ff7520b17f44d99a8e7e98aa..671e77b8cd89a90d09376c0c93aeefb2e858eead 100644
 --- a/dist/editor/editor.js
 +++ b/dist/editor/editor.js
 @@ -436,7 +436,9 @@ var Editor = class {
@@ -907,7 +935,7 @@ index bf17cea32f..671e77b8cd 100644
  		if (newLineAnnotations != null) {
  			this.#lineAnnotations = newLineAnnotations;
 diff --git a/dist/editor/searchPanel.d.ts b/dist/editor/searchPanel.d.ts
-index 9542849786..1c1a51f56d 100644
+index 9542849786b98a7b11f98894847a2f53a9aac113..1c1a51f56da381105113d9b731e0573296edd9be 100644
 --- a/dist/editor/searchPanel.d.ts
 +++ b/dist/editor/searchPanel.d.ts
 @@ -15,6 +15,8 @@ interface SearchPanelOptions {
@@ -920,7 +948,7 @@ index 9542849786..1c1a51f56d 100644
    scrollToMatch: (nextMatch: MatchRange, retainFocus: boolean) => void;
    applyReplace: (edits: ResolvedTextEdit[]) => void;
 diff --git a/dist/editor/searchPanel.js b/dist/editor/searchPanel.js
-index df1ba637c2..676751bb0e 100644
+index df1ba637c2f7834f21f087eba7a416c802f4ac68..676751bb0ea518e24df95477183f647a78a59c98 100644
 --- a/dist/editor/searchPanel.js
 +++ b/dist/editor/searchPanel.js
 @@ -12,7 +12,7 @@ var SearchPanelWidget = class {
@@ -942,7 +970,7 @@ index df1ba637c2..676751bb0e 100644
  			this.#inputElement.select();
  		};
 diff --git a/dist/managers/ResizeManager.d.ts b/dist/managers/ResizeManager.d.ts
-index 3efafc4132..9e5b7511f9 100644
+index 3efafc41324e09c546e66645c0dc474e68417896..9e5b7511f9f82702c4e15fe7063b3e9a0b05a79d 100644
 --- a/dist/managers/ResizeManager.d.ts
 +++ b/dist/managers/ResizeManager.d.ts
 @@ -5,6 +5,8 @@ interface ResizeManagerSetupOptions {
@@ -955,7 +983,7 @@ index 3efafc4132..9e5b7511f9 100644
    private static managersByElement;
    private static getResizeObserver;
 diff --git a/dist/managers/ResizeManager.js b/dist/managers/ResizeManager.js
-index 9724cb1e34..14145d8329 100644
+index 9724cb1e344af1ac8763b592f671a9ceb63f1a76..14145d832900e7a9734786dbb6223d03424f7cb6 100644
 --- a/dist/managers/ResizeManager.js
 +++ b/dist/managers/ResizeManager.js
 @@ -19,6 +19,7 @@ var ResizeManager = class ResizeManager {
@@ -975,7 +1003,7 @@ index 9724cb1e34..14145d8329 100644
  	}
  	applyAnnotationUpdates(annotationUpdates) {
 diff --git a/dist/react/CodeView.d.ts b/dist/react/CodeView.d.ts
-index 12e12c50cd..684c7a89fa 100644
+index 12e12c50cd0442c230fb5a9ac00fb097f6dfb01e..684c7a89faa6a7ef0d81242159fec586ba1e51a9 100644
 --- a/dist/react/CodeView.d.ts
 +++ b/dist/react/CodeView.d.ts
 @@ -57,6 +57,8 @@ interface CodeViewBaseProps<LAnnotation, Caret> {
@@ -988,7 +1016,7 @@ index 12e12c50cd..684c7a89fa 100644
    renderHeaderPrefix?(item: CodeViewItem<LAnnotation>): ReactNode;
    renderHeaderFilenameSuffix?(item: CodeViewItem<LAnnotation>): ReactNode;
 diff --git a/dist/react/CodeView.js b/dist/react/CodeView.js
-index 4dfed6bd0a..ac35a5a455 100644
+index 4dfed6bd0af6511b7325620ae78d25a8857cfa8b..ac35a5a455bfd3228c8976e4d97eba8bc0e4d75c 100644
 --- a/dist/react/CodeView.js
 +++ b/dist/react/CodeView.js
 @@ -24,7 +24,7 @@ function createDefaultCache(controlled) {
@@ -1053,7 +1081,7 @@ index 4dfed6bd0a..ac35a5a455 100644
  	if (hasGutterRenderer) managedOptions.renderGutterUtility = noopRender;
  	if (hasCodeViewHeader) managedOptions.renderCodeViewHeader = noopRender;
 diff --git a/dist/utils/createFileHeaderElement.js b/dist/utils/createFileHeaderElement.js
-index 39fe30e47b..600442e3eb 100644
+index 39fe30e47b3e524a72eec9b25bdcd37559b7b9d3..600442e3eb9697e8657f5f7e93ff282309960d10 100644
 --- a/dist/utils/createFileHeaderElement.js
 +++ b/dist/utils/createFileHeaderElement.js
 @@ -73,12 +73,12 @@ function createMetadataElement(fileDiff) {
@@ -1072,10 +1100,10 @@ index 39fe30e47b..600442e3eb 100644
  		}));
  	}
 diff --git a/package.json b/package.json
-index 0cc43c4a7d..60b7d17d61 100644
+index 0cc43c4a7de60dc1a80a4b383f1fe4a477ae6d07..c07cab5ccd6c9c014aecb6de6aef3c102c3d3aa0 100644
 --- a/package.json
 +++ b/package.json
-@@ -60,6 +60,18 @@
+@@ -60,6 +60,22 @@
      "./worker/worker-portable.js": {
        "types": "./dist/worker/worker-portable.d.ts",
        "import": "./dist/worker/worker-portable.js"
@@ -1091,6 +1119,10 @@ index 0cc43c4a7d..60b7d17d61 100644
 +    "./utils/parsePatchFiles": {
 +      "types": "./dist/utils/parsePatchFiles.d.ts",
 +      "import": "./dist/utils/parsePatchFiles.js"
++    },
++    "./utils/iterateOverDiff": {
++      "types": "./dist/utils/iterateOverDiff.d.ts",
++      "import": "./dist/utils/iterateOverDiff.js"
      }
    },
    "publishConfig": {
