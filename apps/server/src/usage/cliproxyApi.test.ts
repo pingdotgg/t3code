@@ -4,6 +4,8 @@ import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import * as TestClock from "effect/testing/TestClock";
 import { HttpClient, HttpClientError, HttpClientResponse } from "effect/http";
+import { collectLimitPools } from "@t3tools/shared/usageLimits";
+import { grokUsageResponseToLimits } from "@t3tools/provider-grok/server/usageLimits";
 
 import { makeCliproxyApi } from "./cliproxyApi.ts";
 
@@ -51,6 +53,7 @@ function fixture(
     accounts?: Array<
       (typeof accounts)[number] & {
         disabled?: boolean;
+        sub?: string;
         id_token: { chatgpt_account_id: string; plan_type?: string; chatgpt_plan_type?: string };
       }
     >;
@@ -342,6 +345,196 @@ describe("CLIProxyAPI built-in management API", () => {
         ["seven_day", 50],
         ["seven_day_fable", 80],
       ]);
+    }),
+  );
+
+  it.effect.each([
+    ["WEEKLY", "weekly", "Weekly"],
+    ["MONTHLY", "monthly", "Monthly"],
+  ] as const)("reads xAI %s billing as Grok limits through the hub", ([period, kind, label]) =>
+    Effect.gen(function* () {
+      const test = fixture({
+        accounts: [{ ...accounts[0]!, provider: "xai", sub: "oauth-subject" }],
+        upstream: (request) => {
+          const url = `https://cli-chat-proxy.grok.com/v1/billing${period === "WEEKLY" ? "?format=credits" : ""}`;
+          if (request.url !== url) return { status: 403, body: {} };
+          expect(request).toMatchObject({
+            auth_index: "a",
+            method: "GET",
+            url,
+            header: {
+              Authorization: "Bearer $TOKEN$",
+              "x-xai-token-auth": "xai-grok-cli",
+              "x-userid": "oauth-subject",
+              "x-grok-client-version": "1.0.46",
+            },
+          });
+          expect(request.header?.["anthropic-beta"]).toBeUndefined();
+          expect(request.header?.["Chatgpt-Account-Id"]).toBeUndefined();
+          return {
+            status: 200,
+            body: {
+              config: {
+                creditUsagePercent: 37,
+                currentPeriod: { type: `USAGE_PERIOD_TYPE_${period}`, end: "2099-01-01T00:00:00Z" },
+              },
+            },
+          };
+        },
+      });
+      const api = yield* test.api;
+      const result = yield* api.readAccounts(config);
+      expect(result).toHaveLength(1);
+      expect(result[0]).toMatchObject({
+        id: "first.json",
+        driver: "grok",
+        email: "first@example.com",
+        usageLimits: {
+          windows: [
+            {
+              id: kind,
+              kind,
+              label,
+              usedPercent: 37,
+              resetsAt: "2099-01-01T00:00:00.000Z",
+            },
+          ],
+        },
+      });
+      expect(result[0]?.usageLimits.resetCredits).toBeUndefined();
+      expect(test.requests).toHaveLength(3);
+      const checkedAt = result[0]!.usageLimits.checkedAt;
+      const native = grokUsageResponseToLimits(
+        {
+          config: {
+            creditUsagePercent: 63,
+            currentPeriod: { type: `USAGE_PERIOD_TYPE_${period}` },
+          },
+        },
+        checkedAt,
+      );
+      const [pool] = collectLimitPools(
+        [result[0]!.usageLimits, native].map((limits, index) => ({
+          key: String(index),
+          driver: result[0]!.driver,
+          displayName: null,
+          email: undefined,
+          plan: undefined,
+          accentColor: undefined,
+          environments: [],
+          sourceLabel: null,
+          redeem: null,
+          limits,
+        })),
+        Date.parse(checkedAt),
+      );
+      expect(pool?.windows).toHaveLength(1);
+      expect(pool?.windows[0]?.members).toHaveLength(2);
+    }),
+  );
+
+  it.effect("merges distinct Grok billing periods without duplicate windows", () =>
+    Effect.gen(function* () {
+      for (const samePeriod of [false, true]) {
+        const test = fixture({
+          accounts: [{ ...accounts[0]!, provider: "xai" }],
+          upstream: (request) => ({
+            status: 200,
+            body: {
+              config: {
+                creditUsagePercent: request.url?.includes("format=credits") ? 25 : 60,
+                currentPeriod: {
+                  type:
+                    samePeriod || request.url?.includes("format=credits")
+                      ? "USAGE_PERIOD_TYPE_WEEKLY"
+                      : "USAGE_PERIOD_TYPE_MONTHLY",
+                },
+              },
+            },
+          }),
+        });
+        const api = yield* test.api;
+        const [account] = yield* api.readAccounts(config);
+        expect(
+          account?.usageLimits.windows.map((window) => [
+            window.id,
+            window.kind,
+            window.usedPercent,
+          ]),
+        ).toEqual(
+          samePeriod
+            ? [["weekly", "weekly", 25]]
+            : [
+                ["weekly", "weekly", 25],
+                ["monthly", "monthly", 60],
+              ],
+        );
+      }
+    }),
+  );
+
+  it.effect("keeps an unmetered Grok account without inventing a quota", () =>
+    Effect.gen(function* () {
+      const api = yield* fixture({
+        accounts: [{ ...accounts[0]!, provider: "xai" }],
+        upstream: (request) => {
+          expect(request.header?.["x-userid"]).toBeUndefined();
+          return { status: 200, body: { config: {} } };
+        },
+      }).api;
+      const [account] = yield* api.readAccounts(config);
+      expect(account?.driver).toBe("grok");
+      expect(account?.usageLimits.windows).toEqual([]);
+      expect(account?.usageLimits.unavailable).toBeUndefined();
+    }),
+  );
+
+  it.effect.each([
+    { status: 403, body: { error: "private-upstream-details" } },
+    { status: 200, body: { config: { creditUsagePercent: "private-upstream-details" } } },
+  ])("isolates failed or malformed Grok billing without leaking its body", (upstream) =>
+    Effect.gen(function* () {
+      const test = fixture({
+        accounts: [{ ...accounts[0]!, provider: "xai" }, accounts[1]!],
+        upstream: (request) =>
+          request.auth_index === "a"
+            ? upstream
+            : {
+                status: 200,
+                body: request.url?.endsWith("rate-limit-reset-credits")
+                  ? { credits: [] }
+                  : { rate_limit: { primary_window: { used_percent: 12 } } },
+              },
+      });
+      const api = yield* test.api;
+      const result = yield* api.readAccounts(config);
+      expect(result[0]?.driver).toBe("grok");
+      expect(result[0]?.usageLimits.unavailable?.reason).toBe("probeFailed");
+      expect(result[1]?.usageLimits.windows[0]?.usedPercent).toBe(12);
+      expect(encodeJson(result)).not.toContain("private-upstream-details");
+    }),
+  );
+
+  it.effect("skips disabled xAI and unsupported accounts and never redeems Grok credits", () =>
+    Effect.gen(function* () {
+      const test = fixture({
+        accounts: [
+          { ...accounts[0]!, provider: "xai", disabled: true },
+          { ...accounts[1]!, provider: "unsupported" },
+        ],
+      });
+      const api = yield* test.api;
+      expect(yield* api.readAccounts(config)).toEqual([]);
+      const active = fixture({ accounts: [{ ...accounts[0]!, provider: "xai" }] });
+      const activeApi = yield* active.api;
+      expect(
+        (yield* activeApi.consume(config, "first.json", "credit").pipe(Effect.result))._tag,
+      ).toBe("Failure");
+      expect(
+        [...test.requests, ...active.requests].every((request) =>
+          request.path.endsWith("/auth-files"),
+        ),
+      ).toBe(true);
     }),
   );
 

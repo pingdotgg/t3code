@@ -17,6 +17,10 @@ import { codexPlanLabel } from "../provider/CodexProvider.ts";
 import { codexRateLimitsToLimits } from "../provider/codexUsageLimits.ts";
 import { claudeUsageResponseToLimits } from "../provider/claudeUsageLimits.ts";
 import { makeUnavailableUsageLimits } from "@t3tools/provider-core/server/usageLimits";
+import {
+  GrokUsageResponse,
+  grokUsageResponseToLimits,
+} from "@t3tools/provider-grok/server/usageLimits";
 
 const AuthFile = Schema.Struct({
   id: Schema.String,
@@ -24,6 +28,10 @@ const AuthFile = Schema.Struct({
   provider: Schema.String,
   email: Schema.optional(Schema.String),
   disabled: Schema.optional(Schema.Boolean),
+  sub: Schema.optional(Schema.String),
+  subject: Schema.optional(Schema.String),
+  user_id: Schema.optional(Schema.String),
+  userId: Schema.optional(Schema.String),
   id_token: Schema.optional(
     Schema.Struct({
       chatgpt_account_id: Schema.optional(Schema.String),
@@ -100,6 +108,7 @@ const decodeApiResponse = Schema.decodeUnknownEffect(ApiResponse);
 const decodeCreditList = Schema.decodeUnknownEffect(Schema.fromJsonString(CreditList));
 const decodeClaudeUsage = Schema.decodeUnknownEffect(Schema.fromJsonString(ClaudeUsage));
 const decodeCodexUsage = Schema.decodeUnknownEffect(Schema.fromJsonString(CodexUsage));
+const decodeGrokUsage = Schema.decodeUnknownEffect(Schema.fromJsonString(GrokUsageResponse));
 const isUsageLimitSourceError = Schema.is(UsageLimitSourceError);
 
 // Extra CAs can fix untrusted chains; expiry/hostname failures report codes only.
@@ -212,6 +221,9 @@ export const makeCliproxyApi = Effect.gen(function* () {
     url: string,
     data?: unknown,
   ) {
+    const userId = [account.sub, account.subject, account.user_id, account.userId]
+      .map((value) => value?.trim())
+      .find((value) => value);
     const header =
       account.provider === "codex"
         ? {
@@ -223,12 +235,19 @@ export const makeCliproxyApi = Effect.gen(function* () {
               ? { "Chatgpt-Account-Id": account.id_token.chatgpt_account_id }
               : {}),
           }
-        : {
-            Authorization: "Bearer $TOKEN$",
-            "anthropic-beta": "oauth-2025-04-20",
-            // The OAuth usage endpoint can return 429 without a Claude Code user agent.
-            "User-Agent": "claude-code/2.1.273",
-          };
+        : account.provider === "xai"
+          ? {
+              Authorization: "Bearer $TOKEN$",
+              "x-xai-token-auth": "xai-grok-cli",
+              ...(userId ? { "x-userid": userId } : {}),
+              "x-grok-client-version": "1.0.46",
+            }
+          : {
+              Authorization: "Bearer $TOKEN$",
+              "anthropic-beta": "oauth-2025-04-20",
+              // The OAuth usage endpoint can return 429 without a Claude Code user agent.
+              "User-Agent": "claude-code/2.1.273",
+            };
     const raw = yield* management(config, "api-call", {
       auth_index: account.auth_index,
       method: data === undefined ? "GET" : "POST",
@@ -269,13 +288,51 @@ export const makeCliproxyApi = Effect.gen(function* () {
     const checkedAt = DateTime.formatIso(yield* DateTime.now);
     const base = {
       id: account.id,
-      driver: ProviderDriverKind.make(account.provider === "codex" ? "codex" : "claudeAgent"),
+      driver: ProviderDriverKind.make(
+        account.provider === "xai"
+          ? "grok"
+          : account.provider === "codex"
+            ? "codex"
+            : "claudeAgent",
+      ),
       ...(account.email ? { email: account.email } : {}),
       ...(account.id_token?.chatgpt_account_id?.trim()
         ? { workspaceId: account.id_token.chatgpt_account_id.trim() }
         : {}),
     };
     const read = Effect.gen(function* () {
+      if (account.provider === "xai") {
+        const results = yield* Effect.forEach(
+          [
+            "https://cli-chat-proxy.grok.com/v1/billing?format=credits",
+            "https://cli-chat-proxy.grok.com/v1/billing",
+          ],
+          (url) =>
+            apiCall(config, account, url).pipe(Effect.flatMap(decodeGrokUsage), Effect.result),
+          { concurrency: 2 },
+        );
+        const responses = results.flatMap((result) =>
+          result._tag === "Success" ? [result.success] : [],
+        );
+        if (responses.length === 0) {
+          return yield* new UsageLimitSourceError({
+            detail: "The hub could not read Grok billing.",
+          });
+        }
+        const windows = responses.flatMap(
+          (response) => grokUsageResponseToLimits(response, checkedAt).windows,
+        );
+        const uniqueWindows = windows.filter(
+          (window, index) => windows.findIndex((other) => other.kind === window.kind) === index,
+        );
+        return {
+          ...base,
+          usageLimits: {
+            checkedAt,
+            windows: uniqueWindows.map((window) => ({ ...window, id: window.kind })),
+          },
+        };
+      }
       if (account.provider === "claude") {
         const body = yield* apiCall(config, account, "https://api.anthropic.com/api/oauth/usage");
         const usage = yield* decodeClaudeUsage(body);
@@ -378,7 +435,10 @@ export const makeCliproxyApi = Effect.gen(function* () {
     return yield* Effect.forEach(
       accounts.filter(
         (account) =>
-          !account.disabled && (account.provider === "codex" || account.provider === "claude"),
+          !account.disabled &&
+          (account.provider === "codex" ||
+            account.provider === "claude" ||
+            account.provider === "xai"),
       ),
       (account) => readAccount(config, account),
       { concurrency: 4 },
