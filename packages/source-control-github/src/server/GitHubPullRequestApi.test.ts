@@ -42,6 +42,12 @@ const refusedReviewer = {
   message: "Resource not accessible by integration",
   path: ["repository", "pullRequest", "reviewRequests", "nodes", 0, "requestedReviewer"],
 };
+// What GitHub answers for a pull request that has no `refs/pull/<number>/head`.
+const unresolvedPullRef = {
+  type: "NOT_FOUND",
+  message: "Could not resolve head ref 'refs/pull/7/head'.",
+  path: ["repository", "pullRequest", "baseRef", "compare"],
+};
 const pullRequestInput = { cwd: "/w", repository: "acme/web", host: "github.com", number: 7 };
 type PullRequestRead = (
   input: typeof pullRequestInput,
@@ -2355,6 +2361,23 @@ layer("GitHubPullRequestApi.layer", (it) => {
     }),
   );
 
+  it.effect.each([
+    { action: "merge", mutation: "mergePullRequest(" },
+    { action: "update-branch", mutation: "updatePullRequestBranch(" },
+  ] as const)("runs $action on a pull request GitHub has no pull ref for", ({ action, mutation }) =>
+    Effect.gen(function* () {
+      route([
+        "query PullRequestActionState",
+        { ...actionState({ baseRef: { compare: null } }), errors: [unresolvedPullRef] },
+      ]);
+      const cli = yield* GitHubPullRequestApi.GitHubPullRequestApi;
+
+      yield* cli.runPullRequestAction({ ...pullRequestInput, action });
+
+      expect(variablesOf(mutation)).toHaveLength(1);
+    }),
+  );
+
   it.effect("merges at once when auto-merge is asked of a pull request that is ready now", () =>
     Effect.gen(function* () {
       route(["query PullRequestActionState", actionState({ mergeStateStatus: "CLEAN" })]);
@@ -3266,7 +3289,12 @@ layer("GitHubPullRequestApi.layer", (it) => {
         }).pipe(Effect.asVoid, Effect.flip);
         expect(error._tag).toBe(tag ?? "GitHubApiResponseError");
         if (error._tag === "GitHubApiResponseError")
-          expect(error).toMatchObject({ status, githubErrors: errors.map((e) => e.message) });
+          expect(error).toMatchObject({
+            status,
+            githubErrors: errors.map((e) =>
+              "path" in e ? `${e.message} (at ${e.path.join(".")})` : e.message,
+            ),
+          });
         expect(mockedExecute).toHaveBeenCalledTimes(index + 1);
       }
     }),
@@ -3408,6 +3436,91 @@ layer("GitHubPullRequestApi.layer", (it) => {
       expect(detail.labels).toEqual([{ name: "bug", color: "ff0000" }]);
       expect(detail.checks).toHaveLength(2);
       expect(detail.checksState).toBe("failing");
+    }),
+  );
+
+  const unresolvedCore = {
+    ...coreResponse({ baseRef: { compare: null } }),
+    errors: [unresolvedPullRef],
+  };
+  it.effect.each([
+    { description: "alone", answers: [unresolvedCore], requestedReviewers: [100] },
+    {
+      description: "beside a refused reviewer",
+      answers: [
+        { ...unresolvedCore, errors: [unresolvedPullRef, refusedReviewer] },
+        unresolvedCore,
+      ],
+      requestedReviewers: [100, 0],
+    },
+  ])(
+    "reads a pull request without a pull ref, its comparison unknown ($description)",
+    ({ answers, requestedReviewers }) =>
+      Effect.gen(function* () {
+        for (const answer of answers)
+          mockedExecute.mockReturnValueOnce(Effect.succeed(output(encodeJson(answer))));
+        const cli = yield* GitHubPullRequestApi.GitHubPullRequestApi;
+        const detail = yield* cli.getPullRequestDetail(pullRequestInput);
+        expect(detail.number).toBe(7);
+        expect(detail.comparison).toBeNull();
+        expect(variablesOf("PullRequestCore").map((v) => v["requestedReviewers"])).toEqual(
+          requestedReviewers,
+        );
+      }),
+  );
+
+  it.effect("fails a missing pull ref beside another error, in GitHub's words", () =>
+    Effect.gen(function* () {
+      const refusedChecks = {
+        type: "FORBIDDEN",
+        message: "Resource not accessible by integration",
+        path: ["repository", "pullRequest", "commits", "nodes", 0, "commit", "statusCheckRollup"],
+      };
+      mockedExecute.mockReturnValueOnce(
+        Effect.succeed(
+          output(encodeJson({ ...unresolvedCore, errors: [unresolvedPullRef, refusedChecks] })),
+        ),
+      );
+      const cli = yield* GitHubPullRequestApi.GitHubPullRequestApi;
+      const error = yield* Effect.flip(cli.getPullRequestDetail(pullRequestInput));
+      expect(error).toMatchObject({
+        _tag: "GitHubApiResponseError",
+        status: 200,
+        githubErrors: [
+          "Could not resolve head ref 'refs/pull/7/head'. (at repository.pullRequest.baseRef.compare)",
+          "Resource not accessible by integration (at repository.pullRequest.commits.nodes.0.commit.statusCheckRollup)",
+        ],
+      });
+    }),
+  );
+
+  it.effect("still reads a pull request GitHub cannot find as missing, in GitHub's words", () =>
+    Effect.gen(function* () {
+      const { data } = coreResponse();
+      mockedExecute.mockReturnValueOnce(
+        Effect.succeed(
+          output(
+            encodeJson({
+              data: { repository: { ...data.repository, pullRequest: null } },
+              errors: [
+                {
+                  type: "NOT_FOUND",
+                  message: "Could not resolve to a PullRequest with the number of 7.",
+                  path: ["repository", "pullRequest"],
+                },
+              ],
+            }),
+          ),
+        ),
+      );
+      const cli = yield* GitHubPullRequestApi.GitHubPullRequestApi;
+      const error = yield* Effect.flip(cli.getPullRequestDetail(pullRequestInput));
+      expect(error).toMatchObject({
+        _tag: "GitHubApiNotFoundError",
+        githubErrors: [
+          "Could not resolve to a PullRequest with the number of 7. (at repository.pullRequest)",
+        ],
+      });
     }),
   );
 
