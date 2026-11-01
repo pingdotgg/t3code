@@ -847,7 +847,9 @@ it.effect("sends a guest's files as the guest's message and keeps them the guest
     // The day-old pending-upload sweep leaves a waiting guest's files alone.
     const { attachmentsDir } = yield* ServerConfig.ServerConfig;
     // Any pending upload counts as stale at the end of time.
-    sweepStalePendingAttachments({ attachmentsDir, nowMs: Number.MAX_SAFE_INTEGER });
+    yield* Effect.promise(() =>
+      sweepStalePendingAttachments({ attachmentsDir, nowMs: Number.MAX_SAFE_INTEGER }),
+    );
     const copied = pending[0]!;
     yield* orchestrator.dispatch({
       type: "message.dispatch",
