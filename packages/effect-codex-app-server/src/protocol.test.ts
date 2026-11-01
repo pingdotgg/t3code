@@ -1,10 +1,13 @@
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
+import * as PlatformError from "effect/PlatformError";
 import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
+import * as Sink from "effect/Sink";
 import * as Stdio from "effect/Stdio";
 import * as Stream from "effect/Stream";
+import * as Tracer from "effect/Tracer";
 import * as TestClock from "effect/testing/TestClock";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -182,6 +185,95 @@ it.layer(NodeServices.layer)("effect-codex-app-server protocol", (it) => {
           },
         });
       }),
+  );
+
+  it.effect(
+    "correlates concurrent request spans through responses, failures and interruption",
+    () => {
+      const spans: Array<Tracer.NativeSpan> = [];
+      const tracer = Tracer.make({
+        span: (options) => {
+          const span = new Tracer.NativeSpan(options);
+          spans.push(span);
+          return span;
+        },
+      });
+      return Effect.gen(function* () {
+        const { stdio, input, output } = yield* makeInMemoryStdio();
+        const transport = yield* CodexProtocol.makeCodexAppServerPatchedProtocol({ stdio });
+        const methods = ["model/list", "account/read", "skills/list"];
+        const requests = [];
+        for (const method of methods) {
+          requests.push(
+            yield* transport.request(method, { secret: "private-payload" }).pipe(Effect.forkScoped),
+          );
+          yield* Queue.take(output);
+        }
+        yield* Queue.offer(
+          input,
+          encodeJsonl({ id: 2, error: { code: -32602, message: "Invalid params" } }),
+        );
+        yield* Fiber.await(requests[1]!);
+        yield* Queue.offer(input, encodeJsonl({ id: 1, result: { secret: "private-result" } }));
+        yield* Fiber.join(requests[0]!);
+        yield* Fiber.interrupt(requests[2]!);
+        // A late response for an interrupted request must not affect the next request.
+        yield* Queue.offer(input, encodeJsonl({ id: 3, result: {} }));
+        const next = yield* transport.request("config/read").pipe(Effect.forkScoped);
+        yield* Queue.take(output);
+        yield* Queue.offer(input, encodeJsonl({ id: 4, result: {} }));
+        yield* Fiber.join(next);
+        for (const [index, method] of [...methods, "config/read"].entries()) {
+          const request = spans.find(
+            (span) =>
+              span.name === "CodexAppServerProtocol.request" &&
+              span.attributes.get("rpc.request_id") === index + 1,
+          );
+          assert.isDefined(request);
+          assert.equal(request!.attributes.get("rpc.method"), method);
+          assert.equal(request!.attributes.get("rpc.system"), "jsonrpc");
+          assert.equal(request!.status._tag, "Ended");
+          if (request!.status._tag === "Ended") {
+            assert.equal(
+              request!.status.exit._tag,
+              index === 1 || index === 2 ? "Failure" : "Success",
+            );
+          }
+          for (const phase of ["enqueue", "awaitResponse"]) {
+            const child: Tracer.NativeSpan | undefined = spans.find(
+              (span) =>
+                span.name === `CodexAppServerProtocol.request.${phase}` &&
+                span.parent?._tag === "Some" &&
+                span.parent.value.spanId === request!.spanId,
+            );
+            assert.isDefined(child);
+            assert.equal(child!.traceId, request!.traceId);
+            assert.equal(child!.attributes.get("rpc.method"), method);
+            assert.equal(child!.attributes.get("rpc.request_id"), index + 1);
+            assert.equal(child!.status._tag, "Ended");
+          }
+        }
+        const failedSend = yield* transport
+          .request("thread/start", { value: 1n })
+          .pipe(Effect.exit);
+        assert.equal(failedSend._tag, "Failure");
+        const sendSpans = spans.filter((span) => span.attributes.get("rpc.request_id") === 5);
+        assert.deepEqual(
+          sendSpans.map((span) => span.name),
+          ["CodexAppServerProtocol.request", "CodexAppServerProtocol.request.enqueue"],
+        );
+        for (const span of sendSpans) {
+          assert.equal(span.attributes.get("rpc.method"), "thread/start");
+          assert.equal(span.status._tag, "Ended");
+          if (span.status._tag === "Ended") assert.equal(span.status.exit._tag, "Failure");
+        }
+        for (const span of spans) {
+          const attrs = JSON.stringify([...span.attributes]);
+          assert.notInclude(attrs, "private-payload");
+          assert.notInclude(attrs, "private-result");
+        }
+      }).pipe(Effect.withTracer(tracer));
+    },
   );
 
   it.effect.each([1, 7, 1024])(
@@ -737,6 +829,43 @@ it.layer(NodeServices.layer)("effect-codex-app-server protocol", (it) => {
         }),
       );
       assert.instanceOf(failure, CodexError.CodexAppServerInputStreamEndedError);
+    }),
+  );
+
+  it.effect("fails pending requests when a write fails while input stays open", () =>
+    Effect.gen(function* () {
+      const { stdio: baseStdio } = yield* makeInMemoryStdio();
+      const writeFailure = PlatformError.systemError({
+        _tag: "Unknown",
+        module: "Stdio",
+        method: "stdout",
+        cause: new Error("EPIPE"),
+      });
+      const terminated = yield* Deferred.make<CodexError.CodexAppServerError>();
+      const transport = yield* CodexProtocol.makeCodexAppServerPatchedProtocol({
+        stdio: Stdio.make({
+          args: baseStdio.args,
+          stdin: baseStdio.stdin,
+          stdout: () => Sink.forEach(() => Effect.fail(writeFailure)),
+          stderr: baseStdio.stderr,
+        }),
+        onTermination: (error) => Deferred.succeed(terminated, error).pipe(Effect.asVoid),
+      });
+      const pending = yield* transport.request("thread/read", {}).pipe(Effect.forkScoped);
+
+      const failure = yield* Deferred.await(terminated);
+      assert.instanceOf(failure, CodexError.CodexAppServerTransportError);
+      assert.equal(failure.operation, "write-output-stream");
+      assert.strictEqual(failure.cause, writeFailure);
+      for (const request of [Fiber.join(pending), transport.request("thread/read", {})]) {
+        const requestFailure = yield* request.pipe(
+          Effect.match({
+            onFailure: (error) => error,
+            onSuccess: () => assert.fail("Expected the broken transport to reject the request"),
+          }),
+        );
+        assert.strictEqual(requestFailure, failure);
+      }
     }),
   );
 

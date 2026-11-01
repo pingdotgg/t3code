@@ -24,6 +24,7 @@ import * as Stream from "effect/Stream";
 import * as ElectronApp from "../electron/ElectronApp.ts";
 import * as ElectronPowerMonitor from "../electron/ElectronPowerMonitor.ts";
 import * as DesktopRendererHistory from "./DesktopRendererHistory.ts";
+import * as DesktopShellEnvironment from "../shell/DesktopShellEnvironment.ts";
 
 const LIVE_SAMPLE_INTERVAL = Duration.seconds(1);
 const BATTERY_SAMPLE_INTERVAL = Duration.seconds(5);
@@ -146,6 +147,7 @@ export const make = Effect.fn("desktop.telemetryPublisher.make")(function* () {
   const electronApp = yield* ElectronApp.ElectronApp;
   const powerMonitor = yield* ElectronPowerMonitor.ElectronPowerMonitor;
   const rendererHistory = yield* DesktopRendererHistory.DesktopRendererHistory;
+  const shellEnvironment = yield* DesktopShellEnvironment.DesktopShellEnvironment;
   yield* electronApp.whenReady;
 
   const initialPowerState: PowerState = {
@@ -400,7 +402,7 @@ export const make = Effect.fn("desktop.telemetryPublisher.make")(function* () {
       type: "desktopTelemetryHello",
       electronPid: process.pid,
     } as const),
-    Stream.merge(snapshots, updateReports),
+    Stream.merge(Stream.merge(snapshots, updateReports), shellEnvironment.updates),
   ).pipe(Stream.map((message) => textEncoder.encode(`${encodeMessage(message)}\n`)));
 
   const publishUpdateReport: DesktopTelemetryPublisher["Service"]["publishUpdateReport"] = (
