@@ -130,15 +130,15 @@ const writeRecords = Effect.fn("TailscaleServe.writeRecords")(function* (
   yield* fs.rename(`${path}.tmp`, path);
 });
 
+type Profiles = Effect.Success<ReturnType<typeof readTailscaleProfiles>> | null;
+const readProfiles = readTailscaleProfiles().pipe(Effect.orElseSucceed((): Profiles => null));
+
 /**
  * The Tailscale account whose Serve config is live now. Its `key` is the login profile ID,
  * the key Tailscale stores Serve config under, which tagging a host does not change. `keys`
  * also holds the keys earlier runs may have used for it: tailnet and user from a CLI too old
  * to list profiles, which outlives a node ID when a device is re-added, and the node ID.
  */
-type Profiles = Effect.Success<ReturnType<typeof readTailscaleProfiles>> | null;
-const readProfiles = readTailscaleProfiles().pipe(Effect.orElseSucceed((): Profiles => null));
-
 const currentAccount = Effect.fn("TailscaleServe.currentAccount")(function* (listed?: Profiles) {
   const profiles = listed === undefined ? yield* readProfiles : listed;
   const profile = profiles?.selected ?? null;
@@ -164,12 +164,6 @@ const currentAccount = Effect.fn("TailscaleServe.currentAccount")(function* (lis
   return { key, keys, label, profileId: profile?.id ?? null, profiles: profiles?.ids ?? null };
 });
 
-/**
- * Sorts records by whose they are. `ours` belong to `account`. `gone` were made on a login
- * profile Tailscale no longer lists: `tailscale logout` deleted its Serve config with it.
- * Windows lists only the signed-in Windows user's profiles, so absence proves nothing there.
- * `unlisted` were made on a profile, but Tailscale did not list its profiles to tell.
- */
 /** An account as a record or a read names it: every key it had, and its profile if listed. */
 interface AccountKeys {
   readonly keys: ReadonlyArray<string>;
@@ -186,6 +180,12 @@ const recordAccount = (key: string, record: ServeRecord): AccountKeys => ({
   profileId: record.profileId ?? null,
 });
 
+/**
+ * Sorts records by whose they are. `ours` belong to `account`. A record made on a login
+ * profile Tailscale no longer lists is skipped: `tailscale logout` deleted its Serve config
+ * with it. Windows lists only the signed-in Windows user's profiles, so absence proves
+ * nothing there. `unlisted` were made on a profile, but Tailscale did not list profiles.
+ */
 const sortRecords = Effect.fn("TailscaleServe.sortRecords")(function* (
   records: ServeRecords,
   account: AccountKeys | null,
