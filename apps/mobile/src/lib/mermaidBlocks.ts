@@ -157,9 +157,10 @@ export function splitMarkdownWithMermaid(markdown: string): MermaidMarkdownSegme
           key: `mmd-${segment.start}`,
         };
       }
+      const segmentDefinitions = collectDefinitions(segment.markdown);
       const needsPrefix =
         prefix.length > 0 &&
-        !definitions.every((definition) => segment.markdown.includes(definition));
+        !definitions.every((definition) => segmentDefinitions.includes(definition));
       const text = needsPrefix ? `${prefix}${segment.markdown}` : segment.markdown;
       return { kind: "markdown", markdown: text, key: `md-${segment.start}` };
     })

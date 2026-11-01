@@ -71,12 +71,16 @@ describe("splitMarkdownWithMermaid", () => {
         "```",
         "",
         "[Open][guide]",
+        "",
+        "```text",
+        "[guide]: https://example.com",
+        "```",
       ].join("\n"),
     );
     const tail = segments[segments.length - 1];
     expect(tail).toMatchObject({ kind: "markdown" });
     if (tail?.kind === "markdown") {
-      expect(tail.markdown).toContain("[guide]: https://example.com");
+      expect(tail.markdown).toMatch(/^\[guide\]: https:\/\/example\.com\n/);
       expect(tail.markdown).toContain("[Open][guide]");
     }
   });
