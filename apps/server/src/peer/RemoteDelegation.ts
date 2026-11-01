@@ -213,9 +213,9 @@ const make = Effect.gen(function* () {
       const parentNodeId = parentRun.rootNodeId;
       const { target } = input;
       if (
-        parent.thread.modelSelection.skillOverrides !== undefined &&
+        parentRun.modelSelection.skillOverrides !== undefined &&
         target.skillOverrides !== undefined &&
-        !skillOverridesEqual(parent.thread.modelSelection.skillOverrides, target.skillOverrides)
+        !skillOverridesEqual(parentRun.modelSelection.skillOverrides, target.skillOverrides)
       ) {
         return yield* new OrchestratorMcpFailure({
           code: "invalid_request",
@@ -233,7 +233,7 @@ const make = Effect.gen(function* () {
       }
       // The provider and model inherit as they do for a task here. Another
       // provider there has no model to inherit, so the caller names one.
-      const inherited = parent.thread.modelSelection;
+      const inherited = parentRun.modelSelection;
       const instanceId = target.providerInstanceId ?? inherited.instanceId;
       const model =
         target.model ?? (instanceId === inherited.instanceId ? inherited.model : undefined);

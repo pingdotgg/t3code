@@ -777,9 +777,14 @@ function queuedRunModelSelection(
   run: OrchestrationV2Run,
 ): ModelSelection {
   const message = projection.messages.find((candidate) => candidate.id === run.userMessageId);
-  return followsCurrentConversation(message)
+  const selection = followsCurrentConversation(message)
     ? projection.thread.modelSelection
     : run.modelSelection;
+  return selection.skillOverrides === undefined &&
+    selection.instanceId === run.modelSelection.instanceId &&
+    run.modelSelection.skillOverrides !== undefined
+    ? { ...selection, skillOverrides: run.modelSelection.skillOverrides }
+    : selection;
 }
 
 function usageLimitHoldsQueue(
@@ -5479,7 +5484,17 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       ]);
       projection = yield* getProjectionWithPendingEvents(command.threadId, events);
     }
-    const modelSelection = command.modelSelection ?? projection.thread.modelSelection;
+    const requestedSelection = command.modelSelection ?? projection.thread.modelSelection;
+    const storedSkillOverrides = projection.providerThreads.find(
+      (thread) =>
+        thread.id === projection.thread.activeProviderThreadId &&
+        thread.driver === "codex" &&
+        thread.providerInstanceId === requestedSelection.instanceId,
+    )?.nativeMetadata?.skillConfiguration?.overrides;
+    const modelSelection =
+      requestedSelection.skillOverrides === undefined && storedSkillOverrides !== undefined
+        ? { ...requestedSelection, skillOverrides: storedSkillOverrides }
+        : requestedSelection;
     let dispatchMode = resolveMessageDispatchIntent(
       projection,
       command.dispatchMode,

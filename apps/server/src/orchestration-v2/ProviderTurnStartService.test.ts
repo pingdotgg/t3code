@@ -988,11 +988,18 @@ function makeLocalCommandHarness(input: {
 }
 
 effectIt.effect.each([
-  ["claudeAgent", "Session skill overrides unavailable"],
-  ["codex", "Session skill overrides require a fresh thread"],
+  ["claudeAgent", "Session skill overrides unavailable", undefined, []],
+  ["codex", "Session skill overrides require a fresh thread", undefined, []],
+  [
+    "codex",
+    "Session skill overrides cannot change",
+    [{ path: "/skills/review/SKILL.md", enabled: false }],
+    [],
+  ],
+  ["codex", "Session skill overrides cannot change", [], undefined],
 ] as const)(
   "fails before opening %s with unsupported or contaminated skill overrides",
-  ([driver, title]) =>
+  ([driver, title, configured, requested]) =>
     Effect.gen(function* () {
       const harness = makeLocalCommandHarness({ text: "Continue" });
       const projection = harness.projection();
@@ -1000,11 +1007,25 @@ effectIt.effect.each([
         ...projection,
         runs: projection.runs.map((run) => ({
           ...run,
-          modelSelection: { ...run.modelSelection, skillOverrides: [] },
+          modelSelection:
+            requested === undefined
+              ? run.modelSelection
+              : { ...run.modelSelection, skillOverrides: requested },
         })),
         providerThreads: projection.providerThreads.map((thread) => ({
           ...thread,
           driver: ProviderDriverKind.make(driver),
+          ...(configured === undefined
+            ? {}
+            : {
+                nativeMetadata: {
+                  skillConfiguration: {
+                    providerVersion: "0.165.0",
+                    overrides: configured,
+                    skills: [],
+                  },
+                },
+              }),
         })),
       });
       yield* harness.start;

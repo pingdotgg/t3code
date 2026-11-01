@@ -1191,17 +1191,7 @@ describe("CodexAdapterV2 session initialize", () => {
       const session = yield* openReplaySession(
         makeCodexReplayTranscript({
           scenario: "initialize-interrupted",
-          entries: [
-            ...preamble.slice(0, 2),
-            ...preamble.slice(0, 1).map((entry) => withReplayRequestId(entry, 2)),
-            {
-              type: "emit_inbound",
-              label: "initialize-rejected",
-              frame: { id: 2, error: { code: -32600, message: "Already initialized" } },
-            },
-            ...preamble.slice(2, 3),
-            ...preamble.slice(3, 5).map((entry) => withReplayRequestId(entry, 3)),
-          ],
+          entries: [...preamble],
         }),
         (entry) =>
           entry.label === "initialize"
@@ -1220,7 +1210,7 @@ describe("CodexAdapterV2 session initialize", () => {
 
       const providerThread = yield* session.ensureThread("thread-initialize-interrupted");
       assert.equal(providerThread.nativeThreadRef?.nativeId, "initialize-interrupted");
-      assert.equal(session.initializeRequests(), 2);
+      assert.equal(session.initializeRequests(), 1);
     }).pipe(
       Effect.scoped,
       Effect.provide(

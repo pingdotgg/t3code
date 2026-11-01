@@ -2230,7 +2230,11 @@ const make = Effect.gen(function* () {
       const settings = yield* serverSettings.getSettings.pipe(
         Effect.mapError(() => failure("orchestration_error", "Unable to read server settings.")),
       );
-      const inherited = parent?.thread.modelSelection;
+      const inherited =
+        parent === undefined
+          ? undefined
+          : (ThreadManagementService.latestActiveRun(parent)?.modelSelection ??
+            parent.thread.modelSelection);
       const searchTerms = input.search?.toLowerCase().split(/\s+/).filter(Boolean) ?? [];
       return {
         parentThreadId: parent?.thread.id ?? null,
@@ -2346,7 +2350,10 @@ const make = Effect.gen(function* () {
       });
       const isRetryOfAcceptedDelegation = yield* threadManagement.hasReceipt(commandId);
       const target = yield* resolveTargetRechecking({
-        parent,
+        parent: {
+          ...parent,
+          thread: { ...parent.thread, modelSelection: parentRun.modelSelection },
+        },
         target: input.target,
         providers,
         skipProjectEnablementFilter: isRetryOfAcceptedDelegation,
@@ -2755,7 +2762,10 @@ const make = Effect.gen(function* () {
                     .pipe(Effect.mapError(threadManagementFailure))
                 : null;
               const target = yield* resolveTargetRechecking({
-                parent,
+                parent: {
+                  ...parent,
+                  thread: { ...parent.thread, modelSelection: parentRun.modelSelection },
+                },
                 target:
                   committedThread === null
                     ? request.target

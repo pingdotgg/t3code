@@ -1723,50 +1723,40 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
             }),
           ),
         );
-        const initialized = yield* Ref.make(false);
-        // Codex rejects a second initialize on the shared app-server.
-        const initializePermit = yield* Semaphore.make(1);
         const initializedUserAgent = yield* Ref.make("");
-        const ensureInitialized = initializePermit.withPermit(
-          Effect.gen(function* () {
-            const alreadyInitialized = yield* Ref.get(initialized);
-            if (alreadyInitialized) {
-              return;
-            }
-
-            const userAgent = yield* client
-              .request("initialize", {
-                clientInfo: buildCodexInitializeParams().clientInfo,
-                capabilities: CODEX_CLIENT_CAPABILITIES,
-              })
-              .pipe(
-                Effect.map((response) => response.userAgent),
-                Effect.catchTags({
-                  // Interruption can leave Codex initialized before the local flag is set.
-                  CodexAppServerRequestError: (error) =>
-                    error.code === -32600 && error.errorMessage === "Already initialized"
-                      ? Effect.succeed(null)
-                      : Effect.fail(error),
-                }),
-              );
-            if (userAgent !== null) yield* Ref.set(initializedUserAgent, userAgent);
-            const version = userAgent && /\/(\S+)/u.exec(userAgent)?.[1];
-            const advisory =
-              version && adapterOptions.compatibility
-                ? yield* adapterOptions.compatibility(version)
-                : undefined;
-            if (advisory?.status === "broken") {
-              const target =
-                advisory.recommendedVersion ?? advisory.recommendedRange ?? "a newer version";
-              return yield* new ProviderSetupError({
-                instanceId: adapterOptions.instanceId,
-                operation: "runtime",
-                detail: `Codex ${version} does not work with this T3 Code release. Update Codex to ${target}, then retry.`,
-              });
-            }
-            yield* client.notify("initialized", undefined);
-            yield* Ref.set(initialized, true);
-          }),
+        // Keep the handshake in the session scope when its first caller is interrupted.
+        const [initializeFiber, invalidateInitialize] = yield* Effect.cachedInvalidateWithTTL(
+          Effect.forkIn(
+            Effect.gen(function* () {
+              const userAgent = yield* client
+                .request("initialize", {
+                  clientInfo: buildCodexInitializeParams().clientInfo,
+                  capabilities: CODEX_CLIENT_CAPABILITIES,
+                })
+                .pipe(Effect.map((response) => response.userAgent));
+              yield* Ref.set(initializedUserAgent, userAgent);
+              const version = userAgent && /\/(\S+)/u.exec(userAgent)?.[1];
+              const advisory =
+                version && adapterOptions.compatibility
+                  ? yield* adapterOptions.compatibility(version)
+                  : undefined;
+              if (advisory?.status === "broken") {
+                const target =
+                  advisory.recommendedVersion ?? advisory.recommendedRange ?? "a newer version";
+                return yield* new ProviderSetupError({
+                  instanceId: adapterOptions.instanceId,
+                  operation: "runtime",
+                  detail: `Codex ${version} does not work with this T3 Code release. Update Codex to ${target}, then retry.`,
+                });
+              }
+              yield* client.notify("initialized", undefined);
+            }),
+            scope,
+          ),
+          Infinity,
+        );
+        const ensureInitialized = Effect.flatMap(initializeFiber, Fiber.join).pipe(
+          Effect.tapError(() => invalidateInitialize),
         );
         const resolveThreadSkills = Effect.fn("CodexAdapterV2.resolveThreadSkills")(function* (
           selection: Pick<ModelSelection, "skillOverrides"> | undefined,
@@ -7855,12 +7845,10 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               }
               // thread/revert requires the thread loaded in this app-server; resume after restart or idle release.
               if (!loaded) {
-                yield* assertCodexSkillOverridesUnchanged(
-                  input.modelSelection.skillOverrides,
-                  threadInput.providerThread.nativeMetadata?.skillConfiguration?.overrides,
-                );
+                const configured =
+                  threadInput.providerThread.nativeMetadata?.skillConfiguration?.overrides;
                 const skillConfiguration = yield* resolveThreadSkills(
-                  input.modelSelection,
+                  configured === undefined ? undefined : { skillOverrides: configured },
                   input.runtimePolicy.cwd,
                 );
                 yield* client.raw.request("thread/resume", {

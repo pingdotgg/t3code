@@ -1,4 +1,5 @@
-import { modelSelectionsEqual } from "@t3tools/shared/model";
+import { CodexSkillOverrideError } from "../provider/CodexSkillOverrides.ts";
+import { modelSelectionsEqual, skillOverridesEqual } from "@t3tools/shared/model";
 import { projectComposerContextForProvider } from "@t3tools/shared/composerContextReferences";
 import {
   CommandId,
@@ -556,6 +557,20 @@ export const layer: Layer.Layer<
           });
         },
       );
+      const configuredSkills = providerThread.nativeMetadata?.skillConfiguration;
+      if (
+        configuredSkills !== undefined &&
+        !skillOverridesEqual(run.modelSelection.skillOverrides, configuredSkills.overrides)
+      ) {
+        const error = new CodexSkillOverrideError({ reason: "session-policy-changed" });
+        yield* settleStartFailure({
+          signal: "skill-overrides-changed",
+          title: "Session skill overrides cannot change",
+          error,
+          message: error.message,
+        });
+        return;
+      }
       if (run.modelSelection.skillOverrides !== undefined && providerThread.driver !== "codex") {
         const error = new SessionSkillOverridesUnsupportedError();
         yield* settleStartFailure({
@@ -570,7 +585,7 @@ export const layer: Layer.Layer<
         run.modelSelection.skillOverrides !== undefined &&
         providerThread.nativeMetadata?.skillConfiguration === undefined &&
         (run.ordinal !== 1 ||
-          Boolean(projection.thread.forkedFrom) ||
+          projection.thread.forkedFrom?.type === "run" ||
           projection.contextHandoffs.length > 0)
       ) {
         const error = new SessionSkillOverridesHistoryError();
