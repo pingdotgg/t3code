@@ -1,4 +1,4 @@
-import type { ThreadId } from "@t3tools/contracts";
+import { knownThreadHistoryPage, type ThreadId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 
@@ -42,5 +42,5 @@ export const fetchEnvironmentThreadHistoryPage = Effect.fn(
     timeoutMs: input.timeoutMs ?? DEFAULT_THREAD_HISTORY_TIMEOUT_MS,
     request: ({ client, headers }) =>
       client.threadHistoryPage({ ...endpoint, headers: withOrchestrationProtocolHeader(headers) }),
-  });
+  }).pipe(Effect.map(knownThreadHistoryPage));
 });

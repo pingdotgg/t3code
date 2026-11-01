@@ -1,6 +1,8 @@
-import type {
-  OrchestrationV2ProjectedTurnItem,
-  OrchestrationV2ThreadProjection,
+import {
+  knownThreadProjection,
+  type OrchestrationV2ProjectedTurnItem,
+  type OrchestrationV2ThreadProjection,
+  type ReceivedOrchestrationV2ThreadProjection,
 } from "@t3tools/contracts";
 
 import { restoreSnapshotBodies } from "./orchestrationV2DedupedBodies.ts";
@@ -39,12 +41,13 @@ export function restoreLocalVisibleTurnItems(
 
 /** Undoes both opt-in compactions; bodies carry their own markers, so they need no flag. */
 export function boundedSnapshotProjection(snapshot: {
-  readonly projection: OrchestrationV2ThreadProjection;
+  readonly projection: ReceivedOrchestrationV2ThreadProjection;
   readonly turnItemsOmitLocalVisible?: true | undefined;
 }): OrchestrationV2ThreadProjection {
+  const projection = knownThreadProjection(snapshot.projection);
   return restoreSnapshotBodies(
     snapshot.turnItemsOmitLocalVisible === true
-      ? restoreLocalVisibleTurnItems(snapshot.projection)
-      : snapshot.projection,
+      ? restoreLocalVisibleTurnItems(projection)
+      : projection,
   );
 }

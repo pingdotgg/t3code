@@ -1,5 +1,6 @@
 import {
   isOrchestrationV2WorkActive,
+  knownThreadDetailSnapshot,
   ORCHESTRATION_V2_WS_METHODS,
   type EnvironmentId as EnvironmentIdType,
   type OrchestrationV2ThreadDetailSnapshot,
@@ -211,6 +212,7 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
   const cached =
     retained === undefined
       ? yield* cache.loadThread(environmentId, threadId).pipe(
+          Effect.map(Option.map(knownThreadDetailSnapshot)),
           Effect.catch((error) =>
             Effect.logWarning("Could not load cached thread.").pipe(
               Effect.annotateLogs({
@@ -869,9 +871,10 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
           const saved =
             queuedSnapshot ??
             Option.getOrUndefined(
-              yield* cache
-                .loadThread(environmentId, threadId)
-                .pipe(Effect.orElseSucceed(() => Option.none())),
+              yield* cache.loadThread(environmentId, threadId).pipe(
+                Effect.map(Option.map(knownThreadDetailSnapshot)),
+                Effect.orElseSucceed(() => Option.none()),
+              ),
             );
           if (saved === undefined) return;
           const projection = settleTurnItems(threadId, saved.projection, latestItems);

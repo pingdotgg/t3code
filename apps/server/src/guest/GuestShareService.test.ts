@@ -5,6 +5,7 @@ import {
   CommandId,
   EventId,
   GuestShareId,
+  knownThreadProjection,
   type GuestStreamEvent,
   MessageId,
   type OrchestrationV2ThreadHistoryPage,
@@ -272,7 +273,7 @@ it.effect("starts a stream with the runs and items already in the thread", () =>
     }
     assert.equal(snapshot.item.projection.runs.length, 1);
     assert.include(
-      snapshot.item.projection.visibleTurnItems.map((row) => row.item.type),
+      knownThreadProjection(snapshot.item.projection).visibleTurnItems.map((row) => row.item.type),
       "user_message",
     );
   }).pipe(Effect.provide(layerTest)),

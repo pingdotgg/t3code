@@ -1,4 +1,8 @@
 import {
+  knownThreadProjection,
+  type OrchestrationV2ThreadDetailSnapshot,
+} from "@t3tools/contracts";
+import {
   omitLocalVisibleTurnItems,
   restoreLocalVisibleTurnItems,
 } from "@t3tools/shared/orchestrationV2BoundedSnapshot";
@@ -33,10 +37,9 @@ const decodeCompatible = Schema.decodeUnknownEffect(
 );
 
 export const encodeStoredThreadSnapshot = Effect.fn("ThreadCache.encode")(function* (
-  stored: Pick<
-    typeof StoredOrchestrationThreadSnapshot.Type,
-    "environmentId" | "threadId" | "snapshot"
-  >,
+  stored: Pick<typeof StoredOrchestrationThreadSnapshot.Type, "environmentId" | "threadId"> & {
+    readonly snapshot: OrchestrationV2ThreadDetailSnapshot;
+  },
 ) {
   const { snapshot } = stored;
   const compact = omitLocalVisibleTurnItems(snapshot.projection);
@@ -58,7 +61,7 @@ export const decodeStoredThreadSnapshot = Effect.fn("ThreadCache.decode")(functi
   if (stored.schemaVersion !== COMPACT_THREAD_CACHE_SCHEMA_VERSION) return stored;
   const { turnItemsOmitLocalVisible, turnItemCount, visibleTurnItemCount, ...snapshot } =
     stored.snapshot;
-  const { projection } = snapshot;
+  const projection = knownThreadProjection(snapshot.projection);
   const threadId = projection.thread.id;
   let previousPosition = -1;
   const visibleIds = new Set<string>();

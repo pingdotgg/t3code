@@ -35,10 +35,11 @@ export function threadReplayEncodedBytes(items: ReadonlyArray<unknown>): number 
   return total;
 }
 
-type ThreadSnapshotStreamItem = Extract<
-  OrchestrationV2ThreadStreamItem,
-  { readonly kind: "snapshot" }
->;
+// Built from this server's own projection, so it holds only turn items it knows.
+type ThreadSnapshotStreamItem = Omit<
+  Extract<OrchestrationV2ThreadStreamItem, { readonly kind: "snapshot" }>,
+  "projection"
+> & { readonly projection: OrchestrationV2ThreadProjection };
 
 export function boundedSnapshotResponseFields(input: {
   readonly bounded: BoundedProjectionResult;

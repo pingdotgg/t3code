@@ -13,6 +13,7 @@ import {
   EnvironmentId,
   ExecutionEnvironmentDescriptor,
   MessageId,
+  knownThreadProjection,
   ORCHESTRATION_PROTOCOL_HEADER,
   ORCHESTRATION_PROTOCOL_VERSION,
   OrchestrationV2ShellSnapshot,
@@ -234,7 +235,9 @@ export const startEnvironment = Effect.fn("environment.start")(function* (input:
 
   const command = Effect.map(uuid, CommandId.make);
   const projection = (threadId: ThreadId) =>
-    client["orchestration.getThreadProjection"]({ threadId });
+    client["orchestration.getThreadProjection"]({ threadId }).pipe(
+      Effect.map(knownThreadProjection),
+    );
 
   const create = Effect.fn("environment.create")(function* (
     title: string,
