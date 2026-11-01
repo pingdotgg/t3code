@@ -226,6 +226,7 @@ export function resolveWorktreeCleanup(
       worktreeOnMerge: false,
       worktreeOnDelete: false,
       worktreeUnchanged: false,
+      worktreeRequireIntegrated: settings.storageCleanup.worktreeRequireIntegrated,
     };
   const {
     worktreeKeepWhen,
@@ -234,6 +235,7 @@ export function resolveWorktreeCleanup(
     worktreeOnMerge,
     worktreeOnDelete,
     worktreeUnchanged,
+    worktreeRequireIntegrated,
   } = settings.storageCleanup;
   return {
     worktreeKeepWhen,
@@ -242,5 +244,6 @@ export function resolveWorktreeCleanup(
     worktreeOnMerge,
     worktreeOnDelete,
     worktreeUnchanged,
+    worktreeRequireIntegrated,
   };
 }
