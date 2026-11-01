@@ -119,6 +119,7 @@ function makeTestAdapter(input: {
   readonly subagentOnlyBackgroundWork?: boolean;
   readonly holdFirstTurn?: Deferred.Deferred<void>;
   readonly releaseFirstTurn?: Deferred.Deferred<void>;
+  readonly beforeForcedNativeThread?: Effect.Effect<void>;
 }): ProviderAdapter.ProviderAdapterV2["Service"] {
   return {
     instanceId: input.instanceId,
@@ -164,6 +165,8 @@ function makeTestAdapter(input: {
             : { canReuseContextUsage: input.canReuseContextUsage }),
           ensureThread: (threadInput) =>
             Effect.gen(function* () {
+              if (threadInput.forceNewNativeThread && input.beforeForcedNativeThread !== undefined)
+                yield* input.beforeForcedNativeThread;
               const createdAt = yield* DateTime.now;
               const generation =
                 input.nativeThreadGeneration === undefined
@@ -1342,6 +1345,299 @@ describe("orchestration v2 provider switching", () => {
           );
         }),
       ),
+  );
+
+  const unverifiedReplacementHarness = <A, E, R>(
+    name: string,
+    adapters: ReadonlyArray<ProviderAdapter.ProviderAdapterV2["Service"]>,
+    body: (helpers: {
+      readonly orchestrator: Orchestrator.OrchestratorV2["Service"];
+      readonly worker: EffectWorker.OrchestrationEffectWorkerV2["Service"];
+      readonly dispatchRequest: (
+        ordinal: number,
+        selection: ModelSelection,
+      ) => ReturnType<Orchestrator.OrchestratorV2["Service"]["dispatch"]>;
+      readonly awaitSettled: (
+        ordinal: number,
+      ) => Effect.Effect<
+        number,
+        Orchestrator.OrchestratorV2Error | EffectWorker.OrchestrationEffectWorkerError
+      >;
+    }) => Effect.Effect<A, E, R>,
+  ) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const cwd = yield* checkpointWorkspace(name);
+        return yield* Effect.gen(function* () {
+          const orchestrator = yield* Orchestrator.OrchestratorV2;
+          const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+          yield* orchestrator.dispatch({
+            type: "thread.create",
+            commandId: CommandId.make("unverified-replacement:create"),
+            threadId,
+            projectId,
+            createdBy: "user",
+            creationSource: "web",
+            title: "Unverified replacement",
+            modelSelection: CLAUDE_MODEL_SELECTION,
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            branch: null,
+            worktreePath: null,
+          });
+          return yield* body({
+            orchestrator,
+            worker,
+            dispatchRequest: (ordinal, selection) =>
+              orchestrator.dispatch({
+                type: "message.dispatch",
+                commandId: CommandId.make(`unverified-replacement:${ordinal}`),
+                threadId,
+                messageId: MessageId.make(`unverified-replacement:${ordinal}`),
+                createdBy: "user",
+                creationSource: "web",
+                text: `Request ${ordinal}`,
+                attachments: [],
+                modelSelection: selection,
+                dispatchMode: { type: "start_immediately" },
+              }),
+            awaitSettled: (ordinal) =>
+              orchestrator.streamStoredEvents.pipe(
+                Stream.filter(
+                  ({ event }) =>
+                    event.type === "run.updated" &&
+                    event.payload.ordinal === ordinal &&
+                    (event.payload.status === "completed" ||
+                      event.payload.status === "failed" ||
+                      event.payload.status === "interrupted"),
+                ),
+                Stream.runHead,
+                Effect.andThen(worker.drain()),
+              ),
+          });
+        }).pipe(
+          Effect.provide(
+            ProviderReplayHarness.layerWithRegistry(
+              {
+                name,
+                runtimePolicyOverride: {
+                  cwd,
+                  approvalPolicy: "never",
+                  sandboxPolicy: { type: "readOnly" },
+                },
+              },
+              ProviderAdapterRegistry.layerFromAdapters(adapters),
+            ),
+          ),
+        );
+      }),
+    );
+  // Replacement bookkeeping is a full-thread summary handoff plus a resume-fallback transfer.
+  const replacementRecordsFor = (projection: OrchestrationV2ThreadProjection, runId: string) => [
+    ...projection.contextHandoffs.filter(
+      (handoff) => handoff.targetRunId === runId && handoff.strategy === "full_thread_summary",
+    ),
+    ...projection.contextTransfers.filter(
+      (transfer) =>
+        transfer.targetRunId === runId && transfer.id.includes("provider_resume_fallback"),
+    ),
+  ];
+
+  it.live("fails honestly when the provider reuses its session for a context handoff", () =>
+    Effect.gen(function* () {
+      const capturedTurns = yield* Ref.make<ReadonlyArray<CapturedTurn>>([]);
+      yield* unverifiedReplacementHarness(
+        "unverified-replacement-reused",
+        [
+          makeTestAdapter({
+            instanceId: CODEX_MODEL_SELECTION.instanceId,
+            driver: CODEX_DRIVER,
+            capabilities: CodexProviderCapabilitiesV2,
+            modelSelection: CODEX_MODEL_SELECTION,
+            responseByRunOrdinal: { 2: `Source work ${"s".repeat(12_000)}` },
+            capturedTurns,
+          }),
+          // Without a generation every ensureThread returns the same native id, like Muse.
+          makeTestAdapter({
+            instanceId: CLAUDE_MODEL_SELECTION.instanceId,
+            driver: CLAUDE_DRIVER,
+            capabilities: ClaudeProviderCapabilitiesV2,
+            modelSelection: CLAUDE_MODEL_SELECTION,
+            responseByRunOrdinal: {},
+            capturedTurns,
+            getModelContextWindow: () => 32_000,
+          }),
+        ],
+        ({ orchestrator, dispatchRequest, awaitSettled }) =>
+          Effect.gen(function* () {
+            yield* dispatchRequest(1, CLAUDE_MODEL_SELECTION);
+            yield* awaitSettled(1);
+            const target = (yield* orchestrator.getThreadProjection(threadId)).providerThreads[0]!;
+            // The native session has no room left for the returning handoff.
+            yield* (yield* EventSink.EventSinkV2).write({
+              events: [
+                {
+                  id: EventId.make("unverified-replacement-usage"),
+                  type: "provider-thread.updated",
+                  threadId,
+                  occurredAt: yield* DateTime.now,
+                  payload: { ...target, contextUsage: { usedTokens: 31_000, maxTokens: 32_000 } },
+                },
+              ],
+            });
+            yield* dispatchRequest(2, CODEX_MODEL_SELECTION);
+            yield* awaitSettled(2);
+            yield* dispatchRequest(3, CLAUDE_MODEL_SELECTION);
+            yield* awaitSettled(3);
+
+            const projection = yield* orchestrator.getThreadProjection(threadId);
+            const run3 = projection.runs.at(-1)!;
+            assert.equal(run3.status, "failed");
+            assert.deepEqual(replacementRecordsFor(projection, run3.id), []);
+            const failure = projection.turnItems.findLast((item) => item.type === "error");
+            assert.equal(
+              failure?.type === "error" ? failure.failure.message : null,
+              "claudeAgent provider protocol error: the provider returned its existing session when asked for a fresh one, so the conversation context could not be moved to a new session.",
+            );
+            assert.deepEqual(
+              (yield* Ref.get(capturedTurns)).map((turn) => turn.driver),
+              [CLAUDE_DRIVER, CODEX_DRIVER],
+            );
+          }),
+      );
+    }),
+  );
+
+  it.live("fails without retrying when a failed resume's replacement reuses the session", () =>
+    Effect.gen(function* () {
+      const capturedTurns = yield* Ref.make<ReadonlyArray<CapturedTurn>>([]);
+      const failResumeOnce = yield* Ref.make(false);
+      yield* unverifiedReplacementHarness(
+        "unverified-replacement-reused-resume",
+        [
+          // Without a generation every ensureThread returns the same native id, like Muse.
+          makeTestAdapter({
+            instanceId: CLAUDE_MODEL_SELECTION.instanceId,
+            driver: CLAUDE_DRIVER,
+            capabilities: ClaudeProviderCapabilitiesV2,
+            modelSelection: CLAUDE_MODEL_SELECTION,
+            responseByRunOrdinal: {},
+            capturedTurns,
+            failResumeOnce,
+          }),
+        ],
+        ({ orchestrator, worker, dispatchRequest, awaitSettled }) =>
+          Effect.gen(function* () {
+            yield* dispatchRequest(1, CLAUDE_MODEL_SELECTION);
+            yield* awaitSettled(1);
+            const original = (yield* orchestrator.getThreadProjection(threadId))
+              .providerThreads[0]!;
+            yield* orchestrator.dispatch({
+              type: "provider-session.detach",
+              commandId: CommandId.make("unverified-replacement:detach"),
+              threadId,
+              providerSessionId: original.providerSessionId!,
+            });
+            yield* worker.drain();
+            // Only the first attempt fails to resume; a retry would find the session loaded.
+            yield* Ref.set(failResumeOnce, true);
+            yield* dispatchRequest(2, CLAUDE_MODEL_SELECTION);
+            yield* awaitSettled(2);
+
+            const projection = yield* orchestrator.getThreadProjection(threadId);
+            const run2 = projection.runs.at(-1)!;
+            assert.equal(run2.status, "failed");
+            assert.deepEqual(replacementRecordsFor(projection, run2.id), []);
+            const failure = projection.turnItems.findLast((item) => item.type === "error");
+            assert.equal(
+              failure?.type === "error" ? failure.failure.message : null,
+              "claudeAgent provider protocol error: the provider returned its existing session when asked for a fresh one, so the conversation context could not be moved to a new session.",
+            );
+            assert.equal((yield* Ref.get(capturedTurns)).length, 1);
+          }),
+      );
+    }),
+  );
+
+  it.live("drops replacement bookkeeping when the run stops during replacement", () =>
+    Effect.gen(function* () {
+      const capturedTurns = yield* Ref.make<ReadonlyArray<CapturedTurn>>([]);
+      const failResumeOnce = yield* Ref.make(false);
+      const replacementRequested = yield* Deferred.make<void>();
+      const releaseReplacement = yield* Deferred.make<void>();
+      yield* unverifiedReplacementHarness(
+        "unverified-replacement-interrupted",
+        [
+          makeTestAdapter({
+            instanceId: CLAUDE_MODEL_SELECTION.instanceId,
+            driver: CLAUDE_DRIVER,
+            capabilities: ClaudeProviderCapabilitiesV2,
+            modelSelection: CLAUDE_MODEL_SELECTION,
+            responseByRunOrdinal: {},
+            capturedTurns,
+            failResumeOnce,
+            nativeThreadGeneration: yield* Ref.make(0),
+            beforeForcedNativeThread: Deferred.succeed(replacementRequested, undefined).pipe(
+              Effect.andThen(Deferred.await(releaseReplacement)),
+            ),
+          }),
+        ],
+        ({ orchestrator, worker, dispatchRequest, awaitSettled }) =>
+          Effect.gen(function* () {
+            yield* dispatchRequest(1, CLAUDE_MODEL_SELECTION);
+            yield* awaitSettled(1);
+            const original = (yield* orchestrator.getThreadProjection(threadId))
+              .providerThreads[0]!;
+            yield* orchestrator.dispatch({
+              type: "provider-session.detach",
+              commandId: CommandId.make("unverified-replacement:detach"),
+              threadId,
+              providerSessionId: original.providerSessionId!,
+            });
+            yield* worker.drain();
+            yield* Ref.set(failResumeOnce, true);
+            yield* dispatchRequest(2, CLAUDE_MODEL_SELECTION);
+            yield* Deferred.await(replacementRequested);
+            const run2 = (yield* orchestrator.getThreadProjection(threadId)).runs.at(-1)!;
+            assert.equal(run2.status, "starting");
+            // run.interrupt would also cancel the start effect, so move the run on directly to
+            // reach the window where the replacement session exists but is not yet recorded.
+            const settledAt = yield* DateTime.now;
+            yield* (yield* EventSink.EventSinkV2).write({
+              events: [
+                {
+                  id: EventId.make("unverified-replacement-interrupted"),
+                  type: "run.updated",
+                  threadId,
+                  runId: run2.id,
+                  occurredAt: settledAt,
+                  payload: { ...run2, status: "interrupted", completedAt: settledAt },
+                },
+              ],
+            });
+            yield* Deferred.succeed(releaseReplacement, undefined);
+
+            // Effects run one at a time per thread, so run 3 settles after run 2's start finishes.
+            // The next turn resumes the original native session with no abandoned replacement.
+            yield* dispatchRequest(3, CLAUDE_MODEL_SELECTION);
+            yield* awaitSettled(3);
+            const final = yield* orchestrator.getThreadProjection(threadId);
+            const run3 = final.runs.at(-1)!;
+            assert.equal(final.runs[1]?.status, "interrupted");
+            assert.deepEqual(replacementRecordsFor(final, run2.id), []);
+            assert.equal(run3.status, "completed");
+            assert.deepEqual(replacementRecordsFor(final, run3.id), []);
+            assert.equal(
+              final.providerThreads[0]?.nativeThreadRef?.nativeId,
+              original.nativeThreadRef?.nativeId,
+            );
+            const turns = yield* Ref.get(capturedTurns);
+            assert.equal(turns.length, 2);
+            assert.equal(turns[1]?.nativeThreadId, original.nativeThreadRef?.nativeId);
+            assert.include(turns[1]!.text, "Request 3");
+          }),
+      );
+    }),
   );
 
   it.live.each(["an older handoff", "a missed request"] as const)(
