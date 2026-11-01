@@ -26,6 +26,7 @@ import * as Stream from "effect/Stream";
 import { Command } from "effect/cli";
 import { FetchHttpClient } from "effect/http";
 import * as TestClock from "effect/testing/TestClock";
+import * as TestConsole from "effect/testing/TestConsole";
 
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import { cli } from "../binCli.ts";
@@ -490,8 +491,26 @@ it.effect(
       assert.equal(assigned[0]?.id, project.id);
       assert.equal(assigned[0]?.title, project.title);
       assert.equal(assigned[0]?.groupingIdentity, identity);
-      yield* runCli(["project", "grouping", project.id, "--base-dir", baseDir]);
-      yield* runCli(["project", "list", "--base-dir", baseDir]);
+      const groupingOutput = yield* runCli([
+        "project",
+        "grouping",
+        project.id,
+        "--base-dir",
+        baseDir,
+      ]).pipe(Effect.andThen(TestConsole.logLines), Effect.provide(Layer.fresh(TestConsole.layer)));
+      assert.deepEqual(
+        groupingOutput.map((line) => JSON.parse(String(line))),
+        [{ projectId: project.id, groupingIdentity: identity }],
+      );
+      const listOutput = yield* runCli(["project", "list", "--base-dir", baseDir]).pipe(
+        Effect.andThen(TestConsole.logLines),
+        Effect.provide(Layer.fresh(TestConsole.layer)),
+      );
+      assert.lengthOf(listOutput, 1);
+      const listed = JSON.parse(String(listOutput[0]));
+      assert.lengthOf(listed, 1);
+      assert.nestedPropertyVal(listed, "[0].id", project.id);
+      assert.nestedPropertyVal(listed, "[0].groupingIdentity", identity);
       yield* runCli([
         "project",
         "grouping",
