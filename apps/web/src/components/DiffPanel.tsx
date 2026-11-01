@@ -64,6 +64,7 @@ import { useClientSettings, updateClientSettings } from "../hooks/useSettings";
 import { formatRelativeTimeLabel, formatShortTimestamp } from "../timestampFormat";
 import { DiffFilePathCopyButton } from "./DiffFilePathCopyButton";
 import { DiffPanelLoadingState, DiffPanelShell, type DiffPanelMode } from "./DiffPanelShell";
+import { PinnedSelectionsSection } from "./chat/PinnedSelectionsSection";
 import { DiffStatLabel } from "./chat/DiffStatLabel";
 import { AnnotatableCodeView } from "./diffs/AnnotatableCodeView";
 import { DiffFileTree } from "./diffs/DiffFileTree";
@@ -1250,6 +1251,7 @@ export default function DiffPanel({
 
   return (
     <DiffPanelShell mode={mode} header={headerRow}>
+      {routeThreadRef ? <PinnedSelectionsSection threadRef={routeThreadRef} /> : null}
       {!activeThread ? (
         <div className="flex flex-1 items-center justify-center px-5 text-center text-xs text-muted-foreground/70">
           Select a thread to inspect turn diffs.

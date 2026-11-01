@@ -52,6 +52,7 @@ import { formatWorktreePathForDisplay, getOrphanedWorktreePathForThread } from "
 import { stackedThreadToast, toastManager } from "../components/ui/toast";
 import { useClientSettings } from "./useSettings";
 import * as ThreadUndo from "@t3tools/client-runtime/state/thread-undo";
+import { settledPinsToastTitle } from "../pinnedSelections";
 import { showThreadUndoNotice } from "./showThreadUndoNotice";
 import { useAtomCommand } from "../state/use-atom-command";
 import { useOrchestrationCommand } from "../state/use-orchestration-command";
@@ -770,6 +771,19 @@ export function useThreadActions() {
       undo: () => runUndoPlan(target, undoPlan),
       failureTitle: "Failed to undo settle",
     });
+    const pinCount =
+      useUiStateStore.getState().threadPinnedSelectionsById[scopedThreadKey(target)]?.length ?? 0;
+    const pinTitle = settledPinsToastTitle(pinCount);
+    if (pinTitle) {
+      toastManager.add(
+        stackedThreadToast({
+          type: "info",
+          title: pinTitle,
+          priority: "low",
+          timeout: 4200,
+        }),
+      );
+    }
     return result;
   };
 
