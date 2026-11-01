@@ -4,11 +4,14 @@ import {
   type EnvironmentId,
   type ProjectId,
   type ProjectSettingsOverrides,
+  type ProviderInstanceConfig,
   type ProviderInstanceId,
   sessionGrantsScope,
   type ServerSettings,
   type SessionGrantInput,
 } from "@t3tools/contracts";
+
+import { readCodexSetupMode } from "./CodexSetupSection.logic";
 
 export interface ProviderEnvironmentOptionLike {
   readonly environmentId: EnvironmentId;
@@ -129,4 +132,15 @@ export function classifyProviderEnvironmentAccess(input: {
     return { kind: "read-only" };
   }
   return { kind: "editable" };
+}
+
+/** What resetting a default instance restores; `undefined` means the slot is removed. */
+export function defaultInstanceResetBaseline(
+  instance: ProviderInstanceConfig | undefined,
+): ProviderInstanceConfig | undefined {
+  // Removing a managed Codex slot would drop setupMode and fall back to a CLI on PATH.
+  if (instance?.driver !== "codex" || readCodexSetupMode(instance.config) !== "managed") {
+    return undefined;
+  }
+  return { driver: instance.driver, config: { enabled: true, setupMode: "managed" } };
 }
