@@ -43,6 +43,7 @@ export function createSidebarShiftGuard(list: HTMLElement) {
   // a key or another pointer meanwhile cannot hand that press's click to the row.
   const heldDrops = new Set<number>();
   let pressDropped = false;
+  let releasedDrop: number | null = null;
 
   const rowOf = (target: EventTarget | null) => {
     let node = target instanceof Node ? target : null;
@@ -56,6 +57,7 @@ export function createSidebarShiftGuard(list: HTMLElement) {
   const onPointerDown = (event: PointerEvent) => {
     // A new press from the same pointer means its earlier release was missed.
     heldDrops.delete(event.pointerId);
+    if (releasedDrop === event.pointerId) releasedDrop = null;
     const now = performance.now();
     const row = rowOf(event.target);
     const moved = row === null ? undefined : movedAt.get(row);
@@ -65,11 +67,14 @@ export function createSidebarShiftGuard(list: HTMLElement) {
       swallow(event);
       return;
     }
-    if (heldDrops.size === 0) pressDropped = false;
+    pressDropped = false;
     lastInputAt = now;
   };
   const onPointerUp = (event: PointerEvent) => {
-    if (heldDrops.delete(event.pointerId)) {
+    const dropped = heldDrops.delete(event.pointerId);
+    releasedDrop = dropped ? event.pointerId : null;
+    pressDropped = dropped;
+    if (dropped) {
       if (rowOf(event.target) !== null) swallow(event);
       return;
     }
@@ -85,7 +90,11 @@ export function createSidebarShiftGuard(list: HTMLElement) {
   const onPressFollowUp = (event: MouseEvent) => {
     // Keyboard activation clicks carry no click count; only pointer presses are dropped.
     if (event.type === "click" && event.detail === 0) return;
-    if (pressDropped && rowOf(event.target) !== null) swallow(event);
+    const dropped =
+      event instanceof PointerEvent && event.pointerId >= 0
+        ? heldDrops.has(event.pointerId) || releasedDrop === event.pointerId
+        : pressDropped;
+    if (dropped && rowOf(event.target) !== null) swallow(event);
   };
 
   // Window capture runs before React and dnd-kit see the press.
