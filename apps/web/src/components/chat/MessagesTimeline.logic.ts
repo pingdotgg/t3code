@@ -523,6 +523,8 @@ type MessagesTimelineRowContent =
       expanded: boolean;
       active: boolean;
       thought?: WorkLogEntry;
+      /** Labs live-thinking: the row's click expands the full streaming thought. */
+      liveThinking?: true;
     }
   | {
       kind: "working";
@@ -537,6 +539,8 @@ type MessagesTimelineRowContent =
       createdAt: string | null;
       groupId?: string;
       expanded?: boolean;
+      /** Labs live-thinking: the streaming thought the row expands into. */
+      thought?: WorkLogEntry;
     }
   | {
       kind: "work-toggle";
@@ -1399,6 +1403,8 @@ export function deriveMessagesTimelineRows(input: {
   expandedAttemptIds?: ReadonlySet<RunAttemptId>;
   expandedWorkGroupIds?: ReadonlySet<string>;
   isWorking: boolean;
+  /** Labs live-thinking: the live Thinking row expands into the streaming thought. */
+  liveThinkingEnabled?: boolean;
   /** Native subagent work has no app run; runless entries form the live response. */
   runlessWorkActive?: boolean;
   activeTurnStartedAt?: string | null;
@@ -1572,6 +1578,9 @@ export function deriveMessagesTimelineRows(input: {
             expanded: input.expandedWorkGroupIds?.has(groupId) ?? false,
             active: latestToolKeepsActivityLive,
             ...(latestThoughtEntry ? { thought: latestThoughtEntry.entry } : {}),
+            ...(input.liveThinkingEnabled === true && latestThoughtEntry
+              ? { liveThinking: true as const }
+              : {}),
           };
         })()
       : null;
@@ -2109,6 +2118,7 @@ export function deriveMessagesTimelineRows(input: {
     !compactionOnlyRunFinished &&
     (latestToolFailed || (!hasActivityRow && !input.pendingApprovalRequestIds?.size))
   ) {
+    const liveThought = input.liveThinkingEnabled === true ? latestThoughtEntry?.entry : undefined;
     const failedGroupAnchor = latestToolFailed ? activeWorkAnchor : undefined;
     if (failedGroupAnchor) {
       const groupId = workGroupId(failedGroupAnchor.id);
@@ -2119,6 +2129,7 @@ export function deriveMessagesTimelineRows(input: {
         createdAt: input.activeTurnStartedAt ?? null,
         groupId,
         expanded,
+        ...(liveThought ? { thought: liveThought } : {}),
       });
       if (expanded) {
         nextRows.push(
@@ -2134,6 +2145,7 @@ export function deriveMessagesTimelineRows(input: {
         kind: "thinking",
         id: LIVE_ACTIVITY_ROW_ID,
         createdAt: input.activeTurnStartedAt ?? null,
+        ...(liveThought ? { thought: liveThought } : {}),
       });
     }
   }
