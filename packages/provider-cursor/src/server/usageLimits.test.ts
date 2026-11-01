@@ -182,6 +182,35 @@ describe("Cursor usage limits", () => {
     }),
   );
 
+  it.effect("links to the Cursor dashboard when a successful response has no plan usage", () =>
+    Effect.gen(function* () {
+      const limits = yield* withNodeServices(
+        readCursorUsageLimits({ apiEndpoint: "" }, { CURSOR_AUTH_TOKEN: "enterprise-token" }).pipe(
+          Effect.provideService(
+            HttpClient.HttpClient,
+            HttpClient.make((request) =>
+              Effect.succeed(
+                HttpClientResponse.fromWeb(
+                  request,
+                  Response.json({
+                    billingCycleStart: "1790000000000",
+                    billingCycleEnd: "1792600000000",
+                    displayThreshold: 100,
+                  }),
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+      expect(limits).toMatchObject({
+        windows: [],
+        unavailable: { reason: "unsupported", message: expect.any(String) },
+        externalUsage: { label: expect.any(String), url: "https://cursor.com/dashboard?tab=usage" },
+      });
+    }),
+  );
+
   it.effect("does not use a stored login for an explicit API key", () =>
     Effect.gen(function* () {
       const limits = yield* withNodeServices(
