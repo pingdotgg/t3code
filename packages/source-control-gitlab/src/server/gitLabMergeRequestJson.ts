@@ -596,19 +596,31 @@ export function decodeNotesJson(
     const note = decodeNoteEntry(entry);
     if (Exit.isFailure(note)) continue;
     const value = note.value;
-    if (value.system === true) continue;
     const body = value.body ?? "";
-    if (body.trim().length === 0) continue;
+    const trimmedBody = body.trim();
+    if (trimmedBody.length === 0) continue;
+    const reviewState =
+      value.system === true
+        ? trimmedBody === "approved this merge request"
+          ? "APPROVED"
+          : trimmedBody === "unapproved this merge request"
+            ? "DISMISSED"
+            : null
+        : null;
+    if (value.system === true && reviewState === null) continue;
     const isDiffNote = value.type?.trim() === "DiffNote";
     comments.push({
       id: String(value.id),
-      kind: isDiffNote ? "review-comment" : "issue-comment",
+      kind: reviewState !== null ? "review" : isDiffNote ? "review-comment" : "issue-comment",
       author: toActor(value.author),
       body,
       createdAt: value.created_at,
       url: null,
-      path: trimmed(value.position?.new_path) ?? trimmed(value.position?.old_path),
-      reviewState: null,
+      path:
+        reviewState !== null
+          ? null
+          : (trimmed(value.position?.new_path) ?? trimmed(value.position?.old_path)),
+      reviewState,
     });
   }
   return Result.succeed({ comments, rawCount: decoded.success.length });

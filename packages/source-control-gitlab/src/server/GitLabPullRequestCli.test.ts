@@ -1,12 +1,14 @@
 import { afterEach, assert, expect, it, vi } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Schema from "effect/Schema";
 import { ChildProcessSpawner } from "effect/process";
 
 import * as GitLabCli from "./GitLabCli.ts";
 import * as GitLabPullRequestCli from "./GitLabPullRequestCli.ts";
 
 const mockedExecute = vi.fn<GitLabCli.GitLabCli["Service"]["execute"]>();
+const encodeJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
 
 const layer = it.layer(
   GitLabPullRequestCli.layer.pipe(
@@ -760,6 +762,103 @@ layer("GitLabPullRequestCli.layer", (it) => {
       expect(argsOfCall(1).join(" ")).toContain("page=2");
       assert.strictEqual(comments.length, 102);
       assert.isFalse(truncated);
+    }),
+  );
+
+  it.effect("retains approval history after a full page of filtered system notes", () =>
+    Effect.gen(function* () {
+      mockedExecute
+        .mockReturnValueOnce(
+          Effect.succeed(
+            output(
+              encodeJson(
+                Array.from({ length: 100 }, (_, index) => ({
+                  id: index + 1,
+                  system: true,
+                  body: "assigned to @octocat",
+                  created_at: "2026-07-01T00:00:00Z",
+                })),
+              ),
+            ),
+          ),
+        )
+        .mockReturnValueOnce(
+          Effect.succeed(
+            output(
+              encodeJson([
+                {
+                  id: 101,
+                  system: true,
+                  body: "approved this merge request",
+                  author: reviewer,
+                  created_at: "2026-07-02T00:00:00Z",
+                },
+                {
+                  id: 102,
+                  system: true,
+                  body: "unapproved this merge request",
+                  author: reviewer,
+                  created_at: "2026-07-03T00:00:00Z",
+                },
+                {
+                  id: 103,
+                  system: false,
+                  body: "approved this merge request",
+                  author,
+                  created_at: "2026-07-04T00:00:00Z",
+                },
+                {
+                  id: 104,
+                  system: true,
+                  body: "approved this merge request with a custom message",
+                  author: reviewer,
+                  created_at: "2026-07-05T00:00:00Z",
+                },
+              ]),
+            ),
+          ),
+        );
+      const cli = yield* GitLabPullRequestCli.GitLabPullRequestCli;
+
+      const { comments, truncated } = yield* cli.listNotes({
+        cwd: "/w",
+        repository: "acme/web",
+        number: 7,
+      });
+
+      expect(argsOfCall(0)[1]).toContain("notes?per_page=100&page=1");
+      expect(argsOfCall(1)[1]).toContain("notes?per_page=100&page=2");
+      assert.strictEqual(mockedExecute.mock.calls.length, 2);
+      assert.isFalse(truncated);
+      expect(comments).toMatchObject([
+        {
+          id: "101",
+          kind: "review",
+          reviewState: "APPROVED",
+          body: "approved this merge request",
+          author: { login: "octocat" },
+          createdAt: "2026-07-02T00:00:00Z",
+          path: null,
+        },
+        {
+          id: "102",
+          kind: "review",
+          reviewState: "DISMISSED",
+          body: "unapproved this merge request",
+          author: { login: "octocat" },
+          createdAt: "2026-07-03T00:00:00Z",
+          path: null,
+        },
+        {
+          id: "103",
+          kind: "issue-comment",
+          reviewState: null,
+          body: "approved this merge request",
+          author: { login: "bilal" },
+          createdAt: "2026-07-04T00:00:00Z",
+          path: null,
+        },
+      ]);
     }),
   );
 
