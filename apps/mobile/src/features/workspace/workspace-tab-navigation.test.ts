@@ -36,7 +36,40 @@ describe("workspace tab selections", () => {
       afterPullRequest,
     );
     expect(afterSettings.settings).toBe("SettingsAppearance");
-    expect(workspaceSelectionsIn([home, thread], afterSettings)).toBe(afterSettings);
+    expect(workspaceSelectionsIn([home, thread], afterSettings)).toEqual({
+      ...afterSettings,
+      threadsShown: true,
+    });
+  });
+
+  it("remembers whether the chat is the page on screen, under any sheet", () => {
+    const shown = workspaceSelectionsIn([home, thread], {});
+    expect(shown).toMatchObject({ threads: thread.params, threadsShown: true });
+    const sheet = { key: "sheet", name: "ThreadSettingsSheet" };
+    expect(workspaceSelectionsIn([home, thread, sheet], shown)).toBe(shown);
+
+    const backOnList = workspaceSelectionsIn([home], shown);
+    expect(backOnList.threadsShown).toBe(false);
+    expect(backOnList.threads).toMatchObject(thread.params);
+    expect(workspaceSelectionsIn([home], backOnList)).toBe(backOnList);
+
+    const draft = { key: "draft", name: "Thread", params: { environmentId: "env" } };
+    expect(workspaceSelectionsIn([home, draft], shown).threadsShown).toBe(false);
+    for (const params of [
+      { threadId: "child" },
+      { environmentId: "", threadId: "child" },
+      { environmentId: "env", threadId: "" },
+    ]) {
+      const malformed = workspaceSelectionsIn(
+        [home, { key: "malformed", name: "Thread", params }],
+        shown,
+      );
+      expect(malformed.threadsShown).toBe(false);
+      expect(malformed.threads).toEqual(shown.threads);
+    }
+    expect(workspaceSelectionsIn([home, pullRequest], shown).threadsShown).toBe(false);
+    // Recorded before saved selections load, so the hydration merge can't revive a saved `true`.
+    expect(workspaceSelectionsIn([home], {})).toEqual({ threadsShown: false });
   });
 
   it("doesn't remember pages a Settings row doesn't open", () => {
