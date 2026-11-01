@@ -116,6 +116,9 @@ returns to the remembered selection.
 
 Leaving reasoning level or service tier unset uses the provider's own configuration.
 
+Codex shows **Cyber Access** on models whose catalog lists a Daybreak program for your account.
+Choosing a program requests it for the turn; OpenAI still decides whether the account may use it.
+
 ## Quote an assistant response
 
 On web and desktop, select text within one assistant response and choose

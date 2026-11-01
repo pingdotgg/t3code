@@ -86,12 +86,18 @@ type ServerNotificationHandler = (
   payload: unknown,
 ) => Effect.Effect<void, CodexError.CodexAppServerError>;
 
-const V2TurnStartParamsWithCollaborationMode = CodexSchema.V2TurnStartParams.pipe(
+/**
+ * `turn/start` params as sent, with experimental fields the generated struct lacks.
+ * Encoding drops unknown keys, so callers build params with this schema too.
+ */
+export const V2TurnStartParamsWithCollaborationMode = CodexSchema.V2TurnStartParams.pipe(
   Schema.fieldsAssign({
     collaborationMode: Schema.optionalKey(CodexSchema.ClientRequest__CollaborationMode),
     additionalContext: Schema.optionalKey(
       Schema.Record(Schema.String, CodexSchema.V2TurnStartParams__AdditionalContextEntry),
     ),
+    // Codex still enforces authorization for the requested program.
+    cyberAccessProgram: Schema.optionalKey(CodexSchema.V2TurnStartParams__CyberAccessProgram),
   }),
 );
 

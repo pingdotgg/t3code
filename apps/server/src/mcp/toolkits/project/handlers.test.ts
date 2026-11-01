@@ -168,6 +168,7 @@ it.effect(
           readonly targeted?: false;
           readonly overrideModel?: ModelSelection;
           readonly webOrigin?: string;
+          readonly modelSelection?: ModelSelection;
         },
       ) {
         const { targeted, overrideModel, webOrigin, ...input } = params;
@@ -226,6 +227,17 @@ it.effect(
       expect(escalated.result).toMatchObject({ code: "runtime_mode_escalation_denied" });
       expect(escalated.launched).toHaveLength(0);
 
+      const cyber = yield* launchWith("full-access", "full-access", {
+        title: "Fix",
+        modelSelection: {
+          instanceId: ProviderInstanceId.make("codex"),
+          model: "gpt-6-sol",
+          options: [{ id: "cyberAccessProgram", value: "daybreakBlue" }],
+        },
+      });
+      expect(cyber.result).toMatchObject({ code: "invalid_request" });
+      expect(cyber.launched).toHaveLength(0);
+
       const untargeted = yield* launchWith("full-access", "full-access", {
         title: "Fix",
         targeted: false,
@@ -242,6 +254,31 @@ it.effect(
       });
       expect(fromSettings.launched[0]?.modelSelection).toEqual(overrideModel);
     }),
+);
+
+it.effect("a client cannot make a cyber access program a project's default", () =>
+  Effect.gen(function* () {
+    const { projectId, dependencies } = clientLaunchHarness({
+      runtimeModeCeiling: "full-access",
+      launched: [],
+    });
+    const toolkit = yield* ProjectToolkit.pipe(
+      Effect.provide(
+        McpToolAccess.HandlersLayer.layer(ProjectHandlers.layer).pipe(Layer.provide(dependencies)),
+      ),
+    );
+    const result = yield* toolkit
+      .handle("t3_project_update", {
+        projectId,
+        defaultModelSelection: {
+          instanceId: ProviderInstanceId.make("codex"),
+          model: "gpt-6-sol",
+          options: [{ id: "cyberAccessProgram", value: "daybreakBlue" }],
+        },
+      })
+      .pipe(Stream.unwrap, Stream.runCollect, Effect.provide(dependencies));
+    expect(result.at(-1)?.result).toMatchObject({ code: "invalid_request" });
+  }),
 );
 
 it.effect("a launch steps an inherited mode down to the provider's, and refuses one it lacks", () =>
@@ -335,6 +372,23 @@ it.effect("a launch retried with the same clientRequestId replays the first one"
     expect(ids[2]).not.toEqual(ids[0]);
     // Without a key every launch is new.
     expect(ids[3]).not.toEqual(ids[4]);
+
+    // A retry still cannot choose a cyber access program.
+    const retried = yield* toolkit
+      .handle("t3_thread_launch", {
+        title: "Fix",
+        projectId,
+        message: "Fix the bug",
+        clientRequestId: "fix-1",
+        modelSelection: {
+          instanceId: ProviderInstanceId.make("codex"),
+          model: "gpt-6-sol",
+          options: [{ id: "cyberAccessProgram", value: "daybreakBlue" }],
+        },
+      })
+      .pipe(Stream.unwrap, Stream.runCollect, Effect.provide(dependencies));
+    expect(retried.at(-1)?.result).toMatchObject({ code: "invalid_request" });
+    expect(launched).toHaveLength(5);
   }),
 );
 
