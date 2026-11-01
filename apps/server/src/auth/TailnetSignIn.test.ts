@@ -913,8 +913,9 @@ it.layer(NodeServices.layer)("TailnetSignIn", (it) => {
           [LAPTOP_ADDRESS]: { node: laptop, capMap: granted({ scopes: ["read"] }) },
         };
         yield* TestClock.adjust("1 minute");
-        // The scan sees the laptop's grant, then its account check cannot read Tailscale.
-        tailnet.failFreshReadAt = (tailnet.freshReads ?? 0) + 2;
+        // The scan sees and keeps the laptop's grant, then its account check after the lookups
+        // cannot read Tailscale: the reads are the sign-in's, the grant's, then that check's.
+        tailnet.failFreshReadAt = (tailnet.freshReads ?? 0) + 3;
         expect(yield* refusalOf(signIn(makeDpopKey()))).toBe("policy_unknown");
         // The laptop can no longer be read; the grant seen stands, not the older "no grants".
         tailnet.devices = { ...tailnet.devices, [LAPTOP_ADDRESS]: { node: null } };
@@ -961,7 +962,17 @@ it.layer(NodeServices.layer)("TailnetSignIn", (it) => {
       }).pipe(Effect.provide(layerTest(tailnet)));
     });
 
-    it.effect("a grant read from another account during a scan is not kept for this one", () => {
+    it.effect.each([
+      {
+        name: "another device at the laptop's address",
+        atWork: {
+          node: phoneNode({ StableID: "nLaptopAtWork", Addresses: [`${LAPTOP_ADDRESS}/32`] }),
+          capMap: granted({ scopes: ["read"] }),
+        },
+      },
+      // Another profile on the same tailnet sees the same laptop, with its own grants.
+      { name: "the same laptop", atWork: { node: laptop, capMap: granted({ scopes: ["read"] }) } },
+    ])("a grant read from another account ($name) during a scan is not kept here", ({ atWork }) => {
       const tailnet = withLaptop();
       tailnet.status = hostStatus({ Peer: { ...peers, stranger: strangerPeer } });
       tailnet.devices = { ...tailnet.devices, [STRANGER_ADDRESS]: { node: stranger } };
@@ -980,13 +991,7 @@ it.layer(NodeServices.layer)("TailnetSignIn", (it) => {
           Peer: peers,
           Self: { ...hostStatus().Self, ID: "nBoxAtWork" },
         });
-        tailnet.devices = {
-          ...tailnet.devices,
-          [LAPTOP_ADDRESS]: {
-            node: phoneNode({ StableID: "nLaptopAtWork", Addresses: [`${LAPTOP_ADDRESS}/32`] }),
-            capMap: granted({ scopes: ["read"] }),
-          },
-        };
+        tailnet.devices = { ...tailnet.devices, [LAPTOP_ADDRESS]: atWork };
         yield* Deferred.succeed(release, undefined);
         expect(yield* Fiber.join(phone)).toBe("policy_unknown");
         // Back home, with the laptop unreadable, the older "no grants" decides, not that grant.

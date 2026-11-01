@@ -241,12 +241,17 @@ export const make = Effect.gen(function* () {
       const status = (yield* Ref.get(scanFrom)) ?? (yield* host.status);
       const account = status.selfNodeId;
       const signInsBefore = yield* grantSignInsOn(account);
-      // A grant is kept the moment its lookup confirms it, from the node the list names. So
-      // if the scan is cut short or its checks below cannot finish, a later scan that cannot
-      // read every peer falls back to it, never to an older "no grants".
-      const keepGrant = Clock.currentTimeMillis.pipe(
-        Effect.flatMap((at) => Ref.set(lastCleanScan, { account, granted: true, at })),
-      );
+      // Kept once confirmed, so a scan cut short still leaves it for a later scan to fall back
+      // on, never an older "no grants". The account is checked first, as another profile on
+      // the same tailnet sees the same peers with other grants; only the first grant reads it.
+      const grantKept = yield* Ref.make(false);
+      const keepGrant = Effect.gen(function* () {
+        if (yield* Ref.getAndSet(grantKept, true)) return;
+        const now = yield* host.freshStatus;
+        if (now.selfNodeId !== account) return;
+        const at = yield* Clock.currentTimeMillis;
+        yield* Ref.set(lastCleanScan, { account, granted: true, at });
+      }).pipe(Effect.ignore);
       const { granted, unreadable } = yield* policyGrantedPeers(
         status,
         (address) => host.whois(address, { fromServer: true }),
