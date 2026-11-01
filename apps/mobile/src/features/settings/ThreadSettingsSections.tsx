@@ -107,6 +107,7 @@ export function AutoSettleSettingsRows(props: {
           <SettingsSwitchRow
             icon="clock"
             label="Resume after usage limits"
+            subtitle="Automatically resume threads when their usage limits reset. You can cancel auto-resume in each thread."
             value={uniformMobileSetting(displayTargets, "autoResumeLimitedThreads")}
             disabled={disabled}
             onValueChange={(value) => writeToAll({ autoResumeLimitedThreads: value })}
@@ -114,6 +115,7 @@ export function AutoSettleSettingsRows(props: {
           <SettingsSwitchRow
             icon="clock"
             label="Snooze until limits reset"
+            subtitle="Snooze threads until their usage limits reset. Enable auto-resume to continue the agent after the reset."
             value={uniformMobileSetting(displayTargets, "snoozeLimitedThreads")}
             disabled={disabled}
             onValueChange={(value) => writeToAll({ snoozeLimitedThreads: value })}

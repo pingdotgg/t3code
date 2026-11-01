@@ -490,7 +490,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       : []),
     ...(settings.diffLayout !== DEFAULT_UNIFIED_SETTINGS.diffLayout ? ["Diff layout"] : []),
     ...(settings.proactivePanelsEnabled !== DEFAULT_UNIFIED_SETTINGS.proactivePanelsEnabled
-      ? ["Proactive panels"]
+      ? ["Open pull requests and changes panels proactively"]
       : []),
     ...(settings.showSkillsInSlashMenu !== DEFAULT_UNIFIED_SETTINGS.showSkillsInSlashMenu
       ? ["Show skills in slash menu"]
@@ -1393,7 +1393,7 @@ export function DiffsSettingsPanel() {
               onCheckedChange={(checked) =>
                 updateSettings({ proactivePanelsEnabled: Boolean(checked) })
               }
-              aria-label="Proactive panels"
+              aria-label="Open pull requests and changes panels proactively"
             />
           }
         />
@@ -1572,7 +1572,7 @@ export function ThreadsSettingsPanel() {
         <SettingsRow
           serverScoped
           {...searchableSetting("auto-resume-limited-threads")}
-          description="Resume usage-limit stops at the reported reset time. Each thread can cancel its scheduled continuation."
+          description="Automatically resume threads when their usage limits reset. You can cancel auto-resume in each thread."
           settingKeys={["autoResumeLimitedThreads"]}
           control={
             <ScopedSwitch
@@ -1588,7 +1588,7 @@ export function ThreadsSettingsPanel() {
         <SettingsRow
           serverScoped
           {...searchableSetting("snooze-limited-threads")}
-          description="Snooze usage-limit stops until reset. Pair with resume to continue on wake."
+          description="Snooze threads until their usage limits reset. Enable auto-resume to continue the agent after the reset."
           settingKeys={["snoozeLimitedThreads"]}
           control={
             <ScopedSwitch
