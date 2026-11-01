@@ -113,6 +113,7 @@ function makeTestAdapter(input: {
   >;
   readonly failure?: ReturnType<typeof makeProviderFailure>;
   readonly failedRunOrdinals?: ReadonlySet<number>;
+  readonly rejectedNativeThreads?: Ref.Ref<ReadonlySet<string>>;
   readonly interruptedRunOrdinals?: ReadonlySet<number>;
   readonly holdRunOrdinal?: number;
   readonly pendingBackgroundWork?: Ref.Ref<boolean>;
@@ -275,11 +276,25 @@ function makeTestAdapter(input: {
               const providerTurnId = ProviderTurnId.make(
                 `provider-turn:${input.driver}:${turnInput.threadId}:${turnInput.runOrdinal}`,
               );
-              const terminalStatus = input.failedRunOrdinals?.has(turnInput.runOrdinal)
-                ? "failed"
-                : input.interruptedRunOrdinals?.has(turnInput.runOrdinal)
-                  ? "interrupted"
-                  : "completed";
+              const nativeThreadId = turnInput.providerThread.nativeThreadRef?.nativeId ?? "";
+              if (
+                input.rejectedNativeThreads &&
+                input.failedRunOrdinals?.has(turnInput.runOrdinal)
+              ) {
+                yield* Ref.update(
+                  input.rejectedNativeThreads,
+                  (ids) => new Set([...ids, nativeThreadId]),
+                );
+              }
+              const rejectedHistory =
+                input.rejectedNativeThreads !== undefined &&
+                (yield* Ref.get(input.rejectedNativeThreads)).has(nativeThreadId);
+              const terminalStatus =
+                input.failedRunOrdinals?.has(turnInput.runOrdinal) || rejectedHistory
+                  ? "failed"
+                  : input.interruptedRunOrdinals?.has(turnInput.runOrdinal)
+                    ? "interrupted"
+                    : "completed";
               const response =
                 input.responseByThreadId?.[turnInput.threadId]?.[turnInput.runOrdinal] ??
                 input.responseByRunOrdinal[turnInput.runOrdinal] ??
@@ -328,7 +343,7 @@ function makeTestAdapter(input: {
                     messageId: MessageId.make(
                       `message:${input.driver}:${turnInput.threadId}:${turnInput.runOrdinal}:assistant`,
                     ),
-                    text: response,
+                    text: rejectedHistory ? "" : response,
                     streaming: false,
                   },
                 },
@@ -1217,6 +1232,220 @@ describe("orchestration v2 provider switching", () => {
           );
         }),
       ),
+  );
+
+  it.live.each([
+    "live",
+    "detached",
+    "legacy",
+    "other-error",
+    "other-provider",
+    "repaired-native",
+    "background",
+  ] as const)("recovers rejected Codex history on the next prompt: %s", (scenario) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const cwd = yield* checkpointWorkspace("codex-rejected-history");
+        const capturedTurns = yield* Ref.make<ReadonlyArray<CapturedTurn>>([]);
+        const injectedHistory = yield* Ref.make<ReadonlyArray<unknown>>([]);
+        const generation = yield* Ref.make(0);
+        const rejectedNativeThreads = yield* Ref.make<ReadonlySet<string>>(new Set());
+        const pendingBackgroundWork = yield* Ref.make(false);
+        const modelSelection =
+          scenario === "other-provider" ? CLAUDE_MODEL_SELECTION : CODEX_MODEL_SELECTION;
+        const code =
+          scenario === "other-error"
+            ? "serverOverloaded"
+            : "subscription_sharing_unsupported_capability";
+        const registry = ProviderAdapterRegistry.layerFromAdapters([
+          makeTestAdapter({
+            instanceId: modelSelection.instanceId,
+            driver: scenario === "other-provider" ? CLAUDE_DRIVER : CODEX_DRIVER,
+            capabilities:
+              scenario === "other-provider"
+                ? ClaudeProviderCapabilitiesV2
+                : CodexProviderCapabilitiesV2,
+            modelSelection,
+            capturedTurns,
+            injectedHistory,
+            nativeThreadGeneration: generation,
+            rejectedNativeThreads,
+            pendingBackgroundWork,
+            subagentOnlyBackgroundWork: true,
+            failedRunOrdinals: new Set([2]),
+            failure: makeProviderFailure({
+              code,
+              message: "Unsupported input history",
+              class: "provider_error",
+            }),
+            responseByRunOrdinal: { 1: "BASELINE_OK", 3: "RECOVERY_OK", 4: "FOLLOWUP_OK" },
+          }),
+        ]);
+        yield* Effect.gen(function* () {
+          const orchestrator = yield* Orchestrator.OrchestratorV2;
+          const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+          const dispatch = Effect.fn("rejectedHistory.dispatch")(function* (
+            ordinal: number,
+            text: string,
+          ) {
+            yield* orchestrator.dispatch({
+              type: "message.dispatch",
+              commandId: CommandId.make(`rejected:${ordinal}`),
+              threadId,
+              messageId: MessageId.make(`rejected:${ordinal}`),
+              createdBy: "user",
+              creationSource: "web",
+              text,
+              attachments: [],
+              modelSelection,
+              dispatchMode: { type: "start_immediately" },
+            });
+            yield* orchestrator.streamStoredEvents.pipe(
+              Stream.filter(
+                ({ event }) =>
+                  event.type === "run.updated" &&
+                  event.payload.ordinal === ordinal &&
+                  (event.payload.status === "completed" || event.payload.status === "failed"),
+              ),
+              Stream.runHead,
+            );
+            yield* worker.drain();
+            return yield* orchestrator.getThreadProjection(threadId);
+          });
+          yield* orchestrator.dispatch({
+            type: "thread.create",
+            commandId: CommandId.make("rejected:create"),
+            threadId,
+            projectId,
+            createdBy: "user",
+            creationSource: "web",
+            title: "Rejected Codex history",
+            modelSelection,
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            branch: null,
+            worktreePath: null,
+          });
+          assert.equal(
+            (yield* dispatch(1, "Reply BASELINE_OK; remember the constraint")).runs.at(-1)?.status,
+            "completed",
+          );
+          const failed = yield* dispatch(2, "Use the unsupported native agent capability");
+          assert.equal(failed.runs.at(-1)?.status, "failed");
+          assert.isTrue(
+            failed.turnItems.some((item) => item.type === "error" && item.failure.code === code),
+          );
+          if (scenario === "detached" || scenario === "legacy") {
+            yield* orchestrator.dispatch({
+              type: "provider-session.detach",
+              commandId: CommandId.make("rejected:detach"),
+              threadId,
+              providerSessionId: failed.providerThreads[0]!.providerSessionId!,
+            });
+            yield* worker.drain();
+          }
+          if (scenario === "legacy") {
+            yield* (yield* EventSink.EventSinkV2).write({
+              events: failed.attempts.map(
+                ({ nativeThreadId: _nativeThreadId, ...attempt }, index) => ({
+                  id: EventId.make(`rejected:legacy:${index}`),
+                  type: "run-attempt.updated" as const,
+                  threadId,
+                  occurredAt: failed.thread.createdAt,
+                  payload: attempt,
+                }),
+              ),
+            });
+          }
+          if (scenario === "repaired-native") {
+            const providerThread = failed.providerThreads[0]!;
+            yield* (yield* EventSink.EventSinkV2).write({
+              events: [
+                {
+                  id: EventId.make("rejected:repaired-native"),
+                  type: "provider-thread.updated",
+                  threadId,
+                  occurredAt: failed.thread.createdAt,
+                  payload: {
+                    ...providerThread,
+                    nativeThreadRef: {
+                      ...providerThread.nativeThreadRef!,
+                      nativeId: "already-repaired",
+                    },
+                  },
+                },
+              ],
+            });
+          }
+          if (scenario === "background") yield* Ref.set(pendingBackgroundWork, true);
+          const recovered = yield* dispatch(3, "huh");
+          if (scenario === "repaired-native") {
+            assert.equal(recovered.runs.at(-1)?.status, "completed");
+            assert.equal(yield* Ref.get(generation), 1);
+            assert.lengthOf(recovered.contextHandoffs, 0);
+            return;
+          }
+          if (
+            scenario === "other-error" ||
+            scenario === "other-provider" ||
+            scenario === "background"
+          ) {
+            assert.equal(recovered.runs.at(-1)?.status, "failed");
+            assert.equal(yield* Ref.get(generation), 1);
+            assert.lengthOf(yield* Ref.get(capturedTurns), scenario === "background" ? 2 : 3);
+            if (scenario === "background") {
+              yield* Ref.set(pendingBackgroundWork, false);
+              assert.equal(
+                (yield* dispatch(4, "Continue after the worker finished")).runs.at(-1)?.status,
+                "completed",
+              );
+              assert.equal(yield* Ref.get(generation), 2);
+            }
+            return;
+          }
+          assert.equal(recovered.runs.at(-1)?.status, "completed");
+          assert.equal(yield* Ref.get(generation), 2);
+          const turns = yield* Ref.get(capturedTurns);
+          assert.lengthOf(turns, 3);
+          assert.equal(turns[2]!.text, "huh");
+          assert.notEqual(turns[2]!.nativeThreadId, turns[1]!.nativeThreadId);
+          assert.equal(turns[2]!.providerThreadId, turns[1]!.providerThreadId);
+          const history = yield* encodeJson(yield* Ref.get(injectedHistory));
+          assert.include(history, "remember the constraint");
+          assert.include(history, "BASELINE_OK");
+          assert.notInclude(history, '"agent_message"');
+          assert.notInclude(history, "huh");
+          assert.isTrue(
+            recovered.turnItems.some(
+              (item) => item.type === "assistant_message" && item.text === "RECOVERY_OK",
+            ),
+          );
+          const next = yield* dispatch(4, "ok");
+          assert.equal(next.runs.at(-1)?.status, "completed");
+          assert.equal(yield* Ref.get(generation), 2);
+          assert.equal(
+            (yield* Ref.get(capturedTurns))[3]!.nativeThreadId,
+            turns[2]!.nativeThreadId,
+          );
+          assert.equal(yield* encodeJson(yield* Ref.get(injectedHistory)), history);
+          assert.equal(next.contextHandoffs.length, recovered.contextHandoffs.length);
+        }).pipe(
+          Effect.provide(
+            ProviderReplayHarness.layerWithRegistry(
+              {
+                name: "codex-rejected-history",
+                runtimePolicyOverride: {
+                  cwd,
+                  approvalPolicy: "never",
+                  sandboxPolicy: { type: "readOnly" },
+                },
+              },
+              registry,
+            ),
+          ),
+        );
+      }),
+    ),
   );
 
   it.live.each(["native", "legacy"] as const)(
