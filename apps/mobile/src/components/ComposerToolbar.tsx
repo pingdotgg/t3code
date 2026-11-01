@@ -33,6 +33,8 @@ export function ComposerInlineControl(props: {
   readonly renderIcon?: (size: number) => ReactNode;
   readonly label: string;
   readonly suffix?: ReactNode;
+  /** A short suffix keeps its width while the label truncates. */
+  readonly suffixFixed?: boolean;
   /** Show only the icon and chevron; the label still names the control for accessibility. */
   readonly iconOnly?: boolean;
   readonly maxWidth?: ViewStyle["maxWidth"];
@@ -100,7 +102,7 @@ export function ComposerInlineControl(props: {
           </Animated.View>
         )}
         {!props.iconOnly && props.suffix ? (
-          <View className="min-w-0 shrink">{props.suffix}</View>
+          <View className={props.suffixFixed ? "shrink-0" : "min-w-0 shrink"}>{props.suffix}</View>
         ) : null}
         {props.showChevron === false ? null : (
           <SymbolView
