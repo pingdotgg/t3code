@@ -1,14 +1,17 @@
 import { type ReactNode, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { observeResize } from "../lib/observeResize";
+import { cn } from "../lib/utils";
 
 const HEIGHT_TRANSITION_FALLBACK_MS = 250;
 
 export function AnimatedHeight({
   children,
   holdHeight = false,
+  anchor = "top",
 }: {
   readonly children: ReactNode;
   readonly holdHeight?: boolean;
+  readonly anchor?: "top" | "bottom";
 }) {
   const contentRef = useRef<HTMLDivElement>(null);
   const [heightState, setHeightState] = useState<{
@@ -83,7 +86,10 @@ export function AnimatedHeight({
   return (
     <div
       data-slot="animated-height"
-      className="transition-[height] duration-200 ease-out motion-reduce:transition-none [overflow-clip-margin:2px]"
+      className={cn(
+        "transition-[height] duration-200 ease-out motion-reduce:transition-none [overflow-clip-margin:2px]",
+        anchor === "bottom" && "flex flex-col justify-end",
+      )}
       style={
         heightState.height === null
           ? undefined
