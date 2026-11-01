@@ -23,6 +23,8 @@ import type * as SourceControlRateLimit from "./SourceControlRateLimit.ts";
 export interface SourceControlMediaRequest {
   /** A `fetchUrl` this host's definition returned from `mediaUrl`. */
   readonly url: string;
+  /** The checkout whose change request linked the media. */
+  readonly cwd: string;
   /** Request headers to forward, such as `range`. */
   readonly headers: Readonly<Record<string, string>>;
 }

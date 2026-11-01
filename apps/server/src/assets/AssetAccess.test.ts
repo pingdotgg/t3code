@@ -1468,7 +1468,8 @@ describe("AssetAccess", () => {
   );
 
   it.effect("serves a host's credentialed media through that host's driver", () => {
-    const fetched: Array<{ url: string; headers: Readonly<Record<string, string>> }> = [];
+    const fetched: Array<{ url: string; cwd: string; headers: Readonly<Record<string, string>> }> =
+      [];
     const url = "https://github.com/owner/repo/blob/main/docs/shot.png";
     const media = sourceControlDefinitions.mediaUrl(url)!;
     const layerDrivers = Layer.succeed(BuiltInDrivers.SourceControlDrivers, [
@@ -1510,7 +1511,9 @@ describe("AssetAccess", () => {
         range: "bytes=0-4",
         cookie: "session",
       });
-      expect(fetched).toEqual([{ url: media.fetchUrl, headers: { range: "bytes=0-4" } }]);
+      expect(fetched).toEqual([
+        { url: media.fetchUrl, cwd: "/repo", headers: { range: "bytes=0-4" } },
+      ]);
       expect(response.status).toBe(206);
       // The upstream sent no type, so it comes from the file name the host gave the media.
       expect(response.headers["content-type"]).toBe("image/png");
