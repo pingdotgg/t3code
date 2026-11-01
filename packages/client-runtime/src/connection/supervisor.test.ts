@@ -1,5 +1,6 @@
 import { AuthStandardClientScopes, EnvironmentId, type ServerConfig } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
+import * as Clock from "effect/Clock";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -519,6 +520,46 @@ describe("EnvironmentSupervisor", () => {
 
       expect(yield* Ref.get(harness.sessionCount)).toBe(2);
       expect(Option.isSome(yield* SubscriptionRef.get(supervisor.prepared))).toBe(true);
+    }).pipe(Effect.provide(TestClock.layer())),
+  );
+
+  it.effect("keeps retries within five seconds during a recent connection loss", () =>
+    Effect.gen(function* () {
+      const restarted = yield* Deferred.make<void>();
+      const harness = yield* makeHarness({
+        prepare: (attempt) =>
+          attempt === 1
+            ? Effect.succeed(PREPARED_CONNECTION)
+            : Deferred.isDone(restarted).pipe(
+                Effect.flatMap((ready) =>
+                  ready ? Effect.succeed(PREPARED_CONNECTION) : Effect.fail(transient()),
+                ),
+              ),
+      });
+      const supervisor = yield* EnvironmentSupervisor.make(RELAY_ENTRY, {
+        initiallyDesired: true,
+      }).pipe(Effect.provide(harness.dependencies));
+      yield* awaitState(supervisor.state, (state) => state.phase === "connected");
+      yield* TestClock.adjust("30 seconds");
+      yield* harness.closeLatestSession();
+      const lostAt = yield* Clock.currentTimeMillis;
+      for (let attempt = 1; attempt <= 30; attempt++) {
+        const retrying = yield* awaitState(
+          supervisor.state,
+          (state) => state.phase === "backoff" && state.attempt === attempt,
+        );
+        const delay = retrying.retryAt! - (yield* Clock.currentTimeMillis);
+        const windowExpired = (yield* Clock.currentTimeMillis) - lostAt >= 120_000;
+        if (windowExpired) {
+          expect(delay).toBeLessThanOrEqual(2_000);
+          yield* Deferred.succeed(restarted, undefined);
+        } else {
+          expect(delay).toBeLessThanOrEqual(5_000);
+        }
+        yield* TestClock.adjust(delay);
+        if (windowExpired) break;
+      }
+      yield* awaitState(supervisor.state, (state) => state.phase === "connected");
     }).pipe(Effect.provide(TestClock.layer())),
   );
 
