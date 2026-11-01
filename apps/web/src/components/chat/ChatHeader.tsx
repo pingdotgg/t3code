@@ -14,6 +14,8 @@ import { ChevronDownIcon } from "lucide-react";
 import {
   memo,
   useEffect,
+  useImperativeHandle,
+  type Ref,
   useRef,
   useState,
   type KeyboardEvent as ReactKeyboardEvent,
@@ -43,7 +45,12 @@ import { textDirection } from "~/textDirection";
 import { useClientSettings } from "../../hooks/useSettings";
 import { GuestShareIndicator } from "./GuestShareControls";
 
+export interface ChatHeaderHandle {
+  startRename: () => void;
+}
+
 interface ChatHeaderProps {
+  ref?: Ref<ChatHeaderHandle>;
   activeThreadEnvironmentId: EnvironmentId;
   activeThreadId: ThreadId;
   activeThreadTitle: string;
@@ -71,6 +78,7 @@ function resolveRenameCommit(input: {
 // Delay the input-swallowing native menu through the double-click rename interval.
 const TITLE_MENU_OPEN_DELAY_MS = 500;
 export const ChatHeader = memo(function ChatHeader({
+  ref,
   activeThreadEnvironmentId,
   activeThreadId,
   activeThreadTitle,
@@ -172,6 +180,7 @@ export const ChatHeader = memo(function ChatHeader({
       title: activeThreadTitle,
     });
   };
+  useImperativeHandle(ref, () => ({ startRename }));
   const commitRename = (title: string) => {
     setRenaming(null);
     if (!readEnvironmentScope(activeThreadEnvironmentId, AuthOrchestrationOperateScope)) return;
