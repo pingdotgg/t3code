@@ -3912,10 +3912,10 @@ export interface ClaudeAdapterV2Options {
   readonly scopedLimitNames?: Ref.Ref<ClaudeScopedLimitNames>;
   readonly onUsageLimits?: ManagedServerProvider["applyUsageLimits"];
   /**
-   * The instance's model catalog with Claude Code's reported model ids, read per turn so turns
-   * send ids its backend accepts. Defaults to the bundled catalog.
+   * The instance's model catalog with Claude Code's reported model ids for a turn's cwd, read per
+   * turn so turns send ids its backend accepts. Defaults to the bundled catalog.
    */
-  readonly modelCatalog?: Effect.Effect<ClaudeModelCatalog>;
+  readonly modelCatalog?: (cwd: string | null) => Effect.Effect<ClaudeModelCatalog>;
   readonly continuationRequests?: {
     readonly offer: (
       request: ProviderContinuationRequests.ProviderContinuationRequest,
@@ -3974,7 +3974,8 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
       };
     },
   );
-  const modelCatalog = adapterOptions.modelCatalog ?? Effect.succeed(BUNDLED_CLAUDE_MODEL_CATALOG);
+  const modelCatalog =
+    adapterOptions.modelCatalog ?? (() => Effect.succeed(BUNDLED_CLAUDE_MODEL_CATALOG));
 
   // Claude Code's own subagent TTL setting, in its precedence order. Unset or unreadable means
   // Anthropic's default applies.
@@ -9247,7 +9248,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               : { allowedTools: queryPolicy.allowedTools }),
           });
           const queryPolicyKey = claudeEffectiveQueryPolicyKey(queryPolicy, mcpOverrides);
-          const catalog = yield* modelCatalog;
+          const catalog = yield* modelCatalog(turnInput.runtimePolicy.cwd);
           const compiledSelection = compileClaudeModelSelection(turnInput.modelSelection, catalog);
           const resumeSessionAt = yield* getNativeConversationHeadId(turnInput.providerThread);
           const existing = yield* Ref.get(queryContext);

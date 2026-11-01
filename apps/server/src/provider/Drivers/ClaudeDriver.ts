@@ -36,9 +36,9 @@ import {
 import { makeManagedServerProvider } from "@t3tools/provider-core/server/managedProvider";
 import * as ModelCatalog from "@t3tools/provider-core/server/ModelCatalog";
 import {
-  type ClaudeCodeReportedModel,
+  makeClaudeCodeModelRoutes,
   resolveClaudeModelCatalog,
-  withClaudeCodeModelRoutes,
+  resolveClaudeModelSettingsKey,
 } from "../ClaudeModelCatalog.ts";
 import {
   defaultProviderContinuationIdentity,
@@ -174,13 +174,17 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv, Path.
     });
 
     const scopedLimitNames = yield* makeClaudeScopedLimitNames;
-    // Only a successful probe replaces these, so a failed one never sends turns back to slugs
+    // The SDK's user source is the host's home, not a custom one; same rule as the adapter.
+    const customHome =
+      effectiveConfig.homePath.trim().length > 0 ||
+      processEnv.CLAUDE_CONFIG_DIR !== (yield* HostProcess.Environment).CLAUDE_CONFIG_DIR;
+    // Only a successful probe records routes, so a failed one never sends turns back to slugs
     // the backend rejects.
-    const claudeCodeModels = yield* Ref.make<ReadonlyArray<ClaudeCodeReportedModel>>([]);
-    const routedModelCatalog = Effect.zipWith(
-      modelCatalog,
-      Ref.get(claudeCodeModels),
-      withClaudeCodeModelRoutes,
+    const modelRoutes = yield* makeClaudeCodeModelRoutes(modelCatalog, (cwd) =>
+      resolveClaudeModelSettingsKey(
+        customHome ? ["project", "local"] : ["user", "project", "local"],
+        cwd,
+      ),
     );
     const orchestrationAdapter = yield* createClaudeAdapterV2(
       {
@@ -193,7 +197,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv, Path.
       },
       {
         scopedLimitNames,
-        modelCatalog: routedModelCatalog,
+        modelCatalog: modelRoutes.catalogFor,
         onUsageLimits: (update) => snapshot.applyUsageLimits(update),
       },
     ).pipe(
@@ -210,7 +214,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv, Path.
     const textGeneration = yield* makeClaudeTextGeneration(
       effectiveConfig,
       processEnv,
-      routedModelCatalog,
+      modelRoutes.catalogFor,
     );
 
     // Per-instance capabilities cache: keyed on binary + resolved HOME so
@@ -231,9 +235,10 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv, Path.
           ),
           Effect.tap(({ capabilities }) =>
             Ref.set(lastGoodCapabilities, capabilities).pipe(
-              Effect.andThen(Ref.set(claudeCodeModels, capabilities.models ?? [])),
+              Effect.andThen(modelRoutes.record(capabilities.models ?? [], stateDir)),
             ),
           ),
+          Effect.ensuring(modelRoutes.settle),
           Effect.catch((error) =>
             Ref.getAndSet(lastGoodCapabilities, undefined).pipe(
               Effect.flatMap((capabilities) =>
@@ -302,6 +307,8 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv, Path.
           Effect.map(stampIdentity),
         ),
       ),
+      // Disabled, failed version checks and interruption never reach the probe.
+      Effect.ensuring(modelRoutes.settle),
       Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
       Effect.provideService(FileSystem.FileSystem, fileSystem),
       Effect.provideService(Path.Path, path),

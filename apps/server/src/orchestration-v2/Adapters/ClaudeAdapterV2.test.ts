@@ -90,7 +90,9 @@ import { ClaudeExecutableFileCheck } from "../../provider/Drivers/ClaudeExecutab
 import {
   BUNDLED_CLAUDE_MODEL_CATALOG,
   type ClaudeModelCatalog,
+  makeClaudeCodeModelRoutes,
   resolveClaudeModelCatalog,
+  resolveClaudeModelSettingsKey,
   withClaudeCodeModelRoutes,
 } from "../../provider/ClaudeModelCatalog.ts";
 import { resolveProviderCatalog } from "../../provider/ModelManifest.ts";
@@ -2195,7 +2197,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     readonly freshQueueOnReopen?: boolean;
     readonly forkSession?: ClaudeAdapterV2.ClaudeAgentSdkQueryRunnerShape["forkSession"];
     readonly allocateSessionId?: Effect.Effect<string>;
-    readonly modelCatalog?: Effect.Effect<ClaudeModelCatalog>;
+    readonly modelCatalog?: (cwd: string | null) => Effect.Effect<ClaudeModelCatalog>;
   }) =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
@@ -3382,7 +3384,9 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     Effect.scoped(
       Effect.gen(function* () {
         const modelCatalog = yield* Ref.make(BUNDLED_CLAUDE_MODEL_CATALOG);
-        const harness = yield* makeWakeHarnessWithOptions({ modelCatalog: Ref.get(modelCatalog) });
+        const harness = yield* makeWakeHarnessWithOptions({
+          modelCatalog: () => Ref.get(modelCatalog),
+        });
         const now = yield* DateTime.now;
         const turn = (ordinal: number, model: string) =>
           makeClaudeTestTurnInput({
@@ -3437,6 +3441,77 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         ),
       ),
     ),
+  );
+
+  it.effect(
+    "sends Claude Code's reported model id only where the cwd resolves it as the probe did",
+    () =>
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const sdk = yield* Effect.promise(() =>
+          vi.importActual<typeof ClaudeSdk>("@anthropic-ai/claude-agent-sdk"),
+        );
+        vi.mocked(ClaudeSdk.resolveSettings).mockImplementation(sdk.resolveSettings);
+        const probeCwd = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-claude-probe-" });
+        const project = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-claude-project-" });
+        const overridden = yield* fileSystem.makeTempDirectoryScoped({
+          prefix: "t3-claude-local-",
+        });
+        yield* fileSystem.makeDirectory(path.join(overridden, ".claude"));
+        yield* fileSystem.writeFileString(
+          path.join(overridden, ".claude", "settings.local.json"),
+          JSON.stringify({
+            env: { ANTHROPIC_DEFAULT_HAIKU_MODEL: "global.anthropic.claude-sonnet-4-6" },
+          }),
+        );
+        const routes = yield* makeClaudeCodeModelRoutes(
+          Effect.succeed(BUNDLED_CLAUDE_MODEL_CATALOG),
+          (cwd) => resolveClaudeModelSettingsKey(["project", "local"], cwd),
+        );
+        yield* routes.record(
+          [{ value: "haiku", resolvedModel: "us.anthropic.claude-haiku-4-5-20251001-v1:0" }],
+          probeCwd,
+        );
+        yield* routes.settle;
+        const openedModel = (cwd: string) =>
+          Effect.scoped(
+            Effect.gen(function* () {
+              const harness = yield* makeWakeHarnessWithOptions({
+                modelCatalog: routes.catalogFor,
+              });
+              yield* harness.runtime.startTurn(
+                makeClaudeTestTurnInput({
+                  threadId: harness.threadId,
+                  providerThread: harness.providerThread,
+                  now: yield* DateTime.now,
+                  attemptId: RunAttemptId.make("attempt-reported-model-cwd"),
+                  text: "Request",
+                  attachments: [],
+                  modelSelection: {
+                    instanceId: ClaudeAdapterV2.CLAUDE_DEFAULT_INSTANCE_ID,
+                    model: "claude-haiku-4-5",
+                  },
+                  runtimePolicy: ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+                    runtimeMode: "full-access",
+                    interactionMode: "default",
+                    cwd,
+                  }),
+                }),
+              );
+              return harness.getOpenedOptions()?.model;
+            }),
+          );
+
+        assert.equal(yield* openedModel(project), "haiku");
+        // Claude Code resolves `haiku` to Sonnet there, so the slug is the only safe id.
+        assert.equal(yield* openedModel(overridden), "claude-haiku-4-5");
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+        ),
+      ),
   );
 
   it.effect(
