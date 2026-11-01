@@ -364,6 +364,7 @@ const HOST_TAILSCALE_NOTICE: ReadonlySet<ServerTailscaleIssueCause> = new Set([
   "health_warning",
   "outdated",
   "no_ipv4",
+  "userspace_networking",
 ]);
 
 /** " (as of 2h ago)" for facts a minute old or more. */

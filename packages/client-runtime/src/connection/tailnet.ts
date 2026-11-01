@@ -239,7 +239,7 @@ export function tailnetRefusalVerdict(
       return {
         headline: `This device's T3 Code grant on ${host} names no scope T3 Code knows`,
         steps: [
-          `In your tailnet policy at ${TAILNET_POLICY_URL}, set the grant's value to \`{ "scopes": ["standard"] }\`. The list takes "read", "standard", "admin", or single scopes such as "orchestration:read".`,
+          `In your tailnet policy at ${TAILNET_POLICY_URL}, fix the scopes in that grant. The list takes "read", "standard", "admin", or single scopes such as "orchestration:read".`,
         ],
       };
     case "policy_unknown":

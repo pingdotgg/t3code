@@ -682,6 +682,24 @@ it.layer(NodeServices.layer)("TailnetSignIn", (it) => {
     ),
   );
 
+  it.effect("an unusable grant gets no suggested replacement", () =>
+    Effect.gen(function* () {
+      const error = yield* Effect.flip(signIn(makeDpopKey()));
+      expect(isRefusal(error) ? [error.reason, error.suggestedGrant] : error).toEqual([
+        "grant_unusable",
+        undefined,
+      ]);
+    }).pipe(
+      Effect.provide(
+        layerTest({
+          status: hostStatus(),
+          node: phoneNode(),
+          capMap: granted({ scopes: ["raed"] }),
+        }),
+      ),
+    ),
+  );
+
   it.effect("signs in the configured owner's device on a tagged host", () =>
     Effect.gen(function* () {
       const grant = yield* signIn(makeDpopKey());

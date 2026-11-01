@@ -166,10 +166,12 @@ interface DeviceName {
   readonly user: string | null;
 }
 
-/** Refusals that a tailnet policy grant for this device would turn into a sign-in. */
+/**
+ * Refusals that a tailnet policy grant for this device would turn into a sign-in. An unusable
+ * grant is left out: its fix is the scope the operator meant, not one this suggests.
+ */
 const GRANT_FIXES: ReadonlySet<TailnetSignInRefusedReason> = new Set([
   "no_grant",
-  "grant_unusable",
   "policy_unknown",
   "owner_unknown",
   "tagged_device",

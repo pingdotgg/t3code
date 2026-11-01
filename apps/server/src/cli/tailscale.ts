@@ -122,8 +122,11 @@ const readPolicyGrantedPeers = Effect.gen(function* () {
     return { granted: [], unreadable: [], ...facts, blocker, readFailed: true };
   }
   const after = read2.success;
-  return after.selfNodeId !== status.selfNodeId ||
-    (scan.granted.length === 0 && peersJoined(status, after))
+  if (after.selfNodeId !== status.selfNodeId) return "changed" as const;
+  // The host may have changed during the scan, so its latest state decides.
+  const lateBlocker = signInBlocker(after, platform);
+  if (lateBlocker !== null) return { granted: [], unreadable: [], ...facts, blocker: lateBlocker };
+  return scan.granted.length === 0 && peersJoined(status, after)
     ? ("changed" as const)
     : { ...scan, ...facts };
 }).pipe(Effect.option, Effect.map(Option.getOrNull));
@@ -227,6 +230,12 @@ const requireGrantCommand = Command.make("require-grant", {
           ...(scan !== null && scan.blocker === null
             ? [
                 "Devices with a grant get the scopes it names: read, standard, admin, or single scopes.",
+                ...(since === null
+                  ? [
+                      "This is this shell's scan. The server notices a first grant within a minute,",
+                      "and the last grant's removal within five minutes.",
+                    ]
+                  : []),
               ]
             : []),
         ].join("\n"),

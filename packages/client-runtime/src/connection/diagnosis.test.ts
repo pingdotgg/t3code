@@ -342,6 +342,10 @@ describe("Tailscale facts in the diagnosis", () => {
     expect(hostTailscaleNotice("Mac mini", status([https, outdated]), NOW)?.headline).toBe(
       "Tailscale on Mac mini is too old for Tailscale sign-in",
     );
+    const userspace = { cause: "userspace_networking", fix: "Use a TUN device." } as const;
+    expect(hostTailscaleNotice("Mac mini", status([userspace]), NOW)?.headline).toBe(
+      "Tailscale on Mac mini uses userspace networking",
+    );
   });
 });
 
