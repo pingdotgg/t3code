@@ -44,6 +44,7 @@ import * as GitVcsDriver from "./GitVcsDriver.ts";
 import { removeEmptyDirectory, type RemoveEmptyDirectoryError } from "./removeEmptyDirectory.ts";
 import { explicitBareRepositoryEnv, gitConfigEnv } from "./VcsProcess.ts";
 import { removeLinkedWorktree } from "./worktreeRemoval.ts";
+import { worktreeFastEnv } from "./worktreeFast.ts";
 import { resolveWorktreesDirectory } from "../worktreesDirectory.ts";
 import {
   parseRemoteNames,
@@ -944,7 +945,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const commandSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-  const { worktreesDir } = yield* ServerConfig.ServerConfig;
+  const { worktreesDir, worktreeFastPath } = yield* ServerConfig.ServerConfig;
   const isServerInternalPath = yield* makeIsServerInternalPath;
   const digest = yield* Digest.Digest;
   const hostPlatform = yield* HostProcess.Platform;
@@ -4266,7 +4267,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       { concurrency: "unbounded" },
     );
     const checkoutWorkers = configuredCheckoutWorkers ?? "0";
-    const addWorktree = (subcommand: "worktree" | "worktree-fast") =>
+    const addWorktree = (subcommand: "worktree" | "worktree-fast", env: NodeJS.ProcessEnv = {}) =>
       executeGitWithStableDiagnostics(
         "GitVcsDriver.createWorktree",
         input.cwd,
@@ -4284,11 +4285,14 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
           // Large checkouts and post-checkout hooks can legitimately run for many
           // minutes; a fixed deadline kills them and leaves an orphaned worktree.
           timeoutMs: null,
+          env: {
+            ...env,
+            // Git only prints checkout progress when stderr is a tty or the
+            // delay elapsed. GIT_PROGRESS_DELAY=0 forces it through the pipe.
+            ...(onCheckoutProgress ? { GIT_PROGRESS_DELAY: "0" } : {}),
+          },
           ...(onCheckoutProgress
             ? {
-                // Git only prints checkout progress when stderr is a tty or the
-                // delay elapsed. GIT_PROGRESS_DELAY=0 forces it through the pipe.
-                env: { GIT_PROGRESS_DELAY: "0" },
                 progress: {
                   onStderrLine: (line) => {
                     const parsed = parseGitCheckoutProgressLine(line);
@@ -4316,7 +4320,14 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       yield* fileSystem
         .makeDirectory(path.dirname(worktreePath), { recursive: true })
         .pipe(Effect.ignore);
-      yield* addWorktree("worktree-fast").pipe(
+      yield* addWorktree(
+        "worktree-fast",
+        worktreeFastEnv({
+          bundledPath: worktreeFastPath,
+          pathEnv: (yield* HostProcess.Environment).PATH,
+          dirname: path.dirname,
+        }),
+      ).pipe(
         Effect.catch((error) =>
           Effect.gen(function* () {
             // A worktree left behind by the failed add would make Git's retry fail for the wrong reason.

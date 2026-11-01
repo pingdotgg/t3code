@@ -76,6 +76,18 @@
       ]
     },
     {
+      "bundles": ["desktop"],
+      "license": "MIT",
+      "name": "git-worktree-fast",
+      "sourceUrl": "https://github.com/mweinbach/worktree-fast",
+      "generatedNotices": [
+        {
+          "licenseId": "MIT",
+          "copyrights": ["Copyright (c) 2026 Max Weinbach and contributors"]
+        }
+      ]
+    },
+    {
       "bundles": ["device-tools"],
       "includeInBundles": ["mobile", "web"],
       "license": "MIT",

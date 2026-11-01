@@ -4947,7 +4947,11 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
           const cwd = yield* makeTmpDir();
           const { initialBranch } = yield* initRepoWithCommit(cwd);
           const worktreePath = pathService.join(yield* makeTmpDir(), "repo", "feature-fast");
+          const hostEnv = yield* HostProcess.Environment;
+          const searchPath = [hostEnv.PATH, cwd].filter(Boolean).join(NodePath.delimiter);
           const subcommands: string[] = [];
+          const searchPaths: string[] = [];
+          const bundledDirectory = "/Applications/T3 Code.app/Contents/Resources/worktree-fast";
           const delegate = yield* ChildProcessSpawner.ChildProcessSpawner;
           const spawner = ChildProcessSpawner.make((command) => {
             if (!ChildProcess.isStandardCommand(command)) return delegate.spawn(command);
@@ -4957,6 +4961,7 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
             if (index === -1 || command.args[index + 1] !== "add") return delegate.spawn(command);
             subcommands.push(String(command.args[index]));
             if (command.args[index] === "worktree") return delegate.spawn(command);
+            searchPaths.push(String(command.options.env?.PATH));
             if (outcome === "succeeds") {
               const args = command.args.map((arg, position) =>
                 position === index ? "worktree" : arg,
@@ -4973,7 +4978,10 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
           const driver = yield* makeGitVcsDriverCore().pipe(
             Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
             Effect.provideService(HostProcess.Platform, platform),
-            Effect.provide(layerServerConfig),
+            Effect.provideService(ServerConfig.ServerConfig, {
+              ...(yield* ServerConfig.ServerConfig),
+              worktreeFastPath: `${bundledDirectory}/git-worktree-fast`,
+            }),
           );
 
           const created = yield* driver
@@ -4981,9 +4989,15 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
               { cwd, path: worktreePath, refName: initialBranch, newRefName: "feature/fast" },
               { worktreeFast: enabled },
             )
-            .pipe(Effect.exit);
+            .pipe(
+              Effect.provideService(HostProcess.Environment, { ...hostEnv, PATH: searchPath }),
+              Effect.exit,
+            );
 
           assert.deepEqual(subcommands, [...ran]);
+          for (const actualPath of searchPaths) {
+            assert.equal(actualPath, `${searchPath}:${bundledDirectory}`);
+          }
           assert.equal(Exit.isSuccess(created), outcome !== "leaves a folder");
           if (Exit.isSuccess(created)) {
             assert.equal(yield* git(worktreePath, ["branch", "--show-current"]), "feature/fast");
