@@ -15,6 +15,7 @@ import * as Random from "effect/Random";
 import * as Ref from "effect/Ref";
 import * as Result from "effect/Result";
 import * as Semaphore from "effect/Semaphore";
+import * as Stream from "effect/Stream";
 import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientRequest from "effect/http/HttpClientRequest";
 import * as HttpClientResponse from "effect/http/HttpClientResponse";
@@ -269,18 +270,22 @@ export const make = Effect.gen(function* () {
     return [nextBatch, current.slice(nextBatch.length)] as const;
   });
 
+  // Nothing recorded before an opt-out is sent after it, even if telemetry is turned back on.
+  const discardQueued = Effect.andThen(
+    Ref.set(bufferRef, []),
+    Ref.update(deliveryRef, (delivery) => ({
+      ...delivery,
+      failedBatch: [],
+      batchAttempts: 0,
+      firstFailedAt: 0,
+    })),
+  );
+
   // Back off even after dropping rejected batches so bad API keys cannot drain the queue in a tight loop.
   const flush: AnalyticsService["Service"]["flush"] = Effect.gen(function* () {
     while (true) {
-      // Checked per batch: nothing recorded before an opt-out is sent after it.
       if (!(yield* isEnabled)) {
-        yield* Ref.set(bufferRef, []);
-        yield* Ref.update(deliveryRef, (delivery) => ({
-          ...delivery,
-          failedBatch: [],
-          batchAttempts: 0,
-          firstFailedAt: 0,
-        }));
+        yield* discardQueued;
         return;
       }
       const delivery = yield* Ref.get(deliveryRef);
@@ -388,6 +393,21 @@ export const make = Effect.gen(function* () {
         ),
       { discard: true },
     ),
+  );
+
+  // Discard as soon as the setting turns telemetry off, not at the next flush, which may come after
+  // telemetry is back on. The lock waits out a send in flight so its batch cannot be kept for retry.
+  const settingsChanges = yield* serverSettings.subscribeChanges;
+  yield* settingsChanges.pipe(
+    // Use each change's own value: by the time it is handled, telemetry may be back on.
+    Stream.runForEach((settings) =>
+      Effect.flatMap(variableEnabled, (variable) =>
+        Option.getOrElse(variable, () => settings.telemetryEnabled)
+          ? Effect.void
+          : discardQueued.pipe(flushLock.withPermit),
+      ),
+    ),
+    Effect.forkScoped,
   );
 
   yield* Effect.forever(Effect.sleep(FLUSH_INTERVAL_MS).pipe(Effect.andThen(flushWhenDue)), {
