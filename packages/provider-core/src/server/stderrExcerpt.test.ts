@@ -157,6 +157,7 @@ describe("stderrExcerpt", () => {
           '{"password":"topsecret',
           'PASSWORD="top secret',
           "connect postgres://dbuser:dbpassword@db.example/app failed",
+          "connect redis://:hunter2@db.example:6379 failed",
         ].join("\n"),
         "/Users/ada",
         {},
@@ -168,6 +169,7 @@ describe("stderrExcerpt", () => {
         '{"password":"[REDACTED]"',
         "PASSWORD=[REDACTED]",
         "connect postgres://[REDACTED]@db.example/app failed",
+        "connect redis://[REDACTED]@db.example:6379 failed",
       ].join("\n"),
     );
   });

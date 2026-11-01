@@ -205,7 +205,7 @@ export function redactSecretAssignments(value: string): string {
 export function redactUrls(value: string): string {
   return value
     .replace(/\bhttps?:\/\/[^\s<>"]+/giu, redactUrl)
-    .replace(/(\b[a-z][a-z0-9+.-]*:\/\/)[^\s/@:]+:[^\s/@]+@/giu, "$1[REDACTED]@");
+    .replace(/(\b[a-z][a-z0-9+.-]*:\/\/)[^\s/@]+@/giu, "$1[REDACTED]@");
 }
 
 function redactProviderFailureText(value: string): string {
