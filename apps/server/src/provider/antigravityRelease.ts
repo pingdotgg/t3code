@@ -16,6 +16,18 @@ export interface AntigravityReleaseAsset {
   };
 }
 
+/**
+ * A newer release Google lists in the ACP Registry. The registry publishes no
+ * hash or sizes, so the installer bounds the download, accepts only Google's
+ * download host, and relies on the runtime's own handshake to identify it.
+ */
+export interface AntigravityUpstreamRelease {
+  readonly version: string;
+  readonly url: string;
+}
+
+export type AntigravityRelease = AntigravityReleaseAsset | AntigravityUpstreamRelease;
+
 const releaseAssets = new Map<string, AntigravityReleaseAsset>([
   [
     "darwin-arm64",
