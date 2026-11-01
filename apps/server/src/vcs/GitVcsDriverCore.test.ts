@@ -1464,7 +1464,7 @@ describe("rejected git refs", () => {
 });
 
 it.layer(layerTest)("GitVcsDriver core integration", (it) => {
-  it.effect("keeps large change sets available for status and commit preparation", () =>
+  it.effect("keeps large change sets available for status, commit preparation and selection", () =>
     Effect.gen(function* () {
       const cwd = yield* makeTmpDir();
       const fs = yield* FileSystem.FileSystem;
@@ -1473,10 +1473,13 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
       yield* git(cwd, ["init"]);
       yield* git(cwd, ["config", "user.email", "test@test.com"]);
       yield* git(cwd, ["config", "user.name", "Test"]);
+      // The directory pushes the selected paths past Linux's default 2 MiB ARG_MAX.
+      const directory = "d".repeat(200);
       const files = Array.from(
         { length: 6_000 },
-        (_, index) => `file-${String(index).padStart(5, "0")}-${"x".repeat(160)}.txt`,
+        (_, index) => `${directory}/file-${String(index).padStart(5, "0")}-${"x".repeat(160)}.txt`,
       );
+      yield* fs.makeDirectory(path.join(cwd, directory));
       yield* Effect.forEach(files, (file) => fs.writeFileString(path.join(cwd, file), "before\n"), {
         concurrency: 16,
         discard: true,
@@ -1501,6 +1504,13 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
       assert.isNotNull(context);
       assert.isAbove(context!.stagedSummary.length, 1_000_000);
       assert.lengthOf(context!.stagedSummary.split("\n"), files.length);
+      const [leftOut, ...selected] = files;
+      yield* driver.commit(cwd, "selected", "", { stage: { filePaths: selected } });
+      assert.equal(
+        yield* git(cwd, ["show", "--pretty=", "--shortstat", "HEAD"]),
+        "5999 files changed, 5999 insertions(+), 5999 deletions(-)",
+      );
+      assert.equal(yield* git(cwd, ["status", "--porcelain"]), `M ${leftOut}`);
     }),
   );
   describe("structured errors", () => {
@@ -5057,21 +5067,41 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
         const cwd = yield* makeTmpDir();
         yield* initRepoWithCommit(cwd);
         const driver = yield* GitVcsDriver.GitVcsDriver;
+        const selected = ["selected[1].txt", "-dash.txt", "with space.txt"];
+        if ((yield* HostProcess.Platform) !== "win32") selected.push("tab\tand\nnewline.txt");
 
-        yield* writeTextFile(cwd, "selected[1].txt", "literal\n");
+        for (const file of selected) yield* writeTextFile(cwd, file, "literal\n");
         yield* writeTextFile(cwd, "selected1.txt", "pattern match\n");
 
-        const context = yield* driver.prepareCommitContext(cwd, ["selected[1].txt"]);
+        yield* git(cwd, ["add", "selected1.txt"]);
+        const stagedBefore = yield* git(cwd, ["diff", "--cached"]);
+        const headBefore = yield* git(cwd, ["rev-parse", "HEAD"]);
+        const invalidSelection = ["selected[1].txt\0:(top,glob)**"];
+        const prepared = yield* driver
+          .prepareCommitContext(cwd, invalidSelection)
+          .pipe(Effect.result);
+        const committed = yield* driver
+          .commit(cwd, "Invalid selection", "", { stage: { filePaths: invalidSelection } })
+          .pipe(Effect.result);
+        assert.isTrue(Result.isFailure(prepared));
+        assert.isTrue(Result.isFailure(committed));
+        assert.equal(yield* git(cwd, ["diff", "--cached"]), stagedBefore);
+        assert.equal(yield* git(cwd, ["rev-parse", "HEAD"]), headBefore);
+        yield* git(cwd, ["reset"]);
+
+        const context = yield* driver.prepareCommitContext(cwd, selected);
 
         assert.include(context?.stagedSummary ?? "", "selected[1].txt");
         assert.notInclude(context?.stagedSummary ?? "", "selected1.txt");
         assert.equal(yield* git(cwd, ["diff", "--cached", "--name-only"]), "");
         yield* driver.commit(cwd, "Add literal path", "", {
-          stage: { filePaths: ["selected[1].txt"] },
+          stage: { filePaths: selected },
         });
-        assert.equal(
-          yield* git(cwd, ["show", "--pretty=", "--name-only", "HEAD"]),
-          "selected[1].txt",
+        assert.sameMembers(
+          (yield* git(cwd, ["show", "--pretty=", "--name-only", "-z", "HEAD"]))
+            .split("\0")
+            .filter(Boolean),
+          selected,
         );
 
         const status = yield* git(cwd, ["status", "--porcelain"]);
