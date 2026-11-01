@@ -15,6 +15,7 @@ export function decide(
   affected: Array<string>;
   outputs: {
     typecheck: boolean;
+    typecheck_packages: string;
     build: boolean;
     test: boolean;
     test_packages: string;
