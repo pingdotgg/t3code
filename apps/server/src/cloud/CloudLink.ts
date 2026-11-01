@@ -1412,6 +1412,7 @@ const make = Effect.gen(function* () {
 
   const updatePreferences = Effect.fn("environment.cloud.preferences")(
     function* (input: EnvironmentCloudPreferencesRequest) {
+      yield* requireConnectEnabled;
       yield* savePreferences(input);
       return yield* readCloudLinkState();
     },

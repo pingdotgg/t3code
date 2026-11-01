@@ -1,4 +1,5 @@
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import { isConnectEnabled } from "@t3tools/shared/otelEnvironment";
 import * as Config from "effect/Config";
 import * as ConfigProvider from "effect/ConfigProvider";
 import * as Console from "effect/Console";
@@ -66,9 +67,9 @@ const readSetup = Effect.fn("cli.up.read_setup")(function* () {
     .pipe(Config.option)
     .parse(ConfigProvider.fromEnv({ env: entries }));
   const secrets = yield* ServerSecretStore.ServerSecretStore;
-  const connectRevoked =
-    hasCloudPublicConfig && Option.isSome(yield* secrets.get(CLOUD_LINK_REVOKED));
-  const connect = hasCloudPublicConfig
+  const connectAvailable = hasCloudPublicConfig && isConnectEnabled(entries.T3CODE_CONNECT_ENABLED);
+  const connectRevoked = connectAvailable && Option.isSome(yield* secrets.get(CLOUD_LINK_REVOKED));
+  const connect = connectAvailable
     ? connectEnabled({
         cliDesired: yield* CliState.readCliDesiredCloudLink,
         cliMode: yield* CliState.readCliDesiredLinkMode,

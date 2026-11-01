@@ -19,6 +19,11 @@ import * as BootService from "../cloud/bootService.ts";
 import { upsertServiceEnv } from "./service.ts";
 import { connectEnabled, planRoutes, upCommand } from "./up.ts";
 
+vi.mock("../cloud/publicConfig.ts", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../cloud/publicConfig.ts")>()),
+  hasCloudPublicConfig: true,
+}));
+
 const none = Option.none<boolean>();
 
 it.each([
@@ -163,12 +168,23 @@ it.layer(Layer.mergeAll(NodeServices.layer, NetService.layer))("t3 up", (it) => 
     /** Runs as if in a terminal, answering each question with this text. */
     readonly answer?: string;
     readonly prints?: string;
+    readonly omits?: string;
     readonly env: string;
     readonly args: ReadonlyArray<string>;
     readonly installs: number;
     readonly restarts: number;
     readonly envAfter: string;
   }>([
+    {
+      label: "the service disables T3 Connect",
+      installed: true,
+      env: "T3CODE_CONNECT_ENABLED=false\nT3CODE_LAN=false\n",
+      args: ["--no-lan"],
+      installs: 0,
+      restarts: 0,
+      envAfter: "T3CODE_CONNECT_ENABLED=false\nT3CODE_LAN=false\n",
+      omits: "T3 Connect",
+    },
     {
       label: "nothing changed",
       installed: true,
@@ -336,6 +352,9 @@ it.layer(Layer.mergeAll(NodeServices.layer, NetService.layer))("t3 up", (it) => 
       );
       if (input.prints !== undefined) {
         expect(lines.join("\n")).toContain(input.prints);
+      }
+      if (input.omits !== undefined) {
+        expect(lines.join("\n")).not.toContain(input.omits);
       }
       expect(exit._tag).toBe(input.restartFails === true ? "Failure" : "Success");
       expect({ installs, restarts }).toEqual({

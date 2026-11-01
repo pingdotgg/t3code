@@ -664,6 +664,12 @@ describe("releaseManagedTunnelOnShutdown", () => {
       expect(yield* Effect.flip(link.mintCredential({ proof: "proof" }))).toMatchObject({
         operation: "connect-disabled",
       });
+      expect(
+        yield* Effect.flip(
+          link.updatePreferences({ publishAgentActivity: false, holdWebhooksWhileOffline: true }),
+        ),
+      ).toMatchObject({ operation: "connect-disabled" });
+      expect(values.size).toBe(0);
       const linkProof = link.linkProof(
         {
           challenge: "challenge",
