@@ -16,6 +16,7 @@ import {
   credentialConnectionId,
   insertRoute,
   entryWithRoutes,
+  findRouteToSameAddress,
   mergeLearnedRoutes,
   pendingRouteOrder,
   removedWithRelay,
@@ -75,6 +76,13 @@ describe("connection routes", () => {
     expect(connectionRouteKind(direct("ts6", "http://[fd7a:115c:a1e0::1]:3773/"))).toBe("tailnet");
     expect(connectionRouteLabel(TAILNET)).toBe("Tailscale");
     expect(connectionRouteLabel(RELAY)).toBe("T3 Connect");
+  });
+
+  it("finds an address with or without its default port as the same", () => {
+    const saved = direct("paired", "http://100.88.1.2/");
+    expect(findRouteToSameAddress([saved], direct("signed-in", "http://100.88.1.2:80/"))).toBe(
+      saved,
+    );
   });
 
   it("places a new route after faster kinds and ahead of T3 Connect", () => {

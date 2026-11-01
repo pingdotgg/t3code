@@ -223,8 +223,8 @@ describe("presentConnectionDiagnosis", () => {
     expect(refused("blocked")).toMatchObject({
       headline: "Mac mini blocked this device",
       steps: [
-        "On another device with access:write on Mac mini (one paired with a default t3 pair code, one granted admin, or yours while nothing is granted), open Settings > Environments and unblock this device.",
-        "Or run `t3 pair` on Mac mini, pair this device with the code, then unblock it.",
+        "On another device with access:write and orchestration:read on Mac mini (one paired with a default t3 pair code, one granted admin, or yours while nothing is granted), open Settings > Environments and unblock this device.",
+        "Or run `t3 pair` on Mac mini, pair this device with the code, unblock it, then revoke that pairing in Settings > Environments so it signs in through Tailscale again.",
       ],
       moreInfoUrl: expect.stringMatching(/#tailscale-troubleshooting$/),
     });

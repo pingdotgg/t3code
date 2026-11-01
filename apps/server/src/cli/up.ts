@@ -231,7 +231,9 @@ const formatSetup = (setup: Setup) => {
   const notes = [
     ...(setup.host === undefined && settings.lan
       ? [
-          "Anyone on your LAN or tailnet can reach the port. A pairing code is the only lock.",
+          settings.tailscale
+            ? "Anyone on your LAN or tailnet can reach the port. A LAN device needs a pairing code."
+            : "Anyone on your LAN or tailnet can reach the port. A pairing code is the only lock.",
           "Turn it off: `t3 up --no-lan`.",
         ]
       : []),

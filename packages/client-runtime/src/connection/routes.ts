@@ -143,11 +143,21 @@ export function findRouteToSameAddress(
   return key === null ? undefined : routes.find((existing) => routeAddressKey(existing) === key);
 }
 
+// URL drops a default port, so `http://host:80/` and `http://host/` key the same.
+function httpBaseUrlKey(httpBaseUrl: string): string {
+  try {
+    const url = new URL(httpBaseUrl);
+    return `${url.protocol}//${url.host}${url.pathname}`.replace(/\/+$/, "");
+  } catch {
+    return httpBaseUrl.replace(/\/+$/, "");
+  }
+}
+
 function routeAddressKey(route: ConnectionRoute): string | null {
   const profile = Option.getOrNull(route.profile);
   switch (profile?._tag) {
     case "BearerConnectionProfile":
-      return `bearer:${profile.httpBaseUrl.replace(/\/+$/, "")}`;
+      return `bearer:${httpBaseUrlKey(profile.httpBaseUrl)}`;
     case "SshConnectionProfile":
       return `ssh:${sshTargetKey(profile.target)}`;
     default:
