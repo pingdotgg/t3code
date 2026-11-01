@@ -1774,7 +1774,7 @@ function appendToolGroupRows(
             (activity.workEntry.detail?.trim() ?? "") !== "",
         )?.workEntry.detail
       : undefined;
-  const thought = latestThought ? liveThoughtLine(latestThought) : "";
+  const thought = latestThought ? compactWorkEntryText(liveThoughtLine(latestThought)) : "";
   const summary = live
     ? (expanded || thought) && latestActivity.workEntry.itemType === "reasoning"
       ? latestActivity.lifecycleStatus === "inProgress"
@@ -1872,9 +1872,8 @@ function appendToolGroupRows(
 function liveToolActivitySummary(activity: ThreadFeedActivity, presentTense: boolean): string {
   const status = liveActivityToolStatus(activity.lifecycleStatus, presentTense);
   if (activity.workEntry.itemType === "reasoning") {
-    return (
-      activity.workEntry.detail?.trim().replace(/\s+/g, " ") ||
-      (status === "inProgress" ? "Thinking" : "Thought")
+    return compactWorkEntryText(
+      activity.workEntry.detail?.trim() || (status === "inProgress" ? "Thinking" : "Thought"),
     );
   }
   const presentation = resolveWorkEntryToolPresentation({
@@ -1897,7 +1896,7 @@ function liveToolActivitySummary(activity: ThreadFeedActivity, presentTense: boo
               : "Ran";
     return `${verb} ${program ?? "command"}`;
   }
-  return activity.detail ?? activity.summary;
+  return compactWorkEntryText(activity.detail ?? activity.summary);
 }
 
 interface ThreadFeedBuild {
