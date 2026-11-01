@@ -64,6 +64,7 @@ import { SKILL_MENTION_PATTERN } from "@t3tools/shared/composerInlineTokens";
 import * as KeyedLock from "@t3tools/shared/KeyedLock";
 import { getModelSelectionStringOptionValue, modelSelectionsEqual } from "@t3tools/shared/model";
 import { causeErrorTag } from "@t3tools/shared/observability";
+import { readToolOutputImage } from "@t3tools/shared/toolOutput";
 
 import {
   isProviderNativeImageAttachment,
@@ -87,7 +88,7 @@ import {
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import { turnScopedSelectionTransition } from "@t3tools/provider-core/server/selectionTransition";
 import { OPENCODE_PROVIDER, openCodePermissionRequestKind } from "../adapter.ts";
-import { openCodeToolTurnItem } from "../toolItems.ts";
+import { openCodeToolTurnItem, type OpenCodeToolContentBlock } from "../toolItems.ts";
 
 const OpenCode2ProviderCapabilities = {
   sessions: {
@@ -494,6 +495,34 @@ const sessionIdOf = (providerThread: OrchestrationV2ProviderThread) => {
 
 const textOf = (content: ReadonlyArray<{ readonly type: string; readonly text?: string }>) =>
   content.flatMap((part) => (part.type === "text" && part.text ? [part.text] : [])).join("\n");
+
+const BASE64_DATA_URI = /^data:([^;,]*)[^,]*;base64,(.+)$/s;
+
+/**
+ * An image tool such as `image_generation` answers with a file block, not text.
+ * Only raster images inlined as base64 are kept; anything else can't be served.
+ * The data URI's media type must match the block's mime, so a conflicting file isn't relabeled.
+ * Blocks keep the provider's order so text and images stay interleaved.
+ */
+const toolContentOf = (
+  content: ReadonlyArray<{
+    readonly type: string;
+    readonly text?: string;
+    readonly uri?: string;
+    readonly mime?: string;
+  }>,
+) =>
+  content.flatMap((part): ReadonlyArray<OpenCodeToolContentBlock> => {
+    if (part.type === "text") return part.text ? [{ type: "text", text: part.text }] : [];
+    const match = part.type === "file" ? BASE64_DATA_URI.exec(part.uri ?? "") : null;
+    const image =
+      match == null || match[1]!.toLowerCase() !== part.mime?.toLowerCase()
+        ? null
+        : readToolOutputImage({ type: "image", mimeType: part.mime, data: match[2] });
+    return image?.data === undefined
+      ? []
+      : [{ type: "image", mimeType: image.mimeType, data: image.data }];
+  });
 
 const stringField = (record: Readonly<Record<string, unknown>> | undefined, key: string) => {
   const value = record?.[key];
@@ -968,7 +997,11 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       turn: ActiveTurn,
       id: string,
       status: "running" | "completed" | "failed" | "interrupted",
-      result?: { readonly output: string | undefined; readonly metadata: unknown },
+      result?: {
+        readonly output: string | undefined;
+        readonly content?: ReadonlyArray<OpenCodeToolContentBlock>;
+        readonly metadata: unknown;
+      },
     ) {
       const tool = turn.tools.get(id);
       if (tool === undefined) return;
@@ -986,6 +1019,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
             name: tool.name,
             input: tool.input,
             output: result?.output,
+            ...(result?.content === undefined ? {} : { content: result.content }),
             completedMetadata: status === "completed" ? result?.metadata : undefined,
           },
         ),
@@ -2066,9 +2100,9 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
             }
             return yield* settleCall(call, "completed", subagentOutput(textOf(event.data.content)));
           }
-          const output = textOf(event.data.content);
           yield* emitTool(state, turn, event.data.id, "completed", {
-            output,
+            output: textOf(event.data.content),
+            content: toolContentOf(event.data.content),
             metadata: event.data.metadata,
           });
           turn.tools.delete(event.data.id);
@@ -2523,6 +2557,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
           if (part.state.status === "completed") {
             yield* emitTool(state, turn, part.id, "completed", {
               output: textOf(part.state.content),
+              content: toolContentOf(part.state.content),
               metadata: part.state.metadata,
             });
             turn.tools.delete(part.id);
