@@ -5015,20 +5015,27 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         yield* turn(11, true, [result(11, "on", undefined, "standard")]);
         assert.equal(notices().length, 6);
         yield* turn(12, true, [result(12, "on", undefined, "fast")]);
-        yield* turn(13, true, [
-          claudeSdkFrame({
-            ...makeResultFrame({
-              uuid: "fast-mode-failed-result",
-              result: "",
-              subtype: "error_during_execution",
-              isError: true,
-              terminalReason: "api_error",
-              errors: ["Request failed."],
+        for (const [index, failure] of (
+          [
+            { subtype: "error_during_execution", isError: true, terminalReason: "api_error" },
+            { apiErrorStatus: 529 },
+            { apiErrorStatus: 429 },
+            { terminalReason: "aborted_streaming" },
+          ] as const
+        ).entries()) {
+          yield* turn(13 + index, true, [
+            claudeSdkFrame({
+              ...makeResultFrame({
+                uuid: `fast-mode-failed-result-${index}`,
+                result: "",
+                errors: ["Request failed."],
+                ...failure,
+              }),
+              usage: { input_tokens: 1, output_tokens: 1, speed: "standard" },
             }),
-            usage: { input_tokens: 1, output_tokens: 1, speed: "standard" },
-          }),
-        ]);
-        assert.equal(notices().length, 6);
+          ]);
+          assert.equal(notices().length, 6);
+        }
       }).pipe(
         Effect.provide(
           Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),

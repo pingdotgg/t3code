@@ -3991,9 +3991,7 @@ function claudeFastModeNotice(message: SDKMessage): string | null | undefined {
   }
   if (
     message.type === "result" &&
-    (message.subtype !== "success" ||
-      message.is_error ||
-      terminalResultError(message.terminal_reason) !== undefined)
+    (message.is_error || terminalStatusFromResult(message) !== "completed")
   ) {
     return undefined;
   }
