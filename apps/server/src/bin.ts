@@ -5,6 +5,7 @@
  * of evaluation) loads; everything else defers to the real CLI in ./binCli.ts.
  */
 import { isEntrypoint } from "./entrypoint.ts";
+import { enableCliCompileCache } from "./cliCompileCache.ts";
 
 if (
   isEntrypoint({
@@ -39,6 +40,7 @@ if (
     const { runPluginHostChild } = await import("./plugins/pluginHostChild.ts");
     runPluginHostChild();
   } else {
+    enableCliCompileCache();
     // Windows desktop launches without stdin; attach before reading, except on fast paths using pipes.
     const { attachConsoleStdin } = await import("./cli/consoleStdin.ts");
     attachConsoleStdin();

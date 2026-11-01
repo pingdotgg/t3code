@@ -107,7 +107,7 @@ export function webhookDraftErrors(draft: DraftState) {
     ];
   const errors: Array<{ title: string; description: string }> = [];
   for (const [label, value] of [
-    ["Replay key", draft.replayKey],
+    ["Duplicate request key", draft.replayKey],
     ["Coalesce key", draft.coalesceKey],
   ] as const) {
     if (value.trim() && !isWebhookDedupeTemplate(value.trim()))
