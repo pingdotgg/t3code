@@ -87,7 +87,8 @@ function WorktreeFastRow() {
           <>
             Clones commits you prepared with git-worktree-fast from its APFS cache instead of
             checking them out. Prepare one by running <code>git worktree-fast prepare</code> in a T3
-            Code terminal. Other commits, and any failure, use Git’s normal checkout.
+            Code terminal. Other commits, and a failed fast clone that left nothing behind, use
+            Git’s normal checkout.
           </>
         ) : (
           <span className="block space-y-1">
