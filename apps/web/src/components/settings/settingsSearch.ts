@@ -600,7 +600,7 @@ export const SETTINGS_SEARCH_ITEMS = [
   {
     id: "download-new-models",
     title: "Download new models",
-    to: "/settings/general",
+    to: "/settings/maintenance",
     searchTerms: ["model catalog list manifest updates claude opus picker missing"],
     scope: "environment-defaults",
   },
