@@ -1931,11 +1931,40 @@ describe("locating a device id across hosts", () => {
           { concurrency: "unbounded" },
         ),
       );
-      yield* Deferred.succeed(yield* Queue.take(attaching), undefined);
-      yield* Deferred.succeed(yield* Queue.take(attaching), undefined);
+      const first = yield* Queue.take(attaching);
+      if (overlap === 2) {
+        const second = yield* Queue.take(attaching);
+        yield* Deferred.succeed(first, undefined);
+        yield* Deferred.succeed(second, undefined);
+      } else {
+        yield* Deferred.succeed(first, undefined);
+        yield* Deferred.succeed(yield* Queue.take(attaching), undefined);
+      }
       yield* Fiber.join(opening);
       expect(most).toBe(overlap);
       expect((yield* service.state).sessions).toHaveLength(2);
+    }).pipe(Effect.provide(ServerSettings.layerTest({ enableDeviceSupport: true })), Effect.scoped),
+  );
+
+  it.effect("an interrupted open releases its device lock", () =>
+    Effect.gen(function* () {
+      const attached = yield* Deferred.make<void>();
+      let calls = 0;
+      const host = listingHost(macMini, ["MAC-UDID"], () =>
+        ++calls === 1
+          ? Deferred.succeed(attached, undefined).pipe(Effect.andThen(Effect.never))
+          : Effect.void,
+      );
+      const service = yield* DeviceService.makeWithHosts(new Map([[macMini.id, host]])).pipe(
+        Effect.provide(NodeCrypto.layer),
+      );
+      const opening = yield* Effect.forkChild(open(service, macMini.id, "MAC-UDID"));
+      yield* Deferred.await(attached);
+      yield* Fiber.interrupt(opening);
+      const session = yield* open(service, macMini.id, "MAC-UDID");
+      expect(session.deviceId).toBe("MAC-UDID");
+      expect(calls).toBe(2);
+      expect((yield* service.state).sessions).toEqual([session]);
     }).pipe(Effect.provide(ServerSettings.layerTest({ enableDeviceSupport: true })), Effect.scoped),
   );
 

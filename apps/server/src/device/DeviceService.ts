@@ -36,6 +36,7 @@ import { SshCommandError } from "@t3tools/ssh/errors";
 import * as FileSystem from "effect/FileSystem";
 import { resolveNodeExecutable, nodeRuntimeUnavailableMessage } from "@t3tools/shared/nodeRuntime";
 import * as Path from "effect/Path";
+import * as RcMap from "effect/RcMap";
 import { ensureAgentDevice, ensureDeviceHub } from "./DeviceToolchain.ts";
 import {
   agentDeviceCloseOutcome,
@@ -735,16 +736,9 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
   });
 
   // serve-sim rejects overlapping iOS stream setup on the same device.
-  const openLocks = new Map<string, Semaphore.Semaphore>();
-  const withOpenLock = (hostId: DeviceHostId, deviceId: DeviceId) => {
-    const key = `${hostId}\u0000${deviceId}`;
-    let lock = openLocks.get(key);
-    if (lock === undefined) {
-      lock = Semaphore.makeUnsafe(1);
-      openLocks.set(key, lock);
-    }
-    return lock.withPermit;
-  };
+  const openLocks = yield* RcMap.make({
+    lookup: (_key: string) => Semaphore.make(1),
+  });
 
   const open: DeviceService["Service"]["open"] = Effect.fn("DeviceService.open")(
     function* (input, context) {
@@ -855,7 +849,13 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
     },
     (effect, input) =>
       input.platform === "ios"
-        ? withOpenLock(input.hostId ?? LOCAL_DEVICE_HOST_ID, input.deviceId)(effect)
+        ? RcMap.get(
+            openLocks,
+            `${input.hostId ?? LOCAL_DEVICE_HOST_ID}\u0000${input.deviceId}`,
+          ).pipe(
+            Effect.flatMap((lock) => lock.withPermit(effect)),
+            Effect.scoped,
+          )
         : effect,
   );
 
