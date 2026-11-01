@@ -1,16 +1,24 @@
 import { expect, it } from "@effect/vitest";
+import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Tracer from "effect/Tracer";
-import { HttpClient, HttpClientResponse } from "effect/http";
+import { HttpClient, HttpClientError, HttpClientResponse } from "effect/http";
 
 import * as RemoteImage from "./RemoteImage.ts";
 
-function fixture(respond: (url: string) => Response) {
+function fixture(respond: (url: string) => Response | Error) {
   const requests: Array<{ url: string; headers: Readonly<Record<string, string>> }> = [];
   const http = HttpClient.make((request) => {
     requests.push({ url: request.url, headers: request.headers });
-    return Effect.succeed(HttpClientResponse.fromWeb(request, respond(request.url)));
+    const response = respond(request.url);
+    return response instanceof Error
+      ? Effect.fail(
+          new HttpClientError.HttpClientError({
+            reason: new HttpClientError.TransportError({ request, cause: response }),
+          }),
+        )
+      : Effect.succeed(HttpClientResponse.fromWeb(request, response));
   });
   return {
     requests,
@@ -18,34 +26,53 @@ function fixture(respond: (url: string) => Response) {
   };
 }
 
-it.effect(
-  "reads an image without browser CORS headers and follows signed redirects without credentials",
-  () => {
-    const clientSpans: Array<Tracer.Span> = [];
+it.effect.each(["success", "transport", "body"] as const)(
+  "reads signed redirects without credentials or URL-bearing traces: %s",
+  (mode) => {
+    const spans: Array<Tracer.Span> = [];
     const tracer = Tracer.make({
       span: (options) => {
         const span = new Tracer.NativeSpan(options);
-        if (options.kind === "client") clientSpans.push(span);
+        spans.push(span);
         return span;
       },
     });
-    const test = fixture((url) =>
-      url === "https://images.example.com/image"
-        ? new Response(null, {
-            status: 302,
-            headers: { location: "https://cdn.example.com/shot.png?signature=example" },
-          })
-        : new Response("png", { headers: { "content-type": "image/png" } }),
-    );
+    const signedUrl = "https://cdn.example.com/shot.png?jwt=private-image-token";
+    const test = fixture((url) => {
+      if (url === "https://images.example.com/image") {
+        return new Response(null, { status: 302, headers: { location: signedUrl } });
+      }
+      if (mode === "transport") return new Error("Connection failed");
+      return new Response(
+        mode === "body"
+          ? new ReadableStream({
+              start: (controller) => controller.error(new Error("Body failed")),
+            })
+          : "png",
+        { headers: { "content-type": "image/png" } },
+      );
+    });
     return Effect.gen(function* () {
       const images = yield* RemoteImage.RemoteImage;
-      const result = yield* images.read("https://images.example.com/image");
-      expect(clientSpans).toEqual([]);
-      expect(result.mimeType).toBe("image/png");
-      expect(new TextDecoder().decode(result.bytes)).toBe("png");
+      const result = yield* images.read("https://images.example.com/image").pipe(Effect.exit);
+      if (mode === "success") {
+        expect(result._tag).toBe("Success");
+        if (result._tag !== "Success") return;
+        expect(result.value.mimeType).toBe("image/png");
+        expect(new TextDecoder().decode(result.value.bytes)).toBe("png");
+      } else {
+        expect(result._tag).toBe("Failure");
+        const readSpan = spans.find((span) => span.name === "RemoteImage.read");
+        expect(readSpan?.status._tag).toBe("Ended");
+        if (readSpan?.status._tag !== "Ended" || readSpan.status.exit._tag !== "Failure") {
+          throw new Error("Expected a failed image read span");
+        }
+        expect(Cause.pretty(readSpan.status.exit.cause)).not.toContain("private-image-token");
+      }
+      expect(spans.filter((span) => span.kind === "client")).toEqual([]);
       expect(test.requests.map(({ url }) => url)).toEqual([
         "https://images.example.com/image",
-        "https://cdn.example.com/shot.png?signature=example",
+        signedUrl,
       ]);
       for (const { headers } of test.requests) {
         expect(headers.authorization).toBeUndefined();

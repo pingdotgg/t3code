@@ -15,6 +15,7 @@ import { fileHeaderMimeType } from "../workspace/fileHeaderMimeType.ts";
 const MAX_IMAGE_BYTES = 32 * 1024 * 1024;
 const MAX_REDIRECTS = 3;
 
+// Upstream errors can contain signed URLs; retain only the failure reason.
 export class RemoteImageError extends Schema.TaggedError<RemoteImageError>()("RemoteImageError", {
   reason: Schema.Literals([
     "invalid-url",
@@ -24,7 +25,6 @@ export class RemoteImageError extends Schema.TaggedError<RemoteImageError>()("Re
     "not-image",
     "too-large",
   ]),
-  cause: Schema.optional(Schema.Defect()),
 }) {
   override get message(): string {
     return "The remote image could not be read.";
@@ -69,7 +69,7 @@ const make = Effect.gen(function* () {
           )
           .pipe(
             Effect.provideService(HttpClient.TracerDisabledWhen, () => true),
-            Effect.mapError((cause) => new RemoteImageError({ reason: "request", cause })),
+            Effect.mapError(() => new RemoteImageError({ reason: "request" })),
           );
         if (response.status >= 300 && response.status < 400) {
           if (!response.headers.location || hop >= MAX_REDIRECTS) {
@@ -93,7 +93,7 @@ const make = Effect.gen(function* () {
         }
         let size = 0;
         const chunks = yield* response.stream.pipe(
-          Stream.mapError((cause) => new RemoteImageError({ reason: "request", cause })),
+          Stream.mapError(() => new RemoteImageError({ reason: "request" })),
           Stream.tap((chunk) => {
             size += chunk.byteLength;
             return size > MAX_IMAGE_BYTES
@@ -121,9 +121,7 @@ const make = Effect.gen(function* () {
     Effect.scoped,
     Effect.timeout("15 seconds"),
     Effect.mapError((cause) =>
-      cause._tag === "RemoteImageError"
-        ? cause
-        : new RemoteImageError({ reason: "request", cause }),
+      cause._tag === "RemoteImageError" ? cause : new RemoteImageError({ reason: "request" }),
     ),
   );
   return RemoteImage.of({ read });
