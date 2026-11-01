@@ -32,6 +32,7 @@ import {
 import { resolveSidebarThreadStatus, type SidebarThreadStatus } from "./Sidebar.logic";
 import {
   createThreadNotificationGate,
+  isSnoozedForNotification,
   type ThreadNotificationKind,
   type ThreadNotificationObservation,
 } from "./ThreadNotificationCoordinator.logic";
@@ -214,8 +215,9 @@ export function startThreadNotifications(
         status === "limited"
           ? `${thread.latestRun?.runId ?? ""}:${status}`
           : null;
-      const completedAt = Date.parse(thread.latestRun?.completedAt ?? "");
+      const completedAtMs = Date.parse(thread.latestRun?.completedAt ?? "");
       const settled = status === "ready" && thread.latestRun?.status === "completed";
+      const completedAt = settled && Number.isFinite(completedAtMs) ? completedAtMs : null;
       const state = {
         raw: rawThread,
         subagentRequest,
@@ -223,7 +225,8 @@ export function startThreadNotifications(
         status,
         attention,
         settled,
-        completedAt: settled && Number.isFinite(completedAt) ? completedAt : null,
+        completedAt,
+        snoozed: isSnoozedForNotification(thread, completedAt, Date.now()),
       };
       next.set(thread.id, state);
       changed.push([prior, state]);
@@ -235,6 +238,7 @@ export function startThreadNotifications(
       entry.gate.observe(state.thread.id, prior, state, {
         archived: state.thread.archivedAt !== null,
         quiet: state.raw.latestRunStopRequested === true,
+        snoozed: state.snoozed,
       });
     }
   };
