@@ -127,15 +127,16 @@ const runProviderMaintenanceCommandWithSpawner = Effect.fn("ProviderMaintenanceR
             Effect.catchDefect((cause) =>
               Effect.gen(function* () {
                 const platform = yield* HostProcess.Platform;
-                const blockedOnWindows =
-                  platform === "win32" &&
-                  Predicate.hasProperty(cause, "code") &&
-                  cause.code === "UNKNOWN";
-                const reason = blockedOnWindows
-                  ? "Windows could not start it (spawn UNKNOWN). Smart App Control or an application control policy may be blocking this executable."
-                  : cause instanceof Error
-                    ? cause.message
-                    : String(cause);
+                const code =
+                  Predicate.hasProperty(cause, "code") && typeof cause.code === "string"
+                    ? cause.code
+                    : null;
+                const reason =
+                  platform === "win32" && code === "UNKNOWN"
+                    ? "Windows could not start it (spawn UNKNOWN). Smart App Control or an application control policy may be blocking this executable."
+                    : code
+                      ? `spawn ${code}`
+                      : "the process could not be started";
                 return yield* new ProviderMaintenanceCommandError({
                   message: `Failed to run update command ${input.command}: ${reason}`,
                   cause,
