@@ -3,7 +3,6 @@ import {
   type AuthSessionId,
   type AuthTailnetSignInResult,
   AuthStandardClientScopes,
-  TAILNET_APP_CAPABILITY,
   TAILNET_SUBJECT_PREFIX,
   TailnetAccessError,
   type TailnetDevice,
@@ -239,20 +238,16 @@ export const make = Effect.gen(function* () {
       // A switch after this status is caught below.
       const status = (yield* Ref.get(scanFrom)) ?? (yield* host.status);
       const account = status.selfNodeId;
-      // A grant is kept the moment its lookup returns, so if the scan is cut short or its
-      // checks below cannot finish, a later scan that cannot read every peer falls back to
+      // A grant is kept the moment its lookup confirms it, from the node the list names, so if
+      // the scan is cut short or its checks below cannot finish, a later scan that cannot read every peer falls back to
       // it, never to an older "no grants".
       const keepGrant = Clock.currentTimeMillis.pipe(
         Effect.flatMap((at) => Ref.set(lastCleanScan, { account, granted: true, at })),
       );
-      const { granted, unreadable } = yield* policyGrantedPeers(status, (address) =>
-        host
-          .whois(address, { fromServer: true })
-          .pipe(
-            Effect.tap((node) =>
-              Object.hasOwn(node.capabilities, TAILNET_APP_CAPABILITY) ? keepGrant : Effect.void,
-            ),
-          ),
+      const { granted, unreadable } = yield* policyGrantedPeers(
+        status,
+        (address) => host.whois(address, { fromServer: true }),
+        keepGrant,
       );
       // Lookups that ran after a switch read another tailnet, so the scan says nothing. A
       // device that joined since the scanned list was not looked up, so "no grants" is

@@ -76,11 +76,15 @@ interface Tailnet {
   loginName?: string;
   /** Other devices whois answers for, by address. */
   devices?: Record<string, { readonly node: JsonObject | null; readonly capMap?: JsonObject }>;
-  /** Holds the next whois for `address` after it reads the tailnet, until `release`. */
+  /**
+   * Holds the next whois for `address` until `release`. It answers from the tailnet as it
+   * was when the whois began, or with `late`, as it is once released.
+   */
   hold?: {
     readonly address: string;
     readonly started: Deferred.Deferred<void>;
     readonly release: Deferred.Deferred<void>;
+    readonly late?: boolean;
   };
 }
 
@@ -137,12 +141,12 @@ const layerTailscaleHost = (tailnet: Tailnet) =>
           if (tailnet.rateLimited === true && options?.fromServer !== true) {
             return yield* new TailscaleHost.TailscaleWhoisRateLimitedError({});
           }
-          const device = tailnet.devices?.[address] ?? {
-            node: tailnet.node,
-            capMap: tailnet.capMap,
-          };
-          const json =
-            device.node === null
+          const answer = () => {
+            const device = tailnet.devices?.[address] ?? {
+              node: tailnet.node,
+              capMap: tailnet.capMap,
+            };
+            return device.node === null
               ? "{}"
               : tailscaleJson({
                   Node: device.node,
@@ -151,12 +155,16 @@ const layerTailscaleHost = (tailnet: Tailnet) =>
                     ? {}
                     : { UserProfile: { LoginName: tailnet.loginName } }),
                 });
+          };
+          const early = answer();
           const hold = tailnet.hold;
           if (hold?.address === address) {
             delete tailnet.hold;
             yield* Deferred.succeed(hold.started, undefined);
             yield* Deferred.await(hold.release);
+            if (hold.late === true) return yield* parseTailscaleWhois(answer());
           }
+          const json = early;
           return yield* parseTailscaleWhois(json);
         }),
     }),
@@ -856,8 +864,7 @@ it.layer(NodeServices.layer)("TailnetSignIn", (it) => {
       tailnet.status = hostStatus({ Peer: { ...peers, stranger: strangerPeer } });
       tailnet.devices = { ...tailnet.devices, [STRANGER_ADDRESS]: { node: stranger } };
       return Effect.gen(function* () {
-        // Another user's device is refused after a scan that finds no grants. Being refused,
-        // it leaves no sign-in code for the background recheck to scan on.
+        // A scan that finds no grants, from the refused stranger.
         expect(yield* refusalOf(signIn(makeDpopKey(), { remoteAddress: STRANGER_ADDRESS }))).toBe(
           "other_user",
         );
@@ -899,7 +906,7 @@ it.layer(NodeServices.layer)("TailnetSignIn", (it) => {
       });
       tailnet.devices = { ...tailnet.devices, [STRANGER_ADDRESS]: { node: stranger } };
       return Effect.gen(function* () {
-        // A refused device leaves no sign-in code, so no background recheck scans meanwhile.
+        // A scan that finds no grants, from the refused stranger.
         yield* refusalOf(signIn(makeDpopKey(), { remoteAddress: STRANGER_ADDRESS }));
         tailnet.devices = {
           ...tailnet.devices,
@@ -934,7 +941,7 @@ it.layer(NodeServices.layer)("TailnetSignIn", (it) => {
         },
       };
       return Effect.gen(function* () {
-        // A refused device leaves no sign-in code, so no background recheck scans meanwhile.
+        // A scan that finds no grants, from the refused stranger.
         yield* refusalOf(signIn(makeDpopKey(), { remoteAddress: STRANGER_ADDRESS }));
         tailnet.devices = {
           ...tailnet.devices,
@@ -951,6 +958,42 @@ it.layer(NodeServices.layer)("TailnetSignIn", (it) => {
         // The laptop can no longer be read; the grant seen stands, not the older "no grants".
         tailnet.devices = { ...tailnet.devices, [LAPTOP_ADDRESS]: { node: null } };
         expect(yield* refusalOf(signIn(makeDpopKey()))).toBe("no_grant");
+      }).pipe(Effect.provide(layerTest(tailnet)));
+    });
+
+    it.effect("a grant read from another account during a scan is not kept for this one", () => {
+      const tailnet = withLaptop();
+      tailnet.status = hostStatus({ Peer: { ...peers, stranger: strangerPeer } });
+      tailnet.devices = { ...tailnet.devices, [STRANGER_ADDRESS]: { node: stranger } };
+      const home = tailnet.status;
+      return Effect.gen(function* () {
+        // A scan that finds no grants, from the refused stranger.
+        yield* refusalOf(signIn(makeDpopKey(), { remoteAddress: STRANGER_ADDRESS }));
+        yield* TestClock.adjust("1 minute");
+        const started = yield* Deferred.make<void>();
+        const release = yield* Deferred.make<void>();
+        tailnet.hold = { address: LAPTOP_ADDRESS, started, release, late: true };
+        const phone = yield* refusalOf(signIn(makeDpopKey())).pipe(Effect.forkChild);
+        yield* Deferred.await(started);
+        // The host switches accounts; there, the laptop's address names a granted device.
+        tailnet.status = hostStatus({
+          Peer: peers,
+          Self: { ...hostStatus().Self, ID: "nBoxAtWork" },
+        });
+        tailnet.devices = {
+          ...tailnet.devices,
+          [LAPTOP_ADDRESS]: {
+            node: phoneNode({ StableID: "nLaptopAtWork", Addresses: [`${LAPTOP_ADDRESS}/32`] }),
+            capMap: granted({ scopes: ["read"] }),
+          },
+        };
+        yield* Deferred.succeed(release, undefined);
+        expect(yield* Fiber.join(phone)).toBe("policy_unknown");
+        // Back home, with the laptop unreadable, the older "no grants" decides, not that grant.
+        tailnet.status = home;
+        tailnet.devices = { ...tailnet.devices, [LAPTOP_ADDRESS]: { node: null } };
+        yield* TestClock.adjust("11 seconds");
+        yield* signIn(makeDpopKey());
       }).pipe(Effect.provide(layerTest(tailnet)));
     });
 

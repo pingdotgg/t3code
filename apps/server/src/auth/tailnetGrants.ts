@@ -59,11 +59,12 @@ export const peersJoined = (before: PeerList, after: PeerList): boolean => {
 /**
  * The peers this host's tailnet policy grants T3 Code, by name, and the peers
  * whois could not read. A box cannot read its policy without root, but whois
- * shows each peer's grants toward it.
+ * shows each peer's grants toward it. `onGrant` runs as each grant is confirmed.
  */
 export const policyGrantedPeers = Effect.fn("tailnetGrants.policyGrantedPeers")(function* <E, R>(
   status: TailscaleStatus,
   whois: (address: string) => Effect.Effect<TailscaleWhois, E, R>,
+  onGrant: Effect.Effect<void> = Effect.void,
 ) {
   const peers: ReadonlyArray<{
     readonly address: string | undefined;
@@ -98,6 +99,7 @@ export const policyGrantedPeers = Effect.fn("tailnetGrants.policyGrantedPeers")(
               : (Object.hasOwn(node.capabilities, TAILNET_APP_CAPABILITY) as boolean | null),
         })),
         Effect.orElseSucceed(() => ({ name, granted: null })),
+        Effect.tap(({ granted }) => (granted === true ? onGrant : Effect.void)),
       );
     },
     { concurrency: 8 },
