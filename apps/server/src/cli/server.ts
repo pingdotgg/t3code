@@ -7,7 +7,7 @@ import { Command, GlobalFlag } from "effect/cli";
 import * as CliError from "effect/cli/CliError";
 
 import * as ServerConfig from "../config.ts";
-import { awaitLauncherLoss } from "../launcherWatch.ts";
+import { awaitLauncherLoss, awaitLauncherStopOnFds } from "../launcherWatch.ts";
 import { runServer } from "../server.ts";
 import { type CliServerFlags, resolveServerConfig, sharedServerCommandFlags } from "./config.ts";
 
@@ -36,9 +36,13 @@ const runServerCommand = Effect.fn("server.runServerCommand")(function* (
     process.stdout.on("error", ignoreClosedLauncherPipe);
     process.stderr.on("error", ignoreClosedLauncherPipe);
   });
+  const launcherStop =
+    config.desktopStopFd === undefined || config.desktopStopAckFd === undefined
+      ? Effect.never
+      : awaitLauncherStopOnFds({ stopFd: config.desktopStopFd, ackFd: config.desktopStopAckFd });
   return yield* Effect.raceFirst(
     run,
-    awaitLauncherLoss().pipe(
+    Effect.raceFirst(awaitLauncherLoss(), launcherStop).pipe(
       // End like SIGTERM does (interrupt-only exit, so the runtime forces process exit).
       Effect.andThen(Effect.interrupt),
     ),

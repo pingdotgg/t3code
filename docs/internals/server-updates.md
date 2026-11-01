@@ -83,7 +83,10 @@ in the durable outbox. That intent survives another restart before provider star
 Continuation effects wait for activation; a slow provider must not delay the server's
 readiness or the launcher's commit boundary. Graceful shutdown captures intent before
 closing providers, then reconciles after ingestion has stopped so a late completion
-cannot be overwritten by a stale cancellation.
+cannot be overwritten by a stale cancellation. Windows sends no stop signal and kills the
+backend's process tree children first, so the backend would record its providers' deaths
+as state and leave recovery nothing to report. The desktop therefore closes a stop pipe and
+waits briefly for the backend's ack before killing it.
 
 The [continuation handler](../../apps/server/src/orchestration-v2/RestartContinuation.ts)
 rechecks the preference, provider selection, newer user work, a stop the user requested,

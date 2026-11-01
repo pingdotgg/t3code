@@ -9,6 +9,7 @@ import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
+import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -273,6 +274,79 @@ describe("DesktopBackendManager", () => {
         );
       }),
     ),
+  );
+
+  const stopNoticeSpawner = (input: {
+    readonly events: Array<string>;
+    readonly acknowledge: boolean;
+  }) =>
+    Layer.succeed(
+      ChildProcessSpawner.ChildProcessSpawner,
+      ChildProcessSpawner.make((command) =>
+        Effect.gen(function* () {
+          const scope = yield* Scope.Scope;
+          yield* Scope.addFinalizer(
+            scope,
+            Effect.sync(() => input.events.push("killed")),
+          );
+          const ack = yield* Deferred.make<void>();
+          const stopFd =
+            command._tag === "StandardCommand" ? command.options.additionalFds?.fd8 : undefined;
+          if (stopFd?.type === "input" && stopFd.stream) {
+            yield* stopFd.stream.pipe(
+              Stream.runDrain,
+              Effect.andThen(Effect.sync(() => input.events.push("stop notice"))),
+              Effect.andThen(input.acknowledge ? Deferred.succeed(ack, undefined) : Effect.void),
+              Effect.forkIn(scope),
+            );
+          }
+          return makeProcess({
+            exitCode: Effect.never,
+            getOutputFd: (fd) =>
+              fd === 9 ? Stream.fromEffectDrain(Deferred.await(ack)) : Stream.empty,
+          });
+        }),
+      ),
+    );
+
+  const runWithStopNotice = (spawnerLayer: Layer.Layer<ChildProcessSpawner.ChildProcessSpawner>) =>
+    Effect.gen(function* () {
+      const scope = yield* Scope.make();
+      yield* DesktopBackendManager.runBackendProcess({
+        ...baseConfig,
+        bootstrap: { ...baseConfig.bootstrap, desktopStopFd: 8, desktopStopAckFd: 9 },
+        desktopTelemetryStream: Stream.empty,
+      }).pipe(
+        Scope.provide(scope),
+        Effect.provide(Layer.merge(spawnerLayer, layerHealthyHttpClient)),
+        Effect.forkChild({ startImmediately: true }),
+      );
+      return scope;
+    });
+
+  it.effect("tells the backend it is stopping and waits for its ack before killing it", () =>
+    Effect.gen(function* () {
+      const events: Array<string> = [];
+      const scope = yield* runWithStopNotice(stopNoticeSpawner({ events, acknowledge: true }));
+      assert.deepEqual(events, []);
+
+      yield* Scope.close(scope, Exit.void);
+      assert.deepEqual(events, ["stop notice", "killed"]);
+    }),
+  );
+
+  it.effect("kills a backend that never acknowledges the stop notice", () =>
+    Effect.gen(function* () {
+      const events: Array<string> = [];
+      const scope = yield* runWithStopNotice(stopNoticeSpawner({ events, acknowledge: false }));
+
+      const closing = yield* Scope.close(scope, Exit.void).pipe(
+        Effect.forkChild({ startImmediately: true }),
+      );
+      yield* TestClock.adjust("1 second");
+      yield* Fiber.join(closing);
+      assert.deepEqual(events, ["stop notice", "killed"]);
+    }),
   );
 
   it.effect("reports a SIGKILL exit without an exit code", () =>

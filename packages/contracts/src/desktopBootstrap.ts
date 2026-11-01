@@ -26,6 +26,9 @@ export const DesktopBackendBootstrap = Schema.Struct({
   desktopTelemetryControlFd: Schema.optionalKey(PositiveInt),
   desktopBrowserFd: Schema.optionalKey(PositiveInt),
   desktopBrowserControlFd: Schema.optionalKey(PositiveInt),
+  // The desktop closes the stop fd before it kills the backend; the backend closes the ack fd once it knows.
+  desktopStopFd: Schema.optionalKey(PositiveInt),
+  desktopStopAckFd: Schema.optionalKey(PositiveInt),
   resourceMonitorPath: Schema.optionalKey(TrimmedNonEmptyString),
 });
 

@@ -381,6 +381,8 @@ export const resolveServerConfig = Effect.fn("config.resolveServerConfig")(funct
   const desktopTelemetryControlFd = bootstrap?.desktopTelemetryControlFd;
   const desktopBrowserFd = bootstrap?.desktopBrowserFd;
   const desktopBrowserControlFd = bootstrap?.desktopBrowserControlFd;
+  const desktopStopFd = bootstrap?.desktopStopFd;
+  const desktopStopAckFd = bootstrap?.desktopStopAckFd;
   const resourceMonitorPath = bootstrap?.resourceMonitorPath;
   const autoBootstrapProjectFromCwd = Option.getOrElse(
     resolveOptionPrecedence(
@@ -514,6 +516,8 @@ export const resolveServerConfig = Effect.fn("config.resolveServerConfig")(funct
     desktopTelemetryControlFd,
     desktopBrowserFd,
     desktopBrowserControlFd,
+    desktopStopFd,
+    desktopStopAckFd,
     resourceMonitorPath,
     autoBootstrapProjectFromCwd,
     logWebSocketEvents,
