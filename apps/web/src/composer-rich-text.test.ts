@@ -51,6 +51,27 @@ describe("composer rich text markdown", () => {
     ]);
   });
 
+  // regression: #25180 underscores in URLs and paths were read as emphasis
+  it("keeps underscores in URLs and paths literal", () => {
+    for (const text of [
+      "Read src/(_foo_).tsx",
+      "https://example.com/~_user_/a",
+      "_build_/file.ts",
+      "src/__test__.tsx",
+      "edit __init__.py, then",
+    ]) {
+      expect(parseInlineMarkdown(text)).toEqual([{ text, marks: [] }]);
+    }
+    expect(parseInlineMarkdown("(_see_) _a b_ __c__")).toEqual([
+      { text: "(", marks: [] },
+      { text: "see", marks: ["italic"] },
+      { text: ") ", marks: [] },
+      { text: "a b", marks: ["italic"] },
+      { text: " ", marks: [] },
+      { text: "c", marks: ["bold"] },
+    ]);
+  });
+
   it("keeps code span contents literal", () => {
     expect(parseInlineMarkdown("`**not bold**`")).toEqual([
       { text: "**not bold**", marks: ["code"] },
