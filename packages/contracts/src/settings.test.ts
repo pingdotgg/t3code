@@ -291,6 +291,21 @@ describe("ClientSettings notifications", () => {
   });
 });
 
+describe("ClientSettings sidebar section dividers", () => {
+  it("keeps existing clients opted out and preserves explicit choices", () => {
+    expect(decodeClientSettings({}).sidebarSectionDividersEnabled).toBe(false);
+    expect(decodeClientSettingsPatch({})).not.toHaveProperty("sidebarSectionDividersEnabled");
+    for (const enabled of [true, false]) {
+      const patch = { sidebarSectionDividersEnabled: enabled };
+      expect(decodeClientSettingsPatch(patch)).toEqual(patch);
+      expect(
+        decodeClientSettings(encodeClientSettings(decodeClientSettings(patch)))
+          .sidebarSectionDividersEnabled,
+      ).toBe(enabled);
+    }
+  });
+});
+
 describe("ClientSettings quit confirmation", () => {
   it.each([
     [true, "hold"],

@@ -76,16 +76,20 @@ export function SidebarDragBoundary(props: {
   marker: "pinned-header" | "pinned-divider";
   label: string;
   visible: boolean;
+  persistent: boolean;
   isDropTarget: boolean;
 }) {
   return (
     <SortableSidebarMarker
       marker={props.marker}
       data-testid={`sidebar-${props.marker}`}
-      className="pointer-events-none relative mx-0.5 -mb-px h-0"
+      className={cn("pointer-events-none relative mx-0.5 -mb-px", props.persistent ? "h-6" : "h-0")}
     >
       {props.visible ? (
-        <div className="sidebar-drag-boundary-label absolute inset-x-2 top-1 flex h-4 items-center gap-2">
+        <div
+          data-persistent={props.persistent || undefined}
+          className="sidebar-drag-boundary-label absolute inset-x-2 top-1 flex h-4 items-center gap-2"
+        >
           <span
             className={cn(
               "shrink-0 text-xs font-medium",
