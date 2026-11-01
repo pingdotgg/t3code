@@ -58,6 +58,9 @@ vi.mock("@t3tools/client-runtime/state/runtime", () => ({
     return { _tag: "Success", value: { relativePath: input.relativePath } };
   },
 }));
+vi.mock("../components/sourceControlAppAccessToast", () => ({
+  suggestAppAccessForRemote: async () => {},
+}));
 vi.mock("../state/projects", () => ({
   projectEnvironment: { readFile: (read: unknown) => read, writeFile: "writeFile" },
 }));

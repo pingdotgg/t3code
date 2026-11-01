@@ -564,11 +564,31 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
         });
       }),
     );
-
-
   });
 
   describe("writeFile", () => {
+    it.effect.each(["!!!!", "a", "YWJj=", "YWJj!!!!"])(
+      "rejects malformed base64 %s without changing an existing file",
+      (contents) =>
+        Effect.gen(function* () {
+          const service = yield* WorkspaceFileSystem.WorkspaceFileSystem;
+          const fileSystem = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const cwd = yield* makeTempDir;
+          yield* writeTextFile(cwd, "asset.bin", "original");
+          const error = yield* service
+            .writeFile({
+              cwd,
+              relativePath: "asset.bin",
+              contents,
+              encoding: "base64",
+            })
+            .pipe(Effect.flip);
+          expect(error).toBeInstanceOf(WorkspaceFileSystem.WorkspaceFileSystemOperationError);
+          expect(error).toMatchObject({ operation: "write-file" });
+          expect(yield* fileSystem.readFileString(path.join(cwd, "asset.bin"))).toBe("original");
+        }),
+    );
     it.effect("rejects writes outside a known workspace", () =>
       Effect.gen(function* () {
         const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
