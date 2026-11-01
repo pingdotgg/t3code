@@ -1076,5 +1076,9 @@ describe("desktop shell environment updates", () => {
     };
     applyShellEnvironment(env, message.environment);
     expect(env).toEqual({ PATH: "C:\\fresh", SSH_AUTH_SOCK: "/current.sock", UNRELATED: "keep" });
+    env.Path = "C:\\stale";
+    env.path = "C:\\other";
+    applyShellEnvironment(env, { PATH: null, SSH_AUTH_SOCK: null });
+    expect(env).toEqual({ UNRELATED: "keep" });
   });
 });

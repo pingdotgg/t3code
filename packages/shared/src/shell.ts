@@ -909,13 +909,13 @@ function resolveKnownWindowsCliDirs(env: NodeJS.ProcessEnv): ReadonlyArray<strin
 }
 
 /** Keep one PATH spelling in copied Windows environment records. */
-export function setWindowsPath(env: NodeJS.ProcessEnv, value: string): void {
+export function setWindowsPath(env: NodeJS.ProcessEnv, value: string | null): void {
   for (const key of Object.keys(env)) {
     if (key.toUpperCase() === "PATH") {
       delete env[key];
     }
   }
-  env.PATH = value;
+  if (value !== null) env.PATH = value;
 }
 
 function mergeWindowsEnv(
@@ -969,8 +969,8 @@ export const resolveWindowsEnvironment = Effect.fn("shell.resolveWindowsEnvironm
 
 export function applyShellEnvironment(env: NodeJS.ProcessEnv, patch: ShellEnvironmentPatch): void {
   for (const [key, value] of Object.entries(patch)) {
-    if (value === null) delete env[key];
-    else if (key === "PATH") setWindowsPath(env, value);
+    if (key === "PATH") setWindowsPath(env, value);
+    else if (value === null) delete env[key];
     else env[key] = value;
   }
 }
