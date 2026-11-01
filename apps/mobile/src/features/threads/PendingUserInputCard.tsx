@@ -68,6 +68,7 @@ function QuestionText(props: { readonly markdown: string; readonly environmentId
   return (
     <SelectableMarkdownText
       markdown={markdown}
+      preserveSoftBreaks
       textStyle={styles.nativeTextStyle}
       onLinkPress={(href) => void openLink(href)}
     />

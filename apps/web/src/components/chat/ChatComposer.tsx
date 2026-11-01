@@ -403,6 +403,7 @@ export interface ChatComposerProps {
     activeQuestion: {
       id: string;
       initialAnswer?: string | undefined;
+      placeholder?: string | undefined;
       multiSelect?: boolean | undefined;
       allowCustomAnswer?: boolean | undefined;
     } | null;
@@ -3372,7 +3373,10 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                         : activePendingProgress
                           ? isChoiceOnlyPendingQuestion
                             ? "Choose an option above"
-                            : "Type your own answer, or leave this blank to use the selected option"
+                            : (activePendingProgress.activeQuestion?.placeholder ??
+                              (isLiteralPendingAnswer
+                                ? "Type your answer"
+                                : "Type your own answer, or leave this blank to use the selected option"))
                           : showPlanFollowUpPrompt && activeProposedPlan
                             ? "Add feedback to refine the plan, or leave this blank to implement it"
                             : projectSelectionRequired

@@ -1,4 +1,5 @@
 import { type RuntimeRequestId, type ScopedThreadRef } from "@t3tools/contracts";
+import { decodeHTMLStrict } from "entities";
 import { memo, use, useEffect, useEffectEvent, useRef, useState } from "react";
 import { BackgroundThreadContext } from "./backgroundThread";
 import { useStableCallback } from "~/hooks/useStableCallback";
@@ -204,7 +205,7 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
             <>
               <ComposerBanner.Separator />
               <span className="min-w-0 flex-1 truncate text-secondary-label">
-                {activeQuestion.question}
+                {decodeHTMLStrict(activeQuestion.question)}
               </span>
             </>
           ) : null}
@@ -243,6 +244,7 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
           <ComposerBanner.Body className="ps-6 pe-4 pb-1 wrap-anywhere sm:ps-5.5">
             <ChatMarkdown
               text={activeQuestion.question}
+              lineBreaks
               cwd={cwd}
               threadRef={threadRef}
               className="pt-2 text-foreground/85"

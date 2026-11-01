@@ -122,6 +122,7 @@ const question = Schema.Struct({
   multiSelect: Schema.optional(Schema.Boolean),
   allowCustomAnswer: Schema.optional(Schema.Boolean),
   initialAnswer: Schema.optional(Schema.String),
+  placeholder: Schema.optional(Schema.String),
   required: Schema.optional(Schema.Boolean),
 });
 const PendingRequestTool = Tool.make("t3_pending_request", {

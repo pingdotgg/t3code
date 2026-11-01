@@ -3324,25 +3324,27 @@ function piQuestion(
             description: option || "Empty value",
             value: option,
           }))
-      : method === "editor"
-        ? []
-        : [
-            {
-              label: "Submit empty value",
-              description: "Send an empty string to the extension.",
-              value: "",
-            },
-          ];
-  // Extensions may send a blank placeholder, which is not a valid question.
-  const question =
-    [recordString(event, "message"), recordString(event, "placeholder")].find(
-      (text) => text !== undefined && text.trim().length > 0,
-    ) ?? title;
+      : [];
+  const placeholder = method === "input" ? recordString(event, "placeholder") : undefined;
   return {
     id: questionId,
-    header: title,
-    question,
-    ...(method === "editor" ? { initialAnswer: recordString(event, "prefill") ?? "" } : {}),
+    header: "Question",
+    question:
+      title
+        .trim()
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/[\\`*_[\]{}()#+.!|~=$-]/g, (character) => `&#${character.charCodeAt(0)};`) ||
+      (method === "select"
+        ? "Choose an option"
+        : method === "editor"
+          ? "Edit text"
+          : "Enter a value"),
+    ...(method === "select"
+      ? {}
+      : { initialAnswer: method === "editor" ? (recordString(event, "prefill") ?? "") : "" }),
+    ...(placeholder === undefined ? {} : { placeholder }),
     options,
   };
 }
