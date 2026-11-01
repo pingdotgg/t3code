@@ -1,5 +1,10 @@
+import {
+  resolveSettings,
+  type Settings as ClaudeSdkSettings,
+} from "@anthropic-ai/claude-agent-sdk";
 import type { ClaudeSettings } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as Data from "effect/Data";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
@@ -11,6 +16,11 @@ import {
 } from "@t3tools/provider-core/server/providerProxy";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 
+class ClaudeProxySettingsError extends Data.TaggedError("ClaudeProxySettingsError")<{
+  readonly message: string;
+}> {}
+
+const encodeSettings = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
 const quotePath = Schema.encodeSync(Schema.fromJsonString(Schema.String));
 
 export const resolveClaudeHomePath = Effect.fn("resolveClaudeHomePath")(function* (
@@ -52,6 +62,10 @@ const CLAUDE_ROUTE_OVERRIDE_VARIABLES = [
   "CLAUDE_CODE_USE_BEDROCK",
   "CLAUDE_CODE_USE_VERTEX",
   "CLAUDE_CODE_USE_FOUNDRY",
+  "CLAUDE_CODE_USE_ANTHROPIC_AWS",
+  "CLAUDE_CODE_USE_ANTHROPIC_GOOGLE_CLOUD",
+  "CLAUDE_CODE_USE_MANTLE",
+  "CLAUDE_CODE_USE_GATEWAY",
 ] as const;
 
 export const applyClaudeProxyEnvironment = (
@@ -69,6 +83,73 @@ export const applyClaudeProxyEnvironment = (
   for (const name of CLAUDE_ROUTE_OVERRIDE_VARIABLES) delete next[name];
   return next;
 };
+
+// Claude applies settings env over process env; flag settings pin the route for saved configs too.
+export const applyClaudeProxySettings = (
+  settings: ClaudeSdkSettings,
+  proxy: ProviderProxyRoute | undefined,
+): ClaudeSdkSettings => {
+  if (proxy === undefined) return settings;
+  return {
+    ...settings,
+    env: {
+      ...settings?.env,
+      ...Object.fromEntries(CLAUDE_ROUTE_OVERRIDE_VARIABLES.map((name) => [name, "0"])),
+      ANTHROPIC_BASE_URL: proxy.url,
+      ANTHROPIC_AUTH_TOKEN: providerProxyToken(proxy),
+      ANTHROPIC_API_KEY: "",
+      CLAUDE_CODE_OAUTH_TOKEN: "",
+    },
+  };
+};
+
+// A private settings file keeps proxy credentials out of process arguments.
+export const writeClaudeProxySettingsFile = Effect.fn("writeClaudeProxySettingsFile")(function* (
+  settings: ClaudeSdkSettings,
+  environment: NodeJS.ProcessEnv,
+  cwd?: string | null,
+) {
+  const fileSystem = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const remotePath = path.join(
+    environment.CLAUDE_CONFIG_DIR ?? path.join(yield* HostProcess.HomeDirectory, ".claude"),
+    "remote-settings.json",
+  );
+  const remote = yield* fileSystem.readFileString(remotePath).pipe(
+    Effect.flatMap(Schema.decodeUnknownEffect(Schema.fromJsonString(Schema.Unknown))),
+    Effect.catchReason("PlatformError", "NotFound", () => Effect.void),
+  );
+  const resolved = yield* Effect.tryPromise(() =>
+    resolveSettings({
+      ...(cwd == null ? {} : { cwd }),
+      settingSources: [],
+      ...(remote === undefined ? {} : { serverManagedSettings: remote as ClaudeSdkSettings }),
+    }),
+  );
+  const managed = resolved.effective;
+  const expected = settings.env ?? {};
+  if (
+    managed.policyHelper !== undefined ||
+    managed.policyHelpers !== undefined ||
+    Object.entries(managed.env ?? {}).some(
+      ([key, value]) =>
+        (["ANTHROPIC_BASE_URL", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_API_KEY"].includes(key) ||
+          CLAUDE_ROUTE_OVERRIDE_VARIABLES.includes(
+            key as (typeof CLAUDE_ROUTE_OVERRIDE_VARIABLES)[number],
+          )) &&
+        value !== expected[key],
+    )
+  ) {
+    return yield* new ClaudeProxySettingsError({
+      message:
+        "Claude managed policy conflicts with proxy routing. Remove its routing overrides or disable Use proxy.",
+    });
+  }
+  const directory = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-claude-proxy-" });
+  const settingsPath = path.join(directory, "settings.json");
+  yield* fileSystem.writeFileString(settingsPath, encodeSettings(settings), { mode: 0o600 });
+  return settingsPath;
+});
 
 /** managed-mcp.json excludes other MCP config and forbids --strict-mcp-config; omit the flag when present. */
 export const hasClaudeManagedMcpConfig = Effect.fn("hasClaudeManagedMcpConfig")(function* () {
