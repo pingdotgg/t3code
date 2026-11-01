@@ -464,8 +464,8 @@ export const ThreadListV2PendingRow = memo(function ThreadListV2PendingRow(props
         >
           {pendingTask.title}
         </Text>
-        <View className="flex-row items-center gap-1" style={{ minHeight: titleLineHeight }}>
-          {isDraft ? (
+        {isDraft ? (
+          <View className="flex-row items-center gap-1" style={{ minHeight: titleLineHeight }}>
             <SymbolView
               name="square.and.pencil"
               size={13}
@@ -477,22 +477,33 @@ export const ThreadListV2PendingRow = memo(function ThreadListV2PendingRow(props
               type="monochrome"
               weight="semibold"
             />
-          ) : null}
+            <Text
+              className={cn(
+                "text-xs font-t3-bold",
+                selected
+                  ? selectedThreadRowColors.foregroundClassName
+                  : "text-adaptive-amber-700-300",
+              )}
+            >
+              Draft
+            </Text>
+          </View>
+        ) : null}
+      </View>
+      {!isDraft ? (
+        <View className="mt-1" style={{ paddingLeft: titleTextInset }}>
           <Text
             className={cn(
               "text-xs",
-              isDraft && "font-t3-bold",
               selected
                 ? selectedThreadRowColors.foregroundClassName
-                : isDraft
-                  ? "text-adaptive-amber-700-300"
-                  : rowAppearance.tertiaryForegroundClassName,
+                : rowAppearance.tertiaryForegroundClassName,
             )}
           >
-            {isDraft ? "Draft" : "Sends on reconnect"}
+            Sends on reconnect
           </Text>
         </View>
-      </View>
+      ) : null}
       {branch || props.environmentLabel ? (
         <View className="mt-1 flex-row items-center gap-1" style={{ paddingLeft: titleTextInset }}>
           {props.environmentLabel && props.environmentMachine ? (
