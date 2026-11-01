@@ -343,22 +343,31 @@ export function mathWrapperOf(element: Element | null): Element | null {
   return element?.closest(MATH_SELECTOR) ?? null;
 }
 
-/** A cell's text, with each formula as its TeX. */
-function csvCellText(cell: Element): string {
-  if (!cell.querySelector(MATH_SELECTOR)) return cell.textContent ?? "";
-  const copy = cell.cloneNode(true) as Element;
-  for (const wrapper of copy.querySelectorAll(MATH_SELECTOR)) {
-    wrapper.replaceWith(wrapper.getAttribute("data-markdown-copy")?.trim() ?? "");
+function tableCellText(node: Node): string {
+  if (node.nodeType === Node.TEXT_NODE) return node.textContent ?? "";
+  if (node.nodeType !== Node.ELEMENT_NODE) return "";
+  const element = node as Element;
+  if (element.matches(MATH_SELECTOR)) {
+    return element.getAttribute("data-markdown-copy")?.trim() ?? "";
   }
-  return copy.textContent ?? "";
+  if (element.tagName === "BR") return " ";
+  const placeholderAlt = element.getAttribute("data-markdown-alt");
+  if (placeholderAlt !== null) return placeholderAlt;
+  if (element.tagName === "IMG") return element.getAttribute("alt") ?? "";
+  return [...node.childNodes].map(tableCellText).join("");
 }
 
-function csvCell(value: string): string {
-  const normalized = value.replace(/\s+/g, " ").trim();
+function delimitedCell(value: string, format: "tsv" | "csv"): string {
+  const text = value.replace(/\s+/g, " ").trim();
+  const isNumeric = /^[+-]?(?:(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?$/.test(
+    text,
+  );
+  const normalized = /^[=+\-@]/.test(text) && !isNumeric ? `'${text}` : text;
+  if (format === "tsv" && !normalized.startsWith('"')) return normalized;
   return /[",\n]/.test(normalized) ? `"${normalized.replaceAll('"', '""')}"` : normalized;
 }
 
-export function serializeTableElementToCsv(table: Element): string {
+export function serializeTableElementToDelimited(table: Element, format: "tsv" | "csv"): string {
   const rows = [...table.querySelectorAll(":scope > thead > tr, :scope > tbody > tr, :scope > tr")];
   const lines: string[] = [];
   for (const row of rows) {
@@ -366,7 +375,11 @@ export function serializeTableElementToCsv(table: Element): string {
       (cell) => cell.tagName === "TH" || cell.tagName === "TD",
     );
     if (cells.length === 0) continue;
-    lines.push(cells.map((cell) => csvCell(csvCellText(cell))).join(","));
+    lines.push(
+      cells
+        .map((cell) => delimitedCell(tableCellText(cell), format))
+        .join(format === "tsv" ? "\t" : ","),
+    );
   }
   return lines.join("\n");
 }
