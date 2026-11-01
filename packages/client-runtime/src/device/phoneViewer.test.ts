@@ -13,6 +13,7 @@ const gpu = vi.hoisted(() => ({
       rotation: Quaternion | undefined;
       displayAngle: number | undefined;
       yaw: number | undefined;
+      camera: PerspectiveCamera;
       cameraZ: number;
     }[];
   }[],
@@ -53,6 +54,7 @@ vi.mock("three", async () => {
           rotation: phone?.quaternion.clone(),
           displayAngle: phone?.children[0]?.rotation.z,
           yaw: phone?.rotation.y,
+          camera,
           cameraZ: camera.position.z,
         });
         this.state.blank = false;
@@ -80,9 +82,9 @@ vi.mock("./modelScene.ts", async () => {
   };
 });
 
-import { Group, Quaternion } from "three";
+import { Group, Mesh, MeshBasicMaterial, Quaternion, Vector3 } from "three";
 import { createPhoneViewer } from "./phoneViewer.ts";
-import { type DeviceShapeProfile } from "./shapeProfile.ts";
+import { ANDROID_PHONE_SHAPE, type DeviceShapeProfile } from "./shapeProfile.ts";
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -91,7 +93,15 @@ afterEach(() => {
   models.pending.length = 0;
 });
 
-function fixture(profile?: DeviceShapeProfile) {
+function fixture({
+  profile,
+  source: size = { width: 1206, height: 2622 },
+  foldAngle,
+}: {
+  profile?: DeviceShapeProfile;
+  source?: { width: number; height: number };
+  foldAngle?: number;
+} = {}) {
   const pending = new Map<number, FrameRequestCallback>();
   let id = 0;
   let now = 0;
@@ -102,7 +112,7 @@ function fixture(profile?: DeviceShapeProfile) {
   });
   vi.stubGlobal("cancelAnimationFrame", (id: number) => pending.delete(id));
   const canvas = Object.assign(new EventTarget(), { width: 0, height: 0 }) as HTMLCanvasElement;
-  const source = { width: 1206, height: 2622 } as HTMLCanvasElement;
+  const source = { ...size } as HTMLCanvasElement;
   const onUnavailable = vi.fn();
   const onFramingAspect = vi.fn();
   const viewer = createPhoneViewer({
@@ -111,6 +121,7 @@ function fixture(profile?: DeviceShapeProfile) {
     onUnavailable,
     onFramingAspect,
     ...(profile ? { profile } : {}),
+    ...(foldAngle === undefined ? {} : { foldAngle }),
   });
   const draw = (time = now) => {
     now = time;
@@ -150,5 +161,77 @@ it("rejects incompatible accessories and releases an accessory that finishes aft
   await Promise.resolve();
   expect(asset.parent).toBeNull();
   expect(dispose).toHaveBeenCalledOnce();
+  viewer.dispose();
+});
+
+function texturedScreen(scene: Scene) {
+  const screens: Mesh[] = [];
+  scene.traverseVisible((object) => {
+    if (
+      object instanceof Mesh &&
+      object.material instanceof MeshBasicMaterial &&
+      object.material.map
+    )
+      screens.push(object);
+  });
+  expect(screens).toHaveLength(1);
+  const screen = screens[0]!;
+  const position = screen.geometry.getAttribute("position");
+  const uv = screen.geometry.getAttribute("uv");
+  const range = (read: (index: number) => number) => {
+    const values = Array.from({ length: position.count }, (_, index) => read(index));
+    return { min: Math.min(...values), size: Math.max(...values) - Math.min(...values) };
+  };
+  const x = range((index) => position.getX(index));
+  const y = range((index) => position.getY(index));
+  const u = range((index) => uv.getX(index));
+  const v = range((index) => uv.getY(index));
+  const width = x.size / u.size;
+  const height = y.size / v.size;
+  return {
+    aspect: width / height,
+    at: (texU: number, texV: number) =>
+      screen.localToWorld(
+        new Vector3(
+          x.min + (texU - u.min) * width,
+          y.min + (texV - v.min) * height,
+          position.getZ(0),
+        ),
+      ),
+  };
+}
+
+it.each([
+  { name: "a phone frame", first: { width: 1080, height: 2400 }, next: null },
+  { name: "a tablet frame", first: { width: 1920, height: 1200 }, next: null },
+  {
+    name: "a phone frame after a fold-like one",
+    first: { width: 2208, height: 1840 },
+    next: { width: 1080, height: 2400 },
+  },
+])("draws $name on an Android fold at the frame's own aspect", ({ first, next }) => {
+  const { viewer, draw, source, state } = fixture({
+    profile: ANDROID_PHONE_SHAPE,
+    source: first,
+    foldAngle: 180,
+  });
+  if (next) {
+    Object.assign(source, next);
+    viewer.frameUpdated();
+    draw();
+  }
+  const frameAspect = source.width / source.height;
+  const open = texturedScreen(state.frames.at(-1)!.scene);
+  expect(open.aspect, "open inner screen picture aspect").toBeCloseTo(frameAspect, 2);
+
+  const camera = state.frames.at(-1)!.camera;
+  camera.updateMatrixWorld(true);
+  const edge = open.at(0.98, 0.5).project(camera);
+  expect(viewer.screenPoint((edge.x + 1) / 2, (1 - edge.y) / 2)?.x).toBeCloseTo(0.98, 2);
+
+  viewer.setFoldAngle(0);
+  draw(1000);
+  const closed = texturedScreen(state.frames.at(-1)!.scene);
+  expect(closed.aspect, "closed cover screen picture aspect").toBeCloseTo(frameAspect, 2);
   viewer.dispose();
 });
