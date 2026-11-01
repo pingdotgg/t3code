@@ -578,7 +578,10 @@ describe("AgentAwarenessRelay", () => {
 
   // Mute and unmute reach the relay as thread.mute-set events; the unmute
   // event's own time is the cutoff for terminal alerts.
-  const makeMuteRelay = Effect.fnUntraced(function* (confirmWithdrawal = true) {
+  const makeMuteRelay = Effect.fnUntraced(function* (
+    confirmWithdrawal = true,
+    holdCompletion = false,
+  ) {
     const events = yield* Queue.unbounded<OrchestrationV2DomainEvent>();
     const pulls = yield* Queue.unbounded<void>();
     const harness = yield* makeTestRelay({
@@ -627,6 +630,13 @@ describe("AgentAwarenessRelay", () => {
     });
     // Publish live work, then mute and let the withdrawal confirm.
     yield* harness.relay.publishThread(THREAD_ID);
+    if (holdCompletion) {
+      yield* Ref.set(
+        harness.currentShell,
+        shell({ status: "completed", latestRunCompletedAt: yield* DateTime.now }),
+      );
+      yield* harness.relay.publishThread(THREAD_ID);
+    }
     const mutedAt = yield* DateTime.now;
     yield* Ref.set(harness.currentShell, shell({ mutedAt }));
     yield* deliverMuteSet(mutedAt, mutedAt);
@@ -690,6 +700,30 @@ describe("AgentAwarenessRelay", () => {
       yield* TestClock.adjust("5 seconds");
       yield* relay.drain;
       assert.equal(publications.at(-1)?.state, null);
+    }),
+  );
+
+  it.effect("does not restore a muted completion held across settlement", () =>
+    Effect.gen(function* () {
+      const { relay, currentShell, publications, deliverMuteSet } = yield* makeMuteRelay(
+        false,
+        true,
+      );
+      const finishedAt = yield* DateTime.now;
+      yield* TestClock.adjust("1 second");
+      yield* Ref.set(
+        currentShell,
+        shell({
+          status: "completed",
+          settledOverride: "settled",
+          latestRunCompletedAt: finishedAt,
+        }),
+      );
+      yield* deliverMuteSet(null, yield* DateTime.now);
+      yield* TestClock.adjust("5 seconds");
+      yield* relay.drain;
+      assert.equal(publications.at(-1)?.state, null);
+      assert.isFalse(publications.some((publication) => publication.state?.phase === "completed"));
     }),
   );
 

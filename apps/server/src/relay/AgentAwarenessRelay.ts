@@ -621,7 +621,12 @@ export const make = Effect.gen(function* () {
               project,
             })
           : null;
-      if (unsettled?.state?.phase === "completed") {
+      const unmutedAt = unmutedAtByThread.get(threadId);
+      if (
+        unsettled?.state?.phase === "completed" &&
+        (unmutedAt === undefined ||
+          (Option.isSome(thread) && terminalWorkSinceStart(thread.value, unmutedAt)))
+      ) {
         const completion = unsettled.state;
         yield* publishState({
           projectId: unsettled.projectId,
