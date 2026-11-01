@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { buildThreadActionMenuItems, type ThreadActionMenuState } from "./threadActionMenu.logic";
+import {
+  buildThreadActionMenuItems,
+  transcriptViewFromMenuAction,
+  type ThreadActionMenuState,
+} from "./threadActionMenu.logic";
 
 const baseState: ThreadActionMenuState = {
   canOperate: true,
@@ -9,6 +13,7 @@ const baseState: ThreadActionMenuState = {
   isPinned: false,
   isSettled: false,
   autoSettleEnabled: true,
+  transcriptView: "normal",
   isSnoozed: false,
   canSnoozeNow: true,
   isRegeneratingTitle: false,
@@ -26,6 +31,26 @@ const baseState: ThreadActionMenuState = {
 };
 
 describe("buildThreadActionMenuItems", () => {
+  it("offers every Transcript view level with the current one checked, even to read-only clients", () => {
+    const items = buildThreadActionMenuItems({
+      ...baseState,
+      canOperate: false,
+      transcriptView: "thinking",
+    });
+    const menu = items.find((item) => item.id === "transcript-view");
+    expect(menu?.disabled).toBeUndefined();
+    expect(
+      menu?.children?.map(({ id, label, checked, disabled }) => ({ id, label, checked, disabled })),
+    ).toEqual([
+      { id: "transcript-view:normal", label: "Normal", checked: false, disabled: undefined },
+      { id: "transcript-view:thinking", label: "Thinking", checked: true, disabled: undefined },
+      { id: "transcript-view:verbose", label: "Verbose", checked: false, disabled: undefined },
+    ]);
+    expect(transcriptViewFromMenuAction("transcript-view:verbose")).toBe("verbose");
+    expect(transcriptViewFromMenuAction("transcript-view")).toBeNull();
+    expect(transcriptViewFromMenuAction("snooze:custom")).toBeNull();
+  });
+
   it.each([false, true])(
     "disables both lifecycle directions without permission (reversed: %s)",
     (reversed) => {

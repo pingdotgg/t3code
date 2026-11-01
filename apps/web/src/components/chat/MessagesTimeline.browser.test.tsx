@@ -9,6 +9,7 @@ import {
   ProviderDriverKind,
   ProviderInstanceId,
   RunAttemptId,
+  type TranscriptView,
   RunId,
   RuntimeRequestId,
   TurnItemId,
@@ -1439,4 +1440,240 @@ it("keeps concurrent approvals actionable outside collapsed work and restores se
   await expect
     .element(screen.getByRole("button", { name: "Open the current tab", exact: true }))
     .toBeVisible();
+});
+
+describe("MessagesTimeline transcript view", () => {
+  it("opens finished turns, keeps a fold the user closes, and starts over when the view changes", async () => {
+    setup();
+    const base = baseProps();
+    const runId = RunId.make("run-transcript");
+    const entries = [
+      message("Find the bug"),
+      message("Looking around first.", { role: "assistant", runId }, "thought"),
+      message("Fixed it.", { role: "assistant", runId }, "final"),
+    ];
+    const finished = {
+      runId,
+      status: "completed" as const,
+      startedAt: CREATED_AT,
+      completedAt: CREATED_AT,
+    };
+    const next = {
+      ...finished,
+      runId: RunId.make("run-next"),
+      status: "running" as const,
+      completedAt: null,
+    };
+    const timeline = (
+      transcriptView: TranscriptView,
+      latestRun: TimelineProps["latestRun"] = finished,
+    ) => (
+      <MessagesTimeline
+        {...base}
+        timelineEntries={entries}
+        latestRun={latestRun}
+        transcriptView={transcriptView}
+      />
+    );
+    await using screen = await renderElement(timeline("thinking"));
+    await vi.waitFor(() => expect(screen.text()).toContain("Looking around first."));
+
+    await click(screen.button(/^Worked for/));
+    await vi.waitFor(() => expect(screen.text()).not.toContain("Looking around first."));
+    await screen.rerender(timeline("thinking", next));
+    expect(screen.text()).toContain("Fixed it.");
+    expect(screen.text()).not.toContain("Looking around first.");
+
+    await screen.rerender(timeline("normal"));
+    await vi.waitFor(() => expect(screen.text()).toContain("Fixed it."));
+    expect(screen.text()).not.toContain("Looking around first.");
+
+    await screen.rerender(timeline("thinking"));
+    await vi.waitFor(() => expect(screen.text()).toContain("Looking around first."));
+  });
+
+  it("lets find reveal a match inside a fold the user closed in Thinking view", async () => {
+    setup();
+    const base = baseProps();
+    const runId = RunId.make("run-transcript-find");
+    const entries = [
+      message("Find the bug"),
+      message("Looking around first.", { role: "assistant", runId }, "thought"),
+      message("Fixed it.", { role: "assistant", runId }, "final"),
+    ];
+    const timeline = (find: Partial<TimelineProps> = {}) => (
+      <MessagesTimeline {...base} timelineEntries={entries} transcriptView="thinking" {...find} />
+    );
+    await using screen = await renderElement(timeline());
+    await vi.waitFor(() => expect(screen.text()).toContain("Looking around first."));
+    await click(screen.button(/^Worked for/));
+    await vi.waitFor(() => expect(screen.text()).not.toContain("Looking around first."));
+
+    await screen.rerender(
+      timeline({
+        findOpen: true,
+        findExpanded: true,
+        findQuery: "Looking",
+        activeFindMatch: { entryId: "entry-thought", runId: null, occurrence: 0 },
+      }),
+    );
+    await vi.waitFor(() => expect(screen.text()).toContain("Looking around first."));
+  });
+
+  it("restores a thread's remembered folds only under the view they were saved in", async () => {
+    setup();
+    const base = baseProps();
+    const runId = RunId.make("run-transcript-remembered");
+    const entries = [
+      message("Find the bug"),
+      message("Looking around first.", { role: "assistant", runId }, "thought"),
+      message("Fixed it.", { role: "assistant", runId }, "final"),
+    ];
+    const remember = (threadKey: string, transcriptView: TranscriptView) =>
+      rememberTimelinePosition(
+        threadKey,
+        {
+          rowId: "entry-final",
+          offsetWithinRow: 0,
+          scrollOffset: 0,
+          atEnd: true,
+          disclosures: {
+            transcriptView,
+            runs: new Set([runId]),
+            workGroups: new Set(),
+            attempts: new Set(),
+            workGroupState: { scrollPositions: new Map(), expandedEntries: new Set() },
+          },
+        },
+        true,
+      );
+    const openedUnderNormal = "environment-local:thread-transcript-saved-normal";
+    const closedUnderThinking = "environment-local:thread-transcript-saved-thinking";
+    remember(openedUnderNormal, "normal");
+    remember(closedUnderThinking, "thinking");
+    const timeline = (routeThreadKey: string, timelineEntries: Entry[]) => (
+      <MessagesTimeline
+        {...base}
+        routeThreadKey={routeThreadKey}
+        timelineEntries={timelineEntries}
+        transcriptView="thinking"
+      />
+    );
+    await using screen = await renderElement(timeline(base.routeThreadKey, [message("Short")]));
+
+    await screen.rerender(timeline(closedUnderThinking, entries));
+    await vi.waitFor(() => expect(screen.text()).toContain("Fixed it."));
+    expect(screen.text()).not.toContain("Looking around first.");
+
+    await screen.rerender(timeline(openedUnderNormal, entries));
+    await vi.waitFor(() => expect(screen.text()).toContain("Looking around first."));
+  });
+
+  it("opens each row in Verbose view, keeps the one the user closes, and resets for Thinking", async () => {
+    setup();
+    const base = baseProps();
+    const runId = RunId.make("run-transcript-verbose");
+    const entries = [
+      message("Find the bug"),
+      work("thought", {
+        runId,
+        label: "Thinking",
+        tone: "thinking",
+        itemType: "reasoning",
+        detail: "The tokenizer drops trailing commas.",
+      }),
+      work("command", {
+        runId,
+        label: "Ran command",
+        tone: "tool",
+        itemType: "command_execution",
+        command: "npm test",
+      }),
+      message("Fixed it.", { role: "assistant", runId }, "final"),
+    ];
+    const timeline = (transcriptView: TranscriptView) => (
+      <MessagesTimeline {...base} timelineEntries={entries} transcriptView={transcriptView} />
+    );
+    await using screen = await renderElement(timeline("verbose"));
+    const rows = () => [
+      ...screen.container.querySelectorAll<HTMLElement>(
+        '[aria-label="Tool calls"] [aria-expanded]',
+      ),
+    ];
+    const rowStates = () => rows().map((row) => row.getAttribute("aria-expanded"));
+    await vi.waitFor(() => expect(rowStates()).toEqual(["true", "true"]));
+
+    await click(rows()[0]!);
+    await vi.waitFor(() => expect(rowStates()).toEqual(["false", "true"]));
+
+    await screen.rerender(timeline("thinking"));
+    await vi.waitFor(() => expect(rowStates()).toEqual(["false", "false"]));
+
+    await screen.rerender(timeline("verbose"));
+    await vi.waitFor(() => expect(rowStates()).toEqual(["true", "true"]));
+  });
+
+  it("keeps a thinking-only group as foldable rows above Normal", async () => {
+    setup();
+    const base = baseProps();
+    const runId = RunId.make("run-transcript-thoughts");
+    const thought = (id: string, detail: string) =>
+      work(id, { runId, label: "Thinking", tone: "thinking", itemType: "reasoning", detail });
+    const entries = [
+      message("Find the bug"),
+      thought("first", "The tokenizer drops trailing commas."),
+      thought("second", "The parser never sees the last field."),
+      message("Fixed it.", { role: "assistant", runId }, "final"),
+    ];
+    const timeline = (transcriptView: TranscriptView) => (
+      <MessagesTimeline {...base} timelineEntries={entries} transcriptView={transcriptView} />
+    );
+    await using screen = await renderElement(timeline("thinking"));
+    const rowStates = () =>
+      [
+        ...screen.container.querySelectorAll<HTMLElement>(
+          '[aria-label="Tool calls"] [aria-expanded]',
+        ),
+      ].map((row) => row.getAttribute("aria-expanded"));
+    await vi.waitFor(() => expect(rowStates()).toEqual(["false", "false"]));
+
+    await screen.rerender(timeline("verbose"));
+    await vi.waitFor(() => expect(rowStates()).toEqual(["true", "true"]));
+  });
+
+  it("keeps a standalone row closed in Verbose closed after its turn folds and reopens", async () => {
+    setup();
+    const base = baseProps();
+    const runId = RunId.make("run-transcript-standalone");
+    const entries = [
+      message("Find the bug"),
+      work("command", {
+        runId,
+        label: "Ran command",
+        tone: "tool",
+        itemType: "command_execution",
+        command: "npm test",
+      }),
+      message("Fixed it.", { role: "assistant", runId }, "final"),
+    ];
+    await using screen = await renderElement(
+      <MessagesTimeline {...base} timelineEntries={entries} transcriptView="verbose" />,
+    );
+    const rowStates = () =>
+      [
+        ...screen.container.querySelectorAll<HTMLElement>(
+          '[aria-label="Activity"] [aria-expanded]',
+        ),
+      ].map((row) => row.getAttribute("aria-expanded"));
+    await vi.waitFor(() => expect(rowStates()).toEqual(["true"]));
+
+    await click(
+      screen.container.querySelector<HTMLElement>('[aria-label="Activity"] [aria-expanded]')!,
+    );
+    await vi.waitFor(() => expect(rowStates()).toEqual(["false"]));
+    await click(screen.button(/^Worked for/));
+    await vi.waitFor(() => expect(rowStates()).toEqual([]));
+    await click(screen.button(/^Worked for/));
+    await vi.waitFor(() => expect(rowStates()).toEqual(["false"]));
+  });
 });

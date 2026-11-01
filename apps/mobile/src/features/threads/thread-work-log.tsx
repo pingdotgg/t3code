@@ -10,6 +10,7 @@ import {
 } from "./work-log-layout";
 import { QuestionAnswerHistory } from "./QuestionAnswerHistory";
 import { ThreadCommandOutput, useCommandOutputStreaming } from "./thread-command-output";
+import { WorkLogEdgeFades, WorkLogScrollView } from "./thread-work-log-scroll";
 import {
   getQuestionAnswerPreview,
   hasQuestionAnswer,
@@ -36,7 +37,6 @@ import {
   type ColorValue,
   Easing,
   Pressable,
-  ScrollView,
   StyleSheet,
   useAnimatedValue,
   View,
@@ -96,8 +96,8 @@ import Animated, {
   FadeOut,
   LinearTransition,
   ReduceMotion,
-  useAnimatedScrollHandler,
   useAnimatedStyle,
+  useDerivedValue,
   useSharedValue,
   withTiming,
 } from "react-native-reanimated";
@@ -437,7 +437,6 @@ const WORK_ROW_HEIGHT = THREAD_WORK_ROW_MIN_HEIGHT;
 const WORK_ROW_GAP = 1;
 const WORK_LOG_BOTTOM_MARGIN = 3.5;
 const WORK_GROUP_MAX_HEIGHT = 256;
-const WORK_GROUP_EDGE_FADE_HEIGHT = 12;
 
 export const WORK_GROUP_TOGGLE_HEIGHT = THREAD_WORK_ROW_MIN_HEIGHT;
 
@@ -474,6 +473,10 @@ interface ThreadWorkLogProps {
   readonly workspaceRoot?: string | null | undefined;
   readonly copiedRowId: string | null;
   readonly expandedRows: Readonly<Record<string, boolean>>;
+  /** Subagent groups start open; `expandedRows` then names the ones closed. */
+  readonly foldsStartOpen: boolean;
+  /** Each row's details start open; `expandedRows` then names the ones closed. */
+  readonly rowsStartOpen: boolean;
   readonly rowSizing: ReturnType<typeof deriveThreadWorkLogSizing>;
   readonly scrollPositions: Map<string, ThreadWorkGroupScrollPosition>;
   readonly iconSubtleColor: ColorValue;
@@ -494,7 +497,8 @@ export function ThreadWorkLog(props: ThreadWorkLogProps) {
       row={row}
       anchorKey={props.anchorKey}
       copied={props.copiedRowId === row.id}
-      expanded={props.expandedRows[row.id] ?? false}
+      expanded={(props.expandedRows[row.id] ?? false) !== props.rowsStartOpen}
+      edgeFadeColor={props.edgeFadeColor}
       environmentId={props.environmentId}
       iconSubtleColor={props.iconSubtleColor}
       onCopyRow={props.onCopyRow}
@@ -526,17 +530,26 @@ export function ThreadWorkLog(props: ThreadWorkLogProps) {
     return <ThreadSubagentGroup {...props} />;
   }
 
+  // Above Normal, thinking rows stay individually foldable instead of opening as one trace.
   if (
+    !props.foldsStartOpen &&
     props.activities[0]?.groupedToolDetail &&
     props.activities.every((row) => row.projectedItem.item.type === "reasoning")
   ) {
     return (
       <WorkLogBlock continues={props.continuesWorkLog}>
-        <ThreadReasoningGroup
-          activities={props.activities}
-          edgeFadeColor={props.edgeFadeColor}
-          renderReasoning={props.renderReasoning}
-        />
+        <View className="ml-7">
+          <WorkLogScrollView
+            nestedScrollEnabled
+            className="max-h-96"
+            contentContainerClassName="py-1"
+            fadeColor={props.edgeFadeColor}
+          >
+            {props.activities.map((row) => (
+              <View key={row.id}>{props.renderReasoning(row.workEntry.detail ?? "")}</View>
+            ))}
+          </WorkLogScrollView>
+        </View>
       </WorkLogBlock>
     );
   }
@@ -548,6 +561,7 @@ export function ThreadWorkLog(props: ThreadWorkLogProps) {
           activities={props.activities}
           edgeFadeColor={props.edgeFadeColor}
           expandedRows={props.expandedRows}
+          rowsStartOpen={props.rowsStartOpen}
           groupId={props.anchorKey}
           rowSizing={props.rowSizing}
           scrollPositions={props.scrollPositions}
@@ -560,59 +574,11 @@ export function ThreadWorkLog(props: ThreadWorkLogProps) {
   );
 }
 
-function ThreadReasoningGroup(props: {
-  readonly activities: ReadonlyArray<ThreadFeedActivity>;
-  readonly edgeFadeColor: string;
-  readonly renderReasoning: (text: string) => ReactNode;
-}) {
-  const scrollOffset = useSharedValue(0);
-  const contentHeight = useSharedValue(0);
-  const viewportHeight = useSharedValue(0);
-  const onScroll = useAnimatedScrollHandler((event) => {
-    scrollOffset.set(event.contentOffset.y);
-  });
-  const bottomFadeStyle = useAnimatedStyle(() => ({
-    opacity: Math.min(
-      1,
-      Math.max(0, contentHeight.value - viewportHeight.value - scrollOffset.value) /
-        WORK_GROUP_EDGE_FADE_HEIGHT,
-    ),
-  }));
-
-  return (
-    <View className="ml-7">
-      <Animated.ScrollView
-        nestedScrollEnabled
-        className="max-h-96"
-        contentContainerClassName="py-1"
-        scrollEventThrottle={16}
-        onScroll={onScroll}
-        onLayout={(event) => {
-          viewportHeight.set(event.nativeEvent.layout.height);
-        }}
-        onContentSizeChange={(_width, height) => {
-          contentHeight.set(height);
-        }}
-      >
-        {props.activities.map((row) => (
-          <View key={row.id}>{props.renderReasoning(row.workEntry.detail ?? "")}</View>
-        ))}
-      </Animated.ScrollView>
-      <Animated.View
-        pointerEvents="none"
-        className="absolute inset-x-0 bottom-0"
-        style={[{ height: WORK_GROUP_EDGE_FADE_HEIGHT }, bottomFadeStyle]}
-      >
-        <EdgeFade color={props.edgeFadeColor} direction="up" />
-      </Animated.View>
-    </View>
-  );
-}
-
 function ThreadWorkGroupList(props: {
   readonly activities: ReadonlyArray<ThreadFeedActivity>;
   readonly edgeFadeColor: string;
   readonly expandedRows: Readonly<Record<string, boolean>>;
+  readonly rowsStartOpen: boolean;
   readonly groupId: string;
   readonly rowSizing: ReturnType<typeof deriveThreadWorkLogSizing>;
   readonly scrollPositions: Map<string, ThreadWorkGroupScrollPosition>;
@@ -652,16 +618,7 @@ function ThreadWorkGroupList(props: {
   const height = Math.min(contentHeight, WORK_GROUP_MAX_HEIGHT);
   const scrollOffset = useSharedValue(initialPosition?.scrollOffset ?? 0);
   const sharedValues = { scrollOffset };
-
-  const topFadeStyle = useAnimatedStyle(() => ({
-    opacity: Math.min(1, Math.max(0, scrollOffset.value) / WORK_GROUP_EDGE_FADE_HEIGHT),
-  }));
-  const bottomFadeStyle = useAnimatedStyle(() => ({
-    opacity: Math.min(
-      1,
-      Math.max(0, contentHeight - height - scrollOffset.value) / WORK_GROUP_EDGE_FADE_HEIGHT,
-    ),
-  }));
+  const scrollableHeight = useDerivedValue(() => contentHeight - height);
   const rememberPosition = () => {
     if (!loadedRef.current) return;
     const state = listRef.current?.getState();
@@ -735,7 +692,8 @@ function ThreadWorkGroupList(props: {
     return unsubscribe;
   }, []);
   const getFixedItemSize = (row: ThreadFeedActivity, index: number) =>
-    props.expandedRows[row.id] || props.rowSizing.fixedRowHeight === undefined
+    (row.canExpand && (props.expandedRows[row.id] ?? false) !== props.rowsStartOpen) ||
+    props.rowSizing.fixedRowHeight === undefined
       ? undefined
       : props.rowSizing.fixedRowHeight + (index < props.activities.length - 1 ? WORK_ROW_GAP : 0);
   const renderItem = ({ item, index }: { item: ThreadFeedActivity; index: number }) => (
@@ -793,44 +751,12 @@ function ThreadWorkGroupList(props: {
         keyboardShouldPersistTaps="handled"
         style={{ height }}
       />
-      <Animated.View
-        pointerEvents="none"
-        className="absolute inset-x-0 top-0"
-        style={[{ height: WORK_GROUP_EDGE_FADE_HEIGHT }, topFadeStyle]}
-      >
-        <EdgeFade color={props.edgeFadeColor} direction="down" />
-      </Animated.View>
-      <Animated.View
-        pointerEvents="none"
-        className="absolute inset-x-0 bottom-0"
-        style={[{ height: WORK_GROUP_EDGE_FADE_HEIGHT }, bottomFadeStyle]}
-      >
-        <EdgeFade color={props.edgeFadeColor} direction="up" />
-      </Animated.View>
+      <WorkLogEdgeFades
+        color={props.edgeFadeColor}
+        scrollOffset={scrollOffset}
+        scrollableHeight={scrollableHeight}
+      />
     </View>
-  );
-}
-
-function EdgeFade(props: { readonly color: string; readonly direction: "up" | "down" }) {
-  const gradientId = `work-group-fade-${useId().replaceAll(":", "")}`;
-  return (
-    <Svg width="100%" height="100%">
-      <Defs>
-        <LinearGradient id={gradientId} x1="0%" x2="0%" y1="0%" y2="100%">
-          <Stop
-            offset={0}
-            stopColor={props.color}
-            stopOpacity={props.direction === "down" ? 1 : 0}
-          />
-          <Stop
-            offset={1}
-            stopColor={props.color}
-            stopOpacity={props.direction === "down" ? 0 : 1}
-          />
-        </LinearGradient>
-      </Defs>
-      <Rect width="100%" height="100%" fill={`url(#${gradientId})`} />
-    </Svg>
   );
 }
 
@@ -912,8 +838,9 @@ const ThreadWorkLogRow = function ThreadWorkLogRow(
     | "continuesWorkLog"
     | "activities"
     | "copiedRowId"
-    | "edgeFadeColor"
     | "expandedRows"
+    | "foldsStartOpen"
+    | "rowsStartOpen"
     | "rowSizing"
     | "scrollPositions"
   > & {
@@ -922,7 +849,14 @@ const ThreadWorkLogRow = function ThreadWorkLogRow(
     readonly expanded: boolean;
   },
 ) {
-  const { row, expanded } = props;
+  const { row } = props;
+  const notifiedSubagentThreadId =
+    row.projectedItem.item.type === "notification"
+      ? notificationChildThreadId(row.projectedItem.item.source)
+      : undefined;
+  const canExpand = row.canExpand && notifiedSubagentThreadId === undefined;
+  // Verbose opens rows by default, but a row that can't fold must not open.
+  const expanded = props.expanded && canExpand;
   const openLinkedThread = useOpenLinkedThread();
   const streamsOutput =
     useCommandOutputStreaming(props.environmentId) &&
@@ -1006,11 +940,6 @@ const ThreadWorkLogRow = function ThreadWorkLogRow(
       </WorkLogPressable>
     );
   }
-  const notifiedSubagentThreadId =
-    row.projectedItem.item.type === "notification"
-      ? notificationChildThreadId(row.projectedItem.item.source)
-      : undefined;
-  const canExpand = row.canExpand && notifiedSubagentThreadId === undefined;
   const reasoning = row.projectedItem.item.type === "reasoning" ? row.projectedItem.item : null;
   const fetchedItem = fetchedDetail.data?.item ?? null;
   const isRead = toolGroupAction(row.workEntry) === "read";
@@ -1242,12 +1171,13 @@ const ThreadWorkLogRow = function ThreadWorkLogRow(
               </View>
             ))}
           </FilePreviewGallery>
-          <ScrollView
+          <WorkLogScrollView
             nestedScrollEnabled
             directionalLockEnabled
             showsVerticalScrollIndicator
             className="max-h-60"
             contentContainerStyle={{ paddingRight: 8 }}
+            fadeColor={props.edgeFadeColor}
           >
             {reasoning ? (
               props.renderReasoning(reasoning.text)
@@ -1303,7 +1233,7 @@ const ThreadWorkLogRow = function ThreadWorkLogRow(
               </Text>
             ) : null}
             {streamsOutput ? null : exitLine}
-          </ScrollView>
+          </WorkLogScrollView>
           {streamsOutput ? (
             <>
               <ThreadCommandOutput
@@ -1311,6 +1241,7 @@ const ThreadWorkLogRow = function ThreadWorkLogRow(
                 threadId={row.projectedItem.sourceThreadId}
                 itemId={row.projectedItem.sourceItemId}
                 themeAppearance={props.themeAppearance}
+                fadeColor={props.edgeFadeColor}
               />
               {exitLine}
             </>

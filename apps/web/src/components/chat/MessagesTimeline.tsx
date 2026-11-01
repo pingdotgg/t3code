@@ -21,6 +21,10 @@ import {
 } from "@t3tools/contracts";
 import { parseScopedThreadKey } from "@t3tools/client-runtime/environment";
 import { resolveWorkGroupScrollAnchor } from "@t3tools/client-runtime/work-log/scroll-anchor";
+import {
+  transcriptFoldsStartOpen,
+  withDisclosureOpen,
+} from "@t3tools/client-runtime/work-log/disclosure";
 import type { WorkflowOpening } from "@t3tools/client-runtime/state/subagentRuntime";
 import { observeResize } from "~/lib/observeResize";
 import { useStableCallback } from "~/hooks/useStableCallback";
@@ -94,7 +98,7 @@ import { WorktreeSetupCard } from "./WorktreeSetupCard";
 import { useOpenPrLink } from "~/lib/openPullRequestLink";
 import { useMediaQuery } from "~/hooks/useMediaQuery";
 import { cn } from "~/lib/utils";
-import { type TimestampFormat } from "@t3tools/contracts/settings";
+import { type TimestampFormat, type TranscriptView } from "@t3tools/contracts/settings";
 import { type HandoffTimelineRun } from "./V2LifecycleRow";
 import { TimelineSystemDivider } from "./TimelineSystemDivider";
 
@@ -136,20 +140,30 @@ import { useThreadFindPositionReader } from "./useThreadFindPositionReader";
 import { ThreadActivityAnnouncer } from "./ThreadActivityAnnouncer";
 import { useStableHandoffRuns, useIncrementalTimelineRows, useStableRows } from "./useTimelineRows";
 
-function timelineListStateFor(identity: string): {
+function timelineListStateFor(
+  identity: string,
+  transcriptView: TranscriptView,
+): {
   readonly identity: string;
   readonly rememberedPosition: RememberedTimelinePosition | undefined;
   readonly workGroupViewState: WorkGroupViewState;
 } {
-  const rememberedPosition = readTimelinePosition(identity);
+  const remembered = readTimelinePosition(identity);
+  // Folds and scroll offsets remembered under another view don't fit this view's layout.
+  const rememberedPosition =
+    remembered?.disclosures && remembered.disclosures.transcriptView !== transcriptView
+      ? undefined
+      : remembered;
   return {
     identity,
     rememberedPosition,
-    workGroupViewState: rememberedPosition?.disclosures?.workGroupState ?? {
-      scrollPositions: new Map(),
-      expandedEntries: new Set(),
-    },
+    workGroupViewState:
+      rememberedPosition?.disclosures?.workGroupState ?? emptyWorkGroupViewState(),
   };
+}
+
+function emptyWorkGroupViewState(): WorkGroupViewState {
+  return { scrollPositions: new Map(), expandedEntries: new Set() };
 }
 
 const TIMELINE_LIST_HEADER = <div className="h-3 sm:h-4" />;
@@ -289,6 +303,7 @@ interface MessagesTimelineProps {
   markdownCwd: string | undefined;
   resolvedTheme: "light" | "dark";
   timestampFormat: TimestampFormat;
+  transcriptView?: TranscriptView;
   workspaceRoot: string | undefined;
   skills?: ReadonlyArray<ServerProviderSkill>;
   runs: ReadonlyArray<HandoffTimelineRun>;
@@ -388,6 +403,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
   markdownCwd,
   resolvedTheme,
   timestampFormat,
+  transcriptView = "normal",
   workspaceRoot,
   skills = EMPTY_TIMELINE_SKILLS,
   runs: runsProp,
@@ -409,7 +425,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
   // Find open at the opening is part of the snapshot: opening find later
   // announces its own navigation (threadFindStore's announceOpening).
   const [listState, setListState] = useState(() => ({
-    ...timelineListStateFor(listIdentityKey),
+    ...timelineListStateFor(listIdentityKey, transcriptView),
     findOpenAtOpening: findOpen,
   }));
   const [expandedRunIds, setExpandedRunIds] = useState<ReadonlySet<RunId>>(
@@ -436,9 +452,22 @@ const ConversationTimeline = memo(function ConversationTimeline({
   let paintedExpandedRunIds = expandedRunIds;
   let paintedExpandedWorkGroupIds = expandedWorkGroupIds;
   let paintedExpandedAttemptIds = expandedAttemptIds;
+  const startsOpen = transcriptFoldsStartOpen(transcriptView);
+  // Switching the view starts every disclosure from the new default.
+  const [disclosureView, setDisclosureView] = useState(transcriptView);
+  if (disclosureView !== transcriptView) {
+    setDisclosureView(transcriptView);
+    setListState((current) => ({ ...current, workGroupViewState: emptyWorkGroupViewState() }));
+    paintedExpandedRunIds = new Set();
+    paintedExpandedWorkGroupIds = new Set();
+    paintedExpandedAttemptIds = new Set();
+    setExpandedRunIds(paintedExpandedRunIds);
+    setExpandedWorkGroupIds(paintedExpandedWorkGroupIds);
+    setExpandedAttemptIds(paintedExpandedAttemptIds);
+  }
   const identityChanged = listState.identity !== listIdentityKey;
   const { rememberedPosition, workGroupViewState } = identityChanged
-    ? timelineListStateFor(listIdentityKey)
+    ? timelineListStateFor(listIdentityKey, transcriptView)
     : listState;
   if (identityChanged) {
     setPlayingAudioRows(new Map());
@@ -547,7 +576,8 @@ const ConversationTimeline = memo(function ConversationTimeline({
     });
   };
 
-  // An interrupted run opens its fold; a newer run closes the previous run's.
+  // An interrupted run opens its fold; a newer run closes the previous run's
+  // unless every fold starts open.
   const [observedLatestRun, setObservedLatestRun] = useState({
     identity: listIdentityKey,
     runId: latestRun?.runId,
@@ -571,9 +601,11 @@ const ConversationTimeline = memo(function ConversationTimeline({
     ) {
       if (latestRun.runId === previousRunId) {
         if (observedLatestRun.status === "running" && latestRun.status === "interrupted") {
-          setExpandedRunIds((existing) => new Set(existing).add(latestRun.runId));
+          setExpandedRunIds((existing) =>
+            withDisclosureOpen(existing, latestRun.runId, startsOpen),
+          );
         }
-      } else {
+      } else if (!startsOpen) {
         setExpandedRunIds((existing) => {
           if (!existing.has(previousRunId)) return existing;
           const next = new Set(existing);
@@ -600,9 +632,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
   if (expandedFindRunId !== activeFindRunId) {
     setExpandedFindRunId(activeFindRunId);
     if (activeFindRunId) {
-      setExpandedRunIds((previous) =>
-        previous.has(activeFindRunId) ? previous : new Set(previous).add(activeFindRunId),
-      );
+      setExpandedRunIds((previous) => withDisclosureOpen(previous, activeFindRunId, startsOpen));
     }
   }
   // A cited response folded inside a turn opens its fold once per activation;
@@ -637,21 +667,18 @@ const ConversationTimeline = memo(function ConversationTimeline({
     ).get(citedEntry.id);
     setCitationExpandedFor(citationRequest.key);
     if (citedRunId) {
-      setExpandedRunIds((previous) =>
-        previous.has(citedRunId) ? previous : new Set(previous).add(citedRunId),
-      );
+      setExpandedRunIds((previous) => withDisclosureOpen(previous, citedRunId, startsOpen));
     }
     const citedAttempt = citedEntry.attempt;
     if (citedAttempt?.status === "superseded") {
       setExpandedAttemptIds((previous) =>
-        previous.has(citedAttempt.id) ? previous : new Set(previous).add(citedAttempt.id),
+        withDisclosureOpen(previous, citedAttempt.id, startsOpen),
       );
     }
   }
-  const visibleExpandedRunIds =
-    !activeFindRunId || paintedExpandedRunIds.has(activeFindRunId)
-      ? paintedExpandedRunIds
-      : new Set(paintedExpandedRunIds).add(activeFindRunId);
+  const visibleExpandedRunIds = activeFindRunId
+    ? withDisclosureOpen(paintedExpandedRunIds, activeFindRunId, startsOpen)
+    : paintedExpandedRunIds;
 
   const activeFindAttemptId = activeFindMatch
     ? timelineEntries.find((entry) => entry.id === activeFindMatch.entryId)?.attempt?.id
@@ -661,14 +688,13 @@ const ConversationTimeline = memo(function ConversationTimeline({
     setExpandedFindAttemptId(activeFindAttemptId);
     if (activeFindAttemptId) {
       setExpandedAttemptIds((previous) =>
-        previous.has(activeFindAttemptId) ? previous : new Set(previous).add(activeFindAttemptId),
+        withDisclosureOpen(previous, activeFindAttemptId, startsOpen),
       );
     }
   }
-  const visibleExpandedAttemptIds =
-    activeFindAttemptId && !paintedExpandedAttemptIds.has(activeFindAttemptId)
-      ? new Set(paintedExpandedAttemptIds).add(activeFindAttemptId)
-      : paintedExpandedAttemptIds;
+  const visibleExpandedAttemptIds = activeFindAttemptId
+    ? withDisclosureOpen(paintedExpandedAttemptIds, activeFindAttemptId, startsOpen)
+    : paintedExpandedAttemptIds;
 
   const isVisiblePendingApproval = (approval: PendingApproval) =>
     !heldApprovalRequestIds?.has(approval.requestId);
@@ -682,7 +708,8 @@ const ConversationTimeline = memo(function ConversationTimeline({
     runningRunId,
     expandedRunIds: visibleExpandedRunIds,
     expandedAttemptIds: visibleExpandedAttemptIds,
-    expandedWorkGroupIds,
+    expandedWorkGroupIds: paintedExpandedWorkGroupIds,
+    transcriptView,
     isWorking,
     runlessWorkActive,
     activeTurnStartedAt,
@@ -924,6 +951,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
           scrollOffset: element.scrollTop,
           atEnd: isAtEnd,
           disclosures: {
+            transcriptView,
             runs: paintedExpandedRunIds,
             workGroups: paintedExpandedWorkGroupIds,
             attempts: paintedExpandedAttemptIds,
@@ -1027,6 +1055,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
     citationRequest: readyCitationRequest,
     listRef,
     timestampFormat,
+    transcriptView,
     routeThreadKey,
     threadRef: citationThreadRef,
     markdownCwd,

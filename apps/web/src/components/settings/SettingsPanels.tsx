@@ -20,7 +20,9 @@ import {
   type ResponseStreamingMode,
   type QuitConfirmationMode,
   SidebarProjectSortOrder,
+  TranscriptView,
 } from "@t3tools/contracts/settings";
+import { TRANSCRIPT_VIEW_LABELS } from "@t3tools/client-runtime/work-log/disclosure";
 import { desktopUpdateChannelOf } from "@t3tools/shared/cliRelease";
 import { createModelSelection } from "@t3tools/shared/model";
 import * as Equal from "effect/Equal";
@@ -128,6 +130,14 @@ const TIMESTAMP_FORMAT_LABELS = {
   "12-hour": "12-hour",
   "24-hour": "24-hour",
 } as const;
+
+const TRANSCRIPT_VIEW_DESCRIPTIONS: Record<TranscriptView, string> = {
+  normal: "Each finished turn folds its work behind “Worked for”.",
+  thinking: "Every turn, tool group, and superseded attempt starts open.",
+  verbose:
+    "Every turn and group starts open, and so does each row's thinking text and tool output.",
+};
+const isTranscriptView = Schema.is(TranscriptView);
 
 const DIFF_LAYOUT_LABELS: Record<DiffLayout, string> = {
   stacked: "Stacked",
@@ -502,6 +512,9 @@ export function useSettingsRestore(onRestored?: () => void) {
     ...(settings.followUpBehavior !== DEFAULT_UNIFIED_SETTINGS.followUpBehavior
       ? ["Follow-up behavior"]
       : []),
+    ...(settings.transcriptView !== DEFAULT_UNIFIED_SETTINGS.transcriptView
+      ? ["Transcript view"]
+      : []),
     ...(settings.contextWindowMeterEnabled !== DEFAULT_UNIFIED_SETTINGS.contextWindowMeterEnabled
       ? ["Context window indicator"]
       : []),
@@ -616,6 +629,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       composerRichTextEnabled: DEFAULT_UNIFIED_SETTINGS.composerRichTextEnabled,
       sendShortcut: DEFAULT_UNIFIED_SETTINGS.sendShortcut,
       followUpBehavior: DEFAULT_UNIFIED_SETTINGS.followUpBehavior,
+      transcriptView: DEFAULT_UNIFIED_SETTINGS.transcriptView,
       contextWindowMeterEnabled: DEFAULT_UNIFIED_SETTINGS.contextWindowMeterEnabled,
       environmentIdentificationMode: DEFAULT_UNIFIED_SETTINGS.environmentIdentificationMode,
       glassOpacity: DEFAULT_UNIFIED_SETTINGS.glassOpacity,
@@ -1198,6 +1212,42 @@ export function ChatSettingsPanel() {
               <SelectPopup align="end" alignItemWithTrigger={false}>
                 <SelectItem value="queue">Queue</SelectItem>
                 <SelectItem value="steer">Steer</SelectItem>
+              </SelectPopup>
+            </Select>
+          }
+        />
+      </SettingsSection>
+
+      <SettingsSection id="transcript" title="Transcript">
+        <SettingsRow
+          {...searchableSetting("transcript-view")}
+          description={TRANSCRIPT_VIEW_DESCRIPTIONS[settings.transcriptView]}
+          resetAction={
+            settings.transcriptView !== DEFAULT_UNIFIED_SETTINGS.transcriptView ? (
+              <SettingResetButton
+                label="transcript view"
+                onClick={() =>
+                  updateSettings({ transcriptView: DEFAULT_UNIFIED_SETTINGS.transcriptView })
+                }
+              />
+            ) : null
+          }
+          control={
+            <Select
+              value={settings.transcriptView}
+              onValueChange={(value) => {
+                if (isTranscriptView(value)) updateSettings({ transcriptView: value });
+              }}
+            >
+              <SelectTrigger size="sm" className="w-auto min-w-0" aria-label="Transcript view">
+                <SelectValue>{TRANSCRIPT_VIEW_LABELS[settings.transcriptView]}</SelectValue>
+              </SelectTrigger>
+              <SelectPopup align="end" alignItemWithTrigger={false}>
+                {TranscriptView.literals.map((view) => (
+                  <SelectItem key={view} value={view}>
+                    {TRANSCRIPT_VIEW_LABELS[view]}
+                  </SelectItem>
+                ))}
               </SelectPopup>
             </Select>
           }
