@@ -14,6 +14,7 @@ import { AndroidHeaderIconButton } from "../../components/ui/AndroidScreenHeader
 import { AndroidAnchoredMenu } from "../../components/ui/AndroidAnchoredMenu";
 import { Menu } from "../../components/ui/Menu";
 import { SearchField } from "../../components/ui/SearchField";
+import { dismissOpenKeyboard } from "../keyboard/dismissOpenKeyboard";
 import { useHardwareKeyboardCommand } from "../keyboard/hardwareKeyboardCommands";
 import { WorkspaceListToolbarRow } from "../workspace/WorkspaceListToolbarRow";
 import { useWorkspaceConnectionState } from "../../state/workspace";
@@ -68,8 +69,7 @@ export function ThreadListToolbar(props: {
         isTabActive?.("threads") === false
       )
         return false;
-      if (Keyboard.isVisible()) Keyboard.dismiss();
-      else closeSearch();
+      if (!dismissOpenKeyboard()) closeSearch();
       return true;
     });
     return () => subscription.remove();

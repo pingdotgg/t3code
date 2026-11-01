@@ -5,6 +5,7 @@ import { AndroidHeaderIconButton } from "../../components/ui/AndroidScreenHeader
 import { AndroidAnchoredMenu } from "../../components/ui/AndroidAnchoredMenu";
 import { SearchField } from "../../components/ui/SearchField";
 import { useToolbarLayout } from "../../components/ui/useToolbarLayout";
+import { dismissOpenKeyboard } from "../keyboard/dismissOpenKeyboard";
 import { useHardwareKeyboardCommand } from "../keyboard/hardwareKeyboardCommands";
 import { WorkspaceListToolbarRow } from "../workspace/WorkspaceListToolbarRow";
 import { useWorkspaceTabs } from "../workspace/WorkspaceTabsContext";
@@ -50,8 +51,7 @@ export function PullRequestToolbar(props: {
       const state = navigation.getState();
       if (!state || state.routes[state.index]?.name !== "Home" || !isTabActive("pullRequests"))
         return false;
-      if (Keyboard.isVisible()) Keyboard.dismiss();
-      else closeSearch();
+      if (!dismissOpenKeyboard()) closeSearch();
       return true;
     });
     return () => subscription.remove();

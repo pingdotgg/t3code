@@ -908,3 +908,93 @@ index 99cc6c6..d883e76 100644
    );
  }
  
+diff --git a/lib/commonjs/hooks/useKeyboardState/index.js b/lib/commonjs/hooks/useKeyboardState/index.js
+index a4b287006a47011a58c8a16f19b31a479087f44e..e78c9464f530a60f5932cad8a7cc4104badfd554 100644
+--- a/lib/commonjs/hooks/useKeyboardState/index.js
++++ b/lib/commonjs/hooks/useKeyboardState/index.js
+@@ -7,7 +7,8 @@ exports.useKeyboardState = useKeyboardState;
+ var _react = require("react");
+ var _bindings = require("../../bindings");
+ var _module = require("../../module");
+-const EVENTS = ["keyboardWillShow", "keyboardDidHide"];
++// keyboardDidShow: Android's inset desync repair emits only Did* events.
++const EVENTS = ["keyboardWillShow", "keyboardDidShow", "keyboardDidHide"];
+ const getLatestState = () => ({
+   ..._module.KeyboardController.state(),
+   isVisible: _module.KeyboardController.isVisible()
+diff --git a/lib/commonjs/module.js b/lib/commonjs/module.js
+index f27c5a095129cf60831088a73ce94d44f3ba52cd..e3d117b60ba212b8010de9ba92e87f2c5809ee9e 100644
+--- a/lib/commonjs/module.js
++++ b/lib/commonjs/module.js
+@@ -22,6 +22,11 @@ _bindings.KeyboardEvents.addListener("keyboardWillShow", e => {
+   isClosed = false;
+   lastState = e;
+ });
++// Android's inset desync repair emits only Did* events, so treat keyboardDidShow like keyboardWillShow.
++_bindings.KeyboardEvents.addListener("keyboardDidShow", e => {
++  isClosed = false;
++  lastState = e;
++});
+ const dismiss = async options => {
+   const keepFocus = (options === null || options === void 0 ? void 0 : options.keepFocus) ?? false;
+   const animated = (options === null || options === void 0 ? void 0 : options.animated) ?? true;
+diff --git a/lib/module/hooks/useKeyboardState/index.js b/lib/module/hooks/useKeyboardState/index.js
+index 8da7c09fbb398253420d7bfcd9a85abdb981065b..dda0c163e840a003cf2dec78ae478027c6d6484d 100644
+--- a/lib/module/hooks/useKeyboardState/index.js
++++ b/lib/module/hooks/useKeyboardState/index.js
+@@ -1,7 +1,8 @@
+ import { useEffect, useState } from "react";
+ import { KeyboardEvents } from "../../bindings";
+ import { KeyboardController } from "../../module";
+-const EVENTS = ["keyboardWillShow", "keyboardDidHide"];
++// keyboardDidShow: Android's inset desync repair emits only Did* events.
++const EVENTS = ["keyboardWillShow", "keyboardDidShow", "keyboardDidHide"];
+ const getLatestState = () => ({
+   ...KeyboardController.state(),
+   isVisible: KeyboardController.isVisible()
+diff --git a/lib/module/module.js b/lib/module/module.js
+index 01aad2effee498a8daec55e1d4644a5fbc723765..26f1670c1939bc3807a981a601fd82e91c140561 100644
+--- a/lib/module/module.js
++++ b/lib/module/module.js
+@@ -16,6 +16,11 @@ KeyboardEvents.addListener("keyboardWillShow", e => {
+   isClosed = false;
+   lastState = e;
+ });
++// Android's inset desync repair emits only Did* events, so treat keyboardDidShow like keyboardWillShow.
++KeyboardEvents.addListener("keyboardDidShow", e => {
++  isClosed = false;
++  lastState = e;
++});
+ const dismiss = async options => {
+   const keepFocus = (options === null || options === void 0 ? void 0 : options.keepFocus) ?? false;
+   const animated = (options === null || options === void 0 ? void 0 : options.animated) ?? true;
+diff --git a/src/hooks/useKeyboardState/index.ts b/src/hooks/useKeyboardState/index.ts
+index e5fe38dd8e7b8370bfb575296259933094857ca5..19b88da961de9e7fe4b2c19746d44cfd29f26cf5 100644
+--- a/src/hooks/useKeyboardState/index.ts
++++ b/src/hooks/useKeyboardState/index.ts
+@@ -5,7 +5,8 @@ import { KeyboardController } from "../../module";
+ 
+ import type { IKeyboardState } from "../../types";
+ 
+-const EVENTS = ["keyboardWillShow", "keyboardDidHide"] as const;
++// keyboardDidShow: Android's inset desync repair emits only Did* events.
++const EVENTS = ["keyboardWillShow", "keyboardDidShow", "keyboardDidHide"] as const;
+ 
+ const getLatestState = () => ({
+   ...KeyboardController.state(),
+diff --git a/src/module.ts b/src/module.ts
+index f74941914c9ecebbd0a6c2ba55c5436378de79d4..211eca8dd5e5edcd1050e0849d29459f47480853 100644
+--- a/src/module.ts
++++ b/src/module.ts
+@@ -25,6 +25,11 @@ KeyboardEvents.addListener("keyboardWillShow", (e) => {
+   isClosed = false;
+   lastState = e;
+ });
++// Android's inset desync repair emits only Did* events, so treat keyboardDidShow like keyboardWillShow.
++KeyboardEvents.addListener("keyboardDidShow", (e) => {
++  isClosed = false;
++  lastState = e;
++});
+ 
+ const dismiss = async (options?: Partial<DismissOptions>): Promise<void> => {
+   const keepFocus = options?.keepFocus ?? false;
