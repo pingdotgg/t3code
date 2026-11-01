@@ -383,7 +383,16 @@ export const make = Effect.gen(function* () {
   const safeStorage = yield* ElectronSafeStorage.ElectronSafeStorage;
   const crypto = yield* Crypto.Crypto;
   const savedEnvironments = yield* DesktopSavedEnvironments.DesktopSavedEnvironments;
-  const catalogPath = path.join(environment.stateDir, "connection-catalog.json");
+  const localMacKeychainName = environment.localMacKeychainName;
+  const catalogPath =
+    localMacKeychainName === undefined
+      ? path.join(environment.stateDir, "connection-catalog.json")
+      : path.join(
+          environment.stateDir,
+          "local-keychains",
+          localMacKeychainName,
+          "connection-catalog.json",
+        );
   const encryptionAvailable = safeStorage.isEncryptionAvailable.pipe(
     Effect.mapError(
       (cause) =>
@@ -430,9 +439,8 @@ export const make = Effect.gen(function* () {
   });
 
   const migrateLegacyCatalog = Effect.gen(function* () {
-    if (!(yield* encryptionAvailable)) {
-      return Option.none<string>();
-    }
+    // Shared legacy credentials belong to the old key, not this runtime's isolated key.
+    if (localMacKeychainName !== undefined) return Option.none<string>();
     const records = yield* savedEnvironments.getRegistry.pipe(
       Effect.mapError(
         (cause) =>
@@ -444,6 +452,9 @@ export const make = Effect.gen(function* () {
       ),
     );
     if (records.length === 0) {
+      return Option.none<string>();
+    }
+    if (!(yield* encryptionAvailable)) {
       return Option.none<string>();
     }
     const catalog = yield* migrateSavedEnvironmentRecords(records, savedEnvironments, catalogPath);
