@@ -127,12 +127,14 @@ export const reads = <P, A, E, R>(handle: (params: P) => Effect.Effect<A, E, R>)
 export const readsAsCaller = <P, A, E, R>(handle: (params: P) => Effect.Effect<A, E, R>) =>
   declare((params: P) => requireThreadCaller.pipe(Effect.flatMap(() => handle(params))), undefined);
 
-export const actsAsCaller = <P, A, E, R>(handle: (params: P) => Effect.Effect<A, E, R>) =>
+export const actsAsCaller = <P, A, E, R>(
+  handle: (params: P, caller: Caller) => Effect.Effect<A, E, R>,
+) =>
   declare(
     (params: P) =>
       requireThreadCaller.pipe(
         Effect.andThen(writingCaller),
-        Effect.flatMap(() => handle(params)),
+        Effect.flatMap((caller) => handle(params, caller)),
       ),
     undefined,
   );
