@@ -879,7 +879,8 @@ it.layer(NodeServices.layer)("TailnetSignIn", (it) => {
         tailnet.devices = { ...tailnet.devices, [TABLET_ADDRESS]: tabletDevice };
         yield* Deferred.succeed(release, undefined);
         expect(yield* Fiber.join(phone)).toBe("no_grant");
-        // The laptop can no longer be read; the grant found stands, not the older "no grants".
+        // The laptop can no longer be read; the grant found is kept for five minutes as a
+        // full scan, so the older "no grants" never comes back in that time.
         tailnet.devices = {
           [LAPTOP_ADDRESS]: { node: null },
           [STRANGER_ADDRESS]: { node: stranger },
