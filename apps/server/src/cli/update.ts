@@ -131,6 +131,7 @@ export const repointLauncher = Effect.fn("cli.update.repoint_launcher")(function
     return Option.none<string>();
   }
   const linked = yield* linkCommand({
+    create: false,
     link: input.launchedAs,
     baseDir: path.dirname(path.dirname(input.versionsDir)),
     executable: input.targetEntryPath,

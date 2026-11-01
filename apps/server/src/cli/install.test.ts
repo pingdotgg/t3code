@@ -136,11 +136,20 @@ it.layer(NodeServices.layer)("t3 install", (it) => {
       const readOnly = path.join(root, "read-only-bin");
       yield* fs.makeDirectory(readOnly);
       yield* fs.chmod(readOnly, 0o555);
-      const refused = yield* provide(installCli(), { T3CODE_INSTALL_BIN_DIR: readOnly }).pipe(
-        Effect.flip,
-      );
-      assert.include(refused.message, "Cannot write to");
-      assert.equal(yield* fs.readLink(commandLink), otherVersion);
+      // Root can write anywhere, so a read-only folder means nothing there.
+      if (process.getuid?.() !== 0) {
+        const refused = yield* provide(installCli(), { T3CODE_INSTALL_BIN_DIR: readOnly }).pipe(
+          Effect.flip,
+        );
+        assert.include(refused.message, "Cannot write to");
+        assert.equal(yield* fs.readLink(commandLink), otherVersion);
+        // A link there that already leads to the command link needs no write.
+        yield* fs.chmod(readOnly, 0o755);
+        yield* fs.symlink(commandLink, path.join(readOnly, "t3"));
+        yield* fs.chmod(readOnly, 0o555);
+        yield* provide(installCli(), { T3CODE_INSTALL_BIN_DIR: readOnly });
+        assert.equal(yield* fs.readLink(commandLink), executable);
+      }
       yield* fs.chmod(readOnly, 0o755);
 
       // A concurrent install that made the same link a moment ago is not a failure.

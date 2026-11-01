@@ -48,6 +48,18 @@ const standaloneRuntime = Effect.gen(function* () {
 });
 
 /**
+ * A link, nothing, or something else. A concurrent install may make a link between two reads, so
+ * "something else" is read twice before it counts.
+ */
+const entryAt = Effect.fn("cli.install.entry_at")(function* (file: string) {
+  const fs = yield* FileSystem.FileSystem;
+  const isLink = fs.readLink(file).pipe(Effect.option, Effect.map(Option.isSome));
+  if (yield* isLink) return "link";
+  if (!(yield* fs.exists(file).pipe(Effect.orElseSucceed(() => true)))) return "missing";
+  return (yield* isLink) ? "link" : "other";
+});
+
+/**
  * What `link` is to this T3 home: missing, its command link, an older link of this home (straight
  * to a version's t3, or the desktop app's launcher), or another program's.
  */
@@ -80,11 +92,10 @@ const classifyCommandLink = Effect.fn("cli.install.classify_command_link")(funct
   ) {
     return (yield* real(link)) === realCommandLink ? "current" : "foreign";
   }
+  const entry = yield* entryAt(link);
+  if (entry !== "link") return entry === "missing" ? "missing" : "foreign";
   // Only the direct target: a chain through another tool's link is that tool's.
   const targets = yield* directLinkTargets(link);
-  if (targets.length === 0 && Option.isNone(yield* fs.readLink(link).pipe(Effect.option))) {
-    return (yield* fs.exists(link).pipe(Effect.orElseSucceed(() => true))) ? "foreign" : "missing";
-  }
   if (targets.includes(commandLink) || targets.includes(realCommandLink)) return "current";
   const versionsDir = pinnedRuntimeVersionsDir(path, baseDir);
   const realVersionsDir = yield* fs
@@ -144,11 +155,21 @@ export const linkCommand = Effect.fn("cli.install.link_command")(function* (inpu
   readonly link: string;
   readonly baseDir: string;
   readonly executable: string;
+  /** False for `t3 update`, which only switches a launcher it was started from. */
+  readonly create?: boolean;
 }) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const kind = yield* classifyCommandLink(input.link, input.baseDir);
-  if (kind === "foreign") return false;
+  if (kind === "foreign" || (kind === "missing" && input.create === false)) return false;
+  // Checked before the home's command switches, so a folder that cannot be written changes
+  // nothing. A link that already leads to the command link needs no write there.
+  if (
+    kind !== "current" &&
+    !(yield* fs.access(path.dirname(input.link), { writable: true }).pipe(Effect.isSuccess))
+  ) {
+    return yield* new CliInstallError({ reason: `Cannot write to ${path.dirname(input.link)}.` });
+  }
   const commandLink = pinnedRuntimeCommandLink(path, input.baseDir);
   // Inside the T3 home, so swapping it in place cannot replace another program's file. Still,
   // only a link in a real folder is ever replaced there.
@@ -159,10 +180,7 @@ export const linkCommand = Effect.fn("cli.install.link_command")(function* (inpu
     });
   }
   yield* fs.makeDirectory(folder, { recursive: true });
-  if (
-    Option.isNone(yield* fs.readLink(commandLink).pipe(Effect.option)) &&
-    (yield* fs.exists(commandLink))
-  ) {
+  if ((yield* entryAt(commandLink)) === "other") {
     return yield* new CliInstallError({
       reason: `${commandLink} is not a link. Remove it, then run this again.`,
     });
@@ -299,11 +317,6 @@ export const installCli = Effect.fn("cli.install.install")(function* () {
       return yield* new CliInstallError({
         reason: `T3CODE_INSTALL_BIN_DIR cannot be ${commandFolder}. Choose another folder.`,
       });
-    }
-    // Checked before the home's command switches, so a bin folder that cannot be written changes
-    // nothing.
-    if (!(yield* fs.access(binDir, { writable: true }).pipe(Effect.isSuccess))) {
-      return yield* new CliInstallError({ reason: `Cannot write to ${binDir}.` });
     }
     const linked = yield* linkCommand({ link, baseDir, executable: spelled }).pipe(
       Effect.catchTags({

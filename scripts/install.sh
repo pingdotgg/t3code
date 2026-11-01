@@ -367,7 +367,8 @@ switch_command_link() {
   rmdir "$staging_dir"
 }
 # Checked before the home's command switches, so a bin folder that cannot be written changes nothing.
-[ -w "$bin_dir" ] || fail "cannot write to ${bin_dir}"
+# A link that already leads to the command link needs no write there.
+if [ "$kind" != current ] && [ ! -w "$bin_dir" ]; then fail "cannot write to ${bin_dir}"; fi
 # The home's command switches first: if the public link then fails, the home runs the version asked
 # for and only the public link is missing, never a third version.
 switch_command_link

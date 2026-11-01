@@ -431,9 +431,12 @@ exec ${realLn} "$@"
       await NodeFSP.mkdir(readOnly, { mode: 0o555 });
       const refused = await installOver({ script: "install.sh", home, binDir: readOnly });
       await NodeFSP.chmod(readOnly, 0o755);
-      expect(refused.code).not.toBe(0);
-      expect(refused.output).toContain("cannot write to");
-      expect(await NodeFSP.readlink(commandLink)).toBe(otherVersion);
+      // Root can write anywhere, so a read-only folder means nothing there.
+      if (process.getuid?.() !== 0) {
+        expect(refused.code).not.toBe(0);
+        expect(refused.output).toContain("cannot write to");
+        expect(await NodeFSP.readlink(commandLink)).toBe(otherVersion);
+      }
       expect((await NodeFSP.readdir(binDir)).filter((name) => name.startsWith(".t3."))).toEqual([]);
     } finally {
       await NodeFSP.rm(root, { recursive: true, force: true });

@@ -413,6 +413,11 @@ export const directLinkTargets = Effect.fn("cloud.pinned_runtime.direct_link_tar
   const path = yield* Path.Path;
   const text = yield* fs.readLink(link).pipe(Effect.option);
   if (Option.isNone(text)) return [];
+  // The text is decoded as UTF-8; bytes that are not would name another file than the link does.
+  const raw = yield* Effect.tryPromise(() => NodeFSP.readlink(link, { encoding: "buffer" })).pipe(
+    Effect.option,
+  );
+  if (Option.isNone(raw) || !raw.value.equals(Buffer.from(text.value))) return [];
   // `..` can mean another folder once a link is followed, and a target naming a folder (`t3/`,
   // `t3/.`) never runs the file it would resolve to. Other spellings resolve on disk below.
   const parts = text.value.split(/[\\/]/);

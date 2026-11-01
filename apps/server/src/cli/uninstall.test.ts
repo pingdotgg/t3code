@@ -1,3 +1,6 @@
+// @effect-diagnostics-next-line nodeBuiltinImport:off -- Effect's link calls take strings; this test needs raw bytes.
+import * as NodeFSP from "node:fs/promises";
+
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
@@ -71,6 +74,14 @@ it.layer(NodeServices.layer)("t3 uninstall launcher", (it) => {
       const borrowed = path.join(root, "bin/t3-borrowed");
       yield* fs.symlink(path.join(versionsDir, "2.0.0/t3"), borrowed);
       assert.isUndefined(yield* findOwnedLauncher({ launchedAs: borrowed, versionsDir }));
+      // A target that is not UTF-8 names another file than its decoded text, so it is not ours.
+      const rawFolder = Buffer.concat([Buffer.from(`${versionsDir}/`), Buffer.from([0xff])]);
+      yield* Effect.promise(() => NodeFSP.symlink(path.join(root, "elsewhere"), rawFolder));
+      const rawLink = path.join(root, "bin/t3-raw");
+      yield* Effect.promise(() =>
+        NodeFSP.symlink(Buffer.concat([rawFolder, Buffer.from("/t3")]), rawLink),
+      );
+      assert.isUndefined(yield* findOwnedLauncher({ launchedAs: rawLink, versionsDir }));
       // A version folder that is a link to one of ours (versions/latest) is not followed.
       yield* fs.symlink(path.join(versionsDir, "1.0.0"), path.join(versionsDir, "latest"));
       const latest = path.join(root, "bin/t3-latest");

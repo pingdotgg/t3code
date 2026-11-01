@@ -83,6 +83,27 @@ it.layer(NodeServices.layer)("t3 update launcher", (it) => {
         written.filter((file) => file.startsWith(path.dirname(launcher))),
         [],
       );
+      // A launcher removed while update ran stays removed.
+      let removed = false;
+      const vanishing = FileSystem.FileSystem.of({
+        ...fs,
+        readLink: (file) =>
+          fs
+            .readLink(file)
+            .pipe(
+              Effect.tap(() =>
+                file === launcher && !removed
+                  ? fs.remove(launcher).pipe(Effect.andThen(Effect.sync(() => (removed = true))))
+                  : Effect.void,
+              ),
+            ),
+      });
+      const gone = yield* update(newExe).pipe(
+        Effect.provideService(FileSystem.FileSystem, vanishing),
+      );
+      assert.isTrue(removed);
+      assert.isTrue(Option.isNone(gone));
+      assert.isFalse(yield* fs.exists(launcher));
     }).pipe(Effect.scoped, Effect.provideService(HostProcess.Platform, "linux")),
   );
 
