@@ -1424,8 +1424,8 @@ describe("ThreadSettlementServiceV2 terminals", () => {
         const marker = appThread("marker-thread", "settled", "/worktrees/marker");
         const fixture = yield* makeHarness({
           snapshot: makeSnapshot([]),
-          currentThreads: [repeated, other, marker],
-          existingWorktreePaths: ["/worktrees/repeated", "/worktrees/other", "/worktrees/marker"],
+          currentThreads: [repeated, marker],
+          existingWorktreePaths: ["/worktrees/repeated", "/worktrees/marker"],
         });
 
         yield* Effect.gen(function* () {
