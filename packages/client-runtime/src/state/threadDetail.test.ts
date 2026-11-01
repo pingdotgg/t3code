@@ -2,9 +2,14 @@ import {
   EnvironmentId,
   EventId,
   MessageId,
+  NodeId,
+  ProviderThreadId,
+  ProviderTurnId,
   RunId,
+  RuntimeRequestId,
   TurnItemId,
   type OrchestrationV2ThreadProjection,
+  type OrchestrationV2DomainEvent,
   type OrchestrationV2TurnItem,
 } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
@@ -272,6 +277,236 @@ it("only compares replaced entries in a streamed reducer delta", () => {
 
   expect(sameThreadStructure(before, next!)).toBe(true);
   expect(slotReads).toBeLessThanOrEqual(2);
+});
+
+describe("queue detail atoms", () => {
+  function setup(initial: OrchestrationV2ThreadProjection) {
+    let projection = initial;
+    const state = Atom.make(
+      AsyncResult.success({ ...EMPTY_ENVIRONMENT_THREAD_STATE, data: Option.some(initial) }),
+    );
+    const details = createEnvironmentThreadDetailAtoms(() => state);
+    const ref = { environmentId: EnvironmentId.make("env"), threadId: v2ThreadId };
+    const registry = AtomRegistry.make();
+    const workflow = details.queueWorkflowAtom(ref);
+    const count = details.queuedCountAtom(ref);
+    const unmountWorkflow = registry.mount(workflow);
+    const unmountCount = registry.mount(count);
+    const push = (value: OrchestrationV2ThreadProjection | null) =>
+      registry.set(
+        state,
+        AsyncResult.success({
+          ...EMPTY_ENVIRONMENT_THREAD_STATE,
+          data: Option.fromNullishOr(value),
+        }),
+      );
+    return {
+      read: () => ({ workflow: registry.get(workflow), count: registry.get(count) }),
+      push,
+      apply: (event: OrchestrationV2DomainEvent) => {
+        projection = applyOrchestrationV2ProjectionEvent(projection, event)!;
+        push(projection);
+      },
+      [Symbol.dispose]: () => {
+        unmountWorkflow();
+        unmountCount();
+        registry.dispose();
+      },
+    };
+  }
+
+  it.each(["message.updated", "provider-turn.updated"] as const)(
+    "skips history classification after %s with no queued runs",
+    (type) => {
+      let metadataReads = 0;
+      const message = (index: number) =>
+        Object.freeze({
+          id: MessageId.make(`history-${index}`),
+          threadId: v2ThreadId,
+          runId: assistant.runId,
+          nodeId: null,
+          role: "assistant" as const,
+          text: "Completed answer",
+          attachments: [],
+          streaming: false,
+          createdAt: v2Now,
+          updatedAt: later,
+          createdBy: "agent" as const,
+          creationSource: "server" as const,
+          get delegatedCompletion() {
+            metadataReads++;
+            return undefined;
+          },
+        });
+      const initial = {
+        ...withItem(assistant),
+        messages: Object.freeze(Array.from({ length: 1_000 }, (_, index) => message(index))),
+        runs: Object.freeze(
+          Array.from({ length: 501 }, (_, index) =>
+            Object.freeze({
+              id: RunId.make(`run-${index}`),
+              threadId: v2ThreadId,
+              ordinal: index + 1,
+              providerInstanceId: v2Projection.thread.providerInstanceId,
+              modelSelection: v2Projection.thread.modelSelection,
+              providerThreadId: null,
+              userMessageId: MessageId.make(`history-${index}`),
+              rootNodeId: null,
+              activeAttemptId: null,
+              status: index === 500 ? ("running" as const) : ("completed" as const),
+              requestedAt: v2Now,
+              startedAt: v2Now,
+              completedAt: index === 500 ? null : v2Now,
+              checkpointId: null,
+              contextHandoffId: null,
+            }),
+          ),
+        ),
+      };
+      using detail = setup(initial);
+      let previous = detail.read().workflow;
+      metadataReads = 0;
+
+      detail.apply({
+        id: EventId.make("item-only"),
+        type: "turn-item.updated",
+        threadId: v2ThreadId,
+        occurredAt: later,
+        payload: { ...assistant, text: "More streamed text", updatedAt: later },
+      });
+      expect(detail.read()).toEqual({ workflow: previous, count: 0 });
+      expect(detail.read().workflow).toBe(previous);
+      detail.apply({
+        id: EventId.make("request-only"),
+        type: "runtime-request.updated",
+        threadId: v2ThreadId,
+        occurredAt: later,
+        payload: {
+          id: RuntimeRequestId.make("request"),
+          nodeId: NodeId.make("node"),
+          providerTurnId: null,
+          nativeRequestRef: null,
+          kind: "user_input",
+          status: "resolved",
+          responseCapability: { type: "message" },
+          createdAt: v2Now,
+          resolvedAt: later,
+        },
+      });
+      expect(detail.read().workflow).toBe(previous);
+      expect(metadataReads).toBe(0);
+
+      for (let index = 1; index <= 20; index++) {
+        const event = {
+          id: EventId.make(`completion-${index}`),
+          threadId: v2ThreadId,
+          occurredAt: later,
+        };
+        detail.apply(
+          type === "message.updated"
+            ? { ...event, type, payload: message(1_000 + index) }
+            : {
+                ...event,
+                type,
+                payload: {
+                  id: ProviderTurnId.make("provider-turn"),
+                  providerThreadId: ProviderThreadId.make("provider-thread"),
+                  nodeId: NodeId.make("node"),
+                  runAttemptId: null,
+                  nativeTurnRef: null,
+                  ordinal: 1,
+                  status: "completed",
+                  startedAt: v2Now,
+                  completedAt: later,
+                },
+              },
+        );
+        const next = detail.read();
+        expect(next.count).toBe(0);
+        expect(next.workflow?.queuedRuns).toEqual([]);
+        expect(next.workflow?.isHeld).toBe(false);
+        expect(next.workflow?.activeRun?.id).toBe(RunId.make("run-500"));
+        expect(next.workflow).not.toBe(previous);
+        expect(detail.read().workflow).toBe(next.workflow);
+        previous = next.workflow;
+      }
+      expect(metadataReads).toBe(0);
+    },
+  );
+
+  it("tracks queued add, automatic/user changes, removal and reload in both readers", () => {
+    using detail = setup(v2Projection);
+    const run = {
+      id: RunId.make("follow-up"),
+      threadId: v2ThreadId,
+      ordinal: 1,
+      providerInstanceId: v2Projection.thread.providerInstanceId,
+      modelSelection: v2Projection.thread.modelSelection,
+      providerThreadId: null,
+      userMessageId: MessageId.make("follow-up"),
+      rootNodeId: null,
+      activeAttemptId: null,
+      status: "queued" as const,
+      queueHeld: true,
+      requestedAt: v2Now,
+      startedAt: null,
+      completedAt: null,
+      checkpointId: null,
+      contextHandoffId: null,
+    };
+    const message = {
+      id: run.userMessageId,
+      threadId: v2ThreadId,
+      runId: run.id,
+      nodeId: null,
+      role: "user" as const,
+      text: "Follow-up",
+      attachments: [],
+      streaming: false,
+      createdAt: v2Now,
+      updatedAt: v2Now,
+      createdBy: "user" as const,
+      creationSource: "web" as const,
+    };
+    const event = { id: EventId.make("queue"), threadId: v2ThreadId, occurredAt: later };
+    expect(detail.read()).toMatchObject({ count: 0, workflow: { queuedRuns: [], isHeld: false } });
+    detail.apply({ ...event, type: "message.updated", payload: message });
+    detail.apply({ ...event, type: "run.created", payload: run });
+    expect(detail.read()).toMatchObject({
+      count: 1,
+      workflow: { queuedRuns: [{ run, text: "Follow-up" }], isHeld: true },
+    });
+
+    for (const automatic of [
+      {
+        notification: {
+          source: { kind: "monitor" as const },
+          outcome: "updated" as const,
+          summary: "Update",
+        },
+      },
+      {
+        delegatedCompletion: { parentRunId: run.id, generation: 1, taskIds: [NodeId.make("task")] },
+      },
+    ]) {
+      detail.apply({ ...event, type: "message.updated", payload: { ...message, ...automatic } });
+      expect(detail.read()).toMatchObject({ count: 0, workflow: { queuedRuns: [], isHeld: true } });
+      detail.apply({ ...event, type: "message.updated", payload: message });
+      expect(detail.read()).toMatchObject({
+        count: 1,
+        workflow: { queuedRuns: [{ run, text: "Follow-up" }], isHeld: true },
+      });
+    }
+    detail.apply({ ...event, type: "run.updated", payload: { ...run, status: "cancelled" } });
+    expect(detail.read()).toMatchObject({ count: 0, workflow: { queuedRuns: [], isHeld: false } });
+    detail.push(null);
+    expect(detail.read()).toEqual({ count: 0, workflow: null });
+    detail.push({ ...v2Projection, runs: [run], messages: [message] });
+    expect(detail.read()).toMatchObject({
+      count: 1,
+      workflow: { queuedRuns: [{ run, text: "Follow-up" }], isHeld: true },
+    });
+  });
 });
 
 function replaceItem(projection: OrchestrationV2ThreadProjection, item: OrchestrationV2TurnItem) {
