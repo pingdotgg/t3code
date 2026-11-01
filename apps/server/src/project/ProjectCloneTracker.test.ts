@@ -332,6 +332,20 @@ describe("parseGitCloneProgressLine", () => {
       percent: null,
       detail: null,
     });
+    expect(parseGitCloneProgressLine("Filtering content:  33% (1/3), 4.0 MiB | 1.0 MiB/s")).toEqual(
+      {
+        stage: "checkout",
+        percent: 33,
+        detail: "4.0 MiB | 1.0 MiB/s",
+      },
+    );
+    expect(
+      parseGitCloneProgressLine("Downloading LFS objects:  33% (1/3), 20 MB | 4.0 MB/s          "),
+    ).toEqual({
+      stage: "checkout",
+      percent: null,
+      detail: "Downloading LFS objects: 33% (1/3), 20 MB | 4.0 MB/s",
+    });
     expect(parseGitCloneProgressLine("Cloning into 't3code'...")).toBeNull();
     expect(parseGitCloneProgressLine("fatal: repository not found")).toBeNull();
   });
