@@ -433,13 +433,32 @@ describe("MuseAdapterV2", () => {
         muse.host.initializeResult.grantedCapabilities.push("sessionMcp");
       const ack = pendingPromise<Record<string, unknown>>();
       fake.queueResponse("session/resume", ack.promise);
-      const opening = yield* makeHarness(fake, INSTANCE_ID, "saved-session", recovery).pipe(
-        Effect.forkScoped,
-      );
+      const replayed = yield* Deferred.make<void>();
+      const opening = yield* makeHarness(
+        fake,
+        INSTANCE_ID,
+        "saved-session",
+        recovery,
+        undefined,
+        undefined,
+        {
+          nativeEventLogger: {
+            filePath: "/tmp/provider-native.ndjson",
+            write: (event) =>
+              typeof event === "object" &&
+              event !== null &&
+              "method" in event &&
+              event.method === "turn/started"
+                ? Deferred.succeed(replayed, undefined).pipe(Effect.asVoid)
+                : Effect.void,
+            close: () => Effect.void,
+          },
+        },
+      ).pipe(Effect.forkScoped);
       const first = yield* fake.takeCall("session/resume");
       // Muse announces the replayed turn before it acknowledges the resume.
       yield* fake.emit("turn/started", { turnId: "replayed-turn" });
-      yield* Effect.yieldNow;
+      yield* Deferred.await(replayed);
       ack.resolve({
         session: { sessionId: "saved-session", modelId: MODEL, activeTurnId: "replayed-turn" },
         history: { items: [] },
