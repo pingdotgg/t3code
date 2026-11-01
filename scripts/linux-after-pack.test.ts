@@ -5,9 +5,9 @@ import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import { describe, expect, it } from "vite-plus/test";
 
-import afterPack from "./linux-after-pack.ts";
+import { removeSharedWriteAccess } from "./linux-after-pack.ts";
 
-describe.skipIf(HostProcess.Platform.defaultValue() === "win32")("linux afterPack", () => {
+describe.skipIf(HostProcess.Platform.defaultValue() === "win32")("removeSharedWriteAccess", () => {
   it("removes group and other write access from the packed app only", async () => {
     const root = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "t3-after-pack-"));
     try {
@@ -28,7 +28,7 @@ describe.skipIf(HostProcess.Platform.defaultValue() === "win32")("linux afterPac
       await NodeFSP.chmod(NodePath.join(appOutDir, "resources"), 0o777);
       await NodeFSP.symlink("../outside", NodePath.join(appOutDir, "linked-dir"));
 
-      await afterPack({ appOutDir });
+      await removeSharedWriteAccess(appOutDir);
 
       for (const [file, [, after]] of Object.entries(modes)) {
         const { mode } = await NodeFSP.stat(NodePath.join(root, file));
