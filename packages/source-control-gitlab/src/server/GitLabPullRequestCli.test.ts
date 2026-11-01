@@ -288,6 +288,38 @@ layer("GitLabPullRequestCli.layer", (it) => {
     }),
   );
 
+  it.effect("reads a page of merge requests larger than the VCS default output limit", () =>
+    Effect.gen(function* () {
+      const vcsDefaultMaxOutputBytes = 1_000_000;
+      const rows = (JSON.parse(mergeRequests(100, 1)) as ReadonlyArray<object>).map((row) => ({
+        ...row,
+        description: "x".repeat(20_000),
+      }));
+      const response = JSON.stringify(rows);
+      expect(Buffer.byteLength(response)).toBeGreaterThan(vcsDefaultMaxOutputBytes);
+      mockedExecute.mockImplementationOnce(({ maxOutputBytes = vcsDefaultMaxOutputBytes }) =>
+        Effect.succeed(
+          maxOutputBytes >= Buffer.byteLength(response)
+            ? output(response)
+            : output(response.slice(0, maxOutputBytes), true),
+        ),
+      );
+      const cli = yield* GitLabPullRequestCli.GitLabPullRequestCli;
+
+      const batch = yield* cli.listMergeRequests({
+        cwd: "/w",
+        repository: "acme/web",
+        state: "open",
+        involvement: "all",
+        viewer: "bilal",
+        limit: 99,
+      });
+
+      assert.strictEqual(batch.items.length, 99);
+      assert.isTrue(batch.truncated);
+    }),
+  );
+
   it.effect("stops walking when every row on a page fails to decode", () =>
     Effect.gen(function* () {
       const unusable = JSON.stringify(Array.from({ length: 100 }, () => ({ iid: "nope" })));

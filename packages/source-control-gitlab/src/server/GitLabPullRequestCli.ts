@@ -208,6 +208,11 @@ const DIFF_MAX_OUTPUT_BYTES = 8 * 1024 * 1024;
 const DIFF_TIMEOUT_MS = 60_000;
 const isVcsProcessExitError = Schema.is(VcsProcessExitError);
 const DIFF_FILE_MAX_OUTPUT_BYTES = 1024 * 1024;
+/**
+ * The list answers each row with its whole description, which the list never reads, so a page of
+ * long ones passes the megabyte a read is given by default. Azure DevOps gives its list the same.
+ */
+const MERGE_REQUEST_LIST_MAX_OUTPUT_BYTES = 16 * 1024 * 1024;
 
 export interface GitLabMergeRequestListBatch {
   readonly items: ReadonlyArray<GitLabMergeRequestListItem>;
@@ -654,6 +659,7 @@ export const make = Effect.gen(function* () {
         ["per_page", String(perPage)],
         ["page", String(input.page)],
       ])}`,
+      maxOutputBytes: MERGE_REQUEST_LIST_MAX_OUTPUT_BYTES,
     }).pipe(
       Effect.flatMap((result) => {
         const raw = result.stdout.trim();
