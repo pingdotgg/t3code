@@ -225,7 +225,7 @@ export const make = Effect.gen(function* () {
   // Bumped when a sign-in, the recheck or a scan sees a grant, before it knows the account: a
   // scan already running then may not end on "no grants", and a recheck pass runs again.
   const grantsInDoubt = yield* Ref.make(0);
-  // Bumped each time the owner rule lets a device in, by sign-in or recheck.
+  // Bumped each time the owner rule lets a device in: a recheck keeping it, or a sign-in code.
   const ownerRuleAdmissions = yield* Ref.make(0);
   /** Counts a grant seen on `account`; true when it is the first there. */
   const countGrant = (account: string | null) =>
@@ -373,7 +373,6 @@ export const make = Effect.gen(function* () {
     if (ownerUserId === null) return refused("owner_unknown");
     const refusal = refuseNode(node, ownerUserId);
     if (refusal !== null) return refused(refusal);
-    yield* Ref.update(ownerRuleAdmissions, (count) => count + 1);
     return {
       _tag: "Allowed",
       scopes: AuthStandardClientScopes,
@@ -508,6 +507,8 @@ export const make = Effect.gen(function* () {
         scopes,
         ...(deviceLabel === null ? {} : { label: deviceLabel }),
       });
+      // Counted once its code exists, so a recheck that sees the count can list the code.
+      if (via === "owner") yield* Ref.update(ownerRuleAdmissions, (count) => count + 1);
       const device = node.computedName ?? node.stableNodeId;
       yield* Effect.logInfo("Tailscale sign-in.").pipe(
         Effect.annotateLogs({
@@ -571,6 +572,9 @@ export const make = Effect.gen(function* () {
     const node = lookup.value;
     knownUsers.set(stableNodeId, node.loginName ?? node.userId);
     const decision = yield* decide(node, status);
+    if (decision._tag === "Allowed" && decision.via === "owner") {
+      yield* Ref.update(ownerRuleAdmissions, (count) => count + 1);
+    }
     // A grant, usable or not, counts as a grant sign-in does once the host is shown still on
     // this account; unconfirmed, it may be another account's.
     if (tailnetGrantScopes(node.capabilities) !== null) {
