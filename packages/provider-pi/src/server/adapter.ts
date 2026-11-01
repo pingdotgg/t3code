@@ -17,6 +17,7 @@ import {
   type OrchestrationV2ProviderTurn,
   type OrchestrationV2RuntimeRequest,
   type OrchestrationV2TurnItem,
+  type OrchestrationV2Subagent,
   type OrchestrationV2UserInputQuestion,
   type ProviderApprovalDecision,
   type ProviderInstanceId,
@@ -71,6 +72,11 @@ import {
   resolvePiLaunchArgs,
 } from "./mcpInjection.ts";
 import { PI_FILE_CHANGE_TOOLS } from "./mcpExtensionSource.ts";
+import {
+  piSubagentStatus,
+  readPiSubagentSnapshot,
+  type PiSubagentSnapshotNode,
+} from "./subagents.ts";
 
 export const PI_PROVIDER = ProviderDriverKind.make("pi");
 const PI_DRIVER_KIND = PI_PROVIDER;
@@ -84,6 +90,7 @@ const PI_REQUEST_TIMEOUT_MS = 15_000;
 const PI_SESSION_TIMEOUT_MS = 60_000;
 const PI_UNSOLICITED_ACTIVITY_ERROR =
   "Pi started agent work outside an active T3 turn. The session was stopped to prevent invisible tool execution.";
+const subagentPathKey = Schema.encodeSync(Schema.fromJsonString(Schema.Array(Schema.String)));
 const SETTLE_PROBE_MAX_ATTEMPTS = 3;
 const SETTLE_PROBE_RETRY_DELAY = Duration.millis(100);
 
@@ -342,15 +349,25 @@ function compactionTitle(status: PiCompactionStatus): string {
   }
 }
 
+interface PiTurnItemOwner extends Pick<
+  ProviderAdapter.ProviderAdapterV2TurnInput,
+  "threadId" | "runId" | "rootNodeId"
+> {
+  readonly providerThreadId: OrchestrationV2ProviderThread["id"];
+  readonly providerTurnId: OrchestrationV2ProviderTurn["id"];
+  readonly itemOrdinals: Map<string, number>;
+  nextItemOrdinal: number;
+}
+
 interface ActivePiTurn {
   readonly turnInput: ProviderAdapter.ProviderAdapterV2TurnInput;
   readonly providerTurn: OrchestrationV2ProviderTurn;
   readonly startedAt: DateTime.Utc;
-  readonly itemOrdinals: Map<string, number>;
-  nextItemOrdinal: number;
+  readonly items: PiTurnItemOwner;
   messageOrdinal: number;
   readonly streamItems: Map<string, PiStreamItemState>;
   readonly toolArgs: Map<string, unknown>;
+  readonly subagentLaunches: Map<string, PiSubagentLaunch>;
   readonly toolStartedAt: Map<string, DateTime.Utc>;
   interrupted: boolean;
   nativeAborted: boolean;
@@ -369,6 +386,22 @@ interface ActivePiTurn {
   failure: ReturnType<typeof makeProviderFailure> | null;
   rejectedPromptFailure: ReturnType<typeof makeProviderFailure> | null;
   stopTreeRefs?: PiTurnTreeRefs | null;
+}
+
+interface PiSubagentLaunch {
+  readonly owner: PiTurnItemOwner;
+  readonly toolCallId: string;
+  readonly rows: Map<
+    string,
+    { readonly path: ReadonlyArray<string>; readonly subagent: OrchestrationV2Subagent }
+  >;
+  mode: string;
+  asyncId: string | undefined;
+  retired: boolean;
+}
+
+function isPendingAsyncSubagent(launch: PiSubagentLaunch): boolean {
+  return !launch.retired && launch.rows.get(subagentPathKey([]))?.subagent.completedAt == null;
 }
 
 interface PiTurnTreeRefs {
@@ -530,6 +563,8 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
       let stopRequested = false;
       let unsolicitedActivityDetected = false;
       let pendingWake: PiWake | null = null;
+      const asyncSubagents = new Map<string, PiSubagentLaunch>();
+      let lastSubagentSnapshot: ReadonlyArray<PiSubagentSnapshotNode> = [];
       let rollbackBarrier: Deferred.Deferred<
         void,
         ProviderAdapter.ProviderAdapterProtocolError
@@ -609,7 +644,7 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
           });
         });
 
-      const itemOrdinal = (turn: ActivePiTurn, nativeItemId: string): number => {
+      const itemOrdinal = (turn: PiTurnItemOwner, nativeItemId: string): number => {
         const existing = turn.itemOrdinals.get(nativeItemId);
         if (existing !== undefined) return existing;
         const ordinal = turn.nextItemOrdinal++;
@@ -725,7 +760,7 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
         });
 
       const baseItemFields = (
-        turn: ActivePiTurn,
+        turn: PiTurnItemOwner,
         nativeItemId: string,
         startedAt: DateTime.Utc,
         updatedAt: DateTime.Utc,
@@ -735,14 +770,14 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
           driver: PI_PROVIDER,
           nativeItemId,
         }),
-        threadId: turn.turnInput.threadId,
-        runId: turn.turnInput.runId,
+        threadId: turn.threadId,
+        runId: turn.runId,
         nodeId: idAllocator.derive.nodeFromProviderItem({
           driver: PI_PROVIDER,
           nativeItemId,
         }),
-        providerThreadId: turn.turnInput.providerThread.id,
-        providerTurnId: turn.providerTurn.id,
+        providerThreadId: turn.providerThreadId,
+        providerTurnId: turn.providerTurnId,
         nativeItemRef: providerRef(nativeItemId),
         parentItemId:
           parentNativeItemId === undefined
@@ -823,7 +858,7 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
       });
 
       const compactionNativeItemId = (turn: ActivePiTurn): string =>
-        `compaction:${turn.providerTurn.id}:${turn.nextItemOrdinal}`;
+        `compaction:${turn.providerTurn.id}:${turn.items.nextItemOrdinal}`;
 
       const emitCompaction = Effect.fnUntraced(function* (
         turn: ActivePiTurn,
@@ -849,7 +884,7 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
           type: "turn_item.updated",
           driver: PI_PROVIDER,
           turnItem: {
-            ...baseItemFields(turn, compaction.nativeItemId, compaction.startedAt, emittedAt),
+            ...baseItemFields(turn.items, compaction.nativeItemId, compaction.startedAt, emittedAt),
             status,
             title: compactionTitle(status),
             completedAt,
@@ -868,7 +903,7 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
           streaming: boolean,
         ) {
           const emittedAt = yield* DateTime.now;
-          const base = baseItemFields(turn, item.nativeItemId, item.startedAt, emittedAt);
+          const base = baseItemFields(turn.items, item.nativeItemId, item.startedAt, emittedAt);
           yield* emitItemNode(
             turn,
             item.nativeItemId,
@@ -968,7 +1003,7 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
           startedAt,
         };
         turn.streamItems.set(nativeItemId, item);
-        itemOrdinal(turn, nativeItemId);
+        itemOrdinal(turn.items, nativeItemId);
         return item;
       });
 
@@ -1015,7 +1050,7 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
               : "failed"
             : "completed"
           : "running";
-        const base = baseItemFields(turn, toolCallId, startedAt, emittedAt, parentToolCallId);
+        const base = baseItemFields(turn.items, toolCallId, startedAt, emittedAt, parentToolCallId);
         yield* emitItemNode(
           turn,
           toolCallId,
@@ -1089,94 +1124,399 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
         }
       });
 
+      // Native status updates are frequent; these share the session event pump's tracing boundary.
+      const emitSubagentRow = Effect.fnUntraced(function* (
+        launch: PiSubagentLaunch,
+        path: ReadonlyArray<string>,
+        patch: Partial<
+          Pick<OrchestrationV2Subagent, "title" | "prompt" | "model" | "progress" | "result">
+        > & {
+          readonly status: OrchestrationV2Subagent["status"];
+        },
+        nativeStartedAt?: number,
+      ) {
+        const key = subagentPathKey(path);
+        const previous = launch.rows.get(key)?.subagent;
+        const emittedAt = yield* DateTime.now;
+        const active = (status: OrchestrationV2Subagent["status"]) =>
+          status === "running" || status === "pending" || status === "waiting";
+        // Explicit terminal outcomes survive stale widgets and duplicate notices.
+        const status =
+          previous?.completedAt != null &&
+          (active(patch.status) ||
+            (previous.status !== "interrupted" && previous.status !== "idle"))
+            ? previous.status
+            : patch.status;
+        const startedAt =
+          previous?.startedAt ??
+          (nativeStartedAt === undefined ? emittedAt : DateTime.makeUnsafe(nativeStartedAt));
+        const nativeTaskId = `${launch.toolCallId}:subagent:${key}`;
+        const parentPath = path.slice(0, -1);
+        const parentNodeId =
+          path.length > 0 &&
+          (launch.asyncId !== undefined || launch.rows.has(subagentPathKey(parentPath)))
+            ? idAllocator.derive.nodeFromProviderItem({
+                driver: PI_PROVIDER,
+                nativeItemId: `${launch.toolCallId}:subagent:${subagentPathKey(parentPath)}`,
+              })
+            : idAllocator.derive.nodeFromProviderItem({
+                driver: PI_PROVIDER,
+                nativeItemId: launch.toolCallId,
+              });
+        const row: OrchestrationV2Subagent = {
+          id: idAllocator.derive.nodeFromProviderItem({
+            driver: PI_PROVIDER,
+            nativeItemId: nativeTaskId,
+          }),
+          threadId: launch.owner.threadId,
+          runId: launch.owner.runId,
+          parentNodeId,
+          origin: "provider_native",
+          createdBy: "agent",
+          driver: PI_PROVIDER,
+          providerInstanceId: options.instanceId,
+          providerThreadId: launch.owner.providerThreadId,
+          childThreadId: null,
+          nativeTaskRef: providerRef(nativeTaskId),
+          prompt: "",
+          title: null,
+          model: null,
+          result: null,
+          ...previous,
+          ...patch,
+          status,
+          progress: active(status) ? (patch.progress ?? previous?.progress) : undefined,
+          startedAt,
+          completedAt: active(status) ? null : (previous?.completedAt ?? emittedAt),
+          updatedAt: emittedAt,
+        };
+        if (
+          previous !== undefined &&
+          row.status === previous.status &&
+          row.title === previous.title &&
+          row.prompt === previous.prompt &&
+          row.model === previous.model &&
+          row.progress === previous.progress &&
+          row.result === previous.result
+        )
+          return;
+        launch.rows.set(key, { path, subagent: row });
+        yield* emit({
+          type: "node.updated",
+          driver: PI_PROVIDER,
+          ingestion: "session",
+          node: {
+            id: row.id,
+            threadId: row.threadId,
+            runId: row.runId,
+            parentNodeId: row.parentNodeId,
+            rootNodeId: launch.owner.rootNodeId,
+            kind: "subagent",
+            status: row.status,
+            countsForRun: false,
+            providerThreadId: row.providerThreadId,
+            providerTurnId: launch.owner.providerTurnId,
+            nativeItemRef: row.nativeTaskRef,
+            runtimeRequestId: null,
+            checkpointScopeId: null,
+            startedAt,
+            completedAt: row.completedAt,
+          },
+        });
+        yield* emit({
+          type: "subagent.updated",
+          driver: PI_PROVIDER,
+          subagent: row,
+          ingestion: "session",
+        });
+        yield* emit({
+          type: "turn_item.updated",
+          driver: PI_PROVIDER,
+          ingestion: "session",
+          turnItem: {
+            ...baseItemFields(launch.owner, nativeTaskId, startedAt, emittedAt),
+            status: row.status,
+            title: row.title,
+            completedAt: row.completedAt,
+            type: "subagent",
+            subagentId: row.id,
+            origin: "provider_native",
+            driver: PI_PROVIDER,
+            providerInstanceId: options.instanceId,
+            childThreadId: null,
+            prompt: row.prompt,
+            ...(row.progress === undefined ? {} : { progress: row.progress }),
+            result: row.result,
+          },
+        });
+      });
+
+      const endSubagentLaunch = Effect.fnUntraced(function* (
+        launch: PiSubagentLaunch,
+        status: OrchestrationV2Subagent["status"],
+      ) {
+        launch.retired = true;
+        for (const { path, subagent: row } of [...launch.rows.values()].sort(
+          (a, b) => b.path.length - a.path.length,
+        )) {
+          if (row.completedAt === null) yield* emitSubagentRow(launch, path, { status });
+        }
+      });
+
+      const interruptAsyncSubagents = Effect.fnUntraced(function* (turn?: ActivePiTurn) {
+        for (const launch of asyncSubagents.values()) {
+          if (!launch.retired && (turn === undefined || launch.owner === turn.items))
+            yield* endSubagentLaunch(launch, "interrupted");
+        }
+      });
+
+      const resetAsyncSubagents = Effect.fnUntraced(function* () {
+        yield* interruptAsyncSubagents();
+        asyncSubagents.clear();
+        lastSubagentSnapshot = [];
+      });
+
+      const completeAsyncSubagentLaunch = Effect.fnUntraced(function* (
+        launch: PiSubagentLaunch,
+        patch: Parameters<typeof emitSubagentRow>[2],
+        startedAt?: number,
+      ) {
+        // Ordinary chain/parallel notices can omit child identities. Their successful
+        // aggregate settles the steps; a workflow may instead leave detached children.
+        for (const { path, subagent: row } of launch.rows.values()) {
+          if (path.length > 0 && row.completedAt === null)
+            yield* emitSubagentRow(launch, path, {
+              status:
+                patch.status === "completed" && launch.mode !== "workflow"
+                  ? "completed"
+                  : "interrupted",
+            });
+        }
+        // Retain identity for duplicate receipts and late structured inventory, without
+        // pinning the run. Publish the coordinator last so its subscriber sees all members.
+        yield* emitSubagentRow(launch, [], patch, startedAt);
+      });
+
+      const applySubagentSnapshot = Effect.fnUntraced(function* (
+        launch: PiSubagentLaunch,
+        root: PiSubagentSnapshotNode,
+      ) {
+        if (
+          launch.retired ||
+          (launch.rows.get(subagentPathKey([]))?.subagent.completedAt != null &&
+            (root.status === "pending" || root.status === "running"))
+        )
+          return;
+        const visit = Effect.fnUntraced(function* (
+          node: PiSubagentSnapshotNode,
+          path: ReadonlyArray<string>,
+        ): Effect.fn.Return<void> {
+          yield* emitSubagentRow(
+            launch,
+            path,
+            {
+              title: node.title,
+              ...(node.model === undefined ? {} : { model: node.model }),
+              status: node.status,
+              ...(node.progress === undefined ? {} : { progress: node.progress }),
+            },
+            node.startedAt,
+          );
+          for (const child of node.children) yield* visit(child, [...path, child.id]);
+        });
+        const self =
+          launch.mode === "single" &&
+          root.children.length === 1 &&
+          root.children[0]?.kind === "step"
+            ? root.children[0]
+            : undefined;
+        const projected = { ...root, ...self, status: root.status };
+        for (const child of projected.children) yield* visit(child, [child.id]);
+        const patch = {
+          title: projected.title,
+          status: root.status,
+          ...(projected.model === undefined ? {} : { model: projected.model }),
+          ...(projected.progress === undefined ? {} : { progress: projected.progress }),
+        };
+        if (root.status === "running" || root.status === "pending") {
+          yield* emitSubagentRow(launch, [], patch, projected.startedAt);
+        } else {
+          yield* completeAsyncSubagentLaunch(launch, patch, projected.startedAt);
+        }
+      });
+
+      const settleNotifiedAsyncSubagents = Effect.fnUntraced(function* (message: unknown) {
+        const runs = recordField(recordField(message, "details"), "runs");
+        if (!Array.isArray(runs)) return;
+        for (const run of runs) {
+          const runId = [recordString(run, "runId"), recordString(run, "workflowRunId")].find(
+            (id) => id !== undefined && asyncSubagents.has(id),
+          );
+          const launch = runId === undefined ? undefined : asyncSubagents.get(runId);
+          const status = piSubagentStatus(recordString(run, "status"));
+          if (
+            launch === undefined ||
+            launch.retired ||
+            status === undefined ||
+            status === "running" ||
+            status === "pending"
+          )
+            continue;
+          const children = recordField(run, "childRuns");
+          const childOutputs = recordField(run, "childOutputs");
+          if (Array.isArray(children)) {
+            for (const child of children) {
+              const childId = recordString(child, "runId");
+              const workflowKey = recordString(child, "workflowKey");
+              const key = workflowKey ?? childId;
+              const childStatus = piSubagentStatus(recordString(child, "status"));
+              if (key === undefined || childStatus === undefined) continue;
+              const childPath = [key];
+              const output = Array.isArray(childOutputs)
+                ? childOutputs.find(
+                    (output) =>
+                      recordString(output, "workflowKey") === workflowKey &&
+                      (recordString(output, "runId") === childId ||
+                        (childId === "unavailable" && recordString(output, "runId") === undefined)),
+                  )
+                : undefined;
+              const result =
+                recordString(output, "savedOutputPath") ?? recordString(output, "error");
+              yield* emitSubagentRow(launch, childPath, {
+                // A closed owner cannot promise further updates for a detached member.
+                status:
+                  childStatus === "running" || childStatus === "pending"
+                    ? "interrupted"
+                    : childStatus,
+                ...(recordString(child, "agent") === undefined
+                  ? {}
+                  : { title: recordString(child, "agent")! }),
+                ...(result === undefined ? {} : { result }),
+              });
+            }
+          }
+          // A batch's combined text cannot be attributed to any one run or member.
+          const result =
+            runs.length === 1 ? contentText(recordField(message, "content")).slice(0, 10_000) : "";
+          yield* completeAsyncSubagentLaunch(launch, {
+            status,
+            ...(result.length === 0 ? {} : { result }),
+          });
+        }
+      });
+
       const emitSubagentTasks = Effect.fnUntraced(function* (
         turn: ActivePiTurn,
         toolCallId: string,
         resultRecord: unknown,
         completed: boolean,
       ) {
-        const results = recordField(recordField(resultRecord, "details"), "results");
-        if (!Array.isArray(results)) return;
-        const emittedAt = yield* DateTime.now;
-        const parentNodeId = idAllocator.derive.nodeFromProviderItem({
-          driver: PI_PROVIDER,
-          nativeItemId: toolCallId,
-        });
-        for (const [index, result] of results.entries()) {
-          const agent = recordString(result, "agent");
-          const task = recordString(result, "task");
-          if (agent === undefined || task === undefined) continue;
-          const nativeTaskId = `${toolCallId}:subagent:${recordNumber(result, "step") ?? index}`;
-          const subagentId = idAllocator.derive.nodeFromProviderItem({
-            driver: PI_PROVIDER,
-            nativeItemId: nativeTaskId,
-          });
-          const startedAt = turn.toolStartedAt.get(nativeTaskId) ?? emittedAt;
-          turn.toolStartedAt.set(nativeTaskId, startedAt);
-          const finished = completed || recordField(result, "finished") === true;
-          const stopReason = recordString(result, "stopReason");
-          const interrupted = finished && stopReason === "aborted";
-          const failed =
-            finished &&
-            !interrupted &&
-            ((recordNumber(result, "exitCode") ?? 0) !== 0 || stopReason === "error");
-          const status = interrupted
-            ? "interrupted"
-            : failed
-              ? "failed"
-              : finished
-                ? "completed"
-                : "running";
-          const outputText = piSubagentOutput(result);
-          const progress =
-            !finished && outputText.length > 0 ? { progress: outputText.slice(0, 200) } : {};
-          const resultText = finished && outputText.length > 0 ? outputText.slice(0, 10_000) : null;
-          yield* emit({
-            type: "subagent.updated",
-            driver: PI_PROVIDER,
-            subagent: {
-              id: subagentId,
-              threadId: turn.turnInput.threadId,
-              runId: turn.turnInput.runId,
-              parentNodeId,
-              origin: "provider_native",
-              createdBy: "agent",
-              driver: PI_PROVIDER,
-              providerInstanceId: options.instanceId,
-              providerThreadId: turn.turnInput.providerThread.id,
-              childThreadId: null,
-              nativeTaskRef: providerRef(nativeTaskId),
-              prompt: task,
-              title: agent,
-              model: recordString(result, "model") ?? null,
-              status,
-              ...progress,
-              result: resultText,
-              startedAt,
-              completedAt: finished ? emittedAt : null,
-              updatedAt: emittedAt,
-            },
-          });
-          yield* emit({
-            type: "turn_item.updated",
-            driver: PI_PROVIDER,
-            turnItem: {
-              ...baseItemFields(turn, nativeTaskId, startedAt, emittedAt),
-              status,
-              title: agent,
-              completedAt: finished ? emittedAt : null,
-              type: "subagent",
-              subagentId,
-              origin: "provider_native",
-              driver: PI_PROVIDER,
-              providerInstanceId: options.instanceId,
-              childThreadId: null,
-              prompt: task,
-              ...progress,
-              result: resultText,
-            },
-          });
+        const details = recordField(resultRecord, "details");
+        const args = turn.toolArgs.get(toolCallId);
+        let launch = turn.subagentLaunches.get(toolCallId);
+        if (launch === undefined) {
+          launch = {
+            owner: turn.items,
+            toolCallId,
+            rows: new Map(),
+            mode: "single",
+            asyncId: undefined,
+            retired: false,
+          };
+          turn.subagentLaunches.set(toolCallId, launch);
         }
+        launch.mode = recordString(details, "mode") ?? launch.mode;
+        const asyncId = recordString(details, "asyncId");
+        if (
+          asyncId !== undefined &&
+          launch.asyncId === undefined &&
+          ["single", "workflow", "parallel", "chain"].includes(launch.mode)
+        ) {
+          const owner = asyncSubagents.get(asyncId);
+          if (owner !== undefined) {
+            turn.subagentLaunches.set(toolCallId, owner);
+            return;
+          }
+          launch.asyncId = asyncId;
+          // Stop can race a detached launch receipt before its id is known.
+          const cancelled = turn.interrupted || stopRequested;
+          launch.retired = cancelled;
+          if (!cancelled) asyncSubagents.set(asyncId, launch);
+          yield* emitSubagentRow(launch, [], {
+            status: cancelled ? "interrupted" : "running",
+            title: recordString(args, "agent") ?? launch.mode,
+            prompt: recordString(args, "task") ?? "",
+            model: recordString(args, "model") ?? null,
+          });
+          if (cancelled) {
+            stopRequested = true;
+            yield* connection.terminate;
+            return;
+          }
+          const snapshot = lastSubagentSnapshot.find((root) => root.id === asyncId);
+          if (snapshot !== undefined) yield* applySubagentSnapshot(launch, snapshot);
+        }
+        if (launch.asyncId !== undefined) return;
+        const workflowChildren = recordField(recordField(details, "workflowChildren"), "children");
+        const trace = recordField(recordField(details, "workflow"), "trace");
+        if (Array.isArray(workflowChildren)) {
+          for (const child of workflowChildren) {
+            const key = recordString(child, "childId");
+            const status = piSubagentStatus(recordString(child, "state"));
+            if (key === undefined || status === undefined) continue;
+            const entry = Array.isArray(trace)
+              ? trace.findLast((entry) => recordString(entry, "key") === key)
+              : undefined;
+            yield* emitSubagentRow(launch, [key], {
+              status,
+              title: recordString(child, "agent") ?? recordString(entry, "agent") ?? key,
+              ...(recordString(child, "model") === undefined
+                ? {}
+                : { model: recordString(child, "model")! }),
+              ...(recordString(recordField(child, "activity"), "currentTool") === undefined
+                ? {}
+                : {
+                    progress: recordString(recordField(child, "activity"), "currentTool")!.slice(
+                      0,
+                      200,
+                    ),
+                  }),
+            });
+          }
+        }
+        const results = recordField(details, "results");
+        if (Array.isArray(results))
+          for (const [index, result] of results.entries()) {
+            const agent = recordString(result, "agent");
+            const task = recordString(result, "task");
+            if (agent === undefined || task === undefined) continue;
+            const finished = completed || recordField(result, "finished") === true;
+            const stopReason = recordString(result, "stopReason");
+            const output = piSubagentOutput(result);
+            yield* emitSubagentRow(
+              launch,
+              [
+                recordString(result, "workflowKey") ??
+                  `step:${recordNumber(result, "step") ?? index}`,
+              ],
+              {
+                title: agent,
+                prompt: task,
+                ...(recordString(result, "model") === undefined
+                  ? {}
+                  : { model: recordString(result, "model")! }),
+                status: !finished
+                  ? "running"
+                  : stopReason === "aborted"
+                    ? "interrupted"
+                    : (recordNumber(result, "exitCode") ?? 0) !== 0 || stopReason === "error"
+                      ? "failed"
+                      : "completed",
+                ...(finished || output.length === 0 ? {} : { progress: output.slice(0, 200) }),
+                result: finished && output.length > 0 ? output.slice(0, 10_000) : null,
+              },
+            );
+          }
       });
 
       const cancelPrompt = Effect.fn("PiAdapter.cancelPrompt")(function* (
@@ -1240,7 +1580,7 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
           type: "turn_item.updated",
           driver: PI_PROVIDER,
           turnItem: {
-            ...baseItemFields(turn, nativeItemId, emittedAt, emittedAt),
+            ...baseItemFields(turn.items, nativeItemId, emittedAt, emittedAt),
             status: "completed",
             completedAt: emittedAt,
             title: message,
@@ -1293,7 +1633,7 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
           if (turn === null || message.length === 0) return;
           yield* emitSystemNotice(
             turn,
-            `notify:${turn.providerTurn.id}:${turn.nextItemOrdinal}`,
+            `notify:${turn.providerTurn.id}:${turn.items.nextItemOrdinal}`,
             message,
           );
           return;
@@ -1375,7 +1715,7 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
           providerTurnId,
           nativeItemRef: providerRef(nativeRequestId),
           parentItemId: null,
-          ordinal: turn === null ? 0 : itemOrdinal(turn, nativeRequestId),
+          ordinal: turn === null ? 0 : itemOrdinal(turn.items, nativeRequestId),
           status: "waiting" as const,
           title,
           startedAt: createdAt,
@@ -1443,7 +1783,7 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
           return;
         }
         const emittedAt = yield* DateTime.now;
-        const nativeItemId = `extension-error:${turn.providerTurn.id}:${turn.nextItemOrdinal}`;
+        const nativeItemId = `extension-error:${turn.providerTurn.id}:${turn.items.nextItemOrdinal}`;
         const extensionName = piExtensionDisplayName(recordString(event, "extensionPath"));
         const extensionEvent = recordString(event, "event");
         const detail = recordString(event, "error")?.trim();
@@ -1463,7 +1803,7 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
           type: "turn_item.updated",
           driver: PI_PROVIDER,
           turnItem: {
-            ...baseItemFields(turn, nativeItemId, emittedAt, emittedAt),
+            ...baseItemFields(turn.items, nativeItemId, emittedAt, emittedAt),
             status: "failed",
             title: extensionName,
             completedAt: emittedAt,
@@ -1524,6 +1864,12 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
         if (turn === null) return;
         state.activeTurn = null;
         const interrupted = turn.interrupted || turn.nativeAborted;
+        for (const launch of turn.subagentLaunches.values()) {
+          if (launch.asyncId === undefined) yield* endSubagentLaunch(launch, "interrupted");
+        }
+        // Native abort and model failure leave detached extension children running.
+        // Only T3 cancellation owns their observation teardown.
+        if (turn.interrupted) yield* interruptAsyncSubagents(turn);
         const completedAt = yield* DateTime.now;
         yield* completeOpenStreamItems(turn);
         if (turn.activeCompaction !== null) {
@@ -1547,6 +1893,9 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
           ? yield* readTokenUsage(turn.latestCompactionAfterTokens, completedAt)
           : undefined;
         const failure = interrupted ? null : (turn.rejectedPromptFailure ?? turn.failure);
+        const childTurnsContinue = [...asyncSubagents.values()].some(
+          (launch) => launch.owner === turn.items && isPendingAsyncSubagent(launch),
+        );
         yield* emit({
           type: "provider_turn.updated",
           driver: PI_PROVIDER,
@@ -1592,7 +1941,7 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
               type: "turn_item.updated",
               driver: PI_PROVIDER,
               turnItem: {
-                ...baseItemFields(turn, failureItemId, completedAt, completedAt),
+                ...baseItemFields(turn.items, failureItemId, completedAt, completedAt),
                 status: "failed",
                 title: null,
                 completedAt,
@@ -1607,9 +1956,10 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
             providerThreadId: state.providerThread.id,
             providerTurnId: turn.providerTurn.id,
             runOrdinal: turn.turnInput.runOrdinal,
-            failureItemOrdinal: itemOrdinal(turn, failureItemId),
+            failureItemOrdinal: itemOrdinal(turn.items, failureItemId),
             status: "failed",
             failure,
+            ...(childTurnsContinue ? { childTurnsContinue: true } : {}),
             ...(turn.activeProviderRetry === null
               ? {}
               : {
@@ -1627,6 +1977,7 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
             runOrdinal: turn.turnInput.runOrdinal,
             status: interrupted ? "interrupted" : "completed",
             failure: null,
+            ...(interrupted && childTurnsContinue ? { childTurnsContinue: true } : {}),
             threadDisposition: "reusable",
           });
         }
@@ -1675,6 +2026,25 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
       });
 
       const handleSessionEvent = Effect.fnUntraced(function* (event: PiRpcRecord) {
+        // The queued wake waits for the launching run's children. Settle them before
+        // buffering wake output, otherwise neither run can make progress.
+        if (
+          event["type"] === "message_end" &&
+          recordString(event["message"], "role") === "custom" &&
+          recordString(event["message"], "customType") === "subagent-notify"
+        ) {
+          yield* settleNotifiedAsyncSubagents(event["message"]);
+          return;
+        }
+        const snapshot = readPiSubagentSnapshot(event);
+        if (snapshot !== undefined) {
+          lastSubagentSnapshot = snapshot;
+          for (const root of snapshot) {
+            const launch = asyncSubagents.get(root.id);
+            if (launch !== undefined) yield* applySubagentSnapshot(launch, root);
+          }
+          return;
+        }
         // Model hooks can show dialogs before turn ownership; keep requests session-scoped and buffer output.
         const interactiveUiRequest =
           event["type"] === "extension_ui_request" &&
@@ -1888,7 +2258,7 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
               startedAt: current?.startedAt ?? emittedAt,
               itemOrdinal:
                 current?.itemOrdinal ??
-                itemOrdinal(turn, `terminal-failure:${turn.providerTurn.id}`),
+                itemOrdinal(turn.items, `terminal-failure:${turn.providerTurn.id}`),
             } satisfies PiProviderRetryState;
             turn.activeProviderRetry = providerRetry;
             yield* emitProviderRetry(turn, providerRetry, "running", emittedAt);
@@ -1933,7 +2303,7 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
               startedAt: current?.startedAt ?? emittedAt,
               itemOrdinal:
                 current?.itemOrdinal ??
-                itemOrdinal(turn, `terminal-failure:${turn.providerTurn.id}`),
+                itemOrdinal(turn.items, `terminal-failure:${turn.providerTurn.id}`),
             } satisfies PiProviderRetryState;
             turn.activeProviderRetry = providerRetry;
             turn.failure = failure;
@@ -2136,6 +2506,7 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
                   protocolError("Pi transport closed during rollback"),
                 );
               pendingWake = null;
+              yield* resetAsyncSubagents();
               const interrupted = state?.activeTurn?.interrupted === true;
               if (state?.activeTurn != null) {
                 state.activeTurn.failure = interrupted
@@ -2202,6 +2573,13 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
         const existing = threadInput.existingProviderThread;
         const resumeId = existing?.nativeThreadRef?.nativeId;
         const needsNewSession = resumeId == null && registrationAttempted;
+        if (
+          threadState !== null &&
+          (needsNewSession ||
+            (resumeId != null && resumeId !== threadState.providerThread.nativeThreadRef?.nativeId))
+        ) {
+          yield* sessionEventPermit.withPermits(1)(resetAsyncSubagents());
+        }
         registrationAttempted = true;
         if (resumeId != null || needsNewSession) {
           lastNativeThreadId = resumeId ?? lastNativeThreadId;
@@ -2253,6 +2631,9 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
         }
         if (needsNewSession && nativeId === lastNativeThreadId) {
           return yield* protocolError("Pi did not create a distinct session file");
+        }
+        if (nativeId !== lastNativeThreadId) {
+          yield* sessionEventPermit.withPermits(1)(resetAsyncSubagents());
         }
         lastNativeThreadId = nativeId;
         const createdAt = yield* DateTime.now;
@@ -2392,10 +2773,18 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
           return sessionEntity;
         },
         events: Stream.fromQueue(events),
-        hasPendingBackgroundWork: Effect.sync(() => pendingWake !== null),
+        hasPendingBackgroundWork: Effect.sync(
+          () => pendingWake !== null || [...asyncSubagents.values()].some(isPendingAsyncSubagent),
+        ),
         hasPendingBackgroundWorkForThread: (providerThread) =>
           Effect.sync(
-            () => pendingWake !== null && pendingWake.state.providerThread.id === providerThread.id,
+            // A buffered wake needs the session, but must not retain the run it waits behind.
+            () =>
+              [...asyncSubagents.values()].some(
+                (launch) =>
+                  isPendingAsyncSubagent(launch) &&
+                  launch.owner.providerThreadId === providerThread.id,
+              ),
           ),
         getModelContextWindow: (selection) => {
           if (selection.instanceId !== options.instanceId) return undefined;
@@ -2507,11 +2896,19 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
               turnInput,
               providerTurn,
               startedAt,
-              itemOrdinals: new Map(),
-              nextItemOrdinal: turnInput.providerTurnOrdinal * 100 + 1,
+              items: {
+                threadId: turnInput.threadId,
+                runId: turnInput.runId,
+                rootNodeId: turnInput.rootNodeId,
+                providerThreadId: turnInput.providerThread.id,
+                providerTurnId: providerTurn.id,
+                itemOrdinals: new Map(),
+                nextItemOrdinal: turnInput.providerTurnOrdinal * 100 + 1,
+              },
               messageOrdinal: 0,
               streamItems: new Map(),
               toolArgs: new Map(),
+              subagentLaunches: new Map(),
               toolStartedAt: new Map(),
               interrupted: false,
               nativeAborted: false,
@@ -2684,21 +3081,33 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
           function* (interruptInput) {
             const turn = threadState?.activeTurn ?? null;
             if (turn === null && interruptInput.requestRuntimeRestart === true) {
-              if (pendingWake !== null)
-                yield* sessionEventPermit.withPermits(1)(stopPendingWake(pendingWake));
+              yield* sessionEventPermit.withPermits(1)(
+                Effect.gen(function* () {
+                  yield* interruptAsyncSubagents();
+                  if (pendingWake !== null) yield* stopPendingWake(pendingWake);
+                  else {
+                    stopRequested = true;
+                    yield* connection.terminate;
+                  }
+                }),
+              );
               return;
             }
             if (turn === null || turn.providerTurn.id !== interruptInput.providerTurnId) {
               return yield* protocolError(`Pi turn ${interruptInput.providerTurnId} is not active`);
             }
             turn.interrupted = true;
+            const hadNativeChildren = [...asyncSubagents.values()].some(isPendingAsyncSubagent);
+            yield* sessionEventPermit.withPermits(1)(interruptAsyncSubagents());
             if (
+              hadNativeChildren ||
               interruptInput.requestRuntimeRestart === true ||
               turn.settleWhenIdle ||
               turn.activeCompaction !== null ||
               turn.manualCompactInFlight
             ) {
-              // Generic abort misses manual compaction; terminate so Stop covers /compact and recovery.
+              // Abort does not retire native extension observers or manual compaction.
+              // Closing this transport ends observation; detached OS children may continue.
               stopRequested = true;
               if (interruptInput.requestRuntimeRestart === true && !turn.settleWhenIdle) {
                 yield* clearNativeQueue(turn);
@@ -2922,6 +3331,8 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
                   const forkData = yield* lifecycleRequest({ type: "fork", entryId: forkEntryId });
                   if (recordField(forkData, "cancelled") === true)
                     return yield* protocolError("A Pi extension cancelled the session fork");
+                  // A veto keeps the original session and its children observable.
+                  yield* sessionEventPermit.withPermits(1)(resetAsyncSubagents());
                   const forkState = yield* request({ type: "get_state" }).pipe(
                     Effect.onError(() =>
                       Effect.sync(() => {

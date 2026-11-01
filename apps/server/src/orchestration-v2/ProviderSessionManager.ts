@@ -2004,13 +2004,16 @@ export const layerWithOptions = (
                   // (project trust, login, or session-switch hooks). Persist
                   // their runless request artifacts directly so the normal T3
                   // request UI can answer them and unblock session setup.
-                  const threadId = sessionScopedRuntimeRequestThreadId(event);
+                  const sessionIngestedThreadId =
+                    ProviderAdapter.sessionIngestedEventThreadId(event);
+                  const threadId =
+                    sessionIngestedThreadId ?? sessionScopedRuntimeRequestThreadId(event);
                   if (threadId !== undefined) {
-                    yield* Effect.gen(function* () {
+                    const currentSession = yield* Effect.gen(function* () {
                       const current = (yield* Ref.get(sessions)).get(
                         sessionKey(entry.runtime.providerSessionId),
                       );
-                      if (current?.runtime !== entry.runtime) return;
+                      if (current?.runtime !== entry.runtime) return false;
                       yield* providerEventIngestor
                         .ingestNormalized({
                           providerSessionId: entry.runtime.providerSessionId,
@@ -2028,8 +2031,11 @@ export const layerWithOptions = (
                               }),
                           ),
                         );
+                      return true;
                     }).pipe(entry.requestEventPermit.withPermits(1));
-                    return;
+                    // Run subscribers still track lifecycle, but persistence belongs to
+                    // the session so late observations cannot be dropped or written twice.
+                    if (!currentSession || sessionIngestedThreadId === undefined) return;
                   }
                   yield* publishToSubscribers(entry.eventSubscribers, { type: "event", event });
                   yield* releaseLiveOutput;

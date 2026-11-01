@@ -3764,50 +3764,52 @@ function runBackgroundItemScenario(
   });
 }
 
-it.effect("keeps a failed root's still-running native children live while the run settles", () =>
-  Effect.gen(function* () {
-    const finalized = yield* Ref.make<ReadonlyArray<OrchestrationV2DomainEvent>>([]);
-    const childTurn = (
-      ids: BackgroundScenarioIds,
-      status: "running" | "completed",
-    ): ProviderAdapter.ProviderAdapterV2Event =>
-      ({
-        type: "provider_turn.updated",
-        driver,
-        threadId: ids.childThreadId,
-        providerTurn: {
-          id: ProviderTurnId.make(`${ids.rootProviderTurnId}:child`),
-          providerThreadId: ProviderThreadId.make(`${ids.providerThreadId}:child`),
-          nodeId: NodeId.make(`${ids.subagentNodeId}:child-root`),
-          runAttemptId: null,
-          status,
+it.effect.each(["failed", "interrupted"] as const)(
+  "keeps a %s root's still-running native children live while the run settles",
+  (status) =>
+    Effect.gen(function* () {
+      const finalized = yield* Ref.make<ReadonlyArray<OrchestrationV2DomainEvent>>([]);
+      const childTurn = (
+        ids: BackgroundScenarioIds,
+        status: "running" | "completed",
+      ): ProviderAdapter.ProviderAdapterV2Event =>
+        ({
+          type: "provider_turn.updated",
+          driver,
+          threadId: ids.childThreadId,
+          providerTurn: {
+            id: ProviderTurnId.make(`${ids.rootProviderTurnId}:child`),
+            providerThreadId: ProviderThreadId.make(`${ids.providerThreadId}:child`),
+            nodeId: NodeId.make(`${ids.subagentNodeId}:child-root`),
+            runAttemptId: null,
+            status,
+          },
+        }) as ProviderAdapter.ProviderAdapterV2Event;
+      const observed = yield* runBackgroundItemScenario(
+        `${status}-root-live-child`,
+        (ids) => [
+          childThreadCreatedEvent(ids),
+          subagentEvent(ids, "running"),
+          childTurn(ids, "running"),
+          { ...rootTerminalEvent(ids, status), childTurnsContinue: true },
+          subagentEvent(ids, "completed"),
+          childTurn(ids, "completed"),
+        ],
+        {
+          keepEventStreamOpen: true,
+          onFinalized: (events) => Ref.set(finalized, events),
         },
-      }) as ProviderAdapter.ProviderAdapterV2Event;
-    const observed = yield* runBackgroundItemScenario(
-      "failed-root-live-child",
-      (ids) => [
-        childThreadCreatedEvent(ids),
-        subagentEvent(ids, "running"),
-        childTurn(ids, "running"),
-        { ...rootTerminalEvent(ids, "failed"), childTurnsContinue: true },
-        subagentEvent(ids, "completed"),
-        childTurn(ids, "completed"),
-      ],
-      {
-        keepEventStreamOpen: true,
-        onFinalized: (events) => Ref.set(finalized, events),
-      },
-    );
+      );
 
-    assert.deepEqual(observed, ["subagent:running", "root-finalized", "subagent:completed"]);
-    const written = yield* Ref.get(finalized);
-    assert.deepEqual(
-      written.flatMap((event) => (event.type === "run.updated" ? [event.payload.status] : [])),
-      ["failed"],
-    );
-    assert.isFalse(
-      written.some((event) => event.type === "subagent.updated"),
-      "a child that outlives the failed root must not be settled with it",
-    );
-  }),
+      assert.deepEqual(observed, ["subagent:running", "root-finalized", "subagent:completed"]);
+      const written = yield* Ref.get(finalized);
+      assert.deepEqual(
+        written.flatMap((event) => (event.type === "run.updated" ? [event.payload.status] : [])),
+        [status],
+      );
+      assert.isFalse(
+        written.some((event) => event.type === "subagent.updated"),
+        "a child that outlives the root must not be settled with it",
+      );
+    }),
 );

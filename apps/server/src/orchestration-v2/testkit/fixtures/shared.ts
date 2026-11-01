@@ -275,6 +275,7 @@ export interface ProviderOrchestratorReplayVariant {
   readonly modelSelection: ModelSelection;
   readonly runtimePolicyOverride?: RuntimePolicyV2Override;
   readonly runContinuationWorker?: boolean;
+  readonly awaitCommandEffects?: boolean;
   readonly expectedAbsentWorkspacePaths?: ReadonlyArray<string>;
   readonly assertOutput: (
     result: OrchestratorV2ScenarioResult,
