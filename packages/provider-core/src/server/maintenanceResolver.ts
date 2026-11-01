@@ -474,6 +474,7 @@ export const resolvePackageManagedProviderMaintenance = Effect.fn(
   });
   const commandPaths = [context.resolvedCommandPath, context.realCommandPath];
   const packageName = definition.npmPackageName;
+  if (yield* macPortsBlocksProviderUpdate(context, packageName)) return manual;
   // WinGet-managed claude update exits 0 without updating; T3 does not run winget upgrade.
   if (
     definition.provider === "claudeAgent" &&
@@ -699,6 +700,39 @@ export const resolveHomebrewProviderMaintenance = Effect.fn("resolveHomebrewProv
     });
   },
 );
+
+const macPortsBlocksProviderUpdate = Effect.fn("macPortsBlocksProviderUpdate")(function* (
+  context: ProviderMaintenanceResolutionContext,
+  packageName: string,
+) {
+  if (context.platform !== "darwin") return false;
+  const fileSystem = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const commandPaths = [...new Set([context.resolvedCommandPath, context.realCommandPath])];
+  const candidates = new Set<string>();
+  for (const commandPath of commandPaths) {
+    if (path.basename(path.dirname(commandPath)) === "bin") {
+      candidates.add(path.join(path.dirname(commandPath), "port"));
+    }
+    const npmPrefix = npmGlobalPrefixFromCommandPath(commandPath, packageName);
+    if (npmPrefix) candidates.add(path.join(npmPrefix, "bin", "port"));
+    const shareDirectory = path.dirname(path.dirname(commandPath));
+    if (path.basename(shareDirectory) === "share") {
+      candidates.add(path.join(path.dirname(shareDirectory), "bin", "port"));
+    }
+  }
+  const pathPort = yield* resolveCommandPath("port", { env: context.env });
+  if (pathPort) candidates.add(pathPort);
+  candidates.add("/opt/local/bin/port");
+  for (const port of candidates) {
+    if (!(yield* fileSystem.exists(port).pipe(Effect.orElseSucceed(() => false)))) continue;
+    // Quiet `provides` prints only owning port names, or nothing for unowned files.
+    // A failed registry lookup is not proof that another updater may modify them.
+    const owners = yield* runProbe(port, ["-q", "provides", ...commandPaths], context.env);
+    if (owners === null || owners.trim().length > 0) return true;
+  }
+  return false;
+});
 
 const isMiseWrapperScript = Effect.fn("isMiseWrapperScript")(function* (
   context: ProviderMaintenanceResolutionContext,
