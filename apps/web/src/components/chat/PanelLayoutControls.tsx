@@ -181,33 +181,31 @@ export function WorkspaceTitlebarControls(props: {
   readonly showMaximizeControl: boolean;
   readonly rightPanelOpen: boolean;
   readonly animationsActive: boolean;
-  readonly animationDurationMs: number;
   readonly maximized: boolean;
   readonly onToggleMaximized: () => void;
   readonly children: ReactNode;
 }) {
-  const { rightPanelOpen, animationsActive, animationDurationMs, maximized } = props;
+  const { rightPanelOpen, maximized } = props;
   const controlsRef = useRef<HTMLDivElement | null>(null);
   const previous = useRef({ rightPanelOpen, maximized });
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- starts the toggle's slide before the commit that swapped it in paints; the animation is cancelled on change or unmount.
   useLayoutEffect(() => {
-    const closed = previous.current.rightPanelOpen && !rightPanelOpen;
-    const wasMaximized = previous.current.maximized;
+    const { rightPanelOpen: wasOpen, maximized: wasMaximized } = previous.current;
     previous.current = { rightPanelOpen, maximized };
-    if (!closed || wasMaximized || !animationsActive) return;
-    const controls = controlsRef.current;
-    const toggle = controls?.querySelector("[data-thread-panel-toggle]");
-    const panel = controls?.ownerDocument.querySelector("[data-preview-panel-mode='inline']");
-    if (!toggle || !panel) return;
+    if (!wasOpen || rightPanelOpen || wasMaximized) return;
+    const toggle = controlsRef.current?.querySelector("[data-thread-panel-toggle]");
+    const panel = toggle?.ownerDocument.querySelector("[data-preview-panel-mode='inline']");
+    const timing = panel?.getAnimations()[0]?.effect?.getTiming();
+    if (!toggle || !panel || !timing) return;
     // The header's toggle was just removed, so slide this one in from where it sat.
-    const toggleRect = toggle.getBoundingClientRect();
     const headerRight = panel.getBoundingClientRect().left - THREAD_PANEL_HEADER_INSET_PX;
+    const offset = headerRight - toggle.getBoundingClientRect().right;
     const animation = toggle.animate(
-      [{ transform: `translateX(${headerRight - toggleRect.right}px)` }, { transform: "none" }],
-      { duration: animationDurationMs, easing: getComputedStyle(panel).transitionTimingFunction },
+      [{ transform: `translateX(${offset}px)` }, { transform: "none" }],
+      { ...timing, easing: getComputedStyle(panel).transitionTimingFunction },
     );
     return () => animation.cancel();
-  }, [rightPanelOpen, maximized, animationsActive, animationDurationMs]);
+  }, [rightPanelOpen, maximized]);
 
   return (
     <div
