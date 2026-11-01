@@ -18,6 +18,7 @@ import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
+import * as Semaphore from "effect/Semaphore";
 import { AsyncResult, Atom, AtomRegistry } from "effect/reactivity";
 
 import * as EnvironmentRegistry from "../connection/registry.ts";
@@ -29,6 +30,7 @@ import { createEnvironmentQueryAtomFamily } from "./runtime.ts";
 const ASSET_URL_REFRESH_INTERVAL_MS = 30 * 60_000;
 const ASSET_URL_STALE_TIME_MS = 5 * 60_000;
 const ASSET_URL_IDLE_TTL_MS = 60 * 60_000;
+export const ASSET_URL_MAX_IN_FLIGHT = 6;
 
 export class InvalidAssetCollectionKeyError extends Schema.TaggedError<InvalidAssetCollectionKeyError>()(
   "InvalidAssetCollectionKeyError",
@@ -136,15 +138,27 @@ export function createAssetEnvironmentAtoms<R, E>(
     readonly httpBaseUrl: string;
   } | null>,
 ) {
+  // A thread with hundreds of images asks for hundreds of URLs at once. Over a slow remote
+  // they would all wait on one socket and read as stalled, so each environment gets a few
+  // at a time. A query that is interrupted, such as by a new session, gives its slot back.
+  const mintLimits = new Map<EnvironmentId, Semaphore.Semaphore>();
+  const mint = (environmentId: EnvironmentId, input: AssetCreateUrlInput) => {
+    let limit = mintLimits.get(environmentId);
+    if (limit === undefined) {
+      limit = Semaphore.makeUnsafe(ASSET_URL_MAX_IN_FLIGHT);
+      mintLimits.set(environmentId, limit);
+    }
+    return request(WS_METHODS.assetsCreateUrl, input).pipe(limit.withPermit);
+  };
   const execute = Effect.fn("assets.createUrl")(function* (input: AssetCreateUrlInput) {
-    const result = yield* request(WS_METHODS.assetsCreateUrl, input).pipe(Effect.result);
+    const supervisor = yield* EnvironmentSupervisor.EnvironmentSupervisor;
+    const result = yield* mint(supervisor.target.environmentId, input).pipe(Effect.result);
     if (Result.isSuccess(result)) return result.success;
     const error = result.failure;
     const resource = input.resource;
     const local = localMediaEnvironment
       ? (yield* AtomRegistry.AtomRegistry).get(localMediaEnvironment)
       : null;
-    const supervisor = yield* EnvironmentSupervisor.EnvironmentSupervisor;
     if (
       !local ||
       local.environmentId === supervisor.target.environmentId ||
@@ -161,7 +175,7 @@ export function createAssetEnvironmentAtoms<R, E>(
     const registry = yield* EnvironmentRegistry.EnvironmentRegistry;
     // Map the full cause so retry defects and interruption survive.
     const asset = yield* registry
-      .run(local.environmentId, request(WS_METHODS.assetsCreateUrl, input))
+      .run(local.environmentId, mint(local.environmentId, input))
       .pipe(Effect.catchCause((cause) => Effect.failCause(Cause.map(cause, () => error))));
     return { ...asset, relativeUrl: new URL(asset.relativeUrl, local.httpBaseUrl).href };
   });
