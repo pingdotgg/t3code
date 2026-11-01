@@ -2,7 +2,7 @@ import { useAtomValue } from "@effect/atom-react";
 import { EnvironmentId } from "@t3tools/contracts";
 import { Atom } from "effect/reactivity";
 import { ChevronRightIcon } from "lucide-react";
-import { Fragment, type RefObject, useRef } from "react";
+import { Fragment, type RefObject, useId, useRef } from "react";
 
 import { environmentThreadShells } from "~/state/threads";
 import {
@@ -51,7 +51,7 @@ interface UpdateEverythingDialogProps {
   readonly title?: string;
   readonly confirmLabel?: string;
   readonly notes?: ReadonlyArray<string>;
-  /** Shown in place of running-thread counts; disables the confirm button. */
+  /** Shown in place of the interruption warning; disables the confirm button. */
   readonly disabledReason?: string | null;
   /** The confirmed work is starting; it cannot be cancelled from here. */
   readonly busy?: boolean;
@@ -62,6 +62,7 @@ type UpdateEverythingDialogContentProps = Omit<
   "open" | "onOpenChange"
 > & {
   readonly cancelRef: RefObject<HTMLButtonElement | null>;
+  readonly descriptionId: string;
 };
 
 export function UpdateEverythingDialog({
@@ -70,15 +71,25 @@ export function UpdateEverythingDialog({
   ...content
 }: UpdateEverythingDialogProps) {
   const cancelRef = useRef<HTMLButtonElement>(null);
+  const descriptionId = useId();
   return (
     <AlertDialog open={open} onOpenChange={onOpenChange}>
       {/* Refocusing the trigger after a pointer close shows its focus ring and opens its tooltip. */}
       <AlertDialogPopup
         className="sm:max-w-xl"
+        aria-describedby={
+          (content.disabledReason ?? null) === null && content.rows.some((row) => row.app !== null)
+            ? `${descriptionId} ${descriptionId}-interruption`
+            : descriptionId
+        }
         initialFocus={cancelRef}
         finalFocus={(closeType) => closeType === "keyboard"}
       >
-        <UpdateEverythingDialogContent {...content} cancelRef={cancelRef} />
+        <UpdateEverythingDialogContent
+          {...content}
+          cancelRef={cancelRef}
+          descriptionId={descriptionId}
+        />
       </AlertDialogPopup>
     </AlertDialog>
   );
@@ -102,25 +113,8 @@ function UpdateEverythingDialogContent({
   notes = [],
   disabledReason = null,
   busy = false,
+  descriptionId,
 }: UpdateEverythingDialogContentProps) {
-  const stopped = useAtomValue(
-    runningThreadCountAtom(
-      restarts
-        .filter((machine) => !machine.continuesThreads)
-        .map((machine) => machine.environmentId)
-        .join("\n"),
-    ),
-  );
-  const continuing = useAtomValue(
-    runningThreadCountAtom(
-      restarts
-        .filter((machine) => machine.continuesThreads)
-        .map((machine) => machine.environmentId)
-        .join("\n"),
-    ),
-  );
-  const running = stopped + continuing;
-  const threads = `${running} running ${running === 1 ? "thread" : "threads"}`;
   const restarting = new Set(restarts.map((machine) => machine.environmentId));
   const updating = rows.filter((row) => row.app !== null || row.providers.length > 0);
   const skipped = rows.filter((row) => row.skipped !== null);
@@ -131,7 +125,7 @@ function UpdateEverythingDialogContent({
         <AlertDialogTitle>
           {title ?? `Update ${updating.length} ${updating.length === 1 ? "machine" : "machines"}?`}
         </AlertDialogTitle>
-        <AlertDialogDescription>
+        <AlertDialogDescription id={descriptionId}>
           {version !== null ? (
             <>
               T3 Code <span className="font-mono text-xs">{version}</span>
@@ -214,17 +208,18 @@ function UpdateEverythingDialogContent({
         </div>
       </ScrollArea>
       <AlertDialogFooter>
+        {/* Thread counts come from client snapshots that can still be loading, so the warning
+            cannot depend on them. */}
         {disabledReason !== null ? (
           <p className="self-center text-sm max-sm:order-1 max-sm:text-center sm:mr-auto">
             {disabledReason}
           </p>
-        ) : running > 0 ? (
-          <p className="self-center text-muted-foreground text-sm max-sm:order-1 max-sm:text-center sm:mr-auto">
-            {stopped === 0
-              ? `${threads} will be interrupted and can resume after the restart.`
-              : continuing === 0
-                ? `${threads} will be interrupted.`
-                : `${threads} will be interrupted. ${continuing} can resume after the restart.`}
+        ) : updating.some((row) => row.app !== null) ? (
+          <p
+            id={`${descriptionId}-interruption`}
+            className="self-center text-muted-foreground text-sm max-sm:order-1 max-sm:text-center sm:mr-auto"
+          >
+            Updates interrupt tasks and tool calls.
           </p>
         ) : null}
         <AlertDialogClose ref={cancelRef} render={<Button variant="outline" disabled={busy} />}>
