@@ -1,6 +1,10 @@
 import type { PullRequestActivity, PullRequestCheck, PullRequestComment } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
-import { pullRequestChecksSummary, pullRequestReviewSummary } from "./pullRequestStatus";
+import {
+  normalizedReviewState,
+  pullRequestChecksSummary,
+  pullRequestReviewSummary,
+} from "./pullRequestStatus";
 
 const author = { login: "julius", name: null, avatarUrl: null };
 function review(state: string, at: string): PullRequestComment {
@@ -73,6 +77,18 @@ describe("mobile overview review status", () => {
         activity([review("changes-requested", "2026-10-10T11:00:00Z")]),
       ).title,
     ).toBe("Changes requested");
+  });
+});
+
+describe("mobile review state spelling", () => {
+  it("reads GitHub's uppercase and Bitbucket's or GitCafe's lowercase verdicts alike", () => {
+    expect(normalizedReviewState("APPROVED")).toBe("APPROVED");
+    expect(normalizedReviewState("approved")).toBe("APPROVED");
+    expect(normalizedReviewState("CHANGES_REQUESTED")).toBe("CHANGES_REQUESTED");
+    expect(normalizedReviewState("changes_requested")).toBe("CHANGES_REQUESTED");
+    expect(normalizedReviewState("changes-requested")).toBe("CHANGES_REQUESTED");
+    expect(normalizedReviewState("commented")).toBe("COMMENTED");
+    expect(normalizedReviewState(null)).toBeUndefined();
   });
 });
 

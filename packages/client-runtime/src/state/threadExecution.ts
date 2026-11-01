@@ -1,4 +1,5 @@
 import {
+  latestExecutedRun,
   latestRootProviderFailure,
   latestUnheldRun,
   threadErrorSummary,
@@ -16,6 +17,7 @@ import {
   type OrchestrationV2ExecutionNode,
   type OrchestrationV2ThreadProjection,
   orchestrationV2RunWorkStartedAt,
+  type RunId,
   type ThreadId,
 } from "@t3tools/contracts";
 import {
@@ -33,6 +35,7 @@ import {
   type ThreadStructure,
   type ThreadStructureRuntime,
 } from "./models.ts";
+import { commandDisplayText } from "../work-log/commandLabel.ts";
 import { formatSubagentDisplayTitle } from "./subagentDisplay.ts";
 
 const ACTIVITY_RUN_STATUSES = new Set(["preparing", "starting", "running", "waiting"]);
@@ -209,6 +212,20 @@ export function formatProviderSubagentStatus(
   return live ? `${label} ${elapsed}` : `${label} in ${elapsed}`;
 }
 
+/** The run a manual continuation resumes; the server holds the queue until it does. */
+export function deriveResumableRunId(
+  projection: Pick<ThreadStructure, "runs" | "turnItems">,
+  runtime: Pick<ThreadStructureRuntime, "lastErrorClass"> | null,
+): RunId | null {
+  const run = latestExecutedRun(projection.runs);
+  if (run?.status === "interrupted") return run.id;
+  return run?.status === "failed" &&
+    runtime?.lastErrorClass === "usage_limit" &&
+    latestRootProviderFailure(run, projection.turnItems)?.class === "usage_limit"
+    ? run.id
+    : null;
+}
+
 export function deriveThreadRuntime(
   projection: ThreadStructure & Pick<OrchestrationV2ThreadProjection, "updatedAt">,
 ): ThreadRuntimeSummary | null {
@@ -294,6 +311,55 @@ const BACKGROUND_WORK_KINDS: Record<
   background_task: { order: 3, singular: "background task", plural: "background tasks" },
 };
 
+export interface RunStopPresentation {
+  /** `unresponsive`: the provider did not confirm the stop in time, so Force stop is offered. */
+  readonly state: "stopping" | "unresponsive";
+  readonly runId: ThreadStructure["runs"][number]["id"];
+  readonly requestedAt: string;
+  /** The run already ended; the Stop targeted its background work. */
+  readonly background: boolean;
+}
+
+/**
+ * A Stop the provider has not finished yet. It stays `stopping` while the agent winds down,
+ * since some providers confirm the request before the turn actually ends. On a run that
+ * already ended, only an unanswered Stop of its background work counts.
+ */
+export function presentRunStop(
+  projection: Pick<ThreadStructure, "runs" | "turnItems">,
+): RunStopPresentation | null {
+  let active: ThreadStructure["runs"][number] | null = null;
+  let latest: ThreadStructure["runs"][number] | null = null;
+  for (const candidate of projection.runs) {
+    // Queued follow-ups never ran, so they hold no Stop of their own.
+    if (candidate.status !== "queued" && candidate.ordinal > (latest?.ordinal ?? -1))
+      latest = candidate;
+    if (
+      INTERRUPTIBLE_RUN_STATUSES.has(candidate.status) &&
+      candidate.ordinal > (active?.ordinal ?? -1)
+    )
+      active = candidate;
+  }
+  const run = active ?? latest;
+  if (run === null) return null;
+  let request:
+    | Extract<ThreadStructure["turnItems"][number], { type: "run_interrupt_request" }>
+    | undefined;
+  for (const item of projection.turnItems) {
+    if (item.runId !== run.id) continue;
+    if (item.type === "run_interrupt_result") return null;
+    if (item.type === "run_interrupt_request") request = item;
+  }
+  if (request === undefined || (active === null && request.unresponsiveAt === undefined))
+    return null;
+  return {
+    state: request.unresponsiveAt === undefined ? "stopping" : "unresponsive",
+    runId: run.id,
+    requestedAt: DateTime.formatIso(request.startedAt ?? request.updatedAt),
+    background: active === null,
+  };
+}
+
 export interface PendingBackgroundWorkItem {
   readonly taskId: string;
   readonly kind: BackgroundWorkKind;
@@ -321,9 +387,13 @@ export function presentPendingBackgroundWork(
     .map((task): PendingBackgroundWorkItem => {
       const description = task.description?.trim();
       const label =
-        task.kind === "subagent" && description !== undefined
-          ? formatSubagentDisplayTitle(description).trim()
-          : description;
+        description === undefined
+          ? undefined
+          : task.kind === "subagent"
+            ? formatSubagentDisplayTitle(description).trim()
+            : task.kind === "command" || task.kind === "monitor"
+              ? commandDisplayText(description)
+              : description;
       return {
         taskId: task.taskId,
         kind: task.kind,
@@ -379,7 +449,8 @@ const PROVIDER_GOAL_TITLES: Record<OrchestrationV2ProviderGoal["status"], string
 
 function formatGoalTokens(tokens: number): string {
   if (tokens < 1_000) return `${tokens}`;
-  if (tokens < 1_000_000) return `${Math.round(tokens / 1_000)}k`;
+  const thousands = Math.round(tokens / 1_000);
+  if (thousands < 1_000) return `${thousands}k`;
   return `${(tokens / 1_000_000).toFixed(1).replace(/\.0$/, "")}m`;
 }
 
