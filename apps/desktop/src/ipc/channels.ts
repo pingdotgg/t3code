@@ -56,6 +56,7 @@ export const DISMISS_SNAP_SHOT_ANIMATION_CHANNEL = "desktop:dismiss-snap-shot-an
 export const ACKNOWLEDGE_SNAP_SHOT_CHANNEL = "desktop:acknowledge-snap-shot";
 export const GET_CONNECTION_CATALOG_CHANNEL = "desktop:get-connection-catalog";
 export const SET_CONNECTION_CATALOG_CHANNEL = "desktop:set-connection-catalog";
+export const CAN_SAVE_CONNECTION_CATALOG_CHANNEL = "desktop:can-save-connection-catalog";
 export const DISCOVER_SSH_HOSTS_CHANNEL = "desktop:discover-ssh-hosts";
 export const RESOLVE_SSH_HOST_CHANNEL = "desktop:resolve-ssh-host";
 export const ENSURE_SSH_ENVIRONMENT_CHANNEL = "desktop:ensure-ssh-environment";

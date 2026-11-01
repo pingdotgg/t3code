@@ -116,6 +116,7 @@ describe("DesktopConnectionCatalogStore", () => {
     withStore(
       Effect.gen(function* () {
         const store = yield* DesktopConnectionCatalogStore.DesktopConnectionCatalogStore;
+        assert.isFalse(yield* store.canSave);
         assert.isFalse(yield* store.set("{}"));
         assert.deepStrictEqual(yield* store.get, Option.none());
       }),

@@ -1044,6 +1044,7 @@ export interface DesktopBridge {
   setClientSettings: (settings: ClientSettings) => Promise<void>;
   getConnectionCatalog: () => Promise<string | null>;
   setConnectionCatalog: (catalog: string) => Promise<boolean>;
+  canSaveConnectionCatalog: () => Promise<boolean>;
   discoverSshHosts: () => Promise<readonly DesktopDiscoveredSshHost[]>;
   resolveSshHost: (alias: string) => Promise<DesktopSshEnvironmentTarget>;
   requestSnapShotPermissions: (includeAccessibility: boolean) => Promise<void>;
