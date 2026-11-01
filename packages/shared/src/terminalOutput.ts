@@ -394,22 +394,22 @@ class Terminal {
 
   csi(params: string, final: string): void {
     if (/^[?>=]/u.test(params)) return; // Mode switches (cursor visibility, bracketed paste).
+    if (final === "m") {
+      const key = `${this.pen}|${params}`;
+      let pen = penTransitions.get(key);
+      if (pen === undefined) {
+        const attributes = parsePen(this.pen);
+        applySgr(attributes, params === "" ? [] : csiParams(params));
+        pen = formatPen(attributes);
+        if (penTransitions.size >= 512) penTransitions.clear();
+        penTransitions.set(key, pen);
+      }
+      this.pen = pen;
+      return;
+    }
     const numbers = params === "" ? [] : csiParams(params);
     const count = Math.max(1, numbers[0] || 1);
     switch (final) {
-      case "m": {
-        const key = `${this.pen}|${params}`;
-        let pen = penTransitions.get(key);
-        if (pen === undefined) {
-          const attributes = parsePen(this.pen);
-          applySgr(attributes, numbers);
-          pen = formatPen(attributes);
-          if (penTransitions.size >= 512) penTransitions.clear();
-          penTransitions.set(key, pen);
-        }
-        this.pen = pen;
-        return;
-      }
       case "A":
         return this.moveTo(this.row - count, this.col);
       case "B":
@@ -631,8 +631,14 @@ export function terminalOutputResumeText(state: TerminalOutputState): string {
   const { screen } = state;
   const lastRow = screen.lines.length - 1;
   // Moves are relative to the last line, and a viewer only holds the lines in `text`.
-  const shownLines = state.text.split("\n").length;
-  const reachable = Math.min(LIVE_LINES, shownLines) - 1;
+  let reachable = 0;
+  let cursor = 0;
+  while (reachable < LIVE_LINES - 1) {
+    const newline = state.text.indexOf("\n", cursor);
+    if (newline === -1) break;
+    reachable += 1;
+    cursor = newline + 1;
+  }
   const up = (row: number) => Math.min(lastRow - row, reachable);
   const goTo = (row: number, col: number) =>
     (up(row) > 0 ? `${ESC}[${up(row)}A` : "") + `${ESC}[${col + 1}G`;

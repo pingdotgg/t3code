@@ -106,10 +106,15 @@ describe("appendTerminalOutput edge cases from review", () => {
 
 describe("appendTerminalOutput under adversarial output", () => {
   it("gives the same result however the output is split into chunks", () => {
-    const input = "abcdef\rX\u001b[31mred\u001b[0m\nnext line\r\u001b[2Kdone\n";
-    const whole = feed([input], 3).text;
-    for (let cut = 1; cut < input.length; cut += 1) {
-      expect(feed([input.slice(0, cut), input.slice(cut)], 3).text).toBe(whole);
+    const input =
+      "abcdef\rX\u001b[31mred\u001b[0m\nnext line\r\u001b[2Kdone\n" +
+      "\u001b[1;31mbold red\u001b[mplain\u001b[38:2::12:34:56mrgb\u001b[0m\n" +
+      "\u001b[1;31mbold red again\u001b[mplain again\u001b[38:2::12:34:56mrgb again\u001b[0m";
+    for (const maxChars of [3, 1_024]) {
+      const whole = feed([input], maxChars).text;
+      for (let cut = 1; cut < input.length; cut += 1) {
+        expect(feed([input.slice(0, cut), input.slice(cut)], maxChars).text).toBe(whole);
+      }
     }
     expect(feed(["abcdef", "\rX"], 3).text).toBe(feed(["abcdef\rX"], 3).text);
   });

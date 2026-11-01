@@ -3193,9 +3193,12 @@ it.layer(layerTest)("delegated tasks across a server restart", (it) => {
                 occurredAt: now,
                 payload: {
                   ...providerThread,
-                  pendingBackgroundTasks: open
-                    ? [{ taskId: "sleep-900", kind: "command" as const }]
-                    : [],
+                  pendingBackgroundTasks: [
+                    ...(open
+                      ? [{ taskId: "sleep-900", kind: "command" as const, awaited: true as const }]
+                      : []),
+                    { taskId: "log-watcher", kind: "monitor" as const },
+                  ],
                 },
               }
             : {

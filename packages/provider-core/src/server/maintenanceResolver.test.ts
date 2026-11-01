@@ -1431,6 +1431,26 @@ it.layer(
           env: { PATH: "" },
         }).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, noSpawn));
         expect(mise.update).toBeNull();
+
+        // A mise command wrapper is a symlink to the mise binary, not to the tool.
+        const miseBinary = NodePath.join(tempDir, "usr", "bin", "mise");
+        writeExecutable(miseBinary);
+        const wrapper = NodePath.join(
+          tempDir,
+          ".local",
+          "share",
+          "mise",
+          "command-wrappers",
+          "bin",
+          "package-tool",
+        );
+        NodeFS.mkdirSync(NodePath.dirname(wrapper), { recursive: true });
+        NodeFS.symlinkSync(miseBinary, wrapper);
+        const viaWrapper = yield* resolveProviderMaintenanceCapabilitiesEffect(selfUpdating, {
+          binaryPath: wrapper,
+          env: { PATH: "" },
+        }).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, noSpawn));
+        expect(viaWrapper.update).toBeNull();
       }),
   );
 
