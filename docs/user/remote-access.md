@@ -245,7 +245,8 @@ tailnet, since they reach T3 Code as that machine.
 To connect from the desktop or mobile app, with Tailscale on:
 
 - **Desktop:** do nothing. The app finds the machines on your tailnet that offer
-  sign-in and adds them.
+  sign-in and adds them. It skips another user's untagged machine, so if a grant
+  lets you into one, type its name in **Add environment**.
 - **Phone:** scan the QR code from `t3 up`, or type the machine's name, MagicDNS
   name, or `100.x` address in **Add environment** and leave the code empty. After
   that, the phone asks the machines it is connected to for the others and adds

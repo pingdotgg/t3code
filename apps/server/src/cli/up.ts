@@ -954,7 +954,7 @@ export const upCommand = Command.make("up", {
     { command: "t3 up --no-lan", description: "Stop LAN access." },
     {
       command: "t3 up --tailscale --no-connect --no-lan --require-grant",
-      description: "Allow only Tailscale devices your policy grants.",
+      description: "Require a grant for Tailscale sign-in. Pairing codes still work.",
     },
     {
       command: "t3 up --tailscale --owner you@example.com",
