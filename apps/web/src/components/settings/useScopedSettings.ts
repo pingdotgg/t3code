@@ -81,14 +81,13 @@ function useRunScopedPlan() {
       patch,
     }));
     updatePendingScopedWrites((current) => [...current, ...pending]);
-    const settle = (failed: ReadonlySet<string> | null) =>
+    const settle = (target: Pick<PendingScopedWrite, "environmentId" | "patch">, saved: boolean) =>
       updatePendingScopedWrites((current) =>
         current.flatMap((write) => {
-          if (!pending.includes(write)) return [write];
+          if (write.environmentId !== target.environmentId || write.patch !== target.patch)
+            return [write];
           const savedOver = savedSettings(write.environmentId);
-          return failed === null || failed.has(write.environmentId) || savedOver === undefined
-            ? []
-            : [{ ...write, savedOver }];
+          return saved && savedOver !== undefined ? [{ ...write, savedOver }] : [];
         }),
       );
     void persistScopedSettingsPatch(
@@ -97,21 +96,26 @@ function useRunScopedPlan() {
         const missing = requiredScopesForServerSettingsPatch(request.input.patch).find(
           (scope) => !readEnvironmentScope(request.environmentId, scope),
         );
-        if (missing)
-          return AsyncResult.failure(
-            Cause.fail(
-              new EnvironmentAuthorizationError({
-                requiredScope: missing,
-                message: "This connection lacks permission to change these settings.",
-              }),
-            ),
-          );
-        return persistServer(request);
+        const result = missing
+          ? AsyncResult.failure(
+              Cause.fail(
+                new EnvironmentAuthorizationError({
+                  requiredScope: missing,
+                  message: "This connection lacks permission to change these settings.",
+                }),
+              ),
+            )
+          : await persistServer(request);
+        settle(
+          { environmentId: request.environmentId, patch: request.input.patch },
+          result._tag === "Success",
+        );
+        return result;
       },
       persistClientSettingsPatch,
     )
       .then(({ failedEnvironments, savedEnvironments, savedEnvironmentCount }) => {
-        settle(new Set(failedEnvironments.map(({ environmentId }) => environmentId)));
+        for (const failed of failedEnvironments) settle(failed, false);
         if (failedEnvironments.length === 0) return;
         onFailed?.();
         toastManager.add({
@@ -128,7 +132,9 @@ function useRunScopedPlan() {
           ].join("\n"),
         });
       })
-      .catch(() => settle(null));
+      .catch(() => {
+        for (const write of pending) settle(write, false);
+      });
   };
 }
 
