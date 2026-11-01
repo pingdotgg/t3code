@@ -237,10 +237,8 @@ export function DesktopWebLinkCoordinator() {
     // A connected server publishes its config before its project snapshot, so a source control
     // link delivered at launch would miss its project and fall through to the browser. Hold
     // those links until discovery settles; an ordinary link never waits for it.
-    // Discovery never settles without the local environment, so those links do not wait.
     const hold =
       openPullRequestsInApp &&
-      !localEnvironmentDisabled &&
       (sourceControlClients.parseChangeRequestUrl(url) !== null ||
         sourceControlClients.parseCommitUrl(url) !== null)
         ? projectsSettled()
