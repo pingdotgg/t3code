@@ -158,3 +158,55 @@ describe("ProviderCommandNotFoundError", () => {
     });
   });
 });
+
+describe("ProviderCommandOutputLimitError", () => {
+  const collectOversizedOutput = (overflowingStream: "stdout" | "stderr") => {
+    // 9 MiB, one chunk past the 8 MiB cap, from a single shared buffer.
+    const mebibyte = new Uint8Array(1024 * 1024).fill(0x61);
+    const oversized = Stream.fromIterable(Array.from({ length: 9 }, () => mebibyte));
+    const spawner = ChildProcessSpawner.make(() =>
+      Effect.succeed(
+        ChildProcessSpawner.makeHandle({
+          pid: ChildProcessSpawner.ProcessId(1),
+          exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(0)),
+          isRunning: Effect.succeed(false),
+          kill: () => Effect.void,
+          unref: Effect.succeed(Effect.void),
+          stdin: Sink.drain,
+          stdout: overflowingStream === "stdout" ? oversized : Stream.empty,
+          stderr: overflowingStream === "stderr" ? oversized : Stream.empty,
+          all: Stream.empty,
+          getInputFd: () => Sink.drain,
+          getOutputFd: () => Stream.empty,
+        }),
+      ),
+    );
+    return spawnAndCollect(
+      "/usr/local/bin/claude",
+      ChildProcess.make("claude", ["--version"]),
+    ).pipe(
+      Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+      Effect.provideService(HostProcess.Platform, "linux"),
+      // Report a success as its byte counts rather than printing 9 MiB of output.
+      Effect.match({
+        onFailure: (error) => ({ error: error._tag, message: error.message }),
+        onSuccess: (result) => ({
+          stdoutBytes: result.stdout.length,
+          stderrBytes: result.stderr.length,
+        }),
+      }),
+    );
+  };
+
+  it.effect.each(["stdout", "stderr"] as const)(
+    "fails instead of returning %s past the byte cap",
+    (overflowingStream) =>
+      Effect.gen(function* () {
+        expect(yield* collectOversizedOutput(overflowingStream)).toEqual({
+          error: "ProviderCommandOutputLimitError",
+          message:
+            "Provider command /usr/local/bin/claude wrote more than 8388608 bytes to stdout or stderr.",
+        });
+      }),
+  );
+});
