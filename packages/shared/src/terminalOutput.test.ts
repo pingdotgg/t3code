@@ -81,6 +81,30 @@ describe("appendTerminalOutput", () => {
 });
 
 describe("appendTerminalOutput edge cases from review", () => {
+  it("erases the display without moving the cursor", () => {
+    const state = feed(["line1\nline2\u001b[2", "J"]);
+    expect(state.text).toBe("\n");
+    const continued = appendTerminalOutput(state, "X\u001b[1A\rY");
+    expect(continued.text).toBe("Y\n     X");
+    const resumed = appendTerminalOutput(EMPTY_TERMINAL_OUTPUT, terminalOutputResumeText(state));
+    expect(appendTerminalOutput(resumed, "X\u001b[1A\rY").text).toBe(continued.text);
+    for (const [input, maxChars, next] of [
+      ["\n".repeat(10) + "\u001b[2J", 3, "\u001b[8AX"],
+      ["\n".repeat(10) + "\u001b[8A\u001b[2Jx", 3, "X"],
+      ["\n".repeat(100) + "\u001b[2J", 64, "X"],
+    ] as const) {
+      const bounded = feed([input], maxChars);
+      const boundedResume = appendTerminalOutput(
+        EMPTY_TERMINAL_OUTPUT,
+        terminalOutputResumeText(bounded),
+        maxChars,
+      );
+      expect(appendTerminalOutput(boundedResume, next, maxChars).text).toBe(
+        appendTerminalOutput(bounded, next, maxChars).text,
+      );
+    }
+  });
+
   it("clears only scrollback on ESC[3J", () => {
     const lines = Array.from({ length: 70 }, (_, index) => `line ${index}`).join("\n");
     const state = feed([lines, "\u001b[3J"]);
@@ -149,6 +173,8 @@ describe("terminalOutputResumeText with a saved cursor or trimmed output", () =>
       120,
     );
     expect(viewer.text).toBe(appendTerminalOutput(source, " edited", 120).text);
+    const styled = feed([Array(64).fill("\u001b[31mx\u001b[0my".repeat(32)).join("\n")], 4096);
+    expect(terminalOutputResumeText(styled).length).toBeLessThanOrEqual(styled.text.length + 63);
   });
 });
 
