@@ -6,6 +6,7 @@ import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
 import { DEFAULT_SIGNAL_EXPORT } from "@t3tools/shared/observability";
 import * as HostProcess from "@t3tools/shared/HostProcess";
@@ -18,6 +19,7 @@ import {
   RELAY_URL_SECRET,
 } from "../cloud/config.ts";
 import * as ServerConfig from "../config.ts";
+import * as ProcessRunner from "../processRunner.ts";
 import * as ServerEnvironment from "./ServerEnvironment.ts";
 
 const layerServerEnvironment = (baseDir: string) =>
@@ -88,27 +90,62 @@ it.layer(NodeServices.layer)("ServerEnvironmentLive", (it) => {
         '{"name":"t3","version":"0.0.45","bin":{"t3":"./dist/bin.mjs"}}',
       );
       yield* fs.symlink(entry, `${prefix}/bin/t3`);
+      const standalone = `${baseDir}/t3`;
+      yield* fs.writeFileString(standalone, "");
       const config = yield* makeServerConfig(baseDir);
       yield* fs.makeDirectory(config.stateDir, { recursive: true });
-      for (const mode of ["web", "desktop"] as const) {
+      for (const [mode, startupPresentation, npmOwned, launchesT3] of [
+        ["web", "browser", true, true],
+        ["web", "headless", true, true],
+        ["web", "headless", false, true],
+        ["web", "headless", true, false],
+        ["desktop", "browser", true, true],
+      ] as const) {
         const descriptor = yield* Effect.gen(function* () {
-          const environment = yield* ServerEnvironment.ServerEnvironment;
+          const environment = yield* ServerEnvironment.make;
           return yield* environment.getDescriptor;
         }).pipe(
           Effect.provide(
-            ServerEnvironment.layer.pipe(
-              Layer.provide(layerEmptySecretStore),
-              Layer.provide(ServerConfig.layer({ ...config, mode })),
+            Layer.mergeAll(ServerEnvironment.layerIdentity, layerEmptySecretStore).pipe(
+              Layer.provideMerge(ServerConfig.layer({ ...config, mode, startupPresentation })),
             ),
           ),
-          Effect.provideService(HostProcess.Arguments, ["node", entry]),
+          Effect.provideService(ProcessRunner.ProcessRunner, {
+            run: () =>
+              Effect.succeed({
+                stdout: `{ path=ignored ; argv[]=${launchesT3 ? "/usr/bin/npx t3 serve" : "/usr/bin/code-server"} ; ignore_errors=no }`,
+                stderr: "",
+                code: ChildProcessSpawner.ExitCode(0),
+                timedOut: false,
+                stdoutTruncated: false,
+                stderrTruncated: false,
+                stdoutInvalidUtf8: false,
+                stderrInvalidUtf8: false,
+              }),
+          }),
+          Effect.provideService(FileSystem.FileSystem, {
+            ...fs,
+            readFileString: (path, ...args) =>
+              path === "/proc/self/cgroup"
+                ? Effect.succeed(
+                    "0::/user.slice/user-1000.slice/user@1000.service/app.slice/t3.service/payload",
+                  )
+                : fs.readFileString(path, ...args),
+          }),
+          Effect.provideService(HostProcess.Arguments, ["node", npmOwned ? entry : standalone]),
           Effect.provideService(HostProcess.IsExecutable, false),
           Effect.provideService(HostProcess.Platform, "linux"),
           Effect.provideService(HostProcess.Environment, {}),
         );
-        expect(descriptor.capabilities.serverInstallation).toEqual(
-          mode === "web" ? { kind: "npm-global", prefix } : undefined,
-        );
+        if (mode === "web") {
+          expect(descriptor.capabilities.serverInstallation).toEqual({
+            ...(npmOwned ? { kind: "npm-global", prefix } : { kind: "unknown" }),
+            ...(launchesT3 ? { systemdUnit: { name: "t3.service", scope: "user" } } : {}),
+            ...(startupPresentation === "headless" ? { subcommand: "serve" } : {}),
+          });
+        } else {
+          expect(descriptor.capabilities.serverInstallation).toBeUndefined();
+        }
         expect(descriptor.capabilities.serverSelfUpdate).toBe(
           mode === "web" ? undefined : "desktop-managed",
         );

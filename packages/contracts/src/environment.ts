@@ -56,9 +56,28 @@ export type ExecutionEnvironmentPlatform = typeof ExecutionEnvironmentPlatform.T
 export const ServerSelfUpdateMethod = Schema.Literals(["boot-service", "respawn", "desktop-app"]);
 export type ServerSelfUpdateMethod = typeof ServerSelfUpdateMethod.Type;
 
+/** A systemd unit other than T3 Code's own service, which restarts the server if it is stopped by hand. */
+export const ServerSystemdUnit = Schema.Struct({
+  name: TrimmedNonEmptyString,
+  scope: Schema.Literals(["user", "system"]),
+});
+export type ServerSystemdUnit = typeof ServerSystemdUnit.Type;
+
+const serverLaunchFields = {
+  subcommand: Schema.optionalKey(Schema.Literal("serve")),
+  systemdUnit: Schema.optionalKey(ServerSystemdUnit),
+};
+
 export const ServerInstallation = Schema.Union([
-  Schema.Struct({ kind: Schema.Literals(["npx", "pnpm-dlx", "bunx"]) }),
-  Schema.Struct({ kind: Schema.Literal("npm-global"), prefix: TrimmedNonEmptyString }),
+  Schema.Struct({
+    kind: Schema.Literals(["npx", "pnpm-dlx", "bunx", "unknown"]),
+    ...serverLaunchFields,
+  }),
+  Schema.Struct({
+    kind: Schema.Literal("npm-global"),
+    prefix: TrimmedNonEmptyString,
+    ...serverLaunchFields,
+  }),
 ]);
 export type ServerInstallation = typeof ServerInstallation.Type;
 
