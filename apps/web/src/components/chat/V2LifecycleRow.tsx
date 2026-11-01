@@ -233,7 +233,7 @@ function SubagentAvatar({
           driverKind={driver}
           displayName={displayName ?? driver}
           accentColor={accentColor}
-          acpRegistryIconUrl={iconUrl}
+          iconUrl={iconUrl}
           showBadge={showBadge}
           size="compact"
           className="z-auto"
@@ -669,7 +669,7 @@ function HandoffEndpoint(props: {
               displayName={entry?.displayName ?? props.instanceId}
               accentColor={entry?.accentColor}
               acpRegistryAgentId={entry?.acpRegistryAgentId}
-              acpRegistryIconUrl={entry?.acpRegistryIconUrl}
+              iconUrl={entry?.iconUrl}
               showBadge={showBadge}
               size="compact"
               iconClassName={cn(showBadge && "opacity-60")}

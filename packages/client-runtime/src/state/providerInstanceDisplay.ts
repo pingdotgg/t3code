@@ -66,11 +66,13 @@ export function shouldShowInstanceBadge(
     readonly driverKind: ProviderDriverKind;
     readonly accentColor?: string | undefined;
     readonly acpRegistryAgentId?: string | undefined;
+    readonly iconUrl?: string | undefined;
     readonly enabled: boolean;
   },
   entries: Iterable<{
     readonly driverKind: ProviderDriverKind;
     readonly acpRegistryAgentId?: string | undefined;
+    readonly iconUrl?: string | undefined;
     readonly enabled: boolean;
   }>,
 ): boolean {

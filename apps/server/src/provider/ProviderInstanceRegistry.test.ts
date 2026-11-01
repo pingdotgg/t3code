@@ -26,6 +26,7 @@ import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Scope from "effect/Scope";
+import * as Stream from "effect/Stream";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -334,6 +335,100 @@ describe("ProviderInstanceRegistry — multi-instance codex slice", () => {
         expect(yield* registry.getInstance(siblingId)).toBe(sibling);
         expect(closed).toBe(1);
       }).pipe(Effect.provide(layerTest)),
+  );
+
+  it.effect("publishes independent instance icons and restores the driver default on reset", () =>
+    Effect.gen(function* () {
+      const firstId = ProviderInstanceId.make("codex_first");
+      const secondId = ProviderInstanceId.make("codex_second");
+      const entry = {
+        driver: ProviderDriverKind.make("codex"),
+        enabled: false,
+        config: makeCodexConfig({}),
+      };
+      let closes = 0;
+      const driver = {
+        ...CodexDriver,
+        create: Effect.fn("ProviderInstanceRegistry.test.createIconSource")(function* (input) {
+          const instance = yield* CodexDriver.create(input);
+          yield* Effect.addFinalizer(() =>
+            Effect.sync(() => {
+              closes++;
+            }),
+          );
+          return {
+            ...instance,
+            snapshot: {
+              ...instance.snapshot,
+              streamChanges: Stream.fromEffect(instance.snapshot.getSnapshot),
+            },
+            snapshotForCwd: () => instance.snapshot.getSnapshot,
+          };
+        }),
+      } satisfies typeof CodexDriver;
+      const { registry, mutator } = yield* makeProviderInstanceRegistry({
+        drivers: [driver],
+        configMap: {
+          [firstId]: { ...entry, iconUrl: "https://example.com/first.png" },
+          [secondId]: { ...entry, iconUrl: "https://example.com/second.png" },
+        },
+      });
+      const first = yield* registry.getInstance(firstId);
+      const second = yield* registry.getInstance(secondId);
+      expect((yield* first!.snapshot.getSnapshot).iconUrl).toBe("https://example.com/first.png");
+      expect((yield* first!.snapshot.refresh).iconUrl).toBe("https://example.com/first.png");
+      const streamed = yield* Stream.runCollect(first!.snapshot.streamChanges);
+      expect(streamed[0]?.iconUrl).toBe("https://example.com/first.png");
+      expect((yield* first!.snapshotForCwd!("/workspace")).iconUrl).toBe(
+        "https://example.com/first.png",
+      );
+      expect((yield* second!.snapshot.getSnapshot).iconUrl).toBe("https://example.com/second.png");
+      const changes = yield* registry.subscribeChanges;
+      yield* mutator.reconcile({
+        [firstId]: { ...entry, iconUrl: "https://example.com/updated.png" },
+        [secondId]: { ...entry, iconUrl: "https://example.com/second.png" },
+      });
+      expect(closes).toBe(0);
+      yield* PubSub.take(changes);
+      const updated = yield* registry.getInstance(firstId);
+      expect(updated!.orchestrationAdapter).toBe(first!.orchestrationAdapter);
+      expect((yield* updated!.snapshot.getSnapshot).iconUrl).toBe(
+        "https://example.com/updated.png",
+      );
+      yield* mutator.reconcile({
+        [firstId]: entry,
+        [secondId]: { ...entry, iconUrl: "https://example.com/second.png" },
+      });
+      expect(closes).toBe(0);
+      yield* PubSub.take(changes);
+      const reset = yield* registry.getInstance(firstId);
+      expect((yield* reset!.snapshot.getSnapshot).iconUrl).toBeUndefined();
+      yield* mutator.reconcile({
+        [firstId]: { ...entry, iconUrl: "https://example.com/restored.png" },
+        [secondId]: { ...entry, iconUrl: "https://example.com/second.png" },
+      });
+      expect(closes).toBe(0);
+      yield* PubSub.take(changes);
+      const restored = yield* registry.getInstance(firstId);
+      expect((yield* restored!.snapshot.getSnapshot).iconUrl).toBe(
+        "https://example.com/restored.png",
+      );
+    }).pipe(Effect.provide(layerTest)),
+  );
+
+  it.effect("preserves icons for unavailable drivers", () =>
+    Effect.gen(function* () {
+      const { registry } = yield* makeProviderInstanceRegistry<never>({
+        drivers: [],
+        configMap: {
+          [ProviderInstanceId.make("custom")]: {
+            driver: ProviderDriverKind.make("unregistered"),
+            iconUrl: "https://example.com/custom.png",
+          },
+        },
+      });
+      expect((yield* registry.listUnavailable)[0]?.iconUrl).toBe("https://example.com/custom.png");
+    }).pipe(Effect.provide(layerTest)),
   );
 
   it.live("treats an explicit in-config enabled:false as disabling despite the envelope", () =>
@@ -819,7 +914,20 @@ describe("ProviderInstanceRegistry secret environment", () => {
         Effect.sync(() => {
           created.push(input.environment);
           configs.push(input.config);
-          return { instanceId: input.instanceId, enabled: input.enabled } as ProviderInstance;
+          const instance = {
+            instanceId: input.instanceId,
+            enabled: input.enabled,
+          } as ProviderInstance;
+          return {
+            ...instance,
+            snapshot: {
+              resolveMaintenance: () => Effect.die("unused"),
+              applyUsageLimits: () => Effect.void,
+              getSnapshot: Effect.die("unused"),
+              refresh: Effect.die("unused"),
+              streamChanges: Stream.empty,
+            },
+          };
         }),
     };
     const gate = Deferred.makeUnsafe<void>();
@@ -841,6 +949,7 @@ describe("ProviderInstanceRegistry secret environment", () => {
     const configMap: ProviderInstanceConfigMap = {
       [instanceId]: {
         driver: driverKind,
+        iconUrl: "https://example.com/secret-instance.png",
         config,
         environment: [
           { name: "OPENAI_API_KEY", value: secret, sensitive: true },
@@ -887,6 +996,7 @@ describe("ProviderInstanceRegistry secret environment", () => {
       const [unavailable] = yield* registry.listUnavailable;
       expect(unavailable?.instanceId).toBe(instanceId);
       expect(unavailable?.unavailableReason).toContain("OPENAI_API_KEY");
+      expect(unavailable?.iconUrl).toBe("https://example.com/secret-instance.png");
     }).pipe(Effect.scoped);
   });
 
@@ -968,6 +1078,7 @@ describe("ProviderInstanceRegistry secret environment", () => {
       expect(yield* registry.getInstance(instanceId)).toBeUndefined();
       const [pending] = yield* registry.listUnavailable;
       expect(pending?.unavailableReason).toBe("Reading secrets…");
+      expect(pending?.iconUrl).toBe("https://example.com/secret-instance.png");
 
       yield* Deferred.succeed(fixture.gate, undefined);
       yield* PubSub.take(changes);

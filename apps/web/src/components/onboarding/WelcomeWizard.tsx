@@ -973,6 +973,7 @@ function AgentCard({
       <ProviderInstanceIcon
         driverKind={ProviderDriverKind.make(driver)}
         displayName={displayName}
+        iconUrl={provider?.iconUrl}
         iconClassName="size-5"
       />
       <div className="min-w-0 flex-1">

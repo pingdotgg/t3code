@@ -69,7 +69,7 @@ export function ThreadRelationshipIcon({
           displayName={entry?.displayName ?? provider?.displayName ?? driver}
           accentColor={entry?.accentColor}
           acpRegistryAgentId={entry?.acpRegistryAgentId}
-          acpRegistryIconUrl={entry?.acpRegistryIconUrl ?? provider?.iconUrl}
+          iconUrl={entry?.iconUrl ?? provider?.iconUrl}
           showBadge={showInstanceBadge}
           size="compact"
           iconClassName={iconClassName}

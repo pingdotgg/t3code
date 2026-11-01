@@ -1,5 +1,6 @@
 import {
   ACP_REGISTRY_MAX_AGENTS,
+  resolveOfficialAcpRegistryIconUrl,
   AcpRegistryOperationError,
   AcpRegistryOperationErrorReason,
   TrimmedNonEmptyString,
@@ -1659,7 +1660,7 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
           license: agent.license ?? null,
           website: agent.website ?? null,
           repository: agent.repository ?? null,
-          icon: agent.icon ?? null,
+          icon: resolveOfficialAcpRegistryIconUrl(agent.icon ?? null),
           distribution: distribution.kind,
           integrity:
             distribution.kind === "binary" && distribution.binaryTarget?.sha256 !== undefined

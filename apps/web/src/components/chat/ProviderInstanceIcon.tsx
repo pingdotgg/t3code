@@ -1,4 +1,4 @@
-import { type CSSProperties, memo } from "react";
+import { type CSSProperties, memo, useState } from "react";
 
 import {
   normalizeProviderAccentColor,
@@ -6,7 +6,7 @@ import {
   providerInstanceInitials,
 } from "@t3tools/client-runtime/state/provider-instance-display";
 
-import { ProviderDriverKind } from "@t3tools/contracts";
+import { normalizeProviderIconUrl, ProviderDriverKind } from "@t3tools/contracts";
 import { AntigravityIcon, ClaudeAI, Icon, OpenAI } from "../Icons";
 
 import { cn } from "~/lib/utils";
@@ -62,7 +62,7 @@ export const ProviderInstanceIcon = memo(function ProviderInstanceIcon(props: {
   displayName: string;
   accentColor?: string | undefined;
   acpRegistryAgentId?: string | undefined;
-  acpRegistryIconUrl?: string | undefined;
+  iconUrl?: string | undefined;
   showBadge?: boolean;
   badgeContent?: "initials" | "none";
   size?: "default" | "compact";
@@ -84,11 +84,19 @@ export const ProviderInstanceIcon = memo(function ProviderInstanceIcon(props: {
   const badgeContent = props.badgeContent ?? "initials";
   const iconClassName = cn(props.size === "compact" && "size-3.5", props.iconClassName);
   const isAcpRegistry = props.driverKind === "acpRegistry";
-  const acpRegistryIconUrl = resolveProviderInstanceAcpRegistryIconUrl({
+  const registryIconUrl = resolveProviderInstanceAcpRegistryIconUrl({
     driverKind: props.driverKind,
     agentId: props.acpRegistryAgentId,
-    iconUrl: props.acpRegistryIconUrl,
+    iconUrl: props.iconUrl,
   });
+
+  const customIconUrl =
+    isAcpRegistry && resolveOfficialAcpRegistryIconUrl(props.iconUrl ?? null)
+      ? null
+      : normalizeProviderIconUrl(props.iconUrl);
+  const [image, setImage] = useState<{ url: string; loaded: boolean } | null>(null);
+  const currentImage = image?.url === customIconUrl ? image : null;
+  const showCustomIcon = customIconUrl !== null && currentImage?.loaded === true;
 
   return (
     <span
@@ -99,11 +107,26 @@ export const ProviderInstanceIcon = memo(function ProviderInstanceIcon(props: {
       style={accentStyle}
       data-provider-accent-color={accentColor}
     >
-      {isAcpRegistry ? (
+      {customIconUrl && currentImage?.loaded !== false ? (
+        <img
+          src={customIconUrl}
+          alt=""
+          aria-hidden
+          referrerPolicy="no-referrer"
+          className={cn(
+            "size-5 shrink-0 object-contain",
+            !showCustomIcon && "hidden",
+            iconClassName,
+          )}
+          onLoad={() => setImage({ url: customIconUrl, loaded: true })}
+          onError={() => setImage({ url: customIconUrl, loaded: false })}
+        />
+      ) : null}
+      {showCustomIcon ? null : isAcpRegistry ? (
         <AcpRegistryAgentIcon
           className={cn("size-5 rounded-none bg-transparent", iconClassName)}
           fallbackClassName="size-full"
-          icon={acpRegistryIconUrl}
+          icon={registryIconUrl}
         />
       ) : packageIcon ? (
         <ProviderPackageIcon

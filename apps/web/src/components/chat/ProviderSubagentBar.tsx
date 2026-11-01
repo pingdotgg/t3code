@@ -40,7 +40,7 @@ export function ProviderSubagentBar(props: {
               displayName={props.provider.displayName}
               accentColor={props.provider.accentColor}
               acpRegistryAgentId={props.provider.acpRegistryAgentId}
-              acpRegistryIconUrl={props.provider.acpRegistryIconUrl}
+              iconUrl={props.provider.iconUrl}
               showBadge={props.showInstanceBadge}
               className="size-4 shrink-0"
               iconClassName="size-4"
