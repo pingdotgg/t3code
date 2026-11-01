@@ -55,6 +55,7 @@ import * as Stream from "effect/Stream";
 import * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
 import * as OpenCode2Client from "./OpenCode2Client.ts";
 import * as OpenCode2Server from "./OpenCode2Server.ts";
+import { oversizedSessionMessage } from "./oversizedSession.ts";
 import * as OpenCodeRuntime from "../OpenCodeRuntime.ts";
 import { readableProviderErrorMessage } from "../providerErrorMessage.ts";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
@@ -3613,9 +3614,33 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
               state.active === turn
                 ? Effect.gen(function* () {
                     if (!CLEAR_PROMPT_REJECTIONS.has(cause._tag)) markUnsettled(state);
+                    // A prompt the session outgrew reads as a bare
+                    // InvalidRequest; say what actually happened instead of
+                    // the provider's generic text. Anything without size
+                    // evidence keeps the original error.
+                    const oversized = oversizedSessionMessage({
+                      causeTag: cause._tag,
+                      lastStepInputTokens:
+                        turn.lastStep === undefined
+                          ? undefined
+                          : turn.lastStep.input +
+                            turn.lastStep.cache.read +
+                            turn.lastStep.cache.write,
+                      windowTokens: windowOf(
+                        directoryOf(turnInput.runtimePolicy.cwd),
+                        turnInput.modelSelection.model,
+                      ),
+                    });
                     yield* finishTurn(state, {
                       status: "failed",
-                      failure: makeProviderFailure({ cause, class: "provider_error" }),
+                      failure:
+                        oversized === null
+                          ? makeProviderFailure({ cause, class: "provider_error" })
+                          : makeProviderFailure({
+                              cause,
+                              class: "provider_error",
+                              message: oversized,
+                            }),
                     });
                   })
                 : Effect.void,
