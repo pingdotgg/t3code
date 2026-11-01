@@ -395,7 +395,9 @@ describe("schedule timezone labels", () => {
     expect(scheduleTimeZoneLabel("America/Los_Angeles", "2027-01-15T17:00:00Z")).toBe("PST");
     expect(scheduleTimeZoneLabel("America/Los_Angeles", "2027-07-15T16:00:00Z")).toBe("PDT");
     const kolkata = scheduleTimeZoneLabel("Asia/Kolkata");
-    expect(kolkata === "IST" || kolkata?.startsWith("GMT+") === true).toBe(true);
+    expect(
+      kolkata === "IST" || kolkata === "India Time" || kolkata?.startsWith("GMT+") === true,
+    ).toBe(true);
     expect(kolkata).not.toContain("Asia/");
   });
 

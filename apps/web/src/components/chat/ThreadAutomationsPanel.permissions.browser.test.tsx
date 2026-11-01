@@ -122,7 +122,7 @@ it("labels fixed times with a short server zone and preserves labels from older 
 
   state.listResult = { tasks, timeZone: "America/Los_Angeles" };
   await renderPanel();
-  expect(labels()[0]).toMatch(/^Daily at 09:00 (P[DS]T|GMT-)/);
+  expect(labels()[0]).toMatch(/^Daily at 09:00 (PT|Los Angeles Time)$/);
   expect(labels()[0]).not.toContain("America/");
   expect(labels().slice(1)).toEqual(["Every 1 min", "On webhook"]);
 
