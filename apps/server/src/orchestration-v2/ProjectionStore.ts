@@ -6778,7 +6778,9 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 ) AS payload_json
                 FROM orchestration_v2_projection_threads t
                 WHERE t.deleted_at IS NULL
-                  AND json_extract(t.payload_json, '$.archivedAt') IS NULL${
+                  AND json_extract(t.payload_json, '$.archivedAt') IS NULL
+                  -- Subagent children refresh after their own runs; sweeping them costs a lookup each per minute.
+                  AND json_extract(t.payload_json, '$.lineage.relationshipToParent') IS NOT 'subagent'${
                     unsettledOnly
                       ? sql` AND json_extract(t.payload_json, '$.settledAt') IS NULL AND json_extract(t.payload_json, '$.settledOverride') IS NOT 'settled'`
                       : sql``

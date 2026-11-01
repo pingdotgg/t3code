@@ -254,9 +254,10 @@ describe("ThreadPullRequestServiceV2 reads", () => {
         const dependencies = Layer.mergeAll(
           Layer.mock(Orchestrator.OrchestratorV2)({
             streamDomainEvents: Stream.fromQueue(domainEvents),
+            // The store leaves subagent children out of the sweep read.
             getPullRequestSyncThreads: () =>
               Queue.offer(sweeps, undefined).pipe(
-                Effect.as({ snapshotSequence: 1, threads: [parent, child] }),
+                Effect.as({ snapshotSequence: 1, threads: [parent] }),
               ),
             getThreadEventSequence: () => Effect.succeed(1),
             getThreadShell: (threadId) =>

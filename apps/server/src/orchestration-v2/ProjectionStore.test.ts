@@ -908,6 +908,13 @@ const pullRequestSyncReadMatchesShellFields = Effect.gen(function* () {
   yield* create("settled", { settledAt: now });
   yield* create("settled-override", { settledOverride: "settled" });
   yield* create("archived", { archivedAt: now });
+  yield* create("subagent", {
+    lineage: {
+      parentThreadId: ThreadId.make("thread:pull-request-sync:legacy-link"),
+      relationshipToParent: "subagent",
+      rootThreadId: ThreadId.make("thread:pull-request-sync:legacy-link"),
+    },
+  });
   const deleted = yield* create("deleted");
   yield* store.apply({
     id: EventId.make(`event:${deleted.id}:deleted`),
@@ -934,7 +941,12 @@ const pullRequestSyncReadMatchesShellFields = Effect.gen(function* () {
     const shell = yield* store.getShellSnapshot({ location: "active", unsettledOnly });
     const narrow = yield* store.getPullRequestSyncThreads({ unsettledOnly });
     assert.equal(narrow.snapshotSequence, shell.snapshotSequence);
-    assert.deepEqual(narrow.threads.map(syncFields), shell.threads.map(syncFields));
+    assert.deepEqual(
+      narrow.threads.map(syncFields),
+      shell.threads
+        .filter((thread) => thread.lineage.relationshipToParent !== "subagent")
+        .map(syncFields),
+    );
   }
 
   const inProject = (thread: ProjectionStore.ProjectionPullRequestSyncThread) =>
