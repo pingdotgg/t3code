@@ -10,6 +10,7 @@ import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Metric from "effect/Metric";
 import * as Option from "effect/Option";
+import * as PubSub from "effect/PubSub";
 import * as Ref from "effect/Ref";
 import { TestClock } from "effect/testing";
 import * as SqlClient from "effect/sql/SqlClient";
@@ -106,6 +107,88 @@ const layerTestFor = (
   );
 
 const layerTest = layerTestFor(layerMetadata);
+
+it.effect("resolves only the requested active project page in creation order", () =>
+  Effect.gen(function* () {
+    const inspected = yield* Ref.make<ReadonlySet<string>>(new Set());
+    const note = (workspaceRoot: string) =>
+      Ref.update(inspected, (roots) => new Set([...roots, workspaceRoot]));
+    const metadata = Layer.merge(
+      Layer.succeed(RepositoryIdentityResolver.RepositoryIdentityResolver, {
+        resolve: (workspaceRoot) =>
+          note(workspaceRoot).pipe(
+            Effect.as({
+              canonicalKey: `example.test${workspaceRoot}`,
+              locator: {
+                source: "git-remote" as const,
+                remoteName: "origin",
+                remoteUrl: `https://example.test${workspaceRoot}.git`,
+              },
+              rootPath: workspaceRoot,
+            }),
+          ),
+      }),
+      Layer.succeed(ProjectFaviconResolver.ProjectFaviconResolver, {
+        invalidate: () => Effect.void,
+        resolvePath: (workspaceRoot) => note(workspaceRoot).pipe(Effect.as(null)),
+      }),
+    );
+    yield* Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      const service = yield* ProjectService.ProjectService;
+      const enrichment = yield* ProjectEnrichmentService.ProjectEnrichmentService;
+      const changes = yield* enrichment.subscribeChanges;
+      const rows = Array.from({ length: 6 }, (_, index) => ({
+        project_id: `page:${index}`,
+        title: `Project ${index}`,
+        workspace_root: `/work/page-${index}`,
+        scripts_json: "[]",
+        created_at: "2026-10-01T00:00:00.000Z",
+        updated_at: "2026-10-01T00:00:00.000Z",
+        deleted_at: index === 1 ? "2026-10-02T00:00:00.000Z" : null,
+        auto_pull: 0,
+      }));
+      yield* sql`INSERT INTO projection_projects ${sql.insert(rows)}`;
+      const first = yield* service.listPage({ cursor: 0, limit: 2 });
+      assert.deepEqual(
+        first.projects.map((project) => project.id),
+        ["page:0", "page:2"],
+      );
+      assert.equal(first.nextCursor, 2);
+      assert.deepEqual(
+        first.projects.map((project) => project.repositoryIdentity?.canonicalKey),
+        ["example.test/work/page-0", "example.test/work/page-2"],
+      );
+      // A sentinel queued after the page lets the enrichment workers finish
+      // earlier requests before checking which workspaces were inspected.
+      yield* enrichment.request("/work/page-sentinel");
+      for (;;) {
+        if ((yield* PubSub.take(changes)).workspaceRoot === "/work/page-sentinel") break;
+      }
+      assert.deepEqual(
+        new Set(yield* Ref.get(inspected)),
+        new Set(["/work/page-0", "/work/page-2", "/work/page-sentinel"]),
+      );
+      const second = yield* service.listPage({ cursor: first.nextCursor!, limit: 2 });
+      assert.deepEqual(
+        second.projects.map((project) => project.id),
+        ["page:3", "page:4"],
+      );
+      assert.equal(second.nextCursor, 4);
+      const last = yield* service.listPage({ cursor: second.nextCursor!, limit: 2 });
+      assert.deepEqual(
+        last.projects.map((project) => project.id),
+        ["page:5"],
+      );
+      assert.isNull(last.nextCursor);
+      assert.isFalse((yield* Ref.get(inspected)).has("/work/page-1"));
+      assert.deepEqual(yield* service.listPage({ cursor: 99, limit: 2 }), {
+        projects: [],
+        nextCursor: null,
+      });
+    }).pipe(Effect.scoped, Effect.provide(layerTestFor(metadata)));
+  }),
+);
 
 const layerProjectServiceDependencies = Layer.mergeAll(
   RuntimeLayer.layerEventSink,
