@@ -4,7 +4,6 @@ import type {
   ProviderOptionDescriptor,
 } from "@t3tools/contracts";
 import {
-  applyClaudePromptEffortPrefix,
   buildProviderOptionSelectionsFromDescriptors,
   getProviderOptionCurrentLabel,
   getProviderOptionCurrentValue,
@@ -12,12 +11,24 @@ import {
 } from "@t3tools/shared/model";
 import { REASONING_EFFORT_OPTION_IDS } from "./state/threadExecution.ts";
 
-export const ULTRATHINK_PROMPT_PREFIX = "Ultrathink:\n";
-
-export const REASONING_SELECT_DESCRIPTOR_IDS: ReadonlySet<string> = new Set([
+const REASONING_DESCRIPTOR_IDS: ReadonlySet<string> = new Set([
   ...REASONING_EFFORT_OPTION_IDS,
   "thinking",
 ]);
+
+/** The model's reasoning control: a known effort id, or a select its agent marked as reasoning. */
+export function isReasoningControl(descriptor: ProviderOptionDescriptor): boolean {
+  return (
+    (descriptor.type === "select" && descriptor.role === "reasoning") ||
+    REASONING_DESCRIPTOR_IDS.has(descriptor.id)
+  );
+}
+
+export function isReasoningSelect(
+  descriptor: ProviderOptionDescriptor,
+): descriptor is Extract<ProviderOptionDescriptor, { type: "select" }> {
+  return descriptor.type === "select" && isReasoningControl(descriptor);
+}
 
 export function replaceDescriptorCurrentValue(
   descriptors: ReadonlyArray<ProviderOptionDescriptor>,
@@ -51,10 +62,13 @@ export function getDescriptorStringValue(
   return typeof value === "string" ? value : null;
 }
 
+// Prompt-injected levels such as Ultrathink still work when typed, but pickers do not offer them.
 export function selectableProviderOptionChoices(
   descriptor: Extract<ProviderOptionDescriptor, { type: "select" }>,
 ) {
-  return descriptor.options;
+  return descriptor.options.filter(
+    (option) => !descriptor.promptInjectedValues?.includes(option.id),
+  );
 }
 
 export function getPromptControlledTraits(
@@ -81,15 +95,7 @@ export function getTraitSelectChange(
   prompt: string,
   value: string,
 ) {
-  if (!value) return null;
-  if (descriptor.promptInjectedValues?.includes(value)) {
-    return {
-      prompt:
-        prompt.trim().length === 0
-          ? ULTRATHINK_PROMPT_PREFIX
-          : applyClaudePromptEffortPrefix(prompt, "ultrathink"),
-    };
-  }
+  if (!value || descriptor.promptInjectedValues?.includes(value)) return null;
   const isPrimary = descriptor.id === selected.primarySelectDescriptor?.id;
   if (isPrimary && selected.ultrathinkInBodyText) return null;
   return {
@@ -115,8 +121,6 @@ export function buildTraitsTriggerDisplay(input: {
   /** "Fast" or "Ultrafast" when a speed option is on. */
   speedLabel: string | null;
   ultracode: boolean;
-  /** Labels other than reasoning, speed, and Ultracode, such as context window or thinking. */
-  otherLabels: ReadonlyArray<string>;
 } {
   let fastModeFallbackLabel: string | null = null;
   let speedLabel: string | null = null;
@@ -171,11 +175,7 @@ export function buildTraitsTriggerDisplay(input: {
               input.reportedModelSelection,
             );
     if (typeof label === "string" && label.length > 0) {
-      if (
-        reasoningLabelIndex === -1 &&
-        descriptor.type === "select" &&
-        REASONING_SELECT_DESCRIPTOR_IDS.has(descriptor.id)
-      ) {
+      if (reasoningLabelIndex === -1 && isReasoningSelect(descriptor)) {
         reasoningLabelIndex = labels.length;
       }
       labels.push(label);
@@ -183,11 +183,8 @@ export function buildTraitsTriggerDisplay(input: {
   }
 
   const ultracode = ultracodeLabelIndex >= 0;
-  const otherLabels = labels.filter(
-    (_, index) => index !== reasoningLabelIndex && index !== ultracodeLabelIndex,
-  );
   if (labels.length === 0 && fastModeFallbackLabel !== null) {
-    return { label: fastModeFallbackLabel, speedLabel, ultracode, otherLabels };
+    return { label: fastModeFallbackLabel, speedLabel, ultracode };
   }
   if (speedLabel) {
     if (reasoningLabelIndex >= 0) {
@@ -196,5 +193,5 @@ export function buildTraitsTriggerDisplay(input: {
       labels.push(speedLabel);
     }
   }
-  return { label: labels.join(" · "), speedLabel, ultracode, otherLabels };
+  return { label: labels.join(" · "), speedLabel, ultracode };
 }

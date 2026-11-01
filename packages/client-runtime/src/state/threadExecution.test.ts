@@ -23,10 +23,13 @@ import {
   deriveReportedModelSelection,
   deriveLatestThreadRun,
   deriveProviderSubagentStatus,
+  deriveResumableRunId,
   deriveRunlessWorkStartedAt,
   deriveThreadActivityRun,
   deriveThreadRuntime,
   formatModelSelectionEffort,
+  presentPendingBackgroundWork,
+  presentProviderGoal,
   presentRunStop,
   threadRuntimeHasInterruptibleRun,
 } from "./threadExecution.ts";
@@ -84,6 +87,7 @@ describe("thread execution presentation", () => {
       lastError: "Plan limit reached",
       lastErrorClass: "usage_limit",
     });
+    expect(deriveResumableRunId(projection, deriveThreadRuntime(projection))).toBe(failed.id);
     expect(
       deriveThreadRuntime({
         ...projection,
@@ -154,6 +158,7 @@ describe("thread execution presentation", () => {
       lastError: "Plan limit reached",
       lastErrorClass: "usage_limit",
     });
+    expect(deriveResumableRunId(projection, deriveThreadRuntime(projection))).toBe(failed.id);
     const cancelledQueued = {
       ...run("cancelled-queued", 3, "cancelled"),
       startedAt: null,
@@ -165,12 +170,15 @@ describe("thread execution presentation", () => {
     expect(
       deriveThreadRuntime({ ...projection, runs: [failed, queued, cancelledQueued] }),
     ).toMatchObject({ status: "failed", lastErrorClass: "usage_limit" });
-    expect(
-      deriveThreadRuntime({
-        ...projection,
-        turnItems: [{ ...item, failure: { ...item.failure, class: "provider_error" as const } }],
-      }),
-    ).toMatchObject({ status: "queued", lastErrorClass: null });
+    const providerError = {
+      ...projection,
+      turnItems: [{ ...item, failure: { ...item.failure, class: "provider_error" as const } }],
+    };
+    expect(deriveThreadRuntime(providerError)).toMatchObject({
+      status: "queued",
+      lastErrorClass: null,
+    });
+    expect(deriveResumableRunId(providerError, deriveThreadRuntime(providerError))).toBeNull();
   });
 
   it("keeps live activity attached to an executing run when a newer run is queued", () => {
@@ -231,6 +239,7 @@ describe("thread execution presentation", () => {
       status: "interrupted",
       activeRunId: null,
     });
+    expect(deriveResumableRunId(projection, deriveThreadRuntime(projection))).toBe(interrupted.id);
 
     const resumed = { ...projection, runs: [interrupted, { ...held, queueHeld: false }] };
     expect(deriveThreadRuntime(resumed)).toMatchObject({ status: "queued" });
@@ -495,5 +504,43 @@ describe("formatModelSelectionEffort", () => {
     );
 
     expect(formatModelSelectionEffort(selection, models)).toBe("Extra High");
+  });
+});
+
+describe("presentProviderGoal", () => {
+  it("rolls token counts that round to 1000k over to 1m", () => {
+    const usage = (tokensUsed: number) =>
+      presentProviderGoal(
+        { objective: "Ship the feature", status: "active", tokensUsed, tokenBudget: 2_000_000 },
+        true,
+      ).usage;
+    expect(usage(999_499)).toBe("999k / 2m tokens");
+    expect(usage(999_500)).toBe("1m / 2m tokens");
+    expect(usage(999_999)).toBe("1m / 2m tokens");
+    expect(usage(1_000_000)).toBe("1m / 2m tokens");
+    expect(
+      presentProviderGoal(
+        {
+          objective: "Ship the feature",
+          status: "paused",
+          tokensUsed: 999_500,
+          tokenBudget: 999_500,
+        },
+        false,
+      ).usage,
+    ).toBe("1m / 1m tokens");
+  });
+});
+
+describe("presentPendingBackgroundWork", () => {
+  it("names a command by its script, not the shell that wraps it", () => {
+    const presentation = presentPendingBackgroundWork([
+      {
+        taskId: "call_1",
+        kind: "command",
+        description: `/bin/zsh -lc "mv a.ts b.ts\ncat > b.ts <<'EOF'\nexport {};\nEOF"`,
+      },
+    ]);
+    expect(presentation?.items[0]?.label).toBe("mv a.ts b.ts\ncat > b.ts <<'EOF'\nexport {};\nEOF");
   });
 });
