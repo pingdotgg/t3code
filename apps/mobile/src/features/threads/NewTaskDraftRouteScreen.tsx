@@ -99,6 +99,7 @@ export function NewTaskDraftRouteScreen({ route }: StaticScreenProps<NewTaskDraf
       ? params.environmentId[0]
       : params.environmentId,
     projectId: Array.isArray(params.projectId) ? params.projectId[0] : params.projectId,
+    environmentSelection: params.environmentSelection,
     branch: params.branch,
     worktreePath: params.worktreePath,
     cloning: (Array.isArray(params.cloning) ? params.cloning[0] : params.cloning) === "1",
@@ -184,8 +185,9 @@ export function NewTaskDraftRouteScreen({ route }: StaticScreenProps<NewTaskDraf
   // workspace) whenever this object's identity changes. initialProjectRef is new
   // every render, so read its fields first: the compiler then memoizes this
   // object on them, instead of on initialProjectRef.
-  const { environmentId, projectId, cloning } = initialProjectRef;
+  const { environmentId, projectId, environmentSelection, cloning } = initialProjectRef;
   const preparedProjectRef = {
+    environmentSelection,
     environmentId,
     projectId,
     branch: preparedBranch,

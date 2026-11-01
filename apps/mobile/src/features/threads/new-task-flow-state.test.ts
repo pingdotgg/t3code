@@ -78,6 +78,7 @@ describe("resolveRouteDraft", () => {
       flow: {
         ...INITIAL_NEW_TASK_FLOW_STATE,
         environmentId,
+        manualProjectRef: { environmentId, projectId: project.id },
         projectKey: "env:project",
         draftKey: "new-task:draft-1",
       },

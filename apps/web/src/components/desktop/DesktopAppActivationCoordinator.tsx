@@ -88,7 +88,7 @@ export function DesktopAppActivationCoordinator() {
             input: { projectId: projectRef.projectId, archived: false },
           }).then((result) => reportProjectFailure("Failed to unarchive project", result));
         }
-        return openThread(projectRef);
+        return openThread(projectRef, { environmentSelection: "manual" });
       },
     }),
   );

@@ -1,3 +1,4 @@
+import { scopeProjectRef } from "@t3tools/client-runtime/environment";
 import { ActiveNewTaskContext } from "../../state/active-new-task";
 import { resolveNewThreadModelSelection } from "@t3tools/shared/usageLimits";
 import { useNowMinuteMs } from "../../lib/clock";
@@ -11,6 +12,7 @@ import type {
   ProviderOptionSelection,
   RuntimeMode,
   ServerProvider,
+  ScopedProjectRef,
 } from "@t3tools/contracts";
 import {
   CommandId,
@@ -93,7 +95,10 @@ import {
   resolveNewTaskBranchWorktreePath,
   resolveNewTaskLocalWorkspaceSelection,
 } from "./new-task-context-presentation";
-import { resolveEnvironmentProjectMatch } from "./new-task-project-selection";
+import {
+  resolveEnvironmentProjectMatch,
+  resolveNewTaskEnvironmentId,
+} from "./new-task-project-selection";
 import { useNewTaskProjectDefaults } from "./use-new-task-project-defaults";
 import { resolveProjectThreadCreationBranch } from "./projectThreadCreationValidation";
 import {
@@ -135,6 +140,7 @@ type NewTaskFlowContextValue = {
   readonly projectScopes: ReadonlyArray<HomeProjectScope>;
   readonly selectedEnvironmentId: EnvironmentId | null;
   readonly selectedProjectKey: string | null;
+  readonly manualProjectRef: ScopedProjectRef | null;
   readonly selectedModelKey: string | null;
   readonly workspaceMode: WorkspaceMode;
   readonly isGitRepo: boolean;
@@ -171,7 +177,10 @@ type NewTaskFlowContextValue = {
   readonly selectedModelOption: ModelOption | null;
   readonly selectedProviderStatus: ServerProvider | null;
   readonly providerGroups: ReadonlyArray<ProviderGroup>;
-  readonly setProject: (project: EnvironmentProject) => void;
+  readonly setProject: (
+    project: EnvironmentProject,
+    options?: { readonly environmentSelection?: "manual" },
+  ) => void;
   /** The flow's project, read when a continuation resumes after an await. */
   readonly getSelectedProjectKey: () => string | null;
   /**
@@ -228,6 +237,12 @@ export function NewTaskFlowProvider(
   const projects = useProjects();
   const threads = useThreadShells();
   const { savedConnectionsById } = useSavedRemoteConnections();
+  const { connectedEnvironments } = useRemoteConnectionStatus();
+  const connectedEnvironmentIds = new Set(
+    connectedEnvironments
+      .filter((environment) => environment.connectionState === "connected")
+      .map((environment) => environment.environmentId),
+  );
   const groupingSettings = useMobileProjectGroupingSettings();
   const { enabled: legacyPlanModeEnabled } = useLegacyPlanModeState();
 
@@ -288,6 +303,7 @@ export function NewTaskFlowProvider(
     draftKey: activeDraftKey,
     submitting,
     expandedProvider,
+    manualProjectRef = null,
   } = flowState;
   // Continuations read the flow at use time, with the route's draft applied.
   const readFlow = (): NewTaskFlowState => {
@@ -305,11 +321,11 @@ export function NewTaskFlowProvider(
   // binding outlives the draft's project stamp (submit clears it).
   const updateFlow = (patch: Partial<NewTaskFlowState>) =>
     updateNewTaskFlowState(flowKey, { ...readFlow(), ...patch });
-  const selectedEnvironmentId =
-    selectedEnvironmentIdOverride !== null &&
-    projects.some((project) => project.environmentId === selectedEnvironmentIdOverride)
-      ? selectedEnvironmentIdOverride
-      : (projects[0]?.environmentId ?? null);
+  const selectedEnvironmentId = resolveNewTaskEnvironmentId(
+    projects,
+    selectedEnvironmentIdOverride,
+    connectedEnvironmentIds,
+  );
   const projectsForEnvironment = pipe(
     projects,
     Arr.filter((project) => project.environmentId === selectedEnvironmentId),
@@ -333,7 +349,6 @@ export function NewTaskFlowProvider(
   const selectedEnvironmentServerConfig = projectDefaults.serverConfig;
   const isScratchDraft = projectDefaults.isScratch;
   const serverConfigs = useServerConfigs();
-  const { connectedEnvironments } = useRemoteConnectionStatus();
   const selectedProjectDraftKey = selectedProject ? activeDraftKey : null;
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- creates the persistent draft in the new-task flow store once a project is selected, before the composer mounts
   useEffect(() => {
@@ -342,12 +357,14 @@ export function NewTaskFlowProvider(
       props.active === false ||
       props.routeDraftId !== undefined ||
       activeDraftKey !== null ||
+      readNewTaskFlowState(flowKey).draftKey !== null ||
       selectedProject === null
     ) {
       return;
     }
     // Creates the persistent draft once the project selection is ready; the key must exist before the composer mounts.
     updateNewTaskFlowState(flowKey, {
+      environmentId: selectedProject.environmentId,
       draftKey: createNewTaskDraft({
         environmentId: selectedProject.environmentId,
         projectId: selectedProject.id,
@@ -571,8 +588,18 @@ export function NewTaskFlowProvider(
     return createNewTaskDraft(target);
   };
 
-  const setProject = (project: EnvironmentProject) => {
+  const setProject = (
+    project: EnvironmentProject,
+    options?: { readonly environmentSelection?: "manual" },
+  ) => {
+    const current = readFlow().manualProjectRef;
     updateFlow({
+      manualProjectRef:
+        options?.environmentSelection === "manual"
+          ? scopeProjectRef(project.environmentId, project.id)
+          : current?.environmentId === project.environmentId && current.projectId === project.id
+            ? current
+            : null,
       draftKey: carryDraftContentTo(project),
       environmentId: project.environmentId,
       projectKey: scopedProjectKey(project.environmentId, project.id),
@@ -585,6 +612,7 @@ export function NewTaskFlowProvider(
       selectedProject,
     );
     updateFlow({
+      manualProjectRef: match ? scopeProjectRef(match.environmentId, match.id) : null,
       draftKey: match ? carryDraftContentTo(match) : readFlow().draftKey,
       environmentId,
       projectKey: match ? scopedProjectKey(match.environmentId, match.id) : null,
@@ -598,6 +626,11 @@ export function NewTaskFlowProvider(
   const latestSwitchRef = useRef<object | null>(null);
   const switchEnvironment = async (environmentId: EnvironmentId): Promise<boolean> => {
     if (environmentId === selectedEnvironmentId) {
+      updateFlow({
+        manualProjectRef: selectedProject
+          ? scopeProjectRef(selectedProject.environmentId, selectedProject.id)
+          : null,
+      });
       latestSwitchRef.current = null;
       setSwitchingToEnvironmentId(null);
       return true;
@@ -614,7 +647,7 @@ export function NewTaskFlowProvider(
     latestSwitchRef.current = null;
     setSwitchingToEnvironmentId(null);
     if (result._tag === "Success") {
-      setProject(result.value);
+      setProject(result.value, { environmentSelection: "manual" });
       return true;
     }
     if (!isAtomCommandInterrupted(result)) {
@@ -847,6 +880,7 @@ export function NewTaskFlowProvider(
     projectScopes,
     selectedEnvironmentId,
     selectedProjectKey,
+    manualProjectRef,
     selectedModelKey,
     workspaceMode,
     isGitRepo,

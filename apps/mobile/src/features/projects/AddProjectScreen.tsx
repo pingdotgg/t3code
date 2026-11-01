@@ -694,7 +694,10 @@ function useOpenNewTaskDraft() {
       activeRoute.params !== originRoute.params
     )
       return;
-    selectDetail({ name: "Thread", params: { draft: params } });
+    selectDetail({
+      name: "Thread",
+      params: { draft: { ...params, environmentSelection: "manual" } },
+    });
   };
 }
 

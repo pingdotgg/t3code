@@ -42,6 +42,7 @@ import { environmentServerConfigsAtom } from "../state/server";
 import { resolveThreadRouteTarget } from "../threadRoutes";
 import { legacyProjectCwdPreferenceKey, useUiStateStore } from "../uiStateStore";
 import { getClientSettings } from "./useSettings";
+import { useNewThreadProjectTarget, readNewThreadProjectTarget } from "./useNewThreadProjectTarget";
 import { useThreadRouteTarget } from "./useThreadRouteTarget";
 import { readUnloadedThreadCount } from "../state/olderSettledShelf";
 import { resolveProjectDefaultProviderModelSelection } from "../providerInstances";
@@ -76,20 +77,76 @@ export function createNewThreadHandler(router: AnyRouter) {
   };
 
   return (
-    projectRef: ScopedProjectRef,
+    requestedProjectRef: ScopedProjectRef,
     options?: {
       branch?: string | null;
       worktreePath?: string | null;
       envMode?: DraftThreadEnvMode;
       startFromOrigin?: boolean;
       replace?: boolean;
-      /** Composer text for the draft, set before it shows. A draft with user text keeps it. */
+      environmentSelection?: "manual";
       prompt?: string;
     },
   ): Promise<{ draftId: DraftId; threadId: ThreadId } | null> => {
     const projects = readProjects();
     const projectGroupingSettings = selectProjectGroupingSettings(getClientSettings());
-    // Read at call time; status pushes replace the config map and would recreate every sidebar handler.
+    const connectedEnvironmentIds = appAtomRegistry.get(
+      environmentSummaries.connectedEnvironmentIdsAtom,
+    );
+    const currentRouteTarget = getCurrentRouteTarget();
+    const currentDraft =
+      currentRouteTarget?.kind === "draft"
+        ? useComposerDraftStore.getState().getDraftSession(currentRouteTarget.draftId)
+        : null;
+    const requestedProject = projects.find(
+      (project) =>
+        project.environmentId === requestedProjectRef.environmentId &&
+        project.id === requestedProjectRef.projectId,
+    );
+    const preserveOpenDraft =
+      currentRouteTarget?.kind === "draft" &&
+      currentDraft != null &&
+      (currentDraft.environmentSelection === "manual" ||
+        (connectedEnvironmentIds.includes(currentDraft.environmentId) &&
+          projects.some(
+            (project) =>
+              project.environmentId === currentDraft.environmentId &&
+              project.id === currentDraft.projectId &&
+              deriveLogicalProjectKeyFromSettings(project, projectGroupingSettings) ===
+                currentDraft.logicalProjectKey,
+          ))) &&
+      requestedProject !== undefined &&
+      currentDraft.logicalProjectKey ===
+        deriveLogicalProjectKeyFromSettings(requestedProject, projectGroupingSettings) &&
+      !composerDraftHasUserContent(
+        useComposerDraftStore.getState().getComposerDraft(currentRouteTarget.draftId),
+      ) &&
+      options?.environmentSelection === undefined &&
+      options?.branch === undefined &&
+      options?.worktreePath === undefined;
+    const target = readNewThreadProjectTarget(
+      preserveOpenDraft
+        ? scopeProjectRef(currentDraft.environmentId, currentDraft.projectId)
+        : requestedProjectRef,
+      {
+        manual:
+          preserveOpenDraft ||
+          options?.environmentSelection === "manual" ||
+          options?.branch !== undefined ||
+          options?.worktreePath !== undefined,
+      },
+    );
+    const projectRef = target.projectRef ?? requestedProjectRef;
+    const environmentContext = {
+      environmentSelection: preserveOpenDraft
+        ? (currentDraft.environmentSelection ?? "auto")
+        : target.environmentSelection,
+      loadBalancedEnvironmentId: preserveOpenDraft
+        ? (currentDraft.loadBalancedEnvironmentId ?? null)
+        : null,
+    };
+    // Read at call time: every provider status push replaces the config map, and
+    // subscribing would hand every sidebar row a new handler.
     const environmentServerConfigs = appAtomRegistry.get(environmentServerConfigsAtom);
     const targetServerSettings =
       environmentServerConfigs.get(projectRef.environmentId)?.settings ?? DEFAULT_SERVER_SETTINGS;
@@ -112,7 +169,6 @@ export function createNewThreadHandler(router: AnyRouter) {
     };
     const requestingRouteHref = router.state.location.href;
     const routeChangedSinceRequest = () => router.state.location.href !== requestingRouteHref;
-    const currentRouteTarget = getCurrentRouteTarget();
     const carrySourceShell =
       currentRouteTarget?.kind === "server" ? readThreadShell(currentRouteTarget.threadRef) : null;
     const carrySourceDraft =
@@ -306,6 +362,7 @@ export function createNewThreadHandler(router: AnyRouter) {
           projectRef,
           emptyStoredDraftThread.draftId,
           {
+            ...environmentContext,
             threadId: emptyStoredDraftThread.threadId,
             ...workspaceContext,
             ...(!isDraftAlreadyOpen ? { runtimeMode: defaultRuntimeMode } : {}),
@@ -349,6 +406,7 @@ export function createNewThreadHandler(router: AnyRouter) {
         setDraftThreadContext(currentRouteTarget.draftId, pickExplicitWorkspaceOptions(options));
       }
       setLogicalProjectDraftThreadId(logicalProjectKey, projectRef, currentRouteTarget.draftId, {
+        ...environmentContext,
         threadId: latestActiveDraftThread.threadId,
         createdAt: latestActiveDraftThread.createdAt,
         runtimeMode: latestActiveDraftThread.runtimeMode,
@@ -378,6 +436,7 @@ export function createNewThreadHandler(router: AnyRouter) {
         readThreadShell(scopeThreadRef(racedDraft.environmentId, racedDraft.threadId)) === null
       ) {
         setLogicalProjectDraftThreadId(logicalProjectKey, projectRef, racedDraft.draftId, {
+          ...environmentContext,
           threadId: racedDraft.threadId,
           createdAt: racedDraft.createdAt,
           runtimeMode: racedDraft.runtimeMode,
@@ -393,6 +452,7 @@ export function createNewThreadHandler(router: AnyRouter) {
         return { draftId: racedDraft.draftId, threadId: racedDraft.threadId };
       }
       setLogicalProjectDraftThreadId(logicalProjectKey, projectRef, draftId, {
+        ...environmentContext,
         threadId,
         createdAt,
         branch: options?.branch ?? null,
@@ -455,7 +515,11 @@ export function useHandleNewThread() {
   );
   const projects = useProjects();
   const handleNewThread = useNewThreadHandler();
-  const defaultProjectRef = resolveDefaultProjectRef(projects, projectOrder);
+  const resolveProjectTarget = useNewThreadProjectTarget();
+  const orderedProjectRef = resolveDefaultProjectRef(projects, projectOrder);
+  const defaultProjectRef = orderedProjectRef
+    ? resolveProjectTarget(orderedProjectRef).projectRef
+    : null;
 
   return {
     activeDraftThread,

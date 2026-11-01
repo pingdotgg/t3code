@@ -17,6 +17,7 @@ import { useRef, useState } from "react";
 import { View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
+import { useEnvironments } from "../../state/environments";
 import { RUNTIME_MODE_CHOICES } from "../threads/thread-settings-options";
 import { SettingsScreen } from "./components/SettingsScreen";
 import {
@@ -54,6 +55,7 @@ const PAGE_TITLES: Record<SettingsPage, string> = {
 
 const PAGE_PROJECT_KEYS: Record<SettingsPage, readonly ProjectScopedServerSettingKey[]> = {
   threads: [
+    "defaultEnvironmentId",
     "defaultThreadEnvMode",
     "defaultRuntimeMode",
     "responseStreamingMode",
@@ -176,7 +178,23 @@ function ServerSettingsDetail(props: { readonly page: SettingsPage }) {
   const insets = useSafeAreaInsets();
   const navigation = useNavigation();
   const { selectedTargets, projectGroups, selectedProjectKey } = useSettingsEnvironmentFilter();
+  const { environments } = useEnvironments();
   const selectedProject = projectGroups.find((group) => group.key === selectedProjectKey);
+  const projectEnvironments = selectedProject
+    ? [
+        ...new Map(
+          selectedProject.members.map(({ project }) => [
+            project.environmentId,
+            {
+              environmentId: project.environmentId,
+              label:
+                environments.find((target) => target.environmentId === project.environmentId)
+                  ?.label ?? project.environmentId,
+            },
+          ]),
+        ).values(),
+      ]
+    : [];
   const writableEnvironments = useEnvironmentsWithScope(selectedTargets, AuthSettingsWriteScope);
   const projectSelected = selectedProjectKey !== null;
   const targets = resolveMobileSettingsTargets(
@@ -302,6 +320,42 @@ function ServerSettingsDetail(props: { readonly page: SettingsPage }) {
               ) : null}
               {props.page === "threads" ? (
                 <>
+                  {projectEnvironments.length > 1 ? (
+                    <SettingsSection
+                      title="Default environment"
+                      trailing={
+                        pendingWrites === 0 && isMixed("defaultEnvironmentId") ? (
+                          <MixedValuesLabel projectSelected={projectSelected} />
+                        ) : null
+                      }
+                    >
+                      <SettingsChoiceRow
+                        separated={false}
+                        label="Automatic"
+                        description="Use the current environment or automatic routing."
+                        selected={
+                          !isMixed("defaultEnvironmentId") &&
+                          uniform("defaultEnvironmentId") === null
+                        }
+                        disabled={disabledFor("defaultEnvironmentId")}
+                        onPress={() => write({ defaultEnvironmentId: null })}
+                      />
+                      {projectEnvironments.map((environment) => (
+                        <SettingsChoiceRow
+                          key={environment.environmentId}
+                          label={environment.label}
+                          description="Start new threads here when connected."
+                          selected={
+                            !isMixed("defaultEnvironmentId") &&
+                            uniform("defaultEnvironmentId") === environment.environmentId
+                          }
+                          separated
+                          disabled={disabledFor("defaultEnvironmentId")}
+                          onPress={() => write({ defaultEnvironmentId: environment.environmentId })}
+                        />
+                      ))}
+                    </SettingsSection>
+                  ) : null}
                   <SettingsSection
                     title="Default workspace"
                     trailing={

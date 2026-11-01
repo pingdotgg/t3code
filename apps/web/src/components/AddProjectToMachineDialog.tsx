@@ -171,7 +171,7 @@ function AddProjectToMachineDialog({ request }: { request: AddProjectToMachineRe
       });
       return;
     }
-    void handleNewThread(targetRef);
+    void handleNewThread(targetRef, { environmentSelection: "manual" });
   };
 
   const submit = async () => {

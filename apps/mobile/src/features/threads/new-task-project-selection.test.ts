@@ -8,6 +8,7 @@ import {
   newTaskDestination,
   resolveDraftProjectSelection,
   resolveEnvironmentProjectMatch,
+  resolveNewTaskEnvironmentId,
   resolveNewTaskScratchOption,
 } from "./new-task-project-selection";
 
@@ -56,6 +57,43 @@ function makeScope(projects: ReadonlyArray<EnvironmentProject>): HomeProjectScop
     archived: false,
   };
 }
+
+describe("resolveNewTaskEnvironmentId", () => {
+  const mac = EnvironmentId.make("mac");
+  const server = EnvironmentId.make("server");
+  const projects = [makeProject("mac-project", mac), makeProject("server-project", server)];
+
+  it("defaults to a connected environment that has projects", () => {
+    expect(resolveNewTaskEnvironmentId(projects, null, new Set([server]))).toBe(server);
+    expect(
+      resolveNewTaskEnvironmentId(projects, null, new Set([EnvironmentId.make("empty"), server])),
+    ).toBe(server);
+  });
+
+  it("keeps an explicit offline selection", () => {
+    expect(resolveNewTaskEnvironmentId(projects, mac, new Set([server]))).toBe(mac);
+  });
+
+  it("keeps project order when several or no environments are connected", () => {
+    expect(resolveNewTaskEnvironmentId(projects, null, new Set([server, mac]))).toBe(mac);
+    expect(resolveNewTaskEnvironmentId(projects, null, new Set())).toBe(mac);
+    const third = EnvironmentId.make("third");
+    expect(
+      resolveNewTaskEnvironmentId(
+        [...projects, makeProject("third-project", third)],
+        null,
+        new Set([server, third]),
+      ),
+    ).toBe(mac);
+  });
+
+  it("falls back when the selected environment has no projects", () => {
+    expect(
+      resolveNewTaskEnvironmentId(projects, EnvironmentId.make("missing"), new Set([server])),
+    ).toBe(server);
+    expect(resolveNewTaskEnvironmentId([], null, new Set([server]))).toBeNull();
+  });
+});
 
 describe("getProjectScopeSelectionTarget", () => {
   it("prefers a connected copy of a project that spans environments", () => {

@@ -1238,6 +1238,37 @@ describe("composerDraftStore project draft thread mapping", () => {
     });
   });
 
+  it("does not opt a legacy branch choice into balancing when runtime mode changes", () => {
+    const store = useComposerDraftStore.getState();
+    store.setProjectDraftThreadId(projectRef, draftId, { threadId, branch: "feature/pinned" });
+    store.setDraftThreadContext(draftId, { runtimeMode: "full-access" });
+    expect(store.getDraftThread(draftId)?.environmentSelection).toBeUndefined();
+    expect(store.getDraftThread(draftId)?.branch).toBe("feature/pinned");
+  });
+
+  it("round-trips a persisted project-default environment selection", async () => {
+    vi.useFakeTimers();
+    try {
+      useComposerDraftStore.getState().setProjectDraftThreadId(projectRef, draftId, {
+        threadId,
+        environmentSelection: "project-default",
+      });
+      useComposerDraftStore.getState().setPrompt(draftId, "persist this prompt");
+      await vi.advanceTimersByTimeAsync(300);
+
+      resetComposerDraftStore();
+      await useComposerDraftStore.persist.rehydrate();
+
+      expect(useComposerDraftStore.getState().getDraftThread(draftId)).toMatchObject({
+        environmentId: projectRef.environmentId,
+        projectId: projectRef.projectId,
+        environmentSelection: "project-default",
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("pins manual workspace choices and can return to automatic routing without losing the prompt", () => {
     const store = useComposerDraftStore.getState();
     store.setProjectDraftThreadId(projectRef, draftId, { threadId });

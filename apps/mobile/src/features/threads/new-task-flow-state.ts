@@ -1,6 +1,6 @@
 import type { EnvironmentConnectionPhase } from "@t3tools/client-runtime/connection";
 import type { EnvironmentShellStatus } from "@t3tools/client-runtime/state/shell";
-import type { EnvironmentId, ProjectId } from "@t3tools/contracts";
+import type { EnvironmentId, ProjectId, ScopedProjectRef } from "@t3tools/contracts";
 import { Atom } from "effect/reactivity";
 
 import { scopedProjectKey } from "../../lib/scopedEntities";
@@ -25,6 +25,7 @@ export function newTaskFlowKey(route: {
 }
 
 export interface NewTaskFlowState {
+  readonly manualProjectRef?: ScopedProjectRef | null;
   readonly environmentId: EnvironmentId | null;
   readonly projectKey: string | null;
   readonly draftKey: string | null;
@@ -106,6 +107,7 @@ export function resolveRouteDraft(input: {
     kind: "open",
     flow: {
       ...input.flow,
+      manualProjectRef: { environmentId: stamp.environmentId, projectId: stamp.projectId },
       environmentId: stamp.environmentId,
       projectKey: scopedProjectKey(stamp.environmentId, stamp.projectId),
       draftKey: routeDraftId,

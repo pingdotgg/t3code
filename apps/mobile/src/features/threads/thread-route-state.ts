@@ -1,5 +1,6 @@
 export type NewTaskDraftRouteParams = {
   readonly requestId?: string;
+  readonly environmentSelection?: "manual";
   readonly environmentId?: string | string[];
   readonly projectId?: string | string[];
   readonly branch?: string | null;
@@ -31,6 +32,7 @@ export function draftRouteIdentity(draft: NewTaskDraftRouteParams): string {
   const first = (value: string | string[] | undefined) => (Array.isArray(value) ? value[0] : value);
   return JSON.stringify([
     draft.requestId,
+    draft.environmentSelection,
     first(draft.draftId),
     first(draft.environmentId),
     first(draft.projectId),

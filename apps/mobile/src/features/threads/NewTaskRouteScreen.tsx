@@ -34,6 +34,7 @@ import type { WorkspaceState } from "../../state/workspaceModel";
 import { useWorkspaceState } from "../../state/workspace";
 
 import { useIncomingShare } from "../sharing/IncomingShareProvider";
+import { useNewTaskProjectTarget } from "./use-new-task-project-target";
 import { useNewTaskFlow } from "./new-task-flow-provider";
 import {
   filterProjectScopes,
@@ -154,8 +155,9 @@ function NewTaskHeader(props: {
 
 export function NewTaskRouteScreen({ route }: StaticScreenProps<NewTaskRouteParams | undefined>) {
   const projects = useProjects();
+  const resolveProjectTarget = useNewTaskProjectTarget();
   const [searchText, setSearchText] = useState("");
-  const { projectScopes, selectedEnvironmentId, setProject } = useNewTaskFlow();
+  const { projectScopes, selectedEnvironmentId, manualProjectRef, setProject } = useNewTaskFlow();
   const { state: catalogState } = useWorkspaceState();
   const navigation = useNavigation();
   const selectDetail = useSelectWorkspaceDetail();
@@ -468,10 +470,13 @@ export function NewTaskRouteScreen({ route }: StaticScreenProps<NewTaskRoutePara
             >
               {visibleScopes.map((scope, scopeIndex) => {
                 const hasMultipleProjects = scope.projects.length > 1;
-                const selectionTarget = getProjectScopeSelectionTarget(
-                  scope,
-                  selectedEnvironmentId,
-                  connectedEnvironmentIds,
+                const selectionTarget = resolveProjectTarget(
+                  getProjectScopeSelectionTarget(
+                    scope,
+                    selectedEnvironmentId,
+                    connectedEnvironmentIds,
+                  ),
+                  { manualProjectRef },
                 );
                 if (Platform.OS === "android") {
                   return (

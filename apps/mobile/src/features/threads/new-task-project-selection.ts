@@ -16,6 +16,27 @@ type DraftProjectSelectionResolution =
  * The copy of a project a new thread starts in: the preferred environment's, then the
  * representative. A connected copy wins over a disconnected one.
  */
+export function resolveNewTaskEnvironmentId(
+  projects: ReadonlyArray<Pick<EnvironmentProject, "environmentId">>,
+  selectedEnvironmentId: EnvironmentId | null,
+  connectedEnvironmentIds: ReadonlySet<EnvironmentId>,
+): EnvironmentId | null {
+  if (
+    selectedEnvironmentId !== null &&
+    projects.some((project) => project.environmentId === selectedEnvironmentId)
+  ) {
+    return selectedEnvironmentId;
+  }
+  const connectedProjectEnvironmentIds = new Set(
+    projects
+      .filter((project) => connectedEnvironmentIds.has(project.environmentId))
+      .map((project) => project.environmentId),
+  );
+  return connectedProjectEnvironmentIds.size === 1
+    ? [...connectedProjectEnvironmentIds][0]!
+    : (projects[0]?.environmentId ?? null);
+}
+
 export function getProjectScopeSelectionTarget(
   scope: HomeProjectScope,
   preferredEnvironmentId: EnvironmentId | null,

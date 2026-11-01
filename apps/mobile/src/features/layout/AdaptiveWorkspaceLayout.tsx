@@ -650,6 +650,7 @@ function AdaptiveWorkspaceLayoutContent(
         requestId: uuidv4(),
         environmentId: String(thread.environmentId),
         projectId: String(thread.projectId),
+        environmentSelection: "manual",
         branch: thread.branch,
         worktreePath: thread.worktreePath,
       },

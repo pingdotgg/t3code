@@ -420,6 +420,7 @@ export function CommandPalette(props: {
               requestId: uuidv4(),
               environmentId: project.environmentId,
               projectId: project.id,
+              environmentSelection: "manual",
               title: project.title,
             },
           },

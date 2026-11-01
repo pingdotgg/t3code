@@ -80,6 +80,7 @@ export function ProjectDefaultsSettings({ category }: { category: ProjectSetting
     selection?.model,
   );
   const activeEntry = entries.find((entry) => entry.instanceId === selection?.instanceId);
+  const mixedEnvironment = useScopedSettingsMixed(["defaultEnvironmentId"]);
   const mixedModel = defaultModelSelectionsAreMixed(
     clientSettings,
     targets.map((candidate) => ({
@@ -109,6 +110,9 @@ export function ProjectDefaultsSettings({ category }: { category: ProjectSetting
   const modelSource = useScopedSettingSource(["defaultModelSelection"]);
   const isProjectScope = scope.kind === "project" || scope.kind === "checkout";
   const unavailable = connectedEnvironments.length === 0;
+  const projectEnvironments = isProjectScope
+    ? environments.filter((environment) => scope.environmentIds.includes(environment.environmentId))
+    : [];
   const effective = target
     ? resolveProjectSettings(target.settings, null, null, null).settings
     : null;
@@ -330,6 +334,51 @@ export function ProjectDefaultsSettings({ category }: { category: ProjectSetting
       {category === "project" ? (
         <>
           {modelRow}
+          {projectEnvironments.length > 1 ? (
+            <SettingsRow
+              serverScoped
+              settingKeys={["defaultEnvironmentId"]}
+              mixed={mixedEnvironment}
+              id="default-environment"
+              title="Default environment"
+              description="Start new threads on this environment when it is connected."
+              control={
+                <Select
+                  value={mixedEnvironment ? null : (settings.defaultEnvironmentId ?? "automatic")}
+                  onValueChange={(value) => {
+                    if (value === "automatic") updateSettings({ defaultEnvironmentId: null });
+                    else {
+                      const environment = projectEnvironments.find(
+                        (entry) => entry.environmentId === value,
+                      );
+                      if (environment)
+                        updateSettings({ defaultEnvironmentId: environment.environmentId });
+                    }
+                  }}
+                >
+                  <SelectTrigger size="sm" aria-label="Default environment">
+                    <SelectValue>
+                      {mixedEnvironment
+                        ? "Mixed"
+                        : settings.defaultEnvironmentId === null
+                          ? "Automatic"
+                          : (projectEnvironments.find(
+                              (entry) => entry.environmentId === settings.defaultEnvironmentId,
+                            )?.label ?? "Unavailable")}
+                    </SelectValue>
+                  </SelectTrigger>
+                  <SelectPopup align="end" alignItemWithTrigger={false}>
+                    <SelectItem value="automatic">Automatic</SelectItem>
+                    {projectEnvironments.map((environment) => (
+                      <SelectItem key={environment.environmentId} value={environment.environmentId}>
+                        {environment.label}
+                      </SelectItem>
+                    ))}
+                  </SelectPopup>
+                </Select>
+              }
+            />
+          ) : null}
           {fallbackRow}
           {workspaceRow}
         </>

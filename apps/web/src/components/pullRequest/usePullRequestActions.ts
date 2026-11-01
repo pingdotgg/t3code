@@ -330,7 +330,7 @@ export function usePullRequestHandoffs({
     });
     const projectRef = scopeProjectRef(environmentId, detail.projectId);
     // Checkout setup requires the thread to exist first.
-    const opened = await newThread(projectRef).then(
+    const opened = await newThread(projectRef, { environmentSelection: "manual" }).then(
       (session) => session,
       () => null,
     );
