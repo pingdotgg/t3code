@@ -52,7 +52,13 @@ import type {
   ScheduledTaskId,
   TurnItemId,
 } from "@t3tools/contracts";
-import { idleCompactionOf, isCompactionCommandMessage, RunId, ThreadId } from "@t3tools/contracts";
+import {
+  CLAUDE_STOP_HOOK_CONTINUATION_SUMMARY,
+  idleCompactionOf,
+  isCompactionCommandMessage,
+  RunId,
+  ThreadId,
+} from "@t3tools/contracts";
 import {
   classifyToolActivity,
   collectToolFilePaths,
@@ -1067,6 +1073,7 @@ function deriveThreadFeedRunFolds(
   feedFailedRunIds: ReadonlySet<RunId>,
 ): ReadonlyMap<string, ThreadFeedRunFold> {
   const terminalAssistantMessageIdByRun = new Map<RunId, string>();
+  const stopHookAssistantMessageIds = new Set<string>();
   const interruptedRunIds = new Set<RunId>();
   const failedRunIds = new Set(feedFailedRunIds);
   const promptIndexByRunId = new Map<RunId, number>();
@@ -1123,6 +1130,15 @@ function deriveThreadFeedRunFolds(
     if (entry.type !== "activity-group") continue;
     for (const activity of entry.activities) {
       const item = activity.projectedItem.item;
+      if (
+        item.type === "notification" &&
+        item.source.kind === "system" &&
+        item.summary === CLAUDE_STOP_HOOK_CONTINUATION_SUMMARY &&
+        item.runId === runId
+      ) {
+        const answerId = terminalAssistantMessageIdByRun.get(runId);
+        if (answerId !== undefined) stopHookAssistantMessageIds.add(answerId);
+      }
       if (item.type === "run_interrupt_result") interruptedRunIds.add(runId);
       if (
         runId === runlessKey &&
@@ -1153,6 +1169,7 @@ function deriveThreadFeedRunFolds(
         .filter(
           (entry) =>
             entry.id !== terminalAssistantId &&
+            !stopHookAssistantMessageIds.has(entry.id) &&
             entry.type !== "html-render" &&
             entry.type !== "mcp-app" &&
             !(entry.type === "activity-group" && isContextCompactionActivityGroup(entry)) &&

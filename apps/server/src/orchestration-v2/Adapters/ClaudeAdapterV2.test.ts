@@ -16122,7 +16122,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         uuid,
         session_id: WAKE_NATIVE_SESSION,
       });
-    const stopHookFeedback = (uuid: string, condition: string, reason: string) =>
+    const stopHookFeedback = (uuid: string | undefined, condition: string, reason: string) =>
       claudeSdkFrame({
         type: "user",
         message: {
@@ -16140,6 +16140,61 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           ? [event.providerThread.goal]
           : [],
       );
+
+    it.effect.each([
+      { activeGoal: false, uuid: "stop-hook" },
+      { activeGoal: true, uuid: "stop-hook" },
+      { activeGoal: false, uuid: undefined },
+    ])(
+      "shows non-goal Stop hook feedback in the current run, active goal=$activeGoal, uuid=$uuid",
+      ({ activeGoal, uuid }) =>
+        Effect.gen(function* () {
+          const harness = yield* makeWakeHarness;
+          const input = makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make("stop-hook-attempt"),
+            text: "Check the changes.",
+            attachments: [],
+          });
+          yield* harness.runtime.startTurn(input);
+          if (activeGoal) {
+            yield* Queue.offer(
+              harness.sdkMessages,
+              syntheticFrame("goal-set", "Goal set: all tests pass"),
+            );
+          }
+          for (const frame of [
+            makeAssistantTextFrame({ uuid: "answer", text: "Here is the answer." }),
+            stopHookFeedback(uuid, "./check.sh", "Run the formatter before finishing."),
+            makeAssistantTextFrame({ uuid: "reply", text: "The formatter has run." }),
+            makeResultFrame({ uuid: "result", result: "The formatter has run." }),
+          ]) {
+            yield* Queue.offer(harness.sdkMessages, frame);
+          }
+          assert.equal((yield* Queue.take(harness.terminalReceipts)).status, "completed");
+          const notices = harness.events.flatMap((event) =>
+            event.type === "turn_item.updated" && event.turnItem.type === "notification"
+              ? [event.turnItem]
+              : [],
+          );
+          assert.lengthOf(notices, 1);
+          assert.deepInclude(notices[0], {
+            type: "notification",
+            runId: input.runId,
+            status: "completed",
+            source: { kind: "system" },
+            summary: "Stop hook asked Claude to continue",
+            detail: "[./check.sh]: Run the formatter before finishing.",
+          });
+        }).pipe(
+          Effect.scoped,
+          Effect.provide(
+            Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+          ),
+        ),
+    );
 
     it.effect("tracks a /goal through unmet checks until Claude stops on its own", () =>
       Effect.gen(function* () {
@@ -16166,6 +16221,11 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         }
         const terminal = yield* Queue.take(harness.terminalReceipts);
         assert.equal(terminal.status, "completed");
+        assert.isFalse(
+          harness.events.some(
+            (event) => event.type === "turn_item.updated" && event.turnItem.type === "notification",
+          ),
+        );
         assert.deepEqual(goalStatuses(harness.events), [
           { objective: condition, status: "active", checks: 0 },
           {

@@ -69,6 +69,7 @@ import {
   formatClaudeResumeCompactionQuestion,
 } from "@t3tools/shared/claudeCompaction";
 import {
+  CLAUDE_STOP_HOOK_CONTINUATION_SUMMARY,
   type ChatAttachment,
   PROVIDER_SEND_TURN_MAX_FILE_BYTES,
   ClaudeSettings,
@@ -8348,6 +8349,62 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             // without answering it. Not interrupt: the held CLI may never ack it.
             yield* liveQuery.query.close.pipe(Effect.ignore);
             return;
+          }
+          if (
+            message.type === "user" &&
+            message.parent_tool_use_id === null &&
+            message.isSynthetic === true &&
+            nextClaudeGoal(goalsByNativeThread.get(liveQuery.nativeThreadId) ?? null, message) ===
+              undefined
+          ) {
+            const content = message.message.content;
+            const text =
+              typeof content === "string"
+                ? content
+                : content.flatMap((part) => (part.type === "text" ? [part.text] : [])).join("");
+            const prefix = "Stop hook feedback:\n";
+            if (text.startsWith(prefix)) {
+              const now = yield* DateTime.now;
+              const nativeItemId =
+                message.uuid ??
+                (yield* crypto
+                  .randomUUIDv4()
+                  .pipe(
+                    Effect.mapError((cause) => queryRunnerError(cause, "allocateStopHookItemId")),
+                  ));
+              yield* emitProviderEvent({
+                type: "turn_item.updated",
+                driver: CLAUDE_PROVIDER,
+                turnItem: {
+                  id: idAllocator.derive.turnItemFromProviderItem({
+                    driver: CLAUDE_PROVIDER,
+                    nativeItemId,
+                  }),
+                  threadId: context.input.threadId,
+                  runId: context.input.runId,
+                  nodeId: context.input.rootNodeId,
+                  providerThreadId: context.input.providerThread.id,
+                  providerTurnId: context.providerTurnId,
+                  nativeItemRef: {
+                    driver: CLAUDE_PROVIDER,
+                    nativeId: nativeItemId,
+                    strength: message.uuid === undefined ? "weak" : "strong",
+                  },
+                  parentItemId: null,
+                  ordinal: yield* resolveItemOrdinal(context, nativeItemId),
+                  type: "notification",
+                  status: "completed",
+                  title: CLAUDE_STOP_HOOK_CONTINUATION_SUMMARY,
+                  source: { kind: "system" },
+                  outcome: "updated",
+                  summary: CLAUDE_STOP_HOOK_CONTINUATION_SUMMARY,
+                  detail: text.slice(prefix.length).trim(),
+                  startedAt: now,
+                  completedAt: now,
+                  updatedAt: now,
+                },
+              });
+            }
           }
           yield* trackClaudeGoal({ nativeThreadId: liveQuery.nativeThreadId, context, message });
 
