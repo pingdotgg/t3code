@@ -137,6 +137,7 @@ const makeHarness = Effect.fn("TestRemoteAuthorization.makeHarness")(function* (
   readonly bootstrap?: RelayEnvironmentConnectResponse;
   readonly beforeBootstrap?: Effect.Effect<void, ManagedRelay.ManagedRelayClientError>;
   readonly beforePut?: Effect.Effect<void>;
+  readonly beforeCredentialPut?: Effect.Effect<void>;
   readonly clerkToken?: ClientCapabilities.CloudSession["Service"]["clerkToken"];
   readonly credentials?: ReadonlyArray<readonly [string, ConnectionCredential]>;
   readonly surface?: "desktop" | "mobile";
@@ -244,7 +245,13 @@ const makeHarness = Effect.fn("TestRemoteAuthorization.makeHarness")(function* (
               Effect.map((current) => Option.fromUndefinedOr(current.get(connectionId))),
             ),
           put: (connectionId, credential) =>
-            Ref.update(credentials, (current) => new Map(current).set(connectionId, credential)),
+            (input.beforeCredentialPut ?? Effect.void).pipe(
+              Effect.andThen(
+                Ref.update(credentials, (current) =>
+                  new Map(current).set(connectionId, credential),
+                ),
+              ),
+            ),
           remove: (connectionId) =>
             Ref.update(credentials, (current) => {
               const next = new Map(current);
@@ -1193,6 +1200,43 @@ describe("RemoteEnvironmentAuthorization", () => {
       });
       expect(yield* Ref.get(harness.bootstrapCalls)).toBe(0);
     }),
+  );
+
+  it.effect(
+    "renews a live Tailscale socket by signing in again before expiry, not via T3 Connect",
+    () =>
+      Effect.gen(function* () {
+        const puts = yield* Queue.unbounded<void>();
+        const harness = yield* makeHarness({
+          credentials: [["pinned", tailnetSession("current-token", 3_600_000)]],
+          responses: [tailnetGrant(), accessToken("renewed-token")],
+          beforeCredentialPut: Queue.offer(puts, undefined).pipe(Effect.asVoid),
+        });
+
+        yield* Effect.gen(function* () {
+          const remote = yield* RemoteEnvironmentAuthorization.RemoteEnvironmentAuthorization;
+          yield* remote
+            .renewDpopBeforeExpiry({
+              expectedEnvironmentId: ENVIRONMENT_ID,
+              expiresAtEpochMs: 3_600_000,
+              tailnetCredentialId: "pinned",
+            })
+            .pipe(Effect.forkScoped);
+          yield* TestClock.adjust(3_540_000 - 1);
+          expect(harness.fetch.calls).toHaveLength(0);
+          yield* TestClock.adjust(1);
+          yield* Queue.take(puts);
+        }).pipe(Effect.scoped, Effect.provide(Layer.merge(harness.layer, TestClock.layer())));
+
+        expect(requestedUrls(harness.fetch.calls)).toEqual([
+          "http://100.88.1.2:3773/api/auth/tailnet",
+          "http://100.88.1.2:3773/oauth/token",
+        ]);
+        expect((yield* Ref.get(harness.credentials)).get("pinned")).toMatchObject({
+          accessToken: "renewed-token",
+        });
+        expect(yield* Ref.get(harness.bootstrapCalls)).toBe(0);
+      }),
   );
 
   it.effect("signs in again for HTTP only after the host rejects the Tailscale session", () =>

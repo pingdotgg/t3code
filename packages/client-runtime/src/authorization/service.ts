@@ -93,6 +93,8 @@ export class RemoteEnvironmentAuthorization extends Context.Service<
     readonly renewDpopBeforeExpiry: (input: {
       readonly expectedEnvironmentId: EnvironmentId;
       readonly expiresAtEpochMs: number;
+      /** A Tailscale session renews by signing in again at its pinned address, not via T3 Connect. */
+      readonly tailnetCredentialId?: string;
     }) => Effect.Effect<void, ConnectionBlockedError>;
     /** Signs in through Tailscale at a direct tailnet address. */
     readonly signInTailnet: (input: {
@@ -637,13 +639,18 @@ export const make = Effect.gen(function* () {
         yield* Effect.sleep(
           Math.max(5_000, expiresAtEpochMs - DPOP_ACCESS_TOKEN_REFRESH_SKEW_MS - now),
         );
-        const renewed = yield* getDpopToken({
-          expectedEnvironmentId: input.expectedEnvironmentId,
-        }).pipe(
-          Effect.map(({ token }) => token.expiresAtEpochMs),
+        const renewed = yield* (
+          input.tailnetCredentialId === undefined
+            ? getDpopToken({ expectedEnvironmentId: input.expectedEnvironmentId }).pipe(
+                Effect.map(({ token }) => token.expiresAtEpochMs),
+                withRelayClientTracing,
+              )
+            : tailnet
+                .session(input.tailnetCredentialId)
+                .pipe(Effect.map((session) => session.expiresAtEpochMs))
+        ).pipe(
           Effect.withSpan("environment.authorization.renewSocket"),
-          withRelayClientTracing,
-          // A relay blip retries until expiry; a blocked credential ends the loop.
+          // A network blip retries until expiry; a blocked credential ends the loop.
           Effect.catchTags({ ConnectionTransientError: () => Effect.succeed(expiresAtEpochMs) }),
         );
         expiresAtEpochMs = Math.max(expiresAtEpochMs, renewed);

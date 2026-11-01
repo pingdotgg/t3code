@@ -232,6 +232,9 @@ export const make = Effect.gen(function* () {
             .renewDpopBeforeExpiry({
               expectedEnvironmentId: prepared.environmentId,
               expiresAtEpochMs: prepared.httpAuthorization.expiresAtEpochMs,
+              ...(prepared.httpAuthorization.tailnetCredentialId === undefined
+                ? {}
+                : { tailnetCredentialId: prepared.httpAuthorization.tailnetCredentialId }),
             })
             .pipe(
               Effect.catch((error) =>
