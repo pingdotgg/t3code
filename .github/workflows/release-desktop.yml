@@ -64,6 +64,19 @@ on:
         required: false
         default: false
         type: boolean
+      # Whether the job opens the packaged app against a seeded database and
+      # opens a thread before uploading it. Linux AppImage or macOS DMG.
+      launch_check:
+        required: false
+        default: false
+        type: boolean
+      # A runner of the target's own platform and architecture, for a `runner`
+      # that cannot execute the target. The build job skips everything that
+      # runs the packaged binaries, and a second job runs it there.
+      verify_runner:
+        required: false
+        default: ""
+        type: string
       version:
         required: true
         type: string
@@ -91,6 +104,11 @@ on:
       relay_url:
         required: true
         type: string
+
+# electron-builder leaves the default arch (x64) out of the unpacked app's
+# directory name.
+env:
+  UNPACKED_DIR: ${{ inputs.platform }}-${{ inputs.arch != 'x64' && format('{0}-', inputs.arch) || '' }}unpacked
 
 permissions:
   # Windows builds read this run's artifact list to wait for the Linux CLI archive.
@@ -129,52 +147,6 @@ jobs:
           git sparse-checkout set --no-cone '/*' '!/.repos/'
           git -c checkout.workers=0 checkout --detach FETCH_HEAD
 
-      # The runner's PowerShell 7.6/.NET 10 intermittently crashes during signing:
-      # https://github.com/dotnet/runtime/issues/131636
-      # Put the .NET 8 release first for both workflow shells and electron-builder.
-      - name: Use PowerShell 7.4 for Windows ARM builds
-        if: inputs.platform == 'win' && inputs.arch == 'arm64'
-        shell: powershell
-        run: |
-          $ErrorActionPreference = "Stop"
-          $ProgressPreference = "SilentlyContinue"
-          $version = "7.4.20"
-          $archive = Join-Path $env:RUNNER_TEMP "PowerShell-$version-win-arm64.zip"
-          $installDir = Join-Path $env:RUNNER_TEMP "powershell-$version-arm64"
-          Invoke-WebRequest -UseBasicParsing `
-            -Uri "https://github.com/PowerShell/PowerShell/releases/download/v$version/PowerShell-$version-win-arm64.zip" `
-            -OutFile $archive
-          $expectedHash = "67eff749d5dae357501c95a3eec1dcd93f669824e3ca2b1d2adcdecdebf04f35"
-          if ((Get-FileHash $archive -Algorithm SHA256).Hash -ne $expectedHash) {
-            throw "PowerShell archive checksum mismatch"
-          }
-          Expand-Archive -Path $archive -DestinationPath $installDir
-          $installDir | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
-          & "$installDir\pwsh.exe" -NoProfile -NonInteractive -Command '$PSVersionTable; [System.Runtime.InteropServices.RuntimeInformation]::ProcessArchitecture'
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-
-      - name: Verify Windows ARM PowerShell selection
-        if: inputs.platform == 'win' && inputs.arch == 'arm64'
-        shell: pwsh
-        run: |
-          $expectedPath = Join-Path $env:RUNNER_TEMP "powershell-7.4.20-arm64\pwsh.exe"
-          if ((Get-Command pwsh.exe).Source -ne $expectedPath -or $PSVersionTable.PSVersion -ne [version]"7.4.20") {
-            throw "Windows ARM builds must use the pinned PowerShell runtime"
-          }
-
-      # Windows installs straight from the registry. There, linking the packages
-      # takes the time, not downloading them, so a ~700 MB package cache did not
-      # pay for its own restore. Across recent nightlies, restore plus install
-      # took 183-233s on arm64 and 116-172s on x64, while a plain install took
-      # 142-210s and 84-160s. The arm64 entries also filled 4 GB of the
-      # repository's 10 GB Actions cache.
-      - name: Setup Vite+
-        uses: voidzero-dev/setup-vp@250f29ce396baf5e8f24498e17c0dfdebabc26eb # v1
-        with:
-          node-version-file: package.json
-          cache: ${{ inputs.platform != 'win' }}
-          run-install: false
-
       # pnpm checks the lockfile and policy before reusing this result. A missing
       # artifact leaves the cache empty, so installation runs the checks again.
       - name: Download dependency verification
@@ -184,10 +156,35 @@ jobs:
           name: release-dependency-verification
           path: ${{ runner.temp }}/pnpm-metadata
 
-      - name: Install desktop dependencies
+      - name: Setup dependencies
+        uses: ./.github/actions/setup-ci-deps
+        with:
+          install-args: --filter=@t3tools/desktop... --filter=t3... --filter=@t3tools/scripts...
         env:
           pnpm_config_cache_dir: ${{ runner.temp }}/pnpm-metadata
-        run: vp install --filter=@t3tools/desktop... --filter=t3... --filter=@t3tools/scripts...
+
+      # The CLI archive and the staged app install without a lockfile, so they
+      # ask the registry about every package and fetch platform packages the
+      # workspace store lacks. They share this registry metadata and store. A
+      # new week starts cold, which bounds how stale cached ranges can get.
+      - name: Resolve staged install cache
+        id: stage_pnpm
+        shell: bash
+        run: |
+          echo "dir=$RUNNER_TEMP/desktop-stage-pnpm" >> "$GITHUB_OUTPUT"
+          echo "prefix=desktop-stage-pnpm-v2-${{ inputs.platform }}-${{ inputs.arch }}-$(date -u +%G-%V)-" >> "$GITHUB_OUTPUT"
+
+      - name: Restore staged install cache
+        id: stage_pnpm_cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        with:
+          path: ${{ steps.stage_pnpm.outputs.dir }}
+          key: ${{ steps.stage_pnpm.outputs.prefix }}${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: ${{ steps.stage_pnpm.outputs.prefix }}
+
+      - name: Mark staged install cache
+        shell: bash
+        run: mkdir -p "${{ steps.stage_pnpm.outputs.dir }}" && touch "$RUNNER_TEMP/desktop-stage-pnpm.marker"
 
       - name: Cache resource monitor
         id: resource_monitor_cache
@@ -241,28 +238,209 @@ jobs:
           name: js-bundle
           path: apps
 
-      # Only the resource monitor build needs these libraries. With a cached
-      # monitor, the desktop build's preflight skips its MSVC check, and node-pty
-      # ships prebuilt Windows binaries, so the 30-60s install is skipped too.
-      - name: Install Spectre-mitigated MSVC libs
+      - name: Install cargo-xwin
         if: inputs.platform == 'win' && steps.resource_monitor_cache.outputs.cache-hit != 'true'
-        shell: pwsh
+        uses: taiki-e/install-action@8cca0918f8471c33515202b73f56ab27f2bed283 # v2
+        with:
+          tool: cargo-xwin@0.23.1
+
+      # Built here rather than inside the desktop build so the CLI archive,
+      # which bundles the same binary, can be built and uploaded first.
+      - name: Build resource monitor
+        if: steps.resource_monitor_cache.outputs.cache-hit != 'true'
+        shell: bash
+        run: cargo ${{ inputs.platform == 'win' && 'xwin build' || 'build' }} --locked --release --manifest-path native/resource-monitor/Cargo.toml --target "${{ inputs.rust_target }}"
+
+      # Off Windows, scripts/lib/windows-jsign.ts signs through jsign instead of
+      # the TrustedSigning PowerShell module.
+      - name: Install jsign
+        if: inputs.platform == 'win'
+        shell: bash
         run: |
-          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
-          $installPath = & $vswhere -products * -latest -property installationPath
-          $setupExe = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\setup.exe"
-          $proc = Start-Process -FilePath $setupExe `
-            -ArgumentList "modify", "--installPath", "`"$installPath`"", "--add", `
-            "Microsoft.VisualStudio.Component.VC.Runtimes.${{ inputs.arch == 'arm64' && 'ARM64' || 'x86.x64' }}.Spectre", "--quiet", "--norestart" `
-            -Wait -PassThru -NoNewWindow
-          if ($null -eq $proc -or $proc.ExitCode -ne 0) {
-            $code = if ($null -ne $proc) { $proc.ExitCode } else { 1 }
-            Write-Error "Visual Studio Installer failed with exit code $code"
-            exit $code
-          }
+          set -euo pipefail
+          dir="$RUNNER_TEMP/jsign"
+          mkdir -p "$dir"
+          curl -fsSL --retry 3 -o "$dir/jsign.jar" https://github.com/ebourg/jsign/releases/download/7.6/jsign-7.6.jar
+          echo "6cf58aa080e7ff82656f320cff8d4a3bff30408df8766806dcba3740dd839fa5  $dir/jsign.jar" | sha256sum -c -
+          printf '#!/bin/sh\nexec java -jar "%s" "$@"\n' "$dir/jsign.jar" > "$dir/jsign"
+          chmod +x "$dir/jsign"
+          echo "T3CODE_JSIGN=$dir/jsign" >> "$GITHUB_ENV"
+
+      # The desktop build applies the same branding to apps/server/dist/client
+      # (resolveDesktopWebAssetBrand in scripts/build-desktop-artifact.ts); the
+      # CLI archive below ships that client and is now built first.
+      - name: Apply web client branding
+        if: inputs.cli_archive
+        shell: bash
+        run: |
+          brand=production
+          if [[ "${{ inputs.version }}" =~ -nightly\.[0-9]{8}\.[0-9]+$ ]]; then brand=nightly; fi
+          node scripts/apply-web-brand-assets.ts "$brand" apps/server/dist/client
+
+      - name: Resolve target Node.js for the CLI executable
+        id: target_node
+        if: inputs.cli_archive && inputs.platform == 'win'
+        shell: bash
+        run: echo "version=$(node -p 'require("./package.json").engines.node')" >> "$GITHUB_OUTPUT"
+
+      # The download only changes with engines.node, so a cached copy keeps
+      # releases off nodejs.org, which stalls on the runners some days.
+      - name: Restore target Node.js for the CLI executable
+        id: target_node_cache
+        if: inputs.cli_archive && inputs.platform == 'win'
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        with:
+          path: ${{ runner.temp }}/node-download
+          key: node-download-v${{ steps.target_node.outputs.version }}-win-${{ inputs.arch }}
+
+      # tsdown downloads the target Node with one fetch and no retry, and
+      # nodejs.org drops that download often enough to fail releases. Seed
+      # tsdown's cache with a retried, checksum-verified copy instead. A transfer
+      # under 100 KB/s for 30s counts as failed, so a stall retries.
+      - name: Download target Node.js for the CLI executable
+        if: inputs.cli_archive && inputs.platform == 'win' && steps.target_node_cache.outputs.cache-hit != 'true'
+        shell: bash
+        env:
+          VERSION: ${{ steps.target_node.outputs.version }}
+        run: |
+          set -euo pipefail
+          name="node-v$VERSION-win-${{ inputs.arch }}"
+          dir="$RUNNER_TEMP/node-download"
+          mkdir -p "$dir"
+          fetch=(curl -fsSL --retry 5 --retry-all-errors --connect-timeout 10 --speed-limit 102400 --speed-time 30)
+          "${fetch[@]}" -o "$dir/$name.zip" "https://nodejs.org/dist/v$VERSION/$name.zip"
+          "${fetch[@]}" -o "$dir/SHASUMS256.txt" "https://nodejs.org/dist/v$VERSION/SHASUMS256.txt"
+          (cd "$dir" && grep " $name.zip\$" SHASUMS256.txt | sha256sum -c -)
+
+      # Saved right away so a later failure in this job still keeps the download.
+      - name: Save target Node.js for the CLI executable
+        if: inputs.cli_archive && inputs.platform == 'win' && steps.target_node_cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        with:
+          path: ${{ runner.temp }}/node-download
+          key: ${{ steps.target_node_cache.outputs.cache-primary-key }}
+
+      - name: Install target Node.js for the CLI executable
+        if: inputs.cli_archive && inputs.platform == 'win'
+        shell: bash
+        env:
+          VERSION: ${{ steps.target_node.outputs.version }}
+        run: |
+          set -euo pipefail
+          name="node-v$VERSION-win-${{ inputs.arch }}"
+          dir="$RUNNER_TEMP/node-download"
+          dest="${XDG_CACHE_HOME:-$HOME/.cache}/tsdown/node/v$VERSION/win-${{ inputs.arch }}"
+          mkdir -p "$dest"
+          (cd "$dir" && grep " $name.zip\$" SHASUMS256.txt | sha256sum -c -)
+          unzip -p "$dir/$name.zip" "$name/node.exe" > "$dest/node.exe"
+
+      # Setup Vite+ selects the exact engines.node version from package.json.
+      # Native builds embed that executable; cross-target builds download the
+      # same version for their target.
+      - name: Build CLI single-executable
+        if: inputs.cli_archive
+        shell: bash
+        env:
+          # The executable bundles the server again, so it needs the same stamp
+          # as release.yml's JS bundle.
+          T3CODE_TELEMETRY_CHANNEL: ${{ github.repository == 'pingdotgg/t3code' && inputs.release_channel || 'dev' }}
+        run: node apps/server/scripts/cli.ts build-exe --verbose ${{ inputs.platform == 'win' && format('--target win-{0}', inputs.arch) || '' }}
+
+      - name: Import macOS signing certificate for the CLI archive
+        if: inputs.cli_archive && inputs.platform == 'mac'
+        shell: bash
+        env:
+          CSC_LINK: ${{ secrets.CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          if [[ -z "$CSC_LINK" || -z "$CSC_KEY_PASSWORD" ]]; then
+            echo "macOS CLI signing disabled (missing CSC_LINK); the archive is signed ad hoc."
+            exit 0
+          fi
+          keychain="$RUNNER_TEMP/t3-cli-signing.keychain-db"
+          keychain_password="$(openssl rand -hex 16)"
+          cert_path="$RUNNER_TEMP/t3-cli-signing.p12"
+          printf '%s' "$CSC_LINK" | base64 --decode > "$cert_path"
+          security create-keychain -p "$keychain_password" "$keychain"
+          security set-keychain-settings -lut 21600 "$keychain"
+          security unlock-keychain -p "$keychain_password" "$keychain"
+          security import "$cert_path" -k "$keychain" -P "$CSC_KEY_PASSWORD" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple: -s -k "$keychain_password" "$keychain" >/dev/null
+          security list-keychains -d user -s "$keychain" $(security list-keychains -d user | tr -d '"')
+          identity="$(security find-identity -v -p codesigning "$keychain" | sed -n 's/.*"\(Developer ID Application: [^"]*\)".*/\1/p' | head -n 1)"
+          if [[ -z "$identity" ]]; then
+            echo "No Developer ID Application identity found in CSC_LINK." >&2
+            exit 1
+          fi
+          echo "::add-mask::$keychain_password"
+          echo "T3CODE_CLI_MAC_SIGN_IDENTITY=$identity" >> "$GITHUB_ENV"
+          echo "macOS CLI signing enabled."
+
+      - name: Stage resource monitor for the CLI archive
+        if: inputs.cli_archive
+        shell: bash
+        run: |
+          set -euo pipefail
+          binary_name="t3-resource-monitor"
+          if [[ "${{ inputs.platform }}" == "win" ]]; then
+            binary_name="${binary_name}.exe"
+          fi
+          target_dir="$RUNNER_TEMP/cli-resource-monitor/${{ inputs.resource_key }}"
+          mkdir -p "$target_dir"
+          cp "native/resource-monitor/target/${{ inputs.rust_target }}/release/${binary_name}" "$target_dir/$binary_name"
 
       - uses: ./.github/actions/setup-apt-mirrors
         if: inputs.platform == 'linux'
+
+      # The Linux archive ships libatomic.so.1 and points t3's RUNPATH at it.
+      - name: Install patchelf
+        if: inputs.cli_archive && inputs.platform == 'linux'
+        shell: bash
+        run: command -v patchelf || { sudo apt-get update && sudo apt-get install -y patchelf; }
+
+      - name: Build CLI archive
+        if: inputs.cli_archive
+        shell: bash
+        env:
+          pnpm_config_cache_dir: ${{ steps.stage_pnpm.outputs.dir }}/cache
+          pnpm_config_store_dir: ${{ steps.stage_pnpm.outputs.dir }}/store
+          pnpm_config_prefer_offline: "true"
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+          APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
+          AZURE_TRUSTED_SIGNING_ENDPOINT: ${{ secrets.AZURE_TRUSTED_SIGNING_ENDPOINT }}
+          AZURE_TRUSTED_SIGNING_ACCOUNT_NAME: ${{ secrets.AZURE_TRUSTED_SIGNING_ACCOUNT_NAME }}
+          AZURE_TRUSTED_SIGNING_CERTIFICATE_PROFILE_NAME: ${{ secrets.AZURE_TRUSTED_SIGNING_CERTIFICATE_PROFILE_NAME }}
+        run: |
+          set -euo pipefail
+          if [[ "${{ inputs.platform }}" == "mac" && -n "${APPLE_API_KEY:-}" ]]; then
+            key_path="$RUNNER_TEMP/AuthKey_cli_${APPLE_API_KEY_ID}.p8"
+            printf '%s' "$APPLE_API_KEY" > "$key_path"
+            export APPLE_API_KEY="$key_path"
+          fi
+          node scripts/build-cli-archive.ts \
+            --platform "${{ inputs.platform }}" \
+            --arch "${{ inputs.arch }}" \
+            --version "${{ inputs.version }}" \
+            --resource-monitor-dir "$RUNNER_TEMP/cli-resource-monitor" \
+            --output-dir release-cli
+
+      - name: Smoke-test CLI archive
+        if: inputs.cli_archive && inputs.verify_runner == ''
+        shell: bash
+        run: node scripts/smoke-cli-archive.ts --archive release-cli/* --expect-version "${{ inputs.version }}"
+
+      - name: Upload CLI archive
+        if: inputs.cli_archive
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: cli-${{ inputs.platform }}-${{ inputs.arch }}
+          path: release-cli/*
+          if-no-files-found: error
 
       - name: Install Linux desktop build libraries
         if: inputs.platform == 'linux'
@@ -279,68 +457,6 @@ jobs:
           else
               convert -version
           fi
-
-      - name: Prepare Azure Trusted Signing
-        if: inputs.platform == 'win'
-        shell: pwsh
-        env:
-          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
-          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
-          AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
-          AZURE_TRUSTED_SIGNING_ENDPOINT: ${{ secrets.AZURE_TRUSTED_SIGNING_ENDPOINT }}
-          AZURE_TRUSTED_SIGNING_ACCOUNT_NAME: ${{ secrets.AZURE_TRUSTED_SIGNING_ACCOUNT_NAME }}
-          AZURE_TRUSTED_SIGNING_CERTIFICATE_PROFILE_NAME: ${{ secrets.AZURE_TRUSTED_SIGNING_CERTIFICATE_PROFILE_NAME }}
-          AZURE_TRUSTED_SIGNING_PUBLISHER_NAME: ${{ secrets.AZURE_TRUSTED_SIGNING_PUBLISHER_NAME }}
-        run: |
-          $ErrorActionPreference = "Stop"
-
-          $requiredSecrets = @(
-            $env:AZURE_TENANT_ID,
-            $env:AZURE_CLIENT_ID,
-            $env:AZURE_CLIENT_SECRET,
-            $env:AZURE_TRUSTED_SIGNING_ENDPOINT,
-            $env:AZURE_TRUSTED_SIGNING_ACCOUNT_NAME,
-            $env:AZURE_TRUSTED_SIGNING_CERTIFICATE_PROFILE_NAME,
-            $env:AZURE_TRUSTED_SIGNING_PUBLISHER_NAME
-          )
-          if ($requiredSecrets | Where-Object { [string]::IsNullOrWhiteSpace($_) }) {
-            Write-Host "Azure Trusted Signing disabled; skipping TrustedSigning module preparation."
-            exit 0
-          }
-
-          try {
-            Install-PackageProvider `
-              -Name NuGet `
-              -MinimumVersion 2.8.5.201 `
-              -Force `
-              -Scope CurrentUser `
-              -ErrorAction Stop
-          } catch {
-            Write-Warning "Could not bootstrap NuGet package provider. Continuing because the runner may already have a usable provider. $($_.Exception.Message)"
-          }
-
-          Install-Module `
-            -Name TrustedSigning `
-            -MinimumVersion 0.5.0 `
-            -Force `
-            -AllowClobber `
-            -Repository PSGallery `
-            -Scope CurrentUser `
-            -ErrorAction Stop
-
-          Import-Module TrustedSigning -MinimumVersion 0.5.0 -Force
-          Get-Command Invoke-TrustedSigning -ErrorAction Stop
-
-          $moduleRoots = @(
-            [System.IO.Path]::Combine([Environment]::GetFolderPath("MyDocuments"), "PowerShell", "Modules"),
-            [System.IO.Path]::Combine([Environment]::GetFolderPath("MyDocuments"), "WindowsPowerShell", "Modules"),
-            [System.IO.Path]::Combine($env:ProgramFiles, "PowerShell", "Modules"),
-            [System.IO.Path]::Combine($env:ProgramFiles, "WindowsPowerShell", "Modules")
-          )
-          $modulePathEntries = @($moduleRoots + ($env:PSModulePath -split ";")) |
-            Where-Object { $_ -and (Test-Path $_) } |
-            Select-Object -Unique
-          "PSModulePath=$($modulePathEntries -join ';')" >> $env:GITHUB_ENV
 
       # The WSL backend runs the Linux CLI archive inside the distro, so the
       # Windows desktop embeds the same-arch archive the release attaches.
@@ -406,8 +522,11 @@ jobs:
       - name: Build desktop artifact
         shell: bash
         env:
-          pnpm_config_cache_dir: ${{ runner.temp }}/pnpm-metadata
-          T3CODE_DESKTOP_REUSE_RESOURCE_MONITOR: ${{ steps.resource_monitor_cache.outputs.cache-hit == 'true' }}
+          # pnpm only goes to the registry for packages or versions the cache lacks.
+          pnpm_config_cache_dir: ${{ steps.stage_pnpm.outputs.dir }}/cache
+          pnpm_config_store_dir: ${{ steps.stage_pnpm.outputs.dir }}/store
+          pnpm_config_prefer_offline: "true"
+          T3CODE_DESKTOP_REUSE_RESOURCE_MONITOR: true
           T3CODE_DESKTOP_REUSE_LINUX_CAPTURE_HELPERS: ${{ steps.capture_helper_cache.outputs.cache-hit == 'true' }}
           CSC_LINK: ${{ secrets.CSC_LINK }}
           CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
@@ -433,6 +552,9 @@ jobs:
             --skip-build
             --verbose
           )
+          if [[ -n "${{ inputs.verify_runner }}" ]]; then
+            args+=(--keep-stage)
+          fi
 
           has_all() {
             for value in "$@"; do
@@ -488,104 +610,84 @@ jobs:
 
           vp run dist:desktop:artifact "${args[@]}"
 
-      # The single-executable is built with a Node that supports --build-sea
-      # (25.7+); the repo itself stays on the engines.node version. It always
-      # injects into the runner's own Node: tsdown's cross-target download path
-      # runs `tar` on a drive-letter path on Windows, which GNU tar reads as a
-      # remote host, and a cross-built macOS binary cannot be smoke-tested.
-      - name: Build CLI single-executable
-        if: inputs.cli_archive
+      # Warm installs only touch the store index, so new content means a fetch.
+      - name: Check staged install cache for new content
+        id: stage_pnpm_changed
         shell: bash
-        env:
-          # The exact version, not a major: vp downloads it from nodejs.org/dist on
-          # the runner, and only exact versions have a dist directory. Keep in
-          # step with SEA_NODE_VERSION in apps/server/vite.config.ts.
-          VP_NODE_VERSION: "26.8.2"
-        run: node apps/server/scripts/cli.ts build-exe --verbose
-
-      - name: Import macOS signing certificate for the CLI archive
-        if: inputs.cli_archive && inputs.platform == 'mac'
-        shell: bash
-        env:
-          CSC_LINK: ${{ secrets.CSC_LINK }}
-          CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
         run: |
-          set -euo pipefail
-          if [[ -z "$CSC_LINK" || -z "$CSC_KEY_PASSWORD" ]]; then
-            echo "macOS CLI signing disabled (missing CSC_LINK); the archive is signed ad hoc."
-            exit 0
-          fi
-          keychain="$RUNNER_TEMP/t3-cli-signing.keychain-db"
-          keychain_password="$(openssl rand -hex 16)"
-          cert_path="$RUNNER_TEMP/t3-cli-signing.p12"
-          printf '%s' "$CSC_LINK" | base64 --decode > "$cert_path"
-          security create-keychain -p "$keychain_password" "$keychain"
-          security set-keychain-settings -lut 21600 "$keychain"
-          security unlock-keychain -p "$keychain_password" "$keychain"
-          security import "$cert_path" -k "$keychain" -P "$CSC_KEY_PASSWORD" -T /usr/bin/codesign
-          security set-key-partition-list -S apple-tool:,apple: -s -k "$keychain_password" "$keychain" >/dev/null
-          security list-keychains -d user -s "$keychain" $(security list-keychains -d user | tr -d '"')
-          identity="$(security find-identity -v -p codesigning "$keychain" | sed -n 's/.*"\(Developer ID Application: [^"]*\)".*/\1/p' | head -n 1)"
-          if [[ -z "$identity" ]]; then
-            echo "No Developer ID Application identity found in CSC_LINK." >&2
-            exit 1
-          fi
-          echo "::add-mask::$keychain_password"
-          echo "T3CODE_CLI_MAC_SIGN_IDENTITY=$identity" >> "$GITHUB_ENV"
-          echo "macOS CLI signing enabled."
+          dir="${{ steps.stage_pnpm.outputs.dir }}"
+          new=$(find "$dir/cache/v12" "$dir/store/v11/files" -type f -newer "$RUNNER_TEMP/desktop-stage-pnpm.marker" 2>/dev/null | wc -l | tr -d ' ')
+          echo "Staged installs added $new cached files."
+          echo "changed=$([[ "$new" -gt 0 ]] && echo true || echo false)" >> "$GITHUB_OUTPUT"
 
-      - name: Stage resource monitor for the CLI archive
-        if: inputs.cli_archive
+      - name: Save staged install cache
+        if: steps.stage_pnpm_changed.outputs.changed == 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        with:
+          path: ${{ steps.stage_pnpm.outputs.dir }}
+          key: ${{ steps.stage_pnpm_cache.outputs.cache-primary-key }}
+
+      # A build can package fine and still not open (a missing module in the
+      # backend or the bundle). This launches the app from the shipped
+      # AppImage or DMG.
+      - name: Launch check
+        if: inputs.launch_check
         shell: bash
         run: |
           set -euo pipefail
-          binary_name="t3-resource-monitor"
-          if [[ "${{ inputs.platform }}" == "win" ]]; then
-            binary_name="${binary_name}.exe"
+          check=(node scripts/smoke-desktop-app.ts --artifacts-dir "$RUNNER_TEMP/desktop-launch-check")
+          if [[ "${{ inputs.platform }}" == "mac" ]]; then
+            mount="$RUNNER_TEMP/desktop-launch-dmg"
+            hdiutil attach -nobrowse -readonly -mountpoint "$mount" "$(ls "$GITHUB_WORKSPACE"/release/*.dmg)"
+            trap 'hdiutil detach "$mount" -force >/dev/null || true' EXIT
+            app=$(ls -d "$mount"/*.app)
+            executable=$(/usr/libexec/PlistBuddy -c "Print :CFBundleExecutable" "$app/Contents/Info.plist")
+            "${check[@]}" --executable "$app/Contents/MacOS/$executable"
+          else
+            sudo apt-get install -y xvfb
+            appimage=$(ls "$GITHUB_WORKSPACE"/release/*.AppImage)
+            chmod +x "$appimage"
+            (cd "$RUNNER_TEMP" && "$appimage" --appimage-extract >/dev/null)
+            xvfb-run -a "${check[@]}" --executable "$RUNNER_TEMP/squashfs-root/t3code"
           fi
-          target_dir="$RUNNER_TEMP/cli-resource-monitor/${{ inputs.resource_key }}"
-          mkdir -p "$target_dir"
-          cp "native/resource-monitor/target/${{ inputs.rust_target }}/release/${binary_name}" "$target_dir/$binary_name"
 
-      - name: Build CLI archive
-        if: inputs.cli_archive
-        shell: bash
-        env:
-          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
-          APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
-          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
-          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
-          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
-          AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
-          AZURE_TRUSTED_SIGNING_ENDPOINT: ${{ secrets.AZURE_TRUSTED_SIGNING_ENDPOINT }}
-          AZURE_TRUSTED_SIGNING_ACCOUNT_NAME: ${{ secrets.AZURE_TRUSTED_SIGNING_ACCOUNT_NAME }}
-          AZURE_TRUSTED_SIGNING_CERTIFICATE_PROFILE_NAME: ${{ secrets.AZURE_TRUSTED_SIGNING_CERTIFICATE_PROFILE_NAME }}
-        run: |
-          set -euo pipefail
-          if [[ "${{ inputs.platform }}" == "mac" && -n "${APPLE_API_KEY:-}" ]]; then
-            key_path="$RUNNER_TEMP/AuthKey_cli_${APPLE_API_KEY_ID}.p8"
-            printf '%s' "$APPLE_API_KEY" > "$key_path"
-            export APPLE_API_KEY="$key_path"
-          fi
-          node scripts/build-cli-archive.ts \
-            --platform "${{ inputs.platform }}" \
-            --arch "${{ inputs.arch }}" \
-            --version "${{ inputs.version }}" \
-            --resource-monitor-dir "$RUNNER_TEMP/cli-resource-monitor" \
-            --output-dir release-cli
-
-      - name: Smoke-test CLI archive
-        if: inputs.cli_archive
-        shell: bash
-        run: node scripts/smoke-cli-archive.ts --archive release-cli/* --expect-version "${{ inputs.version }}"
-
-      - name: Upload CLI archive
-        if: inputs.cli_archive
+      - name: Upload launch check output
+        if: failure() && inputs.launch_check
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
-          name: cli-${{ inputs.platform }}-${{ inputs.arch }}
-          path: release-cli/*
+          name: desktop-launch-check-${{ inputs.platform }}-${{ inputs.arch }}
+          path: ${{ runner.temp }}/desktop-launch-check
+          if-no-files-found: ignore
+
+      # The verify job runs what this host could not: the packaged natives and
+      # the CLI. Its scripts are bundled so that job needs no install.
+      - name: Stage verification inputs
+        if: inputs.verify_runner != ''
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p verify
+          unpacked=$(ls -d "${TMPDIR:-/tmp}"/t3code-desktop-${{ inputs.platform }}-stage-*/app/dist/"$UNPACKED_DIR")
+          tar -C "$(dirname "$unpacked")" -cf verify/unpacked.tar "$(basename "$unpacked")"
+          esbuild=scripts/node_modules/.bin/esbuild
+          banner="import{createRequire as __cr}from'node:module';const require=__cr(import.meta.url);"
+          # build-desktop-artifact.ts's own import.meta.main guard must not run
+          # its CLI inside the verify bundle.
+          "$esbuild" scripts/verify-windows-desktop-artifact.ts --bundle --platform=node --format=esm \
+            --target=node24 --define:import.meta.main=false --banner:js="$banner" \
+            --outfile=verify/verify-windows-desktop-artifact.mjs
+          "$esbuild" scripts/smoke-cli-archive.ts --bundle --platform=node --format=esm \
+            --target=node24 --banner:js="$banner" --outfile=verify/smoke-cli-archive.mjs
+
+      - name: Upload verification inputs
+        if: inputs.verify_runner != ''
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: verify-${{ inputs.platform }}-${{ inputs.arch }}
+          path: verify/*
           if-no-files-found: error
+          retention-days: 1
+          compression-level: 1
 
       - name: Collect release assets
         shell: bash
@@ -658,3 +760,81 @@ jobs:
           name: resource-monitor-${{ inputs.resource_key }}
           path: resource-monitor-publish/${{ inputs.resource_key }}/*
           if-no-files-found: error
+
+  verify:
+    name: Verify
+    needs: [build]
+    if: inputs.verify_runner != ''
+    runs-on: ${{ inputs.verify_runner }}
+    timeout-minutes: 15
+    steps:
+      - name: Download verification inputs
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: verify-${{ inputs.platform }}-${{ inputs.arch }}
+          path: verify
+
+      - name: Download CLI archive
+        if: inputs.cli_archive
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: cli-${{ inputs.platform }}-${{ inputs.arch }}
+          path: release-cli
+
+      - name: Verify packaged natives
+        shell: bash
+        run: |
+          set -euo pipefail
+          tar -C verify -xf verify/unpacked.tar
+          node verify/verify-windows-desktop-artifact.mjs \
+            --app-dir "$(cygpath -w "$PWD/verify/$UNPACKED_DIR")" \
+            --arch "${{ inputs.arch }}" --build-version "${{ inputs.version }}" --verbose
+
+      - name: Smoke-test CLI archive
+        if: inputs.cli_archive
+        shell: bash
+        run: node verify/smoke-cli-archive.mjs --archive release-cli/* --expect-version "${{ inputs.version }}"
+
+      # cargo-xwin links this binary on Linux, and nothing else runs it before users do.
+      # Node rather than pwsh: PowerShell on Windows ARM crashes intermittently
+      # (https://github.com/dotnet/runtime/issues/131636), which is why this
+      # target stopped building on Windows.
+      - name: Smoke-test resource monitor
+        shell: bash
+        env:
+          MONITOR: verify/${{ env.UNPACKED_DIR }}/resources/resource-monitor/t3-resource-monitor.exe
+          EXPECTED_ARCH: ${{ inputs.arch == 'arm64' && 'aarch64' || 'x86_64' }}
+        run: |
+          node --input-type=module <<'EOF'
+          import { spawn } from "node:child_process";
+          const monitor = spawn(process.env.MONITOR, { stdio: ["pipe", "pipe", "inherit"] });
+          monitor.stdout.setEncoding("utf8");
+          let output = "";
+          const exited = new Promise((resolve) => monitor.on("close", resolve));
+          const hello = await new Promise((resolve, reject) => {
+            monitor.on("error", reject);
+            monitor.on("close", () => reject(new Error(`Resource monitor exited before hello: ${output}`)));
+            monitor.stdout.on("data", (chunk) => {
+              output += chunk;
+              const end = output.indexOf("\n");
+              if (end !== -1) resolve(JSON.parse(output.slice(0, end)));
+            });
+          });
+          if (hello.type !== "hello" || hello.arch !== process.env.EXPECTED_ARCH) {
+            throw new Error(`Unexpected hello: ${JSON.stringify(hello)}`);
+          }
+          const send = (message) => monitor.stdin.write(`${JSON.stringify({ version: hello.version, ...message })}\n`);
+          send({ type: "configure", rootPid: process.pid, sampleIntervalMs: 1000 });
+          send({ type: "sampleNow", requestId: "verify" });
+          monitor.stdin.end();
+          const exitCode = await exited;
+          const sample = output
+            .split("\n")
+            .filter((line) => line.trim())
+            .map((line) => JSON.parse(line))
+            .find((message) => message.requestId === "verify");
+          if (exitCode !== 0 || sample?.type !== "snapshot" || !sample.processes.some((p) => p.pid === process.pid)) {
+            throw new Error(`Resource monitor exited ${exitCode} with: ${output}`);
+          }
+          console.log(`Resource monitor sampled ${sample.scannedProcessCount} processes.`);
+          EOF

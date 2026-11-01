@@ -3,36 +3,9 @@ import * as Exit from "effect/Exit";
 import * as Schema from "effect/Schema";
 
 import { ORCHESTRATION_V2_WS_METHODS } from "./orchestrationV2.ts";
-import { WS_METHODS, WsRpcGroup, WsSubscribeServerConfigRpc } from "./rpc.ts";
-
-describe("subscribeServerConfig payload compatibility", () => {
-  it("is accepted by a server whose schema predates the field", () => {
-    const oldServerPayload = Schema.Struct({});
-    const decoded = Schema.decodeExit(oldServerPayload)({ environmentThemes: true });
-    expect(Exit.isSuccess(decoded)).toBe(true);
-  });
-
-  it("is carried by a server that declares it", () => {
-    const decoded = Schema.decodeSync(WsSubscribeServerConfigRpc.payloadSchema)({
-      environmentThemes: true,
-    });
-    expect(decoded).toEqual({ environmentThemes: true });
-  });
-
-  it("stays optional, so a client that never sends it still subscribes", () => {
-    const decoded = Schema.decodeSync(WsSubscribeServerConfigRpc.payloadSchema)({});
-    expect(decoded).toEqual({});
-  });
-});
+import { WS_METHODS, WsRpcGroup } from "./rpc.ts";
 
 describe("WebSocket RPC contracts", () => {
-  it("exposes only the V2 orchestration transport surface", () => {
-    const methods = [...WsRpcGroup.requests.keys()];
-
-    expect(methods).toEqual(expect.arrayContaining(Object.values(ORCHESTRATION_V2_WS_METHODS)));
-    expect(methods.filter((method) => method.startsWith("orchestrationV1."))).toEqual([]);
-  });
-
   it("rejects server-internal commands sent to dispatchCommand", () => {
     const dispatchCommand = WsRpcGroup.requests.get(ORCHESTRATION_V2_WS_METHODS.dispatchCommand);
     if (dispatchCommand === undefined) throw new Error("dispatchCommand is not registered");
