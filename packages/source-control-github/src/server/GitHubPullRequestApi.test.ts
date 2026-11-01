@@ -21,7 +21,7 @@ import * as SourceControlRateLimit from "@t3tools/source-control-core/server/Sou
 import * as TestSourceControlHost from "@t3tools/source-control-testing/TestSourceControlHost";
 import * as GitHubPullRequestApi from "./GitHubPullRequestApi.ts";
 import * as GitHubPullRequestProvider from "./GitHubPullRequestProvider.ts";
-import { KnownWorkflowRuns } from "./gitHubConditionalChecks.ts";
+import { KnownWorkflowRuns, makeChecksRevalidator } from "./gitHubConditionalChecks.ts";
 import * as GitHubAppAccess from "./GitHubAppAccess.ts";
 import * as GitHubAppSignIn from "./GitHubAppSignIn.ts";
 
@@ -2416,13 +2416,19 @@ layer("GitHubPullRequestApi.layer", (it) => {
   );
 
   it.effect.each([
-    { label: "empty", pullRequests: [] },
-    { label: "missing", pullRequests: undefined },
-  ])("refuses approval when workflow PR association is $label", ({ pullRequests }) =>
+    { label: "empty fork", pullRequests: [], isCrossRepository: true },
+    { label: "empty same repository", pullRequests: [], isCrossRepository: false },
+    { label: "missing fork", pullRequests: undefined, isCrossRepository: true },
+    { label: "missing same repository", pullRequests: undefined, isCrossRepository: false },
+  ])("handles $label workflow PR associations", ({ pullRequests, isCrossRepository }) =>
     Effect.gen(function* () {
-      workflowApprovalRoutes(() => workflowApprovalDetail(), heads([7]), {
-        workflow_runs: [{ ...workflowRuns([10]).workflow_runs[0], pull_requests: pullRequests }],
-      });
+      workflowApprovalRoutes(
+        () => workflowApprovalDetail("abc123", isCrossRepository),
+        heads([7], isCrossRepository),
+        {
+          workflow_runs: [{ ...workflowRuns([10]).workflow_runs[0], pull_requests: pullRequests }],
+        },
+      );
       const cli = yield* GitHubPullRequestApi.GitHubPullRequestApi;
       const result = yield* Effect.result(
         cli.runPullRequestAction({
@@ -2433,8 +2439,10 @@ layer("GitHubPullRequestApi.layer", (it) => {
           action: "approve-workflows",
         }),
       );
-      expect(result._tag).toBe("Failure");
-      expect(restCallsTo("/approve")).toEqual([]);
+      expect(result._tag).toBe(isCrossRepository ? "Success" : "Failure");
+      expect(restCallsTo("/approve").map((call) => call.path)).toEqual(
+        isCrossRepository ? ["repos/acme/web/actions/runs/10/approve"] : [],
+      );
     }),
   );
 
@@ -2468,6 +2476,52 @@ layer("GitHubPullRequestApi.layer", (it) => {
       expect(runReads).toBe(2);
       expect(restCallsTo("/approve")).toEqual([]);
     }),
+  );
+
+  it.effect("revalidates same-repository workflow changes without a new head", () =>
+    Effect.gen(function* () {
+      const sha = "a".repeat(40);
+      let runsChanged = false;
+      let reads = 0;
+      mockedExecute.mockImplementation((call) => {
+        if (call.kind !== "rest") return Effect.die("Expected REST");
+        const isRuns = call.path.includes("actions/runs?");
+        const changed = isRuns && runsChanged;
+        if (call.ifNoneMatch && !changed) return Effect.succeed(output("", false, false, {}, 304));
+        const body = call.path.endsWith("/pulls/7")
+          ? { head: { sha, repo: { id: 1 } }, base: { repo: { id: 1 } } }
+          : isRuns
+            ? { workflow_runs: changed ? workflowRuns([10]).workflow_runs : [] }
+            : {};
+        return Effect.succeed(
+          output(encodeJson(body), false, false, { etag: changed ? "new" : "old" }),
+        );
+      });
+      const revalidate = yield* makeChecksRevalidator;
+      const read = Effect.gen(function* () {
+        reads++;
+        const known = yield* KnownWorkflowRuns;
+        expect(known?.runs.length ?? 0).toBe(runsChanged ? 1 : 0);
+        return {
+          state: "open" as const,
+          checks: [],
+          headSha: sha,
+          workflowApprovalsRequired: known?.runs.length ?? 0,
+        };
+      });
+      yield* revalidate(pullRequestInput, read);
+      yield* revalidate(pullRequestInput, read);
+      expect(reads).toBe(1);
+      runsChanged = true;
+      yield* revalidate(pullRequestInput, read);
+      expect(reads).toBe(2);
+    }).pipe(
+      Effect.provideService(GitHubRequestPolicy.PinnedGitHubCredential, {
+        host: "github.com",
+        token: Redacted.make("token"),
+        credentialFingerprint: "same-repository-cache",
+      }),
+    ),
   );
 
   it.effect("counts revalidated runs that wait on a maintainer as GitHub reports them", () =>

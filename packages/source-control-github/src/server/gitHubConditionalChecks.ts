@@ -142,14 +142,11 @@ export const makeChecksRevalidator = Effect.gen(function* () {
           if ((yield* get(`${root}/pulls/${input.number}`, true)) === null) return yield* read;
           const head = entry.head;
           if (head === null) return yield* fail(200);
-          const runsEndpoint =
-            head.head.repo?.id !== head.base.repo.id
-              ? `${root}/actions/runs?head_sha=${head.head.sha}&event=pull_request`
-              : null;
+          const runsEndpoint = `${root}/actions/runs?head_sha=${head.head.sha}&event=pull_request`;
           const endpoints = [
             `${root}/commits/${head.head.sha}/check-runs?filter=all`,
             `${root}/commits/${head.head.sha}/status`,
-            ...(runsEndpoint === null ? [] : [runsEndpoint]),
+            runsEndpoint,
           ];
           const runPages: Array<string> = [];
           // Each endpoint has its own cursor; only pages within one endpoint depend on each other.
@@ -177,15 +174,14 @@ export const makeChecksRevalidator = Effect.gen(function* () {
           const pages = runPages.map((endpoint) =>
             decodeWorkflowRuns(entry.validators.get(endpoint)?.body ?? ""),
           );
-          const known =
-            runsEndpoint !== null && pages.every(Option.isSome)
-              ? {
-                  headSha: head.head.sha,
-                  runs: pages.flatMap((page) =>
-                    Option.isSome(page) ? page.value.workflow_runs : [],
-                  ),
-                }
-              : null;
+          const known = pages.every(Option.isSome)
+            ? {
+                headSha: head.head.sha,
+                runs: pages.flatMap((page) =>
+                  Option.isSome(page) ? page.value.workflow_runs : [],
+                ),
+              }
+            : null;
           const fresh = yield* read.pipe(Effect.provideService(KnownWorkflowRuns, known));
           const value = {
             state: fresh.state,

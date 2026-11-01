@@ -1611,14 +1611,20 @@ export const make = Effect.gen(function* () {
         { concurrency: 2 },
       ).pipe(
         Effect.flatMap(([, runs]) =>
-          runs.some((run) => run.pullRequestNumbers.length === 0)
+          !input.isCrossRepository && runs.some((run) => run.pullRequestNumbers.length === 0)
             ? Effect.fail(
                 workflowApprovalReadError(
                   input.cwd,
                   new Error("GitHub omitted workflow run pull-request associations."),
                 ),
               )
-            : Effect.succeed(runs.filter((run) => run.pullRequestNumbers.includes(input.number))),
+            : Effect.succeed(
+                runs.filter((run) =>
+                  run.pullRequestNumbers.length === 0
+                    ? input.isCrossRepository
+                    : run.pullRequestNumbers.includes(input.number),
+                ),
+              ),
         ),
       );
 
