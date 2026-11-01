@@ -144,6 +144,27 @@ export function HistorySwipeNavigation() {
             : { kind: "pending", path: event.composedPath(), y: event.clientY, sumX: 0, sumY: 0 };
       }
       if (gesture.kind === "ignored") return;
+      if (gesture.kind === "tracking") {
+        const delta = gesture.direction === "back" ? -event.deltaX : event.deltaX;
+        if (event.deltaX === 0 && event.deltaY === 0) return release();
+        const { direction, distance, y } = gesture;
+        // Past its start the swipe picks a direction again: a stale trailing wheel may
+        // have opened it, and the next swipe's begin can arrive after its first wheels.
+        if (distance + delta < 0 && canNavigateHistory(direction === "back" ? "forward" : "back")) {
+          gesture = {
+            kind: "pending",
+            path: [],
+            y,
+            sumX: direction === "back" ? -distance : distance,
+            sumY: 0,
+          };
+          hideIndicator();
+        } else {
+          gesture.deltas = [...gesture.deltas.slice(1 - MOMENTUM_SAMPLE_SIZE), delta];
+          if (isMomentumTail(gesture.deltas)) return release();
+          gesture.distance = Math.max(0, distance + delta);
+        }
+      }
       if (gesture.kind === "pending") {
         if (event.deltaX === 0 && event.deltaY === 0) return;
         const path = event.composedPath();
@@ -158,12 +179,6 @@ export function HistorySwipeNavigation() {
         if (Math.abs(gesture.sumX) + Math.abs(gesture.sumY) < SWIPE_AXIS_LOCK_DISTANCE) return;
         gesture = lockSwipeAxis({ ...gesture, path: [...gesture.path, ...path] });
         if (gesture.kind === "ignored") return;
-      } else {
-        const delta = gesture.direction === "back" ? -event.deltaX : event.deltaX;
-        if (event.deltaX === 0 && event.deltaY === 0) return release();
-        gesture.deltas = [...gesture.deltas.slice(1 - MOMENTUM_SAMPLE_SIZE), delta];
-        if (isMomentumTail(gesture.deltas)) return release();
-        gesture.distance = Math.max(0, gesture.distance + delta);
       }
       setSwipe({
         direction: gesture.direction,

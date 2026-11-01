@@ -35,7 +35,7 @@ function mountPanel(container: HTMLElement, scroller: Scroller, scrollLeft: numb
 }
 
 describe("HistorySwipeNavigation", () => {
-  it.each<[string, Scroller, number, readonly Step[], "back" | "forward" | null]>([
+  it.each<[string, Scroller, number, readonly Step[], "back" | "forward" | "both" | null]>([
     ["scrolling left inside a shadow-root scroller", "shadow", 400, [[-130]], null],
     ["scrolling right inside a shadow-root scroller", "shadow", 400, [[130]], null],
     ["swiping left at a shadow-root scroller's left edge", "shadow", 0, [[-130]], null],
@@ -119,6 +119,38 @@ describe("HistorySwipeNavigation", () => {
       400,
       [["begin"], [130], ["end"], [1, "remove"], ["begin"], [130]],
       null,
+    ],
+    [
+      "a reversed next swipe whose first wheel beats its begin, after a trailing wheel",
+      "none",
+      0,
+      [
+        ["begin"],
+        [-130],
+        ["end"],
+        [-23.5560302734375],
+        [23.84126091003418],
+        ["begin"],
+        [130],
+        ["end"],
+      ],
+      "both",
+    ],
+    [
+      "a reversed next swipe whose begin beats its first wheel, after a trailing wheel",
+      "none",
+      0,
+      [
+        ["begin"],
+        [130],
+        ["end"],
+        [23.5560302734375],
+        ["begin"],
+        [-23.84126091003418],
+        [-130],
+        ["end"],
+      ],
+      "both",
     ],
     [
       "a history gesture after zero-delta contact on a scroller",
@@ -214,7 +246,7 @@ describe("HistorySwipeNavigation", () => {
       }
     }
 
-    expect(back).toHaveBeenCalledTimes(navigates === "back" ? 1 : 0);
-    expect(forward).toHaveBeenCalledTimes(navigates === "forward" ? 1 : 0);
+    expect(back).toHaveBeenCalledTimes(navigates === "back" || navigates === "both" ? 1 : 0);
+    expect(forward).toHaveBeenCalledTimes(navigates === "forward" || navigates === "both" ? 1 : 0);
   });
 });
