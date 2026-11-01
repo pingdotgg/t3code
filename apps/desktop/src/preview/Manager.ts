@@ -45,6 +45,7 @@ import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
+import * as Predicate from "effect/Predicate";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
@@ -1995,6 +1996,13 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     }
     yield* attemptPromise({ operation: "navigate.loadURL", tabId, webContentsId: wc.id }, () =>
       wc.loadURL(url),
+    ).pipe(
+      // Electron rejects with ERR_ABORTED when the page starts another navigation, such as a
+      // script redirect, before this load finishes; did-fail-load ignores that code too.
+      Effect.catchIf(
+        (error) => Predicate.hasProperty(error.cause, "errno") && error.cause.errno === -3,
+        () => Effect.void,
+      ),
     );
   });
 
