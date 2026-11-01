@@ -99,6 +99,23 @@ const oversizedScreenshotItem = {
   },
 };
 
+const htmlItem = {
+  ...screenshotItem,
+  id: TurnItemId.make("tool-html"),
+  toolName: "mcp__t3-code__html_preview",
+  input: {
+    html:
+      '<!doctype html><script src="https://cdn.example/chart.js"></script><main>' +
+      "x".repeat(300_000) +
+      "Complete document</main>",
+  },
+};
+const otherHtmlItem = {
+  ...htmlItem,
+  id: TurnItemId.make("other-html"),
+  toolName: "other.html_preview",
+};
+
 const layerTest = Layer.mergeAll(
   NodeHttpPlatform.layer,
   Layer.mock(Orchestrator.OrchestratorV2)({
@@ -106,9 +123,13 @@ const layerTest = Layer.mergeAll(
       Effect.succeed(
         itemId === screenshotItem.id
           ? screenshotItem
-          : itemId === oversizedScreenshotItem.id
-            ? oversizedScreenshotItem
-            : null,
+          : itemId === htmlItem.id
+            ? htmlItem
+            : itemId === otherHtmlItem.id
+              ? otherHtmlItem
+              : itemId === oversizedScreenshotItem.id
+                ? oversizedScreenshotItem
+                : null,
       ),
   }),
   layerConfig,
@@ -122,6 +143,67 @@ const layerTest = Layer.mergeAll(
 ).pipe(Layer.provideMerge(NodeServices.layer));
 
 describe("AssetAccess", () => {
+  it.effect("inlines local images in tool HTML with the existing page preparation", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const directory = yield* fs.makeTempDirectoryScoped({ prefix: "t3-tool-html-" });
+      const image = path.join(directory, "shot.png");
+      yield* fs.writeFile(image, screenshotPng);
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      yield* Effect.gen(function* () {
+        const resource = {
+          _tag: "tool-input-html" as const,
+          threadId: htmlItem.threadId,
+          itemId: htmlItem.id,
+          revision: "local-image",
+        };
+        const result = yield* issueAssetUrl({ resource });
+        const suffix = result.relativeUrl.slice(`${ASSET_ROUTE_PREFIX}/`.length);
+        const separator = suffix.indexOf("/");
+        const asset = yield* resolveAsset(suffix.slice(0, separator), suffix.slice(separator + 1));
+        expect(asset?.kind).toBe("bytes");
+        if (asset?.kind !== "bytes") return;
+        expect(new TextDecoder().decode(asset.bytes)).toContain(
+          `<img src="data:image/png;base64,${Buffer.from(screenshotPng).toString("base64")}">`,
+        );
+      }).pipe(
+        Effect.provideService(Orchestrator.OrchestratorV2, {
+          ...orchestrator,
+          getTurnItem: () =>
+            Effect.succeed({ ...htmlItem, input: { html: `<img src="${image}">` } }),
+        }),
+      );
+    }).pipe(Effect.provide(layerTest)),
+  );
+
+  it.effect("serves the complete HTML tool input through a signed document URL", () =>
+    Effect.gen(function* () {
+      const resource = {
+        _tag: "tool-input-html" as const,
+        threadId: htmlItem.threadId,
+        itemId: htmlItem.id,
+        revision: "first",
+      };
+      const result = yield* issueAssetUrl({ resource });
+      const suffix = result.relativeUrl.slice(`${ASSET_ROUTE_PREFIX}/`.length);
+      const separator = suffix.indexOf("/");
+      const asset = yield* resolveAsset(suffix.slice(0, separator), suffix.slice(separator + 1));
+      expect(asset?.kind).toBe("bytes");
+      if (asset?.kind !== "bytes") return;
+      expect(asset.mimeType).toBe("text/html");
+      const html = new TextDecoder().decode(asset.bytes);
+      expect(html).toContain('<script src="https://cdn.example/chart.js"></script>');
+      expect(html).toContain("Complete document</main>");
+      expect(html).toContain("t3-theme");
+      const revised = yield* issueAssetUrl({ resource: { ...resource, revision: "second" } });
+      expect(revised.relativeUrl).not.toBe(result.relativeUrl);
+      for (const itemId of [screenshotItem.id, otherHtmlItem.id, TurnItemId.make("missing")]) {
+        const error = yield* issueAssetUrl({ resource: { ...resource, itemId } }).pipe(Effect.flip);
+        expect(error._tag).toBe("AssetWorkspaceAssetNotFoundError");
+      }
+    }).pipe(Effect.provide(layerTest)),
+  );
   describe("readMcpAppHtml", () => {
     it.effect("accepts snapshots at the stored HTML byte limit", () =>
       Effect.gen(function* () {

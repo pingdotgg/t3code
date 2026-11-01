@@ -178,6 +178,7 @@ export function HtmlRenderDocument(props: {
   readonly className?: string;
   readonly threadRef?: ScopedThreadRef | undefined;
   readonly onContentHeight?: (height: number) => void;
+  readonly onImageExpand?: ((preview: ExpandedImagePreview) => void) | undefined;
   /** Reports fullscreen changes so virtualized rows can stay mounted. */
   readonly onFullscreenChange?: ((fullscreen: boolean) => void) | undefined;
 }) {
@@ -298,7 +299,9 @@ export function HtmlRenderDocument(props: {
     }
     const imageRequest = readHtmlRenderImageRequest(event.data);
     if (imageRequest !== undefined) {
-      setExpandedImage({ images: [{ src: imageRequest.src, name: imageRequest.name }], index: 0 });
+      const preview = { images: [{ src: imageRequest.src, name: imageRequest.name }], index: 0 };
+      if (props.onImageExpand) props.onImageExpand(preview);
+      else setExpandedImage(preview);
     }
   });
   // Attach at commit because a fast page may post its initial height before passive effects run.

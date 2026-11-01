@@ -1,5 +1,10 @@
 import type { AssetResource, OrchestrationV2TurnItem } from "@t3tools/contracts";
-import { toolOutputImageBlocks, toolOutputImages } from "@t3tools/shared/toolOutput";
+import {
+  compactDynamicToolOutput,
+  toolOutputImageBlocks,
+  toolOutputImages,
+} from "@t3tools/shared/toolOutput";
+import { isHtmlRenderTool } from "@t3tools/shared/htmlRender";
 import * as DateTime from "effect/DateTime";
 
 const MAX_TEXT_BLOCK_DEPTH = 4;
@@ -81,20 +86,32 @@ function formatToolValue(value: unknown, hasImagePreview = false): string | null
 export function toolCallLines(input: {
   readonly command?: string | undefined;
   readonly args?: unknown;
+  readonly toolName?: string | null | undefined;
+  readonly status?: OrchestrationV2TurnItem["status"] | undefined;
+  readonly output?: unknown;
 }): {
   readonly command: string | null;
   readonly args: ReadonlyArray<readonly [string, string]> | null;
   readonly argsText: string | null;
+  readonly html: boolean;
 } {
   if (input.command !== undefined) {
     const command = input.command.trim();
-    return { command: command || null, args: null, argsText: null };
+    return { command: command || null, args: null, argsText: null, html: false };
   }
   const args = input.args;
+  const html =
+    isHtmlRenderTool(input.toolName) &&
+    // Summary payloads still resolve the full source through the asset route.
+    (isRecord(args)
+      ? isSummarizedValue(args) || (typeof args.html === "string" && args.html.trim() !== "")
+      : typeof args === "string" && args.trim() !== "") &&
+    input.status !== "failed" &&
+    compactDynamicToolOutput(input.output)?.isError !== true;
   if (isRecord(args) && !isSummarizedValue(args)) {
     const entries = Object.entries(args).flatMap(
       ([key, value]): Array<readonly [string, string]> => {
-        if (value === undefined) return [];
+        if (value === undefined || (key === "html" && html)) return [];
         // An empty string or null can be the point of a call (a clear or reset), so show it.
         return [
           [
@@ -106,13 +123,13 @@ export function toolCallLines(input: {
         ];
       },
     );
-    return { command: null, args: entries.length > 0 ? entries : null, argsText: null };
+    return { command: null, args: entries.length > 0 ? entries : null, argsText: null, html };
   }
-  return { command: null, args: null, argsText: formatToolValue(args) };
+  return { command: null, args: null, argsText: html ? null : formatToolValue(args), html };
 }
 
 function toolCallHasLines(lines: ReturnType<typeof toolCallLines>): boolean {
-  return lines.command !== null || lines.args !== null || lines.argsText !== null;
+  return lines.command !== null || lines.args !== null || lines.argsText !== null || lines.html;
 }
 
 const LIVE_TURN_ITEM_STATUSES: ReadonlySet<OrchestrationV2TurnItem["status"]> = new Set([
@@ -230,7 +247,17 @@ export function turnItemHasDetail(item: OrchestrationV2TurnItem): boolean {
     case "web_search":
       return (item.results?.length ?? 0) > 0 || (item.patterns?.length ?? 0) > 0;
     case "dynamic_tool":
-      return item.outputOmitted === true || toolCallHasLines(toolCallLines({ args: item.input }));
+      return (
+        item.outputOmitted === true ||
+        toolCallHasLines(
+          toolCallLines({
+            args: item.input,
+            toolName: item.toolName,
+            status: item.status,
+            output: item.output,
+          }),
+        )
+      );
     case "approval_request":
       return Boolean(item.prompt?.trim());
     case "user_input_request":

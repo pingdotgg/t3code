@@ -255,6 +255,9 @@ const requiredScopesForRpcCall = (
   }
   if (method === WS_METHODS.assetsCreateUrl) {
     const { resource } = decodeAssetCreateUrlInput(payload);
+    if (resource._tag === "tool-input-html") {
+      return [AuthOrchestrationReadScope, AuthFilesystemReadScope];
+    }
     return [
       resource._tag === "workspace-file" ||
       resource._tag === "media-file" ||

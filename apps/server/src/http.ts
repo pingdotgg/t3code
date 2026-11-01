@@ -428,7 +428,7 @@ export const layerAssetRoute = HttpRouter.add(
     if (asset.kind === "bytes") {
       return HttpServerResponse.uint8Array(asset.bytes, {
         contentType: asset.mimeType,
-        headers: { "cache-control": "private, max-age=3600", "x-content-type-options": "nosniff" },
+        headers: assetResponseHeaders("", { mimeType: asset.mimeType }),
       });
     }
     if (asset.kind === "source-control-media") {

@@ -9,6 +9,7 @@ import {
   ProviderInstanceId,
   SecretProviderId,
   ThreadId,
+  TurnItemId,
   AuthOrchestrationOperateScope,
   AuthOrchestrationReadScope,
   AuthSourceControlWriteScope,
@@ -349,6 +350,12 @@ it.effect("separates host file URLs from readable attachment URLs", () =>
       { _tag: "workspace-file", threadId: ThreadId.make("thread"), path: "file.txt" },
       { _tag: "media-file", threadId: ThreadId.make("thread"), path: "/repo/image.png" },
       { _tag: "draft-workspace-file", cwd: "/repo", path: "file.txt" },
+      {
+        _tag: "tool-input-html",
+        threadId: ThreadId.make("thread"),
+        itemId: TurnItemId.make("html"),
+        revision: "completed",
+      },
     ] as const) {
       expect(
         yield* client[WS_METHODS.assetsCreateUrl]({ resource }).pipe(Effect.flip),
@@ -356,6 +363,54 @@ it.effect("separates host file URLs from readable attachment URLs", () =>
         requiredScope: AuthOrchestrationReadScope,
         requiredPermission: AuthFilesystemReadScope,
       });
+    }
+    expect(handled).toBe(1);
+  }).pipe(Effect.scoped),
+);
+
+it.effect("requires both thread and host-file access for HTML tool previews", () =>
+  Effect.gen(function* () {
+    const group = WsRpcGroup.omit(
+      ...[...WsRpcGroup.requests.keys()].filter(
+        (
+          tag,
+        ): tag is Exclude<keyof typeof RPC_REQUIRED_SCOPES, typeof WS_METHODS.assetsCreateUrl> =>
+          tag !== WS_METHODS.assetsCreateUrl,
+      ),
+    );
+    const resource = {
+      _tag: "tool-input-html" as const,
+      threadId: ThreadId.make("thread"),
+      itemId: TurnItemId.make("html"),
+      revision: "completed",
+    };
+    let handled = 0;
+    for (const scopes of [
+      [AuthFilesystemReadScope],
+      [AuthOrchestrationReadScope, AuthFilesystemReadScope],
+    ]) {
+      const client = yield* RpcTest.makeClient(group).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            group.toLayerHandler(WS_METHODS.assetsCreateUrl, () =>
+              Effect.sync(() => {
+                handled++;
+                return { relativeUrl: "/api/assets/html", expiresAt: 1 };
+              }),
+            ),
+            RpcAuthorization.layer(scopes),
+          ),
+        ),
+      );
+      if (scopes.length === 1) {
+        expect(
+          yield* client[WS_METHODS.assetsCreateUrl]({ resource }).pipe(Effect.flip),
+        ).toMatchObject({ requiredPermission: AuthOrchestrationReadScope });
+      } else {
+        expect(yield* client[WS_METHODS.assetsCreateUrl]({ resource })).toMatchObject({
+          relativeUrl: "/api/assets/html",
+        });
+      }
     }
     expect(handled).toBe(1);
   }).pipe(Effect.scoped),

@@ -33,7 +33,7 @@ import {
   type TurnTokenUsage,
 } from "@t3tools/contracts";
 import { AgentScope, AgentScopeThreadId } from "@t3tools/shared/AgentScope";
-import { HTML_RENDER_TOOL_NAME } from "@t3tools/shared/htmlRender";
+import { HTML_RENDER_TOOL_NAME, isHtmlRenderTool } from "@t3tools/shared/htmlRender";
 import { modelSelectionsEqual } from "@t3tools/shared/model";
 import { type SelfInvocation, selfInvocationArgs } from "@t3tools/shared/nodeRuntime";
 import { resolveT3McpToolId } from "@t3tools/shared/t3McpToolPresentation";
@@ -3653,7 +3653,32 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             yield* rearmDeferredFinalize(context);
             return;
           }
-          const status = projectedStatus ?? toolStatus(toolCall.status);
+          const rawInput = toolCall.data.rawInput;
+          const rawOutput = toolCall.data.rawOutput ?? toolCall.data.content;
+          const rawOutputRecord = unknownRecord(rawOutput);
+          const mcpIdentity = extractMcpToolCallIdentity(toolCall, {
+            embeddedTerminalCommands: embeddedTerminalCommands(
+              context.nativeThreadId,
+              toolCall.toolCallId,
+            ),
+          });
+
+          const toolOutput =
+            mcpIdentity === undefined || rawOutput === undefined
+              ? undefined
+              : acpMcpToolCallOutput(rawOutput);
+          const isError =
+            previous?.status === "failed" ||
+            compactDynamicToolOutput(toolOutput)?.isError === true ||
+            compactDynamicToolOutput(rawOutputRecord?.result)?.isError === true;
+          const providerStatus = projectedStatus ?? toolStatus(toolCall.status);
+          const status =
+            providerStatus === "completed" &&
+            mcpIdentity !== undefined &&
+            isHtmlRenderTool(`${mcpIdentity.server}.${mcpIdentity.tool}`) &&
+            isError
+              ? "failed"
+              : providerStatus;
           const now = yield* DateTime.now;
           const nativeItemId = `${context.nativeThreadId}:tool:${toolCall.toolCallId}`;
           const ordinal = yield* resolveItemOrdinal(context, nativeItemId);
@@ -3706,8 +3731,6 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             completedAt,
             updatedAt: now,
           } as const;
-          const rawInput = toolCall.data.rawInput;
-          const rawOutput = toolCall.data.rawOutput ?? toolCall.data.content;
           const changes = structuredFileChanges(toolCall);
           const path = changes[0]?.path ?? pathFromToolCall(toolCall);
           const diffText =
@@ -3717,7 +3740,6 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             typeof rawInputRecord?.variant === "string"
               ? rawInputRecord.variant.trim().toLowerCase()
               : "";
-          const rawOutputRecord = unknownRecord(rawOutput);
           const outputCommand =
             typeof rawOutputRecord?.command === "string" &&
             rawOutputRecord.command.trim().length > 0
@@ -3732,12 +3754,6 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             rawOutputRecord.type.trim().toLowerCase() === "bash" &&
             commandExitCode(rawOutput) !== undefined;
           const projectAsCommandExecution = inputVariant === "monitor" || outputIsBashResult;
-          const mcpIdentity = extractMcpToolCallIdentity(toolCall, {
-            embeddedTerminalCommands: embeddedTerminalCommands(
-              context.nativeThreadId,
-              toolCall.toolCallId,
-            ),
-          });
           let turnItem: OrchestrationV2TurnItem;
           if (toolCall.toolCallId.startsWith("acp-compaction:")) {
             const summary = textFromUnknown(rawOutput);
@@ -3767,11 +3783,12 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             const toolName = `${mcpIdentity.server}.${mcpIdentity.tool}`;
             const input =
               mcpIdentity.input ?? unknownRecord(rawInputRecord?.arguments) ?? rawInputRecord ?? {};
-            let output = rawOutput === undefined ? undefined : acpMcpToolCallOutput(rawOutput);
+            let output = toolOutput;
             const isHtmlRender = resolveT3McpToolId(toolName) === HTML_RENDER_TOOL_NAME;
-            const isError =
-              compactDynamicToolOutput(output)?.isError === true ||
-              compactDynamicToolOutput(rawOutputRecord?.result)?.isError === true;
+            if (isHtmlRenderTool(toolName) && isError) {
+              // Providers can replace a terminal error with a summary in later updates.
+              context.tools.set(toolCall.toolCallId, { ...toolCall, status: "failed" });
+            }
             if (
               isHtmlRender &&
               (status === "failed" || (status === "completed" && isError)) &&

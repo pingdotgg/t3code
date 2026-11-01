@@ -320,6 +320,12 @@ const inlineLocalImages = Effect.fn("HtmlRender.inlineLocalImages")(function* (h
   };
 });
 
+export const prepareDocument = Effect.fn("HtmlRender.prepareDocument")(function* (html: string) {
+  yield* rejectViewportHeight(html);
+  // Scan the head before local images expand into data URLs.
+  return yield* inlineLocalImages(injectHtmlRenderBootstrap(html));
+});
+
 const MIN_PREVIEW_WIDTH = 240;
 const MAX_PREVIEW_WIDTH = 1_600;
 const MAX_CONCURRENT_BROWSERS = 2;
@@ -396,13 +402,8 @@ const make = Effect.gen(function* () {
     ),
   );
 
-  // The bootstrap goes in first so its head scan never runs over inlined image data.
-  const inline = (html: string) =>
-    inlineLocalImages(injectHtmlRenderBootstrap(html)).pipe(Effect.provideContext(services));
-
   const prepare = Effect.fn("HtmlRender.prepare")(function* (html: string) {
-    yield* rejectViewportHeight(html);
-    const inlined = yield* inline(html);
+    const inlined = yield* prepareDocument(html).pipe(Effect.provideContext(services));
     if (inlined.missing.length > 0) {
       return yield* new HtmlRenderImagesNotFoundError({ paths: inlined.missing });
     }
@@ -469,8 +470,7 @@ const make = Effect.gen(function* () {
       Math.max(MIN_PREVIEW_WIDTH, Math.round(input.width ?? HTML_RENDER_COLUMN_WIDTH)),
     );
     const appearance = input.appearance ?? "dark";
-    yield* rejectViewportHeight(input.html);
-    const inlined = yield* inline(input.html);
+    const inlined = yield* prepareDocument(input.html).pipe(Effect.provideContext(services));
     const executable = yield* previewBrowser.executable;
     const theme = htmlRenderTheme(
       appearance === "light" ? T3_CODE_LIGHT_THEME_COLORS : T3_CODE_DARK_THEME_COLORS,

@@ -663,10 +663,7 @@ describe("AntigravityAdapterV2 html_render pages", () => {
                       sessionUpdate: "tool_call_update",
                       toolCallId: name,
                       status: name === "failed" ? "failed" : "completed",
-                      rawOutput:
-                        name === "failed"
-                          ? "Summary of failed"
-                          : { result: { isError: true, content: [] } },
+                      rawOutput: name === "failed" ? "Summary of failed" : "Summary of error",
                     });
                     yield* send({
                       sessionUpdate: "tool_call_update",
@@ -797,11 +794,18 @@ describe("AntigravityAdapterV2 html_render pages", () => {
         page: undefined,
         output: "Summary of failed",
       });
+      for (const nativeId of ["failed", "error"]) {
+        const node = events.findLast(
+          (event) =>
+            event.type === "node.updated" && event.node.nativeItemRef?.nativeId === nativeId,
+        );
+        assert.strictEqual(node?.type === "node.updated" ? node.node.status : undefined, "failed");
+      }
       assert.deepEqual(tool("error"), {
-        status: "completed",
+        status: "failed",
         toolName: "t3-code.html_render",
         page: undefined,
-        output: [],
+        output: "Summary of error",
       });
       assert.deepEqual(
         events.flatMap((event) =>

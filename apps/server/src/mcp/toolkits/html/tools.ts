@@ -5,6 +5,7 @@ import {
   HTML_RENDER_MAX_FIT_HEIGHT,
   HTML_RENDER_MAX_HEIGHT,
   HTML_RENDER_MAX_TITLE_LENGTH,
+  HTML_RENDER_MAX_SOURCE_LENGTH,
   HTML_RENDER_MIN_HEIGHT,
   HTML_RENDER_THEME_GUIDE,
   HTML_RENDER_TOOL_NAME,
@@ -16,7 +17,10 @@ import * as HtmlRender from "../../../htmlRender/HtmlRender.ts";
 import * as ThreadManagementService from "../../../orchestration-v2/ThreadManagementService.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 
-const Html = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(512_000)).annotate({
+const Html = Schema.String.check(
+  Schema.isMinLength(1),
+  Schema.isMaxLength(HTML_RENDER_MAX_SOURCE_LENGTH),
+).annotate({
   description: "A complete, self-contained HTML document.",
 });
 
