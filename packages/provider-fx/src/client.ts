@@ -12,6 +12,7 @@ import { FxSettings } from "./settings.ts";
 export const fxClient = defineProviderClient({
   driverKind: ProviderDriverKind.make("fx"),
   label: "fx",
+  featured: false,
   settingsSchema: FxSettings,
   icon: {
     viewBox: "166.241 0 155.861 156",
