@@ -678,7 +678,7 @@ it.effect.each<{
     platform: "linux",
     expected: "idea",
     scripts: ({ ide, removed }) => ({
-      idea: `#!/bin/sh\n${removed} --version\nIDE_HOME="${ide}"\nexec "$IDE_HOME" "$@"\n`,
+      idea: `#!/bin/sh\n${removed} --version\nIDE_HOME="${ide}"\n"$IDE_HOME" "$@"\n`,
       idea1: `#!/bin/sh\nexec "${ide}" "$@"\n`,
     }),
   },

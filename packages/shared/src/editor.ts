@@ -28,7 +28,7 @@ const isVersionedBundle = (entry: string, name: string) => {
 /**
  * The program a Toolbox script line runs: its first word, or the operand of `exec`, `open -na` or
  * `start`. Other paths on the line, such as `> /dev/null` or `JAVA_HOME="/opt/jdk"`, say nothing
- * about whether the IDE is still installed. `command` marks lines that run one of those three. */
+ * about whether the IDE is still installed. */
 const launchedProgram = (line: string) => {
   const words = [...line.replace(/^\s*\(/, "").matchAll(/"([^"]*)"|'([^']*)'|(\S+)/g)].map(
     (match) => ({
@@ -52,13 +52,10 @@ const launchedProgram = (line: string) => {
         words.shift();
       } else break;
     }
-    return { program: words[0]?.text, command: true };
+    return words[0]?.text;
   }
-  if (name !== "exec" && name !== "open") return { program: launcher.text, command: false };
-  return {
-    program: words.find((word) => word.quoted || !word.text.startsWith("-"))?.text,
-    command: true,
-  };
+  if (name !== "exec" && name !== "open") return launcher.text;
+  return words.find((word) => word.quoted || !word.text.startsWith("-"))?.text;
 };
 
 export const resolveEditorCommand = Effect.fn("editor.resolveEditorCommand")(function* (
@@ -90,19 +87,16 @@ export const resolveEditorCommand = Effect.fn("editor.resolveEditorCommand")(fun
     const programs = text
       .split(/\r?\n/)
       .flatMap((line) => launchedProgram(line) ?? [])
-      .map(({ program = "", command }) => ({
-        path: home ? program.replace(/^\$(?:HOME|\{HOME\})(?=\/)/, () => home) : program,
-        command,
-      }));
-    const targets = programs.filter(({ path: target }) => path.isAbsolute(target));
-    for (const { path: target } of targets) {
+      .map((program) =>
+        home ? program.replace(/^\$(?:HOME|\{HOME\})(?=\/)/, () => home) : program,
+      );
+    const targets = programs.filter((program) => path.isAbsolute(program));
+    for (const target of targets) {
       if (yield* fs.exists(target).pipe(Effect.orElseSucceed(() => false))) return "found";
     }
-    // A launch command whose program is not a plain path, such as `exec "$IDE_HOME"`, could still
-    // reach an installed IDE.
-    const ambiguous = programs.some(
-      ({ path: target, command }) => command && !path.isAbsolute(target),
-    );
+    // A program still holding a variable, such as `"$IDE_HOME"` or `%IDE%\idea64.exe`, could reach
+    // an installed IDE. Assignments like `IDE_HOME="..."` are not launches.
+    const ambiguous = programs.some((program) => /[$%]/.test(program) && !/^\w+=/.test(program));
     return targets.length > 0 && !ambiguous ? "missing" : "unknown";
   });
   // Toolbox names a launch script `idea1`, `idea2`, ... when another installed version already
