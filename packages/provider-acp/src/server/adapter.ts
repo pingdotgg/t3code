@@ -4033,20 +4033,27 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             if (planState.latest === null) return;
             plan = { ...planState.latest, status: "superseded" };
           } else if (update.kind === "items") {
-            const steps: ReadonlyArray<OrchestrationV2PlanStep> = update.plan.map(
-              (step, index) => ({
-                id: `acp-step-${index + 1}`,
-                text: nonEmptyText(step.step, `Step ${index + 1}`),
-                status:
-                  step.status === "inProgress"
-                    ? "running"
-                    : step.status === "completed"
-                      ? "completed"
-                      : "pending",
-              }),
+            // A cancelled entry is not outstanding work, and plan steps have no
+            // cancelled status, so drop it rather than show it as pending.
+            const steps: ReadonlyArray<OrchestrationV2PlanStep> = update.plan.flatMap(
+              (step, index) =>
+                step.status === "cancelled"
+                  ? []
+                  : [
+                      {
+                        id: `acp-step-${index + 1}`,
+                        text: nonEmptyText(step.step, `Step ${index + 1}`),
+                        status:
+                          step.status === "inProgress"
+                            ? "running"
+                            : step.status === "completed"
+                              ? "completed"
+                              : "pending",
+                      },
+                    ],
             );
             const completed =
-              steps.length > 0 && steps.every((step) => step.status === "completed");
+              update.plan.length > 0 && steps.every((step) => step.status === "completed");
             plan = {
               ...base,
               status: completed ? "completed" : "active",
@@ -4616,10 +4623,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           if (yield* projectAgentTerminalUpdate(notification, context)) return;
           if (
             update.sessionUpdate === "usage_update" ||
-            update.sessionUpdate === "session_info_update" ||
-            (update.sessionUpdate === "state_update" &&
-              update.state === "idle" &&
-              update.usage != null)
+            update.sessionUpdate === "session_info_update"
           ) {
             const stateEvent = parseSessionUpdateEvent(notification).events.find(
               (event) => event._tag === "UsageUpdated" || event._tag === "SessionInfoUpdated",
@@ -4670,7 +4674,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                 providerThread,
               });
             }
-            if (update.sessionUpdate !== "state_update") return;
+            return;
           }
           if (yield* followNativeChild(notification, context)) return;
           if (

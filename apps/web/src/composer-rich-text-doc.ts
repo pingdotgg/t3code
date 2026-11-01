@@ -81,14 +81,37 @@ function codePairCaretPlugin(type: MarkType) {
       handleTextInput(view, from, to, text, insert) {
         if (view.composing || from !== to || text !== "`") return false;
         const $from = view.state.doc.resolve(from);
-        if (
-          !$from.parent.isTextblock ||
-          $from.parent.type.spec.code ||
-          !/(^|[^`])`$/.test($from.nodeBefore?.text ?? "")
-        ) {
-          return false;
+        if (!$from.parent.isTextblock || $from.parent.type.spec.code) return false;
+        const before = $from.nodeBefore?.text ?? "";
+        if (/(^|[^`])`$/.test(before)) {
+          view.dispatch(insert().setMeta(codePairKey, { from: from - 1, to: from + 1 }));
+          return true;
         }
-        view.dispatch(insert().setMeta(codePairKey, { from: from - 1, to: from + 1 }));
+        if (before.endsWith("`")) return false;
+
+        // The opening tick can be typed after the closing one. Input rules
+        // cannot recognize that pair because they only read before the caret.
+        const after = $from.parent.textBetween(
+          $from.parentOffset,
+          $from.parent.content.size,
+          "\n",
+          "\n",
+        );
+        const match = /^([^`\n]+)`(?!`)/.exec(after);
+        if (!match) return false;
+        const end = from + match[1]!.length;
+        let plain = true;
+        view.state.doc.nodesBetween(from, end + 1, (node) => {
+          if (node.isInline && (!node.isText || node.marks.length > 0)) plain = false;
+        });
+        if (!plain) return false;
+        const tr = insert()
+          .delete(end + 1, end + 2)
+          .delete(from, from + 1);
+        tr.addMark(from, end, type.create());
+        tr.setSelection(TextSelection.create(tr.doc, from));
+        tr.addStoredMark(type.create());
+        view.dispatch(tr);
         return true;
       },
     },
