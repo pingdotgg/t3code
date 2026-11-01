@@ -178,25 +178,31 @@ export const make = Effect.gen(function* PreviewManagerMake() {
       // Persisted client surfaces must not bind to a different tab after a server restart.
       const tabId = `${newPreviewTabId()}${runtime === "server" ? `_${serverEpoch}` : ""}`;
       const updatedAt = yield* currentIsoTimestamp;
-      const snapshot: PreviewSessionSnapshot = {
-        threadId: input.threadId,
-        tabId,
-        navStatus: input.url
-          ? { _tag: "Loading", url: yield* normalizeUrl(input.url), title: "" }
-          : { _tag: "Idle" },
-        canGoBack: false,
-        canGoForward: false,
-        viewport: input.viewport ?? FILL_PREVIEW_VIEWPORT,
-        ...(input.profileId === undefined ? {} : { profileId: input.profileId }),
-        ...(runtime === undefined ? {} : { runtime }),
-        ...(runtime === "server" && input.automationOwner !== undefined
-          ? { automationOwner: input.automationOwner }
-          : {}),
-        ...(input.reveal === undefined ? {} : { reveal: input.reveal }),
-        updatedAt,
-      };
-      yield* SynchronizedRef.modifyEffect(stateRef, (state) =>
+      const navStatus: PreviewSessionSnapshot["navStatus"] = input.url
+        ? { _tag: "Loading", url: yield* normalizeUrl(input.url), title: "" }
+        : { _tag: "Idle" };
+      return yield* SynchronizedRef.modifyEffect(stateRef, (state) =>
         Effect.gen(function* () {
+          // A popup inherits its opener's owner from this record, never from the client.
+          const automationOwner =
+            input.automationOwner ??
+            (input.openerTabId === undefined
+              ? undefined
+              : state.sessions.get(compositeKey(input.threadId, input.openerTabId))?.snapshot
+                  .automationOwner);
+          const snapshot: PreviewSessionSnapshot = {
+            threadId: input.threadId,
+            tabId,
+            navStatus,
+            canGoBack: false,
+            canGoForward: false,
+            viewport: input.viewport ?? FILL_PREVIEW_VIEWPORT,
+            ...(input.profileId === undefined ? {} : { profileId: input.profileId }),
+            ...(runtime === undefined ? {} : { runtime }),
+            ...(runtime === "server" && automationOwner !== undefined ? { automationOwner } : {}),
+            ...(input.reveal === undefined ? {} : { reveal: input.reveal }),
+            updatedAt,
+          };
           const revision = state.revision + 1;
           const sessions = new Map(state.sessions);
           sessions.set(compositeKey(input.threadId, tabId), {
@@ -217,7 +223,6 @@ export const make = Effect.gen(function* PreviewManagerMake() {
           return [snapshot, { sessions, revision }] as const;
         }),
       );
-      return snapshot;
     },
   );
 
