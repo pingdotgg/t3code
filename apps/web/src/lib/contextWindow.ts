@@ -24,15 +24,19 @@ export type ContextWindowSnapshot = NullableContextWindowUsage & {
   readonly updatedAt: string;
 };
 
-/** Newest report by timestamp; snapshots order turns by provider thread. */
+/**
+ * Newest report by timestamp among the active provider thread's turns, since a provider switch leaves
+ * the previous provider's report behind. Without an active provider thread, every turn is a candidate.
+ */
 export function latestProviderTurnTokenUsage(
-  turns: ReadonlyArray<Pick<OrchestrationV2ProviderTurn, "tokenUsage">>,
+  turns: ReadonlyArray<Pick<OrchestrationV2ProviderTurn, "providerThreadId" | "tokenUsage">>,
   projection?: Pick<ThreadStructure, "thread" | "contextTransfers"> | null,
-  providerThread?: Pick<OrchestrationV2ProviderThread, "contextUsage"> | null,
+  providerThread?: Pick<OrchestrationV2ProviderThread, "id" | "contextUsage"> | null,
 ): OrchestrationV2ProviderTurnTokenUsage | null {
   let latest: OrchestrationV2ProviderTurnTokenUsage | null = null;
-  for (const { tokenUsage } of turns) {
+  for (const { providerThreadId, tokenUsage } of turns) {
     if (tokenUsage === undefined) continue;
+    if (providerThread != null && providerThreadId !== providerThread.id) continue;
     // Ties go to the later entry, since live upserts append.
     if (latest === null || Date.parse(tokenUsage.updatedAt) >= Date.parse(latest.updatedAt)) {
       latest = tokenUsage;

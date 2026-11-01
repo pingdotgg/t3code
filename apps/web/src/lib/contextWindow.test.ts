@@ -7,6 +7,7 @@ import {
   ContextTransferId,
   ProviderDriverKind,
   ProviderInstanceId,
+  ProviderThreadId,
   RunId,
   ThreadId,
 } from "@t3tools/contracts";
@@ -72,12 +73,14 @@ describe("live provider-turn usage (#8144)", () => {
 
 describe("latestProviderTurnTokenUsage", () => {
   it("picks the newest report, not the last turn in snapshot order", () => {
+    const providerThreadId = ProviderThreadId.make("provider-thread");
     const usage = (usedTokens: number, updatedAt: string) => ({
+      providerThreadId,
       tokenUsage: { usedTokens, updatedAt },
     });
     const latest = latestProviderTurnTokenUsage([
       usage(300_000, "2026-06-20T12:00:00.000Z"),
-      {},
+      { providerThreadId },
       usage(90_000, "2026-06-20T09:00:00.000Z"),
     ]);
     expect(latest?.usedTokens).toBe(300_000);
@@ -140,13 +143,68 @@ describe("latestProviderTurnTokenUsage", () => {
 
   it("replaces inherited usage with the fork's own report", () => {
     const tokenUsage = { usedTokens: 42_000, updatedAt: "2026-10-19T12:10:00.000Z" };
-    expect(latestProviderTurnTokenUsage([{ tokenUsage }], forkProjection())).toEqual(tokenUsage);
+    expect(
+      latestProviderTurnTokenUsage(
+        [{ providerThreadId: ProviderThreadId.make("provider-thread"), tokenUsage }],
+        forkProjection(),
+      ),
+    ).toEqual(tokenUsage);
+  });
+
+  it("ignores the retired provider thread's last report after a provider switch", () => {
+    const retiredTurn = {
+      providerThreadId: ProviderThreadId.make("pi-thread"),
+      tokenUsage: decodeTokenUsage({
+        usedTokens: 180_000,
+        maxTokens: 200_000,
+        updatedAt: "2026-10-19T11:00:00.000Z",
+      }),
+    };
+    const providerThread = {
+      id: ProviderThreadId.make("acp-thread"),
+      contextUsage: { usedTokens: 12_000, maxTokens: 200_000 },
+      updatedAt: DateTime.makeUnsafe("2026-10-19T12:10:00.000Z"),
+    };
+    const liveUsage = latestProviderTurnTokenUsage([retiredTurn], null, providerThread);
+    expect(liveUsage).toBeNull();
+    expect(deriveLatestContextWindowSnapshot([], liveUsage, providerThread)).toMatchObject({
+      usedTokens: 12_000,
+      maxTokens: 200_000,
+      updatedAt: "2026-10-19T12:10:00.000Z",
+    });
+  });
+
+  it("prefers the active provider thread's older report over a newer retired one", () => {
+    const turns = [
+      {
+        providerThreadId: ProviderThreadId.make("pi-thread"),
+        tokenUsage: decodeTokenUsage({
+          usedTokens: 180_000,
+          maxTokens: 200_000,
+          updatedAt: "2026-10-19T12:10:00.000Z",
+        }),
+      },
+      {
+        providerThreadId: ProviderThreadId.make("acp-thread"),
+        tokenUsage: decodeTokenUsage({
+          usedTokens: 12_000,
+          maxTokens: 200_000,
+          updatedAt: "2026-10-19T11:00:00.000Z",
+        }),
+      },
+    ];
+    const liveUsage = latestProviderTurnTokenUsage(turns, null, {
+      id: ProviderThreadId.make("acp-thread"),
+      contextUsage: null,
+    });
+    expect(liveUsage?.usedTokens).toBe(12_000);
   });
 
   it.each([0, 42_000])(
     "prefers target provider-thread usage of %d tokens over inherited usage",
     (usedTokens) => {
       const providerThread = {
+        id: ProviderThreadId.make("provider-thread"),
         contextUsage: {
           usedTokens,
           maxTokens: 200_000,
