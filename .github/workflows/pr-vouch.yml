@@ -21,6 +21,7 @@ jobs:
   collect-targets:
     name: Collect PR targets
     runs-on: ubuntu-24.04
+    timeout-minutes: 5
     outputs:
       targets: ${{ steps.collect.outputs.targets }}
     steps:
@@ -67,6 +68,7 @@ jobs:
     needs: collect-targets
     if: ${{ needs.collect-targets.outputs.targets != '[]' }}
     runs-on: ubuntu-24.04
+    timeout-minutes: 5
     concurrency:
       group: pr-vouch-${{ matrix.target.number }}
       cancel-in-progress: true
