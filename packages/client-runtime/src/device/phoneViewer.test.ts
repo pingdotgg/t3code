@@ -228,6 +228,8 @@ it.each([
   camera.updateMatrixWorld(true);
   const edge = open.at(0.98, 0.5).project(camera);
   expect(viewer.screenPoint((edge.x + 1) / 2, (1 - edge.y) / 2)?.x).toBeCloseTo(0.98, 2);
+  const bottom = open.at(0.6, 0.02).project(camera);
+  expect(viewer.screenPoint((bottom.x + 1) / 2, (1 - bottom.y) / 2)?.y).toBeCloseTo(0.98, 2);
 
   viewer.setFoldAngle(0);
   draw(1000);
