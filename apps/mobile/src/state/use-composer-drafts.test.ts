@@ -195,6 +195,7 @@ import {
   findNewTaskDraftKeys,
   flushComposerDrafts,
   getComposerDraftSnapshot,
+  mergeComposerDraftContent,
   mergeComposerDraftContentState,
   migrateLegacyNewTaskDraft,
   modelOptionMemoryAtom,
@@ -214,6 +215,7 @@ import {
   setStickyComposerModelSelection,
   stickyComposerModelSelectionAtom,
   undoComposerDraftMergeState,
+  undoComposerDraftMerge,
   updateComposerDraftSettings,
 } from "./use-composer-drafts";
 import { retainComposerAttachmentFileForPreview } from "../lib/composerAttachmentPreviewRetention";
@@ -2018,6 +2020,159 @@ describe("mobile composer drafts", () => {
 
       expect(composerDraftFileMocks.getDocument()).toBe(original);
       expect(composerAttachmentCleanupMocks.remove).not.toHaveBeenCalled();
+    },
+  );
+
+  it("coalesces debounced snapshots queued behind a blocked write", async () => {
+    vi.useFakeTimers();
+    const draftKey = "environment-1:thread-1";
+    const barrier = Promise.withResolvers<void>();
+    composerDraftFileMocks.setNextWriteBarrier(barrier.promise);
+
+    setComposerDraftText(draftKey, "A");
+    await vi.advanceTimersByTimeAsync(200);
+    setComposerDraftText(draftKey, "B");
+    await vi.advanceTimersByTimeAsync(200);
+    setComposerDraftText(draftKey, "C");
+    await vi.advanceTimersByTimeAsync(200);
+
+    expect(composerDraftFileMocks.getWrites()).toHaveLength(0);
+    barrier.resolve();
+    await flushComposerDrafts();
+
+    expect(
+      composerDraftFileMocks.getWrites().map((raw) => JSON.parse(raw).drafts[draftKey].text),
+    ).toEqual(["A", "C"]);
+    expect(JSON.parse(composerDraftFileMocks.getDocument()).drafts[draftKey].text).toBe("C");
+  });
+
+  it("coalesces snapshots waiting for hydration without losing saved state", async () => {
+    vi.useFakeTimers();
+    const draftKey = "environment-1:thread-1";
+    const saved = {
+      schemaVersion: 1,
+      drafts: { "environment-1:saved": DRAFT },
+      modelOptionMemory: { codex: { model: [{ id: "thinking", value: "high" }] } },
+      signedOutDrafts: { account: { drafts: { archived: DRAFT }, queuedMessages: [] } },
+    };
+    composerDraftFileMocks.setDocument(saved);
+    composerDraftFileMocks.blockRead();
+
+    setComposerDraftText(draftKey, "A");
+    await vi.advanceTimersByTimeAsync(200);
+    setComposerDraftText(draftKey, "B");
+    await vi.advanceTimersByTimeAsync(200);
+    setComposerDraftText(draftKey, "C");
+    await vi.advanceTimersByTimeAsync(200);
+    const flush = flushComposerDrafts();
+    expect(composerDraftFileMocks.getWrites()).toHaveLength(0);
+
+    composerDraftFileMocks.releaseRead();
+    await flush;
+
+    expect(composerDraftFileMocks.getWrites()).toHaveLength(1);
+    expect(JSON.parse(composerDraftFileMocks.getDocument())).toEqual({
+      ...saved,
+      drafts: { ...saved.drafts, [draftKey]: { text: "C", attachments: [] } },
+    });
+  });
+
+  it("flush lands edits made during a coalesced write", async () => {
+    vi.useFakeTimers();
+    const draftKey = "environment-1:thread-1";
+    const barrier = Promise.withResolvers<void>();
+    composerDraftFileMocks.setNextWriteBarrier(barrier.promise);
+
+    setComposerDraftText(draftKey, "A");
+    await vi.advanceTimersByTimeAsync(200);
+    setComposerDraftText(draftKey, "B");
+    await vi.advanceTimersByTimeAsync(200);
+    setComposerDraftText(draftKey, "C");
+    await vi.advanceTimersByTimeAsync(200);
+    composerDraftFileMocks.setOnWrite(() => {
+      if (composerDraftFileMocks.getWrites().length === 2) {
+        setComposerDraftText(draftKey, "D");
+      }
+    });
+    const flush = flushComposerDrafts();
+    barrier.resolve();
+    await flush;
+
+    expect(
+      composerDraftFileMocks.getWrites().map((raw) => JSON.parse(raw).drafts[draftKey].text),
+    ).toEqual(["A", "C", "D"]);
+    expect(JSON.parse(composerDraftFileMocks.getDocument()).drafts[draftKey].text).toBe("D");
+  });
+
+  it("retries a failed coalesced snapshot on flush", async () => {
+    vi.useFakeTimers();
+    const draftKey = "environment-1:thread-1";
+    const barrier = Promise.withResolvers<void>();
+    const failed = Promise.withResolvers<void>();
+    using warning = vi.spyOn(console, "warn").mockImplementation(() => failed.resolve());
+    composerDraftFileMocks.setNextWriteBarrier(barrier.promise);
+
+    setComposerDraftText(draftKey, "A");
+    await vi.advanceTimersByTimeAsync(200);
+    setComposerDraftText(draftKey, "B");
+    await vi.advanceTimersByTimeAsync(200);
+    setComposerDraftText(draftKey, "C");
+    await vi.advanceTimersByTimeAsync(200);
+    composerDraftFileMocks.setOnWrite(() => {
+      composerDraftFileMocks.setWriteError(new Error("storage unavailable"));
+    });
+    barrier.resolve();
+    await failed.promise;
+    expect(warning).toHaveBeenCalledWith(
+      "[composer-drafts] failed to persist drafts",
+      expect.any(ComposerDraftPersistenceError),
+    );
+    composerDraftFileMocks.setWriteError(null);
+    composerDraftFileMocks.setOnWrite(null);
+    await flushComposerDrafts();
+
+    expect(
+      composerDraftFileMocks.getWrites().map((raw) => JSON.parse(raw).drafts[draftKey].text),
+    ).toEqual(["A", "C"]);
+    expect(JSON.parse(composerDraftFileMocks.getDocument()).drafts[draftKey].text).toBe("C");
+  });
+
+  it.each(["merge", "rollback", "clear"] as const)(
+    "keeps debounced snapshots on both sides of an explicit %s",
+    async (operation) => {
+      vi.useFakeTimers();
+      const draftKey = "environment-1:thread-1";
+      const barrier = Promise.withResolvers<void>();
+      composerDraftFileMocks.setNextWriteBarrier(barrier.promise);
+
+      setComposerDraftText(draftKey, "A");
+      await vi.advanceTimersByTimeAsync(200);
+      setComposerDraftText(draftKey, "B");
+      await vi.advanceTimersByTimeAsync(200);
+      const transaction =
+        operation === "merge"
+          ? mergeComposerDraftContent(draftKey, { text: "merged", attachments: [] })
+          : operation === "rollback"
+            ? undoComposerDraftMerge(
+                draftKey,
+                { text: "before", attachments: [] },
+                getComposerDraftSnapshot(draftKey),
+              )
+            : clearComposerDraftsEnvironment(EnvironmentId.make("environment-1"));
+      await Promise.resolve();
+      const transactionText = getComposerDraftSnapshot(draftKey).text;
+      setComposerDraftText(draftKey, "C");
+      await vi.advanceTimersByTimeAsync(200);
+      barrier.resolve();
+      await transaction;
+      await flushComposerDrafts();
+
+      expect(
+        composerDraftFileMocks
+          .getWrites()
+          .map((raw) => JSON.parse(raw).drafts[draftKey]?.text ?? ""),
+      ).toEqual(["A", "C", transactionText, "C"]);
+      expect(JSON.parse(composerDraftFileMocks.getDocument()).drafts[draftKey].text).toBe("C");
     },
   );
 
