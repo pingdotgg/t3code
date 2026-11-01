@@ -58,4 +58,18 @@ describe("HistorySwipeNavigation", () => {
 
     expect(navigateHistory).toHaveBeenCalledTimes(navigates ? 1 : 0);
   });
+
+  it("a vertical scroll that started slightly diagonal and drifts sideways keeps the thread", async () => {
+    navigateHistory.mockReset();
+    await using screen = await render(<HistorySwipeNavigation />);
+    const content = screen.container.appendChild(document.createElement("div"));
+    const wheel = (deltaX: number, deltaY: number) =>
+      content.dispatchEvent(new WheelEvent("wheel", { deltaX, deltaY, bubbles: true }));
+
+    for (let index = 0; index < 2; index++) wheel(-4, -3);
+    for (let index = 0; index < 40; index++) wheel(-3, -25);
+    wheel(0, 0);
+
+    expect(navigateHistory).not.toHaveBeenCalled();
+  });
 });
