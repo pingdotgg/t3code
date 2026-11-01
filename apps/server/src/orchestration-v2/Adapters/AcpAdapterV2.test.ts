@@ -271,10 +271,17 @@ describe("acpToolCallDiffPatch", () => {
     assert.isUndefined(acpToolCallDiffPatch(content));
     // An omitted preview is not re-diffed from the bare snippets either.
     assert.isUndefined(acpToolCallDiffPatch([{ ...content[0], patch: { format: "omitted" } }]));
-    assert.deepEqual(acpToolCallSnippetEdit(content), {
-      oldStr: "const target = 10;",
-      newStr: "const target = 100;",
-    });
+    // A status block beside the snippet must not hide it.
+    for (const blocks of [
+      content,
+      [{ type: "content", content: { type: "text", text: "Edited." } }, ...content],
+    ]) {
+      assert.isUndefined(acpToolCallDiffPatch(blocks));
+      assert.deepEqual(acpToolCallSnippetEdit(blocks), {
+        oldStr: "const target = 10;",
+        newStr: "const target = 100;",
+      });
+    }
   });
 
   it("builds per-file patches from ACP hunks and recorded old/new text", () => {

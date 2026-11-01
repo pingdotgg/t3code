@@ -954,9 +954,13 @@ const ACP_V1_DIFF_MAX_EDITS = 1_000;
  * from line 1.
  */
 export function acpToolCallSnippetEdit(content: unknown) {
-  if (!Array.isArray(content) || content.length !== 1) return undefined;
-  const diff = unknownRecord(content[0]);
-  if (diff?.type !== "diff" || unknownRecord(diff.patch)?.format !== "snippet") return undefined;
+  if (!Array.isArray(content)) return undefined;
+  const diffs = content.flatMap((entry) => {
+    const diff = unknownRecord(entry);
+    return diff?.type === "diff" ? [diff] : [];
+  });
+  const diff = diffs.length === 1 ? diffs[0] : undefined;
+  if (diff === undefined || unknownRecord(diff.patch)?.format !== "snippet") return undefined;
   return typeof diff.oldText === "string" && typeof diff.newText === "string"
     ? { oldStr: diff.oldText, newStr: diff.newText }
     : undefined;
