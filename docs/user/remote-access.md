@@ -288,8 +288,9 @@ too:
 With Tailscale sign-in on and the local network off, T3 Code accepts only
 loopback and tailnet connections.
 
-Tailscale sign-in does not work with userspace networking, which is common in
-LXC and other containers; `t3 up` tells you when it finds it.
+Tailscale sign-in needs Tailscale 1.80 or newer on the machine, and does not work
+with userspace networking, which is common in LXC and other containers; `t3 up`
+tells you when it finds either.
 
 ### Tailscale HTTPS
 

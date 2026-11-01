@@ -36,7 +36,10 @@ export type TailscaleStatusRead = Result.Result<
 /** Linux and other headless hosts use the CLI; macOS and Windows users usually have the app. */
 const usesApp = (platform: NodeJS.Platform) => platform === "darwin" || platform === "win32";
 
-function stateFix(state: Exclude<TailscaleState, "running">, platform: NodeJS.Platform): string {
+export function stateFix(
+  state: Exclude<TailscaleState, "running">,
+  platform: NodeJS.Platform,
+): string {
   const app = usesApp(platform);
   switch (state) {
     case "not_installed":

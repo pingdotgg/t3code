@@ -1,6 +1,12 @@
 import * as NodeUtil from "node:util";
 
-import { ServerTailscaleStatus, TAILNET_APP_CAPABILITY } from "@t3tools/contracts";
+import {
+  ServerTailscaleStatus,
+  TAILNET_APP_CAPABILITY,
+  tailscaleIssueHeadline,
+  tailscaleStateFromBackend,
+} from "@t3tools/contracts";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import { fromJsonStringPretty } from "@t3tools/shared/schemaJson";
 import { readTailscaleStatus, readTailscaleWhois, type TailscaleStatus } from "@t3tools/tailscale";
 import * as Console from "effect/Console";
@@ -15,7 +21,11 @@ import { Argument, Command, Flag, GlobalFlag } from "effect/cli";
 import { REQUIRE_GRANT_FILE } from "../auth/TailnetSignIn.ts";
 import { SERVICE_ENV_FILE } from "../cloud/serviceProtocol.ts";
 import { peersJoined, policyGrantedPeers } from "../auth/tailnetGrants.ts";
-import { formatTailscaleHealth, readTailscaleHealth } from "../environment/TailscaleHealth.ts";
+import {
+  formatTailscaleHealth,
+  readTailscaleHealth,
+  stateFix,
+} from "../environment/TailscaleHealth.ts";
 import {
   isSupportedTailscaleVersion,
   MINIMUM_TAILSCALE_VERSION,
@@ -56,49 +66,45 @@ export const turnOnRequireGrant = Effect.fn("cli.tailscale.turnOnRequireGrant")(
 });
 
 /** Why Tailscale sign-in cannot work on this host, or null when it can. */
-export const signInBlocker = (status: TailscaleStatus): string | null =>
-  status.backendState !== "Running"
-    ? `Tailscale is ${status.backendState ?? "not running"}. Run \`sudo tailscale up\`.`
-    : status.userspaceNetworking === true
-      ? "Tailscale sign-in needs device addresses, and userspace networking hides them. Give the container /dev/net/tun and run tailscaled without --tun=userspace-networking."
-      : !isSupportedTailscaleVersion(status.version)
-        ? `Tailscale ${status.version ?? "(unknown version)"} is too old for Tailscale sign-in. Update to ${MINIMUM_TAILSCALE_VERSION} or newer.`
-        : status.tailnetIpv4Addresses.length === 0
-          ? "Tailscale reported no IPv4 address for this host, and sign-in needs one."
-          : null;
+export const signInBlocker = (
+  status: TailscaleStatus,
+  platform: NodeJS.Platform,
+): string | null => {
+  const state = tailscaleStateFromBackend(status.backendState);
+  if (state !== "running") {
+    const fix = stateFix(state, platform);
+    return `${tailscaleIssueHeadline("this machine", { cause: state, fix }, null, 0)}. ${fix}`;
+  }
+  return status.userspaceNetworking === true
+    ? "Tailscale sign-in needs device addresses, and userspace networking hides them. Give the container /dev/net/tun and run tailscaled without --tun=userspace-networking."
+    : !isSupportedTailscaleVersion(status.version)
+      ? `Tailscale ${status.version ?? "(unknown version)"} is too old for Tailscale sign-in. Update to ${MINIMUM_TAILSCALE_VERSION} or newer.`
+      : status.tailnetIpv4Addresses.length === 0
+        ? "Tailscale reported no IPv4 address for this host, and sign-in needs one."
+        : null;
+};
 
 /**
  * Peers the tailnet policy grants T3 Code here, and whether this host is tagged. Null when
  * Tailscale cannot say, and "changed" when the account or its devices changed during the
  * check: lookups after a switch read another tailnet, and a device that joined was not read.
  */
-const readPolicyGrantedPeers = readTailscaleStatus("active").pipe(
-  Effect.flatMap((status) =>
-    // Where sign-in cannot work, the policy does not matter, so no device is looked up.
-    (signInBlocker(status) === null
-      ? policyGrantedPeers(status, readTailscaleWhois)
-      : Effect.succeed({ granted: [], unreadable: [] })
-    ).pipe(
-      Effect.flatMap((scan) =>
-        readTailscaleStatus("active").pipe(
-          Effect.map((after) =>
-            after.selfNodeId !== status.selfNodeId ||
-            (scan.granted.length === 0 && peersJoined(status, after))
-              ? ("changed" as const)
-              : {
-                  ...scan,
-                  tagged: status.selfTags.length > 0,
-                  noNode: status.selfNodeId === null,
-                  blocker: signInBlocker(status),
-                },
-          ),
-        ),
-      ),
-    ),
-  ),
-  Effect.option,
-  Effect.map(Option.getOrNull),
-);
+const readPolicyGrantedPeers = Effect.gen(function* () {
+  const status = yield* readTailscaleStatus("active");
+  const facts = {
+    tagged: status.selfTags.length > 0,
+    noNode: status.selfNodeId === null,
+    blocker: signInBlocker(status, yield* HostProcess.Platform),
+  };
+  // Where sign-in cannot work, the policy does not matter, so nothing more is read.
+  if (facts.blocker !== null) return { granted: [], unreadable: [], ...facts };
+  const scan = yield* policyGrantedPeers(status, readTailscaleWhois);
+  const after = yield* readTailscaleStatus("active");
+  return after.selfNodeId !== status.selfNodeId ||
+    (scan.granted.length === 0 && peersJoined(status, after))
+    ? ("changed" as const)
+    : { ...scan, ...facts };
+}).pipe(Effect.option, Effect.map(Option.getOrNull));
 
 /** Whether this tagged host has an owner, from `t3 up --owner` or this shell's environment. */
 const hasOwner = Effect.fn("cli.tailscale.hasOwner")(function* (
@@ -145,7 +151,7 @@ const requireGrantCommand = Command.make("require-grant", {
           ? [
               `No device signs in here. ${scan.blocker}`,
               since === null
-                ? "The require-grant switch is off."
+                ? "Grant required: not turned on."
                 : `Grant required: yes, turned on ${since}.`,
             ]
           : since !== null

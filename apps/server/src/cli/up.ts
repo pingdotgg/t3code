@@ -354,7 +354,7 @@ const checkTailscale = Effect.fn("cli.up.checkTailscale")(function* () {
     } as const;
   }
   const { value } = status;
-  const blocker = signInBlocker(value);
+  const blocker = signInBlocker(value, yield* HostProcess.Platform);
   // signInBlocker already refuses a host with no IPv4 address.
   const address = value.tailnetIpv4Addresses[0];
   if (blocker !== null || address === undefined) {
