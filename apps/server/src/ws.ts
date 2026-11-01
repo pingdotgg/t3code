@@ -9,6 +9,7 @@ import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Base64 from "effect/encoding/Base64";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -338,9 +339,7 @@ export const withLateConfigDiscovery = <E, R>(
     Stream.map((editorConfig) => ({ type: "editorsResolved" as const, editorConfig })),
   );
 
-  const lateRemoteOpenTargets = Stream.fromEffect(
-    resolveAvailableEditorsForConfig(remoteOpenTargets.resolveTargets()),
-  ).pipe(
+  const lateRemoteOpenTargets = Stream.fromEffect(remoteOpenTargets.resolveTargets()).pipe(
     Stream.filter(
       (targets) => JSON.stringify(targets) !== JSON.stringify(config.remoteOpenTargets ?? []),
     ),
@@ -3147,6 +3146,9 @@ export const layerWsRpc = (
               // Buffer changes through discovery and the initial snapshot's RPC ACK wait.
               const keybindingsChanges = yield* keybindings.subscribeChanges;
               const settingsChanges = yield* serverSettings.subscribeChanges;
+              const remoteTargets = yield* Effect.forkScoped(remoteOpenTargets.resolveTargets(), {
+                startImmediately: true,
+              });
               const config = yield* loadServerConfig({
                 usageLimitsCommand,
                 workspaceSnapshotsOnDemand,
@@ -3239,7 +3241,9 @@ export const layerWsRpc = (
 
               return Stream.concat(
                 rpcInitialItems([{ version: 1 as const, type: "snapshot" as const, config }]),
-                withLateConfigDiscovery(config, liveUpdates, externalLauncher, remoteOpenTargets),
+                withLateConfigDiscovery(config, liveUpdates, externalLauncher, {
+                  resolveTargets: () => Fiber.join(remoteTargets),
+                }),
               );
             }),
           ),

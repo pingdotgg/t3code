@@ -21,6 +21,7 @@ import {
 import * as Deferred from "effect/Deferred";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as PubSub from "effect/PubSub";
 import * as Queue from "effect/Queue";
@@ -170,25 +171,35 @@ it.effect("resends late editors without rolling back updates already sent", () =
   }),
 );
 
-it.effect("resends a file manager reveal kind that missed the snapshot", () =>
+it.effect("resends a reveal kind and remote targets that outlast the snapshot timeout", () =>
   Effect.gen(function* () {
-    const events = yield* withLateConfigDiscovery(
+    const targets = [{ kind: "mdns" as const, host: "test.local" }];
+    const finishDiscovery = yield* Deferred.make<typeof targets>();
+    const collecting = yield* withLateConfigDiscovery(
       snapshotConfig({ availableEditors: ["file-manager"] }),
       Stream.empty,
       {
         resolveAvailableEditors: () => Effect.succeed(["file-manager"]),
         resolveFileManagerRevealKind: () => Effect.succeed("file-explorer"),
       },
-      { resolveTargets: () => Effect.succeed([]) },
-    ).pipe(Stream.runCollect);
+      { resolveTargets: () => Deferred.await(finishDiscovery) },
+    ).pipe(Stream.runCollect, Effect.forkScoped({ startImmediately: true }));
+    yield* TestClock.adjust("6 seconds");
+    yield* Deferred.succeed(finishDiscovery, targets);
+    const events = yield* Fiber.join(collecting);
 
-    const [late] = Array.from(events);
-    assert.equal(events.length, 1);
+    const [late, remote] = Array.from(events);
+    assert.equal(events.length, 2);
     assert.equal(late?.type, "snapshot");
     if (late?.type === "snapshot") {
       assert.equal(late.config.shellRevealInFileManagerKind, "file-explorer");
     }
-  }),
+    assert.equal(remote?.type, "snapshot");
+    if (remote?.type === "snapshot") {
+      assert.deepEqual(remote.config.remoteOpenTargets, targets);
+      assert.equal(remote.config.shellRevealInFileManagerKind, "file-explorer");
+    }
+  }).pipe(Effect.scoped),
 );
 
 it.effect("runs editor, remote open target and direct endpoint discovery side by side", () =>
@@ -603,7 +614,7 @@ const layerConfigSources = Layer.mergeAll(
 );
 
 it.effect(
-  "sends initial config before remote discovery and preserves updates through discovery and ACK",
+  "starts remote discovery alongside initial config and preserves updates through discovery and ACK",
   () =>
     Effect.gen(function* () {
       const keybindings = yield* Keybindings.Keybindings;
@@ -719,15 +730,11 @@ it.effect(
         headers: Headers.empty,
       });
       yield* Deferred.await(discoveryStarted);
+      assert.isTrue(yield* Deferred.isDone(remoteDiscoveryStarted));
 
       const duringDiscovery = yield* settings.updateSettings({ defaultAutoPull: true });
       yield* Deferred.succeed(finishDiscovery, undefined);
-      const snapshot = yield* Effect.raceFirst(
-        Queue.take(responses),
-        Deferred.await(remoteDiscoveryStarted).pipe(
-          Effect.as({ type: "discovery-blocked-snapshot" as const }),
-        ),
-      );
+      const snapshot = yield* Queue.take(responses);
       assert.equal(snapshot.type, "snapshot");
       if (snapshot.type !== "snapshot") return yield* Effect.die("Missing initial snapshot");
       assert.deepEqual(snapshot.config.remoteOpenTargets, []);
