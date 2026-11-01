@@ -827,6 +827,8 @@ describe("EnvironmentThreads", () => {
       yield* Effect.scoped(
         Effect.gen(function* () {
           const first = yield* makeHarness({ httpSnapshot: { _tag: "missing" }, resumeCache });
+          yield* awaitThreadState(first.observed, (value) => value.status === "synchronizing");
+          yield* TestClock.adjust("90 seconds");
           yield* awaitThreadState(first.observed, (value) => value.status === "deleted");
         }),
       );
