@@ -12,6 +12,7 @@ import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
+import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import * as TestClock from "effect/testing/TestClock";
 import { HttpClient, HttpClientError, HttpClientRequest, HttpClientResponse } from "effect/http";
 
@@ -265,8 +266,45 @@ it.effect("reports bkt process launch failures with CLI guidance", () => {
       .request({ method: "GET", url: "/repositories/acme/demo" })
       .pipe(Effect.flip);
 
-    assert.instanceOf(error, BitbucketApi.BitbucketResponseError);
+    assert.instanceOf(error, BitbucketApi.BitbucketRequestError);
     assert.include(error.detail, "The bkt CLI could not run");
+    assert.instanceOf(error.cause, VcsProcessSpawnError);
+  }).pipe(Effect.provide(layer));
+});
+
+it.effect("infers bkt response status only from explicit HTTP status text", () => {
+  const outputs = [
+    TestSourceControlHost.processOutput("", {
+      stderr: "operation failed after 503 milliseconds",
+      exitCode: ChildProcessSpawner.ExitCode(1),
+    }),
+    TestSourceControlHost.processOutput("", {
+      stderr: "Request failed with HTTP status 403",
+      exitCode: ChildProcessSpawner.ExitCode(1),
+    }),
+    TestSourceControlHost.processOutput("", {
+      stderr: "You are not logged in to Bitbucket",
+      exitCode: ChildProcessSpawner.ExitCode(1),
+    }),
+  ];
+  const run = vi.fn<SourceControlHost.SourceControlHost["Service"]["process"]["run"]>(() =>
+    Effect.succeed(outputs.shift()!),
+  );
+  const { layer } = makeLayer({
+    response: () => Response.json({}),
+    process: run,
+    env: { T3CODE_BITBUCKET_API_MODE: "bkt" },
+  });
+
+  return Effect.gen(function* () {
+    const bitbucket = yield* BitbucketApi.BitbucketApi;
+    for (const status of [500, 403, 401]) {
+      const error = yield* bitbucket
+        .request({ method: "GET", url: "/repositories/acme/demo" })
+        .pipe(Effect.flip);
+      assert.instanceOf(error, BitbucketApi.BitbucketResponseError);
+      assert.strictEqual(error.status, status);
+    }
   }).pipe(Effect.provide(layer));
 });
 

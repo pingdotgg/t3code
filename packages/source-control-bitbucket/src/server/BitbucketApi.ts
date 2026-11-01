@@ -12,6 +12,7 @@ import {
   settingsSecretLiteral,
   SourceControlProviderKind,
   TrimmedNonEmptyString,
+  VcsError,
   type SourceControlProviderAuth,
   type SourceControlProviderInfo,
   type SourceControlRepositoryCloneUrls,
@@ -41,8 +42,8 @@ import * as SourceControlRateLimit from "@t3tools/source-control-core/server/Sou
 const DEFAULT_API_BASE_URL = "https://api.bitbucket.org/2.0";
 const DEFAULT_MAX_RESPONSE_BYTES = 8 * 1024 * 1024;
 const MAX_REDIRECTS = 3;
-const BKT_CLI_FAILURE_HEADER = "x-t3-bitbucket-cli-failure";
 const BITBUCKET_API_REQUEST_TIMEOUT = "30 seconds";
+const isVcsError = Schema.is(VcsError);
 /** A sweep over many branches would otherwise reach Bitbucket as one burst of lookups. */
 const CONCURRENCY = 4;
 
@@ -109,6 +110,9 @@ export class BitbucketRequestError extends Schema.TaggedError<BitbucketRequestEr
   },
 ) {
   get detail(): string {
+    if (isVcsError(this.cause) && this.cause._tag.startsWith("VcsProcess")) {
+      return "The bkt CLI could not run. Install bkt on the T3 server and check `bkt auth status`.";
+    }
     return "Failed to send the Bitbucket request.";
   }
 
@@ -123,14 +127,11 @@ export class BitbucketResponseError extends Schema.TaggedError<BitbucketResponse
     operation: BitbucketApiOperation,
     status: Schema.Int,
     responseBodyLength: NonNegativeInt,
-    source: Schema.optional(Schema.Literal("cli")),
     retryAt: Schema.optional(Schema.Number),
   },
 ) {
   get detail(): string {
-    return this.status === 503 && this.source === "cli"
-      ? "The bkt CLI could not run. Install bkt on the T3 server and check `bkt auth status`."
-      : `Bitbucket returned HTTP ${this.status}.`;
+    return `Bitbucket returned HTTP ${this.status}.`;
   }
 
   override get message(): string {
@@ -649,10 +650,22 @@ const responseError = Effect.fn("BitbucketApi.responseError")(function* (
     operation,
     status: response.status,
     responseBodyLength: collected.text.length,
-    ...(response.headers[BKT_CLI_FAILURE_HEADER] === "true" ? { source: "cli" as const } : {}),
     retryAt,
   });
 });
+
+function bktHttpStatus(output: {
+  readonly stderr: string;
+  readonly stdout: string;
+}): number | null {
+  const text = `${output.stderr}\n${output.stdout}`;
+  if (/\bnot\s+(?:logged|signed)\s+in\b|\bnot authenticated\b/iu.test(text)) return 401;
+  const match =
+    /\b(?:HTTP(?:\/\d(?:\.\d)?)?(?:\s+status)?|status(?:\s+code)?)\s*[:=]?\s*(401|403|404|409|422|429|5\d{2})\b/iu.exec(
+      text,
+    );
+  return match?.[1] ? Number(match[1]) : null;
+}
 
 /** @public */
 export const make = Effect.gen(function* () {
@@ -754,34 +767,19 @@ export const make = Effect.gen(function* () {
       })
       .pipe(
         Effect.map((output) => {
-          const statusMatch = /\b(401|403|404|409|422|429|5\d{2})\b/u.exec(
-            output.stderr || output.stdout,
-          );
-          const status = Number(output.exitCode) === 0 ? 200 : Number(statusMatch?.[1] ?? 500);
+          const status = Number(output.exitCode) === 0 ? 200 : (bktHttpStatus(output) ?? 500);
           const body =
             Number(output.exitCode) === 0
               ? output.stdout
               : JSON.stringify({ error: output.stderr || output.stdout || "bkt request failed" });
           return HttpClientResponse.fromWeb(
             request,
-            new Response(status === 204 ? null : body, {
+            new Response(body, {
               status,
               headers: { "content-type": acceptsJson ? "application/json" : "text/plain" },
             }),
           );
         }),
-        Effect.orElseSucceed(() =>
-          HttpClientResponse.fromWeb(
-            request,
-            Response.json(
-              {
-                error:
-                  "Install bkt on the T3 server and check `bkt auth status`; set T3CODE_BITBUCKET_CLI_PATH if needed.",
-              },
-              { status: 503, headers: { [BKT_CLI_FAILURE_HEADER]: "true" } },
-            ),
-          ),
-        ),
       );
   });
 
