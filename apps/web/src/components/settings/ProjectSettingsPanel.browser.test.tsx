@@ -495,6 +495,8 @@ describe("project identity reset", () => {
     state.projects = [{ ...asScratch(state.projects[0]!), faviconPath: null, projectIcon: null }];
     await using screen = await mountPanel();
 
+    expect(nameInput(screen).value).toBe("Notes");
+    await rename(screen, "Work notes");
     await userEvent.click(resetButton(screen, "project name")!);
     await vi.waitFor(() =>
       expect(state.update).toHaveBeenCalledWith({
@@ -502,6 +504,7 @@ describe("project identity reset", () => {
         input: { projectId: state.projects[0]!.id, title: "No project" },
       }),
     );
+    await vi.waitFor(() => expect(nameInput(screen).value).toBe("No project"));
     await userEvent.click(resetButton(screen, "project icon")!);
     await vi.waitFor(() =>
       expect(state.update).toHaveBeenLastCalledWith({
