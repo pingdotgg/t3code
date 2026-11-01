@@ -4,6 +4,7 @@ import { assert, describe, it } from "@effect/vitest";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
 import * as Deferred from "effect/Deferred";
+import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Logger from "effect/Logger";
@@ -145,7 +146,7 @@ function runShellEnvironment(input: {
 }
 
 describe("DesktopShellEnvironment", () => {
-  it.effect("does not wait for discovery when the cache is missing", () =>
+  it.effect("does not wait for discovery and reports unprepared when the cache is missing", () =>
     Effect.gen(function* () {
       const started = yield* Deferred.make<void>();
       const release = yield* Deferred.make<void>();
@@ -164,6 +165,7 @@ describe("DesktopShellEnvironment", () => {
             const startup = yield* service.installIntoProcess.pipe(Effect.forkChild);
             yield* Deferred.await(started);
             assert.isDefined(startup.pollUnsafe());
+            assert.isFalse(yield* Fiber.join(startup));
             yield* Deferred.succeed(release, undefined);
             return yield* service.awaitDiscovery;
           }),
@@ -338,7 +340,7 @@ describe("DesktopShellEnvironment", () => {
           handler: () => "",
           use: (service) =>
             Effect.gen(function* () {
-              yield* service.installIntoProcess;
+              assert.isTrue(yield* service.installIntoProcess);
               const replay = yield* Stream.runHead(service.updates);
               assert.isTrue(Option.isSome(replay));
               if (Option.isSome(replay)) {
