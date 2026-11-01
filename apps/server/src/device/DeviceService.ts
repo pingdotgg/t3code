@@ -243,7 +243,7 @@ export interface AgentDeviceLaunchers {
   /** Removes every launcher whose session is not in `live`. */
   readonly prune: (live: ReadonlySet<string>) => Effect.Effect<void>;
   /** Ends the agent-device session behind a launcher, which releases its claim on the device. */
-  readonly release?: (launcher: string) => Effect.Effect<void>;
+  readonly release?: (launcher: string) => Effect.Effect<void, DeviceError>;
 }
 
 export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* (
@@ -316,61 +316,86 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
   // Binding and pruning read sessions under the lock, so neither acts on a session list the other has outdated.
   // A retired session's agent-device session ends before its launcher goes, and a reopen of the same
   // device waits for the lock, so the close cannot end the reopened session.
-  const pruneLaunchers = launcherLock.withPermit(
-    Effect.gen(function* () {
-      if (!launchers) return;
-      const { state } = yield* SynchronizedRef.get(stateRef);
-      const live = new Set(
-        yield* Effect.forEach(state.sessions, (session) =>
-          agentDeviceSession(session.threadId, session.hostId, session.deviceId),
-        ).pipe(Effect.provideService(Crypto.Crypto, crypto)),
-      );
-      const retired = [...boundLaunchers].filter(([session]) => !live.has(session));
-      for (const [session] of retired) boundLaunchers.delete(session);
-      const ending = retired.filter(([session]) => !hostSessionLaunchers.delete(session));
-      const release = launchers.release;
-      if (release)
-        yield* Effect.forEach(ending, ([, launcher]) => release(launcher), {
-          concurrency: "unbounded",
-          discard: true,
-        });
-      yield* launchers.prune(live);
-    }),
-  );
-
-  const releaseLaunchers = (sessions: ReadonlyArray<DeviceSession>) =>
-    launcherLock.withPermit(
-      Effect.forEach(
-        sessions,
-        (session) =>
-          Effect.gen(function* () {
-            const name = yield* agentDeviceSession(
-              session.threadId,
-              session.hostId,
-              session.deviceId,
-            ).pipe(Effect.provideService(Crypto.Crypto, crypto));
-            const launcher = boundLaunchers.get(name);
-            if (!launcher || hostSessionLaunchers.has(name) || !launchers?.release) return;
-            yield* launchers.release(launcher);
-            boundLaunchers.delete(name);
-          }),
-        { discard: true },
-      ),
+  const pruneLaunchers = Effect.gen(function* () {
+    if (!launchers) return;
+    const { state } = yield* SynchronizedRef.get(stateRef);
+    const live = new Set(
+      yield* Effect.forEach(state.sessions, (session) =>
+        agentDeviceSession(session.threadId, session.hostId, session.deviceId),
+      ).pipe(Effect.provideService(Crypto.Crypto, crypto)),
     );
+    const retired = [...boundLaunchers].filter(([session]) => !live.has(session));
+    yield* Effect.forEach(
+      retired,
+      ([session, launcher]) =>
+        Effect.gen(function* () {
+          if (!hostSessionLaunchers.has(session))
+            yield* launchers.release?.(launcher) ?? Effect.void;
+          boundLaunchers.delete(session);
+          hostSessionLaunchers.delete(session);
+        }).pipe(
+          Effect.catch((error) =>
+            Effect.logWarning("Could not end the agent-device session", {
+              session,
+              error: error._tag,
+            }),
+          ),
+        ),
+      {
+        concurrency: "unbounded",
+        discard: true,
+      },
+    );
+    yield* launchers.prune(new Set([...live, ...boundLaunchers.keys()]));
+  });
+
+  const releaseSessions = Effect.fn("DeviceService.releaseSessions")(function* (
+    sessions: ReadonlyArray<DeviceSession>,
+  ) {
+    for (const session of sessions) {
+      const name = yield* agentDeviceSession(
+        session.threadId,
+        session.hostId,
+        session.deviceId,
+      ).pipe(Effect.provideService(Crypto.Crypto, crypto));
+      const launcher = boundLaunchers.get(name);
+      if (launcher === undefined) continue;
+      if (!hostSessionLaunchers.has(name)) yield* launchers?.release?.(launcher) ?? Effect.void;
+    }
+  });
 
   // Uninterruptible so a committed retirement always prunes, even if its caller is cancelled.
-  const publish = (update: (state: DeviceServiceState) => DeviceServiceState) =>
-    SynchronizedRef.modifyEffect(stateRef, ({ state }) => {
-      const next = { ...update(state), revision: state.revision + 1 };
-      const retired = state.sessions.some((session) => !next.sessions.includes(session));
-      return PubSub.publish(statePubSub, next).pipe(
-        Effect.as([{ next, retired }, { state: next }] as const),
-      );
-    }).pipe(
-      Effect.tap(({ retired }) => (retired ? pruneLaunchers : Effect.void)),
-      Effect.map(({ next }) => next),
-      Effect.uninterruptible,
-    );
+  const publish = <E = never>(
+    update: (state: DeviceServiceState) => DeviceServiceState,
+    beforeRetire?: (sessions: ReadonlyArray<DeviceSession>) => Effect.Effect<void, E>,
+  ) =>
+    launcherLock
+      .withPermit(
+        SynchronizedRef.modifyEffect(stateRef, ({ state }) =>
+          Effect.gen(function* () {
+            const next = { ...update(state), revision: state.revision + 1 };
+            const retired = state.sessions.filter((session) => !next.sessions.includes(session));
+            if (beforeRetire) {
+              yield* beforeRetire(retired);
+              for (const session of retired) {
+                const name = yield* agentDeviceSession(
+                  session.threadId,
+                  session.hostId,
+                  session.deviceId,
+                ).pipe(Effect.provideService(Crypto.Crypto, crypto));
+                boundLaunchers.delete(name);
+                hostSessionLaunchers.delete(name);
+              }
+            }
+            yield* PubSub.publish(statePubSub, next);
+            return [{ next, retired: retired.length > 0 }, { state: next }] as const;
+          }),
+        ).pipe(
+          Effect.tap(({ retired }) => (retired ? pruneLaunchers : Effect.void)),
+          Effect.map(({ next }) => next),
+        ),
+      )
+      .pipe(Effect.uninterruptible);
 
   const resolveHost = Effect.fn("DeviceService.resolveHost")(function* (
     hostId: DeviceHostId | undefined,
@@ -844,21 +869,10 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
       ),
     );
 
-  const shutdownDevice = Effect.fn("DeviceService.shutdownDevice")(function* (
-    ready: DeviceReadiness,
-    deviceId: DeviceId,
-    platform: DevicePlatform,
-  ) {
-    yield* ready.devices.shutdown({ id: deviceId, platform });
-    yield* publish((state) => ({
-      ...state,
-      devices: state.devices.map((device) =>
-        device.hostId === ready.hostId && device.id === deviceId
-          ? { ...device, booted: false }
-          : device,
-      ),
-    }));
-  });
+  const shutdownDevice = Effect.fn("DeviceService.shutdownDevice")(
+    (ready: DeviceReadiness, deviceId: DeviceId, platform: DevicePlatform) =>
+      ready.devices.shutdown({ id: deviceId, platform }),
+  );
 
   const close: DeviceService["Service"]["close"] = Effect.fn("DeviceService.close")(
     function* (input) {
@@ -899,22 +913,37 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
               yield* ready.releaseAgentSession(name, session.deviceId);
             }
           }
-          if (input.shutdown) yield* releaseLaunchers(ending);
-          if (input.shutdown) {
-            for (const session of closing) {
-              const ready = yield* currentReadiness(session.hostId);
-              if (!ready)
-                return yield* new DeviceHostUnavailableError({
-                  hostId: session.hostId,
-                  reason: "Device host is not running. Reconnect before retrying close.",
-                });
-              yield* shutdownDevice(ready, session.deviceId, session.platform);
-            }
-          }
-          yield* publish((current) => ({
-            ...current,
-            sessions: current.sessions.filter((session) => !ending.includes(session)),
-          }));
+          yield* publish(
+            (current) => ({
+              ...current,
+              sessions: current.sessions.filter((session) => !ending.includes(session)),
+              devices: input.shutdown
+                ? current.devices.map((device) =>
+                    closing.some(
+                      (session) =>
+                        session.hostId === device.hostId && session.deviceId === device.id,
+                    )
+                      ? { ...device, booted: false }
+                      : device,
+                  )
+                : current.devices,
+            }),
+            (retired) =>
+              Effect.gen(function* () {
+                yield* releaseSessions(retired);
+                if (input.shutdown) {
+                  for (const session of closing) {
+                    const ready = yield* currentReadiness(session.hostId);
+                    if (!ready)
+                      return yield* new DeviceHostUnavailableError({
+                        hostId: session.hostId,
+                        reason: "Device host is not running. Reconnect before retrying close.",
+                      });
+                    yield* shutdownDevice(ready, session.deviceId, session.platform);
+                  }
+                }
+              }),
+          );
           return closing;
         }),
       );
@@ -935,14 +964,26 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
   const shutdown: DeviceService["Service"]["shutdown"] = Effect.fn("DeviceService.shutdown")(
     function* (input) {
       const host = yield* resolveHost(input.hostId);
-      yield* publish((current) => ({
-        ...current,
-        sessions: current.sessions.filter(
-          (session) => !(session.hostId === host.id && session.deviceId === input.deviceId),
-        ),
-      }));
       const ready = yield* readiness(host.id);
-      yield* shutdownDevice(ready, input.deviceId, input.platform);
+      yield* lifecycleLock.withPermit(
+        publish(
+          (current) => ({
+            ...current,
+            sessions: current.sessions.filter(
+              (session) => !(session.hostId === host.id && session.deviceId === input.deviceId),
+            ),
+            devices: current.devices.map((device) =>
+              device.hostId === host.id && device.id === input.deviceId
+                ? { ...device, booted: false }
+                : device,
+            ),
+          }),
+          (retired) =>
+            releaseSessions(retired).pipe(
+              Effect.andThen(shutdownDevice(ready, input.deviceId, input.platform)),
+            ),
+        ),
+      );
       yield* refreshAfterShutdown(ready);
     },
   );
@@ -1050,7 +1091,7 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
   });
 
   // Sessions live in memory, so this removes every launcher a previous run left behind.
-  yield* pruneLaunchers;
+  yield* launcherLock.withPermit(pruneLaunchers);
 
   return {
     ...DeviceService.of({
@@ -1307,8 +1348,6 @@ export const make = Effect.gen(function* () {
         Effect.provideService(FileSystem.FileSystem, fs),
         Effect.provideService(Path.Path, path),
       ),
-    // Best effort: an unreachable host fails fast in the launcher's connection check, and the
-    // launcher goes either way. Only a failed or timed-out close can leave the device claimed.
     release: (launcher) =>
       resolveNodeExecutable("Device automation").pipe(
         Effect.flatMap((node) =>
@@ -1322,20 +1361,23 @@ export const make = Effect.gen(function* () {
         ),
         Effect.provideService(FileSystem.FileSystem, fs),
         Effect.provideService(Path.Path, path),
+        Effect.mapError(
+          (cause) =>
+            new DeviceOperationError({ operation: "close", reason: "command_failed", cause }),
+        ),
         Effect.flatMap((result) => {
           const outcome = agentDeviceCloseOutcome(result);
           return outcome === "failed" || outcome === "timed-out"
-            ? Effect.logWarning("Could not end the agent-device session", {
-                launcher,
-                outcome,
-                stderr: result.stderr.slice(-500),
-              })
+            ? Effect.fail(
+                new DeviceOperationError({
+                  operation: "close",
+                  reason: "command_failed",
+                  ...(result.code === null ? {} : { exitCode: result.code }),
+                  cause: result,
+                }),
+              )
             : Effect.void;
         }),
-        Effect.tapError((cause) =>
-          Effect.logWarning("Could not end the agent-device session", { launcher, cause }),
-        ),
-        Effect.ignore,
       ),
   };
   const probeContext =
