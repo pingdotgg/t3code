@@ -375,6 +375,7 @@ export interface ChatComposerProps {
   canInterrupt: boolean;
   isSendBusy: boolean;
   canResume: boolean;
+  resumeBlocked: boolean;
   isRevertingCheckpoint?: boolean;
   sendDisabledReason: string | null;
   isPreparingWorktree: boolean;
@@ -527,6 +528,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     canInterrupt,
     isSendBusy,
     canResume,
+    resumeBlocked,
     isRevertingCheckpoint = false,
     sendDisabledReason: externalSendDisabledReason,
     isPreparingWorktree,
@@ -3377,13 +3379,15 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                           ? isChoiceOnlyPendingQuestion
                             ? "Choose an option above"
                             : "Type your own answer, or leave this blank to use the selected option"
-                          : showPlanFollowUpPrompt && activeProposedPlan
-                            ? "Add feedback to refine the plan, or leave this blank to implement it"
-                            : projectSelectionRequired
-                              ? "Choose a project above to start a thread"
-                              : showProviderUnavailable
-                                ? "Enable a provider in Settings to send a message"
-                                : DEFAULT_COMPOSER_PLACEHOLDER
+                          : resumeBlocked
+                            ? "A pending request blocks Resume. Send a message instead."
+                            : showPlanFollowUpPrompt && activeProposedPlan
+                              ? "Add feedback to refine the plan, or leave this blank to implement it"
+                              : projectSelectionRequired
+                                ? "Choose a project above to start a thread"
+                                : showProviderUnavailable
+                                  ? "Enable a provider in Settings to send a message"
+                                  : DEFAULT_COMPOSER_PLACEHOLDER
                     }
                     disabled={
                       projectSelectionRequired ||

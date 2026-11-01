@@ -1110,6 +1110,7 @@ function ThreadRouteContent(
           serverConfig={serverConfig}
           onStopThread={awaitingBootstrapTurn ? handleCancelWorktreeSetup : handleStopThread}
           onResumeQueue={composer.canResume ? handleResumeQueue : null}
+          resumeBlocked={composer.resumeBlocked}
           onSendMessage={composer.onSendMessage}
           onReconnectEnvironment={handleReconnectEnvironment}
           canSwitchThreadProvider={composer.canSwitchThreadProvider}
