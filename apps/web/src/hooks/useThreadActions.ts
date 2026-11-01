@@ -288,6 +288,9 @@ export function useThreadActions() {
   const setThreadAutoSettleMutation = useOrchestrationCommand(threadEnvironment.setAutoSettle, {
     reportFailure: false,
   });
+  const setThreadMutedMutation = useOrchestrationCommand(threadEnvironment.setMuted, {
+    reportFailure: false,
+  });
   const reorderPinnedThreadMutation = useOrchestrationCommand(threadEnvironment.reorderPin, {
     reportFailure: false,
   });
@@ -954,6 +957,11 @@ export function useThreadActions() {
     reorderActiveThread,
     markThreadUnread,
     setThreadAutoSettle,
+    setThreadMuted: (target: ScopedThreadRef, muted: boolean) =>
+      setThreadMutedMutation({
+        environmentId: target.environmentId,
+        input: { threadId: target.threadId, muted },
+      }),
     turnThreadIntoProject: (target: ScopedThreadRef) =>
       createProjectFromThread({
         environmentId: target.environmentId,

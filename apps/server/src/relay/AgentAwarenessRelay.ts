@@ -97,6 +97,8 @@ function shouldPublishAgentAwarenessEvent(
     case "thread.settled":
     case "thread.model-selection-updated":
     case "thread.provider-switched":
+    // Muting withdraws the thread from push; unmuting restores it.
+    case "thread.mute-set":
     case "run.created":
     case "run.updated":
     case "runtime-request.updated":
@@ -341,7 +343,7 @@ export function resolveAgentAwarenessRelayActiveThreadIds(input: {
   return input.threads
     .filter((thread) => {
       const project = projectById.get(thread.projectId);
-      if (!project) {
+      if (!project || thread.mutedAt != null) {
         return false;
       }
       const state = projectThreadAwarenessV2({
@@ -410,6 +412,10 @@ export const make = Effect.gen(function* () {
 
   // Confirm through the same worker so tombstones cannot race live updates; recovery clears the deadline.
   const publishConfirmDeadlines = new Map<ThreadId, number>();
+  // When each thread was last unmuted, from the event itself so a batched
+  // publish cannot move the cutoff. Work that finished while a thread was muted
+  // must not alert once it is unmuted.
+  const unmutedAtByThread = new Map<ThreadId, number>();
   // Threads whose confirmation holds a completion, so a thread that settles during the hold still alerts.
   const heldCompletions = new Set<ThreadId>();
   let schedulePublishConfirm: (threadId: ThreadId) => Effect.Effect<void> = () => Effect.void;
@@ -521,26 +527,42 @@ export const make = Effect.gen(function* () {
       // Subagents and side chats have no relay rows to clear; per-event tombstones would needlessly redeliver user aggregates.
       return;
     }
+    // A muted thread publishes like an archived one, so the relay clears it
+    // and no device is alerted.
     const thread =
-      threadShell === null || threadShell.archivedAt !== null
+      threadShell === null || threadShell.archivedAt !== null || threadShell.mutedAt != null
         ? Option.none<OrchestrationV2ThreadShell>()
         : Option.some(threadShell);
     const project = Option.isSome(thread)
       ? yield* projects.getById(thread.value.projectId)
       : Option.none<Project>();
-    const snapshot = resolveAgentAwarenessRelayPublishSnapshot({
+    let snapshot = resolveAgentAwarenessRelayPublishSnapshot({
       environmentId,
       thread,
       project,
     });
-    const publishIdentity = agentAwarenessPublishIdentity(snapshot.state);
+    if (snapshot.state?.phase === "running") unmutedAtByThread.delete(threadId);
     const publishedStateByThread = yield* Ref.get(publishedStateByThreadRef);
-    if (
-      (snapshot.state?.phase === "completed" || snapshot.state?.phase === "failed") &&
-      !publishedStateByThread.has(threadId)
-    ) {
-      if (Option.isNone(thread) || !terminalWorkSinceStart(thread.value, startedAt)) return;
+    if (snapshot.state?.phase === "completed" || snapshot.state?.phase === "failed") {
+      // Startup has no publish history, and unmuting follows a withdrawal. Only
+      // work that finished after that point may produce a terminal alert.
+      const quietBefore =
+        unmutedAtByThread.get(threadId) ??
+        (publishedStateByThread.has(threadId) ? undefined : startedAt);
+      if (
+        quietBefore !== undefined &&
+        (Option.isNone(thread) || !terminalWorkSinceStart(thread.value, quietBefore))
+      ) {
+        if (
+          !unmutedAtByThread.has(threadId) ||
+          !publishedStateByThread.has(threadId) ||
+          publishedStateByThread.get(threadId) === agentAwarenessPublishIdentity(null)
+        )
+          return;
+        snapshot = { ...snapshot, state: null };
+      }
     }
+    const publishIdentity = agentAwarenessPublishIdentity(snapshot.state);
     if (publishedStateByThread.get(threadId) === publishIdentity) {
       // Clear moot deadlines so later transient nulls cannot skip their deferral window.
       publishConfirmDeadlines.delete(threadId);
@@ -599,7 +621,12 @@ export const make = Effect.gen(function* () {
               project,
             })
           : null;
-      if (unsettled?.state?.phase === "completed") {
+      const unmutedAt = unmutedAtByThread.get(threadId);
+      if (
+        unsettled?.state?.phase === "completed" &&
+        (unmutedAt === undefined ||
+          (Option.isSome(thread) && terminalWorkSinceStart(thread.value, unmutedAt)))
+      ) {
         const completion = unsettled.state;
         yield* publishState({
           projectId: unsettled.projectId,
@@ -833,6 +860,9 @@ export const make = Effect.gen(function* () {
       yield* forkParked(
         Stream.runForEach(threads.streamDomainEvents, (event) => {
           const threadId = eventThreadId(event);
+          if (event.type === "thread.mute-set" && event.payload.mutedAt == null) {
+            unmutedAtByThread.set(threadId, DateTime.toEpochMillis(event.occurredAt));
+          }
           if (!shouldPublishAgentAwarenessEvent(event)) {
             return Effect.void;
           }

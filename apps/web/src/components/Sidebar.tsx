@@ -936,6 +936,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     unpinThread,
     confirmAndUnpinThread,
     setThreadAutoSettle,
+    setThreadMuted,
     turnThreadIntoProject,
     reorderPinnedThread,
     reorderActiveThread,
@@ -2587,6 +2588,8 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
         const supportsAutoSettleOptOut =
           serverConfigs.get(thread.environmentId)?.environment.capabilities
             .threadAutoSettleOptOut === true;
+        const supportsMute =
+          serverConfigs.get(thread.environmentId)?.environment.capabilities.threadMute === true;
         const isRegeneratingTitle = thread.titleRegeneration != null;
         const isSettled = settledThreadKeysRef.current.has(threadKey);
         const isSnoozed = snoozedThreadKeysRef.current.has(threadKey);
@@ -2623,6 +2626,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
               isPinned,
               isSettled,
               autoSettleEnabled: thread.autoSettleDisabledAt == null,
+              isMuted: thread.mutedAt != null,
               isSnoozed,
               canSnoozeNow: canSnooze(thread, { now: new Date().toISOString() }),
               isRegeneratingTitle,
@@ -2634,6 +2638,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
               supports: {
                 settlement: configLoaded,
                 autoSettleOptOut: supportsAutoSettleOptOut,
+                mute: supportsMute,
                 snooze: configLoaded,
                 pinning: configLoaded,
                 titleRegeneration: configLoaded,
@@ -2743,6 +2748,21 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                 stackedThreadToast({
                   type: "error",
                   title: "Failed to update auto-settle",
+                  description: error instanceof Error ? error.message : "An error occurred.",
+                }),
+              );
+            }
+            return;
+          }
+          case "mute":
+          case "unmute": {
+            const result = await setThreadMuted(threadRef, clicked.value === "mute");
+            if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
+              const error = squashAtomCommandFailure(result);
+              toastManager.add(
+                stackedThreadToast({
+                  type: "error",
+                  title: "Failed to update notifications",
                   description: error instanceof Error ? error.message : "An error occurred.",
                 }),
               );

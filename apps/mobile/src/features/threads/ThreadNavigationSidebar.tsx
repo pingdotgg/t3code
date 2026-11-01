@@ -173,6 +173,7 @@ function ThreadNavigationSidebarPane(
     pinThread,
     unpinThread,
     setThreadAutoSettle,
+    setThreadMuted,
     moveThread,
     renameThread,
     regenerateThreadTitle,
@@ -294,6 +295,7 @@ function ThreadNavigationSidebarPane(
     snoozePresetsByEnvironmentId,
     pinningEnvironmentIds,
     autoSettleOptOutEnvironmentIds,
+    muteEnvironmentIds,
     pinReorderEnvironmentIds,
     activeReorderEnvironmentIds,
     titleRegenerationEnvironmentIds,
@@ -602,6 +604,8 @@ function ThreadNavigationSidebarPane(
             snoozePresets={snoozePresetsByEnvironmentId.get(thread.environmentId)}
             pinningSupported={pinningEnvironmentIds.has(thread.environmentId)}
             autoSettleOptOutSupported={autoSettleOptOutEnvironmentIds.has(thread.environmentId)}
+            muteSupported={muteEnvironmentIds.has(thread.environmentId)}
+            onSetThreadMuted={setThreadMuted}
             reorderSupported={
               item.item.pinned
                 ? pinReorderEnvironmentIds.has(thread.environmentId)

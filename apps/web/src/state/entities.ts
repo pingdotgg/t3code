@@ -347,6 +347,14 @@ export function readEnvironmentSupportsAutoSettleOptOut(environmentId: Environme
   );
 }
 
+/** Whether the environment's server understands thread.mute.set. */
+export function readEnvironmentSupportsMute(environmentId: EnvironmentId): boolean {
+  return (
+    appAtomRegistry.get(environmentServerConfigsAtom).get(environmentId)?.environment.capabilities
+      .threadMute === true
+  );
+}
+
 export function readEnvironmentThreadRefs(
   environmentId: EnvironmentId,
 ): ReadonlyArray<ScopedThreadRef> {

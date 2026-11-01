@@ -61,6 +61,7 @@ function makeSourceThread(): OrchestrationV2AppThread {
     lastVisitedAt: null,
     snoozedUntil,
     snoozedAt,
+    mutedAt: snoozedAt,
     deletedAt: null,
   };
 }
@@ -134,7 +135,7 @@ const planFork = (
     });
   }).pipe(Effect.provide(ThreadForkService.layer));
 
-it.effect("keeps a fork awake when its source thread is snoozed", () =>
+it.effect("keeps a fork awake when its source thread is snoozed and muted", () =>
   Effect.gen(function* () {
     const sourceThread = makeSourceThread();
     const sourceRun = makeSourceRun("completed");
@@ -142,6 +143,7 @@ it.effect("keeps a fork awake when its source thread is snoozed", () =>
 
     assert.isNull(result.targetThread.snoozedUntil);
     assert.isNull(result.targetThread.snoozedAt);
+    assert.isNull(result.targetThread.mutedAt);
     assert.equal(result.targetThread.projectId, sourceThread.projectId);
     assert.equal(result.targetThread.providerInstanceId, sourceThread.providerInstanceId);
     assert.deepEqual(result.targetThread.modelSelection, sourceThread.modelSelection);

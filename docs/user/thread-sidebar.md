@@ -323,3 +323,11 @@ several selected threads together. Choose **Wake thread** to bring a thread back
 A snoozed thread keeps working and stays hidden until its wake time, even while
 its agent wakes itself for background work. It comes back early only when it needs
 an approval or answer from you, when a run fails, or when you send it a message.
+
+## Mute a thread
+
+Choose **Mute notifications** from a thread's menu to stop its alerts on every device:
+desktop and browser notifications, sounds, in-app toasts, and mobile push. Use it for
+threads you check on your own schedule, such as a scheduled review bot. The thread still
+shows its status in the sidebar. Choose **Unmute notifications** to turn alerts back on.
+You can also ask an agent to mute its own thread.
