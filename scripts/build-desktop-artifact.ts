@@ -3522,6 +3522,44 @@ export const validateWindowsPackagedPayload = Effect.fn(
   return { packagedAppDir, fileCount, unpackedFiles } as const;
 });
 
+export class LinuxPackagedAppMissingError extends Schema.TaggedError<LinuxPackagedAppMissingError>()(
+  "LinuxPackagedAppMissingError",
+  { asarPath: Schema.String },
+) {
+  override get message(): string {
+    return `Expected electron-builder to leave the packaged app at ${this.asarPath}.`;
+  }
+}
+
+export const validateLinuxPackagedPayload = Effect.fn(
+  "desktopArtifact.validateLinuxPackagedPayload",
+)(function* (input: {
+  readonly stageDistDir: string;
+  readonly targetArch: typeof BuildArch.Type;
+  readonly verbose?: boolean;
+}) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  // electron-builder leaves the default arch (x64) out of the unpacked directory name.
+  const unpackedDir =
+    input.targetArch === "x64" ? "linux-unpacked" : `linux-${input.targetArch}-unpacked`;
+  const asarPath = path.join(input.stageDistDir, unpackedDir, "resources/app.asar");
+  if (!(yield* fs.exists(asarPath).pipe(Effect.orElseSucceed(() => false)))) {
+    return yield* new LinuxPackagedAppMissingError({ asarPath });
+  }
+  // The probe runs the host's Node against the target's natives.
+  const hostPlatform = yield* HostProcess.Platform;
+  const hostArchitecture = yield* HostProcess.Architecture;
+  if (hostPlatform !== "linux" || hostArchitecture !== input.targetArch) {
+    yield* Effect.log(
+      `[desktop-artifact] Skipped the bundle self-check on a ${hostPlatform}-${hostArchitecture} host.`,
+    );
+    return;
+  }
+  yield* verifyPackagedBundleIsSelfContained({ asarPath, verbose: input.verbose ?? false });
+  yield* Effect.log("[desktop-artifact] Validated Linux payload.");
+});
+
 export class MacPackagedAppMissingError extends Schema.TaggedError<MacPackagedAppMissingError>()(
   "MacPackagedAppMissingError",
   { stageDistDir: Schema.String },
@@ -4050,6 +4088,13 @@ const buildDesktopArtifactUnlocked = Effect.fn("buildDesktopArtifactUnlocked")(f
         platform: options.platform,
         runtimeArchivePath: options.wslRuntime,
       }),
+      verbose: options.verbose,
+    });
+  }
+  if (options.platform === "linux") {
+    yield* validateLinuxPackagedPayload({
+      stageDistDir,
+      targetArch: options.arch,
       verbose: options.verbose,
     });
   }
