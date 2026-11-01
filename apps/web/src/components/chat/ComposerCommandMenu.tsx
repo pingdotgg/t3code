@@ -56,6 +56,7 @@ export type ComposerCommandItem =
       type: "provider-slash-command";
       provider: ProviderDriverKind;
       command: ServerProviderSlashCommand;
+      replacementText?: string;
       label: string;
       description: string;
     }

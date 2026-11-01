@@ -12,6 +12,46 @@ type SlashSearchItem = Extract<
   { type: "slash-command" | "provider-slash-command" | "skill" }
 >;
 
+export function expandGoalSubcommands(
+  items: ReadonlyArray<SlashSearchItem>,
+  query: string,
+  objective: string | null,
+): SlashSearchItem[] {
+  if (!/^goal(?:\s|$)/i.test(query)) return [...items];
+  return items.flatMap((item): SlashSearchItem[] => {
+    if (
+      item.type !== "provider-slash-command" ||
+      item.command.name !== "goal" ||
+      (item.provider !== "codex" && item.provider !== "claudeAgent")
+    )
+      return [item];
+    const commands = [
+      ...(objective === null ? [] : [{ name: "edit", description: "Edit the current goal" }]),
+      ...(item.provider === "codex"
+        ? [
+            { name: "pause", description: "Pause the current goal" },
+            { name: "resume", description: "Resume the current goal" },
+          ]
+        : []),
+      { name: "clear", description: "Remove the current goal" },
+    ];
+    const prefix = query.slice("goal".length).trim().toLowerCase();
+    return [
+      item,
+      ...commands
+        .filter(({ name }) => name.startsWith(prefix))
+        .map(({ name, description }) => ({
+          ...item,
+          id: `${item.id}:${name}`,
+          command: { name: `goal ${name}`, description },
+          label: `/goal ${name}`,
+          description,
+          ...(name === "edit" ? { replacementText: `/goal ${objective}` } : {}),
+        })),
+    ];
+  });
+}
+
 /** Provider commands, `/side` and `/btw` work only at the message start. */
 export function slashCommandItemsForPromptPosition(
   items: ReadonlyArray<SlashSearchItem>,
@@ -76,7 +116,10 @@ export function searchSlashCommandItems(
   items: ReadonlyArray<SlashSearchItem>,
   query: string,
 ): SlashSearchItem[] {
-  const normalizedQuery = normalizeSearchQuery(query, { trimLeadingPattern: /^\/+/ });
+  const normalizedQuery = normalizeSearchQuery(query, { trimLeadingPattern: /^\/+/ }).replace(
+    /^goal[\t ]+/,
+    "goal ",
+  );
   if (!normalizedQuery) {
     return [...items];
   }
