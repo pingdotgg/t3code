@@ -6,7 +6,50 @@ import * as NodeHttp from "node:http";
 import * as NodeNet from "node:net";
 
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
+import * as Path from "effect/Path";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import { Argument, Command } from "effect/cli";
+
+import {
+  bootServiceBaseDirOf,
+  BOOT_SERVICE_PLIST_FILE,
+  BOOT_SERVICE_UNIT_FILE,
+} from "../cloud/bootService.ts";
+import { resolveBaseDir } from "../os-jank.ts";
+
+/** Resolve once at launch; pairing must use that same home even in a non-login shell. */
+export const resolveSshServerHome = Effect.gen(function* () {
+  const environment = yield* HostProcess.Environment;
+  if (environment.T3CODE_HOME?.trim()) return yield* resolveBaseDir(environment.T3CODE_HOME);
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const home = yield* HostProcess.HomeDirectory;
+  const platform = yield* HostProcess.Platform;
+  const serviceFile =
+    platform === "darwin"
+      ? path.join(home, "Library", "LaunchAgents", BOOT_SERVICE_PLIST_FILE)
+      : path.join(home, ".config", "systemd", "user", BOOT_SERVICE_UNIT_FILE);
+  const service = yield* fs.readFileString(serviceFile).pipe(
+    Effect.catchIf(
+      (error) => error.reason._tag === "NotFound",
+      () => Effect.succeed(""),
+    ),
+  );
+  return yield* resolveBaseDir(bootServiceBaseDirOf(service));
+});
+
+const homeDir = Command.make("home-dir").pipe(
+  Command.withHandler(() =>
+    resolveSshServerHome.pipe(
+      Effect.tap((home) =>
+        Effect.sync(() => {
+          process.stdout.write(home);
+        }),
+      ),
+    ),
+  ),
+);
 
 const canBind = (port: number) =>
   new Promise<boolean>((resolve) => {
@@ -126,5 +169,5 @@ const runtimePort = Command.make("runtime-port", {
 
 export const sshHelperCommand = Command.make("__ssh-helper").pipe(
   Command.unlisted,
-  Command.withSubcommands([pickPort, waitReady, runtimePort]),
+  Command.withSubcommands([pickPort, waitReady, runtimePort, homeDir]),
 );

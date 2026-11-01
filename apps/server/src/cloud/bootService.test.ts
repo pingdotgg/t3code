@@ -1,5 +1,5 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { expect, it } from "@effect/vitest";
+import { assert, expect, it } from "@effect/vitest";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as ConfigProvider from "effect/ConfigProvider";
 import * as Duration from "effect/Duration";
@@ -12,6 +12,7 @@ import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
 import * as ProcessRunner from "../processRunner.ts";
 import * as BootService from "./bootService.ts";
+import { resolveSshServerHome } from "../cli/sshHelper.ts";
 import { pinnedRuntimePaths } from "./pinnedRuntime.ts";
 import {
   parseServiceState,
@@ -907,3 +908,44 @@ it.layer(NodeServices.layer)("boot service install", (it) => {
     }),
   );
 });
+
+it.effect.each(["linux", "darwin"] as const)(
+  "resolves the %s service home and gives an explicit environment home precedence",
+  (platform) =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const directory = yield* fs.makeTempDirectoryScoped({ prefix: "t3-ssh-helper-test-" });
+      const serviceHome = path.join(directory, 'T3 "Data" & 100%');
+      const servicePath =
+        platform === "darwin"
+          ? path.join(directory, "Library/LaunchAgents/com.t3tools.t3code.service.plist")
+          : path.join(directory, ".config/systemd/user/t3code.service");
+      const resolve = (environment: NodeJS.ProcessEnv = {}) =>
+        resolveSshServerHome.pipe(
+          Effect.provideService(HostProcess.HomeDirectory, directory),
+          Effect.provideService(HostProcess.Platform, platform),
+          Effect.provideService(HostProcess.Environment, environment),
+        );
+      assert.strictEqual(yield* resolve(), path.join(directory, ".t3"));
+      const plan = {
+        baseDir: serviceHome,
+        program: ["/fake/t3"],
+        logPath: "/fake/log",
+        unitPath: servicePath,
+      };
+      yield* fs.makeDirectory(path.dirname(servicePath), { recursive: true });
+      yield* fs.writeFileString(
+        servicePath,
+        platform === "darwin"
+          ? BootService.renderBootServicePlist(plan, { homeDir: directory, environmentPath: "" })
+          : BootService.renderBootServiceUnit(plan),
+      );
+      assert.strictEqual(yield* resolve(), serviceHome);
+      assert.strictEqual(
+        yield* resolve({ T3CODE_HOME: "~/explicit home" }),
+        path.join(directory, "explicit home"),
+      );
+      assert.strictEqual(yield* resolve({ T3CODE_HOME: " " }), serviceHome);
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
