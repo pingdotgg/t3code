@@ -214,6 +214,7 @@ describe("releaseManagedTunnelOnShutdown", () => {
             get: unusedSecretStoreOperation(),
             getExisting: harness.getExisting ?? Effect.succeedSome(cliToken),
             hasCredential: unusedSecretStoreOperation(),
+            readStored: unusedSecretStoreOperation(),
             store: () => unusedSecretStoreOperation(),
             clear: unusedSecretStoreOperation(),
           }),

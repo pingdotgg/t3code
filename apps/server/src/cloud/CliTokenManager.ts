@@ -125,6 +125,9 @@ const PersistedToken = Schema.Struct({
   refreshToken: Schema.String,
   expiresAtEpochMs: Schema.Number,
   identity: Schema.optional(Schema.String),
+  // The relay links an environment to the token's subject, so this is what a
+  // stored link's cloud user id is compared against.
+  subject: Schema.optional(Schema.String),
 });
 export type PersistedToken = typeof PersistedToken.Type;
 
@@ -178,13 +181,15 @@ const OidcIdentityClaimsJson = Schema.fromJsonString(
 );
 const decodeOidcIdentityClaimsJson = Schema.decodeUnknownOption(OidcIdentityClaimsJson);
 
-function idTokenIdentity(idToken: string | undefined): string | null {
-  if (!idToken) return null;
-  const payload = idToken.split(".")[1];
-  if (!payload) return null;
+function decodeIdTokenClaims(idToken: string | undefined) {
+  const payload = idToken?.split(".")[1];
+  if (!payload) return Option.none();
   const decoded = Base64Url.decodeString(payload);
-  if (decoded._tag !== "Success") return null;
-  const claims = decodeOidcIdentityClaimsJson(decoded.success);
+  return decoded._tag === "Success" ? decodeOidcIdentityClaimsJson(decoded.success) : Option.none();
+}
+
+function idTokenIdentity(idToken: string | undefined): string | null {
+  const claims = decodeIdTokenClaims(idToken);
   if (Option.isNone(claims)) return null;
   for (const value of [claims.value.email, claims.value.preferred_username, claims.value.sub]) {
     if (typeof value === "string" && value.length > 0) return value;
@@ -280,6 +285,8 @@ export class CloudCliTokenManager extends Context.Service<
     >;
     readonly getExisting: Effect.Effect<Option.Option<PersistedToken>, CloudCliTokenManagerError>;
     readonly hasCredential: Effect.Effect<boolean, CloudCliTokenManagerError>;
+    /** Reads the stored credential without refreshing it, so it never touches the network. */
+    readonly readStored: Effect.Effect<Option.Option<PersistedToken>, CloudCliTokenManagerError>;
     readonly store: (token: PersistedToken) => Effect.Effect<void, CloudCliTokenManagerError>;
     readonly clear: Effect.Effect<void, CloudCliTokenManagerError>;
   }
@@ -300,12 +307,14 @@ const readTokenResponse = Effect.fn("cloud.cli_token.read_token_response")(funct
   const body = yield* HttpClientResponse.schemaBodyJson(OAuthTokenResponse)(response);
   const now = yield* Clock.currentTimeMillis;
   const identity = idTokenIdentity(body.id_token);
+  const subject = Option.getOrUndefined(decodeIdTokenClaims(body.id_token))?.sub;
   return {
     token: {
       accessToken: body.access_token,
       refreshToken: body.refresh_token ?? params.refresh_token ?? "",
       expiresAtEpochMs: now + body.expires_in * 1_000,
       ...(identity === null ? {} : { identity }),
+      ...(subject ? { subject } : {}),
     } satisfies PersistedToken,
     identity,
   };
@@ -500,9 +509,7 @@ export const make = Effect.gen(function* () {
       refresh_token: token.refreshToken,
       client_id: metadata.clientId,
     });
-    return refreshed.identity === undefined && token.identity !== undefined
-      ? { ...refreshed, identity: token.identity }
-      : refreshed;
+    return { ...token, ...refreshed };
   });
 
   const login = Effect.fn("cloud.cli_token.login")(function* () {
@@ -601,12 +608,10 @@ export const make = Effect.gen(function* () {
       Effect.provide(services),
     ),
   );
-  const hasCredential = semaphore.withPermits(1)(
-    read().pipe(
-      Effect.map(Option.isSome),
-      Effect.mapError((cause) => new CloudCliCredentialReadError({ cause })),
-    ),
+  const readStored = semaphore.withPermits(1)(
+    read().pipe(Effect.mapError((cause) => new CloudCliCredentialReadError({ cause }))),
   );
+  const hasCredential = readStored.pipe(Effect.map(Option.isSome));
   const get = semaphore.withPermits(1)(
     Effect.gen(function* () {
       const token = yield* getExistingNoLock().pipe(
@@ -635,7 +640,7 @@ export const make = Effect.gen(function* () {
     );
   });
 
-  return CloudCliTokenManager.of({ get, getExisting, hasCredential, store, clear });
+  return CloudCliTokenManager.of({ get, getExisting, hasCredential, readStored, store, clear });
 });
 
 export const layer = Layer.effect(CloudCliTokenManager, make);
