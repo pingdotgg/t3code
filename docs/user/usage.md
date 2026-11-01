@@ -87,6 +87,12 @@ the dialog.
 
 ## Track subscription limits
 
+On web and desktop, enable **Settings → Chat → Subscription usage bar** to keep the selected
+agent's remaining quotas visible while you work. It is off by default and saved for this app
+or browser. Focus or hover a quota for reset and update times, or choose **Usage** for details.
+Offline readings are marked as last known; providers that do not report limits show an
+unavailable message. Turn the setting off to hide the bar again.
+
 **Usage → Limits** pools every subscription account it can see per provider, so with several Codex
 or Claude accounts across your enabled environments and hubs you read one number per window rather than a
 list. Each window card shows how much of the pool is left and a bar with one segment per account,

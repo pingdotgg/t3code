@@ -502,6 +502,10 @@ export function useSettingsRestore(onRestored?: () => void) {
     ...(settings.followUpBehavior !== DEFAULT_UNIFIED_SETTINGS.followUpBehavior
       ? ["Follow-up behavior"]
       : []),
+    ...(settings.subscriptionUsageBarEnabled !==
+    DEFAULT_UNIFIED_SETTINGS.subscriptionUsageBarEnabled
+      ? ["Subscription usage bar"]
+      : []),
     ...(settings.contextWindowMeterEnabled !== DEFAULT_UNIFIED_SETTINGS.contextWindowMeterEnabled
       ? ["Context window indicator"]
       : []),
@@ -617,6 +621,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       sendShortcut: DEFAULT_UNIFIED_SETTINGS.sendShortcut,
       followUpBehavior: DEFAULT_UNIFIED_SETTINGS.followUpBehavior,
       contextWindowMeterEnabled: DEFAULT_UNIFIED_SETTINGS.contextWindowMeterEnabled,
+      subscriptionUsageBarEnabled: DEFAULT_UNIFIED_SETTINGS.subscriptionUsageBarEnabled,
       environmentIdentificationMode: DEFAULT_UNIFIED_SETTINGS.environmentIdentificationMode,
       glassOpacity: DEFAULT_UNIFIED_SETTINGS.glassOpacity,
       panelAnimationDurationMs: DEFAULT_UNIFIED_SETTINGS.panelAnimationDurationMs,
@@ -1158,6 +1163,36 @@ export function ChatSettingsPanel() {
             }
           />
         </AdvancedSettings>
+      </SettingsSection>
+
+      <SettingsSection id="subscription-usage" title="Subscription usage">
+        <SettingsRow
+          {...searchableSetting("subscription-usage-bar")}
+          description="Keep the selected agent's remaining subscription quotas visible below the chat. Applies to this app or browser."
+          resetAction={
+            settings.subscriptionUsageBarEnabled !==
+            DEFAULT_UNIFIED_SETTINGS.subscriptionUsageBarEnabled ? (
+              <SettingResetButton
+                label="subscription usage bar"
+                onClick={() =>
+                  updateSettings({
+                    subscriptionUsageBarEnabled:
+                      DEFAULT_UNIFIED_SETTINGS.subscriptionUsageBarEnabled,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <Switch
+              checked={settings.subscriptionUsageBarEnabled}
+              onCheckedChange={(checked) =>
+                updateSettings({ subscriptionUsageBarEnabled: Boolean(checked) })
+              }
+              aria-label="Subscription usage bar"
+            />
+          }
+        />
       </SettingsSection>
 
       <SettingsSection id="follow-ups" title="Follow-ups">
