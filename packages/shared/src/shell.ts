@@ -171,28 +171,37 @@ export function readPathFromLaunchctl(
   }
 }
 
-export function mergePathEntries(
+function mergePathLists(
   preferredPath: string | undefined,
   inheritedPath: string | undefined,
   platform: NodeJS.Platform,
+  sanitizeEntry: (entry: string) => string = (entry) => entry,
+  comparisonKey: (entry: string) => string = (entry) => entry,
 ): string | undefined {
-  const delimiter = platform === "win32" ? ";" : ":";
+  const delimiter = pathDelimiterForPlatform(platform);
   const merged: string[] = [];
   const seen = new Set<string>();
 
   for (const pathValue of [preferredPath, inheritedPath]) {
     if (!pathValue) continue;
-    for (const entry of pathValue.split(delimiter)) {
-      const trimmedEntry = entry.trim();
-      if (!trimmedEntry || seen.has(trimmedEntry)) {
-        continue;
-      }
-      seen.add(trimmedEntry);
-      merged.push(trimmedEntry);
+    for (const rawEntry of pathValue.split(delimiter)) {
+      const entry = sanitizeEntry(rawEntry.trim());
+      const key = comparisonKey(entry);
+      if (!entry || !key || seen.has(key)) continue;
+      seen.add(key);
+      merged.push(entry);
     }
   }
 
   return merged.length > 0 ? merged.join(delimiter) : undefined;
+}
+
+export function mergePathEntries(
+  preferredPath: string | undefined,
+  inheritedPath: string | undefined,
+  platform: NodeJS.Platform,
+): string | undefined {
+  return mergePathLists(preferredPath, inheritedPath, platform);
 }
 
 function envCaptureStart(name: string): string {
@@ -415,26 +424,13 @@ export function mergePathValues(
   inheritedPath: string | undefined,
   platform: NodeJS.Platform,
 ): string | undefined {
-  const delimiter = pathDelimiterForPlatform(platform);
-  const merged: string[] = [];
-  const seen = new Set<string>();
-
-  for (const rawValue of [preferredPath, inheritedPath]) {
-    if (!rawValue) continue;
-
-    for (const entry of rawValue.split(delimiter)) {
-      const sanitized = sanitizePathEntry(entry.trim(), platform);
-      if (sanitized.length === 0) continue;
-
-      const normalized = normalizePathEntryForComparison(sanitized, platform);
-      if (normalized.length === 0 || seen.has(normalized)) continue;
-
-      seen.add(normalized);
-      merged.push(sanitized);
-    }
-  }
-
-  return merged.length > 0 ? merged.join(delimiter) : undefined;
+  return mergePathLists(
+    preferredPath,
+    inheritedPath,
+    platform,
+    (entry) => sanitizePathEntry(entry, platform),
+    (entry) => normalizePathEntryForComparison(entry, platform),
+  );
 }
 
 function readEnvPath(env: NodeJS.ProcessEnv): string | undefined {
