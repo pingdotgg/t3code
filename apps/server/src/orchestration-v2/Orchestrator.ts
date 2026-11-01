@@ -5820,7 +5820,16 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       projection.thread.worktreePath === null
         ? latestRun
         : undefined;
-    const queueBehindRun = activeRun ?? worktreeMissingRun;
+    // A message queued while a usage limit blocks its provider waits for the
+    // continuation, like messages queued before the limit, instead of failing on it.
+    const usageLimitedRun =
+      activeRun === undefined &&
+      dispatchMode.type === "queue_after_active" &&
+      latestRun !== null &&
+      usageLimitHoldsQueue(projection, modelSelection.instanceId)
+        ? latestRun
+        : undefined;
+    const queueBehindRun = activeRun ?? worktreeMissingRun ?? usageLimitedRun;
     const pendingMergeBackTransfers = pendingMergeBackTransfersForThread(projection);
     const startsOrQueuesRun =
       dispatchMode.type === "defer_start" ||
