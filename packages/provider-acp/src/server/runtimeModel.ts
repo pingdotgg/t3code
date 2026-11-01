@@ -62,6 +62,7 @@ type AcpAgentTerminalUpdate = Extract<
 >;
 
 const MAX_ACP_TERMINAL_OUTPUT_BYTES = 16 * 1024 * 1024;
+const ACP_TERMINAL_OUTPUT_TRIM_BYTES = 1024 * 1024;
 const MAX_ACP_TERMINAL_FRAME_BYTES = MAX_ACP_TERMINAL_OUTPUT_BYTES;
 
 function isBase64DataCode(code: number): boolean {
@@ -128,12 +129,7 @@ function decodeTerminalOutputChunk(
     : { text, pendingOutputBytes: Uint8Array.from(bytes.subarray(completeEnd)) };
 }
 
-/**
- * Appends decoded text to terminal output and keeps the newest
- * `MAX_ACP_TERMINAL_OUTPUT_BYTES`, dropping whole leading characters. Only the
- * appended text and the dropped prefix are measured, so per-chunk cost does not
- * grow with the retained output.
- */
+// Drop an extra batch at UTF-8 boundaries so flattening the retained string is amortized.
 function appendTerminalOutput(
   output: string,
   outputBytes: number,
@@ -145,7 +141,7 @@ function appendTerminalOutput(
   if (excess <= 0) return { output: combined, outputBytes: combinedBytes };
   let start = 0;
   let dropped = 0;
-  while (dropped < excess) {
+  while (dropped < excess + ACP_TERMINAL_OUTPUT_TRIM_BYTES) {
     const codePoint = combined.codePointAt(start)!;
     dropped += codePoint < 0x80 ? 1 : codePoint < 0x800 ? 2 : codePoint < 0x10000 ? 3 : 4;
     start += codePoint < 0x10000 ? 1 : 2;
