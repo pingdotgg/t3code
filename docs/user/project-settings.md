@@ -197,8 +197,11 @@ are, and cleanup covers both the default folder and the custom one.
 
 On a Mac, [git-worktree-fast](https://github.com/mweinbach/worktree-fast) can clone a commit you
 prepared earlier instead of checking out every file. The desktop app includes it; when T3 Code runs
-another way, the setting shows the command to install it. Prepare commits with
-`git worktree-fast prepare` or `git worktree-fast auto enable` in the repository, then turn on
+another way, the setting shows the command to install it. Prepare a commit by running
+`git worktree-fast prepare [commit]` in the repository from a T3 Code terminal, which finds the
+bundled copy. From another terminal, run the bundled executable directly, for example
+`"/Applications/T3 Code (Beta).app/Contents/Resources/worktree-fast/git-worktree-fast" prepare`, or
+install your own copy. Then turn on
 **Settings → Worktrees → Use git-worktree-fast** under Advanced. The setting is per machine. Commits
 you have not prepared use Git's normal checkout, and so does a failed fast clone that left nothing
 behind. The worktrees it makes are ordinary Git worktrees.

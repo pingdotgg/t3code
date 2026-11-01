@@ -84,7 +84,11 @@ function WorktreeFastRow() {
       {...searchableSetting("worktree-fast")}
       description={
         missing.length === 0 ? (
-          "Clones commits you prepared with git-worktree-fast from its APFS cache instead of checking them out. Other commits, and any failure, use Git’s normal checkout."
+          <>
+            Clones commits you prepared with git-worktree-fast from its APFS cache instead of
+            checking them out. Prepare one by running <code>git worktree-fast prepare</code> in a T3
+            Code terminal. Other commits, and any failure, use Git’s normal checkout.
+          </>
         ) : (
           <span className="block space-y-1">
             <span className="block">
