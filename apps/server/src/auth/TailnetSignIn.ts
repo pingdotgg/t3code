@@ -248,17 +248,14 @@ export const make = Effect.gen(function* () {
       const switchSeen = yield* Ref.make(false);
       const keepGrant = Effect.gen(function* () {
         if (yield* Ref.getAndSet(grantKept, true)) return;
-        // Dropped until the read settles, so a read cut short or failed leaves no "no grants"
-        // to fall back on. A switch means the grant was another account's, so it comes back,
-        // and the scan fails below.
-        const before = yield* Ref.getAndUpdate(lastCleanScan, (last) =>
+        // An older "no grants" is dropped until a full scan, so a read cut short or failed
+        // leaves nothing to fall back on. A switch fails the scan below, and the older result
+        // stays dropped, as the grant may have been read on this account before it.
+        yield* Ref.update(lastCleanScan, (last) =>
           last?.account === account && !last.granted ? null : last,
         );
         const now = yield* host.freshStatus;
-        if (now.selfNodeId !== account) {
-          yield* Ref.set(lastCleanScan, before);
-          return yield* Ref.set(switchSeen, true);
-        }
+        if (now.selfNodeId !== account) return yield* Ref.set(switchSeen, true);
         const at = yield* Clock.currentTimeMillis;
         yield* Ref.set(lastCleanScan, { account, granted: true, at });
       }).pipe(
@@ -552,6 +549,13 @@ export const make = Effect.gen(function* () {
     const node = lookup.value;
     knownUsers.set(stableNodeId, node.loginName ?? node.userId);
     const decision = yield* decide(node, status);
+    // A grant the recheck sees turns the owner rule off here, as a grant sign-in does, until a
+    // full scan clears it.
+    if (decision._tag === "Allowed" && decision.via === "grant") {
+      yield* Ref.update(grantSignIns, (counts) =>
+        new Map(counts).set(status.selfNodeId, (counts.get(status.selfNodeId) ?? 0) + 1),
+      );
+    }
     if (decision._tag === "Refused") return { end: decision.reason, node } as const;
     if (yield* blocks.isBlocked({ stableNodeId })) return { end: "blocked", node } as const;
     return { allowed: new Set(decision.scopes), node } as const;

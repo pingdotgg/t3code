@@ -285,6 +285,13 @@ const exchange = (credential: string, key: ReturnType<typeof makeDpopKey>) =>
 
 const isRefusal = Schema.is(TailnetSignIn.TailnetSignInRefusedError);
 
+/** "signed in", the refusal reason, or the tag of any other failure. */
+const outcomeOf = <A, E extends { readonly _tag: string }, R>(effect: Effect.Effect<A, E, R>) =>
+  effect.pipe(
+    Effect.as<string>("signed in"),
+    Effect.catch((error) => Effect.succeed(isRefusal(error) ? error.reason : error._tag)),
+  );
+
 /** The refusal reason, or the tag of any other failure. */
 const refusalOf = <A, E extends { readonly _tag: string }, R>(effect: Effect.Effect<A, E, R>) =>
   Effect.flip(effect).pipe(
@@ -980,42 +987,52 @@ it.layer(NodeServices.layer)("TailnetSignIn", (it) => {
     it.effect.each([
       {
         name: "another device at the laptop's address",
+        // Its node ID differs, so its grant never reaches confirmation.
+        backHome: "signed in",
         atWork: {
           node: phoneNode({ StableID: "nLaptopAtWork", Addresses: [`${LAPTOP_ADDRESS}/32`] }),
           capMap: granted({ scopes: ["read"] }),
         },
       },
-      // Another profile on the same tailnet sees the same laptop, with its own grants.
-      { name: "the same laptop", atWork: { node: laptop, capMap: granted({ scopes: ["read"] }) } },
-    ])("a grant read from another account ($name) during a scan is not kept here", ({ atWork }) => {
-      const tailnet = withLaptop();
-      tailnet.status = hostStatus({ Peer: { ...peers, stranger: strangerPeer } });
-      tailnet.devices = { ...tailnet.devices, [STRANGER_ADDRESS]: { node: stranger } };
-      const home = tailnet.status;
-      return Effect.gen(function* () {
-        // A scan that finds no grants, from the refused stranger.
-        yield* refusalOf(signIn(makeDpopKey(), { remoteAddress: STRANGER_ADDRESS }));
-        yield* TestClock.adjust("1 minute");
-        const started = yield* Deferred.make<void>();
-        const release = yield* Deferred.make<void>();
-        tailnet.hold = { address: LAPTOP_ADDRESS, started, release, late: true };
-        const phone = yield* refusalOf(signIn(makeDpopKey())).pipe(Effect.forkChild);
-        yield* Deferred.await(started);
-        // The host switches accounts; there, the laptop's address names a granted device.
-        tailnet.status = hostStatus({
-          Peer: peers,
-          Self: { ...hostStatus().Self, ID: "nBoxAtWork" },
-        });
-        tailnet.devices = { ...tailnet.devices, [LAPTOP_ADDRESS]: atWork };
-        yield* Deferred.succeed(release, undefined);
-        expect(yield* Fiber.join(phone)).toBe("policy_unknown");
-        // Back home, with the laptop unreadable, the older "no grants" decides, not that grant.
-        tailnet.status = home;
-        tailnet.devices = { ...tailnet.devices, [LAPTOP_ADDRESS]: { node: null } };
-        yield* TestClock.adjust("11 seconds");
-        yield* signIn(makeDpopKey());
-      }).pipe(Effect.provide(layerTest(tailnet)));
-    });
+      // Another profile on the same tailnet sees the same laptop, with its own grants. The grant
+      // may have been read here before the switch, so nothing older stands in for a full scan.
+      {
+        name: "the same laptop",
+        backHome: "policy_unknown",
+        atWork: { node: laptop, capMap: granted({ scopes: ["read"] }) },
+      },
+    ])(
+      "a grant read from another account ($name) during a scan is not kept here",
+      ({ atWork, backHome }) => {
+        const tailnet = withLaptop();
+        tailnet.status = hostStatus({ Peer: { ...peers, stranger: strangerPeer } });
+        tailnet.devices = { ...tailnet.devices, [STRANGER_ADDRESS]: { node: stranger } };
+        const home = tailnet.status;
+        return Effect.gen(function* () {
+          // A scan that finds no grants, from the refused stranger.
+          yield* refusalOf(signIn(makeDpopKey(), { remoteAddress: STRANGER_ADDRESS }));
+          yield* TestClock.adjust("1 minute");
+          const started = yield* Deferred.make<void>();
+          const release = yield* Deferred.make<void>();
+          tailnet.hold = { address: LAPTOP_ADDRESS, started, release, late: true };
+          const phone = yield* refusalOf(signIn(makeDpopKey())).pipe(Effect.forkChild);
+          yield* Deferred.await(started);
+          // The host switches accounts; there, the laptop's address names a granted device.
+          tailnet.status = hostStatus({
+            Peer: peers,
+            Self: { ...hostStatus().Self, ID: "nBoxAtWork" },
+          });
+          tailnet.devices = { ...tailnet.devices, [LAPTOP_ADDRESS]: atWork };
+          yield* Deferred.succeed(release, undefined);
+          expect(yield* Fiber.join(phone)).toBe("policy_unknown");
+          // Back home, with the laptop unreadable, that grant does not decide.
+          tailnet.status = home;
+          tailnet.devices = { ...tailnet.devices, [LAPTOP_ADDRESS]: { node: null } };
+          yield* TestClock.adjust("11 seconds");
+          expect(yield* outcomeOf(signIn(makeDpopKey()))).toBe(backHome);
+        }).pipe(Effect.provide(layerTest(tailnet)));
+      },
+    );
 
     it.effect("a scan cut short while it confirms a grant still keeps it", () => {
       const tailnet = withLaptop();
@@ -1107,6 +1124,23 @@ it.layer(NodeServices.layer)("TailnetSignIn", (it) => {
         tailnet.devices = { ...tailnet.devices, [LAPTOP_ADDRESS]: { node: laptop } };
         yield* TestClock.adjust("11 seconds");
         yield* signIn(makeDpopKey());
+      }).pipe(Effect.provide(layerTest(tailnet)));
+    });
+
+    it.effect("a grant the session recheck sees turns the owner rule off", () => {
+      const tailnet = withLaptop();
+      return Effect.gen(function* () {
+        // The laptop signs in by the owner rule, then gets a grant the recheck reads.
+        const session = yield* signInLaptop(makeDpopKey());
+        tailnet.devices = {
+          [LAPTOP_ADDRESS]: { node: laptop, capMap: granted({ scopes: ["read"] }) },
+        };
+        yield* TestClock.adjust("30 seconds");
+        expect(yield* revoked(session.access_token)).toBe(true);
+        // Once the laptop cannot be read, the older "no grants" does not let the phone in.
+        tailnet.devices = { [LAPTOP_ADDRESS]: { node: null } };
+        yield* TestClock.adjust("31 seconds");
+        expect(yield* refusalOf(signIn(makeDpopKey()))).toBe("no_grant");
       }).pipe(Effect.provide(layerTest(tailnet)));
     });
 
