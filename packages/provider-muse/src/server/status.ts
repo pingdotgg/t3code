@@ -1,4 +1,4 @@
-import { ServerProviderModel } from "@t3tools/contracts";
+import { ServerProviderModel, type ServerProviderSkill } from "@t3tools/contracts";
 import { MuseSettings } from "../settings.ts";
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
 import * as DateTime from "effect/DateTime";
@@ -8,6 +8,7 @@ import * as Result from "effect/Result";
 import * as ChildProcess from "effect/process/ChildProcess";
 
 import { createMuseSdkHost, makeMuseEnvironment } from "./sdk.ts";
+import { discoverMuseSkills } from "./skills.ts";
 import { parseMuseVersion } from "./maintenance.ts";
 import { discoverMuseModels, museModelCapabilities } from "./modelCatalog.ts";
 import {
@@ -60,13 +61,18 @@ export const checkMuseProviderStatus = Effect.fn("checkMuseProviderStatus")(func
   if (!settings.enabled) return yield* makePendingMuseProvider(settings);
   const checkedAt = DateTime.formatIso(yield* DateTime.now);
   const museEnvironment = environment ?? makeMuseEnvironment();
-  const snapshot = (probe: ProviderProbeResult, models: ReadonlyArray<ServerProviderModel> = []) =>
+  const snapshot = (
+    probe: ProviderProbeResult,
+    models: ReadonlyArray<ServerProviderModel> = [],
+    skills: ReadonlyArray<ServerProviderSkill> = [],
+  ) =>
     buildServerProvider({
       presentation: MUSE_PRESENTATION,
       enabled: true,
       checkedAt,
       models: providerModelsFromSettings(models, settings.customModels, FALLBACK_CAPABILITIES),
       slashCommands: [COMPACT_SLASH_COMMAND],
+      skills,
       probe,
     });
   const versionResult = yield* Effect.gen(function* () {
@@ -116,20 +122,28 @@ export const checkMuseProviderStatus = Effect.fn("checkMuseProviderStatus")(func
     });
   }
 
+  const skills = yield* discoverMuseSkills(settings, museEnvironment).pipe(
+    Effect.orElseSucceed(() => []),
+  );
+
   const catalog = yield* discoverMuseModels(settings, museEnvironment, cwd, createHost).pipe(
     Effect.scoped,
     Effect.timeoutOption(12_000),
     Effect.result,
   );
   if (Result.isFailure(catalog) || Option.isNone(catalog.success)) {
-    return snapshot({
-      installed: true,
-      version,
-      status: "error",
-      auth: { status: "unknown" },
-      message:
-        "Muse Code SDK could not read the model catalog. Check your Muse installation and run `muse login` on this T3 server host.",
-    });
+    return snapshot(
+      {
+        installed: true,
+        version,
+        status: "error",
+        auth: { status: "unknown" },
+        message:
+          "Muse Code SDK could not read the model catalog. Check your Muse installation and run `muse login` on this T3 server host.",
+      },
+      [],
+      skills,
+    );
   }
   const models = catalog.success.value;
   // MSP has no auth signal and serves cached models while logged out; failures surface on first turn.
@@ -147,5 +161,6 @@ export const checkMuseProviderStatus = Effect.fn("checkMuseProviderStatus")(func
           }),
     },
     models,
+    skills,
   );
 });
