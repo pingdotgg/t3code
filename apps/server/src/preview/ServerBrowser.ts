@@ -2197,6 +2197,7 @@ const make = Effect.gen(function* () {
           () =>
             ServerBrowserPage.snapshot({
               ...tab,
+              deadlineMs,
               renderScale: tab.desktop ? "display" : RENDER_SCALE,
             }),
           deadlineMs,

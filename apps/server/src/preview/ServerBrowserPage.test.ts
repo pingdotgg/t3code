@@ -5,7 +5,16 @@ import {
   type CDPSession,
   type Page,
 } from "playwright-core";
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vite-plus/test";
+import {
+  afterAll,
+  afterEach,
+  beforeAll,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  vi,
+} from "vite-plus/test";
 
 import * as ServerBrowserPage from "./ServerBrowserPage.ts";
 
@@ -326,6 +335,48 @@ describe("server browser snapshot screenshot", () => {
       size: [screenshot.width, screenshot.height],
       colors: pixels.map(colorOf),
     }).toEqual({ size: [1280, 800], colors: ["blue", "red", "red"] });
+  });
+
+  it("a late metrics reply after the request deadline preserves a newer snapshot's refs", async () => {
+    const page = await context.newPage();
+    await page.setContent("<button onclick=\"this.textContent = 'clicked'\">click me</button>");
+    const cdp = await context.newCDPSession(page);
+    const started = Promise.withResolvers<void>();
+    const metrics = Promise.withResolvers<{
+      ratio: number;
+      zoom: number;
+      width: number;
+      height: number;
+    }>();
+    const send = cdp.send.bind(cdp);
+    using _send = vi.spyOn(cdp, "send").mockImplementation(async (method, params) => {
+      if (
+        method === "Runtime.evaluate" &&
+        params &&
+        "expression" in params &&
+        params.expression.includes("devicePixelRatio")
+      ) {
+        started.resolve();
+        return { result: { value: await metrics.promise } };
+      }
+      return send(method, params);
+    });
+    const input = { page, cdp, consoleEntries: [], networkEntries: [], actionTimeline: [] };
+    using now = vi.spyOn(performance, "now").mockReturnValue(0);
+    const late = ServerBrowserPage.snapshot({
+      ...input,
+      renderScale: "display",
+      deadlineMs: 10_000,
+    });
+    const rejected = expect(late).rejects.toThrow();
+    await started.promise;
+    const current = await ServerBrowserPage.snapshot({ ...input, renderScale: 2 });
+    now.mockReturnValue(10_001);
+    metrics.resolve({ ratio: 2, zoom: 1, width: 1280, height: 800 });
+    await rejected;
+    const ref = /\[ref=([^\]]+)\]/.exec(String(current.accessibilityTree))![1]!;
+    await ServerBrowserPage.click(page, { locator: `aria-ref=${ref}` });
+    expect(await page.locator("button").innerText()).toBe("clicked");
   });
 
   it("captures a plain page at the shrunk size with its content in place", async () => {
