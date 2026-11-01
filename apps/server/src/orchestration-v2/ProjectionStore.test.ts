@@ -215,6 +215,71 @@ const addRolledBackRecoveryCandidate = Effect.fn("addRolledBackRecoveryCandidate
   return threadId;
 });
 
+it.effect("record reads filter notification sources without dropping matching message bodies", () =>
+  Effect.gen(function* () {
+    const store = yield* ProjectionStore.ProjectionStoreV2;
+    const threadId = yield* addRolledBackRecoveryCandidate("notification-filter");
+    const now = yield* DateTime.now;
+    for (const [id, role, kind] of [
+      ["ordinary", "user", null],
+      ["monitor", "user", "monitor"],
+      ["system", "user", "system"],
+      ["assistant-monitor", "assistant", "monitor"],
+    ] as const) {
+      yield* store.apply({
+        id: EventId.make(`notification-filter:${id}`),
+        type: "message.updated",
+        threadId,
+        occurredAt: now,
+        payload: {
+          id: MessageId.make(id),
+          threadId,
+          runId: null,
+          nodeId: null,
+          createdBy: "agent",
+          creationSource: "server",
+          role,
+          text: `Complete body for ${id}`,
+          attachments: [],
+          streaming: false,
+          createdAt: now,
+          updatedAt: now,
+          ...(kind === null
+            ? {}
+            : {
+                notification: {
+                  source: { kind },
+                  outcome: "updated",
+                  summary: "Background notification",
+                },
+              }),
+        },
+      });
+    }
+    const matching = yield* store.getThreadRecords(threadId, ["messages"], {
+      messageRoles: ["user"],
+      monitorNotificationsOnly: true,
+    });
+    assert.deepEqual(
+      matching.messages.map((message) => [message.id, message.text]),
+      [["monitor", "Complete body for monitor"]],
+    );
+    assert.lengthOf((yield* store.getThreadRecords(threadId, ["messages"])).messages, 4);
+    assert.lengthOf(
+      (yield* store.getThreadRecords(threadId, ["messages"], {
+        monitorNotificationsOnly: true,
+      })).messages,
+      2,
+    );
+    assert.lengthOf(
+      (yield* store.getThreadRecords(threadId, ["messages"], {
+        monitorNotificationsOnly: false,
+      })).messages,
+      4,
+    );
+  }).pipe(Effect.provide(layerTest)),
+);
+
 it.effect("SQL queue readiness skips held runs without bypassing active work", () =>
   Effect.gen(function* () {
     const store = yield* ProjectionStore.ProjectionStoreV2;
@@ -2817,6 +2882,176 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
       assert.isTrue(
         agentWindow.projection.visibleTurnItems.some((row) => row.sourceItemId === agentPromptId),
       );
+    }),
+  );
+
+  it.effect("keeps an open question's row in the window after the run kept working", () =>
+    Effect.gen(function* () {
+      const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
+      const sql = yield* SqlClient.SqlClient;
+      const now = yield* DateTime.now;
+      const nowIso = DateTime.formatIso(now);
+      const threadId = ThreadId.make("thread:open-question-window");
+      yield* projectionStore.apply({
+        id: EventId.make("event:open-question-window:thread"),
+        type: "thread.created",
+        threadId,
+        occurredAt: now,
+        payload: {
+          createdBy: "user",
+          creationSource: "web",
+          id: threadId,
+          projectId: ProjectId.make("project:open-question-window"),
+          title: "Open question window",
+          providerInstanceId,
+          modelSelection,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: null,
+          activeProviderThreadId: null,
+          lineage: { parentThreadId: null, relationshipToParent: null, rootThreadId: threadId },
+          forkedFrom: null,
+          createdAt: now,
+          updatedAt: now,
+          archivedAt: null,
+          settledOverride: null,
+          settledAt: null,
+          lastVisitedAt: null,
+          deletedAt: null,
+        },
+      });
+      for (let ordinal = 10; ordinal <= 300; ordinal += 1) {
+        const id = `turn-item:open-question-window:${ordinal}`;
+        yield* sql`
+          INSERT INTO orchestration_v2_projection_turn_items (
+            turn_item_id, thread_id, run_id, node_id, provider_thread_id, provider_turn_id,
+            parent_item_id, ordinal, type, status, updated_at, payload_json
+          ) VALUES (
+            ${id}, ${threadId}, NULL, NULL, NULL, NULL, NULL, ${ordinal},
+            'command_execution', 'completed', ${nowIso},
+            ${encodeUnknownJsonString({
+              id,
+              threadId,
+              runId: null,
+              nodeId: null,
+              providerThreadId: null,
+              providerTurnId: null,
+              nativeItemRef: null,
+              parentItemId: null,
+              ordinal,
+              status: "completed",
+              title: `command ${ordinal}`,
+              input: `echo ${ordinal}`,
+              output: "ok",
+              exitCode: 0,
+              startedAt: nowIso,
+              completedAt: nowIso,
+              updatedAt: nowIso,
+              type: "command_execution",
+            })}
+          )
+        `;
+      }
+      const requestId = RuntimeRequestId.make("request:open-question-window");
+      const nodeId = NodeId.make("node:open-question-window");
+      const itemId = TurnItemId.make("turn-item:open-question-window:question");
+      yield* projectionStore.apply({
+        id: EventId.make("event:open-question-window:node"),
+        type: "node.updated",
+        threadId,
+        nodeId,
+        occurredAt: now,
+        payload: {
+          id: nodeId,
+          threadId,
+          runId: null,
+          parentNodeId: null,
+          rootNodeId: nodeId,
+          kind: "user_input_request",
+          status: "waiting",
+          countsForRun: false,
+          providerThreadId: null,
+          providerTurnId: null,
+          nativeItemRef: null,
+          runtimeRequestId: requestId,
+          checkpointScopeId: null,
+          startedAt: now,
+          completedAt: null,
+        },
+      });
+      const request = {
+        id: requestId,
+        nodeId,
+        providerTurnId: null,
+        nativeRequestRef: null,
+        kind: "user_input" as const,
+        status: "pending" as const,
+        responseCapability: { type: "message" as const },
+        createdAt: now,
+        resolvedAt: null,
+      };
+      yield* projectionStore.apply({
+        id: EventId.make("event:open-question-window:request"),
+        type: "runtime-request.updated",
+        threadId,
+        nodeId,
+        occurredAt: now,
+        payload: request,
+      });
+      yield* projectionStore.apply({
+        id: EventId.make("event:open-question-window:item"),
+        type: "turn-item.updated",
+        threadId,
+        nodeId,
+        occurredAt: now,
+        payload: {
+          id: itemId,
+          type: "user_input_request",
+          threadId,
+          runId: null,
+          nodeId,
+          providerThreadId: null,
+          providerTurnId: null,
+          nativeItemRef: null,
+          parentItemId: null,
+          ordinal: 5,
+          status: "waiting",
+          title: null,
+          startedAt: now,
+          completedAt: null,
+          updatedAt: now,
+          requestId,
+          responseMode: "message",
+          questions: [{ id: "choice", header: "Choice", question: "Continue?", options: [] }],
+        },
+      });
+
+      const questionRows = (snapshot: {
+        readonly projection: { readonly turnItems: ReadonlyArray<{ readonly id: string }> };
+      }) => snapshot.projection.turnItems.filter((item) => item.id === itemId).length;
+      const open = yield* projectionStore.getThreadSnapshotWindow(threadId, { rowLimit: 76 });
+      assert.strictEqual(questionRows(open), 1);
+      const bounded = buildBoundedThreadProjection({
+        policy: { ...THREAD_HISTORY_PAGE_POLICY, maxUserTurns: undefined, maxItems: 50 },
+        projection: open.projection,
+        snapshotSequence: open.snapshotSequence,
+      });
+      assert.strictEqual(questionRows(bounded), 1);
+      assert.isFalse(
+        bounded.projection.visibleTurnItems.some((row) => row.sourceItemId === itemId),
+      );
+
+      yield* projectionStore.apply({
+        id: EventId.make("event:open-question-window:resolved"),
+        type: "runtime-request.updated",
+        threadId,
+        nodeId,
+        occurredAt: now,
+        payload: { ...request, status: "resolved", resolvedAt: now },
+      });
+      const answered = yield* projectionStore.getThreadSnapshotWindow(threadId, { rowLimit: 76 });
+      assert.strictEqual(questionRows(answered), 0);
     }),
   );
 
