@@ -1,6 +1,8 @@
 // Hashes and sizes match the official ACP registry release. Like 1.4.2 through 1.4.4, it writes a
 // run-workflow skill into the workspace unless T3 disables the tool (antigravitySessionMeta).
 const ANTIGRAVITY_RELEASE_VERSION = "1.4.5";
+// Windows has not been qualified on 1.4.5; it stays on 1.4.1, which takes the pre-1.4.5 paths.
+const ANTIGRAVITY_WINDOWS_RELEASE_VERSION = "1.4.1";
 
 export interface AntigravityReleaseAsset {
   readonly version: string;
@@ -65,23 +67,23 @@ const releaseAssets = new Map<string, AntigravityReleaseAsset>([
   [
     "win32-x64",
     {
-      version: ANTIGRAVITY_RELEASE_VERSION,
-      url: "https://dl.google.com/agy-extensions/releases/windows/agy-acp-server-1.4.5-windows-x86_64.zip",
-      sha256: "d24f4c73c9f96d4f44384e281c855a56c72d8eaa9c5b0fad7ccb1635c6b63f50",
-      archiveBytes: 100_423_655,
-      executable: { name: "agy_acp_server.exe", bytes: 55_839_864 },
-      harness: { name: "localharness_external.exe", bytes: 147_843_736 },
+      version: ANTIGRAVITY_WINDOWS_RELEASE_VERSION,
+      url: "https://dl.google.com/agy-extensions/releases/windows/agy-acp-server-1.4.1-windows-x86_64.zip",
+      sha256: "5f5b7d0328df17c128b2be338d4567b0d24e56ace8196e88794fec37d1372554",
+      archiveBytes: 129_599_308,
+      executable: { name: "agy_acp_server.exe", bytes: 86_098_784 },
+      harness: { name: "localharness_external.exe", bytes: 146_036_888 },
     },
   ],
   [
     "win32-arm64",
     {
-      version: ANTIGRAVITY_RELEASE_VERSION,
-      url: "https://dl.google.com/agy-extensions/releases/windows/agy-acp-server-1.4.5-windows-arm64.zip",
-      sha256: "ab0a9aac8349e08ef289be6d16da8f89e3abe60eba5158032ef78c4a1220261c",
-      archiveBytes: 102_703_121,
-      executable: { name: "agy_acp_server.exe", bytes: 62_293_488 },
-      harness: { name: "localharness_external.exe", bytes: 139_322_008 },
+      version: ANTIGRAVITY_WINDOWS_RELEASE_VERSION,
+      url: "https://dl.google.com/agy-extensions/releases/windows/agy-acp-server-1.4.1-windows-arm64.zip",
+      sha256: "24c52bbc12aae20f55eb53d373669412d95a9c44fd59be4ea4e355918b91fbf7",
+      archiveBytes: 132_507_344,
+      executable: { name: "agy_acp_server.exe", bytes: 93_197_744 },
+      harness: { name: "localharness_external.exe", bytes: 136_970_904 },
     },
   ],
 ]);
