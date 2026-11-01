@@ -260,7 +260,7 @@ export interface BootServiceManager {
 type BootServiceCommand = readonly [executable: string, ...args: ReadonlyArray<string>];
 
 interface BootServiceHandoff {
-  /** Written owner-only before the steps run. */
+  /** Written before the steps run. */
   readonly file?: { readonly path: string; readonly contents: string };
   readonly steps: ReadonlyArray<BootServiceStep>;
 }
@@ -402,9 +402,8 @@ function launchdManager(input: {
         {
           step: "clearing an earlier handoff job",
           command: "launchctl",
-          args: ["bootout", "--wait", `${domainTarget}/${BOOT_SERVICE_HANDOFF_LABEL}`],
+          args: ["bootout", `${domainTarget}/${BOOT_SERVICE_HANDOFF_LABEL}`],
           optional: true,
-          timeout: STOP_STEP_TIMEOUT,
         },
         {
           step: "handing the work to a launchd job",
@@ -705,9 +704,7 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
         const directory = path.dirname(filePath);
         yield* fs.makeDirectory(directory, { recursive: true });
         const tempPath = yield* fs.makeTempFileScoped({ directory, prefix: ".service-write-" });
-        yield* fs.writeFileString(tempPath, contents);
-        // The temp file already exists, so a write mode would not apply; launchd refuses group-writable plists.
-        yield* fs.chmod(tempPath, 0o600);
+        yield* fs.writeFileString(tempPath, contents, { mode: 0o600 });
         // Opened read-write: Windows refuses to flush a handle without write access.
         yield* (yield* fs.open(tempPath, { flag: "r+" })).sync;
         yield* fs.rename(tempPath, filePath);

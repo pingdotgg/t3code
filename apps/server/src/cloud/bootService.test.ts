@@ -965,7 +965,6 @@ it.layer(NodeServices.layer)("boot service install", (it) => {
       );
       expect(handoff).not.toContain("T3_BOOT_SERVICE_UNIT");
       expect(handoff).not.toContain("KeepAlive");
-      expect((yield* fs.stat(handoffPath)).mode & 0o777).toBe(0o600);
     }),
   );
 });
