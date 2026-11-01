@@ -221,12 +221,12 @@ export const make = Effect.gen(function* () {
   // Grants that sign-ins or rechecks saw since the last scan that found none, usable or not,
   // per Tailscale account. The first stops the owner rule there before the next scan. A scan
   // that finds no grants clears its account's count, unless one came meanwhile.
-  const grantSignIns = yield* Ref.make<ReadonlyMap<string | null, number>>(new Map());
-  const grantSignInsOn = (account: string | null) =>
-    Ref.get(grantSignIns).pipe(Effect.map((counts) => counts.get(account) ?? 0));
+  const grantsSeen = yield* Ref.make<ReadonlyMap<string | null, number>>(new Map());
+  const grantsSeenOn = (account: string | null) =>
+    Ref.get(grantsSeen).pipe(Effect.map((counts) => counts.get(account) ?? 0));
   /** Counts a grant seen on `account`; true when it is the first there. */
   const countGrant = (account: string | null) =>
-    Ref.modify(grantSignIns, (counts) => {
+    Ref.modify(grantsSeen, (counts) => {
       const before = counts.get(account) ?? 0;
       return [before === 0, new Map(counts).set(account, before + 1)] as const;
     });
@@ -246,7 +246,7 @@ export const make = Effect.gen(function* () {
       // A switch after this status is caught below.
       const status = (yield* Ref.get(scanFrom)) ?? (yield* host.status);
       const account = status.selfNodeId;
-      const signInsBefore = yield* grantSignInsOn(account);
+      const seenBefore = yield* grantsSeenOn(account);
       // Kept once confirmed, so a scan cut short still leaves it for a later scan to fall back
       // on, never an older "no grants". The account is checked first, as another profile on
       // the same tailnet sees the same peers with other grants; one grant reads it at a time.
@@ -292,8 +292,8 @@ export const make = Effect.gen(function* () {
         const found = granted.length > 0;
         yield* Ref.set(lastCleanScan, { account, granted: found, at: now });
         if (!found)
-          yield* Ref.update(grantSignIns, (counts) =>
-            (counts.get(account) ?? 0) === signInsBefore ? new Map(counts).set(account, 0) : counts,
+          yield* Ref.update(grantsSeen, (counts) =>
+            (counts.get(account) ?? 0) === seenBefore ? new Map(counts).set(account, 0) : counts,
           );
         return { account, granted: found, ttl: ttlOf(found) };
       }
@@ -335,7 +335,7 @@ export const make = Effect.gen(function* () {
       Effect.map(Option.filter((scanned) => scanned.account === account)),
     );
     if (Option.isSome(scan) && scan.value.granted) return "no_grant" as const;
-    if ((yield* grantSignInsOn(account)) > 0) return "no_grant" as const;
+    if ((yield* grantsSeenOn(account)) > 0) return "no_grant" as const;
     return Option.isNone(scan) ? ("policy_unknown" as const) : null;
   });
 
@@ -579,7 +579,7 @@ export const make = Effect.gen(function* () {
     held.length === allowed.size && held.every((scope) => allowed.has(scope));
 
   let statusFailingSince: number | null = null;
-  // The periodic recheck and the one a first grant sign-in starts share the state above.
+  // The periodic recheck and the one a sign-in's first grant starts share the state above.
   const recheckLock = yield* Semaphore.make(1);
 
   const recheckSessions: TailnetSignIn["Service"]["recheckSessions"] = Effect.gen(function* () {
