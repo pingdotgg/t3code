@@ -2,10 +2,13 @@ import { NodeHttpServer } from "@effect/platform-node";
 import { type ExecutionEnvironmentDescriptor, OrchestratorMcpFailure } from "@t3tools/contracts";
 import { expect, it } from "@effect/vitest";
 import * as Context from "effect/Context";
+import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
@@ -335,6 +338,40 @@ it.effect("never sends a link's token to an address that stops answering as that
       expect(failed.message).toContain("Box did not answer");
       expect(yield* Ref.get(b.bearers)).toEqual([]);
       expect((yield* a.links.list).map((link) => link.status)).toEqual(["unreachable"]);
+    }),
+  ).pipe(Effect.provide(NodeHttpServer.layerTest)),
+);
+
+it.effect("lists a peer asleep at every address as unreachable within one probe budget", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const b = yield* serveB(box);
+      // Another address of the same machine, asleep too.
+      const wake = yield* Deferred.make<void>();
+      const elsewhere = yield* serveRaw(() =>
+        Deferred.await(wake).pipe(Effect.as(HttpServerResponse.empty({ status: 503 }))),
+      );
+      yield* Effect.addFinalizer(() => Deferred.succeed(wake, undefined));
+      const a = yield* makeA(laptop);
+      const pairing = yield* b.auth.issuePairingCredential();
+      yield* a.links.link({
+        url: b.url,
+        alternateUrls: [elsewhere],
+        pairingCode: pairing.credential,
+        access: "auto",
+      });
+
+      yield* Ref.set(b.asleep, true);
+      const listing = yield* a.links.list.pipe(Effect.forkScoped);
+      yield* Queue.take(b.unanswered);
+      yield* TestClock.adjust(Duration.seconds(3));
+      yield* Effect.yieldNow;
+      const listed = listing.pollUnsafe();
+      expect(
+        listed === undefined
+          ? "still waiting on the asleep peer"
+          : Exit.map(listed, (links) => links.map((link) => link.status)),
+      ).toEqual(Exit.succeed(["unreachable"]));
     }),
   ).pipe(Effect.provide(NodeHttpServer.layerTest)),
 );
