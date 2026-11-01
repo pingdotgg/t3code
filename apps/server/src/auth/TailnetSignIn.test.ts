@@ -1611,8 +1611,9 @@ it.layer(NodeServices.layer)("TailnetSignIn", (it) => {
     });
   });
 
-  it.effect("blocking ends live sessions and refuses a grant minted before the block", () =>
-    Effect.gen(function* () {
+  it.effect("blocking ends live sessions and refuses a grant minted before the block", () => {
+    const tailnet: Tailnet = { status: hostStatus(), node: phoneNode() };
+    return Effect.gen(function* () {
       const service = yield* TailnetSignIn.TailnetSignIn;
       const sessions = yield* SessionStore.SessionStore;
       const key = makeDpopKey();
@@ -1627,6 +1628,10 @@ it.layer(NodeServices.layer)("TailnetSignIn", (it) => {
         "ServerAuthInvalidCredentialError",
       );
       expect(yield* refusalOf(signIn(key))).toBe("blocked");
+      // Refused anyway, as a tagged device with no grant, it hears it is blocked, not to add one.
+      tailnet.node = phoneNode({ Tags: ["tag:ci"] });
+      expect(yield* refusalOf(signIn(key))).toBe("blocked");
+      tailnet.node = phoneNode();
       expect(yield* service.listDevices("tailscale:nPhone")).toMatchObject([
         { stableNodeId: "nPhone", label: "phone", activeSessionCount: 0, current: true },
       ]);
@@ -1637,6 +1642,6 @@ it.layer(NodeServices.layer)("TailnetSignIn", (it) => {
       expect(yield* service.listDevices("bearer:laptop")).toMatchObject([
         { stableNodeId: "nPhone", blockedAt: null, activeSessionCount: 1, current: false },
       ]);
-    }).pipe(Effect.provide(layerTest({ status: hostStatus(), node: phoneNode() }))),
-  );
+    }).pipe(Effect.provide(layerTest(tailnet)));
+  });
 });

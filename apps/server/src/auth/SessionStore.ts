@@ -1020,6 +1020,8 @@ const make = Effect.gen(function* () {
       }
       return revoked;
     },
+    // Stopped between the write and the notice, the session's open sockets would keep it.
+    Effect.uninterruptible,
   );
 
   // Untraced: it runs inside the revokeAllExcept and revokeBySubject spans.

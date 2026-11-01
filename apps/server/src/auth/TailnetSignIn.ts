@@ -477,6 +477,11 @@ export const make = Effect.gen(function* () {
       ) {
         yield* recheckSessions.pipe(Effect.forkDetach);
       }
+      // Checked before any refusal, as a grant it suggests would not let a blocked device in.
+      const blocked = yield* blocks
+        .isBlocked({ stableNodeId: node.stableNodeId })
+        .pipe(Effect.mapError((cause) => new TailnetDeviceBlockLookupError({ cause })));
+      if (blocked) return yield* refuse("blocked");
       if (decision._tag === "Refused") {
         return yield* refuse(
           decision.reason,
@@ -493,11 +498,6 @@ export const make = Effect.gen(function* () {
         );
       }
       const { scopes, via } = decision;
-
-      const blocked = yield* blocks
-        .isBlocked({ stableNodeId: node.stableNodeId })
-        .pipe(Effect.mapError((cause) => new TailnetDeviceBlockLookupError({ cause })));
-      if (blocked) return yield* refuse("blocked");
 
       knownUsers.set(node.stableNodeId, node.loginName ?? node.userId);
       const deviceLabel = label(node, status);
