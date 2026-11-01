@@ -487,8 +487,8 @@ export const make = Effect.gen(function* () {
       threadTails.delete(group.key);
     }
     const reference = referenceOf(group);
-    // Invalidate cached reads before using the newer fingerprint; clients receive no notification.
-    if (fingerprint !== null) yield* pullRequests.invalidate({ reference });
+    // Final activity reads must bypass shared caches even on hosts without fingerprints.
+    if (fingerprint !== null || plan.activity) yield* pullRequests.invalidate({ reference });
     const read = yield* Effect.exit(
       Effect.all(
         [

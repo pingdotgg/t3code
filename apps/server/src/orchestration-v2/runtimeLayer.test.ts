@@ -32,6 +32,7 @@ import {
   ScheduledTaskId,
   ThreadId,
 } from "@t3tools/contracts";
+import * as Cache from "effect/Cache";
 import * as Effect from "effect/Effect";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
@@ -3179,6 +3180,7 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
           Layer.mergeAll(
             NodeServices.layer,
             Layer.mock(PullRequestService.PullRequestService)({
+              invalidate: () => Effect.void,
               detail: () => Effect.die("host unreachable"),
               activity: () => Effect.die("host unreachable"),
             }),
@@ -3240,6 +3242,7 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
       const host = Layer.mergeAll(
         NodeServices.layer,
         Layer.mock(PullRequestService.PullRequestService)({
+          invalidate: () => Effect.void,
           detail: () =>
             Effect.sync(() => ({
               ...watchedPullRequestDetail({
@@ -3354,12 +3357,17 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
           reviewState: null,
         };
         let comments: Array<PullRequestComment> = [];
+        const activityCache = yield* Cache.make({
+          capacity: 1,
+          timeToLive: "60 seconds",
+          lookup: () => Effect.sync(() => comments),
+        });
         const host = Layer.mergeAll(
           NodeServices.layer,
           Layer.mock(PullRequestService.PullRequestService)({
             watchFingerprint: () =>
               Effect.succeed(fingerprinted ? { status: "unchanged", remarks: "unchanged" } : null),
-            invalidate: () => Effect.void,
+            invalidate: () => Cache.invalidateAll(activityCache),
             detail: () =>
               Effect.sync(() => {
                 reads += 1;
@@ -3373,13 +3381,15 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
                 };
               }),
             activity: () =>
-              Effect.sync(() => ({
-                comments,
-                commentCount: comments.length,
-                commentsTruncated: false,
-                reviewThreads: [],
-                commits: [],
-              })),
+              Cache.get(activityCache, "activity").pipe(
+                Effect.map((comments) => ({
+                  comments,
+                  commentCount: comments.length,
+                  commentsTruncated: false,
+                  reviewThreads: [],
+                  commits: [],
+                })),
+              ),
           }),
         );
         const reactor = yield* PullRequestWatchReactor.make.pipe(Effect.provide(host));
@@ -3391,7 +3401,7 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
         yield* worker.drain();
         assert.deepEqual(yield* summaries, ["#15: checks failed"]);
         comments = [edited];
-        yield* TestClock.adjust("2 minutes");
+        yield* TestClock.adjust("30 seconds");
         yield* reactor.sweep;
         yield* worker.drain();
         assert.deepEqual(yield* summaries, [
@@ -3460,6 +3470,7 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
       const host = Layer.mergeAll(
         NodeServices.layer,
         Layer.mock(PullRequestService.PullRequestService)({
+          invalidate: () => Effect.void,
           detail: () =>
             Effect.sync(() => ({
               ...watchedPullRequestDetail({
@@ -3604,6 +3615,7 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
       const host = Layer.mergeAll(
         NodeServices.layer,
         Layer.mock(PullRequestService.PullRequestService)({
+          invalidate: () => Effect.void,
           detail: () =>
             Effect.sync(() => ({
               ...watchedPullRequestDetail({ projectId, number: 13, at: commentAt }),
@@ -3702,6 +3714,7 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
       const host = Layer.mergeAll(
         NodeServices.layer,
         Layer.mock(PullRequestService.PullRequestService)({
+          invalidate: () => Effect.void,
           detail: () =>
             Effect.sync(() => ({
               ...watchedPullRequestDetail({
@@ -3805,6 +3818,7 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
       const host = Layer.mergeAll(
         NodeServices.layer,
         Layer.mock(PullRequestService.PullRequestService)({
+          invalidate: () => Effect.void,
           detail: () =>
             Effect.sync(() => ({
               ...watchedPullRequestDetail({
@@ -4143,6 +4157,7 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
           Layer.mergeAll(
             NodeServices.layer,
             Layer.mock(PullRequestService.PullRequestService)({
+              invalidate: () => Effect.void,
               detail: () =>
                 Effect.sync(() => ({
                   ...detail,
