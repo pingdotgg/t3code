@@ -83,8 +83,9 @@ ones across your connected environments. Use the settings filter to narrow the
 list by environment or project. Each task runs on the environment you choose,
 using its project, model, and workspace settings. Fixed-time schedules use that
 environment's time zone, which may differ from your phone's. If the environment
-is off or asleep at that time, that run is skipped; turn on
-**Run once if missed** to run it once when the environment is back.
+returns within ten minutes of the scheduled time, the task still runs. Later returns
+skip that run by default; turn on **Run once if missed** to run it once when the
+environment is back.
 
 Deleting a thread also deletes tasks that post into that thread. Tasks that start
 a new thread on each run survive deletion of their previous threads.
