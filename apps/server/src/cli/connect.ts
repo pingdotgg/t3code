@@ -10,6 +10,7 @@ import {
 } from "@t3tools/contracts";
 import { RelayOkResponse } from "@t3tools/contracts/relay";
 import * as RelayClient from "@t3tools/shared/relayClient";
+import { isConnectEnabled } from "@t3tools/shared/otelEnvironment";
 import { withRelayClientTracing } from "@t3tools/shared/relayTracing";
 import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
@@ -26,6 +27,7 @@ import * as Path from "effect/Path";
 import * as References from "effect/References";
 import * as Schema from "effect/Schema";
 import { Command, Flag, GlobalFlag, Prompt } from "effect/cli";
+import * as CliError from "effect/cli/CliError";
 import { FetchHttpClient, HttpClient, HttpClientRequest, HttpClientResponse } from "effect/http";
 import * as HttpApiClient from "effect/http-api/HttpApiClient";
 
@@ -43,7 +45,7 @@ import {
   PUBLISH_AGENT_ACTIVITY_SECRET,
   RELAY_URL_SECRET,
 } from "../cloud/config.ts";
-import { relayUrlConfig } from "../cloud/publicConfig.ts";
+import { readConnectEnabled, relayUrlConfig } from "../cloud/publicConfig.ts";
 import * as RelayTracing from "../cloud/relayTracing.ts";
 import * as ServerConfig from "../config.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
@@ -93,6 +95,17 @@ function formatDeviceAuthorizationPrompt(
     `Waiting for approval. Expires in ${minutes} min. Ctrl+C cancels.`,
   ].join("\n");
 }
+
+const requireConnectEnabled = Effect.fn("cloud.cli.require_connect_enabled")(function* () {
+  const { baseDir } = yield* ServerConfig.ServerConfig;
+  const { entries } = yield* CliService.readServiceEnv(baseDir);
+  if (!(yield* readConnectEnabled) || !isConnectEnabled(entries.T3CODE_CONNECT_ENABLED)) {
+    return yield* new CliError.UserError({
+      cause: "connect",
+      userMessage: "T3 Connect is turned off for this environment (T3CODE_CONNECT_ENABLED=false).",
+    });
+  }
+});
 
 const authorizeCli = Effect.fn("cloud.cli.authorize")(function* (options: {
   readonly headless: boolean;
@@ -561,6 +574,7 @@ const linkEnvironmentForConnect = Effect.fn("cloud.cli.link_environment")(functi
   /** For `t3 up`, where the user already chose T3 Connect: install it quietly, without asking. */
   readonly installRelayClient?: boolean;
 }) {
+  yield* requireConnectEnabled();
   const publishOnly = options.publishOnly ?? false;
   if (!publishOnly) {
     const relayClient = yield* RelayClient.RelayClient;
@@ -605,6 +619,7 @@ const connectLoginCommand = Command.make("login", {
     runCloudCommand(
       flags,
       Effect.gen(function* () {
+        yield* requireConnectEnabled();
         yield* Console.log("T3 Connect\n");
         const identity = yield* authorizeCli(flags);
         yield* Console.log(`✓ Signed in${connectedAs(identity)}`);
@@ -722,6 +737,7 @@ const connectPublishCommand = Command.make("publish", {
         const secrets = yield* ServerSecretStore.ServerSecretStore;
         const tokens = yield* CliTokenManager.CloudCliTokenManager;
         const enabled = !flags.disable;
+        if (enabled) yield* requireConnectEnabled();
         yield* secrets.set(
           PUBLISH_AGENT_ACTIVITY_SECRET,
           stringToBytes(enabled ? "true" : "false"),
