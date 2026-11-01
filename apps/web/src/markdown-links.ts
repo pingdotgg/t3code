@@ -44,7 +44,7 @@ export function resolveInlineCodeFileLinkMeta(
   cwd?: string,
   baseDir: string | undefined = cwd,
 ): MarkdownFileLinkMeta | null {
-  const candidate = inlineCodeFilePathCandidate(codeText);
+  const candidate = inlineCodeFilePathCandidate(codeText, cwd);
   if (candidate === null) return null;
 
   return resolveMarkdownFileLinkMeta(

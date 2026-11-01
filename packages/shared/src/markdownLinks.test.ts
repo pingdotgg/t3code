@@ -26,10 +26,29 @@ describe("inlineCodeFilePathCandidate", () => {
     ["origin/main", null],
     ["z-ai/glm-5.3", null],
     ["share/man/ls.1", "share/man/ls.1"],
+    ["usr/lib/libfoo.so.1", "usr/lib/libfoo.so.1"],
+    ["vendor/jquery-3.6.0.min.js", "vendor/jquery-3.6.0.min.js"],
+    ["./models/glm-5.3", "./models/glm-5.3"],
+    ["/D:/Programme/t3code/file.ts", "/D:/Programme/t3code/file.ts"],
+    ["/D%3A/Programme/other/file.ts", "/D%3A/Programme/other/file.ts"],
+    ["/%74mp/image.png", "/%74mp/image.png"],
+    ["/tmp/image.png", "/tmp/image.png"],
+    ["/images/ZOOM/provider/te115_2.jpg", null],
+    ["/api/v1/users.json", null],
     ["src/main.ts/", null],
     ["./patches/", "./patches/"],
   ])("distinguishes file paths from code and hostnames in %s", (source, candidate) => {
     expect(inlineCodeFilePathCandidate(source)).toBe(candidate);
+  });
+
+  it("keeps absolute paths inside a workspace outside the usual roots", () => {
+    expect(inlineCodeFilePathCandidate("/code/app/src/index.ts", "/code/app")).toBe(
+      "/code/app/src/index.ts",
+    );
+    expect(inlineCodeFilePathCandidate("/images/logo.png", "/code/app")).toBeNull();
+    expect(inlineCodeFilePathCandidate("/code/my%20app/src/main.ts", "/code/my app")).toBe(
+      "/code/my%20app/src/main.ts",
+    );
   });
 });
 
