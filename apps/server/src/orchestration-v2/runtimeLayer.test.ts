@@ -4419,6 +4419,79 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
     }),
   );
 
+  // Archive detaches the provider session, so archiving a live turn kills it
+  // mid-flight and strands its tool calls (#15135).
+  it.effect.each(["starting", "running", "waiting"] as const)(
+    "rejects archiving a thread while a run is %s",
+    (status) =>
+      Effect.gen(function* () {
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const eventSink = yield* EventSink.EventSinkV2;
+        const threadId = ThreadId.make(`runtime-layer-active-archive-${status}-thread`);
+        yield* orchestrator.dispatch({
+          type: "thread.create",
+          createdBy: "user",
+          creationSource: "web",
+          commandId: CommandId.make(`runtime-layer-active-archive-${status}-create`),
+          threadId,
+          projectId: ProjectId.make("runtime-layer-active-archive-project"),
+          title: "Active archive",
+          modelSelection,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: "/tmp/runtime-layer-active-archive",
+        });
+        yield* orchestrator.dispatch({
+          type: "message.dispatch",
+          createdBy: "user",
+          creationSource: "web",
+          commandId: CommandId.make(`runtime-layer-active-archive-${status}-message`),
+          threadId,
+          messageId: MessageId.make(`runtime-layer-active-archive-${status}-message`),
+          text: "Archive this thread, then reply done.",
+          attachments: [],
+          modelSelection,
+          dispatchMode: { type: "start_immediately" },
+        });
+        const run = (yield* orchestrator.getThreadProjection(threadId)).runs[0]!;
+        if (status !== run.status) {
+          const now = yield* DateTime.now;
+          yield* eventSink.commitCommand({
+            commandId: CommandId.make(`runtime-layer-active-archive-${status}-advance`),
+            threadId,
+            commandType: "provider-runtime.reconcile",
+            acceptedAt: now,
+            events: [
+              {
+                id: EventId.make(`runtime-layer-active-archive-${status}-run`),
+                type: "run.updated",
+                threadId,
+                runId: run.id,
+                occurredAt: now,
+                payload: { ...run, status, startedAt: now },
+              },
+            ],
+            effects: [],
+          });
+        }
+
+        const error = yield* orchestrator
+          .dispatch({
+            type: "thread.archive",
+            commandId: CommandId.make(`runtime-layer-active-archive-${status}`),
+            threadId,
+          })
+          .pipe(Effect.flip);
+
+        assert.instanceOf(error, Orchestrator.OrchestratorDispatchError);
+        assert.match(String(error.cause), /still running/);
+        const projection = yield* orchestrator.getThreadProjection(threadId);
+        assert.equal(projection.runs[0]?.status, status);
+        assert.isNull(projection.thread.archivedAt);
+      }),
+  );
+
   it.effect("settles a thread its own agent settled once the turn completes", () =>
     Effect.gen(function* () {
       const orchestrator = yield* Orchestrator.OrchestratorV2;
