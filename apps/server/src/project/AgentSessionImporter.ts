@@ -365,6 +365,34 @@ const make = Effect.gen(function* () {
                 occurredAt: createdAt,
                 payload: appThread,
               },
+              ...(thread.omittedMessageCount > 0
+                ? [
+                    {
+                      id: EventId.make(`${IMPORT_EVENT_PREFIX}:history-truncated:${threadId}`),
+                      type: "turn-item.updated" as const,
+                      threadId,
+                      occurredAt: createdAt,
+                      payload: {
+                        id: TurnItemId.make(`${IMPORT_EVENT_PREFIX}:history-truncated:${threadId}`),
+                        threadId,
+                        runId: null,
+                        nodeId: null,
+                        providerThreadId: null,
+                        providerTurnId: null,
+                        nativeItemRef: null,
+                        parentItemId: null,
+                        ordinal: 0,
+                        status: "completed" as const,
+                        title: null,
+                        startedAt: createdAt,
+                        completedAt: createdAt,
+                        updatedAt: createdAt,
+                        type: "system_notice" as const,
+                        message: `${thread.omittedMessageCount} earlier ${thread.omittedMessageCount === 1 ? "message was" : "messages were"} not imported. This thread keeps the first user message and the most recent history. The original session transcript is unchanged.`,
+                      },
+                    },
+                  ]
+                : []),
               ...thread.messages.flatMap((message, index) =>
                 messageEvents({ threadId, index, message }),
               ),
