@@ -3498,6 +3498,16 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           const previous = context.tools.get(incoming.toolCallId);
           const merged = mergeToolCallState(previous, incoming);
           const normalized = flavor.normalizeToolCall?.(merged) ?? merged;
+          // Some ACP agents send the proposed plan as an exit-plan tool input. Match the
+          // verbatim ACP title: presentation rewrites `title` for command/read kinds.
+          const acpTitle =
+            typeof normalized.data.title === "string" ? normalized.data.title : normalized.title;
+          if (/^(exit_plan_mode|exit plan mode)$/i.test(acpTitle?.trim() ?? "")) {
+            const planMarkdown = unknownRecord(normalized.data.rawInput)?.plan;
+            if (typeof planMarkdown === "string") {
+              yield* captureProposedPlan({ planMarkdown });
+            }
+          }
           const backgroundTaskId = flavor.extractBackgroundTaskId?.(normalized);
           const backgroundCommandTaskId =
             flavor.isBackgroundCommandTool?.(normalized) === true
