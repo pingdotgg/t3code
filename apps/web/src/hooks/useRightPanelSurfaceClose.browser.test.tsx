@@ -11,6 +11,8 @@ const fixture = vi.hoisted(() => ({
   allowed: new Set<string>(),
   sessions: new Map<string, string>(),
   failClose: false,
+  sideChatShell: null as { latestRun: { runId: string } | null } | null,
+  clearedDrafts: [] as ScopedThreadRef[],
 }));
 vi.mock("../lib/terminalCloseConfirm", () => ({
   confirmTerminalClose: (labels: readonly string[]) => fixture.confirm(labels),
@@ -31,13 +33,17 @@ vi.mock("../state/session", () => ({
 vi.mock("../state/entities", () => ({
   useQuietThreadShell: () => null,
   useProject: () => null,
-  readThreadShell: () => null,
+  readThreadShell: () => fixture.sideChatShell,
 }));
 vi.mock("../state/terminalSessions", () => ({ useKnownTerminalSessions: () => null }));
 vi.mock("../composerDraftStore", async () => {
   const Schema = await import("effect/Schema");
   return {
-    useComposerDraftStore: () => null,
+    useComposerDraftStore: Object.assign(() => null, {
+      getState: () => ({
+        clearDraftThread: (ref: ScopedThreadRef) => fixture.clearedDrafts.push(ref),
+      }),
+    }),
     DraftId: Schema.String.pipe(Schema.brand("DraftId")),
   };
 });
@@ -59,6 +65,7 @@ vi.mock("../state/terminal", () => ({ terminalEnvironment: { open: {}, close: {}
 vi.mock("../state/preview", () => ({ previewEnvironment: { close: {} } }));
 vi.mock("../state/threads", () => ({ threadEnvironment: { delete: {} } }));
 vi.mock("../state/shell", () => ({ environmentShell: { stateValueAtom: () => null } }));
+vi.mock("../rpc/atomRegistry", () => ({ appAtomRegistry: { get: () => ({ status: "live" }) } }));
 vi.mock("@t3tools/client-runtime/state/runtime", () => ({
   isAtomCommandInterrupted: () => false,
 }));
@@ -67,6 +74,8 @@ function setup() {
   fixture.allowed = new Set(["environment-a", "environment-b"]);
   fixture.sessions = new Map();
   fixture.failClose = false;
+  fixture.sideChatShell = null;
+  fixture.clearedDrafts = [];
   useRightPanelStore.setState({ byThreadKey: {} });
   useTerminalUiStateStore.setState({ terminalUiStateByThreadKey: {} });
   const original: ScopedThreadRef = {
@@ -133,5 +142,34 @@ it.each(["cancel", "revoked"])(
     expect(
       useRightPanelStore.getState().byThreadKey[scopedThreadKey(other)]?.surfaces,
     ).toHaveLength(1);
+  },
+);
+
+it.each([
+  { latestRun: null, cleared: true },
+  { latestRun: { runId: "run-1" }, cleared: false },
+])(
+  "clears a closed side chat's draft only when it never ran, cleared=$cleared",
+  async ({ latestRun, cleared }) => {
+    const { original } = setup();
+    fixture.sideChatShell = { latestRun };
+    const sideChatId = ThreadId.make("side-chat-a");
+    useRightPanelStore.getState().openSideChat(original, sideChatId);
+    const surface = selectThreadRightPanelState(
+      useRightPanelStore.getState().byThreadKey,
+      original,
+    ).surfaces.find((entry) => entry.kind === "side-chat")!;
+    function SideChatHarness() {
+      const { closeSurface } = useRightPanelSurfaceClose({
+        threadRef: original,
+        terminalLabelsById: new Map(),
+      });
+      return <button onClick={() => closeSurface(surface)}>Close side chat</button>;
+    }
+    await using screen = await render(<SideChatHarness />);
+    await screen.getByRole("button").click();
+    expect(fixture.clearedDrafts).toEqual(
+      cleared ? [{ environmentId: original.environmentId, threadId: sideChatId }] : [],
+    );
   },
 );

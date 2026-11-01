@@ -9,6 +9,7 @@ import { getTerminalLabel } from "@t3tools/shared/terminalLabels";
 import { agentControlledBrowserCloseConfirmation } from "../components/ChatView.logic";
 import { closePreviewSession } from "../components/preview/closePreviewSession";
 import { useThreadTerminalActions } from "../components/terminal/useThreadTerminalActions";
+import { useComposerDraftStore } from "../composerDraftStore";
 import { confirmTerminalClose } from "../lib/terminalCloseConfirm";
 import { focusPanelTerminalAfterClose } from "../lib/terminalFocus";
 import { readLocalApi } from "../localApi";
@@ -79,6 +80,10 @@ export function useRightPanelSurfaceClose(input: {
         readThreadShell(scopeThreadRef(ref.environmentId, surface.threadId)) === null
       )
     ) {
+      const sideChatRef = scopeThreadRef(ref.environmentId, surface.threadId);
+      if (readThreadShell(sideChatRef)?.latestRun === null) {
+        useComposerDraftStore.getState().clearDraftThread(sideChatRef);
+      }
       // The server keeps a side chat with a run or message. Reopen skips one it deleted.
       void deleteThread({
         environmentId: ref.environmentId,
