@@ -285,7 +285,8 @@ fi
 real_bin_dir="$(CDPATH='' cd -P -- "$bin_dir" && pwd)"
 # The desktop app's launcher carries its marker; a linked bin folder could hold a user's own t3.
 desktop_launcher() {
-  [ -f "$1" ] && [ "$(wc -c < "$1")" -le 16384 ] &&
+  # The app writes a file; a link there leads to another home's or another tool's t3.
+  [ ! -L "$1" ] && [ -f "$1" ] && [ "$(wc -c < "$1")" -le 16384 ] &&
     grep -qF "Written by T3 Code: runs the desktop app's bundled t3 CLI." "$1"
 }
 # Prints what the link at $1 is to this home: current (its command link), older (a version's t3

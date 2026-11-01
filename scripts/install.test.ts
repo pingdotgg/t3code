@@ -331,6 +331,21 @@ describe.skipIf(HostProcess.Platform.defaultValue() !== "linux")("install.sh t3 
           ours ? NodePath.join(home, "runtime/versions/current/t3") : NodePath.join(home, "bin/t3"),
         );
       }
+      // A link at the launcher's name leads to another home's or another tool's t3.
+      await NodeFSP.writeFile(
+        NodePath.join(root, "nightly-launcher"),
+        "#!/bin/sh\n# Written by T3 Code: runs the desktop app's bundled t3 CLI.\n",
+      );
+      await NodeFSP.rm(NodePath.join(root, "user-bin/t3"));
+      await NodeFSP.symlink(
+        NodePath.join(root, "nightly-launcher"),
+        NodePath.join(root, "user-bin/t3"),
+      );
+      await NodeFSP.rm(link);
+      await NodeFSP.symlink(NodePath.join(home, "bin/t3"), link);
+      const chained = await installOver({ script: "install.sh", home, binDir });
+      expect(chained.code).not.toBe(0);
+      expect(await NodeFSP.readlink(link)).toBe(NodePath.join(home, "bin/t3"));
     } finally {
       await NodeFSP.rm(root, { recursive: true, force: true });
     }

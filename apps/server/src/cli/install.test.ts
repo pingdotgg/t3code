@@ -212,6 +212,18 @@ it.layer(NodeServices.layer)("t3 install", (it) => {
           contents,
         );
       }
+      // A link at the launcher's name leads to another home's or another tool's t3, and a target
+      // naming it as a folder never runs it.
+      const nightly = path.join(root, "nightly-launcher");
+      yield* fs.writeFileString(nightly, `#!/bin/sh\n# ${DESKTOP_CLI_LAUNCHER_MARKER}\n`);
+      yield* fs.rename(path.join(desktopBin, "t3"), path.join(desktopBin, "t3.real"));
+      yield* fs.symlink(nightly, path.join(desktopBin, "t3"));
+      for (const target of [path.join(root, ".t3/bin/t3"), `${path.join(root, ".t3/bin/t3")}/.`]) {
+        yield* fs.remove(link);
+        yield* fs.symlink(target, link);
+        yield* provide(installCli()).pipe(Effect.ignore);
+        assert.equal(yield* fs.readLink(link), target);
+      }
       yield* fs.remove(path.join(root, ".t3/bin"));
 
       // Another program may write its t3 at any moment, here once, at the first symlink this

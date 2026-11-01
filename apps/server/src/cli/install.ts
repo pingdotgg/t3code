@@ -94,6 +94,8 @@ const classifyCommandLink = Effect.fn("cli.install.classify_command_link")(funct
   // The desktop app's launcher carries its marker; a linked bin folder could hold a user's own t3.
   const isDesktopLauncher = Effect.fn("cli.install.is_desktop_launcher")(
     function* (file: string) {
+      // The app writes a file; a link there leads to another home's or another tool's t3.
+      if (Option.isSome(yield* fs.readLink(file).pipe(Effect.option))) return false;
       const info = yield* fs.stat(file);
       if (info.type !== "File" || Number(info.size) > 16_384) return false;
       return (yield* fs.readFileString(file)).includes(DESKTOP_CLI_LAUNCHER_MARKER);
@@ -106,6 +108,7 @@ const classifyCommandLink = Effect.fn("cli.install.classify_command_link")(funct
     Option.isSome(text) &&
     path.isAbsolute(text.value) &&
     !text.value.split(/[\\/]/).includes("..") &&
+    !/[\\/]\.?$/.test(text.value) &&
     path.normalize(text.value) === desktopLauncher &&
     (yield* isDesktopLauncher(desktopLauncher))
   ) {
