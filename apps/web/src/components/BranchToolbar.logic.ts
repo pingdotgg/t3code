@@ -196,6 +196,23 @@ export function resolveBranchToolbarValue(input: {
   return currentGitBranch ?? activeThreadBranch;
 }
 
+// A repository whose HEAD is unborn (e.g. while a clone is still running) reports its
+// init.defaultBranch as the current branch even though no such ref exists yet.
+export function resolveWorktreeBaseBranchCandidate(input: {
+  isInitialBranchesLoadPending: boolean;
+  refs: ReadonlyArray<VcsRef>;
+  currentGitBranch: string | null;
+}): string | null {
+  const { isInitialBranchesLoadPending, refs, currentGitBranch } = input;
+  if (isInitialBranchesLoadPending) return null;
+  const defaultBranchName = refs.find((refName) => refName.isDefault)?.name ?? null;
+  if (defaultBranchName) return defaultBranchName;
+  if (currentGitBranch && refs.some((refName) => refName.name === currentGitBranch)) {
+    return currentGitBranch;
+  }
+  return null;
+}
+
 export function resolveBranchTriggerLabel(input: {
   activeWorktreePath: string | null;
   effectiveEnvMode: EnvMode;
