@@ -5,8 +5,12 @@ import { ScheduledTaskUpsertInput } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
+import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
+import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 
 import * as ThreadLaunchService from "../orchestration-v2/ThreadLaunchService.ts";
@@ -14,6 +18,7 @@ import * as ThreadManagementService from "../orchestration-v2/ThreadManagementSe
 import * as SecretRequests from "../secrets/SecretRequests.ts";
 import * as ManagedProjectFolders from "../project/ManagedProjectFolders.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
+import { ServerActivation } from "../serverActivation.ts";
 import * as ScheduledTaskService from "./ScheduledTaskService.ts";
 import * as ManagedPolicy from "../policy/ManagedPolicy.ts";
 
@@ -170,6 +175,88 @@ it.effect("keeps the task list order when a toggle or edit rewrites updated_at",
       yield* service.upsert(yield* decodeUpsertInput({ ...edit, enabled: false }));
       expect(yield* listedIds).toEqual(order);
     }).pipe(Effect.provide(ScheduledTaskService.layer.pipe(Layer.provide(layerDependencies))));
+  }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
+);
+
+it.effect("runs a fixed-time slot missed during sleep once only when the task asks for it", () =>
+  Effect.gen(function* () {
+    const dueAt = DateTime.makeZonedUnsafe(
+      { year: 2026, month: 7, day: 1, hour: 7, minute: 30, second: 0, millisecond: 0 },
+      { timeZone: DateTime.zoneMakeLocal(), adjustForTimeZone: true },
+    );
+    const dueIso = DateTime.formatIso(DateTime.toUtc(dueAt));
+    const nextWeekIso = DateTime.formatIso(DateTime.toUtc(DateTime.add(dueAt, { days: 7 })));
+    yield* TestClock.setTime(DateTime.toEpochMillis(dueAt) - 1_000);
+
+    const launches = yield* Ref.make(0);
+    const activate = yield* Deferred.make<void>();
+    const layerDependencies = Layer.mergeAll(
+      NodeCrypto.layer,
+      Scheduler.layer,
+      Layer.mock(ThreadLaunchService.ThreadLaunchService)({
+        launch: () =>
+          Ref.update(launches, (n) => n + 1).pipe(
+            Effect.andThen(Effect.die("synthetic dispatch failure")),
+          ),
+      }),
+      Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
+        namedProjectsRoot: "/projects",
+        isScratchProject: () => Effect.succeed(false),
+      }),
+      Layer.mock(ThreadManagementService.ThreadManagementService)({}),
+      Layer.mock(SecretRequests.SecretRequests)({}),
+    );
+    yield* Effect.gen(function* () {
+      const service = yield* ScheduledTaskService.ScheduledTaskService;
+      const save = (commandId: string, schedule: Record<string, unknown>) =>
+        decodeUpsertInput({
+          commandId,
+          title: "Weekly review",
+          prompt: "Review the open pull requests.",
+          enabled: true,
+          schedule: {
+            type: "fixed_time",
+            timeOfDay: "07:30",
+            weekdays: [DateTime.toParts(dueAt).weekDay],
+            ...schedule,
+          },
+          projectId: "project-missed-run",
+          workspaceStrategy: { type: "root" },
+          modelSelection: { instanceId: "codex", model: "gpt-5.4" },
+          runtimeMode: "full-access",
+          interactionMode: "default",
+        }).pipe(Effect.flatMap(service.upsert));
+
+      const catchUp = yield* save("catch-up", { missedRun: "run_once" });
+      // A client that predates missedRun re-saves without it.
+      const resaved = yield* save("catch-up", {});
+      expect(resaved.task.schedule).toMatchObject({ missedRun: "run_once" });
+      expect(resaved.task.nextRunAt).toBe(dueIso);
+      yield* save("skip", { missedRun: "run_once" });
+      const skipped = yield* save("skip", { missedRun: "skip" });
+      expect(skipped.task.schedule).toMatchObject({ missedRun: "skip" });
+
+      // Asleep through the slot: the scheduler first polls two days later.
+      yield* TestClock.setTime(DateTime.toEpochMillis(dueAt) + 2 * 24 * 60 * 60_000);
+      const settled = yield* service.subscribeList().pipe(
+        Stream.map(({ tasks }) => tasks),
+        Stream.filter((tasks) =>
+          tasks.every((task) => task.lastRunStatus !== "running" && task.nextRunAt !== dueIso),
+        ),
+        Stream.runHead,
+        Effect.forkChild,
+      );
+      yield* Deferred.succeed(activate, undefined);
+      const tasks = Option.getOrThrow(yield* Fiber.join(settled));
+      const byId = new Map(tasks.map((task) => [task.id, task]));
+
+      expect(yield* Ref.get(launches)).toBe(1);
+      expect(byId.get(catchUp.task.id)).toMatchObject({ runCount: 1, nextRunAt: nextWeekIso });
+      expect(byId.get(skipped.task.id)).toMatchObject({ runCount: 0, nextRunAt: nextWeekIso });
+    }).pipe(
+      Effect.provide(ScheduledTaskService.layer.pipe(Layer.provide(layerDependencies))),
+      Effect.provideService(ServerActivation, Deferred.await(activate)),
+    );
   }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
 );
 

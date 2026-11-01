@@ -8,7 +8,9 @@ import {
 } from "@t3tools/contracts";
 import {
   scheduledTaskDefaultModel,
+  createDraft,
   DEFAULT_SCHEDULE,
+  hasScheduledTaskDraftChanges,
   scheduleDraftForTask,
   scheduleFromDraft,
 } from "./scheduledTaskDraft";
@@ -85,6 +87,26 @@ describe("scheduleDraftForTask", () => {
 describe("scheduleFromDraft", () => {
   it("rejects an empty day selection rather than silently scheduling every day", () => {
     expect(scheduleFromDraft({ ...DEFAULT_SCHEDULE, weekdays: [] })).toBeNull();
+  });
+
+  it("round-trips run once if missed and sends an explicit skip when it is off", () => {
+    const draft = scheduleDraftForTask({
+      schedule: { type: "fixed_time", timeOfDay: "07:30", weekdays: [1], missedRun: "run_once" },
+    });
+    expect(scheduleFromDraft(draft)).toMatchObject({ missedRun: "run_once" });
+    // The server keeps a stored value when the field is omitted.
+    expect(scheduleFromDraft({ ...draft, runMissedOnce: false })).toMatchObject({
+      missedRun: "skip",
+    });
+  });
+
+  it("counts a run once if missed toggle as an unsaved change", () => {
+    const initial = createDraft(null, null);
+    const toggled = {
+      ...initial,
+      schedule: { ...initial.schedule, runMissedOnce: !initial.schedule.runMissedOnce },
+    };
+    expect(hasScheduledTaskDraftChanges(initial, toggled)).toBe(true);
   });
 
   it.each([

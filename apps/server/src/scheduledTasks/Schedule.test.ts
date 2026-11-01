@@ -1,7 +1,7 @@
 import { describe, expect, it } from "@effect/vitest";
 import * as DateTime from "effect/DateTime";
 
-import { isSameSchedule, nextScheduledRunAt } from "./Schedule.ts";
+import { isMissedFixedTimeRun, isSameSchedule, nextScheduledRunAt } from "./Schedule.ts";
 
 describe("scheduled task schedule calculation", () => {
   it("skips to the next matching fixed-time weekday", () => {
@@ -81,5 +81,22 @@ describe("scheduled task schedule calculation", () => {
         { type: "fixed_time", timeOfDay: "09:00" },
       ),
     ).toBe(false);
+    expect(
+      isSameSchedule(
+        { type: "fixed_time", timeOfDay: "09:00", missedRun: "run_once" },
+        { type: "fixed_time", timeOfDay: "09:00" },
+      ),
+    ).toBe(true);
+  });
+
+  it("skips late fixed-time runs unless the task runs missed times once", () => {
+    const dueAt = DateTime.makeUnsafe("2026-07-01T09:00:00.000Z");
+    const late = DateTime.makeUnsafe("2026-07-03T12:00:00.000Z");
+    const onTime = DateTime.makeUnsafe("2026-07-01T09:05:00.000Z");
+    const schedule = { type: "fixed_time", timeOfDay: "09:00" } as const;
+    expect(isMissedFixedTimeRun(schedule, dueAt, late)).toBe(true);
+    expect(isMissedFixedTimeRun({ ...schedule, missedRun: "skip" }, dueAt, late)).toBe(true);
+    expect(isMissedFixedTimeRun(schedule, dueAt, onTime)).toBe(false);
+    expect(isMissedFixedTimeRun({ ...schedule, missedRun: "run_once" }, dueAt, late)).toBe(false);
   });
 });

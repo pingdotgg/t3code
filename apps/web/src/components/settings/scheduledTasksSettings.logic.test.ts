@@ -170,6 +170,21 @@ describe("editing scheduled task branch settings", () => {
   });
 });
 
+describe("fixed-time scheduled tasks", () => {
+  it("round-trips run once if missed and sends an explicit skip when it is off", () => {
+    const draft = taskToDraft({
+      ...legacyTask,
+      schedule: { type: "fixed_time", timeOfDay: "07:30", weekdays: [1], missedRun: "run_once" },
+    });
+    expect(draft.runMissedOnce).toBe(true);
+    expect(scheduleFromDraft(draft)).toMatchObject({ missedRun: "run_once" });
+    // The server keeps a stored value when the field is omitted.
+    expect(scheduleFromDraft({ ...draft, runMissedOnce: false })).toMatchObject({
+      missedRun: "skip",
+    });
+  });
+});
+
 describe("one-time scheduled tasks", () => {
   afterEach(() => vi.unstubAllEnvs());
 
