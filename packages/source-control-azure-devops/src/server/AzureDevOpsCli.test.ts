@@ -4,12 +4,16 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as PlatformError from "effect/PlatformError";
-import { ChildProcessSpawner } from "effect/process";
+import { ChildProcess, ChildProcessSpawner } from "effect/process";
+import * as Stream from "effect/Stream";
 import { VcsProcessExitError, VcsProcessSpawnError } from "@t3tools/contracts";
 
 import type * as SourceControlHost from "@t3tools/source-control-core/server/SourceControlHost";
 import * as TestSourceControlHost from "@t3tools/source-control-testing/TestSourceControlHost";
 import * as AzureDevOpsCli from "./AzureDevOpsCli.ts";
+import * as AzureDevOpsPullRequestCli from "./AzureDevOpsPullRequestCli.ts";
+import { discovery } from "./AzureDevOpsSourceControlProvider.ts";
+import { probeSourceControlProvider } from "@t3tools/source-control-core/server/discovery";
 
 const processOutput = (stdout: string): SourceControlHost.SourceControlProcessOutput => ({
   exitCode: ChildProcessSpawner.ExitCode(0),
@@ -307,3 +311,164 @@ describe("AzureDevOpsCli.layer", () => {
     }).pipe(Effect.provide(layer)),
   );
 });
+
+// This CLI has extension credentials but no Azure subscription or authored pull requests.
+const patOnlyCli = `
+const args = process.argv.slice(1);
+if (args[0] === "--version") {
+  console.log("azure-cli 2.86.0");
+} else if (args[0] === "account") {
+  console.error("Please run 'az login' to setup account.");
+  process.exitCode = 1;
+} else if (args.slice(0, 2).join(" ") === "repos pr") {
+  console.log("[]");
+} else if (args.slice(0, 2).join(" ") === "devops invoke"
+    && args[args.indexOf("--detect") + 1] === "true"
+    && args[args.indexOf("--area") + 1].toLowerCase() === "location"
+    && args[args.indexOf("--resource") + 1] === "connectionData"
+    && args[args.indexOf("--api-version") + 1] === "7.1-preview") {
+  if (process.env.FAKE_AUTH === "invalid") {
+    console.error("Authentication failed: invalid PAT");
+    process.exitCode = 1;
+  } else if (process.env.FAKE_AUTH === "offline") {
+    console.error("HTTPSConnectionPool(host='dev.azure.com', port=443): Max retries exceeded with url: /acme/_apis/connectionData");
+    process.exitCode = 1;
+  } else if (process.env.FAKE_AUTH === "no-org") {
+    console.error("--organization must be specified.");
+    process.exitCode = 1;
+  } else if (process.env.FAKE_AUTH === "anonymous") {
+    console.log(JSON.stringify({authenticatedUser: {
+      id: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+      descriptor: "System:PublicAccess;aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+      isActive: true, providerDisplayName: "Anonymous",
+      properties: {Account: {$value: "Anonymous"}}
+    }}));
+  } else {
+    console.log(JSON.stringify({authenticatedUser: {
+      id: "viewer-id", providerDisplayName: "Bilal Hassan",
+      properties: {Account: {$value: "bilal@acme.dev"}}
+    }}));
+  }
+} else {
+  console.error("Unexpected Azure CLI command");
+  process.exitCode = 2;
+}
+`;
+
+const fakePatProcess = Effect.fn("fakePatProcess")(function* (
+  mode: "valid" | "invalid" | "offline" | "no-org" | "anonymous",
+) {
+  const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+  const run: SourceControlHost.SourceControlHost["Service"]["process"]["run"] = (input) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const handle = yield* spawner.spawn(
+          ChildProcess.make(process.execPath, ["--eval", patOnlyCli, "--", ...input.args], {
+            env: { FAKE_AUTH: mode },
+          }),
+        );
+        const [stdout, stderr, exitCode] = yield* Effect.all(
+          [
+            handle.stdout.pipe(
+              Stream.decodeText(),
+              Stream.runFold(
+                () => "",
+                (acc, chunk) => acc + chunk,
+              ),
+            ),
+            handle.stderr.pipe(
+              Stream.decodeText(),
+              Stream.runFold(
+                () => "",
+                (acc, chunk) => acc + chunk,
+              ),
+            ),
+            handle.exitCode,
+          ],
+          { concurrency: "unbounded" },
+        );
+        return { ...processOutput(stdout), stderr, exitCode };
+      }),
+    ).pipe(
+      Effect.orDie,
+      Effect.filterOrFail(
+        (result) => result.exitCode === 0 || input.allowNonZeroExit === true,
+        (result) =>
+          new VcsProcessExitError({
+            operation: input.operation,
+            command: input.command,
+            cwd: input.cwd,
+            exitCode: result.exitCode,
+            detail: result.stderr,
+            failureKind: "authentication",
+          }),
+      ),
+    );
+  return { run };
+});
+
+it.live("discovers a PAT-only sign-in through the extension credential chain", () =>
+  Effect.gen(function* () {
+    const process = yield* fakePatProcess("valid");
+    const item = yield* probeSourceControlProvider({ spec: discovery, process, cwd: "/repo" });
+    assert.strictEqual(item.status, "available");
+    assert.strictEqual(item.auth.status, "authenticated");
+    assert.deepStrictEqual(item.auth.account, Option.some("bilal@acme.dev"));
+  }).pipe(Effect.provide(NodeServices.layer)),
+);
+
+it.live("names a PAT-only viewer who has never authored a pull request", () =>
+  Effect.gen(function* () {
+    const process = yield* fakePatProcess("valid");
+    const support = TestSourceControlHost.layer({ process });
+    const cliLayer = AzureDevOpsPullRequestCli.layer.pipe(
+      Layer.provide(AzureDevOpsCli.layer.pipe(Layer.provide(support))),
+    );
+    const viewer = yield* Effect.gen(function* () {
+      const cli = yield* AzureDevOpsPullRequestCli.AzureDevOpsPullRequestCli;
+      return yield* cli.getViewer({ cwd: "/repo" });
+    }).pipe(Effect.provide(cliLayer));
+    assert.strictEqual(viewer, "bilal@acme.dev");
+  }).pipe(Effect.provide(NodeServices.layer)),
+);
+
+it.live("does not authenticate a rejected PAT", () =>
+  Effect.gen(function* () {
+    const process = yield* fakePatProcess("invalid");
+    const item = yield* probeSourceControlProvider({ spec: discovery, process, cwd: "/repo" });
+    assert.strictEqual(item.auth.status, "unauthenticated");
+  }).pipe(Effect.provide(NodeServices.layer)),
+);
+
+it.live("leaves authentication unknown when Azure DevOps cannot be reached", () =>
+  Effect.gen(function* () {
+    const process = yield* fakePatProcess("offline");
+    const item = yield* probeSourceControlProvider({ spec: discovery, process, cwd: "/repo" });
+    assert.strictEqual(item.auth.status, "unknown");
+  }).pipe(Effect.provide(NodeServices.layer)),
+);
+
+it.live("leaves authentication unknown when no organization can be resolved", () =>
+  Effect.gen(function* () {
+    const process = yield* fakePatProcess("no-org");
+    const item = yield* probeSourceControlProvider({ spec: discovery, process, cwd: "/repo" });
+    assert.strictEqual(item.auth.status, "unknown");
+  }).pipe(Effect.provide(NodeServices.layer)),
+);
+
+it.live("does not authenticate public access to an organization", () =>
+  Effect.gen(function* () {
+    const process = yield* fakePatProcess("anonymous");
+    const item = yield* probeSourceControlProvider({ spec: discovery, process, cwd: "/repo" });
+    assert.strictEqual(item.auth.status, "unauthenticated");
+    const support = TestSourceControlHost.layer({ process });
+    const cliLayer = AzureDevOpsPullRequestCli.layer.pipe(
+      Layer.provide(AzureDevOpsCli.layer.pipe(Layer.provide(support))),
+    );
+    const error = yield* Effect.gen(function* () {
+      const cli = yield* AzureDevOpsPullRequestCli.AzureDevOpsPullRequestCli;
+      return yield* Effect.flip(cli.getViewer({ cwd: "/repo" }));
+    }).pipe(Effect.provide(cliLayer));
+    assert.strictEqual(error._tag, "AzureDevOpsViewerAnonymousError");
+  }).pipe(Effect.provide(NodeServices.layer)),
+);
