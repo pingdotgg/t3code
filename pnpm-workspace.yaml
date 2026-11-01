@@ -227,6 +227,7 @@ minimumReleaseAgeExclude:
   - "@pierre/highlights@0.2.0"
   - "@pierre/theming@1.0.2"
   - agent-device@0.21.32
+  - "@bsky.app/expo-scroll-edge-effect@0.1.11"
 
 overrides:
   # Pin every patched package, including transitive dependencies, so lockfile-free

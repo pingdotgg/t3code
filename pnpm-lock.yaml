@@ -528,6 +528,9 @@ importers:
 
   apps/mobile:
     dependencies:
+      '@bsky.app/expo-scroll-edge-effect':
+        specifier: 0.1.11
+        version: 0.1.11(expo@58.0.14)(react-native@0.88.0(@babel/core@7.29.7(supports-color@8.1.1))(@react-native/metro-config@0.88.0(@babel/core@7.29.7(supports-color@8.1.1))(bufferutil@4.1.0)(supports-color@8.1.1)(utf-8-validate@6.0.6))(@types/react@19.3.0)(bufferutil@4.1.0)(react@19.3.0)(supports-color@8.1.1)(utf-8-validate@6.0.6))(react@19.3.0)
       '@clerk/expo':
         specifier: 4.14.0
         version: 4.14.0(78d307573949e8c4818b3b8d7c035f31)
@@ -3231,6 +3234,13 @@ packages:
     resolution: {integrity: sha512-C3IfPvfvMXmlzBxaMPKFS1XiuV9pu2mC7YqkPk7PSvTgPZ8gbdASIpHpztDLvTTQjqZ0z1Ol8tK5X+V6XXC0wQ==}
     cpu: [x64]
     os: [win32]
+
+  '@bsky.app/expo-scroll-edge-effect@0.1.11':
+    resolution: {integrity: sha512-uEZ9c4bixPEAGHlxo53hDBuhyLmvQJRIX1dtwppLR4Mt2pMY8O/ZtGlB4Is3A7DCEPJo7Y8Z7UKMUO3C4dct5Q==}
+    peerDependencies:
+      expo: '*'
+      react: '*'
+      react-native: '*'
 
   '@bufbuild/protobuf@1.10.0':
     resolution: {integrity: sha512-QDdVFLoN93Zjg36NoQPZfsVH9tZew7wKDKyV5qRdj8ntT4wQCOradQjRaTdwMhWUYsgKsvCINKKm87FdEk96Ag==}
@@ -13277,6 +13287,12 @@ snapshots:
 
   '@bruits/satteri-win32-x64-msvc@0.10.5':
     optional: true
+
+  '@bsky.app/expo-scroll-edge-effect@0.1.11(expo@58.0.14)(react-native@0.88.0(@babel/core@7.29.7(supports-color@8.1.1))(@react-native/metro-config@0.88.0(@babel/core@7.29.7(supports-color@8.1.1))(bufferutil@4.1.0)(supports-color@8.1.1)(utf-8-validate@6.0.6))(@types/react@19.3.0)(bufferutil@4.1.0)(react@19.3.0)(supports-color@8.1.1)(utf-8-validate@6.0.6))(react@19.3.0)':
+    dependencies:
+      expo: 58.0.14(277a83826bb26ba15256633fefeb0bc2)
+      react: 19.3.0
+      react-native: 0.88.0(@babel/core@7.29.7(supports-color@8.1.1))(@react-native/metro-config@0.88.0(@babel/core@7.29.7(supports-color@8.1.1))(bufferutil@4.1.0)(supports-color@8.1.1)(utf-8-validate@6.0.6))(@types/react@19.3.0)(bufferutil@4.1.0)(react@19.3.0)(supports-color@8.1.1)(utf-8-validate@6.0.6)
 
   '@bufbuild/protobuf@1.10.0': {}
 

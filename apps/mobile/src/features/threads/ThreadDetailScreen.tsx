@@ -15,6 +15,7 @@ import { createThreadVisitTracker } from "@t3tools/client-runtime/state/thread-v
 import { useChildThreadInputs, useThreadReportedModelSelection } from "../../state/entities";
 import { UsageLimitRecoveryCard } from "./UsageLimitRecoveryCard";
 import { ChatGptUsageLimitNotice } from "./ChatGptUsageLimitNotice";
+import { ScrollEdgeEffectProvider } from "@bsky.app/expo-scroll-edge-effect";
 import { useFocusEffect, useNavigation } from "@react-navigation/native";
 import {
   effectiveSnoozed,
@@ -357,10 +358,12 @@ const RECONNECT_ERROR_DELAY_MS = 5_000;
 // one thread, so the body remounts when the thread changes.
 export function ThreadDetailScreen(props: ThreadDetailScreenProps) {
   return (
-    <ThreadDetailBody
-      key={scopedThreadKey(props.environmentId, props.selectedThread.id)}
-      {...props}
-    />
+    <ScrollEdgeEffectProvider>
+      <ThreadDetailBody
+        key={scopedThreadKey(props.environmentId, props.selectedThread.id)}
+        {...props}
+      />
+    </ScrollEdgeEffectProvider>
   );
 }
 

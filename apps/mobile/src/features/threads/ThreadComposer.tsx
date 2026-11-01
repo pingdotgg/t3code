@@ -77,6 +77,7 @@ import {
   ComposerAttachmentThumbnail,
 } from "../../components/ComposerAttachmentStrip";
 import { VideoPreviewModal, type VideoPreviewSource } from "../../components/VideoPreviewModal";
+import { ScrollEdgeEffect } from "@bsky.app/expo-scroll-edge-effect";
 import { GlassSurface } from "../../components/ui/GlassSurface";
 import { ComposerEditor, type ComposerEditorHandle } from "../../components/ComposerEditor";
 import { fileRoutePathSegments } from "../files/filePath";
@@ -370,38 +371,42 @@ function ComposerSurface(props: {
 
   // Animate every native frame or glass and content jump to final height inside the clip.
   return (
-    <Animated.View
-      className={
-        Platform.OS === "android" ? undefined : "shadow-[0_6px_28px] shadow-adaptive-black-a15-a35"
-      }
-      layout={layoutTransition}
-      style={[
-        animatedShapeStyle,
-        {
-          overflow: "hidden",
-        },
-      ]}
-    >
-      <AnimatedGlassSurface
-        chrome="none"
-        fallbackColor={colors["--color-composer-surface"]}
-        fallbackClassName="border border-composer-border"
-        glassEffectStyle="regular"
-        pointerEvents="none"
-        tintColor="transparent"
-        layout={layoutTransition}
-        style={[{ position: "absolute", inset: 0 }, animatedShapeStyle]}
-      >
-        {null}
-      </AnimatedGlassSurface>
+    <ScrollEdgeEffect edge="bottom" effect="soft">
       <Animated.View
-        collapsable={false}
+        className={
+          Platform.OS === "android"
+            ? undefined
+            : "shadow-[0_6px_28px] shadow-adaptive-black-a15-a35"
+        }
         layout={layoutTransition}
-        style={[props.style, animatedShapeStyle]}
+        style={[
+          animatedShapeStyle,
+          {
+            overflow: "hidden",
+          },
+        ]}
       >
-        {props.children}
+        <AnimatedGlassSurface
+          chrome="none"
+          fallbackColor={colors["--color-composer-surface"]}
+          fallbackClassName="border border-composer-border"
+          glassEffectStyle="regular"
+          pointerEvents="none"
+          tintColor="transparent"
+          layout={layoutTransition}
+          style={[{ position: "absolute", inset: 0 }, animatedShapeStyle]}
+        >
+          {null}
+        </AnimatedGlassSurface>
+        <Animated.View
+          collapsable={false}
+          layout={layoutTransition}
+          style={[props.style, animatedShapeStyle]}
+        >
+          {props.children}
+        </Animated.View>
       </Animated.View>
-    </Animated.View>
+    </ScrollEdgeEffect>
   );
 }
 

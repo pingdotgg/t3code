@@ -109,6 +109,7 @@ import {
   useState,
   useId,
   type ComponentPropsWithRef,
+  type ComponentRef,
   type ReactNode,
   type Ref,
   type RefObject,
@@ -140,6 +141,8 @@ import { ThreadInlineFilePreview } from "./ThreadInlineFilePreview";
 import { flattenThemeColor } from "../../lib/mobileTheme";
 import { PresentationSource } from "../../components/ui/NativePresentation";
 import { NativeScrollViewMarker } from "../../native/NativeScrollViewMarker";
+import { nativeHeaderScrollEdgeEffects } from "../../native/scrollEdgeEffects";
+import { useScrollEdgeEffectRef } from "@bsky.app/expo-scroll-edge-effect";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import Animated, { FadeIn, FadeInUp, type SharedValue } from "react-native-reanimated";
 import { useUniwindTheme } from "../../lib/useUniwindTheme";
@@ -1082,12 +1085,30 @@ function MessageAttachmentUnknown(props: { readonly name: string }) {
 // LegendList only computes hook visibility when the list has a viewability config.
 const THREAD_MEDIA_VIEWABILITY_CONFIG = { itemVisiblePercentThreshold: 0 };
 
+// The header options hide the bottom edge; the composer's ScrollEdgeEffect shapes it instead.
+const THREAD_FEED_SCROLL_EDGE_EFFECTS = {
+  ...nativeHeaderScrollEdgeEffects(Platform.OS, Platform.Version),
+  bottom: "soft",
+} as const;
+
 // The composer and overlays beside the feed keep UIKit from finding it on its own, so
 // register it with the screen controller. Header minimization observes this scroll view.
-function ThreadFeedScrollView(props: ComponentPropsWithRef<typeof Animated.ScrollView>) {
+function ThreadFeedScrollView({
+  ref,
+  ...props
+}: ComponentPropsWithRef<typeof Animated.ScrollView>) {
+  const scrollEdgeRef = useScrollEdgeEffectRef();
+  const attachScrollView = useCallback(
+    (node: ComponentRef<typeof Animated.ScrollView> | null) => {
+      scrollEdgeRef?.(node);
+      if (typeof ref === "function") ref(node);
+      else if (ref) ref.current = node;
+    },
+    [ref, scrollEdgeRef],
+  );
   return (
-    <NativeScrollViewMarker style={{ flex: 1 }}>
-      <Animated.ScrollView {...props} />
+    <NativeScrollViewMarker style={{ flex: 1 }} scrollEdgeEffects={THREAD_FEED_SCROLL_EDGE_EFFECTS}>
+      <Animated.ScrollView {...props} ref={attachScrollView} />
     </NativeScrollViewMarker>
   );
 }
