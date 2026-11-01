@@ -1,6 +1,6 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
-import type { InteractionUpdate } from "@cursor/sdk";
+import type { InteractionUpdate, ModelSelection as CursorSdkModelSelection } from "@cursor/sdk";
 import {
   EnvironmentId,
   MessageId,
@@ -33,6 +33,7 @@ import {
   nestedToolCallFromEnvelope,
 } from "./adapter.ts";
 import * as CursorAgentSdk from "./CursorAgentSdk.ts";
+import { buildCursorDiscoveredModelsFromSdk } from "./status.ts";
 import { ConfigurationError } from "./sdk.ts";
 
 describe("CursorAdapterV2", () => {
@@ -1577,6 +1578,166 @@ describe("CursorAdapterV2", () => {
         })
         .pipe(Effect.flip);
       assert.equal(makeProviderFailure({ cause: sendFailure }).message, expected);
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        Layer.mergeAll(NodeServices.layer, IdAllocator.layer, McpProviderSessions.layer),
+      ),
+    ),
+  );
+
+  it.effect("sends every catalog parameter when the selection leaves them unset", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const workspace = yield* fileSystem.makeTempDirectoryScoped({ prefix: "cursor-v2-params-" });
+      const instanceId = ProviderInstanceId.make("cursor");
+      const threadId = ThreadId.make("cursor-params-thread");
+      const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        cwd: workspace,
+      });
+      const models = buildCursorDiscoveredModelsFromSdk([
+        {
+          id: "grok-4.5",
+          displayName: "Grok 4.5",
+          parameters: [
+            {
+              id: "effort",
+              displayName: "Effort",
+              values: [{ value: "low" }, { value: "medium" }, { value: "high" }],
+            },
+            { id: "fast", displayName: "Fast", values: [{ value: "false" }, { value: "true" }] },
+          ],
+          variants: [
+            {
+              displayName: "Grok 4.5 High Fast",
+              isDefault: true,
+              params: [
+                { id: "effort", value: "high" },
+                { id: "fast", value: "true" },
+              ],
+            },
+          ],
+        },
+      ]);
+      const sent: Array<{ readonly method: string; readonly model: unknown }> = [];
+      const record = (method: string, model: CursorSdkModelSelection | undefined) =>
+        sent.push({
+          method,
+          model:
+            model === undefined
+              ? undefined
+              : {
+                  id: model.id,
+                  params: model.params?.toSorted((a, b) => a.id.localeCompare(b.id)),
+                },
+        });
+      const adapter = yield* makeCursorAdapterV2({
+        instanceId,
+        environment: { HOME: workspace },
+        getModels: () => models,
+      }).pipe(
+        Effect.provideService(CursorAgentSdk.CursorAgentSdkRunner, {
+          assertComplete: Effect.void,
+          open: (input) => {
+            record(`agent.${input.operation}`, input.options.model);
+            return Effect.succeed({
+              agentId: "native-cursor-params",
+              listMessages: Effect.succeed([]),
+              close: Effect.void,
+              send: (sendInput) => {
+                record("run.start", sendInput.options?.model);
+                return Effect.fail(
+                  new CursorAgentSdk.CursorAgentSdkRunnerError({
+                    method: "run.start",
+                    cause: new Error("stop after recording the model"),
+                  }),
+                );
+              },
+            });
+          },
+        }),
+        Effect.provide(TestProviderHost.layer({ cwd: workspace })),
+      );
+      // A default model from Settings carries no options; the composer adds only Fast off.
+      const settingsDefault = { instanceId, model: "grok-4.5" };
+      const composerSelection = {
+        instanceId,
+        model: "grok-4.5",
+        options: [{ id: "fastMode", value: false }],
+      };
+      const runtime = yield* adapter.openSession({
+        threadId,
+        providerSessionId: ProviderSessionId.make("cursor-params-session"),
+        modelSelection: settingsDefault,
+        runtimePolicy,
+      });
+      const providerThread = yield* runtime.ensureThread({
+        threadId,
+        modelSelection: settingsDefault,
+        runtimePolicy,
+      });
+      const now = yield* DateTime.now;
+      for (const [ordinal, modelSelection] of [settingsDefault, composerSelection].entries()) {
+        yield* runtime
+          .startTurn({
+            threadId,
+            providerThread,
+            modelSelection,
+            runtimePolicy,
+            runId: RunId.make(`cursor-params-run-${ordinal}`),
+            runOrdinal: ordinal + 1,
+            providerTurnOrdinal: ordinal + 1,
+            attemptId: RunAttemptId.make(`cursor-params-attempt-${ordinal}`),
+            rootNodeId: NodeId.make(`cursor-params-root-${ordinal}`),
+            appThread: {
+              id: threadId,
+              projectId: ProjectId.make("cursor-params-project"),
+              createdBy: "user",
+              creationSource: "web",
+              title: "Cursor params",
+              providerInstanceId: instanceId,
+              modelSelection,
+              runtimeMode: "full-access",
+              interactionMode: "default",
+              branch: null,
+              worktreePath: null,
+              activeProviderThreadId: providerThread.id,
+              lineage: { parentThreadId: null, relationshipToParent: null, rootThreadId: threadId },
+              forkedFrom: null,
+              createdAt: now,
+              updatedAt: now,
+              archivedAt: null,
+              settledOverride: null,
+              settledAt: null,
+              lastVisitedAt: null,
+              deletedAt: null,
+            },
+            message: {
+              messageId: MessageId.make(`cursor-params-message-${ordinal}`),
+              createdBy: "user",
+              creationSource: "web",
+              text: "Hello.",
+              attachments: [],
+            },
+          })
+          .pipe(Effect.flip);
+      }
+
+      // Cursor rejects some plans' runs unless each catalog parameter is set; Fast stays off.
+      const catalogDefaults = {
+        id: "grok-4.5",
+        params: [
+          { id: "effort", value: "high" },
+          { id: "fast", value: "false" },
+        ],
+      };
+      assert.deepEqual(sent, [
+        { method: "agent.create", model: catalogDefaults },
+        { method: "run.start", model: catalogDefaults },
+        { method: "run.start", model: catalogDefaults },
+      ]);
     }).pipe(
       Effect.scoped,
       Effect.provide(
