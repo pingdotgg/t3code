@@ -87,7 +87,7 @@ It is a JSON array of rules:
 
 ```json
 [
-  { "key": "mod+g", "command": "terminal.toggle" },
+  { "key": "mod+g", "command": "rightPanel.toggle" },
   { "key": "mod+shift+g", "command": "terminal.new", "when": "terminalFocus" }
 ]
 ```
@@ -112,7 +112,7 @@ Join modifiers and a key with `+`, such as `mod+shift+d` or `ctrl+l`.
 
 ## When conditions
 
-Available context keys are `terminalFocus`, `terminalOpen`, `previewFocus`,
+Available context keys are `terminalFocus`, `previewFocus`,
 `previewOpen`, `modelPickerOpen`, `usagePageOpen`, `composerFocus`, `draftThreadRoute`,
 `turnRunning`, `editableFocus`, `isWeb`, and `isDesktop`.
 `draftThreadRoute` is true on a draft thread, including a restored draft, until it is first sent.
@@ -129,7 +129,7 @@ the same jumps in a browser.
 Combine keys with `!` for not, `&&` for and, `||` for or, and parentheses:
 
 ```json
-{ "key": "mod+j", "command": "terminal.toggle", "when": "terminalOpen && !terminalFocus" }
+{ "key": "mod+j", "command": "rightPanel.toggle", "when": "previewOpen && !terminalFocus" }
 ```
 
 ## Find in the current thread

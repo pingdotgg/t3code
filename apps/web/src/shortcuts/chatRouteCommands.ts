@@ -20,7 +20,6 @@ import { readProjects, readThreadShell } from "../state/entities";
 import { environmentPresentations } from "../state/presentation";
 import { primaryEnvironmentIdAtom } from "../state/primaryEnvironment";
 import { readEnvironmentScope } from "../state/session";
-import { selectThreadTerminalUiState, useTerminalUiStateStore } from "../terminalUiStateStore";
 import { useThreadSelectionStore } from "../threadSelectionStore";
 import { resolveThreadRouteTarget } from "../threadRoutes";
 import { useUiStateStore } from "../uiStateStore";
@@ -171,18 +170,7 @@ export function installChatRouteCommands(router: AnyRouter): () => void {
         router.state.matches.some((match) => match.routeId === CHAT_ROUTE_ID) &&
         !router.state.matches.some((match) => isAppModalPage(match.pathname)) &&
         !isCommandPaletteOpen(),
-      context: () => {
-        const threadRef = readRouteThreadRef();
-        return {
-          terminalOpen: threadRef
-            ? selectThreadTerminalUiState(
-                useTerminalUiStateStore.getState().terminalUiStateByThreadKey,
-                threadRef,
-              ).terminalOpen
-            : false,
-          previewOpen: readPreviewOpen(),
-        };
-      },
+      context: () => ({ previewOpen: readPreviewOpen() }),
       onKeyDown: (event) => {
         if (event.key !== "Escape") return false;
         const selection = useThreadSelectionStore.getState();

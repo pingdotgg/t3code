@@ -104,7 +104,6 @@ function compile(bindings: TestBinding[]): ResolvedKeybindingsConfig {
 
 const DEFAULT_BINDINGS = compile([
   { shortcut: modShortcut("b"), command: "sidebar.toggle" },
-  { shortcut: modShortcut("j"), command: "terminal.toggle" },
   { shortcut: modShortcut("b", { altKey: true }), command: "rightPanel.toggle" },
   {
     shortcut: modShortcut("d"),
@@ -271,31 +270,30 @@ describe("split/new/close terminal shortcuts", () => {
       {
         shortcut: modShortcut("\\"),
         command: "terminal.split",
-        whenAst: whenAnd(whenIdentifier("terminalOpen"), whenNot(whenIdentifier("terminalFocus"))),
+        whenAst: whenAnd(whenIdentifier("previewOpen"), whenNot(whenIdentifier("terminalFocus"))),
       },
       {
         shortcut: modShortcut("n", { shiftKey: true }),
         command: "terminal.new",
-        whenAst: whenAnd(whenIdentifier("terminalOpen"), whenNot(whenIdentifier("terminalFocus"))),
+        whenAst: whenAnd(whenIdentifier("previewOpen"), whenNot(whenIdentifier("terminalFocus"))),
       },
-      { shortcut: modShortcut("j"), command: "terminal.toggle" },
     ]);
     assert.isTrue(
       isTerminalSplitShortcut(event({ key: "\\", ctrlKey: true }), keybindings, {
         platform: "Win32",
-        context: { terminalOpen: true, terminalFocus: false },
+        context: { previewOpen: true, terminalFocus: false },
       }),
     );
     assert.isFalse(
       isTerminalSplitShortcut(event({ key: "\\", ctrlKey: true }), keybindings, {
         platform: "Win32",
-        context: { terminalOpen: false, terminalFocus: false },
+        context: { previewOpen: false, terminalFocus: false },
       }),
     );
     assert.isTrue(
       isTerminalNewShortcut(event({ key: "n", ctrlKey: true, shiftKey: true }), keybindings, {
         platform: "Win32",
-        context: { terminalOpen: true, terminalFocus: false },
+        context: { previewOpen: true, terminalFocus: false },
       }),
     );
   });
@@ -582,14 +580,14 @@ describe("resolveChatShortcutCommand", () => {
   });
 
   it("keeps app shortcuts on the primary environment when the active environment remaps them", () => {
-    const primary = compile([{ shortcut: modShortcut("j"), command: "terminal.toggle" }]);
-    const active = compile([{ shortcut: modShortcut("t"), command: "terminal.toggle" }]);
+    const primary = compile([{ shortcut: modShortcut("j"), command: "filePicker.toggle" }]);
+    const active = compile([{ shortcut: modShortcut("t"), command: "filePicker.toggle" }]);
 
     assert.strictEqual(
       resolveChatShortcutCommand(event({ key: "j", ctrlKey: true }), primary, active, {
         platform: "Linux",
       }),
-      "terminal.toggle",
+      "filePicker.toggle",
     );
     assert.isNull(
       resolveChatShortcutCommand(event({ key: "t", ctrlKey: true }), primary, active, {

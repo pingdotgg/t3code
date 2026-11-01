@@ -26,7 +26,6 @@ export { shortcutKeyFromEvent } from "@t3tools/shared/keybindings";
 
 export interface ShortcutMatchContext {
   terminalFocus: boolean;
-  terminalOpen: boolean;
   previewFocus: boolean;
   previewOpen: boolean;
   isWeb: boolean;
@@ -56,7 +55,6 @@ function resolvePlatform(options: ShortcutMatchOptions | undefined): string {
 function resolveContext(options: ShortcutMatchOptions | undefined): ShortcutMatchContext {
   return {
     terminalFocus: false,
-    terminalOpen: false,
     previewFocus: false,
     previewOpen: false,
     isWeb: !isElectron,
@@ -306,14 +304,6 @@ export function modelPickerJumpIndexFromCommand(command: string): number | null 
     command as ModelPickerJumpKeybindingCommand,
   );
   return index === -1 ? null : index;
-}
-
-export function isTerminalToggleShortcut(
-  event: ShortcutEventLike,
-  keybindings: ResolvedKeybindingsConfig,
-  options?: ShortcutMatchOptions,
-): boolean {
-  return matchesCommandShortcut(event, keybindings, "terminal.toggle", options);
 }
 
 export function isTerminalSplitShortcut(

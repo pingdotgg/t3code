@@ -9,11 +9,11 @@ import {
   registerTerminalFocusTarget,
 } from "./terminalFocus";
 
-// The drawer's collapsed shape: a 0fr grid row that clips the viewport, which
+// A collapsed shape: a 0fr grid row that clips the viewport, which
 // stays focusable, around a surface whose input refuses focus while hidden.
 function mountClippedViewport() {
-  const drawer = document.createElement("div");
-  drawer.style.cssText = "display:grid;grid-template-rows:0fr;overflow:clip";
+  const collapsed = document.createElement("div");
+  collapsed.style.cssText = "display:grid;grid-template-rows:0fr;overflow:clip";
   const clip = document.createElement("div");
   clip.style.cssText = "min-height:0;overflow:clip";
   const mount = document.createElement("div");
@@ -21,8 +21,8 @@ function mountClippedViewport() {
   const input = document.createElement("textarea");
   mount.append(input);
   clip.append(mount);
-  drawer.append(clip);
-  document.body.append(drawer);
+  collapsed.append(clip);
+  document.body.append(collapsed);
   const state = { visible: false };
   const surface = {
     focus() {
@@ -35,13 +35,13 @@ function mountClippedViewport() {
     input,
     state,
     focus,
-    [Symbol.dispose]: () => drawer.remove(),
+    [Symbol.dispose]: () => collapsed.remove(),
   };
 }
 
 describe("focusTerminalViewport", () => {
-  it("keeps a request made while the drawer is hidden until it shows", () => {
-    const ref = scopeThreadRef(EnvironmentId.make("env"), ThreadId.make("hidden-drawer"));
+  it("keeps a request made while the terminal is hidden until it shows", () => {
+    const ref = scopeThreadRef(EnvironmentId.make("env"), ThreadId.make("hidden-terminal"));
     using viewport = mountClippedViewport();
     const unregister = registerTerminalFocusTarget({
       threadRef: ref,

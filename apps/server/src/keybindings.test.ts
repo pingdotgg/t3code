@@ -77,7 +77,7 @@ it.layer(NodeServices.layer)("keybindings", (it) => {
       const compiled = SharedKeybindings.compileResolvedKeybindingRule({
         key: "mod+d",
         command: "terminal.split",
-        when: "terminalOpen && !terminalFocus",
+        when: "previewOpen && !terminalFocus",
       });
 
       assert.deepEqual(compiled, {
@@ -92,7 +92,7 @@ it.layer(NodeServices.layer)("keybindings", (it) => {
         },
         whenAst: {
           type: "and",
-          left: { type: "identifier", name: "terminalOpen" },
+          left: { type: "identifier", name: "previewOpen" },
           right: {
             type: "not",
             node: { type: "identifier", name: "terminalFocus" },
@@ -177,7 +177,7 @@ it.layer(NodeServices.layer)("keybindings", (it) => {
       yield* fs.writeFileString(
         keybindingsConfigPath,
         JSON.stringify([
-          { key: "mod+j", command: "terminal.toggle" },
+          { key: "mod+j", command: "sidebar.toggle" },
           { key: "mod+shift+d+o", command: "terminal.new" },
           { key: "mod+x", command: "invalid.command" },
         ]),
@@ -188,7 +188,7 @@ it.layer(NodeServices.layer)("keybindings", (it) => {
         return yield* keybindings.loadConfigState;
       });
 
-      assert.isTrue(configState.keybindings.some((entry) => entry.command === "terminal.toggle"));
+      assert.isTrue(configState.keybindings.some((entry) => entry.command === "sidebar.toggle"));
       assert.isFalse(
         configState.keybindings.some((entry) => String(entry.command) === "invalid.command"),
       );
@@ -213,7 +213,7 @@ it.layer(NodeServices.layer)("keybindings", (it) => {
       Effect.gen(function* () {
         const { keybindingsConfigPath } = yield* ServerConfig.ServerConfig;
         yield* writeKeybindingsConfig(keybindingsConfigPath, [
-          { key: "mod+shift+y", command: "terminal.toggle" },
+          { key: "mod+shift+y", command: "sidebar.toggle" },
           { key: "mod+shift+r", command: "script.run-tests.run" },
           { key: "mod+shift+b", command: "script.custom-panel.run" },
           {
@@ -229,11 +229,11 @@ it.layer(NodeServices.layer)("keybindings", (it) => {
         const persisted = yield* readKeybindingsConfig(keybindingsConfigPath);
         const byCommand = new Map(persisted.map((entry) => [entry.command, entry]));
 
-        const persistedToggle = byCommand.get("terminal.toggle");
+        const persistedToggle = byCommand.get("sidebar.toggle");
         assert.isNotNull(persistedToggle);
         assert.equal(persistedToggle?.key, "mod+shift+y");
         assert.isFalse(
-          persisted.some((entry) => entry.command === "terminal.toggle" && entry.key === "mod+j"),
+          persisted.some((entry) => entry.command === "sidebar.toggle" && entry.key === "mod+b"),
         );
 
         for (const defaultRule of SharedKeybindings.DEFAULT_KEYBINDINGS) {
@@ -329,7 +329,7 @@ it.layer(NodeServices.layer)("keybindings", (it) => {
     return Effect.gen(function* () {
       const { keybindingsConfigPath } = yield* ServerConfig.ServerConfig;
       yield* writeKeybindingsConfig(keybindingsConfigPath, [
-        { key: "mod+j", command: "script.custom-action.run" },
+        { key: "mod+b", command: "script.custom-action.run" },
       ]);
 
       yield* Effect.gen(function* () {
@@ -338,7 +338,7 @@ it.layer(NodeServices.layer)("keybindings", (it) => {
       });
 
       const persisted = yield* readKeybindingsConfig(keybindingsConfigPath);
-      assert.isFalse(persisted.some((entry) => entry.command === "terminal.toggle"));
+      assert.isFalse(persisted.some((entry) => entry.command === "sidebar.toggle"));
       assert.isTrue(persisted.some((entry) => entry.command === "script.custom-action.run"));
 
       assert.isTrue(
@@ -531,12 +531,12 @@ it.layer(NodeServices.layer)("keybindings", (it) => {
 
       yield* fileSystem.remove(keybindingsConfigPath, { recursive: true });
       yield* writeKeybindingsConfig(keybindingsConfigPath, [
-        { key: "mod+j", command: "terminal.toggle" },
+        { key: "mod+j", command: "sidebar.toggle" },
       ]);
 
       const configState = yield* keybindings.loadConfigState;
       assert.deepEqual(configState.issues, []);
-      assert.isTrue(configState.keybindings.some((entry) => entry.command === "terminal.toggle"));
+      assert.isTrue(configState.keybindings.some((entry) => entry.command === "sidebar.toggle"));
     }).pipe(Effect.provide(layerKeybindings())),
   );
 

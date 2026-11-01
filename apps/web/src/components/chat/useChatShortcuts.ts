@@ -8,17 +8,14 @@ import {
   preventTerminalCloseShortcut,
 } from "../../lib/terminalCloseShortcut";
 import { isInSideChatPane } from "../../lib/sideChatPane";
-import { getTerminalFocusOwner, type TerminalFocusOwner } from "../../lib/terminalFocus";
+import { isTerminalFocused } from "../../lib/terminalFocus";
 import type { ComposerHandleRef } from "../../composerHandleContext";
 import type { BranchToolbarHandle } from "../BranchToolbar";
 import { shouldTypeToFocusComposer } from "./composerFocusRedirect";
 import { composerShortcutCommands } from "./composerShortcuts";
 
 /** Returning false lets the key event through untouched. */
-type ChatShortcutHandler = (context: {
-  readonly event: KeyboardEvent;
-  readonly terminalFocusOwner: TerminalFocusOwner | null;
-}) => boolean | void;
+type ChatShortcutHandler = (context: { readonly event: KeyboardEvent }) => boolean | void;
 
 export type ChatShortcutCommands = Partial<Record<KeybindingCommand, ChatShortcutHandler>>;
 
@@ -65,8 +62,7 @@ export function useChatShortcuts(input: ChatShortcutsInput) {
       return;
     }
     if (!input.enabled || isCommandPaletteOpen() || isInSideChatPane(event.target)) return;
-    const terminalFocusOwner = getTerminalFocusOwner();
-    if (event.defaultPrevented && terminalFocusOwner === null) return;
+    if (event.defaultPrevented && !isTerminalFocused()) return;
     const shortcutContext = input.getShortcutContext(event.target);
 
     if (
@@ -88,7 +84,7 @@ export function useChatShortcuts(input: ChatShortcutsInput) {
       input.commands[command] ??
       composerShortcutCommands(input.composerRef, input.branchToolbarRef)[command] ??
       input.fallback(command);
-    if (!run || run({ event, terminalFocusOwner }) === false) return;
+    if (!run || run({ event }) === false) return;
     event.preventDefault();
     event.stopPropagation();
   });
@@ -116,7 +112,7 @@ export function useChatShortcuts(input: ChatShortcutsInput) {
     const run = command
       ? composerShortcutCommands(input.composerRef, input.branchToolbarRef)[command]
       : undefined;
-    if (!run || run({ event, terminalFocusOwner: null }) === false) return;
+    if (!run || run({ event }) === false) return;
     event.preventDefault();
     event.stopPropagation();
   });

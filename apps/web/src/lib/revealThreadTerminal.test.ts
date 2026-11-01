@@ -3,17 +3,12 @@ import { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { beforeEach, expect, it } from "vite-plus/test";
 
 import { selectThreadRightPanelState, useRightPanelStore } from "../rightPanelStore";
-import { selectThreadTerminalUiState, useTerminalUiStateStore } from "../terminalUiStateStore";
 import { revealThreadTerminal } from "./revealThreadTerminal";
 
 const threadRef = scopeThreadRef(EnvironmentId.make("local"), ThreadId.make("settled-thread"));
 const remoteRef = scopeThreadRef(EnvironmentId.make("remote"), threadRef.threadId);
 
 beforeEach(() => {
-  useTerminalUiStateStore.setState({
-    terminalUiStateByThreadKey: {},
-    suppressedTerminalIdsByThreadKey: {},
-  });
   useRightPanelStore.setState({ byThreadKey: {} });
 });
 
@@ -41,18 +36,18 @@ it("reopens the existing panel and selects a running terminal in its split", () 
       },
     ],
   });
-  expect(
-    selectThreadTerminalUiState(
-      useTerminalUiStateStore.getState().terminalUiStateByThreadKey,
-      threadRef,
-    ).terminalIds,
-  ).toEqual([]);
 });
 
-it("reveals terminals in their own environment without changing another environment's drawer", () => {
+it("adds a panel surface for a terminal the panel does not hold yet, per environment", () => {
   revealThreadTerminal(threadRef, "default");
   revealThreadTerminal(remoteRef, "setup-install");
-  const state = useTerminalUiStateStore.getState().terminalUiStateByThreadKey;
-  expect(selectThreadTerminalUiState(state, threadRef).terminalIds).toEqual(["default"]);
-  expect(selectThreadTerminalUiState(state, remoteRef).terminalIds).toEqual(["setup-install"]);
+  const state = useRightPanelStore.getState().byThreadKey;
+  expect(selectThreadRightPanelState(state, threadRef)).toMatchObject({
+    isOpen: true,
+    surfaces: [{ kind: "terminal", terminalIds: ["default"] }],
+  });
+  expect(selectThreadRightPanelState(state, remoteRef)).toMatchObject({
+    isOpen: true,
+    surfaces: [{ kind: "terminal", terminalIds: ["setup-install"] }],
+  });
 });

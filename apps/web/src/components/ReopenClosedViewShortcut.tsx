@@ -35,7 +35,6 @@ import { previewEnvironment } from "../state/preview";
 import { primaryServerKeybindingsAtom } from "../state/server";
 import { environmentShell } from "../state/shell";
 import { useAtomCommand } from "../state/use-atom-command";
-import { selectThreadTerminalUiState, useTerminalUiStateStore } from "../terminalUiStateStore";
 import {
   buildDraftThreadRouteParams,
   buildThreadRouteParams,
@@ -68,10 +67,6 @@ export function ReopenClosedViewShortcut() {
       : draft
         ? (draft.promotedTo ?? scopeThreadRef(draft.environmentId, draft.threadId))
         : null;
-  const terminalOpen = useTerminalUiStateStore(
-    (state) =>
-      selectThreadTerminalUiState(state.terminalUiStateByThreadKey, threadRef).terminalOpen,
-  );
   const previewOpen = useRightPanelStore(
     (state) => selectActiveRightPanel(state.byThreadKey, threadRef) === "preview",
   );
@@ -165,7 +160,6 @@ export function ReopenClosedViewShortcut() {
       const command = resolveShortcutCommand(event, keybindings, {
         context: {
           terminalFocus: isTerminalFocused(),
-          terminalOpen,
           previewFocus: isPreviewFocused(),
           previewOpen,
           editableFocus: isEditableFocused(event.target),
@@ -185,7 +179,7 @@ export function ReopenClosedViewShortcut() {
       window.removeEventListener("keydown", onKeyDown, true);
       unsubscribe?.();
     };
-  }, [keybindings, previewOpen, terminalOpen]);
+  }, [keybindings, previewOpen]);
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- registers forwarded shortcut chords with the desktop preview bridge and clears them on cleanup
   useEffect(() => {
@@ -196,7 +190,6 @@ export function ReopenClosedViewShortcut() {
         previewFocus: true,
         previewOpen: true,
         terminalFocus: false,
-        terminalOpen,
         editableFocus: false,
         modelPickerOpen: false,
         isDesktop: true,
@@ -221,7 +214,7 @@ export function ReopenClosedViewShortcut() {
     return () => {
       void preview.setForwardedShortcuts([]).catch(() => undefined);
     };
-  }, [hasHistory, keybindings, terminalOpen]);
+  }, [hasHistory, keybindings]);
 
   return null;
 }

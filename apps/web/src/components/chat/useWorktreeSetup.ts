@@ -13,9 +13,8 @@ import { useEnvironmentQuery } from "../../state/query";
 import { threadEnvironment } from "../../state/threads";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { vcsEnvironment } from "../../state/vcs";
-import { useTerminalUiStateStore } from "../../terminalUiStateStore";
 import type { Thread } from "../../types";
-import { focusTerminal } from "../../lib/terminalFocus";
+import { revealThreadTerminal } from "../../lib/revealThreadTerminal";
 import { resolveVisibleWorktreeSetup, resolveWorktreeSetupProgress } from "../ChatView.logic";
 import { worktreeSetupAgentStarted } from "@t3tools/client-runtime/worktree-setup";
 
@@ -51,7 +50,6 @@ export function useWorktreeSetup(input: {
     reportFailure: false,
   });
   const retryWorkspacePreparation = useAtomCommand(threadEnvironment.retryWorkspacePreparation);
-  const storeEnsureTerminal = useTerminalUiStateStore((state) => state.ensureTerminal);
   const [startedSetup, setStartedSetup] = useState<{
     readonly environmentId: EnvironmentId;
     readonly threadId: ThreadId;
@@ -151,10 +149,7 @@ export function useWorktreeSetup(input: {
   const setupThreadRef =
     worktreeSetup && threadRef && worktreeSetup.threadId === threadRef.threadId ? threadRef : null;
   const openSetupTerminal = setupThreadRef
-    ? (terminalId: string) => {
-        storeEnsureTerminal(setupThreadRef, terminalId, { open: true, active: true });
-        focusTerminal(setupThreadRef, terminalId);
-      }
+    ? (terminalId: string) => revealThreadTerminal(setupThreadRef, terminalId)
     : null;
 
   return {

@@ -408,7 +408,7 @@ describe("RpcSessionFactory", () => {
                 version: 1,
                 type: "keybindingsUpdated",
                 payload: {
-                  keybindings: [{ command: "terminal.toggle", shortcut }],
+                  keybindings: [{ command: "filePicker.toggle", shortcut }],
                   issues: [],
                 },
               },
@@ -426,7 +426,7 @@ describe("RpcSessionFactory", () => {
           _tag: "Some",
           value: {
             type: "snapshot",
-            config: { keybindings: [{ command: "terminal.toggle", shortcut }] },
+            config: { keybindings: [{ command: "filePicker.toggle", shortcut }] },
           },
         });
       }),
@@ -992,7 +992,7 @@ describe("RpcSessionFactory", () => {
         ...ENCODED_SERVER_CONFIG,
         keybindings: [
           { command: "someFuture.toggle", shortcut },
-          { command: "terminal.toggle", shortcut },
+          { command: "filePicker.toggle", shortcut },
         ],
         issues: [{ kind: "keybindings.future-issue", message: "From a newer server" }],
         availableEditors: ["some-future-editor", "zed"],
@@ -1000,7 +1000,7 @@ describe("RpcSessionFactory", () => {
       yield* Fiber.join(readyFiber);
 
       const config = yield* session.initialConfig;
-      expect(config.keybindings).toEqual([{ command: "terminal.toggle", shortcut }]);
+      expect(config.keybindings).toEqual([{ command: "filePicker.toggle", shortcut }]);
       expect(config.issues).toEqual([]);
       expect(config.availableEditors).toEqual(["zed"]);
     }),

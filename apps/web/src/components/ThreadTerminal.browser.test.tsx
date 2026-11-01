@@ -2,7 +2,7 @@ import { EMPTY_TERMINAL_SESSION_STATE } from "@t3tools/client-runtime/state/term
 import { EnvironmentId, ThreadId, type ScopedThreadRef } from "@t3tools/contracts";
 import { expect, it, vi } from "vite-plus/test";
 import { act, fakeTimers, render } from "../../test/render";
-import ThreadTerminalDrawer from "./ThreadTerminalDrawer";
+import ThreadTerminal from "./ThreadTerminal";
 
 const fixture = vi.hoisted(() => ({
   statusByThreadId: new Map<string, "running" | "exited">(),
@@ -72,11 +72,10 @@ function Drawer(props: {
   onCloseTerminal: (terminalId: string, threadRef?: ScopedThreadRef) => void;
 }) {
   return (
-    <ThreadTerminalDrawer
+    <ThreadTerminal
       threadRef={props.threadRef}
       threadId={props.threadRef.threadId}
       cwd="/repo"
-      height={240}
       terminalIds={["term-1"]}
       activeTerminalId="term-1"
       terminalGroups={[{ id: "group-1", terminalIds: ["term-1"] }]}
@@ -86,7 +85,6 @@ function Drawer(props: {
       onNewTerminal={() => {}}
       onActiveTerminalChange={() => {}}
       onCloseTerminal={props.onCloseTerminal}
-      onHeightChange={() => {}}
       onAddTerminalContext={() => {}}
       keybindings={[]}
     />

@@ -16,7 +16,6 @@ import { readEnvironmentScope } from "../../state/session";
 import { terminalEnvironment } from "../../state/terminal";
 import { useKnownTerminalSessions } from "../../state/terminalSessions";
 import { useAtomCommand } from "../../state/use-atom-command";
-import { selectThreadTerminalUiState, useTerminalUiStateStore } from "../../terminalUiStateStore";
 
 /** Where a new terminal starts. Omitted fields fall back to the thread's project and worktree. */
 export interface TerminalLaunchLocation {
@@ -44,9 +43,6 @@ export function useThreadTerminalActions(threadRef: ScopedThreadRef | null) {
     environmentId: threadRef?.environmentId ?? null,
     threadId: threadRef?.threadId ?? null,
   });
-  const drawerTerminalIds = useTerminalUiStateStore(
-    (state) => selectThreadTerminalUiState(state.terminalUiStateByThreadKey, threadRef).terminalIds,
-  );
   const panelSurfaces = useRightPanelStore(
     (state) => selectThreadRightPanelState(state.byThreadKey, threadRef).surfaces,
   );
@@ -58,7 +54,6 @@ export function useThreadTerminalActions(threadRef: ScopedThreadRef | null) {
   const allocateTerminalId = () => {
     const ids = new Set([
       ...(knownSessions ?? []).map((session) => session.target.terminalId),
-      ...drawerTerminalIds,
       ...panelSurfaces.flatMap((surface) =>
         surface.kind === "terminal" ? surface.terminalIds : [],
       ),

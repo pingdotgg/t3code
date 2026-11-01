@@ -90,7 +90,6 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
   compact?: boolean;
   isComposerOwned?: boolean;
   disabled?: boolean;
-  terminalOpen?: boolean;
   open?: boolean;
   popupAlign?: "start" | "end";
   triggerClassName?: string;
@@ -265,7 +264,6 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
       instanceEntries={props.instanceEntries}
       {...(props.keybindings ? { keybindings: props.keybindings } : {})}
       modelOptionsByInstance={props.modelOptionsByInstance}
-      terminalOpen={props.terminalOpen ?? false}
       onRequestClose={() => setIsMenuOpen(false)}
       {...(props.onOpenProviderSetup ? { onOpenProviderSetup: props.onOpenProviderSetup } : {})}
       getModelDisabledReason={(instanceId, model) =>

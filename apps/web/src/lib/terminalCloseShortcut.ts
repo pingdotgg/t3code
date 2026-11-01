@@ -10,7 +10,7 @@ export interface TerminalCloseShortcutEvent extends ShortcutEventLike {
 function terminalCloseShortcutOptions(platform?: string) {
   return {
     ...(platform === undefined ? {} : { platform }),
-    context: { terminalFocus: true, terminalOpen: true },
+    context: { terminalFocus: true },
   };
 }
 

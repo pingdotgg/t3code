@@ -12,7 +12,7 @@ import {
   shouldHandleTerminalExit,
   synchronizeTerminalOutput,
   synchronizeTerminalSession,
-} from "./ThreadTerminalDrawer";
+} from "./ThreadTerminal";
 
 describe("terminal selection actions", () => {
   it("does not let an old selection popup cancel its replacement right-click menu", () => {

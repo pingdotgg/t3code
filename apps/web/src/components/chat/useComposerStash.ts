@@ -48,7 +48,6 @@ import { remainingComposerAttachmentSlots } from "./composerThreadImport";
 import { replaceComposerContextReferences } from "@t3tools/shared/composerContextReferences";
 import { resizeSnapShotSource } from "../../lib/snapShotSource";
 import { registerCommands } from "../../shortcuts/dispatcher";
-import { selectThreadTerminalUiState, useTerminalUiStateStore } from "../../terminalUiStateStore";
 import { toastManager } from "../ui/toast";
 import type { useComposerTriggerState } from "./useComposerTriggerState";
 import {
@@ -74,7 +73,6 @@ export function useComposerStash(input: {
   readonly promptRef: ChatComposerProps["promptRef"];
   readonly readAttachmentDraft: () => Pick<ComposerThreadDraftState, "images" | "files">;
   readonly readTerminalContexts: () => ComposerThreadDraftState["terminalContexts"];
-  readonly routeThreadRef: ChatComposerProps["routeThreadRef"];
   readonly projectSelectionRequired: boolean;
   readonly pendingUserInputs: ReadonlyArray<PendingUserInput>;
   readonly activePendingProgress: ChatComposerProps["activePendingProgress"];
@@ -104,7 +102,6 @@ export function useComposerStash(input: {
     promptRef,
     readAttachmentDraft,
     readTerminalContexts,
-    routeThreadRef,
     projectSelectionRequired,
     pendingUserInputs,
     activePendingProgress,
@@ -687,14 +684,6 @@ export function useComposerStash(input: {
   // Capture phase while the composer is mounted, so Mod+S never reaches the browser's save
   // dialog even when a focused widget (the model picker search) stops the key.
   const backgroundThread = use(BackgroundThreadContext);
-  const readShortcutContext = useStableCallback(() => ({
-    terminalOpen: Boolean(
-      selectThreadTerminalUiState(
-        useTerminalUiStateStore.getState().terminalUiStateByThreadKey,
-        routeThreadRef,
-      ).terminalOpen,
-    ),
-  }));
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- registers the capture-phase stash shortcut with the command registry while the composer is mounted
   useEffect(() => {
     if (backgroundThread) return;
@@ -702,11 +691,10 @@ export function useComposerStash(input: {
       { "composer.stash": handleStashShortcut },
       {
         capture: true,
-        context: readShortcutContext,
         when: (event) => !isInSideChatPane(event.target),
       },
     );
-  }, [backgroundThread, handleStashShortcut, readShortcutContext]);
+  }, [backgroundThread, handleStashShortcut]);
 
   return {
     stashQueue,

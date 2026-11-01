@@ -83,7 +83,6 @@ export function ComposerControlsBar(props: {
   providerInstanceEntries: ReadonlyArray<ProviderInstanceEntry>;
   keybindings: ChatComposerProps["keybindings"];
   modelOptionsByInstance: ReadonlyMap<ProviderInstanceId, ReadonlyArray<AppModelOption>>;
-  terminalOpen: boolean;
   modelPickerOpen: boolean;
   onModelPickerOpenChange: (open: boolean) => void;
   modelPickerIconClassName: string | undefined;
@@ -131,7 +130,6 @@ export function ComposerControlsBar(props: {
     providerInstanceEntries,
     keybindings,
     modelOptionsByInstance,
-    terminalOpen,
     modelPickerOpen,
     onModelPickerOpenChange,
     modelPickerIconClassName,
@@ -236,7 +234,6 @@ export function ComposerControlsBar(props: {
           onRuntimeModeChange={handleRuntimeModeChange}
         />
       }
-      terminalOpen={terminalOpen}
       open={modelPickerOpen}
       instanceIndicatorBackground={
         composerControlsCollapsed

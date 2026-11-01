@@ -744,7 +744,7 @@ it.effect.each(["pending", "cached"] as const)(
       assert.deepEqual(snapshot.config.keybindings, initialKeybindings);
       const duringAck = yield* keybindings.upsertKeybindingRule({
         key: "mod+alt+y",
-        command: "terminal.toggle",
+        command: "sidebar.toggle",
       });
       yield* acknowledge;
       yield* Deferred.await(keybindingsSubscribed);

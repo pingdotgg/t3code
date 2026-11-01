@@ -439,7 +439,7 @@ describe("server state projection", () => {
         payload: {
           keybindings: [
             {
-              command: "terminal.toggle",
+              command: "filePicker.toggle",
               shortcut: {
                 key,
                 metaKey: false,

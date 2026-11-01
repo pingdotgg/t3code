@@ -4,7 +4,7 @@ import {
   INITIAL_TERMINAL_OUTPUT_CURSOR,
   nextTerminalAttachSeedState,
 } from "@t3tools/client-runtime/state/terminal";
-import { synchronizeTerminalSession } from "../../components/ThreadTerminalDrawer";
+import { synchronizeTerminalSession } from "../../components/ThreadTerminal";
 
 import { GhosttyTerminalCore, type GhosttyCell, type GhosttyRow } from "./core";
 import {

@@ -115,7 +115,6 @@ import { getSourceControlPresentationForKind } from "~/sourceControlPresentation
 function getShortcutContext() {
   return {
     terminalFocus: isTerminalFocused(),
-    terminalOpen: false,
     previewFocus: false,
     previewOpen: false,
     modelPickerOpen: false,
@@ -1101,11 +1100,7 @@ export function PullRequestsPage() {
   );
   const panelToggleControls = (
     <PanelLayoutControls
-      showTerminalControl={false}
       showThreadPanelControl={false}
-      terminalAvailable={false}
-      terminalOpen={false}
-      terminalShortcutLabel={null}
       threadPanelOpen={false}
       threadPanelPresentation="inline"
       threadPanelShortcutLabel={null}
@@ -1114,7 +1109,6 @@ export function PullRequestsPage() {
       rightPanelOpen={rightPanelState.isOpen}
       rightPanelShortcutLabel={shortcutLabelForCommand(keybindings, "rightPanel.toggle")}
       rightPanelUnavailableLabel="Select a pull request first"
-      onToggleTerminal={() => undefined}
       onToggleRightPanel={toggleRightPanel}
     />
   );

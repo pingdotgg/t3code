@@ -111,7 +111,7 @@ it("re-enables Save when a When editor closes on an expression it could not pars
       <KeybindingsSettingsPanel />
     </RegistryProvider>,
   );
-  const whenTrigger = screen.getByRole("button", { name: "Edit when clause for Terminal: Toggle" });
+  const whenTrigger = screen.getByRole("button", { name: "Edit when clause for Sidebar: Toggle" });
   const expression = screen.getByRole("textbox", { name: "When expression" });
 
   await whenTrigger.click();

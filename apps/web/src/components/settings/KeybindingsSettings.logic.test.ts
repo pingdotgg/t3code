@@ -20,8 +20,8 @@ describe("KeybindingsSettings.logic", () => {
   it("keeps sibling row identities when a saved binding moves to the end", () => {
     const bindings = compileResolvedKeybindingsConfig([
       { command: "chat.new", key: "mod+n" },
-      { command: "terminal.toggle", key: "mod+j" },
-      { command: "terminal.toggle", key: "mod+k", when: "terminalFocus" },
+      { command: "filePicker.toggle", key: "mod+j" },
+      { command: "filePicker.toggle", key: "mod+k", when: "terminalFocus" },
     ]);
     const before = buildKeybindingRows(bindings);
     const after = buildKeybindingRows([
@@ -29,8 +29,8 @@ describe("KeybindingsSettings.logic", () => {
       ...compileResolvedKeybindingsConfig([{ command: "chat.new", key: "mod+shift+n" }]),
     ]);
 
-    expect(after.filter((row) => row.command === "terminal.toggle").map((row) => row.id)).toEqual(
-      before.filter((row) => row.command === "terminal.toggle").map((row) => row.id),
+    expect(after.filter((row) => row.command === "filePicker.toggle").map((row) => row.id)).toEqual(
+      before.filter((row) => row.command === "filePicker.toggle").map((row) => row.id),
     );
     expect(after.find((row) => row.command === "chat.new")?.id).not.toBe(
       before.find((row) => row.command === "chat.new")?.id,
@@ -39,21 +39,23 @@ describe("KeybindingsSettings.logic", () => {
 
   it("shares a stable editor for resolved duplicates but separates commands, shortcuts, and conditions", () => {
     const bindings = compileResolvedKeybindingsConfig([
-      { command: "terminal.toggle", key: "mod+esc", when: "terminalFocus" },
-      { command: "terminal.toggle", key: "mod+escape", when: "(terminalFocus)" },
-      { command: "terminal.toggle", key: "mod+esc", when: "!terminalFocus" },
-      { command: "terminal.toggle", key: "mod+j", when: "terminalFocus" },
+      { command: "filePicker.toggle", key: "mod+esc", when: "terminalFocus" },
+      { command: "filePicker.toggle", key: "mod+escape", when: "(terminalFocus)" },
+      { command: "filePicker.toggle", key: "mod+esc", when: "!terminalFocus" },
+      { command: "filePicker.toggle", key: "mod+j", when: "terminalFocus" },
       { command: "chat.new", key: "mod+esc", when: "terminalFocus" },
     ]);
     const rows = buildKeybindingRows(bindings);
     expect(rows.map(({ command, key, when }) => ({ command, key, when }))).toEqual([
       { command: "chat.new", key: "mod+esc", when: "terminalFocus" },
-      { command: "terminal.toggle", key: "mod+esc", when: "terminalFocus" },
-      { command: "terminal.toggle", key: "mod+esc", when: "!terminalFocus" },
-      { command: "terminal.toggle", key: "mod+j", when: "terminalFocus" },
+      { command: "filePicker.toggle", key: "mod+esc", when: "terminalFocus" },
+      { command: "filePicker.toggle", key: "mod+esc", when: "!terminalFocus" },
+      { command: "filePicker.toggle", key: "mod+j", when: "terminalFocus" },
     ]);
     expect(new Set(rows.map((row) => row.id)).size).toBe(4);
-    expect(rows.find((row) => row.command === "chat.new")?.conflicts).toEqual(["Terminal: Toggle"]);
+    expect(rows.find((row) => row.command === "chat.new")?.conflicts).toEqual([
+      "File Picker: Toggle",
+    ]);
     expect(buildKeybindingRows(bindings.slice(1)).map((row) => row.id)).toEqual(
       rows.map((row) => row.id),
     );

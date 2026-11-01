@@ -175,11 +175,10 @@ function ModelListSeparator() {
 function modelJumpLabelsByKey(
   modelKeys: ReadonlyArray<string>,
   keybindings: ResolvedKeybindingsConfig,
-  terminalOpen: boolean,
 ): ReadonlyMap<string, string> {
   const shortcutLabelOptions = {
     platform: navigator.platform,
-    context: { terminalFocus: false, terminalOpen, modelPickerOpen: true },
+    context: { terminalFocus: false, modelPickerOpen: true },
   };
   const mapping = new Map<string, string>();
   for (const [index, modelKey] of modelKeys.entries()) {
@@ -355,7 +354,6 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
   instanceEntries: ReadonlyArray<ProviderInstanceEntry>;
   keybindings?: ResolvedKeybindingsConfig;
   modelOptionsByInstance: ReadonlyMap<ProviderInstanceId, ReadonlyArray<ModelEsque>>;
-  terminalOpen: boolean;
   onRequestClose?: () => void;
   onOpenProviderSetup?: (instanceId: ProviderInstanceId) => void;
   getModelDisabledReason?: (instanceId: ProviderInstanceId, model: string) => string | null;
@@ -508,7 +506,6 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
 
   const modelJumpShortcutContext = {
     terminalFocus: false,
-    terminalOpen: props.terminalOpen,
     modelPickerOpen: true,
   } as const;
   const lockedProvider = props.lockedProvider;
@@ -759,11 +756,7 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
       ),
     ))();
 
-  const modelJumpLabelByKey = modelJumpLabelsByKey(
-    modelJumpModelKeys,
-    keybindings,
-    props.terminalOpen,
-  );
+  const modelJumpLabelByKey = modelJumpLabelsByKey(modelJumpModelKeys, keybindings);
   const badgedInstanceIds = new Set(
     instanceEntries
       .filter((entry) => shouldShowInstanceBadge(entry, instanceEntries))
