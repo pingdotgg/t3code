@@ -15,7 +15,7 @@ import {
   type NodeRuntimeUnavailableError,
 } from "@t3tools/shared/nodeRuntime";
 import * as NetService from "@t3tools/shared/Net";
-import { isCommandAvailable } from "@t3tools/shared/shell";
+import { isCommandAvailable, resolveCommandPath } from "@t3tools/shared/shell";
 import * as Clock from "effect/Clock";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -146,7 +146,12 @@ const androidSdk = Effect.gen(function* () {
     );
     const legacyAvdmanager =
       !avdmanager && (yield* exists(path.join(root, "tools", "bin", avdmanagerBinary)));
-    return { root, adb, emulator, avdmanager, legacyAvdmanager };
+    const adbPath = adb
+      ? path.join(root, "platform-tools", adbBinary)
+      : windows
+        ? null
+        : yield* resolveCommandPath(adbBinary, { env: environment });
+    return { root, adb: adbPath !== null, adbPath, emulator, avdmanager, legacyAvdmanager };
   });
   const candidates = explicit
     ? [explicit]
@@ -175,7 +180,14 @@ const androidSdk = Effect.gen(function* () {
       if (sdk) return sdk;
     }
   }
-  return { root: null, adb: false, emulator: false, avdmanager: false, legacyAvdmanager: false };
+  return {
+    root: null,
+    adb: false,
+    adbPath: null,
+    emulator: false,
+    avdmanager: false,
+    legacyAvdmanager: false,
+  };
 });
 
 const deviceHostEnvironment = (
@@ -196,6 +208,34 @@ const deviceHostEnvironment = (
       }
     : environment;
 };
+
+const hubSdkEnvironment = Effect.fn("LocalDeviceHost.hubSdkEnvironment")(function* (
+  environment: NodeJS.ProcessEnv,
+  sdk: { readonly root: string | null; readonly adbPath: string | null },
+  directory: string,
+) {
+  const path = yield* Path.Path;
+  const platform = yield* HostProcess.Platform;
+  if (
+    platform === "win32" ||
+    !sdk.root ||
+    !sdk.adbPath ||
+    sdk.adbPath === path.join(sdk.root, "platform-tools", "adb")
+  ) {
+    return environment;
+  }
+  // The hub resolves adb inside an SDK even when the distro installs it separately on PATH.
+  const fs = yield* FileSystem.FileSystem;
+  const entries = yield* fs.readDirectory(sdk.root).pipe(Effect.option);
+  if (Option.isNone(entries)) return environment;
+  const root = yield* fs.makeTempDirectoryScoped({ directory, prefix: "android-sdk-" });
+  for (const entry of entries.value) {
+    if (entry === "platform-tools") continue;
+    yield* fs.symlink(path.resolve(sdk.root, entry), path.join(root, entry));
+  }
+  yield* fs.symlink(path.dirname(path.resolve(sdk.adbPath)), path.join(root, "platform-tools"));
+  return { ...environment, ANDROID_HOME: root, ANDROID_SDK_ROOT: root };
+});
 
 const hubEnvironment = Effect.fn("LocalDeviceHost.hubEnvironment")(function* (
   environment: NodeJS.ProcessEnv,
@@ -411,6 +451,24 @@ export const make = Effect.fn("LocalDeviceHost.make")(function* () {
     const scope = yield* Scope.make("sequential");
     // The hub is not recorded yet; stop it on failure or interruption from spawn onward.
     return yield* Effect.gen(function* () {
+      const hubEnv = yield* hubSdkEnvironment(
+        hostEnvironment,
+        sdk,
+        agentDeviceStateDir(path, config.stateDir),
+      ).pipe(
+        Effect.provideService(FileSystem.FileSystem, fs),
+        Effect.provideService(Path.Path, path),
+        Effect.provideService(HostProcess.Platform, hostPlatform),
+        Effect.provideService(Scope.Scope, scope),
+        Effect.mapError(
+          (cause) =>
+            new DeviceHost.DeviceHostError({
+              hostId,
+              step: "preparing the Android SDK for the device hub",
+              cause,
+            }),
+        ),
+      );
       const child = yield* spawner
         .spawn(
           ChildProcess.make(
@@ -431,7 +489,7 @@ export const make = Effect.fn("LocalDeviceHost.make")(function* () {
               shell: false,
               stdout: "pipe",
               stderr: "pipe",
-              env: yield* hubEnvironment(hostEnvironment).pipe(
+              env: yield* hubEnvironment(hubEnv).pipe(
                 Effect.provideService(FileSystem.FileSystem, fs),
                 Effect.provideService(Path.Path, path),
                 Effect.provideService(ProcessRunner.ProcessRunner, runner),
@@ -488,6 +546,7 @@ export const make = Effect.fn("LocalDeviceHost.make")(function* () {
     Effect.fnUntraced(
       function* (hub: HubProcess, hubTool: DeviceToolPaths) {
         yield* Effect.result(hub.child.exitCode);
+        yield* stopHub(hub);
         const running = yield* Ref.get(runningRef);
         if (running?.hub.child.pid !== hub.child.pid) return;
         const uptime = (yield* Clock.currentTimeMillis) - hub.startedAtMillis;
@@ -656,6 +715,7 @@ export const make = Effect.fn("LocalDeviceHost.make")(function* () {
     if (running) {
       const alive = yield* running.hub.child.isRunning.pipe(Effect.orElseSucceed(() => false));
       if (alive) return running;
+      yield* stopHub(running.hub);
     }
     const nodePath = yield* resolveNodeExecutable("Local device support", hostEnvironment).pipe(
       Effect.provideService(FileSystem.FileSystem, fs),
@@ -880,5 +940,6 @@ export const __testing = {
   androidSdk,
   platformReason,
   deviceHostEnvironment,
+  hubSdkEnvironment,
   hubEnvironment,
 };

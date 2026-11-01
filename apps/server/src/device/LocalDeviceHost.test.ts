@@ -6,6 +6,8 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as PlatformError from "effect/PlatformError";
+import * as Scope from "effect/Scope";
+import * as Exit from "effect/Exit";
 import * as Ref from "effect/Ref";
 import * as FileSystem from "effect/FileSystem";
 import * as Sink from "effect/Sink";
@@ -40,6 +42,7 @@ const agentFixture = Effect.fn("agentFixture")(function* (
     stateDir: string,
   ) => Effect.Effect<ProcessRunner.ProcessRunOutput, ProcessRunner.ProcessRunError>,
   avdOutput: ProcessRunner.ProcessRunOutput = processOutput(0),
+  systemAdb = false,
 ) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -47,6 +50,19 @@ const agentFixture = Effect.fn("agentFixture")(function* (
   const hub = { running: true, spawnFails: false };
   const stateDir = agentDeviceStateDir(path, path.join(baseDir, "userdata"));
   const daemonHealthy = yield* Ref.make(true);
+  const sdkRoot = path.join(baseDir, "sdk");
+  const bin = path.join(baseDir, "bin");
+  if (systemAdb) {
+    for (const file of [
+      path.join(sdkRoot, "emulator", "emulator"),
+      path.join(sdkRoot, "cmdline-tools", "latest", "bin", "avdmanager"),
+    ]) {
+      yield* fs.makeDirectory(path.dirname(file), { recursive: true });
+      yield* fs.writeFileString(file, "");
+    }
+    yield* fs.makeDirectory(bin);
+    yield* fs.symlink(process.execPath, path.join(bin, "adb"));
+  }
   for (const [name, version, entry] of [
     ["expo-device-hub", DEVICE_HUB_VERSION, "dist/server/cli.mjs"],
     ["agent-device", AGENT_DEVICE_VERSION, "bin/agent-device.mjs"],
@@ -59,7 +75,11 @@ const agentFixture = Effect.fn("agentFixture")(function* (
   }
   const host = yield* LocalDeviceHost.make().pipe(
     Effect.provide(Layer.mergeAll(ServerConfig.layerTest(baseDir, baseDir), NetService.layer)),
-    Effect.provideService(HostProcess.Environment, { HOME: baseDir, PATH: "" }),
+    Effect.provideService(HostProcess.Environment, {
+      HOME: baseDir,
+      PATH: systemAdb ? bin : "",
+      ...(systemAdb ? { ANDROID_HOME: sdkRoot } : {}),
+    }),
     Effect.provideService(HostProcess.IsExecutable, false),
     Effect.provideService(HostProcess.Platform, "darwin"),
     Effect.provideService(
@@ -258,19 +278,26 @@ describe("AgentDevice startup", () => {
   it.effect("keeps releasing agent sessions while a dead hub fails to restart and after", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
-      const { host, hub } = yield* agentFixture((stateDir) =>
-        fs
-          .writeFileString(
-            `${stateDir}/daemon.json`,
-            JSON.stringify({ httpPort: 12345, token: "test-token" }),
-          )
-          .pipe(Effect.orDie, Effect.as(processOutput(0))),
+      const { host, hub, stateDir } = yield* agentFixture(
+        (stateDir) =>
+          fs
+            .writeFileString(
+              `${stateDir}/daemon.json`,
+              JSON.stringify({ httpPort: 12345, token: "test-token" }),
+            )
+            .pipe(Effect.orDie, Effect.as(processOutput(0))),
+        processOutput(0),
+        HostProcess.Platform.defaultValue() !== "win32",
       );
       yield* host.ensureAgentReady(() => Effect.void);
+      const sdkViews = fs
+        .readDirectory(stateDir)
+        .pipe(Effect.map((entries) => entries.filter((entry) => entry.startsWith("android-sdk-"))));
       hub.running = false;
       hub.spawnFails = true;
       expect((yield* host.ensureReady(() => Effect.void).pipe(Effect.result))._tag).toBe("Failure");
       expect((yield* host.current)?.releaseAgentSession).toBeTypeOf("function");
+      expect(yield* sdkViews).toEqual([]);
       hub.spawnFails = false;
       yield* host.ensureReady(() => Effect.void);
       expect((yield* host.current)?.releaseAgentSession).toBeTypeOf("function");
@@ -356,6 +383,37 @@ describe("Android SDK availability", () => {
     }),
   );
 
+  it.effect("still requires SDK Platform-Tools on Windows when a standalone adb is on PATH", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const info = yield* fs.stat(process.execPath);
+      const root = "C:\\Android\\Sdk";
+      const sdk = yield* LocalDeviceHost.__testing.androidSdk.pipe(
+        Effect.provideService(HostProcess.Environment, {
+          ANDROID_HOME: root,
+          PATH: "C:\\tools",
+        }),
+        Effect.provideService(HostProcess.Platform, "win32"),
+        Effect.provideService(
+          FileSystem.FileSystem,
+          FileSystem.makeNoop({
+            exists: (file) =>
+              Effect.succeed(
+                [
+                  `${root}\\emulator\\emulator.exe`,
+                  `${root}\\cmdline-tools\\latest\\bin\\avdmanager.bat`,
+                  "C:\\tools\\adb.exe",
+                ].includes(file),
+              ),
+            stat: () => Effect.succeed(info),
+          }),
+        ),
+        Effect.provide(NodePath.layerWin32),
+      );
+      expect(sdk).toMatchObject({ root, adb: false, adbPath: null });
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
   // regression: #12017 detect unsupported legacy Android command-line tools
   it.effect("explains how to upgrade legacy command-line tools in the standard macOS SDK", () =>
     Effect.gen(function* () {
@@ -387,6 +445,82 @@ describe("Android SDK availability", () => {
     }),
   );
 
+  describe.runIf(HostProcess.Platform.defaultValue() !== "win32")("Unix system adb", () => {
+    it.effect.each([
+      { name: "ANDROID_HOME", variable: "ANDROID_HOME" },
+      { name: "ANDROID_SDK_ROOT", variable: "ANDROID_SDK_ROOT" },
+      { name: "the standard SDK location", variable: undefined },
+    ])("accepts a system adb with $name", ({ variable }) =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const directory = yield* fs.makeTempDirectoryScoped({ prefix: "t3-system-adb-" });
+        const root = variable
+          ? path.join(directory, "sdk")
+          : path.join(directory, "Android", "Sdk");
+        const bin = path.join(directory, "bin");
+        const adbPath = path.join(bin, "adb");
+        const emulator = path.join(root, "emulator", "emulator");
+        for (const file of [
+          adbPath,
+          emulator,
+          path.join(root, "cmdline-tools", "latest", "bin", "avdmanager"),
+        ]) {
+          yield* fs.makeDirectory(path.dirname(file), { recursive: true });
+          yield* fs.writeFileString(file, "#!/bin/sh\nexit 0\n");
+          yield* fs.chmod(file, 0o755);
+        }
+        const environment = {
+          HOME: directory,
+          PATH: [path.join(directory, "missing"), bin].join(":"),
+          ...(variable ? { [variable]: root } : {}),
+        };
+        const sdk = yield* LocalDeviceHost.__testing.androidSdk.pipe(
+          Effect.provideService(HostProcess.Environment, environment),
+          Effect.provideService(HostProcess.Platform, "linux"),
+        );
+        expect(sdk).toMatchObject({ root, adb: true, adbPath });
+        expect(
+          yield* LocalDeviceHost.__testing
+            .platformReason("android")
+            .pipe(
+              Effect.provideService(HostProcess.Environment, environment),
+              Effect.provideService(HostProcess.Platform, "linux"),
+            ),
+        ).toBeNull();
+        yield* fs.remove(emulator);
+        expect(
+          yield* LocalDeviceHost.__testing.platformReason("android").pipe(
+            Effect.provideService(HostProcess.Environment, {
+              ...environment,
+              ANDROID_HOME: root,
+            }),
+            Effect.provideService(HostProcess.Platform, "linux"),
+          ),
+        ).toContain("Android Emulator is missing");
+        yield* fs.writeFileString(emulator, "emulator fixture");
+        yield* fs.chmod(adbPath, 0o644);
+        expect(
+          yield* LocalDeviceHost.__testing.androidSdk.pipe(
+            Effect.provideService(HostProcess.Environment, {
+              ...environment,
+              PATH: bin,
+            }),
+            Effect.provideService(HostProcess.Platform, "linux"),
+          ),
+        ).toMatchObject({ root, adb: false });
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+    );
+  });
+
+  it.effect("does not mistake a system adb for a complete SDK", () =>
+    Effect.gen(function* () {
+      expect(
+        yield* diagnose(["/usr/bin/adb"], { HOME: "/test/home", PATH: "/usr/bin" }, "linux"),
+      ).toContain("Android SDK was not found");
+    }),
+  );
+
   it.effect("discovers the standard macOS SDK without ANDROID_HOME", () =>
     Effect.gen(function* () {
       const root = "/test/home/Library/Android/sdk";
@@ -402,6 +536,131 @@ describe("Android SDK availability", () => {
     }),
   );
 });
+
+it.effect("never prepares a temporary SDK view on Windows", () =>
+  Effect.gen(function* () {
+    const environment = { ANDROID_HOME: "C:\\Android\\Sdk", PATH: "C:\\tools" };
+    expect(
+      yield* LocalDeviceHost.__testing.hubSdkEnvironment(
+        environment,
+        { root: environment.ANDROID_HOME, adbPath: "C:\\tools\\adb.exe" },
+        "C:\\state",
+      ),
+    ).toBe(environment);
+  }).pipe(
+    Effect.scoped,
+    Effect.provideService(HostProcess.Platform, "win32"),
+    Effect.provideService(
+      FileSystem.FileSystem,
+      FileSystem.makeNoop({
+        makeTempDirectoryScoped: () => Effect.die("Windows must not prepare an SDK view"),
+      }),
+    ),
+    Effect.provide(NodePath.layerWin32),
+  ),
+);
+
+it.effect.each(["NotFound", "BadResource", "PermissionDenied"] as const)(
+  "does not prepare an SDK view when listing the root fails with %s",
+  (reason) =>
+    Effect.gen(function* () {
+      const environment = { ANDROID_HOME: "/unavailable-sdk", PATH: "/usr/bin" };
+      const result = yield* LocalDeviceHost.__testing.hubSdkEnvironment(
+        environment,
+        { root: environment.ANDROID_HOME, adbPath: "/usr/bin/adb" },
+        "/must-not-be-used",
+      );
+      expect(result).toBe(environment);
+    }).pipe(
+      Effect.scoped,
+      Effect.provideService(
+        FileSystem.FileSystem,
+        FileSystem.makeNoop({
+          readDirectory: () =>
+            Effect.fail(
+              PlatformError.systemError({
+                _tag: reason,
+                module: "FileSystem",
+                method: "readDirectory",
+              }),
+            ),
+          makeTempDirectoryScoped: () => Effect.die("An unavailable SDK must not allocate a view"),
+        }),
+      ),
+      Effect.provideService(HostProcess.Platform, "darwin"),
+      Effect.provide(NodePath.layerPosix),
+    ),
+);
+
+it.effect.runIf(HostProcess.Platform.defaultValue() !== "win32")(
+  "makes a system adb available to SDK-only hub resolvers without changing the SDK",
+  () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const runner = yield* ProcessRunner.ProcessRunner;
+      const directory = yield* fs.makeTempDirectoryScoped({ prefix: "t3-hub-system-adb-" });
+      const root = path.join(directory, "sdk");
+      const bin = path.join(directory, "bin");
+      yield* fs.makeDirectory(path.join(root, "platform-tools"), { recursive: true });
+      yield* fs.makeDirectory(path.join(root, "emulator"));
+      yield* fs.makeDirectory(path.join(root, "cmdline-tools", "latest", "bin"), {
+        recursive: true,
+      });
+      yield* fs.makeDirectory(bin);
+      yield* fs.writeFileString(path.join(root, "emulator", "emulator"), "emulator fixture");
+      yield* fs.writeFileString(
+        path.join(root, "cmdline-tools", "latest", "bin", "avdmanager"),
+        "tools fixture",
+      );
+      yield* fs.writeFileString(path.join(root, "source.properties"), "SDK fixture");
+      const adbPath = path.join(bin, "adb");
+      yield* fs.symlink(process.execPath, adbPath);
+      const environment = { ANDROID_HOME: root, ANDROID_SDK_ROOT: root, PATH: bin };
+      const scope = yield* Scope.make();
+      yield* Effect.addFinalizer(() => Scope.close(scope, Exit.void));
+      const env = yield* LocalDeviceHost.__testing
+        .hubSdkEnvironment(environment, { root, adbPath }, directory)
+        .pipe(Effect.provideService(Scope.Scope, scope));
+      expect(env.ANDROID_HOME).not.toBe(root);
+      expect(env.ANDROID_SDK_ROOT).toBe(env.ANDROID_HOME);
+      expect(env.PATH).toBe(environment.PATH);
+      expect(environment).toEqual({ ANDROID_HOME: root, ANDROID_SDK_ROOT: root, PATH: bin });
+      const hubRoot = env.ANDROID_HOME!;
+      expect(yield* fs.readFileString(path.join(hubRoot, "emulator", "emulator"))).toBe(
+        "emulator fixture",
+      );
+      expect(
+        yield* fs.readFileString(
+          path.join(hubRoot, "cmdline-tools", "latest", "bin", "avdmanager"),
+        ),
+      ).toBe("tools fixture");
+      expect(yield* fs.readFileString(path.join(hubRoot, "source.properties"))).toBe("SDK fixture");
+      const result = yield* runner.run({
+        command: path.join(hubRoot, "platform-tools", "adb"),
+        args: ["-e", "process.stdout.write('system-adb')"],
+        env,
+      });
+      expect(result.code).toBe(0);
+      expect(result.stdout).toBe("system-adb");
+      yield* Scope.close(scope, Exit.void);
+      expect(yield* fs.exists(hubRoot)).toBe(false);
+      expect(yield* fs.readDirectory(path.join(root, "platform-tools"))).toEqual([]);
+      expect(yield* fs.exists(adbPath)).toBe(true);
+      expect(yield* fs.exists(path.join(root, "emulator", "emulator"))).toBe(true);
+      expect(
+        yield* LocalDeviceHost.__testing.hubSdkEnvironment(
+          environment,
+          { root, adbPath: path.join(root, "platform-tools", "adb") },
+          "/must-not-be-used",
+        ),
+      ).toBe(environment);
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(Layer.provideMerge(ProcessRunner.layer, NodeServices.layer)),
+      Effect.provideService(HostProcess.Platform, "linux"),
+    ),
+);
 
 it.effect(
   "recovers an owned Linux runtime directory without overriding explicit environments",
