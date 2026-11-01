@@ -439,6 +439,8 @@ export const draftPenClassName = "size-3 shrink-0 text-warning-foreground";
 // useSortable memoizes on its `disabled` object, so a fresh one per render
 // re-renders every row and marker on each sidebar update.
 export const SIDEBAR_SORTABLE_DRAG_DISABLED = { draggable: true } as const;
+// Child rows sit outside the sortable list, so they neither drag nor take drops.
+const SIDEBAR_SORTABLE_NESTED = { draggable: true, droppable: true } as const;
 const SIDEBAR_SORTABLE_DRAG_ENABLED = { draggable: false } as const;
 
 // Takes the row's props rather than a render function: a closure from the
@@ -459,9 +461,11 @@ export function SortableThreadRow(
   const { listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: sortableId,
     disabled:
-      sortableDisabled || !canOperateThread
-        ? SIDEBAR_SORTABLE_DRAG_DISABLED
-        : SIDEBAR_SORTABLE_DRAG_ENABLED,
+      (rowProps.nestDepth ?? 0) > 0
+        ? SIDEBAR_SORTABLE_NESTED
+        : sortableDisabled || !canOperateThread
+          ? SIDEBAR_SORTABLE_DRAG_DISABLED
+          : SIDEBAR_SORTABLE_DRAG_ENABLED,
     animateLayoutChanges: animateSidebarLayoutChanges,
   });
   // dnd-kit memoizes each field but not the bag, so the memoized row would
@@ -536,6 +540,8 @@ type SidebarThreadRowProps = {
   // "folder" is a one-line row inside a boring sidebar project folder;
   // "folder-multiline" adds the card's branch and PR line under it.
   variant: "card" | "slim" | "folder" | "folder-multiline";
+  /** Levels under a parent row; child rows are slim or folder rows indented by it. */
+  nestDepth?: number | undefined;
   navigationParent?: string | undefined;
   variantAction: SidebarSweepAction;
   settlementSupported: boolean;
@@ -652,6 +658,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
     variant,
     variantAction,
   } = props;
+  const nestDepth = props.nestDepth ?? 0;
   const threadRef = scopeThreadRef(thread.environmentId, thread.id);
   const threadKey = scopedThreadKey(threadRef);
   const canOperateThread = useEnvironmentScope(thread.environmentId, AuthOrchestrationOperateScope);
@@ -1224,6 +1231,13 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
                   // Lines titles up with the folder name, past its chevron and icon.
                   inFolder && "ps-9",
                 )}
+                style={
+                  nestDepth > 0
+                    ? {
+                        paddingInlineStart: `calc(${inFolder ? "2.25rem" : "0.625rem"} + ${nestDepth}rem)`,
+                      }
+                    : undefined
+                }
                 onClick={handleClick}
                 onDoubleClick={handleDoubleClick}
                 onKeyDown={handleKeyDown}

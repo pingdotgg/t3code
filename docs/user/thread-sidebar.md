@@ -149,6 +149,16 @@ right-click it, to start a thread in that project. Pinned threads stay above the
 Snoozed and Settled stay below them. In this mode you cannot drag threads, and the Working section
 is off. Each device keeps its own choice.
 
+### Child chats
+
+On web and desktop, child chats an agent launches sit under their parent's row instead of
+filling the list. They start collapsed: a line under the parent counts them by state (need
+input, running, waiting, failed, and done), showing only states that have chats. Click that line,
+or focus it and press the right or left arrow key, to show or hide them. Each device remembers
+which parents you opened. The chat you have open always stays visible under its parent. A child
+you pinned, or one whose parent is not in the list (filtered out, archived, or in a closed
+section), keeps its own row, and a live child of a settled parent stays in the active list.
+
 ## Settle finished work
 
 Choose **Settle thread** from its menu to move finished work out of the active list

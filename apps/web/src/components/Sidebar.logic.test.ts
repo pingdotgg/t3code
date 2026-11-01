@@ -35,6 +35,10 @@ import {
   groupSidebarThreadsByProject,
   resolveSidebarFolderDot,
   sidebarFolderExpansionKeys,
+  sidebarChildBucket,
+  nestSidebarChildThreads,
+  resolveSidebarShownChildren,
+  flattenSidebarThreadTree,
 } from "./Sidebar.logic";
 import { resolveProjectExpanded } from "../uiStateStore";
 import { threadSearchMatchKey } from "@t3tools/client-runtime/state/thread-search";
@@ -1458,5 +1462,127 @@ describe("resolveSidebarFolderDot", () => {
     expect(resolveSidebarFolderDot([idle, working])).toBe("working");
     expect(resolveSidebarFolderDot([working, unread])).toBe("unread");
     expect(resolveSidebarFolderDot([unread, limited])).toBe("attention");
+  });
+});
+
+describe("sidebar child threads", () => {
+  const runtime = (status: "running" | "queued" | "idle" | "failed") => ({
+    status,
+    activeRunId: null,
+    providerInstanceId: ProviderInstanceId.make("codex"),
+    providerName: "Codex",
+    lastError: null,
+    updatedAt: "2026-03-09T10:00:00.000Z",
+  });
+  const child = (id: string, parent: string | null, overrides: ThreadFixtureOverrides = {}) =>
+    makeThread({
+      id: ThreadId.make(id),
+      parentThreadId: parent === null ? null : ThreadId.make(parent),
+      parentRelationship: parent === null ? null : "child",
+      ...overrides,
+    });
+  const key = (id: string) => `${localEnvironmentId}:${id}`;
+
+  it("buckets each child by the status its own row shows", () => {
+    const cases: Array<[ThreadFixtureOverrides, string]> = [
+      [{ hasPendingApprovals: true, runtime: runtime("running") }, "needsInput"],
+      [{ hasPendingUserInput: true }, "needsInput"],
+      [{ pendingGuestMessageCount: 1 }, "needsInput"],
+      [{ hasPendingApprovals: true, settledOverride: "settled" }, "needsInput"],
+      [{ runtime: runtime("running") }, "running"],
+      [{ runtime: runtime("queued") }, "running"],
+      [{ runtime: runtime("running"), blockedOnThreadWait: true }, "waiting"],
+      // Parked on background work that holds completion, such as a background wait.
+      [{ runtime: runtime("idle") }, "waiting"],
+      [{ runtime: runtime("failed") }, "failed"],
+      [{ runtime: { ...runtime("failed"), lastErrorClass: "usage_limit" } }, "failed"],
+      [{ runtime: runtime("running"), settledOverride: "settled" }, "done"],
+      [{ runtime: null, latestRun: makeLatestRun() }, "done"],
+    ];
+    for (const [overrides, bucket] of cases) {
+      expect(sidebarChildBucket(child("c", "p", overrides)), JSON.stringify(overrides)).toBe(
+        bucket,
+      );
+    }
+  });
+
+  it("folds children under a drawn parent and counts its whole subtree", () => {
+    const captain = child("captain", null);
+    const lead = child("lead", "captain", {
+      runtime: runtime("running"),
+      blockedOnThreadWait: true,
+    });
+    const worker = child("worker", "lead", { hasPendingUserInput: true });
+    const finished = child("finished", "captain", { settledOverride: "settled" });
+    // Its parent is filtered out or archived, so it keeps its own row.
+    const orphan = child("orphan", "missing", { runtime: runtime("running") });
+    const nesting = nestSidebarChildThreads({
+      threads: [captain, lead, worker, finished, orphan],
+      drawnKeys: new Set([key("captain"), key("lead"), key("worker"), key("orphan")]),
+    });
+
+    expect([...nesting.parentKeyByKey.keys()].toSorted()).toEqual(
+      [key("finished"), key("lead"), key("worker")].toSorted(),
+    );
+    expect(nesting.childrenByParentKey.get(key("captain"))?.map((thread) => thread.id)).toEqual([
+      "lead",
+      "finished",
+    ]);
+    expect(nesting.countsByParentKey.get(key("captain"))).toEqual({
+      needsInput: 1,
+      running: 0,
+      waiting: 1,
+      failed: 0,
+      done: 1,
+    });
+    expect(nesting.countsByParentKey.get(key("lead"))).toEqual({
+      needsInput: 1,
+      running: 0,
+      waiting: 0,
+      failed: 0,
+      done: 0,
+    });
+  });
+
+  it("keeps a child on its own row when pinned, its parent is not drawn, or it is live under a settled parent", () => {
+    const shelved = child("shelved", null);
+    const settledParent = child("settled-parent", null, { settledOverride: "settled" });
+    const nesting = nestSidebarChildThreads({
+      threads: [
+        shelved,
+        settledParent,
+        child("under-shelved", "shelved"),
+        child("live", "settled-parent", { runtime: runtime("running") }),
+        child("settled", "settled-parent", { settledOverride: "settled" }),
+        child("pinned", "settled-parent", {
+          settledOverride: "settled",
+          pinnedAt: "2026-03-09T10:00:00.000Z",
+        }),
+      ],
+      // `shelved` sits in a closed shelf.
+      drawnKeys: new Set([key("settled-parent"), key("under-shelved"), key("live"), key("pinned")]),
+    });
+
+    expect([...nesting.parentKeyByKey.keys()]).toEqual([key("settled")]);
+  });
+
+  it("starts collapsed but always shows the open thread's branch", () => {
+    const threads = [
+      child("captain", null),
+      child("lead", "captain"),
+      child("worker", "lead"),
+      child("sibling", "captain"),
+    ];
+    const nesting = nestSidebarChildThreads({ threads, drawnKeys: new Set([key("captain")]) });
+    const rows = (expanded: string[], route: string | null) =>
+      flattenSidebarThreadTree(
+        [threads[0]!],
+        resolveSidebarShownChildren(nesting, new Set(expanded.map(key)), route && key(route)),
+      ).map((thread) => thread.id);
+
+    expect(rows([], null)).toEqual(["captain"]);
+    expect(rows([], "worker")).toEqual(["captain", "lead", "worker"]);
+    expect(rows(["captain"], null)).toEqual(["captain", "lead", "sibling"]);
+    expect(rows(["captain", "lead"], null)).toEqual(["captain", "lead", "worker", "sibling"]);
   });
 });

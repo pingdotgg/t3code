@@ -14,8 +14,10 @@ import {
   type ThreadSearchShell,
 } from "@t3tools/client-runtime/state/thread-search";
 import { foldSearchQuery, rankSearchItems, scoreThreadSearch } from "@t3tools/shared/paletteSearch";
+import { scopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime/environment";
 import {
   isSubagentThread,
+  threadParentRelationship,
   type ContextMenuItem,
   type EnvironmentId,
   type ThreadId,
@@ -911,6 +913,168 @@ export function resolveSidebarFolderDot(
   if (hasUnread) return "unread";
   if (statuses.has("working")) return "working";
   return null;
+}
+
+/**
+ * A child chat's bucket in its parent's collapsed summary, read from the same
+ * status its own row shows. Guest requests wait on the owner, so they count as
+ * input; a settled child is done unless it still asks for something.
+ */
+export type SidebarChildBucket = "needsInput" | "running" | "waiting" | "failed" | "done";
+
+export type SidebarChildCounts = Readonly<Record<SidebarChildBucket, number>>;
+
+export function sidebarChildBucket(
+  thread: SidebarThreadStatusInput & Pick<SidebarThreadSummary, "settledOverride">,
+): SidebarChildBucket {
+  const status = resolveSidebarThreadStatus(thread);
+  if (status === "approval" || status === "input" || status === "request") return "needsInput";
+  if (thread.settledOverride === "settled") return "done";
+  if (status === "working") return "running";
+  if (status === "waiting") return "waiting";
+  if (status === "failed" || status === "limited") return "failed";
+  return "done";
+}
+
+type SidebarNestingThread = SidebarThreadStatusInput &
+  Pick<
+    SidebarThreadSummary,
+    | "environmentId"
+    | "id"
+    | "lineage"
+    | "parentThreadId"
+    | "parentEnvironmentId"
+    | "parentRelationship"
+    | "pinnedAt"
+    | "settledOverride"
+  >;
+
+function sidebarThreadKeyOf(thread: Pick<SidebarThreadSummary, "environmentId" | "id">): string {
+  return scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id));
+}
+
+function sidebarParentKeyOf(thread: SidebarNestingThread): string | null {
+  if (thread.parentThreadId === null || threadParentRelationship(thread) !== "child") return null;
+  return scopedThreadKey(
+    scopeThreadRef(thread.parentEnvironmentId ?? thread.environmentId, thread.parentThreadId),
+  );
+}
+
+export interface SidebarThreadNesting<T> {
+  /** Direct children under each parent, in the order `threads` lists them. */
+  readonly childrenByParentKey: ReadonlyMap<string, readonly T[]>;
+  /** Bucket counts over each parent's whole subtree. */
+  readonly countsByParentKey: ReadonlyMap<string, SidebarChildCounts>;
+  readonly parentKeyByKey: ReadonlyMap<string, string>;
+}
+
+/**
+ * Child chats fold under their parent when the sidebar draws that parent, so a
+ * child whose parent is filtered out, archived, or in a closed shelf keeps its
+ * own row, and so does a child the user pinned. Like the Agents board, a
+ * settled parent holds only settled children so it cannot bury live work.
+ */
+export function nestSidebarChildThreads<T extends SidebarNestingThread>(input: {
+  readonly threads: readonly T[];
+  readonly drawnKeys: ReadonlySet<string>;
+}): SidebarThreadNesting<T> {
+  const byKey = new Map(input.threads.map((thread) => [sidebarThreadKeyOf(thread), thread]));
+  const nested = new Map<string, boolean>();
+  const isNested = (key: string, visiting: Set<string>): boolean => {
+    const cached = nested.get(key);
+    if (cached !== undefined) return cached;
+    const thread = byKey.get(key)!;
+    const parentKey = sidebarParentKeyOf(thread);
+    const parent = parentKey === null ? undefined : byKey.get(parentKey);
+    let result = false;
+    if (
+      parent !== undefined &&
+      parentKey !== null &&
+      thread.pinnedAt == null &&
+      !visiting.has(parentKey)
+    ) {
+      visiting.add(key);
+      result =
+        (parent.settledOverride !== "settled" || thread.settledOverride === "settled") &&
+        (input.drawnKeys.has(parentKey) || isNested(parentKey, visiting));
+      visiting.delete(key);
+    }
+    nested.set(key, result);
+    return result;
+  };
+  const childrenByParentKey = new Map<string, T[]>();
+  const parentKeyByKey = new Map<string, string>();
+  for (const [key, thread] of byKey) {
+    if (!isNested(key, new Set())) continue;
+    const parentKey = sidebarParentKeyOf(thread)!;
+    parentKeyByKey.set(key, parentKey);
+    const siblings = childrenByParentKey.get(parentKey);
+    if (siblings === undefined) childrenByParentKey.set(parentKey, [thread]);
+    else siblings.push(thread);
+  }
+  const countsByParentKey = new Map<string, Record<SidebarChildBucket, number>>();
+  for (const [key, thread] of byKey) {
+    if (!parentKeyByKey.has(key)) continue;
+    const bucket = sidebarChildBucket(thread);
+    const seen = new Set<string>();
+    for (
+      let parentKey = parentKeyByKey.get(key);
+      parentKey !== undefined && !seen.has(parentKey);
+      parentKey = parentKeyByKey.get(parentKey)
+    ) {
+      seen.add(parentKey);
+      let counts = countsByParentKey.get(parentKey);
+      if (counts === undefined) {
+        counts = { needsInput: 0, running: 0, waiting: 0, failed: 0, done: 0 };
+        countsByParentKey.set(parentKey, counts);
+      }
+      counts[bucket] += 1;
+    }
+  }
+  return { childrenByParentKey, countsByParentKey, parentKeyByKey };
+}
+
+/**
+ * The children each parent row shows: all of them while it is expanded,
+ * otherwise only the branch holding the open thread, so collapsing never hides
+ * the thread on screen.
+ */
+export function resolveSidebarShownChildren<
+  T extends Pick<SidebarThreadSummary, "environmentId" | "id">,
+>(
+  nesting: SidebarThreadNesting<T>,
+  expandedParentKeys: ReadonlySet<string>,
+  routeKey: string | null,
+): ReadonlyMap<string, readonly T[]> {
+  const routeBranch = new Set<string>();
+  for (
+    let key = routeKey ?? undefined;
+    key !== undefined && !routeBranch.has(key);
+    key = nesting.parentKeyByKey.get(key)
+  ) {
+    routeBranch.add(key);
+  }
+  const shown = new Map<string, readonly T[]>();
+  for (const [parentKey, children] of nesting.childrenByParentKey) {
+    const visible = expandedParentKeys.has(parentKey)
+      ? children
+      : children.filter((child) => routeBranch.has(sidebarThreadKeyOf(child)));
+    if (visible.length > 0) shown.set(parentKey, visible);
+  }
+  return shown;
+}
+
+/** Rows top to bottom: each top-level row, then the children it shows, depth first. */
+export function flattenSidebarThreadTree<
+  T extends Pick<SidebarThreadSummary, "environmentId" | "id">,
+>(topLevel: readonly T[], shownChildren: ReadonlyMap<string, readonly T[]>): T[] {
+  const rows: T[] = [];
+  const visit = (thread: T) => {
+    rows.push(thread);
+    for (const child of shownChildren.get(sidebarThreadKeyOf(thread)) ?? []) visit(child);
+  };
+  for (const thread of topLevel) visit(thread);
+  return rows;
 }
 
 /**
