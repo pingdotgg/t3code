@@ -199,6 +199,7 @@ export function resolveBranchToolbarValue(input: {
 export interface BranchHold {
   readonly branch: string | null;
   readonly replaces: string | null;
+  readonly environmentId: EnvironmentId;
   readonly cwd: string;
 }
 
@@ -208,9 +209,17 @@ export interface BranchHold {
  */
 export function isBranchHoldCurrent(
   hold: BranchHold,
-  current: { readonly canonicalBranch: string | null; readonly cwd: string | null },
+  current: {
+    readonly canonicalBranch: string | null;
+    readonly environmentId: EnvironmentId;
+    readonly cwd: string | null;
+  },
 ): boolean {
-  return hold.cwd === current.cwd && hold.replaces === current.canonicalBranch;
+  return (
+    hold.environmentId === current.environmentId &&
+    hold.cwd === current.cwd &&
+    hold.replaces === current.canonicalBranch
+  );
 }
 
 export function resolveBranchTriggerLabel(input: {

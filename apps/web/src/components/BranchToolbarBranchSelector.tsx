@@ -291,7 +291,11 @@ export function BranchToolbarBranchSelector({
   const [branchHold, setBranchHold] = useState<BranchHold | null>(null);
   const branchHoldCurrent =
     branchHold !== null &&
-    isBranchHoldCurrent(branchHold, { canonicalBranch: canonicalActiveBranch, cwd: branchCwd });
+    isBranchHoldCurrent(branchHold, {
+      canonicalBranch: canonicalActiveBranch,
+      environmentId,
+      cwd: branchCwd,
+    });
   if (branchHold !== null && !branchHoldCurrent) setBranchHold(null);
   const [resolvedActiveBranch, setOptimisticBranch] = useOptimistic(
     branchHoldCurrent ? branchHold.branch : canonicalActiveBranch,
@@ -434,6 +438,7 @@ export function BranchToolbarBranchSelector({
         setBranchHold({
           branch: nextBranchName,
           replaces: canonicalActiveBranch,
+          environmentId,
           cwd: selectionTarget.checkoutCwd,
         });
         setThreadBranch(nextBranchName, selectionTarget.nextWorktreePath);
@@ -476,6 +481,7 @@ export function BranchToolbarBranchSelector({
         setBranchHold({
           branch: createBranchResult.value.refName,
           replaces: canonicalActiveBranch,
+          environmentId,
           cwd: branchCwd,
         });
         setThreadBranch(createBranchResult.value.refName, activeWorktreePath);
