@@ -248,6 +248,7 @@ describe("registered Preview side panel", () => {
   it("keeps an in-flight pick across a same-thread host re-render", async () => {
     resetFixture();
     await import("./PreviewSidePanel");
+    // The stubbed preview tree does not use router hooks.
     await using screen = await renderScreen(null, { router: false });
     const threadA = thread("thread-a");
     const first = hostFor(threadA);
@@ -271,6 +272,7 @@ describe("registered Preview side panel", () => {
   it("stays mounted across a thread switch and drops a pick that settles after it", async () => {
     resetFixture();
     await import("./PreviewSidePanel");
+    // The stubbed preview tree does not use router hooks.
     await using screen = await renderScreen(null, { router: false });
     const threadA = thread("thread-a");
     const threadB = thread("thread-b");

@@ -21,6 +21,7 @@ describe("panel registry", () => {
   });
 
   it("does no work until opened and keeps one mount across lookups", async () => {
+    // The registry test components do not use router hooks.
     await using screen = await renderScreen(null, { router: false });
     let finish!: (value: { default: typeof Panel }) => void;
     const loaded = new Promise<{ default: typeof Panel }>((resolve) => {
@@ -67,6 +68,7 @@ describe("panel registry", () => {
   });
 
   it("keeps heterogeneous panels independent and their lazy identities stable", async () => {
+    // The registry test components do not use router hooks.
     await using screen = await renderScreen(null, { router: false });
     const events: string[] = [];
     function Notes({ text }: { text: string }) {

@@ -39,6 +39,7 @@ const host: PanelHost = {
 };
 describe("bundled side panels", async () => {
   it("loads only the selected panel body and lends it the host", async () => {
+    // The stubbed panel bodies do not use router hooks.
     await using screen = await renderScreen(null, { router: false });
     expect(loaded).toMatchObject({ diff: 0, preview: 0 });
     await act(async () => {

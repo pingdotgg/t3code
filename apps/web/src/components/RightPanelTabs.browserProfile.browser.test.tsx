@@ -104,6 +104,7 @@ describe("opening Browser from the launcher", () => {
         disconnect() {}
       },
     );
+    // The panel tabs do not use router hooks.
     await using screen = await renderScreen(null, { router: false });
     await screen.rerender(<Harness />);
 
