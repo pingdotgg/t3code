@@ -11,6 +11,7 @@ import { describe, expect, it, vi } from "vite-plus/test";
 
 import { act, render } from "../../../test/render";
 import { AppAtomRegistryProvider, appAtomRegistry } from "../../rpc/atomRegistry";
+import { environmentShell } from "../../state/shell";
 import { threadFamilies } from "../../state/threads";
 import { ThreadContextChip } from "../ThreadContextChip";
 import { MarkdownThreadLink } from "./MarkdownThreadLink";
@@ -19,9 +20,13 @@ type FamilyResult = ReturnType<ReturnType<typeof threadFamilies.familyAtom>["rea
 
 const mocks = await vi.hoisted(async () => {
   const { Atom, AsyncResult } = await import("effect/reactivity");
+  const { EMPTY_SHELL_STATE } = await import("@t3tools/client-runtime/state/shell");
   return {
     shells: Atom.make<ReadonlyMap<string, OrchestrationV2ThreadShell>>(new Map()).pipe(
       Atom.keepAlive,
+    ),
+    shellStates: Atom.family((_environmentId: EnvironmentId) =>
+      Atom.make({ ...EMPTY_SHELL_STATE }).pipe(Atom.keepAlive),
     ),
     reads: Atom.family((_key: string) =>
       Atom.make<FamilyResult>(AsyncResult.initial()).pipe(Atom.keepAlive),
@@ -66,6 +71,8 @@ const row = (id: string, title: string) =>
 
 function setup(shells: ReadonlyMap<string, OrchestrationV2ThreadShell> = new Map()) {
   const baseShells = new Map(shells);
+  const removed = new Set<string>();
+  const states = vi.spyOn(environmentShell, "stateValueAtom").mockImplementation(mocks.shellStates);
   appAtomRegistry.set(mocks.shells, baseShells);
   const mounted = new Map<string, OrchestrationV2ThreadFamily>();
   const counts = new Map<string, number>();
@@ -75,7 +82,8 @@ function setup(shells: ReadonlyMap<string, OrchestrationV2ThreadShell> = new Map
     for (const [familyKey, family] of mounted) {
       const [environmentId] = JSON.parse(familyKey) as [EnvironmentId, ThreadId];
       for (const thread of family.threads) {
-        rows.set(key({ environmentId, threadId: thread.id }), thread);
+        const ref = { environmentId, threadId: thread.id };
+        if (!removed.has(key(ref))) rows.set(key(ref), thread);
       }
     }
     appAtomRegistry.set(mocks.shells, rows);
@@ -115,6 +123,17 @@ function setup(shells: ReadonlyMap<string, OrchestrationV2ThreadShell> = new Map
     });
   return {
     requested,
+    remove: (target: ScopedThreadRef) =>
+      act(() => {
+        removed.add(key(target));
+        baseShells.delete(key(target));
+        const state = mocks.shellStates(target.environmentId);
+        appAtomRegistry.set(state, {
+          ...appAtomRegistry.get(state),
+          removedAt: new Map([[target.threadId, 2]]),
+        });
+        publish();
+      }),
     setShell: (target: ScopedThreadRef, thread: OrchestrationV2ThreadShell | null) =>
       act(() => {
         if (thread === null) baseShells.delete(key(target));
@@ -136,6 +155,11 @@ function setup(shells: ReadonlyMap<string, OrchestrationV2ThreadShell> = new Map
         ),
       ),
     [Symbol.dispose]() {
+      states.mockRestore();
+      for (const environmentId of [ENV, EnvironmentId.make("remote-environment")]) {
+        const state = mocks.shellStates(environmentId);
+        appAtomRegistry.set(state, { ...appAtomRegistry.get(state), removedAt: new Map() });
+      }
       mounts.mockRestore();
       queries.mockRestore();
     },
@@ -260,7 +284,7 @@ describe("thread link family lookups", () => {
         .element(screen.getByRole("link", { name: "Thread, Remote thread reloaded" }))
         .toBeInTheDocument();
       if (lookup === "written") {
-        await fixture.resolve(remote, []);
+        await fixture.remove(remote);
         await expect
           .element(screen.getByRole("link", { name: "Thread, Decoded remote thread" }))
           .toBeInTheDocument();

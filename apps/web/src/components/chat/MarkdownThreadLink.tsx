@@ -1,7 +1,5 @@
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
-import { threadFamilyRead } from "@t3tools/client-runtime/state/threads";
 import type { EnvironmentId, ScopedThreadRef } from "@t3tools/contracts";
-import { AsyncResult } from "effect/reactivity";
 import { useState } from "react";
 import {
   formatThreadLink,
@@ -27,11 +25,7 @@ export function MarkdownThreadLink(props: {
   const writtenRef = scopeThreadRef(environmentId, props.link.threadId);
   const written = useThreadShell(writtenRef);
   const writtenFamily = useThreadFamilyIfMissing(writtenRef, written === null);
-  const writtenMissing =
-    written === null &&
-    AsyncResult.isSuccess(writtenFamily) &&
-    !writtenFamily.waiting &&
-    !writtenFamily.value.threads.some((thread) => thread.id === props.link.threadId);
+  const writtenMissing = written === null && writtenFamily === "missing";
   const decodedRef =
     writtenMissing && decodedId !== null ? scopeThreadRef(environmentId, decodedId) : null;
   const decoded = useThreadShell(decodedRef);
@@ -39,15 +33,9 @@ export function MarkdownThreadLink(props: {
     decodedRef,
     decodedRef !== null && decoded === null,
   );
-  const decodedMissing =
-    decodedId === null ||
-    (decoded === null &&
-      AsyncResult.isSuccess(decodedFamily) &&
-      !decodedFamily.waiting &&
-      !decodedFamily.value.threads.some((thread) => thread.id === decodedId));
+  const decodedMissing = decodedId === null || (decoded === null && decodedFamily === "missing");
   const local = written ?? decoded;
-  const lookupFailed =
-    threadFamilyRead(writtenFamily) === "failed" || threadFamilyRead(decodedFamily) === "failed";
+  const lookupFailed = writtenFamily === "failed" || decodedFamily === "failed";
   const guess =
     local === null &&
     (lookupFailed || (writtenMissing && decodedMissing)) &&
@@ -68,12 +56,7 @@ export function MarkdownThreadLink(props: {
   const remoteRef = guess ? rememberedRef : null;
   const remote = useThreadShell(remoteRef);
   const remoteFamily = useThreadFamilyIfMissing(remoteRef, remoteRef !== null && remote === null);
-  const remoteMissing =
-    remoteRef !== null &&
-    remote === null &&
-    AsyncResult.isSuccess(remoteFamily) &&
-    !remoteFamily.waiting &&
-    !remoteFamily.value.threads.some((thread) => thread.id === remoteRef.threadId);
+  const remoteMissing = remoteRef !== null && remote === null && remoteFamily === "missing";
   const matchesGuess =
     guessedRef !== null &&
     rememberedRef?.environmentId === guessedRef.environmentId &&

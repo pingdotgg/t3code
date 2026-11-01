@@ -10,6 +10,7 @@ import {
   createOlderSettledThreadAtoms,
   createThreadEnvironmentAtoms,
   createThreadFamilyAtoms,
+  threadFamilyRead,
 } from "@t3tools/client-runtime/state/threads";
 import type {
   EnvironmentId,
@@ -48,6 +49,13 @@ export const environmentThreadShells = createEnvironmentThreadShellAtoms({
   snapshotAtom: threadEnvironment.snapshotAtom,
 });
 
+const familyRemovalAtom = Atom.family((key: string) => {
+  const [environmentId, threadId] = JSON.parse(key) as [EnvironmentId, ThreadId];
+  return Atom.make(
+    (get) => get(environmentShell.stateValueAtom(environmentId)).removedAt.get(threadId) ?? -1,
+  );
+});
+const NO_REMOVAL_ATOM = Atom.make(-1);
 const EMPTY_FAMILY_ATOM = Atom.make(AsyncResult.initial<OrchestrationV2ThreadFamily, never>());
 
 export function useThreadFamilyIfMissing(ref: ScopedThreadRef | null, missing: boolean) {
@@ -55,7 +63,7 @@ export function useThreadFamilyIfMissing(ref: ScopedThreadRef | null, missing: b
   const active =
     ref !== null && lookup?.environmentId === ref.environmentId && lookup.threadId === ref.threadId;
   // Family rows make their own shell visible, so retain the lookup until its target changes.
-  if (ref !== null && missing && !active) setLookup(ref);
+  if (!active && (lookup !== null || missing)) setLookup(missing ? ref : null);
   const environmentId = active ? ref.environmentId : null;
   const threadId = active ? ref.threadId : null;
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- retains fetched family rows in the registry while the link targets this thread
@@ -63,9 +71,19 @@ export function useThreadFamilyIfMissing(ref: ScopedThreadRef | null, missing: b
     if (environmentId === null || threadId === null) return;
     return threadFamilies.mount(appAtomRegistry, environmentId, threadId);
   }, [environmentId, threadId]);
-  return useAtomValue(
+  const family = useAtomValue(
     active ? threadFamilies.familyAtom(ref.environmentId, ref.threadId) : EMPTY_FAMILY_ATOM,
   );
+  const removedAt = useAtomValue(
+    active ? familyRemovalAtom(JSON.stringify([ref.environmentId, ref.threadId])) : NO_REMOVAL_ATOM,
+  );
+  const read = threadFamilyRead(family);
+  if (ref === null || read !== "settled" || !AsyncResult.isSuccess(family)) return read;
+  return missing &&
+    (removedAt > family.value.snapshotSequence ||
+      !family.value.threads.some((thread) => thread.id === ref.threadId))
+    ? "missing"
+    : read;
 }
 
 const EMPTY_THREAD_STATE_ATOM = Atom.make(AsyncResult.success(EMPTY_ENVIRONMENT_THREAD_STATE)).pipe(
