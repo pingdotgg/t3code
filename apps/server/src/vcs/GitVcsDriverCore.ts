@@ -4804,18 +4804,24 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
 
       yield* refuseOptionLikeRefName("GitVcsDriver.switchRef", input.cwd, checkoutArgs.at(-1));
 
-      // A stale ref must not turn into a path checkout that discards local edits.
-      yield* executeGitWithStableDiagnostics(
-        "GitVcsDriver.switchRef.checkout",
+      // Git cannot roll back a partially written checkout, so request cancellation,
+      // timeouts, and output limits must not kill it. Invalidate caches after it exits.
+      const checkout = yield* withListRefsInvalidation(
         input.cwd,
-        [...checkoutArgs, "--"],
-        {
-          timeoutMs: 10_000,
-          fallbackErrorDetail: "git checkout failed",
-          // Checking out a remote branch creates a local one that tracks it.
-          writesSharedConfig: !localInputExists,
-        },
-      );
+        executeGitWithStableDiagnostics(
+          "GitVcsDriver.switchRef.checkout",
+          input.cwd,
+          [...checkoutArgs, "--"],
+          {
+            timeoutMs: null,
+            appendTruncationMarker: true,
+            fallbackErrorDetail: "git checkout failed",
+            // Checking out a remote branch creates a local one that tracks it.
+            writesSharedConfig: !localInputExists,
+          },
+        ),
+      ).pipe(Effect.forkIn(serviceScope));
+      yield* Fiber.join(checkout);
 
       const refName = yield* runGitStdout("GitVcsDriver.switchRef.currentBranch", input.cwd, [
         "branch",

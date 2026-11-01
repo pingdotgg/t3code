@@ -271,6 +271,66 @@ const initRepoWithCommit = (
     return { initialBranch };
   });
 
+const makeSlowCheckout = Effect.gen(function* () {
+  const cwd = yield* makeTmpDir();
+  const { initialBranch } = yield* initRepoWithCommit(cwd);
+  yield* git(cwd, ["branch", "feature"]);
+  const gate = yield* Deferred.make<void>();
+  const started = yield* Deferred.make<Fiber.Fiber<unknown, unknown>>();
+  const released = yield* Deferred.make<void>();
+  const delegate = yield* ChildProcessSpawner.ChildProcessSpawner;
+  const spawner = ChildProcessSpawner.make((command) =>
+    Effect.gen(function* () {
+      if (ChildProcess.isStandardCommand(command) && command.args[0] === "checkout") {
+        yield* Effect.addFinalizer(() => Deferred.succeed(released, undefined));
+        yield* Effect.withFiber((fiber) => Deferred.succeed(started, fiber));
+        yield* Deferred.await(gate);
+      }
+      return yield* delegate.spawn(command);
+    }),
+  );
+  const driver = yield* makeGitVcsDriverCore().pipe(
+    Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+  );
+  return {
+    driver,
+    cwd,
+    initialBranch,
+    started,
+    released,
+    finish: Deferred.succeed(gate, undefined),
+  };
+});
+
+it.effect("lets a slow branch checkout finish instead of killing it partway", () =>
+  Effect.gen(function* () {
+    const { driver, cwd, started, finish } = yield* makeSlowCheckout;
+    const switching = yield* driver.switchRef({ cwd, refName: "feature" }).pipe(Effect.forkChild);
+    yield* Deferred.await(started);
+    yield* TestClock.adjust("1 hour");
+    assert.isUndefined(switching.pollUnsafe(), "the checkout is still running");
+    yield* finish;
+    assert.deepEqual(yield* Fiber.join(switching), { refName: "feature" });
+  }).pipe(Effect.provide(layerTest)),
+);
+
+it.effect("keeps a branch checkout running when the request that started it is interrupted", () =>
+  Effect.gen(function* () {
+    const { driver, cwd, initialBranch, started, released, finish } = yield* makeSlowCheckout;
+    const switching = yield* driver.switchRef({ cwd, refName: "feature" }).pipe(Effect.forkChild);
+    const checkout = yield* Deferred.await(started);
+    yield* Fiber.interrupt(switching);
+    assert.isFalse(yield* Deferred.isDone(released), "git was killed with its caller");
+    const before = yield* driver.listRefs({ cwd });
+    assert.equal(before.refs.find((ref) => ref.current)?.name, initialBranch);
+    yield* finish;
+    assert.isTrue(Exit.isSuccess(yield* Fiber.await(checkout)));
+    const after = yield* driver.listRefs({ cwd });
+    assert.equal(after.refs.find((ref) => ref.current)?.name, "feature");
+    assert.equal(yield* git(cwd, ["branch", "--show-current"]), "feature");
+  }).pipe(Effect.provide(layerTest)),
+);
+
 it.effect.each(["root", "nested", "worktree"] as const)(
   "skips clean filters while the %s index is locked and resumes after unlock",
   (location) =>
