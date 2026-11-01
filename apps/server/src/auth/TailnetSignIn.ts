@@ -535,6 +535,8 @@ export const make = Effect.gen(function* () {
   const recheckDevice = Effect.fn("TailnetSignIn.recheckDevice")(function* (
     stableNodeId: string,
     status: TailscaleStatus,
+    /** Whether the host is still on `status`'s account; read once per recheck. */
+    stillOnAccount: Effect.Effect<boolean>,
   ) {
     // Gone from the peer list means removed from the tailnet, or cut off by the policy.
     const peer = status.peers.find((candidate) => candidate.stableNodeId === stableNodeId);
@@ -553,15 +555,11 @@ export const make = Effect.gen(function* () {
     const node = lookup.value;
     knownUsers.set(stableNodeId, node.loginName ?? node.userId);
     const decision = yield* decide(node, status);
-    // A grant the recheck sees, usable or not, turns the owner rule off here as a grant
-    // sign-in does, once a status read shows the host still on this account. A switch means
-    // the grant may be either account's, so no "no grants" stands until a full scan.
-    if (
-      tailnetGrantScopes(node.capabilities) !== null &&
-      (yield* grantSignInsOn(status.selfNodeId)) === 0
-    ) {
-      const now = yield* host.freshStatus.pipe(Effect.option);
-      if (Option.isSome(now) && now.value.selfNodeId === status.selfNodeId) {
+    // Each grant the recheck sees, usable or not, counts as a grant sign-in does, so a scan
+    // running meanwhile cannot clear the count, once the host is shown still on this account.
+    // A switch means the grant may be either account's, so no "no grants" stands meanwhile.
+    if (tailnetGrantScopes(node.capabilities) !== null) {
+      if (yield* stillOnAccount) {
         yield* countGrant(status.selfNodeId);
       } else {
         yield* Ref.update(lastCleanScan, (last) => (last?.granted === false ? null : last));
@@ -640,10 +638,17 @@ export const make = Effect.gen(function* () {
       return;
     }
     statusFailingSince = null;
+    const account = status.value.selfNodeId;
+    const stillOnAccount = yield* Effect.cached(
+      host.freshStatus.pipe(
+        Effect.map((now) => now.selfNodeId === account),
+        Effect.orElseSucceed(() => false),
+      ),
+    );
     yield* Effect.forEach(
       devices,
       Effect.fnUntraced(function* ([stableNodeId, held]) {
-        const result = yield* recheckDevice(stableNodeId, status.value);
+        const result = yield* recheckDevice(stableNodeId, status.value, stillOnAccount);
         if (result === null) return;
         const name = nameOf(stableNodeId, "node" in result ? result.node : undefined);
         if ("end" in result) return yield* endAccess(stableNodeId, result.end, name);

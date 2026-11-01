@@ -1201,6 +1201,43 @@ it.layer(NodeServices.layer)("TailnetSignIn", (it) => {
       }).pipe(Effect.provide(layerTest(tailnet)));
     });
 
+    it.effect(
+      "a grant the recheck sees during a scan that finds none keeps the owner rule off",
+      () => {
+        const tailnet = withLaptop();
+        return Effect.gen(function* () {
+          const service = yield* TailnetSignIn.TailnetSignIn;
+          // The laptop signs in through a grant, which then lapses.
+          tailnet.devices = {
+            [LAPTOP_ADDRESS]: { node: laptop, capMap: granted({ scopes: ["read"] }) },
+          };
+          // The recheck that first grant starts is the next to look the laptop up; it is let
+          // through, then waited out, as rechecks run one at a time.
+          const recheckStarted = yield* Deferred.make<void>();
+          const recheckGoes = yield* Deferred.make<void>();
+          yield* signInLaptop(makeDpopKey());
+          tailnet.hold = { address: LAPTOP_ADDRESS, started: recheckStarted, release: recheckGoes };
+          yield* Deferred.await(recheckStarted);
+          yield* Deferred.succeed(recheckGoes, undefined);
+          yield* service.recheckSessions;
+          tailnet.devices = { [LAPTOP_ADDRESS]: { node: laptop } };
+          // A scan reads the laptop with no grant and waits; the grant comes back and the
+          // recheck reads it before the scan ends.
+          const started = yield* Deferred.make<void>();
+          const release = yield* Deferred.make<void>();
+          tailnet.hold = { address: LAPTOP_ADDRESS, started, release };
+          const phone = yield* refusalOf(signIn(makeDpopKey())).pipe(Effect.forkChild);
+          yield* Deferred.await(started);
+          tailnet.devices = {
+            [LAPTOP_ADDRESS]: { node: laptop, capMap: granted({ scopes: ["read"] }) },
+          };
+          yield* service.recheckSessions;
+          yield* Deferred.succeed(release, undefined);
+          expect(yield* Fiber.join(phone)).toBe("no_grant");
+        }).pipe(Effect.provide(layerTest(tailnet)));
+      },
+    );
+
     it.effect("a grant sign-in on another account does not lock the owner out here", () => {
       const tailnet = withLaptop();
       const home = tailnet.status;
