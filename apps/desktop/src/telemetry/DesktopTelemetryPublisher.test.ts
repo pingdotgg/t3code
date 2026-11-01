@@ -94,7 +94,7 @@ describe("DesktopTelemetryPublisher", () => {
               isOnBatteryPower: Effect.succeed(false),
               getSystemIdleTime: Effect.succeed(0),
               getSystemIdleState: () => Effect.succeed("active"),
-              getCurrentThermalState: Effect.succeed("unknown"),
+              getCurrentThermalState: Effect.succeed("unknown" as const),
               onSimpleEvent: () => Effect.void,
               onThermalStateChange: () => Effect.void,
               onSpeedLimitChange: () => Effect.void,
@@ -118,6 +118,7 @@ describe("DesktopTelemetryPublisher", () => {
         );
         assert.include(yield* Queue.take(samples), '"thermalState":"critical"');
         yield* publisher.handleControlForSource("test", {
+          version: 1,
           type: "setDiagnosticsDemand",
           enabled: true,
         });
