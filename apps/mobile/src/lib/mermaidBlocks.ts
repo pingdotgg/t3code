@@ -11,8 +11,13 @@ export type MermaidMarkdownSegment =
 
 const FENCE_RE = /^ {0,3}(`{3,}|~{3,})[ \t]*([^\n]*)\n?/;
 const QUOTE_RE = /^(?: {0,3}>[ \t]?)+/;
-const DEFINITION_RE = /^ {0,3}\[[^\]\n]+\]:[ \t]*\S.*$/;
+const DESTINATION_RE = "(?:<[^<>\\n]*>|[^\\s<>\\n]+)";
+const TITLE_RE = "(?:\"[^\"]*\"|'[^']*'|\\([^()\\n]*\\))";
+const DEFINITION_RE = new RegExp(
+  `^ {0,3}\\[[^\\]\\n]+\\]:[ \\t]*${DESTINATION_RE}(?:[ \\t]+${TITLE_RE})?[ \\t]*$`,
+);
 const DEFINITION_LABEL_RE = /^ {0,3}\[[^\]\n]+\]:[ \t]*$/;
+const DESTINATION_ONLY_RE = new RegExp(`^[ \\t]*${DESTINATION_RE}(?:[ \\t]+${TITLE_RE})?[ \\t]*$`);
 
 function stripQuote(line: string): string {
   return line.replace(QUOTE_RE, "");
@@ -46,7 +51,11 @@ function closerIndex(
   const char = fence[0] === "`" ? "`" : "~";
   const closeRe = new RegExp(`^ {0,3}${char}{${fence.length},}[ \\t]*$`);
   for (let scan = from; scan < lines.length; scan += 1) {
-    if ((depths[scan] ?? 0) < minDepth) return -1;
+    const depth = depths[scan] ?? 0;
+    // A fenced block ends when its blockquote ends, and only a fence at the
+    // opener's quote depth can close it.
+    if (depth < minDepth) return -1;
+    if (depth !== minDepth) continue;
     if (closeRe.test(lines[scan] ?? "")) return scan;
   }
   return -1;
@@ -82,7 +91,7 @@ function collectDefinitions(markdown: string): string[] {
     else if (
       DEFINITION_LABEL_RE.test(line) &&
       (depths[index + 1] ?? 0) === (depths[index] ?? 0) &&
-      /^[ \t]*\S/.test(lines[index + 1] ?? "") &&
+      DESTINATION_ONLY_RE.test(lines[index + 1] ?? "") &&
       !FENCE_RE.test(lines[index + 1] ?? "")
     ) {
       found.push(`${line}\n${lines[index + 1]}`);

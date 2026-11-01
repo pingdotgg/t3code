@@ -160,4 +160,34 @@ describe("splitMarkdownWithMermaid", () => {
       expect(tail.markdown).not.toContain("[guide]: https://example.com");
     }
   });
+
+  it("does not let a deeper quoted fence close an outer example", () => {
+    const markdown = ["```md", "> ```mermaid", "> A --> B", "> ```", "extra", "```"].join("\n");
+    const segments = splitMarkdownWithMermaid(markdown);
+    expect(segments.map((segment) => segment.kind)).toEqual(["markdown"]);
+    expect(segments[0]).toMatchObject({ kind: "markdown", markdown });
+  });
+
+  it("does not copy a label followed by a heading as a definition", () => {
+    const segments = splitMarkdownWithMermaid(
+      ["[note]:", "# heading", "", "```mermaid", "A --> B", "```", "", "text"].join("\n"),
+    );
+    const tail = segments[segments.length - 1];
+    expect(tail).toMatchObject({ kind: "markdown" });
+    if (tail?.kind === "markdown") {
+      expect(tail.markdown).toContain("text");
+      expect(tail.markdown).not.toContain("[note]:");
+    }
+  });
+
+  it("keeps single-line definitions with titles", () => {
+    const segments = splitMarkdownWithMermaid(
+      ['[a]: /url "title"', "", "```mermaid", "A --> B", "```", "", "[Open][a]"].join("\n"),
+    );
+    const tail = segments[segments.length - 1];
+    expect(tail).toMatchObject({ kind: "markdown" });
+    if (tail?.kind === "markdown") {
+      expect(tail.markdown).toContain('[a]: /url "title"');
+    }
+  });
 });
