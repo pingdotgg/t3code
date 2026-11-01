@@ -868,15 +868,6 @@
       "name": "iobuffer",
       "license": "MIT",
       "sourceUrl": "https://github.com/image-js/iobuffer"
-    },
-    {
-      "name": "@bsky.app/expo-scroll-edge-effect",
-      "version": "0.1.10",
-      "sourceUrl": "https://github.com/bluesky-social/expo-scroll-edge-effect",
-      "generatedNotice": {
-        "licenseId": "MIT",
-        "copyrights": ["Copyright (c) 2026 Bluesky Social PBC"]
-      }
     }
   ]
 }
