@@ -670,6 +670,15 @@ it.effect.each<{
     }),
   },
   {
+    case: "a stale target behind an absolute env wrapper",
+    platform: "linux",
+    expected: "idea2",
+    scripts: ({ ide, removed }) => ({
+      idea1: `#!/bin/sh\nexec /usr/bin/env "${removed}" "$@"\n`,
+      idea2: `#!/bin/sh\nexec "${ide}" "$@"\n`,
+    }),
+  },
+  {
     case: "stale ${HOME} scripts",
     platform: "darwin",
     expected: "idea2",

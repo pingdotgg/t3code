@@ -90,7 +90,9 @@ export const resolveEditorCommand = Effect.fn("editor.resolveEditorCommand")(fun
       home ? word.replace(/^(?:\$HOME|\$\{HOME\}|~)(?=\/)/, () => home) : word;
     const exists = (target: string) => fs.exists(target).pipe(Effect.orElseSucceed(() => false));
     const programs = lines.flatMap((line) => launchedProgram(line) ?? []).map(expand);
-    const targets = programs.filter((program) => path.isAbsolute(program));
+    const targets = programs.filter(
+      (program) => path.isAbsolute(program) && path.basename(program) !== "env",
+    );
     for (const target of targets) {
       if (yield* exists(target)) return "found";
     }
