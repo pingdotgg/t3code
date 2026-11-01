@@ -19,6 +19,8 @@ import { HttpClient, HttpClientResponse } from "effect/http";
 import * as ChildProcess from "effect/process/ChildProcess";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
+import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
+
 export type CloudManagedEndpointRuntimeStatus =
   | {
       readonly status: "disabled";
@@ -109,6 +111,12 @@ const ConnectorConfigBody = Schema.Struct({
 // immediately. Keep that evidence across registrations and connector restarts.
 const QUIC_STALLS_BEFORE_HTTP2 = 30;
 const QUIC_STALL_WINDOW_MS = 5 * 60_000;
+// Retry QUIC on a later startup after transient failures or network changes; reuse never renews this hint.
+const HTTP2_FALLBACK_TTL_MS = 24 * 60 * 60_000;
+const HTTP2_FALLBACK_STATE = "cloud-endpoint-http2-fallback";
+const Http2Fallback = Schema.fromJsonString(Schema.Struct({ fellBackAt: Schema.Number }));
+const decodeHttp2Fallback = Schema.decodeUnknownOption(Http2Fallback);
+const encodeHttp2Fallback = Schema.encodeSync(Http2Fallback);
 // A failed background install of the pinned relay client is retried no sooner
 // than this, so a crash-looping connector or an offline host does not redownload
 // on every reconcile.
@@ -182,6 +190,7 @@ const stopConnector = (connector: ActiveConnector | null) =>
 export const make = Effect.gen(function* () {
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const relayClient = yield* RelayClient.RelayClient;
+  const secrets = yield* ServerSecretStore.ServerSecretStore;
   const httpClient = HttpClient.withScope(yield* HttpClient.HttpClient);
   const activeRef = yield* Ref.make<ActiveConnector | null>(null);
   const desiredConfigRef = yield* Ref.make<RelayManagedEndpointRuntimeConfig | null>(null);
@@ -199,7 +208,18 @@ export const make = Effect.gen(function* () {
   const notReadyChecksBeforeRestartRef = yield* Ref.make(CONNECTOR_NOT_READY_CHECKS_BEFORE_RESTART);
   // An explicit cloudflared transport in the environment is the user's choice.
   const transportChosenByUser = process.env.TUNNEL_TRANSPORT_PROTOCOL !== undefined;
-  const http2Ref = yield* Ref.make(false);
+  const previousFallback = transportChosenByUser
+    ? Option.none()
+    : yield* secrets.get(HTTP2_FALLBACK_STATE).pipe(
+        Effect.map(Option.flatMap((bytes) => decodeHttp2Fallback(new TextDecoder().decode(bytes)))),
+        Effect.orElseSucceed(() => Option.none()),
+      );
+  const now = yield* Clock.currentTimeMillis;
+  const http2Ref = yield* Ref.make(
+    Option.isSome(previousFallback) &&
+      now >= previousFallback.value.fellBackAt &&
+      now - previousFallback.value.fellBackAt < HTTP2_FALLBACK_TTL_MS,
+  );
   const quicStallsRef = yield* Ref.make<ReadonlyArray<number>>([]);
   let reconcileConfig: CloudManagedEndpointRuntime["Service"]["applyConfig"];
 
@@ -452,6 +472,16 @@ export const make = Effect.gen(function* () {
     const desiredConfig = yield* Ref.get(desiredConfigRef);
     if ((yield* Ref.get(http2Ref)) || active !== connector || !desiredConfig) return;
     yield* Ref.set(http2Ref, true);
+    yield* secrets
+      .set(
+        HTTP2_FALLBACK_STATE,
+        new TextEncoder().encode(
+          encodeHttp2Fallback({ fellBackAt: yield* Clock.currentTimeMillis }),
+        ),
+      )
+      .pipe(
+        Effect.catch(() => Effect.logWarning("Could not persist the relay client HTTP/2 fallback")),
+      );
     yield* Effect.logWarning("Relay client keeps losing QUIC connections; switching to HTTP/2", {
       pid: Number(connector.child.pid),
       tunnelId: connector.config.tunnelId,
