@@ -190,22 +190,45 @@ function replaceUnsafeControlCharacters(value: string): string {
   return sanitized.join("");
 }
 
+// A quoted secret that does not close on its line may continue on later lines, so redact the rest.
 export function redactSecretAssignments(value: string): string {
   return value
     .replace(
-      /(["'][\w-]*(?:access[_-]?(?:key|token)|api[_-]?key|authorization|credential|password|secret|token)["']\s*:\s*(["']))(?:\\.|(?!\2)[^\\\n])*\2?/giu,
+      /(["'][\w-]*(?:access[_-]?(?:key|token)|api[_-]?key|authorization|credential|password|secret|token)["']\s*:\s*(["']))(?:(?:\\.|(?!\2)[^\\\n])*\2|[\s\S]*)/giu,
       "$1[REDACTED]$2",
     )
     .replace(
-      /((?<![\w-])[\w-]*(?:access[_-]?(?:key|token)|api[_-]?key|authorization|credential|password|secret|token)\b\s*[:=]\s*)(?:(?:Bearer|Basic|Token)\s+)?(?:"(?:\\[\s\S]|[^"\\])*"|'(?:\\[\s\S]|[^'\\])*'|"(?:\\.|[^"\\\n])*|'(?:\\.|[^'\\\n])*|[^\s,;]+)/giu,
+      /((?<![\w-])[\w-]*(?:access[_-]?(?:key|token)|api[_-]?key|authorization|credential|password|secret|token)\b\s*[:=]\s*)(?:(?:Bearer|Basic|Token)\s+)?(?:"(?:\\.|[^"\\\n])*"|'(?:\\.|[^'\\\n])*'|["'][\s\S]*|[^\s,;]+)/giu,
       "$1[REDACTED]",
     );
 }
 
+function redactSchemeUrl(match: string): string {
+  const trailing = /[),.;!?']+$/u.exec(match)?.[0] ?? "";
+  const url = trailing.length === 0 ? match : match.slice(0, -trailing.length);
+  const authorityStart = url.indexOf("://") + 3;
+  const queryStart = url.slice(authorityStart).search(/[?#]/u);
+  const kept = queryStart < 0 ? url : url.slice(0, authorityStart + queryStart);
+  const authorityEnd = kept.slice(authorityStart).search(/\//u);
+  const authority =
+    authorityEnd < 0
+      ? kept.slice(authorityStart)
+      : kept.slice(authorityStart, authorityStart + authorityEnd);
+  const userinfoEnd = authority.lastIndexOf("@");
+  const redacted =
+    userinfoEnd < 0
+      ? kept
+      : `${kept.slice(0, authorityStart)}[REDACTED]@${kept.slice(authorityStart + userinfoEnd + 1)}`;
+  return `${redacted}${trailing}`;
+}
+
 export function redactUrls(value: string): string {
-  return value
-    .replace(/\bhttps?:\/\/[^\s<>"]+/giu, redactUrl)
-    .replace(/(\b[a-z][a-z0-9+.-]*:\/\/)[^\s/@]+@/giu, "$1[REDACTED]@");
+  return (
+    value
+      .replace(/\bhttps?:\/\/[^\s<>"]+/giu, redactUrl)
+      // The scheme length cap keeps long dotted runs without "://" linear.
+      .replace(/\b[a-z][a-z0-9+.-]{0,31}:\/\/[^\s<>"]+/giu, redactSchemeUrl)
+  );
 }
 
 function redactProviderFailureText(value: string): string {

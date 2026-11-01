@@ -148,36 +148,27 @@ describe("stderrExcerpt", () => {
     ).toBe("fetch https://example.test/api failed");
   });
 
-  it("redacts header values with any scheme or quoting, unterminated quotes and non-HTTP userinfo", () => {
-    expect(
-      sanitizeStderrExcerpt(
-        [
-          "Authorization: Negotiate abc123",
-          'x-api-key: "first second"',
-          '{"password":"topsecret',
-          'PASSWORD="top secret',
-          "connect postgres://dbuser:dbpassword@db.example/app failed",
-          "connect redis://:hunter2@db.example:6379 failed",
-        ].join("\n"),
-        "/Users/ada",
-        {},
-      ),
-    ).toBe(
-      [
-        "Authorization: [REDACTED]",
-        "x-api-key: [REDACTED]",
-        '{"password":"[REDACTED]"',
-        "PASSWORD=[REDACTED]",
-        "connect postgres://[REDACTED]@db.example/app failed",
-        "connect redis://[REDACTED]@db.example:6379 failed",
-      ].join("\n"),
-    );
-  });
-
-  it("redacts a closed quoted secret that spans lines", () => {
-    expect(
-      sanitizeStderrExcerpt('PASSWORD="first\nsecond-secret"\nError: boom', "/Users/ada", {}),
-    ).toBe("PASSWORD=[REDACTED]\nError: boom");
+  it.each([
+    ["Authorization: Negotiate abc123", "Authorization: [REDACTED]"],
+    ['x-api-key: "first second"', "x-api-key: [REDACTED]"],
+    [
+      "connect postgres://dbuser:dbpassword@db.example/app failed",
+      "connect postgres://[REDACTED]@db.example/app failed",
+    ],
+    [
+      "connect redis://:hunter2@db.example:6379 failed",
+      "connect redis://[REDACTED]@db.example:6379 failed",
+    ],
+    [
+      "connect mongodb+srv://db.example/?authMechanismProperties=AWS_SESSION_TOKEN%3As3cr3t failed",
+      "connect mongodb+srv://db.example/ failed",
+    ],
+    ['{"password":"topsecret\nError: boom', '{"password":"[REDACTED]"'],
+    ['PASSWORD="first\nsecond-secret"\nError: boom', "PASSWORD=[REDACTED]"],
+    ['{"password":"first\nsecond-secret"}', '{"password":"[REDACTED]"'],
+    ['{"password":"topsecret\nPASSWORD="top secret', '{"password":"[REDACTED]"'],
+  ])("redacts %j", (input, expected) => {
+    expect(sanitizeStderrExcerpt(input, "/Users/ada", {})).toBe(expected);
   });
 
   it("redacts AWS secret access keys and apostrophe-quoted URL query values", () => {
