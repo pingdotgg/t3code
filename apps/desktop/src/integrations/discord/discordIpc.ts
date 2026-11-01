@@ -202,6 +202,7 @@ export class DiscordIpcClient {
   private readonly handshakeTimeoutMs: number;
   private closed = false;
   private handshakeSettled = false;
+  private ready = false;
   private handshakeResolve: (() => void) | null = null;
   private handshakeReject: ((error: Error) => void) | null = null;
   private handshakeTimer: ReturnType<typeof setTimeout> | null = null;
@@ -333,8 +334,10 @@ export class DiscordIpcClient {
     const reject = this.handshakeReject;
     this.handshakeResolve = null;
     this.handshakeReject = null;
-    if (error === null) resolve?.();
-    else reject?.(error);
+    if (error === null) {
+      this.ready = true;
+      resolve?.();
+    } else reject?.(error);
   }
 
   private handleClose(error: Error | null): void {
@@ -348,7 +351,7 @@ export class DiscordIpcClient {
         // The transport may already be gone.
       }
     }
-    if (!wasClosed) this.onClose?.(error);
+    if (!wasClosed && this.ready) this.onClose?.(error);
   }
 }
 

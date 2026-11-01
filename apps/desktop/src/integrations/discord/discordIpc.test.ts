@@ -167,15 +167,26 @@ it("answers Discord pings while connected", async () => {
 
 it("reports an unexpected close through onClose", async () => {
   const fake = new FakeSocket();
+  const failed = new FakeSocket();
+  failed.onWrite = () => failed.emit("close");
+  let attempts = 0;
   const closes: Array<Error | null> = [];
   await DiscordIpcClient.connect({
     clientId: "1",
     platform: "darwin",
     environment: { TMPDIR: "/tmp" },
-    connect: connectFake(fake),
+    connect: () => {
+      attempts += 1;
+      if (attempts > 1) return connectFake(fake)();
+      queueMicrotask(() => failed.emit("connect"));
+      return failed as unknown as DiscordIpcSocket;
+    },
     onClose: (error) => closes.push(error),
   });
 
+  expect(attempts).toBe(2);
+  expect(failed.destroyed).toBe(true);
+  expect(closes).toEqual([]);
   fake.emit("close");
   expect(closes).toEqual([null]);
 });
