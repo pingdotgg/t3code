@@ -908,7 +908,7 @@ export function acpToolCallDiffPatch(content: unknown): string | undefined {
     const diff = unknownRecord(entry);
     return diff?.type === "diff" ? [diff] : [];
   });
-  const patches = diffs.flatMap((diff) => {
+  const patches = diffs.flatMap((diff): ReadonlyArray<{ text: string; path?: string }> => {
     const patch = unknownRecord(diff.patch);
     if (typeof patch?.text === "string") {
       const change =
@@ -925,10 +925,12 @@ export function acpToolCallDiffPatch(content: unknown): string | undefined {
         const after =
           change.operation === "delete" ? "/dev/null" : JSON.stringify(`b/${change.path}`);
         return [
-          `diff --git ${JSON.stringify(`a/${oldPath}`)} ${JSON.stringify(`b/${change.path}`)}\n--- ${before}\n+++ ${after}\n${patch.text.trimStart()}`,
+          {
+            text: `diff --git ${JSON.stringify(`a/${oldPath}`)} ${JSON.stringify(`b/${change.path}`)}\n--- ${before}\n+++ ${after}\n${patch.text.trimStart()}`,
+          },
         ];
       }
-      return [patch.text];
+      return [{ text: patch.text }];
     }
     if (typeof diff.path !== "string" || typeof diff.newText !== "string") return [];
     const oldText = typeof diff.oldText === "string" ? diff.oldText : undefined;
@@ -946,9 +948,19 @@ export function acpToolCallDiffPatch(content: unknown): string | undefined {
     );
     return structured === undefined || structured.hunks.length === 0
       ? []
-      : [formatPatch(structured, FILE_HEADERS_ONLY)];
+      : [{ text: formatPatch(structured, FILE_HEADERS_ONLY), path: diff.path }];
   });
-  return patches.length === 0 ? undefined : patches.join("\n");
+  // Diff parsers split at Git headers once one exists, so every section then needs its own.
+  const hasGitHeader = patches.some(({ text }) => /^diff --git /m.test(text));
+  return patches.length === 0
+    ? undefined
+    : patches
+        .map(({ text, path }) =>
+          hasGitHeader && path !== undefined
+            ? `diff --git ${JSON.stringify(`a/${path}`)} ${JSON.stringify(`b/${path}`)}\n${text}`
+            : text,
+        )
+        .join("\n");
 }
 
 function pathFromToolCall(toolCall: AcpToolCallState): string | undefined {
