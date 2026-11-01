@@ -263,7 +263,7 @@ async function openProjectDraft(project: EnvironmentProject, request: LinkedDraf
     StackActions.push("Thread", {
       draft: {
         draftId: draftKey,
-        title: request.pullRequest ? `PR #${request.pullRequest.number}` : project.title,
+        ...(request.pullRequest ? { title: `PR #${request.pullRequest.number}` } : {}),
       },
     }),
   );
