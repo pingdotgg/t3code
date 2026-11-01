@@ -243,9 +243,10 @@ imports covered by generation receive prepared bytecode. Worker-only modules com
 Electron's Node 24 cache has no read-only option and includes the producer UID in its directory
 name. The backend links individual prepared files into its writable cache with keys for the
 installed module paths. Node replaces files atomically, so regeneration cannot write through those
-links into signed resources. Windows uses hard links and falls back to normal caching when the
-installation and user cache are on different volumes. No cache bytes are copied during startup. AppImage backends discard their links on normal exit
-because each mount changes module paths.
+links into signed resources. Windows uses hard links and falls back to normal caching when volumes
+differ or resource permissions prevent linking. Protected installations therefore may not reuse
+prepared bytecode. No cache bytes are copied during startup. AppImage backends discard their links
+on normal exit because each mount changes module paths.
 
 The key calculation follows Node's internal portable ESM format. Generation checks that the
 packaged engine produced the expected CLI entry and fails the build if that format changes.
