@@ -49,7 +49,7 @@ export class DesktopPreReadyElectronOptions extends Context.Service<
   }
 >()("@t3tools/desktop/app/DesktopPreReadyPlatform/DesktopPreReadyElectronOptions") {}
 
-/** @public Service construction is part of the canonical Effect module API. */
+/** @public */
 export const make = Effect.gen(function* () {
   const platform = yield* HostProcess.Platform;
   const homeDirectory = yield* HostProcess.HomeDirectory;
@@ -62,6 +62,17 @@ export const make = Effect.gen(function* () {
       platform === "linux" ? resolveEarlyLinuxElectronOptionsFromProcess(homeDirectory) : null;
 
     if (linux !== null) {
+      DesktopEarlyElectronStartup.restoreEarlyLinuxDeviceScaleFactor({
+        env: process.env,
+        homeDirectory,
+        joinPath: NodePath.posix.join,
+        commandLine: Electron.app.commandLine,
+        readFileString: (path) => NodeFS.readFileSync(path, "utf8"),
+        writeFileString: (path, value) => {
+          NodeFS.mkdirSync(NodePath.posix.dirname(path), { recursive: true });
+          NodeFS.writeFileSync(path, value, "utf8");
+        },
+      });
       // The portal also requires a valid desktop entry. An AppImage update may
       // have removed the executable referenced by the previous launch's entry.
       try {
@@ -89,9 +100,7 @@ export const make = Effect.gen(function* () {
               ),
               iconPath,
             );
-          } catch {
-            // Icon installation is optional; registration retries after readiness.
-          }
+          } catch {}
         }
         NodeFS.writeFileSync(
           NodePath.posix.join(applicationsDir, linux.linuxDesktopEntryName),
@@ -100,19 +109,18 @@ export const make = Effect.gen(function* () {
               isDevelopment: linux.isDevelopment,
               appVersion: Electron.app.getVersion(),
             }).displayName,
-            execTarget: process.env.APPIMAGE?.trim() || process.execPath,
+            execTarget:
+              process.env.T3CODE_DESKTOP_LAUNCHER_PATH?.trim() ||
+              process.env.APPIMAGE?.trim() ||
+              process.execPath,
             scheme: ElectronProtocol.getDesktopScheme(linux.isDevelopment),
             ...(iconPath === undefined ? {} : { iconPath }),
           }),
           "utf8",
         );
-      } catch {
-        // The URL handler retries with the full environment and logs failures.
-      }
-      // Chromium caches its portal registration during startup. Set the identity
-      // before any asynchronous work can initialize it with Electron's default.
+      } catch {}
+      // Chromium caches portal identity; set it before any asynchronous initialization.
       Electron.app.setDesktopName(linux.linuxDesktopEntryName);
-      Electron.app.commandLine.appendSwitch("class", linux.linuxWmClass);
       if (linux.passwordStore !== null && linuxPasswordStoreCommandLine === null) {
         Electron.app.commandLine.appendSwitch("password-store", linux.passwordStore);
       }
@@ -122,7 +130,6 @@ export const make = Effect.gen(function* () {
         ozonePlatform: readCommandLineSwitchValue(Electron.app.commandLine, "ozone-platform"),
         enableFeatures: readCommandLineSwitchValue(Electron.app.commandLine, "enable-features"),
         disableFeatures: readCommandLineSwitchValue(Electron.app.commandLine, "disable-features"),
-        // Runs only on Hyprland Wayland sessions without an explicit feature override.
         readHyprctlVersionJson: () =>
           NodeChildProcess.execFileSync("hyprctl", ["version", "-j"], {
             encoding: "utf8",
@@ -140,8 +147,7 @@ export const make = Effect.gen(function* () {
   });
 }).pipe(Effect.withSpan("desktop.electron.configureBeforeReady"));
 
-// Keep Electron's strict pre-ready setup isolated so later runtime layers cannot
-// observe app readiness before scheme privileges and command-line switches exist.
+// Complete scheme privileges and switches before later layers can observe app readiness.
 export const layer = Layer.mergeAll(
   ElectronProtocol.layerSchemePrivileges,
   Layer.effect(DesktopPreReadyElectronOptions, make),

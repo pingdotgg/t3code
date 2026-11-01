@@ -40,7 +40,8 @@ import * as ServerConfig from "../config.ts";
 import { subscribeBeforeSnapshotWithoutMutex } from "../utils/subscribeBeforeSnapshot.ts";
 
 const SAMPLE_INTERVAL_MS = 1_000;
-const UNKNOWN_BACKGROUND_SAMPLE_INTERVAL_MS = 5_000;
+// The sidecar treats 0 as "sample only on request".
+const IDLE_SAMPLE_INTERVAL_MS = 0;
 const BATTERY_SAMPLE_INTERVAL_MS = 5_000;
 const CONSTRAINED_SAMPLE_INTERVAL_MS = 15_000;
 const HANDSHAKE_TIMEOUT = Duration.seconds(5);
@@ -258,13 +259,14 @@ function isThermallyConstrained(snapshot: HostPowerSnapshot): boolean {
   return snapshot.thermalState === "serious" || snapshot.thermalState === "critical";
 }
 
-export function resolveNativeSampleIntervalMs(
+// Without a live subscriber the sidecar does not sample on a timer, so an idle server
+// never walks the process table. History then covers only time with a subscriber.
+function resolveNativeSampleIntervalMs(
   snapshot: HostPowerSnapshot,
   liveSubscriberCount: number,
 ): number {
-  if (snapshot.stale || snapshot.source === "unknown") {
-    return liveSubscriberCount > 0 ? SAMPLE_INTERVAL_MS : UNKNOWN_BACKGROUND_SAMPLE_INTERVAL_MS;
-  }
+  if (liveSubscriberCount === 0) return IDLE_SAMPLE_INTERVAL_MS;
+  if (snapshot.stale || snapshot.source === "unknown") return SAMPLE_INTERVAL_MS;
   if (
     snapshot.suspended ||
     snapshot.locked === "true" ||
@@ -274,26 +276,25 @@ export function resolveNativeSampleIntervalMs(
     return CONSTRAINED_SAMPLE_INTERVAL_MS;
   }
   if (snapshot.onBattery === "true") return BATTERY_SAMPLE_INTERVAL_MS;
-  return liveSubscriberCount > 0 ? SAMPLE_INTERVAL_MS : UNKNOWN_BACKGROUND_SAMPLE_INTERVAL_MS;
+  return SAMPLE_INTERVAL_MS;
 }
 
-export function commitCollectionControlUpdate<E, R>(
+// Desktop power samples also commit control state; avoid a span for each sample.
+export const commitCollectionControlUpdate = Effect.fnUntraced(function* <E, R>(
   desiredState: Ref.Ref<CollectionControl>,
   appliedState: Ref.Ref<CollectionControl>,
   update: (current: CollectionControl) => CollectionControl,
   apply: (previous: CollectionControl, next: CollectionControl) => Effect.Effect<void, E, R>,
-): Effect.Effect<readonly [CollectionControl, CollectionControl], E, R> {
-  return Effect.gen(function* () {
-    const [previousDesired, next] = yield* Ref.modify(desiredState, (previous) => {
-      const next = update(previous);
-      return [[previous, next] as const, next];
-    });
-    const previousApplied = yield* Ref.get(appliedState);
-    yield* apply(previousApplied, next);
-    yield* Ref.set(appliedState, next);
-    return [previousDesired, next] as const;
+): Effect.fn.Return<readonly [CollectionControl, CollectionControl], E, R> {
+  const [previousDesired, next] = yield* Ref.modify(desiredState, (previous) => {
+    const next = update(previous);
+    return [[previous, next] as const, next];
   });
-}
+  const previousApplied = yield* Ref.get(appliedState);
+  yield* apply(previousApplied, next);
+  yield* Ref.set(appliedState, next);
+  return [previousDesired, next] as const;
+});
 
 export function synchronizeCollectionControlOnStart<E1, R1, E2, R2>(
   mutex: Semaphore.Semaphore,
@@ -325,7 +326,7 @@ const isProtocolMismatch = Schema.is(NativeTelemetryProtocolMismatch);
 const isDecodeFailed = Schema.is(NativeTelemetryDecodeFailed);
 const isCommandFailed = Schema.is(NativeTelemetryCommandFailed);
 
-function eventVersion(value: unknown): number | undefined {
+export function eventVersion(value: unknown): number | undefined {
   if (typeof value !== "object" || value === null) return undefined;
   const version = Reflect.get(value, "version");
   return typeof version === "number" ? version : undefined;
@@ -335,7 +336,7 @@ function restartDelay(attempt: number): Duration.Duration {
   return Duration.min(Duration.times(INITIAL_RESTART_DELAY, 2 ** attempt), MAX_RESTART_DELAY);
 }
 
-export function retainRecentNativeTelemetryFailures(
+function retainRecentNativeTelemetryFailures(
   failures: ReadonlyArray<number>,
   now: number,
 ): ReadonlyArray<number> {
@@ -346,21 +347,21 @@ function errorMessage(error: NativeTelemetryClientError): string {
   return error.message;
 }
 
-export function canRequestNativeTelemetryRetry(
+function canRequestNativeTelemetryRetry(
   status: ResourceTelemetrySourceStatus,
   hasHandle: boolean,
 ): boolean {
   return status !== "healthy" && status !== "starting" && !hasHandle;
 }
 
-export function canCommandNativeTelemetrySidecar(
+function canCommandNativeTelemetrySidecar(
   status: ResourceTelemetrySourceStatus,
   hasHandle: boolean,
 ): boolean {
   return hasHandle && (status === "healthy" || status === "degraded");
 }
 
-/** @public Service construction is part of the canonical Effect module API. */
+/** @public */
 export const make = Effect.fn("resourceTelemetry.nativeTelemetryClient.make")(function* () {
   const binary = yield* ResourceMonitorBinary.ResourceMonitorBinary;
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
@@ -382,7 +383,7 @@ export const make = Effect.fn("resourceTelemetry.nativeTelemetryClient.make")(fu
       updatedAt: initializedAt,
     },
     liveSubscriberCount: 0,
-    sampleIntervalMs: UNKNOWN_BACKGROUND_SAMPLE_INTERVAL_MS,
+    sampleIntervalMs: IDLE_SAMPLE_INTERVAL_MS,
   });
   const appliedCollectionControl = yield* Ref.make(yield* Ref.get(collectionControl));
   const externalProcesses = yield* Ref.make<ReadonlyArray<ResourceMonitorExternalProcess>>([]);
@@ -409,23 +410,22 @@ export const make = Effect.fn("resourceTelemetry.nativeTelemetryClient.make")(fu
     Effect.asVoid,
   );
 
-  const failPending = (error: NativeTelemetryClientError) =>
-    Effect.gen(function* () {
-      const samples = yield* Ref.getAndSet(pendingSamples, new Map());
-      const processTables = yield* Ref.getAndSet(pendingProcessTables, new Map());
-      const histories = yield* Ref.getAndSet(pendingHistories, new Map());
-      yield* Effect.forEach(samples.values(), (deferred) => Deferred.fail(deferred, error), {
-        discard: true,
-      });
-      yield* Effect.forEach(processTables.values(), (deferred) => Deferred.fail(deferred, error), {
-        discard: true,
-      });
-      yield* Effect.forEach(
-        histories.values(),
-        (request) => Deferred.fail(request.deferred, error),
-        { discard: true },
-      );
+  const failPending = Effect.fn("NativeTelemetryClient.failPending")(function* (
+    error: NativeTelemetryClientError,
+  ) {
+    const samples = yield* Ref.getAndSet(pendingSamples, new Map());
+    const processTables = yield* Ref.getAndSet(pendingProcessTables, new Map());
+    const histories = yield* Ref.getAndSet(pendingHistories, new Map());
+    yield* Effect.forEach(samples.values(), (deferred) => Deferred.fail(deferred, error), {
+      discard: true,
     });
+    yield* Effect.forEach(processTables.values(), (deferred) => Deferred.fail(deferred, error), {
+      discard: true,
+    });
+    yield* Effect.forEach(histories.values(), (request) => Deferred.fail(request.deferred, error), {
+      discard: true,
+    });
+  });
 
   const writeCommand = (
     handle: ChildProcessSpawner.ChildProcessHandle,
@@ -775,9 +775,11 @@ export const make = Effect.fn("resourceTelemetry.nativeTelemetryClient.make")(fu
     Effect.forkScoped,
   );
 
-  const applyCollectionControl = Effect.fn(
-    "resourceTelemetry.nativeTelemetryClient.applyCollectionControl",
-  )(function* (previous: CollectionControl, next: CollectionControl) {
+  // Desktop power samples reach this even when the control state has not changed.
+  const applyCollectionControl = Effect.fnUntraced(function* (
+    previous: CollectionControl,
+    next: CollectionControl,
+  ) {
     const current = yield* Ref.get(state);
     if (canCommandNativeTelemetrySidecar(current.status, Option.isSome(current.handle))) {
       const handle = Option.getOrThrow(current.handle);
@@ -840,10 +842,9 @@ export const make = Effect.fn("resourceTelemetry.nativeTelemetryClient.make")(fu
     }),
   );
 
-  const setExternalProcesses: NativeTelemetryClient["Service"]["setExternalProcesses"] = (
-    processes,
-  ) =>
-    Effect.gen(function* () {
+  // Desktop telemetry refreshes this process set on every sample.
+  const setExternalProcesses: NativeTelemetryClient["Service"]["setExternalProcesses"] =
+    Effect.fnUntraced(function* (processes) {
       yield* Ref.set(externalProcesses, [...processes]);
       const current = yield* Ref.get(state);
       if (!canCommandNativeTelemetrySidecar(current.status, Option.isSome(current.handle))) return;
@@ -854,64 +855,65 @@ export const make = Effect.fn("resourceTelemetry.nativeTelemetryClient.make")(fu
       });
     });
 
-  const readHistory: NativeTelemetryClient["Service"]["readHistory"] = (windowMs) =>
-    Effect.gen(function* () {
-      const current = yield* Ref.get(state);
-      if (!canCommandNativeTelemetrySidecar(current.status, Option.isSome(current.handle))) {
-        return yield* new NativeTelemetryUnavailable({
-          reason: Option.getOrElse(current.lastError, () => "sidecar is not running"),
-        });
-      }
-      const requestId = yield* crypto.randomUUIDv4.pipe(
-        Effect.mapError(
-          (cause) =>
-            new NativeTelemetryCommandFailed({
-              operation: "createHistoryRequestId",
-              cause,
-            }),
-        ),
-      );
-      const deferred = yield* Deferred.make<
-        ReadonlyArray<ResourceMonitorSnapshotEvent>,
-        NativeTelemetryClientError
-      >();
-      yield* Ref.update(pendingHistories, (pending) => {
-        const next = new Map(pending);
-        next.set(requestId, { deferred, snapshots: [] });
-        return next;
+  const readHistory: NativeTelemetryClient["Service"]["readHistory"] = Effect.fn(
+    "NativeTelemetryClient.readHistory",
+  )(function* (windowMs) {
+    const current = yield* Ref.get(state);
+    if (!canCommandNativeTelemetrySidecar(current.status, Option.isSome(current.handle))) {
+      return yield* new NativeTelemetryUnavailable({
+        reason: Option.getOrElse(current.lastError, () => "sidecar is not running"),
       });
-      return yield* writeCommand(Option.getOrThrow(current.handle), {
-        version: RESOURCE_MONITOR_PROTOCOL_VERSION,
-        type: "readHistory",
-        requestId,
-        windowMs: Math.max(0, Math.round(windowMs)),
-      }).pipe(
-        Effect.andThen(
-          Deferred.await(deferred).pipe(
-            Effect.timeoutOption(HISTORY_REQUEST_TIMEOUT),
-            Effect.flatMap(
-              Option.match({
-                onNone: () =>
-                  Effect.fail(
-                    new NativeTelemetryRequestTimedOut({
-                      operation: "readHistory",
-                      timeoutMs: Duration.toMillis(HISTORY_REQUEST_TIMEOUT),
-                    }),
-                  ),
-                onSome: Effect.succeed,
-              }),
-            ),
+    }
+    const requestId = yield* crypto.randomUUIDv4().pipe(
+      Effect.mapError(
+        (cause) =>
+          new NativeTelemetryCommandFailed({
+            operation: "createHistoryRequestId",
+            cause,
+          }),
+      ),
+    );
+    const deferred = yield* Deferred.make<
+      ReadonlyArray<ResourceMonitorSnapshotEvent>,
+      NativeTelemetryClientError
+    >();
+    yield* Ref.update(pendingHistories, (pending) => {
+      const next = new Map(pending);
+      next.set(requestId, { deferred, snapshots: [] });
+      return next;
+    });
+    return yield* writeCommand(Option.getOrThrow(current.handle), {
+      version: RESOURCE_MONITOR_PROTOCOL_VERSION,
+      type: "readHistory",
+      requestId,
+      windowMs: Math.max(0, Math.round(windowMs)),
+    }).pipe(
+      Effect.andThen(
+        Deferred.await(deferred).pipe(
+          Effect.timeoutOption(HISTORY_REQUEST_TIMEOUT),
+          Effect.flatMap(
+            Option.match({
+              onNone: () =>
+                Effect.fail(
+                  new NativeTelemetryRequestTimedOut({
+                    operation: "readHistory",
+                    timeoutMs: Duration.toMillis(HISTORY_REQUEST_TIMEOUT),
+                  }),
+                ),
+              onSome: Effect.succeed,
+            }),
           ),
         ),
-        Effect.ensuring(
-          Ref.update(pendingHistories, (pending) => {
-            const next = new Map(pending);
-            next.delete(requestId);
-            return next;
-          }),
-        ),
-      );
-    });
+      ),
+      Effect.ensuring(
+        Ref.update(pendingHistories, (pending) => {
+          const next = new Map(pending);
+          next.delete(requestId);
+          return next;
+        }),
+      ),
+    );
+  });
 
   const sampleNow: NativeTelemetryClient["Service"]["sampleNow"] = Effect.gen(function* () {
     const current = yield* Ref.get(state);
@@ -921,7 +923,7 @@ export const make = Effect.fn("resourceTelemetry.nativeTelemetryClient.make")(fu
       });
     }
 
-    const requestId = yield* crypto.randomUUIDv4.pipe(
+    const requestId = yield* crypto.randomUUIDv4().pipe(
       Effect.mapError(
         (cause) =>
           new NativeTelemetryCommandFailed({
@@ -976,11 +978,13 @@ export const make = Effect.fn("resourceTelemetry.nativeTelemetryClient.make")(fu
       });
     }
 
-    const requestId = yield* crypto.randomUUIDv4.pipe(
-      Effect.mapError(
-        (cause) => new NativeTelemetryCommandFailed({ operation: "createRequestId", cause }),
-      ),
-    );
+    const requestId = yield* crypto
+      .randomUUIDv4()
+      .pipe(
+        Effect.mapError(
+          (cause) => new NativeTelemetryCommandFailed({ operation: "createRequestId", cause }),
+        ),
+      );
     const deferred = yield* Deferred.make<
       ReadonlyArray<ResourceMonitorProcessTableEntry>,
       NativeTelemetryClientError
@@ -1069,7 +1073,7 @@ export const layerTest = (
       lastSampleAt: Option.none<DateTime.Utc>(),
       lastError: Option.some("Resource monitor test implementation is unavailable."),
       restartCount: 0,
-      sampleIntervalMs: UNKNOWN_BACKGROUND_SAMPLE_INTERVAL_MS,
+      sampleIntervalMs: IDLE_SAMPLE_INTERVAL_MS,
     });
   return Layer.succeed(
     NativeTelemetryClient,
@@ -1084,14 +1088,19 @@ export const layerTest = (
         processTree: true,
       }),
       snapshots: Stream.empty,
-      readHistory: () =>
-        Effect.fail(
+      readHistory: Effect.fn("NativeTelemetryClient.readHistory")(function () {
+        return Effect.fail(
           new NativeTelemetryUnavailable({
             reason: "No resource monitor history was configured for this test.",
           }),
-        ),
-      setExternalProcesses: () => Effect.void,
-      setHostPowerState: () => Effect.void,
+        );
+      }),
+      setExternalProcesses: Effect.fn("NativeTelemetryClient.setExternalProcesses")(function () {
+        return Effect.void;
+      }),
+      setHostPowerState: Effect.fn("NativeTelemetryClient.setHostPowerState")(function () {
+        return Effect.void;
+      }),
       sampleNow: Effect.fail(
         new NativeTelemetryUnavailable({
           reason: "No resource monitor sample was configured for this test.",

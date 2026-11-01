@@ -1,10 +1,3 @@
-/**
- * Cursor account usage from its dashboard API, read with the saved CLI or
- * Keychain login. The dashboard covers CLI, desktop and headless usage from
- * every machine on the account.
- *
- * @module provider-cursor/server/accountUsage
- */
 import type { UsageRecord } from "@t3tools/provider-core/server/usage";
 import * as Crypto from "effect/Crypto";
 import * as Duration from "effect/Duration";
@@ -32,11 +25,7 @@ function tokens(value: unknown): number {
   return typeof value === "number" && Number.isFinite(value) && value > 0 ? Math.trunc(value) : 0;
 }
 
-/**
- * Maps Cursor's tiered names (`cursor-grok-4.6-high-fast`,
- * `claude-fable-5-1-thinking-high`) to the base model's rate-table key.
- * Grok resolves through xAI's first-party entry, which has no bare alias.
- */
+// Grok's xAI first-party rate entry has no bare alias.
 export function cursorRateModel(model: string): string {
   const base = model
     .replace(/^cursor-/, "")
@@ -51,7 +40,6 @@ export interface CursorAccountUsageReadResult {
   readonly error: string | null;
 }
 
-/** Why a dashboard read was abandoned; the caller only sees the generic message. */
 class CursorAccountUsageInvalidError extends Schema.TaggedError<CursorAccountUsageInvalidError>()(
   "CursorAccountUsageInvalidError",
   { reason: Schema.String },
@@ -84,7 +72,6 @@ function canonicalJson(value: unknown): string {
   return JSON.stringify(value) ?? "null";
 }
 
-/** Find the longest exact suffix/prefix overlap in linear time. */
 function boundaryOverlap(previous: readonly string[], current: readonly string[]): number {
   const sequence = [...current, "", ...previous];
   const lengths = Array.from({ length: sequence.length }, () => 0);
@@ -102,10 +89,6 @@ const DASHBOARD_USAGE_URL = "https://cursor.com/api/dashboard/get-filtered-usage
 /** The session cookie must never follow a redirect off cursor.com. */
 const NO_REDIRECT: RequestInit = { redirect: "error" };
 
-/**
- * Dashboard usage includes headless agents and reports fresh input separately
- * from cache reads. `keychainToken` is only run for a Keychain login.
- */
 export const readCursorAccountUsage = Effect.fn("readCursorAccountUsage")(function* (
   credentialSource: string | { readonly kind: "keychain" },
   sinceMs: number,
@@ -191,8 +174,8 @@ export const readCursorAccountUsage = Effect.fn("readCursorAccountUsage")(functi
     let completed = false;
     const pageSize = 1000;
     let total: number | undefined;
-    const readPage = (page: number) =>
-      Effect.gen(function* () {
+    const readPage = Effect.fn("CursorAccountUsage.readPage")(
+      function* (page: number) {
         // A count can include overlapping page boundaries. Allow room to
         // reconcile them without imposing a fixed account-size limit.
         if (page > (total === undefined ? 1000 : Math.ceil(total / pageSize) * 2 + 1)) {
@@ -258,15 +241,14 @@ export const readCursorAccountUsage = Effect.fn("readCursorAccountUsage")(functi
         }
         if (typeof count === "number") total = count;
         return events as unknown[];
-      }).pipe(
-        Effect.timeoutOrElse({
-          duration: Duration.seconds(10),
-          orElse: () => invalid("Account usage request timed out"),
-        }),
-      );
+      },
+      Effect.timeoutOrElse({
+        duration: Duration.seconds(10),
+        orElse: () => invalid("Account usage request timed out"),
+      }),
+    );
     // Cursor caps a page at 1,000 events and takes about a second to answer one, so the pages
     // the first one's count implies are requested up to six ahead and consumed in page order.
-    // Pages still in flight when the read ends are interrupted with its scope.
     const ahead: Fiber.Fiber<
       Effect.Success<ReturnType<typeof readPage>>,
       CursorAccountUsageInvalidError
@@ -277,7 +259,6 @@ export const readCursorAccountUsage = Effect.fn("readCursorAccountUsage")(functi
       }
       const next = ahead.shift();
       const events = yield* next === undefined ? readPage(page) : Fiber.join(next);
-      // A rejected login comes back as the finished result instead of a page.
       if (!Array.isArray(events)) return events;
       pages.push(events);
       if (events.length < pageSize) {
@@ -374,13 +355,14 @@ export const readCursorAccountUsage = Effect.fn("readCursorAccountUsage")(functi
       duration: Duration.seconds(60),
       orElse: () => invalid("Account usage read timed out"),
     }),
-    Effect.catch(() =>
-      Effect.succeed({
-        accountKey,
-        records: [],
-        missing: false,
-        error: "Cursor account usage could not be read.",
-      } satisfies CursorAccountUsageReadResult),
+    Effect.orElseSucceed(
+      () =>
+        ({
+          accountKey,
+          records: [],
+          missing: false,
+          error: "Cursor account usage could not be read.",
+        }) satisfies CursorAccountUsageReadResult,
     ),
   );
 });

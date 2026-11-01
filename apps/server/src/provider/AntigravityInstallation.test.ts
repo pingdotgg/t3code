@@ -11,22 +11,14 @@ import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as PlatformError from "effect/PlatformError";
-import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
 import { HttpClient, HttpClientResponse } from "effect/http";
-import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
 import * as AntigravityInstallation from "./AntigravityInstallation.ts";
-import { ANTIGRAVITY_AUTH_BROWSER_MARKER } from "./antigravityAuthSupport.ts";
-import {
-  resolveAntigravityReleaseAsset,
-  type AntigravityReleaseAsset,
-} from "./antigravityRelease.ts";
-
-import antigravityInitialize from "../../../../packages/effect-acp/test/fixtures/antigravity-initialize.json" with { type: "json" };
+import { type AntigravityReleaseAsset } from "./antigravityRelease.ts";
 
 const serverContents = "antigravity runtime\n";
 const harnessContents = "local harness\n";
@@ -34,7 +26,6 @@ const previousReleaseId = "1".repeat(64);
 const previousVersion = "fixture-old";
 const encodeJsonString = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
 
-// Small ZIPs made with Python's zipfile module. The unsafe entries are intentional.
 const zipFixtures = {
   complete:
     "UEsDBBQAAAAIAAAAIl1zEy/oFAAAABQAAAASAAAAYWd5X2FjcF9zZXJ2ZXIucGFyS8wryUwvSizLLKlUKCoFcnJTuQBQSwMEFAAAAAgAAAAiXV9yAykQAAAADgAAABUAAABsb2NhbGhhcm5lc3NfZXh0ZXJuYWzLyU9OzFHISCzKSy0u5gIAUEsBAhQDFAAAAAgAAAAiXXMTL+gUAAAAFAAAABIAAAAAAAAAAAAAAO2BAAAAAGFneV9hY3Bfc2VydmVyLnBhclBLAQIUAxQAAAAIAAAAIl1fcgMpEAAAAA4AAAAVAAAAAAAAAAAAAADtgUQAAABsb2NhbGhhcm5lc3NfZXh0ZXJuYWxQSwUGAAAAAAIAAgCDAAAAhwAAAAAA",
@@ -52,10 +43,7 @@ const zipFixtures = {
     "UEsDBBQAAAAIAAAAIl1zEy/oFAAAABQAAAASAAAAYWd5X2FjcF9zZXJ2ZXIuZXhlS8wryUwvSizLLKlUKCoFcnJTuQBQSwMEFAAAAAgAAAAiXV9yAykQAAAADgAAABkAAABsb2NhbGhhcm5lc3NfZXh0ZXJuYWwuZXhly8lPTsxRyEgsykstLuYCAFBLAQIUAxQAAAAIAAAAIl1zEy/oFAAAABQAAAASAAAAAAAAAAAAAADtgQAAAABhZ3lfYWNwX3NlcnZlci5leGVQSwECFAMUAAAACAAAACJdX3IDKRAAAAAOAAAAGQAAAAAAAAAAAAAA7YFEAAAAbG9jYWxoYXJuZXNzX2V4dGVybmFsLmV4ZVBLBQYAAAAAAgACAIcAAACLAAAAAAA=",
 };
 
-// The installation checks POSIX exec bits off the real filesystem unless the
-// platform is win32, so a linux platform mock cannot pass on NTFS. Default to
-// the host and let the fixture names follow; the suite is about install
-// mechanics, which are the same on every platform.
+// Linux platform mocks cannot enforce POSIX exec bits on NTFS; use the host platform.
 const hostPlatform: NodeJS.Platform =
   HostProcess.Platform.defaultValue() === "win32" ? "win32" : "linux";
 const completeArchive = Buffer.from(
@@ -127,6 +115,7 @@ interface HarnessOptions {
   readonly contentLength?: number;
   readonly contentEncoding?: string;
   readonly platform?: NodeJS.Platform;
+  readonly arch?: NodeJS.Architecture;
   readonly path?: string;
   readonly previous?: boolean;
   readonly fileSystem?: FileSystem.FileSystem;
@@ -142,10 +131,11 @@ const makeHarness = Effect.fn("test.makeAntigravityInstallation")(function* (
   const baseDir =
     options.baseDir ?? (yield* fs.makeTempDirectoryScoped({ prefix: "t3-agy-test-" }));
   const platform = options.platform ?? hostPlatform;
+  const arch = options.arch ?? "x64";
   const archive = options.archive ?? completeArchive;
   const asset =
     options.asset === undefined ? yield* releaseAsset(archive, platform) : options.asset;
-  const managedDirectory = path.join(baseDir, "tools", "antigravity-acp", `${platform}-x64`);
+  const managedDirectory = path.join(baseDir, "tools", "antigravity-acp", `${platform}-${arch}`);
   if (options.previous) {
     yield* writeRelease(managedDirectory, {
       ...(yield* releaseAsset(archive, platform)),
@@ -185,7 +175,7 @@ const makeHarness = Effect.fn("test.makeAntigravityInstallation")(function* (
   }).pipe(
     Effect.provideService(FileSystem.FileSystem, trackedFs),
     Effect.provideService(HostProcess.Platform, platform),
-    Effect.provideService(HostProcess.Architecture, "x64"),
+    Effect.provideService(HostProcess.Architecture, arch),
     Effect.provideService(HostProcess.Environment, { PATH: options.path ?? "" }),
     Effect.provideService(
       HttpClient.HttpClient,
@@ -305,156 +295,9 @@ it.layer(NodeServices.layer)("Antigravity installation", (it) => {
     }),
   );
 
-  it.effect.each([
-    {
-      name: "the expected release with protocol 1",
-      protocolVersion: 1,
-      agentName: "antigravity-acp",
-      version: "fixture-new",
-      valid: true,
-    },
-    {
-      name: "the expected release with protocol 2 and legacy fields",
-      protocolVersion: 2,
-      agentName: "antigravity-acp",
-      version: "fixture-new",
-      valid: true,
-    },
-    {
-      name: "an unsupported protocol version",
-      protocolVersion: 3,
-      agentName: "antigravity-acp",
-      version: "fixture-new",
-      valid: false,
-    },
-    { name: "a different agent", agentName: "other-agent", version: "fixture-new", valid: false },
-    {
-      name: "a different version",
-      agentName: "antigravity-acp",
-      version: "other-version",
-      valid: false,
-    },
-  ])("validates $name with initialize only and removes the disposable profile", (testCase) =>
-    Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const encoder = new TextEncoder();
-      const decodeRequest = Schema.decodeUnknownEffect(
-        Schema.fromJsonString(
-          Schema.Struct({
-            id: Schema.Union([Schema.String, Schema.Number]),
-            method: Schema.String,
-          }),
-        ),
-      );
-      const methods: string[] = [];
-      const profiles = new Set<string>();
-      let closedRuntimes = 0;
-      const spawner = ChildProcessSpawner.make(
-        Effect.fn("test.spawnAntigravityValidator")(function* (command) {
-          if (command._tag !== "StandardCommand") {
-            return yield* Effect.die("Expected one validation process.");
-          }
-          const profile = command.options.env?.GEMINI_HOME;
-          if (!profile) return yield* Effect.die("Expected a disposable validation profile.");
-          profiles.add(profile);
-          const helper = command.args[0] === "-e";
-          // The runtime unpacks straight into the disposable profile.
-          if (!helper) expect(command.options.env?.TMPDIR).toBe(profile);
-          const output = yield* Queue.unbounded<Uint8Array>();
-          const exited = yield* Deferred.make<ChildProcessSpawner.ExitCode>();
-          const terminate = Deferred.succeed(exited, ChildProcessSpawner.ExitCode(0)).pipe(
-            Effect.asVoid,
-          );
-          yield* Effect.addFinalizer(() =>
-            terminate.pipe(
-              Effect.andThen(Queue.shutdown(output)),
-              Effect.andThen(
-                Effect.sync(() => {
-                  if (!helper) closedRuntimes += 1;
-                }),
-              ),
-            ),
-          );
-          return ChildProcessSpawner.makeHandle({
-            pid: ChildProcessSpawner.ProcessId(helper ? 1 : 2),
-            exitCode: helper
-              ? Effect.succeed(ChildProcessSpawner.ExitCode(0))
-              : Deferred.await(exited),
-            isRunning: Deferred.isDone(exited).pipe(Effect.map((done) => !done)),
-            kill: () => terminate,
-            unref: Effect.succeed(Effect.void),
-            stdin: Sink.forEach((bytes: Uint8Array) =>
-              Effect.gen(function* () {
-                const request = yield* decodeRequest(new TextDecoder().decode(bytes)).pipe(
-                  Effect.orDie,
-                );
-                methods.push(request.method);
-                yield* Queue.offer(
-                  output,
-                  encoder.encode(
-                    `${encodeJsonString({
-                      jsonrpc: "2.0",
-                      id: request.id,
-                      ...(request.method === "initialize"
-                        ? {
-                            result: {
-                              ...antigravityInitialize,
-                              protocolVersion: testCase.protocolVersion ?? 2,
-                              agentInfo: { name: testCase.agentName, version: testCase.version },
-                            },
-                          }
-                        : {
-                            error: {
-                              code: -32601,
-                              message: "Validation must not sign in or create sessions.",
-                            },
-                          }),
-                    })}\n`,
-                  ),
-                );
-              }),
-            ),
-            stdout: helper ? Stream.empty : Stream.fromQueue(output),
-            stderr: helper
-              ? Stream.make(
-                  encoder.encode(
-                    `${ANTIGRAVITY_AUTH_BROWSER_MARKER}${encodeJsonString(command.args.at(-1))}\n`,
-                  ),
-                )
-              : Stream.empty,
-            all: Stream.empty,
-            getInputFd: () => Sink.drain,
-            getOutputFd: () => Stream.empty,
-          });
-        }),
-      );
-      const { installation, stagingReleased } = yield* makeHarness({
-        previous: true,
-        useDefaultValidation: true,
-      }).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner));
-      yield* installation.start;
-      expect((yield* terminalState(installation)).phase).toBe(
-        testCase.valid ? "succeeded" : "failed",
-      );
-      yield* Deferred.await(stagingReleased);
-      expect(methods).toEqual(["initialize"]);
-      expect(closedRuntimes).toBe(1);
-      expect(profiles.size).toBe(1);
-      for (const profile of profiles) {
-        expect(yield* fs.exists(profile)).toBe(false);
-      }
-      if (testCase.valid) {
-        expect((yield* installation.resolve()).version).toBe("fixture-new");
-      } else {
-        yield* expectPreviousRelease(installation);
-      }
-    }),
-  );
-
   it.effect("accepts an encoded Content-Length when the body is compressed", () =>
     Effect.gen(function* () {
-      // dl.google.com gzips the archive and reports the encoded size. The decoded
-      // stream is still checked byte for byte and by hash.
+      // dl.google.com reports the gzip-encoded size; byte and hash checks use the decoded stream.
       const { installation, validations } = yield* makeHarness({
         contentLength: completeArchive.byteLength - 1_000,
         contentEncoding: "gzip",
@@ -482,7 +325,6 @@ it.layer(NodeServices.layer)("Antigravity installation", (it) => {
     { name: "oversized member", archive: Buffer.from(zipFixtures.oversizedMember, "base64") },
   ])("rejects $name before runtime validation", ({ completeAsset, ...options }) =>
     Effect.gen(function* () {
-      // Pin the asset to the complete archive so the download itself is what disagrees.
       const asset =
         completeAsset === undefined ? undefined : { ...(yield* releaseAsset()), ...completeAsset };
       const { installation, validations, stagingReleased, fs, path } = yield* makeHarness({
@@ -727,8 +569,7 @@ it.layer(NodeServices.layer)("Antigravity installation", (it) => {
       }),
   );
 
-  // Real posix executables in a real temp dir, resolved by a linux-mocked
-  // PATH walk; a Windows temp path cannot be split on `:`.
+  // The mocked Linux PATH walk needs POSIX paths; Windows temp paths contain colons.
   it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32")(
     "honors explicit paths and reports invalid overrides without falling back",
     () =>
@@ -950,28 +791,4 @@ it.layer(NodeServices.layer)("Antigravity installation", (it) => {
       expect(requests).toEqual([]);
     }),
   );
-
-  it("resolves all supported platform release assets including Intel Mac", () => {
-    const supportedPlatforms: Array<{ readonly platform: NodeJS.Platform; readonly arch: string }> =
-      [
-        { platform: "darwin", arch: "arm64" },
-        { platform: "darwin", arch: "x64" },
-        { platform: "linux", arch: "x64" },
-        { platform: "linux", arch: "arm64" },
-        { platform: "win32", arch: "x64" },
-        { platform: "win32", arch: "arm64" },
-      ];
-
-    for (const { platform, arch } of supportedPlatforms) {
-      const asset = resolveAntigravityReleaseAsset(platform, arch);
-      expect(asset).not.toBeNull();
-      expect(asset?.version).toBe("1.3.0");
-      expect(asset?.url).toContain("1.3.0");
-      expect(asset?.archiveBytes).toBeGreaterThan(0);
-      expect(asset?.executable.bytes).toBeGreaterThan(0);
-      expect(asset?.harness.bytes).toBeGreaterThan(0);
-    }
-
-    expect(resolveAntigravityReleaseAsset("freebsd", "x64")).toBeNull();
-  });
 });

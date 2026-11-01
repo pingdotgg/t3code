@@ -1,23 +1,11 @@
-/**
- * SourceControlHost — what a source control provider package may ask of the server it runs in.
- *
- * Providers run inside a T3 server but must not import it. The server provides this one
- * service; everything a provider needs from its environment (settings, the process runner)
- * goes through it, so a provider package depends only on `@t3tools/source-control-core` and
- * its own API and CLI code. HTTP, the filesystem, and paths come from Effect's platform
- * services directly.
- *
- * `git` is the subset of the server's git driver that checking out a change request needs; it
- * grows only when a provider needs another operation.
- *
- * @module source-control-core/server/SourceControlHost
- */
 import type {
   GitCommandError,
   ServerSettings,
   ServerSettingsError,
+  ServerSettingsPatch,
   VcsError,
   VcsListRemotesResult,
+  VcsProcessExitFailureKind,
   VcsSwitchRefInput,
   VcsSwitchRefResult,
 } from "@t3tools/contracts";
@@ -25,7 +13,6 @@ import * as Context from "effect/Context";
 import type * as Effect from "effect/Effect";
 import type * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
-/** One CLI invocation. The server bounds concurrency, output, and time for every run. */
 export interface SourceControlProcessInput {
   readonly operation: string;
   readonly command: string;
@@ -38,9 +25,20 @@ export interface SourceControlProcessInput {
   readonly allowNonZeroExit?: boolean;
   readonly timeoutMs?: number;
   readonly maxOutputBytes?: number;
-  /** What happens past `maxOutputBytes`: fail the run, or keep the first bytes. */
   readonly outputMode?: "error" | "truncate" | undefined;
   readonly appendTruncationMarker?: boolean;
+  /**
+   * Reads a failure the generic rules cannot, such as a host CLI's sign-in hint, from its stderr.
+   * Null leaves it to them.
+   */
+  readonly classifyFailure?: (stderr: string) => VcsProcessExitFailureKind | null;
+  /** The error's detail when the command reports something it was asked for as missing. */
+  readonly notFoundDetail?: string;
+  /**
+   * Runs sharing a key run at most `limit` at a time, for a host that throttles bursts of its CLI.
+   * The first run of a key fixes its limit.
+   */
+  readonly concurrency?: { readonly key: string; readonly limit: number };
 }
 
 export interface SourceControlProcessOutput {
@@ -49,7 +47,6 @@ export interface SourceControlProcessOutput {
   readonly stderr: string;
   readonly stdoutTruncated: boolean;
   readonly stderrTruncated: boolean;
-  /** Present on real process output; optional so narrow test doubles remain lightweight. */
   readonly stdoutInvalidUtf8?: boolean;
   readonly stderrInvalidUtf8?: boolean;
 }
@@ -69,8 +66,18 @@ export class SourceControlHost extends Context.Service<
   SourceControlHost,
   {
     readonly settings: {
-      /** Read fresh on each call, so a credential saved in Settings applies without a restart. */
+      /** Read fresh on each call to pick up credential changes. */
       readonly get: Effect.Effect<ServerSettings, ServerSettingsError>;
+      /**
+       * Like `get`, with each secret provider reference in one host kind's credentials replaced
+       * by the secret it names. An unreadable reference reads as unset. Only a reader of that
+       * kind should call it: resolving can wait on a secret provider.
+       */
+      readonly getWithSecrets: (kind: string) => Effect.Effect<ServerSettings, ServerSettingsError>;
+      /** For credentials the host obtains itself, such as a sign-in it refreshes. */
+      readonly update: (
+        patch: ServerSettingsPatch,
+      ) => Effect.Effect<ServerSettings, ServerSettingsError>;
     };
     readonly process: {
       readonly run: (
@@ -78,7 +85,6 @@ export class SourceControlHost extends Context.Service<
       ) => Effect.Effect<SourceControlProcessOutput, VcsError>;
     };
     readonly git: {
-      /** Runs `git -C cwd …args` through the server's git driver, with its limits and metrics. */
       readonly execute: (input: {
         readonly operation: string;
         readonly cwd: string;
@@ -90,10 +96,7 @@ export class SourceControlHost extends Context.Service<
         readonly cwd: string;
         readonly revision: string;
       }) => Effect.Effect<{ readonly commitSha: string }, GitCommandError>;
-      /**
-       * Lists the remotes of the repository at `cwd`. The outer effect resolves the repository
-       * and fails when the server cannot drive one there; the inner one lists its remotes.
-       */
+      /** The outer effect resolves the repository; the inner effect lists its remotes. */
       readonly remotes: (
         cwd: string,
       ) => Effect.Effect<Effect.Effect<VcsListRemotesResult, VcsError>, VcsError>;
@@ -102,7 +105,6 @@ export class SourceControlHost extends Context.Service<
         key: string,
       ) => Effect.Effect<string | null, GitCommandError>;
       readonly resolvePrimaryRemoteName: (cwd: string) => Effect.Effect<string, GitCommandError>;
-      /** Adds a remote for `url` unless one exists, and returns the name it is under. */
       readonly ensureRemote: (input: {
         readonly cwd: string;
         readonly preferredName: string;
@@ -118,6 +120,20 @@ export class SourceControlHost extends Context.Service<
       readonly setBranchUpstream: (
         input: SourceControlGitRemoteBranch & { readonly branch: string },
       ) => Effect.Effect<void, GitCommandError>;
+      /**
+       * Writes to .git/config, which every worktree shares, go through these rather than
+       * `execute`: the host serializes them per repository.
+       */
+      readonly createBranch: (input: {
+        readonly cwd: string;
+        readonly branch: string;
+        readonly startPoint: string;
+      }) => Effect.Effect<void, GitCommandError>;
+      readonly writeConfigValue: (input: {
+        readonly cwd: string;
+        readonly key: string;
+        readonly value: string;
+      }) => Effect.Effect<void, GitCommandError>;
       readonly switchRef: (
         input: VcsSwitchRefInput,
       ) => Effect.Effect<VcsSwitchRefResult, GitCommandError>;

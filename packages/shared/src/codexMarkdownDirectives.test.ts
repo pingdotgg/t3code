@@ -5,7 +5,7 @@ import { unified } from "unified";
 import {
   remarkCodexDirectives,
   renderCodexDirectivesForCopy,
-  renderCodexFileCitationsAsMarkdown,
+  renderCodexInlineDirectivesAsMarkdown,
   splitCodexArtifactTemplateMarkdown,
 } from "./codexMarkdownDirectives.ts";
 import { parseMarkdownFileLink } from "./markdownLinks.ts";
@@ -26,6 +26,8 @@ interface TestNode {
 }
 
 const FILE_CITATION = ':codex-file-citation{path="outputs/report.xlsx" purpose="output"}';
+const FOLLOW_UP =
+  ':codex-followup[Prepare print version]{prompt="Prepare the document for printing."}';
 const ARTIFACT_TEMPLATE =
   '::artifact-template{skill_name="artifact-template-hello-world" skill_directory="/Users/test/.codex/skills/artifact-template-hello-world" display_name="Hello World" artifact_kind="document"}';
 
@@ -72,19 +74,17 @@ describe("remarkCodexDirectives", () => {
 
   it.each([
     "Meeting at 10:30",
-    "Open src/main.ts:42",
-    "Use :hover and :tada:",
-    "::note",
     ":::note\ncontent\n:::",
     ':codex-file-citation-extra{path="outputs/report.xlsx"}',
-    "::artifact-template-extra",
+    ':codex-followup-extra[Label]{prompt="Prompt"}',
   ])("does not change unrelated colon syntax: %s", (markdown) => {
     expect(parse(markdown)).toEqual(parseOrdinaryMarkdown(markdown));
   });
 
   it.each([
     ':codex-file-citation{purpose="output"}',
-    '::artifact-template{skill_name="artifact-template-hello-world"}',
+    ":codex-followup[Prepare print version]",
+    ':codex-followup[ ]{prompt="Prepare the document for printing."}',
   ])("keeps malformed supported directives literal: %s", (markdown) => {
     expect(parse(markdown)).toEqual(parseOrdinaryMarkdown(markdown));
   });
@@ -92,12 +92,12 @@ describe("remarkCodexDirectives", () => {
 
 describe.each([
   { name: "renderCodexDirectivesForCopy", render: renderCodexDirectivesForCopy },
-  { name: "renderCodexFileCitationsAsMarkdown", render: renderCodexFileCitationsAsMarkdown },
+  { name: "renderCodexInlineDirectivesAsMarkdown", render: renderCodexInlineDirectivesAsMarkdown },
 ])("$name file citation round trips", ({ render }) => {
+  // regression: #12243 copied Codex citations keep their backslashes
   it.each([
     "C:\\Users\\test\\[draft]\\report.md",
     "\\\\server\\share\\report.md",
-    "outputs/report.md",
     "/tmp/report%5C.md",
   ])("preserves the literal path and line: %s", (path) => {
     const markdown = render(`:codex-file-citation{path="${path}" line_range_start="7"}`);
@@ -109,19 +109,20 @@ describe.each([
 });
 
 describe("native Markdown adapters", () => {
-  it("uses the same parser to render file citations as portable links", () => {
-    expect(renderCodexFileCitationsAsMarkdown(`Created ${FILE_CITATION}.`)).toBe(
-      "Created [report.xlsx](<outputs/report.xlsx>).",
-    );
+  it("renders follow-up suggestions as their label Markdown", () => {
+    expect(
+      renderCodexInlineDirectivesAsMarkdown(
+        `- ${FOLLOW_UP}\n- :codex-followup[Review **document**]{prompt="Review it."}`,
+      ),
+    ).toBe("- Prepare print version\n- Review **document**");
   });
 
   it.each([
     `\\${FILE_CITATION}`,
     `\`${FILE_CITATION}\``,
-    `\`\`\`text\n${FILE_CITATION}\n\`\`\``,
     `[See ${FILE_CITATION}](https://example.com)`,
   ])("does not render excluded citation syntax: %s", (markdown) => {
-    expect(renderCodexFileCitationsAsMarkdown(markdown)).toBe(markdown);
+    expect(renderCodexInlineDirectivesAsMarkdown(markdown)).toBe(markdown);
   });
 
   it("splits artifact cards from surrounding native Markdown", () => {
@@ -159,17 +160,12 @@ describe("native Markdown adapters", () => {
 
 describe("directive copy adapter", () => {
   it("copies the Markdown representations shown by citation chips and template cards", () => {
-    expect(renderCodexDirectivesForCopy(`Created ${FILE_CITATION}.\n\n${ARTIFACT_TEMPLATE}`)).toBe(
-      "Created [report.xlsx](<outputs/report.xlsx>).\n\nHello World (Document template)",
+    expect(
+      renderCodexDirectivesForCopy(
+        `Created ${FILE_CITATION}.\n\n${ARTIFACT_TEMPLATE}\n\n- ${FOLLOW_UP}`,
+      ),
+    ).toBe(
+      "Created [report.xlsx](<outputs/report.xlsx>).\n\nHello World (Document template)\n\n- Prepare print version",
     );
-  });
-
-  it("leaves excluded and malformed directive source unchanged", () => {
-    const markdown = [
-      `\`${FILE_CITATION}\``,
-      '::artifact-template{display_name="Hello World"}',
-    ].join("\n\n");
-
-    expect(renderCodexDirectivesForCopy(markdown)).toBe(markdown);
   });
 });

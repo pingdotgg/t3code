@@ -60,6 +60,7 @@ export function makeSubagentChildThread(input: {
     creationSource: input.creationSource,
     id: input.childThreadId,
     title: input.title,
+    titleRegeneration: null,
     linkedPullRequest: null,
     pullRequests: [],
     historyOrigin: undefined,
@@ -82,6 +83,11 @@ export function makeSubagentChildThread(input: {
     settledAt: null,
     snoozedUntil: null,
     snoozedAt: null,
+    pinnedAt: null,
+    pinOrderKey: null,
+    autoSettleDisabledAt: null,
+    // A guest link belongs to the thread it was made for.
+    guestShare: null,
     lastVisitedAt: null,
     deletedAt: null,
   };
@@ -98,6 +104,7 @@ export function makeSubagentConversationArtifacts(input: {
   readonly nativeItemRef: OrchestrationV2ProviderRef | null;
   readonly role: "user" | "assistant";
   readonly text: string;
+  readonly workflowScript?: boolean;
   readonly ordinal: number;
   readonly now: DateTime.Utc;
 }): {
@@ -114,6 +121,9 @@ export function makeSubagentConversationArtifacts(input: {
     role: input.role,
     ...(input.role === "user" && input.senderThreadId !== undefined
       ? { senderThreadId: input.senderThreadId }
+      : {}),
+    ...(input.role === "user" && input.workflowScript !== undefined
+      ? { workflowScript: input.workflowScript }
       : {}),
     text: input.text,
     attachments: [],
@@ -147,6 +157,7 @@ export function makeSubagentConversationArtifacts(input: {
           creationSource: "provider",
           type: "user_message",
           ...(input.senderThreadId === undefined ? {} : { senderThreadId: input.senderThreadId }),
+          ...(input.workflowScript === undefined ? {} : { workflowScript: input.workflowScript }),
           inputIntent: "turn_start",
           attachments: [],
         }
@@ -166,18 +177,6 @@ export function subagentResultForRun(
   readonly messageId: OrchestrationV2ConversationMessage["id"] | null;
   readonly turnItemId: OrchestrationV2TurnItem["id"] | null;
 } {
-  const message =
-    projection.messages
-      .filter(
-        (candidate) =>
-          candidate.runId === run.id &&
-          candidate.role === "assistant" &&
-          candidate.text.trim().length > 0,
-      )
-      .toSorted(
-        (left, right) =>
-          DateTime.toEpochMillis(right.updatedAt) - DateTime.toEpochMillis(left.updatedAt),
-      )[0] ?? null;
   const turnItem =
     projection.turnItems
       .filter(
@@ -189,6 +188,21 @@ export function subagentResultForRun(
           candidate.text.trim().length > 0,
       )
       .toSorted((left, right) => right.ordinal - left.ordinal)[0] ?? null;
+  const messages = projection.messages.filter(
+    (candidate) =>
+      candidate.runId === run.id &&
+      candidate.role === "assistant" &&
+      candidate.text.trim().length > 0,
+  );
+  // Prefer turn item order; providers can finalize messages with identical timestamps.
+  const message =
+    messages.find((candidate) => candidate.id === turnItem?.messageId) ??
+    messages.toSorted(
+      (left, right) =>
+        DateTime.toEpochMillis(right.updatedAt) - DateTime.toEpochMillis(left.updatedAt) ||
+        DateTime.toEpochMillis(right.createdAt) - DateTime.toEpochMillis(left.createdAt),
+    )[0] ??
+    null;
   const failure =
     run.status === "failed"
       ? projection.turnItems
@@ -209,7 +223,6 @@ export function subagentResultForRun(
   };
 }
 
-/** A finished turn can still own live children or queued completion follow-ups. */
 export function delegatedTaskProgress(projection: {
   readonly runs: OrchestrationV2ThreadProjection["runs"];
   readonly messages: ReadonlyArray<
@@ -232,8 +245,6 @@ export function delegatedTaskProgress(projection: {
   const workRuns = projection.runs.filter(
     (run) => !monitorRuns.has(run.id) && run.status !== "rolled_back",
   );
-  // A held queue waits for the user to resume it (after Stop, a restart, or a
-  // provider failure), so its runs are not work the task still owes.
   const active = workRuns.some(
     (run) => !terminal(run.status) && !(run.status === "queued" && run.queueHeld === true),
   );
@@ -243,8 +254,9 @@ export function delegatedTaskProgress(projection: {
         isOrchestrationV2WorkActive(task.status) ||
         // Publishing a child's result precedes scheduling its parent's wake.
         // The parent still owes that follow-up even between those transactions.
-        task.completionDelivery?.state === "pending" ||
-        task.completionDelivery?.state === "claimed",
+        (task.status !== "idle" &&
+          (task.completionDelivery?.state === "pending" ||
+            task.completionDelivery?.state === "claimed")),
     ) ||
     projection.providerThreads.some((thread) => (thread.pendingBackgroundTasks?.length ?? 0) > 0);
   const resultRun = workRuns
@@ -261,30 +273,24 @@ export function delegatedTaskProgress(projection: {
   };
 }
 
-/** Ids that `emitted` already wrote with an event of `type`. */
 function writtenIds(
   emitted: ReadonlyArray<OrchestrationV2DomainEvent>,
-  type: "subagent.updated" | "node.updated" | "turn-item.updated",
+  type: "subagent.updated" | "node.updated" | "turn-item.updated" | "provider-turn.updated",
 ): ReadonlySet<string> {
   return new Set(emitted.flatMap((event) => (event.type === type ? [event.payload.id] : [])));
 }
 
-/**
- * Ends a provider-native subagent, its node and its turn item once the provider
- * process that ran it is gone, since no terminal event will come from it. Each
- * record is skipped if already settled or already ended by `emitted`.
- */
-export const endOrphanedNativeSubagent = <E>(input: {
-  readonly projection: Pick<OrchestrationV2ThreadProjection, "nodes" | "subagents" | "turnItems">;
-  readonly subagentId: NodeId;
-  readonly status: "completed" | "failed" | "interrupted" | "cancelled";
-  readonly completedAt?: DateTime.Utc;
-  readonly result?: string | null;
-  readonly now: DateTime.Utc;
-  readonly emitted: ReadonlyArray<OrchestrationV2DomainEvent>;
-  readonly allocateEventId: () => Effect.Effect<EventId, E>;
-}) =>
-  Effect.gen(function* () {
+export const endOrphanedNativeSubagent = Effect.fn("subagentProjection.endOrphanedNativeSubagent")(
+  function* <E>(input: {
+    readonly projection: Pick<OrchestrationV2ThreadProjection, "nodes" | "subagents" | "turnItems">;
+    readonly subagentId: NodeId;
+    readonly status: "completed" | "failed" | "interrupted" | "cancelled";
+    readonly completedAt?: DateTime.Utc;
+    readonly result?: string | null;
+    readonly now: DateTime.Utc;
+    readonly emitted: ReadonlyArray<OrchestrationV2DomainEvent>;
+    readonly allocateEventId: () => Effect.Effect<EventId, E>;
+  }) {
     const { now, status, subagentId, completedAt = now } = input;
     const subagent = input.projection.subagents.find((entry) => entry.id === subagentId);
     if (subagent?.origin !== "provider_native") return [];
@@ -349,81 +355,97 @@ export const endOrphanedNativeSubagent = <E>(input: {
       });
     }
     return events;
-  });
+  },
+);
 
-/**
- * Ends a provider-native subagent thread's work, a runless root turn plus the
- * items under it (Claude's live progress), which only the provider process that
- * ran it could settle. Skips records `emitted` already ended.
- */
-export const endRunlessRootTurns = <E>(input: {
+export const endRunlessRootTurns = Effect.fn("subagentProjection.endRunlessRootTurns")(function* <
+  E,
+>(input: {
   readonly threadId: ThreadId;
   readonly providerInstanceId: ProviderInstanceId;
-  readonly projection: Pick<OrchestrationV2ThreadProjection, "nodes" | "turnItems">;
+  readonly projection: Pick<
+    OrchestrationV2ThreadProjection,
+    "nodes" | "providerTurns" | "turnItems"
+  >;
   readonly status: "completed" | "failed" | "interrupted" | "cancelled";
   readonly completedAt?: DateTime.Utc;
   readonly now: DateTime.Utc;
   readonly emitted: ReadonlyArray<OrchestrationV2DomainEvent>;
   readonly allocateEventId: () => Effect.Effect<EventId, E>;
-}) =>
-  Effect.gen(function* () {
-    const { now, status, completedAt = now } = input;
-    const endedNodeIds = writtenIds(input.emitted, "node.updated");
-    const endedItemIds = writtenIds(input.emitted, "turn-item.updated");
-    const scope = {
-      threadId: input.threadId,
-      providerInstanceId: input.providerInstanceId,
-      occurredAt: now,
-    };
-    const events: Array<OrchestrationV2DomainEvent> = [];
-    for (const node of input.projection.nodes) {
+}) {
+  const { now, status, completedAt = now } = input;
+  const endedNodeIds = writtenIds(input.emitted, "node.updated");
+  const endedItemIds = writtenIds(input.emitted, "turn-item.updated");
+  const endedProviderTurnIds = writtenIds(input.emitted, "provider-turn.updated");
+  const scope = {
+    threadId: input.threadId,
+    providerInstanceId: input.providerInstanceId,
+    occurredAt: now,
+  };
+  const events: Array<OrchestrationV2DomainEvent> = [];
+  for (const node of input.projection.nodes) {
+    if (
+      node.kind !== "root_turn" ||
+      node.runId !== null ||
+      !isOrchestrationV2WorkActive(node.status)
+    ) {
+      continue;
+    }
+    if (!endedNodeIds.has(node.id)) {
+      events.push({
+        ...scope,
+        id: yield* input.allocateEventId(),
+        type: "node.updated",
+        nodeId: node.id,
+        payload: { ...node, status, completedAt },
+      });
+    }
+    for (const item of input.projection.turnItems) {
       if (
-        node.kind !== "root_turn" ||
-        node.runId !== null ||
-        !isOrchestrationV2WorkActive(node.status)
+        item.nodeId !== node.id ||
+        item.runId !== null ||
+        !isOrchestrationV2WorkActive(item.status) ||
+        endedItemIds.has(item.id)
       ) {
         continue;
       }
-      // Recovery may have ended this node through one of its items; its other
-      // items still need ending.
-      if (!endedNodeIds.has(node.id)) {
-        events.push({
-          ...scope,
-          id: yield* input.allocateEventId(),
-          type: "node.updated",
-          nodeId: node.id,
-          payload: { ...node, status, completedAt },
-        });
-      }
-      for (const item of input.projection.turnItems) {
-        if (
-          item.nodeId !== node.id ||
-          item.runId !== null ||
-          !isOrchestrationV2WorkActive(item.status) ||
-          endedItemIds.has(item.id)
-        ) {
-          continue;
-        }
-        events.push({
-          ...scope,
-          id: yield* input.allocateEventId(),
-          type: "turn-item.updated",
-          nodeId: node.id,
-          payload: {
-            ...item,
-            status:
-              status === "completed" &&
-              (item.type === "command_execution" || item.type === "dynamic_tool")
-                ? "failed"
-                : status,
-            completedAt,
-            updatedAt: now,
-            ...(item.type === "reasoning" || item.type === "assistant_message"
-              ? { streaming: false }
-              : {}),
-          },
-        });
-      }
+      events.push({
+        ...scope,
+        id: yield* input.allocateEventId(),
+        type: "turn-item.updated",
+        nodeId: node.id,
+        payload: {
+          ...item,
+          status:
+            status === "completed" &&
+            (item.type === "command_execution" || item.type === "dynamic_tool")
+              ? "failed"
+              : status,
+          completedAt,
+          updatedAt: now,
+          ...(item.type === "reasoning" || item.type === "assistant_message"
+            ? { streaming: false }
+            : {}),
+        },
+      });
     }
-    return events;
-  });
+    for (const providerTurn of input.projection.providerTurns) {
+      if (
+        providerTurn.nodeId !== node.id ||
+        providerTurn.runAttemptId !== null ||
+        !isOrchestrationV2WorkActive(providerTurn.status) ||
+        endedProviderTurnIds.has(providerTurn.id)
+      ) {
+        continue;
+      }
+      events.push({
+        ...scope,
+        id: yield* input.allocateEventId(),
+        type: "provider-turn.updated",
+        nodeId: node.id,
+        payload: { ...providerTurn, status, completedAt },
+      });
+    }
+  }
+  return events;
+});

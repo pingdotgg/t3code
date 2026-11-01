@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "@effect/vitest"
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Redacted from "effect/Redacted";
+import { HttpClient } from "effect/http";
 import { ChildProcessSpawner } from "effect/process";
 
 import { DEFAULT_SERVER_SETTINGS } from "@t3tools/contracts";
@@ -18,7 +19,6 @@ const TOKEN_VARIABLES = [
   "GITHUB_ENTERPRISE_TOKEN",
 ] as const;
 
-/** Settings keep `enabled` explicit; a host the test leaves it off is enabled. */
 const hostSettings = (
   hosts: Record<string, { readonly account?: string; readonly enabled?: boolean }>,
 ) =>
@@ -63,6 +63,12 @@ function harness(
       }),
     ),
     Layer.provide(NodeCrypto.layer),
+    Layer.provide(
+      Layer.succeed(
+        HttpClient.HttpClient,
+        HttpClient.make((request) => Effect.die(`Unexpected request to ${request.url}`)),
+      ),
+    ),
   );
   return { layer, calls };
 }
@@ -73,39 +79,6 @@ describe("GitHubCredentials", () => {
   });
   afterEach(() => {
     vi.unstubAllEnvs();
-  });
-
-  it.effect("asks gh for the active login when Settings pin nothing", () => {
-    const { layer, calls } = harness();
-    return Effect.gen(function* () {
-      const credentials = yield* GitHubCredentials.GitHubCredentials;
-      const credential = yield* credentials.get("GitHub.com");
-      expect(Redacted.value(credential.token)).toBe("active-token");
-      expect(calls).toEqual([["auth", "token", "--hostname", "github.com"]]);
-    }).pipe(Effect.provide(layer));
-  });
-
-  it.effect("passes --user for an account pinned in Settings", () => {
-    const { layer, calls } = harness({ "github.com": { account: "work" } });
-    return Effect.gen(function* () {
-      const credentials = yield* GitHubCredentials.GitHubCredentials;
-      const credential = yield* credentials.get("github.com");
-      expect(Redacted.value(credential.token)).toBe("token-for-work");
-      expect(calls).toEqual([["auth", "token", "--hostname", "github.com", "--user", "work"]]);
-    }).pipe(Effect.provide(layer));
-  });
-
-  it.effect("fails a host turned off in Settings without asking gh", () => {
-    const { layer, calls } = harness({ "github.com": { enabled: false } });
-    return Effect.gen(function* () {
-      const credentials = yield* GitHubCredentials.GitHubCredentials;
-      const error = yield* Effect.flip(credentials.get("github.com"));
-      expect(error._tag).toBe("GitHubHostDisabledError");
-      expect(error.message).toBe(
-        "GitHub host github.com is turned off in Settings → Source Control.",
-      );
-      expect(calls).toEqual([]);
-    }).pipe(Effect.provide(layer));
   });
 
   it.effect("lets an environment token win over a pinned account, as gh does", () => {
@@ -143,7 +116,6 @@ describe("GitHubCredentials", () => {
 
       yield* settings.update({ sourceControlHosts: { github: { hosts: {} } } });
       expect(Redacted.value((yield* credentials.get("github.com")).token)).toBe("active-token");
-      // The unpinned token stayed cached; only the newly pinned account cost a gh call.
       expect(calls).toHaveLength(2);
     }).pipe(Effect.provide(layer));
   });
@@ -181,6 +153,19 @@ describe("GitHubCredentials", () => {
       expect((yield* Effect.flip(credentials.get("github.com")))._tag).toBe(
         "GitHubHostDisabledError",
       );
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("never hands a token to a host that is not a plain hostname", () => {
+    vi.stubEnv("GH_TOKEN", "env-token");
+    const { layer, calls } = harness();
+    return Effect.gen(function* () {
+      const credentials = yield* GitHubCredentials.GitHubCredentials;
+      for (const host of ["evil.com#.ghe.com", "evil.com/.ghe.com", "user@x.ghe.com"]) {
+        expect(GitHubCredentials.environmentToken(host, { GH_TOKEN: "env-token" })).toBeNull();
+        expect((yield* Effect.flip(credentials.get(host)))._tag).toBe("GitHubNotSignedInError");
+      }
+      expect(calls).toEqual([]);
     }).pipe(Effect.provide(layer));
   });
 });

@@ -3,11 +3,8 @@ import * as Option from "effect/Option";
 
 import { getPropertyName, isIdentifier, unwrapExpression } from "../utils.ts";
 
-// Effect's MCP server, and the modules that re-export it.
 const MCP_SERVER_MODULE = "effect/ai/McpServer";
 const AI_MODULES = new Set(["effect/ai", "effect/ai/index"]);
-// Registering anything straight on the MCP server skips McpToolAccess, where
-// every T3 MCP tool declares who may call it. These are the module functions...
 const MODULE_REGISTRATIONS = new Set([
   "toolkit",
   "registerToolkit",
@@ -16,7 +13,6 @@ const MODULE_REGISTRATIONS = new Set([
   "prompt",
   "registerPrompt",
 ]);
-// ...and the methods on the McpServer service itself.
 const SERVICE_REGISTRATIONS = new Set([
   "addTool",
   "addResource",
@@ -33,7 +29,6 @@ const importMessage = `Only McpHttpServer may use Effect's McpServer: a registra
 const testImportMessage =
   'Tests import McpServer only as `import { McpServer } from "effect/ai"`, so a registration on it is reported.';
 
-/** A module specifier: a string, or a template with nothing substituted. */
 const literalString = (node: unknown): Option.Option<string> =>
   Option.flatMap(unwrapExpression(node), (expression) => {
     if (expression.type === "Literal" && typeof expression.value === "string") {
@@ -51,16 +46,6 @@ const namesMcpServer = (node: unknown) =>
 const exposesMcpServer = (source: Option.Option<string>) =>
   Option.isSome(source) && (source.value === MCP_SERVER_MODULE || AI_MODULES.has(source.value));
 
-/**
- * Keeps every registration on `/mcp` inside McpHttpServer, whose helpers
- * accept only handlers McpToolAccess built; the lint config exempts that file.
- * Elsewhere it reports runtime imports of Effect's McpServer, under any name
- * or path, and reading a registration method or function in any form. Tests
- * may import McpServer to build a server, but only under its own name, so a
- * registration on it is still reported. It guards against a registration that
- * skips the checks by accident; deliberately working around it needs a
- * reviewed change here.
- */
 export default defineRule({
   meta: {
     type: "problem",
@@ -83,7 +68,6 @@ export default defineRule({
           return (
             AI_MODULES.has(source.value) &&
             namesMcpServer(specifier.imported) &&
-            // A test's `McpServer.toolkit(...)` is reported below by name.
             !(isTest && namesMcpServer(specifier.local))
           );
         });
@@ -124,7 +108,6 @@ export default defineRule({
           context.report({ node, message: registrationMessage(`McpServer.${name.value}`) });
         }
       },
-      // `const { addTool } = server`, `const { toolkit } = McpServer`
       ObjectPattern(node) {
         const fromMcpServer =
           node.parent.type === "VariableDeclarator" &&

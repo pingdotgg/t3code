@@ -1,6 +1,6 @@
+import * as Dialog from "./ui/Dialog";
 import { requireNativeModule } from "expo";
 import { useEffect, useEffectEvent, useId } from "react";
-import { Alert } from "react-native";
 
 import type { ResolvedFilePreviewSource } from "./FilePreviewModal.types";
 
@@ -15,6 +15,7 @@ const NativeControls = requireNativeModule<{
     uris: readonly string[],
     names: readonly string[],
     selectedIndex: number,
+    sourceIdentifiers: readonly string[],
     identifier: string,
   ): Promise<void>;
   dismissFile(identifier: string): Promise<void>;
@@ -30,9 +31,10 @@ function NativeFilePreview(props: {
   const onRequestClose = useEffectEvent(props.onRequestClose);
   const onOpenError = useEffectEvent((error: unknown) => {
     if (props.onOpenError) props.onOpenError(error);
-    else Alert.alert("Could not open preview", "The file could not be loaded. Please try again.");
+    else Dialog.alert("Could not open preview", "The file could not be loaded. Please try again.");
   });
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- presents the native file preview and dismisses it on cleanup
   useEffect(() => {
     let canceled = false;
     const presentation =
@@ -44,6 +46,7 @@ function NativeFilePreview(props: {
               0,
               gallery.findIndex((item) => item.uri === uri),
             ),
+            gallery.map((item) => item.sourceIdentifier ?? ""),
             identifier,
           )
         : NativeControls.presentFile(uri, name ?? "Preview", sourceIdentifier ?? "", identifier);

@@ -19,6 +19,10 @@ const ENDPOINTS = [
   "https://daily-cloudcode-pa.googleapis.com",
   "https://cloudcode-pa.googleapis.com",
 ];
+const SUMMARY_WINDOW_MINS = new Map([
+  ["5h", 5 * 60],
+  ["weekly", 7 * 24 * 60],
+]);
 const MANUAL_REDIRECT: RequestInit = { redirect: "manual" };
 const TokenFile = Schema.Struct({
   client_id: Schema.NonEmptyString,
@@ -30,6 +34,7 @@ const TokenResponse = Schema.Struct({
   access_token: Schema.NonEmptyString,
   expires_in: Schema.Number.check(Schema.isGreaterThan(0)),
 });
+const UserInfo = Schema.Struct({ id: Schema.NonEmptyString });
 const Quota = Schema.Struct({
   remainingFraction: Schema.optional(Schema.Number),
   resetTime: Schema.optional(Schema.String),
@@ -39,6 +44,7 @@ const Bucket = Schema.Struct({
   bucketId: Schema.NonEmptyString,
   window: Schema.optional(Schema.String),
   displayName: Schema.optional(Schema.String),
+  description: Schema.optional(Schema.String),
   disabled: Schema.optional(Schema.Boolean),
 });
 const Summary = Schema.Struct({
@@ -65,6 +71,7 @@ const Models = Schema.Struct({
 
 const decodeTokenFile = Schema.decodeEffect(Schema.fromJsonString(TokenFile));
 const decodeTokenResponse = Schema.decodeUnknownEffect(TokenResponse);
+const decodeUserInfo = Schema.decodeUnknownEffect(UserInfo);
 const decodeSummary = Schema.decodeUnknownEffect(Summary);
 const decodeModels = Schema.decodeUnknownEffect(Models);
 
@@ -94,8 +101,22 @@ function quotaWindow(
   };
 }
 
-/** The summary names the actual shared buckets; Claude and GPT consume one allowance. */
-function summaryWindows(summary: typeof Summary.Type) {
+function summaryResetTime(
+  bucket: typeof Bucket.Type,
+  windowDurationMins: number | undefined,
+  requestedAt: number,
+): string | undefined {
+  // Untouched summary buckets report a rolling full-window reset.
+  const untouched =
+    bucket.remainingFraction === 1 &&
+    bucket.description === undefined &&
+    windowDurationMins !== undefined &&
+    Math.abs(Date.parse(bucket.resetTime ?? "") - requestedAt - windowDurationMins * 60_000) <=
+      60_000;
+  return untouched ? undefined : bucket.resetTime;
+}
+
+function summaryWindows(summary: typeof Summary.Type, requestedAt: number) {
   const windows = new Map<string, ServerProviderUsageWindow>();
   const groups = summary.groups?.some((group) => group.buckets?.length)
     ? summary.groups
@@ -103,19 +124,23 @@ function summaryWindows(summary: typeof Summary.Type) {
   for (const group of groups ?? []) {
     for (const bucket of group.buckets ?? []) {
       if (bucket.disabled) continue;
-      const family = bucket.bucketId.startsWith("gemini-")
-        ? "Gemini"
-        : bucket.bucketId.startsWith("3p-")
-          ? "Claude & GPT (shared)"
-          : group.displayName?.trim() || bucket.bucketId;
+      // Argon is metered apart from the default Gemini buckets; keep its group name.
+      const family = bucket.bucketId.startsWith("gemini-argon-")
+        ? group.displayName?.trim() || "Gemini Argon"
+        : bucket.bucketId.startsWith("gemini-")
+          ? "Gemini"
+          : bucket.bucketId.startsWith("3p-")
+            ? "Claude & GPT (shared)"
+            : group.displayName?.trim() || bucket.bucketId;
       const weekly = bucket.window === "weekly";
       const session = bucket.window === "5h";
+      const windowDurationMins = SUMMARY_WINDOW_MINS.get(bucket.window ?? "");
       const window = quotaWindow(
         bucket.bucketId,
         `${family} · ${weekly ? "Weekly" : session ? "5-hour" : bucket.displayName?.trim() || "Quota"}`,
-        bucket,
+        { ...bucket, resetTime: summaryResetTime(bucket, windowDurationMins, requestedAt) },
         weekly ? "weekly" : session ? "session" : "other",
-        weekly ? 7 * 24 * 60 : session ? 5 * 60 : undefined,
+        windowDurationMins,
       );
       if (window) windows.set(window.id, window);
     }
@@ -156,7 +181,6 @@ function modelWindows(models: typeof Models.Type) {
   return [...windows.values()];
 }
 
-/** Reads this instance's Google profile, with a memory-only access token and no credential writes. */
 export const makeAntigravityUsageProbe = Effect.fn("makeAntigravityUsageProbe")(function* (input: {
   readonly profileDirectory: string;
   readonly authMethod: AntigravitySettings["authMethod"];
@@ -168,8 +192,19 @@ export const makeAntigravityUsageProbe = Effect.fn("makeAntigravityUsageProbe")(
   const platform = yield* HostProcess.Platform;
   const architecture = yield* HostProcess.Architecture;
   const tokenPath = path.join(input.profileDirectory, "antigravity-acp", "acp_token.json");
-  let cached: { fingerprint: string; accessToken: string; expiresAt: number } | undefined;
+  let cached:
+    | { fingerprint: string; account: string; accessToken: string; expiresAt: number }
+    | undefined;
   let generation = 0;
+
+  const sha256 = (text: string) =>
+    crypto
+      .digest("SHA-256", new TextEncoder().encode(text))
+      .pipe(
+        Effect.map((digest) =>
+          Array.from(digest, (byte) => byte.toString(16).padStart(2, "0")).join(""),
+        ),
+      );
 
   const request = (request: HttpClientRequest.HttpClientRequest) =>
     client.execute(request).pipe(
@@ -193,17 +228,12 @@ export const makeAntigravityUsageProbe = Effect.fn("makeAntigravityUsageProbe")(
       });
     }
     const token = yield* fs.readFileString(tokenPath).pipe(Effect.flatMap(decodeTokenFile));
-    const fingerprint = Array.from(
-      yield* crypto.digest(
-        "SHA-256",
-        new TextEncoder().encode(
-          `${token.client_id}\0${token.refresh_token}\0${token.project_id ?? ""}`,
-        ),
-      ),
-      (byte) => byte.toString(16).padStart(2, "0"),
-    ).join("");
+    const fingerprint = yield* sha256(
+      `${token.client_id}\0${token.refresh_token}\0${token.project_id ?? ""}`,
+    );
     const now = yield* Clock.currentTimeMillis;
     let accessToken: string;
+    let account: string;
     if (cached?.fingerprint !== fingerprint || cached.expiresAt <= now + 60_000) {
       cached = undefined;
       const refreshed = yield* request(
@@ -217,35 +247,68 @@ export const makeAntigravityUsageProbe = Effect.fn("makeAntigravityUsageProbe")(
         ),
       ).pipe(Effect.flatMap(decodeTokenResponse));
       accessToken = refreshed.access_token;
+      // Use Google account IDs to merge accounts across environments; refresh tokens differ per machine.
+      account = yield* request(
+        HttpClientRequest.get("https://www.googleapis.com/oauth2/v2/userinfo").pipe(
+          HttpClientRequest.setHeaders({ Authorization: `Bearer ${accessToken}` }),
+        ),
+      ).pipe(
+        Effect.flatMap(decodeUserInfo),
+        Effect.flatMap((info) => sha256(`google-account\0${info.id}`)),
+        Effect.orElseSucceed(() => fingerprint),
+      );
       if (generation === startedGeneration) {
-        cached = { fingerprint, accessToken, expiresAt: now + refreshed.expires_in * 1000 };
+        cached = {
+          fingerprint,
+          account,
+          accessToken,
+          expiresAt: now + refreshed.expires_in * 1000,
+        };
       }
     } else {
       accessToken = cached.accessToken;
+      account = cached.account;
     }
+    // Merge endpoints because quota groups differ; keep each bucket's most-used reading.
     const fetchWindows = Effect.fn("AntigravityUsageProbe.fetchWindows")(function* <E>(
       operation: string,
-      parse: (response: unknown) => Effect.Effect<ServerProviderUsageWindow[], E>,
+      parse: (
+        response: unknown,
+        requestedAt: number,
+      ) => Effect.Effect<ServerProviderUsageWindow[], E>,
     ) {
-      for (const endpoint of ENDPOINTS) {
-        const windows = yield* request(
-          HttpClientRequest.post(`${endpoint}/v1internal:${operation}`).pipe(
-            HttpClientRequest.setHeaders({
-              Authorization: `Bearer ${accessToken}`,
-              "User-Agent": `antigravity/hub/1.0.0 (aidev_client; os_type=${platform}; arch=${architecture}; cl=963137146)`,
-            }),
-            HttpClientRequest.bodyJsonUnsafe(token.project_id ? { project: token.project_id } : {}),
-          ),
-        ).pipe(
-          Effect.flatMap(parse),
-          Effect.orElseSucceed(() => []),
-        );
-        if (windows.length > 0) return windows;
+      const responses = yield* Effect.forEach(
+        ENDPOINTS,
+        (endpoint) =>
+          Effect.gen(function* () {
+            // Capture each request after auth, so refresh latency does not widen the tolerance.
+            const requestedAt = yield* Clock.currentTimeMillis;
+            return yield* request(
+              HttpClientRequest.post(`${endpoint}/v1internal:${operation}`).pipe(
+                HttpClientRequest.setHeaders({
+                  Authorization: `Bearer ${accessToken}`,
+                  "User-Agent": `antigravity/hub/2.24.0 (aidev_client; os_type=${platform}; arch=${architecture}; cl=963137146)`,
+                }),
+                HttpClientRequest.bodyJsonUnsafe(
+                  token.project_id ? { project: token.project_id } : {},
+                ),
+              ),
+            ).pipe(
+              Effect.flatMap((response) => parse(response, requestedAt)),
+              Effect.orElseSucceed(() => []),
+            );
+          }),
+        { concurrency: "unbounded" },
+      );
+      const windows = new Map<string, ServerProviderUsageWindow>();
+      for (const window of responses.flat()) {
+        const previous = windows.get(window.id);
+        if (!previous || window.usedPercent > previous.usedPercent) windows.set(window.id, window);
       }
-      return [];
+      return [...windows.values()];
     });
-    const summary = yield* fetchWindows("retrieveUserQuotaSummary", (response) =>
-      decodeSummary(response).pipe(Effect.map(summaryWindows)),
+    const summary = yield* fetchWindows("retrieveUserQuotaSummary", (response, requestedAt) =>
+      decodeSummary(response).pipe(Effect.map((summary) => summaryWindows(summary, requestedAt))),
     );
     const windows = summary.length
       ? summary
@@ -259,7 +322,7 @@ export const makeAntigravityUsageProbe = Effect.fn("makeAntigravityUsageProbe")(
         message: "Antigravity did not return usable quota information.",
       });
     }
-    return { ...makeUsageLimits({ checkedAt, windows }), credentialFingerprint: fingerprint };
+    return { ...makeUsageLimits({ checkedAt, windows }), credentialFingerprint: account };
   });
   const probe = read.pipe(
     Effect.timeout("30 seconds"),

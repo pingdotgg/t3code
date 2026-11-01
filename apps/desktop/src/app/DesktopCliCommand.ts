@@ -1,3 +1,6 @@
+// @effect-diagnostics-next-line nodeBuiltinImport:off -- FileSystem.access has no execute check.
+import * as NodeFSP from "node:fs/promises";
+
 import type { DesktopCliCommandState } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
@@ -12,19 +15,11 @@ import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import * as DesktopCliShim from "./DesktopCliShim.ts";
 import * as DesktopEnvironment from "./DesktopEnvironment.ts";
 
-// Settings → Install `t3` command, like VS Code's "Install 'code' command".
-// The app's launcher (see DesktopCliShim) lives in the T3 home and is off PATH
-// by default. Installing links it into a folder on the user's PATH, or on
-// Windows adds the launcher's folder to the user's PATH. Removing undoes only
-// what installing did: a link that points at one of the app's launchers, or a
-// PATH entry the app recorded adding.
-
 export class DesktopCliCommandError extends Schema.TaggedError<DesktopCliCommandError>()(
   "DesktopCliCommandError",
   { message: Schema.String },
 ) {}
 
-/** User-writable folders that login shells commonly put on PATH, in preference order. */
 const unixCandidates = (home: string, platform: NodeJS.Platform) =>
   platform === "darwin"
     ? ["/opt/homebrew/bin", "/usr/local/bin", `${home}/.local/bin`, `${home}/bin`]
@@ -33,18 +28,11 @@ const unixCandidates = (home: string, platform: NodeJS.Platform) =>
 const pathEntries = (value: string | undefined, separator: string) =>
   (value ?? "").split(separator).filter((entry) => entry.length > 0);
 
-/** Windows paths compare without case or a trailing separator. */
 const sameWindowsPath = (left: string, right: string) =>
   left.replace(/[\\/]+$/, "").toLowerCase() === right.replace(/[\\/]+$/, "").toLowerCase();
 
-/**
- * Reads, or with `T3_SET` set writes, the user's PATH in the registry, keeping
- * `%VAR%` entries unexpanded. Writes keep REG_EXPAND_SZ (Windows' default for
- * PATH; `SetEnvironmentVariable` would store REG_SZ and break every `%VAR%`
- * entry), then broadcast WM_SETTINGCHANGE so Explorer and the terminals it
- * opens see the change. A failed read exits nonzero rather than reading as
- * empty, so a write never replaces the user's PATH wholesale.
- */
+// Preserve REG_EXPAND_SZ and %VAR% expansion; notify Explorer with WM_SETTINGCHANGE.
+// Failed reads must exit nonzero to prevent replacing PATH wholesale.
 const WINDOWS_USER_PATH_SCRIPT = `
 $ErrorActionPreference = 'Stop'
 if ($env:T3_SET -eq '1') {
@@ -73,7 +61,7 @@ export class DesktopCliCommand extends Context.Service<
   }
 >()("@t3tools/desktop/app/DesktopCliCommand") {}
 
-/** @public Service construction is part of the canonical Effect module API. */
+/** @public */
 export const make = Effect.gen(function* () {
   const environment = yield* DesktopEnvironment.DesktopEnvironment;
   const fs = yield* FileSystem.FileSystem;
@@ -82,7 +70,6 @@ export const make = Effect.gen(function* () {
   const windows = environment.platform === "win32";
   const launcher = DesktopCliShim.launcherPath(environment);
   const binDirectory = path.dirname(launcher);
-  /** Records that Install added `binDirectory` to the Windows PATH, so Remove takes out only that. */
   const ownedPathMarker = path.join(environment.stateDir, "cli-command-path-entry");
 
   const fail = (message: string) => new DesktopCliCommandError({ message });
@@ -93,20 +80,30 @@ export const make = Effect.gen(function* () {
       Effect.orElseSucceed(() => false),
     );
 
-  /**
-   * A link to one of the app's launchers, by the marker the launcher carries.
-   * This also finds links made under a previous T3 home, so Remove can clean
-   * them up and Install does not add a second.
-   */
-  const isOurLink = (link: string) =>
-    Effect.gen(function* () {
+  const isOurLink = Effect.fn("DesktopCliCommand.isOurLink")(
+    function* (link: string) {
       yield* fs.readLink(link);
       // The launcher is a few KB; never read a large binary another `t3` links to.
       const info = yield* fs.stat(link);
       if (info.type !== "File" || Number(info.size) > 16_384) return false;
       const content = yield* fs.readFileString(link);
       return content.includes(DesktopCliShim.MARKER);
-    }).pipe(Effect.orElseSucceed(() => false));
+    },
+    Effect.orElseSucceed(() => false),
+  );
+
+  // PATH can reach the regular launcher directly; removal still requires isOurLink.
+  const runsOurLauncher = Effect.fn("DesktopCliCommand.runsOurLauncher")(
+    function* (candidate: string) {
+      if (yield* isOurLink(candidate)) return true;
+      const [resolved, ours] = yield* Effect.all([fs.realPath(candidate), fs.realPath(launcher)]);
+      if (resolved !== ours) return false;
+      const info = yield* fs.stat(candidate);
+      if (info.type !== "File" || Number(info.size) > 16_384) return false;
+      return (yield* fs.readFileString(candidate)).includes(DesktopCliShim.MARKER);
+    },
+    Effect.orElseSucceed(() => false),
+  );
 
   const powershell = (env: Record<string, string>) =>
     Effect.scoped(
@@ -137,24 +134,30 @@ export const make = Effect.gen(function* () {
       Effect.mapError(() => fail("Could not update your PATH.")),
     );
 
-  /** The `t3` a new shell runs, by PATH order, or none. */
+  const isExecutableFile = Effect.fn("DesktopCliCommand.isExecutableFile")(
+    function* (target: string) {
+      if ((yield* fs.stat(target)).type !== "File") return false;
+      yield* Effect.tryPromise(() => NodeFSP.access(target, NodeFSP.constants.X_OK));
+      return true;
+    },
+    Effect.orElseSucceed(() => false),
+  );
+
   const firstOnPath = Effect.gen(function* () {
     for (const directory of pathEntries(process.env.PATH, ":")) {
       const candidate = path.join(directory, "t3");
-      if (yield* exists(candidate)) return Option.some(candidate);
+      if (yield* isExecutableFile(candidate)) return Option.some(candidate);
     }
     return Option.none<string>();
   });
 
-  /** The `t3` a new shell runs when it is not this app's, on Unix. */
   const foreignFirstOnPath = Effect.gen(function* () {
     if (windows) return Option.none<string>();
     const first = yield* firstOnPath;
-    if (Option.isNone(first) || (yield* isOurLink(first.value))) return Option.none<string>();
+    if (Option.isNone(first) || (yield* runsOurLauncher(first.value))) return Option.none<string>();
     return first;
   });
 
-  /** Where this app's command is installed now, if anywhere. */
   const installedAt = Effect.gen(function* () {
     if (windows) {
       if (!(yield* exists(ownedPathMarker))) return Option.none<string>();
@@ -172,22 +175,32 @@ export const make = Effect.gen(function* () {
 
   const state: DesktopCliCommand["Service"]["state"] = Effect.gen(function* () {
     if (!environment.isPackaged) {
-      return { supported: false, installedPath: null, onPath: false } as const;
+      return { supported: false, installedPath: null, onPath: false, launcherPath: null } as const;
     }
+    const launcherPath = (yield* exists(launcher)) ? launcher : null;
     const installed = yield* installedAt;
     const shadowedBy = yield* foreignFirstOnPath;
     const shadow = Option.isSome(shadowedBy) ? { shadowedBy: shadowedBy.value } : {};
-    if (Option.isNone(installed)) {
-      return { supported: true, installedPath: null, onPath: false, ...shadow };
-    }
-    // On Windows only terminals opened after the change see it. On Unix the
-    // first `t3` on PATH must be ours; a `t3` earlier on PATH would shadow it.
     const first = yield* firstOnPath;
-    const onPath = windows || (Option.isSome(first) && (yield* isOurLink(first.value)));
-    return { supported: true, installedPath: installed.value, onPath, ...shadow };
-  }).pipe(Effect.orElseSucceed(() => ({ supported: false, installedPath: null, onPath: false })));
+    const onPath = windows
+      ? Option.isSome(installed)
+      : Option.isSome(first) && (yield* runsOurLauncher(first.value));
+    return {
+      supported: true,
+      installedPath: Option.getOrNull(installed),
+      onPath,
+      launcherPath,
+      ...shadow,
+    };
+  }).pipe(
+    Effect.orElseSucceed(() => ({
+      supported: false,
+      installedPath: null,
+      onPath: false,
+      launcherPath: null,
+    })),
+  );
 
-  /** Writes the launcher if the app has not yet, e.g. when no local backend runs. */
   const ensureLauncher = DesktopCliShim.install.pipe(
     Effect.provideService(DesktopEnvironment.DesktopEnvironment, environment),
     Effect.provideService(FileSystem.FileSystem, fs),
@@ -216,12 +229,10 @@ export const make = Effect.gen(function* () {
     if (Option.isSome(existing)) {
       const target = yield* fs.readLink(existing.value).pipe(Effect.option);
       if (Option.getOrUndefined(target) === launcher) return yield* state;
-      // A link to a previous T3 home's launcher: point it at this one instead.
       yield* fs
         .remove(existing.value)
         .pipe(Effect.mapError(() => fail(`Could not replace ${existing.value}.`)));
     }
-    // A link behind another `t3` never runs, so installing one would only hide the problem.
     const shadowedBy = yield* foreignFirstOnPath;
     if (Option.isSome(shadowedBy)) {
       return yield* fail(
@@ -230,7 +241,6 @@ export const make = Effect.gen(function* () {
     }
     const onPath = pathEntries(process.env.PATH, ":");
     const candidates = unixCandidates(environment.homeDirectory, environment.platform);
-    // Prefer a folder already on PATH that the user can write to without admin rights.
     for (const directory of [
       ...candidates.filter((candidate) => onPath.includes(candidate)),
       ...candidates.filter((candidate) => !onPath.includes(candidate)),
@@ -243,7 +253,6 @@ export const make = Effect.gen(function* () {
             Effect.orElseSucceed(() => false),
           );
       if (!created) continue;
-      // symlink fails if anything, even a broken link, is already there.
       const linked = yield* fs.symlink(launcher, link).pipe(
         Effect.as(true),
         Effect.orElseSucceed(() => false),

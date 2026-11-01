@@ -1,8 +1,14 @@
-import type {
-  EnvironmentId,
-  PullRequestListEntry,
-  PullRequestListInput,
-  PullRequestListResult,
+import { pullRequestFilterProjects } from "@t3tools/client-runtime/pull-request-project-filter";
+import { parsePullRequestQuery } from "@t3tools/client-runtime/pull-request-query";
+import {
+  ProjectId,
+  resolvePullRequestAuthorFilter,
+  type EnvironmentId,
+  type PullRequestDiffStat,
+  type PullRequestListEntry,
+  type PullRequestListInput,
+  type PullRequestListResult,
+  type PullRequestListStatsInput,
 } from "@t3tools/contracts";
 import type { PullRequestListControls } from "../../persistence/mobile-preferences";
 
@@ -14,6 +20,48 @@ export const DEFAULT_PR_LIST_CONTROLS: PullRequestListControls = {
   filters: {},
   sort: "updated",
 };
+
+export function withoutScratchProjectScope(
+  controls: PullRequestListControls,
+  projects: readonly { id: string; environmentId: string; isScratch?: true }[],
+): PullRequestListControls {
+  return projects.some(
+    (project) =>
+      project.isScratch &&
+      project.id === controls.projectId &&
+      project.environmentId === controls.projectEnvironmentId,
+  )
+    ? { ...controls, projectId: undefined, projectEnvironmentId: undefined }
+    : controls;
+}
+
+type FilterProject = Parameters<typeof pullRequestFilterProjects>[0][number];
+
+export function pullRequestProjectChoices<
+  Project extends FilterProject & { readonly isScratch?: true },
+>(
+  projects: readonly Project[],
+  input: {
+    readonly environmentId: string | null;
+    readonly controls: PullRequestListControls;
+    readonly environmentLabels: ReadonlyMap<EnvironmentId, string>;
+    readonly servesPullRequests: (environmentId: EnvironmentId) => boolean;
+  },
+) {
+  const isSelected = (project: Project) =>
+    project.id === input.controls.projectId &&
+    project.environmentId === input.controls.projectEnvironmentId;
+  return pullRequestFilterProjects(
+    projects.filter(
+      (project) =>
+        !project.isScratch &&
+        (input.environmentId === null || project.environmentId === input.environmentId) &&
+        (input.servesPullRequests(project.environmentId) || isSelected(project)),
+    ),
+    input.environmentLabels,
+    projects.find(isSelected),
+  );
+}
 
 export function pullRequestListKey(
   item: Pick<PullRequestListEntry, "host" | "repository" | "number">,
@@ -28,7 +76,103 @@ export type EnvironmentPullRequestListEntry = PullRequestListEntry & {
 export const scopedPullRequestListKey = (entry: EnvironmentPullRequestListEntry) =>
   `${entry.environmentId}:${pullRequestListKey(entry)}`;
 
-/** Provider refreshes and diff-count batches recreate entries; unchanged rows can stay mounted. */
+export const pullRequestStatKey = (
+  row: Pick<PullRequestDiffStat, "projectId" | "repository" | "number">,
+) => `${row.projectId}:${row.repository}:${row.number}`;
+
+/**
+ * Diff stats an environment has answered, the stats query that answered each, and each row's
+ * `updatedAt` as its list last answered it.
+ */
+export interface PullRequestStatsCache {
+  readonly stats: ReadonlyMap<string, PullRequestDiffStat>;
+  readonly answeredBy: ReadonlyMap<string, PullRequestListStatsInput>;
+  readonly updatedAt: ReadonlyMap<string, string>;
+}
+
+export const EMPTY_PULL_REQUEST_STATS_CACHE: PullRequestStatsCache = {
+  stats: new Map(),
+  answeredBy: new Map(),
+  updatedAt: new Map(),
+};
+
+/**
+ * Records the rows a list answered. Stats carry no head, so a row whose `updatedAt` moved (a push,
+ * among other changes) drops its cached stat, and the stats queries that answered it are returned
+ * to refresh: one can still be fresh and would otherwise answer the row's next read with the old
+ * counts.
+ */
+export function withListedPullRequests(
+  cache: PullRequestStatsCache,
+  entries: readonly Pick<
+    PullRequestListEntry,
+    "projectId" | "repository" | "number" | "updatedAt"
+  >[],
+): {
+  readonly cache: PullRequestStatsCache;
+  readonly refresh: readonly PullRequestListStatsInput[];
+} {
+  const moved = entries.filter(
+    (entry) => cache.updatedAt.get(pullRequestStatKey(entry)) !== entry.updatedAt,
+  );
+  if (!moved.length) return { cache, refresh: [] };
+  const stats = new Map(cache.stats);
+  const answeredBy = new Map(cache.answeredBy);
+  const updatedAt = new Map(cache.updatedAt);
+  const refresh = new Set<PullRequestListStatsInput>();
+  for (const entry of moved) {
+    const key = pullRequestStatKey(entry);
+    const query = answeredBy.get(key);
+    if (query) refresh.add(query);
+    stats.delete(key);
+    answeredBy.delete(key);
+    updatedAt.set(key, entry.updatedAt);
+  }
+  return { cache: { stats, answeredBy, updatedAt }, refresh: [...refresh] };
+}
+
+export function withAnsweredPullRequestStats(
+  cache: PullRequestStatsCache,
+  input: PullRequestListStatsInput,
+  answered: readonly PullRequestDiffStat[],
+): PullRequestStatsCache {
+  const stats = new Map(cache.stats);
+  const answeredBy = new Map(cache.answeredBy);
+  for (const row of answered) {
+    stats.set(pullRequestStatKey(row), row);
+    answeredBy.set(pullRequestStatKey(row), input);
+  }
+  return { ...cache, stats, answeredBy };
+}
+
+/**
+ * Fills rows that have no diff stat yet from the stats answers on screen. Returns `entries`
+ * itself when no row changes, so the list keeps its identity across renders.
+ */
+export function withShownPullRequestStats(
+  entries: readonly EnvironmentPullRequestListEntry[],
+  answers: readonly {
+    readonly environmentId: EnvironmentId;
+    readonly stats: readonly PullRequestDiffStat[];
+  }[],
+): readonly EnvironmentPullRequestListEntry[] {
+  const shown = new Map(
+    answers.flatMap(({ environmentId, stats }) =>
+      stats.map((row) => [`${environmentId}:${pullRequestStatKey(row)}`, row] as const),
+    ),
+  );
+  if (!shown.size) return entries;
+  let changed = false;
+  const next = entries.map((entry) => {
+    const stat = shown.get(`${entry.environmentId}:${pullRequestStatKey(entry)}`);
+    if (!stat || entry.additions + entry.deletions !== 0) return entry;
+    if (stat.additions + stat.deletions === 0) return entry;
+    changed = true;
+    return { ...entry, additions: stat.additions, deletions: stat.deletions };
+  });
+  return changed ? next : entries;
+}
+
 export function pullRequestListRowsAreEqual(
   previous: EnvironmentPullRequestListEntry,
   next: EnvironmentPullRequestListEntry,
@@ -44,6 +188,8 @@ export function pullRequestListRowsAreEqual(
       previous.url === next.url &&
       previous.state === next.state &&
       previous.isDraft === next.isDraft &&
+      previous.mergeability === next.mergeability &&
+      previous.baseBranch === next.baseBranch &&
       previous.updatedAt === next.updatedAt &&
       previous.additions === next.additions &&
       previous.deletions === next.deletions &&
@@ -62,7 +208,6 @@ export function pullRequestListRowsAreEqual(
   );
 }
 
-/** Keep cursors and viewer identities with the environment that issued them. */
 export function mergeEnvironmentPullRequestPages(
   sources: readonly { environmentId: EnvironmentId; pages: PullRequestListPages }[],
 ) {
@@ -126,6 +271,49 @@ export function pullRequestListHead(
       };
 }
 
+/** The recorded pages with the current list head on top; before any answer is recorded, the head alone. */
+export function shownPullRequestListPages(
+  recorded: PullRequestListPages | null,
+  head: PullRequestListResult | null,
+): PullRequestListPages | null {
+  return head ? pullRequestListHead(recorded, head) : recorded;
+}
+
+export function patchPullRequestListEntry(
+  recorded: PullRequestListPages | null,
+  head: PullRequestListResult | null,
+  entry: PullRequestListEntry,
+  patch: Partial<PullRequestListEntry>,
+  observedAt: number,
+): PullRequestListPages | null {
+  const pages = shownPullRequestListPages(recorded, head);
+  return (
+    pages && {
+      ...pages,
+      entries: pages.entries.map((row) =>
+        pullRequestListKey(row) === pullRequestListKey(entry)
+          ? { ...row, ...patch, observedAt }
+          : row,
+      ),
+    }
+  );
+}
+
+export function pullRequestListInput(
+  controls: PullRequestListControls,
+  query: string,
+): PullRequestListInput {
+  const parsed = parsePullRequestQuery(query);
+  return {
+    state: controls.state,
+    involvement: controls.involvement,
+    filters: { ...controls.filters, ...parsed.filters },
+    limit: PR_LIST_PAGE_SIZE,
+    ...(controls.projectId ? { projectId: ProjectId.make(controls.projectId) } : {}),
+    ...(parsed.text ? { query: parsed.text } : {}),
+  };
+}
+
 export function nextPullRequestListInput(
   pages: PullRequestListPages,
   input: PullRequestListInput,
@@ -152,6 +340,37 @@ export function appendPullRequestListPage(
   };
 }
 
+/**
+ * A filter picker's rows: what is picked stays in view, then the loaded rows' values that match,
+ * then the host's answers, each once. The host matched its own way (an author's display name, say),
+ * so its answers are not narrowed again here.
+ */
+const FILTER_CHOICE_LIMIT = 100;
+
+export function pullRequestFilterChoices(input: {
+  readonly selected: readonly string[];
+  readonly suggestions: readonly string[];
+  readonly hosted: readonly string[];
+  readonly query: string;
+}): readonly string[] {
+  const needle = input.query.trim().toLowerCase();
+  const seen = new Set<string>();
+  const rows: string[] = [];
+  const add = (value: string) => {
+    const key = value.toLowerCase();
+    if (seen.has(key)) return;
+    seen.add(key);
+    rows.push(value);
+  };
+  const loaded = input.suggestions.filter((value) => value.toLowerCase().includes(needle));
+  for (const value of input.selected) add(value);
+  // Loaded matches alone could fill the list, so the host's answers get room after the first half.
+  for (const value of loaded.slice(0, FILTER_CHOICE_LIMIT / 2)) add(value);
+  for (const value of input.hosted) add(value);
+  for (const value of loaded.slice(FILTER_CHOICE_LIMIT / 2)) add(value);
+  return rows.slice(0, FILTER_CHOICE_LIMIT);
+}
+
 export function pullRequestListFacets(entries: readonly PullRequestListEntry[]) {
   return {
     authors: [
@@ -160,7 +379,21 @@ export function pullRequestListFacets(entries: readonly PullRequestListEntry[]) 
     labels: [...new Set(entries.flatMap((entry) => entry.labels.map((label) => label.name)))].sort(
       (a, b) => a.localeCompare(b),
     ),
+    labelColors: pullRequestLabelColors(entries.flatMap((entry) => entry.labels)),
   };
+}
+
+/** Each label's dot color by lowercased name; the first usable color a name carries wins. */
+export function pullRequestLabelColors(
+  labels: readonly { readonly name: string; readonly color: string | null }[],
+): Readonly<Record<string, string>> {
+  const colors: Record<string, string> = {};
+  for (const label of labels) {
+    const key = label.name.toLowerCase();
+    const color = pullRequestLabelColor(label.color);
+    if (color && !(key in colors)) colors[key] = color;
+  }
+  return colors;
 }
 
 export function filterPullRequestList<
@@ -174,8 +407,9 @@ export function filterPullRequestList<
   connectedEnvironmentIds?: ReadonlySet<string>,
 ) {
   const normalize = (value: string) => value.toLowerCase();
-  const words = query.toLowerCase().split(/\s+/).filter(Boolean);
-  const { filters } = controls;
+  const parsed = parsePullRequestQuery(query);
+  const words = parsed.text.toLowerCase().split(/\s+/).filter(Boolean);
+  const filters = { ...controls.filters, ...parsed.filters };
   const filtered = entries.filter((entry) => {
     if (controls.state !== "all" && entry.state !== controls.state) return false;
     if (controls.projectId && entry.projectId !== controls.projectId) return false;
@@ -192,10 +426,9 @@ export function filterPullRequestList<
     if ((filters.draft === "only" && !entry.isDraft) || (filters.draft === "hide" && entry.isDraft))
       return false;
     if (filters.author) {
-      const author = filters.author === "me" ? viewer : filters.author;
-      if (!author || normalize(entry.author?.login ?? "") !== normalize(author)) return false;
+      const author = resolvePullRequestAuthorFilter(filters.author, viewer);
+      if (normalize(entry.author?.login ?? "") !== normalize(author)) return false;
     }
-    // Hosts without a review rollup still perform their own review filtering.
     if (filters.review && entry.reviewDecision && entry.reviewDecision !== filters.review)
       return false;
     if (filters.review === "none" && entry.reviewDecision) return false;
@@ -211,8 +444,6 @@ export function filterPullRequestList<
     }
     return true;
   });
-  // The same repository can be available on multiple machines. Pick its first matching source,
-  // unless that machine is unreachable and another one can answer: its rows may only be cached.
   const reachable = (entry: Entry) =>
     !connectedEnvironmentIds ||
     (entry.environmentId !== undefined && connectedEnvironmentIds.has(entry.environmentId));

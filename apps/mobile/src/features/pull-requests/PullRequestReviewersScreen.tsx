@@ -1,11 +1,14 @@
+import { SheetHeader } from "../../components/ui/SheetHeader";
+import { AsyncResult } from "effect/reactivity";
+import { AppActivityIndicator } from "../../components/ui/AppActivityIndicator";
 import { usePullRequestConnected } from "./usePullRequestConnected";
 import { useAtomValue } from "@effect/atom-react";
 import { useNavigation, type StaticScreenProps } from "@react-navigation/native";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
+import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
 import type { PullRequestReviewerCandidate } from "@t3tools/contracts";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useRef, useState } from "react";
 import {
-  ActivityIndicator,
   FlatList,
   Platform,
   Pressable,
@@ -14,13 +17,12 @@ import {
   type ScrollViewProps,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { ScrollViewMarker } from "react-native-screens";
-import { AppText as Text, AppTextInput as TextInput } from "../../components/AppText";
-import { AndroidScreenHeader } from "../../components/AndroidScreenHeader";
-import { EmptyState } from "../../components/EmptyState";
-import { MaterialButton } from "../../components/MaterialButton";
-import { SymbolView } from "../../components/AppSymbol";
-import { NativeHeaderToolbar, NativeStackScreenOptions } from "../../native/StackHeader";
+import { NativeScrollViewMarker as ScrollViewMarker } from "../../native/NativeScrollViewMarker";
+import { AppText as Text, AppTextInput as TextInput } from "../../components/ui/AppText";
+import { EmptyState } from "../../components/ui/EmptyState";
+import { Button } from "../../components/ui/Button";
+import { SymbolView } from "../../components/ui/AppSymbol";
+import { NativeStackScreenOptions } from "../../native/StackHeader";
 import { useNativeLayoutMetrics } from "../../native/native-layout-metrics";
 import { composerPullRequests } from "../../state/pull-requests";
 import { useEnvironmentQuery } from "../../state/query";
@@ -33,16 +35,9 @@ import { PullRequestAvatar } from "./PullRequestPresentation";
 import { pullRequestTarget, type PullRequestParams } from "./usePullRequestDiff";
 
 function ReviewerScrollView(props: ScrollViewProps) {
-  const insets = useSafeAreaInsets();
   return (
     <ScrollViewMarker style={{ flex: 1 }}>
-      <ScrollView
-        {...props}
-        automaticallyAdjustContentInsets={false}
-        contentInsetAdjustmentBehavior="never"
-        contentInset={{ top: insets.top }}
-        contentOffset={props.contentOffset ?? { x: 0, y: -insets.top }}
-      />
+      <ScrollView {...props} contentInsetAdjustmentBehavior="automatic" />
     </ScrollViewMarker>
   );
 }
@@ -58,6 +53,9 @@ export function PullRequestReviewersScreen({ route }: StaticScreenProps<PullRequ
   const target = pullRequestTarget(route.params);
   const detail = useEnvironmentQuery(composerPullRequests.detail(target));
   const pr = detail.data;
+  const { singular } = sourceControlClients.get(
+    (pr ?? route.params.initialSummary)?.provider,
+  ).changeRequest;
   const canWrite = useAtomValue(
     composerPullRequests.requestReviewers.permissionAtom(target.environmentId),
   );
@@ -78,7 +76,7 @@ export function PullRequestReviewersScreen({ route }: StaticScreenProps<PullRequ
   const [pending, setPending] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const inFlight = useRef(false);
-  const candidates = useMemo(() => {
+  const candidates = (() => {
     const needle = query.trim().toLowerCase();
     return [...(result.data?.candidates ?? [])]
       .filter((candidate) =>
@@ -87,15 +85,15 @@ export function PullRequestReviewersScreen({ route }: StaticScreenProps<PullRequ
       .sort(
         (a, b) => Number(b.isRequested) - Number(a.isRequested) || a.login.localeCompare(b.login),
       );
-  }, [result.data, query]);
-  useEffect(() => {
-    if (candidates.length === 0) return;
-    // Filtering must reveal the first match below the translucent native header.
+  })();
+  // A new search shows its best matches from the top.
+  const search = (next: string) => {
+    setQuery(next);
     listRef.current?.scrollToOffset({
       offset: Platform.OS === "ios" ? -insets.top : 0,
       animated: false,
     });
-  }, [candidates, insets.top]);
+  };
   const update = async (
     candidate: Pick<PullRequestReviewerCandidate, "id" | "kind" | "isRequested">,
   ) => {
@@ -103,35 +101,34 @@ export function PullRequestReviewersScreen({ route }: StaticScreenProps<PullRequ
     inFlight.current = true;
     setPending(`${candidate.kind}:${candidate.id}`);
     setError(null);
-    try {
-      const response = await request({
-        ...target,
-        input: {
-          ...target.input,
-          reviewers: [{ id: candidate.id, kind: candidate.kind }],
-          requested: !candidate.isRequested,
-        },
-      });
-      if (response._tag === "Failure") throw squashAtomCommandFailure(response);
-      if (!pr?.capabilities.reviewers.listCandidates) {
-        setQuery("");
-        detail.refresh();
-      }
-    } catch (cause) {
+    const response = await request({
+      ...target,
+      input: {
+        ...target.input,
+        reviewers: [{ id: candidate.id, kind: candidate.kind }],
+        requested: !candidate.isRequested,
+      },
+    });
+    inFlight.current = false;
+    setPending(null);
+    if (AsyncResult.isFailure(response)) {
+      const cause = squashAtomCommandFailure(response);
       setError(
         cause instanceof Error ? cause.message : "Couldn't update this review request. Try again.",
       );
-    } finally {
-      inFlight.current = false;
-      setPending(null);
+      return;
+    }
+    if (!pr?.capabilities.reviewers.listCandidates) {
+      search("");
+      detail.refresh();
     }
   };
   const listCandidates = pr?.capabilities.reviewers.listCandidates === true;
   const searchOptions = {
     placeholder: "Search reviewers",
     autoCapitalize: "none" as const,
-    onChangeText: (event: { nativeEvent: { text: string } }) => setQuery(event.nativeEvent.text),
-    onCancelButtonPress: () => setQuery(""),
+    onChangeText: (event: { nativeEvent: { text: string } }) => search(event.nativeEvent.text),
+    onCancelButtonPress: () => search(""),
     hideNavigationBar: false,
     hideWhenScrolling: false,
     obscureBackground: false,
@@ -140,24 +137,21 @@ export function PullRequestReviewersScreen({ route }: StaticScreenProps<PullRequ
   };
   return (
     <View className="flex-1 bg-sheet">
-      <NativeHeaderToolbar placement="left">
-        <NativeHeaderToolbar.Button
-          icon="xmark"
-          accessibilityLabel="Close request review"
-          onPress={() => navigation.goBack()}
-        />
-      </NativeHeaderToolbar>
+      <SheetHeader
+        title="Request review"
+        subtitle={`#${route.params.number} · ${route.params.repository}`}
+        onClose={() => navigation.goBack()}
+        accessibilityLabel="Close request review"
+      />
       <NativeStackScreenOptions
         options={{
-          title: "Request review",
-          unstable_headerSubtitle: `#${route.params.number} · ${route.params.repository}`,
           headerSearchBarOptions: listCandidates ? searchOptions : undefined,
           unstable_headerToolbarItems: () =>
             listCandidates && integratedSearch
               ? [
                   createNativeMailSearchToolbarItem({
                     placeholder: "Search reviewers",
-                    onSearchTextChange: setQuery,
+                    onSearchTextChange: search,
                     showsSearchDismissButton: true,
                     searchTextChangeId: "pr-reviewer-search",
                   }),
@@ -165,9 +159,6 @@ export function PullRequestReviewersScreen({ route }: StaticScreenProps<PullRequ
               : [],
         }}
       />
-      {Platform.OS === "android" ? (
-        <AndroidScreenHeader title="Request review" onBack={() => navigation.goBack()} />
-      ) : null}
       {listCandidates ? (
         <FlatList
           ref={listRef}
@@ -192,14 +183,14 @@ export function PullRequestReviewersScreen({ route }: StaticScreenProps<PullRequ
                   placeholder="Search reviewers"
                   placeholderTextColorClassName="accent-foreground-muted"
                   value={query}
-                  onChangeText={setQuery}
+                  onChangeText={search}
                   autoCapitalize="none"
                   className="min-h-11 rounded-xl bg-grouped-card px-3 text-sm"
                 />
               ) : null}
               {!allowed ? (
                 <Text className="text-xs text-foreground-muted">
-                  Requesting reviews requires write access and an open pull request.
+                  Requesting reviews requires write access and an open {singular}.
                 </Text>
               ) : null}
               {error ? (
@@ -231,7 +222,7 @@ export function PullRequestReviewersScreen({ route }: StaticScreenProps<PullRequ
                   </Text>
                 </View>
                 {pending === id ? (
-                  <ActivityIndicator />
+                  <AppActivityIndicator />
                 ) : item.isRequested ? (
                   <View className="flex-row items-center gap-1.5">
                     <Text className="text-xs text-foreground-muted">Requested</Text>
@@ -245,7 +236,7 @@ export function PullRequestReviewersScreen({ route }: StaticScreenProps<PullRequ
           }}
           ListEmptyComponent={
             result.isPending && !result.data ? (
-              <ActivityIndicator className="my-8" />
+              <AppActivityIndicator className="my-8" />
             ) : (
               <View className="px-4 py-6">
                 <EmptyState
@@ -259,7 +250,7 @@ export function PullRequestReviewersScreen({ route }: StaticScreenProps<PullRequ
                   detail={result.error ?? "Search people and teams with access to this repository."}
                   variant="plain"
                 />
-                {result.error ? <MaterialButton label="Retry" onPress={result.refresh} /> : null}
+                {result.error ? <Button label="Retry" onPress={result.refresh} /> : null}
               </View>
             )
           }
@@ -281,10 +272,10 @@ export function PullRequestReviewersScreen({ route }: StaticScreenProps<PullRequ
         >
           {!pr ? (
             detail.isPending ? (
-              <ActivityIndicator />
+              <AppActivityIndicator />
             ) : (
               <Text className="text-danger-foreground">
-                {detail.error ?? "Couldn't load this pull request."}
+                {detail.error ?? `Couldn't load this ${singular}.`}
               </Text>
             )
           ) : (
@@ -297,18 +288,18 @@ export function PullRequestReviewersScreen({ route }: StaticScreenProps<PullRequ
                 placeholder="Reviewer login or ID"
                 placeholderTextColorClassName="accent-foreground-muted"
                 value={query}
-                onChangeText={setQuery}
+                onChangeText={search}
                 autoCapitalize="none"
                 autoCorrect={false}
                 className="min-h-12 rounded-xl bg-grouped-card px-3 text-base"
               />
-              <MaterialButton
+              <Button
                 label="Request review"
                 fullWidth
                 disabled={!allowed || !query.trim() || pending !== null}
                 onPress={() => void update({ id: query.trim(), kind: "user", isRequested: false })}
               />
-              <MaterialButton
+              <Button
                 label="Remove review request"
                 fullWidth
                 tone="text"

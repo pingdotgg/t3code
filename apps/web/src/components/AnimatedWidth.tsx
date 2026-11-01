@@ -13,11 +13,12 @@ export function AnimatedWidth({
   const contentRef = useRef<HTMLSpanElement>(null);
   const [width, setWidth] = useState<number | null>(null);
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- observes the content element's width before paint to animate width
   useLayoutEffect(() => {
     const element = contentRef.current;
     if (!element) return;
-    return observeResize(element, () => {
-      const nextWidth = Math.ceil(element.getBoundingClientRect().width);
+    return observeResize(element, (entries) => {
+      const nextWidth = Math.ceil(entries.at(-1)?.contentRect.width ?? 0);
       if (nextWidth > 0) setWidth(nextWidth);
     });
   }, []);

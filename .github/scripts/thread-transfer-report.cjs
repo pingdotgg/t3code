@@ -244,10 +244,26 @@ async function resolve({ github, context, core }) {
 
   let pullNumber = source.pull_requests?.[0]?.number;
   if (!pullNumber) {
-    const associated = await github.paginate(
-      github.rest.repos.listPullRequestsAssociatedWithCommit,
-      { owner, repo, commit_sha: source.head_sha, per_page: 100 },
-    );
+    let associated;
+    try {
+      associated = await github.paginate(github.rest.repos.listPullRequestsAssociatedWithCommit, {
+        owner,
+        repo,
+        commit_sha: source.head_sha,
+        per_page: 100,
+      });
+    } catch (error) {
+      // A force-pushed or deleted PR head can disappear before this workflow runs.
+      if (
+        error.status === 422 &&
+        error.response?.data?.message === `No commit found for SHA: ${source.head_sha}`
+      ) {
+        core.info(`Skipping CI result for unavailable commit ${source.head_sha}.`);
+        core.setOutput("publish", "false");
+        return;
+      }
+      throw error;
+    }
     const matchingPulls = associated.filter(
       (pull) =>
         pull.state === "open" &&
@@ -278,6 +294,12 @@ async function resolve({ github, context, core }) {
 
   const sourceArtifacts = await artifactsForRun(github, owner, repo, source.id);
   const sourceArtifact = findResultArtifact(sourceArtifacts);
+  // Successful server tests require this artifact; its absence means CI skipped them.
+  if (!sourceArtifact && source.conclusion === "success") {
+    core.info("CI skipped the server tests for this change; nothing to report.");
+    core.setOutput("publish", "false");
+    return;
+  }
   const workflowRuns = await github.paginate(github.rest.actions.listWorkflowRuns, {
     owner,
     repo,

@@ -4,7 +4,7 @@ import {
   type createPhoneInteraction,
 } from "@t3tools/client-runtime/device/phone-interaction";
 
-/** Canvas-local, non-passive listeners consume browser zoom. Safari reports cumulative pinch scale instead of Ctrl-wheel. */
+/** Safari reports cumulative pinch scale instead of Ctrl-wheel. */
 export function bindPhoneTrackpad(
   canvas: Pick<
     HTMLCanvasElement,
@@ -83,7 +83,6 @@ export function bindPhoneTrackpad(
     if (navigation && interaction.navigate(navigation)) {
       orbitActive = true;
       if (orbitTimer) clearTimeout(orbitTimer);
-      // Browsers without a release signal still return to a useful view.
       orbitTimer = setTimeout(endOrbit, 1200);
     }
   };
