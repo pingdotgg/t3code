@@ -877,7 +877,7 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
           <div
             ref={folded ? revealFoldRef : undefined}
             hidden={folded && !expanded}
-            dir={markdownProseDirection(visibleUserMessageText(plainText))}
+            dir={markdownProseDirection(visibleUserMessageText(resolvedContext.text))}
             className={cn(
               folded && "px-3 pb-3",
               folded && !ctx.findActive && "max-h-96 overflow-auto",
