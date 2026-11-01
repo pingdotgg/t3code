@@ -160,7 +160,7 @@ export const CodexDriver: ProviderDriver<
     const currentCatalog = modelCatalog.current(DRIVER_KIND);
     const routed = applyCodexProxyRuntime(
       config,
-      yield* mergeProviderInstanceEnvironment(environment),
+      yield* mergeProviderInstanceEnvironment(environment, yield* HostProcess.Environment),
       proxy,
     );
     const processEnv = routed.environment;
