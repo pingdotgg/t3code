@@ -17,6 +17,8 @@ type RecoveryProps = {
   runId: RunId;
   resetAt: string | null;
   stoppedAt: string;
+  /** The server refuses recovery for settled threads until they are un-settled. */
+  settled: boolean;
   snoozedUntil: string | null;
   recovery: OrchestrationV2LimitRecovery | null;
   timestampFormat: TimestampFormat;
@@ -24,17 +26,20 @@ type RecoveryProps = {
 };
 
 export function usageLimitRecoveryBannerItem(props: RecoveryProps): ComposerBannerStackItem {
-  const { runId, resetAt, stoppedAt, timestampFormat } = props;
-  const canSchedule = resetAt !== null && Date.parse(resetAt) > Date.parse(stoppedAt);
+  const { runId, resetAt, stoppedAt, settled, timestampFormat } = props;
+  const resetsLater = resetAt !== null && Date.parse(resetAt) > Date.parse(stoppedAt);
   return {
     id: `usage-limit-recovery:${runId}`,
     variant: "warning",
     icon: <GaugeIcon />,
     title: "Usage limit reached",
     description: resetAt
-      ? `Resets ${formatUpcomingTimestamp(resetAt, timestampFormat)}`
+      ? `Resets ${formatUpcomingTimestamp(resetAt, timestampFormat)}${
+          resetsLater && settled ? ". Un-settle to resume at reset" : ""
+        }`
       : "Reset time unavailable; retry manually",
-    actions: canSchedule ? <RecoveryActions key={`${runId}:${resetAt}`} {...props} /> : null,
+    actions:
+      resetsLater && !settled ? <RecoveryActions key={`${runId}:${resetAt}`} {...props} /> : null,
   };
 }
 
