@@ -5,17 +5,21 @@ import { AsyncResult, type Atom } from "effect/reactivity";
 import { expect, it, vi } from "vite-plus/test";
 
 import { act, render, stubGlobal } from "../../../test/render";
+import { toastManager } from "../ui/toast";
 
 const state = vi.hoisted(() => ({
   projects: [] as EnvironmentProject[],
   routeParams: {} as Record<string, string>,
   preview: vi.fn(),
+  openExternal: vi.fn(async (_url: string) => true),
   openLink: vi.fn(async () => undefined),
   navigate: vi.fn(async (): Promise<void> => undefined),
   openScratchProject: vi.fn(async () => null),
   confirm: vi.fn(async (_message: string) => true),
   connectPairing: vi.fn(async (_input: { pairingUrl: string }) => ({ _tag: "Success" })),
   localEnvironmentDisabled: false,
+  catalogReady: true,
+  environmentIds: ["local"] as string[],
 }));
 
 // One connected primary environment that can read pull requests. Its project list and
@@ -31,6 +35,10 @@ vi.mock(import("@tanstack/react-router"), async (original) => ({
 vi.mock(import("../../state/environments"), async (original) => ({
   ...(await original()),
   usePrimaryEnvironmentId: () => "local" as EnvironmentId,
+  useEnvironments: (() => ({
+    isReady: state.catalogReady,
+    environments: state.environmentIds.map((environmentId) => ({ environmentId })),
+  })) as never,
   usePrimaryEnvironment: (() =>
     state.localEnvironmentDisabled
       ? null
@@ -147,6 +155,8 @@ function setup() {
   vi.clearAllMocks();
   state.confirm.mockResolvedValue(true);
   state.localEnvironmentDisabled = false;
+  state.catalogReady = true;
+  state.environmentIds = ["local"];
   state.projects = [];
   state.routeParams = {};
   state.preview
@@ -164,6 +174,7 @@ async function mount(...urls: string[]) {
   stack.use(
     stubGlobal("desktopBridge", {
       getClientSettings: async () => null,
+      openExternal: state.openExternal,
       webLinks: {
         onOpen: (listener: (url: string) => void) => {
           deliver = listener;
@@ -175,14 +186,21 @@ async function mount(...urls: string[]) {
       },
     }),
   );
-  stack.use(
+  const screen = stack.use(
     await render(
       <AppAtomRegistryProvider>
         <DesktopWebLinkCoordinator />
       </AppAtomRegistryProvider>,
     ),
   );
-  return stack.move();
+  return Object.assign(stack.move(), {
+    rerender: () =>
+      screen.rerender(
+        <AppAtomRegistryProvider>
+          <DesktopWebLinkCoordinator />
+        </AppAtomRegistryProvider>,
+      ),
+  });
 }
 
 it("holds a launch PR link until project discovery settles, then opens the PR view", async () => {
@@ -347,3 +365,59 @@ it("holds a launch PR link with Local environment disabled until discovery settl
   expect(state.navigate).toHaveBeenCalledExactlyOnceWith(pullRequestView);
   expect(state.openScratchProject).not.toHaveBeenCalled();
 });
+
+it.each([false, true])(
+  "keeps a saved remote startup thread link queued until its catalog loads (local disabled: %s)",
+  async (localEnvironmentDisabled) => {
+    setup();
+    state.localEnvironmentDisabled = localEnvironmentDisabled;
+    state.catalogReady = false;
+    state.environmentIds = [];
+    await using coordinator = await mount("t3code://threads/remote/thread");
+    expect(state.navigate).not.toHaveBeenCalled();
+    expect(state.openScratchProject).not.toHaveBeenCalled();
+    expect(state.openLink).not.toHaveBeenCalled();
+
+    const navigated = new Promise<void>((resolve) => {
+      state.navigate.mockImplementationOnce(async () => resolve());
+    });
+    state.environmentIds = ["remote"];
+    state.catalogReady = true;
+    await coordinator.rerender();
+    await navigated;
+    expect(state.navigate).toHaveBeenCalledExactlyOnceWith({ href: "/remote/thread" });
+    expect(state.openScratchProject).not.toHaveBeenCalled();
+    expect(state.openLink).not.toHaveBeenCalled();
+  },
+);
+
+it.each([
+  { url: "https://app.t3.codes/unknown/thread", opened: true },
+  { url: "t3code://threads/unknown/thread", opened: true },
+  { url: "https://app.t3.codes/unknown/thread", opened: false },
+])(
+  "opens an uncatalogued thread externally and reports failure: $url (opened: $opened)",
+  async ({ url, opened }) => {
+    setup();
+    state.openExternal.mockResolvedValueOnce(opened);
+    using notification = vi.spyOn(toastManager, "add");
+    await using _coordinator = await mount(url);
+    await vi.waitFor(() =>
+      expect(state.openExternal).toHaveBeenCalledWith("https://app.t3.codes/unknown/thread"),
+    );
+    expect(state.openScratchProject).not.toHaveBeenCalled();
+    expect(state.preview).not.toHaveBeenCalled();
+    expect(state.navigate).not.toHaveBeenCalled();
+    if (!opened) {
+      await vi.waitFor(() =>
+        expect(notification).toHaveBeenCalledWith(
+          expect.objectContaining({
+            type: "error",
+            title: "Could not open the link",
+            description: "Unable to open link.",
+          }),
+        ),
+      );
+    }
+  },
+);

@@ -739,7 +739,20 @@ internal class SelectionAwareEditText(
       pasteContextListener?.invoke(payload)
       return true
     }
-    return pasteImagesOrInterceptedText()
+    val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
+    val clip = clipboard?.primaryClip
+    val plainText = clip?.plainText()
+    return if (
+      plainText != null &&
+      (plainText.contains("app.t3.codes/") || plainText.contains("://threads/"))
+    ) {
+      if (!pasteInterceptedText(clip)) {
+        pasteContextListener?.invoke(payload + ("text" to plainText))
+      }
+      true
+    } else {
+      pasteImagesOrInterceptedText()
+    }
   }
 
   private fun pasteImagesOrInterceptedText(): Boolean {

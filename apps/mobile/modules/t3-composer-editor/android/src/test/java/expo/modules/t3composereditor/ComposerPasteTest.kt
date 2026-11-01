@@ -180,6 +180,35 @@ class ComposerPasteTest {
     assertNull(intercepted)
   }
 
+  @Test
+  fun regularPasteSendsPlainThreadUrlsToTheContextImporter() {
+    val urls = listOf(
+      "https://app.t3.codes/environment/thread",
+      "t3code://threads/environment/thread"
+    )
+    for (url in urls) {
+      clipboard.setPrimaryClip(ClipData.newPlainText("test", url))
+      editor.setText("before")
+      editor.setSelection(6)
+      var payload: Map<String, String>? = null
+      editor.pasteContextListener = { payload = it }
+      assertTrue(editor.onTextContextMenuItem(android.R.id.paste))
+      assertEquals(url, payload?.get("text"))
+      assertEquals("before", editor.text.toString())
+    }
+  }
+
+  @Test
+  fun incidentalThreadUrlsDoNotBypassLargeTextFolding() {
+    val text = "log line\n".repeat(5000) + "https://app.t3.codes/environment/thread"
+    clipboard.setPrimaryClip(ClipData.newPlainText("test", text))
+    editor.pasteContextListener = { error("Large logs must use the text folding path") }
+    var intercepted: String? = null
+    editor.pasteTextListener = { value, _, _ -> intercepted = value }
+    assertTrue(editor.onTextContextMenuItem(android.R.id.paste))
+    assertEquals(text, intercepted)
+  }
+
   private fun dropEditor(): SelectionAwareEditText {
     val activity = Robolectric.buildActivity(Activity::class.java).setup().get()
     return SelectionAwareEditText(activity).apply {

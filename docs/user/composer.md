@@ -292,7 +292,9 @@ Another thread can be context too. Type `@` followed by part of its title to pic
 the same server, or from a machine it links to while the Linked environments beta is on; those
 show the machine's name. On web and desktop you can also drag a thread out of the sidebar and
 drop it on the composer; a multi-selection drops together. On any client, **Copy thread** puts a
-thread on the clipboard that pastes into a composer as its chip. The chip shows the thread's
+plain thread URL on the clipboard. Paste it into a composer to attach the thread as a chip, or
+share it elsewhere to open the thread in a browser, desktop, or mobile app. Opening the link
+requires access to the thread's environment. The chip shows the thread's
 current title and opens it when selected. Your prompt only carries a reference: the agent reads the thread's
 history on demand, so attaching a long thread costs nothing until the agent looks. Attaching a
 thread does not change it, and the agent cannot send messages to it unless you ask.

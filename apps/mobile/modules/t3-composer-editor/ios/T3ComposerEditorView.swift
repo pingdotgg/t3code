@@ -201,7 +201,10 @@ private final class ComposerTextView: UITextView {
     }
     let pasteboard = UIPasteboard.general
     let context = T3ComposerClipboard.read()
-    if !context["fragment", default: ""].isEmpty || context["html", default: ""].contains("data-t3-context-fragment=") {
+    let text = context["text", default: ""]
+    let hasThreadLink = text.contains("app.t3.codes/") || text.contains("://threads/")
+    if !context["fragment", default: ""].isEmpty || context["html", default: ""].contains("data-t3-context-fragment=") ||
+       (!pasteboard.hasImages && !bypassTextPasteInterception && hasThreadLink && !shouldInterceptTextPaste(text)) {
       onPasteContext?(context)
       return
     }
