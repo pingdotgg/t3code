@@ -1309,9 +1309,13 @@ layer("ProviderEventIngestorV2", (it) => {
       }),
   );
 
-  it.effect(
-    "preserves an answer committed after terminal normalization reads a pending question",
-    () =>
+  it.effect.each([
+    { kind: "user_input", source: "terminal" },
+    { kind: "user_input", source: "callback" },
+    { kind: "command", source: "callback" },
+  ] as const)(
+    "preserves a $kind response committed before a $source cancellation",
+    ({ kind, source }) =>
       Effect.scoped(
         Effect.gen(function* () {
           const eventSink = yield* EventSink.EventSinkV2;
@@ -1339,7 +1343,7 @@ layer("ProviderEventIngestorV2", (it) => {
             nodeId,
             providerTurnId,
             nativeRequestRef: null,
-            kind: "user_input",
+            kind,
             status: "pending",
             responseCapability: { type: "live", providerSessionId },
             createdAt: now,
@@ -1351,7 +1355,7 @@ layer("ProviderEventIngestorV2", (it) => {
             runId: null,
             parentNodeId: null,
             rootNodeId: nodeId,
-            kind: "user_input_request",
+            kind: kind === "command" ? "approval_request" : "user_input_request",
             status: "waiting",
             countsForRun: false,
             providerThreadId,
@@ -1377,9 +1381,9 @@ layer("ProviderEventIngestorV2", (it) => {
             startedAt: now,
             completedAt: null,
             updatedAt: now,
-            type: "user_input_request",
-            requestId: request.id,
-            questions: [],
+            ...(kind === "command"
+              ? { type: "approval_request", requestId: request.id, requestKind: "command" }
+              : { type: "user_input_request", requestId: request.id, questions: [] }),
           };
           const seedEvents: Array<OrchestrationV2DomainEvent> = [threadEvent];
           for (const payload of [
@@ -1408,35 +1412,71 @@ layer("ProviderEventIngestorV2", (it) => {
             Effect.provide(Layer.fresh(ProviderEventIngestor.layer)),
             Effect.provideService(EventSink.EventSinkV2, gatedSink),
           );
-          const terminal = yield* ingestor
-            .ingestNormalized({
-              providerSessionId,
-              providerInstanceId: modelSelection.instanceId,
-              threadId,
-              event: {
-                type: "provider_turn.updated",
-                driver: CODEX_DRIVER,
-                providerTurn: {
-                  id: providerTurnId,
-                  providerThreadId,
-                  nodeId,
-                  runAttemptId: null,
-                  nativeTurnRef: null,
-                  ordinal: 1,
-                  status: "completed",
-                  startedAt: now,
-                  completedAt: now,
-                },
-              },
-            })
-            .pipe(Effect.forkScoped);
+          const terminal = yield* (
+            source === "terminal"
+              ? ingestor.ingestNormalized({
+                  providerSessionId,
+                  providerInstanceId: modelSelection.instanceId,
+                  threadId,
+                  event: {
+                    type: "provider_turn.updated",
+                    driver: CODEX_DRIVER,
+                    providerTurn: {
+                      id: providerTurnId,
+                      providerThreadId,
+                      nodeId,
+                      runAttemptId: null,
+                      nativeTurnRef: null,
+                      ordinal: 1,
+                      status: "completed",
+                      startedAt: now,
+                      completedAt: now,
+                    },
+                  },
+                })
+              : Effect.forEach(
+                  [
+                    {
+                      type: "runtime_request.updated" as const,
+                      driver: CODEX_DRIVER,
+                      runtimeRequest: { ...request, status: "cancelled" as const, resolvedAt: now },
+                    },
+                    {
+                      type: "node.updated" as const,
+                      driver: CODEX_DRIVER,
+                      node: { ...node, status: "cancelled" as const, completedAt: now },
+                    },
+                    {
+                      type: "turn_item.updated" as const,
+                      driver: CODEX_DRIVER,
+                      turnItem: {
+                        ...item,
+                        status: "cancelled" as const,
+                        completedAt: now,
+                        updatedAt: now,
+                      },
+                    },
+                  ],
+                  (event) =>
+                    ingestor.ingestNormalized({
+                      providerSessionId,
+                      providerInstanceId: modelSelection.instanceId,
+                      threadId,
+                      event,
+                    }),
+                  { concurrency: 1 },
+                ).pipe(Effect.map((batches) => batches.flat()))
+          ).pipe(Effect.forkScoped);
           yield* Deferred.await(normalized);
-          const answers = { decision: "Use the existing workspace" };
+          const response =
+            kind === "command"
+              ? { decision: "accept" as const }
+              : { answers: { decision: "Use the existing workspace" } };
           const responseEvents: Array<OrchestrationV2DomainEvent> = [];
           for (const payload of [
             {
               type: "runtime-request.updated" as const,
-              payload: { ...request, status: "resolved" as const, answers, resolvedAt: now },
+              payload: { ...request, status: "resolved" as const, ...response, resolvedAt: now },
             },
             {
               type: "node.updated" as const,
@@ -1458,12 +1498,13 @@ layer("ProviderEventIngestorV2", (it) => {
           const committedTerminal = yield* Fiber.join(terminal);
           assert.deepEqual(
             committedTerminal.map((stored) => stored.event.type),
-            ["provider-turn.updated"],
+            source === "terminal" ? ["provider-turn.updated"] : [],
           );
           const projection = yield* projections.getThreadProjection(threadId);
           const answered = projection.runtimeRequests.find((entry) => entry.id === request.id)!;
           assert.equal(answered.status, "resolved");
-          assert.deepEqual(answered.answers, answers);
+          assert.deepEqual(answered.answers, "answers" in response ? response.answers : undefined);
+          assert.equal(answered.decision, "decision" in response ? response.decision : undefined);
           assert.equal(projection.nodes.find((entry) => entry.id === nodeId)!.status, "completed");
           assert.equal(
             projection.turnItems.find((entry) => entry.id === item.id)!.status,

@@ -1719,9 +1719,20 @@ describe("ClaudeAdapterV2 abandoned questions", () => {
         const abortScope = yield* Scope.make();
         const signal = yield* Effect.abortSignal.pipe(Scope.provide(abortScope));
         const requestUpdates = yield* runtime.events.pipe(
-          Stream.filter((event) => event.type === "runtime_request.updated"),
-          Stream.tap(() => Scope.close(abortScope, Exit.void)),
-          Stream.take(2),
+          Stream.filter(
+            (event) =>
+              event.type === "runtime_request.updated" ||
+              event.type === "node.updated" ||
+              event.type === "turn_item.updated",
+          ),
+          Stream.tap((event) =>
+            event.type === "runtime_request.updated"
+              ? Scope.close(abortScope, Exit.void)
+              : Effect.void,
+          ),
+          Stream.takeUntil(
+            (event) => event.type === "turn_item.updated" && event.turnItem.status === "cancelled",
+          ),
           Stream.runCollect,
           Effect.forkScoped,
         );
@@ -1750,10 +1761,21 @@ describe("ClaudeAdapterV2 abandoned questions", () => {
         ).pipe(Effect.forkScoped);
 
         assert.equal((yield* Fiber.join(result))?.behavior, "deny");
-        const statuses = Array.from(yield* Fiber.join(requestUpdates), (event) =>
-          event.type === "runtime_request.updated" ? event.runtimeRequest.status : null,
-        );
+        const updates = Array.from(yield* Fiber.join(requestUpdates));
+        const statuses = updates
+          .filter((event) => event.type === "runtime_request.updated")
+          .map((event) =>
+            event.type === "runtime_request.updated" ? event.runtimeRequest.status : null,
+          );
         assert.deepEqual(statuses, ["pending", "cancelled"]);
+        assert.equal(
+          updates.findLast((event) => event.type === "node.updated")?.node.status,
+          "cancelled",
+        );
+        assert.equal(
+          updates.findLast((event) => event.type === "turn_item.updated")?.turnItem.status,
+          "cancelled",
+        );
       }).pipe(
         Effect.provide(
           Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
