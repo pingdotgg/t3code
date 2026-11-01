@@ -14,7 +14,6 @@ import { LinuxBrowserSecretPath } from "./LinuxBrowserSecret.ts";
 
 const KEY_SALT = "saltysalt";
 const KEY_LENGTH = 16;
-/** macOS stretches the keychain secret; Linux uses a single iteration. */
 const MAC_KEY_ITERATIONS = 1003;
 const LINUX_KEY_ITERATIONS = 1;
 /** Chromium's documented fallback passphrase when no Linux keyring is present. */
@@ -42,11 +41,7 @@ export interface ChromiumKeyMaterial {
   readonly cbcV10?: Buffer;
   readonly cbcV11?: Buffer;
   readonly cbcV11Error?: ChromiumKeyError;
-  /**
-   * AES-128-CBC from an empty passphrase. Some Linux clients wrote records
-   * with it (crbug.com/1195256), so Chromium — and this import — retry with it
-   * after a record's own key fails.
-   */
+  /** Linux clients can encrypt with an empty passphrase; retry it on failure (crbug.com/1195256). */
   readonly cbcEmpty?: Buffer;
   readonly gcmV10?: Buffer;
 }
@@ -54,27 +49,18 @@ export interface ChromiumKeyMaterial {
 const derive = (passphrase: string, iterations: number) =>
   NodeCrypto.pbkdf2Sync(passphrase, KEY_SALT, iterations, KEY_LENGTH, "sha1");
 
-/**
- * Via the CLI the prompt says "security" and "Always Allow" grants trust to a
- * tool every process on the machine can invoke; in-process it names this app
- * and the grant belongs to it.
- *
- * Deliberately untimed: macOS answers this with a modal, and a timeout racing
- * the user means the prompt can be approved while nothing is left listening,
- * which reads as "approving did nothing".
- */
+// In-process Keychain access attributes grants to this app. Keep modal prompts untimed to preserve their listener.
 const readKeychainSecret = Effect.fn("ChromiumKeys.readKeychainSecret")(function* (
   service: string,
   account: string,
 ) {
-  // Only macOS cookie imports need this binding; loading it at startup can
-  // prevent the desktop from opening on platforms that never use it.
+  // Loading the macOS binding at startup can prevent other platforms from opening.
   const Keyring = yield* Effect.tryPromise({
     try: () => import("@napi-rs/keyring"),
     catch: (cause) => new ChromiumKeyError({ reason: "keychainUnavailable", cause }),
   });
-  const secret = yield* Effect.try({
-    try: () => new Keyring.Entry(service, account).getPassword(),
+  const secret = yield* Effect.tryPromise({
+    try: () => new Keyring.AsyncEntry(service, account).getPassword(),
     catch: (cause) => {
       const message = String((cause as { message?: unknown } | undefined)?.message ?? "");
       const missing = /no (matching )?entry|not found/i.test(message);
@@ -84,16 +70,13 @@ const readKeychainSecret = Effect.fn("ChromiumKeys.readKeychainSecret")(function
       });
     },
   });
-  if (secret === null || secret === "") {
+  if (!secret) {
     return yield* new ChromiumKeyError({ reason: "keychainItemMissing" });
   }
   return secret;
 });
 
-/**
- * Its exit codes distinguish a missing key, denied access, and an unavailable
- * keyring without parsing localized error messages.
- */
+/** Exit codes distinguish missing keys, denied access, and unavailable keyrings without localized message parsing. */
 export const readLinuxSecret = Effect.fn("ChromiumKeys.readLinuxSecret")(function* (
   application: string,
 ) {
@@ -267,13 +250,10 @@ export const resolveChromiumKeys = Effect.fn("ChromiumKeys.resolveChromiumKeys")
   }
 
   if (request.platform === "linux") {
-    // The fallback passphrase always applies to `v10` records; a keyring
-    // secret, when one is reachable, additionally unlocks `v11`.
+    // v10 always uses the fallback passphrase; a keyring secret additionally unlocks v11.
     const keyringSecret = request.linuxSecretApplication
       ? yield* readLinuxSecret(request.linuxSecretApplication).pipe(
-          // v10 remains importable when Secret Service is absent or does not
-          // contain a key. An explicit denial/lock/cancel remains a consent
-          // failure rather than being silently downgraded.
+          // Missing Secret Service or keys must not block v10; explicit denial, lock, or cancellation remains a consent failure.
           Effect.catchIf(
             (error) => error.reason !== "needsKeychainApproval",
             (error) => Effect.succeed(error),

@@ -6,6 +6,7 @@ import {
 } from "@t3tools/contracts";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -27,11 +28,11 @@ const MODEL_MANIFEST_URL =
 
 const MANIFEST_TTL_MS = 60 * 60 * 1000;
 
-/** Minimum gap between fetch attempts after a failure, so an offline server
- * does not pay a network timeout on every provider check. */
+/** Back off failed fetches so offline health checks do not each wait on the network. */
 const MANIFEST_RETRY_MS = 5 * 60 * 1000;
 
 const FETCH_TIMEOUT_MS = 10_000;
+const MODEL_NEW_BADGE_DURATION_MS = 7 * 24 * 60 * 60 * 1000;
 
 const ManifestModelStatus = Schema.Literals(["current", "legacy"]);
 
@@ -47,7 +48,8 @@ const ManifestProviderModel = Schema.Struct({
   subProvider: Schema.optional(TrimmedNonEmptyString),
   aliases: Schema.optional(Schema.Array(TrimmedNonEmptyString)),
   status: ManifestModelStatus,
-  badge: Schema.optional(Schema.Literal("new")),
+  /** ISO date or timestamp of the model's public release, as published by its provider. */
+  releasedAt: Schema.optional(Schema.String),
   profile: Schema.optional(TrimmedNonEmptyString),
   adapter: Schema.optional(Schema.Unknown),
 });
@@ -64,11 +66,7 @@ const ManifestProviderCatalog = Schema.Struct({
 
 const ModelManifestEnvelopeSchema = Schema.Struct({
   version: Schema.Literal(1),
-  /**
-   * A release bundles its manifest, and a disk cache of an older edit must not
-   * outrank it. Optional so older remote files still decode; they count as
-   * older than any dated bundle.
-   */
+  /** Older disk caches must not override bundled manifests; absent dates rank below any dated bundle. */
   updatedAt: Schema.optional(Schema.String),
   compatibility: Schema.optional(Schema.Array(ProviderCompatibilityPolicy)),
   currentModels: Schema.Record(Schema.String, Schema.Array(Schema.String)),
@@ -116,6 +114,7 @@ function manifestUpdatedAtMs(manifest: ModelManifestData): number {
 export function resolveProviderCatalog(
   manifest: ModelManifestData,
   driverKind: ProviderDriverKind,
+  nowMs = DateTime.toEpochMillis(DateTime.nowUnsafe()),
 ): ModelCatalog.ProviderCatalog | null {
   const catalog = manifest.providers?.[driverKind];
   if (!catalog) return null;
@@ -129,13 +128,19 @@ export function resolveProviderCatalog(
     const profile = entry.profile ? catalog.profiles[entry.profile] : undefined;
     if (entry.profile && !profile) return null;
 
+    const releasedAtMs = entry.releasedAt === undefined ? NaN : Date.parse(entry.releasedAt);
+    const showNewBadge =
+      entry.status === "current" &&
+      nowMs >= releasedAtMs &&
+      nowMs - releasedAtMs < MODEL_NEW_BADGE_DURATION_MS;
+
     models.push({
       slug: entry.slug,
       name: entry.name,
       ...(entry.shortName ? { shortName: entry.shortName } : {}),
       ...(entry.subProvider ? { subProvider: entry.subProvider } : {}),
       ...(entry.aliases ? { aliases: entry.aliases } : {}),
-      ...(entry.badge ? { badge: entry.badge } : {}),
+      ...(showNewBadge ? { badge: "new" as const } : {}),
       status: entry.status,
       capabilities: profile?.capabilities ?? null,
       adapter: entry.adapter,
@@ -170,9 +175,7 @@ export class ModelManifest extends Context.Service<
     readonly current: Effect.Effect<ModelManifestData>;
     readonly refresh: Effect.Effect<ModelManifestData>;
     readonly forceRefresh: Effect.Effect<ModelManifestData>;
-    /** Drivers call this from
-     * provider checks: the fetch is process-shared state, so it must survive
-     * the teardown of whichever instance happened to trigger it. */
+    /** Process-shared fetches must survive the triggering instance's teardown. */
     readonly refreshInBackground: Effect.Effect<void>;
   }
 >()("t3/provider/ModelManifest") {}
@@ -200,9 +203,7 @@ export const make = Effect.gen(function* () {
   let lastAttemptMs: number | null = null;
   const refreshSemaphore = yield* Semaphore.make(1);
 
-  // `Effect.cached` makes concurrent first readers await the same disk load
-  // rather than racing a "loaded" flag. Only `refreshed` takes the fetch
-  // semaphore; `current` must never wait behind an in-flight network refresh.
+  // Only refresh takes the fetch semaphore; current must not wait on network I/O.
   const ensureDiskCacheLoaded = yield* Effect.cached(
     Effect.gen(function* () {
       const fromDisk = yield* fileSystem.readFileString(cachePath).pipe(
@@ -210,8 +211,6 @@ export const make = Effect.gen(function* () {
         Effect.catchCause(() => Effect.succeed(null)),
       );
       if (fromDisk === null) return;
-      // Comparing edit dates, not fetch time, keeps this independent of when
-      // the cache was written relative to the release.
       if (manifestUpdatedAtMs(BUNDLED_MODEL_MANIFEST) > manifestUpdatedAtMs(fromDisk.manifest)) {
         return;
       }
@@ -223,9 +222,7 @@ export const make = Effect.gen(function* () {
   const refresh = Effect.fn("ModelManifest.refresh")(function* (force = false) {
     yield* ensureDiskCacheLoaded;
     const now = yield* Clock.currentTimeMillis;
-    // A timestamp in the future means the wall clock moved backwards (the
-    // disk cache crosses restarts, so monotonic time cannot cover it). Treat
-    // it as expired: the refetch rewrites both timestamps and self-heals.
+    // Expire future timestamps after clock rollback; disk caches cross restarts, ruling out monotonic time.
     const isWithin = (sinceMs: number | null, windowMs: number) =>
       sinceMs !== null && now >= sinceMs && now - sinceMs < windowMs;
     if (!force && isWithin(fetchedAtMs, MANIFEST_TTL_MS)) return manifest;
@@ -244,8 +241,7 @@ export const make = Effect.gen(function* () {
       Effect.timeout(FETCH_TIMEOUT_MS),
       Effect.catchCause(() => Effect.succeed(null)),
     );
-    // A CDN can still serve an earlier edit after a release. Apply the same
-    // freshness rule as the disk cache so it cannot undo bundled version gates.
+    // Reject stale CDN edits just like stale disk caches to preserve bundled version gates.
     if (fetched === null || manifestUpdatedAtMs(fetched) < manifestUpdatedAtMs(manifest)) {
       return manifest;
     }
@@ -282,10 +278,11 @@ export const layerModelCatalog = Layer.effect(
   Effect.gen(function* () {
     const manifest = yield* ModelManifest;
     return ModelCatalog.ModelCatalog.of({
-      current: (driverKind) =>
-        manifest.current.pipe(
-          Effect.map((data) => resolveProviderCatalog(data, driverKind) ?? undefined),
-        ),
+      current: Effect.fn("ModelCatalog.current")(function* (driverKind: ProviderDriverKind) {
+        const data = yield* manifest.current;
+        const nowMs = yield* Clock.currentTimeMillis;
+        return resolveProviderCatalog(data, driverKind, nowMs) ?? undefined;
+      }),
       bundled: (driverKind) =>
         resolveProviderCatalog(BUNDLED_MODEL_MANIFEST, driverKind) ?? undefined,
       refreshInBackground: manifest.refreshInBackground,

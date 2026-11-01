@@ -70,12 +70,18 @@ vi.mock(import("@t3tools/client-runtime/state/session"), async (original) => {
 vi.mock(import("~/state/environments"), async (original) => ({
   ...(await original()),
   useEnvironments: (() => ({ environments })) as never,
+  readEnvironment: ((id: EnvironmentId) =>
+    environments.find((environment) => environment.environmentId === id) ?? null) as never,
   usePrimaryEnvironmentId: () => primaryId,
 }));
 vi.mock(import("~/state/entities"), async (original) => ({
   ...(await original()),
   useProjects: (() => state.projects) as never,
   useThreadShells: () => [],
+  useServerConfigs: (() =>
+    new Map(
+      environments.map((environment) => [environment.environmentId, environment.serverConfig]),
+    )) as never,
   waitForProjectRemoval: async () => true,
 }));
 vi.mock(import("~/state/projects"), async (original) => {
@@ -145,7 +151,7 @@ const environments = [primaryId, remoteId].map((environmentId) => ({
   serverConfig: {
     keybindings: DEFAULT_RESOLVED_KEYBINDINGS,
     settings: DEFAULT_SERVER_SETTINGS,
-    environment: { platform: { machine: "server" } },
+    environment: { platform: { machine: "server" }, capabilities: { projectOrganization: true } },
   },
 }));
 const session = (scopes: ReadonlyArray<AuthEnvironmentScope>): AuthSessionState => ({
@@ -326,6 +332,21 @@ async function expectProjectAccessDeniedToast(title: string) {
   expect(state.toast).toHaveBeenCalledOnce();
 }
 
+describe("project organization", () => {
+  it("archives the checkout on every machine while one machine is picked", async () => {
+    setup();
+    await using _screen = await mountPanel({ machine: primaryId });
+    await userEvent.click(page.getByRole("button", { name: "Archive" }));
+    await vi.waitFor(() => expect(state.update).toHaveBeenCalledTimes(2));
+    expect(
+      state.update.mock.calls.map(([request]) => [request.environmentId, request.input.archived]),
+    ).toEqual([
+      [primaryId, true],
+      [remoteId, true],
+    ]);
+  });
+});
+
 describe("project settings permissions", () => {
   it("disables shared edits when any member lacks project access", async () => {
     setup();
@@ -457,6 +478,61 @@ describe("project settings permissions", () => {
   );
 });
 
+describe("project identity reset", () => {
+  const scratchIcon = { kind: "lucide", name: "message-square-dashed", color: "gray" } as const;
+  const resetButton = (screen: Screen, label: string) =>
+    screen.container.querySelector<HTMLButtonElement>(`[aria-label="Reset ${label} to default"]`);
+  const asScratch = (project: Project): Project => ({
+    ...project,
+    isScratch: true,
+    title: "Notes",
+    workspaceRoot: "/t3/scratch",
+    projectIcon: { kind: "emoji", emoji: "📝" },
+  });
+
+  it("restores a renamed scratch project's built-in name and icon", async () => {
+    setup();
+    state.projects = [{ ...asScratch(state.projects[0]!), faviconPath: null, projectIcon: null }];
+    await using screen = await mountPanel();
+
+    await userEvent.click(resetButton(screen, "project name")!);
+    await vi.waitFor(() =>
+      expect(state.update).toHaveBeenCalledWith({
+        environmentId: primaryId,
+        input: { projectId: state.projects[0]!.id, title: "No project" },
+      }),
+    );
+    await userEvent.click(resetButton(screen, "project icon")!);
+    await vi.waitFor(() =>
+      expect(state.update).toHaveBeenLastCalledWith({
+        environmentId: primaryId,
+        input: { projectId: state.projects[0]!.id, faviconPath: null, projectIcon: scratchIcon },
+      }),
+    );
+  });
+
+  it("resets each member of a mixed group to its own default icon", async () => {
+    setup();
+    const [primary, remote] = state.projects;
+    state.projects = [asScratch(primary!), { ...remote!, faviconPath: "logo.png" }];
+    await using screen = await mountPanel();
+
+    expect(resetButton(screen, "project name")).toBeNull();
+    await userEvent.click(resetButton(screen, "project icon")!);
+    await vi.waitFor(() => expect(state.update).toHaveBeenCalledTimes(2));
+    expect(state.update.mock.calls.map(([request]) => request)).toEqual([
+      {
+        environmentId: primaryId,
+        input: { projectId: primary!.id, faviconPath: null, projectIcon: scratchIcon },
+      },
+      {
+        environmentId: remoteId,
+        input: { projectId: remote!.id, faviconPath: null, projectIcon: null },
+      },
+    ]);
+  });
+});
+
 describe("project settings scope", () => {
   const environmentMenu = () => page.getByRole("button", { name: /^Environment scope:/ });
   const primaryOption = () => page.getByRole("menuitemradio", { name: /^primary/ });
@@ -550,5 +626,38 @@ it("returns to the project overview after removal, clearing the selection but ke
   await vi.waitFor(() => {
     expect(screen.router.state.location.pathname).toBe("/settings/projects");
     expect(screen.router.state.location.search).toEqual({ machine: remoteId });
+  });
+});
+
+describe("project name composition", () => {
+  it.each([
+    { isComposing: true, keyCode: 13 },
+    { isComposing: false, keyCode: 229 },
+  ])("does not save a partial name for $isComposing/$keyCode", async (composition) => {
+    setup();
+    await using screen = await mountPanel();
+    const input = nameInput(screen);
+    await userEvent.fill(input, "日本");
+    await act(async () => {
+      input.dispatchEvent(
+        new KeyboardEvent("keydown", { key: "Enter", bubbles: true, ...composition }),
+      );
+    });
+    expect(state.update).not.toHaveBeenCalled();
+    await expect.element(input).toHaveFocus();
+
+    await userEvent.type(input, "語");
+    await userEvent.keyboard("{Enter}");
+    await vi.waitFor(() => expect(state.update).toHaveBeenCalledTimes(2));
+    expect(state.projects.map((project) => project.title)).toEqual(["日本語", "日本語"]);
+    await expect.element(nameInput(screen)).toHaveValue("日本語");
+
+    await userEvent.fill(nameInput(screen), "日本語の名前");
+    await userEvent.keyboard("{Tab}");
+    await vi.waitFor(() => expect(state.update).toHaveBeenCalledTimes(4));
+    expect(state.projects.map((project) => project.title)).toEqual([
+      "日本語の名前",
+      "日本語の名前",
+    ]);
   });
 });

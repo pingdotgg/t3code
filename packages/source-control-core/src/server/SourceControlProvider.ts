@@ -117,10 +117,7 @@ export class SourceControlProvider extends Context.Service<
   SourceControlProvider,
   {
     readonly kind: SourceControlProviderKind;
-    /**
-     * The caller checks the owner against what comes back, so a host that cannot search
-     * `owner:branch` can drop those selectors without losing anything.
-     */
+    /** The caller verifies owners, so hosts may drop unsupported `owner:branch` selectors. */
     readonly headBranchProbe?: (input: {
       readonly headSelectors: ReadonlyArray<string>;
       readonly state: "open" | "all";
@@ -129,10 +126,7 @@ export class SourceControlProvider extends Context.Service<
       readonly cwd: string;
       readonly treeish: string;
     }) => Effect.Effect<Option.Option<string>>;
-    /**
-     * The repository's `owner/name` from a remote URL, for a host whose remote paths can carry
-     * more than that (Forgejo's HTTP installation mount). Absent means the whole path.
-     */
+    /** Strip installation mounts from remote paths; absent means use the whole path. */
     readonly repositoryNameFromRemoteUrl?: (url: string) => string | null;
     readonly refineRepositoryIdentity?: (input: {
       readonly identity: RepositoryIdentity;
@@ -201,6 +195,8 @@ export class SourceControlProvider extends Context.Service<
       readonly cwd: string;
       readonly context?: SourceControlProviderContext;
       readonly repository: string;
+      /** The host the repository is on. Without it, the checkout's host. */
+      readonly host?: string;
     }) => Effect.Effect<SourceControlRepositoryCloneUrls, SourceControlProviderError>;
     readonly createRepository: (input: {
       readonly cwd: string;

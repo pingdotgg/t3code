@@ -17,13 +17,7 @@ export interface ConnectAuthorizeRequest {
   readonly loopbackPort: number;
 }
 
-/**
- * The CLI routes through the hosted /connect page rather than hitting Clerk's
- * /oauth/authorize directly: a signed-out browser sent straight to
- * /oauth/authorize goes through Clerk's sign-in redirect, which does not
- * reliably preserve the authorize query parameters (state, response_type,
- * code_challenge).
- */
+/** Route through /connect because Clerk's signed-out redirect can lose OAuth query parameters. */
 export function buildConnectAuthorizeRequestUrl(input: {
   readonly hostedAppUrl: string;
   readonly state: string;
@@ -58,10 +52,7 @@ function parseLoopbackPort(value: string): number | null {
   return port >= 1 && port <= 65535 ? port : null;
 }
 
-/**
- * Redirect URI for the CLI's local callback listener. Must stay in sync with
- * the redirect URI registered on the Clerk CLI OAuth application.
- */
+/** Must match the loopback redirect URI registered on the Clerk CLI OAuth app. */
 export function connectLoopbackRedirectUri(port: number): string {
   return `http://127.0.0.1:${port}${CONNECT_LOOPBACK_CALLBACK_PATH}`;
 }

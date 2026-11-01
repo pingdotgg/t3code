@@ -12,10 +12,13 @@ export function resolveWorkspaceTabOrder(saved: readonly unknown[] | undefined) 
 }
 
 export type WorkspaceTab = NavigationTab;
+/** Lists with their own search: the searchable tabs and the Settings list. */
+export type WorkspaceSearchTab = WorkspaceTab | "settings";
 export type WorkspaceSearchMode = "resting" | "active" | "expanded";
 
-export function workspaceUsesColumns(tab: WorkspaceTab, detailRoute?: string) {
-  return (tab === "threads" || tab === "pullRequests") && detailRoute !== "SettingsSheet";
+/** Settings, Chats and pull requests pair a list with a detail column; Usage is one page. */
+export function workspaceUsesColumns(tab: WorkspaceTab, settingsOpen = false) {
+  return settingsOpen || tab === "threads" || tab === "pullRequests";
 }
 
 export interface WorkspaceTabState {
@@ -28,7 +31,7 @@ export interface WorkspaceTabState {
 export interface WorkspaceTabsState {
   readonly selectedTab: WorkspaceTab;
   readonly selectionRevision: number;
-  readonly tabs: Readonly<Record<WorkspaceTab, WorkspaceTabState>>;
+  readonly tabs: Readonly<Record<WorkspaceSearchTab, WorkspaceTabState>>;
 }
 
 function emptyTab(): WorkspaceTabState {
@@ -43,17 +46,18 @@ export function initialWorkspaceTabsState(): WorkspaceTabsState {
       threads: emptyTab(),
       pullRequests: emptyTab(),
       usage: emptyTab(),
+      settings: emptyTab(),
     },
   };
 }
 
 export type WorkspaceTabsAction =
   | { readonly type: "select"; readonly tab: WorkspaceTab }
-  | { readonly type: "search"; readonly tab?: WorkspaceTab }
-  | { readonly type: "query"; readonly query: string; readonly tab?: WorkspaceTab }
-  | { readonly type: "expand"; readonly tab?: WorkspaceTab }
-  | { readonly type: "cancel"; readonly tab?: WorkspaceTab }
-  | { readonly type: "scroll"; readonly tab: WorkspaceTab; readonly offset: number };
+  | { readonly type: "search"; readonly tab?: WorkspaceSearchTab }
+  | { readonly type: "query"; readonly query: string; readonly tab?: WorkspaceSearchTab }
+  | { readonly type: "expand"; readonly tab?: WorkspaceSearchTab }
+  | { readonly type: "cancel"; readonly tab?: WorkspaceSearchTab }
+  | { readonly type: "scroll"; readonly tab: WorkspaceSearchTab; readonly offset: number };
 
 export function workspaceTabsReducer(
   state: WorkspaceTabsState,
@@ -68,7 +72,7 @@ export function workspaceTabsReducer(
           selectionRevision: state.selectionRevision + 1,
         };
   const tab = action.tab ?? state.selectedTab;
-  if (tab !== "threads" && tab !== "pullRequests") return state;
+  if (tab !== "threads" && tab !== "pullRequests" && tab !== "settings") return state;
   const current = state.tabs[tab];
   let next: WorkspaceTabState;
   switch (action.type) {

@@ -65,10 +65,7 @@ export function SettingsEnvironmentsRouteScreen() {
   }
 
   const openEnvironment = (environmentId: EnvironmentId) => {
-    navigation.navigate("SettingsSheet", {
-      screen: "SettingsContent",
-      params: { screen: "SettingsEnvironmentDetail", params: { environmentId } },
-    });
+    navigation.navigate("SettingsEnvironmentDetail", { environmentId });
   };
   const handleUpdateEnvironment = (
     environmentId: EnvironmentId,
@@ -127,11 +124,7 @@ export function SettingsEnvironmentsRouteScreen() {
           accessibilityLabel: "Add environment",
           icon: "plus",
           tintColor: headerIconColor,
-          onPress: () =>
-            navigation.navigate("SettingsSheet", {
-              screen: "SettingsContent",
-              params: { screen: "SettingsEnvironmentNew" },
-            }),
+          onPress: () => navigation.navigate("SettingsEnvironmentNew"),
         },
       ]}
     >
@@ -164,9 +157,7 @@ export function SettingsEnvironmentsRouteScreen() {
           onUpdate={handleUpdateEnvironment}
         />
 
-        {/* Always mounted: already-connected relay environments must stay
-            visible (and removable) even when cloud config is missing or the
-            user is signed out — the component gates discovery itself. */}
+        {/* Keep connected relays visible and removable without cloud config or sign-in; this component gates discovery. */}
         <CloudEnvironmentRows
           connectedCloudEnvironments={connectedCloudEnvironments}
           onOpenEnvironment={openEnvironment}
