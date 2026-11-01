@@ -21,6 +21,7 @@ import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
 import { vi } from "vite-plus/test";
 import * as HttpClient from "effect/http/HttpClient";
+import * as HttpClientResponse from "effect/http/HttpClientResponse";
 
 import {
   DEFAULT_HANDOFF_TOKEN_CAP,
@@ -71,6 +72,24 @@ it.layer(layerTest)("CursorDriver", (it) => {
     "persists browser credentials, uses them for chat, and closes the SDK session on logout",
     () =>
       Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const home = yield* fileSystem.makeTempDirectoryScoped({ prefix: "cursor-cli-home-" });
+        for (const directory of [".cursor", "Cursor", "cursor"]) {
+          yield* fileSystem.makeDirectory(`${home}/${directory}`, { recursive: true });
+          yield* fileSystem.writeFileString(
+            `${home}/${directory}/auth.json`,
+            '{"accessToken":"cli-login-token"}',
+          );
+        }
+        const usageClient = HttpClient.make((request) => {
+          expect(request.headers.authorization).toBe("Bearer cli-login-token");
+          return Effect.succeed(
+            HttpClientResponse.fromWeb(
+              request,
+              Response.json({ planUsage: { totalPercentUsed: 42 } }),
+            ),
+          );
+        });
         const login = vi.spyOn(Cursor.auth, "login").mockImplementation(async (options) => {
           options?.onLoginUrl?.("https://cursor.com/loginDeepControl?challenge=test-only");
           await options?.store?.save({
@@ -102,12 +121,21 @@ it.layer(layerTest)("CursorDriver", (it) => {
           instanceId: ProviderInstanceId.make("cursor-browser-persisted"),
           displayName: "Personal Cursor",
           enabled: true,
-          environment: [{ name: "CURSOR_API_KEY", value: "", sensitive: true }],
+          environment: [
+            { name: "CURSOR_API_KEY", value: "", sensitive: true },
+            ...["HOME", "USERPROFILE", "APPDATA", "XDG_CONFIG_HOME"].map((name) => ({
+              name,
+              value: home,
+              sensitive: false,
+            })),
+            { name: "AGENT_CLI_CREDENTIAL_STORE", value: "file", sensitive: false },
+          ],
           config: CursorDriver.defaultConfig(),
         };
         const openedKeys: Array<string | undefined> = [];
         let closed = 0;
         const instance = yield* CursorDriver.create(input).pipe(
+          Effect.provideService(HttpClient.HttpClient, usageClient),
           Effect.provideService(CursorAgentSdk.CursorAgentSdkRunner, {
             assertComplete: Effect.void,
             open: (request) =>
@@ -141,6 +169,7 @@ it.layer(layerTest)("CursorDriver", (it) => {
             email: "cursor@example.com",
           },
           setup: { canAuthenticate: true, canInstall: false },
+          usageLimits: { windows: [{ id: "totalPercentUsed", usedPercent: 42 }] },
         });
         const threadId = ThreadId.make("cursor-browser-thread");
         const modelSelection = { instanceId: input.instanceId, model: "auto" };
@@ -158,7 +187,9 @@ it.layer(layerTest)("CursorDriver", (it) => {
         yield* runtime.ensureThread({ threadId, modelSelection, runtimePolicy });
         expect(openedKeys).toEqual(["instance-browser-key"]);
         expect(closed).toBe(0);
-        const recreated = yield* CursorDriver.create(input);
+        const recreated = yield* CursorDriver.create(input).pipe(
+          Effect.provideService(HttpClient.HttpClient, usageClient),
+        );
         expect((yield* recreated.snapshot.refresh).auth.status).toBe("authenticated");
         yield* instance.auth!.logout(Effect.void);
         expect(closed).toBe(1);
