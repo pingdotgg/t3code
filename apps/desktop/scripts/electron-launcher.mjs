@@ -18,7 +18,7 @@ const APP_BUNDLE_ID = isDevelopment
   ? `com.t3tools.t3code.dev.${devBundleIdSuffix || "local"}`
   : "com.t3tools.t3code";
 const APP_PROTOCOL_SCHEMES = isDevelopment ? ["t3code-dev"] : ["t3code"];
-const LAUNCHER_VERSION = 20;
+const LAUNCHER_VERSION = 21;
 const developmentMacIconPngPath = NodePath.join(
   repoRoot,
   "assets",
@@ -320,7 +320,26 @@ function patchHelperBundleInfoPlists(appBundlePath) {
       "CFBundleIdentifier",
       `${APP_BUNDLE_ID}.${bundleIdentifierSuffix}`,
     );
+    if (bundleIdentifierSuffix === "helper") {
+      // The backend runs as this Helper, which macOS asks for privacy prompts its commands trigger.
+      const mainInfoPlist = readPlistJson(NodePath.join(appBundlePath, "Contents", "Info.plist"));
+      for (const [key, value] of Object.entries(mainInfoPlist)) {
+        if (/^NS\w+UsageDescription$/.test(key) && typeof value === "string") {
+          setPlistString(infoPlistPath, key, value);
+        }
+      }
+    }
   }
+}
+
+function readPlistJson(plistPath) {
+  const result = NodeChildProcess.spawnSync("plutil", ["-convert", "json", "-o", "-", plistPath], {
+    encoding: "utf8",
+  });
+  if (result.status !== 0) {
+    throw new Error(`Failed to read plist at ${plistPath}: ${result.stderr}`.trim());
+  }
+  return JSON.parse(result.stdout);
 }
 
 function readJson(path) {

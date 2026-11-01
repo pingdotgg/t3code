@@ -4,6 +4,7 @@ import * as NodePath from "node:path";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { createPackageWithOptions, extractFile } from "@electron/asar";
+import Plist from "plist";
 import { assert, it } from "@effect/vitest";
 import * as ConfigProvider from "effect/ConfigProvider";
 import * as Deferred from "effect/Deferred";
@@ -37,6 +38,7 @@ import {
   MissingMacPasskeyProvisioningProfileError,
   packWindowsServerAsar,
   preflightWindowsDesktopBuild,
+  renderMacHelperEntitlements,
   renderMacPasskeyEntitlements,
   resolveMacWebAuthnEntitlements,
   resolveMacPasskeySigningConfiguration,
@@ -64,6 +66,8 @@ import {
   WSL_RUNTIME_ARCHIVE_NAME,
   wslRuntimeArchiveStem,
 } from "./build-desktop-artifact.ts";
+import afterPackMacos from "./after-pack-macos.ts";
+import { withBackendHelperEntitlements } from "./sign-macos.ts";
 import {
   ReleasePackageManifestError,
   releasePackageFiles,
@@ -1425,6 +1429,119 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
     assert.notInclude(entitlements, "keychain-access-groups");
     assert.notInclude(entitlements, "com.apple.developer.web-browser.public-key-credential");
   });
+
+  it.effect(
+    "gives the macOS backend Helper the app's launcher, privacy strings and entitlements",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const config = yield* createBuildConfig(
+            "mac",
+            "dmg",
+            "1.2.3-nightly.1",
+            true,
+            false,
+            undefined,
+            {
+              entitlementsPath: "/stage/entitlements.mac.plist",
+              provisioningProfilePath: "/stage/profile.provisionprofile",
+            },
+          );
+          const mac = config.mac as Record<string, unknown>;
+          assert.notProperty(mac, "entitlementsInherit");
+          assert.match(config.afterPack as string, /scripts[\\/]after-pack-macos\.ts$/);
+          assert.isTrue(
+            DESKTOP_FILE_EXCLUSIONS.some((glob) =>
+              NodePath.matchesGlob(
+                "apps/desktop/prod-resources/backend-launcher/t3-backend-launcher",
+                glob.slice(1),
+              ),
+            ),
+          );
+          const helperEntitlements = Plist.parse(renderMacHelperEntitlements()) as Record<
+            string,
+            unknown
+          >;
+          assert.isTrue(helperEntitlements["com.apple.security.device.camera"]);
+          assert.isTrue(helperEntitlements["com.apple.security.device.audio-input"]);
+          assert.isTrue(helperEntitlements["com.apple.security.cs.allow-jit"]);
+
+          const appOutDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-mac-after-pack-" });
+          const contents = path.join(appOutDir, "T3 Code (Nightly).app/Contents");
+          const helperPlistPath = path.join(
+            contents,
+            "Frameworks/T3 Code (Nightly) Helper.app/Contents/Info.plist",
+          );
+          yield* fs.makeDirectory(path.dirname(helperPlistPath), { recursive: true });
+          yield* fs.writeFileString(
+            path.join(contents, "Info.plist"),
+            Plist.build({
+              CFBundleExecutable: "T3 Code (Nightly)",
+              CFBundleIdentifier: "com.t3tools.t3code",
+              NSCameraUsageDescription: "camera",
+              NSLocalNetworkUsageDescription: "network",
+            }),
+          );
+          yield* fs.writeFileString(
+            helperPlistPath,
+            Plist.build({ CFBundleIdentifier: "com.t3tools.t3code.helper", LSUIElement: true }),
+          );
+          yield* Effect.promise(() =>
+            afterPackMacos({ appOutDir, electronPlatformName: "darwin" }),
+          );
+          assert.deepStrictEqual(Plist.parse(yield* fs.readFileString(helperPlistPath)), {
+            CFBundleIdentifier: "com.t3tools.t3code.helper",
+            LSUIElement: true,
+            NSCameraUsageDescription: "camera",
+            NSLocalNetworkUsageDescription: "network",
+          });
+
+          const app = path.join(appOutDir, "T3 Code (Nightly).app");
+          const frameworks = path.join(contents, "Frameworks");
+          const builderOptions = (filePath: string) => ({
+            entitlements: filePath === app ? "/stage/main.plist" : "/builder/default.plist",
+            hardenedRuntime: true,
+            additionalArguments: ["--arg"],
+          });
+          const signOptions = yield* withBackendHelperEntitlements(
+            { app, optionsForFile: builderOptions },
+            "/stage/backend-helper.plist",
+          );
+          const signOptionsFor = (filePath: string) =>
+            signOptions.optionsForFile!(filePath, { platform: "darwin" });
+          for (const helperFile of [
+            "T3 Code (Nightly) Helper.app",
+            "T3 Code (Nightly) Helper.app/Contents/MacOS/T3 Code (Nightly) Helper",
+          ]) {
+            assert.deepStrictEqual(signOptionsFor(path.join(frameworks, helperFile)), {
+              entitlements: "/stage/backend-helper.plist",
+              hardenedRuntime: true,
+              additionalArguments: ["--arg"],
+            });
+          }
+          for (const otherFile of [
+            app,
+            path.join(contents, "MacOS/T3 Code (Nightly)"),
+            path.join(frameworks, "T3 Code (Nightly) Helper (Renderer).app"),
+            path.join(
+              frameworks,
+              "T3 Code (Nightly) Helper (GPU).app/Contents/MacOS/T3 Code (Nightly) Helper (GPU)",
+            ),
+            path.join(frameworks, "Electron Framework.framework"),
+            path.join(contents, "Resources/backend-launcher/t3-backend-launcher"),
+          ]) {
+            assert.deepStrictEqual(signOptionsFor(otherFile), builderOptions(otherFile));
+          }
+          const builderSignOptions = { app, optionsForFile: builderOptions };
+          assert.strictEqual(
+            yield* withBackendHelperEntitlements(builderSignOptions, undefined),
+            builderSignOptions,
+          );
+        }),
+      ),
+  );
 
   it("grants in-app browser passkey entitlements only when the provisioning profile does", () => {
     const configuration = { appId: "com.t3tools.t3code", teamId: "ABC1234567" };

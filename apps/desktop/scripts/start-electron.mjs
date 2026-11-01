@@ -3,11 +3,11 @@ import * as NodePath from "node:path";
 
 import { desktopDir, resolveElectronLaunchCommand } from "./electron-launcher.mjs";
 
-NodeChildProcess.execFileSync(
-  process.execPath,
-  [NodePath.join(desktopDir, "scripts/build-browser-secret.mjs")],
-  { stdio: "inherit" },
-);
+for (const script of ["build-browser-secret.mjs", "build-backend-launcher.mjs"]) {
+  NodeChildProcess.execFileSync(process.execPath, [NodePath.join(desktopDir, "scripts", script)], {
+    stdio: "inherit",
+  });
+}
 
 const childEnv = { ...process.env };
 delete childEnv.ELECTRON_RUN_AS_NODE;
