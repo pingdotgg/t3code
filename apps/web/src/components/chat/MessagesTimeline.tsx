@@ -74,6 +74,9 @@ import { AssistantSelectionToolbar } from "./AssistantSelectionToolbar";
 import type { AssistantCitationSourceAnchor } from "~/lib/assistantTextSelection";
 import { type AssistantCitationRequest } from "./AssistantCitationSource";
 import { useAssistantCitationTarget } from "./useAssistantCitationTarget";
+import { usePinnedSelectionTimeline } from "./usePinnedSelectionTimeline";
+import { usePinnedSelectionRevealStore } from "../../pinnedSelectionReveal";
+import { useUiStateStore } from "../../uiStateStore";
 import { worktreeSetupAgentStarted } from "@t3tools/client-runtime/worktree-setup";
 import { resolveCitationPhase, type CitedHistory } from "./citationProcedure";
 import {
@@ -610,6 +613,15 @@ const ConversationTimeline = memo(function ConversationTimeline({
   // The marker stops the O(entries) fold lookup once the entry is found, since
   // the href stays in the URL after the citation settles.
   const [citationExpandedFor, setCitationExpandedFor] = useState<string | null>(null);
+  const pinnedReveal = usePinnedSelectionRevealStore((state) =>
+    state.reveal?.threadKey === listIdentityKey ? state.reveal : null,
+  );
+  const threadPins = useUiStateStore((state) => state.threadPinnedSelectionsById[listIdentityKey]);
+  const activePinnedSelection =
+    pinnedReveal === null
+      ? null
+      : (threadPins?.find((pin) => pin.id === pinnedReveal.pinId) ?? null);
+  const [pinExpandedFor, setPinExpandedFor] = useState<number | null>(null);
   // Back/Forward can restore an earlier activation key, so the marker clears
   // between activations and a revisit opens the fold again.
   if (!citationRequest && citationExpandedFor !== null) setCitationExpandedFor(null);
@@ -646,6 +658,36 @@ const ConversationTimeline = memo(function ConversationTimeline({
       setExpandedAttemptIds((previous) =>
         previous.has(citedAttempt.id) ? previous : new Set(previous).add(citedAttempt.id),
       );
+    }
+  }
+  if (!pinnedReveal && pinExpandedFor !== null) setPinExpandedFor(null);
+  if (pinnedReveal && pinExpandedFor !== pinnedReveal.nonce) {
+    const pinEntry = timelineEntries.find(
+      (entry) => entry.kind === "message" && entry.message.id === pinnedReveal.messageId,
+    );
+    if (pinEntry) {
+      const pinRunId = (
+        findFoldRunIds ??
+        timelineTurnFoldRunIdsByEntryId({
+          timelineEntries,
+          latestRun,
+          runningRunId,
+          isWorking,
+          runlessWorkActive,
+        })
+      ).get(pinEntry.id);
+      setPinExpandedFor(pinnedReveal.nonce);
+      if (pinRunId) {
+        setExpandedRunIds((previous) =>
+          previous.has(pinRunId) ? previous : new Set(previous).add(pinRunId),
+        );
+      }
+      const pinAttempt = pinEntry.attempt;
+      if (pinAttempt?.status === "superseded") {
+        setExpandedAttemptIds((previous) =>
+          previous.has(pinAttempt.id) ? previous : new Set(previous).add(pinAttempt.id),
+        );
+      }
     }
   }
   const visibleExpandedRunIds =
@@ -766,6 +808,16 @@ const ConversationTimeline = memo(function ConversationTimeline({
   const [timelineViewportElement, setTimelineViewportElement] = useState<HTMLDivElement | null>(
     null,
   );
+  const pinnedAlwaysRenderKey = usePinnedSelectionTimeline({
+    threadRef: citationThreadRef,
+    rows,
+    timelineEntries,
+    listRef,
+    viewport: timelineViewportElement,
+    historyControls,
+    reveal: pinnedReveal,
+    pin: activePinnedSelection,
+  });
   const {
     target: readyCitationRequest,
     positioning: citationPositioning,
@@ -804,6 +856,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
     ...(firstMessageRow ? [firstMessageRow.id] : []),
     ...(lastMessageRow && lastMessageRow !== firstMessageRow ? [lastMessageRow.id] : []),
     ...(citationAlwaysRender?.keys ?? []),
+    ...(pinnedAlwaysRenderKey === null ? [] : [pinnedAlwaysRenderKey]),
     ...(fullscreenAppRowId === null ? [] : [fullscreenAppRowId]),
     ...new Set(
       [...playingAudioRows].filter(([audio]) => audio.isConnected).map(([, rowId]) => rowId),
@@ -1309,6 +1362,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
             ref={attachTimelineViewportElement}
             className="relative h-full min-h-0"
             data-assistant-citation-viewport="true"
+            data-pinned-selection-thread={listIdentityKey}
           >
             {onCiteAssistantText && citationThreadRef ? (
               <AssistantSelectionToolbar

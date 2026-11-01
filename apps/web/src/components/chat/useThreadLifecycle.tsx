@@ -29,6 +29,7 @@ import {
   threadWokeAt,
 } from "@t3tools/client-runtime/state/thread-settled";
 import { useAcknowledgeThreadWoke, useThreadActions } from "../../hooks/useThreadActions";
+import { pinMessageSelection } from "../../pinnedSelectionReveal";
 import { settleAndAdvance } from "../../settleAndAdvance";
 import type { ChatShortcutCommands } from "./useChatShortcuts";
 import { resolveThreadLastVisitedAt } from "../Sidebar.logic";
@@ -622,6 +623,10 @@ export function useThreadLifecycle(input: ThreadLifecycleInput) {
       }
       if (settleAndAdvance(activeThreadRef)) return;
       void settleThread(activeThreadRef).then(toastThreadActionFailure("Failed to settle thread"));
+    },
+    "thread.pinSelection": () => {
+      if (!activeThreadRef) return false;
+      return pinMessageSelection(activeThreadRef);
     },
     "thread.pin": ({ event }) => {
       // An open project list pins its highlighted project with this key instead.

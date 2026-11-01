@@ -664,6 +664,11 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
   };
   const isRegeneratingTitle = thread.titleRegeneration != null;
   const localLastVisitedAt = useUiStateStore((state) => state.threadLastVisitedAtById[threadKey]);
+  const pinnedSelectionCount = useUiStateStore((state) =>
+    props.variantAction === "unsettle"
+      ? (state.threadPinnedSelectionsById[threadKey]?.length ?? 0)
+      : 0,
+  );
   const lastVisitedAt = resolveThreadLastVisitedAt(thread.lastVisitedAt, localLastVisitedAt);
   const isSelected = useThreadSelectionStore((state) => state.selectedThreadKeys.has(threadKey));
   const openPrLink = useOpenPrLink();
@@ -1249,6 +1254,26 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
               )}
               {draftIndicator}
               {title}
+              {pinnedSelectionCount > 0 ? (
+                <Tooltip>
+                  <TooltipTrigger
+                    render={
+                      <span
+                        role="img"
+                        aria-label={
+                          pinnedSelectionCount === 1
+                            ? "1 pinned selection"
+                            : `${pinnedSelectionCount} pinned selections`
+                        }
+                        className="pinned-selection-badge inline-flex shrink-0 items-center"
+                      />
+                    }
+                  >
+                    <PinIcon aria-hidden className="size-3" />
+                  </TooltipTrigger>
+                  <TooltipPopup side="top">Pinned text</TooltipPopup>
+                </Tooltip>
+              ) : null}
               {multiline ? titleLineIcons : null}
               {pinIndicator}
               {multiline ? null : terminalStatusIcon}

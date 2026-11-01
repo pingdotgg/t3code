@@ -125,10 +125,13 @@ vi.mock("../terminalUiStateStore", () => ({
     }),
 }));
 vi.mock("../uiStateStore", () => ({
-  useUiStateStore: (select: (store: unknown) => unknown) =>
-    select({
-      markThreadVisited: () => state.localEffects.push("mark-visited"),
-    }),
+  useUiStateStore: Object.assign(
+    (select: (store: unknown) => unknown) =>
+      select({
+        markThreadVisited: () => state.localEffects.push("mark-visited"),
+      }),
+    { getState: () => ({ threadPinnedSelectionsById: {} }) },
+  ),
 }));
 vi.mock("../lib/archivedThreadsState", () => ({
   refreshArchivedThreadsForEnvironment: () => state.localEffects.push("refresh-archive"),
