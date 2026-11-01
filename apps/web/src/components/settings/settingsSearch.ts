@@ -712,7 +712,7 @@ export const SETTINGS_SEARCH_ITEMS = [
     id: "product-analytics",
     title: "Share product analytics",
     to: "/settings/about",
-    scope: "environment",
+    scope: "environment-defaults",
     searchTerms: ["telemetry privacy usage data tracking consent opt out PostHog"],
   },
   {

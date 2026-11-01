@@ -200,11 +200,12 @@ describe("settings search targets", () => {
   });
 
   it("keeps environment-wide settings out of project scopes", () => {
-    const updates = getSettingsSearchTargetScope("provider-update-checks")!;
-    expect(updates.scope).toBe("environment-defaults");
-    expect(isSettingsSearchScopeAvailable(updates.scope, "environment")).toBe(true);
-    expect(isSettingsSearchScopeAvailable(updates.scope, "all")).toBe(true);
-    expect(isSettingsSearchScopeAvailable(updates.scope, "project")).toBe(false);
+    for (const id of ["provider-update-checks", "product-analytics"]) {
+      const target = getSettingsSearchTargetScope(id)!;
+      expect(isSettingsSearchScopeAvailable(target.scope, "environment")).toBe(true);
+      expect(isSettingsSearchScopeAvailable(target.scope, "all")).toBe(true);
+      expect(isSettingsSearchScopeAvailable(target.scope, "project")).toBe(false);
+    }
     const streaming = getSettingsSearchTargetScope("response-streaming")!;
     expect(streaming.scope).toBe("project-defaults");
     expect(isSettingsSearchScopeAvailable(streaming.scope, "project")).toBe(true);
