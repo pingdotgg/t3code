@@ -925,6 +925,51 @@ it.layer(NodeServices.layer)("TailnetSignIn", (it) => {
       }).pipe(Effect.provide(layerTest(tailnet)));
     });
 
+    it.effect("a grant a scan saw stands when the scan is cut short", () => {
+      const STRANGER_ADDRESS = "100.88.1.30";
+      const TABLET_ADDRESS = "100.88.1.9";
+      const stranger = phoneNode({
+        StableID: "nStranger",
+        User: "int64:999",
+        Addresses: [`${STRANGER_ADDRESS}/32`],
+        AllowedIPs: [`${STRANGER_ADDRESS}/32`],
+      });
+      const tailnet = withLaptop();
+      tailnet.status = hostStatus({
+        Peer: {
+          ...peers,
+          stranger: { ID: "nStranger", TailscaleIPs: [STRANGER_ADDRESS], UserID: "int64:999" },
+          tablet: { ID: "nTablet", TailscaleIPs: [TABLET_ADDRESS], UserID: `int64:${OWNER_ID}` },
+        },
+      });
+      tailnet.devices = {
+        ...tailnet.devices,
+        [STRANGER_ADDRESS]: { node: stranger },
+        [TABLET_ADDRESS]: {
+          node: phoneNode({ StableID: "nTablet", Addresses: [`${TABLET_ADDRESS}/32`] }),
+        },
+      };
+      return Effect.gen(function* () {
+        // A refused device leaves no sign-in code, so no background recheck scans meanwhile.
+        yield* refusalOf(signIn(makeDpopKey(), { remoteAddress: STRANGER_ADDRESS }));
+        tailnet.devices = {
+          ...tailnet.devices,
+          [LAPTOP_ADDRESS]: { node: laptop, capMap: granted({ scopes: ["read"] }) },
+        };
+        yield* TestClock.adjust("1 minute");
+        // The scan reads the laptop's grant, then the phone leaves while the tablet's lookup runs.
+        const started = yield* Deferred.make<void>();
+        const release = yield* Deferred.make<void>();
+        tailnet.hold = { address: TABLET_ADDRESS, started, release };
+        const phone = yield* signIn(makeDpopKey()).pipe(Effect.forkChild);
+        yield* Deferred.await(started);
+        yield* Fiber.interrupt(phone);
+        // The laptop can no longer be read; the grant seen stands, not the older "no grants".
+        tailnet.devices = { ...tailnet.devices, [LAPTOP_ADDRESS]: { node: null } };
+        expect(yield* refusalOf(signIn(makeDpopKey()))).toBe("no_grant");
+      }).pipe(Effect.provide(layerTest(tailnet)));
+    });
+
     it.effect(
       "a peer with no ID that replaces another during a scan keeps it from deciding",
       () => {

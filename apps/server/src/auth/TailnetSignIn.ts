@@ -3,6 +3,7 @@ import {
   type AuthSessionId,
   type AuthTailnetSignInResult,
   AuthStandardClientScopes,
+  TAILNET_APP_CAPABILITY,
   TAILNET_SUBJECT_PREFIX,
   TailnetAccessError,
   type TailnetDevice,
@@ -238,15 +239,21 @@ export const make = Effect.gen(function* () {
       // A switch after this status is caught below.
       const status = (yield* Ref.get(scanFrom)) ?? (yield* host.status);
       const account = status.selfNodeId;
-      const { granted, unreadable } = yield* policyGrantedPeers(status, (address) =>
-        host.whois(address, { fromServer: true }),
+      // A grant is kept the moment its lookup returns, so if the scan is cut short or its
+      // checks below cannot finish, a later scan that cannot read every peer falls back to
+      // it, never to an older "no grants".
+      const keepGrant = Clock.currentTimeMillis.pipe(
+        Effect.flatMap((at) => Ref.set(lastCleanScan, { account, granted: true, at })),
       );
-      // A grant seen is kept at once, so if the checks below cannot finish, a later scan that
-      // cannot read every peer falls back to it, never to an older "no grants".
-      if (granted.length > 0) {
-        const seenAt = yield* Clock.currentTimeMillis;
-        yield* Ref.set(lastCleanScan, { account, granted: true, at: seenAt });
-      }
+      const { granted, unreadable } = yield* policyGrantedPeers(status, (address) =>
+        host
+          .whois(address, { fromServer: true })
+          .pipe(
+            Effect.tap((node) =>
+              Object.hasOwn(node.capabilities, TAILNET_APP_CAPABILITY) ? keepGrant : Effect.void,
+            ),
+          ),
+      );
       // Lookups that ran after a switch read another tailnet, so the scan says nothing. A
       // device that joined since the scanned list was not looked up, so "no grants" is
       // unproven; a grant found still stands, as it only turns the owner rule off.
