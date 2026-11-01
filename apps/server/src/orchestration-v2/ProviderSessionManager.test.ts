@@ -3,6 +3,7 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import { AgentScope } from "@t3tools/shared/AgentScope";
 import {
+  CheckpointId,
   EnvironmentId,
   type ModelSelection,
   type OrchestrationV2AppThread,
@@ -338,6 +339,7 @@ const makeProviderAdapter = Effect.fnUntraced(function* (
     readonly backgroundTasksEndWithProcess?: boolean;
     readonly hangSessionScopeClose?: boolean;
     readonly startTurn?: Effect.Effect<void>;
+    readonly rollbackThread?: Effect.Effect<void>;
     readonly interruptTurn?: Effect.Effect<void>;
     readonly beforeUnload?: Effect.Effect<void>;
     readonly spawnBeforeOpen?: boolean;
@@ -433,6 +435,7 @@ const makeProviderAdapter = Effect.fnUntraced(function* (
               resumeCount: current.resumeCount + 1,
             })).pipe(Effect.as(threadInput.providerThread)),
           startTurn: () => options.startTurn ?? Effect.void,
+          compactThread: () => Effect.void,
           steerTurn: () => Effect.void,
           interruptTurn: () =>
             Ref.update(state, (current) => ({
@@ -453,7 +456,17 @@ const makeProviderAdapter = Effect.fnUntraced(function* (
             ),
           respondToRuntimeRequest: () => Effect.void,
           readThreadSnapshot: () => unimplemented("readThreadSnapshot unused in test"),
-          rollbackThread: () => unimplemented("rollbackThread unused in test"),
+          rollbackThread: (rollbackInput) =>
+            options.rollbackThread === undefined
+              ? unimplemented("rollbackThread unused in test")
+              : options.rollbackThread.pipe(
+                  Effect.as({
+                    providerThread: rollbackInput.providerThread,
+                    providerTurns: [],
+                    messages: [],
+                    runtimeRequests: [],
+                  }),
+                ),
           forkThread: () => unimplemented("forkThread unused in test"),
         } satisfies ProviderAdapter.ProviderAdapterV2SessionRuntime;
       }),
@@ -486,12 +499,17 @@ function layerTest(input: {
   readonly backgroundTasksEndWithProcess?: boolean;
   readonly hangSessionScopeClose?: boolean;
   readonly startTurn?: Effect.Effect<void>;
+  readonly rollbackThread?: Effect.Effect<void>;
   readonly interruptTurn?: Effect.Effect<void>;
   readonly beforeUnload?: Effect.Effect<void>;
   readonly spawnBeforeOpen?: boolean;
   readonly scopeCloseReached?: Deferred.Deferred<void>;
   readonly serverSettingsLayer?: ReturnType<typeof ServerSettings.layerTest>;
   readonly projectServiceLayer?: Layer.Layer<ProjectService.ProjectService>;
+  readonly replacementAdapter?: {
+    readonly state: Ref.Ref<TestProviderRuntimeState>;
+    readonly active: Ref.Ref<boolean>;
+  };
 }) {
   const layerConfiguredEventSink =
     input.flakyReleaseWrites !== undefined
@@ -522,13 +540,35 @@ function layerTest(input: {
         ? {}
         : { hangSessionScopeClose: input.hangSessionScopeClose }),
       ...(input.startTurn === undefined ? {} : { startTurn: input.startTurn }),
+      ...(input.rollbackThread === undefined ? {} : { rollbackThread: input.rollbackThread }),
       ...(input.interruptTurn === undefined ? {} : { interruptTurn: input.interruptTurn }),
       ...(input.beforeUnload === undefined ? {} : { beforeUnload: input.beforeUnload }),
       ...(input.spawnBeforeOpen === undefined ? {} : { spawnBeforeOpen: input.spawnBeforeOpen }),
       ...(input.scopeCloseReached === undefined
         ? {}
         : { scopeCloseReached: input.scopeCloseReached }),
-    }).pipe(Effect.map(ProviderAdapterRegistry.layerSingle)),
+    }).pipe(
+      Effect.flatMap((adapter) => {
+        const replacement = input.replacementAdapter;
+        if (replacement === undefined)
+          return Effect.succeed(ProviderAdapterRegistry.layerSingle(adapter));
+        // Mirrors a provider instance rebuilt after its settings changed.
+        return makeProviderAdapter(replacement.state).pipe(
+          Effect.map((rebuilt) =>
+            Layer.succeed(
+              ProviderAdapterRegistry.ProviderAdapterRegistryV2,
+              ProviderAdapterRegistry.ProviderAdapterRegistryV2.of({
+                get: () =>
+                  Ref.get(replacement.active).pipe(
+                    Effect.map((active) => (active ? rebuilt : adapter)),
+                  ),
+                list: () => Effect.succeed([adapter.instanceId]),
+              }),
+            ),
+          ),
+        );
+      }),
+    ),
   );
   const layerConfiguredMcpRegistry =
     input.pauseResolve === undefined
@@ -972,6 +1012,357 @@ it.effect("ProviderSessionManagerV2 closes every live session for a provider ins
       ),
     );
   }),
+);
+
+it.effect(
+  "ProviderSessionManagerV2 reopens an idle session on the adapter rebuilt from changed settings",
+  () =>
+    Effect.gen(function* () {
+      const state = yield* Ref.make(emptyState);
+      const replacementState = yield* Ref.make(emptyState);
+      const replaced = yield* Ref.make(false);
+      const effect = Effect.gen(function* () {
+        const eventSink = yield* EventSink.EventSinkV2;
+        const idAllocator = yield* IdAllocator.IdAllocatorV2;
+        const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+        const now = yield* DateTime.now;
+        const threadId = ThreadId.make("thread-provider-session-manager-settings-change");
+        const providerSessionId = yield* idAllocator.allocate.providerSession({
+          providerInstanceId: modelSelection.instanceId,
+          threadId,
+        });
+        const open = manager.open({ threadId, providerSessionId, modelSelection, runtimePolicy });
+
+        yield* eventSink.write({
+          events: [yield* makeThreadCreatedEvent({ idAllocator, threadId, now })],
+        });
+        const staleRuntime = yield* open;
+        yield* Ref.set(replaced, true);
+        const nextRuntime = yield* open;
+
+        assert.equal(
+          (yield* Ref.get(replacementState)).openCount,
+          1,
+          "next turn should open its session on the adapter built from the new settings",
+        );
+        assert.notStrictEqual(nextRuntime, staleRuntime);
+        assert.equal(
+          (yield* Ref.get(state)).closeCount,
+          1,
+          "the session opened with the old settings should be released",
+        );
+      });
+
+      yield* effect.pipe(
+        Effect.provide(
+          layerTest({
+            state,
+            idleTimeoutMs: 60_000,
+            replacementAdapter: { state: replacementState, active: replaced },
+          }),
+        ),
+      );
+    }),
+);
+
+it.effect(
+  "ProviderSessionManagerV2 keeps a session rebuilt settings made stale when a sibling turn starts while it is checked",
+  () =>
+    Effect.gen(function* () {
+      const state = yield* Ref.make(emptyState);
+      const replacementState = yield* Ref.make(emptyState);
+      const replaced = yield* Ref.make(false);
+      const probeReached = yield* Deferred.make<void>();
+      const continueProbe = yield* Deferred.make<void>();
+      yield* Effect.gen(function* () {
+        const eventSink = yield* EventSink.EventSinkV2;
+        const idAllocator = yield* IdAllocator.IdAllocatorV2;
+        const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+        const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
+        const now = yield* DateTime.now;
+        const busy = ThreadId.make("thread-provider-session-manager-settings-busy");
+        const next = ThreadId.make("thread-provider-session-manager-settings-next");
+        const providerSessionId = idAllocator.derive.providerSession({
+          providerInstanceId: modelSelection.instanceId,
+        });
+        const open = (threadId: ThreadId) =>
+          manager.open({ threadId, providerSessionId, modelSelection, runtimePolicy });
+        yield* eventSink.write({
+          events: [
+            yield* makeThreadCreatedEvent({ idAllocator, threadId: busy, now }),
+            yield* makeThreadCreatedEvent({ idAllocator, threadId: next, now }),
+          ],
+        });
+        const runtime = yield* open(busy);
+        yield* Ref.set(replaced, true);
+        const opening = yield* open(next).pipe(Effect.forkChild);
+        yield* Deferred.await(probeReached);
+        const runId = idAllocator.derive.run({ threadId: busy, ordinal: 1 });
+        yield* runtime.startTurn({
+          appThread: (yield* projectionStore.getThreadProjection(busy)).thread,
+          threadId: busy,
+          runId,
+          runOrdinal: 1,
+          providerTurnOrdinal: 1,
+          attemptId: idAllocator.derive.runAttempt({ runId, attemptOrdinal: 1 }),
+          rootNodeId: idAllocator.derive.rootNode({ runId }),
+          providerThread: makeProviderThread({
+            idAllocator,
+            threadId: busy,
+            providerSessionId,
+            now,
+            nativeThreadId: `native-${busy}`,
+          }),
+          message: {
+            createdBy: "user",
+            creationSource: "web",
+            messageId: yield* idAllocator.allocate.message({ threadId: busy, ordinal: 1 }),
+            text: "turn",
+            attachments: [],
+          },
+          modelSelection,
+          runtimePolicy,
+        });
+        yield* Deferred.succeed(continueProbe, undefined);
+
+        assert.strictEqual(yield* Fiber.join(opening), runtime);
+        assert.equal((yield* Ref.get(state)).closeCount, 0);
+        assert.equal((yield* Ref.get(replacementState)).openCount, 0);
+      }).pipe(
+        Effect.provide(
+          layerTest({
+            state,
+            idleTimeoutMs: 60_000,
+            hasPendingBackgroundWork: Deferred.succeed(probeReached, undefined).pipe(
+              Effect.andThen(Deferred.await(continueProbe)),
+              Effect.as(false),
+            ),
+            replacementAdapter: { state: replacementState, active: replaced },
+          }),
+        ),
+      );
+    }),
+);
+
+it.effect(
+  "ProviderSessionManagerV2 keeps a session rebuilt settings made stale while a compaction runs on it",
+  () =>
+    Effect.gen(function* () {
+      const state = yield* Ref.make(emptyState);
+      const replacementState = yield* Ref.make(emptyState);
+      const replaced = yield* Ref.make(false);
+      yield* Effect.gen(function* () {
+        const eventSink = yield* EventSink.EventSinkV2;
+        const idAllocator = yield* IdAllocator.IdAllocatorV2;
+        const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+        const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
+        const now = yield* DateTime.now;
+        const compacting = ThreadId.make("thread-provider-session-manager-settings-compacting");
+        const next = ThreadId.make("thread-provider-session-manager-settings-after-compact");
+        const providerSessionId = idAllocator.derive.providerSession({
+          providerInstanceId: modelSelection.instanceId,
+        });
+        const open = (threadId: ThreadId) =>
+          manager.open({ threadId, providerSessionId, modelSelection, runtimePolicy });
+        yield* eventSink.write({
+          events: [
+            yield* makeThreadCreatedEvent({ idAllocator, threadId: compacting, now }),
+            yield* makeThreadCreatedEvent({ idAllocator, threadId: next, now }),
+          ],
+        });
+        const runtime = yield* open(compacting);
+        const runId = idAllocator.derive.run({ threadId: compacting, ordinal: 1 });
+        yield* runtime.compactThread!({
+          appThread: (yield* projectionStore.getThreadProjection(compacting)).thread,
+          threadId: compacting,
+          runId,
+          runOrdinal: 1,
+          providerTurnOrdinal: 1,
+          attemptId: idAllocator.derive.runAttempt({ runId, attemptOrdinal: 1 }),
+          rootNodeId: idAllocator.derive.rootNode({ runId }),
+          providerThread: makeProviderThread({
+            idAllocator,
+            threadId: compacting,
+            providerSessionId,
+            now,
+            nativeThreadId: `native-${compacting}`,
+          }),
+          message: {
+            createdBy: "user",
+            creationSource: "web",
+            messageId: yield* idAllocator.allocate.message({ threadId: compacting, ordinal: 1 }),
+            text: "/compact",
+            attachments: [],
+          },
+          modelSelection,
+          runtimePolicy,
+        });
+        yield* Ref.set(replaced, true);
+
+        assert.strictEqual(yield* open(next), runtime);
+        assert.equal(
+          (yield* Ref.get(state)).closeCount,
+          0,
+          "an unfinished compaction keeps its process",
+        );
+        assert.equal((yield* Ref.get(replacementState)).openCount, 0);
+      }).pipe(
+        Effect.provide(
+          layerTest({
+            state,
+            idleTimeoutMs: 60_000,
+            replacementAdapter: { state: replacementState, active: replaced },
+          }),
+        ),
+      );
+    }),
+);
+
+it.effect(
+  "ProviderSessionManagerV2 retires a session settings made stale only after a rollback on it ends",
+  () =>
+    Effect.gen(function* () {
+      const state = yield* Ref.make(emptyState);
+      const replacementState = yield* Ref.make(emptyState);
+      const replaced = yield* Ref.make(false);
+      const rollbackStarted = yield* Deferred.make<void>();
+      const finishRollback = yield* Deferred.make<void>();
+      yield* Effect.gen(function* () {
+        const eventSink = yield* EventSink.EventSinkV2;
+        const idAllocator = yield* IdAllocator.IdAllocatorV2;
+        const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+        const now = yield* DateTime.now;
+        const rollingBack = ThreadId.make("thread-provider-session-manager-settings-rollback");
+        const next = ThreadId.make("thread-provider-session-manager-settings-after-rollback");
+        const providerSessionId = idAllocator.derive.providerSession({
+          providerInstanceId: modelSelection.instanceId,
+        });
+        const open = (threadId: ThreadId) =>
+          manager.open({ threadId, providerSessionId, modelSelection, runtimePolicy });
+        yield* eventSink.write({
+          events: [
+            yield* makeThreadCreatedEvent({ idAllocator, threadId: rollingBack, now }),
+            yield* makeThreadCreatedEvent({ idAllocator, threadId: next, now }),
+          ],
+        });
+        const runtime = yield* open(rollingBack);
+        const rollback = yield* runtime
+          .rollbackThread({
+            providerThread: makeProviderThread({
+              idAllocator,
+              threadId: rollingBack,
+              providerSessionId,
+              now,
+              nativeThreadId: `native-${rollingBack}`,
+            }),
+            target: {
+              type: "thread_start",
+              checkpointId: CheckpointId.make("checkpoint-settings-rollback"),
+              appRunOrdinal: 0,
+            },
+            providerThreadTurns: [],
+          })
+          .pipe(Effect.forkChild);
+        yield* Deferred.await(rollbackStarted);
+        yield* Ref.set(replaced, true);
+
+        assert.strictEqual(yield* open(next), runtime);
+        assert.equal(
+          (yield* Ref.get(state)).closeCount,
+          0,
+          "a rollback in flight keeps its process",
+        );
+
+        yield* Deferred.succeed(finishRollback, undefined);
+        yield* Fiber.join(rollback);
+        assert.notStrictEqual(yield* open(next), runtime);
+        assert.equal((yield* Ref.get(replacementState)).openCount, 1);
+      }).pipe(
+        Effect.provide(
+          layerTest({
+            state,
+            idleTimeoutMs: 60_000,
+            rollbackThread: Deferred.succeed(rollbackStarted, undefined).pipe(
+              Effect.andThen(Deferred.await(finishRollback)),
+            ),
+            replacementAdapter: { state: replacementState, active: replaced },
+          }),
+        ),
+      );
+    }),
+);
+
+it.effect(
+  "ProviderSessionManagerV2 does not send a rollback to a stale session already being released",
+  () =>
+    Effect.gen(function* () {
+      const state = yield* Ref.make(emptyState);
+      const replacementState = yield* Ref.make(emptyState);
+      const replaced = yield* Ref.make(false);
+      const rollbackSent = yield* Ref.make(false);
+      const scopeCloseReached = yield* Deferred.make<void>();
+      yield* Effect.gen(function* () {
+        const eventSink = yield* EventSink.EventSinkV2;
+        const idAllocator = yield* IdAllocator.IdAllocatorV2;
+        const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+        const now = yield* DateTime.now;
+        const rollingBack = ThreadId.make("thread-provider-session-manager-released-rollback");
+        const next = ThreadId.make("thread-provider-session-manager-releasing-open");
+        const providerSessionId = idAllocator.derive.providerSession({
+          providerInstanceId: modelSelection.instanceId,
+        });
+        const open = (threadId: ThreadId) =>
+          manager.open({ threadId, providerSessionId, modelSelection, runtimePolicy });
+        yield* eventSink.write({
+          events: [
+            yield* makeThreadCreatedEvent({ idAllocator, threadId: rollingBack, now }),
+            yield* makeThreadCreatedEvent({ idAllocator, threadId: next, now }),
+          ],
+        });
+        const runtime = yield* open(rollingBack);
+        yield* Ref.set(replaced, true);
+        const opening = yield* open(next).pipe(Effect.forkChild);
+        yield* Deferred.await(scopeCloseReached);
+
+        const rollback = yield* runtime
+          .rollbackThread({
+            providerThread: makeProviderThread({
+              idAllocator,
+              threadId: rollingBack,
+              providerSessionId,
+              now,
+              nativeThreadId: `native-${rollingBack}`,
+            }),
+            target: {
+              type: "thread_start",
+              checkpointId: CheckpointId.make("checkpoint-released-rollback"),
+              appRunOrdinal: 0,
+            },
+            providerThreadTurns: [],
+          })
+          .pipe(Effect.exit);
+
+        assert.isTrue(Exit.isFailure(rollback));
+        assert.isFalse(
+          yield* Ref.get(rollbackSent),
+          "a rollback must not reach a process that is being torn down",
+        );
+        yield* TestClock.adjust("31 seconds");
+        assert.notStrictEqual(yield* Fiber.join(opening), runtime);
+      }).pipe(
+        Effect.provide(
+          layerTest({
+            state,
+            idleTimeoutMs: 60_000,
+            spawnBeforeOpen: true,
+            hangSessionScopeClose: true,
+            scopeCloseReached,
+            rollbackThread: Ref.set(rollbackSent, true),
+            replacementAdapter: { state: replacementState, active: replaced },
+          }),
+        ),
+      );
+    }),
 );
 
 it.effect("ProviderSessionManagerV2 opens a duplicate session only once", () =>
