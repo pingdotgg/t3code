@@ -923,7 +923,7 @@ export const upCommand = Command.make("up", {
   ),
   lan: routeFlag(
     "lan",
-    "Allow LAN and tailnet connections. Anyone there can reach the port; a pairing code is the only lock. Turn off with --no-lan.",
+    "Allow LAN and tailnet connections. Anyone there can reach the port; a pairing code is the only lock, apart from Tailscale sign-in for tailnet devices. Turn off with --no-lan.",
   ),
   owner: Flag.String("owner").pipe(
     Flag.withDescription("Tailscale owner login for a tagged machine. Implies --tailscale."),

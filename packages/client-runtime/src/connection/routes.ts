@@ -250,7 +250,7 @@ export function mergeLearnedRoutes(input: {
     reported.set(url.origin, url);
     if (endpoint.kind === "tailnet") tailscaleOrigins.add(url.origin);
   }
-  const normalized = (url: string) => url.replace(/\/+$/, "");
+  const normalized = httpBaseUrlKey;
   const known = new Set(
     saved.flatMap((route) => {
       const url = routeHttpBaseUrl(route);

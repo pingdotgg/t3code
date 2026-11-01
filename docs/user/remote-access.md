@@ -83,7 +83,8 @@ t3 up --lan
 
 For a server in a terminal, run `t3 serve --lan`. Either way, T3 Code then
 accepts connections from your local network and tailnet, so a pairing code is
-all that keeps other devices on them out.
+all that keeps other devices on them out, apart from
+[Tailscale sign-in](#tailscale-sign-in) for tailnet devices.
 
 If a server is already running, generate a fresh link without restarting it:
 
@@ -265,7 +266,7 @@ that port is in use, Settings shows the port it uses, and other devices add the
 laptop by name with that port.
 
 To cut off one device on one machine, open **Settings → Environments** on a
-device that can manage access there (its scopes include `access:write`: one
+device that can manage access there (its scopes include `access:write` and `orchestration:read`: one
 paired with a default `t3 pair` code, one whose grant includes `admin`, or your
 own devices while your policy grants none), and **Block** it under **Tailscale
 devices on <machine>**. Its sessions there end now, and **Unblock** undoes it. A

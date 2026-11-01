@@ -116,6 +116,17 @@ describe("learned routes", () => {
     routes?.map((route) => connectionRouteId(route.target)) ?? null;
   const profileOf = (route: ConnectionRoute) => Option.getOrThrow(route.profile);
 
+  it("knows a saved address reported with or without its default port", () => {
+    const saved = direct("tailnet", "http://100.88.1.2:80/");
+    const routes = mergeLearnedRoutes({
+      entry: entryWithRoutes(relayOnly, [saved, RELAY]),
+      activeRoute: RELAY,
+      reported: [{ httpBaseUrl: "http://100.88.1.2/" }],
+      allowInsecure: true,
+    });
+    expect(ids(routes)?.some((id) => id.startsWith("learned:")) ?? false).toBe(false);
+  });
+
   it("learns a LAN address over T3 Connect, ahead of it, using the T3 Connect credential", () => {
     const routes = mergeLearnedRoutes({
       entry: relayOnly,
