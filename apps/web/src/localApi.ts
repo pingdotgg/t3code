@@ -19,7 +19,7 @@ async function shouldUseStyledContextMenu(): Promise<boolean> {
   try {
     const { ensureClientSettingsHydrated, getClientSettings } = await import("~/hooks/useSettings");
     await ensureClientSettingsHydrated();
-    return getClientSettings().styledContextMenuEnabled === true;
+    return getClientSettings().styledContextMenuEnabled;
   } catch {
     return false;
   }
