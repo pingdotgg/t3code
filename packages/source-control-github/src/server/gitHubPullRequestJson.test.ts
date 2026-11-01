@@ -292,6 +292,20 @@ describe("pull request list decoding", () => {
     ]);
   });
 
+  it("keeps review required when an approval falls short of the branch's required count", () => {
+    const batch = expectSuccess(
+      decodePullRequestListJson(
+        listJson([
+          {
+            reviewDecision: "REVIEW_REQUIRED",
+            latestReviews: [{ author: user("octocat"), state: "APPROVED" }],
+          },
+        ]),
+      ),
+    );
+    expect(batch.items.map((entry) => entry.reviewDecision)).toEqual(["review-required"]);
+  });
+
   it("skips malformed entries but still counts them, so paging does not stop early", () => {
     const batch = expectSuccess(
       decodePullRequestListJson(listJson([{}, { number: "not-a-number" }])),
