@@ -3297,6 +3297,15 @@ describe("OrchestratorMcpService thread list", () => {
       );
     }).pipe(Effect.provide(service)),
   );
+
+  it.effect("points a caller outside any thread at allProjects when it omits projectId", () =>
+    Effect.gen(function* () {
+      const mcp = yield* OrchestratorMcpService.OrchestratorMcpService;
+      const error = yield* mcp.listThreads(client, {}).pipe(Effect.flip);
+      assert.equal(error.code, "target_required");
+      assert.include(error.message, "allProjects");
+    }).pipe(Effect.provide(service)),
+  );
 });
 
 describe("OrchestratorMcpService thread stop", () => {
