@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { isPublicFaviconHost } from "./hostClassification.ts";
+import { isLocalLoopbackHost, isPublicFaviconHost } from "./hostClassification.ts";
 
 describe("isPublicFaviconHost", () => {
   it("treats public hosts as public", () => {
@@ -107,5 +107,27 @@ describe("isPublicFaviconHost", () => {
   it("rejects malformed IPv4 text as a public host", () => {
     expect(isPublicFaviconHost("10.0.0.999")).toBe(true);
     expect(isPublicFaviconHost("10.0.0")).toBe(true);
+  });
+});
+
+describe("isLocalLoopbackHost", () => {
+  it("treats IPv4-mapped 127/8 as loopback, and only 127/8", () => {
+    for (const host of [
+      "::ffff:127.0.0.1",
+      "::FFFF:127.1.2.3",
+      new URL("http://[::ffff:127.0.0.1]:3773/").hostname,
+      "::ffff:7fff:fffe",
+    ]) {
+      expect(isLocalLoopbackHost(host), host).toBe(true);
+    }
+    for (const host of [
+      "::ffff:192.168.1.10",
+      "::7f00:1",
+      "::ffff:127..0.1",
+      "::ffff:0x7f.0.0.1",
+      "[::ffff:7f00:1",
+    ]) {
+      expect(isLocalLoopbackHost(host), host).toBe(false);
+    }
   });
 });
