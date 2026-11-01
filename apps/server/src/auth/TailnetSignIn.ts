@@ -241,9 +241,18 @@ export const make = Effect.gen(function* () {
       const { granted, unreadable } = yield* policyGrantedPeers(status, (address) =>
         host.whois(address, { fromServer: true }),
       );
-      // Lookups that ran after a switch read another tailnet, so the scan says nothing.
+      // Lookups that ran after a switch read another tailnet, and a device that joined since
+      // the scanned list was not looked up, so either way the scan says nothing.
       const after = yield* host.freshStatus;
       if (after.selfNodeId !== account) return yield* Effect.fail(["this host"]);
+      const scanned = new Set(status.peers.map((peer) => peer.stableNodeId));
+      const joined = after.peers.filter((peer) => !scanned.has(peer.stableNodeId));
+      if (
+        joined.length > 0 ||
+        after.unidentifiedPeerAddresses.length > status.unidentifiedPeerAddresses.length
+      ) {
+        return yield* Effect.fail(joined.map((peer) => peer.hostName ?? peer.stableNodeId));
+      }
       const now = yield* Clock.currentTimeMillis;
       // "No grants" is rechecked sooner, so a new grant is noticed within a minute.
       const ttlOf = (found: boolean) => (found ? POLICY_SCAN_TTL : NO_GRANT_SCAN_TTL);

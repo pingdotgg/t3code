@@ -803,6 +803,35 @@ it.layer(NodeServices.layer)("TailnetSignIn", (it) => {
       }).pipe(Effect.provide(layerTest(tailnet)));
     });
 
+    it.effect("a device that joins during a policy scan keeps the scan from deciding", () => {
+      const TABLET_ADDRESS = "100.88.1.9";
+      const tablet = { ID: "nTablet", TailscaleIPs: [TABLET_ADDRESS], UserID: `int64:${OWNER_ID}` };
+      const tailnet: Tailnet = {
+        status: hostStatus({ Peer: { phone: peers.phone, tablet } }),
+        node: phoneNode(),
+        devices: {
+          [TABLET_ADDRESS]: {
+            node: phoneNode({ StableID: "nTablet", Addresses: [`${TABLET_ADDRESS}/32`] }),
+          },
+        },
+      };
+      return Effect.gen(function* () {
+        const started = yield* Deferred.make<void>();
+        const release = yield* Deferred.make<void>();
+        tailnet.hold = { address: TABLET_ADDRESS, started, release };
+        const phone = yield* refusalOf(signIn(makeDpopKey())).pipe(Effect.forkChild);
+        yield* Deferred.await(started);
+        // The laptop joins with a grant after the scan read its list of devices.
+        tailnet.status = hostStatus({ Peer: { ...peers, tablet } });
+        tailnet.devices = {
+          ...tailnet.devices,
+          [LAPTOP_ADDRESS]: { node: laptop, capMap: granted({ scopes: ["read"] }) },
+        };
+        yield* Deferred.succeed(release, undefined);
+        expect(yield* Fiber.join(phone)).toBe("policy_unknown");
+      }).pipe(Effect.provide(layerTest(tailnet)));
+    });
+
     it.effect("with no node ID for this host, the owner rule does not apply", () => {
       const { ID: _, ...self } = hostStatus().Self;
       const tailnet = withLaptop();

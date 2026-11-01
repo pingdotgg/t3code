@@ -511,7 +511,7 @@ const formatTailscale = (
       ? [
           "Add this grant to your tailnet policy:",
           indent(tailnetGrantSnippet(src, dst, port)),
-          "Let your untagged devices in without a grant: `t3 tailscale require-grant off`.",
+          "Let your untagged devices in without a grant while your policy grants no device here: `t3 tailscale require-grant off`.",
         ]
       : [
           "While your tailnet policy grants no device here, your untagged devices can sign in, agents on them included.",
