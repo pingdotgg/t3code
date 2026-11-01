@@ -190,13 +190,14 @@ export function makeAntigravityAcpAdapterFlavor(
     runtimeHarness: "Antigravity",
     capabilities: AntigravityProviderCapabilitiesV2,
     makeRuntime,
-    buildPrompt: ({ text, attachments, promptCapabilities }) =>
+    buildAttachmentPrompt: ({ text, attachments, promptCapabilities }) =>
       buildAntigravityPrompt({
         input: text,
         attachments,
         attachmentsDir: options.host.paths.attachmentsDir,
         promptCapabilities,
       }).pipe(
+        Effect.map((blocks) => (text.trim() ? blocks.slice(1) : blocks)),
         Effect.provideService(FileSystem.FileSystem, options.fileSystem),
         Effect.provideService(Path.Path, options.path),
       ),
