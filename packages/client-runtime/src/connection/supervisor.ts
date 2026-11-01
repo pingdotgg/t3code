@@ -56,6 +56,7 @@ const LONG_RESUME_PROBE_TIMEOUT = "1500 millis";
 // the host answers while the socket stays silent, the socket is dead.
 const SILENT_SOCKET_CHECK_AFTER = "500 millis";
 const SILENT_SOCKET_RECHECK_EVERY = "1 second";
+const FRAME_CHECK_EVERY = "100 millis";
 // Off the LAN one lost packet can stall a live socket for a second, so a remote
 // socket must stay silent this long, except after a long resume. It must end
 // before QUICK_CONNECTION_PROBE_TIMEOUT so a resume replaces a silent socket
@@ -686,17 +687,26 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
     const socketSilent = lease.session.inboundFrames.pipe(
       Effect.map((frames) => frames === framesBefore),
     );
-    // A radio still waking up or a stale pooled connection can fail one check.
-    while ((yield* driver.checkHost(lease.prepared)) !== "answered") {
-      if (!(yield* socketSilent)) return "alive" as const;
-      yield* Effect.sleep(SILENT_SOCKET_RECHECK_EVERY);
-    }
-    if (!answersQuickly(routeKind) && !longResume) {
-      const silentFor = (yield* Clock.monotonicTimeNanos) - startedAt;
-      const remaining = Duration.toNanosUnsafe(REMOTE_SILENT_SOCKET_AFTER) - silentFor;
-      if (remaining > 0n) yield* Effect.sleep(Duration.nanos(remaining));
-    }
-    return (yield* socketSilent) ? ("silent" as const) : ("alive" as const);
+    // The session only counts frames, so a host check slower than the probe
+    // deadline would otherwise hide a frame until after the socket is replaced.
+    const frameArrives = Effect.sleep(FRAME_CHECK_EVERY).pipe(
+      Effect.andThen(socketSilent),
+      Effect.repeat({ while: (silent) => silent }),
+      Effect.as("alive" as const),
+    );
+    const hostAnswersWhileSilent = Effect.gen(function* () {
+      // A radio still waking up or a stale pooled connection can fail one check.
+      while ((yield* driver.checkHost(lease.prepared)) !== "answered") {
+        yield* Effect.sleep(SILENT_SOCKET_RECHECK_EVERY);
+      }
+      if (!answersQuickly(routeKind) && !longResume) {
+        const silentFor = (yield* Clock.monotonicTimeNanos) - startedAt;
+        const remaining = Duration.toNanosUnsafe(REMOTE_SILENT_SOCKET_AFTER) - silentFor;
+        if (remaining > 0n) yield* Effect.sleep(Duration.nanos(remaining));
+      }
+      return (yield* socketSilent) ? ("silent" as const) : ("alive" as const);
+    });
+    return yield* Effect.race(hostAnswersWhileSilent, frameArrives);
   });
 
   // Returning to the app, an explicit retry, and the network reporting offline
