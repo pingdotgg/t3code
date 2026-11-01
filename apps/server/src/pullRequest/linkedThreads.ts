@@ -6,6 +6,7 @@ import {
   PullRequestLinkedThreadsResult,
   PullRequestOperationError,
   type ThreadPullRequestKey,
+  type ProjectId,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
@@ -52,6 +53,33 @@ export const listLinkedPullRequestThreads = Effect.fn("listLinkedPullRequestThre
       new PullRequestOperationError({
         operation: "linkedThreads",
         detail: "Could not load linked threads.",
+        cause,
+      }),
+  ),
+);
+
+export const listLinkedPullRequestRepositories = Effect.fn("listLinkedPullRequestRepositories")(
+  function* (projectIds: ReadonlyArray<ProjectId>) {
+    if (projectIds.length === 0) return [];
+    const sql = yield* SqlClient.SqlClient;
+    return yield* sql<{ projectId: ProjectId; host: string; repository: string }>`
+      SELECT DISTINCT t.project_id AS "projectId",
+        lower(json_extract(link.value, '$.host')) AS host,
+        json_extract(link.value, '$.repository') AS repository
+      FROM orchestration_v2_projection_threads AS t
+      JOIN json_each(t.payload_json, '$.pullRequests') AS link
+      WHERE ${sql.in("t.project_id", projectIds)}
+        AND t.deleted_at IS NULL
+        AND json_extract(t.payload_json, '$.lineage.sideChat') IS NOT 1
+        AND json_extract(link.value, '$.source') != 'stack-dismissed'
+      ORDER BY "projectId", host, repository
+    `.pipe(NodeSqliteClient.readOnly);
+  },
+  Effect.mapError(
+    (cause) =>
+      new PullRequestOperationError({
+        operation: "listProjects",
+        detail: "Could not load linked repositories.",
         cause,
       }),
   ),
