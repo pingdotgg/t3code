@@ -154,6 +154,18 @@ function writeSystemMessage(
   terminal.write(`\r\n[terminal] ${message}\r\n`);
 }
 
+function copyTerminalProgramText(text: string): void {
+  void writeTextToClipboard(text, "terminal output").catch((error: unknown) => {
+    toastManager.add(
+      stackedThreadToast({
+        type: "error",
+        title: "Failed to copy terminal output",
+        description: error instanceof Error ? error.message : "An error occurred.",
+      }),
+    );
+  });
+}
+
 export function writeTerminalOutputUpdate(
   terminal: Pick<GhosttyTerminalSurface, "resetAndWrite" | "write">,
   update: TerminalOutputUpdate,
@@ -684,6 +696,7 @@ function TerminalSessionViewport({
         beforeKey: (event) => handleBeforeKey(event),
         onLinkActivate: (text, event) => handleLinkActivate(text, event),
         canActivateLink: (text) => canActivateTerminalLink(text),
+        onClipboardWrite: copyTerminalProgramText,
         // Surface listeners start before WASM loading finishes and the terminal handler exists.
         onContextMenu: (event) => {
           if (terminalRef.current) void showTerminalContextMenu(event);
