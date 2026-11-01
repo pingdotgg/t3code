@@ -302,33 +302,68 @@ const layerRelayClient = Layer.unwrap(
   }),
 );
 
-const layerHttpServer = Layer.unwrap(
+const isAddressInUse = (cause: unknown) =>
+  typeof cause === "object" && cause !== null && "code" in cause && cause.code === "EADDRINUSE";
+
+export const layerHttpServer = Layer.unwrap(
   Effect.gen(function* () {
     const config = yield* ServerConfig.ServerConfig;
-    return NodeHttpServer.layer(
-      () => {
-        const server = rejectRequestsUntilServing(
-          guardHttpResponseWriteErrors(NodeHttp.createServer()),
-        );
-        if (config.privateNetworkOnly) {
-          server.on("connection", (socket) => {
-            if (!acceptsPrivateNetworkConnection(socket)) {
-              socket.destroy();
-            }
-          });
-        }
-        return server;
-      },
-      {
-        host: config.host ?? "127.0.0.1",
-        port: config.port,
-        gracefulShutdownTimeout: HTTP_PREEMPTIVE_SHUTDOWN_GRACE_MS,
-        // Context takeover stays enabled (ws default) so the compression
-        // window is shared across frames — that also makes small frames cheap
-        // to compress, so no size threshold is set (ws only honors
-        // `threshold` when context takeover is disabled).
-        websocket: { perMessageDeflate: true },
-      },
+    const listen = (host: string) =>
+      NodeHttpServer.layer(
+        () => {
+          const server = rejectRequestsUntilServing(
+            guardHttpResponseWriteErrors(NodeHttp.createServer()),
+          );
+          if (config.privateNetworkOnly) {
+            server.on("connection", (socket) => {
+              if (!acceptsPrivateNetworkConnection(socket)) {
+                socket.destroy();
+              }
+            });
+          }
+          return server;
+        },
+        {
+          host,
+          port: config.port,
+          gracefulShutdownTimeout: HTTP_PREEMPTIVE_SHUTDOWN_GRACE_MS,
+          // Context takeover stays enabled (ws default) so the compression
+          // window is shared across frames — that also makes small frames cheap
+          // to compress, so no size threshold is set (ws only honors
+          // `threshold` when context takeover is disabled).
+          websocket: { perMessageDeflate: true },
+        },
+      );
+    const listening = Layer.merge(
+      listen(config.host ?? "127.0.0.1"),
+      Layer.succeed(ServerConfig.ServerConfig, config),
+    );
+    if (!config.privateNetworkOnly) return listening;
+    // The managed service only chose the wildcard itself, so a port held on one
+    // interface should not cost the local server; layers above see the real host.
+    return listening.pipe(
+      Layer.catchTag("ServeError", (error) =>
+        Layer.unwrap(
+          isAddressInUse(error.cause)
+            ? Effect.succeed(
+                Layer.merge(
+                  listen("127.0.0.1").pipe(
+                    Layer.tap(() =>
+                      Effect.logWarning(
+                        `Port ${config.port} is taken on another interface; listening on 127.0.0.1 only.`,
+                      ),
+                    ),
+                  ),
+                  Layer.succeed(ServerConfig.ServerConfig, {
+                    ...config,
+                    host: "127.0.0.1",
+                    privateNetworkOnly: undefined,
+                  }),
+                ),
+              )
+            : Effect.fail(error),
+        ),
+      ),
     );
   }),
 );
@@ -813,7 +848,7 @@ const layerMakeServer = Layer.unwrap(
 
         const launcher = yield* ServiceLauncherClient.ServiceLauncherClient;
         const state = yield* makePersistedServerRuntimeState({
-          config,
+          config: yield* ServerConfig.ServerConfig,
           port: address.port,
           serviceManaged: launcher.managed,
         });
