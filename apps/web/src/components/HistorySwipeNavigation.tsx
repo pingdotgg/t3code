@@ -17,6 +17,8 @@ type SwipeGesture =
       direction: HistoryDirection;
       distance: number;
       deltas: number[];
+      travelX: number;
+      travelY: number;
       y: number;
       bounds: SwipeBounds;
     }
@@ -68,6 +70,8 @@ function lockSwipeAxis(
     direction,
     distance: Math.abs(sumX),
     deltas: [],
+    travelX: Math.abs(sumX),
+    travelY: Math.abs(sumY),
     y: pending.y,
     bounds: readMainContentBounds(),
   };
@@ -130,6 +134,13 @@ export function HistorySwipeNavigation() {
       } else {
         const delta = gesture.direction === "back" ? -event.deltaX : event.deltaX;
         if (event.deltaX === 0 && event.deltaY === 0) return release();
+        gesture.travelX += Math.abs(event.deltaX);
+        gesture.travelY += Math.abs(event.deltaY);
+        // A scroll that locked on a diagonal start can turn out to be vertical.
+        if (gesture.travelY > gesture.travelX) {
+          gesture = { kind: "ignored" };
+          return hideIndicator();
+        }
         gesture.deltas = [...gesture.deltas.slice(1 - MOMENTUM_SAMPLE_SIZE), delta];
         if (isMomentumTail(gesture.deltas)) return release();
         gesture.distance = Math.max(0, gesture.distance + delta);
