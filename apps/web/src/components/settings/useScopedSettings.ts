@@ -15,6 +15,7 @@ import {
 } from "@t3tools/contracts";
 
 import { persistClientSettingsPatch, useMergedSettings } from "../../hooks/useSettings";
+import { appAtomRegistry } from "../../rpc/atomRegistry";
 import { serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { toastManager } from "../ui/toast";
@@ -24,11 +25,27 @@ import {
   planProjectOverridesClear,
   planScopedSettingsClear,
   planScopedSettingsPatch,
+  pendingScopedWriteApplies,
+  pendingScopedWritesAtom,
   scopedSettingsAreMixed,
   scopedSettingsSource,
+  type PendingScopedWrite,
   type ProjectOverrideEntry,
   type ScopedSettingsPatch,
 } from "./scopedSettings";
+
+const savedSettings = (environmentId: PendingScopedWrite["environmentId"]) =>
+  appAtomRegistry.get(serverEnvironment.configValueAtom(environmentId))?.settings;
+
+function updatePendingScopedWrites(
+  update: (writes: readonly PendingScopedWrite[]) => readonly PendingScopedWrite[],
+) {
+  appAtomRegistry.update(pendingScopedWritesAtom, (current) =>
+    update(current).filter((write) =>
+      pendingScopedWriteApplies(write, savedSettings(write.environmentId)),
+    ),
+  );
+}
 
 export function useScopedSettings<T = UnifiedSettings>(
   selector?: (settings: UnifiedSettings) => T,
@@ -59,41 +76,65 @@ function useRunScopedPlan() {
       onFailed?.();
       return;
     }
+    const pending = plan.serverWrites.map(({ environmentId, patch }): PendingScopedWrite => ({
+      environmentId,
+      patch,
+    }));
+    updatePendingScopedWrites((current) => [...current, ...pending]);
+    const settle = (target: Pick<PendingScopedWrite, "environmentId" | "patch">, saved: boolean) =>
+      updatePendingScopedWrites((current) =>
+        current.flatMap((write) => {
+          if (write.environmentId !== target.environmentId || write.patch !== target.patch)
+            return [write];
+          const savedOver = savedSettings(write.environmentId);
+          return saved && savedOver !== undefined ? [{ ...write, savedOver }] : [];
+        }),
+      );
     void persistScopedSettingsPatch(
       plan,
       async (request) => {
         const missing = requiredScopesForServerSettingsPatch(request.input.patch).find(
           (scope) => !readEnvironmentScope(request.environmentId, scope),
         );
-        if (missing)
-          return AsyncResult.failure(
-            Cause.fail(
-              new EnvironmentAuthorizationError({
-                requiredScope: missing,
-                message: "This connection lacks permission to change these settings.",
-              }),
-            ),
-          );
-        return persistServer(request);
+        const result = missing
+          ? AsyncResult.failure(
+              Cause.fail(
+                new EnvironmentAuthorizationError({
+                  requiredScope: missing,
+                  message: "This connection lacks permission to change these settings.",
+                }),
+              ),
+            )
+          : await persistServer(request);
+        settle(
+          { environmentId: request.environmentId, patch: request.input.patch },
+          result._tag === "Success",
+        );
+        return result;
       },
       persistClientSettingsPatch,
-    ).then(({ failedEnvironments, savedEnvironments, savedEnvironmentCount }) => {
-      if (failedEnvironments.length === 0) return;
-      onFailed?.();
-      toastManager.add({
-        type: "error",
-        title:
-          savedEnvironmentCount > 0 ? "Setting saved on some environments" : "Setting not saved",
-        description: [
-          ...failedEnvironments.map(
-            ({ label, message }) => `Could not save on ${label}: ${message}`,
-          ),
-          ...(savedEnvironmentCount > 0
-            ? [`Saved on ${savedEnvironments.map(({ label }) => label).join(", ")}.`]
-            : []),
-        ].join("\n"),
+    )
+      .then(({ failedEnvironments, savedEnvironments, savedEnvironmentCount }) => {
+        for (const failed of failedEnvironments) settle(failed, false);
+        if (failedEnvironments.length === 0) return;
+        onFailed?.();
+        toastManager.add({
+          type: "error",
+          title:
+            savedEnvironmentCount > 0 ? "Setting saved on some environments" : "Setting not saved",
+          description: [
+            ...failedEnvironments.map(
+              ({ label, message }) => `Could not save on ${label}: ${message}`,
+            ),
+            ...(savedEnvironmentCount > 0
+              ? [`Saved on ${savedEnvironments.map(({ label }) => label).join(", ")}.`]
+              : []),
+          ].join("\n"),
+        });
+      })
+      .catch(() => {
+        for (const write of pending) settle(write, false);
       });
-    });
   };
 }
 
