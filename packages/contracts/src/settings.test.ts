@@ -340,6 +340,11 @@ describe("ServerSettings worktree defaults", () => {
     ).toBeNull();
   });
 
+  it("keeps stock git worktree creation for existing installations", () => {
+    expect(decodeServerSettings({}).enableWorktreeFast).toBe(false);
+    expect(decodeServerSettings({ enableWorktreeFast: true }).enableWorktreeFast).toBe(true);
+  });
+
   it("keeps an inherited thread env mode off the wire for older clients", () => {
     const encode = Schema.encodeSync(ServerSettings);
     expect("defaultThreadEnvMode" in encode(decodeServerSettings({}))).toBe(false);

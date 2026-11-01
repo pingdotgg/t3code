@@ -965,6 +965,49 @@ describe("DesktopBackendConfiguration", () => {
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
+  it.effect.each(["darwin", "linux"] as const)(
+    "passes the packaged git-worktree-fast to the backend only on macOS (%s)",
+    (platform) =>
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const baseDir = yield* fileSystem.makeTempDirectoryScoped({
+          prefix: "t3-desktop-backend-config-test-",
+        });
+        const resourcesPath = path.join(baseDir, "resources");
+        const worktreeFastPath = path.join(resourcesPath, "worktree-fast/git-worktree-fast");
+        yield* fileSystem.makeDirectory(path.dirname(worktreeFastPath), { recursive: true });
+        yield* fileSystem.writeFileString(worktreeFastPath, "binary");
+
+        yield* Effect.gen(function* () {
+          const configuration = yield* DesktopBackendConfiguration.DesktopBackendConfiguration;
+          const config = yield* configuration.resolvePrimary;
+          assert.equal(
+            config.bootstrap.worktreeFastPath,
+            platform === "darwin" ? worktreeFastPath : undefined,
+          );
+        }).pipe(
+          Effect.provide(
+            layerBackendConfiguration().pipe(
+              Layer.provideMerge(layerServerExposure),
+              Layer.provideMerge(DesktopAppSettings.layerTest()),
+              Layer.provideMerge(DesktopWslServerTree.layerTest()),
+              Layer.provideMerge(DesktopWslEnvironment.layerTest()),
+              Layer.provideMerge(
+                layerEnvironment(baseDir, {
+                  appPath: `${resourcesPath}/app.asar`,
+                  dirname: `${resourcesPath}/app.asar/apps/desktop/dist-electron`,
+                  isPackaged: true,
+                  platform,
+                  resourcesPath,
+                }),
+              ),
+            ),
+          ),
+        );
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
   it("resolvePrimaryLabel is runSync-safe against the real WSL availability probe", async () => {
     // oxlint-disable-next-line t3code/no-manual-effect-runtime-in-tests -- This test intentionally replicates the sync IPC handler's runSync path to catch a regression to async-only resolution; it.effect would mask it.
     const runtime = ManagedRuntime.make(

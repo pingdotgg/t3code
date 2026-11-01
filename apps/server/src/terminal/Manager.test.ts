@@ -242,6 +242,7 @@ interface CreateManagerOptions {
   >[0]["resolveProviderInstanceEnvironment"];
   managedBinaryCacheDir?: string;
   managedBinaryToolsDir?: string;
+  worktreeFastPath?: string;
 }
 
 interface ManagerFixture {
@@ -299,6 +300,9 @@ const createManager = (
               managedBinaryCacheDir: options.managedBinaryCacheDir,
               managedBinaryToolsDir: options.managedBinaryToolsDir,
             }),
+        ...(options.worktreeFastPath !== undefined
+          ? { worktreeFastPath: options.worktreeFastPath }
+          : {}),
       });
       const eventsRef = yield* Ref.make<ReadonlyArray<TerminalEvent>>([]);
       const unsubscribe = yield* manager.subscribe((event) =>
@@ -1861,6 +1865,24 @@ it.layer(
       expect(spawnInput.env.ZELLIJ_SESSION_NAME).toBeUndefined();
       expect(spawnInput.env.ZELLIJ_CONFIG_DIR).toBe("/home/user/.config/zellij");
       expect(ptyAdapter.spawnInputs[1]?.env.TMUX_PANE).toBe("%9");
+    }),
+  );
+
+  it.effect("appends the bundled git-worktree-fast directory to terminal PATH on macOS", () =>
+    Effect.gen(function* () {
+      const bundledDirectory = "/Applications/T3 Code.app/Contents/Resources/worktree-fast";
+      const bundledPath = `${bundledDirectory}/git-worktree-fast`;
+      for (const [platform, expectedPath] of [
+        ["darwin", `/Users/me/.cargo/bin:/usr/bin:${bundledDirectory}`],
+        ["linux", "/Users/me/.cargo/bin:/usr/bin"],
+      ] as const) {
+        const { manager, ptyAdapter } = yield* createManager(5, {
+          worktreeFastPath: bundledPath,
+          env: { PATH: "/Users/me/.cargo/bin:/usr/bin" },
+        }).pipe(Effect.provide(layerWithHostPlatform(platform)));
+        yield* manager.open(openInput());
+        expect(ptyAdapter.spawnInputs[0]?.env.PATH).toBe(expectedPath);
+      }
     }),
   );
 

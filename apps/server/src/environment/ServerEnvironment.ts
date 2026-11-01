@@ -22,6 +22,7 @@ import { resolveServiceLauncherMode } from "../cloud/serviceLauncherClient.ts";
 import * as ServerConfig from "../config.ts";
 import { databaseMigrationHead } from "../persistence/databaseMigrationHead.ts";
 import * as ProcessRunner from "../processRunner.ts";
+import { worktreeFastEnv } from "../vcs/worktreeFast.ts";
 import { resolveServerEnvironmentLabel } from "./ServerEnvironmentLabel.ts";
 import { detectServerEnvironmentMachineKind } from "./ServerEnvironmentMachine.ts";
 
@@ -81,6 +82,25 @@ function platformArch(
       return "other";
   }
 }
+
+const probeWorktreeFast = Effect.fn("ServerEnvironment.probeWorktreeFast")(function* (
+  processRunner: ProcessRunner.ProcessRunner["Service"],
+  env: NodeJS.ProcessEnv,
+) {
+  const installed = yield* processRunner
+    .run({
+      command: "git",
+      args: ["worktree-fast", "--version"],
+      env,
+      timeout: "5 seconds",
+      timeoutBehavior: "timedOutResult",
+    })
+    .pipe(
+      Effect.map((result) => result.code === 0),
+      Effect.orElseSucceed(() => false),
+    );
+  return { installed };
+});
 
 const makeIdentity = Effect.gen(function* () {
   const fileSystem = yield* FileSystem.FileSystem;
@@ -205,6 +225,20 @@ export const make = Effect.gen(function* () {
     serverSelfUpdate === "desktop-managed" && serverConfig.desktopTelemetryControlFd !== undefined;
 
   const databaseMigration = databaseMigrationHead(serverConfig.dbPath);
+  // Re-probed after a minute so installing the tool shows up without a server restart.
+  const readWorktreeFastCapability =
+    hostPlatform === "darwin"
+      ? (yield* probeWorktreeFast(
+          yield* ProcessRunner.ProcessRunner,
+          worktreeFastEnv({
+            bundledPath: serverConfig.worktreeFastPath,
+            pathEnv: (yield* HostProcess.Environment).PATH,
+            dirname: path.dirname,
+          }),
+        ).pipe(Effect.cachedWithTTL("1 minute"))).pipe(
+          Effect.map((worktreeFast) => ({ worktreeFast })),
+        )
+      : Effect.succeed({});
   const descriptor: ExecutionEnvironmentDescriptor = {
     environmentId,
     label,
@@ -285,10 +319,17 @@ export const make = Effect.gen(function* () {
   return ServerEnvironment.of({
     getEnvironmentId: Effect.succeed(environmentId),
     // Publishing opt-in and relay links change at runtime; read the capability per request.
-    getDescriptor: readAgentActivityPublishingActive(secrets).pipe(
-      Effect.map((agentActivityPublishing) => ({
+    getDescriptor: Effect.all([
+      readAgentActivityPublishingActive(secrets),
+      readWorktreeFastCapability,
+    ]).pipe(
+      Effect.map(([agentActivityPublishing, worktreeFastCapability]) => ({
         ...descriptor,
-        capabilities: { ...descriptor.capabilities, agentActivityPublishing },
+        capabilities: {
+          ...descriptor.capabilities,
+          agentActivityPublishing,
+          ...worktreeFastCapability,
+        },
       })),
     ),
   });

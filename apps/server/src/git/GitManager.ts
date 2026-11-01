@@ -743,9 +743,12 @@ export const make = Effect.gen(function* () {
     }
     return result;
   });
-  const readWorktreesDirectory = serverSettingsService.getSettings.pipe(
-    Effect.map((settings) => settings.worktreesDirectory),
-    Effect.orElseSucceed(() => ""),
+  const readWorktreeCreationSettings = serverSettingsService.getSettings.pipe(
+    Effect.map((settings) => ({
+      worktreesDirectory: settings.worktreesDirectory,
+      worktreeFast: settings.enableWorktreeFast,
+    })),
+    Effect.orElseSucceed(() => ({ worktreesDirectory: "", worktreeFast: false })),
   );
   const createWorktree: GitManager["Service"]["createWorktree"] = Effect.fn(
     "GitManager.createWorktree",
@@ -757,9 +760,8 @@ export const make = Effect.gen(function* () {
             Effect.map(({ settings }) => settings.worktreeSubmodules),
             Effect.orElseSucceed(() => null),
           );
-    const worktreesDirectory = yield* readWorktreesDirectory;
     const result = yield* gitCore.createWorktree(input, {
-      worktreesDirectory,
+      ...(yield* readWorktreeCreationSettings),
       ...options,
       submodules,
     });
@@ -2980,7 +2982,7 @@ export const make = Effect.gen(function* () {
           path: null,
         },
         {
-          worktreesDirectory: yield* readWorktreesDirectory,
+          ...(yield* readWorktreeCreationSettings),
           submodules: yield* projectSettingsFor(input).pipe(
             Effect.map(({ settings }) => settings.worktreeSubmodules),
             Effect.orElseSucceed(() => null),
