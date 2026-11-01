@@ -270,6 +270,16 @@ export const make = Effect.gen(function* () {
           Effect.map((output) => Option.liftPredicate(output.stdout.trim(), (path) => path !== "")),
           // Without gh, or without the setting, requests go straight to the host.
           Effect.orElseSucceed(() => Option.none<string>()),
+          // Node opens only named pipes on Windows, not the socket files gh uses there.
+          Effect.tap((socket) =>
+            platform === "win32" && Option.isSome(socket)
+              ? Effect.logWarning(
+                  "Sending GitHub requests straight to the host: Windows cannot use gh's http_unix_socket.",
+                  { host, socket: socket.value },
+                )
+              : Effect.void,
+          ),
+          Effect.map((socket) => (platform === "win32" ? Option.none<string>() : socket)),
         ),
   });
 
@@ -289,8 +299,7 @@ export const make = Effect.gen(function* () {
       );
     }),
     unixSocket: Effect.fn("GitHubCredentials.unixSocket")((host: string) =>
-      // Node opens only named pipes on Windows, not the socket files gh uses there.
-      platform === "win32" ? Effect.succeedNone : Cache.get(unixSockets, normalizeHost(host)),
+      Cache.get(unixSockets, normalizeHost(host)),
     ),
   });
 });

@@ -2,6 +2,7 @@ import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import { afterEach, beforeEach, describe, expect, it, vi } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Logger from "effect/Logger";
 import * as Option from "effect/Option";
 import * as Redacted from "effect/Redacted";
 import { HttpClient } from "effect/http";
@@ -196,12 +197,25 @@ describe("GitHubCredentials", () => {
     }).pipe(Effect.provide(layer), Effect.provideService(HostProcess.Platform, "linux"));
   });
 
-  it.effect("sends straight to the host on Windows, which cannot open gh's socket files", () => {
+  it.effect("sends straight to the host on Windows, and says it skipped gh's socket", () => {
     const { layer, calls } = harness({}, [], {}, { "github.com": "C:\\gh\\gh.sock" });
+    const logs: Array<unknown> = [];
+    const logger = Logger.make(({ message }) => logs.push(message));
     return Effect.gen(function* () {
       const credentials = yield* GitHubCredentials.GitHubCredentials;
       expect(yield* credentials.unixSocket("github.com")).toEqual(Option.none());
-      expect(calls).toEqual([]);
-    }).pipe(Effect.provide(layer), Effect.provideService(HostProcess.Platform, "win32"));
+      expect(yield* credentials.unixSocket("github.com")).toEqual(Option.none());
+      expect(calls).toEqual([["config", "get", "http_unix_socket", "--host", "github.com"]]);
+      expect(logs).toEqual([
+        [
+          "Sending GitHub requests straight to the host: Windows cannot use gh's http_unix_socket.",
+          { host: "github.com", socket: "C:\\gh\\gh.sock" },
+        ],
+      ]);
+    }).pipe(
+      Effect.provide(layer),
+      Effect.provideService(HostProcess.Platform, "win32"),
+      Effect.provide(Logger.layer([logger], { mergeWithExisting: false })),
+    );
   });
 });
