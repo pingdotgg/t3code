@@ -94,11 +94,10 @@ export const resolveEditorCommand = Effect.fn("editor.resolveEditorCommand")(fun
     for (const target of targets) {
       if (yield* exists(target)) return "found";
     }
-    // A program still holding a variable, such as `"$IDE_HOME"` or `%IDE%\idea64.exe`, could reach
-    // an installed IDE. Assignments like `IDE_HOME="..."` are not launches.
-    if (targets.length === 0 || programs.some((p) => /[$%]/.test(p) && !/^\w+=/.test(p))) {
-      return "unknown";
-    }
+    // Any variable other than HOME or the forwarded arguments, such as `$IDE_HOME` or `%IDE%`,
+    // could point at an installed IDE.
+    const variables = /\$|%[\w~]/.test(text.replace(/\$(?:\{HOME\}|HOME\b|@|\*)|%\*/g, ""));
+    if (targets.length === 0 || variables) return "unknown";
     // Any other existing path, as in `env "/opt/idea/bin/idea"`, may be the IDE behind a launcher
     // this parser does not know.
     for (const { text: word } of lines.flatMap(scriptWords)) {
