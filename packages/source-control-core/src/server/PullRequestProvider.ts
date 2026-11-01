@@ -308,6 +308,8 @@ export interface PullRequestProviderApi {
    * definition's `publicHost` can be read from a project with no checkout of its repository.
    */
   readonly readsPublicHostWithoutCheckout?: boolean;
+  /** Concurrent summary reads share requests, so callers may keep many in flight. */
+  readonly batchesReads?: boolean;
   /**
    * Absent means every host detected as this kind is read. A host it refuses is listed as one that
    * cannot be browsed here, and nothing is sent for it.

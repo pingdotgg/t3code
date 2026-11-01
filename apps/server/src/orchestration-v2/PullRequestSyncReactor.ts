@@ -180,6 +180,13 @@ interface LinkEntry {
   readonly link: ThreadPullRequestLink;
 }
 
+const referenceOf = ({ thread, link }: LinkEntry) => ({
+  projectId: thread.projectId,
+  host: normalizeThreadPullRequestKey(link).host,
+  repository: link.repository,
+  number: link.number,
+});
+
 /** Another layer of the stack `url` belongs to, in its host's canonical shape. */
 function siblingChangeRequestUrl(url: string, number: number): string | null {
   if (!Number.isSafeInteger(number) || number < 1) return null;
@@ -452,12 +459,7 @@ export const make = Effect.gen(function* () {
 
     const syncGroup = Effect.fnUntraced(function* (key: string, entries: ReadonlyArray<LinkEntry>) {
       const first = entries[0]!;
-      const ref = {
-        projectId: first.thread.projectId,
-        host: normalizeThreadPullRequestKey(first.link).host,
-        repository: first.link.repository,
-        number: first.link.number,
-      };
+      const ref = referenceOf(first);
       const refreshRequested = requested.has(key);
       // A held merged summary is served without asking the host, so a snapshot still missing its
       // merge time has to drop it or the slow-cadence re-read would hand back the same gap.
@@ -571,26 +573,35 @@ export const make = Effect.gen(function* () {
           return Effect.void;
         }),
       );
-    yield* Effect.forEach(
-      groups,
-      ([key, entries]) => {
-        if (!((scope === "all" || requested.has(key)) && isDue(key, entries, nowMs))) {
-          return Effect.void;
-        }
-        const first = entries[0]!;
-        const pauseKey = `${first.thread.projectId}\0${normalizeThreadPullRequestKey(first.link).host}`;
-        // Check pauses at each read so changes during the sweep apply immediately.
-        return Clock.currentTimeMillis.pipe(
-          Effect.flatMap((startedAtMs) =>
-            (pausedUntil.get(pauseKey) ?? 0) > startedAtMs
-              ? Effect.void
-              : readGroup(key, entries, pauseKey),
-          ),
-        );
-      },
-      // Wider than one summary batch, so reads that finish their cache checks at different times
-      // still share batches; the cap bounds hosts that read each pull request on its own.
-      { concurrency: 100, discard: true },
+    const readIfDue = ([key, entries]: readonly [string, ReadonlyArray<LinkEntry>]) => {
+      if (!isDue(key, entries, nowMs)) return Effect.void;
+      const first = entries[0]!;
+      const pauseKey = `${first.thread.projectId}\0${normalizeThreadPullRequestKey(first.link).host}`;
+      // Check pauses at each read so changes during the sweep apply immediately.
+      return Clock.currentTimeMillis.pipe(
+        Effect.flatMap((startedAtMs) =>
+          (pausedUntil.get(pauseKey) ?? 0) > startedAtMs
+            ? Effect.void
+            : readGroup(key, entries, pauseKey),
+        ),
+      );
+    };
+    const batched: Array<readonly [string, ReadonlyArray<LinkEntry>]> = [];
+    const unbatched: Array<readonly [string, ReadonlyArray<LinkEntry>]> = [];
+    for (const [key, entries] of groups) {
+      if (scope === "requested" && !requested.has(key)) continue;
+      const batches = yield* pullRequests.batchesReads(referenceOf(entries[0]!));
+      (batches ? batched : unbatched).push([key, entries]);
+    }
+    yield* Effect.all(
+      [
+        // Wider than one summary batch, so reads that finish their cache checks at different
+        // times still share batches.
+        Effect.forEach(batched, readIfDue, { concurrency: 100, discard: true }),
+        // One read per pull request, often a CLI process, so these keep the narrower width.
+        Effect.forEach(unbatched, readIfDue, { concurrency: 25, discard: true }),
+      ],
+      { concurrency: 2, discard: true },
     );
     for (const [reason, { count, key }] of skips) {
       yield* Effect.logWarning("pull request sync skipped", { count, key, reason });

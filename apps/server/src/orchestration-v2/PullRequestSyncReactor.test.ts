@@ -166,6 +166,7 @@ function makeSummary(
 
 interface HarnessOptions {
   readonly invalidate?: PullRequestService.PullRequestService["Service"]["invalidate"];
+  readonly batchesReads?: (input: PullRequestRef) => boolean;
   readonly snapshot: TestShellSnapshot;
   readonly summary?: (
     input: PullRequestRef,
@@ -223,6 +224,7 @@ const makeHarness = Effect.fn("makePullRequestSyncHarness")(function* (options: 
   const layerDependencies = Layer.mergeAll(
     Layer.mock(PullRequestService.PullRequestService)({
       withSharedProjectReads: (effect) => effect,
+      batchesReads: (input) => Effect.succeed(options.batchesReads?.(input) ?? true),
       summary,
       stack,
       invalidate: options.invalidate ?? (() => Effect.void),
@@ -1134,6 +1136,50 @@ describe("PullRequestSyncReactor", () => {
           yield* TestClock.adjust("1 second");
           yield* reactor.drain;
           assert.strictEqual((yield* Ref.get(inFlight)).peak, numbers.length);
+          assert.strictEqual((yield* Ref.get(fixture.summaryCalls)).length, numbers.length);
+        }).pipe(Effect.provide(fixture.layer));
+      }),
+    ),
+  );
+
+  it.effect("keeps hosts that read each pull request on its own to the old sweep width", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        yield* TestClock.setTime(Date.parse(NOW));
+        const numbers = Array.from({ length: 60 }, (_, index) => index + 1);
+        const batches = (input: PullRequestRef) => input.number <= 30;
+        const batched = yield* Ref.make({ active: 0, peak: 0 });
+        const unbatched = yield* Ref.make({ active: 0, peak: 0 });
+        const fixture = yield* makeHarness({
+          snapshot: makeSnapshot(
+            numbers.map((number) =>
+              makeThread(`thread-${number}`, { pullRequests: [makeLink(number)] }),
+            ),
+          ),
+          batchesReads: batches,
+          summary: (input) => {
+            const inFlight = batches(input) ? batched : unbatched;
+            return Ref.update(inFlight, ({ active, peak }) => ({
+              active: active + 1,
+              peak: Math.max(peak, active + 1),
+            })).pipe(
+              Effect.andThen(Effect.sleep("1 second")),
+              Effect.andThen(
+                Ref.update(inFlight, (state) => ({ ...state, active: state.active - 1 })),
+              ),
+              Effect.as(makeSummary(input)),
+            );
+          },
+        });
+        yield* Effect.gen(function* () {
+          const reactor = yield* PullRequestSyncReactor.PullRequestSyncReactor;
+          yield* reactor.start();
+          yield* Deferred.succeed(fixture.activation, undefined);
+          yield* TestClock.adjust("1 second");
+          yield* TestClock.adjust("1 second");
+          yield* reactor.drain;
+          assert.strictEqual((yield* Ref.get(batched)).peak, 30);
+          assert.strictEqual((yield* Ref.get(unbatched)).peak, 25);
           assert.strictEqual((yield* Ref.get(fixture.summaryCalls)).length, numbers.length);
         }).pipe(Effect.provide(fixture.layer));
       }),

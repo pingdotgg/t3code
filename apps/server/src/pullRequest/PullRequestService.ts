@@ -196,6 +196,8 @@ export class PullRequestService extends Context.Service<
       input: PullRequestRef,
       options?: { readonly recoverTransientFailure?: boolean },
     ) => Effect.Effect<PullRequestSummary, PullRequestError>;
+    /** Whether the reference's host batches summary reads; false when it cannot be resolved. */
+    readonly batchesReads: (input: PullRequestRef) => Effect.Effect<boolean>;
     readonly stack: (
       input: PullRequestRef,
       options?: { readonly includeDetails?: boolean },
@@ -519,6 +521,7 @@ function withRateLimitBackoff(
     ...(api.readsPublicHostWithoutCheckout === undefined
       ? {}
       : { readsPublicHostWithoutCheckout: api.readsPublicHostWithoutCheckout }),
+    ...(api.batchesReads === undefined ? {} : { batchesReads: api.batchesReads }),
     getViewer:
       options?.viewerAllowsPause === true
         ? interactive("getViewer", api.getViewer)
@@ -2946,6 +2949,12 @@ export const make = Effect.gen(function* () {
         );
   };
 
+  const batchesReads: PullRequestService["Service"]["batchesReads"] = (input) =>
+    requireProject(input).pipe(
+      Effect.map((project) => project.api.batchesReads === true),
+      Effect.orElseSucceed(() => false),
+    );
+
   const stack: PullRequestService["Service"]["stack"] = (input, options) =>
     persistedRead(
       input,
@@ -3714,6 +3723,7 @@ export const make = Effect.gen(function* () {
       return yield* listStats({ ...input, refs: refs.flatMap(Option.toArray) });
     }),
     summary: credentialCached(summary),
+    batchesReads,
     stack: credentialCached(stack),
     subscribeMerges: PubSub.subscribe(mergedPullRequests).pipe(
       Effect.map((subscription) => Stream.fromSubscription(subscription)),
