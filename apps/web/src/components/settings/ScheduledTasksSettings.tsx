@@ -1180,6 +1180,10 @@ function ScheduledTaskEditorForm({
   const { scope, connectedEnvironments } = useSettingsScope();
   const [environmentId, setEnvironmentId] = useState(initialEnvironmentId);
   const environment = useEnvironment(environmentId);
+  // Older servers reject one-time schedules, so offer Once only where it can save.
+  const offersOnce =
+    environment?.serverConfig?.environment.capabilities.oneTimeSchedules === true ||
+    task?.schedule.type === "once";
   const connected =
     environment?.connection.phase === "connected" && environment.serverConfig !== null;
   const tasksQuery = useEnvironmentQuery(
@@ -1620,7 +1624,7 @@ function ScheduledTaskEditorForm({
                 }}
               >
                 <Toggle value="fixed">At a time</Toggle>
-                <Toggle value="once">Once</Toggle>
+                {offersOnce ? <Toggle value="once">Once</Toggle> : null}
                 <Toggle value="interval">Every interval</Toggle>
                 <Toggle value="webhook">On webhook</Toggle>
               </ToggleGroup>

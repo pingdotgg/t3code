@@ -167,12 +167,21 @@ export function webhookDeliveryLabel(delivery: {
 export function scheduleFromDraft(draft: DraftState): ScheduledTaskUpsertSchedule | null {
   if (scheduleDraftErrors(draft).length > 0) return null;
   if (draft.scheduleMode === "once") {
-    const unchanged =
-      draft.savedRunAt && toDateTimeLocalValue(new Date(draft.savedRunAt)) === draft.runAt;
-    // A `datetime-local` value has no offset, so Date reads it as local time.
+    const saved = draft.savedRunAt ? new Date(draft.savedRunAt) : null;
+    if (saved !== null && toDateTimeLocalValue(saved) === draft.runAt)
+      return { type: "once", runAt: draft.savedRunAt };
+    // A `datetime-local` value has no offset. In an hour that repeats when clocks go
+    // back, keep the saved time's offset; otherwise Date reads it as local time.
+    const withSavedOffset =
+      saved === null
+        ? null
+        : new Date(Date.parse(`${draft.runAt}Z`) + saved.getTimezoneOffset() * 60_000);
     return {
       type: "once",
-      runAt: unchanged ? draft.savedRunAt : new Date(draft.runAt).toISOString(),
+      runAt:
+        withSavedOffset !== null && toDateTimeLocalValue(withSavedOffset) === draft.runAt
+          ? withSavedOffset.toISOString()
+          : new Date(draft.runAt).toISOString(),
     };
   }
   if (draft.scheduleMode === "webhook") {

@@ -78,7 +78,7 @@ branch name remains.
 
 ## Scheduled tasks on mobile
 
-Open **Settings → Scheduled tasks** to create recurring tasks or manage existing
+Open **Settings → Scheduled tasks** to create scheduled tasks or manage existing
 ones across your connected environments. Use the settings filter to narrow the
 list by environment or project. Each task runs on the environment you choose,
 using its project, model, and workspace settings. Fixed-time schedules use that

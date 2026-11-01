@@ -716,11 +716,19 @@ export const layer = Layer.effect(
       readonly status: "succeeded" | "failed";
       readonly error: string | null;
       readonly startedAtIso: string;
+      /** The schedule and enabled state the next run was computed from. */
+      readonly source: Pick<ScheduledTask, "schedule" | "enabled">;
     }) =>
       sql`
         UPDATE scheduled_tasks
         SET updated_at = ${input.completedAtIso},
-            next_run_at = ${input.nextRunAtIso},
+            -- An edit saved after the run read the row already set its own next run.
+            next_run_at = CASE
+              WHEN schedule_json = ${JSON.stringify(input.source.schedule)}
+                AND enabled = ${input.source.enabled ? 1 : 0}
+              THEN ${input.nextRunAtIso}
+              ELSE next_run_at
+            END,
             last_run_status = ${input.status},
             last_run_error = ${input.error},
             run_count = run_count + 1
@@ -968,6 +976,7 @@ export const layer = Layer.effect(
             status: lastRunStatus,
             error: lastRunError,
             startedAtIso,
+            source: current,
           });
           if (webhook === undefined) yield* completion;
           else

@@ -977,7 +977,11 @@ function TaskForm({
               variant="card"
               options={[
                 { value: "fixed_time", label: "At a time" },
-                { value: "once", label: "Once" },
+                // Older servers reject one-time schedules on save.
+                ...(config?.environment.capabilities.oneTimeSchedules === true ||
+                draft.schedule.mode === "once"
+                  ? [{ value: "once" as const, label: "Once" }]
+                  : []),
                 { value: "interval", label: "Interval" },
                 { value: "webhook", label: "On webhook" },
               ]}

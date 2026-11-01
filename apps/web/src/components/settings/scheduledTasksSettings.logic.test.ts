@@ -191,6 +191,19 @@ describe("one-time scheduled tasks", () => {
     });
     expect(scheduleFromDraft({ ...draft, runAt: "2027-03-14T02:30" })).toBeNull();
   });
+
+  it("keeps the saved offset when an edit stays in an hour that repeats", () => {
+    vi.stubEnv("TZ", "America/Los_Angeles");
+    // 01:30 PST, the second 01:30 on 2026-11-01.
+    const draft = taskToDraft({
+      ...legacyTask,
+      schedule: { type: "once", runAt: "2026-11-01T09:30:00.000Z" },
+    });
+    expect(scheduleFromDraft({ ...draft, runAt: "2026-11-01T01:35" })).toEqual({
+      type: "once",
+      runAt: "2026-11-01T09:35:00.000Z",
+    });
+  });
 });
 
 describe("webhook scheduled tasks", () => {
