@@ -739,6 +739,13 @@ export const make = Effect.gen(function* () {
     path.join(homeDir, "Downloads"),
     path.join(homeDir, "Documents", "Codex"),
   ];
+  if (serverConfig.scratchDir !== undefined) {
+    const scratchDir = path.resolve(serverConfig.scratchDir);
+    const realScratchDir = yield* fileSystem
+      .realPath(scratchDir)
+      .pipe(Effect.orElseSucceed(() => scratchDir));
+    excludedProjectAncestors.push(scratchDir, realScratchDir);
+  }
 
   const isExcludedProjectPath = (candidatePath: string) =>
     excludedProjectRoots.has(normalizeProjectPathForComparison(candidatePath)) ||
