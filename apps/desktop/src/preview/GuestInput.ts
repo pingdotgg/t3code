@@ -128,7 +128,10 @@ const sendPointerPress = async (
 
 const pointerCommands = new WeakMap<Electron.WebContents, Promise<unknown>>();
 
-/** Focus capture crosses processes; later pointer events must not overtake the press. */
+/**
+ * Focus capture crosses processes; later pointer events must not overtake the press.
+ * Queued per window: a press in a sibling tab would capture that tab's webview as host focus.
+ */
 const sendPointerCommand = async (
   webContents: Electron.WebContents,
   debuggee: Electron.Debugger,
@@ -136,7 +139,8 @@ const sendPointerCommand = async (
   params: Record<string, unknown>,
   sessionId: string | undefined,
 ) => {
-  const previous = pointerCommands.get(webContents) ?? Promise.resolve();
+  const queue = webContents.hostWebContents ?? webContents;
+  const previous = pointerCommands.get(queue) ?? Promise.resolve();
   const current = previous
     .catch(() => {})
     .then(() =>
@@ -144,11 +148,11 @@ const sendPointerCommand = async (
         ? sendPointerPress(webContents, debuggee, method, params, sessionId)
         : debuggee.sendCommand(method, params, sessionId),
     );
-  pointerCommands.set(webContents, current);
+  pointerCommands.set(queue, current);
   try {
     return await current;
   } finally {
-    if (pointerCommands.get(webContents) === current) pointerCommands.delete(webContents);
+    if (pointerCommands.get(queue) === current) pointerCommands.delete(queue);
   }
 };
 
