@@ -1148,6 +1148,65 @@ describe("PullRequestSyncReactor", () => {
     ),
   );
 
+  it.effect("reads a member a sibling flags while the sweep is full", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        yield* TestClock.setTime(Date.parse(NOW));
+        const stackOf = (layers: ReadonlyArray<number>) => ({
+          id: "9",
+          number: 9,
+          url: "https://github.com/owner/repository/stack/9",
+          base: "main",
+          layers: layers.map((number) => ({
+            number,
+            headBranch: `layer-${number}`,
+            state: "open" as const,
+          })),
+        });
+        // #50 is merged and not due until #1's stack read shows it a different layer list.
+        const merged = makeLink(
+          50,
+          { state: "merged", mergedAt: NOW },
+          { stack: { kind: "native", ...stackOf([50]) } },
+        );
+        const started = yield* Ref.make(0);
+        const full = yield* Deferred.make<void>();
+        const synced1 = yield* Deferred.make<void>();
+        const fixture = yield* makeHarness({
+          snapshot: makeSnapshot([
+            ...Array.from({ length: 25 }, (_, index) =>
+              makeThread(`thread-${index + 1}`, { pullRequests: [makeLink(index + 1)] }),
+            ),
+            makeThread("thread-50", { pullRequests: [merged] }),
+          ]),
+          batchesReads: () => false,
+          // #1 reads once all 25 slots are taken; the other 24 hold theirs until #1 has synced.
+          summary: (input) =>
+            Ref.updateAndGet(started, (count) => count + 1).pipe(
+              // Forked, so #1 resumes only after the sweep has handed out its next slot.
+              Effect.tap((count) =>
+                count === 25 ? Effect.forkChild(Deferred.succeed(full, undefined)) : Effect.void,
+              ),
+              Effect.andThen(
+                input.number === 50
+                  ? Effect.void
+                  : Deferred.await(input.number === 1 ? full : synced1),
+              ),
+              Effect.as(makeSummary(input)),
+            ),
+          stack: (input) => Effect.succeed(input.number === 1 ? stackOf([1, 50]) : null),
+          onSync: (command) =>
+            command.number === 1 ? Deferred.succeed(synced1, undefined) : Effect.void,
+        });
+        yield* Effect.gen(function* () {
+          yield* startAndSweep(fixture);
+          const read = (yield* Ref.get(fixture.summaryCalls)).map((ref) => ref.number);
+          assert.include(read, 50);
+        }).pipe(Effect.provide(fixture.layer));
+      }),
+    ),
+  );
+
   it.effect("skips the stack read for a pull request the summary places in no stack", () =>
     Effect.scoped(
       Effect.gen(function* () {

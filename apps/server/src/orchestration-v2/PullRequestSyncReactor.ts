@@ -579,49 +579,55 @@ export const make = Effect.gen(function* () {
           return Effect.void;
         }),
       );
-    const readIfDue = (key: string) => {
-      const entries = groups.get(key)!;
+    const pools = {
+      // Wider than one summary batch, so reads that finish their cache checks at different
+      // times still share batches.
+      batched: { width: 100, reads: yield* Semaphore.make(100) },
+      // One read per pull request, often a CLI process, so these keep the narrower width.
+      unbatched: { width: 25, reads: yield* Semaphore.make(25) },
+    };
+    const readIfDue = (
+      key: string,
+      entries: ReadonlyArray<LinkEntry>,
+      reads: Semaphore.Semaphore,
+    ) => {
       if (!isDue(key, entries, nowMs)) return Effect.void;
       const pauseKey = pauseKeyOf(entries[0]!);
       // Check pauses at each read so changes during the sweep apply immediately.
-      return Clock.currentTimeMillis.pipe(
-        Effect.flatMap((startedAtMs) =>
-          (pausedUntil.get(pauseKey) ?? 0) > startedAtMs
-            ? Effect.void
-            : readGroup(key, entries, pauseKey),
+      return reads.withPermits(1)(
+        Clock.currentTimeMillis.pipe(
+          Effect.flatMap((startedAtMs) =>
+            (pausedUntil.get(pauseKey) ?? 0) > startedAtMs
+              ? Effect.void
+              : readGroup(key, entries, pauseKey),
+          ),
         ),
       );
     };
-    const keysByHost = new Map<string, Array<string>>();
-    for (const [key, entries] of groups) {
-      if (scope === "requested" && !requested.has(key)) continue;
-      const pauseKey = pauseKeyOf(entries[0]!);
-      const keys = keysByHost.get(pauseKey) ?? [];
-      keys.push(key);
-      keysByHost.set(pauseKey, keys);
-    }
-    // Wider than one summary batch, so reads that finish their cache checks at different times
-    // still share batches.
-    const batchedReads = yield* Semaphore.make(100);
-    // One read per pull request, often a CLI process, so these keep the narrower width.
-    const unbatchedReads = yield* Semaphore.make(25);
+    const groupsByHost = Map.groupBy(
+      Array.from(groups).filter(([key]) => scope === "all" || requested.has(key)),
+      ([, entries]) => pauseKeyOf(entries[0]!),
+    );
     yield* Effect.forEach(
-      keysByHost.values(),
-      (keys) => {
-        // Stack retries only flag groups on the flagging group's host, so a host with nothing
-        // due yet stays that way this sweep.
-        if (!keys.some((key) => isDue(key, groups.get(key)!, nowMs))) return Effect.void;
-        return pullRequests
-          .batchesReads(referenceOf(groups.get(keys[0]!)![0]!))
-          .pipe(
-            Effect.flatMap((batches) =>
-              Effect.forEach(
-                keys,
-                (key) => (batches ? batchedReads : unbatchedReads).withPermits(1)(readIfDue(key)),
-                { concurrency: "unbounded", discard: true },
-              ),
-            ),
-          );
+      groupsByHost,
+      ([pauseKey, hostGroups]) => {
+        // Stack retries only flag groups on the flagging group's own host, so a host with
+        // nothing due now reads nothing this sweep.
+        if (
+          (pausedUntil.get(pauseKey) ?? 0) > nowMs ||
+          !hostGroups.some(([key, entries]) => isDue(key, entries, nowMs))
+        ) {
+          return Effect.void;
+        }
+        return pullRequests.batchesReads(referenceOf(hostGroups[0]![1][0]!)).pipe(
+          Effect.flatMap((batches) => {
+            const { width, reads } = batches ? pools.batched : pools.unbatched;
+            return Effect.forEach(hostGroups, ([key, entries]) => readIfDue(key, entries, reads), {
+              concurrency: width,
+              discard: true,
+            });
+          }),
+        );
       },
       { concurrency: "unbounded", discard: true },
     );
