@@ -752,13 +752,18 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     reviewComments: composerReviewComments,
     previewAnnotations: composerPreviewAnnotations,
     threadContexts: answerThreadLinks
-      ? collectThreadLinks(activePendingProgress?.customAnswer ?? "").map(
-          ({ environmentId: linkEnvironmentId, threadId, label }) =>
-            threadContextRecord(
-              { environmentId: linkEnvironmentId ?? environmentId, threadId },
-              label,
-            ),
-        )
+      ? [
+          ...composerThreadContexts,
+          ...collectThreadLinks(activePendingProgress?.customAnswer ?? "").map(
+            ({ environmentId: linkEnvironmentId, threadId, label, source }) => ({
+              ...threadContextRecord(
+                { environmentId: linkEnvironmentId ?? environmentId, threadId },
+                label,
+              ),
+              contextId: toKindScopedComposerContextId("thread", source),
+            }),
+          ),
+        ]
       : composerThreadContexts,
     environmentContexts: composerEnvironmentContexts,
     images: composerImages,

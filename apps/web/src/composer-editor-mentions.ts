@@ -2,7 +2,7 @@ import type { AssistantCitation } from "@t3tools/contracts";
 import { collectAssistantCitations } from "@t3tools/shared/assistantCitations";
 import { collectComposerContextReferences } from "@t3tools/shared/composerContextReferences";
 import { collectThreadLinks } from "@t3tools/shared/threadLinks";
-import { toKindScopedComposerContextId } from "./lib/composerContextReferences";
+import { toKindScopedComposerContextId } from "@t3tools/shared/composerContextReferences";
 import {
   collectComposerInlineTokens,
   type ComposerInlineToken,
@@ -92,7 +92,7 @@ export function collectComposerPromptInlineTokens(text: string, answerThreadLink
       ...match,
       type: "context-reference" as const,
       kind: "thread",
-      contextId: toKindScopedComposerContextId("thread", match.threadId),
+      contextId: toKindScopedComposerContextId("thread", match.source),
     })),
   ];
   return [

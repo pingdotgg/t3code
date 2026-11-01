@@ -8,9 +8,12 @@ import {
   replaceTextRange,
 } from "../../composer-logic";
 import { buildDocJson, serializeEditorDoc } from "../../composer-rich-text-doc";
-import { threadContextRecord } from "@t3tools/shared/composerContextReferences";
+import {
+  toKindScopedComposerContextId,
+  threadContextRecord,
+} from "@t3tools/shared/composerContextReferences";
 import { collectInlineContextIds } from "../../lib/composerContextReferences";
-import { buildPendingUserInputAnswers } from "../../pendingUserInput";
+import { buildPendingUserInputAnswers } from "@t3tools/client-runtime/state/pending-user-input";
 import { composerThreadReferenceText } from "./composerThreadReference";
 
 const record = threadContextRecord(
@@ -57,8 +60,6 @@ describe("thread references in question answers", () => {
         [
           {
             id: "q",
-            header: "Next step",
-            question: "Who can help?",
             options: [],
             multiSelect: false,
           },
@@ -81,7 +82,10 @@ describe("thread references in question answers", () => {
       expect(chip.type.name).toBe("composer-context-reference");
       expect(chip.attrs).toMatchObject({
         kind: "thread",
-        contextId: record.contextId,
+        contextId: toKindScopedComposerContextId(
+          "thread",
+          composerThreadReferenceText(record, true),
+        ),
         label: "Parser design",
       });
       editor.commands.setNodeSelection(chipPosition);

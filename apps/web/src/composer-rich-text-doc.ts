@@ -864,7 +864,7 @@ export function buildTiptapContent(
 export function buildDocJson(
   value: string,
   skillLabelFor: (name: string) => SkillMeta | null,
-  options?: { styling?: boolean; literalText?: boolean },
+  options?: { styling?: boolean; literalText?: boolean; answerThreadLinks?: boolean },
 ) {
   const content = buildTiptapContent(value, skillLabelFor, options);
   if (content.at(-1)?.type === "horizontalRule") content.push({ type: "paragraph" });
