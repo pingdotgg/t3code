@@ -3,7 +3,7 @@ import { useEffect, useState } from "react";
 import { expect, it } from "vite-plus/test";
 import { userEvent } from "vite-plus/test/browser";
 
-import { DEFAULT_RESOLVED_KEYBINDINGS } from "@t3tools/shared/keybindings";
+import { compileResolvedKeybindingsConfig } from "@t3tools/shared/keybindings";
 import { isPreviewFocused } from "~/lib/previewFocus";
 import { surfaceShortcutKey } from "~/lib/surfaceShortcutKey";
 import { render } from "../../../test/render";
@@ -148,7 +148,10 @@ it.each([
 const sideChatKeybindings: ResolvedKeybindingsConfig = [
   ctrl("m", "modelPicker.toggle", true),
   ctrl("x", "thread.stop", true),
-  ...DEFAULT_RESOLVED_KEYBINDINGS.filter((binding) => binding.command === "chat.find"),
+  // The default find rule, with ctrl for mod so it matches on every platform.
+  ...compileResolvedKeybindingsConfig([
+    { key: "ctrl+f", command: "chat.find", when: "!terminalFocus && !previewFocus" },
+  ]),
 ];
 
 // A side chat in the main chat's right panel: no window listeners, only its pane's find and its

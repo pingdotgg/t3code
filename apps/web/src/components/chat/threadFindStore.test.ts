@@ -2,6 +2,8 @@ import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { EnvironmentId, MessageId, ThreadId } from "@t3tools/contracts";
 import { describe, expect, it, vi } from "vite-plus/test";
 
+import { hostRightPanel } from "../../rightPanelStore";
+
 import {
   attachThreadFindTimeline,
   closeThreadFind,
@@ -76,6 +78,22 @@ describe("thread find store", () => {
 
     openThreadFindOnQuery(threadKey, { query: "x" });
     retainThreadFindForRoute({ modalPage: false, threadRef: null });
+    expect(useThreadFindStore.getState().threadKey).toBeNull();
+  });
+
+  it("keeps a side chat's find on its parent's route while the side chat is shown there", () => {
+    setup();
+    const unhost = hostRightPanel(otherRef, threadRef);
+    openThreadFindOnQuery("env-1:thread-2", { query: "x" });
+    retainThreadFindForRoute({ modalPage: true, threadRef: null });
+    retainThreadFindForRoute({ modalPage: false, threadRef });
+    expect(useThreadFindStore.getState()).toMatchObject({
+      threadKey: "env-1:thread-2",
+      query: "x",
+    });
+
+    unhost();
+    retainThreadFindForRoute({ modalPage: false, threadRef });
     expect(useThreadFindStore.getState().threadKey).toBeNull();
   });
 });
