@@ -146,7 +146,10 @@ const layerDesktopFoundation = Layer.mergeAll(
   DesktopLegacyLocalStorage.layer,
   DesktopAppSettings.layer,
   DesktopClientSettings.layer,
-  DesktopConnectionCatalogStore.layer.pipe(Layer.provideMerge(DesktopSavedEnvironments.layer)),
+  DesktopConnectionCatalogStore.layer.pipe(
+    Layer.provideMerge(DesktopSavedEnvironments.layer),
+    Layer.provide(LinuxBrowserSecret.layer),
+  ),
   DesktopAssets.layer,
   DesktopObservability.layer,
   DesktopRendererHistory.layer,
