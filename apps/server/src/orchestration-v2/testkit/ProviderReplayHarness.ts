@@ -264,6 +264,7 @@ export function layerWithRegistry<Error>(
     McpProviderSessions.McpProviderSessions
   >,
   options: {
+    readonly runtimePolicyLayer?: Layer.Layer<RuntimePolicy.RuntimePolicyV2>;
     readonly databaseLayer?: Layer.Layer<
       SqlClient.SqlClient,
       MigrationError | PlatformError.PlatformError | SqlError
@@ -286,11 +287,12 @@ export function layerWithRegistry<Error>(
     makeReplayServerConfig(scenario.name).pipe(Effect.orDie),
   ).pipe(Layer.provide(NodeServices.layer));
   const layerRuntime =
-    scenario.runtimePolicyOverride === undefined
+    options.runtimePolicyLayer ??
+    (scenario.runtimePolicyOverride === undefined
       ? RuntimePolicy.layer
       : RuntimePolicy.layerWithOverride(scenario.runtimePolicyOverride).pipe(
           Layer.provide(RuntimePolicy.layer),
-        );
+        ));
   const layerDatabase = options.databaseLayer ?? SqlitePersistence.layerMemory;
   // Share one continuation queue across adapters, orchestrator, and worker through layer memoization.
   const layerContinuationRequests =

@@ -356,7 +356,8 @@ vp test run src/orchestration-v2/testkit/BoundedDelegation.live.test.ts
 
 The model defaults to `gpt-6.1-sol`. Set `T3_BOUNDED_CODEX_MODEL` to another
 model available to the same authenticated account if needed. The test runs the
-real Codex app-server through T3's orchestrator and adapter. It verifies allowed
+real Codex app-server through `OrchestratorMcpService.delegateTask`, the
+orchestrator, and the adapter. HTTP MCP transport is not exercised. It verifies allowed
 writes, denied sibling-path writes, no pending human approvals, rejection of
 worktree relocation, and matching child and grandchild permission ceilings.
 It writes `bounded-delegation-receipt.json` in the isolated Codex home.

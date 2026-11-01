@@ -1,7 +1,9 @@
+import * as Schema from "effect/Schema";
 import { assert, it } from "@effect/vitest";
 import {
   type ModelSelection,
-  type OrchestrationV2AppThread,
+  OrchestrationV2AppThread,
+  ProviderDriverKind,
   ProjectId,
   ProviderInstanceId,
   type RuntimeMode,
@@ -17,6 +19,9 @@ import type { ProviderInstance } from "@t3tools/provider-core/server/driver";
 import * as ProviderInstanceRegistry from "../provider/ProviderInstanceRegistry.ts";
 import * as ProjectStore from "./ProjectStore.ts";
 import * as RuntimePolicy from "./RuntimePolicy.ts";
+
+const encodeThread = Schema.encodeEffect(OrchestrationV2AppThread);
+const decodeThread = Schema.decodeEffect(OrchestrationV2AppThread);
 
 const projectId = ProjectId.make("project:runtime-policy");
 const providerInstanceId = ProviderInstanceId.make("codex");
@@ -68,6 +73,7 @@ const providerInstanceFor = (instanceId: ProviderInstanceId) =>
   ({
     snapshot: {
       getSnapshot: Effect.succeed({
+        driver: ProviderDriverKind.make(instanceId === grokInstanceId ? "grok" : "codex"),
         supportedRuntimeModes: supportedRuntimeModesByInstance.get(instanceId),
       } as ServerProvider),
     },
@@ -107,6 +113,37 @@ const layerTest = RuntimePolicy.layerFromProjectStore.pipe(
 );
 
 it.layer(layerTest)("RuntimePolicyV2", (it) => {
+  it.effect("preserves the durable ceiling after reload and refuses provider or cwd changes", () =>
+    Effect.gen(function* () {
+      const policy = yield* RuntimePolicy.RuntimePolicyV2;
+      const ceiling = {
+        providerInstanceId,
+        cwd: "/project-root",
+        sandboxPolicy: { type: "readOnly", networkAccess: false },
+      } as const;
+      const thread = {
+        ...makeThread({ now: yield* DateTime.now, worktreePath: null }),
+        delegatedExecution: ceiling,
+      };
+      const reloaded = yield* decodeThread(yield* encodeThread(thread));
+      assert.deepEqual(
+        (yield* policy.resolve({ thread: reloaded, modelSelection })).delegatedExecution,
+        ceiling,
+      );
+      const providerError = yield* policy
+        .resolve({
+          thread: reloaded,
+          modelSelection: { instanceId: grokInstanceId, model: "grok-test" },
+        })
+        .pipe(Effect.flip);
+      assert.equal(providerError._tag, "RuntimePolicyResolveError");
+      const cwdError = yield* policy
+        .resolve({ thread: { ...reloaded, worktreePath: "/other" }, modelSelection })
+        .pipe(Effect.flip);
+      assert.equal(cwdError._tag, "RuntimePolicyResolveError");
+    }),
+  );
+
   it.effect("runs a mode the provider does not offer in Supervised", () =>
     Effect.gen(function* () {
       const policy = yield* RuntimePolicy.RuntimePolicyV2;

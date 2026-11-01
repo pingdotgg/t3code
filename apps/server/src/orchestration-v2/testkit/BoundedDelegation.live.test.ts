@@ -1,8 +1,26 @@
+import * as OrchestratorMcpService from "../../mcp/OrchestratorMcpService.ts";
+import type { McpInvocationScope } from "../../mcp/McpInvocationContext.ts";
+import * as ThreadManagementService from "../ThreadManagementService.ts";
+import * as CommandReceiptStore from "../CommandReceiptStore.ts";
+import * as SqlitePersistence from "../../persistence/Sqlite.ts";
+import * as ServerSettings from "../../serverSettings.ts";
+import * as ProviderRegistryMock from "../../provider/testUtils/providerRegistryMock.ts";
+import * as ThreadLaunchService from "../ThreadLaunchService.ts";
+import * as GitVcsDriver from "../../vcs/GitVcsDriver.ts";
+import * as ProjectService from "../../project/ProjectService.ts";
+import * as ScheduledTaskService from "../../scheduledTasks/ScheduledTaskService.ts";
+import * as SecretRequests from "../../secrets/SecretRequests.ts";
+import * as RemoteDelegation from "../../peer/RemoteDelegation.ts";
+import * as RuntimePolicy from "../RuntimePolicy.ts";
+import * as Cause from "effect/Cause";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
 import {
   CodexSettings,
+  EnvironmentId,
+  ProviderDriverKind,
+  OrchestratorMcpDelegateTaskInput,
   CommandId,
   MessageId,
   ProjectId,
@@ -26,6 +44,7 @@ import * as Orchestrator from "../Orchestrator.ts";
 import * as Registry from "../ProviderAdapterRegistry.ts";
 import * as Harness from "./ProviderReplayHarness.ts";
 
+const decodeDelegateTask = Schema.decodeEffect(OrchestratorMcpDelegateTaskInput);
 const decodeSettings = Schema.decodeEffect(CodexSettings);
 
 describe.runIf(process.env.T3_BOUNDED_CODEX_E2E === "1")("live bounded Codex delegation", () => {
@@ -73,41 +92,110 @@ describe.runIf(process.env.T3_BOUNDED_CODEX_E2E === "1")("live bounded Codex del
               Layer.provide(NodeServices.layer),
             ),
           );
+          const parentId = ThreadId.make("bounded-live-parent");
+          const parentSandbox = {
+            type: "workspaceWrite",
+            writableRoots: [],
+            networkAccess: false,
+            excludeSlashTmp: true,
+            excludeTmpdirEnvVar: true,
+          } as const;
+          const openedSessions = new Set<ThreadId>();
+          const nativeFactory = yield* Effect.service(Codex.CodexAppServerClientFactory).pipe(
+            Effect.provide(factoryContext),
+          );
+          const allocator = yield* IdAllocator.IdAllocatorV2;
           const adapter = yield* Codex.makeCodexAdapterV2({
             instanceId: ProviderInstanceId.make("codex"),
             settings: yield* decodeSettings({ homePath }),
             environment: process.env,
-            clientFactory: yield* Effect.service(Codex.CodexAppServerClientFactory).pipe(
-              Effect.provide(factoryContext),
-            ),
+            clientFactory: {
+              open: Effect.fn("boundedLive.openSession")(function* (
+                input: Parameters<Codex.CodexAppServerClientFactoryShape["open"]>[0],
+              ) {
+                openedSessions.add(input.threadId);
+                return yield* nativeFactory.open(input);
+              }),
+            },
             crypto: yield* Crypto.Crypto,
             fileSystem: fs,
-            idAllocator: yield* IdAllocator.IdAllocatorV2,
+            idAllocator: allocator,
             serverConfig,
           });
+          const parentOnlyPolicy = Layer.effect(
+            RuntimePolicy.RuntimePolicyV2,
+            Effect.gen(function* () {
+              const base = yield* RuntimePolicy.RuntimePolicyV2;
+              return RuntimePolicy.RuntimePolicyV2.of({
+                resolve: (input) =>
+                  base.resolve(input).pipe(
+                    Effect.map((policy) =>
+                      input.thread.id === parentId
+                        ? {
+                            ...policy,
+                            approvalPolicy: "on-request",
+                            sandboxPolicy: parentSandbox,
+                          }
+                        : policy,
+                    ),
+                  ),
+              });
+            }),
+          ).pipe(Layer.provide(RuntimePolicy.layer));
+          const model = process.env.T3_BOUNDED_CODEX_MODEL ?? "gpt-6.1-sol";
+          const registryLayer = Registry.layerFromAdaptersEffect(Effect.succeed([adapter]));
           const runtime = Harness.layerWithRegistry(
-            {
-              name: "bounded-delegation-live",
-              runtimePolicyOverride: {
-                cwd,
-                approvalPolicy: "on-request",
-                sandboxPolicy: {
-                  type: "workspaceWrite",
-                  writableRoots: [],
-                  networkAccess: false,
-                  excludeSlashTmp: true,
-                  excludeTmpdirEnvVar: true,
-                },
-              },
-            },
-            Registry.layerFromAdaptersEffect(Effect.succeed([adapter])),
+            { name: "bounded-delegation-live" },
+            registryLayer,
+            { runtimePolicyLayer: parentOnlyPolicy },
           );
+
+          const management = ThreadManagementService.layer.pipe(
+            Layer.provide(runtime),
+            Layer.provide(ServerSettings.layerTest()),
+            Layer.provide(
+              CommandReceiptStore.layer.pipe(Layer.provide(SqlitePersistence.layerMemory)),
+            ),
+          );
+          const apiLayer = OrchestratorMcpService.layer.pipe(
+            Layer.provide(management),
+            Layer.provide(registryLayer),
+            Layer.provide(
+              ProviderRegistryMock.layer([
+                {
+                  instanceId: ProviderInstanceId.make("codex"),
+                  driver: ProviderDriverKind.make("codex"),
+                  enabled: true,
+                  installed: true,
+                  version: "live",
+                  status: "ready",
+                  auth: { status: "authenticated" },
+                  checkedAt: "2026-11-01T00:00:00.000Z",
+                  models: [{ slug: model, name: model, isCustom: false, capabilities: null }],
+                  slashCommands: [],
+                  skills: [],
+                },
+              ]),
+            ),
+            Layer.provide(ServerSettings.layerTest()),
+            Layer.provide(
+              Layer.mergeAll(
+                Layer.mock(ThreadLaunchService.ThreadLaunchService)({}),
+                Layer.mock(GitVcsDriver.GitVcsDriver)({}),
+                Layer.mock(ProjectService.ProjectService)({}),
+                Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
+                Layer.mock(SecretRequests.SecretRequests)({}),
+                Layer.mock(RemoteDelegation.RemoteDelegation)({}),
+              ),
+            ),
+            Layer.provideMerge(runtime),
+          );
+
           yield* Effect.gen(function* () {
             const orchestrator = yield* Orchestrator.OrchestratorV2;
-            const parentId = ThreadId.make("bounded-live-parent");
             const selection = {
               instanceId: ProviderInstanceId.make("codex"),
-              model: process.env.T3_BOUNDED_CODEX_MODEL ?? "gpt-6.1-sol",
+              model,
               options: [{ id: "reasoningEffort", value: "low" }],
             };
             yield* orchestrator.dispatch({
@@ -148,7 +236,7 @@ describe.runIf(process.env.T3_BOUNDED_CODEX_E2E === "1")("live bounded Codex del
                 ),
               );
             yield* running(parentId, created.sequence);
-            const delegate = Effect.fn("boundedLive.delegate")(function* (
+            const dispatchTask = Effect.fn("boundedLive.dispatchTask")(function* (
               threadId: ThreadId,
               name: string,
               overrides: Partial<
@@ -175,31 +263,103 @@ describe.runIf(process.env.T3_BOUNDED_CODEX_E2E === "1")("live bounded Codex del
                 ...overrides,
               });
             });
-            const rejected = yield* delegate(parentId, "unsupported-worktree", {
+            const openedBefore = openedSessions.size;
+            const rejected = yield* dispatchTask(parentId, "unsupported-worktree", {
               workspaceStrategy: { type: "worktree", baseRef: "HEAD", startFromOrigin: false },
             }).pipe(Effect.exit);
             assert.equal(rejected._tag, "Failure");
+            if (rejected._tag === "Failure")
+              assert.include(Cause.pretty(rejected.cause), "Bounded delegation requires");
+            assert.equal(openedSessions.size, openedBefore);
+            const absent = yield* orchestrator
+              .getThreadProjection(
+                allocator.derive.delegatedTaskThread({
+                  commandId: CommandId.make("bounded-unsupported-worktree"),
+                }),
+              )
+              .pipe(Effect.exit);
+            assert.equal(absent._tag, "Failure");
             assert.lengthOf((yield* orchestrator.getThreadProjection(parentId)).subagents, 0);
-            const childResult = yield* delegate(parentId, "child");
-            const childEvent = childResult.storedEvents.find(
-              (stored) => stored.event.type === "thread.created",
-            );
-            if (childEvent?.event.type !== "thread.created")
-              return yield* Effect.die("No committed child thread.");
-            const childId = childEvent.event.payload.id;
-            const ceiling = childEvent.event.payload.delegatedExecution;
-            assert.isDefined(ceiling);
-            yield* running(childId);
-            const grandchildResult = yield* delegate(childId, "grandchild", {
-              approvalPolicy: "inherit",
+            const api = yield* OrchestratorMcpService.OrchestratorMcpService;
+            const parentScope: McpInvocationScope = {
+              environmentId: EnvironmentId.make("bounded-live"),
+              requestNamespace: "bounded-parent",
+              issuedAt: 0,
+              thread: {
+                threadId: parentId,
+                providerSessionId: "bounded-parent",
+                providerInstanceId: selection.instanceId,
+              },
+              client: undefined,
+              capabilities: new Set(["orchestration"]),
+            };
+            for (const { expected, ...request } of [
+              { isolation: "worktree", expected: "invalid_request" },
+              { runtimeMode: "full-access", expected: "runtime_mode_escalation_denied" },
+              {
+                target: { providerInstanceId: ProviderInstanceId.make("unsupported") },
+                expected: "provider_unavailable",
+              },
+            ] as const) {
+              const error = yield* api
+                .delegateTask(
+                  parentScope,
+                  yield* decodeDelegateTask({
+                    task: "Must not dispatch",
+                    approvalPolicy: "never",
+                    ...request,
+                  }),
+                )
+                .pipe(Effect.flip);
+              assert.equal(error.code, expected);
+            }
+            const unsupportedProviderStartups = openedSessions.size - openedBefore;
+            assert.equal(unsupportedProviderStartups, 0);
+            assert.lengthOf((yield* orchestrator.getThreadProjection(parentId)).subagents, 0);
+            const delegate = Effect.fn("boundedLive.delegateTaskApi")(function* (
+              threadId: ThreadId,
+              name: string,
+              approvalPolicy: "inherit" | "never" = "never",
+            ) {
+              const scope: McpInvocationScope = {
+                environmentId: EnvironmentId.make("bounded-live"),
+                requestNamespace: `bounded-${threadId}`,
+                issuedAt: 0,
+                thread: {
+                  threadId,
+                  providerSessionId: `bounded-${threadId}`,
+                  providerInstanceId: selection.instanceId,
+                },
+                client: undefined,
+                capabilities: new Set(["orchestration"]),
+              };
+              const result = yield* api.delegateTask(
+                scope,
+                yield* decodeDelegateTask({
+                  task: `Run exactly one command using exec_command in ${cwd}: python3 probe.py ${name} ${JSON.stringify(outside)}. This checks disposable files. Do not request escalation. Then return only PASS.`,
+                  approvalPolicy,
+                  mode: "async",
+                  clientRequestId: name,
+                }),
+              );
+              if (result.childThreadId === null)
+                return yield* Effect.die("Expected a local child.");
+              return result.childThreadId;
             });
-            const grandchildEvent = grandchildResult.storedEvents.find(
-              (stored) => stored.event.type === "thread.created",
+            const childId = yield* delegate(parentId, "child");
+            const ceiling = (yield* orchestrator.getThreadProjection(childId)).thread
+              .delegatedExecution;
+            assert.deepEqual(ceiling, {
+              providerInstanceId: selection.instanceId,
+              cwd,
+              sandboxPolicy: parentSandbox,
+            });
+            yield* running(childId);
+            const grandchildId = yield* delegate(childId, "grandchild", "inherit");
+            assert.deepEqual(
+              (yield* orchestrator.getThreadProjection(grandchildId)).thread.delegatedExecution,
+              ceiling,
             );
-            if (grandchildEvent?.event.type !== "thread.created")
-              return yield* Effect.die("No committed grandchild thread.");
-            const grandchildId = grandchildEvent.event.payload.id;
-            assert.deepEqual(grandchildEvent.event.payload.delegatedExecution, ceiling);
             const finish = (threadId: ThreadId) =>
               orchestrator.streamStoredEventsFrom({ threadId, afterSequence: 0 }).pipe(
                 Stream.filter(
@@ -221,9 +381,7 @@ describe.runIf(process.env.T3_BOUNDED_CODEX_E2E === "1")("live bounded Codex del
               const projection = yield* orchestrator.getThreadProjection(threadId);
               assert.equal(projection.runs.at(-1)?.status, "completed");
               assert.lengthOf(
-                projection.runtimeRequests.filter(
-                  (request) => request.status === "pending" && request.kind !== "user_input",
-                ),
+                projection.runtimeRequests.filter((request) => request.kind !== "user_input"),
                 0,
               );
               assert.deepEqual(
@@ -236,16 +394,20 @@ describe.runIf(process.env.T3_BOUNDED_CODEX_E2E === "1")("live bounded Codex del
               path.join(homePath, "bounded-delegation-receipt.json"),
               JSON.stringify({
                 test: "bounded-delegation",
+                dispatchPath: "OrchestratorMcpService.delegateTask",
                 cwd,
                 childId,
                 grandchildId,
                 ceiling,
                 allowed: true,
                 outsideDenied: true,
+                approvalRequestsEver: 0,
                 pendingApprovals: 0,
+                parentOnlyRestrictions: true,
+                unsupportedProviderStartups,
               }),
             );
-          }).pipe(Effect.provide(runtime));
+          }).pipe(Effect.provide(apiLayer));
         }),
       ).pipe(
         Effect.provide(
