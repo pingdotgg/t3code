@@ -765,6 +765,33 @@ it.layer(NodeServices.layer)("server settings", (it) => {
     }).pipe(Effect.provide(layerServerSettings())),
   );
 
+  it.effect("falls back to an enabled custom instance when every default instance is off", () =>
+    Effect.gen(function* () {
+      const serverSettings = yield* ServerSettingsModule.ServerSettingsService;
+      const customId = ProviderInstanceId.make("customClaude");
+      const next = yield* serverSettings.updateSettings({
+        providerInstances: {
+          [ProviderInstanceId.make("codex")]: {
+            driver: ProviderDriverKind.make("codex"),
+            enabled: false,
+          },
+          [ProviderInstanceId.make("claudeAgent")]: {
+            driver: ProviderDriverKind.make("claudeAgent"),
+            enabled: false,
+          },
+          [customId]: {
+            driver: ProviderDriverKind.make("claudeAgent"),
+            enabled: true,
+          },
+        },
+      });
+
+      const expected = { instanceId: customId, model: "claude-haiku-5-5" };
+      assert.deepEqual(next.textGenerationModelSelection, expected);
+      assert.deepEqual((yield* serverSettings.getSettings).textGenerationModelSelection, expected);
+    }).pipe(Effect.provide(layerServerSettings())),
+  );
+
   // A backend behind a custom model may refuse the built-in default.
   it.effect("falls back to the thread default when it is a custom model on that instance", () =>
     Effect.gen(function* () {
