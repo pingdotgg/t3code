@@ -504,10 +504,10 @@ describe("presentProviderGoal", () => {
         { objective: "Ship the feature", status: "active", tokensUsed, tokenBudget: 2_000_000 },
         true,
       ).usage;
-    expect(usage(999_499)).toBe("999k / 2m tokens");
-    expect(usage(999_500)).toBe("1m / 2m tokens");
-    expect(usage(999_999)).toBe("1m / 2m tokens");
-    expect(usage(1_000_000)).toBe("1m / 2m tokens");
+    expect(usage(999_499)).toBe("999k / 2m uncached tokens");
+    expect(usage(999_500)).toBe("1m / 2m uncached tokens");
+    expect(usage(999_999)).toBe("1m / 2m uncached tokens");
+    expect(usage(1_000_000)).toBe("1m / 2m uncached tokens");
     expect(
       presentProviderGoal(
         {
@@ -518,7 +518,7 @@ describe("presentProviderGoal", () => {
         },
         false,
       ).usage,
-    ).toBe("1m / 1m tokens");
+    ).toBe("1m / 1m uncached tokens");
   });
 });
 
