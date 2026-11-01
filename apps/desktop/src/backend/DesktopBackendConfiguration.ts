@@ -511,6 +511,8 @@ const resolvePrimaryStartConfig = Effect.fn("desktop.backendConfiguration.resolv
       desktopTelemetryControlFd: 5,
       desktopBrowserFd: 6,
       desktopBrowserControlFd: 7,
+      desktopStopFd: 8,
+      desktopStopAckFd: 9,
       ...Option.match(input.resourceMonitorPath, {
         onNone: () => ({}),
         onSome: (resourceMonitorPath) => ({ resourceMonitorPath }),

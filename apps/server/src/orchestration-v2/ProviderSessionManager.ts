@@ -44,6 +44,7 @@ import { ProviderWorkspaceMissingError } from "../provider/Errors.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import * as ServerSettings from "../serverSettings.ts";
+import { isShutdownIntentRecorded, recordShutdownIntent } from "../shutdownIntent.ts";
 import * as McpSessionRegistry from "../mcp/McpSessionRegistry.ts";
 import * as EventSink from "./EventSink.ts";
 import * as CommandOutputHub from "./CommandOutputHub.ts";
@@ -385,20 +386,16 @@ export const layerWithOptions = (
         },
       );
       const layerScope = yield* Effect.scope;
-      // Group signals stop providers before restart capture; drop post-signal events so recovery owns that state.
-      const shutdownSignal = { received: false };
-      const onShutdownSignal = () => {
-        shutdownSignal.received = true;
-      };
+      // Group signals (or the desktop's stop notice) precede provider deaths; drop later events so recovery owns that state.
       yield* Effect.acquireRelease(
         Effect.sync(() => {
-          process.on("SIGINT", onShutdownSignal);
-          process.on("SIGTERM", onShutdownSignal);
+          process.on("SIGINT", recordShutdownIntent);
+          process.on("SIGTERM", recordShutdownIntent);
         }),
         () =>
           Effect.sync(() => {
-            process.off("SIGINT", onShutdownSignal);
-            process.off("SIGTERM", onShutdownSignal);
+            process.off("SIGINT", recordShutdownIntent);
+            process.off("SIGTERM", recordShutdownIntent);
           }),
       );
       const sessions = yield* Ref.make(new Map<string, LiveSessionEntry>());
@@ -1944,7 +1941,7 @@ export const layerWithOptions = (
         let stoppedByProvider = false;
         return entry.runtime.events.pipe(
           Stream.runForEach((event) => {
-            if (shutdownSignal.received) return Effect.void;
+            if (isShutdownIntentRecorded()) return Effect.void;
             // Live output bypasses persistence and subscribers so floods cannot delay domain events.
             if (event.type === "command_output.delta") {
               return commandOutput.append(event);
@@ -2040,7 +2037,7 @@ export const layerWithOptions = (
           Effect.exit,
           Effect.flatMap((exit) =>
             Effect.gen(function* () {
-              if (shutdownSignal.received) return;
+              if (isShutdownIntentRecorded()) return;
               const current = (yield* Ref.get(sessions)).get(
                 sessionKey(entry.runtime.providerSessionId),
               );
