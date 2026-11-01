@@ -33,7 +33,7 @@ describe("Android fold scene", () => {
       const projected = new Vector3(x, 0, 0.041).project(camera);
       return [(projected.x + 1) / 2, (1 - projected.y) / 2] as const;
     };
-    expect(scene.screenPoint(...point(0.4), camera)?.x).toBeCloseTo(0.91, 1);
+    expect(scene.screenPoint(...point(0.4), camera)?.x).toBeCloseTo(0.914, 2);
     expect(scene.screenPoint(...point(0.7), camera)).toBeNull();
     expect(scene.screenPoint(...point(0.7), camera, true)?.x).toBe(1);
     scene.dispose();
