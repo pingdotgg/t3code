@@ -77,7 +77,7 @@ const permissionOptionIds = {
   allowAlways: "allow-always",
   rejectOnce: "reject-once",
 };
-const sessionId = "mock-session-1";
+const sessionId = process.env.T3_ACP_SESSION_ID ?? "mock-session-1";
 
 let currentModeId = antigravityProfile
   ? "default"
