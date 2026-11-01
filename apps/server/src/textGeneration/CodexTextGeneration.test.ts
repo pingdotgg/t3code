@@ -196,6 +196,42 @@ function withFakeCodexEnv<A, E, R>(
 }
 
 it.layer(layerCodexTextGenerationTest)("CodexTextGeneration", (it) => {
+  it.effect("generates titles without shell tools", () =>
+    withFakeCodexEnv(
+      {
+        output: JSON.stringify({ title: "Fix autosave" }),
+        requireArg: "--config features.shell_tool=false",
+      },
+      (textGeneration) =>
+        textGeneration.generateThreadTitle({
+          cwd: process.cwd(),
+          message: "Fix autosave",
+          modelSelection: DEFAULT_TEST_MODEL_SELECTION,
+        }),
+    ),
+  );
+
+  it.effect("keeps checkout tools available for review guides", () =>
+    withFakeCodexEnv(
+      {
+        output: JSON.stringify({ stops: [] }),
+        forbidArg: "features.shell_tool=false",
+        stdinMustContain: "git diff --stat abc123...HEAD",
+      },
+      (textGeneration) =>
+        textGeneration.generateReviewGuide({
+          cwd: process.cwd(),
+          number: 1,
+          title: "Fix autosave",
+          description: "Preserve unsaved changes",
+          baseBranch: "main",
+          baseCommit: "abc123",
+          settledReview: "",
+          modelSelection: DEFAULT_TEST_MODEL_SELECTION,
+        }),
+    ),
+  );
+
   it.effect.each(["exec", "mcp list"] as const)(
     "kills a stalled %s CLI when its request is interrupted",
     (command) =>
