@@ -400,6 +400,8 @@ export function routeProviderEvent(
         },
       ];
     }
+    case "app_thread.model_selection.updated":
+      return [ownsThread(event.threadId), state];
     case "provider_thread.updated": {
       const belongs =
         state.ownedProviderThreadIds.has(event.providerThread.id) ||

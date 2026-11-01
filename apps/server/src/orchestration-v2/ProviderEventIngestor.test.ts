@@ -2282,6 +2282,74 @@ layer("ProviderEventIngestorV2", (it) => {
       ),
     ),
   );
+
+  it.effect("moves a thread to the model its provider switched the session to", () =>
+    Effect.gen(function* () {
+      const now = yield* DateTime.now;
+      const eventSink = yield* EventSink.EventSinkV2;
+      const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
+      const ingestor = yield* ProviderEventIngestor.ProviderEventIngestorV2;
+      const idAllocator = yield* IdAllocator.IdAllocatorV2;
+      const rootEvent = yield* threadCreatedEvent(now);
+      const threadId = rootEvent.threadId;
+      if (threadId === undefined) throw new Error("Expected a thread fixture event");
+      yield* eventSink.write({ events: [rootEvent] });
+      const providerSessionId = yield* idAllocator.allocate.providerSession({
+        providerInstanceId: modelSelection.instanceId,
+        threadId,
+      });
+      const reportModel = (reported: ModelSelection) =>
+        ingestor.ingestNormalized({
+          providerSessionId,
+          providerInstanceId: modelSelection.instanceId,
+          threadId,
+          event: {
+            type: "app_thread.model_selection.updated",
+            driver: CODEX_DRIVER,
+            threadId,
+            previousModelSelection: modelSelection,
+            modelSelection: reported,
+          },
+        });
+      const switched = { ...modelSelection, model: "gpt-fallback" };
+
+      const first = yield* reportModel(switched);
+      const repeated = yield* reportModel(switched);
+      const otherInstance = yield* reportModel({
+        ...switched,
+        instanceId: ProviderInstanceId.make("codex-work"),
+      });
+
+      assert.deepEqual(
+        first.map((stored) => stored.event.type),
+        ["thread.model-selection-updated"],
+      );
+      assert.lengthOf(repeated, 0);
+      assert.lengthOf(otherInstance, 0);
+      assert.deepEqual((yield* projectionStore.getThread(threadId)).modelSelection, switched);
+      for (const newer of [
+        { ...modelSelection, model: "user-selected-model" },
+        { ...modelSelection, options: [{ id: "reasoningEffort", value: "low" }] },
+      ]) {
+        yield* eventSink.write({
+          events: [
+            {
+              ...rootEvent,
+              id: yield* idAllocator.allocate.event({ threadId }),
+              type: "thread.model-selection-updated",
+              payload: {
+                ...(yield* projectionStore.getThread(threadId)),
+                modelSelection: newer,
+                updatedAt: now,
+              },
+            },
+          ],
+        });
+        assert.lengthOf(yield* reportModel(switched), 0);
+        assert.deepEqual((yield* projectionStore.getThread(threadId)).modelSelection, newer);
+      }
+    }),
+  );
 });
 
 const ingestCompletedProviderTurn = (
