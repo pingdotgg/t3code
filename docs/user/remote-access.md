@@ -211,7 +211,7 @@ your policy grants T3 Code. It reuses its last full check for up to five
 minutes, then lets in only granted devices until it can tell. Right after it
 starts, it has no check to reuse. On that machine, `t3 tailscale require-grant`
 shows why. A refused
-device shows the grant to add.
+device shows the grant to add, for that device and this machine only.
 
 A grant goes in the `grants` section of your tailnet policy. This one lets your
 devices sign in to machines tagged `tag:t3-box`:

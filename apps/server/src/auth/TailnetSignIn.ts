@@ -225,6 +225,8 @@ export const make = Effect.gen(function* () {
   // Bumped when a sign-in, the recheck or a scan sees a grant, before it knows the account: a
   // scan already running then may not end on "no grants", and a recheck pass runs again.
   const grantsInDoubt = yield* Ref.make(0);
+  // Bumped each time the owner rule lets a device in, by sign-in or recheck.
+  const ownerRuleAdmissions = yield* Ref.make(0);
   /** Counts a grant seen on `account`; true when it is the first there. */
   const countGrant = (account: string | null) =>
     Ref.modify(grantsSeen, (counts) => {
@@ -370,13 +372,13 @@ export const make = Effect.gen(function* () {
     const ownerUserId = TailscaleHost.tailnetOwnerUserId(status, config.tailscaleOwnerUserId);
     if (ownerUserId === null) return refused("owner_unknown");
     const refusal = refuseNode(node, ownerUserId);
-    return refusal === null
-      ? ({
-          _tag: "Allowed",
-          scopes: AuthStandardClientScopes,
-          via: "owner",
-        } satisfies AccessDecision)
-      : refused(refusal);
+    if (refusal !== null) return refused(refusal);
+    yield* Ref.update(ownerRuleAdmissions, (count) => count + 1);
+    return {
+      _tag: "Allowed",
+      scopes: AuthStandardClientScopes,
+      via: "owner",
+    } satisfies AccessDecision;
   });
 
   const refuse = (reason: TailnetSignInRefusedReason, cause?: unknown, suggestedGrant?: string) =>
@@ -481,7 +483,12 @@ export const make = Effect.gen(function* () {
           undefined,
           GRANT_FIXES.has(decision.reason)
             ? // This device on this machine only: a login or tag would cover others too.
-              tailnetGrantSnippet(remoteAddress, localAddress, localPort)
+              tailnetGrantSnippet(
+                remoteAddress,
+                localAddress,
+                localPort,
+                `${label(node, status) ?? remoteAddress} on ${status.magicDnsName?.split(".")[0] ?? localAddress}`,
+              )
             : undefined,
         );
       }
@@ -586,11 +593,11 @@ export const make = Effect.gen(function* () {
   // The periodic recheck and the one a sign-in's first grant starts share the state above.
   const recheckLock = yield* Semaphore.make(1);
 
-  /** One recheck pass; true when it saw a grant while none was counted on its account. */
+  /** One recheck pass; true when, while it ran, a grant was seen and the owner rule let a device in. */
   const recheckPass = Effect.gen(function* () {
-    // Read before the credentials are listed, so a grant seen while they are counts.
-    const countsBefore = yield* Ref.get(grantsSeen);
+    // Read before the credentials are listed, so all the pass's work falls after them.
     const doubtBefore = yield* Ref.get(grantsInDoubt);
+    const admissionsBefore = yield* Ref.get(ownerRuleAdmissions);
     // Unused sign-in credentials count too: exchanging one would bring the device back.
     const now = yield* DateTime.now;
     const devices = new Map<
@@ -652,7 +659,6 @@ export const make = Effect.gen(function* () {
     }
     statusFailingSince = null;
     const account = status.value.selfNodeId;
-    const ownerRuleWasOn = (countsBefore.get(account) ?? 0) === 0;
     const stillOnAccount = yield* Effect.cached(
       host.freshStatus.pipe(
         Effect.map((now) => now.selfNodeId === account),
@@ -697,12 +703,15 @@ export const make = Effect.gen(function* () {
       }),
       { concurrency: 8, discard: true },
     );
-    return ownerRuleWasOn && (yield* Ref.get(grantsInDoubt)) !== doubtBefore;
+    return (
+      (yield* Ref.get(grantsInDoubt)) !== doubtBefore &&
+      (yield* Ref.get(ownerRuleAdmissions)) !== admissionsBefore
+    );
   });
 
   const recheckSessions: TailnetSignIn["Service"]["recheckSessions"] = Effect.gen(function* () {
-    // A pass that first sees a grant may already have let owner-rule devices stay, so it
-    // runs once more.
+    // A device the owner rule let in during a pass may have come before a grant the pass saw,
+    // so the pass runs once more.
     if (yield* recheckPass) yield* recheckPass;
   }).pipe(
     Effect.catchCause((cause) =>

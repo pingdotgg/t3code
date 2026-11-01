@@ -618,13 +618,15 @@ it.layer(NodeServices.layer)("TailnetSignIn", (it) => {
   it.effect.each([
     { device: "a shared-in device", node: phoneNode({ Sharer: "int64:555" }) },
     { device: "a tagged device", node: phoneNode({ Tags: ["tag:ci"] }) },
-  ])("$device's suggested grant names it and this machine by address only", ({ node }) =>
+  ])("$device's suggested grant names it and this machine only, by address", ({ node }) =>
     Effect.gen(function* () {
       yield* requireGrantOn;
       const error = yield* Effect.flip(signIn(makeDpopKey()));
       const grant = isRefusal(error) ? error.suggestedGrant : undefined;
       expect(grant).toContain(`"src": ["${PHONE_ADDRESS}"]`);
       expect(grant).toContain(`"dst": ["${HOST_ADDRESS}"]`);
+      // Addresses do not say whose they are, so a note names both.
+      expect(grant).toContain("// phone on box");
     }).pipe(
       Effect.provide(
         layerTest({

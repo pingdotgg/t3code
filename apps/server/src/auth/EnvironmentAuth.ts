@@ -949,8 +949,8 @@ export const make = Effect.gen(function* () {
   };
 
   // Consuming the grant (which checks the Tailscale block list) and creating the
-  // session share one write transaction. Blocking a device takes the same writer,
-  // so a block either lands before the grant is spent or revokes the new session.
+  // session share one write transaction, so a grant spent after a block lands is
+  // refused, and a session made before it is revoked by the block's next step.
   const exchangeBootstrapCredentialForAccessToken: EnvironmentAuth["Service"]["exchangeBootstrapCredentialForAccessToken"] =
     (credential, requestedScopes, requestMetadata, input) => {
       return resolveBootstrapGrant(credential, {

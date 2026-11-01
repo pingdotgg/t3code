@@ -68,11 +68,18 @@ export const tailnetScopeDenial = (scope: string): string => {
 
 /**
  * The smallest tailnet policy grant that lets `src` (a login, tag, or address)
- * sign in to `dst` (a tag or address) on `port` with standard scopes.
+ * sign in to `dst` (a tag or address) on `port` with standard scopes. A `note`
+ * names them, as addresses do not say whose they are.
  */
-export const tailnetGrantSnippet = (src: string, dst: string, port: number): string =>
+export const tailnetGrantSnippet = (
+  src: string,
+  dst: string,
+  port: number,
+  note?: string,
+): string =>
   [
     '"grants": [{',
+    ...(note === undefined ? [] : [`  // ${note}`]),
     `  "src": [${JSON.stringify(src)}],`,
     `  "dst": [${JSON.stringify(dst)}],`,
     `  "ip":  ["tcp:${port}"],`,
