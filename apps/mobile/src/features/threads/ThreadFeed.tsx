@@ -141,7 +141,7 @@ import { flattenThemeColor } from "../../lib/mobileTheme";
 import { PresentationSource } from "../../components/ui/NativePresentation";
 import { NativeScrollViewMarker } from "../../native/NativeScrollViewMarker";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import Animated, { FadeIn, FadeInUp, type SharedValue } from "react-native-reanimated";
+import Animated, { FadeIn, type SharedValue } from "react-native-reanimated";
 import { useUniwindTheme } from "../../lib/useUniwindTheme";
 import { IOS_NAV_BAR_HEIGHT } from "../../lib/layoutMetrics";
 import { FONT_FAMILIES } from "../../lib/fontFamilies";
@@ -342,6 +342,8 @@ export interface ThreadFeedProps {
   readonly queuedMessages: ReadonlyArray<QueuedThreadMessage>;
   readonly dispatchingMessageId: MessageId | null;
   readonly onEditPendingMessage: ((message: QueuedThreadMessage) => void) | null;
+  // Rows arriving during the close would pin the end against the keyboard's old inset.
+  readonly keyboardClosing?: boolean;
   readonly environmentId: EnvironmentId;
   readonly threadId: ThreadId;
   /** Null while the thread's creation is queued: reading detail then caches a not-found as deleted. */
@@ -1983,7 +1985,7 @@ function renderFeedEntry(
       return (
         <Animated.View
           className={cn("items-end", props.userMessageGrouping.groupedWithNext ? "mb-1" : "mb-5")}
-          {...(enterAnimated ? { entering: FadeInUp.duration(220) } : {})}
+          {...(enterAnimated ? { entering: FadeIn.duration(220) } : {})}
         >
           {presentation.attribution === "t3code" ? (
             <Text className="mb-1 pr-1 font-t3-medium text-2xs text-foreground-muted opacity-60">
@@ -3697,7 +3699,7 @@ export const ThreadFeed = memo(function ThreadFeed({
             freeze={props.freeze}
             // Follow the measured end immediately; animating estimates races row measurement on acknowledgement.
             maintainScrollAtEnd={
-              disclosureToggleSettling || !followsEnd
+              disclosureToggleSettling || !followsEnd || props.keyboardClosing
                 ? false
                 : {
                     animated: false,
