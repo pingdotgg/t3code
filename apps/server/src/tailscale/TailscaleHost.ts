@@ -58,9 +58,8 @@ export class TailscaleHost extends Context.Service<
      */
     readonly freshStatus: Effect.Effect<TailscaleStatus, TailscaleStatusError>;
     /**
-     * Who owns a tailnet address. Single-flight per address, kept for a few
-     * seconds at most, and rate limited per address. Policy scans and rechecks
-     * (`fromServer`) skip the cache and the limit; their callers bound how often they run.
+     * Who owns a tailnet address, read now and rate limited per address. Policy scans and
+     * rechecks (`fromServer`) skip the limit; their callers bound how often they run.
      */
     readonly whois: (
       address: string,

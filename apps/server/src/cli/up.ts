@@ -649,9 +649,11 @@ const setUp = Effect.fn("cli.up")(function* (
           switch (error._tag) {
             case "ServeRecordError":
               return upError(
-                error.reason !== "no_account"
+                error.reason === "unreadable"
                   ? error.message
-                  : `${error.message} Then run this again, ${orDelete}`,
+                  : error.reason === "switched" || error.reason === "unlisted"
+                    ? `${error.message} Run this again.`
+                    : `${error.message} Then run this again, ${orDelete}`,
               );
             case "PlatformError":
               return upError(`Could not update the Tailscale Serve record: ${error.message}`);

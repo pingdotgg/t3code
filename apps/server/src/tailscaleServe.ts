@@ -47,7 +47,11 @@ const remedyFor = (cause: ClaimError, manualCommand: string) => {
   if (cause._tag === "TailscaleServeOccupiedError") {
     return "Another server holds this port. T3 Code leaves it alone and takes over once it stops.";
   }
-  if (cause._tag === "ServeRecordError") return `${cause.message} Serve waits until then.`;
+  if (cause._tag === "ServeRecordError") {
+    return cause.reason === "switched" || cause.reason === "unlisted"
+      ? cause.message
+      : `${cause.message} Serve waits until then.`;
+  }
   if (cause._tag === "PlatformError") {
     return "Could not save the record that lets a later run remove the mapping, so Serve waits until it can.";
   }
@@ -79,6 +83,8 @@ const ServeRecord = Schema.Struct({
   ...ServeTarget.fields,
   label: Schema.String,
   profileId: Schema.optionalKey(Schema.String),
+  // Every key the account had when it was written, so a later read missing one still matches.
+  keys: Schema.optionalKey(Schema.Array(Schema.String)),
 });
 type ServeRecord = typeof ServeRecord.Type;
 const ServeRecords = Schema.fromJsonString(Schema.Record(Schema.String, ServeRecord));
@@ -164,6 +170,10 @@ const currentAccount = Effect.fn("TailscaleServe.currentAccount")(function* (lis
  * Windows lists only the signed-in Windows user's profiles, so absence proves nothing there.
  * `unlisted` were made on a profile, but Tailscale did not list its profiles to tell.
  */
+const sameAccount = (a: ReadonlyArray<string>, b: ReadonlyArray<string>) =>
+  a.some((key) => b.includes(key));
+const recordKeys = (key: string, record: ServeRecord) => [key, ...(record.keys ?? [])];
+
 const sortRecords = Effect.fn("TailscaleServe.sortRecords")(function* (
   records: ServeRecords,
   keys: ReadonlyArray<string>,
@@ -176,7 +186,7 @@ const sortRecords = Effect.fn("TailscaleServe.sortRecords")(function* (
     unlisted: {} as Record<string, ServeRecord>,
   };
   for (const [key, record] of Object.entries(records)) {
-    if (keys.includes(key)) sorted.ours.push(record);
+    if (sameAccount(recordKeys(key, record), keys)) sorted.ours.push(record);
     else if (record.profileId === undefined) sorted.others[key] = record;
     else if (profiles === null) sorted.unlisted[key] = record;
     else if (proofOfAbsence && !profiles.ids.includes(record.profileId)) continue;
@@ -186,15 +196,15 @@ const sortRecords = Effect.fn("TailscaleServe.sortRecords")(function* (
 });
 
 // A switch while removing a mapping means the removal may have run on the other account.
-const switchedDuring = (account: { readonly key: string }) =>
+const switchedDuring = (keys: ReadonlyArray<string>) =>
   currentAccount().pipe(
     Effect.flatMap((now) =>
-      now.keys.includes(account.key)
+      sameAccount(now.keys, keys)
         ? Effect.void
         : Effect.fail(
             new ServeRecordError({
               reason: "switched",
-              message: "Tailscale switched accounts during cleanup. Run this again.",
+              message: "Tailscale switched accounts during cleanup.",
             }),
           ),
     ),
@@ -233,8 +243,8 @@ export const layer = (options: {
       };
       const logContext = { localPort: target.localPort, servePort: target.servePort };
       const manualCommand = `tailscale serve --bg --https=${target.servePort} http://${target.localHost}:${target.localPort}`;
-      // The account this run's mapping is recorded under, once it is.
-      const account = yield* Ref.make<string | null>(null);
+      // The keys of the account this run's mapping is recorded under, once it is.
+      const account = yield* Ref.make<ReadonlyArray<string> | null>(null);
       // An earlier run's mapping on this account that must go before this one is recorded.
       const releasing = yield* Ref.make<ServeTarget | null>(null);
       // Added before the retry fiber is forked, so it runs after that fiber is interrupted.
@@ -243,16 +253,23 @@ export const layer = (options: {
           const recordedUnder = yield* Ref.get(account);
           if (recordedUnder === null) return;
           // After a switch to another account, the mapping is not visible, so its record stays.
-          if (!(yield* currentAccount()).keys.includes(recordedUnder)) return;
+          if (!sameAccount((yield* currentAccount()).keys, recordedUnder)) return;
           const released = yield* releaseTailscaleServe(target).pipe(
             Effect.tapError((cause) =>
               Effect.logWarning("Failed to disable Tailscale Serve", { cause, ...logContext }),
             ),
           );
           if (released) yield* Effect.logInfo("Tailscale Serve disabled", logContext);
-          yield* switchedDuring({ key: recordedUnder });
-          const { [recordedUnder]: _ours, ...rest } = yield* readRecords(options.stateDir);
-          yield* writeRecords(options.stateDir, rest);
+          yield* switchedDuring(recordedUnder);
+          const records = yield* readRecords(options.stateDir);
+          yield* writeRecords(
+            options.stateDir,
+            Object.fromEntries(
+              Object.entries(records).filter(
+                ([key, record]) => !sameAccount(recordKeys(key, record), recordedUnder),
+              ),
+            ),
+          );
         }).pipe(
           Effect.catch((cause) =>
             Effect.logDebug("Left the Tailscale Serve record for the next run", { cause }),
@@ -272,7 +289,7 @@ export const layer = (options: {
         const profiles = yield* readProfiles;
         const now = yield* currentAccount(profiles);
         const recordedUnder = yield* Ref.get(account);
-        if (recordedUnder === null || !now.keys.includes(recordedUnder)) {
+        if (recordedUnder === null || !sameAccount(now.keys, recordedUnder)) {
           // An unreadable record may name a mapping to remove, so Serve waits for it.
           const records = yield* readRecords(options.stateDir);
           const { ours, others, unlisted } = yield* sortRecords(records, now.keys, profiles);
@@ -282,17 +299,18 @@ export const layer = (options: {
             yield* Ref.set(releasing, null);
           }
           // Its record is replaced only once its mapping is gone from this account.
-          if (ours.length > 0) yield* switchedDuring(now);
+          if (ours.length > 0) yield* switchedDuring(now.keys);
           yield* writeRecords(options.stateDir, {
             ...others,
             ...unlisted,
             [now.key]: {
               ...target,
               label: now.label,
+              keys: now.keys,
               ...(now.profileId === null ? {} : { profileId: now.profileId }),
             },
           });
-          yield* Ref.set(account, now.key);
+          yield* Ref.set(account, now.keys);
         }
         yield* claimTailscaleServe(target);
       }).pipe(
@@ -348,13 +366,13 @@ export const releaseRecorded = Effect.fn("TailscaleServe.releaseRecorded")(funct
   for (const record of ours) {
     if (yield* releaseTailscaleServe(record)) released = true;
   }
-  if (now !== null && ours.length > 0) yield* switchedDuring(now);
+  if (now !== null && ours.length > 0) yield* switchedDuring(now.keys);
   yield* writeRecords(stateDir, { ...others, ...unlisted });
   if (Object.keys(unlisted).length > 0) {
     return yield* new ServeRecordError({
       reason: "unlisted",
       message:
-        "Tailscale did not list its accounts, so T3 Code cannot tell whose Serve mapping an earlier run left. Run this again.",
+        "Tailscale did not list its accounts, so T3 Code cannot tell whose Serve mapping an earlier run left.",
     });
   }
   if (now === null && Object.keys(others).length > 0) {

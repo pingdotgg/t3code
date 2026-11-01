@@ -193,8 +193,22 @@ const profileRecord = (id: string) =>
       profileId: id,
     },
   });
-const record = (localPort: number, servePort: number, account = "n1") =>
-  JSON.stringify({ [account]: { localPort, localHost: "127.0.0.1", servePort, label: account } });
+// `keys` is set on records this server writes, and absent on ones a test seeds.
+const record = (
+  localPort: number,
+  servePort: number,
+  account = "n1",
+  keys?: ReadonlyArray<string>,
+) =>
+  JSON.stringify({
+    [account]: {
+      localPort,
+      localHost: "127.0.0.1",
+      servePort,
+      label: account,
+      ...(keys === undefined ? {} : { keys }),
+    },
+  });
 
 // In memory, so writes land within the test clock's steps.
 const memoryFileSystem = (files: Map<string, string>, writeFails = false) => {
@@ -414,7 +428,7 @@ describe("TailscaleServe", () => {
 
       assert.equal(state.releases, 1);
       // The refused try on the first account may have left nothing; its record waits there.
-      assert.equal(files.get(CLAIM_PATH), record(18638, SERVE_PORT));
+      assert.equal(files.get(CLAIM_PATH), record(18638, SERVE_PORT, "n1", ["n1"]));
     }),
   );
 
@@ -517,6 +531,43 @@ describe("TailscaleServe", () => {
     }),
   );
 
+  it.effect("matches a record by any key it was written with when a profile read fails", () =>
+    Effect.gen(function* () {
+      // `switch --list` fails this time, so only the tailnet and user name the account.
+      const fake = makeFakeTailscale({
+        heldBy: LOCAL_TARGET,
+        profile: { tailnet: "example.com", userId: "7" },
+      });
+      const files = new Map([
+        [
+          CLAIM_PATH,
+          JSON.stringify({
+            prof1: {
+              localPort: 18638,
+              localHost: "127.0.0.1",
+              servePort: SERVE_PORT,
+              label: "me@example.com on example.com",
+              profileId: "prof1",
+              keys: ["prof1", "example.com/7", "n1"],
+            },
+          }),
+        ],
+      ]);
+      const scope = yield* Scope.make();
+      yield* Layer.buildWithScope(
+        TailscaleServe.layerReleaseLeftover({ stateDir: STATE_DIR }).pipe(
+          Layer.provide(fakeLayers(fake, files)),
+        ),
+        scope,
+      );
+      yield* TestClock.adjust("1 second");
+
+      assert.equal(fake.state.releases, 1);
+      assert.isFalse(files.has(CLAIM_PATH));
+      yield* Scope.close(scope, Exit.void);
+    }),
+  );
+
   it.effect("on Windows, keeps the record of a profile Tailscale does not list", () =>
     Effect.gen(function* () {
       // Windows lists only the signed-in Windows user's profiles, so the profile may exist.
@@ -598,7 +649,7 @@ describe("TailscaleServe", () => {
       yield* Scope.close(scope, Exit.void);
 
       assert.equal(state.releases, 0);
-      assert.equal(files.get(CLAIM_PATH), record(18638, SERVE_PORT));
+      assert.equal(files.get(CLAIM_PATH), record(18638, SERVE_PORT, "n1", ["n1"]));
     }),
   );
 
