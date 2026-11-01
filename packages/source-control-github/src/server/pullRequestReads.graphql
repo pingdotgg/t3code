@@ -272,6 +272,8 @@ query PullRequestActivity(
           body
           createdAt
           lastEditedAt
+          isMinimized
+          minimizedReason
           url
           author {
             login
