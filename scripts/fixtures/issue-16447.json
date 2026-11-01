@@ -1,0 +1,6 @@
+{
+  "projectTitle": "Minimap synthetic evidence",
+  "user": "Inspect paragraph {n}: verify that text selection, the reference link, and wheel scrolling remain available beneath the timeline preview. This deliberately long user heading exercises compact preview truncation without including private conversation data.",
+  "assistant": "### Synthetic paragraph {n}\n\nSelectable text begins at the left content edge. Amber birds cross the quiet valley while readers compare navigation behavior. Drag across this sentence to select the underlying message, then move back into the narrow timeline rail. The preview should remain a display of context while the conversation stays usable.\n\n[Reference link](https://example.com/#synthetic-{n})\n\n**Result:** this is fixed synthetic markdown with a short list:\n\n- Navigation stays intentional.\n- Selection belongs to the conversation.\n- Scroll position can be reproduced.\n\n",
+  "longTail": "Additional synthetic context exercises the preview length cap. Cedar trees line a river beneath a clear sky. "
+}
