@@ -36,7 +36,7 @@ import {
   allEnvironmentShellsBootstrappedAtom,
 } from "./shell";
 import { environmentThreadDetails, environmentThreadShells } from "./threads";
-import { waitForAtomValue } from "./waitForAtomValue";
+import { untilAtomValue, waitForAtomValue } from "./waitForAtomValue";
 
 const EMPTY_THREAD_REFS: ReadonlyArray<ScopedThreadRef> = Object.freeze([]);
 const EMPTY_VISIBLE_TURN_ITEMS: ReadonlyArray<OrchestrationV2ProjectedTurnItem> = Object.freeze([]);
@@ -318,6 +318,21 @@ export function waitForThreadShell(ref: ScopedThreadRef, timeoutMs = 5_000): Pro
     atom: environmentThreadShells.threadShellAtom(ref),
     predicate: (thread) => thread !== null,
     timeoutMs,
+  });
+}
+
+/** Reports once the thread shell exists, or immediately if it already does. */
+export function untilThreadShell(
+  ref: ScopedThreadRef,
+  onArrival: (shell: EnvironmentThreadShell) => void,
+): () => void {
+  return untilAtomValue({
+    registry: appAtomRegistry,
+    atom: environmentThreadShells.threadShellAtom(ref),
+    predicate: (shell) => shell !== null,
+    onArrival: (shell) => {
+      if (shell !== null) onArrival(shell);
+    },
   });
 }
 
