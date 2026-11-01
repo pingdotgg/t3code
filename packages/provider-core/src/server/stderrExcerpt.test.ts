@@ -147,4 +147,28 @@ describe("stderrExcerpt", () => {
       ),
     ).toBe("fetch https://example.test/api failed");
   });
+
+  it("redacts header values with any scheme or quoting, unterminated quotes and non-HTTP userinfo", () => {
+    expect(
+      sanitizeStderrExcerpt(
+        [
+          "Authorization: Negotiate abc123",
+          'x-api-key: "first second"',
+          '{"password":"topsecret',
+          'PASSWORD="top secret',
+          "connect postgres://dbuser:dbpassword@db.example/app failed",
+        ].join("\n"),
+        "/Users/ada",
+        {},
+      ),
+    ).toBe(
+      [
+        "Authorization: [REDACTED]",
+        "x-api-key: [REDACTED]",
+        '{"password":"[REDACTED]"',
+        "PASSWORD=[REDACTED]",
+        "connect postgres://[REDACTED]@db.example/app failed",
+      ].join("\n"),
+    );
+  });
 });

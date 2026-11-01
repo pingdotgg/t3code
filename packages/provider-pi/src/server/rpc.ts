@@ -27,10 +27,14 @@ import {
 export class PiRpcError extends Schema.TaggedError<PiRpcError>()("PiRpcError", {
   operation: Schema.String,
   detail: Schema.optional(Schema.String),
+  // Sanitized, bounded stderr tail; see "Safe values" in docs/internals/effect-services.md.
+  stderr: Schema.optional(Schema.String),
   cause: Schema.optional(Schema.Defect()),
 }) {
   override get message(): string {
-    return `Pi RPC ${this.operation} failed${this.detail === undefined ? "" : `: ${this.detail}`}.`;
+    const detail = this.detail === undefined ? "" : `: ${this.detail}`;
+    const stderr = this.stderr === undefined ? "" : `: ${this.stderr}`;
+    return `Pi RPC ${this.operation} failed${detail}${stderr}.`;
   }
 }
 
@@ -155,12 +159,11 @@ function summarizePiError(error: unknown): string {
 }
 
 // Pi 0.84+ may exit 1 during import without any protocol output.
-function describePiStdoutClosure(exitCode: number | undefined, stderrExcerpt: string): string {
-  const closure =
-    exitCode === undefined || !Number.isFinite(exitCode)
-      ? "pi process closed stdout"
-      : `pi process exited with code ${exitCode}`;
-  return stderrExcerpt.length === 0 ? closure : `${closure}: ${stderrExcerpt}`;
+function describePiStdoutClosure(exitCode: number | undefined): string {
+  if (exitCode === undefined || !Number.isFinite(exitCode)) {
+    return "pi process closed stdout";
+  }
+  return `pi process exited with code ${exitCode}`;
 }
 
 function parsePiRecord(line: string): PiRpcRecord | undefined {
@@ -364,13 +367,14 @@ export const makePiRpcConnection = Effect.fnUntraced(function* (options: PiRpcSp
           // Stdout-close waits need wall time; TestClock would strand Stop-with-restart without an exit.
           Effect.provideService(Clock.Clock, Clock.Clock.defaultValue()),
         );
+        const stderr = sanitizeStderrExcerpt(stderrTail, homeDirectory, options.env);
         return yield* failTransport(
           new PiRpcError({
             operation: "read",
             detail: describePiStdoutClosure(
               Option.isSome(maybeExitCode) ? maybeExitCode.value : undefined,
-              sanitizeStderrExcerpt(stderrTail, homeDirectory, options.env),
             ),
+            ...(stderr.length === 0 ? {} : { stderr }),
           }),
         );
       }),

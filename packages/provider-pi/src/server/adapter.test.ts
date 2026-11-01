@@ -4406,8 +4406,8 @@ describe("PiRpc early process exit", () => {
       const error = yield* Queue.take(connection.events).pipe(Effect.flip);
       assert.equal(error._tag, "PiRpcError");
       assert.equal(error.operation, "read");
-      assert.isTrue((error.detail ?? "").startsWith("pi process exited with code 1"));
-      assert.isFalse((error.detail ?? "").includes("super-secret"));
+      assert.equal(error.detail, "pi process exited with code 1");
+      assert.isFalse((error.stderr ?? "").includes("super-secret"));
       assert.isFalse(error.message.includes("super-secret"));
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
@@ -4439,10 +4439,11 @@ describe("PiRpc early process exit", () => {
 
       const error = yield* Queue.take(connection.events).pipe(Effect.flip);
       assert.equal(error._tag, "PiRpcError");
-      const detail = error.detail ?? "";
-      assert.include(detail, "pi process exited with code 1");
-      assert.include(detail, "This extension ctx is stale after session replacement");
-      for (const text of [detail, error.message]) {
+      assert.equal(error.detail, "pi process exited with code 1");
+      assert.include(error.message, "pi process exited with code 1");
+      assert.include(error.stderr, "This extension ctx is stale after session replacement");
+      assert.include(error.message, "This extension ctx is stale after session replacement");
+      for (const text of [error.stderr ?? "", error.message]) {
         assert.notInclude(text, "eyJhbGciOiJIUzI1NiJ9.stale-session-token");
         assert.notInclude(text, apiKey);
       }

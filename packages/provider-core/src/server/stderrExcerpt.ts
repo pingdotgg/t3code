@@ -5,9 +5,9 @@ const STDERR_TAIL_MAX_CHARS = 4_096;
 const PAIRING_URL_PATTERN = /https?:\/\/[^\s]*\/pair#[^\s]*/gi;
 const SIGN_IN_URL_PATTERN = /https?:\/\/accounts\.google\.com[^\s]*/gi;
 const BEARER_TOKEN_PATTERN = /\bBearer\s+[A-Za-z0-9._\-+=/]+/gi;
-// Header values may contain `,` and `;`, which end a generic assignment value.
-const AUTHORIZATION_HEADER_PATTERN = /\bAuthorization:[ \t]*(?:(?:Bearer|Basic|Token)[ \t]+)?\S+/gi;
-const API_KEY_HEADER_PATTERN = /\bx-api-key:[ \t]*\S+/gi;
+// A header value runs to the end of the line, whatever its scheme, quoting or separators.
+const AUTHORIZATION_HEADER_PATTERN = /\bAuthorization:[^\r\n]*/gi;
+const API_KEY_HEADER_PATTERN = /\bx-api-key:[^\r\n]*/gi;
 const SECRET_TOKEN_PATTERN =
   /\b(?:sk-[A-Za-z0-9][A-Za-z0-9_-]{7,}|ghp_[A-Za-z0-9]+|xox[a-zA-Z]-[A-Za-z0-9-]+)\b/g;
 
