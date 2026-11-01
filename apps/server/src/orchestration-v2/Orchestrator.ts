@@ -767,7 +767,8 @@ function followsCurrentConversation(
   message: OrchestrationV2ConversationMessage | undefined,
 ): boolean {
   return (
-    message?.notification?.source.kind === "monitor" && !isBufferedProviderNotification(message)
+    message?.delegatedCompletion !== undefined ||
+    (message?.notification?.source.kind === "monitor" && !isBufferedProviderNotification(message))
   );
 }
 
@@ -776,7 +777,6 @@ function queuedRunModelSelection(
   run: OrchestrationV2Run,
 ): ModelSelection {
   const message = projection.messages.find((candidate) => candidate.id === run.userMessageId);
-  // App-owned monitor updates follow the agent currently handling the thread.
   return followsCurrentConversation(message)
     ? projection.thread.modelSelection
     : run.modelSelection;
@@ -4261,11 +4261,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     const sourceProjection = yield* projectionStore
       .getThreadRecords(command.sourceThreadId, [
         "runs",
-        "checkpoints",
+        ...(command.sourcePoint.type === "checkpoint" ? (["checkpoints"] as const) : []),
         "providerThreads",
         "providerTurns",
         "attempts",
-        "contextTransfers",
       ])
       .pipe(
         Effect.mapError(
@@ -9440,7 +9439,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       events,
       effects,
       projection,
-      modelSelection: projection.thread.modelSelection,
+      modelSelection: queuedRun.modelSelection,
       targetRunId: command.targetRunId,
       messageId: queuedMessage.id,
       text: queuedMessage.text,
