@@ -433,38 +433,61 @@ it.effect("keeps a named project and reports why when Git cannot commit", () =>
   ),
 );
 
-it.effect("keeps a folder that another project owns when the create conflicts", () =>
-  withScratch(({ baseDir }) =>
-    withGitEnv(
-      TEST_IDENTITY,
-      Effect.gen(function* () {
-        const folders = yield* ManagedProjectFolders.ManagedProjectFolders;
-        const projects = yield* ProjectService.ProjectService;
-        const fileSystem = yield* FileSystem.FileSystem;
-        const path = yield* Path.Path;
-        const taken = path.join(folders.namedProjectsRoot, "taken");
-        yield* projects.create({
-          commandId: CommandId.make("command:owner"),
-          projectId: ProjectId.make("project:owner"),
-          title: "Owner",
-          workspaceRoot: taken,
-          createWorkspaceRootIfMissing: true,
-        });
-        yield* fileSystem.remove(taken, { recursive: true });
+it.effect.each([false, true])(
+  "keeps a conflicted folder even if its owner was deleted: %s",
+  (deleted) =>
+    withScratch(
+      ({ baseDir }) =>
+        withGitEnv(
+          TEST_IDENTITY,
+          Effect.gen(function* () {
+            const folders = yield* ManagedProjectFolders.ManagedProjectFolders;
+            const projects = yield* ProjectService.ProjectService;
+            const fileSystem = yield* FileSystem.FileSystem;
+            const path = yield* Path.Path;
+            const taken = path.join(folders.namedProjectsRoot, "taken");
+            yield* projects.create({
+              commandId: CommandId.make("command:owner"),
+              projectId: ProjectId.make("project:owner"),
+              title: "Owner",
+              workspaceRoot: taken,
+              createWorkspaceRootIfMissing: true,
+            });
+            yield* fileSystem.remove(taken, { recursive: true });
 
-        const failure = yield* Effect.flip(folders.createNamedProject({ name: "Taken" }));
+            const failure = yield* Effect.flip(folders.createNamedProject({ name: "Taken" }));
 
-        assert.equal(failure._tag, "NamedProjectCreateError");
-        assert.equal(failure.message, "Failed to create the project.");
-        assert.isTrue(yield* fileSystem.exists(path.join(taken, "README.md")));
-        const owner = yield* projects.getByWorkspaceRoot(taken);
-        assert.equal(Option.getOrThrow(owner).id, ProjectId.make("project:owner"));
-        assert.deepEqual(yield* fileSystem.readDirectory(path.resolve(baseDir, "projects")), [
-          "taken",
-        ]);
-      }),
+            assert.equal(failure._tag, "NamedProjectCreateError");
+            assert.equal(failure.message, "Failed to create the project.");
+            assert.isTrue(yield* fileSystem.exists(path.join(taken, "README.md")));
+            const owner = yield* projects.getByWorkspaceRoot(taken);
+            if (deleted) assert.isTrue(Option.isNone(owner));
+            else assert.equal(Option.getOrThrow(owner).id, ProjectId.make("project:owner"));
+            assert.deepEqual(yield* fileSystem.readDirectory(path.resolve(baseDir, "projects")), [
+              "taken",
+            ]);
+          }),
+        ),
+      {
+        projects: (real) =>
+          ProjectService.ProjectService.of({
+            ...real,
+            create: (input) =>
+              real.create(input).pipe(
+                Effect.tapError((error) =>
+                  deleted && error._tag === "ProjectConflictError"
+                    ? real
+                        .delete({
+                          commandId: CommandId.make("delete-conflicting-owner"),
+                          projectId: error.conflictingProjectId,
+                        })
+                        .pipe(Effect.asVoid)
+                    : Effect.void,
+                ),
+              ),
+          }),
+      },
     ),
-  ),
 );
 
 it.effect("removes the folder when the project create is rejected for another reason", () =>
@@ -522,6 +545,49 @@ it.effect("removes the folder when the create is cancelled before the project ex
 
           assert.deepEqual(yield* fileSystem.readDirectory(path.resolve(baseDir, "projects")), []);
           assert.deepEqual((yield* projects.snapshot).projects, []);
+        }),
+      {
+        git: Layer.mock(GitVcsDriver.GitVcsDriver)({
+          readConfigValue: () => Effect.succeed(null),
+          execute: () =>
+            Deferred.succeed(scaffolding, undefined).pipe(Effect.andThen(Effect.never)),
+        }),
+      },
+    );
+  }),
+);
+
+it.effect("keeps a folder another project claims while scaffolding is cancelled", () =>
+  Effect.gen(function* () {
+    const scaffolding = yield* Deferred.make<void>();
+    yield* withScratch(
+      () =>
+        Effect.gen(function* () {
+          const folders = yield* ManagedProjectFolders.ManagedProjectFolders;
+          const projects = yield* ProjectService.ProjectService;
+          const fileSystem = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const workspaceRoot = path.join(folders.namedProjectsRoot, "claimed");
+          const fiber = yield* folders
+            .createNamedProject({ name: "Claimed" })
+            .pipe(Effect.forkChild);
+          yield* Deferred.await(scaffolding);
+          const owner = yield* projects.create({
+            commandId: CommandId.make("command:claimed-owner"),
+            projectId: ProjectId.make("project:claimed-owner"),
+            title: "Claimed owner",
+            workspaceRoot,
+          });
+          const ownerFile = path.join(workspaceRoot, "owner.txt");
+          yield* fileSystem.writeFileString(ownerFile, "keep\n");
+
+          yield* Fiber.interrupt(fiber);
+
+          assert.isTrue(yield* fileSystem.exists(ownerFile));
+          assert.equal(
+            Option.getOrThrow(yield* projects.getByWorkspaceRoot(workspaceRoot)).id,
+            owner.id,
+          );
         }),
       {
         git: Layer.mock(GitVcsDriver.GitVcsDriver)({
