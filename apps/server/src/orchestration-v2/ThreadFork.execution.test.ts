@@ -1186,6 +1186,39 @@ it.effect("a side chat opened during the parent's first turn starts from a diges
   }).pipe(Effect.provide(forkCases[0]!.layer)),
 );
 
+it.effect("a busy parent's side chat handoff points history recovery at the parent", () =>
+  Effect.gen(function* () {
+    const orchestrator = yield* Orchestrator.OrchestratorV2;
+    const parentId = ThreadId.make("side-chat-coverage-parent");
+    const sideChatId = ThreadId.make("side-chat-coverage-child");
+    yield* createParent(parentId);
+    yield* writeParentRun({
+      threadId: parentId,
+      runId: RunId.make("side-chat-coverage-parent-done"),
+      ordinal: 1,
+      status: "completed",
+      text: "Parent work",
+      stable: true,
+    });
+    yield* writeParentRun({
+      threadId: parentId,
+      runId: RunId.make("side-chat-coverage-parent-busy"),
+      ordinal: 2,
+      status: "running",
+      text: "Parent still working",
+    });
+    yield* forkSideChat("side-chat-coverage-fork", parentId, sideChatId);
+    yield* askSideChat(sideChatId, "side-chat-coverage-first-message");
+
+    const started = yield* orchestrator.getThreadProjection(sideChatId);
+    assert.equal(started.contextTransfers[0]?.resolution?.strategy, "portable_context");
+    const coverage = started.contextHandoffs[0]?.history?.coverage ?? "";
+    assert.include(coverage, `Thread: ${parentId}.`);
+    assert.include(coverage, `t3_thread_read({threadId:"${parentId}"`);
+    assert.notInclude(coverage, sideChatId);
+  }).pipe(Effect.provide(forkCases[0]!.layer)),
+);
+
 it.effect("merge-back rejects a second fork's context until the first is consumed", () =>
   Effect.gen(function* () {
     const orchestrator = yield* Orchestrator.OrchestratorV2;
