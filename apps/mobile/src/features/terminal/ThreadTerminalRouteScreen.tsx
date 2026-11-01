@@ -976,7 +976,14 @@ function ThreadTerminal(props: {
                     KeyboardController.dismiss();
                     requestCapture();
                   }}
-                  className="px-4 py-2"
+                  className="px-4 pt-2"
+                  style={{
+                    paddingBottom:
+                      8 +
+                      (keyboardState.isVisible
+                        ? 0
+                        : (nativeColumnMetrics?.safeArea.bottom ?? insets.bottom)),
+                  }}
                 >
                   <Text style={{ color: terminalTheme.foreground }}>Attach visible output</Text>
                 </Pressable>
