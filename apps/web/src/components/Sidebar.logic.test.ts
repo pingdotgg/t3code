@@ -326,6 +326,15 @@ describe("resolveSidebarThreadStatus", () => {
     ).toBe(false);
   });
 
+  it("shows a run still preparing its worktree as Preparing, not Working", () => {
+    expect(
+      resolveSidebarThreadStatus({
+        ...idle,
+        runtime: { ...runtime, status: "preparing" as const },
+      }),
+    ).toBe("preparing");
+  });
+
   it("reports failed only while the latest run failed", () => {
     expect(
       resolveSidebarThreadStatus({
