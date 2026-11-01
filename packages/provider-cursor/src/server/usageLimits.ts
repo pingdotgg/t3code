@@ -21,7 +21,7 @@ import * as CursorKeychain from "./CursorKeychain.ts";
 const CursorCredentials = Schema.Struct({ accessToken: Schema.optional(Schema.String) });
 const DEFAULT_CURSOR_API_ENDPOINT = "https://api2.cursor.sh";
 const NO_LIMITS_MESSAGE =
-  "Cursor doesn't report usage limits for this account. Open Cursor's dashboard with the same account to see its spend.";
+  "Cursor doesn't report usage limits for this account. Open Cursor's dashboard with the same account to see its usage.";
 const decodeCredentials = Schema.decodeEffect(Schema.fromJsonString(CursorCredentials));
 const CursorUsageResponse = Schema.Struct({
   billingCycleEnd: Schema.optional(Schema.Union([Schema.String, Schema.Number])),
