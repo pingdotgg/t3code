@@ -211,8 +211,10 @@ describe("remote editor links", () => {
       openInCwd: "/home/theo/My Project",
     });
     await click(byLabel("Choose editor"));
-    const labels = menuItems().map((item) => item.textContent);
-    expect(labels.some((label) => label?.startsWith("VS Code"))).toBe(true);
+    const labels = menuItems().map(
+      (item) => item.querySelector('[data-slot="menu-item-label"]')?.textContent,
+    );
+    expect(labels).toContain("VS Code");
     expect(labels).toContain("VS Code Insiders");
     expect(labels).not.toContain("Cursor");
 
