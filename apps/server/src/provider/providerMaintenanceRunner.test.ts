@@ -197,6 +197,8 @@ function makeRegistry(
       getProviders: Ref.get(providersRef),
       refresh: () => Ref.get(providersRef),
       refreshInstance: () => Ref.get(providersRef),
+      autoRedeemResetCredit: () => Effect.succeed(null),
+      supportsAutoRedeemResetCredit: () => Effect.succeed(false),
       reloadSecretsAndRefresh: () => Ref.get(providersRef),
       refreshAfterUpdate: () => {
         const version = options?.installedVersionAfterUpdate;

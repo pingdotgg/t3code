@@ -18,6 +18,7 @@ import { createModelSelection } from "./model.ts";
 import { resolveProjectScripts } from "./projectScripts.ts";
 import {
   applyServerSettingsPatch,
+  codexAutoResetSettingsInstances,
   fallbackTextGenerationModelSelection,
   modelPreferencesMigrationPatch,
   resolveModelPreferences,
@@ -30,6 +31,32 @@ const decodeServerSettings = Schema.decodeUnknownSync(ServerSettings);
 const decodeServerSettingsPatch = Schema.decodeUnknownSync(ServerSettingsPatch);
 
 const FOLDED_SERVER_SETTINGS = { ...DEFAULT_SERVER_SETTINGS, projectSettingsFolded: true };
+
+describe("Codex auto-reset settings instances", () => {
+  it("includes the enabled implicit Codex alongside named instances", () => {
+    expect(
+      codexAutoResetSettingsInstances({
+        providerInstances: {
+          [ProviderInstanceId.make("work-codex")]: {
+            driver: ProviderDriverKind.make("codex"),
+            displayName: "Work",
+          },
+        },
+      }).map(([id]) => id),
+    ).toEqual(["work-codex", "codex"]);
+  });
+  it.each([
+    { driver: ProviderDriverKind.make("codex"), enabled: false },
+    { driver: ProviderDriverKind.make("codex"), config: { setupMode: "managed" } },
+    { driver: ProviderDriverKind.make("claudeAgent") },
+  ])("does not replace an ineligible explicit default %j", (config) => {
+    expect(
+      codexAutoResetSettingsInstances({
+        providerInstances: { [ProviderInstanceId.make("codex")]: config },
+      }),
+    ).toEqual([]);
+  });
+});
 
 describe("fallbackTextGenerationModelSelection", () => {
   it("uses Big Pickle when only OpenCode is enabled", () => {

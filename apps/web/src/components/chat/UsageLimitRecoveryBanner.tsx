@@ -1,3 +1,4 @@
+import { codexResetRedemptionMessage } from "@t3tools/shared/usageFormat";
 import {
   type OrchestrationV2LimitRecovery,
   type OrchestrationV2LimitRecoveryUpdate,
@@ -26,14 +27,24 @@ type RecoveryProps = {
 export function usageLimitRecoveryBannerItem(props: RecoveryProps): ComposerBannerStackItem {
   const { runId, resetAt, stoppedAt, timestampFormat } = props;
   const canSchedule = resetAt !== null && Date.parse(resetAt) > Date.parse(stoppedAt);
+  const redemption =
+    props.recovery?.runId === runId && props.recovery.resetAt === resetAt
+      ? props.recovery.codexResetRedemption
+      : undefined;
+  const redemptionReport = redemption ? codexResetRedemptionMessage(redemption) : null;
   return {
     id: `usage-limit-recovery:${runId}`,
     variant: "warning",
     icon: <GaugeIcon />,
     title: "Usage limit reached",
-    description: resetAt
-      ? `Resets ${formatUpcomingTimestamp(resetAt, timestampFormat)}`
-      : "Reset time unavailable; retry manually",
+    description: [
+      resetAt
+        ? `Resets ${formatUpcomingTimestamp(resetAt, timestampFormat)}`
+        : "Reset time unavailable; retry manually",
+      redemptionReport,
+    ]
+      .filter((part): part is string => part !== null)
+      .join(" · "),
     actions: canSchedule ? <RecoveryActions key={`${runId}:${resetAt}`} {...props} /> : null,
   };
 }

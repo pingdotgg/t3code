@@ -17,6 +17,7 @@ import {
   ProjectSettingsOverrides,
   ProviderDriverKind,
   ProviderInstanceId,
+  type ProviderInstanceConfig,
   type ServerProvider,
   ServerSettings,
   type ServerSettingsPatch,
@@ -47,6 +48,35 @@ export function isModelSelectionProviderEnabled(
   }
 
   return isUnconfiguredDefaultInstanceEnabled(selection.instanceId);
+}
+
+export function codexAutoResetSettingsInstances(
+  settings: Pick<ServerSettings, "providerInstances">,
+) {
+  const instances = new Map<ProviderInstanceId, ProviderInstanceConfig>(
+    Object.entries(settings.providerInstances).map(([id, config]) => [
+      ProviderInstanceId.make(id),
+      config,
+    ]),
+  );
+  const codex = ProviderDriverKind.make("codex");
+  const defaultId = defaultInstanceIdForDriver(codex);
+  if (!instances.has(defaultId) && isUnconfiguredDefaultInstanceEnabled(defaultId))
+    instances.set(defaultId, { driver: codex });
+  return Array.from(instances.entries()).filter(([, instance]) => {
+    if (
+      instance.driver !== ProviderDriverKind.make("codex") ||
+      !resolveProviderInstanceEnabled(instance)
+    )
+      return false;
+    const config = instance.config;
+    return !(
+      typeof config === "object" &&
+      config !== null &&
+      "setupMode" in config &&
+      config.setupMode === "managed"
+    );
+  });
 }
 
 const TEXT_GENERATION_FALLBACK_DRIVERS = [

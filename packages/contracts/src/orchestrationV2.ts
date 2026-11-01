@@ -394,12 +394,36 @@ export const OrchestrationV2ProviderCapabilities = Schema.Struct({
 });
 export type OrchestrationV2ProviderCapabilities = typeof OrchestrationV2ProviderCapabilities.Type;
 
+export const OrchestrationV2CodexResetRedemption = Schema.Struct({
+  providerInstanceId: ProviderInstanceId,
+  redeemedByProviderInstanceId: ProviderInstanceId,
+  accountFingerprint: TrimmedNonEmptyString,
+  accountLabel: Schema.optional(TrimmedNonEmptyString),
+  idempotencyKey: TrimmedNonEmptyString,
+  attemptedAt: IsoDateTime,
+  creditId: Schema.optional(TrimmedNonEmptyString),
+  creditsBefore: NonNegativeInt,
+  outcome: Schema.Literals([
+    "pending",
+    "reset",
+    "noCredit",
+    "nothingToReset",
+    "alreadyRedeemed",
+    "unconfirmed",
+    "declined",
+  ]),
+  checkedAt: Schema.optional(IsoDateTime),
+  allowanceCleared: Schema.optional(Schema.Boolean),
+});
+export type OrchestrationV2CodexResetRedemption = typeof OrchestrationV2CodexResetRedemption.Type;
+
 export const OrchestrationV2LimitRecovery = Schema.Struct({
   requestId: Schema.optional(CommandId),
   runId: RunId,
   resetAt: IsoDateTime,
   autoResume: Schema.Boolean,
   snooze: Schema.optional(Schema.Boolean),
+  codexResetRedemption: Schema.optional(OrchestrationV2CodexResetRedemption),
 });
 export type OrchestrationV2LimitRecovery = typeof OrchestrationV2LimitRecovery.Type;
 
@@ -3349,6 +3373,15 @@ export type OrchestrationV2Command = typeof OrchestrationV2Command.Type;
 
 // Excluded from dispatchCommand so only the server can send these.
 const OrchestrationV2InternalCommand = Schema.Union([
+  /** Server-only evidence that Codex redeemed a reset and a fresh probe cleared the limit. */
+  Schema.Struct({
+    type: Schema.Literal("thread.limit-recovery.codex-reset"),
+    commandId: CommandId,
+    threadId: ThreadId,
+    runId: RunId,
+    resetAt: IsoDateTime,
+    codexResetRedemption: OrchestrationV2CodexResetRedemption,
+  }),
   // Guest share commands the server issues after checking T3 Connect and the guest token.
   Schema.Struct({
     type: Schema.Literal("thread.guest-share.open"),

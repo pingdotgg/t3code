@@ -5,6 +5,7 @@ import {
   type CodexSettings,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as Crypto from "effect/Crypto";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Stream from "effect/Stream";
@@ -37,6 +38,7 @@ export const makeManagedCodexProvider = Effect.fn("makeManagedCodexProvider")(fu
 ) {
   const { instanceId, enabled, displayName, accentColor, config } = input;
   const http = yield* HttpClient.HttpClient;
+  const crypto = yield* Crypto.Crypto;
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -132,7 +134,7 @@ export const makeManagedCodexProvider = Effect.fn("makeManagedCodexProvider")(fu
             undefined,
             effective.environment,
             managedAuth,
-          );
+          ).pipe(Effect.provideService(Crypto.Crypto, crypto));
           const credentials = yield* runtime.auth.access;
           // Another server can replace the saved profile while the native probe runs.
           // Never send that account's token with the launch profile's catalog labels.
@@ -214,6 +216,7 @@ export const makeManagedCodexProvider = Effect.fn("makeManagedCodexProvider")(fu
     Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
     Effect.provideService(FileSystem.FileSystem, fileSystem),
     Effect.provideService(Path.Path, path),
+    Effect.provideService(Crypto.Crypto, crypto),
   );
   const snapshot = yield* makeManagedServerProvider({
     resolveMaintenance: () => Effect.succeed({ provider: DRIVER, packageName: null, update: null }),

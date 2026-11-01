@@ -145,6 +145,18 @@ or endpoint configurations do not report subscription limits.
 API-key accounts may not report subscription limits. This also applies to Claude connections
 using a proxy through `ANTHROPIC_AUTH_TOKEN`.
 
+## Automatically use banked Codex resets
+
+To let T3 redeem a Codex reset automatically when an included usage limit is exhausted, enable
+**Use banked Codex resets** for that account in **Settings → Usage limits**, with its server selected. This is off by default
+and applies only to that Codex provider instance. **Resume after usage limits** must also be enabled
+for T3 to continue the thread. T3 checks the account's limits before redeeming and resumes eligible
+threads early only after Codex reports a reset and a fresh limits check shows the exhausted window
+has cleared. If no credit is available or the result cannot be confirmed, the thread stays limited
+with its existing wait and manual-resume options. Automatic redemption is available for native Codex
+instances when Codex reports an account identity and banked-credit details; managed Codex instances
+remain on the existing manual and wait flow.
+
 ## Connect a CLIProxyAPI hub
 
 To see pooled accounts, open **Settings → Providers → Usage providers → Add hub**. Choose the

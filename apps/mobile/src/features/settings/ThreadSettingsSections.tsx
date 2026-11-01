@@ -1,3 +1,4 @@
+import { codexAutoResetSettingsInstances } from "@t3tools/shared/serverSettings";
 import { Button } from "../../components/ui/Button";
 import {
   AuthSettingsWriteScope,
@@ -84,10 +85,13 @@ export function AutoSettleSettingsRows(props: {
     return null;
   }
 
+  const codexInstances = codexAutoResetSettingsInstances(referenceSettings);
+
   const writeToAll = (
     patch: Partial<AutoSettleSettings> & {
       autoResumeLimitedThreads?: boolean;
       snoozeLimitedThreads?: boolean;
+      autoRedeemCodexResetCredits?: ServerSettingsPatch["autoRedeemCodexResetCredits"];
     },
   ) => props.write(patch);
 
@@ -130,6 +134,31 @@ export function AutoSettleSettingsRows(props: {
             disabled={disabledFor("snoozeLimitedThreads")}
             onValueChange={(value) => writeToAll({ snoozeLimitedThreads: value })}
           />
+          {displayTargets.length > 1 && codexInstances.length > 0 ? (
+            <Text className="text-sm text-foreground-secondary">
+              Select one server to change per-account reset settings.
+            </Text>
+          ) : displayTargets.length === 1 ? (
+            codexInstances.map(([instanceId, instance]) => {
+              return (
+                <SettingsSwitchRow
+                  key={instanceId}
+                  icon="clock"
+                  label={`Use banked Codex resets${instance.displayName ? ` for ${instance.displayName}` : ""}`}
+                  subtitle="Requires Resume after usage limits to be enabled."
+                  value={referenceSettings.autoRedeemCodexResetCredits[instanceId] === true}
+                  disabled={disabled}
+                  onValueChange={(value) =>
+                    writeToAll({
+                      autoRedeemCodexResetCredits: {
+                        [instanceId]: value,
+                      },
+                    })
+                  }
+                />
+              );
+            })
+          ) : null}
         </SettingsSection>
       ) : null}
       <SettingsSection title="Auto-settle">

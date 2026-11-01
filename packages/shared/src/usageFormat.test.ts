@@ -1,8 +1,13 @@
 // @effect-diagnostics globalDate:off -- A fixed instant keeps calendar-window assertions deterministic.
 import { describe, expect, it, vi } from "vite-plus/test";
-import type { UsageSource } from "@t3tools/contracts";
+import { ProviderInstanceId, type UsageSource } from "@t3tools/contracts";
 
-import { formatHourShort, makeWindow, usageSourceMessages } from "./usageFormat.ts";
+import {
+  codexResetRedemptionMessage,
+  formatHourShort,
+  makeWindow,
+  usageSourceMessages,
+} from "./usageFormat.ts";
 
 function malformedSource(count: number, overrides: Partial<UsageSource> = {}): UsageSource {
   return {
@@ -176,4 +181,35 @@ describe("hourly usage formatting", () => {
       resolvedOptions.mockRestore();
     }
   });
+});
+
+describe("Codex reset redemption messages", () => {
+  it.each([
+    {
+      allowanceCleared: false,
+      expected: "Codex reported a reset for Test account, but this usage limit is still active.",
+    },
+    {
+      allowanceCleared: true,
+      expected:
+        "Codex reported a reset for Test account, and a fresh check found this usage limit clear.",
+    },
+  ])(
+    "describes an already-redeemed reset with clearance $allowanceCleared",
+    ({ allowanceCleared, expected }) => {
+      expect(
+        codexResetRedemptionMessage({
+          providerInstanceId: ProviderInstanceId.make("codex"),
+          redeemedByProviderInstanceId: ProviderInstanceId.make("codex"),
+          accountFingerprint: "test-fingerprint",
+          accountLabel: "Test account",
+          idempotencyKey: "test-key",
+          attemptedAt: "2026-10-31T12:00:00.000Z",
+          creditsBefore: 1,
+          outcome: "alreadyRedeemed",
+          allowanceCleared,
+        }),
+      ).toBe(expected);
+    },
+  );
 });

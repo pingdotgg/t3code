@@ -58,6 +58,7 @@ rl.on("line", (line) => {
     return;
   }
   if (method === "initialize") {
+    if (script.ignoreInitialize) return;
     write({
       id,
       result: {
@@ -76,12 +77,54 @@ rl.on("line", (line) => {
     });
     return;
   }
-  if (method === "account/rateLimits/read" && script.failRateLimitsRead) {
-    write({ id, error: { code: -32000, message: "usage unavailable" } });
+  if (
+    method === "account/rateLimits/read" &&
+    (script.failRateLimitsRead || script.rateLimits || script.recordRateLimitReads)
+  ) {
+    if (script.recordRateLimitReads) {
+      NodeFS.appendFileSync(
+        `${process.env.T3_CODEX_COLLAB_SCRIPT}.rateLimits`,
+        `${JSON.stringify({ id })}\n`,
+      );
+    }
+    if (script.failRateLimitsRead) {
+      write({ id, error: { code: -32000, message: "usage unavailable" } });
+    } else {
+      write({ id, result: script.rateLimits });
+    }
     return;
   }
-  if (method === "account/rateLimitResetCredit/consume" && script.resetCreditOutcome) {
-    write({ id, result: { outcome: script.resetCreditOutcome } });
+  if (
+    method === "account/rateLimitResetCredit/consume" &&
+    (script.resetCreditOutcome || script.resetCreditOutcomes)
+  ) {
+    const consumeLog = `${process.env.T3_CODEX_COLLAB_SCRIPT}.resetCreditConsumes`;
+    if (script.recordResetCreditConsumes) {
+      NodeFS.appendFileSync(consumeLog, `${JSON.stringify({ id, params: message.params })}\n`);
+    }
+    const consumeCount = NodeFS.existsSync(consumeLog)
+      ? NodeFS.readFileSync(consumeLog, "utf8").trim().split("\n").length
+      : 1;
+    const selectedOutcome =
+      Array.isArray(script.resetCreditOutcomes) && consumeCount <= script.resetCreditOutcomes.length
+        ? script.resetCreditOutcomes[consumeCount - 1]
+        : script.resetCreditOutcome;
+    if (selectedOutcome === null || selectedOutcome === "timeout") return;
+    if (selectedOutcome === "error") {
+      write({ id, error: { code: -32000, message: "consume response lost" } });
+      return;
+    }
+    const respond = () => {
+      if (
+        script.holdResetCreditUntilMarker &&
+        !NodeFS.existsSync(script.holdResetCreditUntilMarker)
+      ) {
+        setTimeout(respond, 10);
+      } else {
+        write({ id, result: { outcome: selectedOutcome } });
+      }
+    };
+    respond();
     return;
   }
   if (method === "skills/list" || method === "model/list") {

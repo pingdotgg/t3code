@@ -432,6 +432,26 @@ it.layer(
       }),
     );
 
+    it.effect("fingerprints the native account identity from app-server usage", () =>
+      Effect.gen(function* () {
+        const status = yield* checkCodexProviderStatus(defaultCodexSettings, () =>
+          Effect.succeed(
+            makeCodexProbeSnapshot({
+              rateLimits: {
+                snapshot: { planType: "plus" },
+                accountId: "workspace-123",
+                resetCredits: null,
+              },
+            }),
+          ),
+        );
+        const fingerprint = status.usageLimits?.credentialFingerprint;
+        if (fingerprint === undefined) throw new Error("Codex account fingerprint was missing.");
+        assert.notStrictEqual(fingerprint, "workspace-123");
+        assert.match(fingerprint, /^[0-9a-f]{64}$/u);
+      }),
+    );
+
     it.effect("returns unauthenticated when app-server requires OpenAI auth", () =>
       Effect.gen(function* () {
         const status = yield* checkCodexProviderStatus(defaultCodexSettings, () =>

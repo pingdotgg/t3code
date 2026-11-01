@@ -12,6 +12,7 @@ import {
   OrchestrationV2Subagent,
   OrchestrationV2ThreadShellJson,
   OrchestrationV2SubagentJson,
+  OrchestrationV2LimitRecoveryUpdate,
   OrchestrationV2ThreadHistoryPage,
   OrchestrationV2TurnItem,
   OrchestrationV2TurnItemJson,
@@ -35,6 +36,18 @@ const decodeOrchestrationV2ProviderCapabilities = Schema.decodeUnknownSync(
 );
 
 describe("orchestration V2 contracts", () => {
+  it("does not accept Codex redemption evidence from client recovery updates", () => {
+    const decode = Schema.decodeUnknownSync(OrchestrationV2LimitRecoveryUpdate);
+    const update = decode({
+      runId: "run:limited",
+      resetAt: "2026-04-20T01:00:00.000Z",
+      autoResume: true,
+      codexResetRedemption: { outcome: "reset", allowanceCleared: true },
+    });
+
+    expect("codexResetRedemption" in update).toBe(false);
+  });
+
   it("decodes thread event types from a newer server as skippable items", () => {
     const decodeWireItems = Schema.decodeUnknownSync(
       Schema.toCodecJson(Schema.Array(OrchestrationV2RpcSchemas.subscribeThread.output)),

@@ -32,6 +32,32 @@ export interface ProviderDriverMetadata {
 export type ProviderWorkspaceSnapshot = ServerProvider &
   Pick<ServerProviderWorkspaceSnapshot, "slashCommandsPending" | "optionDescriptors">;
 
+export type ProviderAutoResetCreditResult =
+  | {
+      readonly status: "notSent";
+      readonly reason: "probeFailed" | "notExhausted" | "noCredit" | "declined" | "keyConflict";
+      readonly accountFingerprint: string;
+      readonly creditsBefore: number;
+      readonly checkedAt?: string;
+      readonly idempotencyKey: string;
+    }
+  | {
+      readonly status: "sentUnknown";
+      readonly accountFingerprint: string;
+      readonly creditsBefore: number;
+      readonly checkedAt?: string;
+      readonly idempotencyKey: string;
+    }
+  | {
+      readonly status: "sent";
+      readonly outcome: ProviderConsumeResetCreditOutcome;
+      readonly accountFingerprint: string;
+      readonly creditsBefore: number;
+      readonly checkedAt?: string;
+      readonly allowanceCleared: boolean;
+      readonly idempotencyKey: string;
+    };
+
 export interface ProviderInstance {
   readonly instanceId: ProviderInstanceId;
   readonly driverKind: ProviderDriverKind;
@@ -49,6 +75,14 @@ export interface ProviderInstance {
     ProviderConsumeResetCreditOutcome,
     ProviderDriverError
   >;
+  readonly autoRedeemResetCredit?: (input: {
+    readonly model: string;
+    readonly idempotencyKey: string;
+    readonly expectedAccountFingerprint: string;
+    readonly resetAt?: string;
+    readonly mode: "first" | "replay";
+    readonly stillArmed?: () => Effect.Effect<boolean>;
+  }) => Effect.Effect<ProviderAutoResetCreditResult, ProviderDriverError>;
   readonly orchestrationAdapter: ProviderAdapter.ProviderAdapterV2["Service"];
   readonly textGeneration: ProviderTextGeneration;
   readonly auth?: ProviderAuthController;

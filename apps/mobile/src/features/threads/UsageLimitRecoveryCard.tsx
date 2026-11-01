@@ -1,3 +1,4 @@
+import { codexResetRedemptionMessage } from "@t3tools/shared/usageFormat";
 import { Button } from "../../components/ui/Button";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import { AsyncResult } from "effect/reactivity";
@@ -28,6 +29,10 @@ export function UsageLimitRecoveryCard({
   const resetPassed = useDeadlinePassed(resetAt === null ? null : Date.parse(resetAt));
   const runId = thread.latestRun?.runId;
   const recovery = thread.limitRecovery;
+  const redemption =
+    recovery?.runId === runId && recovery?.resetAt === resetAt
+      ? recovery?.codexResetRedemption
+      : undefined;
   const scheduled =
     recovery?.runId === runId && recovery?.resetAt === resetAt && recovery?.autoResume;
   if (
@@ -75,6 +80,11 @@ export function UsageLimitRecoveryCard({
           ? `Usage limit resets ${DateTime.toDateUtc(DateTime.makeUnsafe(resetAt)).toLocaleString()}.`
           : "The provider did not report a reset time. Retry manually when your limit is available."}
       </Text>
+      {redemption ? (
+        <Text className="text-sm text-foreground-tertiary">
+          {codexResetRedemptionMessage(redemption)}
+        </Text>
+      ) : null}
       {canSchedule ? (
         <View className="flex-row flex-wrap gap-2">
           <Button
