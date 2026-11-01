@@ -3430,6 +3430,9 @@ export default function ChatView(props: ChatViewProps) {
                 {...(onOpenWorktreeSetupTerminal ? { onOpenWorktreeSetupTerminal } : {})}
                 isPreparingWorktree={isPreparingWorktree}
                 footer={timelineFooter}
+                footerContinuesMessage={
+                  workNow !== null && pendingGuestMessageCount === 0 && !hasQueuedTurns
+                }
                 listRef={legendListRef}
                 runs={serverProjection?.runs ?? []}
                 latestRun={activeActivityRun}

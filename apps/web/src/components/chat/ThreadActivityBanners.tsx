@@ -9,6 +9,7 @@ import {
   presentProviderGoal,
   type RunStopPresentation,
 } from "@t3tools/client-runtime/state/thread-execution";
+import { commandDisplayText } from "@t3tools/client-runtime/work-log/command-label";
 import { childThreadInputsTitle } from "@t3tools/client-runtime/state/threads";
 import { formatDuration } from "@t3tools/shared/orchestrationTiming";
 import * as DateTime from "effect/DateTime";
@@ -24,7 +25,6 @@ import {
 } from "lucide-react";
 import { Fragment } from "react";
 import { tickTextContent } from "~/lib/tickTextContent";
-import { cn } from "~/lib/utils";
 import { Button, InlineButton } from "../ui/button";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import type { ComposerBannerStackItem } from "./ComposerBannerStack";
@@ -172,6 +172,9 @@ export function backgroundWorkNowItem(input: {
     const subagent = item?.type === "subagent" ? item : undefined;
     return {
       task,
+      // Claude labels a command with a prose description; only the command itself is code.
+      isRawCommand:
+        item?.type === "command_execution" && commandDisplayText(item.input.trim()) === task.label,
       activity: subagent?.progress?.replace(/\s+/gu, " ").trim() || null,
       startedAtMs: item?.startedAt ? DateTime.toEpochMillis(item.startedAt) : null,
       updatedAtMs: subagent ? DateTime.toEpochMillis(subagent.updatedAt) : 0,
@@ -182,53 +185,65 @@ export function backgroundWorkNowItem(input: {
   const newest = rows
     .filter((row) => row.activity)
     .toSorted((left, right) => right.updatedAtMs - left.updatedAtMs)[0];
-  const isCommand = (row: (typeof rows)[number]) => row.task.kind !== "subagent";
-  const verb = presentation.waiting ? "Waiting on" : "Running";
+  const label = (row: (typeof rows)[number]) =>
+    row.isRawCommand ? (
+      <span className="font-mono in-data-[slot=popover-popup]:whitespace-pre-wrap">
+        {row.task.label}
+      </span>
+    ) : (
+      row.task.label
+    );
   const onlyThreadId = only?.childThreadId;
   const startedAtMs = only?.startedAtMs ?? null;
   return {
     id: `background-work:${input.threadId}`,
-    icon: rows.every(isCommand) ? <TerminalIcon /> : <CircleDashedIcon />,
-    title: only ? (
+    icon: rows.every((row) => row.task.kind !== "subagent") ? (
+      <TerminalIcon />
+    ) : (
+      <CircleDashedIcon />
+    ),
+    title: (
       <>
-        {verb}{" "}
-        <span
-          className={cn(
-            isCommand(only) && "font-mono in-data-[slot=popover-popup]:whitespace-pre-wrap",
-          )}
-        >
-          {only.task.label}
+        {presentation.waiting ? "Waiting on " : "Running in background "}
+        <span className="text-foreground/80">
+          {only?.task.named === true ? label(only) : presentation.subject}
         </span>
       </>
-    ) : (
-      presentation.title
     ),
-    description: only ? (
-      only.activity
-    ) : newest ? (
-      `${newest.task.label}: ${newest.activity}`
-    ) : rows.every(isCommand) ? (
-      <span className="font-mono">{rows.map((row) => row.task.label).join(", ")}</span>
-    ) : (
-      rows.map((row) => row.task.label).join(", ")
-    ),
+    description: only
+      ? only.activity
+      : newest
+        ? `${newest.task.label}: ${newest.activity}`
+        : rows.map((row, index) => (
+            <Fragment key={row.task.taskId}>
+              {index > 0 ? ", " : null}
+              {label(row)}
+            </Fragment>
+          )),
     actions: (
       <>
         {startedAtMs === null ? null : (
-          <span
-            ref={tickTextContent(
-              (nowMs) => formatDuration(Math.max(1_000, nowMs - startedAtMs)),
-              true,
-            )}
-            className="tabular-nums"
-          />
+          <>
+            <span
+              ref={tickTextContent(
+                (nowMs) => formatDuration(Math.max(1_000, nowMs - startedAtMs)),
+                true,
+              )}
+              className="tabular-nums"
+            />
+            <span aria-hidden>·</span>
+          </>
         )}
         {onlyThreadId === undefined ? null : (
           <InlineButton tone="muted" onClick={() => onOpenThread(onlyThreadId)}>
             Open
           </InlineButton>
         )}
-        <InlineButton disabled={input.stopDisabled} onClick={() => void input.onStop()}>
+        <InlineButton
+          tone="muted"
+          disabled={input.stopDisabled}
+          onClick={() => void input.onStop()}
+        >
           {input.stopping ? "Stopping..." : "Stop"}
         </InlineButton>
       </>

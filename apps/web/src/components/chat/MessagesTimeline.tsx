@@ -77,6 +77,7 @@ import { useAssistantCitationTarget } from "./useAssistantCitationTarget";
 import { worktreeSetupAgentStarted } from "@t3tools/client-runtime/worktree-setup";
 import { resolveCitationPhase, type CitedHistory } from "./citationProcedure";
 import {
+  assistantMetaRow,
   resolveTimelineIsAtEnd,
   resolveTimelineMinimapHasPersistentGutter,
   resolveTimelineMinimapCurrentIndex,
@@ -238,6 +239,8 @@ interface MessagesTimelineProps {
   /** Which request is waiting, so a second one of the same kind is announced too. */
   awaitingRequestId?: string | null;
   footer?: ReactNode;
+  /** The footer continues the last message, so that message's actions follow it. */
+  footerContinuesMessage?: boolean;
 
   listRef: React.RefObject<LegendListRef | null>;
   timelineEntries: ReadonlyArray<TimelineEntry>;
@@ -341,6 +344,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
   activeTurnStartedAt = null,
   worktreeSetup = null,
   footer = null,
+  footerContinuesMessage = false,
   onCancelWorktreeSetup,
   retryableWorkspacePreparationRunIds = EMPTY_RUN_IDS,
   onRetryWorkspacePreparation,
@@ -693,6 +697,26 @@ const ConversationTimeline = memo(function ConversationTimeline({
     worktreeSetup,
   });
   const rows = useStableRows(rawRows, listIdentityKey);
+  const lastRow = rows.at(-1);
+  // A message reserves an invisible hover row for its actions, which would hold the footer away.
+  const messageBeforeFooter =
+    footerContinuesMessage &&
+    lastRow?.kind === "message" &&
+    lastRow.message.role === "assistant" &&
+    lastRow.showAssistantMeta
+      ? lastRow
+      : null;
+  const messageBeforeFooterRow = messageBeforeFooter && {
+    ...messageBeforeFooter,
+    showAssistantMeta: false,
+    showAssistantCopyButton: false,
+  };
+  const metaAfterFooter =
+    footerContinuesMessage && lastRow?.kind === "assistant-meta"
+      ? lastRow
+      : messageBeforeFooter
+        ? assistantMetaRow(messageBeforeFooter, messageBeforeFooter.message.updatedAt)
+        : null;
   const matchedApprovalRequestIds = new Set<string>();
   for (const row of pendingApprovalRequestIds.size > 0 ? rows : []) {
     const entries =
@@ -1244,19 +1268,36 @@ const ConversationTimeline = memo(function ConversationTimeline({
           data-timeline-root="true"
         >
           <AudioPreviewUnmountContext value={onAudioUnmount}>
-            <TimelineRowContent row={item} />
+            {item.kind === "assistant-meta" && item.id === metaAfterFooter?.id ? null : (
+              <TimelineRowContent
+                row={item.id === messageBeforeFooterRow?.id ? messageBeforeFooterRow : item}
+              />
+            )}
           </AudioPreviewUnmountContext>
         </div>
       </div>
     </TimelineRowCtx>
   );
-  const listExtraData = { identity: listIdentityKey, rowCount: rows.length, sharedState };
+  const listExtraData = {
+    identity: listIdentityKey,
+    rowCount: rows.length,
+    sharedState,
+    messageBeforeFooterRow,
+    metaAfterFooter,
+  };
   const timelineListFooter = (
     <TimelineListFooter
       composerInset={anchoredEndSpace ? 0 : contentInsetEndAdjustment}
       onGrow={onFooterGrow}
     >
       {footer}
+      {metaAfterFooter ? (
+        <TimelineRowCtx value={sharedState}>
+          <div className="chat-content-lane">
+            <AssistantMetaTimelineRow row={metaAfterFooter} />
+          </div>
+        </TimelineRowCtx>
+      ) : null}
       {unmatchedPendingApprovals.length > 0 ? (
         <TimelineRowCtx value={sharedState}>
           <div className="messages-timeline-row-frame">
