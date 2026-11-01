@@ -86,6 +86,34 @@ To add a scenario, point a `SCENARIOS` entry at a generic ACP replay fixture
 The agent replays session updates, permission requests, and questions. It drops session setup
 and vendor frames, so Grok and fx recordings lose their vendor-only behavior.
 
+### Profiling dev startup
+
+Run `vp run profile:startup` to capture the first 20 seconds of inherited Node processes under
+`.t3/startup-profiles/<timestamp>`. Workers that execute the preload get separate profiles.
+It starts the normal dev runner and accepts its flags.
+Stop it with Ctrl+C after the capture. Set `T3CODE_STARTUP_PROFILE_DIR` to choose another output
+directory. Profiling adds overhead, so compare readiness with an ordinary `vp run dev` run.
+
+Open a `.cpuprofile` in Chrome DevTools' Performance panel for sampled function stacks and source
+lines. Each `.modules.json` is a Chrome trace containing timed module resolution, loading,
+synchronous subprocess calls, and startup measures. Per-file records include importer URLs,
+source loading, preparation, recursive dependency linking, and top-level evaluation. Preparation
+uses synchronous loader boundaries; linking includes dependencies, and CommonJS evaluation can
+include nested `require` calls. Some ESM/CommonJS interop reports a combined stage. `.process.json` records the process, Node version, and capture window.
+The server's nested Effect and SQL spans remain in `.t3/userdata/logs/server.trace.ndjson`.
+
+The preload temporarily adds module-body timing markers and uses one automatic debugger pause
+to instrument the live Node loader. The launcher adds `--no-node-snapshot` to inherited
+`NODE_OPTIONS` because Node 26's snapshotted loader cannot accept that breakpoint. Include the
+same flag when using the preload directly. This disables Node's built-in startup snapshot,
+can change compilation-cache hits, and adds overhead.
+Treat per-file captures as diagnostic runs; use uninstrumented runs for baseline startup latency.
+The first entry module can compile before loader instrumentation is installed.
+
+A fresh process still uses filesystem, Node compilation, provider, and Vite dependency caches.
+Measure a missing Vite dependency cache separately from a restart with an existing database.
+Neither the Vite ready message nor the HTTP listener proves that a browser has rendered the app.
+
 ### Sharing and remote debugging
 
 `vp run dev --share` publishes the web port over the machine's tailnet and prints a pairing URL
