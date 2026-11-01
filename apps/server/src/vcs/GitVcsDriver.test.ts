@@ -1187,6 +1187,23 @@ it.effect("GitVcsDriver fails repository probes when git cannot read the reposit
   }).pipe(Effect.scoped, Effect.provide(layerGitContract)),
 );
 
+it.effect("GitVcsDriver reports no repository for a deleted cwd or a bare repository", () =>
+  Effect.gen(function* () {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const root = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-no-work-tree-" });
+    const bare = path.join(root, "bare.git");
+    yield* fileSystem.makeDirectory(bare);
+    yield* runGit(bare, ["init", "--bare"]);
+    const driver = yield* GitVcsDriver.makeVcsDriverShape();
+
+    for (const cwd of [path.join(root, "deleted"), bare]) {
+      assert.equal(yield* driver.isInsideWorkTree(cwd), false, cwd);
+      assert.equal(yield* driver.detectRepository(cwd), null, cwd);
+    }
+  }).pipe(Effect.scoped, Effect.provide(layerGitContract)),
+);
+
 const gitCommandCount = (operation: string, outcome: string) =>
   Metric.value(
     Metric.withAttributes(gitCommandsTotal, [
