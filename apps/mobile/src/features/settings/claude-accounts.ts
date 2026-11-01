@@ -60,7 +60,7 @@ export function planClaudeAccountSave(input: {
   const current: ProviderInstanceConfig = Object.hasOwn(input.providerInstances, instanceId)
     ? input.providerInstances[instanceId]!
     : { driver: CLAUDE_DRIVER };
-  const { displayName: _displayName, ...rest } = current;
+  const { displayName: _displayName, config: _config, ...rest } = current;
   const { homePath: _homePath, ...config } = configRecord(current);
   const nextConfig = configDir ? { ...config, homePath: configDir } : config;
   const instance: ProviderInstanceConfig = {
