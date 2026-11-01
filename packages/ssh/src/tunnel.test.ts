@@ -14,6 +14,7 @@ import { TestClock } from "effect/testing";
 import { HttpClient, HttpClientResponse } from "effect/http";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 
+import { captureLauncher, captureLauncherFor, runLauncher } from "./launcherTestHarness.ts";
 import * as SshAuth from "./auth.ts";
 import { SshCommandError, SshPasswordPromptError } from "./errors.ts";
 import * as SshTunnel from "./tunnel.ts";
@@ -446,3 +447,212 @@ describe("ssh tunnel scripts", () => {
 // desktop app with network access on) listens on *:<port>. Linux refuses that
 // bind unless both sockets set SO_REUSEPORT, so on Linux the preload adds it to
 // the picker's probe and the holder sets it too.
+
+describe("SSH launch during desktop update", () => {
+  it.effect("archive launcher reuses the replacement without host Node", () =>
+    Effect.gen(function* () {
+      const script = yield* captureLauncherFor({ archiveVersion: "1.2.3" });
+      const result = runLauncher(script, {
+        archive: true,
+        marker: { startedAt: 0, expiresAt: 60_000 },
+        readyAt: 8_000,
+      });
+      assert.deepEqual(result.output, { remotePort: 4888, serverKind: "external" });
+      assert.equal(result.now, 8_000);
+      assert.isFalse(result.events.some((event) => event.startsWith("start ")));
+    }),
+  );
+
+  it.effect.each(["managed", "external"] as const)(
+    "reuses recorded %s server without runtime metadata or an update wait",
+    (recordedKind) =>
+      Effect.gen(function* () {
+        const result = runLauncher(yield* captureLauncher, {
+          marker: { startedAt: 0, expiresAt: 60_000 },
+          recordedKind,
+        });
+        assert.deepEqual(result.output, { remotePort: 5999, serverKind: recordedKind });
+        assert.equal(result.now, 0);
+        assert.isFalse(result.events.some((event) => event.startsWith("kill ")));
+        assert.isFalse(result.events.some((event) => event.startsWith("start ")));
+      }),
+  );
+
+  it.effect.each([
+    ["malformed", "broken"],
+    ["future", { startedAt: 1_000, expiresAt: 61_000 }],
+    ["missing fields", {}],
+    ["numeric strings", { startedAt: "0", expiresAt: "60000" }],
+  ] as const)("preserves %s markers without waiting", ([, marker]) =>
+    Effect.gen(function* () {
+      const result = runLauncher(yield* captureLauncher, { marker });
+      assert.equal(result.now, 0);
+      assert.isTrue(result.markerExists);
+      assert.deepEqual(result.output, { remotePort: 5999, serverKind: "managed" });
+    }),
+  );
+
+  it.effect.each([-30_000, 120_000])("bounds a host clock jump to %s", (clockJump) =>
+    Effect.gen(function* () {
+      const result = runLauncher(yield* captureLauncher, {
+        marker: { startedAt: 0, expiresAt: 60_000 },
+        clockJump,
+      });
+      assert.deepEqual(result.output, { remotePort: 5999, serverKind: "managed" });
+      assert.isBelow(result.events.filter((event) => event.startsWith("runtime ")).length, 62);
+    }),
+  );
+
+  it.effect("refreshes runtime after readiness removes the marker between polls", () =>
+    Effect.gen(function* () {
+      const result = runLauncher(yield* captureLauncher, {
+        marker: { startedAt: 0, expiresAt: 60_000 },
+        readyAt: 8_000,
+        clearMarkerOnReady: true,
+      });
+      assert.deepEqual(result.output, { remotePort: 4888, serverKind: "external" });
+      assert.equal(result.now, 8_000);
+      assert.isFalse(result.markerExists);
+      assert.isFalse(result.events.some((event) => event.startsWith("start ")));
+      assert.isFalse(result.events.some((event) => event.startsWith("kill ")));
+    }),
+  );
+
+  it.effect.each([false, true])(
+    "reuses a runtime published before the first marker read (archive: %s)",
+    (archive) =>
+      Effect.gen(function* () {
+        const script = archive
+          ? yield* captureLauncherFor({ archiveVersion: "1.2.3" })
+          : yield* captureLauncher;
+        const result = runLauncher(script, {
+          archive,
+          marker: { startedAt: 0, expiresAt: 60_000 },
+          publishAfterFirstRuntimeRead: true,
+        });
+        assert.deepEqual(result.output, { remotePort: 4888, serverKind: "external" });
+        assert.equal(result.now, 0);
+        assert.isFalse(result.events.some((event) => event.startsWith("start ")));
+      }),
+  );
+
+  it.effect("waits across the eight-second installer gap and reuses the replacement server", () =>
+    Effect.gen(function* () {
+      const result = runLauncher(yield* captureLauncher, {
+        marker: { startedAt: 0, expiresAt: 60_000 },
+        readyAt: 8_000,
+      });
+      assert.deepEqual(
+        result.output,
+        { remotePort: 4888, serverKind: "external" },
+        `replacement appears at 8000ms; launcher returned at ${result.now}ms: ${result.events.join(", ")}`,
+      );
+      assert.equal(result.now, 8_000);
+      assert.isBelow(result.now, 60_000);
+      assert.isFalse(result.events.some((event) => event.startsWith("start ")));
+      assert.isAtLeast(result.events.filter((event) => event.startsWith("runtime ")).length, 2);
+    }),
+  );
+
+  it.effect(
+    "refreshes the runtime port while waiting instead of probing the old port forever",
+    () =>
+      Effect.gen(function* () {
+        const result = runLauncher(yield* captureLauncher, {
+          marker: { startedAt: 0, expiresAt: 60_000 },
+          initialPort: 3773,
+          readyAt: 8_000,
+        });
+        assert.deepEqual(result.output, { remotePort: 4888, serverKind: "external" });
+        assert.isTrue(result.events.some((event) => event.startsWith("probe 4888 ")));
+        assert.isFalse(result.events.some((event) => event.startsWith("start ")));
+      }),
+  );
+
+  it.effect("waits the full marker lifetime despite immediately failing stale-port probes", () =>
+    Effect.gen(function* () {
+      const result = runLauncher(yield* captureLauncher, {
+        marker: { startedAt: 0, expiresAt: 60_000 },
+        initialPort: 3773,
+        readyAt: 30_000,
+      });
+      assert.deepEqual(result.output, { remotePort: 4888, serverKind: "external" });
+      assert.equal(result.now, 30_000);
+      assert.isFalse(result.events.some((event) => event.startsWith("start ")));
+    }),
+  );
+
+  it.effect("starts a server when the marker expires without a replacement becoming ready", () =>
+    Effect.gen(function* () {
+      const result = runLauncher(yield* captureLauncher, {
+        marker: { startedAt: 0, expiresAt: 60_000 },
+      });
+      assert.deepEqual(result.output, { remotePort: 5999, serverKind: "managed" });
+      assert.isAtLeast(result.now, 60_000);
+      assert.isAtMost(result.now, 61_000);
+      assert.isTrue(result.markerExists, "an expired marker is ignored, not deleted");
+      assert.equal(result.events.filter((event) => event.startsWith("start ")).length, 1);
+    }),
+  );
+
+  it.effect("honours the explicit expiresAt rather than waiting a new 60-second window", () =>
+    Effect.gen(function* () {
+      const result = runLauncher(yield* captureLauncher, {
+        marker: { startedAt: 0, expiresAt: 1_000 },
+      });
+      assert.deepEqual(result.output, { remotePort: 5999, serverKind: "managed" });
+      assert.isAtLeast(result.now, 1_000);
+      assert.isAtMost(result.now, 2_000);
+      assert.isTrue(result.markerExists);
+    }),
+  );
+
+  it.effect("ignores a stale marker without waiting or deleting it", () =>
+    Effect.gen(function* () {
+      const result = runLauncher(yield* captureLauncher, {
+        marker: { startedAt: -60_000, expiresAt: 0 },
+      });
+      assert.deepEqual(result.output, { remotePort: 5999, serverKind: "managed" });
+      assert.equal(result.now, 0);
+      assert.isTrue(result.markerExists);
+    }),
+  );
+
+  it.effect.each([false, true])("starts immediately without a marker (archive: %s)", (archive) =>
+    Effect.gen(function* () {
+      const script = archive
+        ? yield* captureLauncherFor({ archiveVersion: "1.2.3" })
+        : yield* captureLauncher;
+      const result = runLauncher(script, { archive });
+      assert.deepEqual(result.output, { remotePort: 5999, serverKind: "managed" });
+      assert.equal(result.now, 0);
+      assert.equal(result.events.filter((event) => event.startsWith("start ")).length, 1);
+      assert.equal(result.events.filter((event) => event.startsWith("marker ")).length, 1);
+      assert.equal(result.events.filter((event) => event.startsWith("runtime ")).length, 1);
+    }),
+  );
+
+  it.effect("caps a longer host TTL and preserves its marker", () =>
+    Effect.gen(function* () {
+      const result = runLauncher(yield* captureLauncher, {
+        marker: { startedAt: 0, expiresAt: 600_000 },
+      });
+      assert.deepEqual(result.output, { remotePort: 5999, serverKind: "managed" });
+      assert.equal(result.now, 60_000);
+      assert.isTrue(result.markerExists);
+      assert.equal(result.events.filter((event) => event.startsWith("marker ")).length, 61);
+    }),
+  );
+
+  it.effect("reuses an already ready server without waiting for a fresh marker to expire", () =>
+    Effect.gen(function* () {
+      const result = runLauncher(yield* captureLauncher, {
+        marker: { startedAt: 0, expiresAt: 60_000 },
+        readyAt: 0,
+      });
+      assert.deepEqual(result.output, { remotePort: 4888, serverKind: "external" });
+      assert.equal(result.now, 0);
+      assert.isFalse(result.events.some((event) => event.startsWith("start ")));
+    }),
+  );
+});
