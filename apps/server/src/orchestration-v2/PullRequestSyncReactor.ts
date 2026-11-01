@@ -180,6 +180,19 @@ interface LinkEntry {
   readonly link: ThreadPullRequestLink;
 }
 
+const referenceOf = ({ thread, link }: LinkEntry) => ({
+  projectId: thread.projectId,
+  host: normalizeThreadPullRequestKey(link).host,
+  repository: link.repository,
+  number: link.number,
+});
+
+/** Pauses and batching both belong to a project's host. */
+const pauseKeyOf = (entry: LinkEntry) => {
+  const { projectId, host } = referenceOf(entry);
+  return `${projectId}\0${host}`;
+};
+
 /** Another layer of the stack `url` belongs to, in its host's canonical shape. */
 function siblingChangeRequestUrl(url: string, number: number): string | null {
   if (!Number.isSafeInteger(number) || number < 1) return null;
@@ -452,12 +465,7 @@ export const make = Effect.gen(function* () {
 
     const syncGroup = Effect.fnUntraced(function* (key: string, entries: ReadonlyArray<LinkEntry>) {
       const first = entries[0]!;
-      const ref = {
-        projectId: first.thread.projectId,
-        host: normalizeThreadPullRequestKey(first.link).host,
-        repository: first.link.repository,
-        number: first.link.number,
-      };
+      const ref = referenceOf(first);
       const refreshRequested = requested.has(key);
       // A held merged summary is served without asking the host, so a snapshot still missing its
       // merge time has to drop it or the slow-cadence re-read would hand back the same gap.
@@ -571,25 +579,63 @@ export const make = Effect.gen(function* () {
           return Effect.void;
         }),
       );
+    const pools = {
+      // Wider than one summary batch, so reads that finish their cache checks at different
+      // times still share batches.
+      batched: { width: 100, reads: yield* Semaphore.make(100) },
+      // One read per pull request, often a CLI process, so these keep the narrower width.
+      unbatched: { width: 25, reads: yield* Semaphore.make(25) },
+    };
+    const isPaused = (pauseKey: string, atMs: number) => (pausedUntil.get(pauseKey) ?? 0) > atMs;
+    // Judged once a slot is free, so a stack retry a sibling flags meanwhile still counts, and
+    // pauses set during the sweep apply at once.
+    const readIfDue = (
+      key: string,
+      entries: ReadonlyArray<LinkEntry>,
+      pauseKey: string,
+      reads: Semaphore.Semaphore,
+    ) =>
+      reads.withPermits(1)(
+        Effect.suspend(() =>
+          isDue(key, entries, nowMs)
+            ? Clock.currentTimeMillis.pipe(
+                Effect.flatMap((startedAtMs) =>
+                  isPaused(pauseKey, startedAtMs) ? Effect.void : readGroup(key, entries, pauseKey),
+                ),
+              )
+            : Effect.void,
+        ),
+      );
+    const groupsByHost = Map.groupBy(
+      Array.from(groups).filter(([key]) => scope === "all" || requested.has(key)),
+      ([, entries]) => pauseKeyOf(entries[0]!),
+    );
     yield* Effect.forEach(
-      groups,
-      ([key, entries]) => {
-        if (!((scope === "all" || requested.has(key)) && isDue(key, entries, nowMs))) {
+      groupsByHost,
+      ([pauseKey, hostGroups]) => {
+        // A host paused or with nothing due skips the lookup. Stack retries only flag groups on
+        // the flagging group's own host, so nothing on it becomes due this sweep.
+        if (
+          isPaused(pauseKey, nowMs) ||
+          !hostGroups.some(([key, entries]) => isDue(key, entries, nowMs))
+        ) {
           return Effect.void;
         }
-        const first = entries[0]!;
-        const pauseKey = `${first.thread.projectId}\0${normalizeThreadPullRequestKey(first.link).host}`;
-        // Check pauses at each read so changes during the sweep apply immediately.
-        return Clock.currentTimeMillis.pipe(
-          Effect.flatMap((startedAtMs) =>
-            (pausedUntil.get(pauseKey) ?? 0) > startedAtMs
-              ? Effect.void
-              : readGroup(key, entries, pauseKey),
-          ),
+        return pullRequests.batchesReads(referenceOf(hostGroups[0]![1][0]!)).pipe(
+          Effect.flatMap((batches) => {
+            const { width, reads } = batches ? pools.batched : pools.unbatched;
+            return Effect.forEach(
+              hostGroups,
+              ([key, entries]) => readIfDue(key, entries, pauseKey, reads),
+              {
+                concurrency: width,
+                discard: true,
+              },
+            );
+          }),
         );
       },
-      // Match summary batch width so GitHub reads coalesce into one request.
-      { concurrency: 25, discard: true },
+      { concurrency: "unbounded", discard: true },
     );
     for (const [reason, { count, key }] of skips) {
       yield* Effect.logWarning("pull request sync skipped", { count, key, reason });
