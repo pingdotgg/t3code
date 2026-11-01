@@ -1,3 +1,5 @@
+// @effect-diagnostics-next-line nodeBuiltinImport:off -- Cross-process launcher contention uses real filesystem leases and IPC barriers.
+import * as NodeChildProcess from "node:child_process";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { expect, it } from "@effect/vitest";
 import * as HostProcess from "@t3tools/shared/HostProcess";
@@ -5,10 +7,12 @@ import * as ConfigProvider from "effect/ConfigProvider";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import { HttpClient } from "effect/http";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
+import { vi } from "vite-plus/test";
 
 import * as ProcessRunner from "../processRunner.ts";
 import * as BootService from "./bootService.ts";
@@ -20,6 +24,24 @@ import {
   SERVICE_RESTART_PENDING_FILE,
   serviceStateHasPendingUpdate,
 } from "./serviceProtocol.ts";
+
+const leaseObserver = vi.hoisted(() => ({ contended: (_destination: string) => {} }));
+vi.mock("node:fs", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("node:fs")>();
+  return {
+    ...actual,
+    renameSync: (...args: Parameters<typeof actual.renameSync>) => {
+      try {
+        return actual.renameSync(...args);
+      } catch (error) {
+        if (["EEXIST", "ENOTEMPTY"].includes((error as NodeJS.ErrnoException).code ?? "")) {
+          leaseObserver.contended(String(args[1]));
+        }
+        throw error;
+      }
+    },
+  };
+});
 
 it("reads the served T3 home back out of a rendered unit or plist", () => {
   const plan = (baseDir: string) => ({
@@ -370,6 +392,11 @@ it.layer(NodeServices.layer)("boot service install", (it) => {
             current: false,
             installedVersion: "1.2.4-nightly.1",
           });
+          yield* service.install({ allowDowngrade: true });
+          expect(parseServiceState(yield* fs.readFileString(statePath))).toEqual({
+            protocol: SERVICE_LAUNCHER_PROTOCOL,
+            activeVersion: "1.2.3",
+          });
         }
       }),
   );
@@ -503,6 +530,168 @@ it.layer(NodeServices.layer)("boot service install", (it) => {
         expect(yield* newer.restart).toBe("restarted");
         expect((yield* newer.status).problems).not.toContain("restart-pending");
         expect((yield* newer.status).current).toBe(true);
+
+        const latest = yield* makeService(undefined, "1.2.5");
+        yield* latest.install({ start: true });
+        expect(parseServiceState(yield* fs.readFileString(statePath))).toEqual({
+          protocol: SERVICE_LAUNCHER_PROTOCOL,
+          activeVersion: "1.2.5",
+        });
+        expect(yield* fs.readFileString(plan.unitPath)).toContain("versions/1.2.5/t3");
+        expect((yield* latest.status).current).toBe(true);
+        expect(
+          yield* fs.exists(path.join(path.dirname(statePath), SERVICE_RESTART_PENDING_FILE)),
+        ).toBe(false);
+      }),
+  );
+
+  it.effect(
+    "serializes a local install with another process reconciling an older unit snapshot",
+    () =>
+      Effect.gen(function* () {
+        const { service, fs, statePath, makeService, runtime } = yield* makeHarness();
+        const path = yield* Path.Path;
+        const plan = yield* service.install();
+        const unit = yield* fs.readFileString(plan.unitPath);
+        yield* fs.writeFileString(
+          plan.unitPath,
+          unit.replace("versions/1.2.3/t3", "versions/1.2.2/t3"),
+        );
+        yield* fs.writeFileString(
+          statePath,
+          JSON.stringify({
+            protocol: SERVICE_LAUNCHER_PROTOCOL,
+            activeVersion: "1.2.3",
+            update: {
+              id: "committed",
+              fromVersion: "1.2.2",
+              targetVersion: "1.2.3",
+              status: "committed",
+            },
+          }),
+        );
+        const rejection = path.join(plan.baseDir, "rejected-update");
+        const databasePath = path.join(plan.baseDir, "state.sqlite");
+        yield* fs.writeFileString(databasePath, "database");
+        yield* fs.writeFileString(
+          runtime.entryPath,
+          `#!${process.execPath}
+import { writeFileSync } from "node:fs";
+process.on("message", message => {
+  if (message === "request-update") process.send({ type: "request-update", targetVersion: "1.2.5", dbPath: ${JSON.stringify(databasePath)} });
+  if (message.type === "update-rejected") {
+    writeFileSync(${JSON.stringify(rejection)}, message.reason);
+    process.exit(0);
+  }
+});
+`,
+        );
+        yield* fs.chmod(runtime.entryPath, 0o755);
+        const newer = yield* makeService(undefined, "1.2.4");
+        yield* makeService(undefined, "1.2.5");
+        const snapshot = Promise.withResolvers<void>();
+        const milestone = Promise.withResolvers<void>();
+        const script = path.join(plan.baseDir, "launcher-contention.mjs");
+        yield* fs.writeFileString(
+          script,
+          `
+import fs from "node:fs/promises";
+import cp from "node:child_process";
+import { syncBuiltinESMExports } from "node:module";
+const server = Promise.withResolvers();
+const originalSpawn = cp.spawn;
+cp.spawn = (...args) => { const child = originalSpawn(...args); server.resolve(child); return child; };
+process.on("message", async message => {
+  if (message === "installed") (await server.promise).send("request-update");
+});
+const originalRead = fs.readFile;
+fs.readFile = async (...args) => {
+  const contents = await originalRead(...args);
+  if (args[0] === ${JSON.stringify(plan.unitPath)}) {
+    fs.readFile = originalRead;
+    syncBuiltinESMExports();
+    const resume = new Promise(resolve => process.once("message", resolve));
+    process.send("snapshot");
+    await resume;
+  }
+  return contents;
+};
+syncBuiltinESMExports();
+const { Launcher, readServiceState } = await import(${JSON.stringify(import.meta.resolve("../serviceLauncher.ts"))});
+const launcher = new Launcher(${JSON.stringify(plan.baseDir)}, await readServiceState(${JSON.stringify(statePath)}), {
+  serviceUnit: { path: ${JSON.stringify(plan.unitPath)}, reload: async () => {} },
+});
+try { await launcher.run(); throw Error("unexpected completion"); }
+catch (error) {
+  if (!error.message.includes("Active child exited unexpectedly (0)")) throw error;
+}
+const { acquireServiceSelectionLock } = await import(${JSON.stringify(import.meta.resolve("./serviceSelectionLock.ts"))});
+// Exit owning the real lease, as a crashed process would.
+await acquireServiceSelectionLock(${JSON.stringify(plan.unitPath)});
+process.disconnect();
+`,
+        );
+        const child = yield* Effect.acquireRelease(
+          Effect.sync(() =>
+            NodeChildProcess.fork(script, [], {
+              execArgv: [],
+              stdio: ["ignore", "inherit", "inherit", "ipc"],
+            }),
+          ),
+          (child) =>
+            Effect.sync(() => {
+              if (child.exitCode === null && child.signalCode === null) child.kill();
+            }),
+        );
+        const exited = new Promise<void>((resolve, reject) => {
+          child.once("error", reject);
+          child.once("exit", (code) =>
+            code === 0 ? resolve() : reject(new Error(`launcher exited ${code}`)),
+          );
+        });
+        child.on("message", (message) => {
+          if (message === "snapshot") snapshot.resolve();
+        });
+        yield* Effect.promise(() =>
+          Promise.race([
+            snapshot.promise,
+            exited.then(() => {
+              throw new Error("launcher exited before snapshot");
+            }),
+          ]),
+        );
+        leaseObserver.contended = (destination) => {
+          if (destination === plan.unitPath + ".selection-lock") milestone.resolve();
+        };
+        yield* Effect.addFinalizer(() =>
+          Effect.sync(() => {
+            leaseObserver.contended = () => {};
+          }),
+        );
+        const installing = yield* newer
+          .install({ start: false })
+          .pipe(Effect.ensuring(Effect.sync(() => milestone.resolve())), Effect.forkChild);
+        // Either observe real OS contention or let an uncoordinated installer finish
+        // before releasing the stale snapshot. The latter deterministically loses C.
+        yield* Effect.promise(() => milestone.promise);
+        child.send("resume");
+        yield* Fiber.join(installing);
+        child.send("installed");
+        yield* Effect.promise(() => exited);
+        expect(yield* fs.readFileString(rejection)).toContain("Service selection changed");
+        expect(parseServiceState(yield* fs.readFileString(statePath))).toEqual({
+          protocol: SERVICE_LAUNCHER_PROTOCOL,
+          activeVersion: "1.2.4",
+        });
+        expect(yield* fs.readFileString(plan.unitPath)).toContain("versions/1.2.4/t3");
+        expect(
+          yield* fs.readFileString(
+            path.join(path.dirname(statePath), SERVICE_RESTART_PENDING_FILE),
+          ),
+        ).toBe("1.2.4\n");
+        // The next installer reclaims the dead owner and releases its own lease.
+        yield* newer.install({ start: false });
+        expect(yield* fs.exists(plan.unitPath + ".selection-lock")).toBe(false);
       }),
   );
 
@@ -544,6 +733,11 @@ it.layer(NodeServices.layer)("boot service install", (it) => {
 
       const error = yield* service.install({ start: false }).pipe(Effect.flip);
       expect(error._tag).toBe("BootServiceUpdatePendingError");
+      expect(yield* fs.readFileString(statePath)).toBe(pendingState);
+      yield* fs.remove((yield* service.status).unitPath);
+      expect((yield* service.install({ start: false }).pipe(Effect.flip))._tag).toBe(
+        "BootServiceUpdatePendingError",
+      );
       expect(yield* fs.readFileString(statePath)).toBe(pendingState);
     }),
   );
