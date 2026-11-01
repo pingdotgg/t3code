@@ -51,7 +51,7 @@ function Menu({
 
 it("mounts only the rows near the visible window of a long skill list", async () => {
   await using screen = await render(<Menu activeItemId={null} />);
-  await expect.element(page.getByRole("option", { name: /Demo Skill 000/ })).toBeVisible();
+  await expect.element(page.getByRole("option", { name: /demo-skill-000/ })).toBeVisible();
 
   const mountedRows = screen.container.querySelectorAll("[data-composer-item-id]").length;
   expect(mountedRows, "rows mounted for 300 skills").toBeLessThan(50);
@@ -59,7 +59,7 @@ it("mounts only the rows near the visible window of a long skill list", async ()
 
 it("fades the bottom edge of an overflowing list before it is scrolled", async () => {
   await using screen = await render(<Menu activeItemId={null} />);
-  await expect.element(page.getByRole("option", { name: /Demo Skill 000/ })).toBeVisible();
+  await expect.element(page.getByRole("option", { name: /demo-skill-000/ })).toBeVisible();
 
   await vi.waitFor(() =>
     expect(screen.container.querySelector(".virtualized-scroll-fade")).not.toBeNull(),
@@ -90,17 +90,17 @@ it("fills the visible list with rows in the first frame it paints", async () => 
 
 it("brings a highlighted row far down a long list into the visible window", async () => {
   await using screen = await render(<Menu activeItemId={null} />);
-  await expect.element(page.getByRole("option", { name: /Demo Skill 000/ })).toBeVisible();
+  await expect.element(page.getByRole("option", { name: /demo-skill-000/ })).toBeVisible();
   await screen.rerender(<Menu activeItemId={skillItems[250]!.id} />);
 
-  const option = page.getByRole("option", { name: /Demo Skill 250/ });
+  const option = page.getByRole("option", { name: /demo-skill-250/ });
   await expect.element(option).toBeInViewport();
   await expect.element(option).toHaveAttribute("aria-posinset", "251");
   await expect.element(option).toHaveAttribute("aria-setsize", "300");
 });
 
 async function scrollListToEnd() {
-  const firstRow = page.getByRole("option", { name: /Demo Skill 000/ });
+  const firstRow = page.getByRole("option", { name: /demo-skill-000/ });
   await expect.element(firstRow).toBeVisible();
   let scroller = firstRow.element().parentElement;
   while (scroller && scroller.scrollHeight <= scroller.clientHeight) {
@@ -108,7 +108,7 @@ async function scrollListToEnd() {
   }
   if (!scroller) throw new Error("list scroller not found");
   scroller.scrollTop = scroller.scrollHeight;
-  await expect.element(page.getByRole("option", { name: /Demo Skill 299/ })).toBeInViewport();
+  await expect.element(page.getByRole("option", { name: /demo-skill-299/ })).toBeInViewport();
 }
 
 it("shows the first row when filtering a scrolled list highlights it", async () => {
@@ -117,7 +117,7 @@ it("shows the first row when filtering a scrolled list highlights it", async () 
   const filtered = skillItems.filter((item) => item.label.endsWith("3"));
   await screen.rerender(<Menu activeItemId={filtered[0]!.id} items={filtered} />);
 
-  await expect.element(page.getByRole("option", { name: /Demo Skill 003/ })).toBeInViewport();
+  await expect.element(page.getByRole("option", { name: /demo-skill-003/ })).toBeInViewport();
 });
 
 it("keeps the highlighted option mounted while the list scrolls away from it", async () => {
