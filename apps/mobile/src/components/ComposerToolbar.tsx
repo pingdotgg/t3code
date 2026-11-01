@@ -1,5 +1,5 @@
 import type { ComponentProps, ReactNode } from "react";
-import { useCallback, useMemo, useState } from "react";
+import { useState } from "react";
 import {
   Pressable,
   ScrollView,
@@ -12,7 +12,7 @@ import {
   type ViewStyle,
 } from "react-native";
 
-import Animated, { FadeIn } from "react-native-reanimated";
+import Animated, { FadeIn, useReducedMotion } from "react-native-reanimated";
 
 import { cn } from "../lib/cn";
 import { AppText as Text } from "./ui/AppText";
@@ -43,6 +43,7 @@ export function ComposerInlineControl(props: {
   readonly showChevron?: boolean;
 }) {
   const { scale, smallIconSize } = useAndroidControlSizing();
+  const reducedMotion = useReducedMotion();
   // Keep the picker anchored to its parent while the editor changes height.
   const animatesLabel = props.iconOnly !== undefined;
   const iconSize = props.size === "large" ? 20 : smallIconSize;
@@ -85,7 +86,7 @@ export function ComposerInlineControl(props: {
         {props.iconOnly ? null : (
           <Animated.View
             className="shrink"
-            entering={animatesLabel ? INLINE_CONTROL_LABEL_ENTERING : undefined}
+            entering={animatesLabel && !reducedMotion ? INLINE_CONTROL_LABEL_ENTERING : undefined}
           >
             <Text
               className={cn(
@@ -154,33 +155,31 @@ export function ComposerToolbarScroller(props: {
     viewportWidth: 0,
   });
 
-  const scrollEdges = useMemo(() => {
-    const maxOffset = Math.max(0, metrics.contentWidth - metrics.viewportWidth);
-    return {
-      showLeftFade: metrics.offsetX > COMPOSER_TOOLBAR_SCROLL_EPSILON,
-      showRightFade: metrics.offsetX < maxOffset - COMPOSER_TOOLBAR_SCROLL_EPSILON,
-    };
-  }, [metrics]);
+  const maxOffset = Math.max(0, metrics.contentWidth - metrics.viewportWidth);
+  const scrollEdges = {
+    showLeftFade: metrics.offsetX > COMPOSER_TOOLBAR_SCROLL_EPSILON,
+    showRightFade: metrics.offsetX < maxOffset - COMPOSER_TOOLBAR_SCROLL_EPSILON,
+  };
 
-  const handleLayout = useCallback((event: LayoutChangeEvent) => {
+  const handleLayout = (event: LayoutChangeEvent) => {
     const viewportWidth = event.nativeEvent.layout.width;
     setMetrics((current) =>
       current.viewportWidth === viewportWidth ? current : { ...current, viewportWidth },
     );
-  }, []);
+  };
 
-  const handleContentSizeChange = useCallback((contentWidth: number) => {
+  const handleContentSizeChange = (contentWidth: number) => {
     setMetrics((current) =>
       current.contentWidth === contentWidth ? current : { ...current, contentWidth },
     );
-  }, []);
+  };
 
-  const handleScroll = useCallback((event: NativeSyntheticEvent<NativeScrollEvent>) => {
+  const handleScroll = (event: NativeSyntheticEvent<NativeScrollEvent>) => {
     const offsetX = event.nativeEvent.contentOffset.x;
     setMetrics((current) =>
       Math.abs(current.offsetX - offsetX) < 1 ? current : { ...current, offsetX },
     );
-  }, []);
+  };
 
   return (
     <View className="relative min-w-0 flex-1">

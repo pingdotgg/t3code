@@ -437,10 +437,8 @@ cd ${shellQuote(linuxServerDir)} && node <<'NODE' >/dev/null 2>&1
 // it accurately instead of letting the server crash on ERR_MODULE_NOT_FOUND at
 // launch (which, in wsl-only mode, would just fail to launch with no fallback).
 //
-// The sentinel must be a package the CLI bundle leaves external. It used to be
-// "effect", back when the bundle externalized its runtime deps and the whole
-// node_modules tree was unpacked. The bundle now inlines its JS dependencies,
-// so "effect" no longer exists on disk and only the native packages do.
+// The sentinel must be a package the CLI bundle leaves external. The bundle
+// inlines its JS dependencies, so only the native packages exist on disk.
 // Resolving node-pty is what actually validates the unpacked tree.
 try { require.resolve("node-pty/package.json"); } catch (_e) { process.exit(3); }
 const fs = require("node:fs");
