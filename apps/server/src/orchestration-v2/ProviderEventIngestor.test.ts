@@ -2327,6 +2327,27 @@ layer("ProviderEventIngestorV2", (it) => {
       assert.lengthOf(repeated, 0);
       assert.lengthOf(otherInstance, 0);
       assert.deepEqual((yield* projectionStore.getThread(threadId)).modelSelection, switched);
+      for (const newer of [
+        { ...modelSelection, model: "user-selected-model" },
+        { ...modelSelection, options: [{ id: "reasoningEffort", value: "low" }] },
+      ]) {
+        yield* eventSink.write({
+          events: [
+            {
+              ...rootEvent,
+              id: yield* idAllocator.allocate.event({ threadId }),
+              type: "thread.model-selection-updated",
+              payload: {
+                ...(yield* projectionStore.getThread(threadId)),
+                modelSelection: newer,
+                updatedAt: now,
+              },
+            },
+          ],
+        });
+        assert.lengthOf(yield* reportModel(switched), 0);
+        assert.deepEqual((yield* projectionStore.getThread(threadId)).modelSelection, newer);
+      }
     }),
   );
 });
