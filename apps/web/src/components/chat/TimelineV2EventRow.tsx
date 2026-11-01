@@ -83,7 +83,7 @@ const V2SubagentGroup = memo(function V2SubagentGroup({
   const label = `${members.length} ${members.length === 1 ? "subagent" : "subagents"}`;
   const statusSummary = summarizeSubagentStatuses(agents.map(({ status }) => status));
   const toggleExpanded = (open: boolean) => {
-    ctx.onToggleWorkEntry(row.id, expanded);
+    ctx.onToggleWorkEntry(row.id);
     if (open) ctx.workGroupViewState.expandedEntries.add(groupId);
     else ctx.workGroupViewState.expandedEntries.delete(groupId);
     setExpanded(open);

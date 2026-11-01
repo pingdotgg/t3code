@@ -1788,8 +1788,7 @@ function renderFeedEntry(
         toolIcon={entry.toolIcon}
         summaryToolIcon={entry.summaryToolIcon}
         hasFailure={entry.hasFailure}
-        shimmer={entry.shimmer}
-        thought={entry.thought}
+        live={entry.live}
         trailing={
           entry.checkpointSummary ? (
             <TurnDiffStat
@@ -3534,20 +3533,15 @@ export const ThreadFeed = memo(function ThreadFeed({
       case "run-fold":
         return resolveThreadFeedFixedItemSize(entry.type);
       case "work-toggle":
-        return entry.thought ? undefined : WORK_GROUP_TOGGLE_HEIGHT;
+        return WORK_GROUP_TOGGLE_HEIGHT;
       case "thinking":
         return WORK_GROUP_TOGGLE_HEIGHT;
-      case "activity-group":
-        if (entry.activities[0]?.projectedItem.item.type === "subagent") {
+      case "activity-group": {
+        const itemType = entry.activities[0]?.projectedItem.item.type;
+        if (itemType === "subagent" || itemType === "reasoning") {
           return undefined;
         }
         if (isContextCompactionActivityGroup(entry) || isContextHandoffActivityGroup(entry)) {
-          return undefined;
-        }
-        if (
-          entry.activities[0]?.groupedToolDetail &&
-          entry.activities.every((activity) => activity.workEntry.itemType === "reasoning")
-        ) {
           return undefined;
         }
         return entry.activities.some(
@@ -3555,6 +3549,7 @@ export const ThreadFeed = memo(function ThreadFeed({
         )
           ? undefined
           : collapsedWorkLogHeight(entry.activities, entry.continuesWorkLog);
+      }
       default:
         return undefined;
     }
@@ -3721,6 +3716,12 @@ export const ThreadFeed = memo(function ThreadFeed({
             viewabilityConfig={THREAD_MEDIA_VIEWABILITY_CONFIG}
             keyExtractor={(entry) => entry.id}
             getItemType={(entry) => {
+              if (
+                entry.type === "activity-group" &&
+                entry.activities[0]?.projectedItem.item.type === "reasoning"
+              ) {
+                return "activity-group:reasoning";
+              }
               if (entry.type !== "message") return entry.type;
               if (isCompactionCommandFeedEntry(entry)) return "message:compaction";
               const { attribution } = resolveUserMessagePresentation(entry.message);

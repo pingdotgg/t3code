@@ -4,6 +4,7 @@ import { ThreadId, TurnItemId, type OrchestrationV2TurnItem } from "@t3tools/con
 import * as DateTime from "effect/DateTime";
 
 import {
+  activeToolLabel,
   resolveWorkEntryToolPresentation,
   toolItemForDisplay,
   type WorkLogPresentationEntry,
@@ -202,5 +203,37 @@ describe("resolveWorkEntryToolPresentation", () => {
         toolData: { server: "another-server", tool: "preview_click" },
       }),
     ).toBeNull();
+  });
+});
+
+describe("activeToolLabel", () => {
+  const base = { id: "w1", createdAt: "2026-01-01T00:00:00.000Z", tone: "tool" } as const;
+
+  it.each([
+    [{ label: "Read", itemType: "command_execution", command: "vp test" }, "Running vp"],
+    [{ label: "Read", changedFiles: ["/repo/src/a.ts"], requestKind: "file-read" }, "Reading a.ts"],
+    [
+      { label: "Read", requestKind: "file-read", toolData: { path: "/repo/src/b.ts" } },
+      "Reading b.ts",
+    ],
+    [{ label: "Searched TODO in src", itemType: "file_search" }, "Searching TODO in src"],
+    [
+      {
+        label: "grep",
+        itemType: "dynamic_tool",
+        toolData: { toolName: "grep", input: { pattern: "TODO", path: "/repo/src" } },
+      },
+      "Searching TODO in src",
+    ],
+    [
+      {
+        label: "Allow reading /repo/src/a.ts?",
+        itemType: "approval_request",
+        requestKind: "file-read",
+      },
+      undefined,
+    ],
+  ] as const)("labels a running call: %j", (fields, label) => {
+    expect(activeToolLabel({ ...base, ...fields })).toBe(label);
   });
 });

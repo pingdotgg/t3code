@@ -113,7 +113,6 @@ import {
   WorkGroupSection,
   WorkingTimelineRow,
   ThinkingTimelineRow,
-  LiveWorkEntryTimelineRow,
   WorkGroupToggleTimelineRow,
 } from "./TimelineWorkGroupRows";
 import { UserMessageRow } from "./TimelineUserMessageRow";
@@ -522,14 +521,14 @@ const ConversationTimeline = memo(function ConversationTimeline({
       return next;
     });
   };
-  const onToggleWorkGroup = (groupId: string, anchorKey: string) => {
+  const onToggleWorkGroup = (groupId: string, anchorKey: string, expanded?: boolean) => {
     suspendEndScrollMaintenanceForDisclosure(anchorKey);
     setExpandedWorkGroupIds((existing) => {
       const next = new Set(existing);
-      if (next.has(groupId)) {
-        next.delete(groupId);
-      } else {
+      if (expanded ?? !next.has(groupId)) {
         next.add(groupId);
+      } else {
+        next.delete(groupId);
       }
       return next;
     });
@@ -695,8 +694,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
   const rows = useStableRows(rawRows, listIdentityKey);
   const matchedApprovalRequestIds = new Set<string>();
   for (const row of pendingApprovalRequestIds.size > 0 ? rows : []) {
-    const entries =
-      row.kind === "work" ? row.groupedEntries : row.kind === "work-live" ? [row.entry] : [];
+    const entries = row.kind === "work" ? row.groupedEntries : [];
     for (const entry of entries) {
       const item = entry.projectedItem?.item;
       if (item?.type === "approval_request") matchedApprovalRequestIds.add(item.requestId);
@@ -1428,6 +1426,9 @@ function keyExtractor(item: MessagesTimelineRow) {
 
 // LegendList averages by type; length buckets prevent inflated estimates and nested-update loops.
 function getItemType(item: MessagesTimelineRow) {
+  if (item.kind === "work" && item.groupedEntries[0]?.itemType === "reasoning") {
+    return "work:reasoning";
+  }
   if (item.kind !== "message") return item.kind;
   const lengthBucket = Math.max(0, Math.floor(Math.log2(item.message.text.length / 1000)));
   return `message:${item.message.role}:${lengthBucket}`;
@@ -1436,14 +1437,8 @@ function getItemType(item: MessagesTimelineRow) {
 const TimelineRowContent = memo(function TimelineRowContent({ row }: { row: TimelineRow }) {
   const isExpandedToolGroup = row.kind === "work" && row.isExpandedToolGroup;
   const isSubagentGroup = row.kind === "event" && row.projectedItem.item.type === "subagent";
-  const isWorkLogRow =
-    row.kind === "work" ||
-    row.kind === "work-live" ||
-    row.kind === "work-toggle" ||
-    row.kind === "thinking";
-  const isExpandedToolGroupHeader =
-    (row.kind === "work-toggle" || row.kind === "work-live" || row.kind === "thinking") &&
-    row.expanded === true;
+  const isWorkLogRow = row.kind === "work" || row.kind === "work-toggle" || row.kind === "thinking";
+  const isExpandedToolGroupHeader = row.kind === "work-toggle" && row.expanded;
 
   return (
     <div
@@ -1492,12 +1487,12 @@ const TimelineRowContent = memo(function TimelineRowContent({ row }: { row: Time
               anchorKey={row.id}
               groupedEntries={row.groupedEntries}
               isExpandedToolGroup={row.isExpandedToolGroup}
+              groupId={row.groupId}
               displayLabel={row.displayLabel}
             />
           ) : null}
-          {row.kind === "work-live" ? <LiveWorkEntryTimelineRow row={row} /> : null}
           {row.kind === "work-toggle" ? <WorkGroupToggleTimelineRow row={row} /> : null}
-          {row.kind === "thinking" ? <ThinkingTimelineRow row={row} /> : null}
+          {row.kind === "thinking" ? <ThinkingTimelineRow /> : null}
         </WorkLogBlock>
       ) : null}
       {row.kind === "turn-fold" ? <TurnFoldTimelineRow key={row.id} row={row} /> : null}

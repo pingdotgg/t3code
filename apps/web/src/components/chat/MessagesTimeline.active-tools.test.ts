@@ -1,10 +1,10 @@
 import { RunId } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
-import { deriveMessagesTimelineRows, liveWorkEntryLabel } from "./MessagesTimeline.logic";
+import { deriveMessagesTimelineRows } from "./MessagesTimeline.logic";
 
 describe("long active tool groups", () => {
   it.each([false, true])(
-    "preserves chronological order and the latest activity, expanded=%s",
+    "keeps reasoning in sequence and groups the tools between traces, expanded=%s",
     (expanded) => {
       const runId = RunId.make("long-active-run");
       const createdAt = "2026-10-12T00:00:00Z";
@@ -17,34 +17,54 @@ describe("long active tool groups", () => {
           createdAt,
           runId,
           label: `Tool ${index}`,
-          tone: index % 2 === 0 ? ("thinking" as const) : ("tool" as const),
-          itemType: index % 2 === 0 ? ("reasoning" as const) : ("command_execution" as const),
-          ...(index % 2 === 0 ? { detail: `Thought ${index}` } : {}),
+          ...(index % 500 === 0
+            ? {
+                tone: "thinking" as const,
+                itemType: "reasoning" as const,
+                detail: `Thought ${index}`,
+              }
+            : { tone: "tool" as const, itemType: "command_execution" as const }),
           toolLifecycleStatus: index === 999 ? ("inProgress" as const) : ("completed" as const),
         },
       }));
-      const rows = deriveMessagesTimelineRows({
+      const input = {
         timelineEntries,
         isWorking: true,
         runningRunId: runId,
         activeTurnStartedAt: createdAt,
         turnDiffSummaries: [],
         supportsConversationRollback: false,
-        expandedWorkGroupIds: new Set(expanded ? ["work-group:work-entry-0"] : []),
+      };
+      const groupId = "work-group:work-entry-501";
+      // A lone call shares its future group's id, so opening it survives a second call joining.
+      expect(
+        deriveMessagesTimelineRows({
+          ...input,
+          timelineEntries: timelineEntries.slice(0, 502),
+        }).find((row) => row.id === "work-entry-501"),
+      ).toMatchObject({ kind: "work", groupId });
+      const rows = deriveMessagesTimelineRows({
+        ...input,
+        expandedWorkGroupIds: new Set(expanded ? [groupId] : []),
       });
-      const live = rows.find((row) => row.kind === "work-live");
-      expect(live).toBeDefined();
-      expect(live?.entry.id).toBe("work-999");
-      expect(live && liveWorkEntryLabel(live.entry, undefined, live.active)).toContain("999");
-      expect(live?.thought?.id).toBe("work-998");
-      expect(live?.groupedEntries.map(({ id }) => id)).toEqual(
-        timelineEntries.map(({ entry }) => entry.id),
-      );
-      expect(live?.groupId).toBe("work-group:work-entry-0");
-      const details = rows.filter((row) => row.kind === "work");
-      expect(details).toHaveLength(expanded ? 1 : 0);
+      expect(rows.map((row) => row.id)).toEqual([
+        "working-indicator-row",
+        "work-entry-0",
+        "work-toggle:work-entry-1",
+        "work-entry-500",
+        "work-toggle:work-entry-501",
+        ...(expanded ? ["work-group:work-entry-501:details"] : []),
+      ]);
+      const groups = rows.filter((row) => row.kind === "work-toggle");
+      expect(groups[0]).toMatchObject({ hiddenCount: 499 });
+      expect(groups[1]).toMatchObject({ hiddenCount: 499, activeEntry: { id: "work-999" } });
       if (expanded) {
-        expect(details[0]?.groupedEntries).toEqual(live?.groupedEntries);
+        const details = rows
+          .filter((row) => row.kind === "work")
+          .find((row) => row.isExpandedToolGroup);
+        expect(details?.groupedEntries.map(({ id }) => id)).toEqual(
+          timelineEntries.slice(501).map(({ entry }) => entry.id),
+        );
       }
     },
   );
