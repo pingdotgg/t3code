@@ -25,6 +25,7 @@ import {
   isLearned,
   pendingRouteOrder,
 } from "@t3tools/client-runtime/connection";
+import * as Option from "effect/Option";
 import { GripVerticalIcon, PlusIcon, XIcon } from "lucide-react";
 import { useState } from "react";
 
@@ -36,6 +37,8 @@ import { usePreparedConnection } from "~/state/session";
 import { useAtomCommand } from "~/state/use-atom-command";
 import { Button } from "../ui/button";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+import { formatDesktopSshTarget } from "./EnvironmentRow";
+import { SshSensitiveText } from "./SshSensitiveText";
 
 export function EnvironmentRoutesList({
   environment,
@@ -141,6 +144,9 @@ function SortableRouteRow({
   const id = connectionRouteId(route.target);
   const label = connectionRouteLabel(route);
   const address = connectionRouteAddress(route);
+  const profile = Option.getOrNull(route.profile);
+  const sshAddress =
+    profile?._tag === "SshConnectionProfile" ? formatDesktopSshTarget(profile.target) : null;
   const {
     attributes,
     listeners,
@@ -174,6 +180,9 @@ function SortableRouteRow({
             {address}
             {isLearned(route) ? " · found automatically" : ""}
           </p>
+        ) : null}
+        {sshAddress !== null ? (
+          <SshSensitiveText value={sshAddress} className="block max-w-full truncate text-left" />
         ) : null}
       </div>
       <button

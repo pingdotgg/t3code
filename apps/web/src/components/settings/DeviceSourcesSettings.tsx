@@ -1,3 +1,5 @@
+import { redactSshText } from "./sshTarget";
+import { SshSensitiveText } from "./SshSensitiveText";
 import { useAtomValue } from "@effect/atom-react";
 import { Fragment, useState, type ReactNode } from "react";
 import * as Cause from "effect/Cause";
@@ -310,8 +312,8 @@ export function DeviceSourcesSettings(props: {
     toastManager.add({
       type: failed.length ? "error" : "success",
       title: failed.length
-        ? `${host.label}: ${failed.length} of ${targets.length} environments failed`
-        : `${host.label}: connection checks passed`,
+        ? `${redactSshText(host.label)}: ${failed.length} of ${targets.length} environments failed`
+        : `${redactSshText(host.label)}: connection checks passed`,
       description: failed.length
         ? failed
             .map((target) => {
@@ -403,9 +405,9 @@ export function DeviceSourcesSettings(props: {
     rows.push({
       key: `ssh:${host.id}:${group.members.map((member) => member.environmentId).join(",")}`,
       shared: true,
-      title: host.label,
+      title: redactSshText(host.label),
       kind: "SSH",
-      description: host.target,
+      description: <SshSensitiveText value={host.target} />,
       environments: active.map((member) => {
         const held = group.members.find(
           (candidate) => candidate.environmentId === member.environmentId,

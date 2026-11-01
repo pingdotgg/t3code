@@ -26,6 +26,7 @@ export function redactedPlaceholder(value: string): string {
 
 export function RedactedSensitiveText(props: {
   readonly value: string | null | undefined;
+  readonly redactedValue?: string;
   readonly ariaLabel: string;
   readonly revealTooltip: string;
   readonly hideTooltip: string;
@@ -36,6 +37,7 @@ export function RedactedSensitiveText(props: {
   const redacted = value ? redactedPlaceholder(value) : "";
 
   if (!value) return null;
+  if (props.redactedValue === value) return <span className={props.className}>{value}</span>;
 
   return (
     <Tooltip>
@@ -45,13 +47,15 @@ export function RedactedSensitiveText(props: {
             type="button"
             className={cn(
               "min-w-0 cursor-pointer rounded-sm font-mono text-2xs leading-normal transition hover:text-foreground",
-              revealed ? "text-muted-foreground" : "select-none text-muted-foreground blur-xs",
+              revealed || props.redactedValue !== undefined
+                ? "text-muted-foreground"
+                : "select-none text-muted-foreground blur-xs",
               props.className,
             )}
             onClick={() => setRevealed((current) => !current)}
             aria-label={props.ariaLabel}
           >
-            {revealed ? value : redacted}
+            {revealed ? value : (props.redactedValue ?? redacted)}
           </button>
         }
       />

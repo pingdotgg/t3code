@@ -3,6 +3,7 @@ import {
   connectionRouteId,
   connectionRouteLabel,
   connectionRoutes,
+  sshTargetLabel,
 } from "@t3tools/client-runtime/connection";
 import type { DesktopSshEnvironmentTarget, EnvironmentMachineKind } from "@t3tools/contracts";
 import * as Option from "effect/Option";
@@ -44,7 +45,7 @@ export function environmentTransportLabel(
     Option.isSome(entry.profile) &&
     entry.profile.value._tag === "SshConnectionProfile"
   ) {
-    return `SSH ${formatDesktopSshTarget(entry.profile.value.target)}`;
+    return sshTargetLabel(entry.profile.value.target);
   }
   return environment.displayUrl ?? "Remote link";
 }

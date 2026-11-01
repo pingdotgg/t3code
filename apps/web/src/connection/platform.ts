@@ -16,6 +16,7 @@ import {
   type PlatformConnectionRegistration,
   PrimaryConnectionRegistration,
   PrimaryConnectionTarget,
+  redactSshAddresses,
   sshTargetKey,
   Wakeups,
 } from "@t3tools/client-runtime/connection";
@@ -164,18 +165,23 @@ export function currentClientMetadata() {
   });
 }
 
-function sshPreparationError(cause: unknown) {
-  const message = cause instanceof Error ? cause.message : String(cause);
-  if (message.toLowerCase().includes("cancel")) {
-    return new ConnectionBlockedError({
-      reason: "authentication",
-      detail: message,
+function sshPreparationError(target: DesktopSshEnvironmentTarget) {
+  return (cause: unknown) => {
+    const original = cause instanceof Error ? cause.message : String(cause);
+    const message = redactSshAddresses(original, target);
+    if (original.toLowerCase().includes("cancel")) {
+      return new ConnectionBlockedError({
+        reason: "authentication",
+        detail: message,
+        rawDetail: original,
+      });
+    }
+    return new ConnectionTransientError({
+      reason: "remote-unavailable",
+      detail: `Could not prepare the SSH environment: ${message}`,
+      rawDetail: original,
     });
-  }
-  return new ConnectionTransientError({
-    reason: "remote-unavailable",
-    detail: `Could not prepare the SSH environment: ${message}`,
-  });
+  };
 }
 
 // IPC keeps running after its waiter is interrupted. A retry can adopt only
@@ -205,7 +211,7 @@ const ensureDesktopSshEnvironment = (bridge: DesktopBridge, target: DesktopSshEn
       setup.promise.then(forget, forget);
       return setup.promise;
     },
-    catch: sshPreparationError,
+    catch: sshPreparationError(target),
   });
 
 export const provisionDesktopSshEnvironment = Effect.fn(
@@ -225,7 +231,7 @@ export const provisionDesktopSshEnvironment = Effect.fn(
   }
   const descriptor = yield* Effect.tryPromise({
     try: () => bridge.fetchSshEnvironmentDescriptor(bootstrap.httpBaseUrl),
-    catch: sshPreparationError,
+    catch: sshPreparationError(target),
   });
   if (expectedEnvironmentId !== undefined && descriptor.environmentId !== expectedEnvironmentId) {
     return yield* new ConnectionBlockedError({
@@ -236,7 +242,7 @@ export const provisionDesktopSshEnvironment = Effect.fn(
   const access = yield* Effect.tryPromise({
     try: () => bridge.bootstrapSshBearerSession(bootstrap.httpBaseUrl, pairingToken),
     catch: (cause) => {
-      const error = sshPreparationError(cause);
+      const error = sshPreparationError(target)(cause);
       // A reused remote server on another build can fail to decode the grant
       // the desktop's runner just minted, and answers 500 on every retry.
       if (
@@ -274,12 +280,12 @@ export const prepareDesktopSshEnvironment = Effect.fn("web.connectionPlatform.ss
     if (bearerToken !== undefined) {
       const bootstrap = yield* Effect.tryPromise({
         try: () => bridge.ensureSshEnvironment(input.target, { issuePairingToken: false }),
-        catch: sshPreparationError,
+        catch: sshPreparationError(input.target),
       });
       // Check identity before sending saved credentials or pairing.
       const descriptor = yield* Effect.tryPromise({
         try: () => bridge.fetchSshEnvironmentDescriptor(bootstrap.httpBaseUrl),
-        catch: sshPreparationError,
+        catch: sshPreparationError(input.target),
       });
       if (descriptor.environmentId !== input.expectedEnvironmentId) {
         return yield* new ConnectionBlockedError({
@@ -289,7 +295,7 @@ export const prepareDesktopSshEnvironment = Effect.fn("web.connectionPlatform.ss
       }
       const session = yield* Effect.tryPromise({
         try: () => bridge.fetchSshSessionState(bootstrap.httpBaseUrl, bearerToken),
-        catch: sshPreparationError,
+        catch: sshPreparationError(input.target),
       });
       // Stored grants never widen; re-pair tokens missing newer standard scopes.
       const granted = session.permissions ?? session.scopes ?? [];

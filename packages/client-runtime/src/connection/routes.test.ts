@@ -16,10 +16,13 @@ import {
   credentialConnectionId,
   insertRoute,
   entryWithRoutes,
+  isSshNetworkAddress,
   mergeLearnedRoutes,
-  pendingRouteOrder,
+  redactSshAddresses,
   removedWithRelay,
   routesAfterRemoving,
+  sshTargetLabel,
+  pendingRouteOrder,
   sendsTokenInClear,
   upsertRoute,
   usableRoutes,
@@ -424,5 +427,121 @@ describe("learned routes", () => {
     });
     expect(moved).not.toBeNull();
     expect(profileOf(moved![0]!)).toMatchObject({ httpBaseUrl: "https://desk.local:3773/" });
+  });
+});
+
+describe("SSH addresses", () => {
+  const devbox = { alias: "devbox", hostname: "203.0.113.42", username: "deploy", port: 2222 };
+  const bare = { alias: "198.51.100.7", hostname: "198.51.100.7", username: null, port: null };
+
+  it("tells an address from an alias the user chose", () => {
+    for (const address of [
+      "203.0.113.42",
+      "2001:db8::1",
+      "[2001:db8::1]",
+      "build.example.com",
+      "deploy@devbox",
+    ]) {
+      expect(isSshNetworkAddress(address)).toBe(true);
+    }
+    for (const alias of ["devbox", "vectr", "build-box_2", " devbox "]) {
+      expect(isSshNetworkAddress(alias)).toBe(false);
+    }
+  });
+
+  it("labels a target by its alias, never its address", () => {
+    expect(sshTargetLabel(devbox)).toBe("SSH devbox");
+    expect(sshTargetLabel(bare)).toBe("SSH");
+    expect(sshTargetLabel({ ...devbox, alias: "build.example.com" })).toBe("SSH");
+  });
+
+  it("hides the target's address in error text", () => {
+    expect(redactSshAddresses("deploy@203.0.113.42: Permission denied (publickey).", devbox)).toBe(
+      "•••@devbox: Permission denied (publickey).",
+    );
+    expect(
+      redactSshAddresses("ssh: connect to host 203.0.113.42 port 2222: timed out", devbox),
+    ).toBe("ssh: connect to host devbox port 2222: timed out");
+    expect(redactSshAddresses("ssh: connect to host 198.51.100.7 port 22: refused", bare)).toBe(
+      "ssh: connect to host ••• port 22: refused",
+    );
+    expect(
+      redactSshAddresses("Could not resolve hostname build.example.com: Name not known", {
+        ...bare,
+        alias: "build.example.com",
+        hostname: "build.example.com",
+      }),
+    ).toBe("Could not resolve hostname •••: Name not known");
+  });
+
+  it.each(["buildbox", "build.example.com", "box.tail1234.ts.net"])(
+    "redacts only sensitive parts of the configured hostname %s",
+    (hostname) => {
+      const target = { ...devbox, hostname };
+      const visibleHost = hostname === "buildbox" ? hostname : "devbox";
+      expect(redactSshAddresses(`connect to host ${hostname}`, target)).toBe(
+        `connect to host ${visibleHost}`,
+      );
+      expect(redactSshAddresses(`deploy@${hostname}: Permission denied`, target)).toBe(
+        `•••@${visibleHost}: Permission denied`,
+      );
+      expect(redactSshAddresses("deploy@devbox: Permission denied", target)).toBe(
+        "•••@devbox: Permission denied",
+      );
+    },
+  );
+
+  it("hides the known username even when SSH prints an unknown hostname", () => {
+    expect(redactSshAddresses("deploy@resolved.example.com: Permission denied", devbox)).toBe(
+      "•••@resolved.example.com: Permission denied",
+    );
+  });
+
+  it("masks IP literals the target does not name", () => {
+    // ssh resolves an alias to an address the client never saw.
+    expect(
+      redactSshAddresses("connect to host 192.0.2.9 port 22 via 2001:db8::5: refused", {
+        ...devbox,
+        hostname: "devbox",
+      }),
+    ).toBe("connect to host ••• port 22 via •••: refused");
+  });
+
+  it.each([
+    "2001:db8::",
+    "[2001:db8::]",
+    "2001::",
+    "::1",
+    "[2001:db8::1]",
+    "2001:db8::5",
+    "fdab::cafe",
+    "a::b",
+    "2001:db8:0:1:2:3:4:5",
+    "[2001:db8:0:1:2:3:4:5]",
+  ])("masks the resolved IPv6 address %s", (address) => {
+    expect(
+      redactSshAddresses(`connect to host ${address} port 22: refused`, {
+        ...devbox,
+        hostname: "devbox",
+      }),
+    ).toBe("connect to host ••• port 22: refused");
+  });
+
+  it.each([
+    "node.js",
+    "connect to host node.js",
+    "Could not resolve hostname unknown.example.com",
+    "Connection closed by unknown.example.com",
+    "other@unknown.example.com: Permission denied",
+    "other@buildbox: Permission denied",
+    "12:34:56",
+    "dead:beef:cafe",
+    "::",
+    "std::",
+    "std::vector",
+    "std::bad_alloc",
+    "crate::dead::beef",
+  ])("preserves unrelated error text containing %s", (text) => {
+    expect(redactSshAddresses(`SSH failed: ${text}`, devbox)).toBe(`SSH failed: ${text}`);
   });
 });

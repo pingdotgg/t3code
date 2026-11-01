@@ -169,9 +169,7 @@ export function connectionRouteLabel(route: ConnectionRoute): string {
       return "VPN";
     case "ssh": {
       const profile = Option.getOrNull(route.profile);
-      return profile?._tag === "SshConnectionProfile"
-        ? `SSH ${profile.target.username ? `${profile.target.username}@` : ""}${profile.target.hostname}`
-        : "SSH";
+      return profile?._tag === "SshConnectionProfile" ? sshTargetLabel(profile.target) : "SSH";
     }
     case "public":
       return routeHostname(route) ?? "Remote link";
@@ -179,10 +177,7 @@ export function connectionRouteLabel(route: ConnectionRoute): string {
 }
 
 export function connectionRouteAddress(route: ConnectionRoute): string | null {
-  if (route.target._tag === "SshConnectionTarget") {
-    const profile = Option.getOrNull(route.profile);
-    return profile?._tag === "SshConnectionProfile" ? profile.target.alias : null;
-  }
+  if (route.target._tag === "SshConnectionTarget") return null;
   return routeHttpBaseUrl(route);
 }
 
@@ -440,6 +435,31 @@ export function pendingRouteOrder(
 
 export function removedWithRelay(entry: ConnectionCatalogEntry): boolean {
   return routesAfterRemoving(connectionRoutes(entry), RELAY_ROUTE_ID).length === 0;
+}
+
+export function isSshNetworkAddress(value: string): boolean {
+  return /[.:@]/u.test(value.trim());
+}
+
+export function sshTargetLabel(target: DesktopSshEnvironmentTarget): string {
+  return isSshNetworkAddress(target.alias) ? "SSH" : `SSH ${target.alias}`;
+}
+
+const IPV4_LITERAL = /\b(?:\d{1,3}\.){3}\d{1,3}\b/gu;
+const IPV6_LITERAL =
+  /(?<![\w:])\[?(?:[0-9a-f]{1,4}(?::[0-9a-f]{1,4}){0,6}::(?:[0-9a-f]{1,4}(?::[0-9a-f]{1,4}){0,5})?|::[0-9a-f]{1,4}(?::[0-9a-f]{1,4}){0,6}|(?:[0-9a-f]{1,4}:){7}[0-9a-f]{1,4})\]?(?!\w|:[0-9a-f:])/giu;
+
+export function redactSshAddresses(text: string, target: DesktopSshEnvironmentTarget): string {
+  const replacement = isSshNetworkAddress(target.alias) ? "•••" : target.alias;
+  const secrets = [
+    isSshNetworkAddress(target.hostname) ? target.hostname : null,
+    isSshNetworkAddress(target.alias) ? target.alias : null,
+  ].filter((secret): secret is string => secret !== null);
+  const withoutUsername = target.username ? text.split(`${target.username}@`).join("•••@") : text;
+  return secrets
+    .reduce((redacted, secret) => redacted.split(secret).join(replacement), withoutUsername)
+    .replace(IPV4_LITERAL, "•••")
+    .replace(IPV6_LITERAL, "•••");
 }
 
 export function sshTargetKey(target: DesktopSshEnvironmentTarget): string {

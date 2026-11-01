@@ -1,3 +1,4 @@
+import { RedactedSensitiveText } from "./RedactedSensitiveText";
 import { SessionPermissions } from "./SessionPermissions";
 import {
   ChevronRightIcon,
@@ -245,30 +246,42 @@ export function SavedBackendListRow({
       dimmed={!enabled}
       subtitle={
         <span className="flex min-w-0 items-center gap-1">
-          <Tooltip>
-            {/* The status can change while the tooltip is open, and base-ui only
+          {environment.connection.rawError ? (
+            <RedactedSensitiveText
+              key={environment.connection.rawError}
+              value={environment.connection.rawError}
+              redactedValue={subtitleText}
+              ariaLabel="Toggle SSH connection error visibility"
+              revealTooltip="Click to reveal full error"
+              hideTooltip="Click to hide full error"
+              className="whitespace-pre-wrap break-words text-left font-sans text-xs"
+            />
+          ) : (
+            <Tooltip>
+              {/* The status can change while the tooltip is open, and base-ui only
                 re-measures the popup when the trigger's payload changes. */}
-            <TooltipTrigger
-              payload={statusTooltip}
-              render={
-                <span
-                  className={cn(
-                    "min-w-0 truncate",
-                    enabled &&
-                      status.tone === "error" &&
-                      !resumingServerUpdate &&
-                      !diagnosis &&
-                      "text-destructive",
-                  )}
-                />
-              }
-            >
-              {subtitleText}
-            </TooltipTrigger>
-            <TooltipPopup side="top" className="whitespace-pre-wrap">
-              {statusTooltip}
-            </TooltipPopup>
-          </Tooltip>
+              <TooltipTrigger
+                payload={statusTooltip}
+                render={
+                  <span
+                    className={cn(
+                      "min-w-0 truncate",
+                      enabled &&
+                        status.tone === "error" &&
+                        !resumingServerUpdate &&
+                        !diagnosis &&
+                        "text-destructive",
+                    )}
+                  />
+                }
+              >
+                {subtitleText}
+              </TooltipTrigger>
+              <TooltipPopup side="top" className="whitespace-pre-wrap">
+                {statusTooltip}
+              </TooltipPopup>
+            </Tooltip>
+          )}
           <span aria-hidden className="shrink-0">
             ·
           </span>

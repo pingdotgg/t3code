@@ -17,6 +17,7 @@ export type EnvironmentConnectionPhase =
 export interface EnvironmentConnectionPresentation {
   readonly phase: EnvironmentConnectionPhase;
   readonly error: string | null;
+  readonly rawError?: string;
   readonly traceId: string | null;
 }
 
@@ -45,6 +46,9 @@ export function presentConnectionState(
       return {
         phase: state.attempt <= 1 && state.lastFailure === null ? "connecting" : "reconnecting",
         error: state.lastFailure?.message ?? null,
+        ...(state.lastFailure?.rawDetail === undefined
+          ? {}
+          : { rawError: state.lastFailure.rawDetail }),
         traceId: state.lastFailure?.traceId ?? null,
       };
     case "connected":
@@ -53,12 +57,18 @@ export function presentConnectionState(
       return {
         phase: "reconnecting",
         error: state.lastFailure?.message ?? null,
+        ...(state.lastFailure?.rawDetail === undefined
+          ? {}
+          : { rawError: state.lastFailure.rawDetail }),
         traceId: state.lastFailure?.traceId ?? null,
       };
     case "blocked":
       return {
         phase: state.lastFailure?.reason === "unsupported" ? "unsupported" : "error",
         error: state.lastFailure?.message ?? null,
+        ...(state.lastFailure?.rawDetail === undefined
+          ? {}
+          : { rawError: state.lastFailure.rawDetail }),
         traceId: state.lastFailure?.traceId ?? null,
       };
   }

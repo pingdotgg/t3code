@@ -18,6 +18,7 @@ import {
   DialogTitle,
 } from "../ui/dialog";
 import { Input } from "../ui/input";
+import { SshSensitiveText } from "../settings/SshSensitiveText";
 
 function describeSshTarget(request: DesktopSshPasswordPromptRequest): string {
   return request.username ? `${request.username}@${request.destination}` : request.destination;
@@ -143,8 +144,6 @@ function ActiveSshPasswordPrompt({
     void respond(null);
   };
 
-  const target = describeSshTarget(request);
-
   return (
     <Dialog
       open
@@ -158,7 +157,8 @@ function ActiveSshPasswordPrompt({
         <DialogHeader>
           <DialogTitle>SSH verification required</DialogTitle>
           <DialogDescription>
-            Enter the password or verification code required by <code>{target}</code>. T3 Code
+            Enter the password or verification code required by{" "}
+            <SshSensitiveText value={describeSshTarget(request)} className="text-sm" />. T3 Code
             passes your response to the local SSH process and keeps it in memory to reuse for this
             host. T3 Code does not write it to disk.
           </DialogDescription>
@@ -174,7 +174,13 @@ function ActiveSshPasswordPrompt({
           >
             <div className="space-y-2">
               <div className="flex items-center justify-between gap-3">
-                <p className="text-sm font-medium text-foreground">{request.prompt}</p>
+                <p className="text-sm font-medium text-foreground">
+                  <SshSensitiveText
+                    value={request.prompt}
+                    destination={describeSshTarget(request)}
+                    className="font-sans text-sm text-left"
+                  />
+                </p>
                 {remainingLabel ? (
                   <span
                     className={

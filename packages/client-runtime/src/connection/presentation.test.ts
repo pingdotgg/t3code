@@ -13,7 +13,7 @@ import {
   RelayConnectionTarget,
   type SupervisorConnectionState,
 } from "./model.ts";
-import { environmentMcpUrl, presentConnectionState } from "./presentation.ts";
+import { connectionStatusText, environmentMcpUrl, presentConnectionState } from "./presentation.ts";
 
 const TARGET = new BearerConnectionTarget({
   environmentId: EnvironmentId.make("environment-1"),
@@ -50,6 +50,26 @@ function supervisorState(overrides: Partial<SupervisorConnectionState>): Supervi
 }
 
 describe("connection presentation", () => {
+  it.each(["connecting", "backoff", "blocked"] as const)(
+    "retains the full SSH error for explicit reveal during %s",
+    (phase) => {
+      const rawDetail = "deploy@host.example.com: Permission denied";
+      const connection = presentConnectionState(
+        supervisorState({
+          phase,
+          lastFailure: new ConnectionTransientError({
+            reason: "remote-unavailable",
+            detail: "devbox: Permission denied",
+            rawDetail,
+          }),
+        }),
+      );
+      expect(connection.rawError).toBe(rawDetail);
+      expect(connectionStatusText(connection)).not.toContain("host.example.com");
+      expect(connectionStatusText(connection)).not.toContain("deploy@");
+    },
+  );
+
   it("copies the MCP address of the route this device is connected over", () => {
     const route = (connectionId: string, httpBaseUrl: string): ConnectionRoute => {
       const target = new BearerConnectionTarget({ ...TARGET, connectionId });

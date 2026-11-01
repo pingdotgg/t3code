@@ -1,3 +1,9 @@
+import {
+  isSshNetworkAddress,
+  redactSshAddresses,
+  sshTargetLabel,
+} from "@t3tools/client-runtime/connection";
+import { SshSensitiveText } from "./SshSensitiveText";
 import { pipe } from "effect/Function";
 import { ChevronsLeftRightEllipsisIcon, PlusIcon, TerminalIcon } from "lucide-react";
 import { useAtomValue } from "@effect/atom-react";
@@ -112,6 +118,8 @@ export function AddEnvironmentDialog({
   const [savedBackendMode, setSavedBackendMode] = useState<"remote" | "ssh">("remote");
   const [savedBackendHost, setSavedBackendHost] = useState("");
   const [savedBackendPairingCode, setSavedBackendPairingCode] = useState("");
+  const [savedBackendSshErrorTarget, setSavedBackendSshErrorTarget] =
+    useState<DesktopSshEnvironmentTarget>();
   const [savedBackendSshHost, setSavedBackendSshHost] = useState("");
   const [savedBackendSshUsername, setSavedBackendSshUsername] = useState("");
   const [savedBackendSshPort, setSavedBackendSshPort] = useState("");
@@ -161,6 +169,7 @@ export function AddEnvironmentDialog({
   };
   const connectSavedBackendSshTarget = async (target: DesktopSshEnvironmentTarget) => {
     const session = savedBackendSessionRef.current;
+    setSavedBackendSshErrorTarget(target);
     setIsAddingSavedBackend(true);
     onErrorChange(null);
     const result = await connectSshEnvironment({
@@ -181,8 +190,8 @@ export function AddEnvironmentDialog({
       type: "success",
       title: routeTarget ? "Route added" : "Environment connected",
       description: routeTarget
-        ? `${routeTarget.label} can now be reached over SSH ${target.alias}.`
-        : `${target.alias} is ready over an SSH-managed tunnel.`,
+        ? `${routeTarget.label} can now be reached over ${sshTargetLabel(target)}.`
+        : `${isSshNetworkAddress(target.alias) ? "The host" : target.alias} is ready over an SSH-managed tunnel.`,
     });
     setIsAddingSavedBackend(false);
   };
@@ -201,6 +210,29 @@ export function AddEnvironmentDialog({
         return;
       }
 
+      if (desktopBridge) {
+        const session = savedBackendSessionRef.current;
+        setIsAddingSavedBackend(true);
+        onErrorChange(null);
+        try {
+          const resolved = await desktopBridge.resolveSshHost(target.alias);
+          if (session !== savedBackendSessionRef.current) {
+            setIsAddingSavedBackend(false);
+            return;
+          }
+          target = {
+            ...resolved,
+            username: target.username ?? resolved.username,
+            port: target.port ?? resolved.port,
+          };
+        } catch (error) {
+          if (session === savedBackendSessionRef.current)
+            onErrorChange(formatDesktopSshConnectionError(error));
+          setIsAddingSavedBackend(false);
+          return;
+        }
+        setIsAddingSavedBackend(false);
+      }
       await connectSavedBackendSshTarget(target);
       return;
     }
@@ -280,6 +312,7 @@ export function AddEnvironmentDialog({
     setIsAddingSavedBackend(true);
     onErrorChange(null);
     setSavedBackendSshHost(target.alias);
+    setSavedBackendSshErrorTarget(target);
     let resolved: DesktopSshEnvironmentTarget;
     try {
       resolved = await desktopBridge.resolveSshHost(target.alias);
@@ -364,6 +397,8 @@ export function AddEnvironmentDialog({
         )}
         disabled={isAddingSavedBackend}
         onClick={() => {
+          onErrorChange(null);
+          setSavedBackendSshErrorTarget(undefined);
           setSavedBackendMode(input.mode);
         }}
       >
@@ -537,11 +572,14 @@ export function AddEnvironmentDialog({
                           className="h-8 min-h-8 whitespace-nowrap"
                         >
                           <span className="min-w-0 truncate text-sm font-medium">
-                            {target.alias}
+                            {redactSshAddresses(target.alias, {
+                              ...target,
+                              alias: target.hostname,
+                            })}
                           </span>
                           {address !== target.alias ? (
                             <span className="min-w-0 flex-1 truncate text-xs text-muted-foreground">
-                              {address}
+                              {redactSshAddresses(address, { ...target, alias: target.hostname })}
                             </span>
                           ) : (
                             <span className="flex-1" />
@@ -589,7 +627,13 @@ export function AddEnvironmentDialog({
         </div>
         {error || discoveredSshHostsError ? (
           <Alert variant="error">
-            <AlertDescription>{error ?? discoveredSshHostsError}</AlertDescription>
+            <AlertDescription>
+              <SshSensitiveText
+                value={error ?? discoveredSshHostsError ?? ""}
+                destination={savedBackendSshHost}
+                target={savedBackendSshErrorTarget}
+              />
+            </AlertDescription>
           </Alert>
         ) : null}
         <Button
