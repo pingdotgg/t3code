@@ -270,6 +270,8 @@ export const make = Effect.gen(function* () {
     return [nextBatch, current.slice(nextBatch.length)] as const;
   });
 
+  // Counts opt-outs as they land, without waiting for a flush in progress to release its lock.
+  const optOutsRef = yield* Ref.make(0);
   // Nothing recorded before an opt-out is sent after it, even if telemetry is turned back on.
   const discardQueued = Effect.andThen(
     Ref.set(bufferRef, []),
@@ -283,8 +285,10 @@ export const make = Effect.gen(function* () {
 
   // Back off even after dropping rejected batches so bad API keys cannot drain the queue in a tight loop.
   const flush: AnalyticsService["Service"]["flush"] = Effect.gen(function* () {
+    const optOutsAtStart = yield* Ref.get(optOutsRef);
     while (true) {
-      if (!(yield* isEnabled)) {
+      // An opt-out during this flush stops it even if telemetry is already back on.
+      if (!(yield* isEnabled) || (yield* Ref.get(optOutsRef)) !== optOutsAtStart) {
         yield* discardQueued;
         return;
       }
@@ -404,7 +408,10 @@ export const make = Effect.gen(function* () {
       Effect.flatMap(variableEnabled, (variable) =>
         Option.getOrElse(variable, () => settings.telemetryEnabled)
           ? Effect.void
-          : discardQueued.pipe(flushLock.withPermit),
+          : Effect.andThen(
+              Ref.update(optOutsRef, (count) => count + 1),
+              discardQueued.pipe(flushLock.withPermit),
+            ),
       ),
     ),
     Effect.forkScoped,
