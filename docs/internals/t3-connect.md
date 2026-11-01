@@ -168,8 +168,10 @@ The version comes from running `cloudflared version`, not from the folder name.
 Connectors from before `--no-autoupdate` replaced themselves in place, so a
 managed folder can hold another release. Such a binary still runs as a fallback
 while the pin installs. Every binary needs `CLOUDFLARED_MIN_VERSION`, the oldest
-release that accepts every flag the connector is started with. Raise it whenever
-a new flag is added.
+release that accepts every flag the connector is started with and rejects the
+compromised eMudhra intermediates. No binary below it runs, even as a fallback,
+so a host without an eligible one stays off the relay until it has one. Raise it
+whenever a new flag or security fix needs it.
 
 ## OAuth traps
 
