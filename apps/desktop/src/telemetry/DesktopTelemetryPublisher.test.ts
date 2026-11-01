@@ -77,7 +77,9 @@ describe("DesktopTelemetryPublisher", () => {
         }),
       );
       const layer = DesktopTelemetryPublisher.layer.pipe(
-        Layer.provide(Layer.mergeAll(layerElectronApp([]), layerPower, layerHistory)),
+        Layer.provide(
+          Layer.mergeAll(layerElectronApp([]), layerPower, layerHistory, NodeServices.layer),
+        ),
       );
       const scope = yield* Scope.make();
 

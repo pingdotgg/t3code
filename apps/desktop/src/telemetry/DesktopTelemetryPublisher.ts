@@ -253,17 +253,20 @@ export const make = Effect.fn("desktop.telemetryPublisher.make")(function* () {
           };
           return [next, next] as const;
         });
-        const linuxPower =
-          process.platform === "linux"
-            ? LinuxHostPower.fillElectronGaps(
-                observedPower.thermalState,
-                Option.getOrNull(observedPower.speedLimitPercent),
-                LinuxHostPower.sample(),
-              )
-            : {
-                thermalState: observedPower.thermalState,
-                speedLimitPercent: Option.getOrNull(observedPower.speedLimitPercent),
-              };
+        const linuxPower = yield* process.platform === "linux"
+          ? LinuxHostPower.sample("/sys").pipe(
+              Effect.map((linuxSample) =>
+                LinuxHostPower.fillElectronGaps(
+                  observedPower.thermalState,
+                  Option.getOrNull(observedPower.speedLimitPercent),
+                  linuxSample,
+                ),
+              ),
+            )
+          : Effect.succeed({
+              thermalState: observedPower.thermalState,
+              speedLimitPercent: Option.getOrNull(observedPower.speedLimitPercent),
+            });
         const nextSequence = yield* Ref.modify(sequence, (current) => [current + 1, current + 1]);
         const snapshot: DesktopHostTelemetrySnapshot = {
           version: 1,
