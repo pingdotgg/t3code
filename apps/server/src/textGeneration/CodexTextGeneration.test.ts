@@ -196,11 +196,11 @@ function withFakeCodexEnv<A, E, R>(
 }
 
 it.layer(layerCodexTextGenerationTest)("CodexTextGeneration", (it) => {
-  it.effect("passes the shell-tool override for self-contained titles", () =>
+  it.effect("passes tool overrides for self-contained titles", () =>
     withFakeCodexEnv(
       {
         output: JSON.stringify({ title: "Fix autosave" }),
-        requireArg: "--config features.shell_tool=false",
+        requireArg: "--config features.shell_tool=false --config features.code_mode=false",
       },
       (textGeneration) =>
         Effect.gen(function* () {
@@ -235,7 +235,7 @@ it.layer(layerCodexTextGenerationTest)("CodexTextGeneration", (it) => {
       ),
   );
 
-  it.effect("keeps checkout tools available for review guides", () =>
+  it.effect("omits the shell-tool override for review guides", () =>
     withFakeCodexEnv(
       {
         output: JSON.stringify({ stops: [] }),

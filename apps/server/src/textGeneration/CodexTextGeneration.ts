@@ -290,7 +290,9 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
           "-s",
           "read-only",
           // Self-contained helpers should not wander through the checkout to compose their reply.
-          ...(!investigate && !requiresTools ? ["--config", "features.shell_tool=false"] : []),
+          ...(!investigate && !requiresTools
+            ? ["--config", "features.shell_tool=false", "--config", "features.code_mode=false"]
+            : []),
           "--model",
           model,
           "--config",
