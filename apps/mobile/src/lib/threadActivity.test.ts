@@ -1843,6 +1843,194 @@ describe("streamed feed updates", () => {
   });
 });
 
+describe("wake notification groups", () => {
+  const second = (value: number) => `2026-06-20T00:00:${String(value).padStart(2, "0")}.000Z`;
+  const wake = (
+    id: string,
+    at: number,
+    outcome: "completed" | "failed" = "completed",
+    taskCount = 1,
+  ): Extract<OrchestrationV2TurnItem, { type: "notification" }> => ({
+    ...base(id, second(at), at),
+    type: "notification",
+    source: {
+      kind: "delegated_task",
+      taskIds: Array.from({ length: taskCount }, (_, index) => NodeId.make(`task-${id}-${index}`)),
+    },
+    outcome,
+    summary: `Delegated task "${id}" ${outcome === "failed" ? "failed" : "finished"}`,
+  });
+  const work = (id: string, at: number): OrchestrationV2TurnItem => ({
+    ...command(second(at)),
+    id: TurnItemId.make(id),
+    ordinal: at,
+  });
+  const feed = () =>
+    buildThreadFeed(
+      [
+        userMessage(second(1)),
+        work("work-1", 2),
+        wake("a", 3),
+        work("work-2", 4),
+        wake("b", 5),
+        work("work-3", 6),
+        wake("c", 7, "failed"),
+        assistantMessage(second(8)),
+      ].map((item, position) => projected(item, position)),
+    );
+
+  it("folds back-to-back wakes of a settled run into one toggle", () => {
+    const cache = createThreadFeedCache();
+    const rows = deriveThreadFeedPresentation(
+      feed(),
+      null,
+      new Set(),
+      new Set(),
+      null,
+      false,
+      cache,
+    );
+    expect(rows.map((row) => row.type)).toEqual(["message", "run-fold", "work-toggle", "message"]);
+    expect(rows[2]).toMatchObject({
+      groupId: "notifications:local:thread-1:a",
+      hiddenCount: 3,
+      expanded: false,
+      summary: "3 delegated tasks: 2 finished, 1 failed",
+      notificationIcon: "hammer",
+    });
+
+    const expanded = deriveThreadFeedPresentation(
+      feed(),
+      null,
+      new Set(),
+      new Set(["notifications:local:thread-1:a"]),
+    );
+    expect(expanded.map((row) => row.type)).toEqual([
+      "message",
+      "run-fold",
+      "work-toggle",
+      "activity-group",
+      "message",
+    ]);
+    const details = expanded[3];
+    expect(
+      details?.type === "activity-group"
+        ? details.activities.map((activity) => [activity.summary, activity.groupedToolDetail])
+        : null,
+    ).toEqual([
+      ['Delegated task "a" finished', true],
+      ['Delegated task "b" finished', true],
+      ['Delegated task "c" failed', true],
+    ]);
+  });
+
+  it.each([false, true])("counts batched wakes with mixed sources: %s", (mixed) => {
+    const rows = deriveThreadFeedPresentation(
+      buildThreadFeed(
+        [
+          userMessage(second(1)),
+          work("work-1", 2),
+          mixed
+            ? { ...wake("a", 3), source: { kind: "system" as const } }
+            : wake("a", 3, "completed", 3),
+          work("work-2", 4),
+          mixed
+            ? { ...wake("b", 5, "failed"), source: { kind: "command" as const } }
+            : wake("b", 5, "failed", 2),
+          assistantMessage(second(6)),
+        ].map((item, position) => projected(item, position)),
+      ),
+      null,
+      new Set(),
+    );
+    expect(rows[2]).toMatchObject({
+      type: "work-toggle",
+      hiddenCount: 2,
+      summary: mixed
+        ? "2 notifications: 1 finished, 1 failed"
+        : "5 delegated tasks: 3 finished, 2 failed",
+    });
+  });
+
+  it("keeps wakes separate where work runs between them", () => {
+    const rows = deriveThreadFeedPresentation(feed(), null, new Set([runId]), new Set());
+    expect(
+      rows.flatMap((row) =>
+        row.type === "activity-group" &&
+        row.activities[0]?.projectedItem.item.type === "notification"
+          ? [row.activities[0].summary]
+          : [],
+      ),
+    ).toEqual([
+      'Delegated task "a" finished',
+      'Delegated task "b" finished',
+      'Delegated task "c" failed',
+    ]);
+    expect(rows.some((row) => row.type === "work-toggle" && row.notificationIcon)).toBe(false);
+  });
+
+  it("keeps cached rebuilds after a later prompt in step with a fresh build", () => {
+    const secondRun = RunId.make("run-2");
+    const inSecondRun = (item: OrchestrationV2TurnItem, id: string): OrchestrationV2TurnItem =>
+      ({ ...item, id: TurnItemId.make(id), runId: secondRun }) as OrchestrationV2TurnItem;
+    const rows = [
+      userMessage(second(1)),
+      work("work-1", 2),
+      wake("a", 3),
+      work("work-2", 4),
+      wake("b", 5),
+      assistantMessage(second(6)),
+      {
+        ...inSecondRun(userMessage(second(20)), "second-prompt"),
+        messageId: MessageId.make("second-prompt"),
+      } as OrchestrationV2TurnItem,
+      inSecondRun(command(second(21)), "second-work"),
+      inSecondRun({ ...assistantMessage(second(22)), streaming: true }, "second-reply"),
+    ].map((item, position) => projected(item, position));
+    const latestRun = {
+      runId: secondRun,
+      status: "running" as const,
+      startedAt: second(20),
+      completedAt: null,
+    };
+    const present = (feed: ReadonlyArray<ThreadFeedEntry>, cache?: ThreadFeedCache) =>
+      deriveThreadFeedPresentation(
+        feed,
+        latestRun,
+        new Set(),
+        new Set(),
+        second(20),
+        false,
+        cache,
+      ).map((row) => row.id);
+
+    const cache = createThreadFeedCache();
+    present(buildThreadFeed(rows.slice(0, -1), { cache }), cache);
+    const next = buildThreadFeed(rows, { cache });
+    const fresh = present(next);
+    expect(fresh.filter((id) => id === "second-prompt")).toHaveLength(1);
+    expect(present(next, cache)).toEqual(fresh);
+  });
+
+  it("leaves a lone wake as its own row", () => {
+    const rows = deriveThreadFeedPresentation(
+      buildThreadFeed(
+        [userMessage(second(1)), work("work-1", 2), wake("a", 3), assistantMessage(second(4))].map(
+          (item, position) => projected(item, position),
+        ),
+      ),
+      null,
+      new Set(),
+    );
+    expect(rows.map((row) => row.type)).toEqual([
+      "message",
+      "run-fold",
+      "activity-group",
+      "message",
+    ]);
+  });
+});
+
 it.each([false, true])(
   "caps live approval headers while preserving the prompt (grouped: %s)",
   (grouped) => {
