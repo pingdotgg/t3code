@@ -371,7 +371,7 @@ it.layer(layerTest)("CursorDriver", (it) => {
           allowance: DEFAULT_HANDOFF_TOKEN_CAP,
         },
         catalogDefault: {
-          model: { id: "claude-opus-5-5" },
+          model: { id: "claude-opus-5-5", params: [{ id: "context", value: "1m" }] },
           window: 1_000_000,
           allowance: DEFAULT_HANDOFF_TOKEN_CAP,
         },

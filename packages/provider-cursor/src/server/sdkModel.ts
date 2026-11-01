@@ -55,13 +55,27 @@ export function cursorContextWindowTokens(
   return Number.isSafeInteger(tokens) && tokens > 0 ? tokens : undefined;
 }
 
-export function cursorSdkModelSelection(modelSelection: ModelSelection): CursorSdkModelSelection {
+export function cursorSdkModelSelection(
+  modelSelection: ModelSelection,
+  models: ReadonlyArray<ServerProviderModel> = [],
+): CursorSdkModelSelection {
+  const explicit = modelSelection.options ?? [];
+  const descriptors =
+    models.find((model) => model.slug === modelSelection.model)?.capabilities?.optionDescriptors ??
+    [];
+  // Some Cursor plans reject runs that leave a catalog parameter unset; T3 keeps Fast off until picked.
+  const defaults = descriptors.flatMap((descriptor) => {
+    if (explicit.some((option) => option.id === descriptor.id)) return [];
+    const value = descriptor.id === "fastMode" ? false : getProviderOptionCurrentValue(descriptor);
+    return value === undefined ? [] : [{ id: descriptor.id, value }];
+  });
+  const options = [...explicit, ...defaults];
   return {
     id: modelSelection.model === "auto" ? "default" : modelSelection.model,
-    ...(modelSelection.options === undefined || modelSelection.options.length === 0
+    ...(options.length === 0
       ? {}
       : {
-          params: modelSelection.options.map((option): ModelParameterValue => ({
+          params: options.map((option): ModelParameterValue => ({
             id: cursorSdkParameterId(option.id),
             value: String(option.value),
           })),
