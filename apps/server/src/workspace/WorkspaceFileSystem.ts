@@ -434,8 +434,11 @@ export const make = Effect.gen(function* () {
           const truncated = stat.size > PROJECT_READ_FILE_MAX_BYTES;
           return {
             relativePath: target.relativePath,
+            // Editors save these contents back verbatim, so a stripped BOM would vanish from the file.
             // Streaming decode drops a character the byte limit split, instead of ending in U+FFFD.
-            contents: new TextDecoder("utf-8").decode(fileBytes, { stream: truncated }),
+            contents: new TextDecoder("utf-8", { ignoreBOM: true }).decode(fileBytes, {
+              stream: truncated,
+            }),
             byteLength: stat.size,
             truncated,
           };

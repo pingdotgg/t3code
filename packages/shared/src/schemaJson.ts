@@ -21,11 +21,14 @@ export const decodeJsonResult = <S extends Schema.Codec<unknown, unknown, never,
 const decodeJsonString = Schema.decodeEffect(Schema.fromJsonString(Schema.Unknown));
 
 const parseLenientJsonGetter = SchemaGetter.transformEffect((input: string) => {
+  // Editors on Windows save JSON with a byte-order mark, which JSON.parse rejects.
   // Match comments together so URLs stay inside blocks; whitespace keeps adjacent tokens apart.
-  let stripped = input.replace(
-    /("(?:[^"\\]|\\.)*")|\/\/[^\r\n]*|\/\*[\s\S]*?\*\//g,
-    (match, stringLiteral: string | undefined) => (stringLiteral ? match : " "),
-  );
+  let stripped = input
+    .replace(/^\uFEFF/, "")
+    .replace(
+      /("(?:[^"\\]|\\.)*")|\/\/[^\r\n]*|\/\*[\s\S]*?\*\//g,
+      (match, stringLiteral: string | undefined) => (stringLiteral ? match : " "),
+    );
 
   stripped = stripped.replace(
     /("(?:[^"\\]|\\.)*")|,(\s*[}\]])/g,
