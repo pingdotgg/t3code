@@ -488,7 +488,7 @@ function ThreadTerminal(props: {
       ? {
           terminalLocation: activeKnownSession?.state.summary ?? null,
           activeSessionLocation: activeKnownSession?.state.summary ?? null,
-          workspaceRoot: selectedThreadProject.workspaceRoot,
+          workspaceRoot: selectedThread.workspaceRoot ?? selectedThreadProject.workspaceRoot,
           threadShellWorktreePath: selectedThread.worktreePath ?? null,
           threadDetailWorktreePath: selectedThreadDetailWorktreePath,
         }

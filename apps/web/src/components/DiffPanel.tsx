@@ -248,10 +248,6 @@ export default function DiffPanel({
   );
   const activeCwd =
     activeThread?.worktreePath ?? activeThread?.workspaceRoot ?? activeProject?.workspaceRoot;
-  const activeRepositoryRoot =
-    activeThread?.worktreePath || activeThread?.workspaceRoot
-      ? undefined
-      : activeProject?.repositoryIdentity?.rootPath;
   const serverConfig = useAtomValue(
     serverEnvironment.configValueAtom(activeThread?.environmentId ?? null),
   );
@@ -269,6 +265,11 @@ export default function DiffPanel({
         })
       : null,
   );
+  const activeRepositoryRoot =
+    gitStatusQuery.data?.workingTree.rootPath ??
+    (activeThread?.worktreePath || activeThread?.workspaceRoot
+      ? undefined
+      : activeProject?.repositoryIdentity?.rootPath);
   const diffSelection = useDiffPanelStore((state) =>
     selectThreadDiffPanelSelection(state.byThreadKey, routeThreadRef),
   );

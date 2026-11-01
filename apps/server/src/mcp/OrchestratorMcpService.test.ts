@@ -1120,6 +1120,77 @@ describe("OrchestratorMcpService provider resolution", () => {
       subagents,
     }) as unknown as OrchestrationV2ThreadProjection;
 
+  it.effect(
+    "rejects worktree delegation when a moved root's commit is absent from its project",
+    () =>
+      Effect.gen(function* () {
+        const projection = parentProjection([]);
+        const calls: Array<string> = [];
+        const dependencies = Layer.mergeAll(
+          NodeServices.layer,
+          ServerSettings.layerTest(),
+          Layer.mock(ThreadManagementService.ThreadManagementService)({
+            hasReceipt: () => Effect.succeed(false),
+            getThreadRecords: () =>
+              Effect.succeed({
+                ...projection,
+                thread: { ...projection.thread, worktreePath: null, workspaceRoot: "/original" },
+              }),
+            isProviderInstanceEnabledForProject: () => Effect.succeed(true),
+          }),
+          providerRegistryLayer([
+            providerSnapshot({
+              instanceId: codexInstanceId,
+              driver: ProviderDriverKind.make("codex"),
+              model: "gpt-5.4",
+            }),
+          ]),
+          adapterRegistryLayer([codexInstanceId]),
+          Layer.mock(ProjectService.ProjectService)({
+            getById: () =>
+              Effect.succeedSome({
+                id: projectId,
+                title: "Destination",
+                workspaceRoot: "/destination",
+              } as never),
+          }),
+          Layer.mock(GitVcsDriver.GitVcsDriver)({
+            resolveCommit: ({ cwd }) => {
+              calls.push(cwd);
+              return cwd === "/original"
+                ? Effect.succeed({ commitSha: "abc123" })
+                : Effect.fail(
+                    new GitCommandError({
+                      operation: "test",
+                      command: "git",
+                      cwd,
+                      detail: "Missing commit",
+                    }),
+                  );
+            },
+          }),
+          Layer.mock(ThreadLaunchService.ThreadLaunchService)({}),
+          Layer.mock(SecretRequests.SecretRequests)({}),
+          Layer.mock(RemoteDelegation.RemoteDelegation)({}),
+          Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
+        );
+        const service = yield* OrchestratorMcpService.OrchestratorMcpService.pipe(
+          Effect.provide(OrchestratorMcpService.layer.pipe(Layer.provide(dependencies))),
+        );
+        const error = yield* service
+          .delegateTask(scope, {
+            task: "Review",
+            isolation: "worktree",
+            mode: "async",
+            clientRequestId: "moved-root",
+          })
+          .pipe(Effect.flip);
+        assert.equal(error.code, "invalid_request");
+        assert.include(error.message, "does not contain the parent checkout's commit");
+        assert.deepEqual(calls, ["/original", "/destination"]);
+      }),
+  );
+
   const childProjection = {
     thread: { id: childThreadId, title: "Child" },
     runs: [],

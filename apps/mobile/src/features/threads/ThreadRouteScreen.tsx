@@ -791,11 +791,11 @@ function ThreadRouteContent(
       threadDetailWorktreePath: selectedThreadDetailWorktreePath,
     });
     const cwd = projectScriptCwd({
-      project: { cwd: selectedThreadProject.workspaceRoot },
+      project: { cwd: selectedThread.workspaceRoot ?? selectedThreadProject.workspaceRoot },
       worktreePath: preferredWorktreePath,
     });
     const env = projectScriptRuntimeEnv({
-      project: { cwd: selectedThreadProject.workspaceRoot },
+      project: { cwd: selectedThread.workspaceRoot ?? selectedThreadProject.workspaceRoot },
       worktreePath: preferredWorktreePath,
     });
     stagePendingTerminalLaunch({

@@ -2,8 +2,8 @@ import { EnvironmentId, ProjectId, ThreadId } from "@t3tools/contracts";
 import { describe, expect, it, vi } from "vite-plus/test";
 
 const state = vi.hoisted(() => ({
-  shell: null as { projectId: string; worktreePath: string | null } | null,
-  detail: null as { thread: { projectId: string } } | null,
+  shell: null as { projectId: string; worktreePath: string | null; workspaceRoot?: string } | null,
+  detail: null as { thread: { projectId: string; workspaceRoot?: string } } | null,
   detailWorktreePath: null as string | null,
   projects: new Map<string, { workspaceRoot: string }>(),
 }));
@@ -51,5 +51,12 @@ describe("useThreadCwd", () => {
   it("is null without a thread", () => {
     setup({ detail: { thread: { projectId: "project" } } });
     expect(useThreadCwd(null)).toBeNull();
+  });
+
+  it("preserves a moved root thread's workspace from its shell or detail", () => {
+    setup({ shell: { projectId: "project", worktreePath: null, workspaceRoot: "/original" } });
+    expect(useThreadCwd(ref)).toBe("/original");
+    setup({ detail: { thread: { projectId: "project", workspaceRoot: "/original" } } });
+    expect(useThreadCwd(ref)).toBe("/original");
   });
 });
