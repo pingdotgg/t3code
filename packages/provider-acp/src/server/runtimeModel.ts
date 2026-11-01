@@ -657,15 +657,21 @@ function boundToolCallOutputText(text: string): string {
 }
 
 const RAW_OUTPUT_TEXT_FIELDS = ["content", "stdout", "stderr", "output"] as const;
+// Agents also send output as a plain string or as `{ type: "Text", text }`, the two
+// forms the adapter reads back as command output.
+const RAW_OUTPUT_BOUNDED_FIELDS = [...RAW_OUTPUT_TEXT_FIELDS, "text"] as const;
 
 // rawOutput can duplicate cumulative output and bypass content limits.
 function boundToolCallRawOutput(rawOutput: unknown): unknown {
+  if (typeof rawOutput === "string") {
+    return boundToolCallOutputText(rawOutput);
+  }
   if (!isRecord(rawOutput)) {
     return rawOutput;
   }
   let changed = false;
   const bounded: Record<string, unknown> = { ...rawOutput };
-  for (const field of RAW_OUTPUT_TEXT_FIELDS) {
+  for (const field of RAW_OUTPUT_BOUNDED_FIELDS) {
     const value = rawOutput[field];
     if (typeof value === "string" && value.length > TOOL_CALL_CONTENT_MAX_CHARS) {
       bounded[field] = boundToolCallOutputText(value);
@@ -826,6 +832,9 @@ function makeToolCallState(
   },
   options?: {
     readonly fallbackStatus?: "pending" | "inProgress" | "completed" | "failed";
+    // Compaction summaries reuse this state but are not cumulative tool output,
+    // so they keep their whole text instead of the tail window.
+    readonly keepWholeRawOutput?: boolean;
   },
 ): AcpToolCallState | undefined {
   const toolCallId = input.toolCallId.trim();
@@ -861,7 +870,9 @@ function makeToolCallState(
     data.meta = input._meta;
   }
   if (input.rawOutput !== undefined) {
-    data.rawOutput = boundToolCallRawOutput(input.rawOutput);
+    data.rawOutput = options?.keepWholeRawOutput
+      ? input.rawOutput
+      : boundToolCallRawOutput(input.rawOutput);
   }
   if (input.content != null) {
     data.content = sanitizeAcpToolCallContent(extractedContent.content ?? input.content);
@@ -1525,14 +1536,17 @@ export function parseSessionUpdateEvent(params: EffectAcpSchema.SessionNotificat
           : upd.status === "failed" || upd.status === "cancelled"
             ? ("failed" as const)
             : ("inProgress" as const);
-      const toolCall = makeToolCallState({
-        toolCallId: `acp-compaction:${upd.compactionId}`,
-        title: "Compact context",
-        kind: "think",
-        status,
-        rawOutput: (upd.error ?? summary) || undefined,
-        _meta: upd._meta,
-      });
+      const toolCall = makeToolCallState(
+        {
+          toolCallId: `acp-compaction:${upd.compactionId}`,
+          title: "Compact context",
+          kind: "think",
+          status,
+          rawOutput: (upd.error ?? summary) || undefined,
+          _meta: upd._meta,
+        },
+        { keepWholeRawOutput: true },
+      );
       if (toolCall !== undefined) {
         events.push({ _tag: "ToolCallUpdated", toolCall, rawPayload: params });
       }
@@ -1540,14 +1554,17 @@ export function parseSessionUpdateEvent(params: EffectAcpSchema.SessionNotificat
     }
     case "compaction_summary_chunk": {
       const text = acpContentBlockDisplayText(upd.content);
-      const toolCall = makeToolCallState({
-        toolCallId: `acp-compaction:${upd.compactionId}`,
-        title: "Compact context",
-        kind: "think",
-        status: "inProgress",
-        ...(text === undefined ? {} : { rawOutput: text }),
-        _meta: upd._meta,
-      });
+      const toolCall = makeToolCallState(
+        {
+          toolCallId: `acp-compaction:${upd.compactionId}`,
+          title: "Compact context",
+          kind: "think",
+          status: "inProgress",
+          ...(text === undefined ? {} : { rawOutput: text }),
+          _meta: upd._meta,
+        },
+        { keepWholeRawOutput: true },
+      );
       if (toolCall !== undefined) {
         events.push({ _tag: "ToolCallUpdated", toolCall, rawPayload: params });
       }
