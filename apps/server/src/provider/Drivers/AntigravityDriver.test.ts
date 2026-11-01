@@ -6,6 +6,7 @@ import {
   type AntigravitySettings,
 } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -46,13 +47,18 @@ const blockedCredentialKeys = new Set([
   "GOOGLE_APPLICATION_CREDENTIALS",
   "GOOGLE_GENAI_USE_VERTEXAI",
 ]);
+const modelCatalogMigrationMarker = ".t3-model-catalog-v1";
 
 function shellQuote(value: string): string {
   return `'${value.replaceAll("'", `'"'"'`)}'`;
 }
 
 const makeHarness = Effect.fn("makeAntigravityDriverHarness")(function* (
-  options: { readonly config?: Partial<AntigravitySettings>; readonly enabled?: boolean } = {},
+  options: {
+    readonly config?: Partial<AntigravitySettings>;
+    readonly enabled?: boolean;
+    readonly catalogMigrated?: boolean;
+  } = {},
 ) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -68,6 +74,10 @@ const makeHarness = Effect.fn("makeAntigravityDriverHarness")(function* (
   const requestLog = path.join(root, "requests.jsonl");
   const directories = yield* resolveAntigravityInstanceDirectories(config.stateDir, instanceId);
   const profileDirectory = directories.profile;
+  if (options.catalogMigrated ?? true) {
+    yield* fs.makeDirectory(profileDirectory, { recursive: true });
+    yield* fs.writeFileString(path.join(profileDirectory, modelCatalogMigrationMarker), "1\n");
+  }
   const instancePath = `${path.join(root, "instance-bin")}:${baseEnv.PATH ?? ""}`;
 
   const makeExecutable = Effect.fn("AntigravityDriverTest.makeExecutable")(function* (
@@ -109,6 +119,7 @@ const makeHarness = Effect.fn("makeAntigravityDriverHarness")(function* (
   const controls = { selected: first, failResolution: false, beforeAcquire: Effect.void };
   const acquisitions: Array<{ binaryPath: string | undefined; path: string | undefined }> = [];
   const releases: Array<string | null> = [];
+  const releaseObserved = yield* Deferred.make<void>();
   const launches: Array<{
     command: string;
     args: ReadonlyArray<string>;
@@ -149,7 +160,7 @@ const makeHarness = Effect.fn("makeAntigravityDriverHarness")(function* (
         yield* Effect.addFinalizer(() =>
           Effect.sync(() => {
             releases.push(selected.version);
-          }),
+          }).pipe(Effect.andThen(Deferred.succeed(releaseObserved, undefined))),
         );
         return selected;
       }),
@@ -231,6 +242,7 @@ const makeHarness = Effect.fn("makeAntigravityDriverHarness")(function* (
     controls,
     acquisitions,
     releases,
+    releaseObserved,
     launches,
     readRequests,
     assertClosed,
@@ -269,6 +281,29 @@ const layerTest = ProviderHostLive.layer.pipe(
 );
 
 it.layer(layerTest)("AntigravityDriver", (it) => {
+  it.effect.skipIf(windowsHost)("refreshes a legacy model catalog once on create", () =>
+    Effect.gen(function* () {
+      const h = yield* makeHarness({ catalogMigrated: false });
+      yield* Deferred.await(h.releaseObserved);
+
+      const snapshot = yield* h.instance.snapshot.getSnapshot;
+      expect(snapshot.status).toBe("ready");
+      expect(snapshot.models.map((model) => model.slug)).toEqual([
+        "gemini-test-low",
+        "gemini-test-high",
+      ]);
+      expect(h.acquisitions).toEqual([{ binaryPath: "", path: h.instancePath }]);
+      expect(h.releases).toEqual([h.first.version]);
+      const requests = yield* h.readRequests;
+      expect(requests.map((request) => request.method)).toEqual([
+        "initialize",
+        "auth/login",
+        "session/new",
+      ]);
+      yield* h.assertClosed;
+    }).pipe(Effect.scoped),
+  );
+
   it.effect.skipIf(windowsHost)(
     "refreshes through the selected executable and personal Google ACP",
     () =>
