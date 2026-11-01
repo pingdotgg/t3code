@@ -10,6 +10,8 @@ import * as TextGenerationOperations from "@t3tools/provider-core/server/textGen
 import * as OpenCodeRuntime from "./OpenCodeRuntime.ts";
 import * as OpenCodeServerOwner from "./OpenCodeServerOwner.ts";
 
+const GENERATION_TIMEOUT = "3 minutes";
+
 const OpenCodeTextGenerationOperation = Schema.Literals([
   "generateCommitMessage",
   "generatePrContent",
@@ -339,6 +341,16 @@ export const makeOpenCodeTextGeneration = Effect.fn("makeOpenCodeTextGeneration"
             .pipe(Effect.flatMap(runAgainstServer), Effect.scoped)
         : serverOwner.withServer(runAgainstServer);
     const rawOutput = yield* serverOutput.pipe(
+      Effect.timeoutOrElse({
+        duration: GENERATION_TIMEOUT,
+        orElse: () =>
+          Effect.fail(
+            new TextGenerationError({
+              operation: input.operation,
+              detail: "OpenCode did not finish generating in time.",
+            }),
+          ),
+      }),
       Effect.catchTags({
         OpenCodeRuntimeError: (cause) =>
           Effect.fail(
