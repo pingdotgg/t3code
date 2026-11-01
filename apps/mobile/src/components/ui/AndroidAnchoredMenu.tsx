@@ -42,7 +42,7 @@ export type AndroidAnchoredMenuProps = {
 };
 
 export function AndroidAnchoredMenu(props: AndroidAnchoredMenuProps) {
-  const { scale, menuWidth: desiredMenuWidth } = useAndroidControlSizing();
+  const { scale, menuWidth: desiredMenuWidth, menuCornerRadius } = useAndroidControlSizing();
   const [anchor, setAnchor] = useState<AnchorSnapshot | null>(null);
   const [path, setPath] = useState<readonly MenuAction[]>([]);
   const [rootHeight, setRootHeight] = useState<number | null>(null);
@@ -183,12 +183,12 @@ export function AndroidAnchoredMenu(props: AndroidAnchoredMenuProps) {
             ) : (
               <Animated.View
                 entering={FadeIn.duration(120)}
-                className="absolute overflow-hidden bg-card-alt shadow-md"
+                className="absolute overflow-hidden bg-grouped-card shadow-md"
                 style={{
                   left,
                   maxHeight,
                   width: menuWidth,
-                  borderRadius: 4 * scale,
+                  borderRadius: menuCornerRadius,
                   ...(opensDown
                     ? { top: local.y + local.height + ANCHOR_GAP }
                     : { bottom: (rootHeight ?? 0) - local.y + ANCHOR_GAP }),
