@@ -152,6 +152,48 @@ describe("normalizeReviewGuide", () => {
     expect(result.stops).toHaveLength(1);
   });
 
+  it("merges excerpts that a later excerpt bridges into one", () => {
+    const result = normalizeReviewGuide(
+      guide({
+        stops: [
+          stop({
+            excerpts: [
+              excerpt("src/a.ts", 40, 41),
+              { ...excerpt("src/a.ts", 50, 51), caption: "Second" },
+              excerpt("src/a.ts", 41, 50),
+            ],
+          }),
+        ],
+      }),
+      change,
+    );
+    expect(result.stops[0]?.excerpts).toEqual([
+      { ...excerpt("src/a.ts", 40, 51), caption: "Second" },
+    ]);
+
+    const tailNote = { path: "src/a.ts", line: 40, title: "Tail", body: "Keep this note." };
+    const wide = normalizeReviewGuide(
+      guide({
+        stops: [
+          stop({
+            excerpts: [
+              excerpt("src/a.ts", 1, 25),
+              { ...excerpt("src/a.ts", 30, 45), caption: "Second" },
+              excerpt("src/a.ts", 24, 32),
+            ],
+            notes: [tailNote],
+          }),
+        ],
+      }),
+      parseReviewGuideChange(
+        "src/a.ts\0",
+        "diff --git a/src/a.ts b/src/a.ts\n--- a/src/a.ts\n+++ b/src/a.ts\n@@ -0,0 +1,60 @@\n+added",
+      ),
+    );
+    expect(wide.stops[0]?.excerpts).toEqual([{ ...excerpt("src/a.ts", 1, 25), caption: "Second" }]);
+    expect(wide.stops[0]?.notes).toEqual([]);
+  });
+
   it("drops notes outside the stop's remaining excerpts", () => {
     const result = normalizeReviewGuide(
       guide({
