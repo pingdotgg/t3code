@@ -1353,44 +1353,57 @@ describe("XAiAcpExtension", () => {
     }),
   );
 
-  it.effect("cancels pending completions without restarting a stalled runtime", () =>
-    Effect.gen(function* () {
-      const hungStart = yield* Deferred.make<never>();
-      const hungPrompt = yield* Deferred.make<never>();
-      let startCount = 0;
-      let cancelCalled = false;
-      const baseRuntime = {
-        start: () => {
-          startCount += 1;
-          return startCount === 1
-            ? Effect.succeed({
-                sessionId: "root-session",
-                initializeResult: {},
-                sessionSetupResult: {},
-                modelConfigId: undefined,
-              })
-            : Deferred.await(hungStart);
-        },
-        prompt: () => Deferred.await(hungPrompt),
-        cancel: Effect.sync(() => {
-          cancelCalled = true;
-        }),
-        handleExtNotification: () => Effect.void,
-        handleExtRequest: () => Effect.void,
-      } as unknown as AcpSessionRuntime.AcpSessionRuntime["Service"];
+  it.effect.each([0, 1, 128])(
+    "cancels %i pending completions without restarting a stalled runtime",
+    (promptCount) =>
+      Effect.gen(function* () {
+        const hungStart = yield* Deferred.make<never>();
+        const hungPrompt = yield* Deferred.make<never>();
+        const promptsReady = yield* Deferred.make<void>();
+        let enteredPrompts = 0;
+        let startCount = 0;
+        let cancelCount = 0;
+        const baseRuntime = {
+          start: () => {
+            startCount += 1;
+            return startCount <= promptCount
+              ? Effect.succeed({
+                  sessionId: "root-session",
+                  initializeResult: {},
+                  sessionSetupResult: {},
+                  modelConfigId: undefined,
+                })
+              : Deferred.await(hungStart);
+          },
+          prompt: () =>
+            Effect.gen(function* () {
+              enteredPrompts += 1;
+              if (enteredPrompts === promptCount) yield* Deferred.succeed(promptsReady, undefined);
+              return yield* Deferred.await(hungPrompt);
+            }),
+          cancel: Effect.sync(() => {
+            cancelCount += 1;
+          }),
+          handleExtNotification: () => Effect.void,
+          handleExtRequest: () => Effect.void,
+        } as unknown as AcpSessionRuntime.AcpSessionRuntime["Service"];
 
-      const runtime = yield* makeXAiPromptCompletionRuntime(baseRuntime);
-      const promptFiber = yield* runtime
-        .prompt({ prompt: [{ type: "text", text: "hi" }] })
-        .pipe(Effect.forkChild);
-      yield* Effect.yieldNow;
+        const runtime = yield* makeXAiPromptCompletionRuntime(baseRuntime);
+        const promptFibers = yield* Effect.forEach(Array.from({ length: promptCount }), () =>
+          runtime.prompt({ prompt: [{ type: "text", text: "hi" }] }).pipe(Effect.forkChild),
+        );
+        if (promptCount > 0) yield* Deferred.await(promptsReady);
 
-      yield* runtime.cancel;
+        yield* runtime.cancel;
+        yield* runtime.cancel;
 
-      expect(cancelCalled).toBe(true);
-      expect(startCount).toBe(1);
-      expect((yield* Fiber.join(promptFiber)).stopReason).toBe("cancelled");
-    }),
+        expect(cancelCount).toBe(2);
+        expect(startCount).toBe(promptCount);
+        const responses = yield* Effect.forEach(promptFibers, Fiber.join);
+        expect(responses.map((response) => response.stopReason)).toEqual(
+          Array.from({ length: promptCount }, () => "cancelled"),
+        );
+      }),
   );
 });
 
