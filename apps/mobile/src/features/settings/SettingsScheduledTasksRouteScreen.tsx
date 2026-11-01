@@ -627,6 +627,12 @@ function SettingsScheduledTaskEditorScreen({ title }: { readonly title: string }
             setDraft={(update) => {
               if (!saving)
                 setEditor((current) =>
+                  current ? { ...current, draft: update(current.draft) } : current,
+                );
+            }}
+            setEnvironmentDraft={(update) => {
+              if (!saving)
+                setEditor((current) =>
                   current && current.environmentId === editor.environmentId
                     ? { ...current, draft: update(current.draft) }
                     : current,
@@ -677,6 +683,7 @@ function TaskForm({
   dictationPending,
   promptField,
   setDraft,
+  setEnvironmentDraft,
   onSaved,
   onChangeEnvironment,
 }: {
@@ -689,6 +696,7 @@ function TaskForm({
   readonly dictationPending: boolean;
   readonly promptField: ReactNode;
   readonly setDraft: (update: (current: Draft) => Draft) => void;
+  readonly setEnvironmentDraft: (update: (current: Draft) => Draft) => void;
   readonly onSaved: () => void;
   readonly onChangeEnvironment: (target: SettingsTarget) => void;
 }) {
@@ -911,7 +919,7 @@ function TaskForm({
             onSelect={(id) => {
               const project = projects.find((item) => item.id === id);
               if (!project) return;
-              setDraft((current) => {
+              setEnvironmentDraft((current) => {
                 const keepsExplicitModel =
                   current.modelSelectionIsExplicit &&
                   (current.modelSelection === null ||
@@ -1000,7 +1008,9 @@ function TaskForm({
               disabled={saving}
               value={draft.checkoutPath}
               borderTop
-              onChange={(checkoutPath) => setDraft((current) => ({ ...current, checkoutPath }))}
+              onChange={(checkoutPath) =>
+                setEnvironmentDraft((current) => ({ ...current, checkoutPath }))
+              }
             />
           ) : null}
         </SettingsSection>
