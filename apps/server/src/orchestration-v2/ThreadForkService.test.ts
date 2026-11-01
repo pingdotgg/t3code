@@ -1,6 +1,8 @@
 import { assert, it } from "@effect/vitest";
 import {
+  CommandId,
   ContextTransferId,
+  EnvironmentId,
   MessageId,
   type ModelSelection,
   type OrchestrationV2AppThread,
@@ -11,6 +13,7 @@ import {
   ProviderThreadId,
   RunId,
   ThreadId,
+  type ThreadPullRequestLink,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -107,11 +110,15 @@ function makeSourceProjection(sourceRun: OrchestrationV2Run): OrchestrationV2Thr
   };
 }
 
-const planFork = (sourceRun: OrchestrationV2Run) =>
+const planFork = (
+  sourceRun: OrchestrationV2Run,
+  sourceProjection = makeSourceProjection(sourceRun),
+  options: { readonly sideChat?: boolean } = {},
+) =>
   Effect.gen(function* () {
     const service = yield* ThreadForkService.ThreadForkServiceV2;
     return yield* service.plan({
-      sourceProjection: makeSourceProjection(sourceRun),
+      sourceProjection,
       sourceRun,
       sourceProviderThread: undefined,
       canonicalSourcePoint: {
@@ -121,26 +128,14 @@ const planFork = (sourceRun: OrchestrationV2Run) =>
       transferId: ContextTransferId.make("context-transfer:fork-snoozed-source"),
       targetThreadId,
       title: "Awake fork",
+      ...options,
       createdBy: "user",
       creationSource: "mobile",
       createdAt: forkCreatedAt,
     });
   }).pipe(Effect.provide(ThreadForkService.layer));
 
-it("treats usage-limited and other provider-finished runs as forkable", () => {
-  assert.isTrue(ThreadForkService.isForkableSourceRunStatus("completed"));
-  assert.isTrue(ThreadForkService.isForkableSourceRunStatus("waiting"));
-  assert.isTrue(ThreadForkService.isForkableSourceRunStatus("failed"));
-  assert.isTrue(ThreadForkService.isForkableSourceRunStatus("interrupted"));
-  assert.isTrue(ThreadForkService.isForkableSourceRunStatus("cancelled"));
-  assert.isFalse(ThreadForkService.isForkableSourceRunStatus("running"));
-  assert.isFalse(ThreadForkService.isForkableSourceRunStatus("starting"));
-  assert.isFalse(ThreadForkService.isForkableSourceRunStatus("queued"));
-  assert.isFalse(ThreadForkService.isForkableSourceRunStatus("preparing"));
-  assert.isFalse(ThreadForkService.isForkableSourceRunStatus("rolled_back"));
-});
-
-it.effect("keeps a fork awake and unmuted when its source thread is snoozed and muted", () =>
+it.effect("keeps a fork awake when its source thread is snoozed and muted", () =>
   Effect.gen(function* () {
     const sourceThread = makeSourceThread();
     const sourceRun = makeSourceRun("completed");
@@ -170,14 +165,92 @@ it.effect("keeps a fork awake and unmuted when its source thread is snoozed and 
   }),
 );
 
-it.effect("forks from a usage-limited failed run", () =>
+it.effect("starts a fork without the source thread's pending title regeneration", () =>
   Effect.gen(function* () {
-    const result = yield* planFork(makeSourceRun("failed"));
-    assert.deepEqual(result.targetThread.forkedFrom, {
-      type: "run",
-      threadId: sourceThreadId,
-      runId: sourceRunId,
-    });
+    const sourceRun = makeSourceRun("completed");
+    const titleRegeneration = {
+      requestId: CommandId.make("command:fork-source-title"),
+      startedAt: snoozedAt,
+    };
+    const sourceProjection = {
+      ...makeSourceProjection(sourceRun),
+      thread: { ...makeSourceThread(), titleRegeneration },
+    };
+    const result = yield* planFork(sourceRun, sourceProjection);
+
+    assert.isNull(result.targetThread.titleRegeneration);
+    assert.deepEqual(sourceProjection.thread.titleRegeneration, titleRegeneration);
+  }),
+);
+
+it.effect("preserves pull request context without inheriting any watches", () =>
+  Effect.gen(function* () {
+    const sourceRun = makeSourceRun("completed");
+    const watch = {
+      startedAt: DateTime.formatIso(sourceCreatedAt),
+      headSha: "source-head",
+      failedChecks: ["lint"],
+      passed: false,
+      passedChecks: [],
+      remarksThrough: DateTime.formatIso(snoozedAt),
+      remarkIds: ["review-1"],
+      conflicting: true,
+      wakes: 2,
+    };
+    const links = (["agent", "stack", "manual", "stack-dismissed"] as const).map(
+      (source, index) =>
+        ({
+          host: "github.com",
+          repository: "example/repo",
+          number: index + 1,
+          url: `https://github.com/example/repo/pull/${index + 1}`,
+          source,
+          linkedAt: DateTime.formatIso(sourceCreatedAt),
+          snapshot: {
+            state: "open",
+            title: `Pull request ${index + 1}`,
+            headBranch: `feature-${index + 1}`,
+            baseBranch: "main",
+            isDraft: false,
+            updatedAt: null,
+            syncedAt: DateTime.formatIso(snoozedAt),
+          },
+          stack: {
+            kind: "native",
+            id: "stack-1",
+            number: 1,
+            url: "https://github.com/example/repo/stack/1",
+            base: "main",
+            layers: [{ number: 1, headBranch: "feature-1", state: "open" }],
+          },
+        }) satisfies ThreadPullRequestLink,
+    );
+    const watchedLinks: ReadonlyArray<ThreadPullRequestLink> = links.map((link, index) =>
+      index < 2 ? { ...link, watch } : link,
+    );
+    const legacyLink = {
+      projectId: makeSourceThread().projectId,
+      repository: "example/repo",
+      number: 1,
+      url: links[0]!.url,
+    };
+    const sourceProjection = {
+      ...makeSourceProjection(sourceRun),
+      thread: {
+        ...makeSourceThread(),
+        pullRequests: watchedLinks,
+        linkedPullRequest: legacyLink,
+        branchPullRequest: legacyLink,
+      },
+    };
+    const result = yield* planFork(sourceRun, sourceProjection);
+
+    assert.deepEqual(result.targetThread.pullRequests, links);
+    assert.deepEqual(result.targetThread.linkedPullRequest, legacyLink);
+    assert.deepEqual(result.targetThread.branchPullRequest, legacyLink);
+    assert.deepEqual(sourceProjection.thread.pullRequests, watchedLinks);
+    assert.deepEqual(sourceProjection.thread.pullRequests[0]?.watch, watch);
+    assert.deepEqual(sourceProjection.thread.pullRequests[1]?.watch, watch);
   }),
 );
 
@@ -191,5 +264,65 @@ it.effect("rejects in-progress and rolled-back fork sources", () =>
       assert.equal(error.targetThreadId, targetThreadId);
       assert.equal(error.cause, ThreadForkService.forkableSourceRunStatusError(sourceRun));
     }
+  }),
+);
+
+it.effect("marks only requested forks as supervised side chats", () =>
+  Effect.gen(function* () {
+    const sourceRun = makeSourceRun("completed");
+    const sideChat = yield* planFork(sourceRun, makeSourceProjection(sourceRun), {
+      sideChat: true,
+    });
+    assert.isTrue(sideChat.targetThread.lineage.sideChat);
+    assert.equal(sideChat.targetThread.runtimeMode, "approval-required");
+
+    const sideChatSource = makeSourceProjection(sourceRun);
+    const sideChatProjection = {
+      ...sideChatSource,
+      thread: {
+        ...sideChatSource.thread,
+        lineage: { ...sideChatSource.thread.lineage, sideChat: true },
+      },
+    };
+    const forkOfSideChat = yield* planFork(sourceRun, sideChatProjection);
+    assert.isUndefined(forkOfSideChat.targetThread.lineage.sideChat);
+    assert.equal(forkOfSideChat.targetThread.runtimeMode, "full-access");
+
+    const nested = yield* planFork(sourceRun, sideChatProjection, { sideChat: true }).pipe(
+      Effect.flip,
+    );
+    assert.equal(nested.cause, "A side chat cannot start another side chat.");
+
+    const subagentSource = makeSourceProjection(sourceRun);
+    const fromSubagent = yield* planFork(
+      sourceRun,
+      {
+        ...subagentSource,
+        thread: {
+          ...subagentSource.thread,
+          lineage: { ...subagentSource.thread.lineage, relationshipToParent: "subagent" },
+        },
+      },
+      { sideChat: true },
+    ).pipe(Effect.flip);
+    assert.equal(fromSubagent.cause, "A subagent cannot start a side chat.");
+
+    const delegatedSource = makeSourceProjection(sourceRun);
+    const fromDelegated = yield* planFork(
+      sourceRun,
+      {
+        ...delegatedSource,
+        thread: {
+          ...delegatedSource.thread,
+          delegatedFrom: {
+            environmentId: EnvironmentId.make("linked-environment"),
+            threadId: ThreadId.make("linked-parent"),
+            title: "Linked parent",
+          },
+        },
+      },
+      { sideChat: true },
+    ).pipe(Effect.flip);
+    assert.equal(fromDelegated.cause, "A subagent cannot start a side chat.");
   }),
 );

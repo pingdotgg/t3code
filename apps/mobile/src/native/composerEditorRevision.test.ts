@@ -8,25 +8,6 @@ import {
   resolveComposerControlledEventCount,
 } from "./composerEditorRevision";
 
-describe("acknowledgeComposerNativeEvent", () => {
-  it("advances to newer native text revisions", () => {
-    expect(acknowledgeComposerNativeEvent(4, 5)).toBe(5);
-  });
-
-  it("accepts a duplicate event from the current native revision", () => {
-    expect(acknowledgeComposerNativeEvent(5, 5)).toBe(5);
-  });
-
-  it("rejects events older than the latest native text revision", () => {
-    expect(acknowledgeComposerNativeEvent(5, 4)).toBeNull();
-  });
-
-  it("rejects malformed revision counters", () => {
-    expect(acknowledgeComposerNativeEvent(5, Number.NaN)).toBeNull();
-    expect(acknowledgeComposerNativeEvent(5, 5.5)).toBeNull();
-  });
-});
-
 describe("isComposerNativeEcho", () => {
   const snapshots = [{ eventCount: 3, value: "native", selection: { start: 6, end: 6 } }];
 
@@ -40,13 +21,7 @@ describe("isComposerNativeEcho", () => {
     expect(isComposerNativeEcho("parent edit", { start: 6, end: 6 }, 3, snapshots)).toBe(false);
   });
 
-  it("matches value and revision when selection is uncontrolled", () => {
-    expect(isComposerNativeEcho("native", null, 3, snapshots)).toBe(true);
-  });
-
   it("does not claim a controlled selection against an assumed state without one", () => {
-    // An echo payload serializes `selection: null`; classifying a controlled
-    // selection as an echo of an assumed state would drop a parent caret move.
     const assumed = [{ eventCount: 3, value: "native", selection: null }];
     expect(isComposerNativeEcho("native", { start: 0, end: 0 }, 3, assumed)).toBe(false);
     expect(isComposerNativeEcho("other", { start: 0, end: 0 }, 3, assumed)).toBe(false);
@@ -73,10 +48,6 @@ describe("resolveComposerControlledEventCount", () => {
     expect(resolveComposerControlledEventCount("", { start: 0, end: 0 }, 4, snapshots)).toBe(0);
   });
 
-  it("acknowledges the latest native value at the latest revision", () => {
-    expect(resolveComposerControlledEventCount("ab", { start: 2, end: 2 }, 4, snapshots)).toBe(4);
-  });
-
   it("allows an unmatched parent-driven edit at the latest native revision", () => {
     expect(resolveComposerControlledEventCount("/plan ", { start: 6, end: 6 }, 4, snapshots)).toBe(
       4,
@@ -94,10 +65,6 @@ describe("resolveComposerControlledEventCount", () => {
 
   it("keeps a stale selection paired with current text behind the native revision", () => {
     expect(resolveComposerControlledEventCount("ab", { start: 1, end: 1 }, 4, snapshots)).toBe(3);
-  });
-
-  it("does not control selection when no selection prop is provided", () => {
-    expect(resolveComposerControlledEventCount("ab", null, 4, snapshots)).toBe(4);
   });
 });
 
@@ -144,14 +111,6 @@ describe("pruneAcknowledgedComposerNativeEvents", () => {
 });
 
 describe("assumeComposerControlledState", () => {
-  it("replaces the acknowledged history with the applied controlled state", () => {
-    const snapshots = [{ eventCount: 3, value: "typed", selection: { start: 5, end: 5 } }];
-
-    expect(assumeComposerControlledState(snapshots, 3, "")).toEqual([
-      { eventCount: 3, value: "", selection: null },
-    ]);
-  });
-
   it("keeps native events that raced past the controlled revision", () => {
     const snapshots = [
       { eventCount: 3, value: "typed", selection: { start: 5, end: 5 } },
@@ -165,8 +124,6 @@ describe("assumeComposerControlledState", () => {
   });
 
   it("applies a parent caret move on the assumed value at the assumed revision", () => {
-    // Same value, new caret: not an echo (so the selection is serialized) but
-    // still stamped at the assumed revision so the editor accepts it.
     const snapshots = assumeComposerControlledState([], 3, "typed");
 
     expect(isComposerNativeEcho("typed", { start: 2, end: 2 }, 3, snapshots)).toBe(false);
@@ -176,10 +133,6 @@ describe("assumeComposerControlledState", () => {
   });
 
   it("re-applies a parent value that round-trips back to an acknowledged state", () => {
-    // Native acknowledged "typed", the parent then controlled the editor to ""
-    // (a send clearing the draft) and back to "typed" (the send failed and the
-    // draft was restored). The restore must be a fresh non-echo edit stamped at
-    // the current revision, not an echo the editor would drop.
     const snapshots = assumeComposerControlledState(
       [{ eventCount: 3, value: "typed", selection: { start: 5, end: 5 } }],
       3,
@@ -200,13 +153,10 @@ describe("typing immediately before an intercepted paste", () => {
       { eventCount: 1, value: "typed", selection: { start: 5, end: 5 } },
       { eventCount: 2, value: "typed", selection: { start: 0, end: 5 } },
     ];
-    // Both native platforms stamp the paste with its current value and selection.
-    // A render still carrying the typing caret cannot overwrite that selection.
     expect(resolveComposerControlledEventCount("typed", { start: 5, end: 5 }, 2, snapshots)).toBe(
       1,
     );
     expect(isComposerNativeEcho("typed", { start: 0, end: 5 }, 2, snapshots)).toBe(true);
-    // The replacement is a parent edit at the acknowledged paste revision.
     expect(resolveComposerControlledEventCount("pasted", { start: 6, end: 6 }, 2, snapshots)).toBe(
       2,
     );

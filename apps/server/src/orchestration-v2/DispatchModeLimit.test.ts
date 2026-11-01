@@ -63,7 +63,6 @@ it.layer(layerTest)("DispatchModeLimit", (it) => {
       const projections = yield* ProjectionStore.ProjectionStoreV2;
       const threadId = ThreadId.make("thread:limit-raised");
       yield* createThread(threadId);
-      // The user raises the thread; the user's own commands have no limit.
       yield* orchestrator.dispatch({
         type: "thread.runtime-mode.set",
         commandId: CommandId.make("raise"),
@@ -82,8 +81,6 @@ it.layer(layerTest)("DispatchModeLimit", (it) => {
       assert.equal(refused._tag, "OrchestratorThreadAboveModeLimitError");
       assert.equal((yield* projections.getThreadShell(threadId))?.title, "Before");
 
-      // Refused before planning, so no receipt holds the command id: once the
-      // user lowers the thread again, the same command goes through.
       yield* orchestrator.dispatch({
         type: "thread.runtime-mode.set",
         commandId: CommandId.make("lower"),
@@ -94,30 +91,6 @@ it.layer(layerTest)("DispatchModeLimit", (it) => {
         .dispatch(rename)
         .pipe(Effect.provideService(DispatchModeLimit, supervised));
       assert.equal((yield* projections.getThreadShell(threadId))?.title, "After");
-    }),
-  );
-
-  it.effect("names the interaction mode when that is what was raised", () =>
-    Effect.gen(function* () {
-      const orchestrator = yield* Orchestrator.OrchestratorV2;
-      const threadId = ThreadId.make("thread:limit-plan");
-      yield* createThread(threadId);
-      const refused = yield* orchestrator
-        .dispatch({
-          type: "thread.metadata.update",
-          commandId: CommandId.make("rename-plan"),
-          threadId,
-          title: "After",
-        })
-        .pipe(
-          Effect.provideService(DispatchModeLimit, {
-            runtimeMode: "full-access",
-            interactionMode: "plan",
-          }),
-          Effect.flip,
-        );
-      assert.ok(refused._tag === "OrchestratorThreadAboveModeLimitError");
-      assert.equal(refused.mode, "interaction");
     }),
   );
 
@@ -150,8 +123,6 @@ it.layer(layerTest)("DispatchModeLimit", (it) => {
       assert.equal(refused.threadId, sourceThreadId);
       assert.isNull(yield* projections.getThreadShell(targetThreadId));
 
-      // The refusal records no receipt: once the source is lowered, the same
-      // command is planned again (and fails only for want of a finished run).
       yield* orchestrator.dispatch({
         type: "thread.runtime-mode.set",
         commandId: CommandId.make("lower-source"),

@@ -8,12 +8,7 @@ import {
   type WordPart,
 } from "unbash";
 
-/**
- * Code in another language inside a shell command: a `bash -lc "…"` script, a
- * `python3 -c '…'` argument, or a heredoc fed to an interpreter or written to
- * a file. `starts[i]` and `ends[i]` are the span of the original command that
- * spells `text[i]`, so a quoted `\"` maps back to both of its characters.
- */
+/** starts[i]..ends[i] spans the original spelling of text[i], including escapes. */
 export interface EmbeddedScript {
   readonly language: string;
   readonly text: string;
@@ -29,17 +24,11 @@ interface MappedText {
 
 interface Interpreter {
   readonly language: string;
-  /** Flags whose next argument is the script. */
   readonly inline: (flag: string) => boolean;
-  /** Options that consume the next argument. */
   readonly valueOptions?: ReadonlySet<string>;
-  /** Options after which the script comes from a file or module instead. */
   readonly scriptFileOptions?: ReadonlySet<string>;
-  /** "always" for SQL shells, which read statements from stdin next to their database argument. */
   readonly stdin: "always" | "without-script-file" | "never";
-  /** The first positional argument holding a script, as in `sqlite3 app.db "select 1"`. */
   readonly positionalScript?: number;
-  /** SQL shells run every `-c` and every statement argument, in order. */
   readonly repeatable?: boolean;
   readonly subcommand?: string;
   /** PowerShell matches parameters case-insensitively; the lists above are lowercase. */
@@ -68,8 +57,6 @@ const PYTHON: Interpreter = {
   stdin: "without-script-file",
 };
 
-// Shared by SQL clients; each names its own script flags, since `-c` and `-f`
-// mean different things to psql and mysql.
 const SQL_SHELL = {
   language: "sql",
   valueOptions: new Set([
@@ -150,7 +137,6 @@ const INTERPRETERS: Record<string, Interpreter> = {
 INTERPRETERS.powershell = INTERPRETERS.pwsh!;
 INTERPRETERS.mariadb = INTERPRETERS.mysql!;
 
-// Commands that run the next word as the program, with the options that consume a value.
 const PROGRAM_WRAPPERS: Record<string, ReadonlySet<string>> = {
   env: new Set(["-u", "--unset", "-C", "--chdir"]),
   sudo: new Set(["-u", "--user", "-g", "--group", "-C", "-D", "--chdir"]),
@@ -161,7 +147,6 @@ const PROGRAM_WRAPPERS: Record<string, ReadonlySet<string>> = {
   builtin: new Set(),
 };
 
-// Heredoc delimiters that name their language, as in `<<'SQL'`.
 const DELIMITER_LANGUAGES: Record<string, string> = {
   py: "python",
   python: "python",
@@ -188,12 +173,7 @@ const DELIMITER_LANGUAGES: Record<string, string> = {
   patch: "diff",
 };
 
-/**
- * The scripts embedded in a shell command, outermost first, so a highlighter
- * painting them in order lets a nested script override the one containing it.
- * Returns nothing for a command that does not parse cleanly; where a broken
- * quote ends cannot be trusted.
- */
+/** Returns nothing for commands that do not parse cleanly. */
 export function embeddedScripts(command: string): EmbeddedScript[] {
   const identity = Array.from({ length: command.length }, (_, index) => index);
   return scriptsIn(
@@ -228,7 +208,6 @@ function isNode(value: unknown): value is { readonly type: string } {
   return typeof value === "object" && value !== null && "type" in value;
 }
 
-/** Visits every simple command, including those inside `$(…)`, loops and subshells. */
 function forEachCommand(
   node: unknown,
   visit: (command: Command) => void,
@@ -247,7 +226,6 @@ function forEachCommand(
     case "CommandExpansion":
     case "ProcessSubstitution": {
       const { script } = node as Extract<WordPart, { type: "CommandExpansion" }>;
-      // Escaped-backtick scripts own a decoded source their positions index.
       if (script && !script.errors?.length && script.source === undefined) {
         forEachCommand(script.commands, visit, seen);
       }
@@ -268,12 +246,10 @@ function programName(word: Word): string {
 }
 
 function interpreterFor(name: string): Interpreter | undefined {
-  // `py` is the Windows Python launcher, as in `py -3 -c '…'`.
   if (/^python(?:\d+(?:\.\d+)?)?$|^pypy3?$|^py$/u.test(name)) return PYTHON;
   return Object.hasOwn(INTERPRETERS, name) ? INTERPRETERS[name] : undefined;
 }
 
-/** Skips `env FOO=1`, `sudo -u bob` and similar to the word naming the real program. */
 function programIndex(words: ReadonlyArray<Word>): number {
   let index = 0;
   while (index < words.length) {
@@ -341,7 +317,6 @@ function commandScripts(
   return scripts;
 }
 
-/** Whether a redirection without a descriptor, or with `fd`, targets file descriptor `fd`. */
 function isDescriptor(descriptor: HereDoc["descriptor"], fd: number): boolean {
   return (
     descriptor === undefined || (descriptor.type === "FileDescriptor" && descriptor.value === fd)
@@ -350,11 +325,9 @@ function isDescriptor(descriptor: HereDoc["descriptor"], fd: number): boolean {
 
 interface ScriptArgument {
   readonly word: Word;
-  /** The script follows the `=` of `--eval=…` rather than filling the word. */
   readonly inValue: boolean;
 }
 
-/** The script arguments, and whether the script comes from a file instead. */
 function interpreterArgs(
   interpreter: Interpreter,
   args: ReadonlyArray<Word>,
@@ -372,7 +345,6 @@ function interpreterArgs(
       continue;
     }
     if (!optionsEnded && flag.startsWith("-") && flag !== "-") {
-      // `--eval=code` and `--file=path` carry their value in the same word.
       const [name = flag, value] = flag.startsWith("--") ? flag.split(/=(.*)/su) : [flag];
       if (interpreter.scriptFileOptions?.has(name)) {
         if (!interpreter.repeatable) return { scripts, scriptFromFile: true };
@@ -393,7 +365,6 @@ function interpreterArgs(
       continue;
     }
     positionals.push(arg);
-    // An interpreter stops reading its own options at the script file.
     if (interpreter.stdin === "without-script-file" && !interpreter.subcommand) break;
   }
 
@@ -419,7 +390,6 @@ function sliceMapped(mapped: MappedText, start: number): MappedText {
   };
 }
 
-/** The language of the file `cat > file` or `tee file` writes its stdin to. */
 function writtenFileLanguage(
   name: string,
   command: Command,
@@ -449,7 +419,6 @@ function delimiterLanguage(hereDoc: HereDoc): string | undefined {
   return name && Object.hasOwn(DELIMITER_LANGUAGES, name) ? DELIMITER_LANGUAGES[name] : undefined;
 }
 
-/** A heredoc body as written; the interpreter reads its characters one to one. */
 function hereDocText(hereDoc: HereDoc, source: string): MappedText {
   const { pos, end } = hereDoc.body;
   const starts = Array.from({ length: end - pos }, (_, index) => pos + index);
@@ -460,11 +429,7 @@ function hereDocText(hereDoc: HereDoc, source: string): MappedText {
   };
 }
 
-/**
- * A word's value with the source span of each character: quotes removed and
- * escapes resolved, the way the program receives it. Expansions such as
- * `$HOME` stay as written. Returns undefined for spellings it cannot map.
- */
+// Preserve literal expansions; return undefined for unmappable spellings.
 function wordText(word: Word, source: string): MappedText | undefined {
   const builder = new MappedTextBuilder();
   const parts: ReadonlyArray<WordPart> = word.parts ?? [
@@ -511,7 +476,6 @@ class MappedTextBuilder {
     return true;
   }
 
-  /** Adds a literal, resolving backslash escapes; false when the result disagrees with the parser. */
   addEscaped(literal: { pos: number; text: string; value: string }, doubleQuoted: boolean) {
     const before = this.text.length;
     const { text, pos } = literal;

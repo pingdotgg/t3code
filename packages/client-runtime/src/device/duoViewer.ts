@@ -33,7 +33,6 @@ import { duoScreenSettled, type DuoPose } from "./duoControl.ts";
 
 export interface DuoViewer {
   readonly setScreen: (screen: DeviceScreenSize | null) => void;
-  /** A pinch holds the leaf under it and follows the fingers; a fold button eases the hinge and re-presents the device. */
   readonly setHingePreview: (angle: number | null, pinch?: boolean) => void;
   readonly setInteractionActive: (active: boolean, mode?: "touch" | "orbit") => void;
   readonly rejectOrientation: () => void;
@@ -51,7 +50,6 @@ export interface DuoViewer {
   readonly dispose: () => void;
 }
 
-/** On-demand renderer for the articulated body. One inner framebuffer spans both leaves; HID belongs to the stream. */
 export function createDuoViewer(options: {
   canvas: HTMLCanvasElement;
   sources: Record<DuoPanelId, HTMLCanvasElement>;
@@ -140,7 +138,6 @@ export function createDuoViewer(options: {
     if (!model || !screen?.supportsPhysicalOrientation || !options.onPanelRequested)
       return activeSnaps();
     const cover = duoViewSnaps(model.restFrames(1), 1);
-    // A shut inner display is occluded and cannot become a useful rest view.
     return angle > 20 && angle < 180
       ? [...duoViewSnaps(model.restFrames(3), 3), ...cover]
       : activeSnaps();
@@ -200,7 +197,6 @@ export function createDuoViewer(options: {
     model.setAngle(angle);
     appliedAngle = angle;
     if (before && hingeLeaf) {
-      // The primary surface stays in camera space; its partner supplies the fold.
       // Rebase both the displayed rotation and its rest target so releasing a
       // pinch cannot resume the pre-fold body rotation.
       const correction = before.multiply(model.leafRotation(hingeLeaf).invert());
@@ -332,10 +328,6 @@ export function createDuoViewer(options: {
       screen = next;
       const changedPose = next?.hingePose && next.hingePose !== previous?.hingePose;
       const folding = hingeLeaf !== null && !changedPose;
-      // A hinge change no held leaf owns re-presents the device, centered on the
-      // hinge, once the display that shows the new fold reports. Across the closed
-      // position that takes steps: the outgoing display first reports the incoming
-      // one's orientation.
       const angleBefore = previous?.hingeAngle ?? (previous?.screenId === 1 ? 0 : 180);
       const angleAfter = next?.hingeAngle ?? (next?.screenId === 1 ? 0 : 180);
       if (!next || folding || changedPose) foldPending = false;
@@ -360,9 +352,6 @@ export function createDuoViewer(options: {
       }
       // A command reply/config confirms hinge state. Display identity, never an angle heuristic, owns input.
       targetAngle = previewAngle ?? next?.hingeAngle ?? (next?.screenId === 1 ? 0 : 180);
-      // Native angle commands clear hingePose. While a leaf is held (a pinch, or a
-      // fold on a stand) they change articulation only and preserve the viewing
-      // pose. A separate rotation clears the physical preset and follows panel orientation.
       if (
         firstPose ||
         changedPose ||
@@ -391,11 +380,9 @@ export function createDuoViewer(options: {
             new Quaternion().setFromAxisAngle(new Vector3(0, 0, 1), roll),
           );
         if (next?.screenId === 1 && !landedFold && physicalPose !== "tent") {
-          // Native readback can retain the cover even for an open physical preset.
-          // A screen-facing rest must use that display's actual hinged normal.
-          // A landed fold is shut, so its pose already faces the cover; the
-          // hinge is still moving and its current normal would be stale.
-          // Tent stands on both edges with the cover outward; facing it flat would tip it over.
+          // Open presets can retain native cover readback; face the display's actual hinged normal.
+          // Landed folds already face the cover while the hinge normal is stale.
+          // Tent must stand on both edges with the cover outward; facing it flat would tip it over.
           const snap = nearestDuoView(targetPresentation, activeSnaps());
           if (snap) targetPresentation.copy(snap.rotation);
         }
@@ -431,8 +418,6 @@ export function createDuoViewer(options: {
       if (!moving()) lastTime = performance.now();
       previewAngle = next;
       if (next !== null && !pinch) {
-        // A fold button holds no leaf, so the device is presented, centered on
-        // the hinge, once the fold lands.
         hingeLeaf = null;
       } else if (next !== null && !hingeLeaf && model) {
         clearHandoff();
@@ -442,7 +427,6 @@ export function createDuoViewer(options: {
       }
       orbit.hold(interactionActive || (pinch && next !== null), performance.now());
       targetAngle = next ?? screen?.hingeAngle ?? (screen?.screenId === 1 ? 0 : 180);
-      // A pinch follows the fingers; anything else eases toward the target.
       if (next !== null && pinch) {
         angle = next;
         applyPose();
@@ -561,9 +545,6 @@ export function createDuoViewer(options: {
       if (!leaf) return false;
       clearHandoff();
       requestedOrientation = null;
-      // The right inner leaf and the shut cover share the front-facing plane.
-      // Holding that leaf lets the cover replace the inner image without a
-      // half turn, even when the pinch starts over the moving partner.
       hingeLeaf = screen.screenId === 1 && angle > 20 ? "left" : "right";
       orbit.setPose(orbit.rotation.clone(), performance.now(), true);
       model.cancelInput();

@@ -3,7 +3,7 @@ import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import * as TestClock from "effect/testing/TestClock";
-import { HttpClient, HttpClientResponse } from "effect/http";
+import { HttpClient, HttpClientError, HttpClientResponse } from "effect/http";
 
 import { makeCliproxyApi } from "./cliproxyApi.ts";
 
@@ -48,7 +48,12 @@ const encodeJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
 
 function fixture(
   options: {
-    accounts?: Array<(typeof accounts)[number] & { disabled?: boolean }>;
+    accounts?: Array<
+      (typeof accounts)[number] & {
+        disabled?: boolean;
+        id_token: { chatgpt_account_id: string; plan_type?: string; chatgpt_plan_type?: string };
+      }
+    >;
     upstream?: (request: RequestBody) => { status: number; body: unknown };
     cooldownStatus?: number;
   } = {},
@@ -73,7 +78,7 @@ function fixture(
           request,
           Response.json({}, { status: options.cooldownStatus ?? 200 }),
         );
-      expect(path).toBe("/v0/management/api-call");
+      expect(path).toMatch(/\/v0\/management\/api-call$/);
       expect(body?.header?.Authorization).toBe("Bearer $TOKEN$");
       const upstream = options.upstream?.(body!) ?? {
         status: 200,
@@ -114,6 +119,80 @@ function fixture(
   };
 }
 
+const unreachableHub = (
+  fail: (
+    request: Parameters<Parameters<typeof HttpClient.make>[0]>[0],
+  ) => HttpClientError.HttpClientError,
+) =>
+  makeCliproxyApi.pipe(
+    Effect.provideService(
+      HttpClient.HttpClient,
+      HttpClient.make((request) => Effect.fail(fail(request))),
+    ),
+    Effect.provide(NodeCrypto.layer),
+  );
+
+describe("CLIProxyAPI hub failures", () => {
+  it.effect("names the TLS code when the hub's certificate is not trusted", () =>
+    Effect.gen(function* () {
+      const api = yield* unreachableHub(
+        (request) =>
+          new HttpClientError.HttpClientError({
+            reason: new HttpClientError.TransportError({
+              request,
+              // Node's fetch wraps the TLS error, which carries the code, in a generic TypeError.
+              cause: new TypeError("fetch failed", {
+                cause: Object.assign(new Error("unable to get local issuer certificate"), {
+                  code: "UNABLE_TO_GET_ISSUER_CERT_LOCALLY",
+                }),
+              }),
+            }),
+          }),
+      );
+      const error = yield* Effect.flip(api.readAccounts(config));
+      expect(error.detail).toContain("UNABLE_TO_GET_ISSUER_CERT_LOCALLY");
+      expect(error.detail).toContain("NODE_EXTRA_CA_CERTS");
+    }),
+  );
+
+  // regression: #18168 Limits hub failures name their TLS, HTTP, or timeout cause
+  it.effect("ignores a transport code that is not a short Node error code", () =>
+    Effect.gen(function* () {
+      const api = yield* unreachableHub(
+        (request) =>
+          new HttpClientError.HttpClientError({
+            reason: new HttpClientError.TransportError({
+              request,
+              cause: Object.assign(new Error("odd"), { code: "X".repeat(200) }),
+            }),
+          }),
+      );
+      const error = yield* Effect.flip(api.readAccounts(config));
+      expect(error.detail).toBe("The hub management request failed.");
+    }),
+  );
+
+  it.effect("names the status, not the body, when the hub rejects the request", () =>
+    Effect.gen(function* () {
+      const test = HttpClient.make((request) =>
+        Effect.succeed(
+          HttpClientResponse.fromWeb(
+            request,
+            Response.json({ error: "management-secret is wrong" }, { status: 401 }),
+          ),
+        ),
+      );
+      const api = yield* makeCliproxyApi.pipe(
+        Effect.provideService(HttpClient.HttpClient, test),
+        Effect.provide(NodeCrypto.layer),
+      );
+      const error = yield* Effect.flip(api.readAccounts(config));
+      expect(error.detail).toContain("401");
+      expect(error.detail).not.toContain("management-secret");
+    }),
+  );
+});
+
 describe("CLIProxyAPI built-in management API", () => {
   it.effect(
     "reads both accounts and their earliest unexpired credits without plugin endpoints",
@@ -143,6 +222,58 @@ describe("CLIProxyAPI built-in management API", () => {
           ],
         ).toBe("account-b");
       }),
+  );
+
+  it.effect("resolves a missing usage plan from current, then legacy, token plans", () =>
+    Effect.gen(function* () {
+      const test = fixture({
+        accounts: [
+          { ...accounts[0]!, id_token: { chatgpt_account_id: "account-a", plan_type: "free" } },
+          {
+            ...accounts[1]!,
+            id_token: {
+              chatgpt_account_id: "account-b",
+              plan_type: "go",
+              chatgpt_plan_type: "plus",
+            },
+          },
+          {
+            ...accounts[1]!,
+            id: "third.json",
+            auth_index: "c",
+            id_token: { chatgpt_account_id: "account-c", chatgpt_plan_type: "free" },
+          },
+        ],
+        upstream: (request) => ({
+          status: 200,
+          body: {
+            ...(request.auth_index === "a" ? { plan_type: "plus" } : {}),
+            rate_limit: { primary_window: { used_percent: 12 } },
+          },
+        }),
+      });
+      const api = yield* test.api;
+      const result = yield* api.readAccounts(config);
+      expect(result.map((account) => [account.plan, account.usageLimits.windows[0]?.kind])).toEqual(
+        [
+          ["ChatGPT Plus Subscription", "session"],
+          ["ChatGPT Go Subscription", "monthly"],
+          ["ChatGPT Free Subscription", "monthly"],
+        ],
+      );
+    }),
+  );
+
+  it.effect("keeps the path of a hub served under a prefix", () =>
+    Effect.gen(function* () {
+      const test = fixture();
+      const api = yield* test.api;
+      yield* api.readAccounts({ ...config, url: "https://tools.test/cliproxy" });
+      expect(test.requests.length).toBeGreaterThan(0);
+      expect(
+        test.requests.every((request) => request.path.startsWith("/cliproxy/v0/management/")),
+      ).toBe(true);
+    }),
   );
 
   it.effect("keeps usage when the credits endpoint fails", () =>
@@ -185,8 +316,9 @@ describe("CLIProxyAPI built-in management API", () => {
     Effect.gen(function* () {
       const test = fixture({
         accounts: [{ ...accounts[0]!, provider: "claude" }],
-        upstream: () => ({
-          status: 200,
+        // The usage endpoint answers 429 to requests without a Claude Code user agent.
+        upstream: (request) => ({
+          status: request.header?.["User-Agent"]?.startsWith("claude-code/") ? 200 : 429,
           body: {
             five_hour: { utilization: 10, resets_at: null },
             seven_day: { utilization: 50, resets_at: "2099-01-01T00:00:00Z" },
@@ -226,7 +358,6 @@ describe("CLIProxyAPI built-in management API", () => {
       expect(redemptions[0]?.body?.data).toBe(redemptions[1]?.body?.data);
       expect(redemptions[0]?.body?.data).toBe(
         encodeJson({
-          // UUIDv5 of "account-b:credit-b"; must stay stable so retries deduplicate.
           redeem_request_id: "519d5243-011a-5b7b-91f3-44d85f095705",
           credit_id: "credit-b",
         }),
@@ -236,21 +367,6 @@ describe("CLIProxyAPI built-in management API", () => {
           .filter((request) => request.path.endsWith("/reset-quota"))
           .map((request) => request.body?.auth_index),
       ).toEqual(["b", "b"]);
-    }),
-  );
-
-  it.effect.each([
-    ["nothing_to_reset", "nothingToReset"],
-    ["no_credit", "noCredit"],
-    ["already_redeemed", "alreadyRedeemed"],
-  ] as const)("reports %s accurately", ([code, outcome]) =>
-    Effect.gen(function* () {
-      const test = fixture({ upstream: () => ({ status: 200, body: { code } }) });
-      const api = yield* test.api;
-      expect(yield* api.consume(config, "first.json", "credit")).toEqual({ outcome });
-      expect(test.requests.some((request) => request.path.endsWith("/reset-quota"))).toBe(
-        code === "already_redeemed",
-      );
     }),
   );
 

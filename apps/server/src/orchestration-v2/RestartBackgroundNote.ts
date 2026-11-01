@@ -6,32 +6,49 @@ import type {
   OrchestrationV2RunAttempt,
   OrchestrationV2TurnItem,
 } from "@t3tools/contracts";
-import { runRanAfter } from "@t3tools/shared/orchestrationV2ThreadError";
+import { latestRootProviderFailure, runRanAfter } from "@t3tools/shared/orchestrationV2ThreadError";
 
 type Work = OrchestrationV2RestartCancelledBackgroundWork;
 type Attempt = Pick<OrchestrationV2RunAttempt, "id" | "runId">;
 
 const MAX_LABEL_LENGTH = 160;
 
-function compactLabel(value: unknown): string | undefined {
+function compactLabel(value: unknown, maxLength = MAX_LABEL_LENGTH): string | undefined {
   if (typeof value !== "string") return undefined;
   const text = value.replaceAll(/\s+/g, " ").trim();
   if (text.length === 0) return undefined;
-  return text.length > MAX_LABEL_LENGTH ? `${text.slice(0, MAX_LABEL_LENGTH - 1)}…` : text;
+  return text.length > maxLength ? `${text.slice(0, maxLength - 1)}…` : text;
 }
 
-/** Describes a background-capable turn item that restart recovery cancels. */
-export function cancelledTurnItemWork(item: OrchestrationV2TurnItem): Work | undefined {
+/** A bounded label that keeps its id suffix whole whenever it fits. */
+function labelWithId(name: unknown, fallback: string, suffix: string): string {
+  const budget = MAX_LABEL_LENGTH - suffix.length;
+  if (budget < 2) return compactLabel(`${fallback}${suffix}`) ?? fallback;
+  return `${compactLabel(name, budget) ?? compactLabel(fallback, budget)}${suffix}`;
+}
+
+/** resumeId overrides the item id for native resume, such as Codex's child provider-thread id. */
+export function cancelledTurnItemWork(
+  item: OrchestrationV2TurnItem,
+  resumeId?: string,
+): Work | undefined {
   switch (item.type) {
-    case "subagent":
+    case "subagent": {
+      const nativeId =
+        item.origin === "provider_native" ? (resumeId ?? item.nativeItemRef?.nativeId) : undefined;
       return {
         kind: "subagent",
-        label: compactLabel(item.title) ?? compactLabel(item.prompt) ?? "subagent",
+        label: labelWithId(
+          compactLabel(item.title) === undefined ? item.prompt : item.title,
+          "subagent",
+          nativeId === undefined ? "" : ` (id ${nativeId})`,
+        ),
         id: item.id,
       };
+    }
     case "command_execution":
       return {
-        kind: "shell",
+        kind: item.monitor === true ? "monitor" : "shell",
         label: compactLabel(item.input) ?? compactLabel(item.title) ?? "background command",
         id: item.id,
       };
@@ -51,6 +68,17 @@ export function cancelledTurnItemWork(item: OrchestrationV2TurnItem): Work | und
   }
 }
 
+/** Returns the awaiting provider thread; native subagents can run on children while their launching turn awaits them. */
+export function awaitingProviderThreadId(
+  item: OrchestrationV2TurnItem,
+  runs: ReadonlyArray<Pick<OrchestrationV2Run, "id" | "providerThreadId">>,
+): OrchestrationV2Run["providerThreadId"] | undefined {
+  const runProviderThreadId = runs.find((run) => run.id === item.runId)?.providerThreadId;
+  return item.type === "subagent" && item.origin === "provider_native"
+    ? (runProviderThreadId ?? item.providerThreadId)
+    : (item.providerThreadId ?? runProviderThreadId);
+}
+
 function restartWorkKind(task: OrchestrationV2PendingBackgroundTask): Work["kind"] {
   switch (task.kind) {
     case "command":
@@ -67,8 +95,14 @@ function restartWorkKind(task: OrchestrationV2PendingBackgroundTask): Work["kind
   }
 }
 
-/** Describes a provider-reported background task (the provider-thread roster). */
 export function cancelledRosterTaskWork(task: OrchestrationV2PendingBackgroundTask): Work {
+  if (task.parentTaskId !== undefined) {
+    return {
+      kind: "subagent",
+      label: labelWithId(task.description, "background task", ` (subagent ${task.parentTaskId})`),
+      id: task.parentTaskId,
+    };
+  }
   const kind = restartWorkKind(task);
   const description = compactLabel(task.description);
   return {
@@ -78,19 +112,17 @@ export function cancelledRosterTaskWork(task: OrchestrationV2PendingBackgroundTa
         description === undefined ? task.taskId : `${description} (id ${task.taskId})`,
       ) ?? "background task",
     id: task.taskId,
+    ...(task.awaited === true ? { awaited: true as const } : {}),
   };
 }
 
 const MAX_NOTE_ENTRIES = 10;
 
-/**
- * Provider-facing text for work the model still expects to hear back from.
- * Bounded (entries and label length) so it cannot crowd out the turn's context.
- */
+/** Bounds entries and labels to protect the context budget. */
 export function restartCancelledBackgroundWorkNote(work: ReadonlyArray<Work>): string {
   const omitted = work.length - MAX_NOTE_ENTRIES;
   return [
-    "Note: the T3 server restarted, and this background work was cancelled before it finished. It will not report back:",
+    "Note: the T3 server restarted, and this background work was cancelled before it finished. It will not report back on its own, so resume or restart what you still need and wait for its result:",
     ...work.slice(0, MAX_NOTE_ENTRIES).map((entry) => `- ${entry.kind}: ${entry.label}`),
     ...(omitted > 0 ? [`- and ${omitted} more`] : []),
   ].join("\n");
@@ -101,18 +133,12 @@ type ProviderTurnState = Pick<
   "runAttemptId" | "providerThreadId" | "status"
 >;
 
-/**
- * A run whose turn had settled before the restart cancelled its background
- * work. Continuing it prompts the provider with the note. A run cut mid-turn
- * instead resumes that turn, which Codex does natively without a prompt.
- */
 export function isRestartNoteSource(
   source: Pick<OrchestrationV2Run, "status" | "activeAttemptId" | "restartCancelledBackgroundWork">,
   providerTurns: ReadonlyArray<Pick<ProviderTurnState, "runAttemptId" | "status">>,
 ): boolean {
   return (
-    // A failed or interrupted turn is never continued. Recovery cancels a
-    // waiting run it cannot checkpoint, so a cancelled one still qualifies.
+    // Failed and interrupted turns never continue; recovery-cancelled waiting runs still qualify.
     (source.status === "completed" ||
       source.status === "waiting" ||
       source.status === "cancelled") &&
@@ -124,12 +150,91 @@ export function isRestartNoteSource(
 }
 
 /**
- * The note a restart continuation of `source` carries, and whether the turn it
- * continues had settled (the note is then the whole prompt). A continuation cut
- * before its provider turn completed may not have delivered its own note:
- * adapters can announce a running turn before accepting the prompt. Carry the
- * note forward until a completed turn proves delivery.
+ * Matches the Working-section hold: a shell or monitor wakes it only when the agent said it
+ * waits on it. Most are dev servers and their watchdogs, so their note waits for the next
+ * user message.
  */
+export function isAwaitedWork(work: Pick<Work, "kind" | "awaited">): boolean {
+  return work.awaited === true || (work.kind !== "shell" && work.kind !== "monitor");
+}
+
+export function runOutcome(
+  run: Pick<OrchestrationV2Run, "status" | "restartCancelledBackgroundWork">,
+): OrchestrationV2Run["status"] {
+  return (run.status === "completed" || run.status === "cancelled") &&
+    (run.restartCancelledBackgroundWork ?? []).some(isAwaitedWork)
+    ? "interrupted"
+    : run.status;
+}
+
+/** Unstarted runs have no lost work to continue, except prepared continuations carrying a source run. */
+export function neverStarted(
+  run: Pick<OrchestrationV2Run, "startedAt" | "restartContinuationOfRunId">,
+): boolean {
+  return run.startedAt === null && run.restartContinuationOfRunId === undefined;
+}
+
+/** Restart-cancelled unstarted runs supersede nothing; user-stopped unstarted runs do. */
+export function cancelledBeforeStart(
+  run: Pick<OrchestrationV2Run, "status" | "startedAt" | "restartContinuationOfRunId">,
+): boolean {
+  return run.status === "cancelled" && neverStarted(run);
+}
+
+/** The provider never accepted this continuation's prompt, so starting it again repeats nothing. */
+export function continuationFailedBeforePrompt(
+  run: Pick<OrchestrationV2Run, "status" | "activeAttemptId" | "restartContinuationOfRunId">,
+  providerTurns: ReadonlyArray<Pick<ProviderTurnState, "runAttemptId">>,
+): boolean {
+  return (
+    run.status === "failed" &&
+    run.restartContinuationOfRunId !== undefined &&
+    !providerTurns.some((turn) => turn.runAttemptId === run.activeAttemptId)
+  );
+}
+
+const CONTINUATION_START_RETRY_DELAYS_MS = [60_000, 180_000];
+
+/** Backoff before restarting a continuation that failed to start, or undefined to let it fail. */
+export function continuationStartRetryDelayMs(
+  run: OrchestrationV2Run,
+  projection: {
+    readonly runs: ReadonlyArray<OrchestrationV2Run>;
+    readonly providerTurns: ReadonlyArray<Pick<ProviderTurnState, "runAttemptId">>;
+    readonly turnItems: Parameters<typeof latestRootProviderFailure>[1];
+  },
+): number | undefined {
+  if (!continuationFailedBeforePrompt(run, projection.providerTurns)) return;
+  // These fail the same way however often they start.
+  const failureClass = latestRootProviderFailure(run, projection.turnItems)?.class;
+  if (
+    failureClass === "usage_limit" ||
+    failureClass === "permission_error" ||
+    failureClass === "validation_error"
+  )
+    return;
+  let failedStarts = 0;
+  for (
+    let current: OrchestrationV2Run | undefined = run;
+    current !== undefined && continuationFailedBeforePrompt(current, projection.providerTurns);
+    current = projection.runs.find(
+      (candidate) => candidate.id === current?.restartContinuationOfRunId,
+    )
+  )
+    failedStarts += 1;
+  return CONTINUATION_START_RETRY_DELAYS_MS[failedStarts - 1];
+}
+
+export function isRestartContinuationSource(
+  source: Pick<OrchestrationV2Run, "status" | "activeAttemptId" | "restartCancelledBackgroundWork">,
+  providerTurns: ReadonlyArray<Pick<ProviderTurnState, "runAttemptId" | "status">>,
+): boolean {
+  return isRestartNoteSource(source, providerTurns)
+    ? (source.restartCancelledBackgroundWork ?? []).some(isAwaitedWork)
+    : source.status === "cancelled";
+}
+
+/** Running does not prove prompt acceptance; carry continuation notes until a completed turn proves delivery. */
 export function restartContinuationNote(
   source: OrchestrationV2Run,
   runs: ReadonlyArray<OrchestrationV2Run>,
@@ -159,11 +264,6 @@ export function restartContinuationNote(
   return { work, settled: isRestartNoteSource(current, providerTurns) };
 }
 
-/**
- * A restart continuation prompted with the note rather than a native resume.
- * A turn cut mid-way that lost background work is prompted too, so the note
- * is delivered with it; only a continuation without a note resumes natively.
- */
 export function isRestartNoteContinuation(
   run: Pick<OrchestrationV2Run, "restartContinuationOfRunId">,
   runs: ReadonlyArray<OrchestrationV2Run>,
@@ -180,15 +280,7 @@ export function isRestartNoteContinuation(
   );
 }
 
-/**
- * Work cancelled by a restart that the run's provider thread has not been told
- * about yet. The note belongs to the provider thread that lost the work: turns
- * on another provider (after a switch) neither owe it nor deliver it. A later
- * completed turn on the same provider thread proves delivery, so the pending
- * set is derived rather than cleared. Compactions and
- * resumed turns carry no note, and a rolled-back run left native history, so
- * none of them counts as delivery. A note continuation's own prompt is the note.
- */
+/** Derive delivery from later completed turns on the same provider thread, excluding compactions, resumes, and rolled-back runs. */
 export function pendingRestartCancelledBackgroundWork(input: {
   readonly runs: ReadonlyArray<OrchestrationV2Run>;
   readonly providerTurns: ReadonlyArray<ProviderTurnState>;
@@ -203,12 +295,10 @@ export function pendingRestartCancelledBackgroundWork(input: {
     | "restartContinuationOfRunId"
     | "activeAttemptId"
   >;
-  /** Include earlier attempts: a steer replaces the attempt but not the run. */
+
   readonly attempts: ReadonlyArray<Attempt>;
 }): ReadonlyArray<Work> {
   const isCompaction = (run: typeof input.run) => input.compactionMessageIds.has(run.userMessageId);
-  // The current run prepends the note unless it is a compaction or a
-  // continuation (whose own prompt is the note, or which resumes natively).
   if (
     input.run.providerThreadId === null ||
     input.run.restartContinuationOfRunId !== undefined ||
@@ -235,8 +325,7 @@ export function pendingRestartCancelledBackgroundWork(input: {
       (candidate.restartContinuationOfRunId === undefined ||
         isRestartNoteContinuation(candidate, input.runs, input.providerTurns, input.attempts)),
   );
-  // A steer restarts this run on a new attempt: an earlier attempt that already
-  // reached the provider delivered the note, so the replacement must not repeat it.
+  // Earlier attempts may already have delivered the note; a steer's replacement attempt must not repeat it.
   const alreadyDelivered = input.attempts.some(
     (attempt) =>
       attempt.runId === input.run.id &&
@@ -262,7 +351,6 @@ export function mergeRestartCancelledBackgroundWork(
   current: ReadonlyArray<Work>,
   added: ReadonlyArray<Work>,
 ): ReadonlyArray<Work> {
-  // Rows recorded before ids existed fall back to kind + label.
   const identity = (entry: Work) => entry.id ?? `${entry.kind}\u0000${entry.label}`;
   const seen = new Set(current.map(identity));
   const merged = [...current];

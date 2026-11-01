@@ -103,7 +103,6 @@ export function assertClaudeSubagentOutput(
       ),
       `child thread ${subagent.childThreadId} must contain the subagent response`,
     );
-    // Progress stays on the subagent card; the child shows the work itself.
     assert.isFalse(
       childProjection.turnItems.some(
         (item) => item.type === "reasoning" && item.text === expectedProgress,

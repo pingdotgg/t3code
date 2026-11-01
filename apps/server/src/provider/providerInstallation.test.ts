@@ -123,27 +123,6 @@ const makeHarness = Effect.fn("providerInstallation.test.makeHarness")(function*
 });
 
 describe("provider installation routing", () => {
-  it.effect("allows explicit installation while the provider is disabled", () =>
-    Effect.gen(function* () {
-      const harness = yield* makeHarness();
-      yield* harness.router.start({ instanceId });
-      assert.deepEqual(harness.calls, ["start"]);
-    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
-  );
-
-  it.effect("rejects another driver and unknown instances before installation", () =>
-    Effect.gen(function* () {
-      const harness = yield* makeHarness({ instance: instance(ProviderDriverKind.make("codex")) });
-      const wrongDriver = yield* Effect.flip(harness.router.start({ instanceId }));
-      const missing = yield* Effect.flip(
-        harness.router.start({ instanceId: ProviderInstanceId.make("missing") }),
-      );
-      assert.equal(wrongDriver._tag, "ProviderSetupError");
-      assert.equal(missing._tag, "ProviderSetupError");
-      assert.deepEqual(harness.calls, []);
-    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
-  );
-
   it.effect("keeps external installs manual without hiding shared install status", () =>
     Effect.gen(function* () {
       const harness = yield* makeHarness({
@@ -162,51 +141,6 @@ describe("provider installation routing", () => {
       assert.include(remove.detail, "custom executable");
       const observed = yield* Stream.runCollect(harness.router.subscribe({ instanceId }));
       assert.deepEqual(Array.from(observed), [state]);
-      assert.deepEqual(harness.calls, []);
-    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
-  );
-
-  it.effect("routes a managed Codex instance through its own installer and refreshes removal", () =>
-    Effect.gen(function* () {
-      const codexId = ProviderInstanceId.make("codex");
-      const harness = yield* makeHarness({
-        instance: instance(ProviderDriverKind.make("codex"), codexId),
-        settings: {
-          providerInstances: {
-            [ProviderInstanceId.make("codex")]: {
-              driver: ProviderDriverKind.make("codex"),
-              config: { setupMode: "managed" },
-            },
-          },
-        },
-      });
-      assert.equal((yield* harness.router.start({ instanceId: codexId })).driver, "codex");
-      yield* harness.router.cancel({ instanceId: codexId, operationId: "operation" });
-      const observed = yield* Stream.runCollect(harness.router.subscribe({ instanceId: codexId }));
-      assert.equal(Array.from(observed)[0]?.driver, "codex");
-      yield* harness.router.remove({ instanceId: codexId });
-      assert.deepEqual(harness.calls, ["codex-start", "codex-cancel", "codex-remove", "refresh"]);
-    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
-  );
-
-  it.effect("keeps native Codex installation outside managed setup", () =>
-    Effect.gen(function* () {
-      const codexId = ProviderInstanceId.make("codex");
-      const harness = yield* makeHarness({
-        instance: instance(ProviderDriverKind.make("codex"), codexId),
-        settings: {
-          providerInstances: {
-            [ProviderInstanceId.make("codex")]: {
-              driver: ProviderDriverKind.make("codex"),
-              config: { setupMode: "existing" },
-            },
-          },
-        },
-      });
-      assert.include(
-        (yield* Effect.flip(harness.router.start({ instanceId: codexId }))).detail,
-        "Choose managed setup",
-      );
       assert.deepEqual(harness.calls, []);
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );

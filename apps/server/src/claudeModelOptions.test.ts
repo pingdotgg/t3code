@@ -30,17 +30,6 @@ describe("compileClaudeModelSelection", () => {
     });
   });
 
-  it("compiles fast mode only for models that expose it", () => {
-    expect(
-      compileClaudeModelSelection(selection("claude-opus-4-6", [{ id: "fastMode", value: true }]))
-        .settings,
-    ).toEqual({ fastMode: true });
-    expect(
-      compileClaudeModelSelection(selection("claude-opus-4-6", [{ id: "fastMode", value: false }]))
-        .settings,
-    ).toEqual({ fastMode: false });
-  });
-
   it("uses the model default SDK effort alongside prompt-injected effort", () => {
     expect(
       compileClaudeModelSelection(
@@ -49,10 +38,14 @@ describe("compileClaudeModelSelection", () => {
     ).toMatchObject({ effort: "high", promptEffort: "ultrathink" });
   });
 
-  it("compiles the thinking toggle for models that expose it", () => {
+  it("keeps explicit effort for models missing from the local catalog", () => {
     expect(
-      compileClaudeModelSelection(selection("claude-haiku-4-5", [{ id: "thinking", value: false }]))
-        .settings,
-    ).toEqual({ alwaysThinkingEnabled: false });
+      compileClaudeModelSelection(
+        selection("claude-pool-model-not-in-catalog", [{ id: "effort", value: "max" }]),
+      ).effort,
+    ).toBe("max");
+    expect(
+      compileClaudeModelSelection(selection("claude-pool-model-not-in-catalog", [])).effort,
+    ).toBeUndefined();
   });
 });

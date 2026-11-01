@@ -1,8 +1,10 @@
 import {
   ORCHESTRATION_CACHE_SCHEMA_VERSION,
-  ORCHESTRATION_THREAD_CACHE_SCHEMA_VERSION,
-  StoredOrchestrationThreadSnapshot,
+  COMPACT_THREAD_CACHE_SCHEMA_VERSION,
+  decodeStoredThreadSnapshot,
+  encodeStoredThreadSnapshot,
   Persistence,
+  makeStoredShellSnapshotEncoder,
 } from "@t3tools/client-runtime/platform";
 import { type EnvironmentId, ServerConfig, VcsListRefsResult } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
@@ -11,7 +13,6 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
 import * as MobileDatabase from "../persistence/mobile-database";
-import { makeStoredShellSnapshotEncoder } from "./shell-cache-encoding";
 import {
   attachProjectFaviconDatabase,
   projectFaviconDatabaseCache,
@@ -33,12 +34,6 @@ const StoredVcsRefs = Schema.Struct({
   refs: VcsListRefsResult,
 });
 
-const decodeStoredThreadSnapshot = Schema.decodeUnknownEffect(
-  Schema.fromJsonString(StoredOrchestrationThreadSnapshot),
-);
-const encodeStoredThreadSnapshot = Schema.encodeEffect(
-  Schema.fromJsonString(StoredOrchestrationThreadSnapshot),
-);
 const decodeStoredServerConfig = Schema.decodeUnknownEffect(
   Schema.fromJsonString(StoredServerConfig),
 );
@@ -113,8 +108,6 @@ export const make = Effect.fn("MobileEnvironmentCacheStore.make")(function* () {
         select: (stored) =>
           stored.environmentId === environmentId ? Option.some(stored.snapshot) : Option.none(),
       }).pipe(
-        // Read cached project icons in parallel with the shell so the first rows can show
-        // them, instead of making the thread list wait for the icon read after the decode.
         Effect.zipWith(
           Effect.promise(() => projectFaviconDatabaseCache.hydrate()),
           (snapshot) => snapshot,
@@ -149,19 +142,12 @@ export const make = Effect.fn("MobileEnvironmentCacheStore.make")(function* () {
     saveThread: Effect.fn("MobileEnvironmentCache.saveThread")(function* (environmentId, snapshot) {
       const threadId = snapshot.projection.thread.id;
       const payload = yield* encodeStoredThreadSnapshot({
-        schemaVersion: ORCHESTRATION_THREAD_CACHE_SCHEMA_VERSION,
         environmentId,
         threadId,
         snapshot,
       }).pipe(Effect.mapError((cause) => persistenceError("save-thread", cause)));
       yield* database
-        .saveCache(
-          environmentId,
-          "thread",
-          threadId,
-          ORCHESTRATION_THREAD_CACHE_SCHEMA_VERSION,
-          payload,
-        )
+        .saveCache(environmentId, "thread", threadId, COMPACT_THREAD_CACHE_SCHEMA_VERSION, payload)
         .pipe(Effect.mapError(mapDatabaseError("save-thread")));
     }),
     removeThread: Effect.fn("MobileEnvironmentCache.removeThread")((environmentId, threadId) =>

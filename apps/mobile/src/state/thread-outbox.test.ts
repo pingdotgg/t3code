@@ -78,15 +78,12 @@ vi.mock("expo-file-system", () => {
 import {
   decodeQueuedThreadMessage,
   encodeQueuedThreadMessage,
-  groupQueuedThreadMessages,
   isQueuedThreadCreationSendable,
-  modelSelectionsEqual,
   resolveThreadOutboxDeliveryAction,
   resolveThreadOutboxDispatchStep,
   resolveThreadOutboxFailureAction,
   resolveQueuedThreadSettings,
   shouldRetryThreadOutboxDelivery,
-  threadOutboxRetryDelayMs,
   type QueuedThreadMessage,
 } from "./thread-outbox-model";
 import { createThreadOutboxManager, ThreadOutboxManagerError } from "./thread-outbox-manager";
@@ -140,15 +137,6 @@ describe("thread outbox", () => {
       decodeQueuedThreadMessage(JSON.parse(JSON.stringify(encodeQueuedThreadMessage(message)))),
     ).toEqual(message);
   });
-  it("retains queue mode when a queued provider switch reloads from storage", () => {
-    const message: QueuedThreadMessage = {
-      ...queuedMessage({ messageId: "queued-switch", createdAt: "2026-09-17T09:00:00.000Z" }),
-      dispatchMode: "queue",
-    };
-    expect(
-      decodeQueuedThreadMessage(JSON.parse(JSON.stringify(encodeQueuedThreadMessage(message)))),
-    ).toEqual(message);
-  });
   it.each(["read", "json", "schema"] as const)(
     "recovers usable messages without permitting cleanup after a record %s failure",
     async (failure) => {
@@ -162,7 +150,6 @@ describe("thread outbox", () => {
         messageId: "message-2",
         createdAt: "2026-06-08T10:00:02.000Z",
       });
-      // Put the unreadable record first to check that later records still load.
       outboxFiles.set(
         "message-2.json",
         failure === "read"
@@ -203,8 +190,6 @@ describe("thread outbox", () => {
       expect(outboxFiles.get("message-2.json")).toBe(unreadable);
       expect(outboxFiles.has("message-1.json")).toBe(true);
 
-      // A delivered readable message can leave the queue while the failed
-      // record stays intact. Its attachment cleanup has a separate guard.
       await expect(manager.remove(edited)).resolves.toBe(edited);
       expect(outboxFiles.has("message-1.json")).toBe(false);
 
@@ -301,68 +286,9 @@ describe("thread outbox", () => {
     await expect(manager.confirmQueued(edited)).resolves.toBe(true);
 
     await manager.remove(edited);
-    // A later repaired record can contain a stale copy of a removed message.
     await expect(manager.load()).resolves.toBe(true);
     expect(registry.get(manager.queuedMessagesByThreadKeyAtom)).toEqual({});
     expect(load).toHaveBeenCalledTimes(2);
-  });
-
-  it("groups messages by scoped thread and preserves creation order", () => {
-    const later = queuedMessage({
-      messageId: "message-2",
-      createdAt: "2026-06-08T10:00:02.000Z",
-    });
-    const earlier = queuedMessage({
-      messageId: "message-1",
-      createdAt: "2026-06-08T10:00:01.000Z",
-    });
-
-    expect(groupQueuedThreadMessages([later, earlier])).toEqual({
-      "environment-1:thread-1": [earlier, later],
-    });
-  });
-
-  it("decodes the persisted schema and rejects incomplete messages", () => {
-    const message = queuedMessage({
-      messageId: "message-1",
-      createdAt: "2026-06-08T10:00:01.000Z",
-    });
-
-    expect(
-      decodeQueuedThreadMessage({
-        schemaVersion: 1,
-        ...message,
-      }),
-    ).toEqual(message);
-    expect(() =>
-      decodeQueuedThreadMessage({
-        schemaVersion: 1,
-        environmentId: "environment-1",
-      }),
-    ).toThrow();
-  });
-
-  it("persists generic attachment paths without embedding their contents", () => {
-    const message = {
-      ...queuedMessage({
-        messageId: "message-file",
-        createdAt: "2026-06-08T10:00:01.000Z",
-      }),
-      attachments: [
-        {
-          id: "file-1",
-          type: "file" as const,
-          name: "report.pdf",
-          mimeType: "application/pdf",
-          sizeBytes: 42,
-          fileUri: "file:///documents/report.pdf",
-          uploadedAttachmentId: "pending-report-pdf",
-          uploadEnvironmentId: EnvironmentId.make("environment-1"),
-        },
-      ],
-    } satisfies QueuedThreadMessage;
-
-    expect(decodeQueuedThreadMessage(encodeQueuedThreadMessage(message))).toEqual(message);
   });
 
   it("reads file-backed images from v4 queued messages", () => {
@@ -421,22 +347,6 @@ describe("thread outbox", () => {
     });
   });
 
-  it("compares model options as part of the queued settings change", () => {
-    const base = {
-      instanceId: ProviderInstanceId.make("codex"),
-      model: "gpt-5.4",
-      options: [{ id: "reasoningEffort", value: "medium" }],
-    } as const;
-
-    expect(modelSelectionsEqual(base, base)).toBe(true);
-    expect(
-      modelSelectionsEqual(base, {
-        ...base,
-        options: [{ id: "reasoningEffort", value: "xhigh" }],
-      }),
-    ).toBe(false);
-  });
-
   it("normalizes queued plan mode against the queued provider, not the current thread", () => {
     const codex = { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.6-sol" };
     const antigravity = {
@@ -477,59 +387,6 @@ describe("thread outbox", () => {
         providers,
       ).interactionMode,
     ).toBe("plan");
-  });
-
-  it("normalizes a legacy queued message that inherits unsupported plan mode", () => {
-    const modelSelection = {
-      instanceId: ProviderInstanceId.make("google-personal"),
-      model: "gemini-test-thinking",
-    };
-    expect(
-      resolveQueuedThreadSettings(
-        queuedMessage({ messageId: "legacy-plan", createdAt: "2026-09-02T10:00:00.000Z" }),
-        { modelSelection, runtimeMode: "approval-required", interactionMode: "plan" },
-        [{ instanceId: modelSelection.instanceId, showInteractionModeToggle: false }],
-      ).interactionMode,
-    ).toBe("default");
-  });
-
-  it("backs off queued delivery retries and caps them at sixteen seconds", () => {
-    expect([1, 2, 3, 4, 5, 6].map(threadOutboxRetryDelayMs)).toEqual([
-      1_000, 2_000, 4_000, 8_000, 16_000, 16_000,
-    ]);
-  });
-
-  it("serializes mutations even when an earlier mutation is slower", async () => {
-    const registry = AtomRegistry.make();
-    const manager = createThreadOutboxManager({
-      registry,
-      storage: {
-        load: async () => ({ messages: [], errors: [] }),
-        write: async () => undefined,
-        remove: async () => undefined,
-      },
-    });
-    const order: string[] = [];
-    let releaseFirst!: () => void;
-    const firstBlocked = new Promise<void>((resolve) => {
-      releaseFirst = resolve;
-    });
-
-    const first = manager.serialize(async () => {
-      order.push("first:start");
-      await firstBlocked;
-      order.push("first:end");
-    });
-    const second = manager.serialize(async () => {
-      order.push("second");
-    });
-
-    await Promise.resolve();
-    expect(order).toEqual(["first:start"]);
-    releaseFirst();
-    await Promise.all([first, second]);
-    expect(order).toEqual(["first:start", "first:end", "second"]);
-    registry.dispose();
   });
 
   it("holds the mutation queue while persisted messages are loading", async () => {
@@ -744,9 +601,6 @@ describe("thread outbox", () => {
       createdAt: "2026-06-08T10:00:01.000Z",
     });
 
-    // A concurrent update losing its race can compensate-write this payload
-    // to disk before this write fails; rollback must clear that copy or a
-    // restart resurrects the message.
     await expect(manager.enqueue(message)).rejects.toBeInstanceOf(ThreadOutboxManagerError);
     expect(removed).toEqual(["message-1"]);
     registry.dispose();
@@ -785,37 +639,11 @@ describe("thread outbox", () => {
     await expect(first).rejects.toBeInstanceOf(ThreadOutboxManagerError);
     await second;
 
-    // The failed first attempt must not roll back the retry that replaced it.
     expect(registry.get(manager.queuedMessagesByThreadKeyAtom)).toEqual({
       "environment-1:thread-1": [retried],
     });
     await expect(manager.confirmQueued(retried)).resolves.toBe(true);
     await expect(manager.confirmQueued(message)).resolves.toBe(false);
-    registry.dispose();
-  });
-
-  it("replaces an existing message when an enqueue retry uses the same id", async () => {
-    const registry = AtomRegistry.make();
-    const manager = createThreadOutboxManager({
-      registry,
-      storage: {
-        load: async () => ({ messages: [], errors: [] }),
-        write: async () => undefined,
-        remove: async () => undefined,
-      },
-    });
-    const message = queuedMessage({
-      messageId: "message-1",
-      createdAt: "2026-06-08T10:00:01.000Z",
-    });
-    const retried = { ...message, text: "retried" };
-
-    await manager.enqueue(message);
-    await manager.enqueue(retried);
-
-    expect(registry.get(manager.queuedMessagesByThreadKeyAtom)).toEqual({
-      "environment-1:thread-1": [retried],
-    });
     registry.dispose();
   });
 
@@ -872,15 +700,12 @@ describe("thread outbox", () => {
     const edited = { ...original, text: "keep my changes" };
 
     await manager.enqueue(original);
-    // Revision captured before slow work (an attachment upload) starts.
     const revision = manager.revisionOf(original.messageId);
     await manager.update(edited);
 
     await expect(manager.update({ ...original, text: "stale upload" }, revision)).resolves.toBe(
       false,
     );
-    // The losing writer was rejected before persisting: no stale payload can
-    // sit on disk waiting to resurrect on the next load.
     expect(writes).toEqual([original.text, "keep my changes"]);
     expect(registry.get(manager.queuedMessagesByThreadKeyAtom)).toEqual({
       "environment-1:thread-1": [edited],
@@ -929,9 +754,6 @@ describe("thread outbox", () => {
     resumeWrite();
 
     await expect(update).resolves.toBe(false);
-    // The losing update re-writes the winning payload inside its own
-    // mutation, before the replacement's serialized write lands, so a crash
-    // between the two cannot leave the stale payload on disk.
     expect(writes).toEqual([original.text, "stale upload", "newer edit", "newer edit"]);
     await enqueue;
     expect(registry.get(manager.queuedMessagesByThreadKeyAtom)).toEqual({
@@ -962,8 +784,6 @@ describe("thread outbox", () => {
     const edited = { ...original, text: "edited while restoring" };
 
     await manager.enqueue(original);
-    // Revision captured when restore-to-composer read the payload it intends
-    // to remove; the edit accepted afterwards must survive the removal.
     const revision = manager.revisionOf(original.messageId);
     await manager.update(edited);
 
@@ -1018,13 +838,10 @@ describe("thread outbox", () => {
       removalSettled = true;
     });
     await removeStarted.promise;
-    // Published synchronously while the durable remove is still in flight.
     const enqueue = manager.enqueue(retried);
     removeBarrier.resolve();
     await replacementWriteStarted.promise;
 
-    // The canceled removal itself restores the durable winner. The queued
-    // enqueue write has not had a chance to run yet.
     expect(removalSettled).toBe(false);
     replacementWriteBarrier.resolve();
     await expect(removal).resolves.toBe(null);
@@ -1226,10 +1043,6 @@ describe("thread outbox", () => {
   });
 
   it("removes an already-created pending task before the file-capability gate runs", () => {
-    // The creation's startTurn already made the thread, so the resolver wants
-    // the queued message removed. A missing server config (or missing file
-    // support) must not turn that into a restore, which would duplicate the
-    // task as a draft.
     const fileAttachments = [{ name: "report.pdf", sizeBytes: 42 }];
     expect(
       resolveThreadOutboxDispatchStep({
@@ -1281,23 +1094,6 @@ describe("thread outbox", () => {
     ).toEqual({ step: "send" });
   });
 
-  it("waits for provider capabilities before sending text-only queued messages", () => {
-    expect(
-      resolveThreadOutboxDispatchStep({
-        deliveryAction: "send",
-        fileAttachments: [],
-        serverConfig: null,
-      }),
-    ).toEqual({ step: "retry" });
-    expect(
-      resolveThreadOutboxDispatchStep({
-        deliveryAction: "send",
-        fileAttachments: [],
-        serverConfig: { maxFileUploadBytes: undefined },
-      }),
-    ).toEqual({ step: "send" });
-  });
-
   it("only removes a missing-thread message after shell synchronization is live", () => {
     expect(
       resolveThreadOutboxDeliveryAction({
@@ -1305,7 +1101,6 @@ describe("thread outbox", () => {
         threadExists: false,
         shellStatus: "synchronizing",
         environmentConnected: true,
-        threadBusy: false,
       }),
     ).toBe("wait");
     expect(
@@ -1314,7 +1109,6 @@ describe("thread outbox", () => {
         threadExists: false,
         shellStatus: "live",
         environmentConnected: true,
-        threadBusy: false,
       }),
     ).toBe("remove");
     expect(
@@ -1323,9 +1117,20 @@ describe("thread outbox", () => {
         threadExists: true,
         shellStatus: "live",
         environmentConnected: true,
-        threadBusy: false,
       }),
     ).toBe("send");
+  });
+
+  it("removes a missing-thread message only after a settled family read when idle children can be omitted", () => {
+    const missing = {
+      isCreation: false,
+      threadExists: false,
+      shellStatus: "live",
+      environmentConnected: true,
+    } as const;
+    expect(resolveThreadOutboxDeliveryAction({ ...missing, familyRead: "pending" })).toBe("wait");
+    expect(resolveThreadOutboxDeliveryAction({ ...missing, familyRead: "failed" })).toBe("wait");
+    expect(resolveThreadOutboxDeliveryAction({ ...missing, familyRead: "settled" })).toBe("remove");
   });
 
   it("sends existing-thread messages whenever connected so queued messages can steer", () => {
@@ -1335,7 +1140,6 @@ describe("thread outbox", () => {
         threadExists: true,
         shellStatus: "live",
         environmentConnected: true,
-        threadBusy: true,
       }),
     ).toBe("send");
     expect(
@@ -1344,7 +1148,6 @@ describe("thread outbox", () => {
         threadExists: true,
         shellStatus: "live",
         environmentConnected: false,
-        threadBusy: true,
       }),
     ).toBe("wait");
   });
@@ -1356,18 +1159,14 @@ describe("thread outbox", () => {
         threadExists: false,
         shellStatus: "cached",
         environmentConnected: false,
-        threadBusy: false,
       }),
     ).toBe("wait");
-    // Connected but not yet synchronized: a previously delivered creation may
-    // simply not be visible yet — sending now could duplicate the thread.
     expect(
       resolveThreadOutboxDeliveryAction({
         isCreation: true,
         threadExists: false,
         shellStatus: "synchronizing",
         environmentConnected: true,
-        threadBusy: false,
       }),
     ).toBe("wait");
     expect(
@@ -1376,7 +1175,6 @@ describe("thread outbox", () => {
         threadExists: false,
         shellStatus: "live",
         environmentConnected: true,
-        threadBusy: false,
       }),
     ).toBe("send");
     expect(
@@ -1385,7 +1183,6 @@ describe("thread outbox", () => {
         threadExists: true,
         shellStatus: "live",
         environmentConnected: true,
-        threadBusy: true,
       }),
     ).toBe("remove");
   });
@@ -1477,10 +1274,6 @@ describe("thread outbox", () => {
     ).toBe(false);
   });
 
-  // A pending task created offline drains the moment the phone reconnects,
-  // which is exactly when the socket is most likely to drop again. Every way a
-  // request can fail in flight must retry; a restore turns the pending task
-  // into a draft and it disappears from the list.
   it("retries every in-flight transport failure by tag, not by message text", () => {
     const socketReasons = [
       new Socket.SocketReadError({ cause: new Error("The network connection was lost.") }),

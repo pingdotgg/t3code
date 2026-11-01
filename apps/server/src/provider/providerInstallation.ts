@@ -25,7 +25,6 @@ const hasBinaryPath = Schema.is(Schema.Struct({ binaryPath: Schema.String }));
 const decodeCodexSettings = Schema.decodeUnknownEffect(CodexSettings);
 const decodeAntigravitySettings = Schema.decodeUnknownEffect(AntigravitySettings);
 
-/** Route instance setup to the environment-owned installer without owning the download. */
 export const makeProviderInstallation = Effect.fn("makeProviderInstallation")(function* () {
   const antigravityInstallation = yield* AntigravityInstallation.AntigravityInstallation;
   const codexInstallation = yield* CodexInstallation.CodexInstallation;
@@ -141,12 +140,10 @@ export const makeProviderInstallation = Effect.fn("makeProviderInstallation")(fu
           return [];
         }
         const binaryPath = entry.config.binaryPath.trim();
-        return yield* resolveCommandPath(binaryPath, {
+        const resolved = yield* resolveCommandPath(binaryPath, {
           env: yield* mergeProviderInstanceEnvironment(entry.environment),
-        }).pipe(
-          Effect.map((resolved) => [binaryPath, resolved]),
-          Effect.orElseSucceed(() => [binaryPath]),
-        );
+        });
+        return resolved === null ? [binaryPath] : [binaryPath, resolved];
       }),
     );
     yield* installation

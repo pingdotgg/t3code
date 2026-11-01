@@ -2,16 +2,9 @@ import { findProjectByPath } from "@t3tools/client-runtime/state/projects";
 import type { AgentSessionProjectCandidate, EnvironmentId, ProjectId } from "@t3tools/contracts";
 
 const RECENT_PROJECT_WINDOW_MS = 30 * 24 * 60 * 60 * 1000;
-/** One or two threads in a directory is usually a one-off question, not a project. */
 const DEFAULT_SELECTION_MIN_THREADS = 3;
 
-/**
- * Existing projects still need their agent history imported, so every scan
- * candidate is offered. The default selection is narrower: git repositories
- * active in the last 30 days with enough threads to look like real work.
- * Servers that predate the git scan omit `git`; their candidates are treated
- * as repositories so old computers still get a useful default selection.
- */
+/** Treat candidates missing git as repositories for servers predating git scans. */
 export function partitionOnboardingProjects<T extends AgentSessionProjectCandidate>(
   candidates: ReadonlyArray<T>,
   now = Date.now(),
@@ -31,9 +24,7 @@ export function partitionOnboardingProjects<T extends AgentSessionProjectCandida
 }
 
 export interface OnboardingProjectGroup<T> {
-  /** Stable identity for collapse state and React keys. */
   readonly key: string;
-  /** GitHub `owner/name`, or the checkout's folder name when the origin is elsewhere. */
   readonly label: string;
   readonly repository: string | null;
   readonly candidates: ReadonlyArray<T>;
@@ -47,14 +38,6 @@ function latestActivity(left: string | null, right: string | null): string | nul
   return left > right ? left : right;
 }
 
-/**
- * Group scan candidates for the onboarding picker. Clones of one repository
- * share a group keyed by their normalized origin URL. Repositories without an
- * origin get a group each, as do candidates from servers that do not report
- * git identity. Directories that are not git repositories are returned
- * separately so the UI can fold them away by default. Groups sort by most
- * recent activity, newest first.
- */
 export function groupOnboardingProjects<
   T extends Pick<
     AgentSessionProjectCandidate,
@@ -118,7 +101,6 @@ export function resolveOnboardingProjectId(
   return null;
 }
 
-/** Prefer a selected project with imported history, then a completed empty import. */
 export function resolveOnboardingLandingProject<T>(
   selection: ReadonlyArray<string>,
   projectsWithImportedHistory: ReadonlyMap<string, T>,
@@ -135,7 +117,20 @@ export function resolveOnboardingLandingProject<T>(
   return undefined;
 }
 
-/** Paths identify projects only within the computer that owns them. */
+export function splitOnboardingProjectPath(path: string): {
+  readonly name: string;
+  readonly parent: string;
+} {
+  if (/^[A-Za-z]:[\\/]+$/.test(path) || /^[\\/]{2}[^\\/]+[\\/][^\\/]+[\\/]*$/.test(path)) {
+    return { name: path, parent: "" };
+  }
+  const trimmed = path.replace(/[\\/]+$/, "");
+  const separatorIndex = Math.max(trimmed.lastIndexOf("/"), trimmed.lastIndexOf("\\"));
+  if (trimmed.length === 0) return { name: path, parent: "" };
+  if (separatorIndex < 0) return { name: trimmed, parent: "" };
+  return { name: trimmed.slice(separatorIndex + 1), parent: trimmed.slice(0, separatorIndex + 1) };
+}
+
 export function onboardingProjectKey(environmentId: EnvironmentId, path: string): string {
   return JSON.stringify([environmentId, path]);
 }
