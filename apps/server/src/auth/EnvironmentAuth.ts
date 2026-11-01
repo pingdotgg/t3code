@@ -643,7 +643,7 @@ export function selectRequestCredential(
   legacyCookieName: string | undefined,
 ) {
   const cookieToken = request.cookies[cookieName];
-  if (cookieToken !== undefined) {
+  if (cookieToken) {
     return { token: cookieToken, source: "cookie" } as const;
   }
 
