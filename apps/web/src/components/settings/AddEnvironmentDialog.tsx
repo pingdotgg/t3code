@@ -176,7 +176,7 @@ export function AddEnvironmentDialog({
       return;
     }
 
-    handleOpenChange(false);
+    if (session === savedBackendSessionRef.current) handleOpenChange(false);
     toastManager.add({
       type: "success",
       title: routeTarget ? "Route added" : "Environment connected",

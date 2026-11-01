@@ -7,6 +7,7 @@ import { describe, expect, it, vi } from "vite-plus/test";
 
 import { render, stubGlobal } from "../../../test/render";
 import { AppAtomRegistryProvider } from "../../rpc/atomRegistry";
+import { ToastProvider } from "../ui/toast";
 
 const mocks = vi.hoisted(() => ({
   connectSshEnvironment: vi.fn<() => Promise<AtomCommandResult<void, Error>>>(async () =>
@@ -48,14 +49,16 @@ function Owner() {
   const [error, setError] = useState<string | null>(null);
   return (
     <AppAtomRegistryProvider>
-      <AddEnvironmentDialog
-        open={open}
-        routeTarget={null}
-        error={error}
-        savedEnvironments={[]}
-        onOpenChange={setOpen}
-        onErrorChange={setError}
-      />
+      <ToastProvider>
+        <AddEnvironmentDialog
+          open={open}
+          routeTarget={null}
+          error={error}
+          savedEnvironments={[]}
+          onOpenChange={setOpen}
+          onErrorChange={setError}
+        />
+      </ToastProvider>
     </AppAtomRegistryProvider>
   );
 }
@@ -135,5 +138,28 @@ describe("AddEnvironmentDialog", () => {
       .element(page.getByRole("dialog").getByRole("button", { name: "Add environment" }))
       .toBeEnabled();
     await expect.element(page.getByText(/dismissed SSH attempt/)).not.toBeInTheDocument();
+
+    let finishSuccessfulConnection!: (result: AtomCommandResult<void, Error>) => void;
+    mocks.connectSshEnvironment.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finishSuccessfulConnection = resolve;
+        }),
+    );
+    await userEvent.click(sshCard());
+    await userEvent.type(page.getByPlaceholder("Search hosts or type devbox"), "devbox");
+    await userEvent.click(
+      page.getByRole("dialog").getByRole("button", { name: "Add environment" }),
+    );
+    await userEvent.keyboard("{Escape}");
+    await expectDefaultModeAfterReopen();
+    finishSuccessfulConnection(AsyncResult.success(undefined));
+    await expect
+      .element(page.getByText("devbox is ready over an SSH-managed tunnel."))
+      .toBeVisible();
+    await userEvent.type(page.getByPlaceholder("backend.example.com"), "newer.example.com");
+    await expect
+      .element(page.getByPlaceholder("backend.example.com"))
+      .toHaveValue("newer.example.com");
   });
 });
