@@ -4398,12 +4398,8 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
           }).pipe(Effect.orDie),
         );
 
-        yield* client.handleServerNotification("account/rateLimits/updated", (payload) =>
-          Effect.gen(function* () {
-            const previous = yield* Ref.getAndUpdate(rateLimitSnapshot, (previous) =>
-              mergeCodexRateLimits(previous, payload.rateLimits),
-            );
-            const resetAt = codexUsageLimitResetAt(yield* Ref.get(rateLimitSnapshot));
+        const backfillUsageLimitResetAt = Effect.fn("CodexAdapterV2.backfillUsageLimitResetAt")(
+          function* (resetAt: string | null) {
             for (const item of (yield* Ref.get(limitedTurnItems)).values()) {
               if (resetAt === null || item.failure.resetAt != null) continue;
               const updated = {
@@ -4420,6 +4416,17 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                 turnItem: updated,
               });
             }
+          },
+        );
+
+        yield* client.handleServerNotification("account/rateLimits/updated", (payload) =>
+          Effect.gen(function* () {
+            const previous = yield* Ref.getAndUpdate(rateLimitSnapshot, (previous) =>
+              mergeCodexRateLimits(previous, payload.rateLimits),
+            );
+            yield* backfillUsageLimitResetAt(
+              codexUsageLimitResetAt(yield* Ref.get(rateLimitSnapshot)),
+            );
             const update = codexRateLimitsToUpdate(payload.rateLimits, previous);
             if (update && adapterOptions.onUsageLimits) {
               const checkedAt = DateTime.formatIso(yield* DateTime.now);
@@ -5751,7 +5758,35 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
           },
         );
 
-        const emitRootTerminal = Effect.fnUntraced(function* (
+        const resolveUsageLimitResetAt = Effect.fn("CodexAdapterV2.resolveUsageLimitResetAt")(
+          function* () {
+            const beforeRead = yield* Ref.get(rateLimitSnapshot);
+            const cached = codexUsageLimitResetAt(beforeRead);
+            if (cached !== null) return cached;
+            // A rejected request may follow a stale percentage or an empty premium snapshot.
+            const response = yield* client
+              .request("account/rateLimits/read", null)
+              .pipe(Effect.timeout("3 seconds"), Effect.option);
+            if (Option.isSome(response)) {
+              const snapshot =
+                response.value.rateLimitsByLimitId?.codex ?? response.value.rateLimits;
+              // Main-allowance notifications replace this reference; keep any update that won the race.
+              const applied = yield* Ref.modify(rateLimitSnapshot, (current) =>
+                current === beforeRead && (!snapshot.limitId || snapshot.limitId === "codex")
+                  ? ([true, snapshot] as const)
+                  : ([false, current] as const),
+              );
+              const update = applied ? codexRateLimitsToUpdate(snapshot, beforeRead) : undefined;
+              if (update && adapterOptions.onUsageLimits) {
+                const checkedAt = DateTime.formatIso(yield* DateTime.now);
+                yield* adapterOptions.onUsageLimits({ ...update, checkedAt });
+              }
+            }
+            return codexUsageLimitResetAt(yield* Ref.get(rateLimitSnapshot));
+          },
+        );
+
+        const emitResolvedRootTerminal = Effect.fnUntraced(function* (
           context: ActiveCodexTurnContext,
           event: CodexRootTerminalEvent,
         ) {
@@ -5769,13 +5804,6 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               : event;
           yield* emitProviderEvent(current);
           const continued = continuedRuns.get(context.providerTurnId) ?? [context];
-          if (current.status !== "completed") {
-            yield* Ref.update(
-              terminalizedNonCompletedNativeTurns,
-              (nativeTurns) =>
-                new Set([...nativeTurns, ...continued.map((turn) => turn.nativeTurnId)]),
-            );
-          }
           for (const turn of continued) {
             continuedRuns.delete(turn.providerTurnId);
           }
@@ -5801,6 +5829,39 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               new Map(items).set(context.providerThread.id, item),
             );
           }
+        });
+
+        // Failure ingestion stops at the terminal; finish the RPC off the reader before emitting it.
+        const emitRootTerminal = Effect.fnUntraced(function* (
+          context: ActiveCodexTurnContext,
+          event: CodexRootTerminalEvent,
+        ) {
+          if (event.status !== "completed") {
+            const continued = continuedRuns.get(context.providerTurnId) ?? [context];
+            yield* Ref.update(
+              terminalizedNonCompletedNativeTurns,
+              (nativeTurns) =>
+                new Set([...nativeTurns, ...continued.map((turn) => turn.nativeTurnId)]),
+            );
+          }
+          if (
+            event.status === "failed" &&
+            event.failure.class === "usage_limit" &&
+            event.failure.resetAt == null &&
+            codexUsageLimitResetAt(yield* Ref.get(rateLimitSnapshot)) === null
+          ) {
+            yield* resolveUsageLimitResetAt().pipe(
+              Effect.flatMap((resetAt) =>
+                emitResolvedRootTerminal(context, {
+                  ...event,
+                  failure: { ...event.failure, resetAt },
+                }),
+              ),
+              Effect.forkIn(scope),
+            );
+            return;
+          }
+          yield* emitResolvedRootTerminal(context, event);
         });
 
         const emitOrDeferRootTerminal = Effect.fn("CodexAdapterV2.emitOrDeferRootTerminal")(

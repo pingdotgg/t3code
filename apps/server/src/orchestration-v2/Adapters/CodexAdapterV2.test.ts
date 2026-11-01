@@ -1150,6 +1150,9 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         transcript.scenario,
       ).pipe(Effect.orDie);
       const changes = yield* makeChangeSignal;
+      const usageLimitsUpdates: Array<
+        Parameters<NonNullable<CodexAdapterV2.CodexAdapterV2Options["onUsageLimits"]>>[0]
+      > = [];
       const continuationRequests: Array<ProviderContinuationRequests.ProviderContinuationRequest> =
         [];
       const driver = yield* CodexReplay.makeReplayDriver(
@@ -1196,6 +1199,10 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         fileSystem,
         idAllocator,
         serverConfig,
+        onUsageLimits: (update) =>
+          Effect.sync(() => {
+            usageLimitsUpdates.push(update);
+          }),
         continuationRequests: {
           offer: (request) =>
             Effect.sync(() => {
@@ -1259,6 +1266,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         threadId,
         serverConfig,
         events,
+        usageLimitsUpdates,
         continuationRequests,
         terminalEvents,
         subagentUpdates,
@@ -5044,6 +5052,54 @@ describe("CodexAdapterV2 post-settle continuation", () => {
       expectedClass: "usage_limit",
     },
     {
+      name: "stale-read",
+      code: "usageLimitExceeded",
+      notification: false,
+      expectedClass: "usage_limit",
+    },
+    {
+      name: "empty-read",
+      code: "usageLimitExceeded",
+      notification: false,
+      expectedClass: "usage_limit",
+    },
+    {
+      name: "failed-read",
+      code: "usageLimitExceeded",
+      notification: false,
+      expectedClass: "usage_limit",
+    },
+    {
+      name: "timed-out-read",
+      code: "usageLimitExceeded",
+      notification: false,
+      expectedClass: "usage_limit",
+    },
+    {
+      name: "unexhausted-read",
+      code: "usageLimitExceeded",
+      notification: false,
+      expectedClass: "usage_limit",
+    },
+    {
+      name: "newer-notification-read",
+      code: "usageLimitExceeded",
+      notification: false,
+      expectedClass: "usage_limit",
+    },
+    {
+      name: "omitted-window-read",
+      code: "usageLimitExceeded",
+      notification: false,
+      expectedClass: "usage_limit",
+    },
+    {
+      name: "known-reset",
+      code: "usageLimitExceeded",
+      notification: false,
+      expectedClass: "usage_limit",
+    },
+    {
       name: "replacement",
       code: "usageLimitExceeded",
       notification: true,
@@ -5114,7 +5170,66 @@ describe("CodexAdapterV2 post-settle continuation", () => {
           scenario: `codex-limit-${scenario.name}`,
           entries: [
             ...codexReplayPreamble({ nativeThreadId, nativeTurnId, prompt: "Continue." }),
-            ...(scenario.name === "deferred-reset" ? [snapshot] : []),
+            ...(scenario.name === "deferred-reset" || scenario.name === "known-reset"
+              ? [snapshot]
+              : scenario.name === "stale-read" ||
+                  scenario.name === "failed-read" ||
+                  scenario.name === "unexhausted-read" ||
+                  scenario.name === "newer-notification-read"
+                ? [
+                    {
+                      ...snapshot,
+                      frame: {
+                        method: "account/rateLimits/updated",
+                        params: {
+                          rateLimits: {
+                            limitId: "codex",
+                            primary: {
+                              usedPercent: 99,
+                              resetsAt: 2000000000,
+                              windowDurationMins: 300,
+                            },
+                          },
+                        },
+                      },
+                    },
+                  ]
+                : []),
+            ...(scenario.name === "omitted-window-read"
+              ? [
+                  {
+                    ...snapshot,
+                    frame: {
+                      method: "account/rateLimits/updated",
+                      params: {
+                        rateLimits: {
+                          limitId: "codex",
+                          primary: { usedPercent: 100, resetsAt: 2000000000 },
+                          secondary: { usedPercent: 100 },
+                        },
+                      },
+                    },
+                  },
+                ]
+              : []),
+            ...(scenario.name === "stale-read" || scenario.name === "empty-read"
+              ? [
+                  {
+                    type: "emit_inbound" as const,
+                    label: "account/rateLimits/updated/premium",
+                    frame: {
+                      method: "account/rateLimits/updated",
+                      params: {
+                        rateLimits: {
+                          limitId: "premium",
+                          primary: null,
+                          secondary: null,
+                        },
+                      },
+                    },
+                  },
+                ]
+              : []),
             ...(scenario.name === "deferred-reset"
               ? [
                   {
@@ -5198,6 +5313,88 @@ describe("CodexAdapterV2 post-settle continuation", () => {
                 },
               },
             },
+            ...(scenario.expectedClass === "usage_limit" &&
+            scenario.name !== "deferred-reset" &&
+            scenario.name !== "known-reset" &&
+            scenario.name !== "timed-out-read"
+              ? [
+                  {
+                    type: "expect_outbound" as const,
+                    label: "account/rateLimits/read",
+                    frame: {
+                      id: 4,
+                      method: "account/rateLimits/read",
+                      params: null,
+                    },
+                  },
+                  ...(scenario.name === "newer-notification-read"
+                    ? [
+                        {
+                          ...snapshot,
+                          frame: {
+                            method: "account/rateLimits/updated",
+                            params: {
+                              rateLimits: {
+                                limitId: "codex",
+                                primary: {
+                                  usedPercent: 50,
+                                  resetsAt: 2000200000,
+                                  windowDurationMins: 300,
+                                },
+                              },
+                            },
+                          },
+                        },
+                      ]
+                    : []),
+                  {
+                    type: "emit_inbound" as const,
+                    label: "account/rateLimits/read",
+                    frame: {
+                      id: 4,
+                      ...(scenario.name === "failed-read"
+                        ? { error: { code: -32603, message: "Usage endpoint unavailable." } }
+                        : {
+                            result: {
+                              rateLimits: { limitId: "premium", primary: null, secondary: null },
+                              rateLimitsByLimitId: {
+                                codex:
+                                  scenario.name === "stale-read" ||
+                                  scenario.name === "empty-read" ||
+                                  scenario.name === "newer-notification-read"
+                                    ? {
+                                        limitId: "codex",
+                                        primary: {
+                                          usedPercent: 100,
+                                          resetsAt: 2000000000,
+                                          windowDurationMins: 300,
+                                        },
+                                        secondary: {
+                                          usedPercent: 100,
+                                          resetsAt: 2000100000,
+                                          windowDurationMins: 10080,
+                                        },
+                                      }
+                                    : scenario.name === "omitted-window-read"
+                                      ? {
+                                          limitId: "codex",
+                                          secondary: { usedPercent: 99, resetsAt: 2000100000 },
+                                        }
+                                      : {
+                                          limitId: "codex",
+                                          primary: {
+                                            usedPercent: 99,
+                                            resetsAt: 2000000000,
+                                            windowDurationMins: 300,
+                                          },
+                                        },
+                              },
+                            },
+                          }),
+                    },
+                  },
+                ]
+              : []),
             ...(scenario.name === "late-reset" ? [snapshot] : []),
             ...(scenario.name === "deferred-reset"
               ? [
@@ -5236,12 +5433,29 @@ describe("CodexAdapterV2 post-settle continuation", () => {
           ],
         });
         const resetReceipt = yield* Deferred.make<void>();
-        const harness = yield* makeCodexReplayHarness(transcript, (event) =>
-          event.type === "turn_item.updated" &&
-          event.turnItem.type === "error" &&
-          event.turnItem.failure.resetAt === resetAt
-            ? Deferred.succeed(resetReceipt, undefined)
-            : Effect.void,
+        const readStarted = yield* Deferred.make<void>();
+        const readInterrupted = yield* Deferred.make<void>();
+        const harness = yield* makeCodexReplayHarness(
+          transcript,
+          (event) =>
+            event.type === "turn_item.updated" &&
+            event.turnItem.type === "error" &&
+            event.turnItem.failure.resetAt === resetAt
+              ? Deferred.succeed(resetReceipt, undefined)
+              : Effect.void,
+          (method) =>
+            method === "account/rateLimits/read"
+              ? Deferred.succeed(readStarted, undefined).pipe(
+                  Effect.andThen(
+                    scenario.name === "timed-out-read"
+                      ? Effect.never.pipe(
+                          Effect.onInterrupt(() => Deferred.succeed(readInterrupted, undefined)),
+                        )
+                      : Effect.void,
+                  ),
+                  Effect.asVoid,
+                )
+              : Effect.void,
         );
         yield* harness.runtime.startTurn(
           makeCodexTestTurnInput({
@@ -5252,24 +5466,68 @@ describe("CodexAdapterV2 post-settle continuation", () => {
             attemptId: RunAttemptId.make(`attempt-limit-${scenario.name}`),
           }),
         );
+        if (scenario.name === "timed-out-read") {
+          yield* Deferred.await(readStarted);
+          assert.lengthOf(harness.terminalEvents(), 0);
+          yield* TestClock.adjust("3 seconds");
+          yield* Deferred.await(readInterrupted);
+        }
         yield* harness.firstTerminal;
         const terminal = harness.terminalEvents()[0];
         assert.equal(terminal?.status, "failed");
         if (terminal?.status !== "failed") return;
         assert.equal(terminal.failure.class, scenario.expectedClass);
         assert.equal(terminal.threadDisposition, "reusable");
-        if (scenario.name === "deferred-reset") assert.equal(terminal.failure.resetAt, resetAt);
+        if (scenario.name.endsWith("-read")) yield* Deferred.await(readStarted);
+        if (scenario.name === "timed-out-read") {
+          assert.isNull(terminal.failure.resetAt);
+          assert.isFalse(
+            harness.events.some(
+              (event) =>
+                event.type === "turn_item.updated" &&
+                event.turnItem.type === "error" &&
+                event.turnItem.failure.resetAt != null,
+            ),
+          );
+        }
+        if (scenario.name === "known-reset") assert.isFalse(yield* Deferred.isDone(readStarted));
+        if (["deferred-reset", "known-reset", "stale-read", "empty-read"].includes(scenario.name)) {
+          assert.equal(terminal.failure.resetAt, resetAt);
+        }
+        if (
+          [
+            "failed-read",
+            "unexhausted-read",
+            "omitted-window-read",
+            "newer-notification-read",
+          ].includes(scenario.name)
+        ) {
+          assert.isNull(terminal.failure.resetAt);
+          assert.equal(terminal.failure.message, message);
+        }
         if (scenario.name === "matching-details")
           assert.equal(terminal.failure.message, "Detailed provider allowance explanation.");
-        if (scenario.name === "late-reset") {
-          yield* Deferred.await(resetReceipt);
-          const item = harness.events.find(
-            (event) =>
-              event.type === "turn_item.updated" &&
-              event.turnItem.type === "error" &&
-              event.turnItem.failure.resetAt === resetAt,
+        if (scenario.name === "newer-notification-read") {
+          assert.deepEqual(
+            harness.usageLimitsUpdates
+              .at(-1)
+              ?.windows.map(({ usedPercent, resetsAt }) => ({ usedPercent, resetsAt })),
+            [{ usedPercent: 50, resetsAt: "2033-05-20T11:06:40.000Z" }],
           );
-          assert.isDefined(item);
+        }
+        if (scenario.name === "late-reset" && terminal.failure.resetAt !== resetAt) {
+          yield* Deferred.await(resetReceipt);
+        }
+        if (scenario.name === "stale-read" || scenario.name === "empty-read") {
+          assert.deepEqual(
+            harness.usageLimitsUpdates
+              .at(-1)
+              ?.windows.map(({ id, usedPercent, resetsAt }) => ({ id, usedPercent, resetsAt })),
+            [
+              { id: "primary", usedPercent: 100, resetsAt: "2033-05-18T03:33:20.000Z" },
+              { id: "secondary", usedPercent: 100, resetsAt: resetAt },
+            ],
+          );
         }
         if (scenario.name === "retry") assert.equal(terminal.retry?.attempt, 1);
         if (scenario.name === "chatgpt-workspace-limit") {
