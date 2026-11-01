@@ -24,7 +24,7 @@ const Config = Schema.Struct({
   oauthAccount: Schema.optional(
     Schema.Struct({
       organizationUuid: Schema.optional(Schema.String),
-      accountUuid: Schema.optional(Schema.String),
+      accountUuid: Schema.optional(Schema.NullOr(Schema.String)),
     }),
   ),
 });

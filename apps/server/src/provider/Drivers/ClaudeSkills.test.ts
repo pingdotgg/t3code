@@ -368,6 +368,23 @@ it.layer(NodeServices.layer)("discoverClaudeSkills", (it) => {
           ["pstack:poteto-mode", path.join(bucket, "pstack", "skills", "poteto-mode", "SKILL.md")],
         ],
       );
+      assert.deepEqual(
+        (yield* discoverClaudeSkills({ homePath: configDir }, undefined, {
+          CLAUDE_CODE_OAUTH_TOKEN: "token",
+          CLAUDE_CODE_ACCOUNT_UUID: "77777777-8888-4999-aaaa-bbbbbbbbbbbb",
+        })).map((skill) => skill.name),
+        ["design:design-critique-other-account", "pstack:poteto-mode-other-account"],
+      );
+      yield* fs.writeFileString(
+        path.join(configDir, "settings.json"),
+        '{"enabledPlugins":{"pstack@synced":false}}',
+      );
+      assert.deepEqual(
+        (yield* discoverClaudeSkills({ homePath: configDir }, undefined, {})).map(
+          (skill) => skill.name,
+        ),
+        ["design:design-critique"],
+      );
       yield* fs.writeFileString(
         path.join(configDir, "settings.json"),
         '{"syncClaudeAiPlugins":false}',

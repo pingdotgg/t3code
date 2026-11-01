@@ -394,12 +394,16 @@ const resolveSyncedPluginBucket = Effect.fn("resolveSyncedPluginBucket")(functio
   );
   const account = yield* readClaudeOauthAccount(accountConfigPath);
   const organizationId = environment.CLAUDE_CODE_ORGANIZATION_UUID ?? account?.organizationUuid;
-  const accountId = account?.accountUuid ?? environment.CLAUDE_CODE_ACCOUNT_UUID;
+  // A stored claude.ai login names its own account; an injected token uses the env account.
+  const accountId =
+    account !== undefined && !environment.CLAUDE_CODE_OAUTH_TOKEN
+      ? account.accountUuid
+      : (environment.CLAUDE_CODE_ACCOUNT_UUID ?? "unbound");
   if (
-    organizationId === undefined ||
-    accountId === undefined ||
+    !organizationId ||
+    !accountId ||
     !ACCOUNT_UUID_PATTERN.test(organizationId) ||
-    !ACCOUNT_UUID_PATTERN.test(accountId)
+    (accountId !== "unbound" && !ACCOUNT_UUID_PATTERN.test(accountId))
   ) {
     return undefined;
   }
@@ -499,7 +503,9 @@ const discoverPluginSkillRoots = Effect.fn("discoverPluginSkillRoots")(function*
     const manifest = yield* readPluginManifest(pluginPath);
     const prefix = manifest?.name ?? plugin.name;
     // A plugin the user installed with the same name takes precedence over the synced copy.
-    if (installedPluginNames.has(prefix)) continue;
+    if (installedPluginNames.has(prefix) || enabledPlugins.get(`${prefix}@synced`) === false) {
+      continue;
+    }
     roots.push(...(yield* pluginSkillRoots(pluginPath, "user", prefix, manifest)));
   }
   return roots;
