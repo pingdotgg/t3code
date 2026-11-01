@@ -22,6 +22,7 @@ type CreateProjectInput = {
 };
 const state = vi.hoisted(() => ({
   selectedEnvironment: "primary",
+  addedEnvironments: [] as string[],
   sessions: new Map<string, unknown>(),
   projects: null as unknown,
   providers: null as unknown,
@@ -67,7 +68,9 @@ vi.mock(import("../../state/environments"), async (original) => {
   return {
     ...(await original()),
     usePrimaryEnvironment: (() => primary) as never,
-    useEnvironments: (() => ({ environments: [environment(state.selectedEnvironment)] })) as never,
+    useEnvironments: (() => ({
+      environments: [state.selectedEnvironment, ...state.addedEnvironments].map(environment),
+    })) as never,
   };
 });
 vi.mock(import("../../state/server"), async (original) => {
@@ -232,6 +235,12 @@ async function click(label: string) {
   await act(async () => target.click());
 }
 
+async function clickStage(label: string) {
+  const stage = document.querySelector<HTMLButtonElement>(`button[aria-label="${label}"]`);
+  expect(stage?.disabled).toBe(false);
+  await act(async () => stage?.click());
+}
+
 async function mountImport(remote = false) {
   state.selectedEnvironment = remote ? "remote" : "primary";
   await using stack = new AsyncDisposableStack();
@@ -253,6 +262,7 @@ async function mountImport(remote = false) {
 // Returns the clock spy so each test can `using` it; the spy would otherwise outlive the test.
 function setup() {
   const now = vi.spyOn(Date, "now").mockReturnValue(NOW);
+  state.addedEnvironments = [];
   state.sessions.clear();
   for (const id of [primaryId, remoteId]) {
     state.sessions.set(
@@ -281,6 +291,34 @@ function setup() {
   state.waitForProject.mockReset().mockImplementation(waitForRecordedProject);
   return now;
 }
+
+it("keeps the project selection after going back a stage", async () => {
+  using _now = setup();
+  await using _screen = await mountImport();
+  await click("Select none");
+  expect(pageText()).toContain("0 of 2 selected");
+
+  await clickStage("Agents, step 2");
+  await click("Continue");
+  expect(pageText()).toContain("Import your projects");
+  expect(pageText()).toContain("0 of 2 selected");
+});
+
+it("ticks the recent projects of a computer added after the selection changed", async () => {
+  using _now = setup();
+  await using _screen = await mountImport();
+  await click("Select none");
+
+  state.addedEnvironments = ["remote"];
+  await clickStage("Connect, step 1");
+  await click("Continue");
+  await click("Continue");
+  expect(pageText()).toContain("2 of 4 selected");
+
+  await click("Import 2 projects");
+  const created = state.createProject.mock.calls as Array<[CreateProjectInput]>;
+  expect(created.map(([call]) => call.environmentId)).toEqual([remoteId, remoteId]);
+});
 
 it("rechecks after project creation and can retry its history without recreating the project", async () => {
   using _now = setup();
