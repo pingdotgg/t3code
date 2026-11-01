@@ -44,7 +44,7 @@ export class ElectronApp extends Context.Service<
   {
     readonly metadata: Effect.Effect<ElectronAppMetadata, ElectronAppMetadataReadError>;
     readonly name: Effect.Effect<string>;
-    /** Packaged builds ship only en-US; app.getLocale() and Intl defaults do not reflect the OS locale. */
+    /** The OS locale. app.getLocale() and Intl snap to the closest shipped locale pak and can drop the region. */
     readonly systemLocale: Effect.Effect<string>;
     readonly whenReady: Effect.Effect<void, ElectronAppWhenReadyError>;
     readonly requestSingleInstanceLock: Effect.Effect<boolean>;
