@@ -44,6 +44,8 @@ const GrantClaims = Schema.Struct({
   kind: Schema.Literal("preview-proxy"),
   gid: Schema.String,
   sid: AuthSessionId,
+  // A DPoP socket outlives its first session by renewing; the grant follows the same chain.
+  pkt: Schema.optionalKey(Schema.String),
   ports: Schema.Array(Schema.Int),
   exp: Schema.Number,
 });
@@ -56,7 +58,7 @@ export class RemotePreviewProxy extends Context.Service<
   RemotePreviewProxy,
   {
     readonly issueGrant: (
-      sessionId: AuthSessionId,
+      session: { readonly sessionId: AuthSessionId; readonly proofKeyThumbprint?: string },
       ports: ReadonlyArray<number>,
     ) => Effect.Effect<PreviewProxyGrant, PreviewProxyGrantError>;
     /** The claims of a signed, unexpired, unrevoked grant whose session is still active. */
@@ -95,7 +97,7 @@ const make = Effect.gen(function* () {
   });
 
   const issueGrant = Effect.fn("RemotePreviewProxy.issueGrant")(function* (
-    sessionId: AuthSessionId,
+    session: { readonly sessionId: AuthSessionId; readonly proofKeyThumbprint?: string },
     ports: ReadonlyArray<number>,
   ) {
     // The server's own port answers loopback callers more permissively than remote ones.
@@ -114,7 +116,8 @@ const make = Effect.gen(function* () {
       v: 1,
       kind: "preview-proxy",
       gid,
-      sid: sessionId,
+      sid: session.sessionId,
+      ...(session.proofKeyThumbprint ? { pkt: session.proofKeyThumbprint } : {}),
       ports: [...new Set(ports)].toSorted((a, b) => a - b),
       exp: now.epochMilliseconds + Duration.toMillis(GRANT_TTL),
     };
@@ -142,7 +145,7 @@ const make = Effect.gen(function* () {
     if (claims.value.exp <= now.epochMilliseconds) return Option.none();
     if ((yield* Ref.get(revoked)).has(claims.value.gid)) return Option.none();
     const active = yield* sessions
-      .isActive(claims.value.sid)
+      .isActive(claims.value.sid, claims.value.pkt)
       .pipe(Effect.orElseSucceed(() => false));
     return active ? claims : Option.none();
   });
@@ -193,7 +196,7 @@ const make = Effect.gen(function* () {
       if ((yield* Ref.get(revoked)).has(claims.gid)) return;
       yield* Effect.raceFirst(
         Effect.flatMap(revocationFor(claims.gid), Deferred.await),
-        sessions.awaitInvalidation(claims.sid).pipe(Effect.ignore),
+        sessions.awaitInvalidation(claims.sid, claims.pkt).pipe(Effect.ignore),
       );
     }),
   });

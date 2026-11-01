@@ -22,7 +22,8 @@ import * as SessionStore from "../auth/SessionStore.ts";
 import * as ServerConfig from "../config.ts";
 import * as RemotePreviewProxy from "./RemotePreviewProxy.ts";
 
-const SESSION = AuthSessionId.make("session-1");
+const PROOF_KEY = "proof-key";
+const SESSION = { sessionId: AuthSessionId.make("session-1"), proofKeyThumbprint: PROOF_KEY };
 const SERVER_PORT = 3773;
 
 const setup = Effect.gen(function* () {
@@ -36,8 +37,10 @@ const setup = Effect.gen(function* () {
         Layer.mock(SessionStore.SessionStore)({
           cookieName: "t3_session",
           legacyCookieName: undefined,
-          isActive: () => Effect.sync(() => active),
-          awaitInvalidation: () => Deferred.await(invalidated),
+          // Grants must follow the socket's DPoP renewal chain, which needs the proof key.
+          isActive: (_sessionId, proofKey) => Effect.sync(() => active && proofKey === PROOF_KEY),
+          awaitInvalidation: (_sessionId, proofKey) =>
+            proofKey === PROOF_KEY ? Deferred.await(invalidated) : Effect.void,
         }),
       ),
       Layer.provide(

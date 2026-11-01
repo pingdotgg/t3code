@@ -3071,7 +3071,7 @@ export const layerWsRpc = (
         [WS_METHODS.subscribeDeviceState]: (_input) => DeviceService.stateStream(deviceService),
         [WS_METHODS.previewStopLocalServer]: (input) => portDiscovery.stopServer(input),
         [WS_METHODS.previewIssueProxyGrant]: (input) =>
-          remotePreviewProxy.issueGrant(currentSessionId, input.ports),
+          remotePreviewProxy.issueGrant(currentSession, input.ports),
         [WS_METHODS.subscribeDiscoveredLocalServers]: (input) =>
           Stream.callback<DiscoveredLocalServerList>((queue) =>
             Effect.gen(function* () {

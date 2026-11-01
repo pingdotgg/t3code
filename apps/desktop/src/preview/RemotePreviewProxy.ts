@@ -127,7 +127,9 @@ const make = Effect.gen(function* () {
   const entries = new Map<EnvironmentId, Entry>();
   const listeners = new Set<(status: DesktopRemotePreviewProxyStatus) => void>();
   const scope = yield* Effect.scope;
-  const entryCreation = yield* Semaphore.make(1);
+  // Serializes entry creation and state changes, so a queued configure cannot undo a later revoke.
+  const mutation = yield* Semaphore.make(1);
+  const serialized = mutation.withPermits(1);
 
   const toStatus = (entry: Entry): DesktopRemotePreviewProxyStatus => ({
     environmentId: entry.environmentId,
@@ -207,7 +209,7 @@ const make = Effect.gen(function* () {
     };
     entries.set(environmentId, entry);
     return entry;
-  }, entryCreation.withPermits(1));
+  });
 
   const postGrant = (entry: Entry, path: string, grant: string) =>
     httpClient.execute(
@@ -283,11 +285,13 @@ const make = Effect.gen(function* () {
     yield* FiberMap.run(renewals, input.environmentId, renewLoop(entry));
     publish(entry);
     return toStatus(entry);
-  });
+  }, serialized);
 
-  const revoke = Effect.fn("RemotePreviewProxy.revoke")(function* (environmentId: EnvironmentId) {
+  const revokeLocally = Effect.fn("RemotePreviewProxy.revokeLocally")(function* (
+    environmentId: EnvironmentId,
+  ) {
     const entry = entries.get(environmentId);
-    if (!entry) return;
+    if (!entry) return null;
     yield* FiberMap.remove(renewals, environmentId);
     yield* FiberMap.remove(externalExpirations, environmentId);
     const grants = [...entry.grants];
@@ -303,6 +307,13 @@ const make = Effect.gen(function* () {
       { discard: true },
     );
     publish(entry);
+    return { entry, grants };
+  }, serialized);
+
+  const revoke = Effect.fn("RemotePreviewProxy.revoke")(function* (environmentId: EnvironmentId) {
+    const revoked = yield* revokeLocally(environmentId);
+    if (revoked === null) return;
+    const { entry, grants } = revoked;
     // Best effort: the environment also drops these when the issuing session signs out.
     yield* Effect.forEach(
       grants,
@@ -312,25 +323,26 @@ const make = Effect.gen(function* () {
   });
 
   return RemotePreviewProxy.of({
-    attachSession: Effect.fn("RemotePreviewProxy.attachSession")(
-      function* (environmentId, session) {
-        const entry = yield* ensureEntry(environmentId);
-        if (entry.sessions.has(session)) return;
-        yield* Effect.tryPromise({
-          try: async () => {
-            await session.setProxy({
-              mode: "fixed_servers",
-              proxyRules: `http://127.0.0.1:${entry.server.port}`,
-              // Chromium bypasses proxies for loopback unless told otherwise.
-              proxyBypassRules: "<-loopback>",
-            });
-            await session.closeAllConnections();
-          },
-          catch: (cause) => new RemotePreviewProxySessionError({ environmentId, cause }),
-        });
-        entry.sessions.add(session);
-      },
-    ),
+    attachSession: Effect.fn("RemotePreviewProxy.attachSession")(function* (
+      environmentId,
+      session,
+    ) {
+      const entry = yield* ensureEntry(environmentId);
+      if (entry.sessions.has(session)) return;
+      yield* Effect.tryPromise({
+        try: async () => {
+          await session.setProxy({
+            mode: "fixed_servers",
+            proxyRules: `http://127.0.0.1:${entry.server.port}`,
+            // Chromium bypasses proxies for loopback unless told otherwise.
+            proxyBypassRules: "<-loopback>",
+          });
+          await session.closeAllConnections();
+        },
+        catch: (cause) => new RemotePreviewProxySessionError({ environmentId, cause }),
+      });
+      entry.sessions.add(session);
+    }, serialized),
     configure,
     status: Effect.fn("RemotePreviewProxy.status")((environmentId) =>
       Effect.sync(() => {
@@ -341,38 +353,38 @@ const make = Effect.gen(function* () {
     statuses: Effect.fn("RemotePreviewProxy.statuses")(() =>
       Effect.sync(() => [...entries.values()].map(toStatus)),
     ),
-    issueExternalAccess: Effect.fn("RemotePreviewProxy.issueExternalAccess")(
-      function* (environmentId) {
-        const entry = entries.get(environmentId);
-        if (!entry || entry.state !== "ready") {
-          return yield* new RemotePreviewProxyNotConfiguredError({ environmentId });
-        }
-        const password = yield* randomSecret;
-        const expiresAt = (yield* Clock.currentTimeMillis) + Duration.toMillis(EXTERNAL_ACCESS_TTL);
-        // One external consumer at a time: a new credential replaces the old one.
-        if (entry.external !== null) entry.server.closeTunnelsFor(entry.external.credential);
-        const external = { credential: `${EXTERNAL_USER}:${password}`, expiresAt };
-        entry.external = external;
-        yield* FiberMap.run(
-          externalExpirations,
-          environmentId,
-          Effect.gen(function* () {
-            yield* Effect.sleep(EXTERNAL_ACCESS_TTL);
-            if (entry.external !== external) return;
-            entry.server.closeTunnelsFor(external.credential);
-            entry.external = null;
-            publish(entry);
-          }),
-        );
-        publish(entry);
-        return {
-          proxyServer: `http://127.0.0.1:${entry.server.port}`,
-          username: EXTERNAL_USER,
-          password,
-          expiresAt,
-        };
-      },
-    ),
+    issueExternalAccess: Effect.fn("RemotePreviewProxy.issueExternalAccess")(function* (
+      environmentId,
+    ) {
+      const entry = entries.get(environmentId);
+      if (!entry || entry.state !== "ready") {
+        return yield* new RemotePreviewProxyNotConfiguredError({ environmentId });
+      }
+      const password = yield* randomSecret;
+      const expiresAt = (yield* Clock.currentTimeMillis) + Duration.toMillis(EXTERNAL_ACCESS_TTL);
+      // One external consumer at a time: a new credential replaces the old one.
+      if (entry.external !== null) entry.server.closeTunnelsFor(entry.external.credential);
+      const external = { credential: `${EXTERNAL_USER}:${password}`, expiresAt };
+      entry.external = external;
+      yield* FiberMap.run(
+        externalExpirations,
+        environmentId,
+        Effect.gen(function* () {
+          yield* Effect.sleep(EXTERNAL_ACCESS_TTL);
+          if (entry.external !== external) return;
+          entry.server.closeTunnelsFor(external.credential);
+          entry.external = null;
+          publish(entry);
+        }),
+      );
+      publish(entry);
+      return {
+        proxyServer: `http://127.0.0.1:${entry.server.port}`,
+        username: EXTERNAL_USER,
+        password,
+        expiresAt,
+      };
+    }, serialized),
     revokeExternalAccess: Effect.fn("RemotePreviewProxy.revokeExternalAccess")((environmentId) =>
       Effect.sync(() => {
         const entry = entries.get(environmentId);

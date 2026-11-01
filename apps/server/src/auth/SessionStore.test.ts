@@ -177,6 +177,8 @@ it.layer(NodeServices.layer)("SessionStore.layer", (it) => {
       const renewal = yield* sessions.issue({ ...relaySessionInput, ...testCase.renewal });
       yield* TestClock.adjust(Duration.millis((testCase.closesAtMinute - 59) * 60_000 - 1));
       expect(yield* Deferred.isDone(invalidated)).toBe(false);
+      const isActive = sessions.isActive(client.sessionId, relaySessionInput.proofKeyThumbprint);
+      expect(yield* isActive).toBe(true);
       yield* TestClock.adjust(Duration.millis(1));
       if ("revoke" in testCase) {
         yield* sessions.revoke(
@@ -184,6 +186,7 @@ it.layer(NodeServices.layer)("SessionStore.layer", (it) => {
         );
       }
       yield* Fiber.join(watcher);
+      expect(yield* isActive).toBe(false);
     }).pipe(Effect.scoped, Effect.provide(Layer.merge(layerSessionStore(), TestClock.layer()))),
   );
 

@@ -11,7 +11,6 @@ import {
   ThreadId,
   AuthOrchestrationOperateScope,
   AuthOrchestrationReadScope,
-  AuthPreviewOperateScope,
   AuthSourceControlWriteScope,
   AuthTerminalReadScope,
   AuthTerminalOperateScope,
@@ -64,15 +63,11 @@ describe("RPC authorization scopes", () => {
       WS_METHODS.terminalClear,
       WS_METHODS.terminalClose,
       WS_METHODS.previewStopLocalServer,
+      // Proxy grants open raw TCP tunnels to loopback ports, not just browser traffic.
+      WS_METHODS.previewIssueProxyGrant,
     ]) {
       expect(requiredScopeForRpcMethod(method)).toBe(AuthTerminalOperateScope);
     }
-  });
-
-  it("keeps remote preview proxy grants, which reach environment loopback ports, behind preview operate", () => {
-    expect(requiredScopeForRpcMethod(WS_METHODS.previewIssueProxyGrant)).toBe(
-      AuthPreviewOperateScope,
-    );
   });
 
   it("rejects unknown RPC method names", () => {

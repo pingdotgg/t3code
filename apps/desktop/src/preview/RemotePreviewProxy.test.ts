@@ -826,6 +826,45 @@ it.effect("an environment that rejects the grant marks the proxy expired", () =>
   }),
 );
 
+it.effect("a configuration queued behind another environment cannot undo a later revoke", () =>
+  Effect.gen(function* () {
+    const { proxy } = yield* makeProxy;
+    const environment = yield* fakeEnvironment;
+    const appPort = yield* listen(appServer("remote-app").server);
+    environment.loopback.set(appPort, appPort);
+    const endpoint = yield* configure(proxy, environment, ENV_A, "grant-a", [appPort]);
+    environment.grants.set("grant-a2", new Set([appPort]));
+    const session = {
+      setProxy: async () => {},
+      closeAllConnections: async () => {},
+    } as unknown as Session;
+    yield* Effect.all(
+      [
+        proxy.attachSession(ENV_B, session),
+        proxy.configure({
+          environmentId: ENV_A,
+          label: "environment env-a",
+          httpBaseUrl: environment.origin,
+          grant: "grant-a2",
+          expiresAt: (yield* Clock.currentTimeMillis) + TEN_MINUTES,
+          ports: [appPort],
+        }),
+        proxy.revoke(ENV_A),
+      ],
+      { concurrency: "unbounded" },
+    );
+
+    expect((yield* proxy.status(ENV_A))?.state).toBe("revoked");
+    const embedded = proxy.embeddedCredentialForPort(endpoint.port);
+    assert(embedded !== null);
+    const page = yield* proxiedRequest(
+      { port: endpoint.port, authorization: `Basic ${Buffer.from(embedded).toString("base64")}` },
+      `http://localhost:${appPort}/`,
+    );
+    expect(page.status).toBe(503);
+  }).pipe(Effect.scoped),
+);
+
 it.effect("an unconfigured environment fails closed", () =>
   Effect.gen(function* () {
     const { proxy } = yield* makeProxy;

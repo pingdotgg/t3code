@@ -268,7 +268,7 @@ apps.
 In the desktop app, a browser tab you open on this computer for another
 environment renders the page locally, while `localhost` addresses still reach
 the environment's servers through your existing connection, including T3
-Connect. The address stays `http://localhost:5173`, so cookies, OAuth callbacks
+Connect. This needs the `terminal:operate` permission on that environment. The address stays `http://localhost:5173`, so cookies, OAuth callbacks
 and HTTPS certificates behave as they do on the host. Nothing on this computer
 answers those addresses; if the environment is unreachable the tab says so.
 
@@ -280,7 +280,8 @@ the same on the host.
 
 To use the same ports from Chrome or a Playwright script, choose **Copy proxy
 for another browser**. It copies a proxy address, a user name and a password,
-valid for 8 hours or until **Stop other browser access**. Start Chrome with a
+valid for 8 hours or until **Stop other browser access**. Copying it again
+replaces the credential and disconnects the browser using the previous one. Start Chrome with a
 new profile, `--proxy-server` set to that address and
 `--proxy-bypass-list="<-loopback>"`, and enter the user name and password when
 asked. Playwright routes `localhost` through its `proxy` option already. Other
