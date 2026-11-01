@@ -18,6 +18,7 @@ import {
   collectLimitNotices,
   collectLimitPools,
   elapsedShare,
+  formatPaceHeadroom,
   exhaustedUsageWindow,
   paceOf,
   paceRemainingPercent,
@@ -154,6 +155,15 @@ describe("new thread model fallback", () => {
 });
 
 describe("pace", () => {
+  it("phrases distance from even spending", () => {
+    expect(formatPaceHeadroom(24)).toBe("24% behind pace");
+    expect(formatPaceHeadroom(-7)).toBe("7% ahead of pace");
+    expect(formatPaceHeadroom(0)).toBe("On pace");
+    expect(formatPaceHeadroom(3)).toBe("On pace");
+    expect(formatPaceHeadroom(-3)).toBe("On pace");
+    expect(formatPaceHeadroom(4)).toBe("4% behind pace");
+  });
+
   it("places the clock three fifths through a five-hour window with two hours left", () => {
     expect(elapsedShare(window, now)).toBeCloseTo(0.6);
     expect(paceRemainingPercent(window, now)).toBe(40);
@@ -783,12 +793,12 @@ describe("pools", () => {
       ),
       now,
     );
-    expect(untimed[0]?.windows[0]?.pace).toBe("on");
+    expect(untimed[0]?.windows[0]?.paceHeadroomPercent).toBeNull();
     expect(session).toMatchObject({
       id: "five_hour",
       remainingPercent: 40,
       usedPercent: 60,
-      pace: "under",
+      paceHeadroomPercent: 10,
     });
     expect(
       session?.resets.map((reset) => [reset.member.account.key, reset.restoresPercent]),
@@ -956,7 +966,11 @@ describe("pooled account columns", () => {
         ],
         now,
       );
-      expect(pool!.windows[0]).toMatchObject({ remainingPercent: 0, pace: null, resets: [] });
+      expect(pool!.windows[0]).toMatchObject({
+        remainingPercent: 0,
+        paceHeadroomPercent: null,
+        resets: [],
+      });
       expect(pool!.windows[0]!.columns.map((column) => column.window?.resetsAt)).toEqual([
         undefined,
         undefined,

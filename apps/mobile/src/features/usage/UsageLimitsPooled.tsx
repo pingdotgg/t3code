@@ -9,6 +9,7 @@ import {
   collectLimitPools,
   cursorUsageWindowDetails,
   displayLimitWindows,
+  formatPaceHeadroom,
   formatResetsIn,
   paceRemainingPercent,
   remainingPercent,
@@ -35,7 +36,6 @@ const DRIVER_LABEL: Partial<Record<string, string>> = {
   grok: "Grok",
   antigravity: "Antigravity",
 };
-const PACE_LABEL = { ahead: "Ahead of pace", on: "On pace", under: "Under pace" } as const;
 
 function accountName(account: LimitAccount) {
   if (account.displayName) return account.displayName;
@@ -198,29 +198,36 @@ function PoolWindowCard({
     });
   const summary = (
     <>
-      <View className={wide ? "gap-1" : "flex-row items-start justify-between gap-3"}>
-        <View className="gap-1">
+      <View className={wide ? "gap-1" : "flex-row flex-wrap items-start justify-between gap-3"}>
+        <View className="min-w-0 max-w-full gap-1">
           <Text className="text-sm font-t3-medium text-foreground">{label ?? pool.label}</Text>
-          <View className="flex-row items-baseline gap-1.5">
+          <View className="flex-row flex-wrap items-baseline gap-1.5">
             <Text className="text-3xl font-t3-bold tabular-nums text-foreground">
               {pool.remainingPercent}%
             </Text>
             <Text className="text-sm text-foreground-muted">left</Text>
+            {nextRefill ? (
+              <Text
+                accessibilityLabel={`${pool.columns.length > 1 ? "Pooled usage" : "Usage"} +${nextRefill.restoresPercent}% ${formatResetsIn(
+                  nextRefill.member.window,
+                  now,
+                )
+                  ?.replace("resets in ", "in ")
+                  .replace("resets now", "now")}`}
+                className="text-xs tabular-nums text-foreground-muted"
+              >
+                ↻ +{nextRefill.restoresPercent}%
+              </Text>
+            ) : null}
           </View>
         </View>
-        {pool.pace ? (
-          <Text className="text-xs text-foreground-tertiary">{PACE_LABEL[pool.pace]}</Text>
+        {pool.paceHeadroomPercent !== null ? (
+          <Text className="text-xs tabular-nums text-foreground-tertiary">
+            {formatPaceHeadroom(pool.paceHeadroomPercent)}
+          </Text>
         ) : null}
       </View>
       {description ? <Text className="text-xs text-foreground-muted">{description}</Text> : null}
-      {nextRefill ? (
-        <Text className="text-xs tabular-nums text-foreground-muted">
-          ↻ +{nextRefill.restoresPercent}%{" "}
-          {formatResetsIn(nextRefill.member.window, now)
-            ?.replace("resets in ", "in ")
-            .replace("resets now", "now")}
-        </Text>
-      ) : null}
     </>
   );
   const bar = (
