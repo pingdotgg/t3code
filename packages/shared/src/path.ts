@@ -140,7 +140,7 @@ export function resolvePastedPath(previous: string, next: string): string {
 
   const [, single, double] = QUOTED_PATH_AT_END.exec(next) ?? [];
   const quoted = single ?? double;
-  if (quoted !== undefined) return isHostPath(quoted) ? quoted : next;
+  if (quoted !== undefined && isHostPath(quoted)) return quoted;
 
   // Without a trailing separator, `/a` then `/a/b` is a longer path, not one pasted after a folder.
   const afterFolder = /[/\\]$/.test(previous) && next.startsWith(previous);

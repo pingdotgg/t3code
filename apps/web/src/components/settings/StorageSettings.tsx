@@ -55,6 +55,7 @@ export function WorktreesDirectoryRow() {
   const updateSettings = useUpdateScopedSettings();
   const mixed = useScopedSettingsMixed(["worktreesDirectory"]);
   const edited = useRef(false);
+  const draft = useRef("");
   if (
     connectedEnvironments.some(
       (environment) =>
@@ -88,12 +89,16 @@ export function WorktreesDirectoryRow() {
           spellCheck={false}
           placeholder={mixed ? "Mixed" : "Default"}
           defaultValue={mixed ? "" : settings.worktreesDirectory}
-          onChange={() => {
+          onFocus={(event) => {
+            draft.current = event.target.value;
+          }}
+          onChange={(event) => {
             edited.current = true;
+            draft.current = resolvePastedPath(draft.current, event.target.value);
+            event.target.value = draft.current;
           }}
           onBlur={(event) => {
-            const value = resolvePastedPath("", event.target.value).trim();
-            event.target.value = value;
+            const value = event.target.value.trim();
             if (edited.current && (mixed || value !== settings.worktreesDirectory))
               updateSettings({ worktreesDirectory: value });
             edited.current = false;

@@ -43,6 +43,12 @@ describe("resolvePastedPath", () => {
     ["Finder, a space", "", "'/Users/me/Monarch Money'", "/Users/me/Monarch Money"],
     ["Finder, an apostrophe", "", "/Users/me/Bob\\'s\\ Stuff", "/Users/me/Bob's Stuff"],
     ["Finder, a backslash", "", "/Users/me/a\\\\\\ b", "/Users/me/a\\ b"],
+    [
+      "Finder, apostrophes around a name",
+      "",
+      "/Users/me/\\'My\\ Folder\\'",
+      "/Users/me/'My Folder'",
+    ],
     ["Explorer, a drive", "", '"C:\\Users\\me\\My Code"', "C:\\Users\\me\\My Code"],
     ["Explorer, a share", "", '"\\\\host\\share\\My Code"', "\\\\host\\share\\My Code"],
     ["an apostrophe in double quotes", "", '"/Users/me/Bob\'s Stuff"', "/Users/me/Bob's Stuff"],
