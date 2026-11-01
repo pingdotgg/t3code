@@ -470,6 +470,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["usage quota rate limit reset recover continue"],
   },
   {
+    id: "new-thread-button",
+    title: "New thread button",
+    to: "/settings/general",
+    searchTerms: ["no project scratch default picker choose project sidebar shortcut"],
+  },
+  {
     id: "working-shelf",
     title: "Working section",
     to: "/settings/general",

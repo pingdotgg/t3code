@@ -19,6 +19,7 @@ import {
   type DiffLayout,
   MAX_SIDEBAR_AUTO_SETTLE_AFTER_DAYS,
   MIN_SIDEBAR_AUTO_SETTLE_AFTER_DAYS,
+  NewThreadButtonTarget,
   type ResponseStreamingMode,
   type QuitConfirmationMode,
   SidebarProjectSortOrder,
@@ -139,6 +140,12 @@ const SIDEBAR_PROJECT_SORT_ORDER_LABELS: Record<SidebarProjectSortOrder, string>
   manual: "Manual",
 };
 const isSidebarProjectSortOrder = Schema.is(SidebarProjectSortOrder);
+
+const NEW_THREAD_BUTTON_TARGET_LABELS: Record<NewThreadButtonTarget, string> = {
+  "pick-project": "Choose a project",
+  "no-project": "No project",
+};
+const isNewThreadButtonTarget = Schema.is(NewThreadButtonTarget);
 
 const TIMESTAMP_FORMAT_LABELS = {
   locale: "System default",
@@ -512,6 +519,9 @@ export function useSettingsRestore(onRestored?: () => void) {
     ...(settings.sidebarProjectSortOrder !== DEFAULT_UNIFIED_SETTINGS.sidebarProjectSortOrder
       ? ["Project order"]
       : []),
+    ...(settings.newThreadButtonTarget !== DEFAULT_UNIFIED_SETTINGS.newThreadButtonTarget
+      ? ["New thread button"]
+      : []),
     ...(settings.sidebarWorkingShelfEnabled !== DEFAULT_UNIFIED_SETTINGS.sidebarWorkingShelfEnabled
       ? ["Working section"]
       : []),
@@ -697,6 +707,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       panelAnimationDurationMs: DEFAULT_UNIFIED_SETTINGS.panelAnimationDurationMs,
       sidebarProjectGroupingMode: DEFAULT_UNIFIED_SETTINGS.sidebarProjectGroupingMode,
       sidebarProjectSortOrder: DEFAULT_UNIFIED_SETTINGS.sidebarProjectSortOrder,
+      newThreadButtonTarget: DEFAULT_UNIFIED_SETTINGS.newThreadButtonTarget,
       sidebarWorkingShelfEnabled: DEFAULT_UNIFIED_SETTINGS.sidebarWorkingShelfEnabled,
       sidebarAutoSettleAfterDays: DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleAfterDays,
       sidebarAutoSettleScope: DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleScope,
@@ -931,6 +942,45 @@ export function GeneralSettingsPanel() {
                 {SidebarProjectSortOrder.literals.map((sortOrder) => (
                   <SelectItem hideIndicator key={sortOrder} value={sortOrder}>
                     {SIDEBAR_PROJECT_SORT_ORDER_LABELS[sortOrder]}
+                  </SelectItem>
+                ))}
+              </SelectPopup>
+            </Select>
+          }
+        />
+        <SettingsRow
+          {...searchableSetting("new-thread-button")}
+          description="What New thread and its shortcut start. Shift+click still starts in the current project."
+          resetAction={
+            settings.newThreadButtonTarget !== DEFAULT_UNIFIED_SETTINGS.newThreadButtonTarget ? (
+              <SettingResetButton
+                label="new thread button"
+                onClick={() =>
+                  updateSettings({
+                    newThreadButtonTarget: DEFAULT_UNIFIED_SETTINGS.newThreadButtonTarget,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <Select
+              value={settings.newThreadButtonTarget}
+              onValueChange={(value) => {
+                if (isNewThreadButtonTarget(value)) {
+                  updateSettings({ newThreadButtonTarget: value });
+                }
+              }}
+            >
+              <SelectTrigger size="sm" className="w-full sm:w-44" aria-label="New thread button">
+                <SelectValue>
+                  {NEW_THREAD_BUTTON_TARGET_LABELS[settings.newThreadButtonTarget]}
+                </SelectValue>
+              </SelectTrigger>
+              <SelectPopup align="end" alignItemWithTrigger={false}>
+                {NewThreadButtonTarget.literals.map((target) => (
+                  <SelectItem hideIndicator key={target} value={target}>
+                    {NEW_THREAD_BUTTON_TARGET_LABELS[target]}
                   </SelectItem>
                 ))}
               </SelectPopup>
