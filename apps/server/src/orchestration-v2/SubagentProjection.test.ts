@@ -9,10 +9,13 @@ import {
   EventId,
   TurnItemId,
   type OrchestrationV2Run,
+  type OrchestrationV2TurnItem,
   type OrchestrationV2AppThread,
   ProjectId,
+  ProviderDriverKind,
   ProviderInstanceId,
   ProviderThreadId,
+  ProviderTurnId,
   ThreadId,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
@@ -403,6 +406,132 @@ it("orders a task's assistant messages by turn item, not by timestamps", () => {
   assert.equal(result.text, "All steps passed.");
   assert.equal(result.messageId, report.message.id);
   assert.equal(result.turnItemId, report.turnItem.id);
+});
+
+type SystemNotice = Extract<OrchestrationV2TurnItem, { readonly type: "system_notice" }>;
+
+it("notes a substituted model with the root provider notice from the same run", () => {
+  const { projection, run } = taskFixture();
+  const answer = makeSubagentConversationArtifacts({
+    messageId: MessageId.make("answer"),
+    turnItemId: TurnItemId.make("answer"),
+    threadId: parentThreadId,
+    rootNodeId: NodeId.make("root"),
+    providerThreadId: null,
+    providerTurnId: null,
+    nativeItemRef: null,
+    role: "assistant",
+    text: "Review done.",
+    ordinal: 1,
+    now: childCreatedAt,
+  });
+  const fallback = "Model gpt-5.4 is restricted by your organization. Using gpt-5.4-mini instead.";
+  const notice = (
+    id: string,
+    message: string,
+    overrides: Partial<
+      Pick<SystemNotice, "nodeId" | "runId" | "nativeItemRef" | "providerTurnId">
+    > = {},
+  ): SystemNotice => ({
+    id: TurnItemId.make(id),
+    threadId: parentThreadId,
+    runId: run.id,
+    nodeId: NodeId.make("root"),
+    providerThreadId: null,
+    providerTurnId: ProviderTurnId.make("active-notice"),
+    nativeItemRef: {
+      driver: ProviderDriverKind.make("claudeAgent"),
+      nativeId: id,
+      strength: "strong",
+    },
+    parentItemId: null,
+    ordinal: 0,
+    status: "completed",
+    title: message,
+    startedAt: childCreatedAt,
+    completedAt: childCreatedAt,
+    updatedAt: childCreatedAt,
+    type: "system_notice",
+    message,
+    ...overrides,
+  });
+  const result = subagentResultForRun(
+    {
+      ...projection,
+      messages: [{ ...answer.message, runId: run.id }],
+      turnItems: [
+        { ...answer.turnItem, runId: run.id },
+        notice("fallback", fallback),
+        notice("native-subagent", "Subagent fell back to Haiku.", {
+          nodeId: NodeId.make("native-subagent"),
+        }),
+        notice("other-run", "Another run's notice.", { runId: RunId.make("other") }),
+        notice("old-attempt", "An earlier attempt's notice.", {
+          providerTurnId: ProviderTurnId.make("old-attempt"),
+        }),
+        notice("unattributed", "A notice without attempt attribution.", { providerTurnId: null }),
+        notice("usage-limit", "T3 usage limit notice.", {
+          nativeItemRef: {
+            driver: ProviderDriverKind.make("claudeAgent"),
+            nativeId: "usage-limit",
+            strength: "weak",
+          },
+        }),
+      ],
+      providerTurns: [
+        { id: ProviderTurnId.make("active-notice"), runAttemptId: run.activeAttemptId, ordinal: 1 },
+        {
+          id: ProviderTurnId.make("active-result"),
+          runAttemptId: run.activeAttemptId,
+          ordinal: 2,
+          model: "gpt-5.4-mini",
+        },
+        {
+          id: ProviderTurnId.make("old-attempt"),
+          runAttemptId: RunAttemptId.make("other"),
+          ordinal: 3,
+          model: "gpt-5.4-nano",
+        },
+      ] as never,
+    },
+    run,
+  );
+  assert.equal(
+    result.text,
+    `Requested model gpt-5.4, but the provider ran gpt-5.4-mini.\nProvider notice: ${fallback}\n\nReview done.`,
+  );
+  assert.equal(result.messageId, answer.message.id);
+  const resultWithTurns = (providerTurns: ReadonlyArray<object>) =>
+    subagentResultForRun(
+      {
+        ...projection,
+        messages: [{ ...answer.message, runId: run.id }],
+        turnItems: [notice("fallback", fallback)],
+        providerTurns: providerTurns as never,
+      },
+      run,
+    ).text;
+  const attempt = { id: ProviderTurnId.make("active-notice"), runAttemptId: run.activeAttemptId };
+  // The provider's own verdict wins over comparing labels, such as for an alias it resolved.
+  assert.equal(
+    resultWithTurns([
+      { ...attempt, ordinal: 1, model: "gpt-5.4-2026-03-05", modelSubstituted: false },
+    ]),
+    "Review done.",
+  );
+  assert.equal(
+    resultWithTurns([{ ...attempt, ordinal: 1, model: "gpt-5.4-mini", modelSubstituted: true }]),
+    `Requested model gpt-5.4, but the provider ran gpt-5.4-mini.\nProvider notice: ${fallback}\n\nReview done.`,
+  );
+  assert.equal(resultWithTurns([{ ...attempt, ordinal: 1, model: "gpt-5.4" }]), "Review done.");
+  // The newest turn reported no model, so an earlier turn's substitution is not attributed to it.
+  assert.equal(
+    resultWithTurns([
+      { ...attempt, ordinal: 1, model: "gpt-5.4-mini", modelSubstituted: true },
+      { ...attempt, ordinal: 2 },
+    ]),
+    "Review done.",
+  );
 });
 
 it.effect("ends an orphaned native subagent's node when only its record already ended", () =>
