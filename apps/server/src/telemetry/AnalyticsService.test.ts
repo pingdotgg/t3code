@@ -16,7 +16,10 @@ import * as HttpServerRequest from "effect/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 
+import type { ManagedPolicyDocument } from "@t3tools/contracts";
+
 import * as ServerConfig from "../config.ts";
+import * as ManagedPolicy from "../policy/ManagedPolicy.ts";
 import { getTelemetryIdentity } from "./Identify.ts";
 import * as AnalyticsService from "./AnalyticsService.ts";
 
@@ -119,6 +122,7 @@ const sendFor = (
     never,
     AnalyticsService.AnalyticsService | Effect.Services<typeof getTelemetryIdentity>
   > = recordTwentyEvents,
+  policy?: ManagedPolicyDocument,
 ) =>
   Effect.gen(function* () {
     const batches: Array<ReadonlyArray<SentEvent>> = [];
@@ -151,6 +155,7 @@ const sendFor = (
           Layer.succeed(HostProcess.Platform, "win32"),
           Layer.succeed(HostProcess.Architecture, "x64"),
           Layer.succeed(HttpClient.HttpClient, client),
+          ManagedPolicy.layerTest(policy),
         ),
       ),
     );
@@ -240,6 +245,24 @@ it.layer(NodeServices.layer)("AnalyticsService test", (it) => {
     }),
   );
 
+  it.effect(
+    "sends nothing when a managed policy turns telemetry off, despite the environment",
+    () =>
+      Effect.gen(function* () {
+        const policy = { schemaVersion: 1, organization: "Example Corp" } as const;
+        const allowed = yield* sendFor(1, respondWithStatus(204), recordTwentyEvents, {
+          ...policy,
+          limits: { telemetry: true },
+        });
+        assert.equal(allowed.length, 1);
+        const denied = yield* sendFor(1, respondWithStatus(204), recordTwentyEvents, {
+          ...policy,
+          limits: { telemetry: false },
+        });
+        assert.deepEqual(denied, []);
+      }),
+  );
+
   it.effect("drops a batch the endpoint rejects without sending it again", () =>
     Effect.gen(function* () {
       const batches = yield* sendFor(10, respondWithStatus(400));
@@ -286,6 +309,7 @@ it.layer(NodeServices.layer)("AnalyticsService test", (it) => {
           Layer.mergeAll(
             Layer.succeed(HostProcess.Platform, "linux"),
             Layer.succeed(HostProcess.Architecture, "arm64"),
+            ManagedPolicy.layerTest(),
           ),
         ),
         Layer.provideMerge(NodeHttpServer.layerTest),
@@ -376,6 +400,7 @@ it.layer(NodeServices.layer)("AnalyticsService test", (it) => {
           Layer.mergeAll(
             Layer.succeed(HostProcess.Platform, "linux"),
             Layer.succeed(HostProcess.Architecture, "arm64"),
+            ManagedPolicy.layerTest(),
           ),
         ),
         Layer.provideMerge(NodeHttpServer.layerTest),
