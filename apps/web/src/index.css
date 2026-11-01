@@ -2569,3 +2569,32 @@ code {
   outline: 2px solid var(--ring);
   outline-offset: -2px;
 }
+
+/* The app status row is part of the shell, so viewport-sized pages and the fixed sidebar stop above it. */
+[data-app-shell] {
+  display: flex !important;
+  flex-direction: column !important;
+  min-height: 0 !important;
+}
+
+[data-app-shell-main] {
+  flex: 1 1 0% !important;
+  min-height: 0;
+  width: 100%;
+}
+
+[data-app-shell-main] [data-slot="sidebar-inset"] {
+  height: 100% !important;
+  min-height: 0;
+}
+
+[data-app-shell] [data-slot="sidebar-container"] {
+  bottom: 1.75rem;
+  height: calc(100svh - 1.75rem);
+}
+
+[data-app-status-bar] {
+  position: relative;
+  z-index: 20;
+  flex: 0 0 1.75rem;
+}

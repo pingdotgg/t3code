@@ -39,7 +39,7 @@ describe("codexRateLimitsToLimits", () => {
     expect(codexRateLimitsToUpdate(snapshot)).toEqual({ windows });
   });
 
-  it("maps primary and secondary onto the session and weekly windows", () => {
+  it("maps primary and secondary onto the 5-hour session and weekly windows", () => {
     expect(
       codexRateLimitsToLimits({
         checkedAt,
@@ -55,7 +55,7 @@ describe("codexRateLimitsToLimits", () => {
         {
           id: "primary",
           kind: "session",
-          label: "Session",
+          label: "5-hour session",
           usedPercent: 12,
           windowDurationMins: 300,
           resetsAt: "2026-07-14T03:33:20.000Z",
@@ -225,7 +225,7 @@ describe("mergeCodexRateLimits", () => {
         {
           id: "primary",
           kind: "session",
-          label: "Session",
+          label: "5-hour session",
           usedPercent: 12,
           windowDurationMins: 300,
         },

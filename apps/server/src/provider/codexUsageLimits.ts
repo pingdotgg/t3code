@@ -52,7 +52,8 @@ function kindForDuration(mins: number): ServerProviderUsageWindow["kind"] {
   return "session";
 }
 
-function labelForKind(kind: ServerProviderUsageWindow["kind"]): string {
+function labelForKind(kind: ServerProviderUsageWindow["kind"], windowDurationMins: number): string {
+  if (kind === "session" && windowDurationMins === SESSION_MINS) return "5-hour session";
   return kind === "session" ? "Session" : kind === "weekly" ? "Weekly" : "Monthly";
 }
 
@@ -77,7 +78,7 @@ function codexRateLimitsToWindows(
     windows.push({
       id,
       kind,
-      label: labelForKind(kind),
+      label: labelForKind(kind, windowDurationMins),
       usedPercent: clampPercent(window.usedPercent),
       windowDurationMins,
       ...(resetsAt ? { resetsAt } : {}),
