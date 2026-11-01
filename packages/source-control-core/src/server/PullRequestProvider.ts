@@ -191,6 +191,7 @@ export interface ProviderChangeRequestDetail extends ProviderChangeRequest {
   readonly maintainerCanModify?: boolean;
   readonly headSha?: string | null;
   readonly body: string;
+  readonly displayBody?: string | undefined;
   readonly changedFiles: number;
   readonly mergedAt: string | null;
   readonly closedAt: string | null;
