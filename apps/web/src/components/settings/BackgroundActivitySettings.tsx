@@ -219,8 +219,8 @@ function BackgroundActivityAdvancedDialog({
               <div className="min-w-0 space-y-1">
                 <div className="text-sm font-medium">Provider health interval</div>
                 <p className="text-xs leading-relaxed text-muted-foreground">
-                  Refresh provider availability, versions, and auth state. Model catalog updates
-                  follow Provider update checks.
+                  Refresh provider availability, versions, and auth state. Model catalogs refresh
+                  when Download new models is on.
                 </p>
               </div>
               <div className="flex shrink-0 items-center gap-2">
