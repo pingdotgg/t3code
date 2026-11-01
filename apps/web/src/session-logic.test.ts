@@ -138,6 +138,24 @@ describe("V2 session presentation", () => {
         failure: { ...retryItem.failure, class: "usage_limit" },
       }),
     ).toMatchObject({ label: "Usage limit reached after 2/10 retries" });
+    const capacityMessage =
+      "Upstream request failed: [ttft_admission_refused] the cell is at capacity; retry shortly (after 30 s)";
+    expect(
+      providerErrorPresentation({
+        ...retryItem,
+        status: "failed",
+        completedAt: now,
+        failure: {
+          class: "usage_limit",
+          code: "provider.rate-limit",
+          message: capacityMessage,
+          retryable: null,
+        },
+      }),
+    ).toMatchObject({
+      label: "Provider at capacity after 2/10 retries",
+      detail: capacityMessage,
+    });
     const recoveredLimit = {
       ...retryItem,
       status: "completed" as const,

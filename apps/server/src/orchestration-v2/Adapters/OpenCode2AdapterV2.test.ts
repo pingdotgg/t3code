@@ -563,6 +563,16 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
         status: 429,
       },
     },
+    {
+      name: "a provider.rate-limit admission refusal",
+      failureClass: "usage_limit",
+      error: {
+        type: "provider.rate-limit",
+        message:
+          "Upstream request failed: [ttft_admission_refused] the cell is at capacity; retry shortly (after 30 s)",
+        status: 429,
+      },
+    },
   ] as const)("classifies $name as $failureClass", ({ error, failureClass }) =>
     Effect.gen(function* () {
       const { runtime, thread } = yield* resumed([

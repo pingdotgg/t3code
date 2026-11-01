@@ -63,6 +63,7 @@ import {
 } from "@t3tools/shared/toolActivity";
 import { claudeResumeCompactionAge } from "@t3tools/shared/claudeCompaction";
 import { formatDuration } from "@t3tools/shared/orchestrationTiming";
+import { providerFailurePresentation } from "@t3tools/shared/orchestrationV2ThreadError";
 import { truncate } from "@t3tools/shared/String";
 import type { HtmlRenderReference } from "@t3tools/shared/htmlRender";
 import type { McpAppReference } from "@t3tools/shared/mcpApp";
@@ -585,6 +586,9 @@ function itemSummary(
     (item.type === "dynamic_tool"
       ? dynamicToolTitle(item.toolName, item.input, item.title)
       : undefined) ?? item.title?.trim();
+  if (item.type === "error" && item.status === "failed") {
+    return providerFailurePresentation(item.failure, title).title;
+  }
   if (item.type === "subagent") return formatSubagentDisplayTitle(title || "Subagent");
   if (title) return toolPresentation?.displayName ?? capitalizePhrase(title);
   switch (item.type) {

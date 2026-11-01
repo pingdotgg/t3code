@@ -3,6 +3,7 @@ import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime"
 import { AsyncResult } from "effect/reactivity";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
 import type { EnvironmentId } from "@t3tools/contracts";
+import { providerFailurePresentation } from "@t3tools/shared/orchestrationV2ThreadError";
 import * as DateTime from "effect/DateTime";
 import { useState } from "react";
 import { View } from "react-native";
@@ -36,6 +37,20 @@ export function UsageLimitRecoveryCard({
     !runId
   )
     return null;
+  const failurePresentation = providerFailurePresentation({
+    class: thread.runtime.lastErrorClass,
+    code: thread.runtime.lastErrorCode ?? null,
+    message: thread.runtime.lastError ?? "",
+  });
+  const resetTime = resetAt
+    ? DateTime.toDateUtc(DateTime.makeUnsafe(resetAt)).toLocaleString()
+    : null;
+  const recoveryDescription =
+    failurePresentation.kind === "provider_capacity"
+      ? `${failurePresentation.title}. ${thread.runtime.lastError ?? ""}${resetTime ? ` Resets ${resetTime}.` : ""}`
+      : resetTime
+        ? `Usage limit resets ${resetTime}.`
+        : "The provider did not report a reset time. Retry manually when your limit is available.";
   const snoozed =
     recovery?.snooze === true &&
     recovery.runId === runId &&
@@ -70,11 +85,7 @@ export function UsageLimitRecoveryCard({
   }
   return (
     <View className="mx-3 mb-2 gap-2 rounded-xl border border-warning-foreground/25 bg-screen p-3">
-      <Text className="text-sm text-warning-foreground">
-        {resetAt
-          ? `Usage limit resets ${DateTime.toDateUtc(DateTime.makeUnsafe(resetAt)).toLocaleString()}.`
-          : "The provider did not report a reset time. Retry manually when your limit is available."}
-      </Text>
+      <Text className="text-sm text-warning-foreground">{recoveryDescription}</Text>
       {canSchedule ? (
         <View className="flex-row flex-wrap gap-2">
           <Button

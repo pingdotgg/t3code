@@ -1,8 +1,10 @@
 import {
   type OrchestrationV2LimitRecovery,
   type OrchestrationV2LimitRecoveryUpdate,
+  type OrchestrationV2ProviderFailure,
   type RunId,
 } from "@t3tools/contracts";
+import { providerFailurePresentation } from "@t3tools/shared/orchestrationV2ThreadError";
 import { type TimestampFormat } from "@t3tools/contracts/settings";
 import { deadlineStore } from "@t3tools/client-runtime/clock";
 import { GaugeIcon } from "lucide-react";
@@ -19,6 +21,7 @@ type RecoveryProps = {
   stoppedAt: string;
   snoozedUntil: string | null;
   recovery: OrchestrationV2LimitRecovery | null;
+  failure?: Pick<OrchestrationV2ProviderFailure, "class" | "code" | "message">;
   timestampFormat: TimestampFormat;
   onChange: (recovery: OrchestrationV2LimitRecoveryUpdate) => Promise<void>;
 };
@@ -26,14 +29,18 @@ type RecoveryProps = {
 export function usageLimitRecoveryBannerItem(props: RecoveryProps): ComposerBannerStackItem {
   const { runId, resetAt, stoppedAt, timestampFormat } = props;
   const canSchedule = resetAt !== null && Date.parse(resetAt) > Date.parse(stoppedAt);
+  const failurePresentation = props.failure ? providerFailurePresentation(props.failure) : null;
   return {
     id: `usage-limit-recovery:${runId}`,
     variant: "warning",
     icon: <GaugeIcon />,
-    title: "Usage limit reached",
-    description: resetAt
-      ? `Resets ${formatUpcomingTimestamp(resetAt, timestampFormat)}`
-      : "Reset time unavailable; retry manually",
+    title: failurePresentation?.title ?? "Usage limit reached",
+    description:
+      failurePresentation?.kind === "provider_capacity"
+        ? `${props.failure?.message ?? "Provider at capacity"}${resetAt ? ` Resets ${formatUpcomingTimestamp(resetAt, timestampFormat)}.` : ""}`
+        : resetAt
+          ? `Resets ${formatUpcomingTimestamp(resetAt, timestampFormat)}`
+          : "Reset time unavailable; retry manually",
     actions: canSchedule ? <RecoveryActions key={`${runId}:${resetAt}`} {...props} /> : null,
   };
 }

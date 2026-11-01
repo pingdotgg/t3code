@@ -16,6 +16,7 @@ import * as Effect from "effect/Effect";
 import {
   makeProviderFailure,
   makeProviderFailureTurnItem,
+  makeProviderRetryTurnItem,
   MAX_PROVIDER_FAILURE_MESSAGE_LENGTH,
   ContextHandoffBudgetError,
   ContextHandoffBackgroundWorkError,
@@ -196,6 +197,53 @@ it("does not serialize arbitrary provider causes", () => {
     code: null,
     retryable: null,
   });
+});
+
+it("preserves OpenCode admission-refusal data and recovered retry titles", () => {
+  const driver = ProviderDriverKind.make("opencode");
+  const threadId = ThreadId.make("thread:provider-capacity-title");
+  const runId = RunId.make("run:provider-capacity-title");
+  const nodeId = NodeId.make("node:provider-capacity-title");
+  const providerThreadId = ProviderThreadId.make("provider-thread:provider-capacity-title");
+  const providerTurnId = ProviderTurnId.make("provider-turn:provider-capacity-title");
+  const occurredAt = DateTime.makeUnsafe("2026-10-29T00:00:00.000Z");
+  const message =
+    "Upstream request failed: [ttft_admission_refused] the cell is at capacity; retry shortly (after 30 s)";
+  const failure = makeProviderFailure({
+    class: "usage_limit",
+    code: "provider.rate-limit",
+    message,
+    resetAt: "2026-10-29T00:00:30.000Z",
+  });
+  const base = {
+    driver,
+    threadId,
+    runId,
+    nodeId,
+    providerThreadId,
+    providerTurnId,
+    itemOrdinal: 101,
+    failure,
+    retry: { attempt: 1, maxAttempts: null, retryDelayMs: 30_000 },
+  } as const;
+
+  const failed = makeProviderFailureTurnItem({ ...base, occurredAt });
+  assert.equal(failed.title, "Provider at capacity");
+  assert.deepEqual(failed.failure, {
+    class: "usage_limit",
+    code: "provider.rate-limit",
+    message,
+    retryable: null,
+    resetAt: "2026-10-29T00:00:30.000Z",
+  });
+
+  const completedRetry = makeProviderRetryTurnItem({
+    ...base,
+    status: "completed",
+    startedAt: occurredAt,
+    updatedAt: occurredAt,
+  });
+  assert.equal(completedRetry.title, "Provider recovered");
 });
 
 it.effect("keys terminal failure items by provider turn across retries and fallback paths", () =>
