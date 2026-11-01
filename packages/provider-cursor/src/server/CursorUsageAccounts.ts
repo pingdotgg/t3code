@@ -186,10 +186,9 @@ const make = Effect.gen(function* () {
     retentionStartMs: number,
     awaitRefresh: boolean,
   ) {
-    if (
-      typeof credential === "string" &&
-      !(yield* fileSystem.exists(credential).pipe(Effect.orElseSucceed(() => true)))
-    ) {
+    // A Keychain login outlives an uninstalled Cursor, so it also needs Cursor's local directory.
+    const localLogin = typeof credential === "string" ? credential : path.dirname(authPath);
+    if (!(yield* fileSystem.exists(localLogin).pipe(Effect.orElseSucceed(() => true)))) {
       return null;
     }
     yield* ensureLoaded;
