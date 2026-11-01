@@ -22,11 +22,8 @@ import {
   CommandShortcut,
 } from "./ui/command";
 import { getVirtualizedScrollFadeClassName } from "./ui/scroll-area";
-import {
-  HighlightedSearchText,
-  SearchMatchHintLine,
-  ThreadSearchMatchExcerpt,
-} from "./ThreadSearchMatch";
+import { ProjectPinButton } from "./ProjectPinButton";
+import { SearchMatchHintLine, ThreadSearchMatchExcerpt } from "./ThreadSearchMatch";
 
 interface CommandPaletteResultsProps {
   emptyStateMessage?: string;
@@ -159,16 +156,12 @@ export function CommandPaletteTitleIcon(props: { children: ReactNode }) {
 function CommandPaletteTitle({
   item,
 }: {
-  item: Pick<CommandPaletteActionItem | CommandPaletteSubmenuItem, "title" | "titleRanges">;
+  item: Pick<CommandPaletteActionItem | CommandPaletteSubmenuItem, "title">;
 }) {
   const { title } = item;
   return (
     <span className="truncate" dir={typeof title === "string" ? textDirection(title) : undefined}>
-      {typeof title === "string" && item.titleRanges ? (
-        <HighlightedSearchText text={title} ranges={item.titleRanges} />
-      ) : (
-        title
-      )}
+      {title}
     </span>
   );
 }
@@ -276,6 +269,14 @@ function CommandPaletteResultRow(props: {
         </span>
       )}
       {props.item.titleTrailingContent}
+      {props.item.kind === "action" && props.item.pin ? (
+        <ProjectPinButton
+          name={props.item.pin.name}
+          pinned={props.item.pin.pinned}
+          onToggle={props.item.pin.toggle}
+          shortcutLabel={shortcutLabelForCommand(props.keybindings, "thread.pin")}
+        />
+      ) : null}
       {props.item.timestamp ? (
         <span className="min-w-12 shrink-0 text-right text-xs tabular-nums text-muted-foreground/70">
           {props.item.timestamp}

@@ -33,6 +33,7 @@ class T3ReviewDiffView(context: Context, appContext: AppContext) : ExpoView(cont
   private val onToggleComment by EventDispatcher()
   private var rows: List<DiffRow> = emptyList()
   private var visibleRows: List<DiffRow> = emptyList()
+  private var visibleRowIndices = IntArray(0)
   private var collapsedFileIds: Set<String> = emptySet()
   private var viewedFileIds: Set<String> = emptySet()
   private var selectedRowIds: Set<String> = emptySet()
@@ -75,8 +76,8 @@ class T3ReviewDiffView(context: Context, appContext: AppContext) : ExpoView(cont
       onDebug(
         mapOf(
           "message" to "visible-range",
-          "firstRowIndex" to first,
-          "lastRowIndex" to last,
+          "firstRowIndex" to visibleRowIndices[first],
+          "lastRowIndex" to visibleRowIndices[last],
           "totalRows" to rows.size,
         ),
       )
@@ -105,6 +106,7 @@ class T3ReviewDiffView(context: Context, appContext: AppContext) : ExpoView(cont
     horizontalScroller.forceFinished(true)
     rows = emptyList()
     visibleRows = emptyList()
+    visibleRowIndices = IntArray(0)
     canvasView.rows = emptyList()
     canvasView.tokensByRowId = emptyMap()
     lastVisibleFileId = null
@@ -393,16 +395,20 @@ class T3ReviewDiffView(context: Context, appContext: AppContext) : ExpoView(cont
   private fun rebuildVisibleRows() {
     canvasView.setViewportEventsPaused(true)
     val filtered = ArrayList<DiffRow>(rows.size)
+    val indices = IntArray(rows.size)
     var currentFileCollapsed = false
-    rows.forEach { row ->
+    rows.forEachIndexed { index, row ->
       if (row.kind == "file") {
         currentFileCollapsed = collapsedFileIds.contains(row.resolvedFileId)
-        filtered.add(row)
-      } else if (!currentFileCollapsed) {
+      }
+      if (row.kind == "file" || !currentFileCollapsed) {
+        indices[filtered.size] = index
         filtered.add(row)
       }
     }
     visibleRows = filtered
+    // JS selects highlights from the full payload, including collapsed rows.
+    visibleRowIndices = indices.copyOf(filtered.size)
     canvasView.rows = filtered
     canvasView.viewedFileIds = viewedFileIds
     canvasView.selectedRowIds = selectedRowIds
@@ -477,6 +483,7 @@ class T3ReviewDiffView(context: Context, appContext: AppContext) : ExpoView(cont
       )
       postInvalidateOnAnimation()
     } else {
+      verticalScroller.forceFinished(true)
       canvasView.setVerticalOffset(target)
     }
   }
@@ -1417,13 +1424,24 @@ private fun centeredBaseline(top: Int, bottom: Int, paint: Paint): Float {
   return (top + bottom) / 2f - (metrics.ascent + metrics.descent) / 2f
 }
 
+// A single-line preview never shows this many characters, so longer text is cut before measuring.
+private const val ELLIPSIZE_MAX_CHARS = 500
+
 private fun ellipsize(value: String, paint: Paint, width: Float): String {
-  if (paint.measureText(value) <= width) return value
+  val truncated = value.length > ELLIPSIZE_MAX_CHARS
+  val capEnd = surrogateSafeEnd(value, ELLIPSIZE_MAX_CHARS)
+  val text = if (truncated) value.substring(0, capEnd) else value
+  if (!truncated && paint.measureText(text) <= width) return value
   val suffix = "..."
   val available = max(0f, width - paint.measureText(suffix))
-  var end = value.length
-  while (end > 0 && paint.measureText(value, 0, end) > available) end -= 1
-  return value.substring(0, end) + suffix
+  val end = surrogateSafeEnd(text, paint.breakText(text, true, available, null))
+  return text.substring(0, end) + suffix
+}
+
+private fun surrogateSafeEnd(value: String, end: Int): Int {
+  val splitsPair = end in 1 until value.length &&
+    Character.isSurrogatePair(value[end - 1], value[end])
+  return if (splitsPair) end - 1 else end
 }
 
 private fun indexFileHeaders(rows: List<DiffRow>): IntArray {

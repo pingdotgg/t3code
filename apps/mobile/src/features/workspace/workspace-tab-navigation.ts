@@ -17,6 +17,14 @@ type PullRequestSelection = NonNullable<WorkspaceSelections["pullRequests"]>;
 /** Opened when Settings has columns and none of its pages has been opened yet. */
 export const DEFAULT_SETTINGS_PAGE = "SettingsEnvironments" satisfies SettingsPageTarget;
 
+export function workspaceTabColumns(
+  platform: string,
+  tab: WorkspaceTab | "settings",
+  columns: boolean,
+) {
+  return columns && (platform === "ios" || (platform === "android" && tab === "settings"));
+}
+
 // Pages a Settings row opens, minus Project overview: it shows the project chosen in the
 // Settings scope, which resets whenever Settings closes.
 const REMEMBERED_SETTINGS_PAGES: ReadonlySet<string> = new Set(
@@ -91,9 +99,17 @@ export function workspaceSelectionsIn(
     threadId &&
     (next.threads?.environmentId !== environmentId ||
       next.threads.threadId !== threadId ||
-      next.threads.key !== thread?.key)
+      next.threads.key !== thread?.key ||
+      next.threadsDraft)
   ) {
-    next = { ...next, threads: { environmentId, threadId, key: thread?.key } };
+    const { threadsDraft: _, ...rest } = next;
+    next = { ...rest, threads: { environmentId, threadId, key: thread?.key } };
+  } else if (
+    thread?.key !== undefined &&
+    !threadId &&
+    (next.threadsDraft?.key !== thread.key || next.threadsDraft.params !== thread.params)
+  ) {
+    next = { ...next, threadsDraft: { key: thread.key, params: thread.params } };
   }
   const pullRequestRoute = routes.findLast((route) => route.name === "PullRequest");
   const pullRequest = pullRequestSelection(pullRequestRoute?.params);
@@ -136,6 +152,16 @@ function detailRoute(
   check: WorkspaceSelectionCheck,
 ): RouteLike | undefined {
   if (tab === "threads") {
+    const draft = selections.threadsDraft;
+    if (draft) {
+      return (
+        state.routes.find((route) => route.key === draft.key) ?? {
+          key: draft.key,
+          name: "Thread",
+          params: draft.params as object | undefined,
+        }
+      );
+    }
     const thread = selections.threads;
     if (!thread || !check.thread(thread)) return undefined;
     return (

@@ -131,6 +131,98 @@ describe("highlightNativeReviewDiffVisibleRows", () => {
     expect([...new Set(loadedFiles)].sort()).toEqual(["file-7", "file-8"]);
   });
 
+  it("skips collapsed code before the row cap and restores it on expansion", async () => {
+    const collapsedSource = Array.from(
+      { length: 100_000 },
+      (_, index) => `int hidden${index} = 1;`,
+    );
+    const expandedSource = [
+      "/* open",
+      ...Array.from({ length: 222 }, () => "still a comment"),
+      "*/ int visible = 1;",
+    ];
+    const collapsedLoad = vi.fn(async () => ({
+      oldContents: "",
+      newContents: collapsedSource.join("\n"),
+    }));
+    const expandedLoad = vi.fn(async () => ({
+      oldContents: "",
+      newContents: expandedSource.join("\n"),
+    }));
+    const files = [
+      {
+        ...TYPESCRIPT_FILE,
+        id: "collapsed",
+        language: "c",
+        path: "highlights.c",
+        loadContents: collapsedLoad,
+      },
+      {
+        ...TYPESCRIPT_FILE,
+        id: "expanded",
+        language: "c",
+        path: "highlights.h",
+        loadContents: expandedLoad,
+      },
+    ];
+    const rows = [collapsedSource, expandedSource].flatMap((source, fileIndex) => {
+      const fileId = files[fileIndex]!.id;
+      return [
+        { kind: "file", id: `${fileId}-header`, fileId },
+        ...source.map((content, index) => ({
+          ...makeLine({
+            id: `${fileId}-${index}`,
+            content,
+            change: "add",
+            newLineNumber: index + 1,
+          }),
+          fileId,
+        })),
+      ] satisfies NativeReviewDiffRow[];
+    });
+    const input = {
+      rows,
+      files,
+      scheme: "dark" as const,
+      firstRowIndex: 0,
+      lastRowIndex: rows.length - 1,
+    };
+    // A collapsed header and the next expanded header can share an iOS viewport,
+    // with 100,000 zero-height code rows between their canonical indices.
+    const viewport = await highlightNativeReviewDiffVisibleRows({
+      ...input,
+      collapsedFileIds: new Set(["collapsed"]),
+      overscanRows: 0,
+    });
+    expect(Object.keys(viewport.tokensByRowId)).toEqual(
+      expandedSource.map((_, index) => `expanded-${index}`),
+    );
+    const overscan = await highlightNativeReviewDiffVisibleRows({
+      ...input,
+      collapsedFileIds: new Set(["collapsed"]),
+      lastRowIndex: 100_002,
+      alreadyHighlightedRowIds: new Set(["expanded-0"]),
+    });
+    expect(Object.keys(overscan.tokensByRowId)).toEqual(
+      Array.from({ length: 160 }, (_, index) => `expanded-${index + 1}`),
+    );
+    expect(overscan.tokensByRowId["expanded-1"]).toEqual(
+      highlightCode(expandedSource.join("\n"), "c", "dark")[1],
+    );
+    expect(collapsedLoad).not.toHaveBeenCalled();
+    expect(expandedLoad).toHaveBeenCalled();
+
+    const expanded = await highlightNativeReviewDiffVisibleRows({
+      ...input,
+      lastRowIndex: 400,
+      collapsedFileIds: new Set(),
+      overscanRows: 0,
+    });
+    expect(expanded.rowCount).toBe(360);
+    expect(expanded.tokensByRowId["collapsed-0"]).toBeDefined();
+    expect(collapsedLoad).toHaveBeenCalledTimes(1);
+  });
+
   it("delivers the dominant viewport file before fetching a smaller blocked neighbor", async () => {
     const neighborStarted = Promise.withResolvers<void>();
     const neighborResponse = Promise.withResolvers<{ oldContents: string; newContents: string }>();
