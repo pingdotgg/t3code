@@ -227,6 +227,12 @@ describe("timelineVisibleTurnItemsAtom", () => {
     expect(registry.get(timelineAtom)).toBe(first);
     expect(registry.get(textAtom)).toBe("Hello");
 
+    push({ ...assistant, text: " \n", updatedAt: later });
+    const blank = registry.get(timelineAtom);
+    expect(blank).not.toBe(first);
+    push({ ...assistant, text: " \nHi", updatedAt: later });
+    expect(registry.get(timelineAtom)).not.toBe(blank);
+
     push({ ...assistant, text: "Hello", streaming: false, status: "completed" });
     expect(registry.get(timelineAtom)[0]?.item).toMatchObject({ text: "Hello", streaming: false });
     registry.dispose();

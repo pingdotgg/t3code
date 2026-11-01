@@ -1,11 +1,4 @@
-import {
-  createContext,
-  use,
-  useLayoutEffect,
-  useRef,
-  type ComponentProps,
-  type ReactNode,
-} from "react";
+import { createContext, use, type ComponentProps, type ReactNode } from "react";
 import { cn } from "../../lib/utils";
 
 const GroupedRows = createContext(false);
@@ -125,42 +118,16 @@ export function WorkLogRow({
   );
 }
 
-const LIVE_EDGE_PX = 4;
-
 export function WorkLogDetails({
   children,
-  kind = "text",
-  followLive = false,
+  kind,
 }: {
   children: ReactNode;
-  kind?: "text" | "panel" | "media";
-
-  followLive?: boolean;
+  kind: "panel" | "media";
 }) {
-  const scrollerRef = useRef<HTMLDivElement>(null);
-  const atLiveEdgeRef = useRef(true);
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- pins the scroller's scrollTop to the bottom after each commit while following live output
-  useLayoutEffect(() => {
-    const scroller = scrollerRef.current;
-    if (followLive && atLiveEdgeRef.current && scroller) {
-      scroller.scrollTop = scroller.scrollHeight;
-    }
-  });
   return (
     <div
-      ref={scrollerRef}
-      onScroll={(event) => {
-        const { scrollHeight, scrollTop, clientHeight } = event.currentTarget;
-        atLiveEdgeRef.current = scrollHeight - scrollTop - clientHeight <= LIVE_EDGE_PX;
-      }}
-      className={cn(
-        "cursor-auto",
-        kind === "text"
-          ? "ms-7 flex max-h-96 flex-col gap-3 overflow-auto px-0.5 py-1 select-text"
-          : kind === "panel"
-            ? "mt-0.5 mb-1.5 pb-2"
-            : "mt-1",
-      )}
+      className={cn("cursor-auto", kind === "panel" ? "mt-0.5 mb-1.5 pb-2" : "mt-1")}
       onClick={(event) => event.stopPropagation()}
       onPointerDown={(event) => event.stopPropagation()}
     >

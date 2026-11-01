@@ -40,8 +40,6 @@ import {
   type PendingApproval,
   deriveTimelineEntriesFromVisibleTurnItems,
 } from "../../session-logic";
-import { remarkThoughtPreview } from "./TimelineWorkEntryRow.logic";
-import { parseMarkdownWithMath } from "@t3tools/shared/markdownMath";
 import { collectThreadFindRanges } from "./threadFindHighlights";
 import { toastManager } from "../ui/toast";
 import type { CitedHistory } from "./citationProcedure";
@@ -1109,25 +1107,6 @@ describe("MessagesTimeline thread find", () => {
       expect(top).toBeGreaterThanOrEqual(bounds.top);
       expect(top).toBeLessThan(bounds.bottom);
     });
-  });
-});
-
-describe("compact reasoning math", () => {
-  it("keeps formulas while flattening compact reasoning previews", () => {
-    const tree = parseMarkdownWithMath("## Reasoning\n\nUse **norm** $|x|$ and \\[x^2\\]");
-    remarkThoughtPreview("Reasoning")(tree);
-    expect(tree.children.map((node) => node.type)).toEqual([
-      "text",
-      "inlineMath",
-      "text",
-      "inlineMath",
-    ]);
-    expect(tree.children.map((node) => ("value" in node ? node.value : null))).toEqual([
-      "Reasoning Use norm ",
-      "|x|",
-      " and ",
-      "x^2",
-    ]);
   });
 });
 

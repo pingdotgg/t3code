@@ -20,7 +20,13 @@ import { resolveMediaSource } from "@t3tools/client-runtime/media-source";
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
 import { isWorkspaceImagePreviewPath } from "@t3tools/shared/mediaPreview";
 import { formatTokens } from "@t3tools/shared/usageFormat";
-import { classifyToolActivity } from "@t3tools/shared/toolActivity";
+import {
+  classifyToolActivity,
+  collectToolFilePaths,
+  formatSearchToolLabel,
+} from "@t3tools/shared/toolActivity";
+import { fileBasename } from "@t3tools/shared/path";
+import { commandProgramName } from "@t3tools/client-runtime/work-log/command-label";
 import { toolOutputIndicatesFailure } from "@t3tools/shared/toolOutput";
 
 import {
@@ -215,14 +221,6 @@ function resolveT3McpToolPresentation(
   };
 }
 
-export function liveActivityToolStatus(status: string | undefined, presentTense: boolean) {
-  if (status === "failed" || status === "declined" || status === "stopped" || status === "idle") {
-    return status;
-  }
-  if (presentTense || status === "inProgress") return "inProgress";
-  return "completed";
-}
-
 export function resolveWorkEntryToolPresentation(
   entry: Pick<
     WorkLogPresentationEntry,
@@ -240,6 +238,30 @@ export function resolveWorkEntryToolPresentation(
     definition && t3ToolResultIndicatesFailure(workEntryToolOutput(entry)) ? "failed" : status,
     entry.toolData,
   );
+}
+
+export function activeToolLabel(entry: WorkLogPresentationEntry): string | undefined {
+  if (entry.itemType === "approval_request" || entry.itemType === "user_input_request") {
+    return undefined;
+  }
+  const presentation = resolveWorkEntryToolPresentation(entry, "inProgress");
+  if (presentation) return presentation.displayName;
+  if (entry.command?.trim()) return `Running ${commandProgramName(entry.command) ?? "command"}`;
+  const action = toolGroupAction(entry);
+  if (action === "code-search") {
+    const searched =
+      entry.itemType === "file_search"
+        ? entry.label
+        : formatSearchToolLabel(asRecord(entry.toolData) ?? undefined);
+    return searched ? searched.replace(/^Searched\b/, "Searching") : "Searching code";
+  }
+  if (action !== "read") return undefined;
+  const path =
+    entry.changedFiles?.[0] ??
+    entry.viewedImagePath ??
+    collectToolFilePaths({ input: workEntryToolInput(entry) })[0] ??
+    collectToolFilePaths(entry.toolData)[0];
+  return path ? `Reading ${fileBasename(path)}` : "Reading file";
 }
 
 function asRecord(value: unknown): Record<string, unknown> | null {
@@ -628,18 +650,4 @@ export function toolGroupSummaryKind(
     }),
   );
   return fallbackKinds.size === 1 ? fallbackKinds.values().next().value! : "mixed";
-}
-
-export function liveThoughtLine(markdown: string): string {
-  const heading = /^\s*\*\*([^*\r\n]+)\*\*[ \t]*\r?(?:\n|$)/.exec(markdown)?.[1];
-  const text = (heading ?? markdown)
-    .replace(/!?\[([^\]]*)\]\([^)]*\)/g, "$1")
-    .replace(/^[ \t]*(?:#{1,6}|[-*+]|\d+\.)[ \t]+/gm, "")
-    .replace(/`+|\*\*|~~/g, "")
-    .replace(/(^|[^\w*])[*_]([^*_\n]+)[*_](?![\w*])/g, "$1$2")
-    .replace(/\s+/g, " ")
-    .trim();
-  if (heading !== undefined) return text;
-  const end = /[.?!]["'”’)]?(?=\s)/.exec(text);
-  return end ? text.slice(0, end.index + end[0].length) : text;
 }

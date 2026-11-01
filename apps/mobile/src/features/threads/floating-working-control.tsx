@@ -532,10 +532,7 @@ function FloatingStatusLabel(props: {
           className="flex-none"
           textClassName="font-t3-medium"
           compact
-          icon="arrow.triangle.branch"
-          iconSubtleColor="transparent"
           label={props.status.label}
-          showIcon={false}
         />
       </StatusLabelRow>
     );
