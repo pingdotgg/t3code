@@ -6,7 +6,7 @@ import { AndroidAnchoredMenu } from "../../components/ui/AndroidAnchoredMenu";
 import { SearchField } from "../../components/ui/SearchField";
 import { useToolbarLayout } from "../../components/ui/useToolbarLayout";
 import { useHardwareKeyboardCommand } from "../keyboard/hardwareKeyboardCommands";
-import { WorkspaceListToolbarRow } from "../workspace/WorkspaceListToolbarRow";
+import { WorkspaceBrandTitle, WorkspaceListToolbarRow } from "../workspace/WorkspaceListToolbarRow";
 import { useWorkspaceTabs } from "../workspace/WorkspaceTabsContext";
 import type { PullRequestFilterMenu } from "./PullRequestListFilters";
 import { openSettings } from "../settings/settings-navigation";
@@ -60,22 +60,28 @@ export function PullRequestToolbar(props: {
   return (
     <View className="bg-header px-2" style={{ paddingTop, paddingBottom }}>
       <WorkspaceListToolbarRow
-        searching={searching}
-        searchField={
-          <SearchField
-            inputRef={input}
-            accessibilityLabel="Search pull requests"
-            clearAccessibilityLabel="Clear search"
-            placeholder="Search pull requests"
-            value={tab.query}
-            onChangeText={(query) => dispatch({ type: "query", tab: "pullRequests", query })}
+        title={
+          <WorkspaceBrandTitle
+            accessibilityLabel="T3 Code, Pull requests"
+            onOpenEnvironments={() => openSettings(navigation, "SettingsEnvironments")}
           />
         }
-        onCloseSearch={closeSearch}
-        onOpenSearch={openSearch}
-        searchAccessibilityLabel="Search pull requests"
-        titleAccessibilityLabel="T3 Code, Pull requests"
-        onOpenEnvironments={() => openSettings(navigation, "SettingsEnvironments")}
+        search={{
+          searching,
+          field: (
+            <SearchField
+              inputRef={input}
+              accessibilityLabel="Search pull requests"
+              clearAccessibilityLabel="Clear search"
+              placeholder="Search pull requests"
+              value={tab.query}
+              onChangeText={(query) => dispatch({ type: "query", tab: "pullRequests", query })}
+            />
+          ),
+          onClose: closeSearch,
+          onOpen: openSearch,
+          accessibilityLabel: "Search pull requests",
+        }}
         filter={
           filters ? (
             <AndroidAnchoredMenu
