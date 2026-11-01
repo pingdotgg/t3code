@@ -420,9 +420,9 @@ type PointerEventListener = (event: DesktopPreviewPointerEvent) => Effect.Effect
 
 type OpenLinkListener = (event: DesktopPreviewOpenLinkEvent) => Effect.Effect<void>;
 
-// Chromium's net::ERR_ABORTED: a newer main-frame navigation, such as a client redirect, superseded the load.
+// Chromium's net::ERR_ABORTED: the load was cancelled, usually superseded by a newer navigation such as a client redirect.
 const NET_ERR_ABORTED = -3;
-const isSupersededLoad = (cause: unknown) =>
+const isAbortedLoad = (cause: unknown) =>
   typeof cause === "object" &&
   cause !== null &&
   "errno" in cause &&
@@ -2005,7 +2005,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
       wc.loadURL(url),
     ).pipe(
       Effect.catchIf(
-        (error) => isSupersededLoad(error.cause),
+        (error) => isAbortedLoad(error.cause),
         () => Effect.void,
       ),
     );
