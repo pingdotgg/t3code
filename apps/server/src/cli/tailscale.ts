@@ -132,7 +132,8 @@ const requireGrantCommand = Command.make("require-grant", {
               ]
             : read === "changed"
               ? [
-                  "Grant required: unknown. This host's Tailscale account or its devices changed during the check.",
+                  "Grant required: unknown. This host's Tailscale account or its devices",
+                  "changed during the check.",
                   "Run this again.",
                 ]
               : scan === null

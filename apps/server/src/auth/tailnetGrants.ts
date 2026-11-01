@@ -39,7 +39,6 @@ type PeerList = Pick<TailscaleStatus, "unidentifiedPeers"> & {
  * Whether `after` lists a device `before` did not, so a scan of `before` never looked it up.
  * Peers with no ID are compared by node key and address, so one replacing another counts.
  */
-
 export const peersJoined = (before: PeerList, after: PeerList): boolean => {
   const known = new Set(before.peers.map((peer) => peer.stableNodeId));
   if (after.peers.some((peer) => !known.has(peer.stableNodeId))) return true;

@@ -636,6 +636,16 @@ it.layer(NodeServices.layer)("TailnetSignIn", (it) => {
           onSuccess: () => false,
         }),
       );
+    // Another user's device. Refused, it leaves no sign-in code, so no background recheck
+    // runs a scan while a test moves the clock.
+    const STRANGER_ADDRESS = "100.88.1.30";
+    const stranger = phoneNode({
+      StableID: "nStranger",
+      User: "int64:999",
+      Addresses: [`${STRANGER_ADDRESS}/32`],
+      AllowedIPs: [`${STRANGER_ADDRESS}/32`],
+    });
+    const strangerPeer = { ID: "nStranger", TailscaleIPs: [STRANGER_ADDRESS], UserID: "int64:999" };
     const signInLaptop = (key: ReturnType<typeof makeDpopKey>) =>
       signIn(key, { remoteAddress: LAPTOP_ADDRESS }).pipe(
         Effect.flatMap((grant) => exchange(grant.credential, key)),
@@ -842,18 +852,6 @@ it.layer(NodeServices.layer)("TailnetSignIn", (it) => {
       const tabletDevice = {
         node: phoneNode({ StableID: "nTablet", Addresses: [`${TABLET_ADDRESS}/32`] }),
       };
-      const STRANGER_ADDRESS = "100.88.1.30";
-      const stranger = phoneNode({
-        StableID: "nStranger",
-        User: "int64:999",
-        Addresses: [`${STRANGER_ADDRESS}/32`],
-        AllowedIPs: [`${STRANGER_ADDRESS}/32`],
-      });
-      const strangerPeer = {
-        ID: "nStranger",
-        TailscaleIPs: [STRANGER_ADDRESS],
-        UserID: "int64:999",
-      };
       const tailnet = withLaptop();
       tailnet.status = hostStatus({ Peer: { ...peers, stranger: strangerPeer } });
       tailnet.devices = { ...tailnet.devices, [STRANGER_ADDRESS]: { node: stranger } };
@@ -892,18 +890,11 @@ it.layer(NodeServices.layer)("TailnetSignIn", (it) => {
     });
 
     it.effect("a grant a scan saw stands when the scan cannot finish its checks", () => {
-      const STRANGER_ADDRESS = "100.88.1.30";
-      const stranger = phoneNode({
-        StableID: "nStranger",
-        User: "int64:999",
-        Addresses: [`${STRANGER_ADDRESS}/32`],
-        AllowedIPs: [`${STRANGER_ADDRESS}/32`],
-      });
       const tailnet = withLaptop();
       tailnet.status = hostStatus({
         Peer: {
           ...peers,
-          stranger: { ID: "nStranger", TailscaleIPs: [STRANGER_ADDRESS], UserID: "int64:999" },
+          stranger: strangerPeer,
         },
       });
       tailnet.devices = { ...tailnet.devices, [STRANGER_ADDRESS]: { node: stranger } };
@@ -926,19 +917,12 @@ it.layer(NodeServices.layer)("TailnetSignIn", (it) => {
     });
 
     it.effect("a grant a scan saw stands when the scan is cut short", () => {
-      const STRANGER_ADDRESS = "100.88.1.30";
       const TABLET_ADDRESS = "100.88.1.9";
-      const stranger = phoneNode({
-        StableID: "nStranger",
-        User: "int64:999",
-        Addresses: [`${STRANGER_ADDRESS}/32`],
-        AllowedIPs: [`${STRANGER_ADDRESS}/32`],
-      });
       const tailnet = withLaptop();
       tailnet.status = hostStatus({
         Peer: {
           ...peers,
-          stranger: { ID: "nStranger", TailscaleIPs: [STRANGER_ADDRESS], UserID: "int64:999" },
+          stranger: strangerPeer,
           tablet: { ID: "nTablet", TailscaleIPs: [TABLET_ADDRESS], UserID: `int64:${OWNER_ID}` },
         },
       });
