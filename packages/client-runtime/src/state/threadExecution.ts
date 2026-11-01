@@ -37,6 +37,7 @@ import {
 } from "./models.ts";
 import { commandDisplayText } from "../work-log/commandLabel.ts";
 import { formatSubagentDisplayTitle } from "./subagentDisplay.ts";
+import { pendingRuntimeRequestIds } from "./threadRequests.ts";
 
 const ACTIVITY_RUN_STATUSES = new Set(["preparing", "starting", "running", "waiting"]);
 const INTERRUPTIBLE_RUN_STATUSES = new Set(["preparing", "starting", "running"]);
@@ -224,6 +225,19 @@ export function deriveResumableRunId(
     latestRootProviderFailure(run, projection.turnItems)?.class === "usage_limit"
     ? run.id
     : null;
+}
+
+/**
+ * Whether Resume can start: the run's continuation, else the held queue. The server refuses that
+ * continuation while any request is pending, so the queue must not be released in its place.
+ */
+export function canResumeThread(
+  projection: Pick<ThreadStructure, "runtimeRequests">,
+  resumableRunId: RunId | null,
+  queueHeld: boolean,
+): boolean {
+  if (resumableRunId === null) return queueHeld;
+  return pendingRuntimeRequestIds(projection).length === 0;
 }
 
 export function deriveThreadRuntime(

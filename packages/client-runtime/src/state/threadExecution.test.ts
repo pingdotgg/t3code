@@ -9,9 +9,11 @@ import {
   ProviderTurnId,
   RunAttemptId,
   RunId,
+  RuntimeRequestId,
   ThreadId,
   type OrchestrationV2ExecutionNode,
   type OrchestrationV2RunStatus,
+  type OrchestrationV2RuntimeRequest,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import { usageLimitBlockedRun } from "@t3tools/shared/orchestrationV2ThreadError";
@@ -19,6 +21,7 @@ import { describe, expect, it } from "vite-plus/test";
 
 import { v2Projection } from "./orchestrationV2TestFixtures.ts";
 import {
+  canResumeThread,
   deriveReportedModelSelection,
   deriveLatestThreadRun,
   deriveProviderSubagentStatus,
@@ -33,6 +36,24 @@ import {
 } from "./threadExecution.ts";
 
 const now = DateTime.makeUnsafe("2026-07-28T10:00:00.000Z");
+
+function request(
+  id: string,
+  status: OrchestrationV2RuntimeRequest["status"],
+  kind: OrchestrationV2RuntimeRequest["kind"] = "command",
+): OrchestrationV2RuntimeRequest {
+  return {
+    id: RuntimeRequestId.make(id),
+    nodeId: NodeId.make(`node-${id}`),
+    providerTurnId: null,
+    nativeRequestRef: null,
+    kind,
+    status,
+    responseCapability: { type: "not_resumable", reason: "Session ended." },
+    createdAt: now,
+    resolvedAt: status === "pending" ? null : now,
+  };
+}
 
 function run(id: string, ordinal: number, status: OrchestrationV2RunStatus) {
   return {
@@ -249,6 +270,61 @@ describe("thread execution presentation", () => {
     };
     expect(deriveLatestThreadRun(onlyHeld)).toBeNull();
     expect(deriveThreadRuntime(onlyHeld)).toBeNull();
+  });
+
+  it.each([
+    { name: "no requests", requests: [], runId: "run-stopped", held: false, expected: true },
+    {
+      name: "a pending request",
+      requests: [request("approval", "pending")],
+      runId: "run-stopped",
+      held: false,
+      expected: false,
+    },
+    ...(["resolved", "cancelled", "expired"] as const).map((status) => ({
+      name: `only a request now ${status}`,
+      requests: [request("approval", status)],
+      runId: "run-stopped",
+      held: false,
+      expected: true,
+    })),
+    {
+      name: "a pending request no card shows",
+      requests: [request("auth", "pending", "auth_refresh")],
+      runId: "run-stopped",
+      held: false,
+      expected: false,
+    },
+    {
+      name: "an older pending request among settled ones",
+      requests: [request("older", "pending"), request("newer", "resolved")],
+      runId: "run-stopped",
+      held: false,
+      expected: false,
+    },
+    {
+      name: "a held queue behind a blocked continuation",
+      requests: [request("approval", "pending")],
+      runId: "run-stopped",
+      held: true,
+      expected: false,
+    },
+    {
+      name: "a held queue with no run to continue",
+      requests: [request("approval", "pending")],
+      runId: null,
+      held: true,
+      expected: true,
+    },
+    { name: "nothing to resume", requests: [], runId: null, held: false, expected: false },
+  ])("decides whether Resume can start with $name", ({ requests, runId, held, expected }) => {
+    expect(
+      canResumeThread(
+        { runtimeRequests: requests },
+        runId === null ? null : RunId.make(runId),
+        held,
+      ),
+    ).toBe(expected);
   });
 
   it("does not expose a queued-only run as interruptible", () => {
