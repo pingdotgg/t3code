@@ -79,6 +79,31 @@ it("searches displayed prose and file-chip labels without hidden paths", () => {
     "label main.ts · L3:C2",
   ]);
   expect(assistantSegments("[label](src/main.ts#L3C2)")).toEqual(["label"]);
+  for (const text of [
+    "[a](/repo/app/(a)/page.tsx) and [b](/repo/app/(b)/page.tsx)",
+    String.raw`[a](/repo/app/\(a\)/page.tsx) and [b](/repo/app/\(b\)/page.tsx)`,
+  ]) {
+    expect(assistantSegments(text, "/repo")).toEqual([
+      "a page.tsx · app/(a) and b page.tsx · app/(b)",
+    ]);
+  }
+  expect(
+    assistantSegments(
+      String.raw`[a](C:\repo\.a\page.tsx) and [b](C:\repo\.b\page.tsx)`,
+      String.raw`C:\repo`,
+    ),
+  ).toEqual(["a page.tsx · repo/.a and b page.tsx · repo/.b"]);
+  for (const name of ["x&y", "x&amp;y"]) {
+    expect(
+      assistantSegments(
+        `[a](C:\\repo\\.a\\${name}\\page.tsx) and [b](C:\\repo\\.b\\${name}\\page.tsx)`,
+        String.raw`C:\repo`,
+      ),
+    ).toEqual(["a page.tsx · .a/x&y and b page.tsx · .b/x&y"]);
+  }
+  expect(
+    assistantSegments("[a](/repo/a&amp;b/page.tsx) and [b](/repo/c&amp;d/page.tsx)", "/repo"),
+  ).toEqual(["a page.tsx · repo/a&b and b page.tsx · repo/c&d"]);
 });
 
 it("keeps fence paths literal and indexes file-chip labels in user messages", () => {
