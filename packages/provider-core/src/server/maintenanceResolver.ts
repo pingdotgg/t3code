@@ -199,6 +199,8 @@ export function makeManualOnlyProviderMaintenanceCapabilities(input: {
   readonly provider: ProviderDriverKind;
   readonly packageName: string | null;
   readonly installPath?: string;
+  readonly lookupLatestVersion?: Effect.Effect<string | null>;
+  readonly manualCommand?: string;
 }): ProviderMaintenanceCapabilities {
   return {
     ...makeProviderMaintenanceCapabilities({
@@ -207,8 +209,12 @@ export function makeManualOnlyProviderMaintenanceCapabilities(input: {
       updateExecutable: null,
       updateArgs: [],
       updateLockKey: null,
+      ...(input.lookupLatestVersion
+        ? { latestVersion: null, lookupLatestVersion: input.lookupLatestVersion }
+        : {}),
     }),
     ...(input.installPath ? { installPath: input.installPath } : {}),
+    ...(input.manualCommand ? { manualCommand: input.manualCommand } : {}),
   };
 }
 
@@ -246,6 +252,32 @@ const winGetClaudeCommandPath =
 
 function isWinGetClaudeCommandPath(commandPath: string): boolean {
   return winGetClaudeCommandPath.test(normalizeCommandPath(commandPath));
+}
+
+const CHOCOLATEY_CLAUDE_PACKAGE_ID = "claude-code";
+
+// Chocolatey's executable shim is not a symlink, so realpath cannot prove its owner.
+const chocolateyClaudeCommandPath = /\/chocolatey\/(?:bin|lib\/claude-code\/tools)\/claude\.exe$/;
+
+function isChocolateyClaudeCommandPath(commandPath: string, env: NodeJS.ProcessEnv): boolean {
+  const normalized = normalizeCommandPath(commandPath);
+  if (chocolateyClaudeCommandPath.test(normalized)) return true;
+  const root = nonEmptyString(env.ChocolateyInstall);
+  if (!root) return false;
+  const prefix = normalizeCommandPath(root.replace(/[\\/]+$/, ""));
+  return (
+    normalized === `${prefix}/bin/claude.exe` ||
+    normalized === `${prefix}/lib/claude-code/tools/claude.exe`
+  );
+}
+
+/** `choco search --exact --limit-output` prints `<id>|<version>` for a match and nothing otherwise. */
+export function parseChocolateyLatestVersion(output: string, packageId: string): string | null {
+  for (const line of output.split(/\r?\n/)) {
+    const [id, version] = line.trim().split("|", 2);
+    if (id?.toLowerCase() === packageId.toLowerCase()) return nonEmptyString(version);
+  }
+  return null;
 }
 
 function isPnpmGlobalCommandPath(commandPath: string): boolean {
@@ -446,6 +478,32 @@ export const resolvePackageManagedProviderMaintenance = Effect.fn(
     commandPaths.some(isWinGetClaudeCommandPath)
   ) {
     return manual;
+  }
+  // Chocolatey's package directory is writable only by administrators, so an
+  // unelevated server cannot run `choco upgrade`; `claude update` through the
+  // shim installs a native copy elsewhere and leaves the shim's version alone.
+  if (
+    definition.provider === "claudeAgent" &&
+    context.platform === "win32" &&
+    commandPaths.some((commandPath) => isChocolateyClaudeCommandPath(commandPath, context.env))
+  ) {
+    const services = yield* Effect.context<ProviderMaintenanceResolverServices>();
+    return makeManualOnlyProviderMaintenanceCapabilities({
+      provider: definition.provider,
+      packageName,
+      installPath: context.realCommandPath,
+      manualCommand: "choco upgrade claude-code",
+      lookupLatestVersion: runProbe(
+        "choco",
+        ["search", CHOCOLATEY_CLAUDE_PACKAGE_ID, "--exact", "--limit-output"],
+        context.env,
+      ).pipe(
+        Effect.map((output) =>
+          output ? parseChocolateyLatestVersion(output, CHOCOLATEY_CLAUDE_PACKAGE_ID) : null,
+        ),
+        Effect.provideContext(services),
+      ),
+    });
   }
 
   const nativeUpdate = definition.nativeUpdate;
@@ -873,7 +931,10 @@ export function createProviderVersionAdvisory(input: {
     status: advisory.status,
     currentVersion: input.currentVersion,
     latestVersion,
-    updateCommand: resolveLatestProviderUpdateAction(capabilities, latestVersion)?.command ?? null,
+    updateCommand:
+      resolveLatestProviderUpdateAction(capabilities, latestVersion)?.command ??
+      capabilities.manualCommand ??
+      null,
     canUpdate: capabilities.update !== null,
     canInstallVersion: makeTargetedProviderUpdateAction(capabilities, "0.0.0") !== null,
     checkedAt: input.checkedAt ?? null,
@@ -896,12 +957,16 @@ const fetchNpmLatestVersion = Effect.fn("fetchNpmLatestVersion")(function* (pack
   return Option.isSome(payload) ? nonEmptyString(payload.value.version) : null;
 });
 
-/** The installer's own answer is cached apart from the npm registry entry. */
+/**
+ * The installer's own answer is cached apart from the npm registry entry. A
+ * manual-only install has no command to key on, so its executable stands in.
+ */
 function installerLatestVersionKey(capabilities: ProviderMaintenanceCapabilities) {
   if (!capabilities.lookupLatestVersion) return null;
   const update = capabilities.update;
-  return update
-    ? [update.lockKey, update.executable, ...update.args].join("\0")
+  if (update) return [update.lockKey, update.executable, ...update.args].join("\0");
+  return capabilities.installPath
+    ? ["manual", capabilities.installPath].join("\0")
     : capabilities.packageName && `npm-registry\0${capabilities.packageName}`;
 }
 

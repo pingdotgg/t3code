@@ -25,10 +25,12 @@ import {
   homebrewOwnershipFromCommandPath,
   invalidateLatestProviderVersion,
   makeCachedProviderMaintenanceResolution,
+  makeManualOnlyProviderMaintenanceCapabilities,
   makePackageManagedProviderMaintenanceResolver,
   makeProviderMaintenanceCapabilities,
   normalizeCommandPath,
   npmGlobalPrefixFromCommandPath,
+  parseChocolateyLatestVersion,
   parseHomebrewLatestVersion,
   resolveLatestProviderVersion,
   resolvePackageManagedProviderMaintenance,
@@ -381,6 +383,26 @@ it.layer(
     });
   });
 
+  it("shows the Chocolatey upgrade command without offering to run it", () => {
+    expect(
+      createProviderVersionAdvisory({
+        driver: driver("claudeAgent"),
+        currentVersion: "2.1.304",
+        latestVersion: "2.1.306",
+        maintenanceCapabilities: makeManualOnlyProviderMaintenanceCapabilities({
+          provider: driver("claudeAgent"),
+          packageName: "@anthropic-ai/claude-code",
+          installPath: "C:\\ProgramData\\chocolatey\\bin\\claude.exe",
+          manualCommand: "choco upgrade claude-code",
+        }),
+      }),
+    ).toMatchObject({
+      canUpdate: false,
+      canInstallVersion: false,
+      updateCommand: "choco upgrade claude-code",
+    });
+  });
+
   it.effect("stays manual-only when the binary cannot be located", () =>
     resolveProviderMaintenanceCapabilitiesEffect(packageToolUpdate, {
       binaryPath: "package-tool",
@@ -547,12 +569,13 @@ it.layer(
     readonly resolved: string;
     readonly real: string;
     readonly platform?: NodeJS.Platform;
+    readonly env?: NodeJS.ProcessEnv;
   }) =>
     resolvePackageManagedProviderMaintenance(input.definition, {
       binaryPath: "claude",
       resolvedCommandPath: input.resolved,
       realCommandPath: input.real,
-      env: {},
+      env: input.env ?? {},
       platform: input.platform ?? "win32",
     }).pipe(
       Effect.provideService(HostProcess.Platform, input.platform ?? "win32"),
@@ -583,6 +606,135 @@ it.layer(
 
       expect(capabilities.update).toBeNull();
     }),
+  );
+
+  const chocolateyShim = "C:\\ProgramData\\chocolatey\\bin\\claude.exe";
+  const chocolateyPackage = "C:\\ProgramData\\chocolatey\\lib\\claude-code\\tools\\claude.exe";
+
+  it.effect.each([
+    { name: "the shimgen shim", resolved: chocolateyShim, real: chocolateyShim },
+    { name: "the package binary", resolved: chocolateyPackage, real: chocolateyPackage },
+    {
+      name: "a custom root",
+      resolved: "D:\\Tools\\Choco\\bin\\claude.exe",
+      real: "D:\\Tools\\Choco\\bin\\claude.exe",
+      env: { ChocolateyInstall: "D:\\Tools\\Choco" },
+    },
+    {
+      name: "a custom root package",
+      resolved: "D:\\Tools\\Choco\\lib\\claude-code\\tools\\claude.exe",
+      real: "D:\\Tools\\Choco\\lib\\claude-code\\tools\\claude.exe",
+      env: { ChocolateyInstall: "D:\\Tools\\Choco" },
+    },
+    {
+      name: "a mixed-case custom root with a trailing separator",
+      resolved: "D:\\Tools\\Choco\\bin\\Claude.EXE",
+      real: "D:\\Tools\\Choco\\bin\\Claude.EXE",
+      env: { ChocolateyInstall: "d:/tools/choco/" },
+    },
+    { name: "a native-looking alias", resolved: nativeClaude, real: chocolateyPackage },
+  ] as const)("keeps a Chocolatey Claude install manual-only through $name", (fixture) =>
+    Effect.gen(function* () {
+      const capabilities = yield* resolveInstall({ definition: claudeUpdate, ...fixture });
+
+      expect(capabilities.update).toBeNull();
+      expect(capabilities.installPath).toBe(fixture.real);
+      expect(capabilities.latestVersion).toBeNull();
+      expect(capabilities.lookupLatestVersion).toBeDefined();
+      expect(capabilities.manualCommand).toBe("choco upgrade claude-code");
+    }),
+  );
+
+  it.effect("keeps a Chocolatey-shaped path off Windows on the native updater", () =>
+    Effect.gen(function* () {
+      const commandPath = "/home/me/chocolatey/bin/claude.exe";
+      const capabilities = yield* resolveInstall({
+        definition: claudeUpdate,
+        resolved: commandPath,
+        real: commandPath,
+        platform: "linux",
+      });
+
+      expect(capabilities.update).toMatchObject({ lockKey: "claudeAgent-native" });
+    }),
+  );
+
+  // Chocolatey publishes behind npm, so comparing against the registry would
+  // report an update `choco upgrade` cannot install yet.
+  it.effect("compares a Chocolatey Claude install against choco search", () =>
+    Effect.gen(function* () {
+      const probes: Array<{ command: string; args: ReadonlyArray<string> }> = [];
+      const capabilities = yield* resolvePackageManagedProviderMaintenance(claudeUpdate, {
+        binaryPath: "claude",
+        resolvedCommandPath: chocolateyShim,
+        realCommandPath: chocolateyShim,
+        env: {},
+        platform: "win32",
+      }).pipe(
+        Effect.provideService(HostProcess.Platform, "win32"),
+        Effect.provideService(
+          ChildProcessSpawner.ChildProcessSpawner,
+          stdoutSpawner((command, args) => {
+            probes.push({ command, args });
+            return "claude-code|2.1.304\r\n";
+          }),
+        ),
+      );
+      expect(probes).toEqual([]);
+
+      const latest = yield* resolveLatestProviderVersion(capabilities).pipe(
+        Effect.provide(ProviderLatestVersions.layer),
+        Effect.provideService(
+          HttpClient.HttpClient,
+          HttpClient.make(() => Effect.die("the installer's latest should not come from npm")),
+        ),
+      );
+
+      expect(latest).toBe("2.1.304");
+      expect(probes.map(({ command }) => NodePath.basename(command).replace(/\.\w+$/, ""))).toEqual(
+        ["choco"],
+      );
+      expect(probes[0]?.args).toEqual(["search", "claude-code", "--exact", "--limit-output"]);
+      expect(
+        createProviderVersionAdvisory({
+          driver: driver("claudeAgent"),
+          currentVersion: "2.1.304",
+          latestVersion: latest,
+          maintenanceCapabilities: capabilities,
+        }),
+      ).toMatchObject({ status: "current", canUpdate: false, canInstallVersion: false });
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("stays unknown when choco search fails instead of asking npm", () =>
+    Effect.gen(function* () {
+      const capabilities = yield* resolvePackageManagedProviderMaintenance(claudeUpdate, {
+        binaryPath: "claude",
+        resolvedCommandPath: chocolateyShim,
+        realCommandPath: chocolateyShim,
+        env: {},
+        platform: "win32",
+      }).pipe(
+        Effect.provideService(HostProcess.Platform, "win32"),
+        Effect.provideService(
+          ChildProcessSpawner.ChildProcessSpawner,
+          stdoutSpawner(
+            () => "",
+            () => 1,
+          ),
+        ),
+      );
+
+      const latest = yield* resolveLatestProviderVersion(capabilities).pipe(
+        Effect.provide(ProviderLatestVersions.layer),
+        Effect.provideService(
+          HttpClient.HttpClient,
+          HttpClient.make(() => Effect.die("a failed choco search should not fall back to npm")),
+        ),
+      );
+
+      expect(latest).toBeNull();
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.effect.each([
@@ -616,6 +768,12 @@ it.layer(
       definition: otherProviderUpdate,
       resolved: userWinGetLink,
       real: userWinGetPackage,
+    },
+    {
+      name: "a claude-code tools path outside Chocolatey",
+      definition: claudeUpdate,
+      resolved: "C:\\Work\\lib\\claude-code\\tools\\claude.exe",
+      real: "C:\\Work\\lib\\claude-code\\tools\\claude.exe",
     },
     {
       name: "another WinGet package",
@@ -1054,6 +1212,13 @@ it.layer(
       expect(capabilities.update?.env).toEqual({ TOOL_HOME: tempDir });
     }),
   );
+
+  it("reads the Chocolatey package version from choco search --limit-output", () => {
+    expect(parseChocolateyLatestVersion("claude-code|2.1.304\r\n", "claude-code")).toBe("2.1.304");
+    expect(parseChocolateyLatestVersion("Claude-Code|2.1.304\r\n", "claude-code")).toBe("2.1.304");
+    expect(parseChocolateyLatestVersion("claude-code-other|9.9.9\r\n", "claude-code")).toBeNull();
+    expect(parseChocolateyLatestVersion("", "claude-code")).toBeNull();
+  });
 
   it("recognizes Homebrew kegs and casks from the real executable path", () => {
     expect(
