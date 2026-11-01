@@ -201,6 +201,7 @@ import type { ThreadContentPresentation } from "./threadContentPresentation";
 import { resolveThreadFeedSubmissionAnchor } from "./thread-feed-live-follow";
 import { useOpenLinkedThread } from "./useOpenLinkedThread";
 import { useGlobalVoiceInput } from "../voice-input/VoiceInputProvider";
+import type { OrchestrationV2ProviderSession } from "@t3tools/contracts";
 
 export interface ThreadDetailScreenProps {
   readonly header?: React.ReactNode;
@@ -233,6 +234,7 @@ export interface ThreadDetailScreenProps {
   readonly activeWorkStartedAt: string | null;
   readonly runlessWorkActive?: boolean;
   readonly providerSubagentStatus?: ProviderSubagentStatus | null;
+  readonly extensionStatuses?: NonNullable<OrchestrationV2ProviderSession["extensionStatuses"]>;
   readonly isCompacting: boolean;
   readonly creationState:
     | {
@@ -674,6 +676,13 @@ function ThreadDetailBody(props: ThreadDetailScreenProps) {
   const pendingBackgroundWork = presentPendingBackgroundWork(
     props.selectedThread.pendingBackgroundTasks,
   );
+  const extensionStatus = props.extensionStatuses?.length
+    ? {
+        label: `Pi · ${props.extensionStatuses.map((status) => status.text).join(" · ")}`,
+        onPress: () =>
+          Dialog.alert("Pi", props.extensionStatuses?.map((status) => status.text).join("\n\n")),
+      }
+    : null;
   const floatingStatus = ((): FloatingWorkingStatus | null => {
     const connectionStatus = connectionFloatingStatus({
       connectionError: connectionRetrying ? retryConnectionError : props.connectionError,
@@ -801,6 +810,9 @@ function ThreadDetailBody(props: ThreadDetailScreenProps) {
         label: goal.title,
         accessibilityLabel: `${goal.title}: ${goal.objective}`,
       };
+    }
+    if (extensionStatus !== null && contentPresentationKind === "ready") {
+      return { kind: "extension", ...extensionStatus };
     }
     return null;
   })();
@@ -1481,6 +1493,16 @@ function ThreadDetailBody(props: ThreadDetailScreenProps) {
                   <FloatingWorkingControl
                     colorScheme={isDarkMode ? "dark" : "light"}
                     status={floatingStatus}
+                    extensionStatus={
+                      floatingStatus !== null &&
+                      (floatingStatus.kind === "working" ||
+                        floatingStatus.kind === "compacting" ||
+                        floatingStatus.kind === "background" ||
+                        floatingStatus.kind === "goal" ||
+                        floatingStatus.kind === "lifecycle")
+                        ? extensionStatus
+                        : null
+                    }
                     lift={floatingControlLift}
                     devicePreview={
                       devicePreviews.length > 0

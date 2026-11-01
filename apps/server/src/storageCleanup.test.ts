@@ -6,6 +6,7 @@ import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Queue from "effect/Queue";
 import type * as Path from "effect/Path";
 import type * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
@@ -344,6 +345,7 @@ const cleanupFixture = (
     let editBeforeRemoval = false;
     let openSessionCwd: string | null = null;
     let sessionLive = true;
+    let sessionLiveChecks = 0;
     let onLiveCheck: Effect.Effect<void> = Effect.void;
     let outboxStatus: string | null = null;
     let fullStatusCalls = 0;
@@ -415,7 +417,10 @@ const cleanupFixture = (
       } as unknown as ProjectionStore.ProjectionStoreV2["Service"]),
       Effect.provideService(ProviderSessionManager.ProviderSessionManagerV2, {
         isLive: () =>
-          Effect.sync(() => sessionLive).pipe(Effect.tap(() => Effect.suspend(() => onLiveCheck))),
+          Effect.sync(() => {
+            sessionLiveChecks++;
+            return sessionLive;
+          }).pipe(Effect.tap(() => Effect.suspend(() => onLiveCheck))),
       } as unknown as ProviderSessionManager.ProviderSessionManagerV2["Service"]),
       Effect.provideService(Orchestrator.OrchestratorV2, {
         streamDomainEvents: Stream.suspend(() => events),
@@ -550,6 +555,7 @@ const cleanupFixture = (
         }) ?? Effect.void,
       fullStatusCalls: () => fullStatusCalls,
       snapshotReads: () => snapshotReads,
+      sessionLiveChecks: () => sessionLiveChecks,
       activate: (domainEvents: Stream.Stream<OrchestrationV2DomainEvent>) => {
         events = domainEvents;
         return Deferred.succeed(activated, undefined);
@@ -1740,6 +1746,106 @@ describe("orphan worktree reports", () => {
 });
 
 describe("storage cleanup reports and local file policies", () => {
+  it.effect.each([true, false])(
+    "sweeps on runtime retirement rather than live error metadata, worktreeOnDelete=%s",
+    (worktreeOnDelete) =>
+      runCleanupTest(
+        Effect.gen(function* () {
+          const fixture = yield* cleanupFixture({
+            ...DEFAULT_SERVER_SETTINGS.storageCleanup,
+            worktreeAfterDays: 8,
+            worktreeOnDelete,
+          });
+          fixture.setThreads([]);
+          fixture.setDeletedThreads([
+            shell({ branch: "feature", worktreePath: fixture.worktree, deletedAt: at(0) }),
+          ]);
+          yield* fixture.fs.writeFileString(`${fixture.worktree}/tracked.txt`, "agent edit\n");
+          const events = yield* Queue.unbounded<{
+            readonly event: OrchestrationV2DomainEvent;
+            readonly processed: Deferred.Deferred<void>;
+          }>();
+          yield* fixture.activate(
+            Stream.fromQueue(events).pipe(
+              Stream.flatMap(({ event, processed }) =>
+                Stream.succeed(event).pipe(
+                  Stream.concat(
+                    // The next pull acknowledges that the listener handled this event.
+                    Stream.fromEffect(Deferred.succeed(processed, undefined)).pipe(Stream.drain),
+                  ),
+                ),
+              ),
+            ),
+          );
+          yield* fixture.service.reports.pipe(
+            Stream.filter((report) => report !== null),
+            Stream.take(1),
+            Stream.runDrain,
+          );
+          yield* fixture.service.drain;
+          const startupReads = fixture.snapshotReads();
+          const publish = Effect.fn("StorageCleanupTest.publish")(function* (
+            event: OrchestrationV2DomainEvent,
+          ) {
+            const processed = yield* Deferred.make<void>();
+            yield* Queue.offer(events, { event, processed });
+            yield* Deferred.await(processed);
+            yield* fixture.service.drain;
+          });
+          const sessionUpdated = (
+            status: "ready" | "error" | "stopped",
+            text: string,
+          ): OrchestrationV2DomainEvent => ({
+            id: EventId.make(`event:session:${status}:${text}`),
+            type: "provider-session.updated",
+            threadId: ThreadId.make("thread-1"),
+            occurredAt: at(0),
+            payload: {
+              id: ProviderSessionId.make("session-1"),
+              driver: ProviderDriverKind.make("pi"),
+              providerInstanceId: ProviderInstanceId.make("pi"),
+              status,
+              cwd: fixture.worktree,
+              model: null,
+              capabilities: CodexProviderCapabilitiesV2,
+              extensionStatuses: text === "" ? [] : [{ key: "watch", text }],
+              createdAt: at(-DAY_MS),
+              updatedAt: at(0),
+              lastError: status === "error" ? "Rate limited" : null,
+            },
+          });
+          yield* publish(sessionUpdated("ready", "Watching"));
+          expect(fixture.snapshotReads()).toBe(startupReads);
+          expect(fixture.sessionLiveChecks()).toBe(0);
+          for (let index = 0; index < 5; index++) {
+            yield* publish(sessionUpdated("error", `Watching ${index} files`));
+            expect(fixture.snapshotReads()).toBe(startupReads);
+          }
+          expect(fixture.sessionLiveChecks()).toBe(worktreeOnDelete ? 5 : 0);
+
+          // Release removes the live entry before publishing its final error update.
+          fixture.setSessionLive(false);
+          yield* publish(sessionUpdated("error", ""));
+          expect(fixture.snapshotReads()).toBe(startupReads + Number(worktreeOnDelete));
+          expect(fixture.sessionLiveChecks()).toBe(worktreeOnDelete ? 6 : 0);
+
+          yield* publish(sessionUpdated("stopped", ""));
+          expect(fixture.snapshotReads()).toBe(startupReads + 2 * Number(worktreeOnDelete));
+          expect(fixture.sessionLiveChecks()).toBe(worktreeOnDelete ? 6 : 0);
+
+          fixture.setSessionLive(true);
+          yield* publish({
+            id: EventId.make("event:thread:deleted"),
+            type: "thread.deleted",
+            threadId: ThreadId.make("thread-1"),
+            occurredAt: at(0),
+            payload: { ...shell({ deletedAt: at(0) }), lastVisitedAt: null },
+          });
+          expect(fixture.snapshotReads()).toBe(startupReads + 3 * Number(worktreeOnDelete));
+          expect(fixture.sessionLiveChecks()).toBe(worktreeOnDelete ? 6 : 0);
+        }),
+      ),
+  );
   it.effect("automatically removes an eligible archived thread checkout", () =>
     runCleanupTest(
       Effect.gen(function* () {

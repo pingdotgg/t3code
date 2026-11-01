@@ -7,7 +7,7 @@ import { cn } from "~/lib/utils";
 import { Button } from "../ui/button";
 import { ScrollArea } from "../ui/scroll-area";
 
-export type ComposerBannerVariant = "default" | "error" | "info" | "success" | "warning";
+export type ComposerBannerVariant = "default" | "plain" | "error" | "info" | "success" | "warning";
 
 const surfaceColors = cn(
   "[--chat-composer-attached-surface:var(--chat-composer-glass-surface,var(--card))]",
@@ -23,8 +23,12 @@ const neutralOutline = cn(
   "dark:[html[data-theme-id=t3-chat]_&]:[--chat-composer-attached-outline:#241e28]",
 );
 
+const plainSurfaceColors =
+  "text-white [--glass-opacity:100%] [--glass-blur:0px] [--chat-composer-attached-surface:#000] dark:[--chat-composer-attached-surface:#000] [html[data-theme-id]_&]:[--chat-composer-attached-surface:#000]";
+
 const variantColors: Record<ComposerBannerVariant, string> = {
   default: neutralOutline,
+  plain: cn(neutralOutline, plainSurfaceColors),
   error:
     "[--chat-composer-attached-outline:color-mix(in_srgb,var(--error)_32%,transparent)] [--chat-composer-attached-tint:color-mix(in_srgb,var(--error)_8%,transparent)]",
   info: neutralOutline,

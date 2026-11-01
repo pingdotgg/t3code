@@ -13,6 +13,7 @@ import {
   type OrchestrationV2NotificationSource,
   type OrchestrationV2PendingBackgroundTask,
   type OrchestrationV2ProviderGoal,
+  type OrchestrationV2ProviderSession,
   type ServerProviderModel,
   type OrchestrationV2ExecutionNode,
   type OrchestrationV2ThreadProjection,
@@ -40,6 +41,45 @@ import { formatSubagentDisplayTitle } from "./subagentDisplay.ts";
 
 const ACTIVITY_RUN_STATUSES = new Set(["preparing", "starting", "running", "waiting"]);
 const INTERRUPTIBLE_RUN_STATUSES = new Set(["preparing", "starting", "running"]);
+
+const EMPTY_EXTENSION_STATUSES: NonNullable<OrchestrationV2ProviderSession["extensionStatuses"]> =
+  [];
+
+/** Only the selected provider's current session can supply transient extension status. */
+export function deriveProviderExtensionStatuses(
+  projection:
+    | (Pick<ThreadStructure, "thread"> & {
+        readonly providerThreads: ReadonlyArray<
+          Pick<
+            ThreadStructure["providerThreads"][number],
+            "id" | "providerSessionId" | "providerInstanceId"
+          >
+        >;
+        readonly providerSessions: ReadonlyArray<
+          Pick<
+            OrchestrationV2ProviderSession,
+            "id" | "providerInstanceId" | "status" | "extensionStatuses"
+          >
+        >;
+      })
+    | null,
+) {
+  if (projection === null) return EMPTY_EXTENSION_STATUSES;
+  const instanceId = projection.thread.modelSelection.instanceId;
+  const activeThread = projection.providerThreads.find(
+    (thread) => thread.id === projection.thread.activeProviderThreadId,
+  );
+  if (activeThread !== undefined && activeThread.providerInstanceId !== instanceId)
+    return EMPTY_EXTENSION_STATUSES;
+  const session = projection.providerSessions.findLast(
+    (session) =>
+      session.providerInstanceId === instanceId &&
+      (activeThread === undefined || session.id === activeThread.providerSessionId),
+  );
+  return session === undefined || session.status === "stopped"
+    ? EMPTY_EXTENSION_STATUSES
+    : (session.extensionStatuses ?? EMPTY_EXTENSION_STATUSES);
+}
 
 function latestMatchingRun(
   projection: ThreadStructure,

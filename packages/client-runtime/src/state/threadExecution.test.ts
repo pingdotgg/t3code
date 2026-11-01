@@ -22,6 +22,7 @@ import {
   deriveReportedModelSelection,
   deriveLatestThreadRun,
   deriveProviderSubagentStatus,
+  deriveProviderExtensionStatuses,
   deriveResumableRunId,
   deriveRunlessWorkStartedAt,
   deriveThreadActivityRun,
@@ -55,6 +56,77 @@ function run(id: string, ordinal: number, status: OrchestrationV2RunStatus) {
 }
 
 describe("thread execution presentation", () => {
+  it("shows extension statuses only from the selected provider's current live session", () => {
+    const instanceId = v2Projection.thread.modelSelection.instanceId;
+    const providerThreadId = ProviderThreadId.make("native-status-thread");
+    const sessionId = ProviderSessionId.make("native-status-session");
+    const statuses = [{ key: "watch", text: "Watching" }];
+    const projection = {
+      thread: { ...v2Projection.thread, activeProviderThreadId: providerThreadId },
+      providerThreads: [
+        { id: providerThreadId, providerSessionId: sessionId, providerInstanceId: instanceId },
+      ],
+      providerSessions: [
+        {
+          id: sessionId,
+          providerInstanceId: instanceId,
+          status: "ready" as const,
+          extensionStatuses: statuses,
+        },
+      ],
+    };
+    expect(deriveProviderExtensionStatuses(projection)).toEqual(statuses);
+    expect(
+      deriveProviderExtensionStatuses({
+        ...projection,
+        providerSessions: [
+          ...projection.providerSessions,
+          {
+            ...projection.providerSessions[0]!,
+            id: ProviderSessionId.make("unrelated"),
+            extensionStatuses: [{ key: "wrong", text: "Wrong session" }],
+          },
+        ],
+      }),
+    ).toEqual(statuses);
+    expect(
+      deriveProviderExtensionStatuses({
+        ...projection,
+        providerSessions: [{ ...projection.providerSessions[0]!, status: "stopped" }],
+      }),
+    ).toEqual([]);
+    expect(
+      deriveProviderExtensionStatuses({
+        ...projection,
+        providerSessions: [{ ...projection.providerSessions[0]!, status: "error" }],
+      }),
+    ).toEqual(statuses);
+    expect(
+      deriveProviderExtensionStatuses({
+        ...projection,
+        providerSessions: [
+          { ...projection.providerSessions[0]!, status: "error", extensionStatuses: [] },
+        ],
+      }),
+    ).toEqual([]);
+    expect(
+      deriveProviderExtensionStatuses({
+        ...projection,
+        providerSessions: [{ ...projection.providerSessions[0]!, extensionStatuses: undefined }],
+      }),
+    ).toEqual([]);
+    expect(
+      deriveProviderExtensionStatuses({
+        ...projection,
+        thread: {
+          ...projection.thread,
+          modelSelection: { instanceId: ProviderInstanceId.make("other"), model: "default" },
+        },
+      }),
+    ).toEqual([]);
+    expect(deriveProviderExtensionStatuses(null)).toEqual([]);
+  });
+
   it("derives the current root failure without inheriting errors from children or previous runs", () => {
     const failed = { ...run("limited", 1, "failed"), rootNodeId: NodeId.make("root") };
     const item = {

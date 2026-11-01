@@ -4044,6 +4044,9 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 CROSS JOIN orchestration_v2_projection_provider_session_bindings AS bindings
                   ON bindings.provider_session_id = sessions.provider_session_id
                 WHERE sessions.status NOT IN ('stopped', 'error')
+                  OR (sessions.status = 'error' AND CASE WHEN json_valid(sessions.payload_json)
+                    THEN json_array_length(sessions.payload_json, '$.extensionStatuses') > 0
+                    ELSE 0 END)
                 UNION
                 -- A detach drops the binding but keeps the session's status.
                 SELECT sessions.thread_id
@@ -4535,6 +4538,9 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                   )
                   AND (
                     session.status NOT IN ('stopped', 'error')
+                    OR (session.status = 'error' AND CASE WHEN json_valid(session.payload_json)
+                      THEN json_array_length(session.payload_json, '$.extensionStatuses') > 0
+                      ELSE 0 END)
                     OR session.provider_session_id IN (
                       SELECT provider_thread.provider_session_id
                       FROM orchestration_v2_projection_provider_threads AS provider_thread
