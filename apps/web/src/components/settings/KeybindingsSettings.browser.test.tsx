@@ -126,16 +126,20 @@ it("re-enables Save when a When editor closes on an expression it could not pars
   await expect.element(screen.getByRole("button", { name: "Save" })).toBeEnabled();
 });
 
-it("filters actions and keeps assigned commands disabled with their shortcuts", async () => {
+it("filters actions and allows additional shortcuts for assigned commands", async () => {
   await using screen = await render(<KeybindingsSettingsPanel />);
   await screen.getByRole("button", { name: "Add keybinding" }).click();
   const search = screen.getByRole("combobox", { name: "Search actions" });
   await expect.element(search).toHaveFocus();
   await userEvent.keyboard("sidebar.toggle");
   const assigned = screen.getByRole("option", { name: /Sidebar: Toggle/ });
-  await expect.element(assigned).toHaveAttribute("aria-disabled", "true");
+  await expect.element(assigned).not.toHaveAttribute("aria-disabled", "true");
   await expect.element(assigned.element().querySelector("kbd")!).toBeVisible();
   expect(screen.getByRole("option").elements()).toHaveLength(1);
+  await assigned.click();
+  const command = screen.getByRole("combobox", { name: "Command", exact: true });
+  await expect.element(command).toHaveTextContent("Sidebar: Toggle");
+  await command.click();
   await search.fill("no-such-action");
   await expect.element(screen.getByText("No actions found.")).toBeVisible();
   await search.fill("composer.cycleHost");

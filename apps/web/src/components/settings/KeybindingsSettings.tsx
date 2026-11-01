@@ -1167,7 +1167,7 @@ function NewKeybindingCommandSelect({
           {(command: KeybindingCommandOption) => {
             const bindings = allRows.filter((row) => row.command === command);
             return (
-              <ComboboxItem key={command} value={command} disabled={bindings.length > 0}>
+              <ComboboxItem key={command} value={command}>
                 <div className="flex min-w-0 flex-1 items-center justify-between gap-3">
                   <span>{commandLabel(command)}</span>
                   {bindings.length > 0 && (
