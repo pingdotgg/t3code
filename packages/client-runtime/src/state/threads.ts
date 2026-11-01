@@ -406,6 +406,7 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
     // state when only the projection changes. Bounded installs pass history so
     // projection + cursor persist together in one enqueue.
     const next = yield* SubscriptionRef.updateAndGet(state, (previous) => {
+      if (previous.status === "deleted") return previous;
       const history =
         options?.history !== undefined
           ? options.history
@@ -428,7 +429,7 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
     // Active projections can update many times per second and retain large tool
     // payloads. Persist once the run settles so cache encoding stays off the
     // streaming path. Progressive meta rides along when the window is incomplete.
-    if (shouldPersistThread(thread, next.history)) {
+    if (next.status !== "deleted" && shouldPersistThread(thread, next.history)) {
       const snapshotSequence = yield* SubscriptionRef.get(lastSequence);
       yield* queuePersist(
         snapshotToPersist(
@@ -938,7 +939,7 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
       ORCHESTRATION_V2_WS_METHODS.subscribeThread,
       Effect.fn("EnvironmentThreadState.makeSubscribeInput")(function* (session) {
         let current = yield* SubscriptionRef.get(state);
-        // A prior definitive miss (or delete event) already cleared this thread.
+        // An explicit delete event already cleared this thread.
         // Park the subscription attempt without opening the socket so we do not
         // retry forever against a known-missing id.
         if (current.status === "deleted") {
@@ -965,8 +966,14 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
               }),
             ),
           );
-          const httpResult: ThreadSnapshotLoader.ThreadSnapshotLoadResult =
+          let httpResult: ThreadSnapshotLoader.ThreadSnapshotLoadResult =
             yield* snapshotLoader.load(prepared, threadId);
+          // Navigation can precede thread creation; an HTTP miss is not a deletion event.
+          for (const delay of [500, 1_000, 2_000, 4_000, 8_000, 16_000]) {
+            if (httpResult._tag !== "missing") break;
+            yield* Effect.sleep(delay);
+            httpResult = yield* snapshotLoader.load(prepared, threadId);
+          }
           switch (httpResult._tag) {
             case "present": {
               if (canLoadHistory && httpResult.history !== undefined) {
@@ -997,9 +1004,7 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
               break;
             }
             case "missing": {
-              yield* setDeleted();
-              // A 404 also means "not created yet". Only a delete event may outlive this mount.
-              if (resumeCache?.owner === owner) resumeCache.snapshot = undefined;
+              yield* setStreamError("Thread not found. Reopen the thread to try again.");
               return yield* Effect.never;
             }
             case "unavailable": {
