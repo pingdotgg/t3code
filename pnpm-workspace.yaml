@@ -398,6 +398,9 @@ patchedDependencies:
   # Observe the owned host exit independently of descendants retaining its stdio.
   "@muse-code/sdk@1.4.6": patches/@muse-code__sdk@1.4.6.patch
   app-builder-lib@26.16.1: patches/app-builder-lib@26.16.1.patch
+  # `focusEmulation: false` launch option: lets the server browser hide previews nobody
+  # watches, which Playwright's focus emulation otherwise keeps painting (ServerBrowserContexts.test.ts).
+  playwright-core@1.60.0: patches/playwright-core@1.60.0.patch
 
 peerDependencyRules:
   allowAny:

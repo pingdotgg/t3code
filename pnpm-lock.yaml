@@ -359,6 +359,7 @@ packageExtensionsChecksum: sha256-EowbsmlBFaoO0Ypufw901RnvdyjKG5dcdk2FRbc7Dr0=
 pnpmfileChecksum: sha256-STsbxG7+RxOFI611PrDEj1TonJgqKKllY9hYCFMLYiU=
 
 patchedDependencies:
+  playwright-core@1.60.0: dab55e4944b06427b14cb2078b3c812d98f851401172d3a0bd83948ba5eb22f5
   '@clerk/expo-native-components@0.4.0': 7a808b92da8460750b85818552e13be3fb73d111691c7db76965970351e124e4
   '@effect/vitest@4.0.5': 2731c9c3761c595f25ddc625a7d61ca376b389d5b3049ecb837c8940f21cfa02
   '@expo/fingerprint@0.21.5': 8fba80d6bbce46c72de427fe8c7907462d262a0bfe50c6b2b7ee9c4e0c61e5e1
@@ -471,7 +472,7 @@ importers:
         version: 1.3.2
       playwright-core:
         specifier: 1.60.0
-        version: 1.60.0
+        version: 1.60.0(patch_hash=dab55e4944b06427b14cb2078b3c812d98f851401172d3a0bd83948ba5eb22f5)
       react-grab:
         specifier: ^0.1.32
         version: 0.1.44(react@19.3.0)
@@ -918,7 +919,7 @@ importers:
         version: 1.2.0-beta.15(patch_hash=f1e680afec85f650699ea756f91f469844ec4c976f4f168492a45c6b3f67d651)
       playwright-core:
         specifier: 1.60.0
-        version: 1.60.0
+        version: 1.60.0(patch_hash=dab55e4944b06427b14cb2078b3c812d98f851401172d3a0bd83948ba5eb22f5)
       proper-lockfile:
         specifier: 4.1.2
         version: 4.1.2
@@ -2415,7 +2416,7 @@ importers:
         version: 4.0.5
       playwright-core:
         specifier: 1.60.0
-        version: 1.60.0
+        version: 1.60.0(patch_hash=dab55e4944b06427b14cb2078b3c812d98f851401172d3a0bd83948ba5eb22f5)
       plist:
         specifier: 'catalog:'
         version: 3.1.1
@@ -20937,11 +20938,11 @@ snapshots:
       pvutils: 1.1.5
       tslib: 2.8.1
 
-  playwright-core@1.60.0: {}
+  playwright-core@1.60.0(patch_hash=dab55e4944b06427b14cb2078b3c812d98f851401172d3a0bd83948ba5eb22f5): {}
 
   playwright@1.60.0:
     dependencies:
-      playwright-core: 1.60.0
+      playwright-core: 1.60.0(patch_hash=dab55e4944b06427b14cb2078b3c812d98f851401172d3a0bd83948ba5eb22f5)
     optionalDependencies:
       fsevents: 2.3.2
 
