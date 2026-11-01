@@ -40,7 +40,6 @@ export function seedPreparedCache(prepared: string, active: string, runtime: str
       manifest.entries.length === 0
     )
       return false;
-    let seeded = false;
     for (const entry of manifest.entries) {
       if (
         typeof entry?.module !== "string" ||
@@ -58,12 +57,10 @@ export function seedPreparedCache(prepared: string, active: string, runtime: str
         // Node replaces cache files atomically. A directory link would instead allow writes into signed resources.
         if (process.platform === "win32") NodeFS.linkSync(source, destination);
         else NodeFS.symlinkSync(source, destination);
-        seeded = true;
-      } catch {
-        seeded ||= NodeFS.existsSync(destination);
-      }
+      } catch {}
+      if (!NodeFS.existsSync(destination)) return false;
     }
-    return seeded;
+    return true;
   } catch {
     return false;
   }

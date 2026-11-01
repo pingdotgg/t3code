@@ -31,6 +31,17 @@ it("seeds relocated cache entries without allowing writes into shipped resources
     expect(NodeFS.readFileSync(NodePath.join(prepared, "12345678"), "utf8")).toBe("prepared bytes");
     expect(seedPreparedCache(prepared, active, "matching")).toBe(true);
     expect(NodeFS.readFileSync(NodePath.join(active, key), "utf8")).toBe("runtime replacement");
+    const missing = { module: "app.asar/apps/server/dist/missing.mjs", file: "87654321" };
+    for (const entries of [
+      [...manifest.entries, missing],
+      [missing, ...manifest.entries],
+    ]) {
+      NodeFS.writeFileSync(
+        NodePath.join(prepared, "manifest.json"),
+        JSON.stringify({ ...manifest, entries }),
+      );
+      expect(seedPreparedCache(prepared, active, "matching")).toBe(false);
+    }
     NodeFS.writeFileSync(NodePath.join(prepared, "manifest.json"), "corrupt");
     expect(seedPreparedCache(prepared, active, "matching")).toBe(false);
     expect(seedPreparedCache(NodePath.join(root, "missing"), active, "matching")).toBe(false);
