@@ -4147,7 +4147,17 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     const progress = options?.progress;
     const onCheckoutProgress = progress?.onCheckoutProgress;
 
-    const checkoutWorkers = (yield* readConfigValue(input.cwd, "checkout.workers")) ?? "0";
+    // Both reads leave the repository alone, so they share one round trip before the checkout.
+    const [configuredCheckoutWorkers, base] = yield* Effect.all(
+      [
+        readConfigValue(input.cwd, "checkout.workers"),
+        input.newRefName && input.baseRefName
+          ? resolveBranchBase(input.cwd, input.baseRefName)
+          : Effect.succeed(null),
+      ],
+      { concurrency: "unbounded" },
+    );
+    const checkoutWorkers = configuredCheckoutWorkers ?? "0";
     yield* executeGitWithStableDiagnostics(
       "GitVcsDriver.createWorktree",
       input.cwd,
@@ -4253,32 +4263,27 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     }
 
     const newRefName = input.newRefName;
-    if (newRefName && input.baseRefName) {
-      const base = yield* resolveBranchBase(input.cwd, input.baseRefName);
-      if (base) {
-        yield* Effect.gen(function* () {
+    if (newRefName && base) {
+      yield* Effect.gen(function* () {
+        yield* writeConfigValue({
+          cwd: input.cwd,
+          key: branchBaseConfigKey(newRefName),
+          value: base.branchName,
+        });
+        if (base.baseRef.startsWith("refs/remotes/")) {
+          // The base key names a branch on the host; this one keeps the remote it came from.
           yield* writeConfigValue({
             cwd: input.cwd,
-            key: branchBaseConfigKey(newRefName),
-            value: base.branchName,
+            key: `branch.${newRefName}.t3-merge-base-ref`,
+            value: base.baseRef,
           });
-          if (base.baseRef.startsWith("refs/remotes/")) {
-            // The base key names a branch on the host; this one keeps the remote it came from.
-            yield* writeConfigValue({
-              cwd: input.cwd,
-              key: `branch.${input.newRefName}.t3-merge-base-ref`,
-              value: base.baseRef,
-            });
-          }
-        }).pipe(
-          Effect.catchTags({
-            GitCommandError: () =>
-              Effect.logWarning(
-                "worktree base-ref configuration failed; using base-branch fallback",
-              ),
-          }),
-        );
-      }
+        }
+      }).pipe(
+        Effect.catchTags({
+          GitCommandError: () =>
+            Effect.logWarning("worktree base-ref configuration failed; using base-branch fallback"),
+        }),
+      );
     }
 
     return {
@@ -4444,7 +4449,11 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     const branch =
       parseRemoteRefWithRemoteNames(input.refName, [input.remoteName])?.branchName ?? input.refName;
     const scopedArgs = [
-      ...args,
+      "fetch",
+      "--quiet",
+      "--no-tags",
+      "--",
+      input.remoteName,
       `+refs/heads/${branch}:refs/remotes/${input.remoteName}/${branch}`,
     ];
     const result = yield* runFetch(scopedArgs);
@@ -4524,7 +4533,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
 
   const fetchWorktreeBaseCommit: GitVcsDriver.GitVcsDriver["Service"]["fetchWorktreeBaseCommit"] =
     Effect.fn("fetchWorktreeBaseCommit")(function* (input) {
-      const target = yield* resolveWorktreeBaseRemote(input);
+      const target = input.remote ?? (yield* resolveWorktreeBaseRemote(input));
       if (target === null) return null;
       const { remoteName, branchName } = target;
       const remoteRefName = `${remoteName}/${branchName}`;

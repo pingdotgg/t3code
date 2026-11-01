@@ -5413,6 +5413,55 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
       }),
     );
 
+    it.effect("fetches a worktree base without downloading tags", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        const remote = yield* makeTmpDir("git-remote-");
+        const { initialBranch } = yield* initRepoWithCommit(cwd);
+        yield* git(remote, ["init", "--bare"]);
+        yield* git(cwd, ["remote", "add", "origin", remote]);
+        yield* git(cwd, ["push", "-u", "origin", initialBranch]);
+        const localHead = yield* git(cwd, ["rev-parse", "HEAD"]);
+        yield* git(cwd, ["commit", "--allow-empty", "-m", "tagged release"]);
+        const remoteHead = yield* git(cwd, ["rev-parse", "HEAD"]);
+        yield* git(cwd, ["tag", "v1"]);
+        yield* git(cwd, ["push", "origin", initialBranch, "v1"]);
+        yield* git(cwd, ["tag", "-d", "v1"]);
+        yield* git(cwd, ["reset", "--hard", localHead]);
+        yield* git(cwd, ["update-ref", "-d", `refs/remotes/origin/${initialBranch}`]);
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+
+        assert.deepEqual(yield* driver.fetchWorktreeBaseCommit({ cwd, refName: initialBranch }), {
+          commitSha: remoteHead,
+          remoteRefName: `origin/${initialBranch}`,
+        });
+        assert.equal(yield* git(cwd, ["tag", "--list", "v1"]), "");
+      }),
+    );
+
+    it.effect("fetches the remote a caller already resolved for the worktree base", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        const remote = yield* makeTmpDir("git-remote-");
+        const { initialBranch } = yield* initRepoWithCommit(cwd);
+        yield* git(remote, ["init", "--bare"]);
+        yield* git(cwd, ["remote", "add", "origin", remote]);
+        yield* git(cwd, ["push", "origin", initialBranch]);
+        const head = yield* git(cwd, ["rev-parse", "HEAD"]);
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+
+        assert.isNull(yield* driver.fetchWorktreeBaseCommit({ cwd, refName: "unpublished" }));
+        assert.deepEqual(
+          yield* driver.fetchWorktreeBaseCommit({
+            cwd,
+            refName: "unpublished",
+            remote: { remoteName: "origin", branchName: initialBranch },
+          }),
+          { commitSha: head, remoteRefName: `origin/${initialBranch}` },
+        );
+      }),
+    );
+
     it.effect("fails instead of falling back when the worktree base remote is unreachable", () =>
       Effect.gen(function* () {
         const cwd = yield* makeTmpDir();
