@@ -76,6 +76,8 @@ let clientSettingsHydrationPromise: Promise<void> | null = null;
 let clientSettingsHydrationGeneration = 0;
 let clientSettingsPersistenceQueue: Promise<void> = Promise.resolve();
 let deferredClientSettingsPatchCount = 0;
+// Set when another tab saves; cleared only by a successful re-read, so writes never use a stale snapshot.
+let clientSettingsStale = false;
 let stopReloadingClientSettings: (() => void) | null = null;
 
 function emitClientSettingsChange() {
@@ -195,18 +197,22 @@ function enqueueClientSettingsPersistence<A>(work: () => Promise<A>): Promise<A>
   return result;
 }
 
-function reloadClientSettings(): void {
-  deferredClientSettingsPatchCount += 1;
-  void enqueueClientSettingsPersistence(async () => {
-    try {
-      const persistedSettings = await readPersistedClientSettings();
-      if (persistedSettings) {
-        replaceClientSettingsSnapshot(persistedSettings);
-      }
-    } finally {
-      deferredClientSettingsPatchCount -= 1;
+async function ensureFreshClientSettings(): Promise<void> {
+  if (clientSettingsHydrationStatus !== "ready") {
+    return hydrateClientSettings();
+  }
+  if (clientSettingsStale) {
+    const persistedSettings = await readPersistedClientSettings();
+    if (persistedSettings) {
+      replaceClientSettingsSnapshot(persistedSettings);
     }
-  }).catch((error) => {
+    clientSettingsStale = false;
+  }
+}
+
+function reloadClientSettings(): void {
+  clientSettingsStale = true;
+  void enqueueClientSettingsPersistence(ensureFreshClientSettings).catch((error) => {
     console.error(`${CLIENT_SETTINGS_PERSISTENCE_ERROR_SCOPE} reload failed`, {
       operation: "reload",
       ...safeErrorLogAttributes(error),
@@ -220,7 +226,9 @@ export function persistClientSettingsPatch(
 ): Promise<void> {
   // Patches queued behind hydration or a reload must publish before newer optimistic patches.
   const deferPatch =
-    clientSettingsHydrationStatus !== "ready" || deferredClientSettingsPatchCount > 0;
+    clientSettingsHydrationStatus !== "ready" ||
+    clientSettingsStale ||
+    deferredClientSettingsPatchCount > 0;
   if (deferPatch) {
     deferredClientSettingsPatchCount += 1;
   } else {
@@ -229,9 +237,7 @@ export function persistClientSettingsPatch(
   return enqueueClientSettingsPersistence(async () => {
     if (deferPatch) {
       try {
-        if (clientSettingsHydrationStatus !== "ready") {
-          await hydrateClientSettings();
-        }
+        await ensureFreshClientSettings();
         replaceClientSettingsSnapshot({ ...getClientSettingsSnapshot(), ...patch });
       } finally {
         deferredClientSettingsPatchCount -= 1;
@@ -252,8 +258,8 @@ export async function persistClientSettingsUpdate(
   persist: (settings: ClientSettings) => Promise<void> = defaultClientSettingsPersistence,
 ): Promise<ClientSettings> {
   return enqueueClientSettingsPersistence(async () => {
-    if (clientSettingsHydrationStatus !== "ready") {
-      await hydrateClientSettings();
+    if (clientSettingsHydrationStatus !== "ready" || clientSettingsStale) {
+      await ensureFreshClientSettings();
     }
     for (;;) {
       const current = getClientSettingsSnapshot();
@@ -762,6 +768,7 @@ export function __resetClientSettingsPersistenceForTests(): void {
   clientSettingsHydrationGeneration += 1;
   stopReloadingClientSettings?.();
   stopReloadingClientSettings = null;
+  clientSettingsStale = false;
   clientSettingsSnapshot = DEFAULT_CLIENT_SETTINGS;
   clientSettingsHydrationStatus = "pending";
   clientSettingsHydrationPromise = null;

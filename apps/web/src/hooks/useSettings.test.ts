@@ -211,6 +211,26 @@ describe("persistClientSettingsPatch", () => {
     expect(persistenceMocks.setClientSettings).toHaveBeenLastCalledWith(expected);
     expect(getClientSettings()).toEqual(expected);
   });
+
+  it("writes only after re-reading settings another tab saved when the reload failed", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    vi.stubGlobal("window", new EventTarget());
+    await ensureClientSettingsHydrated();
+    const otherTabSettings = { ...DEFAULT_CLIENT_SETTINGS, timestampFormat: "12-hour" as const };
+    persistenceMocks.getClientSettings
+      .mockRejectedValueOnce(new Error("storage unavailable"))
+      .mockRejectedValueOnce(new Error("storage unavailable"))
+      .mockResolvedValue(otherTabSettings);
+    window.dispatchEvent(Object.assign(new Event("storage"), { key: "t3code:client-settings:v1" }));
+
+    await persistClientSettingsPatch({ wordWrap: false });
+    expect(persistenceMocks.setClientSettings).not.toHaveBeenCalled();
+
+    await persistClientSettingsPatch({ snapShotFlash: false });
+    const expected = { ...otherTabSettings, snapShotFlash: false };
+    expect(persistenceMocks.setClientSettings).toHaveBeenCalledExactlyOnceWith(expected);
+    expect(getClientSettings()).toEqual(expected);
+  });
 });
 
 describe("persistClientSettingsUpdate", () => {
@@ -234,6 +254,27 @@ describe("persistClientSettingsUpdate", () => {
     finishPersistence();
     await expect(pending).resolves.toMatchObject({ timestampFormat: "12-hour" });
     expect(getClientSettings().timestampFormat).toBe("12-hour");
+  });
+
+  it("rejects after a failed reload until settings another tab saved can be re-read", async () => {
+    const failure = new Error("storage unavailable");
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    vi.stubGlobal("window", new EventTarget());
+    await ensureClientSettingsHydrated();
+    const otherTabSettings = { ...DEFAULT_CLIENT_SETTINGS, timestampFormat: "12-hour" as const };
+    persistenceMocks.getClientSettings
+      .mockRejectedValueOnce(failure)
+      .mockRejectedValueOnce(failure)
+      .mockResolvedValue(otherTabSettings);
+    window.dispatchEvent(Object.assign(new Event("storage"), { key: "t3code:client-settings:v1" }));
+    const disableWrap = (current: ClientSettings) => ({ ...current, wordWrap: false });
+
+    await expect(persistClientSettingsUpdate(disableWrap)).rejects.toBe(failure);
+    expect(persistenceMocks.setClientSettings).not.toHaveBeenCalled();
+
+    const expected = { ...otherTabSettings, wordWrap: false };
+    await expect(persistClientSettingsUpdate(disableWrap)).resolves.toEqual(expected);
+    expect(persistenceMocks.setClientSettings).toHaveBeenCalledExactlyOnceWith(expected);
   });
 
   it("preserves an optimistic write made while an awaited update persists", async () => {
