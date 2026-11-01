@@ -53,6 +53,7 @@
         "scripts/update-test-shard-weights.ts",
         "scripts/verify-background-live.ts",
         "src/provider/testFixtures/*.mjs",
+        "src/plugins/testFixtures/**/*.mjs",
         // graphqlgen reads its config.
         "graphql.config.ts",
       ],
