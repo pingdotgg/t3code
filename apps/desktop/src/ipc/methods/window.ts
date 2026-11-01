@@ -375,6 +375,38 @@ export const revealWindow = DesktopIpc.makeIpcMethod({
   }),
 });
 
+const htmlFullscreenWindows = new WeakSet<Electron.BrowserWindow>();
+
+// The main window keeps HTML fullscreen inside itself so preview guests stay in their webview,
+// so the app's own fullscreen elements, such as chat videos, take the screen here.
+export const syncHtmlFullscreen = DesktopIpc.makeIpcMethod({
+  channel: IpcChannels.SYNC_HTML_FULLSCREEN_CHANNEL,
+  payload: Schema.Boolean,
+  result: Schema.Void,
+  handler: Effect.fn("desktop.ipc.window.syncHtmlFullscreen")(function* (fullscreen, event) {
+    const electronWindow = yield* ElectronWindow.ElectronWindow;
+    const main = yield* electronWindow.main;
+    if (
+      event === undefined ||
+      Option.isNone(main) ||
+      main.value.isDestroyed() ||
+      main.value.webContents.id !== event.sender.id
+    ) {
+      return;
+    }
+    const window = main.value;
+    if (fullscreen) {
+      if (window.isFullScreen()) return;
+      htmlFullscreenWindows.add(window);
+      // Leaving OS fullscreen any other way, such as F11, hands the window back to the user.
+      window.once("leave-full-screen", () => htmlFullscreenWindows.delete(window));
+      window.setFullScreen(true);
+    } else if (htmlFullscreenWindows.delete(window)) {
+      window.setFullScreen(false);
+    }
+  }),
+});
+
 const PICKED_THEME_FILE_MAX_BYTES = 256 * 1024;
 
 export const pickThemeFiles = DesktopIpc.makeIpcMethod({
