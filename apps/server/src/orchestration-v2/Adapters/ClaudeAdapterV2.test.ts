@@ -5009,6 +5009,135 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       ),
   );
 
+  it.effect("tells the user once when Claude Code serves a Fast request at standard speed", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const harness = yield* makeWakeHarness;
+        const now = yield* DateTime.now;
+        const selection = (fastMode: boolean) =>
+          ({
+            instanceId: ClaudeAdapterV2.CLAUDE_DEFAULT_INSTANCE_ID,
+            model: "claude-opus-5-5",
+            options: [{ id: "fastMode", value: fastMode }],
+          }) satisfies ModelSelection;
+        const fastModeFields = (state: string, reason?: string) => ({
+          fast_mode_state: state,
+          ...(reason === undefined ? {} : { fast_mode_disabled_reason: reason }),
+        });
+        const turn = Effect.fnUntraced(function* (
+          ordinal: number,
+          fastMode: boolean,
+          frames: ReadonlyArray<SDKMessage>,
+        ) {
+          yield* harness.runtime.startTurn(
+            makeClaudeTestTurnInput({
+              threadId: harness.threadId,
+              providerThread: harness.providerThread,
+              now,
+              attemptId: RunAttemptId.make(`attempt-fast-mode:${ordinal}`),
+              text: `Request ${ordinal}`,
+              attachments: [],
+              providerTurnOrdinal: ordinal,
+              modelSelection: selection(fastMode),
+            }),
+          );
+          for (const frame of frames) yield* harness.offerAndWait(frame);
+          yield* Queue.take(harness.terminalReceipts);
+        });
+        const result = (
+          ordinal: number,
+          state: string,
+          reason?: string,
+          speed?: "standard" | "fast",
+        ) =>
+          claudeSdkFrame({
+            ...makeResultFrame({ uuid: `fast-mode-result-${ordinal}`, result: "Done." }),
+            ...fastModeFields(state, reason),
+            ...(speed === undefined ? {} : { usage: { input_tokens: 1, output_tokens: 1, speed } }),
+          });
+        const notices = () =>
+          harness.events.flatMap((event) =>
+            event.type === "turn_item.updated" && event.turnItem.type === "system_notice"
+              ? [event.turnItem.message]
+              : [],
+          );
+        const creditsNotice =
+          "Fast mode is off, so Claude is answering at standard speed. It needs usage credits on this Claude account.";
+
+        yield* turn(1, true, [
+          claudeSdkFrame({
+            type: "system",
+            subtype: "init",
+            uuid: "fast-mode-init",
+            session_id: WAKE_NATIVE_SESSION,
+            ...fastModeFields("off", "pending"),
+          }),
+          result(1, "off", "extra_usage_disabled"),
+        ]);
+        yield* turn(2, true, [result(2, "off", "extra_usage_disabled")]);
+        assert.deepEqual(notices(), [creditsNotice]);
+
+        const cooldownNotice =
+          "Fast mode is paused after a rate limit, so Claude is answering at standard speed until the cooldown ends.";
+        yield* turn(3, true, [result(3, "cooldown")]);
+        yield* turn(4, true, [result(4, "on")]);
+        yield* turn(5, true, [result(5, "cooldown")]);
+        yield* turn(6, false, [makeResultFrame({ uuid: "fast-mode-result-6", result: "Done." })]);
+        yield* turn(7, true, [result(7, "cooldown")]);
+        assert.deepEqual(notices(), [
+          creditsNotice,
+          cooldownNotice,
+          cooldownNotice,
+          cooldownNotice,
+        ]);
+
+        const standardNotice = "Claude answered this Fast request at standard speed.";
+        yield* turn(8, true, [result(8, "on", undefined, "standard")]);
+        yield* turn(9, true, [
+          claudeSdkFrame({
+            type: "system",
+            subtype: "init",
+            uuid: "fast-mode-init-9",
+            session_id: WAKE_NATIVE_SESSION,
+            ...fastModeFields("on"),
+          }),
+          result(9, "on", undefined, "standard"),
+        ]);
+        assert.deepEqual(notices().slice(-1), [standardNotice]);
+        assert.equal(notices().length, 5);
+        yield* turn(10, true, [result(10, "on", undefined, "fast")]);
+        yield* turn(11, true, [result(11, "on", undefined, "standard")]);
+        assert.equal(notices().length, 6);
+        yield* turn(12, true, [result(12, "on", undefined, "fast")]);
+        for (const [index, failure] of (
+          [
+            { subtype: "error_during_execution", isError: true, terminalReason: "api_error" },
+            { apiErrorStatus: 529 },
+            { apiErrorStatus: 429 },
+            { terminalReason: "aborted_streaming" },
+          ] as const
+        ).entries()) {
+          yield* turn(13 + index, true, [
+            claudeSdkFrame({
+              ...makeResultFrame({
+                uuid: `fast-mode-failed-result-${index}`,
+                result: "",
+                errors: ["Request failed."],
+                ...failure,
+              }),
+              usage: { input_tokens: 1, output_tokens: 1, speed: "standard" },
+            }),
+          ]);
+          assert.equal(notices().length, 6);
+        }
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+        ),
+      ),
+    ),
+  );
+
   it.effect("re-sends the model on the turn after a live selection change fails", () =>
     Effect.scoped(
       Effect.gen(function* () {
