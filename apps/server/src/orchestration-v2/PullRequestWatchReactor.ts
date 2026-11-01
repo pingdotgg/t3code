@@ -82,6 +82,7 @@ interface LastRead {
   readonly at: number;
   readonly fingerprint: string;
   readonly inFlight: boolean;
+  readonly checksPending: boolean;
   readonly remarksComplete: boolean;
   readonly watches: ReadonlySet<string>;
   readonly status: string | null;
@@ -150,7 +151,7 @@ function planRead(
   // full read. Reading activity on every sweep while checks run would spend host quota, so it waits
   // for the sweep after they settled.
   const finishing =
-    !last.inFlight &&
+    (!last.checksPending || fingerprint === null) &&
     group.targets.some(
       ({ watch }) => watch.failedChecks.length > 0 && !watch.passed && !watch.finished,
     );
@@ -553,6 +554,7 @@ export const make = Effect.gen(function* () {
       inFlight:
         detail.mergeability === "unknown" ||
         detail.checks.some((check) => check.status === "pending"),
+      checksPending: detail.checks.some((check) => check.status === "pending"),
       remarksComplete: plan.activity ? remarks !== null : (last?.remarksComplete ?? false),
       watches: new Set(group.targets.map(watchKey)),
       status: fingerprint?.status ?? null,
