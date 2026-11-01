@@ -94,7 +94,7 @@ export const replaceOwnedLink = Effect.fn("ownedLink.replace")(function* <E, R>(
                   const now = yield* fs.readLink(input.link).pipe(Effect.option);
                   if (Option.getOrUndefined(now) === input.target) return;
                   yield* putBack.pipe(Effect.andThen(discard.pipe(Effect.ignore)));
-                  return yield* Effect.fail(error);
+                  return yield* error;
                 }),
               ),
             );
