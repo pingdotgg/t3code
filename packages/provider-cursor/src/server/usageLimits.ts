@@ -16,7 +16,7 @@ import {
 import { DEFAULT_CURSOR_API_ENDPOINT, exchangeCursorApiKey } from "./apiKey.ts";
 
 const NO_LIMITS_MESSAGE =
-  "Cursor doesn't report usage limits for this account. Open Cursor's dashboard with the same account to see its spend.";
+  "Cursor doesn't report usage limits for this account. Open Cursor's dashboard with the same account to see its usage.";
 const CursorUsageResponse = Schema.Struct({
   billingCycleStart: Schema.optional(Schema.Union([Schema.String, Schema.Number])),
   billingCycleEnd: Schema.optional(Schema.Union([Schema.String, Schema.Number])),
