@@ -30,6 +30,8 @@ import * as Schema from "effect/Schema";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import type * as EffectAcpSchema from "effect-acp/compat";
 
+import * as AcpSessionRuntime from "@t3tools/provider-acp/server/AcpSessionRuntime";
+
 import * as TestProviderHost from "@t3tools/provider-testing/TestProviderHost";
 import * as ProjectStore from "../ProjectStore.ts";
 import { buildInitialGrokProviderSnapshot } from "@t3tools/provider-grok/testing";
@@ -589,5 +591,184 @@ describe("Grok native questions", () => {
       });
       yield* Deferred.await(terminal);
     }).pipe(Effect.scoped, Effect.provide(layerTest)),
+  );
+});
+
+describe("GrokAdapterV2 html_render pages", () => {
+  const layerHost = TestProviderHost.layer().pipe(Layer.provide(NodeServices.layer));
+  const layerTest = Layer.mergeAll(
+    NodeServices.layer,
+    IdAllocator.layer,
+    McpProviderSessions.layer,
+    layerHost,
+  );
+
+  it.effect("shows the page published by Grok use_tool html_render (#23714)", () =>
+    Effect.gen(function* () {
+      const path = yield* Path.Path;
+      const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
+      const mockAgentPath = yield* path.fromFileUrl(
+        new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
+      );
+      type RuntimeService = AcpSessionRuntime.AcpSessionRuntime["Service"];
+      let sessionUpdate: Parameters<RuntimeService["handleSessionUpdate"]>[0] | undefined;
+      const instanceId = ProviderInstanceId.make("grok-html-render-test");
+      const threadId = ThreadId.make("thread-grok-html-render");
+      const toolInput = { html: "<p>Revenue</p>", title: "Revenue", height: 240 };
+      const page = { attachmentId: `${threadId}-html`, title: "Revenue", height: 240 };
+      const adapter = yield* makeGrokAdapterV2({
+        instanceId,
+        settings: LAUNCH_TEST_GROK_SETTINGS,
+        environment: {},
+        hostPlatform: "darwin",
+        selfInvocation: yield* resolveSelfInvocation(),
+        makeRuntime: (input) =>
+          AcpSessionRuntime.make({
+            ...input,
+            spawn: {
+              command: process.execPath,
+              args: [mockAgentPath],
+              cwd: input.cwd,
+              env: { T3_ACP_SESSION_LIFECYCLE: "1" },
+            },
+          }).pipe(
+            Effect.map((runtime): RuntimeService => ({
+              ...runtime,
+              handleSessionUpdate: (handler) =>
+                Effect.sync(() => {
+                  sessionUpdate = handler;
+                }).pipe(Effect.andThen(runtime.handleSessionUpdate(handler))),
+              prompt: () =>
+                Effect.gen(function* () {
+                  const send = (update: EffectAcpSchema.SessionUpdate) =>
+                    sessionUpdate === undefined
+                      ? Effect.die("the adapter must handle session updates")
+                      : sessionUpdate({ sessionId: "mock-session-1", update });
+                  yield* send({
+                    sessionUpdate: "tool_call",
+                    toolCallId: "html-render",
+                    title: "use_tool",
+                    rawInput: { tool_name: "t3-code__html_render", tool_input: toolInput },
+                    _meta: { "x.ai/tool": { kind: "use_tool", name: "use_tool" } },
+                  });
+                  yield* send({
+                    sessionUpdate: "tool_call_update",
+                    toolCallId: "html-render",
+                    kind: "other",
+                    title: "t3-code__html_render",
+                    rawInput: {
+                      variant: "UseTool",
+                      tool_name: "t3-code__html_render",
+                      tool_input: toolInput,
+                    },
+                  });
+                  yield* mcpSessions.recordHtmlRender(threadId, toolInput, page);
+                  yield* send({
+                    sessionUpdate: "tool_call_update",
+                    toolCallId: "html-render",
+                    status: "completed",
+                    rawOutput: {
+                      type: "MCP",
+                      server_name: "t3-code",
+                      tool_name: "html_render",
+                      output: { OkayOutput: "Shown to the reader above your reply." },
+                    },
+                  });
+                  return { stopReason: "end_turn" as const };
+                }),
+            })),
+          ),
+      });
+      const policy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        cwd: process.cwd(),
+      });
+      const modelSelection = { instanceId, model: "default" } as const;
+      const session = yield* adapter.openSession({
+        threadId,
+        providerSessionId: ProviderSessionId.make("provider-session-grok-html-render"),
+        modelSelection,
+        runtimePolicy: policy,
+      });
+      const providerThread = yield* session.ensureThread({
+        threadId,
+        modelSelection,
+        runtimePolicy: policy,
+      });
+      const now = yield* DateTime.now;
+      yield* session.startTurn({
+        appThread: {
+          createdBy: "user",
+          creationSource: "web",
+          id: threadId,
+          projectId: ProjectId.make("project-grok-html-render"),
+          title: "Grok html_render",
+          providerInstanceId: instanceId,
+          modelSelection,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: process.cwd(),
+          activeProviderThreadId: providerThread.id,
+          lineage: { parentThreadId: null, relationshipToParent: null, rootThreadId: threadId },
+          forkedFrom: null,
+          createdAt: now,
+          updatedAt: now,
+          archivedAt: null,
+          settledOverride: null,
+          settledAt: null,
+          lastVisitedAt: null,
+          deletedAt: null,
+        },
+        threadId,
+        runId: RunId.make("run-grok-html-render"),
+        runOrdinal: 1,
+        providerTurnOrdinal: 1,
+        attemptId: RunAttemptId.make("attempt-grok-html-render"),
+        rootNodeId: NodeId.make("node-grok-html-render"),
+        providerThread,
+        message: {
+          createdBy: "user",
+          creationSource: "web",
+          messageId: MessageId.make("message-grok-html-render"),
+          text: "chart the revenue",
+          attachments: [],
+        },
+        modelSelection,
+        runtimePolicy: policy,
+      });
+      const events = Array.from(
+        yield* session.events.pipe(
+          Stream.takeUntil((event) => event.type === "turn.terminal"),
+          Stream.runCollect,
+        ),
+      );
+      const event = events.findLast(
+        (event) =>
+          event.type === "turn_item.updated" &&
+          event.turnItem.nativeItemRef?.nativeId === "html-render",
+      );
+      assert.isDefined(event);
+      if (event?.type !== "turn_item.updated" || event.turnItem.type !== "dynamic_tool") {
+        return yield* Effect.die("expected a dynamic_tool row for html_render");
+      }
+      const item = event.turnItem;
+      assert.deepEqual(
+        {
+          status: item.status,
+          toolName: item.toolName,
+          input: item.input,
+          output: item.output,
+        },
+        {
+          status: "completed",
+          toolName: "t3-code.html_render",
+          input: toolInput,
+          output: { htmlRender: page },
+        },
+      );
+      assert.strictEqual(yield* mcpSessions.takeHtmlRender(threadId, toolInput), undefined);
+    }).pipe(Effect.provide(layerTest), Effect.scoped),
   );
 });

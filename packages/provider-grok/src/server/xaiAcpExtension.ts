@@ -565,6 +565,38 @@ export function normalizeXAiAcpToolCallState(toolCall: AcpToolCallState): AcpToo
   const rawOutput = unknownRecord(withTitle.data.rawOutput);
   const outputType = nonEmptyString(rawOutput?.type)?.toLowerCase();
   const reportedRunning = withTitle.status === "inProgress" || withTitle.status === "pending";
+  const mcpServer = nonEmptyString(rawOutput?.server_name);
+  const mcpTool = nonEmptyString(rawOutput?.tool_name);
+  if (
+    rawOutput?.type === "MCP" &&
+    !reportedRunning &&
+    mcpServer !== undefined &&
+    mcpTool !== undefined
+  ) {
+    const rawInput = unknownRecord(withTitle.data.rawInput);
+    const output = unknownRecord(rawOutput.output);
+    const okayOutput = output?.OkayOutput;
+    const errorMessage = Object.values(output ?? {}).find((value) => typeof value === "string");
+    return {
+      ...withTitle,
+      data: {
+        ...withTitle.data,
+        meta: { ...unknownRecord(withTitle.data.meta), is_mcp_tool_call: true },
+        rawInput: {
+          server: mcpServer,
+          tool: mcpTool,
+          arguments:
+            unknownRecord(rawInput?.tool_input) ?? unknownRecord(rawInput?.arguments) ?? {},
+        },
+        rawOutput:
+          typeof okayOutput === "string"
+            ? { result: { content: [{ type: "text", text: okayOutput }] } }
+            : typeof errorMessage === "string"
+              ? { error: { message: errorMessage } }
+              : rawOutput,
+      },
+    };
+  }
   if (outputType === "bash" && !reportedRunning) {
     // Keep exit-code keys aligned with adapter commandExitCode.
     const exitCode = ["exit_code", "exitCode", "code"]

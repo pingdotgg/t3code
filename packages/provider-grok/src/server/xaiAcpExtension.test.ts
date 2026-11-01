@@ -30,6 +30,7 @@ import {
 import * as AcpSessionRuntime from "@t3tools/provider-acp/server/AcpSessionRuntime";
 import {
   type AcpToolCallState,
+  extractMcpToolCallIdentity,
   mergeToolCallState,
   parseSessionUpdateEvent,
 } from "@t3tools/provider-acp/server/runtimeModel";
@@ -315,6 +316,117 @@ describe("XAiAcpExtension", () => {
         appendOutput: "",
       },
     ]);
+  });
+
+  it("normalizes recorded Grok use_tool MCP envelopes after completion", () => {
+    const toolCallId = "call-2dc0984e-5f82-4bc6-bea2-227208fa7e04-1";
+    const meta = {
+      "x.ai/tool": {
+        version: 1,
+        name: "use_tool",
+        kind: "use_tool",
+        namespace: "grok_build",
+        label: "Use Tool",
+        read_only: false,
+      },
+    };
+    const started = parseRecordedToolCallUpdate({
+      sessionUpdate: "tool_call",
+      toolCallId,
+      title: "use_tool",
+      rawInput: { tool_name: "probe__show_card", tool_input: { label: "hi" } },
+      _meta: meta,
+    });
+    const running = mergeToolCallState(
+      started,
+      parseRecordedToolCallUpdate({
+        sessionUpdate: "tool_call_update",
+        toolCallId,
+        kind: "other",
+        title: "probe__show_card",
+        locations: [],
+        rawInput: {
+          variant: "UseTool",
+          tool_name: "probe__show_card",
+          tool_input: { label: "hi" },
+        },
+        _meta: meta,
+      }),
+    );
+    expect(normalizeXAiAcpToolCallState(running)).toEqual(running);
+    expect(extractMcpToolCallIdentity(running)).toBeUndefined();
+
+    const text = 'probe card shown (show_card)\n{"shown":true,"label":"hi"}';
+    const uiMeta = {
+      ui: { resourceUri: "ui://probe/card.html", visibility: ["model", "app"] },
+      "ui/resourceUri": "ui://probe/card.html",
+    };
+    const completed = mergeToolCallState(
+      running,
+      parseRecordedToolCallUpdate({
+        sessionUpdate: "tool_call_update",
+        toolCallId,
+        status: "completed",
+        rawOutput: {
+          type: "MCP",
+          tool_name: "show_card",
+          server_name: "probe",
+          output: { OkayOutput: text },
+        },
+        _meta: uiMeta,
+      }),
+    );
+    const normalized = normalizeXAiAcpToolCallState(completed);
+    expect(normalized).toEqual({
+      ...completed,
+      data: {
+        ...completed.data,
+        meta: { ...uiMeta, is_mcp_tool_call: true },
+        rawInput: { server: "probe", tool: "show_card", arguments: { label: "hi" } },
+        rawOutput: { result: { content: [{ type: "text", text }] } },
+      },
+    });
+    expect(extractMcpToolCallIdentity(normalized)).toEqual({ server: "probe", tool: "show_card" });
+    expect(normalizeXAiAcpToolCallState(normalized)).toEqual(normalized);
+    expect(
+      normalizeXAiAcpToolCallState(
+        mergeToolCallState(normalized, {
+          toolCallId,
+          data: { rawOutput: completed.data.rawOutput },
+        }),
+      ),
+    ).toEqual(normalized);
+
+    const failed = normalizeXAiAcpToolCallState({
+      ...completed,
+      status: "failed",
+      data: {
+        ...completed.data,
+        rawInput: { variant: "UseTool", tool_name: "probe__show_card" },
+        rawOutput: {
+          type: "MCP",
+          server_name: "probe",
+          tool_name: "show_card",
+          output: { SyntheticFailure: "probe unavailable" },
+        },
+      },
+    });
+    expect(failed.data.rawInput).toEqual({ server: "probe", tool: "show_card", arguments: {} });
+    expect(failed.data.rawOutput).toEqual({ error: { message: "probe unavailable" } });
+    expect(normalizeXAiAcpToolCallState(failed)).toEqual(failed);
+  });
+
+  it("leaves non-MCP use_tool results unchanged", () => {
+    const toolCall = parseRecordedToolCallUpdate({
+      sessionUpdate: "tool_call_update",
+      toolCallId: "use-tool-non-mcp",
+      title: "use_tool",
+      status: "completed",
+      rawInput: { variant: "UseTool", tool_name: "local_tool", tool_input: { label: "hi" } },
+      rawOutput: { type: "Text", text: "local tool completed" },
+    });
+    expect(normalizeXAiAcpToolCallState(toolCall)).toEqual(toolCall);
+    expect(extractMcpToolCallIdentity(toolCall)).toBeUndefined();
   });
 
   it("tracks text Monitor ACKs with generic titles and description-only input", () => {
