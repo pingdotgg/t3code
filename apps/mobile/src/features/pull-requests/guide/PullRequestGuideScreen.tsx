@@ -1,23 +1,25 @@
+import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
+import { Toolbar } from "../../../components/ui/Toolbar";
 import { parsePatchFiles } from "@pierre/diffs/utils/parsePatchFiles";
 import type { FileDiffMetadata } from "@pierre/diffs";
 import { StackActions, useNavigation, type StaticScreenProps } from "@react-navigation/native";
-import { useEffect, useMemo } from "react";
+import { useEffect } from "react";
 import { Platform, Pressable, View } from "react-native";
-import { AndroidScreenHeader } from "../../../components/AndroidScreenHeader";
+import { AndroidScreenHeader } from "../../../components/ui/AndroidScreenHeader";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import {
   letterStopNotes,
   stepTourPosition,
   stopFilePaths,
 } from "@t3tools/client-runtime/review-guide-tour";
-import { SymbolView } from "../../../components/AppSymbol";
+import { SymbolView } from "../../../components/ui/AppSymbol";
 import { GuideOutline } from "./GuideOutline";
-import { AppText as Text } from "../../../components/AppText";
-import { ScreenScrollView } from "../../../components/ScreenScrollView";
-import { ControlPillMenu } from "../../../components/ControlPillMenu";
-import { MaterialIconButton } from "../../../components/MaterialIconButton";
+import { AppText as Text } from "../../../components/ui/AppText";
+import { ScreenScrollView } from "../../../components/ui/ScreenScrollView";
+import { Menu } from "../../../components/ui/Menu";
+import { IconButton } from "../../../components/ui/IconButton";
 import { useAppearancePreferences } from "../../settings/appearance/AppearancePreferencesProvider";
-import { NativeHeaderToolbar, NativeStackScreenOptions } from "../../../native/StackHeader";
+import { NativeStackScreenOptions } from "../../../native/StackHeader";
 import { PullRequestCardGroup, PullRequestCardRow } from "../PullRequestControls";
 import { PullRequestMarkdown, PullRequestMarkdownRepository } from "../PullRequestMarkdown";
 import { usePullRequestDiff, type PullRequestParams } from "../usePullRequestDiff";
@@ -46,9 +48,15 @@ const attentionLabels = {
   accessibility: "An accessibility call",
 };
 
-export function PullRequestGuideContent({ params }: { readonly params: PullRequestParams }) {
+export function PullRequestGuideContent({
+  params,
+  visible = true,
+}: {
+  readonly params: PullRequestParams;
+  readonly visible?: boolean;
+}) {
   const navigation = useNavigation();
-  const state = useReviewGuide(params);
+  const state = useReviewGuide(params, visible);
   const { guide, stale } = reviewGuideState(state.data);
   return (
     <Animated.View layout={PR_ROW_LAYOUT} className="w-full max-w-[760px] self-center">
@@ -100,27 +108,18 @@ export function PullRequestGuideStopScreen({ route }: StaticScreenProps<GuideSto
   const { guide, stale } = reviewGuideState(state.data);
   const position = Math.max(0, Math.min(route.params.position, (guide?.stops.length ?? 1) - 1));
   const stop = guide?.stops[Math.max(0, position)];
-  const diff = usePullRequestDiff(route.params);
-  const excerptFiles = useMemo(() => {
-    const files = new Map<string, FileDiffMetadata>();
-    try {
-      for (const patch of parsePatchFiles(diff.patch)) {
-        for (const file of patch.files) {
-          files.set(file.name, file);
-          if (file.prevName) files.set(file.prevName, file);
-        }
-      }
-    } catch {
-      // An omitted or unparseable patch is shown as unavailable by the excerpt.
-    }
-    return files;
-  }, [diff.patch]);
-  const wanted = useMemo(() => (stop ? stopFilePaths(stop) : []), [stop]);
+  const diff = usePullRequestDiff(
+    route.params,
+    sourceControlClients.get((detail.data ?? route.params.initialSummary)?.provider).changeRequest,
+  );
+  const excerptFiles = diffFilesByPath(diff.patch);
+  const wanted = stop ? stopFilePaths(stop) : [];
   const loadedPaths = new Set(
     diff.parsed.kind === "files" ? diff.parsed.files.map((file) => file.path) : [],
   );
   const missing = wanted.some((path) => !loadedPaths.has(path));
   const { error: diffError, loadMore } = diff;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- requests the next page of the paged diff query until the stop's files have loaded
   useEffect(() => {
     if (state.enabled && missing && !diffError) loadMore();
   }, [state.enabled, missing, diffError, loadMore]);
@@ -144,7 +143,7 @@ export function PullRequestGuideStopScreen({ route }: StaticScreenProps<GuideSto
           title={`Stop ${route.params.position + 1}`}
           onBack={() => navigation.goBack()}
           trailing={
-            <ControlPillMenu
+            <Menu
               actions={[
                 {
                   id: "word-wrap",
@@ -156,31 +155,24 @@ export function PullRequestGuideStopScreen({ route }: StaticScreenProps<GuideSto
               onPressAction={() => setCodeWordBreak(!appearance.codeWordBreak)}
             >
               <View pointerEvents="none">
-                <MaterialIconButton icon="ellipsis" accessibilityLabel="Guide options" />
+                <IconButton icon="ellipsis" accessibilityLabel="Guide options" />
               </View>
-            </ControlPillMenu>
+            </Menu>
           }
         />
       ) : null}
-      <NativeHeaderToolbar placement="right">
-        <NativeHeaderToolbar.Menu
-          title="Guide options"
-          accessibilityLabel="Guide options"
-          icon="ellipsis"
-        >
-          <NativeHeaderToolbar.MenuAction
+      <Toolbar placement="right">
+        <Toolbar.Menu title="Guide options" accessibilityLabel="Guide options" icon="ellipsis">
+          <Toolbar.MenuAction
             icon="text.alignleft"
             isOn={appearance.codeWordBreak}
             onPress={() => setCodeWordBreak(!appearance.codeWordBreak)}
           >
-            <NativeHeaderToolbar.Label>Word wrap</NativeHeaderToolbar.Label>
-          </NativeHeaderToolbar.MenuAction>
-        </NativeHeaderToolbar.Menu>
-      </NativeHeaderToolbar>
-      <PullRequestMarkdownRepository
-        params={route.params}
-        value={`https://${route.params.host ?? "github.com"}/${route.params.repository}`}
-      >
+            <Toolbar.Label>Word wrap</Toolbar.Label>
+          </Toolbar.MenuAction>
+        </Toolbar.Menu>
+      </Toolbar>
+      <PullRequestMarkdownRepository params={route.params} changeRequest={detail.data}>
         <ScreenScrollView
           contentInsetAdjustmentBehavior="automatic"
           contentContainerStyle={{ padding: 16, paddingBottom: insets.bottom + 24, gap: 20 }}
@@ -196,7 +188,7 @@ export function PullRequestGuideStopScreen({ route }: StaticScreenProps<GuideSto
               <>
                 <GuideNotice state={state} />
                 <Text className="text-2xl leading-8 font-t3-semibold">{stop.title}</Text>
-                <PullRequestMarkdown markdown={stop.summary} />
+                <PullRequestMarkdown lineBreaks={false} markdown={stop.summary} />
                 {stop.attention ? (
                   <View className="gap-3 rounded-xl border border-border bg-grouped-card p-4">
                     <View className="flex-row items-center gap-2">
@@ -205,7 +197,7 @@ export function PullRequestGuideStopScreen({ route }: StaticScreenProps<GuideSto
                         {attentionLabels[stop.attention.kind]}
                       </Text>
                     </View>
-                    <PullRequestMarkdown markdown={stop.attention.note} />
+                    <PullRequestMarkdown lineBreaks={false} markdown={stop.attention.note} />
                   </View>
                 ) : null}
                 {stale ? (
@@ -222,7 +214,6 @@ export function PullRequestGuideStopScreen({ route }: StaticScreenProps<GuideSto
                             ...route.params,
                             path: excerpt.path,
                             focus: { side: excerpt.side, start: excerpt.start, end: excerpt.end },
-                            fileSelectionId: `guide:${position}:${excerpt.path}:${excerpt.start}`,
                           }),
                         )
                       }
@@ -246,7 +237,7 @@ export function PullRequestGuideStopScreen({ route }: StaticScreenProps<GuideSto
                           <Text className="text-xs text-foreground-muted">
                             {note.path.split("/").at(-1)}:{note.line}
                           </Text>
-                          <PullRequestMarkdown markdown={note.body} />
+                          <PullRequestMarkdown lineBreaks={false} markdown={note.body} />
                         </View>
                       </View>
                     ))}
@@ -275,7 +266,7 @@ export function PullRequestGuideStopScreen({ route }: StaticScreenProps<GuideSto
                   <View className="gap-3">
                     <Text className="font-t3-semibold">Questions to consider</Text>
                     {stop.questions.map((question) => (
-                      <PullRequestMarkdown key={question} markdown={question} />
+                      <PullRequestMarkdown key={question} lineBreaks={false} markdown={question} />
                     ))}
                   </View>
                 ) : null}
@@ -336,4 +327,17 @@ export function PullRequestGuideStopScreen({ route }: StaticScreenProps<GuideSto
       </PullRequestMarkdownRepository>
     </View>
   );
+}
+
+function diffFilesByPath(patchText: string): Map<string, FileDiffMetadata> {
+  const files = new Map<string, FileDiffMetadata>();
+  try {
+    for (const patch of parsePatchFiles(patchText)) {
+      for (const file of patch.files) {
+        files.set(file.name, file);
+        if (file.prevName) files.set(file.prevName, file);
+      }
+    }
+  } catch {}
+  return files;
 }

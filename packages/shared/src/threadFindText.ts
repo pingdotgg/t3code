@@ -5,7 +5,7 @@ import {
 } from "./inlineSkills.ts";
 import {
   artifactTemplateFromHastProperties,
-  renderCodexFileCitationsAsMarkdown,
+  renderCodexInlineDirectivesAsMarkdown,
 } from "./codexMarkdownDirectives.ts";
 import { codexArtifactTemplatePresentationLabel } from "./codexArtifactTemplates.ts";
 import {
@@ -21,7 +21,10 @@ import {
   resolveMarkdownFileLinkTarget,
 } from "./markdownLinks.ts";
 import { upgradeLegacyContextMessage } from "./composerContextLegacy.ts";
-import { parseComposerContextHref } from "./composerContextReferences.ts";
+import {
+  isAttachmentOnlyBootstrapPrompt,
+  parseComposerContextHref,
+} from "./composerContextReferences.ts";
 import { assistantCitationLabel, parseAssistantCitationHref } from "./assistantCitations.ts";
 import type { OrchestrationV2ConversationMessage } from "@t3tools/contracts";
 import { proposedPlanTitle, stripDisplayedPlanMarkdown } from "./proposedPlanText.ts";
@@ -102,7 +105,6 @@ interface TextTree {
   readonly children?: ReadonlyArray<TextTree>;
 }
 
-/** Uses the renderer's Markdown transforms, without mounting folded/virtualized rows. */
 function markdownThreadFindText(
   markdown: string,
   userMessage = false,
@@ -117,7 +119,7 @@ function markdownThreadFindText(
       : assistantProcessor;
   const tree = processor.runSync(processor.parse(markdown));
   const paths = [
-    ...extractMarkdownLinkHrefs(renderCodexFileCitationsAsMarkdown(markdown)),
+    ...extractMarkdownLinkHrefs(renderCodexInlineDirectivesAsMarkdown(markdown)),
     ...extractInlineCodeSpans(markdown).flatMap(
       (span) => inlineCodeFilePathCandidate(span, cwd) ?? [],
     ),
@@ -141,7 +143,6 @@ function markdownThreadFindText(
     const citation =
       node.tagName === "a" && typeof href === "string" ? parseAssistantCitationHref(href) : null;
     if (citation) {
-      // Matches the citation chip, which shows its label instead of the link text.
       text += assistantCitationLabel(citation);
       return;
     }
@@ -172,7 +173,6 @@ function markdownThreadFindText(
     }
     const template = artifactTemplateFromHastProperties(node.properties);
     if (template) {
-      // Matches the card's visible text; its action button is not indexed.
       flush();
       segments.push(
         template.displayName,
@@ -222,6 +222,8 @@ export function searchableMessageSegments(
   skills: readonly InlineSkill[] = [],
 ): readonly string[] | null {
   if (message.role === "user") {
+    // Clients hide this prompt, so find must not match text nobody can see.
+    if (isAttachmentOnlyBootstrapPrompt(message.text)) return [];
     const text = message.context ? message.text : upgradeLegacyContextMessage(message.text).text;
     return markdownThreadFindText(text, true, cwd, skills);
   }

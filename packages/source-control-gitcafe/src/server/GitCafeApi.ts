@@ -13,12 +13,9 @@ import * as GitCafeCredentials from "./GitCafeCredentials.ts";
 import * as GitCafeHosts from "./gitCafeHosts.ts";
 
 const NO_REDIRECT: RequestInit = { redirect: "manual" };
+const MAX_REDIRECTS = 3;
 const TIMEOUT = Duration.seconds(30);
 
-/**
- * Why a request failed, as far as a caller needs to act on it: a missing CLI or refused token
- * disables the provider, a limit pauses the host, and the rest belong to the one request.
- */
 export const GitCafeApiFailure = Schema.Literals([
   "missing-tool",
   "unauthenticated",
@@ -30,7 +27,6 @@ export const GitCafeApiFailure = Schema.Literals([
 export class GitCafeApiError extends Schema.TaggedError<GitCafeApiError>()("GitCafeApiError", {
   host: Schema.String,
   operation: Schema.String,
-  /** GitCafe's HTTP status; null when no answer arrived. */
   status: Schema.NullOr(Schema.Int),
   reason: GitCafeApiFailure,
   detail: Schema.String,
@@ -45,21 +41,17 @@ export interface GitCafeApiRequest {
   readonly host: string;
   readonly operation: string;
   readonly method?: "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
-  /** Below `/api`, query string included, e.g. `/repos/owner/repo/pulls/7`. */
   readonly path: string;
   readonly body?: unknown;
 }
 
-/** GitCafe's REST API on its own hosts, authenticated with the `GitCafeCredentials` token. */
 export class GitCafeApi extends Context.Service<
   GitCafeApi,
   {
-    /** The body of a successful answer. */
     readonly request: (input: GitCafeApiRequest) => Effect.Effect<string, GitCafeApiError>;
   }
 >()("@t3tools/source-control-gitcafe/server/GitCafeApi") {}
 
-/** GitCafe's RFC 7807 error body, e.g. `{"type":"https://cafe.sh/errors/not-found",...}`. */
 const decodeProblem = Schema.decodeUnknownOption(
   Schema.fromJsonString(
     Schema.Struct({
@@ -94,7 +86,29 @@ const credentialFailure = (
       ? "unauthenticated"
       : "failed";
 
-/** @public Service construction is part of the canonical Effect module API. */
+const REDIRECTS = new Set([301, 302, 303, 307, 308]);
+// 307 and 308 keep the method and body; the others only safely repeat a read.
+const METHOD_PRESERVING = new Set([307, 308]);
+
+const redirectTarget = (
+  method: string,
+  origin: string,
+  from: string,
+  response: { readonly status: number; readonly location: string | undefined },
+): string | null => {
+  if (!REDIRECTS.has(response.status) || response.location === undefined) return null;
+  if (method !== "GET" && !METHOD_PRESERVING.has(response.status)) return null;
+  const target = URL.parse(response.location, from);
+  return target !== null &&
+    target.origin === origin &&
+    target.username === "" &&
+    target.password === "" &&
+    target.pathname.startsWith("/api/")
+    ? target.href
+    : null;
+};
+
+/** @public */
 export const make = Effect.gen(function* () {
   const httpClient = yield* HttpClient.HttpClient;
   const credentials = yield* GitCafeCredentials.GitCafeCredentials;
@@ -111,7 +125,7 @@ export const make = Effect.gen(function* () {
         detail: fields.detail,
         ...(fields.cause === undefined ? {} : { cause: fields.cause }),
       });
-    // The host comes from a remote URL, so a token never leaves for one GitCafe does not own.
+    // Remote URLs must not send tokens outside GitCafe's hosts.
     const host = GitCafeHosts.gitCafeHost(input.host);
     if (host === null)
       return yield* fail({
@@ -131,31 +145,49 @@ export const make = Effect.gen(function* () {
           fail({ status: null, reason: credentialFailure(cause), detail: cause.message, cause }),
         ),
       );
-    const base = HttpClientRequest.make(input.method ?? "GET")(
-      `https://${host}/api${input.path}`,
-    ).pipe(
-      HttpClientRequest.bearerToken(Redacted.value(credential.token)),
-      HttpClientRequest.setHeaders({ accept: "application/json", "user-agent": "t3code" }),
-    );
-    const { status, text } = yield* Effect.gen(function* () {
-      const response = yield* httpClient
-        .execute(
-          input.body === undefined ? base : base.pipe(HttpClientRequest.bodyJsonUnsafe(input.body)),
-        )
-        .pipe(
-          // The client's own span would record the query string, which can carry branch names.
-          Effect.provideService(HttpClient.TracerDisabledWhen, () => true),
-          // fetch would follow a redirect itself and keep the bearer token on a same-origin hop;
-          // GitCafe's API never redirects a request it serves, so a 3xx is answered as a failure.
-          Effect.provideService(FetchHttpClient.RequestInit, NO_REDIRECT),
-        );
-      return { status: response.status, text: yield* response.text };
-    }).pipe(
-      Effect.timeout(TIMEOUT),
-      Effect.mapError((cause) =>
-        fail({ status: null, reason: "failed", detail: "Could not reach GitCafe.", cause }),
-      ),
-    );
+    const origin = `https://${host}`;
+    const method = input.method ?? "GET";
+    const send = (url: string) => {
+      const base = HttpClientRequest.make(method)(url).pipe(
+        HttpClientRequest.bearerToken(Redacted.value(credential.token)),
+        HttpClientRequest.setHeaders({ accept: "application/json", "user-agent": "t3code" }),
+      );
+      return Effect.gen(function* () {
+        const response = yield* httpClient
+          .execute(
+            input.body === undefined
+              ? base
+              : base.pipe(HttpClientRequest.bodyJsonUnsafe(input.body)),
+          )
+          .pipe(
+            // Client spans expose query strings containing branch names.
+            Effect.provideService(HttpClient.TracerDisabledWhen, () => true),
+            // fetch would carry the bearer token to any redirect target.
+            Effect.provideService(FetchHttpClient.RequestInit, NO_REDIRECT),
+          );
+        return {
+          status: response.status,
+          location: response.headers.location,
+          text: yield* response.text,
+        };
+      }).pipe(
+        Effect.timeout(TIMEOUT),
+        Effect.mapError((cause) =>
+          fail({ status: null, reason: "failed", detail: "Could not reach GitCafe.", cause }),
+        ),
+      );
+    };
+    // A renumbered pull request (provisional number replaced by the synced GitHub one)
+    // answers with a redirect; follow it only within this host's API.
+    let url = `${origin}/api${input.path}`;
+    let response = yield* send(url);
+    for (let hop = 0; hop < MAX_REDIRECTS; hop++) {
+      const next = redirectTarget(method, origin, url, response);
+      if (next === null) break;
+      url = next;
+      response = yield* send(url);
+    }
+    const { status, text } = response;
     yield* Effect.annotateCurrentSpan({ "http.response.status_code": status });
     if (status >= 200 && status < 300) return text;
     // The source may hold a newer token than the one that was refused.
@@ -164,7 +196,6 @@ export const make = Effect.gen(function* () {
     return yield* fail({
       status,
       reason: reasonForStatus(status),
-      // GitCafe's own explanation is what the user acts on; it is kept short and single-line.
       detail:
         boundedProblemText(problem?.detail ?? problem?.title) ?? `GitCafe answered HTTP ${status}.`,
     });

@@ -28,10 +28,6 @@ import {
 } from "./azureDevOpsPullRequestJson.ts";
 import type { ProviderListCursor } from "@t3tools/source-control-core/server/PullRequestProvider";
 
-/**
- * Names the read that produced unusable output, so a failure reports the call it came from
- * rather than borrowing another operation's message.
- */
 export class AzureDevOpsPullRequestReadError extends Schema.TaggedError<AzureDevOpsPullRequestReadError>()(
   "AzureDevOpsPullRequestReadError",
   {
@@ -50,7 +46,6 @@ export class AzureDevOpsPullRequestReadError extends Schema.TaggedError<AzureDev
   }
 }
 
-/** Not a decode failure: az answered, the account it answered for just has no name. */
 export class AzureDevOpsViewerUnavailableError extends Schema.TaggedError<AzureDevOpsViewerUnavailableError>()(
   "AzureDevOpsViewerUnavailableError",
   {
@@ -67,10 +62,6 @@ export class AzureDevOpsViewerUnavailableError extends Schema.TaggedError<AzureD
   }
 }
 
-/**
- * Not a decode failure either: az answered with a well-formed pull request that simply carries
- * no branch or link, which is a response this cannot place rather than one it cannot read.
- */
 export class AzureDevOpsPullRequestIncompleteError extends Schema.TaggedError<AzureDevOpsPullRequestIncompleteError>()(
   "AzureDevOpsPullRequestIncompleteError",
   {
@@ -88,11 +79,6 @@ export class AzureDevOpsPullRequestIncompleteError extends Schema.TaggedError<Az
   }
 }
 
-/**
- * Not a decode failure: the reader named a reviewer `az` would read as a flag of its own. The
- * reviewers travel as argv rather than in a request body — `az repos pr reviewer` takes them no
- * other way — so anything that could leave the value position is refused rather than sent.
- */
 export class AzureDevOpsReviewerNameError extends Schema.TaggedError<AzureDevOpsReviewerNameError>()(
   "AzureDevOpsReviewerNameError",
   {
@@ -116,43 +102,21 @@ export type AzureDevOpsPullRequestCliError =
   | AzureDevOpsReviewerNameError
   | AzureDevOpsViewerUnavailableError;
 
-/** The version every REST call below is pinned to, so a new default cannot reshape a response. */
 const REST_API_VERSION = "7.1";
 const PULL_REQUEST_LIST_MAX_OUTPUT_BYTES = 16 * 1024 * 1024;
-/**
- * A full page of change entries is two thousand files, each carrying its path, its url and
- * several object ids, which is past the megabyte a read is given by default. Output cut at that
- * ceiling arrives here as JSON that will not parse, so a change large enough to be paged would
- * report itself as a host returning nonsense rather than as the ordinary page it is.
- */
+/** A 2,000-file page exceeds the default 1 MiB output budget. */
 const CHANGE_ENTRIES_MAX_OUTPUT_BYTES = 8 * 1024 * 1024;
-/**
- * Four times the megabyte of file the other hosts hand over, because Azure has no route that
- * serves the bytes themselves: the file arrives inside a JSON envelope, escaped if it is text and
- * base64 if it is not, and both are larger than the file they carry.
- */
+/** JSON escaping and base64 can exceed the decoded file's size. */
 const ITEM_CONTENT_MAX_OUTPUT_BYTES = 4 * 1024 * 1024;
-/**
- * What a review's own history is given. Neither route pages, so each answers with the whole of it
- * at once and grows with how long the review ran rather than with how large the change is. Cut at
- * the default, both arrive as JSON that stops mid-string, and a long review would report its host
- * as answering with nonsense.
- */
+/** Review history is unpaged and independent of diff size. */
 const REVIEW_HISTORY_MAX_OUTPUT_BYTES = 8 * 1024 * 1024;
 
-/** Azure's own ceiling for one page of an iteration's changes. */
+/** Azure's iteration-change page limit. */
 const CHANGE_ENTRIES_PER_PAGE = 2000;
 
-/**
- * Where following the pages stops, counted in the entries Azure was asked to skip rather than in
- * the files that survived decoding: a page can be entirely folders and other entries a review has
- * nothing to show for, and bounding on what was kept would follow such a change forever. Every
- * page is an `az` process of its own, so the read gives up and reports itself incomplete rather
- * than presenting five pages as the whole change.
- */
+/** Count raw entries, including folders and malformed rows. */
 const MAX_CHANGE_ENTRIES = 10_000;
 
-/** What an iteration changed, and whether following its pages reached the end of it. */
 export interface AzureDevOpsIterationChanges {
   readonly changes: ReadonlyArray<AzureDevOpsChangeEntry>;
   readonly truncated: boolean;
@@ -172,6 +136,8 @@ export class AzureDevOpsPullRequestCli extends Context.Service<
       readonly involvement: PullRequestInvolvement;
       readonly viewer: string;
       readonly limit: number;
+      /** Matched by `--creator`, which takes the email a row shows as its login. */
+      readonly author?: string | undefined;
       /**
        * Where to carry on from. Azure has no date filter for a pull request listing, so the only
        * part of a cursor it can use is how many rows have already been handed over.
@@ -181,7 +147,6 @@ export class AzureDevOpsPullRequestCli extends Context.Service<
       {
         readonly items: ReadonlyArray<AzureDevOpsPullRequest>;
         readonly truncated: boolean;
-        /** Raw Azure rows consumed to produce this page, including malformed rows. */
         readonly cursorAdvance: number;
       },
       AzureDevOpsPullRequestCliError
@@ -192,27 +157,19 @@ export class AzureDevOpsPullRequestCli extends Context.Service<
       readonly number: number;
     }) => Effect.Effect<AzureDevOpsPullRequest, AzureDevOpsPullRequestCliError>;
 
-    /** Threads are not reachable through `az repos pr`, so they come from the REST API. */
     readonly listThreads: (input: {
       readonly cwd: string;
       readonly location: AzureDevOpsRepositoryLocation;
       readonly number: number;
     }) => Effect.Effect<ReadonlyArray<PullRequestComment>, AzureDevOpsPullRequestCliError>;
 
-    /**
-     * The pushes a pull request has had, oldest first. Azure hangs the changed files off an
-     * iteration rather than off the pull request, so reading a diff starts here.
-     */
     readonly listIterations: (input: {
       readonly cwd: string;
       readonly location: AzureDevOpsRepositoryLocation;
       readonly number: number;
     }) => Effect.Effect<ReadonlyArray<AzureDevOpsIteration>, AzureDevOpsPullRequestCliError>;
 
-    /**
-     * What one iteration changed, against the merge base rather than against the previous push,
-     * which is the whole of the pull request rather than the latest slice of it.
-     */
+    /** Changes cover the whole PR from its merge base. */
     readonly listIterationChanges: (input: {
       readonly cwd: string;
       readonly location: AzureDevOpsRepositoryLocation;
@@ -220,10 +177,6 @@ export class AzureDevOpsPullRequestCli extends Context.Service<
       readonly iterationId: number;
     }) => Effect.Effect<AzureDevOpsIterationChanges, AzureDevOpsPullRequestCliError>;
 
-    /**
-     * One file's text at one commit. Azure has no diff route that carries content, so both sides
-     * of every changed file are read this way and the patch is made from them here.
-     */
     readonly readItemContent: (input: {
       readonly cwd: string;
       readonly location: AzureDevOpsRepositoryLocation;
@@ -238,7 +191,6 @@ export class AzureDevOpsPullRequestCli extends Context.Service<
       readonly mergeMethod?: PullRequestMergeMethod;
     }) => Effect.Effect<void, AzureDevOpsPullRequestCliError>;
 
-    /** Rewrites the pull request's own words, through the same command that moves it. */
     readonly updatePullRequest: (input: {
       readonly cwd: string;
       readonly number: number;
@@ -246,11 +198,6 @@ export class AzureDevOpsPullRequestCli extends Context.Service<
       readonly body?: string | undefined;
     }) => Effect.Effect<void, AzureDevOpsPullRequestCliError>;
 
-    /**
-     * Adds reviewers to a pull request, or takes them off it. `az repos pr reviewer` is the whole
-     * of what Azure offers here: it adds and removes named identities, and has no counterpart that
-     * says who could be named.
-     */
     readonly setPullRequestReviewers: (input: {
       readonly cwd: string;
       readonly number: number;
@@ -287,11 +234,6 @@ function involvementArgs(input: {
   }
 }
 
-/**
- * Azure moves a pull request by setting its state rather than by named commands: completing it
- * is the merge, abandoning it is the close, and reactivating it is the reopen. Squashing is a
- * completion option rather than a strategy of its own.
- */
 function actionArgs(
   action: PullRequestAction,
   mergeMethod: PullRequestMergeMethod | undefined,
@@ -299,8 +241,6 @@ function actionArgs(
   switch (action) {
     case "merge":
       return ["--status", "completed", "--squash", mergeMethod === "squash" ? "true" : "false"];
-    // Auto-complete is Azure's own name for it: the pull request stays active and Azure completes
-    // it once its policies pass. The squash choice is stored with it, as it is for a merge now.
     case "enable-auto-merge":
       return [
         "--auto-complete",
@@ -317,35 +257,27 @@ function actionArgs(
       return ["--draft", "true"];
     case "close":
       return ["--status", "abandoned"];
-    // Never reached: this host does not declare the action, so nothing offers it.
     case "update-branch":
       return [];
     case "reopen":
       return ["--status", "active"];
-    // Never reached: this host does not declare the action, so the service refuses it first.
     case "revert":
     case "approve-workflows":
+    case "delete-branch":
       throw new Error(`Azure DevOps pull request action ${action} is unsupported`);
   }
 }
 
-/**
- * A reviewer Azure could be given: an email address, a display name or an identity guid, and
- * nothing that starts with a dash. The dash is the whole point — these are argv, and a value that
- * looks like a flag stops being a value.
- */
 function isReviewerName(value: string): boolean {
   const name = value.trim();
   return name.length > 0 && !name.startsWith("-");
 }
 
-/** @public Service construction is part of the canonical Effect module API. */
+/** @public */
 export const make = Effect.gen(function* () {
   const azure = yield* AzureDevOpsCli.AzureDevOpsCli;
 
-  // Every command resolves the organization, project and repository from the checkout, which is
-  // what the rest of the Azure wrapper does. The remote takes three shapes and only `az` knows
-  // how to read all of them.
+  // Let `az` parse all three remote formats.
   const detectArgs = ["--detect", "true"] as const;
 
   const executeJson = (input: {
@@ -359,13 +291,7 @@ export const make = Effect.gen(function* () {
       ...(input.maxOutputBytes === undefined ? {} : { maxOutputBytes: input.maxOutputBytes }),
     });
 
-  /**
-   * A REST route reached through `az devops invoke`, which addresses it by area, resource and
-   * route parameters rather than by URL. Used in place of `az rest` because it signs in the way
-   * the azure-devops extension does: `az rest` mints its own token against the tenant `az`
-   * defaults to, and an organisation in any other tenant answers that with a sign-in page, which
-   * arrives here as unreadable output rather than as a failure.
-   */
+  /** Use the extension's credentials; `az rest` uses the default tenant. */
   const invoke = <A>(input: {
     readonly cwd: string;
     readonly operation: string;
@@ -410,11 +336,7 @@ export const make = Effect.gen(function* () {
       }),
     );
 
-  /**
-   * Azure names its own items with a leading slash, which the repository paths carried around
-   * here have had taken off so they match the patch and the viewed mark. Put it back on the way
-   * out, because the items route is documented in Azure's own spelling.
-   */
+  /** Azure's items route requires a leading slash. */
   const toItemPath = (path: string) => (path.startsWith("/") ? path : `/${path}`);
 
   const repositoryRoute = (location: AzureDevOpsRepositoryLocation): ReadonlyArray<string> => [
@@ -430,16 +352,14 @@ export const make = Effect.gen(function* () {
     `pullRequestId=${input.number}`,
   ];
 
-  /**
-   * Azure pages by raw offset. Keep reading when malformed rows leave the decoded page short, and
-   * retain the raw count so the next public cursor skips every row this walk consumed.
-   */
+  /** Decoding can shorten a non-final page; advance by raw rows. */
   const listPullRequestPage = (input: {
     readonly cwd: string;
     readonly repository: string;
     readonly state: PullRequestListState;
     readonly involvement: PullRequestInvolvement;
     readonly viewer: string;
+    readonly author?: string | undefined;
     readonly limit: number;
     readonly skip: number;
     readonly cursorAdvance: number;
@@ -466,7 +386,9 @@ export const make = Effect.gen(function* () {
         input.repository,
         ...statusArgs(input.state),
         ...involvementArgs(input),
-        // A web link per row, which is the only url that needs no assembling.
+        ...(input.author === undefined || input.involvement === "authored"
+          ? []
+          : ["--creator", input.author]),
         "--include-links",
         ...(input.skip === 0 ? [] : ["--skip", String(input.skip)]),
         "--top",
@@ -499,7 +421,6 @@ export const make = Effect.gen(function* () {
           const consumed = lastItemIndex + 1;
           return Effect.succeed({
             items: [...input.items, ...decoded.success.items.slice(0, remaining)],
-            // A full raw response may have more rows even when malformed entries used the probe.
             truncated: consumed < decoded.success.rawCount || decoded.success.rawCount === top,
             cursorAdvance: input.cursorAdvance + consumed,
           });
@@ -524,11 +445,9 @@ export const make = Effect.gen(function* () {
   };
 
   return AzureDevOpsPullRequestCli.of({
-    getViewer: (input) =>
-      executeJson({ cwd: input.cwd, args: ["account", "show", "--query", "user"] }).pipe(
+    getViewer: Effect.fn("AzureDevOpsPullRequestCli.getViewer")(function (input) {
+      return executeJson({ cwd: input.cwd, args: ["account", "show", "--query", "user"] }).pipe(
         Effect.flatMap((result): Effect.Effect<string, AzureDevOpsPullRequestCliError> => {
-          // `--query user` narrows the payload to the account, so it is nested back under the
-          // key the decoder reads to keep one shape for the signed-in user.
           const decoded = decodeViewerJson(`{"user":${result.stdout.trim() || "null"}}`);
           if (!Result.isSuccess(decoded)) {
             return Effect.fail(
@@ -544,10 +463,7 @@ export const make = Effect.gen(function* () {
             ? Effect.fail(new AzureDevOpsViewerUnavailableError({ command: "az", cwd: input.cwd }))
             : Effect.succeed(decoded.success);
         }),
-        // `az devops login` signs in with a personal access token, which `az account show` knows
-        // nothing about, and nothing in `az` prints whose token it is. `--creator me` is resolved
-        // by the extension itself, so the viewer's own pull request names them. Someone with none
-        // stays unnamed: `me` would read as nobody everywhere a row is compared with the viewer.
+        // `az account show` cannot identify PAT logins; the extension resolves `--creator me`.
         Effect.catchIf(
           (error) => error._tag !== "AzureDevOpsCliUnavailableError",
           () =>
@@ -579,27 +495,26 @@ export const make = Effect.gen(function* () {
               }),
             ),
         ),
-      ),
+      );
+    }),
 
-    listPullRequests: (input) =>
-      listPullRequestPage({
+    listPullRequests: Effect.fn("AzureDevOpsPullRequestCli.listPullRequests")(function (input) {
+      return listPullRequestPage({
         cwd: input.cwd,
         repository: input.repository,
         state: input.state,
         involvement: input.involvement,
         viewer: input.viewer,
+        author: input.author,
         limit: input.limit,
-        // Azure counts rather than filters, so a slice carries on by stepping over every raw row
-        // the prior slice consumed. That is an offset into a list that can shift underneath it:
-        // a pull request opened between two slices moves everything down one, and the row on the
-        // seam is the one that pays for it.
         skip: input.cursor?.delivered ?? 0,
         cursorAdvance: 0,
         items: [],
-      }),
+      });
+    }),
 
-    getPullRequest: (input) =>
-      executeJson({
+    getPullRequest: Effect.fn("AzureDevOpsPullRequestCli.getPullRequest")(function (input) {
+      return executeJson({
         cwd: input.cwd,
         args: ["repos", "pr", "show", ...detectArgs, "--id", String(input.number)],
       }).pipe(
@@ -616,8 +531,6 @@ export const make = Effect.gen(function* () {
                 }),
               );
             }
-            // Null means Azure answered with too little to place the pull request. Nothing
-            // failed underneath it, so it is its own outcome rather than a decode failure.
             return decoded.success === null
               ? Effect.fail(
                   new AzureDevOpsPullRequestIncompleteError({
@@ -629,63 +542,62 @@ export const make = Effect.gen(function* () {
               : Effect.succeed(decoded.success);
           },
         ),
-      ),
+      );
+    }),
 
-    listThreads: (input) =>
-      invoke({
+    listThreads: Effect.fn("AzureDevOpsPullRequestCli.listThreads")(function (input) {
+      return invoke({
         cwd: input.cwd,
         operation: "listThreads",
         resource: "pullRequestThreads",
         routeParameters: pullRequestRoute(input),
         maxOutputBytes: REVIEW_HISTORY_MAX_OUTPUT_BYTES,
         decode: decodeThreadsJson,
-      }),
+      });
+    }),
 
-    listIterations: (input) =>
-      invoke({
+    listIterations: Effect.fn("AzureDevOpsPullRequestCli.listIterations")(function (input) {
+      return invoke({
         cwd: input.cwd,
         operation: "listIterations",
         resource: "pullRequestIterations",
         routeParameters: pullRequestRoute(input),
         maxOutputBytes: REVIEW_HISTORY_MAX_OUTPUT_BYTES,
         decode: decodeIterationsJson,
-      }),
+      });
+    }),
 
-    listIterationChanges: (input) => {
-      const page = (skip: number) =>
-        invoke({
-          cwd: input.cwd,
-          operation: "listIterationChanges",
-          resource: "pullRequestIterationChanges",
-          routeParameters: [...pullRequestRoute(input), `iterationId=${input.iterationId}`],
-          // Azure pages this route at 1000 entries by default; this is its own maximum per page,
-          // and it names where the next page starts rather than answering with the whole change.
-          queryParameters: [`$top=${CHANGE_ENTRIES_PER_PAGE}`, `$skip=${skip}`],
-          maxOutputBytes: CHANGE_ENTRIES_MAX_OUTPUT_BYTES,
-          decode: decodeIterationChangesJson,
-        });
-      const from = (
-        skip: number,
-        collected: ReadonlyArray<AzureDevOpsChangeEntry>,
-      ): Effect.Effect<AzureDevOpsIterationChanges, AzureDevOpsPullRequestCliError> =>
-        page(skip).pipe(
-          Effect.flatMap((answer) => {
-            const changes = [...collected, ...answer.changes];
-            // The last page names no page after it, and only that is the end of the change.
-            if (answer.nextSkip === null) return Effect.succeed({ changes, truncated: false });
-            // A page pointing at where the read already is would be followed forever, and one
-            // past the ceiling is a change nobody will read to the end of. Both stop the read
-            // and both say so, rather than presenting part of a change as the whole of it.
-            return answer.nextSkip <= skip || answer.nextSkip >= MAX_CHANGE_ENTRIES
-              ? Effect.succeed({ changes, truncated: true })
-              : from(answer.nextSkip, changes);
-          }),
-        );
-      return from(0, []);
-    },
+    listIterationChanges: Effect.fn("AzureDevOpsPullRequestCli.listIterationChanges")(
+      function (input) {
+        const page = (skip: number) =>
+          invoke({
+            cwd: input.cwd,
+            operation: "listIterationChanges",
+            resource: "pullRequestIterationChanges",
+            routeParameters: [...pullRequestRoute(input), `iterationId=${input.iterationId}`],
+            queryParameters: [`$top=${CHANGE_ENTRIES_PER_PAGE}`, `$skip=${skip}`],
+            maxOutputBytes: CHANGE_ENTRIES_MAX_OUTPUT_BYTES,
+            decode: decodeIterationChangesJson,
+          });
+        const from = (
+          skip: number,
+          collected: ReadonlyArray<AzureDevOpsChangeEntry>,
+        ): Effect.Effect<AzureDevOpsIterationChanges, AzureDevOpsPullRequestCliError> =>
+          page(skip).pipe(
+            Effect.flatMap((answer) => {
+              const changes = [...collected, ...answer.changes];
+              if (answer.nextSkip === null) return Effect.succeed({ changes, truncated: false });
+              return answer.nextSkip <= skip || answer.nextSkip >= MAX_CHANGE_ENTRIES
+                ? Effect.succeed({ changes, truncated: true })
+                : from(answer.nextSkip, changes);
+            }),
+          );
+        return from(0, []);
+      },
+    ),
 
-    readItemContent: (input) =>
-      invoke({
+    readItemContent: Effect.fn("AzureDevOpsPullRequestCli.readItemContent")(function (input) {
+      return invoke({
         cwd: input.cwd,
         operation: "readItemContent",
         resource: "items",
@@ -695,45 +607,68 @@ export const make = Effect.gen(function* () {
           "versionDescriptor.versionType=commit",
           `versionDescriptor.version=${input.commit}`,
           "includeContent=true",
-          // Azure leaves `contentMetadata` out unless this is asked for, and with it goes its own
-          // word on whether the file is binary, which is the only reliable one, since a binary
-          // file arrives encoded rather than as the bytes it is on the host.
+          // Encoded content cannot identify binaries; request Azure's binary flag.
           "includeContentMetadata=true",
-          // Without this Azure answers with the file's own bytes rather than with a JSON
-          // envelope, and `az devops invoke` refuses anything it cannot parse as JSON.
+          // `az devops invoke` requires JSON; otherwise Azure returns raw file bytes.
           "$format=json",
         ],
         maxOutputBytes: ITEM_CONTENT_MAX_OUTPUT_BYTES,
         decode: decodeItemContentJson,
-      }),
+      });
+    }),
 
-    setPullRequestReviewers: (input) =>
-      input.reviewers.some((reviewer) => !isReviewerName(reviewer))
-        ? Effect.fail(new AzureDevOpsReviewerNameError({ command: "az", cwd: input.cwd }))
-        : azure
-            .execute({
-              cwd: input.cwd,
-              args: [
-                "repos",
-                "pr",
-                "reviewer",
-                input.requested ? "add" : "remove",
-                ...detectArgs,
-                "--id",
-                String(input.number),
-                // One `--reviewers` takes them all, because az reads the flag as a list and a
-                // second one would replace the first rather than add to it.
-                "--reviewers",
-                ...input.reviewers,
-                "--only-show-errors",
-                "--output",
-                "json",
-              ],
-            })
-            .pipe(Effect.asVoid),
+    setPullRequestReviewers: Effect.fn("AzureDevOpsPullRequestCli.setPullRequestReviewers")(
+      function* (input) {
+        if (input.reviewers.some((reviewer) => !isReviewerName(reviewer))) {
+          return yield* new AzureDevOpsReviewerNameError({ command: "az", cwd: input.cwd });
+        }
+        return yield* azure
+          .execute({
+            cwd: input.cwd,
+            args: [
+              "repos",
+              "pr",
+              "reviewer",
+              input.requested ? "add" : "remove",
+              ...detectArgs,
+              "--id",
+              String(input.number),
+              // Repeating `--reviewers` replaces the earlier list.
+              "--reviewers",
+              ...input.reviewers,
+              "--only-show-errors",
+              "--output",
+              "json",
+            ],
+          })
+          .pipe(Effect.asVoid);
+      },
+    ),
 
-    runPullRequestAction: (input) =>
-      azure
+    runPullRequestAction: Effect.fn("AzureDevOpsPullRequestCli.runPullRequestAction")(
+      function (input) {
+        return azure
+          .execute({
+            cwd: input.cwd,
+            args: [
+              "repos",
+              "pr",
+              "update",
+              ...detectArgs,
+              "--id",
+              String(input.number),
+              ...actionArgs(input.action, input.mergeMethod),
+              "--only-show-errors",
+              "--output",
+              "json",
+            ],
+          })
+          .pipe(Effect.asVoid);
+      },
+    ),
+
+    updatePullRequest: Effect.fn("AzureDevOpsPullRequestCli.updatePullRequest")(function (input) {
+      return azure
         .execute({
           cwd: input.cwd,
           args: [
@@ -743,28 +678,7 @@ export const make = Effect.gen(function* () {
             ...detectArgs,
             "--id",
             String(input.number),
-            ...actionArgs(input.action, input.mergeMethod),
-            "--only-show-errors",
-            "--output",
-            "json",
-          ],
-        })
-        .pipe(Effect.asVoid),
-
-    updatePullRequest: (input) =>
-      azure
-        .execute({
-          cwd: input.cwd,
-          args: [
-            "repos",
-            "pr",
-            "update",
-            ...detectArgs,
-            "--id",
-            String(input.number),
-            // One argument rather than a flag and a value beside it: a description usually opens
-            // with a bullet, and az reads a dash in the next argv slot as a flag of its own.
-            // `--description` also takes several strings, and this keeps the whole text as one.
+            // One argv entry preserves leading dashes and multi-string descriptions.
             ...(input.title === undefined ? [] : [`--title=${input.title}`]),
             ...(input.body === undefined ? [] : [`--description=${input.body}`]),
             "--only-show-errors",
@@ -772,7 +686,8 @@ export const make = Effect.gen(function* () {
             "json",
           ],
         })
-        .pipe(Effect.asVoid),
+        .pipe(Effect.asVoid);
+    }),
   });
 });
 

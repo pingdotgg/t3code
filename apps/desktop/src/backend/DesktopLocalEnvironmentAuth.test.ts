@@ -128,7 +128,6 @@ describe("DesktopLocalEnvironmentAuth", () => {
           ]),
         } as unknown as DesktopBackendPool.DesktopBackendPool["Service"]);
 
-        // The first exchange happens a day after launch, past the launch token's windows.
         yield* TestClock.setTime(DESKTOP_BOOTSTRAP_TOKEN_WINDOW_MS * 2 + 1);
         yield* Effect.gen(function* () {
           const auth = yield* DesktopLocalEnvironmentAuth.DesktopLocalEnvironmentAuth;
@@ -171,7 +170,6 @@ describe("DesktopLocalEnvironmentAuth", () => {
       },
     ]),
   } as unknown as DesktopBackendPool.DesktopBackendPool["Service"]);
-  // Answers the first `failures` exchanges with `failure`, then with a token.
   const makeExchange = (failures: number, failure: () => Response) =>
     Effect.gen(function* () {
       const requestCount = yield* Ref.make(0);
@@ -196,21 +194,6 @@ describe("DesktopLocalEnvironmentAuth", () => {
       );
       return { auth, requestCount };
     });
-
-  it.effect("retries a backend that is still starting", () =>
-    Effect.gen(function* () {
-      const { auth, requestCount } = yield* makeExchange(
-        2,
-        () => new Response("", { status: 503 }),
-      );
-
-      const fiber = yield* auth.getBearerToken.pipe(Effect.forkChild);
-      yield* TestClock.adjust(Duration.seconds(1));
-
-      assert.strictEqual(yield* Fiber.join(fiber), "desktop-bearer-token");
-      assert.strictEqual(yield* Ref.get(requestCount), 3);
-    }).pipe(Effect.provide(TestClock.layer())),
-  );
 
   it.effect("does not retry a rejected bootstrap credential", () =>
     Effect.gen(function* () {

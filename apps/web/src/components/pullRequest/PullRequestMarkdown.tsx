@@ -1,9 +1,14 @@
 import { ExternalLinkIcon, PaperclipIcon } from "lucide-react";
 import { markdownImageSourceFragment } from "@t3tools/client-runtime/markdown-images";
-import { githubMediaFetchUrl } from "@t3tools/shared/githubMedia";
-import type { AssetResource, EnvironmentId, ScopedThreadRef } from "@t3tools/contracts";
-import { createContext, useContext, useMemo } from "react";
-import type { Options as ReactMarkdownOptions } from "react-markdown";
+import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
+import {
+  SOURCE_CONTROL_MEDIA_ASSET,
+  type AssetResource,
+  type EnvironmentId,
+  type ScopedThreadRef,
+} from "@t3tools/contracts";
+import { createContext, useContext } from "react";
+import type { PluggableList } from "unified";
 
 import { useAssetUrlRefresh, useAssetUrlState } from "~/assets/assetUrls";
 import { cn } from "~/lib/utils";
@@ -11,19 +16,16 @@ import { PULL_REQUESTS_PANEL_REF } from "~/rightPanelStore";
 
 import ChatMarkdown from "../ChatMarkdown";
 import { MediaVideoPlayer } from "../media/MediaVideoPlayer";
-import { remarkPullRequestAutolinks, splitPullRequestBody } from "./pullRequestMarkdown.logic";
+import { splitPullRequestBody } from "./pullRequestMarkdown.logic";
 
 export const PullRequestMarkdownContext = createContext<{
-  repositoryUrl: string | null;
+  /** Stable per repository, so comments share one renderer and its parse cache. */
+  remarkPlugins: PluggableList;
+  lineBreaks: boolean;
   threadRef: ScopedThreadRef | null;
 } | null>(null);
 
-/**
- * A video GitHub hosts for the repository. It plays through a signed asset URL the server
- * fetches with the repository's GitHub credential, which is what a private repository's
- * uploads need; the URL is re-signed on retry, so a stale one recovers without a reload.
- */
-function PullRequestGitHubVideo({
+function PullRequestHostVideo({
   environmentId,
   cwd,
   url,
@@ -31,19 +33,12 @@ function PullRequestGitHubVideo({
 }: {
   environmentId: EnvironmentId;
   cwd: string;
-  /** What the body authored, which is what "Open original" should reach. */
   url: string;
-  /** The canonical GitHub media URL: a `blob` link addresses the page, not the bytes. */
   fetchUrl: string;
 }) {
-  const resource = useMemo<AssetResource>(
-    () => ({ _tag: "github-media", cwd, url: fetchUrl }),
-    [cwd, fetchUrl],
-  );
+  const resource: AssetResource = { _tag: SOURCE_CONTROL_MEDIA_ASSET, cwd, url: fetchUrl };
   const assetUrl = useAssetUrlState(environmentId, resource);
   const refreshAssetUrl = useAssetUrlRefresh(environmentId, resource);
-  // A server too old to sign this resource, or one with no route to GitHub, still leaves a
-  // public repository's video playing exactly as it did before.
   const src =
     assetUrl._tag === "Success" ? assetUrl.url : assetUrl._tag === "Failure" ? fetchUrl : null;
   return (
@@ -58,29 +53,24 @@ function PullRequestGitHubVideo({
   );
 }
 
-/** Renders PR uploads inline, with retry and an original link when video playback fails. */
 export function PullRequestMarkdown({
   text,
   cwd,
   environmentId,
   threadRef,
+  lineBreaks,
   className,
 }: {
   text: string;
   cwd: string;
   environmentId: EnvironmentId;
-  /** Thread the body is shown beside, so its links can open in that thread's in-app browser. */
   threadRef?: ScopedThreadRef | null;
+  lineBreaks?: boolean;
   className?: string;
 }) {
   const segments = splitPullRequestBody(text);
   const context = useContext(PullRequestMarkdownContext);
-  const repositoryUrl = context?.repositoryUrl;
   const resolvedThreadRef = threadRef ?? context?.threadRef ?? undefined;
-  const extraRemarkPlugins = useMemo<NonNullable<ReactMarkdownOptions["remarkPlugins"]>>(
-    () => (repositoryUrl ? [[remarkPullRequestAutolinks, { repositoryUrl }]] : []),
-    [repositoryUrl],
-  );
   return (
     <div
       className={cn(
@@ -99,20 +89,21 @@ export function PullRequestMarkdown({
               threadRef={resolvedThreadRef}
               pullRequestPanelRef={resolvedThreadRef ?? PULL_REQUESTS_PANEL_REF}
               environmentId={environmentId}
-              extraRemarkPlugins={extraRemarkPlugins}
-              githubMedia
+              {...(context ? { extraRemarkPlugins: context.remarkPlugins } : {})}
+              lineBreaks={lineBreaks ?? context?.lineBreaks ?? false}
+              sourceControlMedia
             />
           );
         }
-        const githubMediaUrl = segment.media === "video" ? githubMediaFetchUrl(segment.url) : null;
-        if (githubMediaUrl !== null) {
+        const hostMedia = sourceControlClients.mediaUrl(segment.url);
+        if (segment.media === "video" && hostMedia !== null) {
           return (
-            <PullRequestGitHubVideo
+            <PullRequestHostVideo
               key={`${segment.id}:${segment.url}`}
               environmentId={environmentId}
               cwd={cwd}
               url={segment.url}
-              fetchUrl={githubMediaUrl}
+              fetchUrl={hostMedia.fetchUrl}
             />
           );
         }
@@ -129,9 +120,7 @@ export function PullRequestMarkdown({
           );
         }
         return (
-          // A plain anchor rather than the page's openExternal button: the desktop window
-          // turns a blocked _blank into openExternal itself, and in a browser tab — where
-          // there is no shell to call — this is the only one of the two that goes anywhere.
+          // Desktop converts blocked _blank navigation to openExternal.
           <a
             key={segment.id}
             href={segment.url}
@@ -140,7 +129,9 @@ export function PullRequestMarkdown({
             className="flex items-center gap-2 rounded-lg border border-border/60 bg-muted/30 px-3 py-2 text-sm hover:bg-muted/60"
           >
             <PaperclipIcon aria-hidden className="size-3.5 shrink-0 text-muted-foreground" />
-            <span className="min-w-0 flex-1 truncate">Open attachment on GitHub</span>
+            <span className="min-w-0 flex-1 truncate">
+              Open attachment on {hostMedia?.definition.label ?? new URL(segment.url).hostname}
+            </span>
             <ExternalLinkIcon aria-hidden className="size-3 shrink-0 text-muted-foreground" />
           </a>
         );

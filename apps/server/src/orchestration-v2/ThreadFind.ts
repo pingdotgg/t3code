@@ -14,6 +14,7 @@ import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
+import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import * as SqlClient from "effect/sql/SqlClient";
 import {
   ProjectionStoreReadError,
@@ -82,21 +83,6 @@ function parseText(key: TextKey): readonly string[] {
       ) ?? []);
 }
 
-function searchableRows(items: readonly OrchestrationV2ProjectedTurnItem[]) {
-  const foldedAnswers = new Set(
-    items.flatMap(({ item }) =>
-      item.type === "user_input_request" && item.questionAnswer
-        ? [`async-answer:${item.questionAnswer.requestId}`]
-        : [],
-    ),
-  );
-  return items.filter(
-    ({ item }) =>
-      ["user_message", "assistant_message", "proposed_plan"].includes(item.type) &&
-      !(item.type === "user_message" && foldedAnswers.has(item.messageId)),
-  );
-}
-
 function documentFor(row: OrchestrationV2ProjectedTurnItem, count: number): FindDocument {
   return {
     position: row.position,
@@ -143,23 +129,6 @@ function selectMatch(
   return { totalMatches, activeIndex, document: null, occurrence: 0 };
 }
 
-/** The memory projection uses the same match ordering as SQLite. */
-export function findProjectedThreadItems(
-  items: readonly OrchestrationV2ProjectedTurnItem[],
-  input: OrchestrationV2SearchThreadInput,
-  snapshotSequence: number,
-  cwd?: string,
-): OrchestrationV2SearchThreadResult {
-  const rows = searchableRows(items);
-  const docs = rows.map((row) =>
-    documentFor(
-      row,
-      countSegments(parseText(textKey(row.item, cwd, input.skills ?? [])), input.query),
-    ),
-  );
-  return resultForSelection(selectMatch(docs, input), docs, snapshotSequence);
-}
-
 function resultForSelection(
   selected: ReturnType<typeof selectMatch>,
   documents: readonly FindDocument[],
@@ -195,7 +164,6 @@ function resultForSelection(
   };
 }
 
-/** Read the canonical index once per scan, including inherited fork rows, without tool bodies. */
 export const makeThreadFind = Effect.fn("makeThreadFind")(function* (
   readIndex: (threadId: ThreadId) => Effect.Effect<
     readonly (Omit<FindRow, "position"> & {
@@ -264,9 +232,9 @@ export const makeThreadFind = Effect.fn("makeThreadFind")(function* (
           });
     });
   });
-  // Cache rendered segments, not queries; typing and navigation reuse Markdown parsing.
+  // Scans visit every message; a cache smaller than the thread churns without hits.
   const textCache = yield* Cache.make({
-    capacity: 512,
+    capacity: 8192,
     timeToLive: "1 minute",
     lookup: (key: TextKey) => Effect.sync(() => parseText(key)),
   });
@@ -276,8 +244,6 @@ export const makeThreadFind = Effect.fn("makeThreadFind")(function* (
     timeToLive: "1 minute",
     lookup: (key: TextKey) => Effect.sync(() => parseText(key)),
   });
-  // Scans retain counts and item references, never message bodies. Navigation checks
-  // the current revision in its transaction without reloading message payloads.
   const scans = new Map<
     string,
     {
@@ -300,6 +266,9 @@ export const makeThreadFind = Effect.fn("makeThreadFind")(function* (
         WHERE json_extract(t.payload_json, '$.forkedFrom.type') = 'run'
       )
       SELECT COALESCE(MAX(sequence), 0) AS sequence FROM orchestration_events
+      -- The planner otherwise walks every V2 event backwards from the newest,
+      -- which takes seconds for a thread that has been idle a long time.
+      INDEXED BY idx_orch_events_stream_sequence
       WHERE application_event_version = 2 AND aggregate_kind = 'thread'
         AND stream_id IN (SELECT thread_id FROM source_threads)
     `;
@@ -344,7 +313,7 @@ export const makeThreadFind = Effect.fn("makeThreadFind")(function* (
       }
       return { payloads, cwd, sequence, cacheKey, sourceThreadIds };
     },
-    sql.withTransaction,
+    (effect) => sql.withTransaction(effect).pipe(NodeSqliteClient.readOnly),
     (effect, input) =>
       effect.pipe(
         Effect.mapError((cause) =>
@@ -407,8 +376,6 @@ export const makeThreadFind = Effect.fn("makeThreadFind")(function* (
           }
           return resultForSelection(selectMatch(ordered, input), ordered, sequence);
         });
-        // Relative navigation needs the final counts. Initial searches can reveal an
-        // identity immediately, scanning at/below the reading anchor before wrapping.
         if (input.index !== undefined || (input.offset ?? 0) !== 0)
           return Stream.fromEffect(finish);
         const anchor = Math.max(
@@ -432,7 +399,6 @@ export const makeThreadFind = Effect.fn("makeThreadFind")(function* (
             activeIndex: 0,
             match: { entryId: document.entryId, runId: document.runId, occurrence },
           };
-          // The remainder is pulled only after the first frame has been delivered.
           return Stream.concat(Stream.succeed(first), Stream.fromEffect(finish));
         }
         return Stream.fromEffect(finish);

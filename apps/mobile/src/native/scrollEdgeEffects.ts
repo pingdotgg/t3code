@@ -1,6 +1,4 @@
-// Pure helpers for native header scroll-edge effects. Kept free of
-// react-native / react-navigation imports so they stay unit-testable in node
-// (those packages ship untranspiled Flow syntax).
+// Avoid RN/navigation imports so node checks do not load their untranspiled Flow.
 
 export type NativeTopScrollEdgeEffect = "automatic" | "soft";
 export type NativeHeaderScrollEdgeEffects = {
@@ -10,7 +8,7 @@ export type NativeHeaderScrollEdgeEffects = {
   readonly right: "hidden";
 };
 
-export function nativeTopScrollEdgeEffect(
+function nativeTopScrollEdgeEffect(
   os: string,
   _version: number | string,
 ): NativeTopScrollEdgeEffect {
@@ -18,9 +16,7 @@ export function nativeTopScrollEdgeEffect(
     return "automatic";
   }
 
-  // The standalone RNS/Mail spike that matched Messages/GitHub used UIKit's
-  // automatic scroll-edge behavior. Forcing `soft` on iOS 27 makes production
-  // look like a local overlay instead of sampling the app content edge-to-edge.
+  // On iOS 27, soft uses a local overlay rather than sampling edge-to-edge app content.
   return "automatic";
 }
 

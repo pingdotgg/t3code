@@ -8,7 +8,6 @@ import { describe, expect, it } from "vite-plus/test";
 
 import { Route as PullRequestsRoute } from "../../routes/_chat.pull-requests";
 
-/** Matches a URL in a router shaped like the app's: a layout without its own search rules. */
 function matchedSearch(url: string) {
   const root = createRootRoute();
   const chat = createRoute({ getParentRoute: () => root, id: "_chat" });
@@ -21,7 +20,7 @@ function matchedSearch(url: string) {
     routeTree: root.addChildren([chat.addChildren([pullRequests])]),
     history: createMemoryHistory({ initialEntries: [url] }),
   });
-  // The search a component reads through `useSearch` is the matched route's, not the URL's.
+  // useSearch reads matched-route search, which can differ from URL search.
   return router.matchRoutes(router.latestLocation).at(-1)?.search as
     | Record<string, unknown>
     | undefined;

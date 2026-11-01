@@ -47,11 +47,6 @@ export function getMobileUniwindThemeName(
     : `${themeId}-${appearance}`;
 }
 
-/**
- * Plans imperative runtime work separately from theme selection. Palette
- * changes are handled by one root ScopedTheme render; only typography and the
- * native appearance override need imperative Uniwind/React Native updates.
- */
 export function createMobileThemeRuntimeOperations(
   previous: MobileThemeRuntimeState | null,
   next: MobileThemeRuntimeState,

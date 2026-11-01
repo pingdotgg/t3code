@@ -4,7 +4,6 @@ interface CommentSubmitShortcutEvent {
   readonly ctrlKey: boolean;
 }
 
-/** Shared guard for inline comment composers that submit on Command/Ctrl+Enter. */
 export function isCommentSubmitShortcut(
   event: CommentSubmitShortcutEvent,
   value: string,

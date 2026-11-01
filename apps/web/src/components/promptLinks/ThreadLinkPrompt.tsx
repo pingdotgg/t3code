@@ -3,15 +3,12 @@ import { parseThreadLinkPrompt, withoutPromptLinkParams } from "@t3tools/shared/
 import { useLocation, useNavigate } from "@tanstack/react-router";
 import { useEffect } from "react";
 
+import { isThreadRoutePathname } from "../../threadRoutes";
 import { stackedThreadToast, toastManager } from "../ui/toast";
 import { placeLinkedPrompt } from "./linkedPrompt";
 
 const handledLinkKeys = new Set<string>();
 
-/**
- * Moves a thread link's `?prompt=` into that thread's composer, then drops it from the URL so a
- * reload or a copied address does not bring it back. Rendered beside the thread view.
- */
 export function ThreadLinkPrompt({ threadRef }: { readonly threadRef: ScopedThreadRef }) {
   const navigate = useNavigate();
   const location = useLocation({
@@ -23,7 +20,10 @@ export function ThreadLinkPrompt({ threadRef }: { readonly threadRef: ScopedThre
     structuralSharing: true,
   });
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- places a ?prompt link into the composer once per location and strips it from the URL via the router
   useEffect(() => {
+    // A pending navigation shows the next location while the params still name this thread.
+    if (!isThreadRoutePathname(location.pathname, threadRef)) return;
     if (!new URLSearchParams(location.search).has("prompt")) return;
     if (!handledLinkKeys.has(location.key)) {
       handledLinkKeys.add(location.key);
