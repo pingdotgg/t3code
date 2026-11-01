@@ -3015,22 +3015,37 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       [...tempIndexConfig, "update-index", "--no-split-index"],
       { env },
     );
-    yield* executeGit(
-      "GitVcsDriver.readUnifiedWorkingTreeReviewDiff.addUntracked",
-      cwd,
-      [
-        ...tempIndexConfig,
-        // Avoid redundant tracked-entry pathspec matching in this disposable index.
-        "-c",
-        "core.preloadIndex=false",
-        "--literal-pathspecs",
-        "add",
-        "--intent-to-add",
-        "--pathspec-from-file=-",
-        "--pathspec-file-nul",
-      ],
-      { env, stdin: `${pathsToAdd.join("\0")}\0` },
-    );
+    const addUntrackedOperation = "GitVcsDriver.readUnifiedWorkingTreeReviewDiff.addUntracked";
+    const addUntrackedArgs = [
+      ...tempIndexConfig,
+      // Avoid redundant tracked-entry pathspec matching in this disposable index.
+      "-c",
+      "core.preloadIndex=false",
+      "--literal-pathspecs",
+      "add",
+      "--intent-to-add",
+      "--ignore-errors",
+      "--pathspec-from-file=-",
+      "--pathspec-file-nul",
+    ];
+    const addedUntracked = yield* executeGit(addUntrackedOperation, cwd, addUntrackedArgs, {
+      env,
+      stdin: `${pathsToAdd.join("\0")}\0`,
+      allowNonZeroExit: true,
+    });
+    // --ignore-errors exits 1 after skipping paths it cannot index, such as a nested repository
+    // with no commits. Anything else is a fatal failure.
+    if (addedUntracked.exitCode !== 0 && addedUntracked.exitCode !== 1) {
+      const reason = classifyGitFailure(addedUntracked.stderr);
+      return yield* new GitCommandError({
+        ...gitCommandContext({ operation: addUntrackedOperation, cwd, args: addUntrackedArgs }),
+        ...(reason === null ? {} : { reason }),
+        detail: gitFailureDetail(reason),
+        exitCode: addedUntracked.exitCode,
+        stdoutLength: addedUntracked.stdout.length,
+        stderrLength: addedUntracked.stderr.length,
+      });
+    }
     return env;
   });
 
