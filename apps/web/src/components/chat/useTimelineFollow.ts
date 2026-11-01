@@ -71,7 +71,6 @@ function createVisitScrollState(
     // LegendList only re-pins within one viewport of the end, so a follow scroll
     // cut short further up (an instant adjustment cancels a smooth one) stays there.
     repinEndDebouncer: new Debouncer((repinEnd: () => void) => repinEnd(), { wait: 150 }),
-    endScrollOffset: null as number | null,
     positionedAnchor: null as MessageId | null,
     settledAnchor: null as MessageId | null,
     releaseAnchorScrollHold: null as (() => void) | null,
@@ -352,17 +351,11 @@ export function useTimelineFollow(input: TimelineFollowInput) {
     });
   };
   const scrollToEndStable = useStableCallback(scrollToEnd);
-  const repinEnd = (scroll: VisitScrollState) => {
-    const state = legendListRef.current?.getState();
+  const repinEnd = () => {
     if (
       readFollow().mode === "following" &&
       timelineAnchorMessageId === null &&
-      resolveTimelineIsAtEnd(state) === false &&
-      // Only a follow scroll that stopped on its way down. A view moved above its last
-      // end position (a screen reader jump the release detector missed) stays put.
-      state !== undefined &&
-      scroll.endScrollOffset !== null &&
-      state.scroll > scroll.endScrollOffset
+      resolveTimelineIsAtEnd(legendListRef.current?.getState()) === false
     ) {
       scrollToEnd();
     }
@@ -514,12 +507,11 @@ export function useTimelineFollow(input: TimelineFollowInput) {
       setShowScrollToBottom(false);
       // Every scroll event reports again, so this runs once scrolling stops short.
       scroll.repinEndDebouncer.maybeExecute(() => {
-        if (visitScrollRef.current === scroll) repinEndStable(scroll);
+        if (visitScrollRef.current === scroll) repinEndStable();
       });
       return;
     }
     scroll.repinEndDebouncer.cancel();
-    if (isAtEnd) scroll.endScrollOffset = legendListRef.current?.getState().scroll ?? null;
     const { before, after } = followStore.dispatch(visit, {
       type: isAtEnd ? "reachedEnd" : "leftEnd",
     });
