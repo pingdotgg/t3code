@@ -1107,7 +1107,7 @@ describe("Working shelf (beta)", () => {
     },
   );
 
-  it("lists a running thread outside the shelf while its environment is disconnected", () => {
+  it("keeps disconnected threads and pending guest requests outside the shelves", () => {
     const thread = { ...idle, runtime, environmentId: localEnvironmentId };
     const shelve = (disconnected: ReadonlyArray<EnvironmentId>, enabled = true) =>
       belongsInSidebarWorkingShelf(thread, {
@@ -1125,7 +1125,9 @@ describe("Working shelf (beta)", () => {
     const watching = {
       ...waiting,
       environmentId: localEnvironmentId,
-      pendingBackgroundTasks: [{ ...backgroundTask, taskId: "pull-request-watch:github.com/acme/app#1" }],
+      pendingBackgroundTasks: [
+        { ...backgroundTask, taskId: "pull-request-watch:github.com/acme/app#1" },
+      ],
       pendingGuestMessageCount: 1,
     };
     expect(isSidebarThreadWorking(watching)).toBe(true);

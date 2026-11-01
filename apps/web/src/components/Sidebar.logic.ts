@@ -193,7 +193,9 @@ export function isSidebarEnvironmentDisconnected(
   return phase !== "connecting" && (phase !== "connected" || !shellIsLive);
 }
 
-export function belongsInSidebarWorkingShelf<T extends { readonly environmentId: EnvironmentId }>(
+export function belongsInSidebarWorkingShelf<
+  T extends { readonly environmentId: EnvironmentId; readonly pendingGuestMessageCount?: number },
+>(
   thread: T,
   input: {
     readonly enabled: boolean;
@@ -203,6 +205,7 @@ export function belongsInSidebarWorkingShelf<T extends { readonly environmentId:
 ): boolean {
   return (
     input.enabled &&
+    (thread.pendingGuestMessageCount ?? 0) === 0 &&
     !input.disconnectedEnvironmentIds.has(thread.environmentId) &&
     input.isWorking(thread)
   );
