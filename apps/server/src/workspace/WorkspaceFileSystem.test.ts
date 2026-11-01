@@ -74,6 +74,45 @@ const writeTextFile = Effect.fn("writeTextFile")(function* (
   yield* fileSystem.writeFileString(absolutePath, contents).pipe(Effect.orDie);
 });
 
+type PositionalRead = (
+  this: NodeFSP.FileHandle,
+  buffer: Buffer,
+  offset: number,
+  length: number,
+  position: number,
+) => Promise<NodeFSP.FileReadResult<Buffer>>;
+
+/**
+ * File handle reads in this scope return at most `chunkBytes`, as the OS may,
+ * and report end of file from `endOfFileAt`, as if the file shrank mid-read.
+ */
+const shortenFileReads = Effect.fn("shortenFileReads")(function* (
+  anyFile: string,
+  options: { readonly chunkBytes: number; readonly endOfFileAt?: number },
+) {
+  const handle = yield* Effect.promise(() => NodeFSP.open(anyFile));
+  const prototype = Object.getPrototypeOf(handle) as { read: PositionalRead };
+  yield* Effect.promise(() => handle.close());
+  const read = prototype.read;
+  yield* Effect.acquireRelease(
+    Effect.sync(() =>
+      vi.spyOn(prototype, "read").mockImplementation(function (
+        this: NodeFSP.FileHandle,
+        buffer,
+        offset,
+        length,
+        position,
+      ) {
+        if (options.endOfFileAt !== undefined && position >= options.endOfFileAt) {
+          return Promise.resolve({ bytesRead: 0, buffer });
+        }
+        return read.call(this, buffer, offset, Math.min(length, options.chunkBytes), position);
+      }),
+    ),
+    (spy) => Effect.sync(() => spy.mockRestore()),
+  );
+});
+
 it.layer(layerTest, { excludeTestServices: true })("WorkspaceFileSystemLive", (it) => {
   describe("getMetadata", () => {
     it.effect(
@@ -405,9 +444,151 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
         expect("contents" in error).toBe(false);
       }),
     );
+
+    it.effect("copies binary files byte for byte through base64", () =>
+      Effect.gen(function* () {
+        const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const source = yield* makeTempDir;
+        const target = yield* makeTempDir;
+        // NUL plus bytes that are not valid UTF-8, which a text read would replace.
+        const bytes = Uint8Array.from([0x89, 0x50, 0x4e, 0x47, 0, 0xff, 0xfe, 0x80, 0x0a]);
+        yield* fileSystem.writeFile(path.join(source, "asset.bin"), bytes);
+
+        const read = yield* workspaceFileSystem.readFile({
+          cwd: source,
+          relativePath: "asset.bin",
+          encoding: "base64",
+        });
+        expect(read).toMatchObject({ byteLength: bytes.length, truncated: false });
+        yield* workspaceFileSystem.writeFile({
+          cwd: target,
+          relativePath: "nested/asset.bin",
+          contents: read.contents,
+          encoding: "base64",
+        });
+
+        const copied = yield* fileSystem
+          .readFile(path.join(target, "nested/asset.bin"))
+          .pipe(Effect.orDie);
+        expect(Array.from(copied)).toEqual(Array.from(bytes));
+      }),
+    );
+
+    it.effect("reads every byte of a binary file when reads come back short", () =>
+      Effect.gen(function* () {
+        const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const cwd = yield* makeTempDir;
+        const bytes = Uint8Array.from({ length: 10 }, (_, index) =>
+          index === 4 ? 0 : 0xf0 + index,
+        );
+        yield* fileSystem.writeFile(path.join(cwd, "asset.bin"), bytes);
+        yield* shortenFileReads(path.join(cwd, "asset.bin"), { chunkBytes: 3 });
+
+        const read = yield* workspaceFileSystem.readFile({
+          cwd,
+          relativePath: "asset.bin",
+          encoding: "base64",
+        });
+
+        expect(read).toEqual({
+          relativePath: "asset.bin",
+          contents: Buffer.from(bytes).toString("base64"),
+          byteLength: bytes.length,
+          truncated: false,
+        });
+      }),
+    );
+
+    it.effect("fails a base64 read when the file ends before its size", () =>
+      Effect.gen(function* () {
+        const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const cwd = yield* makeTempDir;
+        const resolvedPath = path.join(cwd, "asset.bin");
+        yield* fileSystem.writeFile(resolvedPath, new Uint8Array(10).fill(0xff));
+        yield* shortenFileReads(resolvedPath, { chunkBytes: 4, endOfFileAt: 8 });
+
+        const error = yield* workspaceFileSystem
+          .readFile({ cwd, relativePath: "asset.bin", encoding: "base64" })
+          .pipe(Effect.flip);
+
+        expect(error).toBeInstanceOf(WorkspaceFileSystem.WorkspaceFileSystemOperationError);
+        expect(error).toMatchObject({ resolvedPath, operation: "read" });
+      }),
+    );
+
+    it.effect("reads the full capped prefix of an oversized file when reads come back short", () =>
+      Effect.gen(function* () {
+        const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const cwd = yield* makeTempDir;
+        const maxBytes = 1024 * 1024;
+        const bytes = Uint8Array.from({ length: maxBytes + 3 }, (_, index) => index % 251);
+        yield* fileSystem.writeFile(path.join(cwd, "large.bin"), bytes);
+        yield* shortenFileReads(path.join(cwd, "large.bin"), { chunkBytes: 64 * 1024 });
+
+        const read = yield* workspaceFileSystem.readFile({
+          cwd,
+          relativePath: "large.bin",
+          encoding: "base64",
+        });
+
+        expect(read).toMatchObject({ byteLength: bytes.length, truncated: true });
+        expect(Buffer.from(read.contents, "base64").equals(bytes.subarray(0, maxBytes))).toBe(true);
+      }),
+    );
+
+    it.effect("reads an empty file through base64", () =>
+      Effect.gen(function* () {
+        const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
+        const cwd = yield* makeTempDir;
+        yield* writeTextFile(cwd, "empty.bin");
+
+        const read = yield* workspaceFileSystem.readFile({
+          cwd,
+          relativePath: "empty.bin",
+          encoding: "base64",
+        });
+
+        expect(read).toEqual({
+          relativePath: "empty.bin",
+          contents: "",
+          byteLength: 0,
+          truncated: false,
+        });
+      }),
+    );
   });
 
   describe("writeFile", () => {
+    it.effect.each(["!!!!", "a", "YWJj=", "YWJj!!!!"])(
+      "rejects malformed base64 %s without changing an existing file",
+      (contents) =>
+        Effect.gen(function* () {
+          const service = yield* WorkspaceFileSystem.WorkspaceFileSystem;
+          const fileSystem = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const cwd = yield* makeTempDir;
+          yield* writeTextFile(cwd, "asset.bin", "original");
+          const error = yield* service
+            .writeFile({
+              cwd,
+              relativePath: "asset.bin",
+              contents,
+              encoding: "base64",
+            })
+            .pipe(Effect.flip);
+          expect(error).toBeInstanceOf(WorkspaceFileSystem.WorkspaceFileSystemOperationError);
+          expect(error).toMatchObject({ operation: "write-file" });
+          expect(yield* fileSystem.readFileString(path.join(cwd, "asset.bin"))).toBe("original");
+        }),
+    );
     it.effect("rejects writes outside a known workspace", () =>
       Effect.gen(function* () {
         const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;

@@ -139,6 +139,9 @@ export const ExecutionEnvironmentCapabilities = Schema.Struct({
   projectOrganization: Schema.optionalKey(Schema.Boolean),
   /** Server answers projects.listIgnoredFiles. */
   ignoredFileListing: Schema.optionalKey(Schema.Boolean),
+  /** projects.readFile and projects.writeFile take `encoding: "base64"`. Older
+      servers ignore it, reading text and writing the base64 as text. */
+  base64FileTransfer: Schema.optionalKey(Schema.Boolean),
   environmentIcon: Schema.optionalKey(Schema.Boolean),
   desktopAppUpdate: Schema.optionalKey(Schema.Boolean),
   /** The desktop app switches update tracks when a server update request names one. */

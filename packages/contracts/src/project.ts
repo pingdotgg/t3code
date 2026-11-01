@@ -430,12 +430,17 @@ export class ProjectListEntriesError extends Schema.TaggedError<ProjectListEntri
   }
 }
 
+// base64 carries any bytes. utf8, the default, rejects files holding NUL bytes.
+export const ProjectFileEncoding = Schema.Literals(["utf8", "base64"]);
+export type ProjectFileEncoding = typeof ProjectFileEncoding.Type;
+
 export const ProjectReadFileInput = Schema.Struct({
   cwd: TrimmedNonEmptyString,
   // Workspace-relative or absolute host path; only workspace-relative paths are writable.
   relativePath: TrimmedNonEmptyString.check(Schema.isMaxLength(PROJECT_READ_FILE_PATH_MAX_LENGTH)),
   // Optional files can be absent without failing the read.
   allowMissing: Schema.optional(Schema.Boolean),
+  encoding: Schema.optional(ProjectFileEncoding),
 });
 export type ProjectReadFileInput = typeof ProjectReadFileInput.Type;
 
@@ -510,6 +515,7 @@ export const ProjectWriteFileInput = Schema.Struct({
   cwd: TrimmedNonEmptyString,
   relativePath: TrimmedNonEmptyString.check(Schema.isMaxLength(PROJECT_WRITE_FILE_PATH_MAX_LENGTH)),
   contents: Schema.String,
+  encoding: Schema.optional(ProjectFileEncoding),
 });
 export type ProjectWriteFileInput = typeof ProjectWriteFileInput.Type;
 
