@@ -2932,6 +2932,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     });
 
   const makeWakeHarnessWithOptions = (options?: {
+    readonly afterTerminalEvent?: Effect.Effect<void>;
     readonly close?: (sdkMessages: Queue.Queue<SDKMessage>) => Effect.Effect<void>;
     readonly interrupt?: Effect.Effect<void>;
     readonly setPermissionMode?: ClaudeAdapterV2.ClaudeAgentSdkQuerySession["setPermissionMode"];
@@ -3003,6 +3004,9 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         >();
       let openedOptions: ClaudeAdapterV2.ClaudeAgentSdkQueryOptions | undefined;
       const adapter = yield* ClaudeAdapterV2.makeClaudeAdapterV2({
+        ...(options?.afterTerminalEvent === undefined
+          ? {}
+          : { testHooks: { afterTerminalEvent: options.afterTerminalEvent } }),
         instanceId: ClaudeAdapterV2.CLAUDE_DEFAULT_INSTANCE_ID,
         settings: options?.settings ?? DEFAULT_CLAUDE_SETTINGS,
         environment: options?.environment ?? {},
@@ -5761,6 +5765,173 @@ describe("ClaudeAdapterV2 background wake turns", () => {
   const makeRollbackHarness = makeWakeHarnessWithOptions({
     close: (sdkMessages) => Queue.shutdown(sdkMessages),
   });
+
+  it.effect("rejects rollback while a Claude provider turn is active", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeRollbackHarness;
+      yield* harness.runtime.startTurn(
+        makeClaudeTestTurnInput({
+          threadId: harness.threadId,
+          providerThread: harness.providerThread,
+          now: yield* DateTime.now,
+          attemptId: RunAttemptId.make("active-rollback-proof"),
+          text: "Keep the turn active.",
+          attachments: [],
+        }),
+      );
+      const error = yield* harness.runtime
+        .rollbackThread({
+          providerThread: harness.providerThread,
+          target: {
+            type: "thread_start",
+            checkpointId: CheckpointId.make("active-rollback-checkpoint"),
+            appRunOrdinal: 0,
+          },
+          providerThreadTurns: [],
+        })
+        .pipe(Effect.flip);
+      assert.equal(error._tag, "ProviderAdapterRollbackThreadError");
+      if (error._tag !== "ProviderAdapterRollbackThreadError") return;
+      assert.instanceOf(error.cause, ProviderAdapter.ProviderAdapterProtocolError);
+      assert.include(String(error.cause), "while provider turn");
+      const admissionError = yield* harness.runtime.withRollbackAdmission!(
+        {
+          providerThread: harness.providerThread,
+          target: {
+            type: "thread_start",
+            checkpointId: CheckpointId.make("active-admission-checkpoint"),
+            appRunOrdinal: 0,
+          },
+          providerThreadTurns: [],
+        },
+        () => Effect.die("active turns must not enter rollback admission"),
+      ).pipe(Effect.flip);
+      assert.equal(admissionError._tag, "ProviderAdapterProtocolError");
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+      ),
+    ),
+  );
+
+  it.effect("keeps admission closed after terminal until Claude clears the active turn", () =>
+    Effect.gen(function* () {
+      const terminalEmitted = yield* Deferred.make<void>();
+      const releaseTerminal = yield* Deferred.make<void>();
+      const harness = yield* makeWakeHarnessWithOptions({
+        close: (messages) => Queue.shutdown(messages),
+        afterTerminalEvent: Deferred.succeed(terminalEmitted, undefined).pipe(
+          Effect.andThen(Deferred.await(releaseTerminal)),
+        ),
+      });
+      yield* harness.runtime.startTurn(
+        makeClaudeTestTurnInput({
+          threadId: harness.threadId,
+          providerThread: harness.providerThread,
+          now: yield* DateTime.now,
+          attemptId: RunAttemptId.make("terminal-admission-turn"),
+          text: "Finish this turn.",
+          attachments: [],
+        }),
+      );
+      yield* Queue.offer(
+        harness.sdkMessages,
+        makeResultFrame({ uuid: "terminal-admission-result", result: "Done." }),
+      );
+      yield* Deferred.await(terminalEmitted);
+      assert.equal((yield* Queue.take(harness.terminalReceipts)).status, "completed");
+      const rejected = yield* harness.runtime.withRollbackAdmission!(
+        {
+          providerThread: harness.providerThread,
+          target: {
+            type: "thread_start",
+            checkpointId: CheckpointId.make("terminal-admission"),
+            appRunOrdinal: 0,
+          },
+          providerThreadTurns: [],
+        },
+        () => Effect.die("terminal is not native cleanup"),
+      ).pipe(Effect.flip);
+      assert.equal(rejected._tag, "ProviderAdapterProtocolError");
+      yield* Deferred.succeed(releaseTerminal, undefined);
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+      ),
+    ),
+  );
+
+  it.effect.each(["complete", "interrupt"] as const)(
+    "waits for rollback admission to %s before starting Claude",
+    (outcome) =>
+      Effect.gen(function* () {
+        const harness = yield* makeRollbackHarness;
+        const entered = yield* Deferred.make<void>();
+        const release = yield* Deferred.make<void>();
+        const admitted = yield* harness.runtime.withRollbackAdmission!(
+          {
+            providerThread: harness.providerThread,
+            target: {
+              type: "thread_start",
+              checkpointId: CheckpointId.make("exclusive-admission"),
+              appRunOrdinal: 0,
+            },
+            providerThreadTurns: [],
+          },
+          () => Deferred.succeed(entered, undefined).pipe(Effect.andThen(Deferred.await(release))),
+        ).pipe(Effect.forkChild({ startImmediately: true }));
+        yield* Deferred.await(entered);
+        const starting = yield* harness.runtime
+          .startTurn(
+            makeClaudeTestTurnInput({
+              threadId: harness.threadId,
+              providerThread: harness.providerThread,
+              now: yield* DateTime.now,
+              attemptId: RunAttemptId.make("exclusive-admission-turn"),
+              text: "Start after the rollback.",
+              attachments: [],
+            }),
+          )
+          .pipe(Effect.forkChild({ startImmediately: true }));
+        assert.isUndefined(harness.getOpenedOptions());
+        if (outcome === "interrupt") {
+          yield* Fiber.interrupt(admitted);
+        } else {
+          yield* Deferred.succeed(release, undefined);
+          yield* Fiber.join(admitted);
+        }
+        yield* Fiber.join(starting);
+        assert.isDefined(harness.getOpenedOptions());
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+        ),
+      ),
+  );
+
+  it.effect("preserves failures from inside rollback admission", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeRollbackHarness;
+      const expected = { _tag: "host-restore-failure" as const };
+      const error = yield* harness.runtime.withRollbackAdmission!(
+        {
+          providerThread: harness.providerThread,
+          target: {
+            type: "thread_start",
+            checkpointId: CheckpointId.make("admission-host-failure"),
+            appRunOrdinal: 0,
+          },
+          providerThreadTurns: [],
+        },
+        () => Effect.fail(expected),
+      ).pipe(Effect.flip);
+      assert.strictEqual(error, expected);
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+      ),
+    ),
+  );
 
   it.effect.each([
     { kind: "fork with inherited head", fork: true, headMessageId: "remapped-inherited-head" },
@@ -16302,6 +16473,28 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           harness.events.some(
             (event) =>
               event.type === "provider_thread.updated" && event.providerThread.goal === null,
+          ),
+        );
+        const clearedThread = harness.events.findLast(
+          (event) => event.type === "provider_thread.updated" && event.providerThread.goal === null,
+        );
+        assert.equal(clearedThread?.type, "provider_thread.updated");
+        if (clearedThread?.type !== "provider_thread.updated") return;
+        assert.isTrue(
+          yield* harness.runtime.withRollbackAdmission!(
+            {
+              providerThread: {
+                ...clearedThread.providerThread,
+                goal: { objective: condition, status: "active", checks: 1 },
+              },
+              target: {
+                type: "thread_start",
+                checkpointId: CheckpointId.make("cleared-goal-admission"),
+                appRunOrdinal: 0,
+              },
+              providerThreadTurns: [],
+            },
+            () => Effect.succeed(true),
           ),
         );
         assert.isFalse(
