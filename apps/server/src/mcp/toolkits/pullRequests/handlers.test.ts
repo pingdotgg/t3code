@@ -266,6 +266,56 @@ describe("pull request toolkit handlers", () => {
     }),
   );
 
+  it.effect.each([
+    {
+      tool: "link_pull_request",
+      command: { type: "thread.pull-request.link", source: "agent" },
+      result: { alreadyLinked: false },
+    },
+    {
+      tool: "unlink_pull_request",
+      command: { type: "thread.pull-request.unlink" },
+      result: { wasLinked: true },
+    },
+    {
+      tool: "watch_pull_request",
+      command: { type: "thread.pull-request.watch", watching: true },
+      result: { wasWatching: false },
+    },
+    {
+      tool: "unwatch_pull_request",
+      command: { type: "thread.pull-request.watch", watching: false },
+      result: { wasWatching: false },
+    },
+  ] as const)("accepts a GitHub Enterprise Cloud URL in $tool", ({ tool, command, result }) =>
+    Effect.gen(function* () {
+      const target = { host: "my-awesome-company.ghe.com", repository: "owner/repo", number: 9 };
+      const url = `https://${target.host}/Owner/Repo/pull/9`;
+      const harness = yield* makeHarness({
+        thread: makeThread(tool === "unlink_pull_request" ? [makeLink(9, { ...target, url })] : []),
+      });
+      expect(yield* harness.call(tool, { url })).toMatchObject({ ...target, ...result });
+      expect(yield* Ref.get(harness.commands)).toMatchObject([
+        { ...command, threadId: THREAD_ID, ...target },
+      ]);
+    }),
+  );
+
+  it.effect("names all explicit target fields when a URL is not recognized", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness();
+      const error = yield* harness
+        .call("link_pull_request", { url: "ftp://code.acme.test/owner/repo/pull/9" })
+        .pipe(Effect.flip);
+      expect(error).toMatchObject({
+        _tag: "PullRequestUrlInvalidError",
+        message:
+          "This is not a recognised pull request URL. Pass host, repository and number instead.",
+      });
+      expect(yield* Ref.get(harness.commands)).toEqual([]);
+    }),
+  );
+
   it.effect("watching an unlinked pull request links it first", () =>
     Effect.gen(function* () {
       const harness = yield* makeHarness();
