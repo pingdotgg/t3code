@@ -655,9 +655,14 @@ export const make = Effect.gen(function* () {
       return false;
     }
     // A daemon that is starting or logged out lists no peers, which proves nothing for a
-    // while. Past the grace period nothing vouches for these devices, so their access ends.
+    // while, and one too old for sign-in is not trusted either. Past the grace period
+    // nothing vouches for these devices, so their access ends.
     const status = yield* host.freshStatus.pipe(Effect.option);
-    if (status._tag === "None" || status.value.backendState !== "Running") {
+    if (
+      status._tag === "None" ||
+      status.value.backendState !== "Running" ||
+      !TailscaleHost.isSupportedTailscaleVersion(status.value.version)
+    ) {
       const nowMs = DateTime.toEpochMillis(now);
       statusFailingSince ??= nowMs;
       if (nowMs - statusFailingSince < Duration.toMillis(LOOKUP_GRACE)) {

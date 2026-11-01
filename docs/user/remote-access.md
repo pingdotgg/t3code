@@ -254,13 +254,16 @@ reconnect when Tailscale is back.
 
 To let your phone reach your laptop the same way, turn on **Tailscale sign-in** in
 **Settings → Sharing & access**. The app restarts and listens on your tailnet at
-port 3773 and refuses LAN connections. If that port is in use, Settings shows the
-port it uses, and other devices add the laptop by name with that port.
+port 3773; unless **Network access** is on, it still refuses LAN connections. If
+that port is in use, Settings shows the port it uses, and other devices add the
+laptop by name with that port.
 
 To cut off one device on one machine, open **Settings → Environments** on any
 device connected to that machine, and **Block** it under **Tailscale devices on
-<machine>**. Its sessions there end now, and **Unblock** undoes it. A device that
-rejoins Tailscale gets a new ID, so block it again or remove it from your tailnet.
+<machine>**. Its sessions there end now, and **Unblock** undoes it. A browser
+preview or device screen it already has open keeps streaming until it closes. A
+device that rejoins Tailscale gets a new ID, so block it again or remove it from
+your tailnet.
 
 To turn Tailscale sign-in off, run `t3 up --no-tailscale` for the background
 service, or turn it off in **Settings → Sharing & access** in the desktop app.

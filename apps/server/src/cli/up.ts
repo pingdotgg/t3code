@@ -505,7 +505,10 @@ const formatTailscale = (
     `Add this machine: ${directUrl}`,
     // A QR code is noise in a log.
     ...(process.stdout.isTTY ? [renderTerminalQrCode(directUrl)] : []),
-    "Tailnet devices find this machine automatically.",
+    // Other devices look for machines only on the default port.
+    ...(port === ServerConfig.DEFAULT_PORT
+      ? ["Tailnet devices find this machine automatically."]
+      : []),
     "",
     ...(requireGrant
       ? [

@@ -856,6 +856,18 @@ it.layer(NodeServices.layer)("TailnetSignIn", (it) => {
       }).pipe(Effect.provide(layerTest(tailnet)));
     });
 
+    it.effect("a Tailscale too old for sign-in ends sessions once the grace runs out", () => {
+      const tailnet = withLaptop();
+      return Effect.gen(function* () {
+        const session = yield* signInLaptop(makeDpopKey());
+        tailnet.status = hostStatus({ Peer: peers, Version: "1.62.0" });
+        yield* TestClock.adjust("30 seconds");
+        expect(yield* revoked(session.access_token)).toBe(false);
+        yield* TestClock.adjust("2 minutes");
+        expect(yield* revoked(session.access_token)).toBe(true);
+      }).pipe(Effect.provide(layerTest(tailnet)));
+    });
+
     it.effect("an unused sign-in is revoked with its grant, even with no session", () => {
       // Tagged, so the owner rule cannot let it back in once the grant is gone.
       const ciBox = { ...laptop, Tags: ["tag:ci"] };
