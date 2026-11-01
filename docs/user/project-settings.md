@@ -249,3 +249,21 @@ On mobile, use **Settings → Source control** to change selected environment de
 T3 Code only pulls when it can fast-forward and the checkout has no changed files, untracked files,
 or local commits. It skips checkouts on another branch or without an upstream. If a checkout has
 local work, resolve it yourself before automatic pulls can resume.
+
+## Default editor on Linux
+
+To use your environment host's editor, set `VISUAL` or `EDITOR` to an executable
+name or path before starting T3 Code, then choose **Default editor** in the Open
+menu. `VISUAL` takes precedence. Commands with extra arguments or shell expansion
+are not supported.
+
+For terminal editors such as Neovim, install `xdg-terminal-exec` and configure
+its default terminal. For example, `EDITOR=nvim` opens Neovim in that terminal.
+The host must have a graphical desktop session. Changing the editor environment
+variables requires restarting the server.
+
+Unrecognized editors launch through `xdg-terminal-exec` and require a configured
+default terminal. File links include line and column
+positions for editors supported by `open-editor`. The existing
+Open-menu preference remembers **Default editor**. This option launches on the
+environment host and is not available in SSH deep-link mode or on macOS and Windows.

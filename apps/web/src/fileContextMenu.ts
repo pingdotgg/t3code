@@ -6,6 +6,7 @@ import {
 } from "@t3tools/contracts";
 
 import { resolveDiffPathForWorkspace } from "./diffFileActions";
+import { useRemoteOpenState } from "./remoteOpen";
 import {
   revealInFileExplorerLabelForKind,
   revealInFileExplorerLabelForOs,
@@ -89,8 +90,13 @@ function buildFileContextMenuItems(input: {
 export function useFileContextMenu(environmentId: EnvironmentId | null) {
   const openInEditor = useAtomCommand(shellEnvironment.openInEditor, { reportFailure: false });
   const serverConfig = useAtomValue(serverEnvironment.configValueAtom(environmentId));
+  const remote = useRemoteOpenState(environmentId);
 
   const availableEditors = serverConfig?.availableEditors ?? [];
+  const editorIds =
+    remote.mode === "remote-links"
+      ? availableEditors.filter((editorId) => editorId !== "default-editor")
+      : availableEditors;
   const capabilities: FileContextMenuCapabilities = {
     // WSL can reveal in Windows Explorer despite reporting Linux; use server wording.
     revealLabel:
@@ -102,7 +108,7 @@ export function useFileContextMenu(environmentId: EnvironmentId | null) {
           : revealInFileExplorerLabelForKind(serverConfig.shellRevealInFileManagerKind)
         : undefined,
     canOpenDefault: availableEditors.includes("file-manager"),
-    editorIds: availableEditors,
+    editorIds,
   };
 
   const activate = async (

@@ -1,4 +1,5 @@
 // @effect-diagnostics nodeBuiltinImport:off - the Windows launch smoke tests use filesystem notifications to observe real PowerShell launches.
+import * as NodeFS from "node:fs";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import * as ConfigProvider from "effect/ConfigProvider";
@@ -905,4 +906,294 @@ it.effect("starts a Windows command shim for unicode paths with cmd metacharacte
       ),
     );
   }),
+);
+
+it.effect.skipIf(windowsHost)("passes line breaks through to editors started without a shell", () =>
+  Effect.gen(function* () {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const binDir = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-editors-" });
+    const zed = path.join(binDir, "zed");
+    yield* fileSystem.writeFileString(zed, "#!/bin/sh\n");
+    yield* fileSystem.chmod(zed, 0o755);
+    let spawned: ChildProcess.StandardCommand | undefined;
+    yield* Effect.gen(function* () {
+      const launcher = yield* ExternalLauncher.ExternalLauncher;
+      yield* launcher.launchEditor({ editor: "zed", cwd: "/workspace/odd\nname.ts" });
+    }).pipe(
+      Effect.provide(
+        layerTest({
+          platform: "linux",
+          env: { PATH: binDir, HOME: binDir },
+          onSpawn: (command) => {
+            spawned = command;
+          },
+        }),
+      ),
+    );
+    assert.ok(spawned);
+    assert.deepEqual(spawned.args, ["/workspace/odd\nname.ts"]);
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
+it.effect("rejects unknown editors through the service API", () =>
+  Effect.gen(function* () {
+    const launcher = yield* ExternalLauncher.ExternalLauncher;
+    const error = yield* launcher
+      .launchEditor({ editor: "missing-editor" as never, cwd: "/tmp/workspace" })
+      .pipe(Effect.flip);
+    assert.instanceOf(error, ExternalLauncher.ExternalLauncherUnknownEditorError);
+    assert.equal(error.editor, "missing-editor");
+    assert.equal(error.message, "Unknown editor: missing-editor");
+  }).pipe(Effect.provide(layerTest({ platform: "linux", env: { PATH: "" } }))),
+);
+
+for (const [target, expectedArgs] of [
+  ["/workspace with spaces", ["/workspace with spaces"]],
+  ["/workspace/file.ts:12:4", ["+call cursor(12, 4)", "/workspace/file.ts"]],
+  ["/workspace/file.ts:12", ["+call cursor(12, 1)", "/workspace/file.ts"]],
+  [
+    "/workspace/$(touch marker);'file.ts:2:3",
+    ["+call cursor(2, 3)", "/workspace/$(touch marker);'file.ts"],
+  ],
+] satisfies Array<[string, string[]]>) {
+  it.effect.skipIf(windowsHost)(
+    `opens ${target} in the host's Neovim through the default terminal`,
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const binDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-default-editor-" });
+        for (const command of ["nvim", "xdg-terminal-exec"]) {
+          yield* fs.writeFileString(path.join(binDir, command), "#!/bin/sh\nexit 0\n");
+          yield* fs.chmod(path.join(binDir, command), 0o755);
+        }
+        let spawned: ChildProcess.StandardCommand | undefined;
+        yield* Effect.gen(function* () {
+          const launcher = yield* ExternalLauncher.ExternalLauncher;
+          assert.include(yield* launcher.resolveAvailableEditors(), "default-editor");
+          yield* launcher.launchEditor({ editor: "default-editor", cwd: target });
+        }).pipe(
+          Effect.provide(
+            layerTest({
+              platform: "linux",
+              env: { PATH: binDir, EDITOR: "nvim", DISPLAY: ":42" },
+              onSpawn: (command) => {
+                spawned = command;
+              },
+            }),
+          ),
+        );
+        assert.ok(spawned);
+        assert.equal(spawned.command, "xdg-terminal-exec");
+        assert.deepEqual(spawned.args, ["--", "nvim", ...expectedArgs]);
+        assert.equal(spawned.options.shell, false);
+      }).pipe(Effect.provide(NodeServices.layer)),
+  );
+}
+
+it.effect.skipIf(windowsHost)(
+  "runs an unclassified installed editor through the default terminal",
+  () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const binDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-default-editor-" });
+      for (const command of ["hx", "xdg-terminal-exec"]) {
+        yield* fs.writeFileString(path.join(binDir, command), "#!/bin/sh\nexit 0\n");
+        yield* fs.chmod(path.join(binDir, command), 0o755);
+      }
+      let spawned: ChildProcess.StandardCommand | undefined;
+      yield* Effect.gen(function* () {
+        const launcher = yield* ExternalLauncher.ExternalLauncher;
+        assert.include(yield* launcher.resolveAvailableEditors(), "default-editor");
+        yield* launcher.launchEditor({ editor: "default-editor", cwd: "/workspace/file.ts:3:2" });
+      }).pipe(
+        Effect.provide(
+          layerTest({
+            platform: "linux",
+            env: { PATH: binDir, EDITOR: "hx", DISPLAY: ":42" },
+            onSpawn: (command) => {
+              spawned = command;
+            },
+          }),
+        ),
+      );
+      assert.ok(spawned);
+      assert.equal(spawned.command, "xdg-terminal-exec");
+      assert.deepEqual(spawned.args, ["--", "hx", "/workspace/file.ts"]);
+    }).pipe(Effect.provide(NodeServices.layer)),
+);
+
+it.effect.skipIf(windowsHost)(
+  "launches a known graphical editor directly even when a default terminal exists",
+  () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const binDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-default-editor-" });
+      for (const command of ["code", "xdg-terminal-exec"]) {
+        yield* fs.writeFileString(path.join(binDir, command), "#!/bin/sh\nexit 0\n");
+        yield* fs.chmod(path.join(binDir, command), 0o755);
+      }
+      let spawned: ChildProcess.StandardCommand | undefined;
+      yield* Effect.gen(function* () {
+        const launcher = yield* ExternalLauncher.ExternalLauncher;
+        assert.include(yield* launcher.resolveAvailableEditors(), "default-editor");
+        yield* launcher.launchEditor({ editor: "default-editor", cwd: "/workspace/file.ts:3:2" });
+      }).pipe(
+        Effect.provide(
+          layerTest({
+            platform: "linux",
+            env: { PATH: binDir, EDITOR: "code", DISPLAY: ":42" },
+            onSpawn: (command) => {
+              spawned = command;
+            },
+          }),
+        ),
+      );
+      assert.ok(spawned);
+      assert.equal(spawned.command, "code");
+      assert.deepEqual(spawned.args, ["--goto", "/workspace/file.ts:3:2"]);
+    }).pipe(Effect.provide(NodeServices.layer)),
+);
+
+it.effect.skipIf(windowsHost)("prefers VISUAL and preserves its absolute executable path", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const binDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-default-editor-" });
+    const editor = path.join(binDir, "code");
+    yield* fs.writeFileString(editor, "#!/bin/sh\nexit 0\n");
+    yield* fs.chmod(editor, 0o755);
+    let spawned: ChildProcess.StandardCommand | undefined;
+    yield* Effect.gen(function* () {
+      const launcher = yield* ExternalLauncher.ExternalLauncher;
+      yield* launcher.launchEditor({ editor: "default-editor", cwd: "/workspace/file.ts:3:2" });
+    }).pipe(
+      Effect.provide(
+        layerTest({
+          platform: "linux",
+          env: { PATH: binDir, VISUAL: editor, EDITOR: "missing", WAYLAND_DISPLAY: "wayland-1" },
+          onSpawn: (command) => {
+            spawned = command;
+          },
+        }),
+      ),
+    );
+    assert.ok(spawned);
+    assert.equal(spawned.command, editor);
+    assert.deepEqual(spawned.args, ["--goto", "/workspace/file.ts:3:2"]);
+  }).pipe(Effect.provide(NodeServices.layer)),
+);
+
+it.effect.skipIf(windowsHost)(
+  "opens an existing filename ending in a numeric suffix literally",
+  () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const binDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-default-editor-" });
+      for (const command of ["nvim", "xdg-terminal-exec"]) {
+        yield* fs.writeFileString(path.join(binDir, command), "#!/bin/sh\nexit 0\n");
+        yield* fs.chmod(path.join(binDir, command), 0o755);
+      }
+      const target = path.join(binDir, "file:12:4");
+      yield* fs.writeFileString(target, "literal filename\n");
+      let spawned: ChildProcess.StandardCommand | undefined;
+      yield* Effect.gen(function* () {
+        const launcher = yield* ExternalLauncher.ExternalLauncher;
+        yield* launcher.launchEditor({ editor: "default-editor", cwd: target });
+      }).pipe(
+        Effect.provide(
+          layerTest({
+            platform: "linux",
+            env: { PATH: binDir, EDITOR: "nvim", DISPLAY: ":42" },
+            onSpawn: (command) => {
+              spawned = command;
+            },
+          }),
+        ),
+      );
+      assert.ok(spawned);
+      assert.deepEqual(spawned.args, ["--", "nvim", target]);
+    }).pipe(Effect.provide(NodeServices.layer)),
+);
+
+for (const [name, platform, env] of [
+  ["unset editor", "linux", { DISPLAY: ":42" }],
+  ["missing executable", "linux", { EDITOR: "missing", DISPLAY: ":42" }],
+  ["missing terminal", "linux", { EDITOR: "nvim", DISPLAY: ":42" }],
+  ["unclassified editor and no default terminal", "linux", { EDITOR: "hx", DISPLAY: ":42" }],
+  ["headless host", "linux", { EDITOR: "nvim" }],
+  ["blank X11 display", "linux", { EDITOR: "code", DISPLAY: " \t " }],
+  ["blank Wayland display", "linux", { EDITOR: "code", WAYLAND_DISPLAY: " \t " }],
+  ["unsupported platform", "darwin", { EDITOR: "nvim", DISPLAY: ":42" }],
+] satisfies Array<[string, NodeJS.Platform, Record<string, string>]>) {
+  it.effect.skipIf(windowsHost)(`does not offer or launch the default editor with ${name}`, () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const binDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-default-editor-" });
+      for (const command of ["nvim", "hx", "code"]) {
+        yield* fs.writeFileString(path.join(binDir, command), "#!/bin/sh\nexit 0\n");
+        yield* fs.chmod(path.join(binDir, command), 0o755);
+      }
+      yield* Effect.gen(function* () {
+        const launcher = yield* ExternalLauncher.ExternalLauncher;
+        assert.notInclude(yield* launcher.resolveAvailableEditors(), "default-editor");
+        const result = yield* launcher
+          .launchEditor({ editor: "default-editor", cwd: "/workspace" })
+          .pipe(Effect.flip);
+        assert.instanceOf(result, ExternalLauncher.ExternalLauncherUnsupportedEditorError);
+      }).pipe(Effect.provide(layerTest({ platform, env: { ...env, PATH: binDir } })));
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+}
+
+it.live.skipIf(!process.env.T3CODE_TEST_DEFAULT_EDITOR)(
+  "opens a real Neovim in the default terminal at the requested file position",
+  () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const scratch = yield* fs.makeTempDirectoryScoped({ prefix: "t3-real-default-editor-" });
+      const target = path.join(scratch, "file with spaces.ts");
+      const output = path.join(scratch, "observed.json");
+      yield* fs.writeFileString(target, "first line\nsecond line\nthird line\n");
+      const wrapper = path.join(scratch, "nvim");
+      const record = `autocmd VimEnter * call writefile([json_encode({'path': expand('%:p'), 'line': line('.'), 'column': col('.')})], [${JSON.stringify(output + ".tmp")}][0]) | call rename([${JSON.stringify(output + ".tmp")}][0], [${JSON.stringify(output)}][0]) | qa!`;
+      const shellQuotedRecord = "'" + record.replaceAll("'", "'\\''") + "'";
+      yield* fs.writeFileString(
+        wrapper,
+        `#!/bin/sh\nexec nvim --clean -i NONE --cmd ${shellQuotedRecord} "$@"\n`,
+      );
+      yield* fs.chmod(wrapper, 0o755);
+      yield* Effect.gen(function* () {
+        const launcher = yield* ExternalLauncher.ExternalLauncher;
+        assert.include(yield* launcher.resolveAvailableEditors(), "default-editor");
+        const observed = yield* Deferred.make<void>();
+        const watcher = NodeFS.watch(scratch, (event, filename) => {
+          if (event === "rename" && filename === "observed.json")
+            Deferred.doneUnsafe(observed, Exit.void);
+        });
+        yield* Effect.addFinalizer(() => Effect.sync(() => watcher.close()));
+        yield* launcher.launchEditor({ editor: "default-editor", cwd: `${target}:2:4` });
+        yield* Deferred.await(observed);
+        assert.deepEqual(JSON.parse(yield* fs.readFileString(output)), {
+          column: 4,
+          line: 2,
+          path: target,
+        });
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            ExternalLauncher.layer.pipe(Layer.provide(NodeServices.layer)),
+            ConfigProvider.layer(
+              ConfigProvider.fromEnv({ env: { ...process.env, VISUAL: wrapper } }),
+            ),
+          ),
+        ),
+      );
+    }).pipe(Effect.provide(NodeServices.layer)),
 );

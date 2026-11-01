@@ -13,6 +13,8 @@ export function editorLabelForPlatform(editorId: EditorId, platform: string): st
 }
 
 export function openInEditorMenuLabel(editorId: EditorId | null): string {
+  if (editorId === "default-editor") return "Open in default editor";
+
   return editorId === null || editorId === "file-manager"
     ? "Open in editor"
     : `Open in ${editorLabels.get(editorId) ?? "Editor"}`;
