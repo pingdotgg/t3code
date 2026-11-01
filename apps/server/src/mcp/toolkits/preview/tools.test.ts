@@ -1,4 +1,5 @@
 import { expect, it } from "@effect/vitest";
+import * as Schema from "effect/Schema";
 import { Tool } from "effect/ai";
 
 import { PreviewToolkit } from "./tools.ts";
@@ -35,4 +36,18 @@ it("exports provider-compatible object schemas", () => {
       `${tool.name} must allow an explicit collaborative browser tab target`,
     ).toBeDefined();
   }
+});
+
+it("preview_open accepts a target while preserving open input constraints", () => {
+  const decode = Schema.decodeUnknownSync(PreviewToolkit.tools.preview_open.parametersSchema);
+  const target = { kind: "environment-port", port: 3000 };
+  expect(decode({ target })).toEqual({ target });
+  expect(decode({})).toEqual({});
+  expect(decode({ url: "https://example.com" })).toEqual({ url: "https://example.com" });
+  expect(decode({ url: "http://localhost:3000", target })).toEqual({
+    url: "http://localhost:3000",
+    target,
+  });
+  expect(() => decode({ target: { ...target, port: 0 } })).toThrow();
+  expect(() => decode({ target, tabId: "tab-1", reuseExistingTab: false })).toThrow();
 });
