@@ -492,10 +492,11 @@ async function captureSource({
       if (!active) {
         throw new DesktopSnapShotError({ operation: "window-unavailable", captureId });
       }
+      // The worker copies physical pixels; a DIP rect cannot place a window on a scaled secondary display.
       ({ source, png } = await captureRegionWindowSnapshot(
         regionSnapShotPool,
         active,
-        snapShotFlashBounds(active, platform),
+        active.bounds,
         snapShotThumbnailSize(active),
       ));
     } else {
