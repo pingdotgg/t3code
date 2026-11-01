@@ -25,6 +25,7 @@ export const PULL_REQUEST_ROW_NUMBER_CLASS =
 export function PullRequestRowGlyph({
   state,
   isDraft,
+  inMergeQueue,
   mergeability,
   baseBranch,
   below,
@@ -32,6 +33,7 @@ export function PullRequestRowGlyph({
 }: {
   state: PullRequestState;
   isDraft: boolean;
+  inMergeQueue?: boolean | undefined;
   mergeability?: PullRequestMergeability | undefined;
   baseBranch?: string | undefined;
   below?: ReactNode;
@@ -40,7 +42,7 @@ export function PullRequestRowGlyph({
   return (
     <span className={cn("flex w-4 shrink-0 flex-col items-center gap-0.5", className)}>
       <span className="relative inline-flex">
-        <PullRequestStateGlyph state={state} isDraft={isDraft} />
+        <PullRequestStateGlyph state={state} isDraft={isDraft} inMergeQueue={inMergeQueue} />
         {/* Offset the wrapper to keep the badge-sized tooltip trigger anchored. */}
         <span className="absolute -right-1 -bottom-1 inline-flex">
           <PullRequestConflictGlyph

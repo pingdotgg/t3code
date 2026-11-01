@@ -27,6 +27,7 @@ export function composerPullRequestsFromLinks(
             baseBranch: link.snapshot.baseBranch,
             state: link.snapshot.state,
             isDraft: link.snapshot.isDraft,
+            inMergeQueue: link.snapshot.inMergeQueue,
             updatedAt: link.snapshot.updatedAt ?? link.linkedAt,
           },
         ],

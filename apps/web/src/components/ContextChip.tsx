@@ -21,6 +21,7 @@ const contextChipVariants = cva(
         "preview-annotation": "[--context-chip-accent:var(--context-chip-preview-annotation)]",
         "review-comment": "[--context-chip-accent:var(--context-chip-review-comment)]",
         "pull-request": "[--context-chip-accent:var(--context-chip-pull-request)]",
+        "pr-queued": "[--context-chip-accent:var(--context-chip-pr-queued)]",
         "pr-open": "[--context-chip-accent:var(--context-chip-pr-open)]",
         "pr-draft": "[--context-chip-accent:var(--context-chip-pr-draft)]",
         "pr-merged": "[--context-chip-accent:var(--context-chip-pr-merged)]",

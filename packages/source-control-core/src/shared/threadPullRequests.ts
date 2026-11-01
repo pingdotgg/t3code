@@ -48,7 +48,7 @@ export interface ThreadPullRequestChain {
 }
 
 export type ThreadPullRequestBadge = {
-  readonly state: "open" | "closed" | "merged" | "draft";
+  readonly state: "open" | "closed" | "merged" | "draft" | "queued";
 } & (
   | {
       readonly kind: "stack";
@@ -291,13 +291,17 @@ export function makeThreadPullRequests(
     const visible = visibleThreadPullRequests(pullRequests ?? []);
     if (visible.length === 0) return null;
     const states = visible.map((link) => link.snapshot?.state ?? "open");
-    const state = visible.every((link) => link.snapshot?.state === "open" && link.snapshot.isDraft)
-      ? "draft"
-      : states.includes("open")
-        ? "open"
-        : states.every((entry) => entry === "merged")
-          ? "merged"
-          : "closed";
+    const open = visible.filter(isOpen);
+    const state =
+      open.length > 0 && open.every((link) => link.snapshot?.inMergeQueue === true)
+        ? "queued"
+        : visible.every((link) => link.snapshot?.state === "open" && link.snapshot.isDraft)
+          ? "draft"
+          : states.includes("open")
+            ? "open"
+            : states.every((entry) => entry === "merged")
+              ? "merged"
+              : "closed";
     const chains = resolveThreadPullRequestChains(visible);
     if (visible.length > 1 && chains.length === 1) {
       return { kind: "stack", layers: visible.length, state };

@@ -135,6 +135,7 @@ function PullRequestRowImpl({
         <PullRequestRowGlyph
           state={entry.state}
           isDraft={entry.isDraft}
+          inMergeQueue={entry.inMergeQueue}
           mergeability={entry.mergeability}
           baseBranch={entry.baseBranch}
           className="mt-0.75 self-start"

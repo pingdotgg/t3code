@@ -65,6 +65,14 @@ describe("mobile pull request actions", () => {
     expect(mergeUnavailableReason(pr, true, GITHUB)).toContain("conflicts");
   });
 
+  it("blocks manual and auto merge while queued", () => {
+    const pr = detail({ inMergeQueue: true });
+    expect(canPerformPullRequestAction(pr, "merge")).toBe(false);
+    expect(canPerformPullRequestAction(pr, "draft")).toBe(false);
+    expect(canPerformPullRequestAction(pr, "enable-auto-merge")).toBe(false);
+    expect(mergeUnavailableReason(pr, true, GITHUB)).toContain("queued to merge");
+  });
+
   it("names the change request with its host's term", () => {
     expect(pullRequestActionLabel("close", GITHUB)).toBe("Close pull request");
     expect(pullRequestActionLabel("close", GITLAB)).toBe("Close merge request");

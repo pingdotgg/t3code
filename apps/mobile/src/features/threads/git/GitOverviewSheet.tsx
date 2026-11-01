@@ -39,6 +39,7 @@ import {
   useLinkedPullRequestLines,
 } from "../LinkedPullRequestList";
 import { useLinkedPullRequestActions } from "../useLinkedPullRequestActions";
+import { pullRequestStatus } from "../../pull-requests/pullRequestStatus";
 
 type GitOverviewSheetProps = StaticScreenProps<{
   readonly environmentId: string;
@@ -212,7 +213,12 @@ function GitOverviewSheetContent(props: GitOverviewSheetProps) {
       return `${ahead} commit${ahead === 1 ? "" : "s"} ahead`;
     }
     if (item.kind === "open_pr" && status.pr?.number != null) {
-      return `${shortLabel} #${status.pr.number} ${status.pr.state ?? "open"}`;
+      const prStatus = pullRequestStatus({
+        state: status.pr.state ?? "open",
+        isDraft: status.pr.isDraft === true,
+        inMergeQueue: status.pr.inMergeQueue,
+      });
+      return `${shortLabel} #${status.pr.number} ${prStatus.label.toLowerCase()}`;
     }
     return undefined;
   };

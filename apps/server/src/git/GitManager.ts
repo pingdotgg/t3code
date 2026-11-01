@@ -205,6 +205,7 @@ interface OpenPrInfo {
 interface PullRequestInfo extends OpenPrInfo, PullRequestHeadRemoteInfo {
   state: "open" | "closed" | "merged";
   isDraft?: boolean;
+  inMergeQueue?: boolean;
   closedAt?: string | null;
   mergedAt?: string | null;
   updatedAt: Option.Option<DateTime.Utc>;
@@ -223,6 +224,7 @@ interface ResolvedPullRequest {
   baseBranch: string;
   headBranch: string;
   state: "open" | "closed" | "merged";
+  inMergeQueue?: boolean;
 }
 
 interface PullRequestHeadRemoteInfo {
@@ -410,6 +412,7 @@ function toPullRequestInfo(summary: ChangeRequest): PullRequestInfo {
     ...(summary.headSha !== undefined ? { headSha: summary.headSha } : {}),
     state: summary.state ?? "open",
     ...(summary.isDraft === true ? { isDraft: true } : {}),
+    ...(summary.inMergeQueue === undefined ? {} : { inMergeQueue: summary.inMergeQueue }),
     closedAt: summary.closedAt ?? null,
     mergedAt: summary.mergedAt ?? null,
     updatedAt: summary.updatedAt,
@@ -592,6 +595,7 @@ function toStatusPr(pr: PullRequestInfo): {
   headRef: string;
   state: "open" | "closed" | "merged";
   isDraft?: boolean;
+  inMergeQueue?: boolean;
   updatedAt: string | null;
 } {
   return {
@@ -602,6 +606,7 @@ function toStatusPr(pr: PullRequestInfo): {
     headRef: pr.headRefName,
     state: pr.state,
     ...(pr.isDraft === true ? { isDraft: true } : {}),
+    ...(pr.inMergeQueue === undefined ? {} : { inMergeQueue: pr.inMergeQueue }),
     updatedAt: Option.match(pr.updatedAt, {
       onNone: () => null,
       onSome: (updatedAt) => DateTime.formatIso(updatedAt),
@@ -622,6 +627,7 @@ function toResolvedPullRequest(pr: {
   baseRefName: string;
   headRefName: string;
   state?: "open" | "closed" | "merged";
+  inMergeQueue?: boolean | undefined;
 }): ResolvedPullRequest {
   return {
     number: pr.number,
@@ -630,6 +636,7 @@ function toResolvedPullRequest(pr: {
     baseBranch: pr.baseRefName,
     headBranch: pr.headRefName,
     state: pr.state ?? "open",
+    ...(pr.inMergeQueue === undefined ? {} : { inMergeQueue: pr.inMergeQueue }),
   };
 }
 
@@ -1199,7 +1206,11 @@ export const make = Effect.gen(function* () {
   const pullRequestStateChanges = yield* PubSub.sliding<ThreadPullRequestKey>(64);
   const lookupStates = new Map<
     string,
-    { readonly state: PullRequestInfo["state"]; readonly isDraft: boolean }
+    {
+      readonly state: PullRequestInfo["state"];
+      readonly isDraft: boolean;
+      readonly inMergeQueue: boolean;
+    }
   >();
   const noteLookupState = (pr: PullRequestInfo) =>
     Effect.suspend(() => {
@@ -1213,9 +1224,14 @@ export const make = Effect.gen(function* () {
         const oldest = lookupStates.keys().next().value;
         if (oldest !== undefined) lookupStates.delete(oldest);
       }
-      lookupStates.set(id, { state: pr.state, isDraft: pr.isDraft === true });
+      lookupStates.set(id, {
+        state: pr.state,
+        isDraft: pr.isDraft === true,
+        inMergeQueue: pr.inMergeQueue === true,
+      });
       return (previous?.state ?? "open") === pr.state &&
-        (previous?.isDraft === true) === (pr.isDraft === true)
+        (previous?.isDraft === true) === (pr.isDraft === true) &&
+        (previous?.inMergeQueue === true) === (pr.inMergeQueue === true)
         ? Effect.void
         : PubSub.publish(pullRequestStateChanges, key);
     });

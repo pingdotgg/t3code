@@ -1,3 +1,4 @@
+import { resolvePullRequestState } from "./pullRequest/pullRequestPresentation";
 import {
   AuthOrchestrationOperateScope,
   type EnvironmentId,
@@ -119,7 +120,15 @@ export function PullRequestThreadDialog({
       parsedReference !== parsedDebouncedReference ||
       pullRequestResolution.isPending ||
       pullRequestResolution.isFetching);
-  const statusTone = pullRequestStatusTone(resolvedPullRequest?.state);
+  const statusPresentation =
+    resolvedPullRequest === null
+      ? null
+      : resolvePullRequestState({ ...resolvedPullRequest, isDraft: false });
+
+  const statusTone =
+    resolvedPullRequest?.state === "open" && resolvedPullRequest.inMergeQueue
+      ? statusPresentation?.toneClassName
+      : pullRequestStatusTone(resolvedPullRequest?.state);
 
   const handleConfirm = async (mode: "local" | "worktree") => {
     if (!preparePullRequestThreadAction.isAllowed) return;
@@ -251,7 +260,7 @@ export function PullRequestThreadDialog({
                   </p>
                 </div>
                 <span className={cn("shrink-0 text-xs capitalize", statusTone)}>
-                  {resolvedPullRequest.state}
+                  {statusPresentation?.label}
                 </span>
               </div>
             </div>

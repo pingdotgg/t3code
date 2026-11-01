@@ -1,3 +1,7 @@
+import {
+  GitHubPullRequestQueuedError,
+  readGitHubPullRequestQueue,
+} from "./gitHubPullRequestQueue.ts";
 import { isCommitSha, normalizeHost } from "@t3tools/source-control-core/server/pullRequestUtils";
 import { removeAgentCredits } from "@t3tools/source-control-core/server/mergeMessage";
 import { KnownWorkflowRuns, makeChecksRevalidator } from "./gitHubConditionalChecks.ts";
@@ -1844,6 +1848,7 @@ export const make = Effect.gen(function* () {
                   after,
                   // Stack badges come from their own batched read below, for the rows that stay.
                   stacks: false,
+                  mergeQueue: stacks,
                   stats: true,
                 })
                 .pipe(Effect.map((result) => toPage(toPullRequestRows(result.search))))
@@ -1855,6 +1860,7 @@ export const make = Effect.gen(function* () {
                   first: pageRows(rows),
                   after,
                   stacks: false,
+                  mergeQueue: stacks,
                   stats: true,
                 })
                 .pipe(
@@ -1966,6 +1972,7 @@ export const make = Effect.gen(function* () {
           q: query,
           first: rows,
           stacks: input.host.toLowerCase() === "github.com",
+          mergeQueue: input.host.toLowerCase() === "github.com",
           stats: false,
         })
         .pipe(
@@ -2026,7 +2033,12 @@ export const make = Effect.gen(function* () {
         const { owner, name } = parseRepositorySelector(input.repository);
         const operation = "getPullRequestPreview";
         return client
-          .PullRequestPreview({ owner, name, number: input.number })
+          .PullRequestPreview({
+            owner,
+            name,
+            number: input.number,
+            mergeQueue: asksRequired(input.host),
+          })
           .pipe(
             graphql({ ...input, operation }),
             Effect.map(toPullRequestPreview),
@@ -2036,10 +2048,10 @@ export const make = Effect.gen(function* () {
     ),
     listWorkflowRunsRequiringApproval,
 
-    getPullRequestStack: Effect.fn("GitHubPullRequestApi.getPullRequestStack")(function (input) {
+    getPullRequestStack: Effect.fn("GitHubPullRequestApi.getPullRequestStack")(function* (input) {
       const { owner, name } = parseRepositorySelector(input.repository);
       // Polled by the pull request sync for every linked pull request, so revalidate it.
-      return revalidatedRestRead({
+      const stack = yield* revalidatedRestRead({
         cwd: input.cwd,
         host: input.host,
         operation: "getPullRequestStack",
@@ -2062,6 +2074,31 @@ export const make = Effect.gen(function* () {
           GitHubApiNotFoundError: () => Effect.succeed(null),
         }),
       );
+      if (!input.includeDetails || stack === null) return stack;
+      const membership = yield* readGitHubPullRequestQueue({
+        host: input.host,
+        repository: input.repository,
+        numbers: stack.layers
+          .filter((layer) => layer.state === "open")
+          .map((layer) => layer.number),
+      }).pipe(
+        Effect.provideService(GitHubRequestPolicy.GitHubRequestPolicy, policy),
+        Effect.provideService(HttpClient.HttpClient, httpClient),
+        Effect.catch((error) =>
+          Effect.logWarning("Pull request stack queue membership enrichment failed", {
+            operation: "getPullRequestStack",
+            host: input.host,
+            error: error._tag,
+          }).pipe(Effect.as(new Map<number, boolean>())),
+        ),
+      );
+      return {
+        ...stack,
+        layers: stack.layers.map((layer) => {
+          const queued = membership.get(layer.number);
+          return queued === undefined ? layer : { ...layer, inMergeQueue: queued };
+        }),
+      };
     }),
 
     getPullRequestActivity: Effect.fn("GitHubPullRequestApi.getPullRequestActivity")(
@@ -2631,6 +2668,7 @@ export const make = Effect.gen(function* () {
             owner,
             name,
             number: input.number,
+            mergeQueue: asksRequired(input.host),
             headRef: `refs/pull/${input.number}/head`,
           })
           .pipe(
@@ -2652,6 +2690,11 @@ export const make = Effect.gen(function* () {
               graphql(target),
             );
         }
+        if (state.isInMergeQueue === true)
+          return yield* new GitHubPullRequestQueuedError({
+            repository: input.repository,
+            number: input.number,
+          });
         let body: string | undefined;
         let expectedHead: string | undefined;
         if (input.removeAgentCreditsOnMerge === true && input.mergeMethod !== "rebase") {

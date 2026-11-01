@@ -75,6 +75,7 @@ export function pullRequestListEntryToSummary(entry: PullRequestListEntry): Pull
     url: entry.url,
     state: entry.state,
     isDraft: entry.isDraft,
+    inMergeQueue: entry.inMergeQueue,
     headBranch: entry.headBranch,
     baseBranch: entry.baseBranch,
     updatedAt: entry.updatedAt,
@@ -117,6 +118,7 @@ export function newestPullRequestObservation(
     summary: {
       ...incoming.summary,
       isDraft: incoming.summary.isDraft ?? current.summary.isDraft,
+      inMergeQueue: incoming.summary.inMergeQueue ?? current.summary.inMergeQueue,
       mergeability: incoming.summary.mergeability ?? current.summary.mergeability,
       reviewDecision:
         incoming.summary.reviewDecision === undefined

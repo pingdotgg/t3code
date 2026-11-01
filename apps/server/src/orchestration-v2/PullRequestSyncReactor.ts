@@ -204,6 +204,7 @@ function snapshotFieldsOf(summary: PullRequestSummary): SnapshotFields {
     headBranch: summary.headBranch,
     baseBranch: summary.baseBranch,
     isDraft: summary.isDraft ?? false,
+    ...(summary.inMergeQueue === undefined ? {} : { inMergeQueue: summary.inMergeQueue }),
     updatedAt: summary.updatedAt,
     closedAt: summary.closedAt ?? null,
     mergedAt: summary.mergedAt ?? null,
@@ -252,6 +253,7 @@ function snapshotFieldsEqual(left: SnapshotFields, right: SnapshotFields): boole
     left.headBranch === right.headBranch &&
     left.baseBranch === right.baseBranch &&
     left.isDraft === right.isDraft &&
+    left.inMergeQueue === right.inMergeQueue &&
     left.updatedAt === right.updatedAt &&
     (left.closedAt ?? null) === (right.closedAt ?? null) &&
     (left.mergedAt ?? null) === (right.mergedAt ?? null) &&
@@ -533,11 +535,9 @@ export const make = Effect.gen(function* () {
                       }).pipe(Effect.as(null)),
               ),
             );
-      if (needsStack) {
-        if (fetchedStack === null) {
-          retryStacks.add(key);
-          return;
-        }
+      if (needsStack && fetchedStack === null) {
+        retryStacks.add(key);
+      } else if (fetchedStack !== null) {
         const fetched = fetchedStack.stack;
         stacksReadThisSweep.set(key, fetched);
         // New upper layers leave older members' fields unchanged; differing layer lists need a stack read.
@@ -565,8 +565,15 @@ export const make = Effect.gen(function* () {
       requested.delete(key);
       yield* Effect.forEach(
         entries,
-        (entry) =>
-          syncEntry(entry, fields, fetchedStack, summary.provider).pipe(
+        (entry) => {
+          const nextFields =
+            needsStack && fetchedStack === null
+              ? entry.link.snapshot === null
+                ? null
+                : { ...entry.link.snapshot, inMergeQueue: fields.inMergeQueue }
+              : fields;
+          if (nextFields === null) return Effect.void;
+          return syncEntry(entry, nextFields, fetchedStack, summary.provider).pipe(
             persistence.withPermits(1),
             Effect.catchCause((cause) => {
               if (!Cause.hasInterruptsOnly(cause)) retryStacks.add(key);
@@ -574,7 +581,8 @@ export const make = Effect.gen(function* () {
                 cause,
               );
             }),
-          ),
+          );
+        },
         { discard: true },
       );
     }, Effect.withSpan("PullRequestSyncReactor.syncGroup"));
