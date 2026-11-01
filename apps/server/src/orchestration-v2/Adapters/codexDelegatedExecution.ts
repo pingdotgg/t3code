@@ -5,6 +5,10 @@ import {
 } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 
+const isUnrestrictedSandbox = Schema.is(
+  Schema.Struct({ type: Schema.Literal("dangerFullAccess") }),
+);
+
 const decodeSettings = Schema.decodeUnknownOption(
   Schema.Struct({
     cwd: Schema.String,
@@ -33,12 +37,20 @@ export function captureDelegatedExecution(
   providerInstanceId: ProviderInstanceId,
   settings: unknown,
   isAbsolute: (path: string) => boolean,
+  targetDriver?: string,
 ): DelegatedExecution | undefined {
   const decoded = decodeSettings(settings);
   if (decoded._tag === "None") return undefined;
   const value = decoded.value;
   // A legacy sandbox cannot reproduce a custom profile's filesystem deny rules.
   if (value.activePermissionProfile != null || !isAbsolute(value.cwd)) return undefined;
+  if (targetDriver === "grok" && isUnrestrictedSandbox(value.sandboxPolicy)) {
+    return {
+      providerInstanceId,
+      cwd: value.cwd,
+      sandboxPolicy: { type: "dangerFullAccess", networkAccess: true },
+    };
+  }
   const sandbox = decodeSandbox(value.sandboxPolicy);
   if (sandbox._tag === "None") return undefined;
   const policy = sandbox.value;
@@ -72,6 +84,8 @@ export function withinDelegatedExecution(
     return false;
   const policy = current.sandboxPolicy;
   const limit = ceiling.sandboxPolicy;
+  if (limit.type === "dangerFullAccess") return true;
+  if (policy.type === "dangerFullAccess") return false;
   if (policy.networkAccess && !limit.networkAccess) return false;
   if (policy.type === "readOnly") return true;
   if (limit.type !== "workspaceWrite") return false;

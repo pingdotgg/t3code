@@ -2,6 +2,7 @@ import * as Schema from "effect/Schema";
 import { ProviderInstanceId } from "./providerInstance.ts";
 
 export const DelegatedSandbox = Schema.Union([
+  Schema.Struct({ type: Schema.Literal("dangerFullAccess"), networkAccess: Schema.Literal(true) }),
   Schema.Struct({ type: Schema.Literal("readOnly"), networkAccess: Schema.Boolean }),
   Schema.Struct({
     type: Schema.Literal("workspaceWrite"),

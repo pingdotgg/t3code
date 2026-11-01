@@ -154,6 +154,52 @@ it.layer(layerTest)("RuntimePolicyV2", (it) => {
     }),
   );
 
+  it.effect("reloads unrestricted grants only for the recorded full-access Grok instance", () =>
+    Effect.gen(function* () {
+      const policy = yield* RuntimePolicy.RuntimePolicyV2;
+      const selection = { instanceId: grokInstanceId, model: "grok-test" };
+      const thread = {
+        ...makeThread({ now: yield* DateTime.now, worktreePath: null }),
+        providerInstanceId: grokInstanceId,
+        modelSelection: selection,
+        delegatedExecution: {
+          providerInstanceId: grokInstanceId,
+          cwd: "/project-root",
+          sandboxPolicy: { type: "dangerFullAccess" as const, networkAccess: true as const },
+        },
+      };
+      const reloaded = yield* decodeThread(yield* encodeThread(thread));
+      assert.deepEqual(
+        (yield* policy.resolve({ thread: reloaded, modelSelection: selection })).delegatedExecution,
+        thread.delegatedExecution,
+      );
+      for (const changed of [
+        { ...reloaded, runtimeMode: "auto" as const },
+        { ...reloaded, worktreePath: "/other" },
+      ])
+        assert.equal(
+          (yield* policy.resolve({ thread: changed, modelSelection: selection }).pipe(Effect.flip))
+            ._tag,
+          "RuntimePolicyResolveError",
+        );
+      assert.equal(
+        (yield* policy
+          .resolve({
+            thread: {
+              ...reloaded,
+              delegatedExecution: {
+                ...thread.delegatedExecution,
+                providerInstanceId,
+              },
+            },
+            modelSelection,
+          })
+          .pipe(Effect.flip))._tag,
+        "RuntimePolicyResolveError",
+      );
+    }),
+  );
+
   it.effect("runs a mode the provider does not offer in Supervised", () =>
     Effect.gen(function* () {
       const policy = yield* RuntimePolicy.RuntimePolicyV2;

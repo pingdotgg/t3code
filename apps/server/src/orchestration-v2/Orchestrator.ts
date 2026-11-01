@@ -7550,14 +7550,22 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             commandType: command.type,
             cause,
           });
+        const unrestrictedGrok =
+          targetAdapter.driver === "grok" &&
+          parentProjection.thread.runtimeMode === "full-access" &&
+          command.runtimeMode === "full-access" &&
+          (delegatedExecution === undefined ||
+            (delegatedExecution.sandboxPolicy.type === "dangerFullAccess" &&
+              delegatedExecution.providerInstanceId === command.modelSelection.instanceId));
         if (
-          targetAdapter.driver !== "codex" ||
-          command.modelSelection.instanceId !== parentRun.providerInstanceId ||
+          (!unrestrictedGrok &&
+            (targetAdapter.driver !== "codex" ||
+              command.modelSelection.instanceId !== parentRun.providerInstanceId)) ||
           command.workspaceStrategy !== undefined ||
           command.runtimeMode !== parentProjection.thread.runtimeMode
         ) {
           return yield* refuse(
-            "Bounded delegation requires the same Codex provider, runtime mode and shared directory.",
+            "Bounded delegation requires the same Codex provider, or Grok with unrestricted parent access, unchanged runtime mode and shared directory.",
           );
         }
         const turn = parentProjection.providerTurns.find(
@@ -7573,12 +7581,21 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           .pipe(Effect.mapError(() => refuse("Parent session unavailable.")));
         if (Option.isNone(session) || session.value.getDelegatedExecution === undefined)
           return yield* refuse("Provider cannot capture effective parent limits.");
-        const captured = yield* session.value.getDelegatedExecution(parentRun.id);
+        const captured = yield* session.value.getDelegatedExecution(
+          parentRun.id,
+          targetAdapter.driver,
+        );
         if (captured === undefined)
           return yield* refuse(
             "Effective Codex permissions are unavailable or cannot be reproduced. Custom profiles and external/full-access sandboxes are unsupported. No child was dispatched.",
           );
-        delegatedExecution = captured;
+        if (unrestrictedGrok && captured.sandboxPolicy.type !== "dangerFullAccess")
+          return yield* refuse(
+            "Grok noninteractive delegation requires verified unrestricted parent access.",
+          );
+        delegatedExecution = unrestrictedGrok
+          ? { ...captured, providerInstanceId: command.modelSelection.instanceId }
+          : captured;
       }
 
       const now = command.createdAt ?? (yield* DateTime.now);

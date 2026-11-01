@@ -115,7 +115,9 @@ export const layerFromProjectStore: Layer.Layer<
           ));
         if (
           input.thread.delegatedExecution !== undefined &&
-          (snapshot?.driver !== "codex" ||
+          ((input.thread.delegatedExecution.sandboxPolicy.type === "dangerFullAccess"
+            ? snapshot?.driver !== "grok" || input.thread.runtimeMode !== "full-access"
+            : snapshot?.driver !== "codex") ||
             input.modelSelection.instanceId !==
               input.thread.delegatedExecution.providerInstanceId ||
             cwd !== input.thread.delegatedExecution.cwd)

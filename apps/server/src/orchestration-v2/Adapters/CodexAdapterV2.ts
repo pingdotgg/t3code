@@ -750,6 +750,12 @@ export const buildCodexTurnStartParams = Effect.fn("CodexAdapterV2.buildCodexTur
     readonly omitServiceTier?: boolean;
     readonly appContext?: ProviderAdapter.ProviderAdapterV2TurnInput["appContext"];
   }) {
+    if (input.runtimePolicy.delegatedExecution?.sandboxPolicy.type === "dangerFullAccess") {
+      return yield* new ProviderAdapter.ProviderAdapterProtocolError({
+        driver: CODEX_PROVIDER,
+        detail: "Unrestricted delegated execution is supported only by Grok.",
+      });
+    }
     const runtimeModeDefaults = codexRuntimeModeTurnDefaults(input.runtimePolicy.runtimeMode);
     const approvalPolicy =
       input.runtimePolicy.delegatedExecution !== undefined
@@ -1680,6 +1686,12 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
     }),
     openSession: Effect.fn("CodexAdapterV2.openSession")(
       function* (input) {
+        if (input.runtimePolicy.delegatedExecution?.sandboxPolicy.type === "dangerFullAccess")
+          return yield* new ProviderAdapter.ProviderAdapterOpenSessionError({
+            driver: CODEX_PROVIDER,
+            providerSessionId: input.providerSessionId,
+            cause: "Unrestricted delegated execution is supported only by Grok.",
+          });
         const scope = yield* Scope.Scope;
         const resolvedRuntime =
           adapterOptions.resolveRuntime === undefined
@@ -6988,7 +7000,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
           providerSession: session,
           events: Stream.fromEffectRepeat(Queue.take(events)),
           getDelegatedExecution: Effect.fn("CodexAdapterV2.getDelegatedExecution")(
-            function* (runId) {
+            function* (runId, targetDriver) {
               const context = [...(yield* Ref.get(activeTurns)).values()].find(
                 (turn) => turn.input.runId === runId && turn.subagent === null,
               );
@@ -6997,6 +7009,9 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                 adapterOptions.instanceId,
                 effectiveSettings.get(context.providerThread.nativeThreadRef?.nativeId ?? ""),
                 path.isAbsolute,
+                context.input.runtimePolicy.runtimeMode === "full-access"
+                  ? targetDriver
+                  : undefined,
               );
               const ceiling = context.input.runtimePolicy.delegatedExecution;
               return captured !== undefined &&

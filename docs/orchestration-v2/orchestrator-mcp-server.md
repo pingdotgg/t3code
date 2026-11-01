@@ -254,14 +254,25 @@ omits it for a provider that offers all of them. When the target lists
 inherited mode steps down to the broadest mode the target offers.
 
 `approvalPolicy: "never"` disables tool approval prompts while retaining the
-parent's effective filesystem and network limits. It currently supports Codex
+parent's effective filesystem and network limits. Codex supports this
 on the same provider instance, runtime mode, and shared working directory.
 T3 captures the active native policy and persists it on the child. Follow-ups
 and grandchildren inherit that ceiling even when the option is omitted.
 `orchestrator_capabilities` lists `delegatedApprovalPolicies` per provider.
 
+Grok also supports `approvalPolicy: "never"` from a verified unrestricted Codex
+parent, or an already authorized Grok child. The parent must use Full access,
+with an active native `dangerFullAccess` policy and no custom permission profile.
+T3 records unrestricted access on the child and preserves its Grok instance and
+working directory for follow-ups and grandchildren. This mode adds no filesystem
+or network confinement. Restricted Codex parents cannot delegate to Grok this way.
+Grok retains its native deny rules. Residual tool approvals are rejected, while
+clarification questions still wait. Native Grok subagents are disabled; use T3
+`delegate_task` for descendants.
+
 Unsupported providers, remote delegation, worktree relocation, custom permission
-profiles, and full-access or external sandboxes fail before child dispatch.
+profiles, and external sandboxes fail before child dispatch. Codex full-access
+delegation remains unsupported.
 T3 never substitutes a broader policy. Approval callbacks are denied immediately,
 including unexpected legacy callbacks. A task clarification question still waits
 for an operator answer. T3 never supplies an answer automatically.

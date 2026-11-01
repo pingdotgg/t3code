@@ -1630,7 +1630,7 @@ describe("OrchestratorMcpService provider resolution", () => {
     );
   });
 
-  it.effect.each(["explicit", "inherited"] as const)(
+  it.effect.each(["explicit", "inherited", "grok"] as const)(
     "dispatches bounded %s approval policy to the caller's explicit local environment",
     (policySource) =>
       Effect.gen(function* () {
@@ -1661,7 +1661,7 @@ describe("OrchestratorMcpService provider resolution", () => {
           thread: {
             ...original.thread,
             providerInstanceId: codexInstanceId,
-            runtimeMode: "auto" as const,
+            runtimeMode: policySource === "grok" ? ("full-access" as const) : ("auto" as const),
             ...(policySource === "inherited"
               ? {
                   delegatedExecution: {
@@ -1699,8 +1699,13 @@ describe("OrchestratorMcpService provider resolution", () => {
               driver: ProviderDriverKind.make("codex"),
               model: "gpt-5.4",
             }),
+            providerSnapshot({
+              instanceId: ProviderInstanceId.make("grok"),
+              driver: ProviderDriverKind.make("grok"),
+              model: "grok-test",
+            }),
           ]),
-          adapterRegistryLayer([codexInstanceId]),
+          adapterRegistryLayer([codexInstanceId, ProviderInstanceId.make("grok")]),
           ServerSettings.layerTest(),
           Layer.mock(ProjectService.ProjectService)({}),
           Layer.mock(SecretRequests.SecretRequests)({}),
@@ -1711,9 +1716,14 @@ describe("OrchestratorMcpService provider resolution", () => {
           const service = yield* OrchestratorMcpService.OrchestratorMcpService;
           const result = yield* service.delegateTask(scope, {
             task: "Bounded local test",
-            target: { environmentId: scope.environmentId },
+            target: {
+              environmentId: scope.environmentId,
+              ...(policySource === "grok"
+                ? { providerInstanceId: ProviderInstanceId.make("grok"), model: "grok-test" }
+                : {}),
+            },
             mode: "async",
-            ...(policySource === "explicit" ? { approvalPolicy: "never" as const } : {}),
+            ...(policySource !== "inherited" ? { approvalPolicy: "never" as const } : {}),
           });
           assert.equal(result.status, "running");
           const commands = yield* Ref.get(dispatched);
@@ -1736,6 +1746,7 @@ describe("OrchestratorMcpService provider resolution", () => {
           ...original,
           thread: {
             ...original.thread,
+            ...(kind === "provider" ? { runtimeMode: "auto" as const } : {}),
             ...(kind === "inherited-worktree"
               ? {
                   delegatedExecution: {

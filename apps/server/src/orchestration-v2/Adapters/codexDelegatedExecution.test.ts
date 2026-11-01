@@ -7,7 +7,7 @@ import { captureDelegatedExecution, withinDelegatedExecution } from "./codexDele
 import { buildCodexTurnStartParams } from "./CodexAdapterV2.ts";
 
 const providerInstanceId = ProviderInstanceId.make("codex");
-const ceiling: DelegatedExecution = {
+const ceiling = {
   providerInstanceId,
   cwd: "/workspace",
   sandboxPolicy: {
@@ -17,7 +17,7 @@ const ceiling: DelegatedExecution = {
     excludeSlashTmp: true,
     excludeTmpdirEnvVar: true,
   },
-};
+} satisfies DelegatedExecution;
 
 it.effect("captures exact legacy limits and refuses policies it cannot reproduce", () =>
   Effect.gen(function* () {
@@ -31,6 +31,33 @@ it.effect("captures exact legacy limits and refuses policies it cannot reproduce
     assert.deepEqual(capture(ceiling.sandboxPolicy), ceiling);
     assert.isUndefined(capture({ type: "externalSandbox" }));
     assert.isUndefined(capture({ type: "dangerFullAccess" }));
+    const full = {
+      cwd: "/workspace",
+      sandboxPolicy: { type: "dangerFullAccess" },
+      activePermissionProfile: null,
+    };
+    assert.deepEqual(captureDelegatedExecution(providerInstanceId, full, path.isAbsolute, "grok"), {
+      providerInstanceId,
+      cwd: "/workspace",
+      sandboxPolicy: { type: "dangerFullAccess", networkAccess: true },
+    });
+    assert.isUndefined(
+      captureDelegatedExecution(
+        providerInstanceId,
+        { ...full, activePermissionProfile: { id: "custom" } },
+        path.isAbsolute,
+        "grok",
+      ),
+    );
+    assert.isUndefined(
+      captureDelegatedExecution(
+        providerInstanceId,
+        { ...full, sandboxPolicy: { type: "externalSandbox" } },
+        path.isAbsolute,
+        "grok",
+      ),
+    );
+
     assert.isUndefined(capture(ceiling.sandboxPolicy, { id: "custom" }));
     assert.isUndefined(capture({ ...ceiling.sandboxPolicy, writableRoots: ["relative"] }));
     assert.isUndefined(capture({ type: "readOnly", networkAccess: true }));

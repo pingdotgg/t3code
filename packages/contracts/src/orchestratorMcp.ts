@@ -169,7 +169,7 @@ export const OrchestratorMcpDelegateTaskInput = Schema.Struct({
   approvalPolicy: Schema.optional(
     Schema.Literals(["inherit", "never"]).annotate({
       description:
-        "Never asks for tool approval. Codex only, same provider and shared directory. Inherits effective access limits; unsupported policies fail before dispatch. Task questions still require an answer.",
+        "Never waits for tool approval. Codex preserves effective bounds in the same provider and directory. Grok requires verified unrestricted parent access and the shared directory; it adds no filesystem or network confinement. Unsupported policies fail before dispatch. Task questions still require an answer.",
     }),
   ),
   task: OrchestratorMcpPrompt,

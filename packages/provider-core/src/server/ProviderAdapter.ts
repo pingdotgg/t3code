@@ -567,7 +567,10 @@ export type ProviderAdapterV2SubagentOutcome = {
 };
 
 export interface ProviderAdapterV2SessionRuntime {
-  readonly getDelegatedExecution?: (runId: RunId) => Effect.Effect<DelegatedExecution | undefined>;
+  readonly getDelegatedExecution?: (
+    runId: RunId,
+    targetDriver?: ProviderDriverKind,
+  ) => Effect.Effect<DelegatedExecution | undefined>;
   readonly instanceId: ProviderInstanceId;
   readonly driver: ProviderDriverKind;
   readonly providerSessionId: ProviderSessionId;

@@ -2285,7 +2285,7 @@ const make = Effect.gen(function* () {
               ? {}
               : { runtimeModes: [...provider.supportedRuntimeModes] }),
             delegatedApprovalPolicies:
-              provider.driver === "codex"
+              provider.driver === "codex" || provider.driver === "grok"
                 ? (["inherit", "never"] as const)
                 : (["inherit"] as const),
             canRunChildTask: constraints.length === 0,
@@ -2382,17 +2382,27 @@ const make = Effect.gen(function* () {
         parent.thread.interactionMode,
         input.interactionMode,
       );
+      const targetDriver = providers.find(
+        (provider) => provider.instanceId === target.modelSelection.instanceId,
+      )?.driver;
+      const unrestrictedGrok =
+        targetDriver === "grok" &&
+        parent.thread.runtimeMode === "full-access" &&
+        runtimeMode === "full-access" &&
+        (parentCeiling === undefined ||
+          (parentCeiling.sandboxPolicy.type === "dangerFullAccess" &&
+            target.modelSelection.instanceId === parentCeiling.providerInstanceId));
       if (
         bounded &&
         (input.isolation === "worktree" ||
-          target.modelSelection.instanceId !== parent.thread.providerInstanceId ||
-          providers.find((provider) => provider.instanceId === target.modelSelection.instanceId)
-            ?.driver !== "codex" ||
+          (!unrestrictedGrok &&
+            (target.modelSelection.instanceId !== parent.thread.providerInstanceId ||
+              targetDriver !== "codex")) ||
           runtimeMode !== parent.thread.runtimeMode)
       ) {
         return yield* failure(
           "invalid_request",
-          "Bounded delegation requires Codex, the same provider instance, runtime mode and shared directory. No child was dispatched.",
+          "Bounded delegation requires the same Codex provider, or Grok with unrestricted parent access, unchanged runtime mode and shared directory. No child was dispatched.",
         );
       }
       let workspaceStrategy: OrchestrationV2ThreadLaunchWorkspaceStrategy | undefined;
