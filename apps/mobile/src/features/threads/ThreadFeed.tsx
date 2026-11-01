@@ -1616,6 +1616,8 @@ function renderFeedEntry(
     readonly userBubbleMaxWidth: number;
     readonly markdownContentWidth: number;
     readonly contentWidth: number;
+    readonly htmlRenderContentHeights: Readonly<Record<string, number>>;
+    readonly onHtmlRenderContentHeight: (attachmentId: string, height: number) => void;
     readonly threadTitle: string;
     readonly workflowOpening: WorkflowOpening | null;
     readonly userMessageGrouping: GroupedThreadFeedRow["userMessageGrouping"];
@@ -1676,6 +1678,10 @@ function renderFeedEntry(
         threadId={props.threadId}
         render={entry.render}
         frameWidth={props.contentWidth}
+        contentHeight={props.htmlRenderContentHeights[entry.render.attachmentId]}
+        onContentHeight={(height) =>
+          props.onHtmlRenderContentHeight(entry.render.attachmentId, height)
+        }
         iconColor={iconSubtleColor}
       />
     );
@@ -2601,6 +2607,13 @@ export const ThreadFeed = memo(function ThreadFeed({
     expandedTurnIds: new Set(),
   });
   const { copiedRowId, expandedWorkGroups, expandedWorkRows, expandedTurnIds } = interactionState;
+  const [htmlRenderContentHeights, setHtmlRenderContentHeights] = useState<
+    Readonly<Record<string, number>>
+  >({});
+  const onHtmlRenderContentHeight = (attachmentId: string, height: number) =>
+    setHtmlRenderContentHeights((current) =>
+      current[attachmentId] === height ? current : { ...current, [attachmentId]: height },
+    );
   const markdownLinkRequest = useRef<AbortController | null>(null);
   const onInlinePlaybackStart = () => {
     markdownLinkRequest.current?.abort();
@@ -3078,6 +3091,7 @@ export const ThreadFeed = memo(function ThreadFeed({
     userBubbleColor,
     viewportWidth,
     contentWidth,
+    htmlRenderContentHeights,
     skills: props.skills,
     workflowOpening,
   };
@@ -3448,7 +3462,13 @@ export const ThreadFeed = memo(function ThreadFeed({
   const getFixedItemSize = (entry: ThreadFeedRow) => {
     if (entry.type === "guest-pending") return undefined;
     if (entry.type === "html-render") {
-      return htmlRenderRowHeight(htmlRenderFrameHeight(entry.render, contentWidth));
+      return htmlRenderRowHeight(
+        htmlRenderFrameHeight(
+          entry.render,
+          contentWidth,
+          htmlRenderContentHeights[entry.render.attachmentId],
+        ),
+      );
     }
     if (workRowSizing.fixedRowHeight === undefined || entry.checkpointSummary) {
       return undefined;
@@ -3488,18 +3508,22 @@ export const ThreadFeed = memo(function ThreadFeed({
   // re-caches old sizes.
   const { textSizeKey } = workRowSizing;
   const hasHtmlRenders = presentedFeed.some((entry) => entry.type === "html-render");
-  const previousRowGeometry = useRef({ textSizeKey, contentWidth });
+  const previousRowGeometry = useRef({ textSizeKey, contentWidth, htmlRenderContentHeights });
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- clears LegendList size caches and starts a reflow after the commit that brings new row geometry
   useLayoutEffect(() => {
     const previous = previousRowGeometry.current;
-    if (previous.textSizeKey === textSizeKey && previous.contentWidth === contentWidth) return;
-    previousRowGeometry.current = { textSizeKey, contentWidth };
+    previousRowGeometry.current = { textSizeKey, contentWidth, htmlRenderContentHeights };
+    const widthChanged = previous.contentWidth !== contentWidth;
     // Rows re-rendered at this width are measured in the next commit, after this effect.
-    if (previous.contentWidth !== contentWidth) beginReflow();
-    if (previous.textSizeKey !== textSizeKey || hasHtmlRenders) {
+    if (widthChanged) beginReflow();
+    if (
+      previous.textSizeKey !== textSizeKey ||
+      previous.htmlRenderContentHeights !== htmlRenderContentHeights ||
+      (widthChanged && hasHtmlRenders)
+    ) {
       listRef.current?.clearCaches({ mode: "sizes" });
     }
-  }, [textSizeKey, contentWidth, hasHtmlRenders, beginReflow, listRef]);
+  }, [textSizeKey, contentWidth, htmlRenderContentHeights, hasHtmlRenders, beginReflow, listRef]);
 
   const renderItem = (info: { item: GroupedThreadFeedRow; index: number }) => (
     <Animated.View
@@ -3551,6 +3575,8 @@ export const ThreadFeed = memo(function ThreadFeed({
             userBubbleMaxWidth,
             markdownContentWidth,
             contentWidth,
+            htmlRenderContentHeights,
+            onHtmlRenderContentHeight,
             threadTitle: props.threadTitle,
             skills: props.skills,
             workspaceRoot: props.workspaceRoot,

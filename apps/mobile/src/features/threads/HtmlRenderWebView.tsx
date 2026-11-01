@@ -47,13 +47,14 @@ function postTheme(view: WebView<object> | null, theme: HtmlRenderTheme) {
 
 const OVERFLOW_MESSAGE_TYPE = "t3-html-render-overflow";
 
-const OVERFLOW_SCRIPT = `(function(){var last;function report(){var d=document.documentElement,b=document.body;var x=Math.max(d.scrollWidth,b?b.scrollWidth:0)>window.innerWidth+1,y=Math.max(d.scrollHeight,b?b.scrollHeight:0)>window.innerHeight+1,o=x+","+y;if(o===last)return;last=o;window.ReactNativeWebView.postMessage(JSON.stringify({type:${JSON.stringify(OVERFLOW_MESSAGE_TYPE)},x:x,y:y}));}report();if(window.ResizeObserver){var r=new ResizeObserver(report);r.observe(document.documentElement);if(document.body)r.observe(document.body);}window.addEventListener("resize",report);})();true;`;
+// `h` measures the page like the web bridge so the feed can fit the frame to it.
+const OVERFLOW_SCRIPT = `(function(){var last;function report(){var d=document.documentElement,b=document.body;var x=Math.max(d.scrollWidth,b?b.scrollWidth:0)>window.innerWidth+1,y=Math.max(d.scrollHeight,b?b.scrollHeight:0)>window.innerHeight+1,h=Math.ceil(d.scrollHeight>d.clientHeight?d.scrollHeight:d.getBoundingClientRect().height),o=x+","+y+","+h;if(o===last)return;last=o;window.ReactNativeWebView.postMessage(JSON.stringify({type:${JSON.stringify(OVERFLOW_MESSAGE_TYPE)},x:x,y:y,h:h}));}report();if(window.ResizeObserver){var r=new ResizeObserver(report);r.observe(document.documentElement);if(document.body)r.observe(document.body);}window.addEventListener("resize",report);window.addEventListener("load",report);})();true;`;
 
 type Overflow = { readonly x: boolean; readonly y: boolean };
 
 const NO_OVERFLOW: Overflow = { x: false, y: false };
 
-function readOverflowMessage(data: string): Overflow | null {
+function readOverflowMessage(data: string): (Overflow & { readonly height: number }) | null {
   try {
     const message: unknown = JSON.parse(data);
     return typeof message === "object" &&
@@ -63,8 +64,12 @@ function readOverflowMessage(data: string): Overflow | null {
       "x" in message &&
       typeof message.x === "boolean" &&
       "y" in message &&
-      typeof message.y === "boolean"
-      ? { x: message.x, y: message.y }
+      typeof message.y === "boolean" &&
+      "h" in message &&
+      typeof message.h === "number" &&
+      Number.isFinite(message.h) &&
+      message.h > 0
+      ? { x: message.x, y: message.y, height: message.h }
       : null;
   } catch {
     return null;
@@ -78,6 +83,7 @@ export function HtmlRenderWebView(props: {
   readonly title: string;
   readonly nested: boolean;
   readonly onLoadError?: () => void;
+  readonly onContentHeight?: (height: number) => void;
 }) {
   const theme = useHtmlRenderTheme();
   const [initialTheme] = useState(theme);
@@ -155,7 +161,11 @@ export function HtmlRenderWebView(props: {
               injectedJavaScript: OVERFLOW_SCRIPT,
               onMessage: (event: WebViewMessageEvent) => {
                 const next = readOverflowMessage(event.nativeEvent.data);
-                if (next !== null) setOverflow(next);
+                if (next === null) return;
+                setOverflow((current) =>
+                  current.x === next.x && current.y === next.y ? current : next,
+                );
+                props.onContentHeight?.(next.height);
               },
             }
           : {})}
@@ -174,11 +184,13 @@ export function ThreadHtmlRender(props: {
   readonly threadId: ThreadId;
   readonly render: HtmlRenderReference;
   readonly frameWidth: number;
+  readonly contentHeight: number | undefined;
+  readonly onContentHeight: (height: number) => void;
   readonly iconColor: ColorValue;
 }) {
   const navigation = useNavigation();
   const { attachmentId, title } = props.render;
-  const height = htmlRenderFrameHeight(props.render, props.frameWidth);
+  const height = htmlRenderFrameHeight(props.render, props.frameWidth, props.contentHeight);
   const fileName = htmlRenderFileName(title);
   const resource = {
     _tag: "attachment" as const,
@@ -218,6 +230,7 @@ export function ThreadHtmlRender(props: {
             title={title}
             nested
             onLoadError={handleLoadError}
+            onContentHeight={props.onContentHeight}
           />
         ) : failed || asset._tag === "Failure" ? (
           <Pressable
