@@ -3,10 +3,15 @@ import { expect, it } from "@effect/vitest";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as ConfigProvider from "effect/ConfigProvider";
 import * as Duration from "effect/Duration";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
+import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Path from "effect/Path";
+import * as TestClock from "effect/testing/TestClock";
 import { HttpClient } from "effect/http";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
@@ -87,6 +92,48 @@ it.each([
 const macInstallerPath =
   "/opt/homebrew/bin:/Users/theo/.npm-global/bin:/Users/theo/.nvm/versions/node/v22.16.0/bin:/usr/bin:/bin";
 
+const output = {
+  stdout: "",
+  stderr: "",
+  timedOut: false,
+  stdoutTruncated: false,
+  stderrTruncated: false,
+  stdoutInvalidUtf8: false,
+  stderrInvalidUtf8: false,
+};
+
+// launchctl on macOS 15: `bootout --wait` is a usage error (64) that leaves the job loaded,
+// bootout of an unloaded job fails with ESRCH (3), and bootstrap over a loaded label is EIO (5).
+// A booted-out job stays loaded for `exitPrints` more prints while it drains through ExitTimeOut,
+// and bootout then returns EINPROGRESS (36).
+interface LaunchdJob {
+  loaded: boolean;
+  exitPrints?: number;
+  exiting?: number | undefined;
+}
+const launchctl = (job: LaunchdJob, args: ReadonlyArray<string>) => {
+  if (args.includes("--wait")) return 64;
+  switch (args[0]) {
+    case "bootout":
+      if (!job.loaded) return 3;
+      job.exiting = job.exitPrints ?? 0;
+      job.loaded = job.exiting > 0;
+      return job.loaded ? 36 : 0;
+    case "print":
+      if (job.exiting !== undefined && --job.exiting < 0) {
+        job.loaded = false;
+        job.exiting = undefined;
+      }
+      return job.loaded ? 0 : 113;
+    case "bootstrap":
+      if (job.loaded) return 5;
+      job.loaded = true;
+      return 0;
+    default:
+      return 0;
+  }
+};
+
 const makeHarness = Effect.fn("test.make_boot_service_harness")(function* (
   platform: NodeJS.Platform = "linux",
   installerPath = macInstallerPath,
@@ -110,11 +157,14 @@ const makeHarness = Effect.fn("test.make_boot_service_harness")(function* (
     linger: string;
     enabled: boolean;
     active: boolean;
+    launchd: LaunchdJob | undefined;
+    onCommand?: (command: string) => Effect.Effect<void, ProcessRunner.ProcessRunError>;
   } = {
     failCommand: undefined,
     linger: "yes",
     enabled: true,
     active: true,
+    launchd: platform === "darwin" ? { loaded: false } : undefined,
   };
   const runner = ProcessRunner.ProcessRunner.of({
     run: Effect.fn("test.run_boot_service_command")(function* (
@@ -124,6 +174,7 @@ const makeHarness = Effect.fn("test.make_boot_service_harness")(function* (
       commands.push(command);
       invocations.push(input);
       timeouts.set(command, input.timeout);
+      if (control.onCommand !== undefined) yield* control.onCommand(command);
       const failed = command === control.failCommand;
       if (!failed && command === "loginctl enable-linger --no-ask-password 501")
         control.linger = "yes";
@@ -134,9 +185,15 @@ const makeHarness = Effect.fn("test.make_boot_service_harness")(function* (
       if (
         control.stateAfterStop !== undefined &&
         (command === "systemctl --user stop t3code.service" ||
-          command.startsWith("launchctl bootout --wait "))
+          command.startsWith("launchctl bootout "))
       ) {
         yield* fs.writeFileString(statePath, control.stateAfterStop).pipe(Effect.orDie);
+      }
+      if (control.launchd !== undefined && input.command === "launchctl") {
+        return {
+          ...output,
+          code: ChildProcessSpawner.ExitCode(failed ? 1 : launchctl(control.launchd, input.args)),
+        };
       }
       return {
         stdout:
@@ -423,7 +480,8 @@ it.layer(NodeServices.layer)("boot service install", (it) => {
           platform === "linux"
             ? ["systemctl --user stop t3code.service", "systemctl --user restart t3code.service"]
             : [
-                "launchctl bootout --wait gui/501/com.t3tools.t3code.service",
+                "launchctl bootout gui/501/com.t3tools.t3code.service",
+                "launchctl print gui/501/com.t3tools.t3code.service",
                 `launchctl bootstrap gui/501 ${plan.unitPath}`,
               ],
         );
@@ -789,7 +847,7 @@ it.layer(NodeServices.layer)("boot service install", (it) => {
       expect((yield* service.status).installed).toBe(false);
       expect(commands.some((command) => command.startsWith("systemctl "))).toBe(false);
       // launchd can take 90s to bootout; the runner's 60s default could let bootstrap race it.
-      expect(timeouts.get("launchctl bootout --wait gui/501/com.t3tools.t3code.service")).toEqual(
+      expect(timeouts.get("launchctl bootout gui/501/com.t3tools.t3code.service")).toEqual(
         Duration.seconds(120),
       );
     }),
@@ -874,10 +932,103 @@ it.layer(NodeServices.layer)("boot service install", (it) => {
     Effect.gen(function* () {
       const { service, control } = yield* makeHarness("darwin");
       yield* service.install();
-      control.failCommand = "launchctl bootout --wait gui/501/com.t3tools.t3code.service";
+      control.launchd = { loaded: false };
 
       yield* service.install();
       expect((yield* service.status).current).toBe(true);
+    }),
+  );
+
+  // regression: #11995 macOS 15 launchctl rejects `bootout --wait` without stopping the job
+  it.effect("reinstalls over a loaded launch agent when launchctl rejects bootout --wait", () =>
+    Effect.gen(function* () {
+      const { service, control } = yield* makeHarness("darwin");
+      yield* service.install();
+
+      expect(yield* service.install().pipe(Effect.flip, Effect.option)).toEqual(Option.none());
+      expect(control.launchd?.loaded).toBe(true);
+    }),
+  );
+
+  it.effect("uninstall unloads the launch agent when launchctl rejects bootout --wait", () =>
+    Effect.gen(function* () {
+      const { service, control } = yield* makeHarness("darwin");
+      yield* service.install();
+
+      expect(yield* service.uninstall).toBe(true);
+      expect(control.launchd?.loaded).toBe(false);
+    }),
+  );
+
+  it.effect("waits for a booted-out launch agent to exit before bootstrapping it again", () =>
+    Effect.gen(function* () {
+      const { service, control, commands } = yield* makeHarness("darwin");
+      yield* service.install();
+      control.launchd = { loaded: true, exitPrints: 2 };
+      // The first command after bootout is the wait's print, or a premature bootstrap.
+      const afterBootout = yield* Deferred.make<void>();
+      control.onCommand = (command) =>
+        /^launchctl (print|bootstrap) /.test(command)
+          ? Deferred.succeed(afterBootout, undefined)
+          : Effect.void;
+      commands.length = 0;
+
+      const reinstall = yield* service.install().pipe(Effect.forkChild);
+      yield* Deferred.await(afterBootout);
+      yield* TestClock.adjust("1 second");
+      yield* Fiber.join(reinstall);
+
+      expect(control.launchd.loaded).toBe(true);
+      expect(commands.filter((command) => command.startsWith("launchctl print "))).toHaveLength(3);
+    }),
+  );
+
+  it.effect("keeps waiting for a draining launch agent when a print times out", () =>
+    Effect.gen(function* () {
+      const { service, control } = yield* makeHarness("darwin");
+      yield* service.install();
+      control.launchd = { loaded: true, exitPrints: 1 };
+      const afterBootout = yield* Deferred.make<void>();
+      // The first print times out; a premature bootstrap also releases the clock.
+      control.onCommand = (command) =>
+        Effect.gen(function* () {
+          if (!/^launchctl (print|bootstrap) /.test(command)) return;
+          const first = yield* Deferred.succeed(afterBootout, undefined);
+          if (first && command.startsWith("launchctl print ")) {
+            return yield* new ProcessRunner.ProcessTimeoutError({
+              command: "launchctl",
+              argumentCount: 2,
+              timeoutMs: 5000,
+            });
+          }
+        });
+
+      const reinstall = yield* service.install().pipe(Effect.forkChild);
+      yield* Deferred.await(afterBootout);
+      yield* TestClock.adjust("1 second");
+      yield* Fiber.join(reinstall);
+
+      expect(control.launchd.loaded).toBe(true);
+    }),
+  );
+
+  it.effect("keeps the launch agent installed when it is still loaded at the stop deadline", () =>
+    Effect.gen(function* () {
+      const { service, control, fs } = yield* makeHarness("darwin");
+      const plan = yield* service.install();
+      control.launchd = { loaded: true, exitPrints: Number.POSITIVE_INFINITY };
+      const polling = yield* Deferred.make<void>();
+      control.onCommand = (command) =>
+        command.startsWith("launchctl print ")
+          ? Deferred.succeed(polling, undefined).pipe(Effect.asVoid)
+          : Effect.void;
+
+      const uninstall = yield* service.uninstall.pipe(Effect.exit, Effect.forkChild);
+      yield* Deferred.await(polling);
+      yield* TestClock.adjust("121 seconds");
+
+      expect(Exit.isFailure(yield* Fiber.join(uninstall))).toBe(true);
+      expect(yield* fs.exists(plan.unitPath)).toBe(true);
     }),
   );
 
