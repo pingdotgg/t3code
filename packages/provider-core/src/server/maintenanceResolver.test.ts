@@ -926,10 +926,10 @@ it.layer(
     }),
   );
 
-  it.effect.each(["wrapper", "symlink"])(
+  it.effect.each(["wrapper", "symlink", "Homebrew keg"])(
     "keeps a mise-owned %s in a native install location manual-only",
     (launcher, { skip }) => {
-      if (windowsHost || (launcher === "symlink" && !symlinksSupported)) skip();
+      if (windowsHost || (launcher !== "wrapper" && !symlinksSupported)) skip();
       return Effect.gen(function* () {
         const tempDir = yield* makeTempDir("t3-native-mise");
         const nativePath = NodePath.join(tempDir, ".local", "bin", "native-package-tool");
@@ -940,14 +940,17 @@ it.layer(
             '#!/bin/sh\nexec mise x native-package-tool -- native-package-tool "$@"\n',
           );
         } else {
-          const target = NodePath.join(
-            tempDir,
-            "mise",
-            "installs",
-            "native-package-tool",
-            "1.0.0",
-            "native-package-tool",
-          );
+          const target =
+            launcher === "symlink"
+              ? NodePath.join(
+                  tempDir,
+                  "mise",
+                  "installs",
+                  "native-package-tool",
+                  "1.0.0",
+                  "native-package-tool",
+                )
+              : NodePath.join(tempDir, "Cellar", "mise", "2026.9.1", "bin", "mise");
           writeExecutable(target);
           NodeFS.mkdirSync(NodePath.dirname(nativePath), { recursive: true });
           NodeFS.symlinkSync(target, nativePath);
