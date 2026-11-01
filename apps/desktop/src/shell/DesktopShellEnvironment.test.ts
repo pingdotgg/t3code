@@ -312,6 +312,10 @@ describe("DesktopShellEnvironment", () => {
           environment: {
             PATH: "/cached/bin",
             __MISE_DIFF: "cached-mise",
+            JAVA_HOME: "/cached/java",
+            NODE_EXTRA_CA_CERTS: "/cached/ca.pem",
+            SSL_CERT_FILE: "/cached/cert.pem",
+            SSL_CERT_DIR: "/cached/certs",
             SSH_AUTH_SOCK: "/stale.sock",
             NODE_OPTIONS: "--bad",
           },
@@ -321,6 +325,10 @@ describe("DesktopShellEnvironment", () => {
         const env: NodeJS.ProcessEnv = {
           SHELL: "/bin/zsh",
           PATH: "/usr/bin",
+          __MISE_DIFF: "launcher-mise",
+          JAVA_HOME: "/launcher/java",
+          NODE_EXTRA_CA_CERTS: "/launcher/ca.pem",
+          SSL_CERT_FILE: "",
           SSH_AUTH_SOCK: "/current.sock",
         };
         const prepared = yield* runShellEnvironment({
@@ -328,10 +336,25 @@ describe("DesktopShellEnvironment", () => {
           stateDir,
           platform: "darwin",
           handler: () => "",
+          use: (service) =>
+            Effect.gen(function* () {
+              yield* service.installIntoProcess;
+              const replay = yield* Stream.runHead(service.updates);
+              assert.isTrue(Option.isSome(replay));
+              if (Option.isSome(replay)) {
+                assert.equal(replay.value.environment.JAVA_HOME, "/launcher/java");
+                assert.equal(replay.value.environment.NODE_EXTRA_CA_CERTS, "/launcher/ca.pem");
+              }
+              return yield* service.awaitDiscovery;
+            }),
         });
         assert.isFalse(prepared);
         assert.equal(env.PATH, "/cached/bin:/usr/bin");
         assert.equal(env.__MISE_DIFF, "cached-mise");
+        assert.equal(env.JAVA_HOME, "/launcher/java");
+        assert.equal(env.NODE_EXTRA_CA_CERTS, "/launcher/ca.pem");
+        assert.equal(env.SSL_CERT_FILE, "");
+        assert.equal(env.SSL_CERT_DIR, "/cached/certs");
         assert.equal(env.SSH_AUTH_SOCK, "/current.sock");
         assert.isUndefined(env.NODE_OPTIONS);
         assert.equal(yield* fs.readFileString(cachePath), contents);

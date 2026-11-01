@@ -626,6 +626,9 @@ export const make = Effect.gen(function* () {
         const cached = Object.fromEntries(
           CACHED_ENV_NAMES.flatMap((name) => {
             const value = cache.value.environment[name];
+            // mise's metadata must describe the cached PATH entries restored alongside it.
+            if (name !== "PATH" && name !== "__MISE_DIFF" && inherited[name] !== undefined)
+              return [];
             return typeof value === "string" ? [[name, value]] : [];
           }),
         );
