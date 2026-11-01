@@ -2042,17 +2042,20 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
         if (continuation) return;
         yield* Effect.gen(function* () {
           if (compact) {
-            const result = yield* request("session/compact", {}, true, nativeId).pipe(
+            // The turn's terminal reports a declined compaction; only a broken host fails the command.
+            const declined = yield* request("session/compact", {}, true, nativeId).pipe(
               Effect.flatMap((value) => decode(MuseCompactResult, value)),
+              Effect.map((result) =>
+                result.status === "accepted"
+                  ? undefined
+                  : result.status === "noop"
+                    ? (result.reason ?? "Muse has no context to compact.")
+                    : `Muse returned an unsupported compaction status: ${result.status}`,
+              ),
+              Effect.catch((error) => (broken ? Effect.fail(error) : Effect.succeed(error.detail))),
             );
-            if (result.status === "noop")
-              yield* eventPermit.withPermits(1)(
-                finish(turn, "failed", result.reason ?? "Muse has no context to compact."),
-              );
-            else if (result.status !== "accepted")
-              return yield* protocolError(
-                `Muse returned an unsupported compaction status: ${result.status}`,
-              );
+            if (declined !== undefined)
+              yield* eventPermit.withPermits(1)(finish(turn, "failed", declined));
           } else {
             const result = yield* request(
               "turn/start",
@@ -2232,6 +2235,7 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
         interruptTurn: Effect.fn("MuseAdapter.interruptTurn")(
           function* (args) {
             const turn = active;
+            if (!turn && args.requestRuntimeRestart === true) return;
             if (
               !turn ||
               turn.providerTurn.id !== args.providerTurnId ||
