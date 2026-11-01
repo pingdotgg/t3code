@@ -53,6 +53,7 @@ import {
 } from "./adapter.ts";
 import { makePiRpcConnection, type PiRpcRecord } from "./rpc.ts";
 import { loadMcpBridge } from "./mcpBridge.testkit.ts";
+import { PI_T3_TODO_TOOL } from "./mcpExtensionSource.ts";
 import { turnItemOutputText } from "../../../client-runtime/src/work-log/itemDetail.ts";
 
 const layerTest = Layer.mergeAll(
@@ -2467,6 +2468,91 @@ describe("PiAdapterV2", () => {
         subagentItem.type === "turn_item.updated" &&
           subagentItem.turnItem.type === "subagent" &&
           subagentItem.turnItem.childThreadId === null,
+      );
+    }).pipe(Effect.scoped, Effect.provide(layerTest)),
+  );
+
+  it.effect("projects T3 todo tool calls as one evolving todo list per turn", () =>
+    Effect.gen(function* () {
+      const fake = yield* makeFakePi;
+      const { runtime, takeEvent } = yield* openRuntime(fake);
+      const providerThread = yield* runtime.ensureThread({
+        threadId: THREAD_ID,
+        modelSelection: modelSelection("default"),
+        runtimePolicy,
+      });
+      yield* startTurn(runtime, providerThread);
+      yield* fake.takeRequest("prompt");
+      yield* fake.emit({ type: "agent_start" });
+      const bridge = yield* Effect.promise(() => loadMcpBridge({ withoutMcp: true }));
+      const tool = bridge.registeredTool(PI_T3_TODO_TOOL)!;
+      const callTool = Effect.fnUntraced(function* (
+        toolCallId: string,
+        args: Record<string, unknown>,
+      ) {
+        yield* fake.emit({ type: "tool_execution_start", toolCallId, toolName: tool.name, args });
+        const result = yield* Effect.promise(() => tool.execute(toolCallId, args));
+        yield* fake.emit({
+          type: "tool_execution_end",
+          toolCallId,
+          toolName: tool.name,
+          result,
+          isError: false,
+        });
+        const plan = yield* takeEvent((event) => event.type === "plan.updated");
+        const item = yield* takeEvent((event) => event.type === "turn_item.updated");
+        if (plan.type !== "plan.updated" || plan.plan.kind !== "todo_list")
+          return yield* Effect.die("Expected a todo list plan");
+        if (item.type !== "turn_item.updated" || item.turnItem.type !== "todo_list")
+          return yield* Effect.die("Expected a todo list item");
+        return { plan: plan.plan, item: item.turnItem };
+      });
+
+      const first = yield* callTool("todos-1", {
+        explanation: "Starting with the parser",
+        todos: [
+          { id: "parse", text: "Fix the parser", status: "in_progress" },
+          { id: "tests", text: "Run the tests", status: "pending" },
+        ],
+      });
+      assert.equal(first.plan.status, "active");
+      assert.equal(first.plan.explanation, "Starting with the parser");
+      assert.deepEqual(first.plan.steps, [
+        { id: "parse", text: "Fix the parser", status: "running" },
+        { id: "tests", text: "Run the tests", status: "pending" },
+      ]);
+      assert.equal(first.item.planId, first.plan.id);
+      assert.equal(first.item.nodeId, first.plan.nodeId);
+      assert.equal(first.item.status, "completed");
+      assert.deepEqual(first.item.steps, first.plan.steps);
+
+      const second = yield* callTool("todos-2", {
+        todos: [
+          { id: "parse", text: "Fix the parser", status: "completed" },
+          { id: "tests", text: "Run the tests", status: "completed" },
+        ],
+      });
+      assert.equal(second.plan.id, first.plan.id);
+      assert.equal(second.plan.status, "completed");
+      assert.notEqual(second.item.id, first.item.id);
+      assert.isAbove(second.item.ordinal, first.item.ordinal);
+
+      yield* fake.emit({
+        type: "tool_execution_end",
+        toolCallId: "todos-bad",
+        toolName: tool.name,
+        // A tool_result hook can mark a call failed and keep its details.
+        result: {
+          content: [{ type: "text", text: "Blocked by a policy hook." }],
+          details: { steps: [{ id: "a", text: "One", status: "pending" }] },
+        },
+        isError: true,
+      });
+      const failed = yield* takeEvent((event) => event.type === "turn_item.updated");
+      assert.isTrue(
+        failed.type === "turn_item.updated" &&
+          failed.turnItem.type === "dynamic_tool" &&
+          failed.turnItem.status === "failed",
       );
     }).pipe(Effect.scoped, Effect.provide(layerTest)),
   );

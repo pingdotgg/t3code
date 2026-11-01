@@ -24,6 +24,7 @@ interface RegisteredTool {
       readonly mimeType?: string;
     }>;
     readonly structuredContent?: unknown;
+    readonly details?: unknown;
     readonly isError?: boolean;
   }>;
 }
@@ -35,6 +36,7 @@ type AgentStartHook = (
   },
   ctx: {
     model?: { api: string };
+    isProjectTrusted: () => boolean;
     ui: { notify: (message: string, severity: string) => void };
   },
 ) => Promise<{ systemPrompt: string } | undefined>;
@@ -48,10 +50,12 @@ export async function loadMcpBridge(
     readonly allowsTool?: (name: string) => boolean;
     readonly runtimeMode?: string;
     readonly inputSchema?: Record<string, unknown>;
+    /** Launch without T3 MCP credentials, as Pi runs when no MCP session exists. */
+    readonly withoutMcp?: boolean;
   } = {},
 ) {
   const handlers = new Map<string, AgentStartHook>();
-  const tools: RegisteredTool[] = [];
+  const registered: RegisteredTool[] = [];
   const requests: Array<{ readonly method: string; readonly params?: unknown }> = [];
   let activeTools = ["read"];
   let bridgeSourcePath = "/fixture/pi-t3-extension.ts";
@@ -88,8 +92,9 @@ export async function loadMcpBridge(
   await NodeVM.runInNewContext(`${source}\nt3McpExtension(pi)`, {
     process: {
       env: {
-        T3_MCP_URL: "http://fixture.invalid/mcp",
-        T3_MCP_BEARER_TOKEN: "fixture-token",
+        ...(options.withoutMcp
+          ? {}
+          : { T3_MCP_URL: "http://fixture.invalid/mcp", T3_MCP_BEARER_TOKEN: "fixture-token" }),
         T3_PI_MCP_EXTENSION_PATH: "/fixture/pi-t3-extension.ts",
         T3_PI_RUNTIME_MODE: options.runtimeMode,
       },
@@ -124,19 +129,28 @@ export async function loadMcpBridge(
       });
     },
     pi: {
-      on: (name: string, handler: AgentStartHook) => handlers.set(name, handler),
+      // Runs every handler for an event in registration order; only the last result is kept.
+      on: (name: string, handler: AgentStartHook) => {
+        const previous = handlers.get(name);
+        handlers.set(
+          name,
+          previous === undefined
+            ? handler
+            : async (event, ctx) => (await previous(event, ctx), handler(event, ctx)),
+        );
+      },
       registerTool: (tool: RegisteredTool) => {
         if (options.allowsTool && !options.allowsTool(tool.name)) return;
-        const index = tools.findIndex((current) => current.name === tool.name);
-        if (index === -1) tools.push(tool);
-        else tools[index] = tool;
+        const index = registered.findIndex((current) => current.name === tool.name);
+        if (index === -1) registered.push(tool);
+        else registered[index] = tool;
       },
       getActiveTools: () => activeTools,
       setActiveTools: (names: string[]) => {
         activeTools = names.filter((name) => options.allowsTool?.(name) ?? true);
       },
       getAllTools: () => [
-        ...tools.map((tool) => ({ name: tool.name, sourceInfo: { path: bridgeSourcePath } })),
+        ...registered.map((tool) => ({ name: tool.name, sourceInfo: { path: bridgeSourcePath } })),
         ...(options.toolSearchAvailable &&
         !options.toolSearchDisabled &&
         (options.allowsTool?.("tool_search") ?? true)
@@ -154,7 +168,11 @@ export async function loadMcpBridge(
   });
   return {
     handlers,
-    tools,
+    /** Tools bridged from the T3 MCP server. */
+    get tools() {
+      return registered.filter((tool) => tool.name.startsWith("mcp__"));
+    },
+    registeredTool: (name: string) => registered.find((tool) => tool.name === name),
     setBridgeSourcePath: (path: string) => {
       bridgeSourcePath = path;
     },
