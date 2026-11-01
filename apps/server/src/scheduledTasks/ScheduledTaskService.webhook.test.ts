@@ -1199,6 +1199,32 @@ it.effect("start failures release both replay keys and relay claims for redelive
   ),
 );
 
+it.effect("a start failure releases the relay claim when the task row is replaced mid-run", () =>
+  Effect.gen(function* () {
+    const gate = yield* Deferred.make<void>();
+    yield* withService(
+      ({ service, sql, launches }) =>
+        Effect.gen(function* () {
+          const { task } = yield* service.upsert(yield* webhookTaskInput());
+          const request = requestFor(task, { relayDeliveryId: "replaced-mid-run" });
+          const first = yield* waitForSpan(
+            service.triggerWebhook(request),
+            "ScheduledTaskService.runWebhookDelivery",
+          ).pipe(Effect.forkChild);
+          yield* Queue.take(launches);
+          // A same-id recreate while the launch is out: the stored row is no longer this run's.
+          yield* sql`UPDATE scheduled_tasks SET last_run_status = 'never', last_run_at = NULL`;
+          yield* Deferred.succeed(gate, undefined);
+          yield* Fiber.join(first);
+          const retry = yield* service.triggerWebhook(request);
+          assert.equal(retry._tag === "accepted" && retry.outcome, "accepted");
+          yield* Queue.take(launches);
+        }),
+      { gate, failLaunches: { remaining: 1 } },
+    );
+  }),
+);
+
 it.effect("main retention keeps fifty runs and preserves filtered and dedupe buckets", () =>
   withService(({ service, sql, launches }) =>
     Effect.gen(function* () {

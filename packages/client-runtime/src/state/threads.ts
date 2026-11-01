@@ -1023,6 +1023,8 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
                 const elapsedMillis = (yield* Clock.currentTimeMillis) - budgetStartMillis;
                 if (elapsedMillis >= THREAD_PENDING_CREATION_PROBE_BUDGET_MILLIS) {
                   yield* setDeleted();
+                  // A 404 also means "not created yet". Only a delete event may outlive this mount.
+                  if (resumeCache?.owner === owner) resumeCache.snapshot = undefined;
                   return yield* Effect.never;
                 }
                 const delay = Math.min(
