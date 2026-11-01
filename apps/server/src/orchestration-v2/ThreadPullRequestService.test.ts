@@ -302,13 +302,15 @@ describe("ThreadPullRequestServiceV2 reads", () => {
   );
 
   it.effect.each([
-    { state: "closed", sameBranch: false },
-    { state: "merged", sameBranch: false },
-    { state: "closed", sameBranch: true },
-    { state: "merged", sameBranch: true },
+    { state: "closed", sameBranch: false, superseded: false },
+    { state: "merged", sameBranch: false, superseded: false },
+    { state: "closed", sameBranch: true, superseded: false },
+    { state: "merged", sameBranch: true, superseded: false },
+    { state: "closed", sameBranch: true, superseded: true },
+    { state: "merged", sameBranch: true, superseded: true },
   ] as const)(
-    "restores a $state automatic PR only for its own branch (sameBranch=$sameBranch)",
-    ({ state, sameBranch }) =>
+    "restores a $state automatic PR only for its own branch before it advances (sameBranch=$sameBranch, superseded=$superseded)",
+    ({ state, sameBranch, superseded }) =>
       Effect.scoped(
         Effect.gen(function* () {
           const savedReference = {
@@ -359,6 +361,7 @@ describe("ThreadPullRequestServiceV2 reads", () => {
             }),
             Layer.mock(GitManager.GitManager)({
               branchPullRequest: () => Effect.succeed(null),
+              branchSupersededPullRequest: () => Effect.succeed(superseded),
             }),
             Layer.mock(PullRequestService.PullRequestService)({
               summary: () =>
@@ -405,7 +408,7 @@ describe("ThreadPullRequestServiceV2 reads", () => {
             yield* service.drain;
           }).pipe(Effect.provide(dependencies));
 
-          if (sameBranch) {
+          if (sameBranch && !superseded) {
             expect(commands).toEqual([]);
           } else {
             expect(commands).toHaveLength(1);
