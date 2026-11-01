@@ -912,7 +912,7 @@ describe("composer file attachments", () => {
     const result = await pickComposerFiles({ existingCount: 0 });
 
     expect(result.files.map((file) => file.name)).toEqual([name]);
-    const storedName = result.files[0]!.fileUri.split("/").at(-1);
+    const storedName = result.files[0]!.fileUri!.split("/").at(-1);
     expect(storedName).not.toMatch(/[[\]{}<>|^"`\\]/);
   });
 
