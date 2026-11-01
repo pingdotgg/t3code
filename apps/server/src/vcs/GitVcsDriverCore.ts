@@ -1531,17 +1531,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         const path = yield* Path.Path;
         const fetchCwd =
           path.basename(gitCommonDir) === ".git" ? path.dirname(gitCommonDir) : gitCommonDir;
-        return yield* executeGit(
-          "GitVcsDriver.statusDetails.defaultBranch",
-          fetchCwd,
-          ["--git-dir", gitCommonDir, "symbolic-ref", "refs/remotes/origin/HEAD"],
-          { allowNonZeroExit: true },
-        ).pipe(
-          Effect.map((result) => {
-            if (result.exitCode !== 0) return null;
-            return parseDefaultBranchFromRemoteHeadRef(result.stdout, "origin");
-          }),
-        );
+        return yield* resolvePrimaryDefaultBranchName(fetchCwd);
       }),
     {
       capacity: 2_048,
@@ -1728,6 +1718,14 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       detail: "No git remote is configured for this repository.",
     });
   });
+
+  const resolvePrimaryDefaultBranchName = Effect.fn("GitVcsDriver.resolvePrimaryDefaultBranchName")(
+    function* (cwd: string) {
+      const remoteNames = yield* listRemoteNames(cwd);
+      const remoteName = remoteNames.includes("origin") ? "origin" : remoteNames[0];
+      return remoteName === undefined ? null : yield* resolveDefaultBranchName(cwd, remoteName);
+    },
+  );
 
   const resolvePushRemoteName = Effect.fn("resolvePushRemoteName")(function* (
     cwd: string,
@@ -2048,7 +2046,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       );
     }
 
-    const defaultBranch = yield* resolveDefaultBranchName(cwd, "origin");
+    const defaultBranch = yield* resolvePrimaryDefaultBranchName(cwd);
     const isDefaultBranch =
       branch !== null &&
       (branch === defaultBranch ||
@@ -2194,7 +2192,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         ),
         statusCacheKey
           ? Cache.get(defaultBranchCache, statusCacheKey).pipe(Effect.orElseSucceed(() => null))
-          : resolveDefaultBranchName(cwd, "origin").pipe(Effect.orElseSucceed(() => null)),
+          : resolvePrimaryDefaultBranchName(cwd).pipe(Effect.orElseSucceed(() => null)),
         statusCacheKey
           ? Cache.get(originExistsCache, statusCacheKey).pipe(Effect.orElseSucceed(() => false))
           : originRemoteExists(cwd).pipe(Effect.orElseSucceed(() => false)),
