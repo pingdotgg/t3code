@@ -4,9 +4,14 @@ import { render, stubGlobal } from "../../test/render";
 import { HistorySwipeNavigation } from "./HistorySwipeNavigation";
 
 type Scroller = "shadow" | "light" | "none" | "shadow-dialog";
+// Main stamps gesture IPCs with its own performance.now(), whose origin differs from the page's.
+const MAIN_CLOCK_AHEAD = 1_000_000;
+// "late-end": main saw the end this long before its IPC reached the page.
+const LATE_END_DELAY = 50;
 type Step = readonly [
   // "stale": a 1px wheel created before the last end, delivered after its IPC.
-  event: number | "begin" | "end" | "zoom" | "stale",
+  // "fresh": a 1px wheel created after main saw a late end, before its IPC arrived.
+  event: number | "begin" | "end" | "late-end" | "zoom" | "stale" | "fresh",
   after?: number | "remount" | "remove" | "close-dialog",
 ];
 
@@ -75,6 +80,13 @@ describe("HistorySwipeNavigation", () => {
       null,
     ],
     [
+      "a next-gesture wheel created while the previous end IPC was in flight",
+      "shadow",
+      400,
+      [["begin"], [130], ["late-end"], ["fresh", "remove"], ["begin"], [130]],
+      null,
+    ],
+    [
       "a history gesture after zero-delta contact on a scroller",
       "shadow",
       400,
@@ -99,13 +111,14 @@ describe("HistorySwipeNavigation", () => {
     ["swiping left over content without overflow", "none", 0, [[-130]], "back"],
     ["swiping right over content without overflow", "none", 0, [[130]], "forward"],
   ])("%s", async (_name, scroller, scrollLeft, steps, navigates) => {
-    const listeners = { begin: new Set<() => void>(), end: new Set<() => void>() };
+    type Listener = (at: number) => void;
+    const listeners = { begin: new Set<Listener>(), end: new Set<Listener>() };
     using _bridge = stubGlobal("desktopBridge", {
-      onTrackpadScrollBegin: (listener: () => void) => {
+      onTrackpadScrollBegin: (listener: Listener) => {
         listeners.begin.add(listener);
         return () => listeners.begin.delete(listener);
       },
-      onTrackpadScrollEnd: (listener: () => void) => {
+      onTrackpadScrollEnd: (listener: Listener) => {
         listeners.end.add(listener);
         return () => listeners.end.delete(listener);
       },
@@ -115,20 +128,29 @@ describe("HistorySwipeNavigation", () => {
     using forward = vi.spyOn(window.history, "forward").mockImplementation(() => undefined);
     using _canGoBack = vi.spyOn(window.navigation, "canGoBack", "get").mockReturnValue(true);
     using _canGoForward = vi.spyOn(window.navigation, "canGoForward", "get").mockReturnValue(true);
+    let now = 1000;
+    let lateEndAt = 0;
+    using _now = vi.spyOn(performance, "now").mockImplementation(() => now);
     let { viewport, content } = mountPanel(screen.container, scroller, scrollLeft);
 
     for (const [event, after] of [...steps, [0] as const]) {
-      if (event !== "begin" && event !== "end") {
+      now += 10;
+      if (event === "begin" || event === "end") {
+        for (const listener of listeners[event]) listener(now + MAIN_CLOCK_AHEAD);
+      } else if (event === "late-end") {
+        lateEndAt = now - LATE_END_DELAY;
+        for (const listener of listeners.end) listener(lateEndAt + MAIN_CLOCK_AHEAD);
+      } else {
         const wheel = new WheelEvent("wheel", {
-          deltaX: typeof event === "number" ? event : event === "stale" ? 1 : 0,
+          deltaX: typeof event === "number" ? event : event === "zoom" ? 0 : 1,
           ctrlKey: event === "zoom",
           bubbles: true,
           composed: true,
         });
-        if (event === "stale") Object.defineProperty(wheel, "timeStamp", { value: 0 });
+        const timeStamp =
+          event === "stale" ? 0 : event === "fresh" ? lateEndAt + LATE_END_DELAY / 2 : now;
+        Object.defineProperty(wheel, "timeStamp", { value: timeStamp });
         content.dispatchEvent(wheel);
-      } else {
-        for (const listener of listeners[event]) listener();
       }
       if (after === "remount") {
         const replacement = viewport.cloneNode(true) as HTMLDivElement;

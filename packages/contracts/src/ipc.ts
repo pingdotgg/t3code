@@ -1018,8 +1018,9 @@ export interface DesktopBridge {
   getClientPlatform: () => string;
   setNotificationBadge: (badge: { count: number; image: string | null }) => Promise<void>;
   onNotificationBadgeClear: (listener: () => void) => () => void;
-  onTrackpadScrollBegin: (listener: () => void) => () => void;
-  onTrackpadScrollEnd: (listener: () => void) => () => void;
+  /** `at` is the main process's `performance.now()`, whose origin differs from the page's. */
+  onTrackpadScrollBegin: (listener: (at: number) => void) => () => void;
+  onTrackpadScrollEnd: (listener: (at: number) => void) => () => void;
   /**
    * Renderer `window.focus()` cannot raise an Electron window, and on Wayland
    * only the main process can spend a notification click's activation token.
