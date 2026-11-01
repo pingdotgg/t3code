@@ -1068,7 +1068,6 @@ export default function ChatView(props: ChatViewProps) {
   const rightPanelLayout = useClientSettings((settings) => settings.rightPanelLayout);
   const rightPanelColumnsLayout =
     rightPanelLayout === "columns" && !prefersPlanSidebarSheet && !embedded;
-  const [rightPanelRevealRequestId, setRightPanelRevealRequestId] = useState(0);
   const [chatColumnView, setChatColumnView] = useState<ChatColumnView>({
     visible: true,
     unclipped: true,
@@ -2387,7 +2386,6 @@ export default function ChatView(props: ChatViewProps) {
     shortcuts: rightPanelShortcuts,
   } = useRightPanelActions({
     activeThreadRef,
-    onRevealSurface: () => setRightPanelRevealRequestId((value) => value + 1),
     activeProject,
     activeRightPanelSurface,
     activePreviewState,
@@ -3402,7 +3400,7 @@ export default function ChatView(props: ChatViewProps) {
         enabled={rightPanelColumnsLayout}
         surfaces={columnSurfaces}
         activeSurfaceId={activeRightPanelSurface?.id ?? null}
-        revealRequestId={rightPanelRevealRequestId}
+        revealRequest={rightPanelState}
         onActivate={activateRightPanelSurfaceStable}
         onMoveSurface={moveRightPanelSurfaceStable}
         renderSurface={renderRightPanelColumn}

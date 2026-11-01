@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 
 import { cn } from "~/lib/utils";
-import type { RightPanelSurface } from "../rightPanelStore";
+import type { RightPanelSurface, ThreadRightPanelState } from "../rightPanelStore";
 import { SortableTabList } from "./RightPanelTabs";
 
 export interface RightPanelColumnView {
@@ -37,7 +37,7 @@ export function RightPanelColumns(props: {
   surfaces: readonly RightPanelSurface[];
   activeSurfaceId: string | null;
   /** Changes whenever a surface is selected, even the current one, to scroll it into view. */
-  revealRequestId: number;
+  revealRequest: ThreadRightPanelState;
   onActivate: (surface: RightPanelSurface) => void;
   onMoveSurface: (surfaceId: string, toIndex: number) => void;
   renderSurface: (surface: RightPanelSurface, view: RightPanelColumnView) => ReactNode;
@@ -51,7 +51,7 @@ export function RightPanelColumns(props: {
   chatRevealRequestId?: number;
   children: ReactNode;
 }) {
-  const { enabled, surfaces, activeSurfaceId, revealRequestId, onActivate, renderSurface } = props;
+  const { enabled, surfaces, activeSurfaceId, revealRequest, onActivate, renderSurface } = props;
   const stripRef = useRef<HTMLDivElement>(null);
   const chatColumnRef = useRef<HTMLDivElement>(null);
   const columnRefs = useRef(new Map<string, HTMLDivElement>());
@@ -140,8 +140,6 @@ export function RightPanelColumns(props: {
     });
   }, [enabled, chatRevealRequestId]);
 
-  const activeSurface = surfaces.find((surface) => surface.id === activeSurfaceId);
-  const fileRevealRequestId = activeSurface?.kind === "file" ? activeSurface.revealRequestId : 0;
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- scroll the selected surface DOM column into view, including repeated selections
   useEffect(() => {
     if (!enabled || !activeSurfaceId) return;
@@ -155,7 +153,7 @@ export function RightPanelColumns(props: {
     });
     // A repeated selection must reveal the column again even when its id is unchanged.
     // eslint-disable-next-line react/exhaustive-effect-dependencies
-  }, [enabled, activeSurfaceId, revealRequestId, fileRevealRequestId]);
+  }, [enabled, activeSurfaceId, revealRequest]);
 
   // Every column, the chat included, takes half the strip when it shares it,
   // never narrower than a usable column, and later ones scroll past the edge.
