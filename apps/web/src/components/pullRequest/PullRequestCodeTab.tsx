@@ -3,7 +3,7 @@ import {
   sourceControlClients,
 } from "@t3tools/client-runtime/source-control-clients";
 import type { CodeViewItem, DiffLineAnnotation, SelectedLineRange } from "@pierre/diffs";
-import type { CodeViewAnnotationArgs, CodeViewDiffItem } from "@pierre/diffs/react";
+import type { CodeViewAnnotationArgs, CodeViewDiffItem, CodeViewHandle } from "@pierre/diffs/react";
 import type {
   EnvironmentId,
   PullRequestDetailView,
@@ -83,12 +83,17 @@ import { DiffCommentAnnotation } from "../diffs/DiffCommentAnnotation";
 import { DiffFileTree } from "../diffs/DiffFileTree";
 import { FileExplorerPane } from "../files/FileExplorerPane";
 import { useCodeViewFileReveal } from "../diffs/useCodeViewFileReveal";
+import {
+  DiffCursorOutline,
+  DiffSingleFileToggle,
+  DiffViewedToggle,
+} from "../diffs/DiffReviewControls";
+import { useDiffReviewKeyboard } from "../diffs/useDiffReviewKeyboard";
 import { useHideTestFiles } from "../diffs/useHideTestFiles";
 import { diffFileTreeEntries, orderDiffFilesLikeTree } from "../diffs/diffFileTree.logic";
 import { StyledDiffCodeView } from "../diffs/StyledDiffCodeView";
 import { Button } from "../ui/button";
 import { MorphIcon } from "~/components/MorphIcon";
-import { Checkbox } from "../ui/checkbox";
 import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from "../ui/collapsible";
 import {
   DropdownMenu,
@@ -181,6 +186,7 @@ interface FileViewedToggleState {
   readonly isViewed: (path: string) => boolean;
   readonly isStale: (path: string) => boolean;
   readonly setFileViewed: (fileKey: string, viewed: boolean, extendRange: boolean) => void;
+  readonly shortcutLabel: string | null;
 }
 
 // Context updates viewed toggles without invalidating memoized header portals.
@@ -197,40 +203,18 @@ function FileViewedToggle({
 }) {
   const viewedFiles = use(FileViewedToggleContext);
   if (viewedFiles === null || !viewedFiles.enabled) return stat;
-  const viewed = viewedFiles.isViewed(path);
-  const stale = viewedFiles.isStale(path);
   return (
     <span className="flex items-center gap-3">
       {stat}
-      <label
-        data-viewed-toggle=""
-        className="flex w-18 shrink-0 cursor-pointer select-none items-center gap-1.5 text-2xs text-muted-foreground"
-        onClick={(event) => event.stopPropagation()}
-      >
-        <Checkbox
-          aria-label={stale ? "Changed" : "Viewed"}
-          checked={viewed}
-          onCheckedChange={(next, details) =>
-            viewedFiles.setFileViewed(
-              fileKey,
-              next === true,
-              "shiftKey" in details.event && details.event.shiftKey === true,
-            )
-          }
-        />
-        {stale ? (
-          <Tooltip>
-            <TooltipTrigger render={<span className="text-warning-foreground" />}>
-              Changed
-            </TooltipTrigger>
-            <TooltipPopup side="bottom">
-              This file has been pushed to since you marked it viewed.
-            </TooltipPopup>
-          </Tooltip>
-        ) : (
-          <span className="@max-xs:hidden">Viewed</span>
-        )}
-      </label>
+      <DiffViewedToggle
+        filePath={path}
+        viewed={viewedFiles.isViewed(path)}
+        stale={viewedFiles.isStale(path)}
+        shortcutLabel={viewedFiles.shortcutLabel}
+        onViewedChange={(viewed, extendRange) =>
+          viewedFiles.setFileViewed(fileKey, viewed, extendRange)
+        }
+      />
     </span>
   );
 }
@@ -293,6 +277,7 @@ function PullRequestCodeTab({
   useDiffWorkerPool();
   const settings = useClientSettings((settings) => ({
     diffFilesCollapsed: settings.diffFilesCollapsed,
+    diffAutoAdvanceOnViewed: settings.diffAutoAdvanceOnViewed,
     diffIgnoreWhitespace: settings.diffIgnoreWhitespace,
     diffLayout: settings.diffLayout,
     wordWrap: settings.wordWrap,
@@ -312,10 +297,6 @@ function PullRequestCodeTab({
     Schema.Boolean,
   );
   const [hideTestFiles, setHideTestFiles] = useHideTestFiles();
-  const [selectedLines, setSelectedLines] = useState<{
-    id: string;
-    range: SelectedLineRange;
-  } | null>(null);
   const [draft, setDraft] = useState<DraftAnchor | null>(null);
   const [threadPending, setThreadPending] = useState(false);
   const [orphansOpen, setOrphansOpen] = useState(false);
@@ -341,7 +322,6 @@ function PullRequestCodeTab({
     setStateScopeKey(scopeKey);
     setLastViewedFileKey(null);
     setDraft(null);
-    setSelectedLines(null);
     setToggledFiles(new Set());
     setFoldOverride(null);
     setVisibleCommitCount(COMMIT_PAGE_SIZE);
@@ -665,9 +645,66 @@ function PullRequestCodeTab({
       </div>
     );
 
-  const items: CodeViewDiffItem<ReviewAnnotationGroup>[] = annotatedFiles.map(
-    ({ fileKey, path, fileDiff, annotations, annotationsVersion }) => {
-      const collapsed = isFileDiffCollapsed(fileKey, effectiveFoldOverride, toggledFiles);
+  const isCollapsed = (fileKey: string) =>
+    isFileDiffCollapsed(fileKey, effectiveFoldOverride, toggledFiles);
+  const setCollapsed = (fileKey: string, collapsed: boolean) =>
+    setToggledFiles((current) =>
+      toggleFileDiffFoldForViewed(fileKey, collapsed, effectiveFoldOverride, current),
+    );
+  const toggleFile = (fileKey: string) => setCollapsed(fileKey, !isCollapsed(fileKey));
+  const setFileViewed = (fileKey: string, viewed: boolean, extendRange: boolean) => {
+    const range = getFileViewedRange(
+      annotatedFiles,
+      fileKey,
+      extendRange ? lastViewedFileKey : null,
+    );
+    setLastViewedFileKey(fileKey);
+    for (const file of range) setViewed(file.path, viewed);
+    setToggledFiles((current) =>
+      range.reduce(
+        (next, file) =>
+          toggleFileDiffFoldForViewed(file.fileKey, viewed, effectiveFoldOverride, next),
+        current,
+      ),
+    );
+  };
+  const viewerHandleRef = useRef<CodeViewHandle<ReviewAnnotationGroup, undefined> | null>(null);
+  const attachViewer = (handle: CodeViewHandle<ReviewAnnotationGroup, undefined> | null) => {
+    viewerHandleRef.current = handle;
+    codeViewReveal.attach(handle);
+  };
+  const { rootRef: reviewRootRef, ...diffReview } = useDiffReviewKeyboard({
+    scopeKey,
+    files: annotatedFiles.map(({ fileKey, path, fileDiff }) => ({
+      fileKey,
+      filePath: path,
+      fileDiff,
+      rendered: true,
+    })),
+    diffStyle: diffLayout === "split" ? "split" : "unified",
+    canLoadFullFiles: true,
+    autoAdvanceOnViewed: settings.diffAutoAdvanceOnViewed,
+    getViewer: () => viewerHandleRef.current,
+    isCollapsed,
+    setCollapsed,
+    isViewed: (file) => filesViewedEnabled && isFileViewed(file.filePath),
+    setViewed: (file, viewed) => {
+      if (filesViewedEnabled) setFileViewed(file.fileKey, viewed, false);
+    },
+    revealFile: (file) => codeViewReveal.request(file.fileKey),
+    beginComment: (fileKey, range) => {
+      const item = items.find((candidate) => candidate.id === fileKey);
+      if (item) beginComment(range, { item });
+    },
+  });
+
+  const items: CodeViewDiffItem<ReviewAnnotationGroup>[] = annotatedFiles
+    .filter(
+      ({ fileKey }) =>
+        diffReview.singleFileKey === undefined || fileKey === diffReview.singleFileKey,
+    )
+    .map(({ fileKey, path, fileDiff, annotations, annotationsVersion }) => {
+      const collapsed = fileKey !== diffReview.singleFileKey && isCollapsed(fileKey);
       const viewedMark = filesViewedEnabled
         ? `e${isFileViewed(path) ? "v" : ""}${isFileViewedStale(path) ? "s" : ""}`
         : "";
@@ -679,8 +716,7 @@ function PullRequestCodeTab({
         collapsed,
         version: fnv1a32(`${collapsed ? "1" : "0"}:${viewedMark}:${annotationsVersion}`),
       };
-    },
-  );
+    });
   const fileKeys = items.map((item) => item.id);
   const collapsedFileKeys = new Set(
     items.filter((item) => item.collapsed === true).map((item) => item.id),
@@ -708,47 +744,21 @@ function PullRequestCodeTab({
     );
   };
 
-  const toggleFile = (fileKey: string) =>
-    setToggledFiles((current) => {
-      const next = new Set(current);
-      if (next.has(fileKey)) next.delete(fileKey);
-      else next.add(fileKey);
-      return next;
-    });
-
-  const setFileViewed = (fileKey: string, viewed: boolean, extendRange: boolean) => {
-    const range = getFileViewedRange(
-      annotatedFiles,
-      fileKey,
-      extendRange ? lastViewedFileKey : null,
-    );
-    setLastViewedFileKey(fileKey);
-    for (const file of range) setViewed(file.path, viewed);
-    setToggledFiles((current) =>
-      range.reduce(
-        (next, file) =>
-          toggleFileDiffFoldForViewed(file.fileKey, viewed, effectiveFoldOverride, next),
-        current,
-      ),
-    );
-  };
   const fileViewedToggle = {
     enabled: filesViewedEnabled,
     isViewed: isFileViewed,
     isStale: isFileViewedStale,
     setFileViewed,
+    shortcutLabel: diffReview.shortcutLabels.viewed,
   };
 
   const revealFile = (path: string) => {
-    const item = items.find((candidate) => resolveFileDiffPath(candidate.fileDiff) === path);
-    if (item === undefined) return;
+    const file = annotatedFiles.find((candidate) => candidate.path === path);
+    if (file === undefined) return;
+    diffReview.selectFile(path);
     // Unfold only: a second reveal before the unfold renders must not fold the file again.
-    if (item.collapsed === true) {
-      setToggledFiles((current) =>
-        toggleFileDiffFoldForViewed(item.id, false, effectiveFoldOverride, current),
-      );
-    }
-    codeViewReveal.request(item.id);
+    setCollapsed(file.fileKey, false);
+    codeViewReveal.request(file.fileKey);
   };
 
   const toggleAllFiles = () => {
@@ -790,6 +800,11 @@ function PullRequestCodeTab({
     });
   };
 
+  const closeDraft = () => {
+    setDraft(null);
+    diffReview.onDraftClose();
+  };
+
   const finishSelection = (
     anchor: DraftAnchor,
     text: string,
@@ -808,8 +823,7 @@ function PullRequestCodeTab({
             range: anchor.range,
             text,
           });
-    setDraft(null);
-    setSelectedLines(null);
+    closeDraft();
     if (comment !== null) onFinish(comment);
   };
 
@@ -836,19 +850,22 @@ function PullRequestCodeTab({
   const renderHeaderPrefix = (item: CodeViewItem<ReviewAnnotationGroup>) => {
     const collapsed = item.collapsed === true;
     return (
-      <Button
-        size="icon-micro"
-        variant="ghost-muted"
-        aria-expanded={!collapsed}
-        aria-label={collapsed ? "Expand diff" : "Collapse diff"}
-        className="mr-1"
-        onClick={(event) => {
-          event.stopPropagation();
-          toggleFile(item.id);
-        }}
-      >
-        <MorphIcon className="size-4" icon={collapsed ? ChevronRight : ChevronDown} />
-      </Button>
+      <>
+        {diffReview.cursor?.fileKey === item.id ? <DiffCursorOutline /> : null}
+        <Button
+          size="icon-micro"
+          variant="ghost-muted"
+          aria-expanded={!collapsed}
+          aria-label={collapsed ? "Expand diff" : "Collapse diff"}
+          className="mr-1"
+          onClick={(event) => {
+            event.stopPropagation();
+            toggleFile(item.id);
+          }}
+        >
+          <MorphIcon className="size-4" icon={collapsed ? ChevronRight : ChevronDown} />
+        </Button>
+      </>
     );
   };
 
@@ -888,7 +905,10 @@ function PullRequestCodeTab({
     enableLineSelection: canSelectLines && draft === null,
     onGutterUtilityClick: beginComment,
     onLineSelectionEnd: beginComment,
-    onPostRender: codeViewReveal.flush,
+    onPostRender: () => {
+      codeViewReveal.flush();
+      diffReview.flushScroll();
+    },
   };
 
   const runThreadCommand = async (
@@ -998,10 +1018,7 @@ function PullRequestCodeTab({
                 },
               }
             : {})}
-          onCancel={() => {
-            setDraft(null);
-            setSelectedLines(null);
-          }}
+          onCancel={closeDraft}
           onComment={(body) => {
             if (!canCommentOnLines) {
               if (onAddToAgentSelection) {
@@ -1019,8 +1036,7 @@ function PullRequestCodeTab({
               position: draft.position,
               body,
             });
-            setDraft(null);
-            setSelectedLines(null);
+            closeDraft();
           }}
         />
       ) : null}
@@ -1032,7 +1048,7 @@ function PullRequestCodeTab({
   const changeIgnoreWhitespace = (next: boolean) => {
     setIgnoreWhitespace(next);
     setDraft(null);
-    setSelectedLines(null);
+    diffReview.onSelectedLinesChange(null);
   };
   const toolbar = (
     <div className="@container flex h-10 min-h-10 shrink-0 items-center justify-between gap-2 border-b border-border/60 bg-background px-4 text-xs text-muted-foreground">
@@ -1326,6 +1342,13 @@ function PullRequestCodeTab({
             </TooltipPopup>
           </Tooltip>
         ) : null}
+        {annotatedFiles.length > 0 ? (
+          <DiffSingleFileToggle
+            singleFile={diffReview.singleFile}
+            shortcutLabel={diffReview.shortcutLabels.singleFile}
+            onToggle={diffReview.toggleSingleFile}
+          />
+        ) : null}
         {fileKeys.length > 0 ? (
           <Tooltip>
             <TooltipTrigger
@@ -1353,7 +1376,7 @@ function PullRequestCodeTab({
   // positions it when it renders it.
   const answerReveal = useEffectEvent(() => {
     if (revealRequest === null || answeredRevealNonce.current === revealRequest.nonce) return;
-    if (!items.some((item) => resolveFileDiffPath(item.fileDiff) === revealRequest.path)) {
+    if (!annotatedFiles.some((file) => file.path === revealRequest.path)) {
       if (canLoadNextSlice) loadNextSlice();
       return;
     }
@@ -1412,7 +1435,13 @@ function PullRequestCodeTab({
   }
 
   return (
-    <div className="flex h-full min-h-0 flex-col">
+    // Focusable so a click anywhere in the tab, toolbar included, gives it the review keys.
+    <div
+      ref={reviewRootRef}
+      data-diff-panel
+      tabIndex={-1}
+      className="flex h-full min-h-0 flex-col outline-none"
+    >
       {toolbar}
       {orphanFiles.size > 0 ? (
         <div className="shrink-0 border-b border-border/60">
@@ -1496,10 +1525,15 @@ function PullRequestCodeTab({
             <StyledDiffCodeView<ReviewAnnotationGroup>
               className="@container h-full overflow-auto [scrollbar-gutter:stable]"
               containerRef={scrollerRef}
-              viewerRef={codeViewReveal.attach}
+              viewerRef={attachViewer}
               items={items}
-              selectedLines={selectedLines}
-              onSelectedLinesChange={setSelectedLines}
+              selectedLines={diffReview.selectedLines}
+              onSelectedLinesChange={diffReview.onSelectedLinesChange}
+              gutterUtilityLabel={
+                diffReview.shortcutLabels.comment
+                  ? `Add comment (${diffReview.shortcutLabels.comment})`
+                  : "Add comment"
+              }
               options={diffViewOptions}
               renderCodeViewFooter={renderCodeViewFooter}
               renderHeaderPrefix={renderHeaderPrefix}

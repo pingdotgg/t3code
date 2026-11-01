@@ -64,6 +64,39 @@ match in a folded file opens it. Escape closes the search. This shortcut is not
 configurable. A very large uncommitted diff loads its files as you scroll, and
 find only searches the files loaded so far.
 
+## Review a diff from the keyboard
+
+Click into the Diff panel or a pull request's Code tab to review it without the
+mouse. Both start on files. Press `i` to move into a file's lines, and Escape to step back out.
+
+On files:
+
+- `j` and `k` move to the next or previous file.
+- `n` and `Shift+n` jump to the next or previous file you have not viewed.
+- `v` marks the file viewed, which also folds it. Press it again to unmark.
+- Enter or `Space` folds or unfolds the file.
+- `f` shows only the current file. `j`, `k`, and `n` switch which file it shows.
+
+On lines:
+
+- `j` and `k` move one line.
+- `Shift+j` and `Shift+k` show more of the unchanged lines below or above.
+- `c` comments on the line. In a pull request, that starts a review comment.
+  After you send or cancel the comment, you are back on the line.
+- `Shift+v` starts a selection. `j` and `k` extend it, and `c` comments on
+  the selected lines.
+- `v` marks the file viewed and returns to files.
+
+In the Diff panel, viewed marks belong to this device and thread, and a file that
+changes after you view it shows as not viewed again. In a pull request, `v` sets
+the same marks as the Viewed checkbox; see
+[Mark files as viewed](./source-control.md#mark-files-as-viewed). To jump to the next unviewed file after each
+mark, turn on **Settings → Diffs → Auto-advance after marking viewed**.
+
+Change any of these keys in **Settings → Keybindings** under the **Diff**
+commands. Showing more unchanged lines needs the full files, so it is not
+available for turn and tool call diffs.
+
 ## iPad
 
 With a hardware keyboard, use `Cmd+1` through `Cmd+9` to open the first nine
@@ -113,8 +146,10 @@ Join modifiers and a key with `+`, such as `mod+shift+d` or `ctrl+l`.
 ## When conditions
 
 Available context keys are `terminalFocus`, `terminalOpen`, `previewFocus`,
-`previewOpen`, `modelPickerOpen`, `usagePageOpen`, `composerFocus`, `draftThreadRoute`,
-`turnRunning`, `editableFocus`, `isWeb`, and `isDesktop`.
+`previewOpen`, `diffFocus`, `diffLineMode`, `modelPickerOpen`, `usagePageOpen`,
+`composerFocus`, `draftThreadRoute`, `turnRunning`, `editableFocus`, `isWeb`, and
+`isDesktop`. `diffFocus` is true while the Diff panel has the keyboard and no text
+field in it does. `diffLineMode` is true while you are on a diff's lines or a selection.
 `draftThreadRoute` is true on a draft thread, including a restored draft, until it is first sent.
 `editableFocus` is true while a text field, the composer, or another editor has
 the keyboard. `isWeb` is true in a browser tab. `isDesktop` is true in the

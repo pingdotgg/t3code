@@ -7,10 +7,11 @@ import {
   type UncontrolledCodeViewProps,
 } from "@pierre/diffs/react";
 /* oxlint-enable eslint/no-restricted-imports */
-import type { Ref } from "react";
+import { type Ref, useState } from "react";
 
 import { DIFF_SURFACE_THEME_UNSAFE_CSS } from "~/lib/diffRendering";
 import { DiffWorkerPoolProvider } from "../DiffWorkerPoolProvider";
+import { Tooltip, TooltipPopup } from "../ui/tooltip";
 
 export const DIFF_VIEW_UNSAFE_CSS = `${DIFF_SURFACE_THEME_UNSAFE_CSS}
 /* A 1fr track's automatic minimum grows with the currently mounted lines. In split
@@ -215,6 +216,8 @@ type StyledDiffCodeViewProps<LAnnotation> = (
   readonly options?: StyledDiffCodeViewOptions<LAnnotation>;
   readonly viewerRef?: Ref<CodeViewHandle<LAnnotation, undefined>>;
   readonly unsafeCSSExtra?: string;
+  /** Tooltip for the gutter's "+" button while it is enabled. */
+  readonly gutterUtilityLabel?: string;
 };
 
 export function StyledDiffCodeView<LAnnotation = undefined>({
@@ -222,37 +225,67 @@ export function StyledDiffCodeView<LAnnotation = undefined>({
   viewerRef,
   className,
   unsafeCSSExtra,
+  gutterUtilityLabel,
   ...props
 }: StyledDiffCodeViewProps<LAnnotation>) {
+  const [hoveredUtilityButton, setHoveredUtilityButton] = useState<HTMLElement | null>(null);
+  const view = (
+    <CodeView<LAnnotation>
+      {...props}
+      {...(viewerRef ? { ref: viewerRef } : {})}
+      className={
+        className
+          ? `diff-render-surface [--code-background:var(--background)] outline-none ${className}`
+          : "diff-render-surface [--code-background:var(--background)] outline-none"
+      }
+      options={{
+        ...options,
+        unsafeCSS: unsafeCSSExtra
+          ? `${DIFF_VIEW_UNSAFE_CSS}\n${unsafeCSSExtra}`
+          : DIFF_VIEW_UNSAFE_CSS,
+        itemMetrics: {
+          diffHeaderHeight: 32,
+          hunkSeparatorHeight: 24,
+          // Zero both spacing and paddingTop; Pierre's expanded-file fallback otherwise adds an 8px header
+          // gap.
+          spacing: 0,
+          paddingTop: 0,
+          // Include Pierre's 8px --diffs-gap-fallback in metrics or each expanded file loses a scrollable
+          // row.
+          paddingBottom: 8,
+        },
+        layout: { paddingTop: 0, paddingBottom: 0, gap: 0 },
+      }}
+    />
+  );
   return (
     <DiffWorkerPoolProvider>
-      <CodeView<LAnnotation>
-        {...props}
-        {...(viewerRef ? { ref: viewerRef } : {})}
-        className={
-          className
-            ? `diff-render-surface [--code-background:var(--background)] outline-none ${className}`
-            : "diff-render-surface [--code-background:var(--background)] outline-none"
-        }
-        options={{
-          ...options,
-          unsafeCSS: unsafeCSSExtra
-            ? `${DIFF_VIEW_UNSAFE_CSS}\n${unsafeCSSExtra}`
-            : DIFF_VIEW_UNSAFE_CSS,
-          itemMetrics: {
-            diffHeaderHeight: 32,
-            hunkSeparatorHeight: 24,
-            // Zero both spacing and paddingTop; Pierre's expanded-file fallback otherwise adds an 8px header
-            // gap.
-            spacing: 0,
-            paddingTop: 0,
-            // Include Pierre's 8px --diffs-gap-fallback in metrics or each expanded file loses a scrollable
-            // row.
-            paddingBottom: 8,
-          },
-          layout: { paddingTop: 0, paddingBottom: 0, gap: 0 },
-        }}
-      />
+      {gutterUtilityLabel ? (
+        // The viewer draws its "+" button inside a shadow root, so the tooltip is anchored from here.
+        <div
+          className="contents"
+          onPointerOver={(event) =>
+            setHoveredUtilityButton(
+              event.nativeEvent
+                .composedPath()
+                .find(
+                  (node): node is HTMLElement =>
+                    node instanceof HTMLElement && node.hasAttribute("data-utility-button"),
+                ) ?? null,
+            )
+          }
+          onPointerLeave={() => setHoveredUtilityButton(null)}
+        >
+          <Tooltip open={hoveredUtilityButton !== null && options?.enableGutterUtility === true}>
+            <TooltipPopup side="top" anchor={hoveredUtilityButton}>
+              {gutterUtilityLabel}
+            </TooltipPopup>
+          </Tooltip>
+          {view}
+        </div>
+      ) : (
+        view
+      )}
     </DiffWorkerPoolProvider>
   );
 }

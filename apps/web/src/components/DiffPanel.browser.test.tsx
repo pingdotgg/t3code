@@ -34,9 +34,13 @@ const state = vi.hoisted(() => ({
   commits: null as unknown as ResultAtom<ReviewBranchCommitsResult>,
 }));
 
-vi.mock("~/state/server", () => ({
-  serverEnvironment: { configValueAtom: () => state.config },
-}));
+vi.mock("~/state/server", async () => {
+  const { Atom } = await import("effect/reactivity");
+  return {
+    serverEnvironment: { configValueAtom: () => state.config },
+    primaryServerKeybindingsAtom: Atom.make([]),
+  };
+});
 vi.mock("~/state/review", () => ({
   reviewEnvironment: {
     diffPreview: ({ input }: { input: { baseRef?: string } }) =>

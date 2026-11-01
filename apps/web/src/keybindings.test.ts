@@ -920,3 +920,36 @@ describe("Usage shortcuts", () => {
     );
   });
 });
+
+describe("Diff review shortcuts", () => {
+  it.each([
+    [event({ key: "j" }), { diffFocus: true }, "diff.nextFile"],
+    [event({ key: "j" }), { diffFocus: true, diffLineMode: true }, "diff.nextLine"],
+    [event({ key: "j" }), {}, null],
+    [
+      event({ key: "J", shiftKey: true }),
+      { diffFocus: true, diffLineMode: true },
+      "diff.expandBelow",
+    ],
+    [
+      event({ key: "V", shiftKey: true }),
+      { diffFocus: true, diffLineMode: true },
+      "diff.startSelection",
+    ],
+    [event({ key: "v" }), { diffFocus: true, diffLineMode: true }, "diff.toggleFileViewed"],
+    [event({ key: "c" }), { diffFocus: true, diffLineMode: true }, "diff.comment"],
+    [event({ key: " ", code: "Space" }), { diffFocus: true, diffLineMode: true }, null],
+    [event({ key: " ", code: "Space" }), { diffFocus: true }, "diff.toggleFileCollapsed"],
+    [event({ key: "Enter" }), { diffFocus: true }, "diff.toggleFileCollapsed"],
+    [event({ key: "Escape" }), { diffFocus: true, diffLineMode: true }, "diff.back"],
+    [event({ key: "Escape" }), { diffFocus: true }, null],
+  ] as const)("resolves %o with %o to %s", (shortcut, context, command) => {
+    assert.strictEqual(
+      resolveShortcutCommand(shortcut, DEFAULT_RESOLVED_KEYBINDINGS, {
+        platform: "Linux",
+        context,
+      }),
+      command,
+    );
+  });
+});

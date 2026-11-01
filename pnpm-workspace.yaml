@@ -372,8 +372,9 @@ patchedDependencies:
   expo-widgets@58.0.20: patches/expo-widgets@58.0.20.patch
   "@ff-labs/fff-node@0.11.0": patches/@ff-labs__fff-node@0.11.0.patch
   "@legendapp/list@3.3.5": patches/@legendapp__list@3.3.5.patch
-  # Exports the dependency-light subpaths mobile and the web diff parser import, and keeps
-  # measured wrapped-row heights above an edit (fileEditorVirtualization.test.ts).
+  # Exports the dependency-light subpaths mobile and the web diff parser import, exposes a
+  # file's expanded context for diff keyboard review, and keeps measured wrapped-row heights
+  # above an edit (fileEditorVirtualization.test.ts).
   "@pierre/diffs@1.6.1": patches/@pierre%2Fdiffs@1.6.1.patch
   "@react-native-ai/apple@0.12.0": patches/@react-native-ai__apple@0.12.0.patch
   "@react-native-menu/menu@2.0.0": patches/@react-native-menu__menu@2.0.0.patch
