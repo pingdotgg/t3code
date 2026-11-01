@@ -40,6 +40,7 @@ import {
 import type * as Cause from "effect/Cause";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
+import * as Duration from "effect/Duration";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 import * as Hex from "effect/encoding/Hex";
@@ -525,6 +526,11 @@ const RECONNECT_ATTEMPTS = 5;
 const RECONNECT_DELAY = "2 seconds";
 const RECONCILE_TIMEOUT = "15 seconds";
 const RECONNECT_WAIT = "30 seconds";
+const OWNED_RECONNECT_SCHEDULE = Schedule.exponential(RECONNECT_DELAY).pipe(
+  Schedule.modifyDelay(({ duration }) =>
+    Effect.succeed(Duration.min(duration, Duration.seconds(30))),
+  ),
+);
 const LOST_BACKGROUND =
   "T3 Code lost its connection to OpenCode while this subagent ran, so its result is not shown.";
 const INVENTORY_TIMEOUT = "5 seconds";
@@ -2467,77 +2473,85 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       ).pipe(
         Stream.takeUntil((message) => message.id === start),
         Stream.runCollect,
+        Effect.catchTags({ SessionNotFoundError: () => Effect.succeed(null) }),
       );
-      // Without this turn's start in history, all retrieved turns are older.
-      const found = start === null || read.at(-1)?.id === start;
-      if (!found) return undefined;
-      const recent = before !== undefined && before !== null ? read.slice(0, -1) : read;
-      const idle = recent.find((message) => message.type === "idle");
-      const assistant = recent.find((message) => message.type === "assistant");
-      if (assistant?.retry !== undefined) {
-        // Snapshots omit when the retry was scheduled, so only its remaining delay is known.
-        yield* updateRetry(
-          state,
-          turn,
-          assistant.retry,
-          DateTime.toEpochMillis(assistant.retry.at) - DateTime.toEpochMillis(yield* DateTime.now),
-        );
-      } else if (
-        turn.retry !== undefined &&
-        assistant !== undefined &&
-        assistant.error === undefined &&
-        assistant.content.length > 0
-      ) {
-        yield* emitRetry(state, turn, "completed");
-        turn.retry = undefined;
-      }
-      for (const message of recent.toReversed()) {
-        if (message.type !== "assistant" || state.active !== turn) continue;
-        const ordinals = { text: 0, reasoning: 0 };
-        for (const [index, part] of message.content.entries()) {
-          if (part.type === "text" || part.type === "reasoning") {
-            const block = { assistantMessageID: message.id, ordinal: ordinals[part.type]++ };
-            // OpenCode saves a block's text only when the block ends, so the last block of a
-            // response still streaming stays open and keeps the text that already arrived.
-            const open =
-              message.time.streamed === undefined && index === message.content.length - 1;
-            yield* emitText(
+      return yield* lock.withPermit(
+        Effect.gen(function* () {
+          if (state.active !== turn) return undefined;
+          if (read === null) return { outcome: "missing" as const };
+          // Without this turn's start in history, all retrieved turns are older.
+          const found = start === null || read.at(-1)?.id === start;
+          if (!found) return undefined;
+          const recent = before !== undefined && before !== null ? read.slice(0, -1) : read;
+          const idle = recent.find((message) => message.type === "idle");
+          const assistant = recent.find((message) => message.type === "assistant");
+          if (assistant?.retry !== undefined) {
+            // Snapshots omit when the retry was scheduled, so only its remaining delay is known.
+            yield* updateRetry(
               state,
               turn,
-              block,
-              part.type,
-              (text) => (open && !part.text.startsWith(text) ? text : part.text),
-              !open,
+              assistant.retry,
+              DateTime.toEpochMillis(assistant.retry.at) -
+                DateTime.toEpochMillis(yield* DateTime.now),
             );
-            continue;
+          } else if (
+            turn.retry !== undefined &&
+            assistant !== undefined &&
+            assistant.error === undefined &&
+            assistant.content.length > 0
+          ) {
+            yield* emitRetry(state, turn, "completed");
+            turn.retry = undefined;
           }
-          if (part.type !== "tool") continue;
-          if (!turn.tools.has(part.id)) {
-            turn.tools.set(part.id, { name: part.name, input: {} });
-            turn.startedAt.set(part.id, yield* DateTime.now);
+          for (const message of recent.toReversed()) {
+            if (message.type !== "assistant" || state.active !== turn) continue;
+            const ordinals = { text: 0, reasoning: 0 };
+            for (const [index, part] of message.content.entries()) {
+              if (part.type === "text" || part.type === "reasoning") {
+                const block = { assistantMessageID: message.id, ordinal: ordinals[part.type]++ };
+                // OpenCode saves a block's text only when the block ends, so the last block of a
+                // response still streaming stays open and keeps the text that already arrived.
+                const open =
+                  message.time.streamed === undefined && index === message.content.length - 1;
+                yield* emitText(
+                  state,
+                  turn,
+                  block,
+                  part.type,
+                  (text) => (open && !part.text.startsWith(text) ? text : part.text),
+                  !open,
+                );
+                continue;
+              }
+              if (part.type !== "tool") continue;
+              if (!turn.tools.has(part.id)) {
+                turn.tools.set(part.id, { name: part.name, input: {} });
+                turn.startedAt.set(part.id, yield* DateTime.now);
+              }
+              const tool = turn.tools.get(part.id)!;
+              if (typeof part.state.input === "object" && part.state.input !== null) {
+                tool.input = part.state.input as Record<string, unknown>;
+              }
+              if (part.state.status === "completed") {
+                yield* emitTool(state, turn, part.id, "completed", {
+                  output: textOf(part.state.content),
+                  metadata: part.state.metadata,
+                });
+                turn.tools.delete(part.id);
+              } else if (part.state.status === "error") {
+                yield* emitTool(state, turn, part.id, "failed", {
+                  output: part.state.error.message,
+                  metadata: part.state.metadata,
+                });
+                turn.tools.delete(part.id);
+              } else {
+                yield* emitTool(state, turn, part.id, "running");
+              }
+            }
           }
-          const tool = turn.tools.get(part.id)!;
-          if (typeof part.state.input === "object" && part.state.input !== null) {
-            tool.input = part.state.input as Record<string, unknown>;
-          }
-          if (part.state.status === "completed") {
-            yield* emitTool(state, turn, part.id, "completed", {
-              output: textOf(part.state.content),
-              metadata: part.state.metadata,
-            });
-            turn.tools.delete(part.id);
-          } else if (part.state.status === "error") {
-            yield* emitTool(state, turn, part.id, "failed", {
-              output: part.state.error.message,
-              metadata: part.state.metadata,
-            });
-            turn.tools.delete(part.id);
-          } else {
-            yield* emitTool(state, turn, part.id, "running");
-          }
-        }
-      }
-      return idle === undefined ? undefined : { outcome: idle.outcome };
+          return idle === undefined ? undefined : { outcome: idle.outcome };
+        }),
+      );
     });
 
     // Restarts retain the previous session.outcome; without an idle item, the lost execution was interrupted.
@@ -2559,7 +2573,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       ) {
         return;
       }
-      const active = yield* client.session.active();
+      const active = { ...(yield* client.session.active()) };
       for (const sessionId of busy) if (!(sessionId in active)) busy.delete(sessionId);
       for (const state of threads.values()) {
         if (state.unsettled && !(state.sessionId in active)) state.unsettledStarted = true;
@@ -2569,61 +2583,90 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
         const turn = state.active;
         if (turn === undefined) continue;
         const ended = yield* backfill(sessionId, state);
-        if (sessionId in active || state.active !== turn) continue;
-        yield* finishTurn(
-          state,
-          ended?.outcome === "succeeded"
-            ? { status: turn.interrupted ? "interrupted" : "completed" }
-            : ended?.outcome === "failed"
-              ? {
-                  status: "failed",
-                  failure: makeProviderFailure({
-                    message:
-                      "OpenCode ended the turn with an error while T3 Code was reconnecting.",
-                    class: "provider_error",
-                  }),
-                }
-              : { status: "interrupted" },
+        if (ended?.outcome === "missing") {
+          delete active[Session.ID.make(sessionId)];
+          busy.delete(sessionId);
+        }
+        if (sessionId in active) continue;
+        yield* lock.withPermit(
+          Effect.gen(function* () {
+            if (state.active !== turn) return;
+            yield* finishTurn(
+              state,
+              ended?.outcome === "succeeded"
+                ? { status: turn.interrupted ? "interrupted" : "completed" }
+                : ended?.outcome === "failed"
+                  ? {
+                      status: "failed",
+                      failure: makeProviderFailure({
+                        message:
+                          "OpenCode ended the turn with an error while T3 Code was reconnecting.",
+                        class: "provider_error",
+                      }),
+                    }
+                  : { status: "interrupted" },
+              ended?.outcome === "missing" ? "broken" : "reusable",
+            );
+          }),
         );
       }
-      for (const state of background) {
-        for (const call of runningCalls(state)) {
-          const child = call.child?.sessionId;
-          if (child === undefined || !(child in active)) {
-            yield* settleCall(call, "interrupted", LOST_BACKGROUND);
+      yield* lock.withPermit(
+        Effect.gen(function* () {
+          for (const state of background) {
+            for (const call of runningCalls(state)) {
+              const child = call.child?.sessionId;
+              if (child === undefined || !(child in active)) {
+                yield* settleCall(call, "interrupted", LOST_BACKGROUND);
+              }
+            }
+            for (const session of sessionsOf(state)) {
+              discardWakes(session, session.wakes.splice(0));
+              session.reports.clear();
+            }
           }
-        }
-        for (const session of sessionsOf(state)) {
-          discardWakes(session, session.wakes.splice(0));
-          session.reports.clear();
-        }
-      }
-      // Stopped off the lock this reconcile holds; one still running waits for a Stop.
-      for (const thread of new Set([...strays.values()].map(rootOf))) {
-        yield* Effect.forkIn(stopStrays(thread), sessionScope);
-      }
+          // Stopped off the lock this reconcile holds; one still running waits for a Stop.
+          for (const thread of new Set([...strays.values()].map(rootOf))) {
+            yield* Effect.forkIn(stopStrays(thread), sessionScope);
+          }
+        }),
+      );
       const listed = new Map<string, Set<string>>();
       for (const sessionId of Object.keys(active)) {
-        if (ownerOf(sessionId) === undefined) continue;
+        const owner = ownerOf(sessionId);
+        if (owner === undefined) continue;
+        const turn = requestTurn(sessionId)?.turn;
+        // Replies may settle during these reads; an older snapshot must not ask again.
+        const known = new Set([...pending.values()].map((entry) => entry.native.id));
         const sessionID = Session.ID.make(sessionId);
         const [permissions, forms] = yield* Effect.all([
           client.permission.list({ sessionID }),
           client.session.form.list({ sessionID }),
         ]);
-        listed.set(sessionId, new Set([...permissions, ...forms].map((request) => request.id)));
-        const shown = new Set([...pending.values()].map((entry) => entry.native.id));
-        for (const request of permissions) {
-          if (!shown.has(request.id)) yield* onAsked({ type: "permission", request });
-        }
-        for (const form of forms) {
-          if (!shown.has(form.id)) yield* onAsked({ type: "form", form });
-        }
+        yield* lock.withPermit(
+          Effect.gen(function* () {
+            if (ownerOf(sessionId) !== owner || requestTurn(sessionId)?.turn !== turn) return;
+            listed.set(sessionId, new Set([...permissions, ...forms].map((request) => request.id)));
+            const shown = new Set([...pending.values()].map((entry) => entry.native.id));
+            for (const request of permissions) {
+              if (!shown.has(request.id) && !known.has(request.id))
+                yield* onAsked({ type: "permission", request });
+            }
+            for (const form of forms) {
+              if (!shown.has(form.id) && !known.has(form.id))
+                yield* onAsked({ type: "form", form });
+            }
+          }),
+        );
       }
-      for (const entry of Array.from(pending.values())) {
-        if (listed.get(entry.sessionId)?.has(entry.native.id) !== true) {
-          yield* settleRequest(entry, "cancelled");
-        }
-      }
+      yield* lock.withPermit(
+        Effect.gen(function* () {
+          for (const entry of Array.from(pending.values())) {
+            if (listed.get(entry.sessionId)?.has(entry.native.id) !== true) {
+              yield* settleRequest(entry, "cancelled");
+            }
+          }
+        }),
+      );
     });
 
     const reconnect = Effect.gen(function* () {
@@ -2631,7 +2674,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       const scope = yield* Scope.make();
       const { next, stream } = yield* Effect.gen(function* () {
         const next = yield* borrow.pipe(Effect.provideService(Scope.Scope, scope));
-        return { next, stream: yield* next.events };
+        return { next, stream: yield* next.events.pipe(Effect.provideService(Scope.Scope, scope)) };
       }).pipe(Effect.onError(() => Scope.close(scope, Exit.void)));
       const previous = currentScope;
       connection = next;
@@ -2640,10 +2683,20 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       yield* Scope.close(previous, Exit.void);
       // A restarted server forgot T3's MCP servers; the next turn adds them again.
       for (const state of threads.values()) state.mcp = undefined;
-      yield* lock.withPermit(reconcile).pipe(Effect.timeout(RECONCILE_TIMEOUT));
+      // An owned process's exit, rather than a read deadline, bounds recovery.
+      // HTTP waits stay outside the event lock so Stop can still settle.
+      yield* connection.processExit === undefined
+        ? reconcile.pipe(Effect.timeout(RECONCILE_TIMEOUT))
+        : reconcile.pipe(Effect.retry({ schedule: OWNED_RECONNECT_SCHEDULE }));
       return stream;
     }).pipe(
-      Effect.retry({ times: RECONNECT_ATTEMPTS - 1, schedule: Schedule.spaced(RECONNECT_DELAY) }),
+      Effect.retry({
+        times: connection.processExit === undefined ? RECONNECT_ATTEMPTS - 1 : undefined,
+        schedule:
+          connection.processExit === undefined
+            ? Schedule.spaced(RECONNECT_DELAY)
+            : OWNED_RECONNECT_SCHEDULE,
+      }),
     );
 
     let currentScope = initial.scope;
@@ -2669,7 +2722,9 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
               Effect.option,
             );
             if (next._tag === "None") {
-              return yield* failAll("The OpenCode event stream was lost and could not reconnect.");
+              return yield* lock.withPermit(
+                failAll("The OpenCode event stream was lost and could not reconnect."),
+              );
             }
             streamFailure = undefined;
             const done = reconnected;
@@ -2680,7 +2735,19 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
         ),
       );
     // Subscribed before any session or prompt call, so no event of theirs is missed.
-    yield* follow(yield* connection.events).pipe(Effect.forkScoped);
+    const following = follow(
+      yield* connection.events.pipe(Effect.provideService(Scope.Scope, currentScope)),
+    );
+    yield* (
+      connection.processExit === undefined
+        ? following
+        : Effect.raceFirst(
+            following,
+            connection.processExit.pipe(
+              Effect.andThen(lock.withPermit(failAll("The OpenCode server exited."))),
+            ),
+          )
+    ).pipe(Effect.forkScoped);
 
     // External servers outlive T3; stop their turns before losing observation.
     if (connection.external) {
@@ -3752,9 +3819,15 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
                 }),
               ),
             );
-          if (reply._tag === "None") {
-            markUnsettled(state);
-            return yield* lock.withPermit(finishTurn(state, { status: "interrupted" }));
+          // Recovery may hold the terminal event behind a blocked history read.
+          if (reply._tag === "None" || (reply.value.interrupted && streamFailure !== undefined)) {
+            return yield* lock.withPermit(
+              Effect.gen(function* () {
+                if (state.active !== turn) return;
+                markUnsettled(state);
+                yield* finishTurn(state, { status: "interrupted" });
+              }),
+            );
           }
           // Stop between steer executions retracts pending steers and skips any run they already started.
           if (!reply.value.interrupted && state.active === turn && turn.heldEnd !== undefined) {
