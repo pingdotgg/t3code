@@ -1,3 +1,4 @@
+import { Button } from "../../components/ui/Button";
 import { DateTimePicker } from "@expo/ui/community/datetime-picker";
 import {
   localSnoozeDate,
@@ -15,8 +16,8 @@ import {
   TextInput,
   View,
 } from "react-native";
-import { AppText } from "../../components/AppText";
-import { SegmentedControl } from "../../components/SegmentedControl";
+import { AppText } from "../../components/ui/AppText";
+import { SegmentedControl } from "../../components/ui/SegmentedControl";
 
 export function CustomSnoozeSheet(props: {
   readonly onClose: () => void;
@@ -143,16 +144,10 @@ export function CustomSnoozeSheet(props: {
             </AppText>
           )}
           <View className="flex-row justify-end gap-3">
-            <Pressable
-              accessibilityRole="button"
-              className="min-h-12 justify-center px-3"
-              onPress={props.onClose}
-            >
-              <AppText>Cancel</AppText>
-            </Pressable>
-            <Pressable
-              accessibilityRole="button"
-              className="min-h-12 justify-center rounded-xl bg-subtle px-3"
+            <Button label="Cancel" tone="text" onPress={props.onClose} />
+            <Button
+              label="Snooze"
+              tone="secondary"
               onPress={() => {
                 const input: CustomSnoozeInput =
                   mode === "date"
@@ -170,9 +165,7 @@ export function CustomSnoozeSheet(props: {
                 props.onSnooze(snoozedUntil);
                 props.onClose();
               }}
-            >
-              <AppText className="text-foreground">Snooze</AppText>
-            </Pressable>
+            />
           </View>
         </ScrollView>
       </KeyboardAvoidingView>

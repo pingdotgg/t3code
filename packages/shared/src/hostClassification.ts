@@ -66,9 +66,7 @@ const isPrivateIpv4Address = (parts: readonly number[]): boolean =>
 const isSpecialPurposeIpv4Address = (parts: readonly number[]): boolean =>
   isPrivateIpv4Address(parts) ||
   parts[0]! >= 224 ||
-  // Deliberately suppress the whole protocol-assignment block. IANA marks
-  // .9 and .10 globally reachable, but privacy-safe false negatives are
-  // preferable to disclosing another special-purpose address by mistake.
+  // Suppress the entire protocol-assignment block, including public .9/.10, to avoid disclosing special-purpose addresses.
   (parts[0] === 192 && parts[1] === 0 && parts[2] === 0) ||
   (parts[0] === 192 && parts[1] === 0 && parts[2] === 2) ||
   (parts[0] === 192 && parts[1] === 88 && parts[2] === 99) ||
@@ -81,11 +79,7 @@ export const isLocalLoopbackHost = (host: string): boolean => {
   return parseIpv4Address(normalized)?.[0] === 127;
 };
 
-/**
- * A name or address only Tailscale uses: a MagicDNS name or its IPv6 range
- * fd7a:115c:a1e0::/48. Its IPv4 addresses come from the shared 100.64.0.0/10
- * range, so they prove nothing on their own.
- */
+/** MagicDNS or fd7a:115c:a1e0::/48 identifies Tailscale; shared 100.64.0.0/10 addresses alone do not. */
 export const isTailnetHost = (host: string): boolean => {
   const normalized = normalizeHostname(host);
   if (normalized.endsWith(".ts.net")) return true;
@@ -93,10 +87,6 @@ export const isTailnetHost = (host: string): boolean => {
   return ipv6 !== null && ipv6PrefixMatches(ipv6, [0xfd7a, 0x115c, 0xa1e0, 0, 0, 0, 0, 0], 48);
 };
 
-/**
- * An IPv4 address in 100.64.0.0/10. Tailscale, Cloudflare WARP and Mesh, other
- * VPNs, and carrier-grade NAT all assign from this range.
- */
 export const isSharedAddressSpaceHost = (host: string): boolean => {
   const parts = parseIpv4Address(host);
   return parts !== null && parts[0] === 100 && parts[1]! >= 64 && parts[1]! <= 127;
@@ -127,8 +117,7 @@ export const isPrivateNetworkHost = (host: string): boolean => {
   );
 };
 
-// Reserved and special-use names, plus the private TLDs RFC 6762 Appendix G
-// records as common on internal networks.
+// Includes private TLDs from RFC 6762 Appendix G.
 const PRIVATE_FAVICON_TLDS = [
   ".alt",
   ".corp",
@@ -144,10 +133,8 @@ const PRIVATE_FAVICON_TLDS = [
 ];
 const INTERNAL_HOST_LABELS: ReadonlySet<string> = new Set(["corp", "internal", "intranet"]);
 
-/** Whether a hostname is eligible to be disclosed to a public favicon provider. */
 export const isPublicFaviconHost = (host: string): boolean => {
-  // A single trailing dot is a valid absolute DNS name. Repeated trailing
-  // dots are malformed and can conceal legacy numeric forms such as 127.1.
+  // One trailing DNS dot is valid; repeated dots can conceal legacy numeric addresses.
   if (host.endsWith("..")) return false;
   const normalized = normalizeHostname(host);
   if (isPrivateNetworkHost(normalized)) return false;
@@ -158,8 +145,7 @@ export const isPublicFaviconHost = (host: string): boolean => {
   ) {
     return false;
   }
-  // Company networks often nest internal services under a public domain
-  // (`grafana.internal.acme.com`); never send those names to a third party.
+  // Public domains can contain internal service labels; keep them off third-party requests.
   if (normalized.split(".").some((label) => INTERNAL_HOST_LABELS.has(label))) return false;
   const ipv4 = parseIpv4Address(normalized) ?? parseIpv4MappedIpv6Address(normalized);
   if (ipv4) return !isSpecialPurposeIpv4Address(ipv4);

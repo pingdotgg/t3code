@@ -19,17 +19,16 @@ import {
 } from "./useScopedSettings";
 import { useScopedModelDisabledReason } from "./useScopedModelAvailability";
 import { useSettingsScope } from "./SettingsScopeContext";
-import {
-  applyProviderInstanceSettings,
-  deriveProviderInstanceEntries,
-  sortProviderInstanceEntries,
-} from "../../providerInstances";
+import { providerInstanceEntriesFor } from "../../providerInstances";
 import {
   getCustomModelOptionsByInstance,
   resolveAppModelSelectionState,
+  selectsPlanAgent,
 } from "../../modelSelection";
+import { useEnvironmentProviders } from "../../state/environments";
 import { EMPTY_SERVER_PROVIDERS } from "../../state/server";
 import { ProviderModelPicker } from "../chat/ProviderModelPicker";
+import { TraitsPicker } from "../chat/TraitsPicker";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { Switch } from "../ui/switch";
 import { Textarea } from "../ui/textarea";
@@ -41,7 +40,7 @@ import {
   SettingsRow,
   SettingsSection,
 } from "./settingsLayout";
-import { BranchNamingSettings } from "./BranchNamingSettings";
+import { AdvancedSettings } from "./AdvancedSettings";
 import { searchableSetting } from "./settingsSearch";
 
 const MODE_OPTIONS: Record<SourceControlWritingStyleMode, { label: string; description: string }> =
@@ -66,13 +65,14 @@ export function SourceControlWritingSettingsSection() {
   const updateSettings = useUpdateScopedSettings();
   const mixedReviewGuidesEnabled = useScopedSettingsMixed(["reviewGuidesEnabled"]);
   const navigate = useNavigate();
-  const { environment, connectedEnvironments, targets } = useSettingsScope();
-  // The representative supplies the provider list; a model choice is checked
-  // against every target before it fans out.
+  const { environment, connectedEnvironments, targets, target } = useSettingsScope();
   const environmentId = environment?.environmentId ?? null;
   const hasServerTargets = connectedEnvironments.length > 0;
-  const serverProviders = environment?.serverConfig?.providers ?? EMPTY_SERVER_PROVIDERS;
-  // The writing style is one object; each control only cares about its own field.
+  const providersByEnvironment = useEnvironmentProviders();
+  const serverProviders =
+    (environment?.serverConfig
+      ? providersByEnvironment.get(environment.environmentId)
+      : undefined) ?? EMPTY_SERVER_PROVIDERS;
   const styleFieldMixed = (field: keyof ServerSettings["sourceControlWritingStyle"]) => {
     const first = targets[0];
     return (
@@ -106,20 +106,34 @@ export function SourceControlWritingSettingsSection() {
   const textGenerationProviders = serverProviders.filter(
     (provider) => provider.supportsTextGeneration !== false,
   );
-  const defaultModelSelection = resolveAppModelSelectionState(settings, textGenerationProviders);
+  const instanceEntries = providerInstanceEntriesFor(
+    textGenerationProviders,
+    settings,
+    target?.projectId ?? null,
+  );
+  const projectEnabledInstanceIds = new Set(
+    instanceEntries
+      .filter((entry) => entry.enabled && entry.isAvailable)
+      .map((entry) => entry.instanceId),
+  );
+  const projectEffectiveTextGenerationProviders = textGenerationProviders.filter((provider) =>
+    projectEnabledInstanceIds.has(provider.instanceId),
+  );
+  const defaultModelSelection = resolveAppModelSelectionState(
+    settings,
+    projectEffectiveTextGenerationProviders,
+  );
   const usesDedicatedModel = settings.sourceControlWriterModelSelection !== null;
   const activeSelection = resolveAppModelSelectionState(
     {
       ...settings,
       textGenerationModelSelection: resolveSourceControlWriterModelSelection(
         settings,
-        textGenerationProviders,
+        projectEffectiveTextGenerationProviders,
+        target?.projectId ?? null,
       ),
     },
-    textGenerationProviders,
-  );
-  const instanceEntries = sortProviderInstanceEntries(
-    applyProviderInstanceSettings(deriveProviderInstanceEntries(textGenerationProviders), settings),
+    projectEffectiveTextGenerationProviders,
   );
   const canEnableDedicatedModel = instanceEntries.some(
     (entry) =>
@@ -127,11 +141,14 @@ export function SourceControlWritingSettingsSection() {
   );
   const modelOptionsByInstance = getCustomModelOptionsByInstance(
     settings,
-    textGenerationProviders,
+    projectEffectiveTextGenerationProviders,
     activeSelection.instanceId,
     activeSelection.model,
   );
   const writerModelDisabledReason = useScopedModelDisabledReason(settings, instanceEntries);
+  const writerInstanceEntry = instanceEntries.find(
+    (entry) => entry.instanceId === activeSelection.instanceId,
+  );
   const usesReviewGuideModel = settings.reviewGuideModelSelection !== null;
   const reviewGuideSelection = resolveAppModelSelectionState(
     {
@@ -139,21 +156,23 @@ export function SourceControlWritingSettingsSection() {
       textGenerationModelSelection: resolveReviewGuideModelSelection(
         settings,
         textGenerationProviders,
+        target?.projectId ?? null,
       ),
     },
     textGenerationProviders,
   );
-  // Its own list: a custom model chosen for guides is not among the writer model's options.
   const reviewGuideModelOptionsByInstance = getCustomModelOptionsByInstance(
     settings,
     textGenerationProviders,
     reviewGuideSelection.instanceId,
     reviewGuideSelection.model,
   );
+  const reviewGuideInstanceEntry = instanceEntries.find(
+    (entry) => entry.instanceId === reviewGuideSelection.instanceId,
+  );
 
   return (
-    <SettingsSection id="source-control-text-generation" title="Text generation">
-      <BranchNamingSettings />
+    <SettingsSection id="source-control-text-generation" title="Writing & review">
       <SettingsRow
         serverScoped
         settingKeys={["sourceControlWritingStyle"]}
@@ -273,124 +292,10 @@ export function SourceControlWritingSettingsSection() {
 
       <SettingsRow
         serverScoped
-        settingKeys={["sourceControlWritingStyle"]}
-        mixed={templatesMixed}
-        {...searchableSetting("follow-change-request-templates")}
-        description="Use the repository's template for change request descriptions when available."
-        resetAction={
-          templatesMixed ||
-          style.followChangeRequestTemplates !== defaults.followChangeRequestTemplates ? (
-            <SettingResetButton
-              label="change request templates"
-              onClick={() =>
-                updateSettings({
-                  sourceControlWritingStyle: {
-                    followChangeRequestTemplates: defaults.followChangeRequestTemplates,
-                  },
-                })
-              }
-            />
-          ) : null
-        }
-        control={
-          <Switch
-            mixed={templatesMixed}
-            checked={templatesMixed ? false : style.followChangeRequestTemplates}
-            onCheckedChange={(checked) =>
-              updateSettings({
-                sourceControlWritingStyle: {
-                  followChangeRequestTemplates: Boolean(checked),
-                },
-              })
-            }
-            aria-label="Follow change request templates"
-          />
-        }
-      />
-
-      <SettingsRow
-        serverScoped
-        settingKeys={["sourceControlWriterModelSelection"]}
-        {...searchableSetting("source-control-writer-model")}
-        description="Model for source control text and branch or bookmark names. Off uses the environment's text generation model."
-        control={
-          !hasServerTargets ? (
-            <span className="text-sm text-muted-foreground">
-              Connect an environment to choose its source control writer model.
-            </span>
-          ) : (
-            <div className="flex flex-wrap items-center justify-end gap-2">
-              {usesDedicatedModel && !canEnableDedicatedModel ? (
-                <span className="text-sm text-muted-foreground">
-                  No text generation providers available.
-                </span>
-              ) : null}
-              {usesDedicatedModel && canEnableDedicatedModel ? (
-                <ProviderModelPicker
-                  environmentId={environmentId}
-                  activeInstanceId={activeSelection.instanceId}
-                  model={activeSelection.model}
-                  lockedProvider={null}
-                  instanceEntries={instanceEntries}
-                  modelOptionsByInstance={modelOptionsByInstance}
-                  triggerClassName={SETTINGS_PICKER_TRIGGER_CLASSNAME}
-                  triggerAriaLabel="Source control writer model"
-                  {...(mixedWriterModel ? { triggerLabel: "Mixed" } : {})}
-                  {...(environmentId
-                    ? {
-                        onOpenProviderSetup: (instanceId: ProviderInstanceId) => {
-                          void navigate({
-                            to: "/settings/providers",
-                            search: { environmentId, instanceId },
-                          });
-                        },
-                      }
-                    : {})}
-                  getModelDisabledReason={writerModelDisabledReason}
-                  onInstanceModelChange={(instanceId, model) => {
-                    const reason = writerModelDisabledReason(instanceId, model);
-                    if (reason) {
-                      toastManager.add({
-                        type: "error",
-                        title: "Source control writer model not saved",
-                        description: reason,
-                      });
-                      return;
-                    }
-                    updateSettings({
-                      sourceControlWriterModelSelection: createModelSelection(instanceId, model),
-                    });
-                  }}
-                />
-              ) : null}
-              <Switch
-                checked={usesDedicatedModel}
-                disabled={!usesDedicatedModel && !canEnableDedicatedModel}
-                onCheckedChange={(checked) =>
-                  updateSettings({
-                    sourceControlWriterModelSelection: checked
-                      ? createModelSelection(
-                          defaultModelSelection.instanceId,
-                          defaultModelSelection.model,
-                          defaultModelSelection.options,
-                        )
-                      : null,
-                  })
-                }
-                aria-label="Use a separate source control writer model"
-              />
-            </div>
-          )
-        }
-      />
-
-      {/* A beta the server owns: off hides the Guide tab in every client and refuses agents. */}
-      <SettingsRow
-        serverScoped
         settingKeys={["reviewGuidesEnabled"]}
         mixed={mixedReviewGuidesEnabled}
         {...searchableSetting("review-guides")}
-        description="Adds a Guide tab to pull requests: an agent writes a tour of the change, stop by stop, with the calls a maintainer should make."
+        description="Add a Guide tab to pull requests. An agent explains the changes and points out decisions that need review."
         control={
           <Switch
             mixed={mixedReviewGuidesEnabled}
@@ -443,6 +348,31 @@ export function SourceControlWritingSettingsSection() {
                       }}
                     />
                   ) : null}
+                  {usesReviewGuideModel &&
+                  canEnableDedicatedModel &&
+                  !mixedReviewGuideModel &&
+                  reviewGuideInstanceEntry ? (
+                    <TraitsPicker
+                      provider={reviewGuideInstanceEntry.driverKind}
+                      models={reviewGuideInstanceEntry.models}
+                      model={reviewGuideSelection.model}
+                      modelOptions={reviewGuideSelection.options ?? []}
+                      allowPromptInjectedEffort={false}
+                      planModeEnabled={
+                        settings.planModeEnabled || selectsPlanAgent(reviewGuideSelection.options)
+                      }
+                      triggerClassName={SETTINGS_PICKER_TRIGGER_CLASSNAME}
+                      onModelOptionsChange={(options) =>
+                        updateSettings({
+                          reviewGuideModelSelection: createModelSelection(
+                            reviewGuideSelection.instanceId,
+                            reviewGuideSelection.model,
+                            options,
+                          ),
+                        })
+                      }
+                    />
+                  ) : null}
                   <Switch
                     mixed={mixedReviewGuideModel}
                     checked={mixedReviewGuideModel ? false : usesReviewGuideModel}
@@ -452,7 +382,6 @@ export function SourceControlWritingSettingsSection() {
                         updateSettings({ reviewGuideModelSelection: null });
                         return;
                       }
-                      // Every selected target gets this model, so it must run on all of them.
                       const reason = writerModelDisabledReason(
                         activeSelection.instanceId,
                         activeSelection.model,
@@ -522,6 +451,150 @@ export function SourceControlWritingSettingsSection() {
           </SettingsRow>
         </>
       ) : null}
+      <AdvancedSettings
+        targetIds={[
+          searchableSetting("follow-change-request-templates").id,
+          searchableSetting("source-control-writer-model").id,
+        ]}
+      >
+        <SettingsRow
+          serverScoped
+          settingKeys={["sourceControlWritingStyle"]}
+          mixed={templatesMixed}
+          {...searchableSetting("follow-change-request-templates")}
+          description="Use the repository's template for change request descriptions when available."
+          resetAction={
+            templatesMixed ||
+            style.followChangeRequestTemplates !== defaults.followChangeRequestTemplates ? (
+              <SettingResetButton
+                label="change request templates"
+                onClick={() =>
+                  updateSettings({
+                    sourceControlWritingStyle: {
+                      followChangeRequestTemplates: defaults.followChangeRequestTemplates,
+                    },
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <Switch
+              mixed={templatesMixed}
+              checked={templatesMixed ? false : style.followChangeRequestTemplates}
+              onCheckedChange={(checked) =>
+                updateSettings({
+                  sourceControlWritingStyle: {
+                    followChangeRequestTemplates: Boolean(checked),
+                  },
+                })
+              }
+              aria-label="Follow change request templates"
+            />
+          }
+        />
+
+        <SettingsRow
+          serverScoped
+          settingKeys={["sourceControlWriterModelSelection"]}
+          {...searchableSetting("source-control-writer-model")}
+          description="Model for source control text and branch or bookmark names. When disabled, use the text generation model configured for this environment."
+          control={
+            !hasServerTargets ? (
+              <span className="text-sm text-muted-foreground">
+                Connect an environment to choose its source control writer model.
+              </span>
+            ) : (
+              <div className="flex flex-wrap items-center justify-end gap-2">
+                {usesDedicatedModel && !canEnableDedicatedModel ? (
+                  <span className="text-sm text-muted-foreground">
+                    No text generation providers available.
+                  </span>
+                ) : null}
+                {usesDedicatedModel && canEnableDedicatedModel ? (
+                  <ProviderModelPicker
+                    environmentId={environmentId}
+                    activeInstanceId={activeSelection.instanceId}
+                    model={activeSelection.model}
+                    lockedProvider={null}
+                    instanceEntries={instanceEntries}
+                    modelOptionsByInstance={modelOptionsByInstance}
+                    triggerClassName={SETTINGS_PICKER_TRIGGER_CLASSNAME}
+                    triggerAriaLabel="Source control writer model"
+                    {...(mixedWriterModel ? { triggerLabel: "Mixed" } : {})}
+                    {...(environmentId
+                      ? {
+                          onOpenProviderSetup: (instanceId: ProviderInstanceId) => {
+                            void navigate({
+                              to: "/settings/providers",
+                              search: { environmentId, instanceId },
+                            });
+                          },
+                        }
+                      : {})}
+                    getModelDisabledReason={writerModelDisabledReason}
+                    onInstanceModelChange={(instanceId, model) => {
+                      const reason = writerModelDisabledReason(instanceId, model);
+                      if (reason) {
+                        toastManager.add({
+                          type: "error",
+                          title: "Source control writer model not saved",
+                          description: reason,
+                        });
+                        return;
+                      }
+                      updateSettings({
+                        sourceControlWriterModelSelection: createModelSelection(instanceId, model),
+                      });
+                    }}
+                  />
+                ) : null}
+                {usesDedicatedModel &&
+                canEnableDedicatedModel &&
+                !mixedWriterModel &&
+                writerInstanceEntry ? (
+                  <TraitsPicker
+                    provider={writerInstanceEntry.driverKind}
+                    models={writerInstanceEntry.models}
+                    model={activeSelection.model}
+                    modelOptions={activeSelection.options ?? []}
+                    allowPromptInjectedEffort={false}
+                    planModeEnabled={
+                      settings.planModeEnabled || selectsPlanAgent(activeSelection.options)
+                    }
+                    triggerClassName={SETTINGS_PICKER_TRIGGER_CLASSNAME}
+                    onModelOptionsChange={(options) =>
+                      updateSettings({
+                        sourceControlWriterModelSelection: createModelSelection(
+                          activeSelection.instanceId,
+                          activeSelection.model,
+                          options,
+                        ),
+                      })
+                    }
+                  />
+                ) : null}
+                <Switch
+                  checked={usesDedicatedModel}
+                  disabled={!usesDedicatedModel && !canEnableDedicatedModel}
+                  onCheckedChange={(checked) =>
+                    updateSettings({
+                      sourceControlWriterModelSelection: checked
+                        ? createModelSelection(
+                            defaultModelSelection.instanceId,
+                            defaultModelSelection.model,
+                            defaultModelSelection.options,
+                          )
+                        : null,
+                    })
+                  }
+                  aria-label="Use a separate source control writer model"
+                />
+              </div>
+            )
+          }
+        />
+      </AdvancedSettings>
     </SettingsSection>
   );
 }

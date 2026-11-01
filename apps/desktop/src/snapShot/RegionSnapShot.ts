@@ -55,10 +55,6 @@ export type RegionSnapShotProcess = {
   readonly close: () => void;
 };
 
-/**
- * One capture child. `warm` it ahead of time so the native module is loaded
- * before the shortcut fires; each child serves a single capture and exits.
- */
 export function startRegionSnapShotProcess(
   workerPath: string,
   fork: (workerPath: string) => RegionSnapShotChild = forkRegionSnapShotChild,

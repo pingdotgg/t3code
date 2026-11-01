@@ -1,9 +1,3 @@
-/**
- * Pi's client definition: settings form, label, and glyph. Browser- and
- * React Native-safe.
- *
- * @module provider-pi/client
- */
 import { ProviderDriverKind } from "@t3tools/contracts";
 import { defineProviderClient } from "@t3tools/provider-core/client";
 
@@ -12,6 +6,7 @@ import { PiSettings } from "./settings.ts";
 export const piClient = defineProviderClient({
   driverKind: ProviderDriverKind.make("pi"),
   label: "Pi",
+  acpRegistryAgentIds: ["pi-acp"],
   settingsSchema: PiSettings,
   icon: {
     viewBox: "165.29 165.29 469.43 469.43",

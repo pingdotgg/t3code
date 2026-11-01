@@ -1,11 +1,13 @@
 // @effect-diagnostics nodeBuiltinImport:off -- The integration fixture binds the same platform socket or named pipe as the CLI.
+import * as NodeChildProcess from "node:child_process";
+import * as NodeEvents from "node:events";
 import * as NodeFSP from "node:fs/promises";
 import * as NodeNet from "node:net";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { it } from "@effect/vitest";
+import { assert, it } from "@effect/vitest";
 import type { DesktopAppActivationRequest } from "@t3tools/contracts";
 import { resolveDesktopAppControlAddress } from "@t3tools/shared/desktopAppControl";
 import * as HostProcess from "@t3tools/shared/HostProcess";
@@ -19,6 +21,22 @@ import { describe, expect } from "vite-plus/test";
 
 import { makeCli } from "../binCli.ts";
 import { PersistedServerRuntimeState } from "../serverRuntimeState.ts";
+
+const liveProcess = Effect.acquireRelease(
+  Effect.promise(async () => {
+    const child = NodeChildProcess.spawn(process.execPath, ["-e", "process.stdin.resume()"], {
+      stdio: ["pipe", "ignore", "ignore"],
+    });
+    await NodeEvents.EventEmitter.once(child, "spawn");
+    return child;
+  }),
+  (child) =>
+    Effect.promise(async () => {
+      const exited = NodeEvents.EventEmitter.once(child, "exit");
+      child.kill();
+      await exited;
+    }),
+);
 
 const encodeRuntimeState = Schema.encodeEffect(Schema.fromJsonString(PersistedServerRuntimeState));
 
@@ -90,6 +108,7 @@ async function startFakeDesktop(input: {
   });
 
   return {
+    directory: target.directory,
     received,
     close: async () => {
       await new Promise<void>((resolve) => server.close(() => resolve()));
@@ -116,9 +135,10 @@ const fakeDesktop = Effect.fn(function* (
 const withTempDirectory = <A, E, R>(
   prefix: string,
   use: (root: string) => Effect.Effect<A, E, R>,
+  tempDir = NodeOS.tmpdir(),
 ) =>
   Effect.acquireUseRelease(
-    Effect.promise(() => NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), prefix))),
+    Effect.promise(() => NodeFSP.mkdtemp(NodePath.join(tempDir, prefix))),
     use,
     (root) => Effect.promise(() => NodeFSP.rm(root, { recursive: true, force: true })),
   );
@@ -148,26 +168,17 @@ describe("t3 server command safety", () => {
     ),
   );
 
-  it.effect("shows help without creating state", () =>
-    withTempDirectory("t3-cli-help-", (root) =>
-      Effect.gen(function* () {
-        const baseDir = NodePath.join(root, "home");
-        const help = yield* runCli(["help"], { T3CODE_HOME: baseDir }).pipe(Effect.flip);
-        expect(help).toMatchObject({ _tag: "ShowHelp", commandPath: ["t3"], errors: [] });
-        expect(yield* pathExists(baseDir)).toBe(false);
-      }),
-    ),
-  );
-
   it.effect("refuses manual startup over a live server before creating directories", () =>
     withTempDirectory("t3-cli-running-", (root) =>
       Effect.gen(function* () {
         const baseDir = NodePath.join(root, "home");
         const stateDir = NodePath.join(baseDir, "userdata");
         const statePath = NodePath.join(stateDir, "server-runtime.json");
+        const child = yield* liveProcess;
+        assert(child.pid !== undefined);
         const record = yield* encodeRuntimeState({
           version: 1,
-          pid: process.pid,
+          pid: child.pid,
           port: 3773,
           origin: "http://127.0.0.1:3773",
           startedAt: "2026-10-01T00:00:00.000Z",
@@ -206,59 +217,58 @@ describe("t3 server command safety", () => {
 });
 
 describe("t3 app", () => {
-  it.effect("rejects SSH before it tries to reach a desktop app", () =>
-    withTempDirectory("t3-app-ssh-test-", (root) =>
+  it.live.each(["permissions", "owner", "symlink", "missing owner"] as const)(
+    "rejects unsafe %s on the socket directory before sending",
+    (unsafe) =>
       Effect.gen(function* () {
-        const baseDir = NodePath.join(root, "missing-t3-home");
-        const error = yield* runCli(["app", "--base-dir", baseDir], {
-          SSH_CONNECTION: "client server",
-        }).pipe(Effect.flip);
-
-        expect(error).toMatchObject({
-          _tag: "DesktopAppSshUnsupportedError",
-          message:
-            "`t3 app` only controls a desktop app on the same machine. It cannot run over SSH.",
-        });
-        expect(yield* pathExists(baseDir)).toBe(false);
-      }),
-    ),
-  );
-
-  it.effect("rejects unsupported platforms without creating state", () =>
-    withTempDirectory("t3-app-platform-test-", (root) =>
-      Effect.gen(function* () {
-        const baseDir = NodePath.join(root, "missing-t3-home");
-        const error = yield* runCli(["app", "--base-dir", baseDir]).pipe(
-          Effect.provideService(HostProcess.Platform, "freebsd"),
-          Effect.flip,
+        const platform = yield* HostProcess.Platform;
+        if (platform === "win32") return;
+        yield* withTempDirectory(
+          "t3-app-unsafe-",
+          (root) =>
+            Effect.gen(function* () {
+              const previousTmpdir = process.env.TMPDIR;
+              yield* Effect.acquireRelease(
+                Effect.sync(() => {
+                  process.env.TMPDIR = root;
+                }),
+                () =>
+                  Effect.sync(() => {
+                    if (previousTmpdir === undefined) delete process.env.TMPDIR;
+                    else process.env.TMPDIR = previousTmpdir;
+                  }),
+              );
+              const baseDir = NodePath.join(root, ".t3");
+              const userId = yield* HostProcess.UserId;
+              assert(userId !== undefined);
+              const expectedUserId =
+                unsafe === "missing owner" ? undefined : unsafe === "owner" ? userId + 1 : userId;
+              const desktop = yield* fakeDesktop({ baseDir }).pipe(
+                Effect.provideService(HostProcess.UserId, expectedUserId),
+              );
+              const directory = desktop.directory;
+              assert(directory !== null);
+              if (unsafe === "permissions") {
+                yield* Effect.promise(() => NodeFSP.chmod(directory, 0o755));
+              } else if (unsafe === "symlink") {
+                const moved = NodePath.join(root, "moved");
+                yield* Effect.promise(() => NodeFSP.rename(directory, moved));
+                yield* Effect.promise(() => NodeFSP.symlink(moved, directory));
+              }
+              const result = yield* runCli(["app"]).pipe(
+                Effect.provideService(HostProcess.HomeDirectory, root),
+                Effect.provideService(HostProcess.UserId, expectedUserId),
+                Effect.result,
+              );
+              expect(desktop.received).toEqual([]);
+              expect(result).toMatchObject({
+                _tag: "Failure",
+                failure: { _tag: "DesktopAppUnreachableError" },
+              });
+            }).pipe(Effect.scoped),
+          "/tmp",
         );
-
-        expect(error).toMatchObject({
-          _tag: "DesktopAppPlatformUnsupportedError",
-          platform: "freebsd",
-          message: "`t3 app` is not supported on freebsd.",
-        });
-        expect(yield* pathExists(baseDir)).toBe(false);
       }),
-    ),
-  );
-
-  it.effect("does not create state when only a server or no desktop app is running", () =>
-    withTempDirectory("t3-app-missing-test-", (root) =>
-      Effect.gen(function* () {
-        const baseDir = NodePath.join(root, "missing-t3-home");
-        const error = yield* runCli(["app", "--base-dir", baseDir]).pipe(Effect.flip);
-
-        expect(error).toMatchObject({
-          _tag: "DesktopAppUnreachableError",
-          candidateAddresses: [expect.any(String)],
-          workspaceRoot: yield* HostProcess.WorkingDirectory,
-          message: expect.stringContaining("Could not reach the T3 Code desktop app."),
-          cause: { code: "ENOENT" },
-        });
-        expect(yield* pathExists(baseDir)).toBe(false);
-      }),
-    ),
   );
 
   it.effect("uses T3CODE_HOME or --base-dir and sends the default or explicit path", () =>

@@ -5,11 +5,13 @@ export type SecretRequestItem = Extract<
   { readonly type: "secret_request" }
 >;
 
-/** Shown under the field: the one promise the card makes about the value. */
-export const SECRET_REQUEST_PRIVACY_NOTE = "Stored securely, never shown to the agent";
+/** A `file` request lets the agent's commands read the value, so its card must not promise more. */
+export const secretRequestPrivacyNote = (item: Pick<SecretRequestItem, "delivery">) =>
+  item.delivery === "file"
+    ? "Kept out of chat, in a private file this agent's commands can read for 24 hours"
+    : "Stored securely, never shown to the agent";
 export const SECRET_REQUEST_DEFAULT_PLACEHOLDER = "Paste the secret";
 
-/** What a secret request card shows: the form while pending, otherwise a one-line outcome. */
 export type SecretRequestDisplay =
   | { readonly kind: "pending" }
   | { readonly kind: "pending-elsewhere"; readonly label: string }
@@ -60,10 +62,6 @@ export function secretRequestDisplay(
   }
 }
 
-/**
- * Builds the RPC payload for an answer. A save with a blank value returns null,
- * since the server rejects it; callers keep Save disabled instead.
- */
 export function secretRequestAnswerInput(
   item: Pick<SecretRequestItem, "id" | "threadId">,
   answer: { readonly type: "save"; readonly secret: string } | { readonly type: "decline" },
@@ -76,13 +74,11 @@ export function secretRequestAnswerInput(
   return { threadId: item.threadId, turnItemId: item.id, answer: { type: "save", secret } };
 }
 
-/** Failures whose message is written for the user and never echoes the request payload. */
 const USER_FACING_FAILURE_TAGS = new Set(["SecretRequestError", "EnvironmentAuthorizationError"]);
 
 /**
- * Inline error copy for a failed answer. Only known server errors pass their
- * message through: anything else (transport or encoding failures) gets the
- * generic copy, so the typed value can never surface in the UI.
+ * Only known server errors pass their message through: anything else (transport or encoding
+ * failures) gets the generic copy, so the typed value can never surface in the UI.
  */
 export function secretRequestFailureMessage(failure: unknown): string {
   if (

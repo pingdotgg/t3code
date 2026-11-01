@@ -2,7 +2,7 @@ import { useNavigation } from "@react-navigation/native";
 import * as Haptics from "expo-haptics";
 import { useMemo, useState } from "react";
 
-import { AppText as Text } from "../../components/AppText";
+import { AppText as Text } from "../../components/ui/AppText";
 import { buildModelOptions, groupByProvider } from "../../lib/modelOptions";
 import { resolveProviderOptionDescriptors } from "../../lib/providerOptions";
 import { useEnvironmentServerConfig, useProjects } from "../../state/entities";
@@ -25,7 +25,11 @@ export function ScheduledTaskModelPickerRouteScreen() {
   const { editor, setEditor } = useScheduledTaskEditor();
   const config = useEnvironmentServerConfig(editor?.environmentId ?? null);
   const selectedModel = editor?.draft.modelSelection ?? null;
-  const models = useMemo(() => buildModelOptions(config, selectedModel), [config, selectedModel]);
+  const projectId = editor?.draft.projectId ?? null;
+  const models = useMemo(
+    () => buildModelOptions(config, selectedModel, undefined, projectId),
+    [config, selectedModel, projectId],
+  );
   const providerGroups = useMemo(() => groupByProvider(models), [models]);
   const selectedOption = models.find(
     (option) =>
@@ -46,8 +50,15 @@ export function ScheduledTaskModelPickerRouteScreen() {
   return (
     <ThreadSettingsPickerScreen
       environmentId={editor.environmentId}
+      projectId={projectId}
       providerGroups={providerGroups}
       selectedModel={selectedModel}
+      prompt={editor.draft.prompt}
+      onPromptChange={(prompt) =>
+        setEditor((current) =>
+          current ? { ...current, draft: { ...current.draft, prompt } } : current,
+        )
+      }
       onSelectModel={(option) =>
         setEditor((current) =>
           current

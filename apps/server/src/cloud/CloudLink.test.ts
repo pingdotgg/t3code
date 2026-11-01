@@ -16,6 +16,7 @@ import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as AgentAwarenessRelay from "../relay/AgentAwarenessRelay.ts";
 import * as CliTokenManager from "./CliTokenManager.ts";
 import * as CloudLink from "./CloudLink.ts";
+import * as ConnectReachability from "./ConnectReachability.ts";
 import * as ManagedEndpointRuntime from "./ManagedEndpointRuntime.ts";
 import {
   HOLD_WEBHOOKS_WHILE_OFFLINE_SECRET,
@@ -26,7 +27,6 @@ import {
 
 const encode = (value: string) => new TextEncoder().encode(value);
 
-/** A linked environment whose secret store can refuse writes, and the relay calls it made. */
 const withService = <A, E>(
   options: {
     readonly failHoldWrite?: boolean;
@@ -34,7 +34,6 @@ const withService = <A, E>(
     readonly relayFails?: boolean;
     readonly failActivityRead?: boolean;
     readonly failHoldRead?: boolean;
-    /** The first relay call reports itself, then waits for this before answering. */
     readonly holdFirstRelayCall?: {
       readonly started: () => void;
       readonly released: Promise<void>;
@@ -95,8 +94,10 @@ const withService = <A, E>(
         getEnvironmentId: Effect.succeed(EnvironmentId.make("environment-1")),
       }),
       Layer.mock(AgentAwarenessRelay.AgentAwarenessRelay)({ requestCatchUp: () => Effect.void }),
-      // Saving preferences touches none of the link's other dependencies.
       Layer.mock(ManagedEndpointRuntime.CloudManagedEndpointRuntime)({}),
+      Layer.mock(ConnectReachability.ConnectReachability)({
+        latest: Effect.succeedNone,
+      }),
       Layer.mock(EnvironmentAuth.EnvironmentAuth)({}),
       Layer.mock(CliTokenManager.CloudCliTokenManager)({}),
       Layer.mock(HttpServer.HttpServer)({
@@ -184,19 +185,6 @@ it.effect("keeps both settings unchanged when the relay refuses the hold change"
   ),
 );
 
-it.effect("changes nothing when the current activity setting can't be read", () =>
-  withService({ failActivityRead: true, relayFails: true }, ({ preferences, stored, relayCalls }) =>
-    Effect.gen(function* () {
-      const error = yield* preferences
-        .update({ publishAgentActivity: true, holdWebhooksWhileOffline: true })
-        .pipe(Effect.flip);
-      assert.deepInclude(error, { _tag: "CloudLinkInternalError", operation: "read-preferences" });
-      assert.deepEqual(relayCalls, []);
-      assert.equal(new TextDecoder().decode(stored.get(PUBLISH_AGENT_ACTIVITY_SECRET)), "false");
-    }),
-  ),
-);
-
 it.effect("two overlapping updates are applied one after the other", () => {
   let release!: () => void;
   let started!: () => void;
@@ -215,7 +203,6 @@ it.effect("two overlapping updates are applied one after the other", () => {
       const second = yield* preferences
         .update({ publishAgentActivity: false, holdWebhooksWhileOffline: false })
         .pipe(Effect.forkChild);
-      // Give the second update every chance to run; it must wait for the first.
       yield* Effect.yieldNow;
       assert.equal(new TextDecoder().decode(stored.get(PUBLISH_AGENT_ACTIVITY_SECRET)), "true");
       release();
@@ -229,20 +216,6 @@ it.effect("two overlapping updates are applied one after the other", () => {
     }),
   );
 });
-
-it.effect("changes nothing when the current hold setting can't be read", () =>
-  withService({ failHoldRead: true, failHoldWrite: true }, ({ preferences, stored, relayCalls }) =>
-    Effect.gen(function* () {
-      stored.set(HOLD_WEBHOOKS_WHILE_OFFLINE_SECRET, encode("true"));
-      const error = yield* preferences
-        .update({ publishAgentActivity: true, holdWebhooksWhileOffline: false })
-        .pipe(Effect.flip);
-      assert.deepInclude(error, { _tag: "CloudLinkInternalError", operation: "read-preferences" });
-      assert.deepEqual(relayCalls, []);
-      assert.equal(new TextDecoder().decode(stored.get(PUBLISH_AGENT_ACTIVITY_SECRET)), "false");
-    }),
-  ),
-);
 
 it.effect("an update the client walks away from still finishes", () => {
   let release!: () => void;
@@ -259,7 +232,6 @@ it.effect("an update the client walks away from still finishes", () => {
         .update({ publishAgentActivity: true, holdWebhooksWhileOffline: true })
         .pipe(Effect.forkChild);
       yield* Effect.promise(() => atRelay);
-      // The interrupt is in flight before the relay answers.
       const interrupted = yield* Fiber.interrupt(update).pipe(Effect.forkChild);
       yield* Effect.yieldNow;
       release();

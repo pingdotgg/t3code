@@ -8,9 +8,7 @@ export type LinuxPasswordStoreSwitch = Exclude<LinuxPasswordStorePreference, "au
 
 export const DEFAULT_LINUX_PASSWORD_STORE: LinuxPasswordStorePreference = "auto";
 
-// Chromium matches XDG_CURRENT_DESKTOP values case-sensitively and returns on the first value it
-// recognizes, so these stay exact literals and are scanned in order. Omitting a real desktop fails
-// safe: we force gnome-libsecret, which is the backend Chromium selects for all of these anyway.
+// Chromium matches desktop names case-sensitively and stops at the first recognized value.
 const ELECTRON_LIBSECRET_DESKTOPS = new Set([
   "Deepin",
   "GNOME",
@@ -36,11 +34,6 @@ export function normalizeLinuxPasswordStorePreference(
     : DEFAULT_LINUX_PASSWORD_STORE;
 }
 
-// Auto mode asks one question: will Electron select a real keyring on its own? If so, stay out of
-// the way, which is how canonical KDE sessions keep the KWallet generation Chromium picks for them.
-// Otherwise force gnome-libsecret, because the alternative is basic text, which is barely
-// encryption at all. Forcing never guesses a KWallet generation; a KDE session that needs a
-// specific one sets linuxPasswordStore explicitly.
 export function resolveLinuxPasswordStoreSwitch(input: {
   readonly preference: LinuxPasswordStorePreference;
   readonly env: NodeJS.ProcessEnv;
@@ -52,11 +45,8 @@ export function resolveLinuxPasswordStoreSwitch(input: {
   return electronSelectsProtectedBackend(input.env) ? null : "gnome-libsecret";
 }
 
-// Only an exact XDG_CURRENT_DESKTOP literal proves Electron will protect the session. Chromium can
-// also reach a real backend through DESKTOP_SESSION and the legacy KDE markers, but those are the
-// variables a previous session leaves behind, and trusting them is what let stale hints suppress
-// the forced backend before. Forcing where Chromium would have chosen libsecret is harmless, since
-// it lands on the same backend.
+// DESKTOP_SESSION and legacy KDE markers can be stale, so only trust exact XDG_CURRENT_DESKTOP values.
+
 function electronSelectsProtectedBackend(env: NodeJS.ProcessEnv): boolean {
   for (const name of splitDesktopNameList(env.XDG_CURRENT_DESKTOP)) {
     const trimmed = name.trim();

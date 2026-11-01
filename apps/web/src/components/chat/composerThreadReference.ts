@@ -9,6 +9,6 @@ export function composerThreadReferenceText(
   answeringQuestion: boolean,
 ) {
   return answeringQuestion
-    ? formatThreadLink(record.threadId, record.title)
+    ? formatThreadLink(record, record.title)
     : formatInlineContextReference(threadContextReference(record));
 }
