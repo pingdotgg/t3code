@@ -1,6 +1,8 @@
 // @effect-diagnostics-next-line nodeBuiltinImport:off -- A real listener on a Unix socket stands in for gh's proxy.
 import * as NodeHttp from "node:http";
+import type * as NodeNet from "node:net";
 import * as NodeOS from "node:os";
+import type * as Undici from "undici";
 
 import { describe, expect, it } from "@effect/vitest";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
@@ -167,6 +169,43 @@ describe("GitHubRest", () => {
         },
       ]);
       expect(JSON.parse(answer.body)).toEqual({ login: "octocat" });
+    }),
+  );
+
+  it.live("leaves a gh socket's errors to undici once it has connected", () =>
+    Effect.gen(function* () {
+      const id = yield* Random.nextInt;
+      const socket =
+        (yield* HostProcess.Platform) === "win32"
+          ? `\\\\.\\pipe\\gh-${id}`
+          : `${NodeOS.tmpdir()}/gh-${id}.sock`;
+      const server = NodeHttp.createServer();
+      yield* Effect.promise(() => new Promise<void>((resolve) => server.listen(socket, resolve)));
+      const callbacks: Array<Error | null> = [];
+      const connected = yield* Effect.promise(
+        () =>
+          new Promise<NodeNet.Socket>((resolve) =>
+            GitHubRequestPolicy.connectUnixSocket(socket)(
+              {} as Undici.buildConnector.Options,
+              (error, connection) => {
+                callbacks.push(error);
+                if (connection !== null) resolve(connection);
+              },
+            ),
+          ),
+      ).pipe(
+        Effect.ensuring(
+          Effect.promise(() => {
+            server.closeAllConnections();
+            return new Promise<void>((resolve) => server.close(() => resolve()));
+          }),
+        ),
+      );
+      // undici's own handler, attached once the connector hands the socket over.
+      connected.on("error", () => undefined);
+      connected.emit("error", new Error("connection reset"));
+      connected.destroy();
+      expect(callbacks).toEqual([null]);
     }),
   );
 

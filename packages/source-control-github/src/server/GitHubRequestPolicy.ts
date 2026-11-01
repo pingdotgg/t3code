@@ -263,6 +263,23 @@ function refusedToApp<A>(answer: GitHubAnswer<A>): boolean {
 // undici is external to the server bundle; single executables can load it only with require.
 const requireUndici = NodeModule.createRequire(import.meta.url);
 
+/**
+ * Connects the way gh does over its `http_unix_socket`: plain HTTP on the socket even for an https
+ * URL, so whatever listens there (a proxy that adds the credential) reads the host and path.
+ */
+export const connectUnixSocket =
+  (path: string): Undici.buildConnector.connector =>
+  (_options, callback) => {
+    const socket = NodeNet.connect(path);
+    const failed = (error: Error) => callback(error, null);
+    // Once connected, undici handles the socket's errors itself.
+    socket.once("error", failed);
+    socket.once("connect", () => {
+      socket.off("error", failed);
+      callback(null, socket);
+    });
+  };
+
 /** @public */
 export const make = Effect.gen(function* () {
   const credentials = yield* GitHubCredentials.GitHubCredentials;
@@ -277,26 +294,12 @@ export const make = Effect.gen(function* () {
     ),
   );
 
-  /**
-   * Sends over gh's `http_unix_socket` the way gh does: plain HTTP on the socket even for an https
-   * URL, so whatever listens there (a proxy that adds the credential) reads the host and path.
-   */
+  /** One undici agent per gh socket path, closed when this service ends. */
   const unixSocketDispatcher = (path: string): Undici.Dispatcher => {
     let dispatcher = unixSocketDispatchers.get(path);
     if (dispatcher === undefined) {
       const undici = requireUndici("undici") as typeof Undici;
-      dispatcher = new undici.Agent({
-        connect: (_options, callback) => {
-          const socket = NodeNet.connect(path);
-          const failed = (error: Error) => callback(error, null);
-          // Once connected, undici handles the socket's errors itself.
-          socket.once("error", failed);
-          socket.once("connect", () => {
-            socket.off("error", failed);
-            callback(null, socket);
-          });
-        },
-      });
+      dispatcher = new undici.Agent({ connect: connectUnixSocket(path) });
       unixSocketDispatchers.set(path, dispatcher);
     }
     return dispatcher;
