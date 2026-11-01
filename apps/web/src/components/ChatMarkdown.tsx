@@ -223,8 +223,6 @@ import { reportMarkdownActionFailure } from "./chat/markdownActionFailure";
 const isAssetNotFoundError = Schema.is(AssetWorkspaceAssetNotFoundError);
 
 interface ChatMarkdownProps {
-  /** Compact markdown transforms remove blocks before rendering inside a label. */
-  inline?: boolean;
   text: string;
   cwd: string | undefined;
   threadRef?: ScopedThreadRef | undefined;
@@ -488,7 +486,6 @@ function resolveFileLinkSources(
 
 function useChatMarkdownState({
   text,
-  inline = false,
   cwd,
   threadRef,
   pullRequestPanelRef,
@@ -906,7 +903,6 @@ function useChatMarkdownState({
     imageBaseDir,
     workspaceMutationId,
     inlineCodeFileLinkMetaByText,
-    inline,
     mathEnabled,
     isStreaming,
     linkTargetPreference,
@@ -1333,17 +1329,12 @@ const CHAT_MARKDOWN_COMPONENTS = {
     );
   },
   code: function MarkdownCode({ node, children, className, ...props }) {
-    const { cwd, imageBaseDir, inlineCodeFileLinkMetaByText, fileLinkChip, mathEnabled, inline } =
-      use(ChatMarkdownRendererContext);
+    const { cwd, imageBaseDir, inlineCodeFileLinkMetaByText, fileLinkChip, mathEnabled } = use(
+      ChatMarkdownRendererContext,
+    );
     const math = mathEnabled ? mathKind(className) : null;
     if (math) {
-      return (
-        <MarkdownMath
-          tex={nodeToPlainText(children)}
-          display={math === "display"}
-          focusable={!inline}
-        />
-      );
+      return <MarkdownMath tex={nodeToPlainText(children)} display={math === "display"} />;
     }
     if (node?.properties?.dataInlineCode != null) {
       const codeText = nodeToPlainText(children);
@@ -1566,7 +1557,6 @@ const CHAT_MARKDOWN_COMPONENTS = {
       expandMedia,
       isStreaming,
       onRunShellCommand,
-      inline,
       mathEnabled,
     } = use(ChatMarkdownRendererContext);
     const text = use(ChatMarkdownTextContext);
@@ -1583,7 +1573,7 @@ const CHAT_MARKDOWN_COMPONENTS = {
         mathKind(codeBlock.className) === "display" ||
         isClosedCodeFence(node, text, codeBlock.code))
     ) {
-      return <MarkdownMath tex={codeBlock.code} display focusable={!inline} />;
+      return <MarkdownMath tex={codeBlock.code} display />;
     }
     const fenceTitle = extractFenceTitle(extractPreCodeMeta(node));
     const highlightedCode = (
@@ -1718,20 +1708,16 @@ const MarkdownSource = memo(function MarkdownSource({
 function ChatMarkdown({
   text,
   className,
-  inline = false,
   lineBreaks = false,
   parseRawHtml = true,
   extraRemarkPlugins = EMPTY_REMARK_PLUGINS,
   ...props
 }: ChatMarkdownProps) {
   const { componentState, handleCopy, markdownRef, localMediaPreview, closeLocalMediaPreview } =
-    useChatMarkdownState({ text, inline, ...props });
+    useChatMarkdownState({ text, ...props });
   // Streaming re-renders only the last block; offsets for task edits need the whole text.
   const streamingBlocks =
-    props.isStreaming === true &&
-    !inline &&
-    extraRemarkPlugins.length === 0 &&
-    !props.onTaskListChange
+    props.isStreaming === true && extraRemarkPlugins.length === 0 && !props.onTaskListChange
       ? splitMarkdownBlocks(text)
       : null;
   const incrementalParsing =
@@ -1739,7 +1725,6 @@ function ChatMarkdown({
     streamingBlocks === null &&
     extraRemarkPlugins.length === 0 &&
     /(?:^|\n) {0,3}(?:`{3}|~{3})/.test(text);
-  const Root = inline ? "span" : "div";
   const bindMarkdownRef = (node: HTMLElement | null) => {
     markdownRef.current = node;
   };
@@ -1761,12 +1746,11 @@ function ChatMarkdown({
   const blocks = streamingBlocks ?? [text];
 
   return (
-    <Root
+    <div
       ref={bindMarkdownRef}
       className={cn(
         "chat-markdown w-full min-w-0 [overflow-wrap:anywhere] [word-break:break-word]",
-        !inline &&
-          "text-sm leading-relaxed text-foreground/[calc(90%+var(--appearance-contrast-boost)/10)]",
+        "text-sm leading-relaxed text-foreground/[calc(90%+var(--appearance-contrast-boost)/10)]",
         className,
       )}
       data-streaming={componentState.isStreaming ? "" : undefined}
@@ -1793,7 +1777,7 @@ function ChatMarkdown({
       {localMediaPreview ? (
         <ExpandedImageDialog preview={localMediaPreview} onClose={closeLocalMediaPreview} />
       ) : null}
-    </Root>
+    </div>
   );
 }
 

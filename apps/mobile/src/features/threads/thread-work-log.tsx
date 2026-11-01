@@ -35,7 +35,6 @@ import {
   Animated as NativeAnimated,
   type ColorValue,
   Easing,
-  Pressable,
   ScrollView,
   StyleSheet,
   useAnimatedValue,
@@ -96,7 +95,6 @@ import Animated, {
   FadeOut,
   LinearTransition,
   ReduceMotion,
-  useAnimatedScrollHandler,
   useAnimatedStyle,
   useSharedValue,
   withTiming,
@@ -108,7 +106,6 @@ import { useOpenLinkedThread } from "./useOpenLinkedThread";
 const SHIMMER_WIDTH = 72;
 const SHIMMER_SWEEP_MS = 1_350;
 const SHIMMER_PAUSE_MS = 1_450;
-const SHIMMER_ICON_AND_GAP_WIDTH = 30;
 export const THREAD_DISCLOSURE_TRANSITION_MS = 180;
 const WORK_LOG_LAYOUT_TRANSITION = LinearTransition.duration(THREAD_DISCLOSURE_TRANSITION_MS);
 const WORK_LOG_DETAIL_ENTER_TRANSITION = FadeIn.duration(140);
@@ -125,9 +122,8 @@ function WorkLogIcon(props: {
   readonly icon: WorkContentIcon;
   readonly color: ColorValue;
   readonly colorClassName?: string;
-  readonly highlighted?: boolean;
 }) {
-  const colorClassName = props.highlighted ? "accent-foreground" : props.colorClassName;
+  const { colorClassName } = props;
   if (props.icon === "t3-code") {
     return (
       <T3Wordmark height={10} {...(colorClassName ? { colorClassName } : { color: props.color })} />
@@ -204,37 +200,12 @@ export function ThreadDisclosureChevron(props: {
 function ShimmerWorkContent(props: {
   readonly textClassName?: string;
   readonly compact?: boolean;
-  readonly environmentId?: EnvironmentId;
   readonly highlighted: boolean;
-  readonly icon: WorkContentIcon;
-  readonly iconSubtleColor: ColorValue;
   readonly label: string;
   readonly onTextLayout?: ComponentProps<typeof Text>["onTextLayout"];
-  readonly showIcon: boolean;
-  readonly themeAppearance?: "light" | "dark";
-  readonly toolIcon?: ToolActivityIcon;
 }) {
   return (
     <View className="flex-row items-center gap-1.5">
-      {props.showIcon ? (
-        <View className="h-6 w-6 shrink-0 items-center justify-center">
-          {props.toolIcon && props.environmentId ? (
-            <ToolActivityIconView
-              environmentId={props.environmentId}
-              icon={props.toolIcon}
-              fallback={props.icon}
-              fallbackColor={props.iconSubtleColor}
-              themeAppearance={props.themeAppearance ?? "light"}
-            />
-          ) : (
-            <WorkLogIcon
-              icon={props.icon}
-              color={props.iconSubtleColor}
-              highlighted={props.highlighted}
-            />
-          )}
-        </View>
-      ) : null}
       <Text
         className={cn(
           "min-w-0 shrink",
@@ -255,13 +226,7 @@ export function ShimmeringWorkContent(props: {
   readonly className?: string;
   readonly textClassName?: string;
   readonly compact?: boolean;
-  readonly environmentId?: EnvironmentId;
-  readonly icon: WorkContentIcon;
-  readonly iconSubtleColor: ColorValue;
   readonly label: string;
-  readonly showIcon: boolean;
-  readonly themeAppearance?: "light" | "dark";
-  readonly toolIcon?: ToolActivityIcon;
 }) {
   const [availableWidth, setAvailableWidth] = useState(0);
   const [textWidth, setTextWidth] = useState(0);
@@ -270,10 +235,7 @@ export function ShimmeringWorkContent(props: {
   const screenIsFocused = useIsFocused();
   const progress = useAnimatedValue(0);
   const gradientId = `work-shimmer-${useId().replaceAll(":", "")}`;
-  const contentWidth = Math.min(
-    availableWidth,
-    (props.showIcon ? SHIMMER_ICON_AND_GAP_WIDTH : 0) + Math.ceil(textWidth),
-  );
+  const contentWidth = Math.min(availableWidth, Math.ceil(textWidth));
 
   // Runs on React Native's native driver instead of Reanimated, whose
   // per-frame commits starve React's while commit pausing is disabled
@@ -316,14 +278,8 @@ export function ShimmeringWorkContent(props: {
       <ShimmerWorkContent
         textClassName={props.textClassName}
         compact={props.compact}
-        environmentId={props.environmentId}
         highlighted={false}
-        icon={props.icon}
-        iconSubtleColor={props.iconSubtleColor}
         label={props.label}
-        showIcon={props.showIcon}
-        themeAppearance={props.themeAppearance}
-        toolIcon={props.toolIcon}
         onTextLayout={(event) => setTextWidth(event.nativeEvent.lines[0]?.width ?? 0)}
       />
       {!reducedMotion && appIsActive && screenIsFocused && contentWidth > 0 ? (
@@ -367,14 +323,8 @@ export function ShimmeringWorkContent(props: {
               <ShimmerWorkContent
                 textClassName={props.textClassName}
                 compact={props.compact}
-                environmentId={props.environmentId}
                 highlighted
-                icon={props.icon}
-                iconSubtleColor={props.iconSubtleColor}
                 label={props.label}
-                showIcon={props.showIcon}
-                themeAppearance={props.themeAppearance}
-                toolIcon={props.toolIcon}
               />
             </NativeAnimated.View>
           </MaskedView>
@@ -500,7 +450,6 @@ export function ThreadWorkLog(props: ThreadWorkLogProps) {
       onCopyRow={props.onCopyRow}
       onToggleRow={props.onToggleRow}
       renderImage={props.renderImage}
-      renderReasoning={props.renderReasoning}
       onPressPreview={props.onPressPreview}
       themeAppearance={props.themeAppearance}
     />
@@ -510,33 +459,31 @@ export function ThreadWorkLog(props: ThreadWorkLogProps) {
     return null;
   }
 
-  const plan = props.activities[0]?.projectedItem.item;
-  if (plan?.type === "proposed_plan") {
+  const item = props.activities[0]?.projectedItem.item;
+  if (item?.type === "proposed_plan") {
     return (
       <ProposedPlanCard
         environmentId={props.environmentId}
         workspaceRoot={props.workspaceRoot}
-        markdown={plan.markdown}
+        markdown={item.markdown}
         renderMarkdown={props.renderReasoning}
       />
     );
   }
 
-  if (props.activities[0]?.projectedItem.item.type === "subagent") {
+  if (item?.type === "subagent") {
     return <ThreadSubagentGroup {...props} />;
   }
 
-  if (
-    props.activities[0]?.groupedToolDetail &&
-    props.activities.every((row) => row.projectedItem.item.type === "reasoning")
-  ) {
+  if (item?.type === "reasoning") {
     return (
       <WorkLogBlock continues={props.continuesWorkLog}>
-        <ThreadReasoningGroup
-          activities={props.activities}
-          edgeFadeColor={props.edgeFadeColor}
-          renderReasoning={props.renderReasoning}
-        />
+        <View className="flex-row items-start gap-1.5 px-0.5 py-1.5">
+          <WorkLogIconSlot>
+            <WorkLogIcon icon="brain" color={props.iconSubtleColor} />
+          </WorkLogIconSlot>
+          <View className="min-w-0 flex-1 opacity-75">{props.renderReasoning(item.text)}</View>
+        </View>
       </WorkLogBlock>
     );
   }
@@ -557,55 +504,6 @@ export function ThreadWorkLog(props: ThreadWorkLogProps) {
         <WorkLogRows>{props.activities.map(renderRow)}</WorkLogRows>
       )}
     </WorkLogBlock>
-  );
-}
-
-function ThreadReasoningGroup(props: {
-  readonly activities: ReadonlyArray<ThreadFeedActivity>;
-  readonly edgeFadeColor: string;
-  readonly renderReasoning: (text: string) => ReactNode;
-}) {
-  const scrollOffset = useSharedValue(0);
-  const contentHeight = useSharedValue(0);
-  const viewportHeight = useSharedValue(0);
-  const onScroll = useAnimatedScrollHandler((event) => {
-    scrollOffset.set(event.contentOffset.y);
-  });
-  const bottomFadeStyle = useAnimatedStyle(() => ({
-    opacity: Math.min(
-      1,
-      Math.max(0, contentHeight.value - viewportHeight.value - scrollOffset.value) /
-        WORK_GROUP_EDGE_FADE_HEIGHT,
-    ),
-  }));
-
-  return (
-    <View className="ml-7">
-      <Animated.ScrollView
-        nestedScrollEnabled
-        className="max-h-96"
-        contentContainerClassName="py-1"
-        scrollEventThrottle={16}
-        onScroll={onScroll}
-        onLayout={(event) => {
-          viewportHeight.set(event.nativeEvent.layout.height);
-        }}
-        onContentSizeChange={(_width, height) => {
-          contentHeight.set(height);
-        }}
-      >
-        {props.activities.map((row) => (
-          <View key={row.id}>{props.renderReasoning(row.workEntry.detail ?? "")}</View>
-        ))}
-      </Animated.ScrollView>
-      <Animated.View
-        pointerEvents="none"
-        className="absolute inset-x-0 bottom-0"
-        style={[{ height: WORK_GROUP_EDGE_FADE_HEIGHT }, bottomFadeStyle]}
-      >
-        <EdgeFade color={props.edgeFadeColor} direction="up" />
-      </Animated.View>
-    </View>
   );
 }
 
@@ -915,6 +813,7 @@ const ThreadWorkLogRow = function ThreadWorkLogRow(
     | "edgeFadeColor"
     | "expandedRows"
     | "rowSizing"
+    | "renderReasoning"
     | "scrollPositions"
   > & {
     readonly row: ThreadFeedActivity;
@@ -1011,7 +910,6 @@ const ThreadWorkLogRow = function ThreadWorkLogRow(
       ? notificationChildThreadId(row.projectedItem.item.source)
       : undefined;
   const canExpand = row.canExpand && notifiedSubagentThreadId === undefined;
-  const reasoning = row.projectedItem.item.type === "reasoning" ? row.projectedItem.item : null;
   const fetchedItem = fetchedDetail.data?.item ?? null;
   const isRead = toolGroupAction(row.workEntry) === "read";
   const shownItem = fetchedItem ?? row.projectedItem.item;
@@ -1030,7 +928,7 @@ const ThreadWorkLogRow = function ThreadWorkLogRow(
       ? shownItem.exitCode
       : null;
   const fullDetail =
-    expanded && !reasoning && !call
+    expanded && !call
       ? fetchedItem && !isRead
         ? formatItemFullDetail(row.projectedItem, fetchedItem)
         : row.getFullDetail()
@@ -1074,7 +972,7 @@ const ThreadWorkLogRow = function ThreadWorkLogRow(
     !isSystemNotice && !isUsageLimit && (row.icon === "alert" || row.icon === "warning");
   const failed = row.status === "failure";
   const toolIcon = row.workEntry.toolIcon ?? row.workEntry.toolSource?.icon;
-  const icon = reasoning ? "brain" : (toolPresentation?.icon ?? workRowSymbolName(row.icon));
+  const icon = toolPresentation?.icon ?? workRowSymbolName(row.icon);
 
   return (
     <Animated.View
@@ -1110,61 +1008,45 @@ const ThreadWorkLogRow = function ThreadWorkLogRow(
         }}
         onLongPress={() => props.onCopyRow(row.id, row.getCopyText())}
       >
-        {row.live && !expanded ? (
-          <ShimmeringWorkContent
-            environmentId={props.environmentId}
-            icon={icon}
-            iconSubtleColor={props.iconSubtleColor}
-            label={displayText}
-            showIcon
-            themeAppearance={props.themeAppearance}
-            toolIcon={toolIcon}
-          />
-        ) : (
-          <>
-            <WorkLogIconSlot>
-              {toolIcon ? (
-                <ToolActivityIconView
-                  environmentId={props.environmentId}
-                  icon={toolIcon}
-                  fallback={icon}
-                  fallbackColor={props.iconSubtleColor}
-                  themeAppearance={props.themeAppearance}
-                />
-              ) : (
-                <WorkLogIcon
-                  icon={icon}
-                  color={props.iconSubtleColor}
-                  colorClassName={
-                    isUsageLimit
-                      ? "accent-warning-foreground"
-                      : iconIsDestructive
-                        ? "accent-adaptive-rose-600-400"
-                        : failed
-                          ? "accent-danger-foreground/40"
-                          : undefined
-                  }
-                />
-              )}
-            </WorkLogIconSlot>
-            <WorkLogLabel
-              tone={isUsageLimit ? "warning" : iconIsDestructive ? "danger" : "default"}
-            >
-              {displayText}
-              {answerPreview ? (
-                <Text
-                  className={
-                    !expanded &&
-                    row.workEntry.questionAnswer &&
-                    hasQuestionAnswer(row.workEntry.questionAnswer)
-                      ? "text-foreground"
-                      : "text-foreground-subtle"
-                  }
-                >{`  ${answerPreview}`}</Text>
-              ) : null}
-            </WorkLogLabel>
-          </>
-        )}
+        <WorkLogIconSlot>
+          {toolIcon ? (
+            <ToolActivityIconView
+              environmentId={props.environmentId}
+              icon={toolIcon}
+              fallback={icon}
+              fallbackColor={props.iconSubtleColor}
+              themeAppearance={props.themeAppearance}
+            />
+          ) : (
+            <WorkLogIcon
+              icon={icon}
+              color={props.iconSubtleColor}
+              colorClassName={
+                isUsageLimit
+                  ? "accent-warning-foreground"
+                  : iconIsDestructive
+                    ? "accent-adaptive-rose-600-400"
+                    : failed
+                      ? "accent-danger-foreground/40"
+                      : undefined
+              }
+            />
+          )}
+        </WorkLogIconSlot>
+        <WorkLogLabel tone={isUsageLimit ? "warning" : iconIsDestructive ? "danger" : "default"}>
+          {displayText}
+          {answerPreview ? (
+            <Text
+              className={
+                !expanded &&
+                row.workEntry.questionAnswer &&
+                hasQuestionAnswer(row.workEntry.questionAnswer)
+                  ? "text-foreground"
+                  : "text-foreground-subtle"
+              }
+            >{`  ${answerPreview}`}</Text>
+          ) : null}
+        </WorkLogLabel>
 
         <View className="shrink-0 flex-row items-center gap-px">
           {props.copied ? (
@@ -1190,7 +1072,7 @@ const ThreadWorkLogRow = function ThreadWorkLogRow(
             {canExpand ? (
               <ThreadDisclosureChevron
                 expanded={expanded}
-                collapsedDirection="down"
+                collapsedDirection="right"
                 size={11}
                 tintColor={props.iconSubtleColor}
               />
@@ -1200,8 +1082,7 @@ const ThreadWorkLogRow = function ThreadWorkLogRow(
       </WorkLogPressable>
 
       {expanded &&
-      (reasoning ||
-        fullDetail ||
+      (fullDetail ||
         call ||
         fetchedOutput ||
         viewedImagePath ||
@@ -1211,7 +1092,7 @@ const ThreadWorkLogRow = function ThreadWorkLogRow(
           entering={WORK_LOG_DETAIL_ENTER_TRANSITION}
           exiting={WORK_LOG_DETAIL_EXIT_TRANSITION}
           layout={WORK_LOG_LAYOUT_TRANSITION}
-          className={reasoning ? "ml-7 py-1" : "pb-1 pt-0.5"}
+          className="pb-1 pt-0.5"
         >
           {row.workEntry.questionAnswer ? (
             <QuestionAnswerHistory
@@ -1249,9 +1130,7 @@ const ThreadWorkLogRow = function ThreadWorkLogRow(
             className="max-h-60"
             contentContainerStyle={{ paddingRight: 8 }}
           >
-            {reasoning ? (
-              props.renderReasoning(reasoning.text)
-            ) : call ? (
+            {call ? (
               [
                 call.command,
                 ...(call.args ?? []).map(([key, value]) =>
@@ -1334,13 +1213,17 @@ export function ThreadWorkGroupToggle(props: {
   readonly toolSurface?: import("@t3tools/contracts").ToolActivitySurface;
   readonly toolIcon?: ToolActivityIcon;
   readonly hasFailure: boolean;
-  readonly shimmer: boolean;
-  readonly thought?: string | undefined;
+  readonly live: boolean;
   readonly trailing?: ReactNode;
   readonly onToggle: () => void;
 }) {
-  const statusLabel = props.hasFailure ? `${props.summary}, tool call failed` : props.summary;
-  const accessibilityLabel = props.thought ? `${props.thought} ${statusLabel}` : statusLabel;
+  const statusLabel = [
+    props.summary,
+    props.live && !props.expanded && `+${props.hiddenCount - 1} more`,
+    props.hasFailure && "tool call failed",
+  ]
+    .filter(Boolean)
+    .join(", ");
   const icon =
     props.summaryToolIcon ??
     (props.toolSurface
@@ -1349,32 +1232,12 @@ export function ThreadWorkGroupToggle(props: {
 
   return (
     <WorkLogBlock layout="group-header">
-      {props.thought ? (
-        <Pressable
-          accessible={false}
-          onPress={props.onToggle}
-          className="flex-row items-start gap-1.5 rounded-md px-0.5 active:bg-subtle"
-        >
-          <WorkLogIconSlot>
-            <WorkLogIcon icon="brain" color={props.iconSubtleColor} />
-          </WorkLogIconSlot>
-          <Text
-            key={props.rowSizing.textSizeKey}
-            selectable={false}
-            numberOfLines={4}
-            ellipsizeMode="tail"
-            className="min-w-0 flex-1 py-0.5 text-sm text-foreground-muted"
-          >
-            {props.thought}
-          </Text>
-        </Pressable>
-      ) : null}
       <View className="flex-row items-center">
         <View className="min-w-0 flex-1">
           <WorkLogPressable
             accessibilityRole="button"
             accessibilityState={{ expanded: props.expanded }}
-            accessibilityLabel={accessibilityLabel}
+            accessibilityLabel={statusLabel}
             accessibilityHint={`Double tap to ${props.expanded ? "hide" : "show"} ${props.hiddenCount} tool ${props.hiddenCount === 1 ? "call" : "calls"}.`}
             onPress={() => {
               void Haptics.selectionAsync();
@@ -1382,34 +1245,46 @@ export function ThreadWorkGroupToggle(props: {
             }}
             rowSizing={props.rowSizing}
           >
-            {props.shimmer ? (
-              <ShimmeringWorkContent
-                key={props.rowSizing.textSizeKey}
-                environmentId={props.environmentId}
-                icon={icon}
-                iconSubtleColor={props.iconSubtleColor}
-                label={props.summary}
-                showIcon
-                themeAppearance={props.themeAppearance}
-                toolIcon={props.toolIcon}
+            <WorkLogIconSlot>
+              {props.toolIcon ? (
+                <ToolActivityIconView
+                  environmentId={props.environmentId}
+                  icon={props.toolIcon}
+                  fallback={icon}
+                  fallbackColor={props.iconSubtleColor}
+                  themeAppearance={props.themeAppearance}
+                />
+              ) : (
+                <WorkLogIcon
+                  icon={icon}
+                  color={props.iconSubtleColor}
+                  colorClassName={props.hasFailure ? "accent-danger-foreground/40" : undefined}
+                />
+              )}
+            </WorkLogIconSlot>
+            <Text
+              key={props.rowSizing.textSizeKey}
+              numberOfLines={1}
+              className="min-w-0 shrink text-sm text-foreground-muted"
+            >
+              {props.summary}
+            </Text>
+            {props.live && !props.expanded ? (
+              <Text className="text-xs tabular-nums text-foreground-subtle">
+                +{props.hiddenCount - 1} more
+              </Text>
+            ) : null}
+            {props.hasFailure && props.toolIcon ? (
+              <SymbolView
+                name="xmark"
+                size={11}
+                tintColorClassName="accent-danger-foreground/40"
+                type="monochrome"
               />
-            ) : (
-              <>
-                <WorkLogIconSlot>
-                  <ToolActivityIconView
-                    environmentId={props.environmentId}
-                    icon={props.toolIcon}
-                    fallback={icon}
-                    fallbackColor={props.iconSubtleColor}
-                    themeAppearance={props.themeAppearance}
-                  />
-                </WorkLogIconSlot>
-                <WorkLogLabel key={props.rowSizing.textSizeKey}>{props.summary}</WorkLogLabel>
-              </>
-            )}
+            ) : null}
             <ThreadDisclosureChevron
               expanded={props.expanded}
-              collapsedDirection="down"
+              collapsedDirection="right"
               size={11}
               tintColor={props.iconSubtleColor}
             />
@@ -1432,13 +1307,12 @@ export function ThreadThinkingRow(props: {
       className="-mx-1 min-h-8 flex-row items-center px-1.5 py-0"
       style={{ minHeight: props.rowSizing.estimatedRowHeight }}
     >
-      <ShimmeringWorkContent
-        key={props.rowSizing.textSizeKey}
-        icon="brain"
-        iconSubtleColor={props.iconSubtleColor}
-        label="Thinking"
-        showIcon
-      />
+      <WorkLogIconSlot>
+        <WorkLogIcon icon="brain" color={props.iconSubtleColor} />
+      </WorkLogIconSlot>
+      <Text key={props.rowSizing.textSizeKey} className="ml-1.5 text-sm text-foreground-muted">
+        Thinking
+      </Text>
     </View>
   );
 }

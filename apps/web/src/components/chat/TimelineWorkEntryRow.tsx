@@ -50,7 +50,6 @@ import { SubagentNotificationLink } from "./V2LifecycleRow";
 import {
   TimelineRowCtx,
   TimelineRowActivityCtx,
-  WorkGroupViewCtx,
   type TimelineWorkEntry,
 } from "./timelineRowContext";
 import { MESSAGE_HEADING_LEVEL, TimelineRowTimestamp } from "./TimelineRowParts";
@@ -64,12 +63,13 @@ import {
   workEntryRawCommand,
   buildToolCallExpandedBody,
   workEntryIconName,
-  THINKING_PREVIEW_PLUGINS,
-  THOUGHT_PREVIEW_PLUGINS,
 } from "./TimelineWorkEntryRow.logic";
 
-export function useThreadReadTarget(entry: TimelineWorkEntry, environmentId: EnvironmentId) {
-  const rawThreadId = threadReadTargetId(entry);
+export function useThreadReadTarget(
+  entry: TimelineWorkEntry | undefined,
+  environmentId: EnvironmentId,
+) {
+  const rawThreadId = entry ? threadReadTargetId(entry) : null;
   const threadId = rawThreadId === null ? null : ThreadId.make(rawThreadId);
   const shell = useThreadShell(threadId ? scopeThreadRef(environmentId, threadId) : null);
   const title = threadReadTargetTitle(shell);
@@ -116,29 +116,38 @@ const toolCallExpandedBodyClassName =
 
 const stopRowToggle = (e: { stopPropagation: () => void }) => e.stopPropagation();
 
-export function ReasoningTraceContent({ entries }: { entries: ReadonlyArray<TimelineWorkEntry> }) {
+function ReasoningTrace({ entry }: { entry: TimelineWorkEntry }) {
   const ctx = use(TimelineRowCtx);
   const { isWorking, latestRunId } = use(TimelineRowActivityCtx);
-  const isStreaming = (entry: TimelineWorkEntry) =>
-    isWorking && entry.runId === latestRunId && entry.toolLifecycleStatus === "inProgress";
   return (
-    <WorkLogDetails followLive={entries.some(isStreaming)}>
-      {entries.map((entry) => (
-        <ChatMarkdown
-          key={entry.id}
-          className="text-foreground"
-          text={entry.detail ?? ""}
-          cwd={ctx.markdownCwd}
-          threadRef={ctx.threadRef ?? undefined}
-          skills={ctx.skills}
-          isStreaming={isStreaming(entry)}
-          headingLevelOffset={MESSAGE_HEADING_LEVEL}
-          onUseArtifactTemplate={ctx.onUseArtifactTemplate}
-          onImageExpand={ctx.onImageExpand}
-          lineBreaks
+    <section
+      aria-label="Reasoning"
+      data-v2-item-type="reasoning"
+      className="flex items-start gap-1.5 px-0.5 py-1.5"
+    >
+      <span className="flex w-6 shrink-0 justify-center pt-1">
+        <ToolActivityIconView
+          icon={undefined}
+          fallbackName="brain"
+          className="size-4 text-icon-muted"
+          muted
         />
-      ))}
-    </WorkLogDetails>
+      </span>
+      <ChatMarkdown
+        className="text-foreground/75"
+        text={entry.detail ?? ""}
+        cwd={ctx.markdownCwd}
+        threadRef={ctx.threadRef ?? undefined}
+        skills={ctx.skills}
+        isStreaming={
+          isWorking && entry.runId === latestRunId && entry.toolLifecycleStatus === "inProgress"
+        }
+        headingLevelOffset={MESSAGE_HEADING_LEVEL}
+        onUseArtifactTemplate={ctx.onUseArtifactTemplate}
+        onImageExpand={ctx.onImageExpand}
+        lineBreaks
+      />
+    </section>
   );
 }
 
@@ -146,11 +155,12 @@ type WorkEntryRowProps = {
   workEntry: TimelineWorkEntry;
   workspaceRoot: string | undefined;
   displayLabel?: string | undefined;
-  onToggleEntry?: ((collapsed: boolean) => void) | undefined;
+  onToggleEntry: (expanded: boolean) => void;
 };
 
 export const SimpleWorkEntryRow = memo(function SimpleWorkEntryRow(props: WorkEntryRowProps) {
   const ctx = use(TimelineRowCtx);
+  if (props.workEntry.itemType === "reasoning") return <ReasoningTrace entry={props.workEntry} />;
   const item = props.workEntry.projectedItem?.item;
   const childThreadId =
     item?.type === "notification" ? notificationChildThreadId(item.source) : undefined;
@@ -185,19 +195,13 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
     workEntry.projectedItem?.item.type === "notification"
       ? notificationChildThreadId(workEntry.projectedItem.item.source)
       : undefined;
-  const groupView = use(WorkGroupViewCtx);
-  const [expanded, setExpanded] = useState(
-    () => groupView?.state.expandedEntries.has(workEntry.id) ?? false,
-  );
+  const { expandedEntries } = ctx.workGroupViewState;
+  const [expanded, setExpanded] = useState(() => expandedEntries.has(workEntry.id));
   const toggleExpanded = () => {
     const next = !expanded;
-    if (groupView) {
-      groupView.onToggleEntry(!next);
-      if (next) groupView.state.expandedEntries.add(workEntry.id);
-      else groupView.state.expandedEntries.delete(workEntry.id);
-    } else {
-      props.onToggleEntry?.(!next);
-    }
+    if (next) expandedEntries.add(workEntry.id);
+    else expandedEntries.delete(workEntry.id);
+    props.onToggleEntry(next);
     setExpanded(next);
   };
   const failureItem = workEntry.projectedItem?.item;
@@ -279,16 +283,11 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
     showWarningIndicator || showDestructiveRowStyle
       ? undefined
       : (workEntry.toolIcon ?? workEntry.toolSource?.icon);
-  const isReasoning = workEntry.itemType === "reasoning";
   const questionHeading = workEntry.questionAnswer
     ? getQuestionTextPreview(workEntry.questionAnswer)
     : "";
   const previewText =
-    isReasoning && expanded
-      ? workEntry.toolLifecycleStatus === "inProgress"
-        ? "Thinking"
-        : "Thought"
-      : questionHeading || (displayLabel ?? workEntryDisplayLabel(workEntry, workspaceRoot));
+    questionHeading || (displayLabel ?? workEntryDisplayLabel(workEntry, workspaceRoot));
   const answerPreview =
     workEntry.questionAnswer && hasQuestionAnswer(workEntry.questionAnswer)
       ? getQuestionAnswerPreview(workEntry.questionAnswer)
@@ -322,17 +321,16 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
       workEntry.changedFiles?.length ||
       viewedImage,
     );
-  const expandedBody =
-    expanded && !isReasoning
-      ? plainOutput !== undefined
-        ? plainOutput
-        : buildToolCallExpandedBody(
-            workEntry,
-            workspaceRoot,
-            previewText,
-            viewedImage ? viewedImagePath : null,
-          )
-      : null;
+  const expandedBody = expanded
+    ? plainOutput !== undefined
+      ? plainOutput
+      : buildToolCallExpandedBody(
+          workEntry,
+          workspaceRoot,
+          previewText,
+          viewedImage ? viewedImagePath : null,
+        )
+    : null;
   const plainOutputFetches =
     plainOutput !== undefined &&
     workEntry.projectedItem !== undefined &&
@@ -342,13 +340,11 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
       ? Boolean(plainOutput || viewedImage || workEntry.questionAnswer || plainOutputFetches)
       : workEntry.projectedItem === undefined
         ? canExpand
-        : isReasoning
-          ? Boolean(workEntry.detail?.trim())
-          : Boolean(
-              viewedImage ||
-              workEntry.questionAnswer ||
-              turnItemHasDetail(workEntry.projectedItem.item),
-            );
+        : Boolean(
+            viewedImage ||
+            workEntry.questionAnswer ||
+            turnItemHasDetail(workEntry.projectedItem.item),
+          );
   const iconWrapperClass = cn(
     "flex size-4 items-center justify-center",
     showWarningIndicator
@@ -368,7 +364,7 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
       : workLogEntryIsToolLike(workEntry)
         ? "text-secondary-label"
         : "text-foreground/80";
-  const threadLabel = isReasoning ? null : threadReadLabel(previewText, threadTarget);
+  const threadLabel = threadReadLabel(previewText, threadTarget);
   const accessiblePreview = [threadLabel?.text ?? previewText, answerPreview]
     .filter(Boolean)
     .join(": ");
@@ -416,19 +412,7 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
             <span
               className={cn(answerPreview ? "min-w-0" : "min-w-0 flex-1", "truncate", headingClass)}
             >
-              {isReasoning && !expanded ? (
-                <ChatMarkdown
-                  inline
-                  text={workEntry.detail ?? previewText}
-                  cwd={ctx.markdownCwd}
-                  parseRawHtml={false}
-                  extraRemarkPlugins={
-                    workEntry.toolLifecycleStatus === "inProgress"
-                      ? THINKING_PREVIEW_PLUGINS
-                      : THOUGHT_PREVIEW_PLUGINS
-                  }
-                />
-              ) : threadLabel ? (
+              {threadLabel ? (
                 <ThreadReadLabel
                   label={threadLabel}
                   environmentId={ctx.activeThreadEnvironmentId}
@@ -522,9 +506,7 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
       {expanded && workEntry.questionAnswer ? (
         <QuestionAnswerHistory answer={workEntry.questionAnswer} />
       ) : null}
-      {expanded && isReasoning ? <ReasoningTraceContent entries={[workEntry]} /> : null}
       {expanded &&
-      !isReasoning &&
       !workEntry.questionAnswer &&
       canExpandProjectedItem &&
       (expandedBody ||

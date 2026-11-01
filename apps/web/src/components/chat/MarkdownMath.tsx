@@ -11,11 +11,7 @@ const MathTypeset = lazy(() => import("./MathTypeset"));
  * keeps showing it when KaTeX cannot parse it, such as mid-stream. Copying
  * any part of a formula copies its whole TeX source.
  */
-export const MarkdownMath = memo(function MarkdownMath(props: {
-  tex: string;
-  display: boolean;
-  focusable?: boolean;
-}) {
+export const MarkdownMath = memo(function MarkdownMath(props: { tex: string; display: boolean }) {
   const viewportRef = useRef<HTMLSpanElement>(null);
   const contentRef = useRef<HTMLSpanElement>(null);
   const [overflows, setOverflows] = useState(false);
@@ -23,13 +19,12 @@ export const MarkdownMath = memo(function MarkdownMath(props: {
   useLayoutEffect(() => {
     const viewport = viewportRef.current;
     const content = contentRef.current;
-    if (!viewport || !content || props.focusable === false) return;
+    if (!viewport || !content) return;
     const measure = () => setOverflows(viewport.scrollWidth > viewport.clientWidth);
     measure();
     // Typesetting and streamed TeX can change content width without resizing the viewport.
     return observeResize([viewport, content], measure);
-  }, [props.focusable]);
-  const scrollable = props.focusable !== false && overflows;
+  }, []);
   const tex = props.tex.trim();
   const source = props.display ? `\\[\n${tex}\n\\]` : `\\(${tex}\\)`;
   const fallback = <span className="whitespace-pre-wrap">{source}</span>;
@@ -42,21 +37,15 @@ export const MarkdownMath = memo(function MarkdownMath(props: {
       }
       data-markdown-math={props.display ? "display" : "inline"}
       data-markdown-copy={props.display ? `${source}\n\n` : source}
-      role={props.focusable === false ? undefined : "group"}
-      aria-label={
-        props.focusable === false
-          ? undefined
-          : props.display
-            ? "Display equation"
-            : "Inline equation"
-      }
+      role="group"
+      aria-label={props.display ? "Display equation" : "Inline equation"}
     >
       <span
         ref={viewportRef}
         className="block max-w-full overflow-x-auto overflow-y-hidden in-[.chat-markdown-table-container]:max-w-none in-[.chat-markdown-table-container]:overflow-visible px-0.5 py-0.75 focus-visible:outline-1 focus-visible:outline-solid focus-visible:-outline-offset-1 focus-visible:outline-border [&::-webkit-scrollbar]:h-2 [&::-webkit-scrollbar-thumb]:rounded [&::-webkit-scrollbar-thumb]:border [&::-webkit-scrollbar-thumb]:border-transparent [&::-webkit-scrollbar-thumb]:bg-clip-content"
-        tabIndex={scrollable ? 0 : -1}
+        tabIndex={overflows ? 0 : -1}
         aria-label={
-          !scrollable
+          !overflows
             ? undefined
             : props.display
               ? "Scroll display equation"
