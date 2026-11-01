@@ -1638,6 +1638,10 @@ it.layer(NodeServices.layer)("TailnetSignIn", (it) => {
       ]);
 
       expect(yield* service.unblockDevice("nPhone")).toBe(true);
+      // A code from before the block stays revoked once the device is unblocked.
+      expect(yield* refusalOf(exchange(pending.credential, key))).toBe(
+        "ServerAuthInvalidCredentialError",
+      );
       const renewed = yield* exchange((yield* signIn(key)).credential, key);
       expect((yield* sessions.verify(renewed.access_token)).subject).toBe("tailscale:nPhone");
       expect(yield* service.listDevices("bearer:laptop")).toMatchObject([
@@ -1645,23 +1649,29 @@ it.layer(NodeServices.layer)("TailnetSignIn", (it) => {
       ]);
 
       // A block whose revocation never ran ends the device's sessions at the next recheck,
-      // even when Tailscale cannot look the device up.
+      // even when Tailscale cannot look the device up, or cannot be read at all.
       const blockList = yield* AuthTailnetDeviceBlocks.AuthTailnetDeviceBlockRepository;
-      yield* blockList.block({
-        stableNodeId: "nPhone",
-        label: null,
-        blockedAt: yield* DateTime.now,
-      });
-      tailnet.status = hostStatus({
-        Peer: {
-          phone: { ID: "nPhone", TailscaleIPs: [PHONE_ADDRESS], UserID: `int64:${OWNER_ID}` },
-        },
-      });
-      tailnet.node = null;
-      yield* service.recheckSessions;
-      expect((yield* Effect.flip(sessions.verify(renewed.access_token)))._tag).toBe(
-        "SessionTokenRevokedError",
-      );
+      let session = renewed;
+      for (const unreadable of ["the device", "Tailscale"] as const) {
+        const blockedAt = yield* DateTime.now;
+        yield* blockList.block({ stableNodeId: "nPhone", label: null, blockedAt });
+        if (unreadable === "the device") {
+          tailnet.status = hostStatus({
+            Peer: {
+              phone: { ID: "nPhone", TailscaleIPs: [PHONE_ADDRESS], UserID: `int64:${OWNER_ID}` },
+            },
+          });
+          tailnet.node = null;
+        } else tailnet.failFreshReadAt = (tailnet.freshReads ?? 0) + 1;
+        yield* service.recheckSessions;
+        expect((yield* Effect.flip(sessions.verify(session.access_token)))._tag).toBe(
+          "SessionTokenRevokedError",
+        );
+        yield* service.unblockDevice("nPhone");
+        tailnet.status = hostStatus();
+        tailnet.node = phoneNode();
+        session = yield* exchange((yield* signIn(key)).credential, key);
+      }
     }).pipe(Effect.provide(layerTest(tailnet)));
   });
 });

@@ -655,7 +655,18 @@ export const make = Effect.gen(function* () {
     if (status._tag === "None" || status.value.backendState !== "Running") {
       const nowMs = DateTime.toEpochMillis(now);
       statusFailingSince ??= nowMs;
-      if (nowMs - statusFailingSince < Duration.toMillis(LOOKUP_GRACE)) return false;
+      if (nowMs - statusFailingSince < Duration.toMillis(LOOKUP_GRACE)) {
+        // A block needs no answer from Tailscale.
+        yield* Effect.forEach(
+          devices.keys(),
+          (id) =>
+            Effect.flatMap(blocks.isBlocked({ stableNodeId: id }), (blocked) =>
+              blocked ? endAccess(id, "blocked", nameOf(id)) : Effect.void,
+            ),
+          { discard: true },
+        );
+        return false;
+      }
       yield* Effect.forEach(
         devices.keys(),
         (id) => endAccess(id, "tailscale_unavailable", nameOf(id)),
@@ -780,9 +791,11 @@ export const make = Effect.gen(function* () {
     // A grant exchange checks blocks in its own write, so once the block lands none can make
     // a session; one made before is revoked here. Not one transaction: an open socket that
     // wakes on the revocation must read it committed. A dropped request still does both.
+    // Unused codes go too, so a quick unblock does not bring one back with older scopes.
     return yield* blocks
       .block({ stableNodeId, label, blockedAt })
       .pipe(
+        Effect.andThen(pairingLinks.revokeUnusedBySubject({ subject, revokedAt: blockedAt })),
         Effect.andThen(sessions.revokeBySubject(subject)),
         Effect.uninterruptible,
         Effect.mapError(accessError("Could not block the device.")),
