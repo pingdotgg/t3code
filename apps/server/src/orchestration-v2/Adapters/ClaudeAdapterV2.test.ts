@@ -11453,6 +11453,112 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     ),
   );
 
+  it.effect.each([false, true])(
+    "settles an answered wake while preserving later wake: %s",
+    (laterWake) =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const harness = yield* makeWakeHarness;
+          const now = yield* DateTime.now;
+          const startTurn = (ordinal: number, text: string, wake = false) =>
+            harness.runtime.startTurn(
+              makeClaudeTestTurnInput({
+                threadId: harness.threadId,
+                providerThread: harness.providerThread,
+                now,
+                attemptId: RunAttemptId.make(`attempt-claude-wake-answered-${ordinal}`),
+                text,
+                attachments: [],
+                providerTurnOrdinal: ordinal,
+                ...(wake
+                  ? {
+                      messageCreatedBy: "agent" as const,
+                      messageCreationSource: "provider" as const,
+                    }
+                  : {}),
+              }),
+            );
+          const lifecycle = (promptIndex: number, state: string, uuid: string) =>
+            claudeSdkFrame({
+              type: "command_lifecycle",
+              command_uuid: harness.promptUuid(promptIndex),
+              state,
+              uuid,
+              session_id: WAKE_NATIVE_SESSION,
+            });
+
+          yield* startTurn(1, "Open the PR.");
+          yield* harness.offerAndWait(
+            claudeSdkFrame({
+              ...makeResultFrame({
+                uuid: "00000000-0000-4000-8000-000000000a01",
+                result: "Opened.",
+              }),
+              user_message_uuid: harness.promptUuid(0),
+            }),
+          );
+          assert.equal((yield* Queue.take(harness.terminalReceipts)).status, "completed");
+
+          // Claude opens a native wake turn on its own while T3 is idle.
+          yield* harness.offerAndWait(wakeTurnInit);
+          yield* Queue.take(harness.continuationReceipts);
+
+          // A queued user message runs before the continuation. Claude folds it
+          // into the wake turn it already opened and ends both with one result.
+          yield* startTurn(2, "A check failed on the PR.");
+          for (const frame of [
+            lifecycle(1, "queued", "00000000-0000-4000-8000-000000000a02"),
+            lifecycle(1, "started", "00000000-0000-4000-8000-000000000a03"),
+            makeAssistantTextFrame({
+              uuid: "00000000-0000-4000-8000-000000000a04",
+              text: "Fixed the check.",
+            }),
+            lifecycle(1, "completed", "00000000-0000-4000-8000-000000000a05"),
+            claudeSdkFrame({
+              ...makeResultFrame({
+                uuid: "00000000-0000-4000-8000-000000000a06",
+                result: "Fixed the check.",
+              }),
+              user_message_uuid: harness.promptUuid(1),
+            }),
+          ]) {
+            yield* harness.offerAndWait(frame);
+          }
+          assert.equal((yield* Queue.take(harness.terminalReceipts)).status, "completed");
+
+          if (laterWake) {
+            yield* harness.offerAndWait(
+              claudeSdkFrame({ ...wakeTurnInit, uuid: "00000000-0000-4000-8000-000000000a07" }),
+            );
+          }
+          yield* startTurn(3, "Background task completed.", true);
+          if (laterWake) {
+            assert.equal(yield* Queue.size(harness.terminalReceipts), 0);
+            yield* harness.offerAndWait(
+              makeResultFrame({
+                uuid: "00000000-0000-4000-8000-000000000a08",
+                result: "Later wake finished.",
+              }),
+            );
+          }
+          assert.equal((yield* Queue.take(harness.terminalReceipts)).status, "completed");
+          if (laterWake) {
+            assert.isTrue(
+              harness.events.some(
+                (event) =>
+                  event.type === "message.updated" && event.message.text === "Later wake finished.",
+              ),
+            );
+          }
+          assert.lengthOf(harness.offeredMessages, 2);
+        }).pipe(
+          Effect.provide(
+            Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+          ),
+        ),
+      ),
+  );
+
   it.effect("keeps a nested subagent's launch in order while the root turn is idle", () =>
     Effect.scoped(
       Effect.gen(function* () {

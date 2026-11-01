@@ -4871,6 +4871,9 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             { readonly messages: ReadonlyArray<SDKMessage>; readonly detail: string | null }
           >(),
         );
+        // A root result ends whichever native turn is open; root frames buffered before it are answered.
+        // Claude can fold a queued prompt into its wake turn, leaving that wake's continuation no result.
+        const answeredWakeFrames = new WeakSet<SDKMessage>();
         // Wake results lack task ids and can follow queued prompts; retain reports for one user turn.
         // Keep report stamps atomic with turn changes.
         const wakeReportsByNativeThread = yield* Ref.make<{
@@ -9465,6 +9468,10 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               resultFailure?.class === "usage_limit"
                 ? { ...resultFailure, resetAt: resetAt ?? resultFailure.resetAt ?? null }
                 : resultFailure;
+            const lastBufferedRootFrame = (yield* Ref.get(wakeBuffers))
+              .get(liveQuery.nativeThreadId)
+              ?.messages.findLast(isClaudeRootTurnFrame);
+            if (lastBufferedRootFrame !== undefined) answeredWakeFrames.add(lastBufferedRootFrame);
             yield* finalizeActiveTurn({
               context,
               status: interrupted
@@ -10749,7 +10756,10 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                   yield* handleSdkMessage({ query: querySession.query, message: lastResult });
                   return;
                 }
-                if (hasOpaqueTaskNotification && !context.nativeWakeStarted) {
+                const lastRootFrame = drained.findLast(isClaudeRootTurnFrame);
+                const wakeTurnAnswered =
+                  lastRootFrame !== undefined && answeredWakeFrames.has(lastRootFrame);
+                if (wakeTurnAnswered || (hasOpaqueTaskNotification && !context.nativeWakeStarted)) {
                   const completedAt = yield* DateTime.now;
                   yield* finalizeActiveTurn({ context, status: "completed", completedAt });
                 } else if (!context.nativeWakeStarted) {
