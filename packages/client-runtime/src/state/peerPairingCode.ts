@@ -3,12 +3,13 @@
  * user's own session there, so a link card can be answered without fetching a code by hand.
  * It carries exactly what an agent sign-in with the chosen access needs.
  */
-import { type AuthMcpClientAccess, mcpClientScopes } from "@t3tools/contracts";
+import { type AuthMcpClientAccess, type EnvironmentId, mcpClientScopes } from "@t3tools/contracts";
 import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
 import type * as HttpClient from "effect/http/HttpClient";
 import * as Option from "effect/Option";
-import type { Atom } from "effect/reactivity";
+import type { Atom, AtomRegistry } from "effect/reactivity";
+import * as Result from "effect/Result";
 import * as SubscriptionRef from "effect/SubscriptionRef";
 
 import * as RemoteEnvironmentAuthorization from "../authorization/service.ts";
@@ -17,7 +18,7 @@ import type { EnvironmentRegistry } from "../connection/registry.ts";
 import * as EnvironmentSupervisor from "../connection/supervisor.ts";
 import * as ManagedRelay from "../relay/managedRelay.ts";
 import { executeAuthenticatedEnvironmentHttpRequest } from "./environmentHttpAuth.ts";
-import { createEnvironmentCommand } from "./runtime.ts";
+import { createEnvironmentCommand, squashAtomCommandFailure } from "./runtime.ts";
 
 const MINT_TIMEOUT_MS = 8_000;
 const PEER_PAIRING_CODE_LABEL = "T3 Code link";
@@ -72,13 +73,15 @@ const mintPeerPairingCode = Effect.fn("clientRuntime.state.mintPeerPairingCode")
 });
 
 /**
- * Mints a code on the environment it runs in. Each run mints its own: a code
- * is one-use, so two overlapping answers must never share one.
+ * Mints a fresh code on `environmentId` with this client's session there, for linking with
+ * `access`. Each call mints its own: a code is one-use, so two overlapping answers must never
+ * share one. Fails with `PeerPairingCodeError` when the session may not create one.
  */
-export function createPeerPairingCodeCommand<R, E>(
+export function createPeerPairingCodeMinter<R, E>(
   runtime: Atom.AtomRuntime<EnvironmentRegistry | HttpClient.HttpClient | R, E>,
+  registry: AtomRegistry.AtomRegistry,
 ) {
-  return createEnvironmentCommand(runtime, {
+  const mint = createEnvironmentCommand(runtime, {
     label: "environment-data:peer-pairing-code:mint",
     execute: Effect.fn(function* (access: AuthMcpClientAccess) {
       const supervisor = yield* EnvironmentSupervisor.EnvironmentSupervisor;
@@ -92,4 +95,13 @@ export function createPeerPairingCodeCommand<R, E>(
       return yield* mintPeerPairingCode(prepared.value, access);
     }),
   });
+  return async (
+    environmentId: EnvironmentId,
+    access: AuthMcpClientAccess,
+  ): Promise<Result.Result<string, unknown>> => {
+    const result = await mint.run(registry, { environmentId, input: access });
+    return result._tag === "Success"
+      ? Result.succeed(result.value)
+      : Result.fail(squashAtomCommandFailure(result));
+  };
 }
