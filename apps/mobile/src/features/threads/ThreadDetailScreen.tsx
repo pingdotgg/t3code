@@ -727,7 +727,7 @@ function ThreadDetailBody(
       return connectionStatus;
     }
     // Before the request check: an agent stuck on an approval may also ignore Stop.
-    if (runStop !== null && contentPresentationKind === "ready") {
+    if (runStop !== null && ready) {
       const unresponsive = runStop.state === "unresponsive";
       return {
         kind: "stop",
@@ -768,8 +768,9 @@ function ThreadDetailBody(
     if (threadSyncLabel !== null) {
       return { kind: "syncing", label: threadSyncLabel };
     }
+    if (!ready) return null;
     const childInput = childThreadInputs[0];
-    if (childInput && ready) {
+    if (childInput) {
       return {
         kind: "child-input",
         label: childThreadInputsTitle(childThreadInputs),
@@ -780,13 +781,13 @@ function ThreadDetailBody(
         },
       };
     }
-    if (props.isCompacting && ready) {
+    if (props.isCompacting) {
       return { kind: "compacting" };
     }
-    if (props.activeWorkStartedAt !== null && ready) {
+    if (props.activeWorkStartedAt !== null) {
       return { kind: "working", startedAt: props.activeWorkStartedAt };
     }
-    if (pendingBackgroundWork !== null && ready) {
+    if (pendingBackgroundWork !== null) {
       return {
         kind: "background",
         label: pendingBackgroundWork.title,
@@ -809,7 +810,7 @@ function ThreadDetailBody(
         },
       };
     }
-    if (ready && (snoozed || settled || woke)) {
+    if (snoozed || settled || woke) {
       const state = snoozed ? "snoozed" : settled ? "settled" : "woke";
       const label =
         snoozed && snoozedUntil !== null
@@ -836,7 +837,7 @@ function ThreadDetailBody(
         },
       };
     }
-    if (props.selectedThread.goal !== null && ready) {
+    if (props.selectedThread.goal !== null) {
       const goal = presentProviderGoal(props.selectedThread.goal, false);
       return {
         kind: "goal",
