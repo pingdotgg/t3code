@@ -268,4 +268,43 @@ describe("claudeRateLimitEventToUpdate", () => {
       ],
     });
   });
+
+  it("maps every window in the unifiedWindows the CLI streams below the warning threshold", () => {
+    expect(
+      claudeRateLimitEventToUpdate(
+        {
+          status: "allowed",
+          resetsAt: 1_793_576_803,
+          rateLimitType: "five_hour",
+          isUsingOverage: false,
+          ...({
+            unifiedWindows: {
+              five_hour: { utilization: 0.15, resetsAt: 1_793_576_803 },
+              seven_day: { utilization: 0.31, resetsAt: 1_793_994_403 },
+            },
+          } as object),
+        },
+        noNames,
+      ),
+    ).toEqual({
+      windows: [
+        {
+          id: "five_hour",
+          kind: "session",
+          label: "Session",
+          usedPercent: 15,
+          windowDurationMins: 300,
+          resetsAt: "2026-11-01T23:46:43.000Z",
+        },
+        {
+          id: "seven_day",
+          kind: "weekly",
+          label: "Weekly",
+          usedPercent: 31,
+          windowDurationMins: 10080,
+          resetsAt: "2026-11-06T19:46:43.000Z",
+        },
+      ],
+    });
+  });
 });
