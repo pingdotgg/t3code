@@ -110,10 +110,7 @@ vi.mock("../components/FilePreviewModal", () => ({ FilePreviewModal: () => null 
 vi.mock("../components/VideoPreviewModal", () => ({ VideoPreviewModal: () => null }));
 vi.mock("../features/threads/ThreadMarkdownImage", () => ({ ThreadMarkdownImageView: () => null }));
 
-import {
-  ThreadMarkdownVideo,
-  ThreadMediaVisibleContext,
-} from "../features/threads/ThreadMarkdownVideo";
+import { ThreadMarkdownVideo } from "../features/threads/ThreadMarkdownVideo";
 import {
   PullRequestMedia,
   PullRequestMediaContext,
@@ -181,21 +178,20 @@ function setup(kind: "thread" | "PR" | "files", compact = false) {
                 resolvePlaybackUri={mocks.refresh}
               />
             ) : kind === "thread" ? (
-              <ThreadMediaVisibleContext value={visible}>
-                <ThreadMarkdownVideo
-                  source={{
-                    type: "media",
-                    name: "clip.mp4",
-                    mimeType: "video/mp4",
-                    environmentId,
-                    resource: {
-                      _tag: "github-media",
-                      cwd: "/project",
-                      url: "https://github.com/user-attachments/assets/video",
-                    },
-                  }}
-                />
-              </ThreadMediaVisibleContext>
+              <ThreadMarkdownVideo
+                thumbnailVisible={visible}
+                source={{
+                  type: "media",
+                  name: "clip.mp4",
+                  mimeType: "video/mp4",
+                  environmentId,
+                  resource: {
+                    _tag: "github-media",
+                    cwd: "/project",
+                    url: "https://github.com/user-attachments/assets/video",
+                  },
+                }}
+              />
             ) : (
               <PullRequestMediaContext value={{ environmentId, cwd: "/project" }}>
                 <PullRequestMediaVisibleContext value={visible}>

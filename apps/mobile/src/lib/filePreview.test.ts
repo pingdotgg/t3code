@@ -143,16 +143,10 @@ vi.mock("../state/assets", () => ({
   useAssetUrlState: () => ({ _tag: "Success", url: "https://example.com/clip.mp4" }),
   assetEnvironment: {},
 }));
-vi.mock("../features/threads/ThreadMarkdownVideo", async (importOriginal) => {
-  const { createContext } = await import("react");
-  const actual = await importOriginal<typeof import("../features/threads/ThreadMarkdownVideo")>();
-  return {
-    ...actual,
-    ThreadMediaVisibleContext: createContext(true),
-    ThreadMarkdownVideo: (props: Parameters<typeof actual.ThreadMarkdownVideo>[0]) =>
-      createElement(actual.ThreadMarkdownVideo, { ...props, thumbnailVisible: true }),
-  };
-});
+vi.mock("../features/threads/ThreadMediaVisibility", () => ({
+  ThreadMediaVisibility: (props: { readonly children: ReactNode }) => props.children,
+  useThreadMediaVisible: (override?: boolean) => override ?? true,
+}));
 
 vi.mock("@t3tools/client-runtime/state/runtime", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@t3tools/client-runtime/state/runtime")>()),
