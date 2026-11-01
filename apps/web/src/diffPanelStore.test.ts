@@ -17,7 +17,7 @@ describe("diffPanelStore", () => {
       byThreadKey: {},
       branchBaseRefByThreadKey: {},
     });
-    useDiffPanelSessionStore.setState({ foldStateByScopeKey: {} });
+    useDiffPanelSessionStore.setState({ collapsedFileKeysByScopeKey: {} });
   });
 
   it("keeps a tool call selection independent of checkpoints and allows returning to Git changes", () => {
@@ -98,13 +98,13 @@ describe("diffPanelStore", () => {
       true,
     );
 
-    expect(useDiffPanelSessionStore.getState().foldStateByScopeKey[scopeKey]).toEqual({
+    expect(useDiffPanelSessionStore.getState().collapsedFileKeysByScopeKey[scopeKey]).toEqual({
       foldOverride: "folded",
       toggledFileKeys: new Set(["src/app.ts"]),
     });
 
     useDiffPanelSessionStore.getState().updateFoldState(scopeKey, (current) => current, false);
-    const stored = useDiffPanelSessionStore.getState().foldStateByScopeKey[scopeKey]!;
+    const stored = useDiffPanelSessionStore.getState().collapsedFileKeysByScopeKey[scopeKey]!;
     expect(
       isDiffFileFoldCollapsed(
         "src/app.ts",
@@ -112,7 +112,7 @@ describe("diffPanelStore", () => {
         stored.toggledFileKeys,
       ),
     ).toBe(false);
-    expect(useDiffPanelSessionStore.getState().foldStateByScopeKey[scopeKey]).toEqual({
+    expect(useDiffPanelSessionStore.getState().collapsedFileKeysByScopeKey[scopeKey]).toEqual({
       foldOverride: "folded",
       toggledFileKeys: new Set(["src/app.ts"]),
     });

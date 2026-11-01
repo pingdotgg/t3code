@@ -619,7 +619,7 @@ export default function DiffPanel({
   const shownFileEntries = renderableFileEntries.filter(({ fileDiff }) => isFileShown(fileDiff));
   const shownFileKeys = shownFileEntries.map((file) => file.fileKey);
   const storedFoldState = useDiffPanelSessionStore((state) =>
-    collapseScopeKey ? state.foldStateByScopeKey[collapseScopeKey] : undefined,
+    collapseScopeKey ? state.collapsedFileKeysByScopeKey[collapseScopeKey] : undefined,
   );
   const foldState = storedFoldState ?? EMPTY_DIFF_FILE_FOLD_STATE;
   const effectiveFoldOverride = resolveDiffFileFoldOverride(
