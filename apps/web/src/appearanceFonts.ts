@@ -263,6 +263,18 @@ function resolveGenericFamilyLabel(generic: string): string | null {
   return null;
 }
 
+// Synthetic Apple labels are not necessarily available as named CSS families.
+export function displayFontFamily(family: string): string {
+  const label = family
+    .trim()
+    .replace(/^(['"])(.*)\1$/, "$2")
+    .trim()
+    .toLowerCase();
+  if (label === "sf pro") return appearanceFontStack(family, DEFAULT_SANS_FONT_STACK);
+  if (label === "sf mono") return DEFAULT_CODE_FONT_STACK;
+  return cssFontFamilies(family) ?? "";
+}
+
 export function resolveDefaultFamilyLabel(stack: string): string | null {
   for (const raw of stack.split(",")) {
     const family = raw.trim().replace(/^(['"])(.*)\1$/, "$2");
