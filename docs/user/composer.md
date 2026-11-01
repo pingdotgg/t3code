@@ -120,7 +120,8 @@ Leaving reasoning level or service tier unset uses the provider's own configurat
 
 On web and desktop, select text within one assistant response and choose
 **Cite in composer**. You can add a comment about the quote and write instructions
-around it.
+around it. Text inside an inline HTML render can be quoted the same way, except in
+saved pages larger than 5 MiB.
 
 Select the quote in a draft or sent message to return to its source. If the source
 is unavailable or has changed, the saved quote remains readable.

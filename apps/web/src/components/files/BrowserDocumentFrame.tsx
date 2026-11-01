@@ -180,10 +180,19 @@ export function HtmlRenderDocument(props: {
   readonly onContentHeight?: (height: number) => void;
   /** Reports fullscreen changes so virtualized rows can stay mounted. */
   readonly onFullscreenChange?: ((fullscreen: boolean) => void) | undefined;
+  /** Called when the page has loaded. */
+  readonly onLoad?: () => void;
+  readonly selectionBridge?: boolean;
 }) {
   const theme = useHtmlRenderTheme();
   const frameRef = useRef<HTMLIFrameElement>(null);
-  const [src] = useState(() => `${props.src.split("#", 1)[0]}${htmlRenderThemeFragment(theme)}`);
+  const [src] = useState(() => {
+    const url = new URL(props.src, window.location.href);
+    if (props.selectionBridge && (url.protocol === "http:" || url.protocol === "https:")) {
+      url.searchParams.set("t3-html-selection", "1");
+    }
+    return `${url.href.split("#", 1)[0]}${htmlRenderThemeFragment(theme)}`;
+  });
   const [loaded, setLoaded] = useState(false);
   const [expandedImage, setExpandedImage] = useState<ExpandedImagePreview | null>(null);
   const postTheme = () => {
@@ -317,17 +326,25 @@ export function HtmlRenderDocument(props: {
       <iframe
         ref={frameRef}
         src={src}
+        data-html-selection-bridge={props.selectionBridge || undefined}
         title={props.title}
         // Never allow-same-origin: the opaque origin keeps the page out of the app's session.
         sandbox="allow-scripts allow-forms"
         // Lets a page's video or image viewer take the screen.
         allow="fullscreen"
-        loading="lazy"
+        loading={props.selectionBridge ? "eager" : "lazy"}
         onLoad={() => {
           setLoaded(true);
           // Covers a theme change that landed while the page was loading.
           postTheme();
           postShortcuts();
+          props.onLoad?.();
+          if (props.selectionBridge) {
+            frameRef.current?.setAttribute("data-html-selection-ready", "true");
+            frameRef.current?.dispatchEvent(
+              new Event("t3-html-selection-ready", { bubbles: true }),
+            );
+          }
         }}
         // Match the blank document's scheme to avoid dark-mode white flashes, then follow the app after load.
         className={cn("border-0 scheme-light", props.className)}
