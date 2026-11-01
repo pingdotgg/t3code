@@ -5,7 +5,6 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
-import * as Ref from "effect/Ref";
 import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
 import { HttpServer } from "effect/http";
@@ -82,32 +81,27 @@ export const layer = (options: {
       const fs = yield* FileSystem.FileSystem;
       const claimPath = (yield* Path.Path).join(options.stateDir, CLAIM_FILE);
       const manualCommand = `tailscale serve --bg --https=${target.servePort} http://${target.localHost}:${target.localPort}`;
-      const configured = yield* Ref.make(false);
-
-      // Added before the retry fiber is forked, so it runs after that fiber
-      // is interrupted and sees the final state.
+      // Recorded before the first claim, since a claim can apply the mapping and still fail.
+      // Release removes only a root that points here, so it is safe when no claim landed.
+      yield* encodeClaim(target).pipe(
+        Effect.flatMap((claim) =>
+          fs
+            .makeDirectory(options.stateDir, { recursive: true })
+            .pipe(Effect.andThen(fs.writeFileString(claimPath, claim))),
+        ),
+        Effect.catch((cause) =>
+          Effect.logWarning("Could not record the Tailscale Serve mapping", { cause }),
+        ),
+      );
+      // Added before the retry fiber is forked, so it runs after that fiber is interrupted.
       yield* Effect.addFinalizer(() =>
-        Ref.get(configured).pipe(
-          Effect.flatMap((wasConfigured) =>
-            wasConfigured
-              ? releaseTailscaleServe(target).pipe(
-                  Effect.tap(() => fs.remove(claimPath, { force: true })),
-                  Effect.tap((released) =>
-                    Effect.logInfo(
-                      released
-                        ? "Tailscale Serve disabled"
-                        : "Tailscale Serve no longer points at this server; leaving it in place",
-                      logContext,
-                    ),
-                  ),
-                  Effect.catch((cause) =>
-                    Effect.logWarning("Failed to disable Tailscale Serve", {
-                      cause,
-                      ...logContext,
-                    }),
-                  ),
-                )
-              : Effect.void,
+        releaseTailscaleServe(target).pipe(
+          Effect.tap(() => fs.remove(claimPath, { force: true })),
+          Effect.tap((released) =>
+            released ? Effect.logInfo("Tailscale Serve disabled", logContext) : Effect.void,
+          ),
+          Effect.catch((cause) =>
+            Effect.logWarning("Failed to disable Tailscale Serve", { cause, ...logContext }),
           ),
         ),
       );
@@ -117,19 +111,6 @@ export const layer = (options: {
       // between the two would leave it behind with nothing to remove it.
       // Shutdown waits for the commands' own timeouts instead.
       const attempt = claimTailscaleServe(target).pipe(
-        Effect.tap(() => Ref.set(configured, true)),
-        Effect.tap(() =>
-          encodeClaim(target).pipe(
-            Effect.flatMap((claim) =>
-              fs
-                .makeDirectory(options.stateDir, { recursive: true })
-                .pipe(Effect.andThen(fs.writeFileString(claimPath, claim))),
-            ),
-            Effect.catch((cause) =>
-              Effect.logWarning("Could not record the Tailscale Serve mapping", { cause }),
-            ),
-          ),
-        ),
         Effect.uninterruptible,
         Effect.tap(() => Effect.logInfo("Tailscale Serve configured", logContext)),
         Effect.tapError((cause) => {

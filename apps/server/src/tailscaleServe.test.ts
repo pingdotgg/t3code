@@ -33,6 +33,8 @@ interface FakeOptions {
   readonly heldBy?: string;
   /** `serve status` fails this many times, as while the daemon is down. */
   readonly statusFailures?: number;
+  /** `serve status` fails once right after the daemon takes the mapping. */
+  readonly statusFailsAfterServe?: boolean;
 }
 
 // Stands in for the tailscale CLI and keeps the Serve root like the daemon does.
@@ -42,6 +44,7 @@ const makeFakeTailscale = (options: FakeOptions) => {
     statusCalls: 0,
     releases: 0,
     root: options.heldBy ?? null,
+    statusFailurePending: false,
   };
   // Completes when the daemon takes the mapping, before the CLI exits.
   const mappingApplied = Deferred.makeUnsafe<void>();
@@ -60,7 +63,8 @@ const makeFakeTailscale = (options: FakeOptions) => {
     const command = args.join(" ");
     if (command === "serve status --json") {
       state.statusCalls += 1;
-      if (state.statusCalls <= (options.statusFailures ?? 0)) {
+      if (state.statusCalls <= (options.statusFailures ?? 0) || state.statusFailurePending) {
+        state.statusFailurePending = false;
         return { code: 1, stderr: "failed to connect to local tailscaled" };
       }
       return { code: 0, stdout: serveStatus() };
@@ -74,6 +78,7 @@ const makeFakeTailscale = (options: FakeOptions) => {
         return undefined;
       }
       state.root = args.at(-1) ?? null;
+      state.statusFailurePending = options.statusFailsAfterServe === true;
       Deferred.doneUnsafe(mappingApplied, Effect.void);
       return { code: 0, ...(options.ackDelay === undefined ? {} : { ackDelay: options.ackDelay }) };
     }
@@ -251,6 +256,18 @@ describe("TailscaleServe", () => {
       const shutdown = yield* Scope.close(scope, Exit.void).pipe(Effect.forkChild);
       yield* TestClock.adjust("2 seconds");
       yield* Fiber.join(shutdown);
+
+      assert.equal(state.releases, 1, "a mapping the daemon applied outlived shutdown");
+    }),
+  );
+
+  it.effect("removes the Serve root on shutdown when the claim landed but its check failed", () =>
+    Effect.gen(function* () {
+      const { state, scope, settled } = yield* startTailscaleServe({ statusFailsAfterServe: true });
+      yield* Deferred.await(settled);
+      assert.equal(state.root, LOCAL_TARGET);
+
+      yield* Scope.close(scope, Exit.void);
 
       assert.equal(state.releases, 1, "a mapping the daemon applied outlived shutdown");
     }),
