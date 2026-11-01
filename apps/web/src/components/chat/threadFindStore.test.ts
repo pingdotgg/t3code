@@ -91,6 +91,9 @@ describe("thread find store", () => {
       threadKey: "env-1:thread-2",
       query: "x",
     });
+    // A route to the side chat itself shows it too, even while its pane is still hosted.
+    retainThreadFindForRoute({ modalPage: false, threadRef: otherRef });
+    expect(useThreadFindStore.getState().threadKey).toBe("env-1:thread-2");
 
     unhost();
     retainThreadFindForRoute({ modalPage: false, threadRef });

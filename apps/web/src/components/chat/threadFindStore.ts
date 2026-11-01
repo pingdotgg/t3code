@@ -162,7 +162,7 @@ export function retainThreadFindForRoute(route: {
   const shownKey = route.threadRef ? scopedThreadKey(route.threadRef) : null;
   const findRef = parseScopedThreadKey(threadKey);
   const hostKey = findRef ? scopedThreadKey(rightPanelHostRef(findRef)) : threadKey;
-  if (hostKey !== shownKey) closeThreadFind();
+  if (threadKey !== shownKey && hostKey !== shownKey) closeThreadFind();
 }
 
 /** Whether find is open in `thread`, as long as find is available there. */
