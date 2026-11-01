@@ -4616,10 +4616,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           if (yield* projectAgentTerminalUpdate(notification, context)) return;
           if (
             update.sessionUpdate === "usage_update" ||
-            update.sessionUpdate === "session_info_update" ||
-            (update.sessionUpdate === "state_update" &&
-              update.state === "idle" &&
-              update.usage != null)
+            update.sessionUpdate === "session_info_update"
           ) {
             const stateEvent = parseSessionUpdateEvent(notification).events.find(
               (event) => event._tag === "UsageUpdated" || event._tag === "SessionInfoUpdated",
@@ -4670,7 +4667,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                 providerThread,
               });
             }
-            if (update.sessionUpdate !== "state_update") return;
+            return;
           }
           if (yield* followNativeChild(notification, context)) return;
           if (
