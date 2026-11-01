@@ -9,7 +9,7 @@ import { decodeJsonResult } from "@t3tools/shared/schemaJson";
 import { readSourceControlHostSettings } from "@t3tools/source-control-core/shared/definition";
 import * as SourceControlHost from "@t3tools/source-control-core/server/SourceControlHost";
 
-import * as TangledClient from "../client/definition.ts";
+import * as TangledClient from "../shared/definition.ts";
 
 /** `tg` is one binary on PATH; nothing here installs or updates it. */
 export const TANGLED_CLI = "tg";
@@ -49,7 +49,7 @@ export const TangledRepositorySchema = Schema.Struct({
  * `warning:` line is advisory — `tg repo view` prints one when a repository has no pipelines — so
  * it is not what a caller is told went wrong.
  */
-export function tangledErrorMessage(result: {
+function tangledErrorMessage(result: {
   readonly stderr: string;
   readonly stdout: string;
 }): string | undefined {
@@ -122,7 +122,7 @@ function environmentEnv(knot: string, appview: string): Readonly<Record<string, 
   return env;
 }
 
-export const make = Effect.gen(function* () {
+const make = Effect.gen(function* () {
   const { process, settings: hostSettings } = yield* SourceControlHost.SourceControlHost;
 
   /**

@@ -10,7 +10,7 @@ import type * as SourceControlHost from "@t3tools/source-control-core/server/Sou
 import { PullRequestProviderError } from "@t3tools/source-control-core/server/PullRequestProvider";
 import * as TestSourceControlHost from "@t3tools/source-control-testing/TestSourceControlHost";
 
-import * as TangledClient from "../client/definition.ts";
+import * as TangledClient from "../shared/definition.ts";
 import * as TangledCli from "./TangledCli.ts";
 import * as TangledSourceControlProvider from "./TangledSourceControlProvider.ts";
 

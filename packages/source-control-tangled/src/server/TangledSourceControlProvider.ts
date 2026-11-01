@@ -16,7 +16,7 @@ import {
 import * as SourceControlHost from "@t3tools/source-control-core/server/SourceControlHost";
 import * as SourceControlProvider from "@t3tools/source-control-core/server/SourceControlProvider";
 
-import * as TangledClient from "../client/definition.ts";
+import * as TangledClient from "../shared/definition.ts";
 import * as TangledPullRequestProvider from "./TangledPullRequestProvider.ts";
 import {
   isTangledCliError,
@@ -27,17 +27,6 @@ import {
 } from "./TangledCli.ts";
 
 export const KIND = SourceControlProviderKind.make("tangled");
-
-/** tangled.org serves the repository pages; `tangled.sh` and each knot serve the same trees. */
-export function isTangledHostname(hostname: string): boolean {
-  const host = hostname.toLowerCase();
-  return (
-    host === "tangled.org" ||
-    host === "tangled.sh" ||
-    host.endsWith(".tangled.org") ||
-    host.endsWith(".tangled.sh")
-  );
-}
 
 /** `tg auth status --json` names the account and the DID when one is signed in. */
 export function parseAuth(input: SourceControlAuthProbeInput) {
@@ -96,7 +85,7 @@ function cloneUrls(repository: string): SourceControlRepositoryCloneUrls {
  * is the shape most real remotes have — and both forms are served by tangled.org and accepted by
  * git, which is what lets every URL here be derived from the address instead of looked up.
  */
-export function isTangledRepositoryDid(address: string): boolean {
+function isTangledRepositoryDid(address: string): boolean {
   return /^did:[a-z0-9]+:[a-z0-9]+$/iu.test(address.trim());
 }
 
@@ -104,7 +93,7 @@ export function isTangledRepositoryDid(address: string): boolean {
  * The path below a remote's host. The shared reader needs at least one `/` between segments,
  * which a repository DID does not have, so a single-segment remote is read here instead.
  */
-export function repositoryPathFromTangledRemote(url: string): string | null {
+function repositoryPathFromTangledRemote(url: string): string | null {
   const shared = SourceControlProvider.repositoryPathFromRemoteUrl(url);
   if (shared !== null) return shared;
   const single =
@@ -120,13 +109,7 @@ export function defaultBranchFromSymref(stdout: string): string | null {
   return match?.[1] ?? null;
 }
 
-/**
- * Tangled pull requests are addressed two ways that do not meet: `tg` takes an AT Protocol record
- * key (`3mkaewigwhi22`), while tangled.org's pages are numbered from a per-knot database
- * sequence (`/pulls/19`). `ChangeRequest.number` is the number, and no public endpoint maps one
- * to the other, so this build cannot name a pull request without inventing an id the user would
- * then see as a wrong link. These fail rather than answer with a number that does not exist.
- */
+// `tg pr checkout` takes record keys; this interface receives the page's numeric identifier.
 function unsupported(operation: string, cwd: string) {
   return Effect.fail(
     new SourceControlProviderError({
@@ -178,7 +161,7 @@ export function createsUnderOwner(input: {
  * The address a caller typed or pasted: `handle/repo`, a repository DID, or a URL naming one,
  * since the clone picker accepts whatever is pasted into it.
  */
-export function repositoryAddress(repository: string): string | null {
+function repositoryAddress(repository: string): string | null {
   const trimmed = repository
     .trim()
     .replace(/\.git$/iu, "")
@@ -238,8 +221,8 @@ export const make = Effect.gen(function* () {
     kind: KIND,
     repositoryNameFromRemoteUrl: (url) => repositoryPathFromTangledRemote(url),
 
-    getRepositoryCloneUrls: (input) =>
-      Effect.gen(function* () {
+    getRepositoryCloneUrls: Effect.fn("TangledSourceControlProvider.getRepositoryCloneUrls")(
+      function* (input) {
         const repository = yield* repositoryFrom({
           cwd: input.cwd,
           repository: input.repository,
@@ -258,83 +241,82 @@ export const make = Effect.gen(function* () {
             .pipe(Effect.mapError((cause) => fail("getRepositoryCloneUrls", input.cwd, cause)));
         }
         return cloneUrls(repository);
-      }),
+      },
+    ),
 
-    createRepository: (input) =>
-      Effect.gen(function* () {
-        const segments = input.repository.split("/");
-        const [owner, name] = segments;
-        if (segments.length !== 2 || !owner || !name) {
-          return yield* notNamed(
-            "createRepository",
-            input.cwd,
-            "Name a Tangled repository as handle/repo.",
-          );
-        }
-        const account = yield* cli
-          .runJson({
-            cwd: input.cwd,
-            args: ["auth", "status"],
-            schema: TangledAuthStatusSchema,
-          })
-          .pipe(Effect.mapError((cause) => fail("createRepository", input.cwd, cause)));
-        if (
-          !account.authenticated ||
-          account.status === "expired" ||
-          account.status === "unknown" ||
-          (owner !== account.handle && owner !== account.did)
-        ) {
-          return yield* notNamed(
-            "createRepository",
-            input.cwd,
-            `Cannot confirm Tangled is signed in as ${owner} (reported account: ${account.handle ?? account.did ?? "unknown"}). Run \`tg auth login ${owner}\` and retry.`,
-          );
-        }
-        // Tangled has no private repositories, so `visibility` is not something `tg` can be asked
-        // for; a knot may still refuse the name, which surfaces as this operation's error.
-        const created = yield* cli
-          .runJson({
-            cwd: input.cwd,
-            args: ["repo", "create", name],
-            schema: TangledRepositorySchema,
-          })
-          .pipe(Effect.mapError((cause) => fail("createRepository", input.cwd, cause)));
-        // `tg` always creates under the signed-in account. Say so rather than hand back URLs for
-        // a repository that was never made where the caller asked.
-        if (!createsUnderOwner({ requested: owner, created: created.author })) {
-          return yield* notNamed(
-            "createRepository",
-            input.cwd,
-            `tg created ${name} under ${created.author ?? "your account"}, not ${owner}. Create it on tangled.org to own it as ${owner}.`,
-          );
-        }
-        return cloneUrls(input.repository);
-      }),
+    createRepository: Effect.fn("TangledSourceControlProvider.createRepository")(function* (input) {
+      const segments = input.repository.split("/");
+      const [owner, name] = segments;
+      if (segments.length !== 2 || !owner || !name) {
+        return yield* notNamed(
+          "createRepository",
+          input.cwd,
+          "Name a Tangled repository as handle/repo.",
+        );
+      }
+      const account = yield* cli
+        .runJson({
+          cwd: input.cwd,
+          args: ["auth", "status"],
+          schema: TangledAuthStatusSchema,
+        })
+        .pipe(Effect.mapError((cause) => fail("createRepository", input.cwd, cause)));
+      if (
+        !account.authenticated ||
+        account.status === "expired" ||
+        account.status === "unknown" ||
+        (owner !== account.handle && owner !== account.did)
+      ) {
+        return yield* notNamed(
+          "createRepository",
+          input.cwd,
+          `Cannot confirm Tangled is signed in as ${owner} (reported account: ${account.handle ?? account.did ?? "unknown"}). Run \`tg auth login ${owner}\` and retry.`,
+        );
+      }
+      // Tangled has no private repositories, so `visibility` is not something `tg` can be asked
+      // for; a knot may still refuse the name, which surfaces as this operation's error.
+      const created = yield* cli
+        .runJson({
+          cwd: input.cwd,
+          args: ["repo", "create", name],
+          schema: TangledRepositorySchema,
+        })
+        .pipe(Effect.mapError((cause) => fail("createRepository", input.cwd, cause)));
+      // `tg` always creates under the signed-in account. Say so rather than hand back URLs for
+      // a repository that was never made where the caller asked.
+      if (!createsUnderOwner({ requested: owner, created: created.author })) {
+        return yield* notNamed(
+          "createRepository",
+          input.cwd,
+          `tg created ${name} under ${created.author ?? "your account"}, not ${owner}. Create it on tangled.org to own it as ${owner}.`,
+        );
+      }
+      return cloneUrls(input.repository);
+    }),
 
-    getDefaultBranch: (input) =>
-      Effect.gen(function* () {
-        yield* repositoryFrom({ cwd: input.cwd, context: input.context });
-        const remoteName = input.context?.remoteName;
-        if (remoteName === undefined) {
-          return yield* notNamed(
-            "getDefaultBranch",
-            input.cwd,
-            "This project has no Tangled remote.",
-          );
-        }
-        // `tg repo view` reports no default branch, so git's own symref is the source.
-        const listing = yield* git
-          .execute({
-            operation: "TangledSourceControlProvider.getDefaultBranch",
-            cwd: input.cwd,
-            args: ["ls-remote", "--symref", remoteName, "HEAD"],
-          })
-          .pipe(Effect.mapError((cause) => fail("getDefaultBranch", input.cwd, cause)));
-        return defaultBranchFromSymref(listing.stdout);
-      }),
+    getDefaultBranch: Effect.fn("TangledSourceControlProvider.getDefaultBranch")(function* (input) {
+      yield* repositoryFrom({ cwd: input.cwd, context: input.context });
+      const remoteName = input.context?.remoteName;
+      if (remoteName === undefined) {
+        return yield* notNamed(
+          "getDefaultBranch",
+          input.cwd,
+          "This project has no Tangled remote.",
+        );
+      }
+      // `tg repo view` reports no default branch, so git's own symref is the source.
+      const listing = yield* git
+        .execute({
+          operation: "TangledSourceControlProvider.getDefaultBranch",
+          cwd: input.cwd,
+          args: ["ls-remote", "--symref", remoteName, "HEAD"],
+        })
+        .pipe(Effect.mapError((cause) => fail("getDefaultBranch", input.cwd, cause)));
+      return defaultBranchFromSymref(listing.stdout);
+    }),
 
-    listChangeRequests: (input) =>
-      Effect.gen(function* () {
+    listChangeRequests: Effect.fn("TangledSourceControlProvider.listChangeRequests")(
+      function* (input) {
         const repository = yield* repositoryFrom(input);
         const page = yield* pullRequests
           .listChangeRequests({
@@ -372,10 +354,11 @@ export const make = Effect.gen(function* () {
             state: pull.state,
             updatedAt: DateTime.make(pull.updatedAt),
           }));
-      }),
+      },
+    ),
 
-    createChangeRequest: (input) =>
-      Effect.gen(function* () {
+    createChangeRequest: Effect.fn("TangledSourceControlProvider.createChangeRequest")(
+      function* (input) {
         const source = SourceControlProvider.sourceControlRefFromInput(input);
         const headBranch = SourceControlProvider.sourceBranch(input);
         const address = yield* repositoryFrom({
@@ -422,9 +405,14 @@ export const make = Effect.gen(function* () {
         yield* cli
           .run({ cwd: input.cwd, args })
           .pipe(Effect.mapError((cause) => fail("createChangeRequest", input.cwd, cause)));
-      }),
+      },
+    ),
 
-    getChangeRequest: (input) => unsupported("getChangeRequest", input.cwd),
-    checkoutChangeRequest: (input) => unsupported("checkoutChangeRequest", input.cwd),
+    getChangeRequest: Effect.fn("TangledSourceControlProvider.getChangeRequest")((input) =>
+      unsupported("getChangeRequest", input.cwd),
+    ),
+    checkoutChangeRequest: Effect.fn("TangledSourceControlProvider.checkoutChangeRequest")(
+      (input) => unsupported("checkoutChangeRequest", input.cwd),
+    ),
   });
 });

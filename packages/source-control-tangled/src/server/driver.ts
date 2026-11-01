@@ -5,10 +5,13 @@ import { SourceControlProviderKind } from "@t3tools/contracts";
  *
  * @module source-control-tangled/server/driver
  */
-import { defineSourceControlDriver, withOwnServices } from "@t3tools/source-control-core/server/driver";
+import {
+  defineSourceControlDriver,
+  withOwnServices,
+} from "@t3tools/source-control-core/server/driver";
 import * as Effect from "effect/Effect";
 
-import { definition } from "../client/definition.ts";
+import { definition } from "../shared/definition.ts";
 import * as TangledCli from "./TangledCli.ts";
 
 import * as TangledPullRequestProvider from "./TangledPullRequestProvider.ts";
@@ -17,9 +20,12 @@ import * as TangledSourceControlProvider from "./TangledSourceControlProvider.ts
 export const driver = defineSourceControlDriver({
   kind: SourceControlProviderKind.make("tangled"),
   definition,
-  make: withOwnServices(Effect.all({
-    sourceControl: TangledSourceControlProvider.make,
-    discovery: Effect.succeed(TangledSourceControlProvider.discovery),
-    pullRequests: TangledPullRequestProvider.make,
-  }), TangledCli.layer),
+  make: withOwnServices(
+    Effect.all({
+      sourceControl: TangledSourceControlProvider.make,
+      discovery: Effect.succeed(TangledSourceControlProvider.discovery),
+      pullRequests: TangledPullRequestProvider.make,
+    }),
+    TangledCli.layer,
+  ),
 });

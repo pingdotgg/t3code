@@ -916,8 +916,11 @@ export function PullRequestSummaryTab({
                 {commentCount === 0 ? (
                   "Comments are not available here. Open this pull request on the host to read them."
                 ) : (
-                  <>This conversation is only partially loaded. {commentCount} comment
-                  {commentCount === 1 ? " is" : "s are"} loaded; open it on the host to read the rest.</>
+                  <>
+                    This conversation is only partially loaded. {commentCount} comment
+                    {commentCount === 1 ? " is" : "s are"} loaded; open it on the host to read the
+                    rest.
+                  </>
                 )}
               </p>
             ) : null}

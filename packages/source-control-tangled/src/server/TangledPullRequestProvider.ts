@@ -106,32 +106,31 @@ export const make = Effect.gen(function* () {
    * unknown and its pull requests are left unnumbered rather than numbered wrongly.
    */
   const offsets = yield* Cache.make({
-    lookup: (repository: string) =>
-      Effect.gen(function* () {
-        const pulls = yield* listed({
-          operation: "listChangeRequests",
-          cwd: ".",
-          repository,
-        });
-        if (pulls.length === 0) return 0;
-        const html = yield* Effect.gen(function* () {
-          const response = yield* httpClient.execute(
-            HttpClientRequest.get(`https://tangled.org/${repository}/pulls?q=state%3Aall`).pipe(
-              HttpClientRequest.setHeader("accept", "text/html"),
-            ),
-          );
-          if (response.status < 200 || response.status >= 300) return null;
-          return (yield* collectUint8StreamText({
-            stream: response.stream,
-            maxBytes: 4 * 1024 * 1024,
-          })).text;
-        }).pipe(
-          // A page that cannot be read leaves the numbering unknown, which reads as a repository
-          // whose pull requests are not listed rather than as a failure to report.
-          Effect.orElseSucceed(() => null),
+    lookup: Effect.fn("TangledPullRequestProvider.offset")(function* (repository: string) {
+      const pulls = yield* listed({
+        operation: "listChangeRequests",
+        cwd: ".",
+        repository,
+      });
+      if (pulls.length === 0) return 0;
+      const html = yield* Effect.gen(function* () {
+        const response = yield* httpClient.execute(
+          HttpClientRequest.get(`https://tangled.org/${repository}/pulls?q=state%3Aall`).pipe(
+            HttpClientRequest.setHeader("accept", "text/html"),
+          ),
         );
-        return html === null ? null : offsetFromRows(parsePullPageRows(html, repository), pulls);
-      }),
+        if (response.status < 200 || response.status >= 300) return null;
+        return (yield* collectUint8StreamText({
+          stream: response.stream,
+          maxBytes: 4 * 1024 * 1024,
+        })).text;
+      }).pipe(
+        // A page that cannot be read leaves the numbering unknown, which reads as a repository
+        // whose pull requests are not listed rather than as a failure to report.
+        Effect.orElseSucceed(() => null),
+      );
+      return html === null ? null : offsetFromRows(parsePullPageRows(html, repository), pulls);
+    }),
     capacity: OFFSET_CACHE_CAPACITY,
     timeToLive: OFFSET_TTL,
   });

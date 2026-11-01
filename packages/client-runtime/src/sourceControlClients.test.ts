@@ -249,6 +249,15 @@ describe("sourceControlClients.recognizeRemote", () => {
     expect(kindOfRemote("https://bitbucket.gitlab.example/o/r")).toBe("gitlab");
     expect(kindOfRemote("https://bitbucket.visualstudio.com/p/_git/r")).toBe("azure-devops");
     expect(kindOfRemote("git@git.cafe:pingdotgg/t3code.git")).toBe("gitcafe");
+    for (const remote of [
+      "git@tangled.org:alice.example/repo",
+      "https://tangled.org/alice.example/repo.git",
+      "https://knot1.tangled.sh/alice.example/repo",
+      "ssh://git@knot.tangled.org/alice.example/repo.git",
+      "git@tangled.org:did:plc:abc123",
+    ]) {
+      expect(kindOfRemote(remote), remote).toBe("tangled");
+    }
   });
 
   it("reads a remote no host claims as an unknown host, and a local path as no host", () => {

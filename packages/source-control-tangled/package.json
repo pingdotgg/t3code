@@ -3,29 +3,13 @@
   "private": true,
   "type": "module",
   "exports": {
-    "./client/definition": {
-      "types": "./src/client/definition.ts",
-      "import": "./src/client/definition.ts"
+    "./shared/definition": {
+      "types": "./src/shared/definition.ts",
+      "import": "./src/shared/definition.ts"
     },
     "./server/driver": {
       "types": "./src/server/driver.ts",
       "import": "./src/server/driver.ts"
-    },
-    "./server/TangledCli": {
-      "types": "./src/server/TangledCli.ts",
-      "import": "./src/server/TangledCli.ts"
-    },
-    "./server/TangledSourceControlProvider": {
-      "types": "./src/server/TangledSourceControlProvider.ts",
-      "import": "./src/server/TangledSourceControlProvider.ts"
-    },
-    "./server/TangledPullRequestProvider": {
-      "types": "./src/server/TangledPullRequestProvider.ts",
-      "import": "./src/server/TangledPullRequestProvider.ts"
-    },
-    "./server/tangledPulls": {
-      "types": "./src/server/tangledPulls.ts",
-      "import": "./src/server/tangledPulls.ts"
     }
   },
   "scripts": {
