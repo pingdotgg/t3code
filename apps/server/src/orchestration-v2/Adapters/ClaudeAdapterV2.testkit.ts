@@ -1480,7 +1480,9 @@ const resolveClaudeRecordingExecutablePath = Effect.fn("resolveClaudeRecordingEx
   function* (environment: NodeJS.ProcessEnv) {
     const resolveExecutable = yield* SpawnExecutableResolution;
     const platform = yield* HostProcess.Platform;
-    const resolved = resolveExecutable("claude", platform, environment);
+    const resolved = yield* Effect.promise(async () =>
+      resolveExecutable("claude", platform, environment),
+    );
     if (resolved === undefined) {
       return undefined;
     }

@@ -309,7 +309,7 @@ describe("AcpRegistrySupport", () => {
           registryUrl,
         }).pipe(
           Effect.provideService(HostProcess.Platform, "win32"),
-          Effect.provideService(SpawnExecutableResolution, () => `C:\\bin\\dsh${extension}`),
+          Effect.provideService(SpawnExecutableResolution, async () => `C:\\bin\\dsh${extension}`),
         );
         const localSettings = decodeAcpRegistrySettings({ source: "local", commandPath: "dsh" });
         for (const failure of [
@@ -791,6 +791,7 @@ describe("AcpRegistrySupport", () => {
       name: "Codex Darwin",
     } satisfies AcpRegistrySupport.AcpRegistryAgent;
 
+    const lookups: string[] = [];
     return Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
       const cacheDir = yield* fileSystem.makeTempDirectoryScoped({
@@ -800,9 +801,15 @@ describe("AcpRegistrySupport", () => {
         cacheDir,
         toolsDir: `${cacheDir}/tools`,
         registryUrl,
-      });
+      }).pipe(
+        Effect.provideService(SpawnExecutableResolution, async (command) => {
+          lookups.push(command);
+          return "/bin/npm";
+        }),
+      );
       const result = yield* resolver.search({ query: "codex" });
 
+      expect(lookups).toEqual(["npm"]);
       expect(result.agents.map((agent) => agent.id)).toEqual(["codex-acp", "other-agent"]);
       expect(result.agents[0]).toMatchObject({
         authors: ["OpenAI", "Zed Industries"],

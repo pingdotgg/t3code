@@ -263,7 +263,7 @@ describe("Muse launch", () => {
   const onWindows = (resolved: string | undefined, env: NodeJS.ProcessEnv = { ComSpec: CMD }) =>
     museLaunch("muse", env).pipe(
       Effect.provideService(HostProcess.Platform, "win32"),
-      Effect.provideService(SpawnExecutableResolution, () => resolved),
+      Effect.provideService(SpawnExecutableResolution, async () => resolved),
     );
 
   it.effect("runs an exe directly and a launcher script under cmd.exe on Windows", () =>
