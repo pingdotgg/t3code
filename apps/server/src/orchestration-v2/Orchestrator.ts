@@ -95,6 +95,7 @@ import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 
 import * as ProjectStore from "./ProjectStore.ts";
+import * as UsageLimitRecovery from "./UsageLimitRecovery.ts";
 import {
   isCheckpointRestoreIsolated,
   SHARED_WORKSPACE_RESTORE_MESSAGE,
@@ -3372,7 +3373,14 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         run?.id !== command.limitRecovery.runId ||
         failure?.class !== "usage_limit" ||
         failure.resetAt !== command.limitRecovery.resetAt ||
-        resetMs <= DateTime.toEpochMillis(run.completedAt ?? run.requestedAt) ||
+        (command.limitRecovery.autoResume === true &&
+          resetMs <= DateTime.toEpochMillis(run.completedAt ?? run.requestedAt) &&
+          !UsageLimitRecovery.staleResetAllowed({
+            limitRecovery: thread.limitRecovery,
+            latestRunId: run.id,
+            usageLimitResetAt: failure.resetAt,
+            recoveryCompletedMs: UsageLimitRecovery.recoveryRunCompletedMs(projection),
+          })) ||
         projection.runtimeRequests.some((request) => request.status === "pending")
       ) {
         return yield* new OrchestratorDispatchError({
@@ -5366,6 +5374,24 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           cause: "This thread can no longer be resumed from that run.",
         });
       }
+      const recovery = projection.thread.limitRecovery;
+      if (
+        limited?.class === "usage_limit" &&
+        recovery?.autoResume &&
+        recovery.resetAt === limited.resetAt
+      ) {
+        // The arm may still name an earlier refused run. A manual continuation spends it too.
+        const event = yield* emit(
+          events,
+          command,
+        )({
+          type: "thread.metadata-updated",
+          threadId: command.threadId,
+          occurredAt: yield* DateTime.now,
+          payload: { ...projection.thread, limitRecovery: null },
+        });
+        projection = applyToProjection(projection, event);
+      }
     }
     if (command.usageLimitContinuationOfRunId !== undefined) {
       const run = usageLimitBlockedRun(projection.runs, projection.turnItems, null);
@@ -5380,7 +5406,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         recovery.requestId !== command.usageLimitRecoveryRequestId ||
         recovery.runId !== run.id ||
         recovery.resetAt !== failure.resetAt ||
-        Date.parse(recovery.resetAt) > DateTime.toEpochMillis(now) ||
+        UsageLimitRecovery.dueMs(Date.parse(recovery.resetAt), run.completedAt ?? run.requestedAt) >
+          DateTime.toEpochMillis(now) ||
         projection.thread.archivedAt !== null ||
         projection.thread.deletedAt !== null ||
         projection.thread.settledOverride === "settled" ||
@@ -5401,8 +5428,14 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             ...(recovery?.autoResume &&
             recovery.requestId === command.usageLimitRecoveryRequestId &&
             recovery.runId === command.usageLimitContinuationOfRunId &&
-            projection.thread.snoozedUntil != null &&
-            DateTime.toEpochMillis(projection.thread.snoozedUntil) > DateTime.toEpochMillis(now)
+            ((run?.id === recovery.runId &&
+              UsageLimitRecovery.dueMs(
+                Date.parse(recovery.resetAt),
+                run.completedAt ?? run.requestedAt,
+              ) > DateTime.toEpochMillis(now)) ||
+              (projection.thread.snoozedUntil != null &&
+                DateTime.toEpochMillis(projection.thread.snoozedUntil) >
+                  DateTime.toEpochMillis(now)))
               ? { limitRecovery: { ...recovery, requestId: command.commandId } }
               : {}),
           },
