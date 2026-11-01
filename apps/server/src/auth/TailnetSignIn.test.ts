@@ -444,6 +444,15 @@ it.layer(NodeServices.layer)("TailnetSignIn", (it) => {
       refused: "tailscale_unavailable",
     },
     {
+      name: "the device's user changed after its lookup",
+      status: hostStatus({
+        Peer: {
+          phone: { ID: "nPhone", TailscaleIPs: [PHONE_ADDRESS], UserID: `int64:${NEIGHBOR_ID}` },
+        },
+      }),
+      refused: "tailscale_unavailable",
+    },
+    {
       name: "the device's node key expired",
       status: hostStatus({
         Peer: {
@@ -1608,6 +1617,37 @@ it.layer(NodeServices.layer)("TailnetSignIn", (it) => {
         expect(yield* Fiber.join(phone)).toBe("tailscale_unavailable");
       }).pipe(Effect.provide(layerTest(tailnet)));
     });
+
+    it.effect.each([{ change: "require-grant turned on" }, { change: "the host tagged" }])(
+      "an owner-rule sign-in refuses when $change after its scan",
+      ({ change }) => {
+        const tailnet = withLaptop();
+        return Effect.gen(function* () {
+          // The third read is sign-in's last, after its owner-rule scan's two.
+          const last = (tailnet.freshReads ?? 0) + 3;
+          if (change === "the host tagged") {
+            tailnet.onFreshRead = (count) => {
+              if (count === last) {
+                tailnet.status = hostStatus({
+                  Peer: peers,
+                  Self: { ...hostStatus().Self, Tags: ["tag:server"] },
+                });
+              }
+            };
+            expect(yield* refusalOf(signIn(makeDpopKey()))).toBe("policy_unknown");
+          } else {
+            const started = yield* Deferred.make<void>();
+            const release = yield* Deferred.make<void>();
+            tailnet.holdFreshRead = { at: last, started, release };
+            const phone = yield* refusalOf(signIn(makeDpopKey())).pipe(Effect.forkChild);
+            yield* Deferred.await(started);
+            yield* requireGrantOn;
+            yield* Deferred.succeed(release, undefined);
+            expect(yield* Fiber.join(phone)).toBe("no_grant");
+          }
+        }).pipe(Effect.provide(layerTest(tailnet)));
+      },
+    );
 
     it.effect("a host tagged during a scan does not admit its former owner", () => {
       const tailnet = withLaptop();

@@ -480,9 +480,10 @@ export const make = Effect.gen(function* () {
         if (peer === undefined) return refuse("tailscale_unavailable");
         // Off the tailnet until it logs in to Tailscale again, which only the device can do.
         if (peer.keyExpired) return refuse("not_direct_tailnet", "node key expired");
-        return sameTags(peer.tags, node.tags)
+        return sameTags(peer.tags, node.tags) &&
+          (peer.userId === null || peer.userId === node.userId)
           ? Effect.void
-          : refuse("tailscale_unavailable", "device tags changed during sign-in");
+          : refuse("tailscale_unavailable", "device changed during sign-in");
       };
       yield* checkCaller(status);
       const decision = yield* decide(node, status);
@@ -515,13 +516,23 @@ export const make = Effect.gen(function* () {
         );
       }
       const { scopes, via } = decision;
-      // The owner rule waited on a policy scan, during which the device may have changed.
+      // The owner rule waited on a policy scan, during which the device, this host's owner, or
+      // the require-grant setting may have changed.
       if (via === "owner") {
-        yield* checkCaller(
-          yield* host.freshStatus.pipe(
-            Effect.catch((cause) => refuse("tailscale_unavailable", cause)),
-          ),
+        const final = yield* host.freshStatus.pipe(
+          Effect.catch((cause) => refuse("tailscale_unavailable", cause)),
         );
+        yield* checkCaller(final);
+        if (
+          final.selfNodeId !== status.selfNodeId ||
+          TailscaleHost.tailnetOwnerUserId(final, config.tailscaleOwnerUserId) !==
+            TailscaleHost.tailnetOwnerUserId(status, config.tailscaleOwnerUserId)
+        ) {
+          return yield* refuse("policy_unknown", "this host changed during sign-in");
+        }
+        if (yield* fs.exists(requireGrantPath).pipe(Effect.orElseSucceed(() => true))) {
+          return yield* refuse("no_grant");
+        }
       }
 
       knownUsers.set(node.stableNodeId, node.loginName ?? node.userId);
