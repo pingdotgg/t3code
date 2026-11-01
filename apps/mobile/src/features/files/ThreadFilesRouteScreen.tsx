@@ -28,6 +28,7 @@ import { copyTextWithHaptic } from "../../lib/copyTextWithHaptic";
 import { isPdfFile } from "../../lib/filePreview";
 import { tryOpenExternalUrl } from "../../lib/openExternalUrl";
 import { useUniwindTheme } from "../../lib/useUniwindTheme";
+import { firstRouteParam } from "../../lib/routeParams";
 import type { MediaVideoPreviewSource } from "../../lib/videoPreviewSource";
 import { useMediaActions } from "../../state/mediaActions";
 import { type MediaActionsSource } from "../../lib/mediaActionsSource";
@@ -183,11 +184,6 @@ function FileHeader(props: {
 }
 
 type FileViewMode = "preview" | "source";
-
-function firstRouteParam(value: string | string[] | undefined): string | null {
-  const first = Array.isArray(value) ? value[0] : value;
-  return first === undefined || first.trim().length === 0 ? null : first;
-}
 
 function normalizeRoutePath(value: string | string[] | undefined): string | null {
   const path = Array.isArray(value) ? value.join("/") : value;

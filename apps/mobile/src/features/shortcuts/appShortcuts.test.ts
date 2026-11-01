@@ -80,12 +80,21 @@ describe("activeThreadRef", () => {
       { environmentId: "   ", threadId: "thread-2" },
       { environmentId: "env-1", threadId: "  " },
       { environmentId: 42, threadId: "thread-2" },
+      { environmentId: null, threadId: "thread-2" },
       { environmentId: { nested: true }, threadId: "thread-2" },
       { environmentId: [], threadId: [] },
     ];
     for (const params of malformed) {
       expect(activeThreadRef(navState({ name: "Thread", params }))).toBe(null);
     }
+  });
+
+  it("uses the trimmed first value of each param", () => {
+    const params = { environmentId: [" env-1 ", "env-2"], threadId: "thread-2 " };
+    expect(activeThreadRef(navState({ name: "Thread", params }))).toEqual({
+      environmentId: "env-1",
+      threadId: "thread-2",
+    });
   });
 });
 

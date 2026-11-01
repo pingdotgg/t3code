@@ -48,6 +48,7 @@ import { useEnvironmentQuery } from "../../state/query";
 import { appAtomRegistry } from "../../state/atom-registry";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { uuidv4 } from "../../lib/uuid";
+import { firstRouteParam } from "../../lib/routeParams";
 import { useServerConfigs } from "../../state/entities";
 import { useConnectionsReady } from "../../state/workspace";
 import {
@@ -199,11 +200,6 @@ type TerminalToolbarAction =
       readonly label: string;
       readonly modifier: PendingModifier;
     };
-
-function firstRouteParam(value: string | string[] | undefined): string | null {
-  const first = Array.isArray(value) ? value[0] : value;
-  return first === undefined || first.trim().length === 0 ? null : first;
-}
 
 function inferHostPlatform(environmentLabel: string | null): HostPlatform {
   const value = environmentLabel?.toLowerCase() ?? "";

@@ -44,6 +44,7 @@ import { vcsEnvironment } from "../../state/vcs";
 import { EmptyState } from "../../components/ui/EmptyState";
 import { LoadingScreen } from "../../components/LoadingScreen";
 import { scopedThreadKey } from "../../lib/scopedEntities";
+import { firstRouteParam } from "../../lib/routeParams";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { useThreadShell } from "../../state/entities";
 import { NATIVE_LIQUID_GLASS_SUPPORTED } from "../../native/native-glass";
@@ -124,11 +125,6 @@ import { useSelectWorkspaceDetail } from "../workspace/useSelectWorkspaceDetail"
 function InspectorPaneRoleActivation() {
   useAdaptiveWorkspacePaneRole("inspector");
   return null;
-}
-
-function firstRouteParam(value: string | string[] | undefined): string | null {
-  const first = Array.isArray(value) ? value[0] : value;
-  return first === undefined || first.trim().length === 0 ? null : first;
 }
 
 function ThreadRouteFallbackLayout(props: { readonly children: ReactNode }) {
