@@ -30,7 +30,10 @@ describe("buildRuntimeInstructions", () => {
     assert.notInclude(instructions, "merge it now");
     assert.include(instructions, "Otherwise act now or hand back.");
     assert.include(instructions, "then watch and end your turn");
-    assert.include(instructions, "A delegated child watches only when its task asks for it.");
+    assert.include(
+      instructions,
+      "A delegated child watches only when asked; interim results keep watches.",
+    );
     assert.include(
       instructions,
       "After PR work, a child's last line is: PR <full URL>, head <SHA>, checks and reviews <state>.",
