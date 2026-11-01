@@ -1,3 +1,5 @@
 export function isLocalEnvironmentDisabled(): boolean {
-  return window.desktopBridge?.getLocalEnvironmentEnabled() === false;
+  return (
+    typeof window !== "undefined" && window.desktopBridge?.getLocalEnvironmentEnabled() === false
+  );
 }

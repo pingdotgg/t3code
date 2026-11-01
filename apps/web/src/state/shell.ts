@@ -124,7 +124,7 @@ export const allEnvironmentProjectSnapshotsReadyAtom =
   createAllEnvironmentProjectSnapshotsReadyAtom({
     catalogValueAtom: environmentCatalog.catalogValueAtom,
     shellStateValueAtom: environmentShell.stateValueAtom,
-    requiresPrimaryEnvironment: !isHostedStaticApp(),
+    requiresPrimaryEnvironment: expectsPrimaryEnvironment(),
   });
 
 /** Hosted clients and desktops with the local environment disabled never discover a primary. */
