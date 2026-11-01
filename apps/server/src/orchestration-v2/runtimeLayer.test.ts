@@ -1,3 +1,4 @@
+import { PullRequestProviderError } from "@t3tools/source-control-core/server/PullRequestProvider";
 import { SourceControlProviderKind } from "@t3tools/contracts";
 import { limitRecoveryCommand } from "./UsageLimitRecoveryWorker.ts";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
@@ -23,6 +24,7 @@ import {
   type PullRequestDetail,
   type PullRequestComment,
   PullRequestOperationError,
+  PullRequestUnavailableError,
   ProviderDriverKind,
   ProviderInstanceId,
   ProviderSessionId,
@@ -3174,18 +3176,35 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
         watching: true,
         link: { url: "https://github.com/pingdotgg/t3code/pull/8", source: "agent" },
       });
+      const rateLimited = new PullRequestOperationError({
+        operation: "detail",
+        detail: "GitHub requests are paused until the rate limit resets",
+        cause: new PullRequestProviderError({
+          provider: SourceControlProviderKind.make("github"),
+          operation: "getChangeRequest",
+          reason: "rate-limited",
+          detail: "paused",
+        }),
+      });
+      let paused = true;
+      const read = () => (paused ? Effect.fail(rateLimited) : Effect.die("host unreachable"));
       const reactor = yield* PullRequestWatchReactor.make.pipe(
         Effect.provide(
           Layer.mergeAll(
             NodeServices.layer,
             Layer.mock(PullRequestService.PullRequestService)({
-              detail: () => Effect.die("host unreachable"),
-              activity: () => Effect.die("host unreachable"),
+              detail: read,
+              activity: read,
             }),
           ),
         ),
       );
-      for (let pass = 0; pass < 15; pass += 1) yield* reactor.sweep;
+      for (let pass = 0; pass < 8; pass += 1) yield* reactor.sweep;
+      assert.isDefined((yield* orchestrator.getThreadShell(threadId))?.pullRequests?.[0]?.watch);
+      paused = false;
+      for (let pass = 0; pass < 7; pass += 1) yield* reactor.sweep;
+      assert.isDefined((yield* orchestrator.getThreadShell(threadId))?.pullRequests?.[0]?.watch);
+      yield* reactor.sweep;
 
       const thread = yield* orchestrator.getThreadShell(threadId);
       assert.isUndefined(thread?.pullRequests?.[0]?.watch);
@@ -3193,6 +3212,144 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
       assert.deepEqual(
         messages.flatMap((message) => message.notification?.summary ?? []),
         ["#8: stopped watching, could not read it"],
+      );
+    }),
+  );
+
+  it.effect.each(
+    (["not-found", "cli-unauthenticated", "cli-missing", "provider-unsupported"] as const).flatMap(
+      (reason) => ["detail", "fingerprint"].map((source) => ({ reason, source })),
+    ),
+  )("ends a refused watch on its first read and says why: $reason $source", ({ reason, source }) =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const threadId = ThreadId.make(`runtime-pull-request-watch-refused-${reason}-${source}`);
+      const projectId = ProjectId.make(`pr-watch-refused-project-${reason}-${source}`);
+      yield* seedProject({
+        projectId,
+        title: "Watch refused",
+        workspaceRoot: "/workspace/watch-refused",
+        defaultModelSelection: null,
+        createdAt: "2026-10-01T00:00:00.000Z",
+      });
+      yield* orchestrator.dispatch({
+        type: "thread.create",
+        createdBy: "user",
+        creationSource: "web",
+        commandId: CommandId.make(`pr-watch-refused-create-${reason}-${source}`),
+        threadId,
+        projectId,
+        title: "Watch refused",
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: null,
+      });
+      yield* orchestrator.dispatch({
+        type: "thread.pull-request.watch",
+        commandId: CommandId.make(`pr-watch-refused-start-${reason}-${source}`),
+        threadId,
+        host: "github.com",
+        repository: "pingdotgg/t3code",
+        number: 14,
+        watching: true,
+        link: { url: "https://github.com/pingdotgg/t3code/pull/14", source: "agent" },
+      });
+      // GitHub answers a credential that cannot see a private repository with a 404.
+      const hidden =
+        reason !== "not-found"
+          ? new PullRequestUnavailableError({ reason })
+          : new PullRequestOperationError({
+              operation: "detail",
+              detail:
+                "GitHub could not find the requested resource, or the credential cannot see it.",
+              reason: "not-found",
+              cause: new PullRequestProviderError({
+                provider: SourceControlProviderKind.make("github"),
+                operation: "getChangeRequest",
+                reason: "not-found",
+                detail:
+                  "GitHub could not find the requested resource, or the credential cannot see it.",
+              }),
+            });
+      // A field the credential may not read, such as one requested reviewer, is not a refusal of
+      // the pull request, so it keeps the usual retries.
+      const forbiddenField = new PullRequestOperationError({
+        operation: "detail",
+        detail: "Resource not accessible by integration",
+        cause: new PullRequestProviderError({
+          provider: SourceControlProviderKind.make("github"),
+          operation: "getChangeRequest",
+          reason: "failed",
+          detail: "Resource not accessible by integration",
+        }),
+      });
+      let failure: PullRequestService.PullRequestError | null = forbiddenField;
+      let fingerprintFailure: PullRequestService.PullRequestError | null = null;
+      const reactor = yield* PullRequestWatchReactor.make.pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            NodeServices.layer,
+            Layer.mock(PullRequestService.PullRequestService)({
+              watchFingerprint: () =>
+                fingerprintFailure === null
+                  ? Effect.succeed(null)
+                  : Effect.fail(fingerprintFailure),
+              detail: () =>
+                failure === null
+                  ? Effect.succeed({
+                      ...watchedPullRequestDetail({
+                        projectId,
+                        number: 14,
+                        at: "2026-10-02T12:00:00.000Z",
+                      }),
+                      checks: [],
+                    })
+                  : Effect.fail(failure),
+              activity: () =>
+                failure === null
+                  ? Effect.succeed({
+                      comments: [],
+                      commentCount: 0,
+                      commentsTruncated: false,
+                      reviewThreads: [],
+                      commits: [],
+                    })
+                  : Effect.fail(failure),
+            }),
+          ),
+        ),
+      );
+      yield* reactor.sweep;
+      assert.isDefined((yield* orchestrator.getThreadShell(threadId))?.pullRequests?.[0]?.watch);
+
+      if (source === "fingerprint") {
+        failure = null;
+        yield* reactor.sweep;
+        assert.isDefined((yield* orchestrator.getThreadShell(threadId))?.pullRequests?.[0]?.watch);
+        fingerprintFailure = hidden;
+      } else {
+        failure = hidden;
+      }
+      yield* reactor.sweep;
+
+      const thread = yield* orchestrator.getThreadShell(threadId);
+      assert.isUndefined(thread?.pullRequests?.[0]?.watch);
+      const { messages } = yield* orchestrator.getThreadRecords(threadId, ["messages"]);
+      assert.deepEqual(
+        messages.flatMap((message) =>
+          message.notification?.outcome === "failed" ? [message.notification.summary] : [],
+        ),
+        ["#14: stopped watching, could not read it"],
+      );
+      assert.include(messages.at(-1)?.text ?? "", hidden.message);
+      assert.include(messages.at(-1)?.text ?? "", "Settings → Source Control");
+      assert.include(messages.at(-1)?.text ?? "", "watch_pull_request");
+      yield* reactor.sweep;
+      assert.lengthOf(
+        (yield* orchestrator.getThreadRecords(threadId, ["messages"])).messages,
+        messages.length,
       );
     }),
   );

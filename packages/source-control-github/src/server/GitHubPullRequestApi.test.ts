@@ -1014,9 +1014,9 @@ layer("GitHubPullRequestApi.layer", (it) => {
     }),
   );
 
-  it.effect(
-    "fails only the pull request GitHub cannot find, and answers the rest of its batch",
-    () =>
+  it.effect.each(["summary", "fingerprint", "fingerprint-null"] as const)(
+    "fails only the pull request GitHub cannot find, and answers the rest of its batch: %s",
+    (kind) =>
       Effect.gen(function* () {
         mockedExecute.mockReturnValueOnce(
           Effect.succeed(
@@ -1033,6 +1033,10 @@ layer("GitHubPullRequestApi.layer", (it) => {
                       baseRefName: "main",
                       headRefName: "feat/eight",
                       state: "OPEN",
+                      headRefOid: "abc123",
+                      comments: { totalCount: 0, nodes: [] },
+                      reviews: { totalCount: 0, nodes: [] },
+                      reviewThreads: { totalCount: 0 },
                       isDraft: false,
                       mergeable: "MERGEABLE",
                       reviewDecision: null,
@@ -1049,13 +1053,16 @@ layer("GitHubPullRequestApi.layer", (it) => {
                     },
                   },
                 },
-                errors: [
-                  {
-                    type: "NOT_FOUND",
-                    path: ["_0_repository", "pullRequest"],
-                    message: "Could not resolve to a PullRequest with the number of 7.",
-                  },
-                ],
+                errors:
+                  kind === "fingerprint-null"
+                    ? []
+                    : [
+                        {
+                          type: "NOT_FOUND",
+                          path: ["_0_repository", "pullRequest"],
+                          message: "Could not resolve to a PullRequest with the number of 7.",
+                        },
+                      ],
               }),
             ),
           ),
@@ -1064,22 +1071,25 @@ layer("GitHubPullRequestApi.layer", (it) => {
 
         const reads = yield* Effect.forEach(
           [7, 8],
-          (number) =>
-            cli
-              .getPullRequestSummary({
-                cwd: "/w",
-                repository: "acme/web",
-                host: "github.com",
-                number,
-              })
-              .pipe(Effect.result),
+          (number) => {
+            const input = { cwd: "/w", repository: "acme/web", host: "github.com", number };
+            return (
+              kind === "summary"
+                ? cli.getPullRequestSummary(input).pipe(Effect.map((result) => result?.headBranch))
+                : cli
+                    .getPullRequestWatchFingerprint(input)
+                    .pipe(Effect.map((result) => (result === null ? null : "fingerprint")))
+            ).pipe(Effect.result);
+          },
           { concurrency: "unbounded" },
         ).pipe(Effect.forkChild);
         yield* TestClock.adjust("10 millis");
         const [seven, eight] = yield* Fiber.join(reads);
 
         expect(Result.isFailure(seven!) ? seven.failure._tag : null).toBe("GitHubApiNotFoundError");
-        expect(Result.isSuccess(eight!) ? eight.success.headBranch : null).toBe("feat/eight");
+        expect(Result.isSuccess(eight!) ? eight.success : null).toBe(
+          kind === "summary" ? "feat/eight" : "fingerprint",
+        );
         expect(mockedExecute).toHaveBeenCalledOnce();
         expect(callAt(0)).toMatchObject({ kind: "graphql", partial: true });
       }),
