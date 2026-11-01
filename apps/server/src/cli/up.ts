@@ -677,8 +677,9 @@ const setUp = Effect.fn("cli.up")(function* (
         yield* Console.log(formatNextSteps(routes, false));
         // A Windows sign-in again makes a new profile, so the "other" account can be this one.
         if (leftover.otherAccounts.every((label) => label === leftover.currentLabel)) {
+          const windows = (yield* HostProcess.Platform) === "win32";
           return yield* upError(
-            `A Tailscale Serve mapping may remain from an earlier sign-in to ${leftover.currentLabel}, or from another Windows user signed in to it; Tailscale keeps each one's Serve settings apart. Delete ${record} if that sign-in is gone.`,
+            `A Tailscale Serve mapping may remain from an earlier sign-in to ${leftover.currentLabel}${windows ? ", or from another Windows user signed in to it" : ""}; Tailscale keeps each one's Serve settings apart. Delete ${record} if that sign-in is gone.`,
           );
         }
         const one = leftover.otherAccounts.length === 1;
