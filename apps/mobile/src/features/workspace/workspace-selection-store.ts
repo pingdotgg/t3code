@@ -1,4 +1,5 @@
 import type { NavigationState } from "@react-navigation/native";
+import { threadFamilyRead } from "@t3tools/client-runtime/state/threads";
 import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import * as Linking from "expo-linking";
 import { AppState, Dimensions, Platform } from "react-native";
@@ -23,6 +24,7 @@ import {
   environmentThreadShells,
   startOpeningEnvironmentThread,
   threadEnvironment,
+  threadFamilies,
 } from "../../state/threads";
 import {
   rememberedSettingsPage,
@@ -38,6 +40,34 @@ const REMEMBERS = Platform.OS === "ios";
 let selections: WorkspaceSelections = {};
 let saved = selections;
 let hydration: Promise<void> | null = null;
+let rememberedFamily: {
+  readonly selection: NonNullable<WorkspaceSelections["threads"]>;
+  readonly release: () => void;
+} | null = null;
+
+// A shell may leave the remembered chat out (older settled, idle subagent). Its mounted family
+// keeps the chat's row in the thread index while it exists, so the check can trust that index.
+function mountRememberedFamily() {
+  const selection = selections.threads;
+  const mounted = rememberedFamily?.selection;
+  if (
+    selection?.environmentId === mounted?.environmentId &&
+    selection?.threadId === mounted?.threadId
+  ) {
+    return;
+  }
+  rememberedFamily?.release();
+  rememberedFamily = selection
+    ? {
+        selection,
+        release: threadFamilies.mount(
+          appAtomRegistry,
+          selection.environmentId as EnvironmentId,
+          selection.threadId as ThreadId,
+        ),
+      }
+    : null;
+}
 
 function save() {
   const writing = selections;
@@ -70,6 +100,7 @@ export function hydrateWorkspaceSelections() {
     .then((preferences) => {
       selections = { ...withoutRouteKeys(preferences.workspaceSelections), ...selections };
       saved = selections;
+      mountRememberedFamily();
       AppState.addEventListener("change", (status) => {
         if (status !== "active") save();
       });
@@ -89,6 +120,7 @@ export function currentWorkspaceSelections() {
 export function recordWorkspaceSelections(state: NavigationState | undefined) {
   if (!REMEMBERS || !state) return;
   selections = workspaceSelectionsIn(state.routes.slice(0, state.index + 1), selections);
+  mountRememberedFamily();
 }
 
 function environmentRemoved(environmentId: string) {
@@ -103,16 +135,28 @@ function environmentRemoved(environmentId: string) {
 
 /**
  * A remembered chat is gone once its environment was removed, or once that environment's
- * snapshot has loaded without it. Before it loads there is nothing to contradict it.
+ * snapshot has loaded without it and the current shell's read of its family has settled. Before
+ * then the chat's own page decides.
  */
 export const workspaceSelectionCheck: WorkspaceSelectionCheck = {
   thread: (selection) => {
     if (environmentRemoved(selection.environmentId)) return false;
     const environmentId = selection.environmentId as EnvironmentId;
+    const threadId = selection.threadId as ThreadId;
     if (!appAtomRegistry.get(threadEnvironment.snapshotAtom(environmentId))) return true;
-    return appAtomRegistry
-      .get(environmentThreadShells.environmentThreadIndexAtom(environmentId))
-      .has(selection.threadId as ThreadId);
+    if (
+      appAtomRegistry
+        .get(environmentThreadShells.environmentThreadIndexAtom(environmentId))
+        .has(threadId)
+    ) {
+      return true;
+    }
+    const read = threadFamilyRead(
+      appAtomRegistry.get(threadFamilies.familyAtom(environmentId, threadId)),
+    );
+    // Otherwise a failed read would keep reopening the chat until the next shell.
+    if (read === "failed") threadFamilies.refresh(appAtomRegistry, environmentId, threadId);
+    return read !== "settled";
   },
   pullRequest: (selection) => !environmentRemoved(selection.environmentId),
 };
