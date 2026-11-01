@@ -472,7 +472,7 @@ function searchItem(number: number, repository: string, updatedAt: string) {
     updatedAt,
     repository: { nameWithOwner: repository },
     reviewRequests: { nodes: [{ requestedReviewer: { __typename: "User", login: "hubot" } }] },
-    labels: { nodes: [{ name: "bug", color: "ff0000" }] },
+    labels: { nodes: [{ name: "bug", color: "ff0000", description: null }] },
   };
 }
 
@@ -3503,7 +3503,9 @@ layer("GitHubPullRequestApi.layer", (it) => {
                     },
                   ],
                 },
-                labels: { nodes: [{ name: "bug", color: "ff0000" }] },
+                labels: {
+                  nodes: [{ name: "bug", color: "ff0000", description: "Something is broken" }],
+                },
                 commits: {
                   nodes: [
                     {
@@ -3554,7 +3556,9 @@ layer("GitHubPullRequestApi.layer", (it) => {
           avatarUrl: "https://avatars.githubusercontent.com/t/1",
         },
       ]);
-      expect(detail.labels).toEqual([{ name: "bug", color: "ff0000" }]);
+      expect(detail.labels).toEqual([
+        { name: "bug", color: "ff0000", description: "Something is broken" },
+      ]);
       expect(detail.checks).toHaveLength(2);
       expect(detail.checksState).toBe("failing");
     }),

@@ -42,13 +42,13 @@ export function PullRequestLabelChip({
   className,
   children,
 }: {
-  label: Pick<PullRequestLabel, "name" | "color">;
+  label: Pick<PullRequestLabel, "name" | "color" | "description">;
   size?: "sm" | "default";
   className?: string;
   children?: ReactNode;
 }) {
   const color = pullRequestLabelColor(label.color);
-  return (
+  const badge = (
     <Badge
       size={size}
       variant={color ? "label" : "secondary"}
@@ -58,6 +58,13 @@ export function PullRequestLabelChip({
       <span className="truncate">{label.name}</span>
       {children}
     </Badge>
+  );
+  if (!label.description) return badge;
+  return (
+    <Tooltip>
+      <TooltipTrigger render={badge} />
+      <TooltipPopup>{label.description}</TooltipPopup>
+    </Tooltip>
   );
 }
 
