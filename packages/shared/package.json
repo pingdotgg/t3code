@@ -499,6 +499,10 @@
       "types": "./src/atomicWrite.ts",
       "import": "./src/atomicWrite.ts"
     },
+    "./desktopCliLauncher": {
+      "types": "./src/desktopCliLauncher.ts",
+      "import": "./src/desktopCliLauncher.ts"
+    },
     "./ownedLink": {
       "types": "./src/ownedLink.ts",
       "import": "./src/ownedLink.ts"

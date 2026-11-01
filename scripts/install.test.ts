@@ -310,15 +310,27 @@ describe.skipIf(HostProcess.Platform.defaultValue() !== "linux")("install.sh t3 
       );
       expect(await NodeFSP.readlink(link)).toBe(NodePath.join(home, "runtime/versions/current/t3"));
 
-      await NodeFSP.rm(link);
-      await NodeFSP.symlink(NodePath.join(home, "bin/t3"), link);
-      const overDesktop = await installOver({
-        script: "install.sh",
-        home: `${home}//`,
-        binDir: `${binDir}/`,
-      });
-      expect(overDesktop.code, overDesktop.output).toBe(0);
-      expect(await NodeFSP.readlink(link)).toBe(NodePath.join(home, "runtime/versions/current/t3"));
+      // This home's desktop launcher is replaced only when it carries the app's marker; a t3 the
+      // user keeps in a bin folder the home links to is theirs.
+      await NodeFSP.mkdir(NodePath.join(root, "user-bin"));
+      await NodeFSP.symlink(NodePath.join(root, "user-bin"), NodePath.join(home, "bin"));
+      for (const [contents, ours] of [
+        ["#!/bin/sh\necho mine\n", false],
+        ["#!/bin/sh\n# Written by T3 Code: runs the desktop app's bundled t3 CLI.\n", true],
+      ] as const) {
+        await NodeFSP.writeFile(NodePath.join(root, "user-bin/t3"), contents);
+        await NodeFSP.rm(link);
+        await NodeFSP.symlink(NodePath.join(home, "bin/t3"), link);
+        const overDesktop = await installOver({
+          script: "install.sh",
+          home: `${home}//`,
+          binDir: `${binDir}/`,
+        });
+        expect(overDesktop.code === 0, overDesktop.output).toBe(ours);
+        expect(await NodeFSP.readlink(link)).toBe(
+          ours ? NodePath.join(home, "runtime/versions/current/t3") : NodePath.join(home, "bin/t3"),
+        );
+      }
     } finally {
       await NodeFSP.rm(root, { recursive: true, force: true });
     }

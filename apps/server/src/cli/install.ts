@@ -1,4 +1,5 @@
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import { DESKTOP_CLI_LAUNCHER_MARKER } from "@t3tools/shared/desktopCliLauncher";
 import { replaceOwnedLink } from "@t3tools/shared/ownedLink";
 import { pathSetupCommand } from "@t3tools/shared/shell";
 import * as Console from "effect/Console";
@@ -90,23 +91,44 @@ const classifyCommandLink = Effect.fn("cli.install.classify_command_link")(funct
     .pipe(Effect.orElseSucceed(() => versionsDir));
   const desktopLauncher = path.join(baseDir, "bin", "t3");
   const realDesktopLauncher = yield* real(desktopLauncher);
+  // The desktop app's launcher carries its marker; a linked bin folder could hold a user's own t3.
+  const isDesktopLauncher = Effect.fn("cli.install.is_desktop_launcher")(
+    function* (file: string) {
+      const info = yield* fs.stat(file);
+      if (info.type !== "File" || Number(info.size) > 16_384) return false;
+      return (yield* fs.readFileString(file)).includes(DESKTOP_CLI_LAUNCHER_MARKER);
+    },
+    Effect.orElseSucceed(() => false),
+  );
   // The desktop app writes this exact path, also when the home's bin folder is a link.
   const text = yield* fs.readLink(link).pipe(Effect.option);
   if (
     Option.isSome(text) &&
     path.isAbsolute(text.value) &&
-    path.normalize(text.value) === desktopLauncher
+    !text.value.split(/[\\/]/).includes("..") &&
+    path.normalize(text.value) === desktopLauncher &&
+    (yield* isDesktopLauncher(desktopLauncher))
   ) {
     return "older";
   }
-  const older = targets.some(
-    (candidate) =>
-      isVersionExecutable(path, versionsDir, candidate) ||
-      isVersionExecutable(path, realVersionsDir, candidate) ||
-      candidate === desktopLauncher ||
-      candidate === realDesktopLauncher,
-  );
-  return older ? "older" : "foreign";
+  if (
+    targets.some(
+      (candidate) =>
+        isVersionExecutable(path, versionsDir, candidate) ||
+        isVersionExecutable(path, realVersionsDir, candidate),
+    )
+  ) {
+    return "older";
+  }
+  for (const candidate of targets) {
+    if (
+      (candidate === desktopLauncher || candidate === realDesktopLauncher) &&
+      (yield* isDesktopLauncher(candidate))
+    ) {
+      return "older";
+    }
+  }
+  return "foreign";
 });
 
 /**

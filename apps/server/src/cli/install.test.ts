@@ -12,6 +12,8 @@ import * as Path from "effect/Path";
 import * as TestClock from "effect/testing/TestClock";
 
 import packageJson from "../../package.json" with { type: "json" };
+import { DESKTOP_CLI_LAUNCHER_MARKER } from "@t3tools/shared/desktopCliLauncher";
+
 import { installCli, isForegroundProcStat, isForegroundPs, offerCliInstall } from "./install.ts";
 
 const VERSION = packageJson.version;
@@ -192,12 +194,24 @@ it.layer(NodeServices.layer)("t3 install", (it) => {
 
       // This home's desktop launcher is replaced, as install.sh does, also when its bin folder
       // is a link.
-      yield* fs.makeDirectory(path.join(root, "desktop-bin"));
-      yield* fs.symlink(path.join(root, "desktop-bin"), path.join(root, ".t3/bin"));
-      yield* fs.remove(link);
-      yield* fs.symlink(path.join(root, ".t3/bin/t3"), link);
-      yield* provide(installCli());
-      assert.equal(yield* fs.readLink(link), commandLink);
+      // A t3 there without the desktop app's marker is the user's own.
+      const desktopBin = path.join(root, "desktop-bin");
+      yield* fs.makeDirectory(desktopBin);
+      yield* fs.symlink(desktopBin, path.join(root, ".t3/bin"));
+      for (const [contents, ours] of [
+        ["#!/bin/sh\necho mine\n", false],
+        [`#!/bin/sh\n# ${DESKTOP_CLI_LAUNCHER_MARKER}\n`, true],
+      ] as const) {
+        yield* fs.writeFileString(path.join(desktopBin, "t3"), contents);
+        yield* fs.remove(link);
+        yield* fs.symlink(path.join(root, ".t3/bin/t3"), link);
+        yield* provide(installCli()).pipe(Effect.ignore);
+        assert.equal(
+          yield* fs.readLink(link),
+          ours ? commandLink : path.join(root, ".t3/bin/t3"),
+          contents,
+        );
+      }
       yield* fs.remove(path.join(root, ".t3/bin"));
 
       // Another program may write its t3 at any moment, here once, at the first symlink this

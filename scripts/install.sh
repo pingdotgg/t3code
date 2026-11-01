@@ -283,6 +283,11 @@ if real_bin="$(CDPATH='' cd -P -- "${t3_home}/bin" 2>/dev/null && pwd)"; then
   real_desktop_launcher="${real_bin}/t3"
 fi
 real_bin_dir="$(CDPATH='' cd -P -- "$bin_dir" && pwd)"
+# The desktop app's launcher carries its marker; a linked bin folder could hold a user's own t3.
+desktop_launcher() {
+  [ -f "$1" ] && [ "$(wc -c < "$1")" -le 16384 ] &&
+    grep -qF "Written by T3 Code: runs the desktop app's bundled t3 CLI." "$1"
+}
 # Prints what the link at $1 is to this home: current (its command link), older (a version's t3
 # or the desktop app's launcher), or nothing. Anything that is not a symlink is someone else's.
 link_kind() {
@@ -299,7 +304,7 @@ link_kind() {
   case "$existing" in /*) ;; *) existing="${real_bin_dir}/${existing}" ;; esac
   existing="$(resolve_path "$existing")"
   # The desktop app writes this exact path, also when the home's bin folder is a link.
-  if [ "$existing" = "${t3_home}/bin/t3" ]; then echo older; return 0; fi
+  if [ "$existing" = "${t3_home}/bin/t3" ] && desktop_launcher "$existing"; then echo older; return 0; fi
   # A folder that is itself a link (another versions/<name>) is not followed.
   folder="$(dirname -- "$existing")"
   [ ! -L "$folder" ] || return 0
@@ -307,7 +312,8 @@ link_kind() {
   if existing_dir="$(CDPATH='' cd -P -- "$folder" 2>/dev/null && pwd)"; then
     real_existing="${existing_dir}/${existing##*/}"
     if [ "$real_existing" = "$real_command_link" ]; then echo current
-    elif [ "$real_existing" = "$real_desktop_launcher" ] || version_t3 "$real_existing" "$real_versions_dir"; then
+    elif version_t3 "$real_existing" "$real_versions_dir" ||
+      { [ "$real_existing" = "$real_desktop_launcher" ] && desktop_launcher "$real_existing"; }; then
       echo older
     fi
     return 0
@@ -317,9 +323,7 @@ link_kind() {
   [ ! -e "$folder" ] || return 0
   parent="$(CDPATH='' cd -P -- "$(dirname -- "$folder")" 2>/dev/null && pwd)" || return 0
   real_existing="${parent}/${folder##*/}/${existing##*/}"
-  if [ "$real_existing" = "$real_desktop_launcher" ] || version_t3 "$real_existing" "$real_versions_dir"; then
-    echo older
-  fi
+  if version_t3 "$real_existing" "$real_versions_dir"; then echo older; fi
 }
 kind=
 real_public="$(CDPATH='' cd -P -- "$bin_dir" && pwd)/t3"
@@ -346,6 +350,8 @@ case "$kind" in
     # folder of its own, so nothing left by an earlier install is replaced; the entry keeps its
     # name t3, so it goes back with `ln -P ... "${bin_dir}/"`, which never overwrites anything.
     aside_dir="$(mktemp -d "${bin_dir}/.t3.XXXXXX")" || fail "could not replace ${public}"
+    # BusyBox ln has no -P; its plain ln links a symlink itself, as Linux link() does.
+    put_back() { ln -P "$aside" "${bin_dir}/" 2>/dev/null || ln "$aside" "${bin_dir}/" 2>/dev/null; }
     aside="${aside_dir}/t3"
     # Not stopped between moving the old link aside and putting a link back, so a cancelled
     # install never leaves the name empty.
@@ -354,7 +360,7 @@ case "$kind" in
     if [ -n "$(link_kind "$aside")" ]; then
       if ! ln -s "$command_link" "${bin_dir}/"; then
         # Keep the working old command when the name is still free; if it cannot go back, it stays.
-        ln -P "$aside" "${bin_dir}/" 2>/dev/null ||
+        put_back ||
           fail "could not link ${public}; the old link is at ${aside}."
         rm -f "$aside" && rmdir "$aside_dir"
         fail "could not link ${public}"
@@ -364,7 +370,7 @@ case "$kind" in
     else
       # Another program wrote it after the check: put it back without overwriting anything newer.
       # A folder cannot be hard linked; it stays where it is, and the message says where.
-      ln -P "$aside" "${bin_dir}/" 2>/dev/null ||
+      put_back ||
         fail "another program wrote ${public} during the install; it is now at ${aside}."
       rm -f "$aside" && rmdir "$aside_dir"
       fail "another t3 was just written at ${public}. Remove it and run this again, or run ${target_dir}/t3 directly."
