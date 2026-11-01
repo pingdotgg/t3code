@@ -65,7 +65,9 @@ query ReviewThreads(
   }
   repository(owner: $owner, name: $name) {
     pullRequest(number: $number) {
-      reviewThreads(first: 100, after: $after) {
+      # GitHub prices a page by the rows it may return, not the rows that exist, so a page of
+      # twenty-five threads costs 6 points even on a pull request with none.
+      reviewThreads(first: 25, after: $after) {
         totalCount
         pageInfo {
           hasNextPage

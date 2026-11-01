@@ -3612,18 +3612,23 @@ layer("GitHubPullRequestApi.layer", (it) => {
     }),
   );
 
-  it.effect("stops at the thread bound and says the conversation was cut short", () =>
+  it.effect("stops at a thousand threads and says the conversation was cut short", () =>
     Effect.gen(function* () {
-      mockedExecute.mockReturnValue(
-        Effect.succeed(
+      // Serves whatever page size the document asks for, so the bound holds in threads.
+      mockedExecute.mockImplementation((call) => {
+        const query = call.kind === "graphql" ? call.query : "";
+        const first = Number(/reviewThreads\(first:(\d+)/.exec(query)?.[1]);
+        const start = Number(call.kind === "graphql" ? (call.variables?.["after"] ?? 0) : 0);
+        const ids = Array.from({ length: first }, (_, index) => `PRRT_${start + index + 1}`);
+        return Effect.succeed(
           output(
             reviewThreadsPage(
-              [{ ...thread("PRRT_1", "c1"), comments: threadComments(["c1"], "Y3Vyc29yOjI", 3) }],
-              "Y3Vyc29yOjE",
+              ids.map((id) => thread(id, `c_${id}`)),
+              String(start + first),
             ),
           ),
-        ),
-      );
+        );
+      });
       const cli = yield* GitHubPullRequestApi.GitHubPullRequestApi;
 
       const conversation = yield* cli.listReviewThreadComments({
@@ -3633,7 +3638,8 @@ layer("GitHubPullRequestApi.layer", (it) => {
         number: 7,
       });
 
-      assert.strictEqual(mockedExecute.mock.calls.length, 10);
+      assert.strictEqual(conversation.reviewThreads.length, 1_000);
+      assert.strictEqual(conversation.reviewThreads.at(-1)?.id, "PRRT_1000");
       assert.isTrue(conversation.truncated);
       assert.isTrue(conversation.reviewThreadsTruncated);
     }),
