@@ -246,7 +246,7 @@ export function tailnetRefusalVerdict(
       return {
         headline: `${host} cannot tell whether your tailnet policy grants T3 Code, so it lets in only granted devices`,
         steps: [
-          `On ${host}, run \`t3 tailscale require-grant\` to see why. T3 Code retries on its own.`,
+          `On ${host}, run \`t3 tailscale require-grant\` to see why. Saved machines retry on their own.`,
           grant,
         ],
       };
@@ -261,7 +261,7 @@ export function tailnetRefusalVerdict(
     case "rate_limited":
       return {
         headline: `${host} asked this device to slow down`,
-        steps: ["Wait a minute. T3 Code retries on its own."],
+        steps: ["Wait a minute, then try again. Saved machines retry on their own."],
       };
   }
 }

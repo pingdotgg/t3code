@@ -116,7 +116,11 @@ const readPolicyGrantedPeers = Effect.gen(function* () {
   // Where sign-in cannot work, the policy does not matter, so nothing more is read.
   if (facts.blocker !== null) return { granted: [], unreadable: [], ...facts };
   const scan = yield* policyGrantedPeers(status, readTailscaleWhois);
-  const after = yield* readTailscaleStatus("active");
+  const read2 = yield* Effect.result(readTailscaleStatus("active"));
+  if (Result.isFailure(read2)) {
+    return { granted: [], unreadable: [], ...facts, blocker: readFailure(read2.failure, platform) };
+  }
+  const after = read2.success;
   return after.selfNodeId !== status.selfNodeId ||
     (scan.granted.length === 0 && peersJoined(status, after))
     ? ("changed" as const)
@@ -211,7 +215,7 @@ const requireGrantCommand = Command.make("require-grant", {
                           ]
                         : [
                             "Grant required: no. Your tailnet policy grants T3 Code here to no device,",
-                            "so your own untagged devices sign in without one.",
+                            "so, with Tailscale sign-in on, your own untagged devices sign in without one.",
                             `Once the policy grants ${TAILNET_APP_CAPABILITY} here, only granted devices get in.`,
                             "Require a grant now with: t3 tailscale require-grant on",
                           ];
