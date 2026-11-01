@@ -54,7 +54,8 @@ interface AuthFlow {
   state: ProviderAuthState;
   pending: AntigravityAuthorizationUrl | undefined;
   callbackSent: boolean;
-  fiber: Fiber.Fiber<void> | undefined;
+  fiber: Fiber.Fiber<void, AcpErrors.AcpError | ProviderSetupError> | undefined;
+  result: Exit.Exit<void, unknown> | undefined;
   forwarding: Fiber.Fiber<void, ProviderSetupError> | undefined;
 }
 
@@ -87,9 +88,12 @@ export interface AntigravityAuthOptions<
     result: AcpSessionRuntime.AcpSessionRuntimeStartResult,
     runtime: Runtime,
   ) => Effect.Effect<void>;
-  readonly onSignedOut: Effect.Effect<void>;
+  readonly onSignedOut: Effect.Effect<void, ProviderSetupError>;
   readonly forwardCallback?: (callback: URL) => Effect.Effect<void, ProviderSetupError>;
   readonly usesBrowser?: boolean;
+  readonly withFreshCredentials?: (
+    task: Effect.Effect<void, AcpErrors.AcpError | ProviderSetupError>,
+  ) => Effect.Effect<void, AcpErrors.AcpError | ProviderSetupError>;
 }
 
 function visibleSnapshot(snapshot: AuthSnapshot, ownerSessionId: string): ProviderAuthState {
@@ -224,7 +228,7 @@ export const makeAntigravityAuth = Effect.fn("makeAntigravityAuth")(function* <
   const finishFlow = (flow: AuthFlow, result: Exit.Exit<void, unknown>) =>
     lock.withPermits(1)(
       Effect.gen(function* () {
-        if (activeFlow !== flow) return;
+        if (activeFlow !== flow || operation !== "auth") return;
         activeFlow = undefined;
         operation = "idle";
         flow.pending = undefined;
@@ -271,38 +275,53 @@ export const makeAntigravityAuth = Effect.fn("makeAntigravityAuth")(function* <
   const runSignIn = Effect.fn("AntigravityAuth.runSignIn")(
     function* (flow: AuthFlow, stopSessions: Effect.Effect<void, ProviderSetupError>) {
       yield* stopSessions.pipe(Effect.ensuring(stopOwnedProcesses));
-      yield* Effect.sleep(NO_RESPONSE_HINT_MS).pipe(
-        Effect.andThen(
-          lock.withPermits(1)(
-            Effect.gen(function* () {
-              if (activeFlow !== flow || flow.state.phase !== "starting") return;
-              yield* publishFlow(flow, { ...flow.state, message: NO_RESPONSE_MESSAGE });
-            }),
+      const authenticate = Effect.gen(function* () {
+        yield* Effect.sleep(NO_RESPONSE_HINT_MS).pipe(
+          Effect.andThen(
+            lock.withPermits(1)(
+              Effect.gen(function* () {
+                if (activeFlow !== flow || flow.state.phase !== "starting") return;
+                yield* publishFlow(flow, { ...flow.state, message: NO_RESPONSE_MESSAGE });
+              }),
+            ),
           ),
-        ),
-        Effect.forkScoped,
-      );
-      const runtime = yield* options.makeRuntime({
-        onAuthorizationUrl: (url) => receiveAuthorizationUrl(flow, url),
-      });
-      const started = yield* runtime.start();
-      yield* lock.withPermits(1)(
-        Effect.gen(function* () {
-          if (activeFlow !== flow) return;
-          flow.pending = undefined;
-          yield* publishFlow(flow, {
-            ...flow.state,
-            phase: "verifying",
-            authorizationUrl: null,
-            message: "Checking Antigravity access and models.",
-          });
-        }),
-      );
-      yield* options.onAuthenticated(started, runtime);
+          Effect.forkScoped,
+        );
+
+        const runtime = yield* options.makeRuntime({
+          onAuthorizationUrl: (url) => receiveAuthorizationUrl(flow, url),
+        });
+        const started = yield* runtime.start();
+        yield* lock.withPermits(1)(
+          Effect.gen(function* () {
+            if (activeFlow !== flow || operation !== "auth") return;
+            flow.pending = undefined;
+            yield* publishFlow(flow, {
+              ...flow.state,
+              phase: "verifying",
+              authorizationUrl: null,
+              message: "Checking Antigravity access and models.",
+            });
+          }),
+        );
+        yield* options.onAuthenticated(started, runtime);
+      }).pipe(Effect.scoped);
+      const withFreshCredentials = options.withFreshCredentials;
+      if (usesBrowser && withFreshCredentials) {
+        yield* Effect.uninterruptibleMask((restore) =>
+          Effect.gen(function* () {
+            // Capture cleanup failure before pending interruption crosses the credential boundary.
+            const result = yield* withFreshCredentials(restore(authenticate)).pipe(Effect.exit);
+            flow.result = result;
+            return yield* result;
+          }),
+        );
+      } else {
+        yield* authenticate;
+      }
     },
-    (effect, flow, _stopSessions) =>
+    (effect, flow) =>
       effect.pipe(
-        Effect.scoped,
         Effect.timeoutOrElse({
           duration: AUTH_TIMEOUT_MS,
           orElse: () =>
@@ -315,36 +334,57 @@ export const makeAntigravityAuth = Effect.fn("makeAntigravityAuth")(function* <
               ),
             ),
         }),
-        Effect.exit,
-        Effect.flatMap((result) => finishFlow(flow, result)),
+        Effect.onExit((result) => {
+          const credentials = flow.result;
+          flow.result =
+            credentials &&
+            Exit.isFailure(credentials) &&
+            !Cause.hasInterruptsOnly(credentials.cause)
+              ? credentials
+              : result;
+          return finishFlow(flow, flow.result);
+        }),
       ),
   );
+
+  const interruptFlow = Effect.fn("AntigravityAuth.interruptFlow")(function* (flow: AuthFlow) {
+    if (flow.forwarding) yield* Fiber.interrupt(flow.forwarding);
+    if (!flow.fiber) return Exit.void;
+    yield* Fiber.interrupt(flow.fiber);
+    return flow.result ?? (yield* Fiber.await(flow.fiber));
+  });
 
   const stopFlow = (flow: AuthFlow, phase: "cancelled" | "failed", message: string) =>
     Effect.uninterruptible(
       Effect.gen(function* () {
-        const detached = yield* lock.withPermits(1)(
+        const stopping = yield* lock.withPermits(1)(
           Effect.gen(function* () {
-            if (activeFlow !== flow) return false;
-            activeFlow = undefined;
+            if (activeFlow !== flow || operation !== "auth") return false;
             operation = "cancel";
             flow.pending = undefined;
             yield* publishFlow(flow, {
               ...flow.state,
-              phase,
+              phase: "verifying",
               authorizationUrl: null,
               expiresAt: null,
-              message,
+              message: "Stopping Google sign-in.",
             });
             return true;
           }),
         );
-        if (!detached) return;
-        if (flow.forwarding) yield* Fiber.interrupt(flow.forwarding);
-        if (flow.fiber) yield* Fiber.interrupt(flow.fiber);
+        if (!stopping) return;
+        const result = yield* interruptFlow(flow);
         yield* lock.withPermits(1)(
-          Effect.sync(() => {
-            if (operation === "cancel") operation = "idle";
+          Effect.gen(function* () {
+            if (activeFlow !== flow || operation !== "cancel") return;
+            activeFlow = undefined;
+            operation = "idle";
+            const failed = Exit.isFailure(result) && !Cause.hasInterruptsOnly(result.cause);
+            yield* publishFlow(flow, {
+              ...flow.state,
+              phase: failed ? "failed" : phase,
+              message: failed ? safeAuthFailure(result.cause, usesBrowser) : message,
+            });
           }),
         );
       }),
@@ -356,7 +396,12 @@ export const makeAntigravityAuth = Effect.fn("makeAntigravityAuth")(function* <
     name: string,
   ) {
     const flow = activeFlow;
-    if (!flow || flow.id !== flowId || flow.ownerSessionId !== ownerSessionId) {
+    if (
+      !flow ||
+      operation !== "auth" ||
+      flow.id !== flowId ||
+      flow.ownerSessionId !== ownerSessionId
+    ) {
       return yield* setupError(name, "This sign-in is no longer active in this client.");
     }
     const now = yield* Clock.currentTimeMillis;
@@ -400,6 +445,7 @@ export const makeAntigravityAuth = Effect.fn("makeAntigravityAuth")(function* <
               pending: undefined,
               callbackSent: false,
               fiber: undefined,
+              result: undefined,
               forwarding: undefined,
             };
             activeFlow = flow;
@@ -475,28 +521,41 @@ export const makeAntigravityAuth = Effect.fn("makeAntigravityAuth")(function* <
               }
               operation = "logout";
               const currentFlow = activeFlow;
-              activeFlow = undefined;
               if (currentFlow) {
                 currentFlow.pending = undefined;
                 yield* publishFlow(currentFlow, {
                   ...currentFlow.state,
-                  phase: "cancelled",
+                  phase: "verifying",
                   authorizationUrl: null,
                   expiresAt: null,
-                  message: "Google sign-in was cancelled by sign-out.",
+                  message: "Signing out of Google.",
                 });
               }
               return currentFlow;
             }),
           );
+          let signInResult: Exit.Exit<void, unknown> | undefined;
           const stopRemaining = Effect.gen(function* () {
-            if (flow?.forwarding) yield* Fiber.interrupt(flow.forwarding);
-            if (flow?.fiber) yield* Fiber.interrupt(flow.fiber);
-            yield* stopOwnedProcesses;
-          });
+            if (flow) signInResult = yield* interruptFlow(flow);
+          }).pipe(Effect.ensuring(stopOwnedProcesses));
           const result = yield* restore(
             Effect.gen(function* () {
               yield* stopSessions.pipe(Effect.ensuring(stopRemaining));
+              if (
+                signInResult &&
+                Exit.isFailure(signInResult) &&
+                Option.exists(
+                  Cause.findErrorOption(signInResult.cause),
+                  (error) => isSetupError(error) && error.operation === "credentials",
+                )
+              ) {
+                return yield* new ProviderSetupError({
+                  instanceId: options.instanceId,
+                  operation: "logout",
+                  detail: safeAuthFailure(signInResult.cause, usesBrowser),
+                  cause: signInResult.cause,
+                });
+              }
               const runtime = yield* options.makeRuntime({});
               const initialized = yield* runtime.initialize();
               if (!initialized.agentCapabilities?.auth?.logout) {
@@ -517,6 +576,7 @@ export const makeAntigravityAuth = Effect.fn("makeAntigravityAuth")(function* <
           ).pipe(Effect.exit);
           yield* lock.withPermits(1)(
             Effect.gen(function* () {
+              activeFlow = undefined;
               operation = "idle";
               yield* SubscriptionRef.set(snapshot, {
                 ownerSessionId: null,
