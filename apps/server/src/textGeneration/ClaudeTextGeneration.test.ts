@@ -65,6 +65,7 @@ function withFakeClaudeEnv<A, E, R>(
     stdinMustContain?: string;
     configDirMustBe?: string;
     cwdMustNotBe?: string;
+    settingsMustEqual?: unknown;
     claudeConfig?: Partial<ClaudeSettings>;
   },
   effectFn: (textGeneration: TextGeneration.TextGeneration["Service"]) => Effect.Effect<A, E, R>,
@@ -83,6 +84,7 @@ function withFakeClaudeEnv<A, E, R>(
     const previousStdinMustContain = process.env.T3_FAKE_CLAUDE_STDIN_MUST_CONTAIN;
     const previousConfigDirMustBe = process.env.T3_FAKE_CLAUDE_CONFIG_DIR_MUST_BE;
     const previousCwdMustNotBe = process.env.T3_FAKE_CLAUDE_CWD_MUST_NOT_BE;
+    const previousSettingsMustEqual = process.env.T3_FAKE_CLAUDE_SETTINGS_MUST_EQUAL;
 
     yield* Effect.acquireRelease(
       Effect.sync(() => {
@@ -129,6 +131,12 @@ function withFakeClaudeEnv<A, E, R>(
           process.env.T3_FAKE_CLAUDE_CONFIG_DIR_MUST_BE = input.configDirMustBe;
         } else {
           delete process.env.T3_FAKE_CLAUDE_CONFIG_DIR_MUST_BE;
+        }
+
+        if (input.settingsMustEqual !== undefined) {
+          process.env.T3_FAKE_CLAUDE_SETTINGS_MUST_EQUAL = JSON.stringify(input.settingsMustEqual);
+        } else {
+          delete process.env.T3_FAKE_CLAUDE_SETTINGS_MUST_EQUAL;
         }
       }),
       () =>
@@ -181,6 +189,12 @@ function withFakeClaudeEnv<A, E, R>(
             delete process.env.T3_FAKE_CLAUDE_CONFIG_DIR_MUST_BE;
           } else {
             process.env.T3_FAKE_CLAUDE_CONFIG_DIR_MUST_BE = previousConfigDirMustBe;
+          }
+
+          if (previousSettingsMustEqual === undefined) {
+            delete process.env.T3_FAKE_CLAUDE_SETTINGS_MUST_EQUAL;
+          } else {
+            process.env.T3_FAKE_CLAUDE_SETTINGS_MUST_EQUAL = previousSettingsMustEqual;
           }
         }),
     );
@@ -285,6 +299,76 @@ it.layer(layerClaudeTextGenerationTest)("ClaudeTextGeneration", (it) => {
             instanceId: ProviderInstanceId.make("claudeAgent"),
             model: SYNTHETIC_CLAUDE_STANDARD_MODEL,
           },
+        }),
+    ),
+  );
+
+  const launchSettings = {
+    disableAllHooks: false,
+    fastMode: false,
+    env: { ANTHROPIC_VERTEX_PROJECT_ID: "issue-25017-marker" },
+  };
+  it.effect.each([
+    { label: "inline JSON", inline: true },
+    { label: "a request-cwd-relative file", inline: false },
+  ])("merges --settings launch args from $label under T3 settings", ({ inline }) =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const requestCwd = yield* fs.makeTempDirectoryScoped({ prefix: "t3code-claude-settings-" });
+      yield* fs.writeFileString(
+        path.join(requestCwd, "launch-settings.json"),
+        JSON.stringify(launchSettings),
+      );
+      return yield* withFakeClaudeEnv(
+        {
+          output: JSON.stringify({ structured_output: { title: "Use launch settings" } }),
+          settingsMustEqual: { ...launchSettings, disableAllHooks: true, fastMode: true },
+          claudeConfig: {
+            launchArgs: `--settings '${inline ? JSON.stringify(launchSettings) : "launch-settings.json"}'`,
+          },
+        },
+        (textGeneration) =>
+          textGeneration.generateThreadTitle({
+            cwd: requestCwd,
+            message: "thread title",
+            modelSelection: createModelSelection(
+              ProviderInstanceId.make("claudeAgent"),
+              SYNTHETIC_CLAUDE_CAPABLE_MODEL,
+              [{ id: "fastMode", value: true }],
+            ),
+          }),
+      );
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect.each([
+    [
+      "malformed JSON",
+      `--settings '{"env":'`,
+      "The --settings launch argument is not a JSON object.",
+    ],
+    ["no value", "--settings", "The --settings launch argument needs a JSON object or file path."],
+  ] as const)("rejects a --settings launch arg with %s", ([, launchArgs, detail]) =>
+    withFakeClaudeEnv(
+      {
+        output: JSON.stringify({ structured_output: { title: "Unused" } }),
+        claudeConfig: { launchArgs },
+      },
+      (textGeneration) =>
+        Effect.gen(function* () {
+          const error = yield* Effect.flip(
+            textGeneration.generateThreadTitle({
+              cwd: process.cwd(),
+              message: "Name this thread",
+              modelSelection: {
+                instanceId: ProviderInstanceId.make("claudeAgent"),
+                model: SYNTHETIC_CLAUDE_STANDARD_MODEL,
+              },
+            }),
+          );
+
+          expect(error.detail).toBe(detail);
         }),
     ),
   );

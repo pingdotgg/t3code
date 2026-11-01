@@ -1,11 +1,13 @@
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
+import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 
 import { type ClaudeSettings, TextGenerationError } from "@t3tools/contracts";
+import { parseCliArgs } from "@t3tools/shared/cliArgs";
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
 
 import * as TextGenerationOperations from "@t3tools/provider-core/server/textGenerationOperations";
@@ -65,6 +67,9 @@ const decodeClaudeOutput = Schema.decodeEffect(
 
 const ClaudeErrorResult = Schema.Struct({ is_error: Schema.Literal(true), result: Schema.String });
 const isClaudeErrorResult = Schema.is(ClaudeErrorResult);
+const decodeLaunchSettings = Schema.decodeEffect(
+  Schema.fromJsonString(Schema.Record(Schema.String, Schema.Unknown)),
+);
 const decodeJsonOption = Schema.decodeUnknownOption(Schema.fromJsonString(Schema.Unknown));
 
 // Claude reports JSON errors on stdout; stderr may contain only wrapper notices.
@@ -84,6 +89,7 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
 ) {
   const commandSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const fileSystem = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
   const claudeEnvironment = yield* makeClaudeEnvironment(claudeSettings, environment);
   const scopedModelCatalog = modelCatalog.pipe(
     Effect.map((catalog) => scopeClaudeModelCatalog(catalog, claudeSettings.customModels)),
@@ -119,6 +125,34 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
           }),
       ),
     );
+
+  // Claude passes one --settings flag, so ours has to carry the launch-arg settings too.
+  // Like the CLI, a value starting with "{" is JSON and anything else is a file path.
+  const readLaunchSettings = Effect.fn("readLaunchSettings")(function* (
+    operation: TextGenerationOperations.Operation,
+    cwd: string,
+  ) {
+    const raw = parseCliArgs(claudeSettings.launchArgs).flags.settings;
+    if (raw === undefined) return {};
+    const value = raw?.trim() ?? "";
+    const fail = (detail: string) => (cause: unknown) =>
+      new TextGenerationError({ operation, detail, cause });
+    if (value.length === 0) {
+      return yield* new TextGenerationError({
+        operation,
+        detail: "The --settings launch argument needs a JSON object or file path.",
+      });
+    }
+    const filePath = path.resolve(cwd, value);
+    const json = value.startsWith("{")
+      ? value
+      : yield* fileSystem
+          .readFileString(filePath)
+          .pipe(Effect.mapError(fail(`Failed to read Claude settings file ${filePath}.`)));
+    return yield* decodeLaunchSettings(json).pipe(
+      Effect.mapError(fail("The --settings launch argument is not a JSON object.")),
+    );
+  });
 
   const runClaudeJson = Effect.fn("runClaudeJson")(function* <S extends Schema.Top>({
     operation,
@@ -170,6 +204,7 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
     const fastMode =
       fastModeDescriptor?.type === "boolean" ? fastModeDescriptor.currentValue : undefined;
     const settings = {
+      ...(yield* readLaunchSettings(operation, cwd)),
       disableAllHooks: true,
       ...(typeof thinking === "boolean" ? { alwaysThinkingEnabled: thinking } : {}),
       ...(fastMode ? { fastMode: true } : {}),
