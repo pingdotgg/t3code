@@ -64,8 +64,9 @@ export function EnvironmentSkillsSettings({ environmentId }: { environmentId: En
   const change = async (
     skill: ManagedSkill,
     action: ManageBundledSkillInput["action"],
-    instanceId = target?.instanceId,
+    requestedInstanceId?: ProviderInstanceId,
   ) => {
+    const instanceId = requestedInstanceId ?? target?.instanceId;
     if (!instanceId || busy !== null) return;
     setBusy(skill.id);
     setError(null);
