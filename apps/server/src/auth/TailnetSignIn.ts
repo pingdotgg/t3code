@@ -243,7 +243,7 @@ export const make = Effect.gen(function* () {
       const signInsBefore = yield* grantSignInsOn(account);
       // Kept once confirmed, so a scan cut short still leaves it for a later scan to fall back
       // on, never an older "no grants". The account is checked first, as another profile on
-      // the same tailnet sees the same peers with other grants; only the first grant reads it.
+      // the same tailnet sees the same peers with other grants; one grant reads it at a time.
       const grantKept = yield* Ref.make(false);
       const switchSeen = yield* Ref.make(false);
       const keepGrant = Effect.gen(function* () {
