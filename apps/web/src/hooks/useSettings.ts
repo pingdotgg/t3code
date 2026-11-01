@@ -131,6 +131,11 @@ export function subscribeClientSettingsHydration(listener: () => void): () => vo
   };
 }
 
+async function readPersistedClientSettings(): Promise<ClientSettings | null> {
+  const persistedSettings = await ensureLocalApi().persistence.getClientSettings();
+  return persistedSettings ? { ...DEFAULT_CLIENT_SETTINGS, ...persistedSettings } : null;
+}
+
 async function hydrateClientSettings(): Promise<void> {
   if (clientSettingsHydrationStatus === "ready") {
     return;
@@ -147,12 +152,12 @@ async function hydrateClientSettings(): Promise<void> {
   );
   const nextHydration = (async () => {
     try {
-      const persistedSettings = await ensureLocalApi().persistence.getClientSettings();
+      const persistedSettings = await readPersistedClientSettings();
       if (hydrationGeneration !== clientSettingsHydrationGeneration) {
         return;
       }
       if (persistedSettings) {
-        replaceClientSettingsSnapshot({ ...DEFAULT_CLIENT_SETTINGS, ...persistedSettings });
+        replaceClientSettingsSnapshot(persistedSettings);
       }
       setClientSettingsHydrationStatus("ready");
       stopReloadingClientSettings ??= subscribeBrowserClientSettings(reloadClientSettings);
@@ -194,9 +199,9 @@ function reloadClientSettings(): void {
   deferredClientSettingsPatchCount += 1;
   void enqueueClientSettingsPersistence(async () => {
     try {
-      const persistedSettings = await ensureLocalApi().persistence.getClientSettings();
+      const persistedSettings = await readPersistedClientSettings();
       if (persistedSettings) {
-        replaceClientSettingsSnapshot({ ...DEFAULT_CLIENT_SETTINGS, ...persistedSettings });
+        replaceClientSettingsSnapshot(persistedSettings);
       }
     } finally {
       deferredClientSettingsPatchCount -= 1;
