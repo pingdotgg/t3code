@@ -21,7 +21,7 @@ type SwipeGesture =
       bounds: SwipeBounds;
     }
   // Not a swipe, or one already decided: the rest of its events are ignored.
-  | { kind: "ignored"; scrollerOwned?: true };
+  | { kind: "ignored" };
 type SwipeIndicatorState = {
   direction: HistoryDirection;
   progress: number;
@@ -91,7 +91,9 @@ export function HistorySwipeNavigation() {
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- window wheel and desktop gesture listeners track trackpad swipes
   useEffect(() => {
     let gesture: SwipeGesture | null = null;
-    let endedAt = Number.NEGATIVE_INFINITY;
+    // Begin and end IPC race the wheels, so they cannot say which gesture a wheel belongs to.
+    // Trackpad scrolling never moves the pointer: a content claim holds until it does.
+    let claimedAt: { x: number; y: number } | null = null;
     const hideIndicator = () =>
       setSwipe((current) => (current === null ? null : { ...current, tracking: false }));
     // The fingers lifted: navigate if the swipe went far enough, then ignore its momentum.
@@ -102,21 +104,19 @@ export function HistorySwipeNavigation() {
       gesture = { kind: "ignored" };
       hideIndicator();
     };
-    // Scroll-begin IPC can arrive after the first wheel already gave ownership to content.
+    // Chromium brackets each trackpad scroll, momentum included, with these.
     const unsubscribeScrollBegin = window.desktopBridge?.onTrackpadScrollBegin(() => {
-      if (gesture?.kind === "ignored" && !gesture.scrollerOwned) gesture = null;
+      if (gesture?.kind === "ignored") gesture = null;
     });
-    const unsubscribeScrollEnd = window.desktopBridge?.onTrackpadScrollEnd((at) => {
+    const unsubscribeScrollEnd = window.desktopBridge?.onTrackpadScrollEnd(() => {
       if (gesture?.kind === "tracking") release();
       gesture = null;
-      // Wall time is the only clock main shares with the page. Converting on receipt keeps
-      // sleep and clock changes out of the offset, leaving Date.now()'s 1ms resolution.
-      endedAt = at - (Date.now() - performance.now());
     });
     const onWheel = (event: WheelEvent) => {
-      // End IPC can overtake its gesture's last wheels. Those were created before main saw the
-      // end; the next gesture's wheels usually come after, even when the IPC is slow.
-      if (event.timeStamp < endedAt) return;
+      if (claimedAt !== null) {
+        if (event.clientX === claimedAt.x && event.clientY === claimedAt.y) return;
+        claimedAt = null;
+      }
       if (gesture === null) {
         gesture =
           event.ctrlKey || event.deltaMode !== WheelEvent.DOM_DELTA_PIXEL
@@ -129,7 +129,8 @@ export function HistorySwipeNavigation() {
         const path = event.composedPath();
         // Claim content scrolling while its layout still exists, before a possible remount.
         if (isInHorizontalScroller(path)) {
-          gesture = { kind: "ignored", scrollerOwned: true };
+          claimedAt = { x: event.clientX, y: event.clientY };
+          gesture = null;
           return;
         }
         gesture.sumX += event.deltaX;

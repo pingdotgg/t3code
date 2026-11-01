@@ -4,14 +4,9 @@ import { render, stubGlobal } from "../../test/render";
 import { HistorySwipeNavigation } from "./HistorySwipeNavigation";
 
 type Scroller = "shadow" | "light" | "none" | "shadow-dialog";
-// The page's Date.now() minus its performance.now(); main stamps the end with Date.now().
-const WALL_CLOCK_AHEAD = 1_700_000_000_000;
-// Every gesture IPC reaches the page this long after main sees the native event.
-const IPC_LAG = 40;
 type Step = readonly [
-  // "stale": a 1px wheel created before main saw the last end, delivered after its IPC.
-  // "fresh": a 1px wheel created after main saw the last end, before its IPC arrived.
-  event: number | "begin" | "end" | "zoom" | "stale" | "fresh",
+  // "move": the pointer moves to content without overflow elsewhere.
+  event: number | "begin" | "end" | "zoom" | "move",
   after?: number | "remount" | "remove" | "close-dialog",
 ];
 
@@ -59,31 +54,31 @@ describe("HistorySwipeNavigation", () => {
       null,
     ],
     [
-      "a new history gesture after a content scroll ends",
+      "a history gesture elsewhere after a content scroll ends",
       "shadow",
       400,
-      [[1, "remove"], ["end"], ["begin"], [130]],
+      [[1, "remove"], ["end"], ["move"], ["begin"], [130]],
       "forward",
     ],
     [
-      "a history gesture after a stale wheel reaches a scroller",
+      "a history gesture elsewhere after a trailing wheel reaches a scroller",
       "shadow",
       400,
-      [["begin"], [130], ["end"], ["stale", "remove"], ["begin"], [-130]],
+      [["begin"], [130], ["end"], [1, "remount"], ["move"], ["begin"], [-130]],
       "back",
+    ],
+    [
+      "the next gesture's first wheel arriving before the previous end, then scroller removal",
+      "shadow",
+      400,
+      [["begin"], [130], [1, "remove"], ["end"], ["begin"], [130]],
+      null,
     ],
     [
       "a scroll begin arriving after the next gesture's first wheel and scroller removal",
       "shadow",
       400,
       [["begin"], [130], ["end"], [1, "remove"], ["begin"], [130]],
-      null,
-    ],
-    [
-      "a next-gesture wheel created while the previous end IPC was in flight",
-      "shadow",
-      400,
-      [["begin"], [130], ["end"], ["fresh", "remove"], ["begin"], [130]],
       null,
     ],
     [
@@ -111,14 +106,13 @@ describe("HistorySwipeNavigation", () => {
     ["swiping left over content without overflow", "none", 0, [[-130]], "back"],
     ["swiping right over content without overflow", "none", 0, [[130]], "forward"],
   ])("%s", async (_name, scroller, scrollLeft, steps, navigates) => {
-    type Listener = (at: number) => void;
-    const listeners = { begin: new Set<() => void>(), end: new Set<Listener>() };
+    const listeners = { begin: new Set<() => void>(), end: new Set<() => void>() };
     using _bridge = stubGlobal("desktopBridge", {
       onTrackpadScrollBegin: (listener: () => void) => {
         listeners.begin.add(listener);
         return () => listeners.begin.delete(listener);
       },
-      onTrackpadScrollEnd: (listener: Listener) => {
+      onTrackpadScrollEnd: (listener: () => void) => {
         listeners.end.add(listener);
         return () => listeners.end.delete(listener);
       },
@@ -128,32 +122,27 @@ describe("HistorySwipeNavigation", () => {
     using forward = vi.spyOn(window.history, "forward").mockImplementation(() => undefined);
     using _canGoBack = vi.spyOn(window.navigation, "canGoBack", "get").mockReturnValue(true);
     using _canGoForward = vi.spyOn(window.navigation, "canGoForward", "get").mockReturnValue(true);
-    let now = 1000;
-    let endSeenAt = 0;
-    using _now = vi.spyOn(performance, "now").mockImplementation(() => now);
-    using _wallNow = vi.spyOn(Date, "now").mockImplementation(() => now + WALL_CLOCK_AHEAD);
     let { viewport, content } = mountPanel(screen.container, scroller, scrollLeft);
+    let pointerX = 0;
 
     for (const [event, after] of [...steps, [0] as const]) {
-      now += 10;
       if (event === "begin") {
-        now += IPC_LAG;
         for (const listener of listeners.begin) listener();
       } else if (event === "end") {
-        endSeenAt = now;
-        now += IPC_LAG;
-        for (const listener of listeners.end) listener(endSeenAt + WALL_CLOCK_AHEAD);
+        for (const listener of listeners.end) listener();
+      } else if (event === "move") {
+        ({ viewport, content } = mountPanel(screen.container, "none", 0));
+        pointerX += 100;
       } else {
-        const wheel = new WheelEvent("wheel", {
-          deltaX: typeof event === "number" ? event : event === "zoom" ? 0 : 1,
-          ctrlKey: event === "zoom",
-          bubbles: true,
-          composed: true,
-        });
-        const timeStamp =
-          event === "stale" ? endSeenAt - 5 : event === "fresh" ? endSeenAt + IPC_LAG / 2 : now;
-        Object.defineProperty(wheel, "timeStamp", { value: timeStamp });
-        content.dispatchEvent(wheel);
+        content.dispatchEvent(
+          new WheelEvent("wheel", {
+            deltaX: event === "zoom" ? 0 : event,
+            ctrlKey: event === "zoom",
+            clientX: pointerX,
+            bubbles: true,
+            composed: true,
+          }),
+        );
       }
       if (after === "remount") {
         const replacement = viewport.cloneNode(true) as HTMLDivElement;

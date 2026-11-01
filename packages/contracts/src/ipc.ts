@@ -1019,8 +1019,7 @@ export interface DesktopBridge {
   setNotificationBadge: (badge: { count: number; image: string | null }) => Promise<void>;
   onNotificationBadgeClear: (listener: () => void) => () => void;
   onTrackpadScrollBegin: (listener: () => void) => () => void;
-  /** `at` is the main process's wall clock (`Date.now()`) when it saw the end. */
-  onTrackpadScrollEnd: (listener: (at: number) => void) => () => void;
+  onTrackpadScrollEnd: (listener: () => void) => () => void;
   /**
    * Renderer `window.focus()` cannot raise an Electron window, and on Wayland
    * only the main process can spend a notification click's activation token.
