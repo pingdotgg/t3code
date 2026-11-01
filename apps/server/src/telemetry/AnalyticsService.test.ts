@@ -172,11 +172,9 @@ const analyticsLayerWith = (client: HttpClient.HttpClient, options: AnalyticsTes
 };
 
 /**
- * Runs `record` (20 events by default), then lets `minutes` of background
- * flushes run against a client that answers every send with `respond`.
- * `T3CODE_TELEMETRY_ENABLED` is `true` unless `variable` says otherwise; `null` leaves it unset.
- * `policy` is the managed policy document, none by default.
- * Returns the sent batches.
+ * Runs `record` (20 events by default), then `minutes` of background flushes against `respond`.
+ * `variable` sets `T3CODE_TELEMETRY_ENABLED` (`true` by default, `null` unset), `setting` the
+ * setting, and `policy` the managed policy. Returns the sent batches.
  */
 const sendFor = (
   minutes: number,
