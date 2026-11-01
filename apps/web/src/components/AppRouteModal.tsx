@@ -2,6 +2,8 @@ import { Dialog as DialogPrimitive } from "@base-ui/react/dialog";
 import { XIcon } from "lucide-react";
 import { useRef, useState, type ReactNode } from "react";
 
+import { useNativeTitlebarHeight } from "~/lib/windowControlsOverlay";
+
 import { useCloseAppModal } from "./sidebar/mainAppLocation";
 import { Button } from "./ui/button";
 import { DialogBackdrop } from "./ui/dialog";
@@ -20,6 +22,7 @@ export function AppRouteModal({ label, children }: { label: string; children: Re
   // Focus the surface, not its first control: no stray focus ring, no phone keyboard.
   // On close, leave focus alone; returning it to the opener paints a focus ring.
   const popupRef = useRef<HTMLDivElement>(null);
+  const titlebarHeight = useNativeTitlebarHeight();
 
   return (
     <DialogPrimitive.Root
@@ -41,7 +44,12 @@ export function AppRouteModal({ label, children }: { label: string; children: Re
       <DialogPrimitive.Portal>
         <DialogBackdrop />
         <DialogPrimitive.Viewport
-          className="fixed inset-0 z-50 flex items-center justify-center sm:p-6 lg:p-10"
+          className="fixed inset-0 z-50 flex items-center justify-center sm:p-6 sm:[--app-modal-padding:--spacing(6)] lg:p-10 lg:[--app-modal-padding:--spacing(10)]"
+          style={
+            titlebarHeight > 0
+              ? { paddingTop: `max(var(--app-modal-padding, 0px), ${titlebarHeight}px)` }
+              : undefined
+          }
           onPointerDown={(event) => {
             backdropPressRef.current = event.target === event.currentTarget;
           }}
