@@ -21,7 +21,7 @@ export function isThreadWorking(thread: WorkingThreadInput): boolean {
   if (
     !threadRuntimeIsActive(thread.runtime) &&
     thread.runtime?.status !== "idle" &&
-    !thread.hasWorkingSideChat
+    !(thread.hasWorkingSideChat && thread.runtime?.status !== "failed")
   ) {
     return false;
   }
