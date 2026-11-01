@@ -1344,6 +1344,124 @@ describe("orchestration v2 provider switching", () => {
       ),
   );
 
+  it.live("shows the recovery handoff in the timeline when a native resume fails", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const cwd = yield* checkpointWorkspace("resume-fallback-handoff-item");
+        const failResumeOnce = yield* Ref.make(false);
+        const layerRegistry = ProviderAdapterRegistry.layerFromAdapters([
+          makeTestAdapter({
+            instanceId: CLAUDE_MODEL_SELECTION.instanceId,
+            driver: CLAUDE_DRIVER,
+            capabilities: ClaudeProviderCapabilitiesV2,
+            modelSelection: CLAUDE_MODEL_SELECTION,
+            responseByRunOrdinal: {},
+            capturedTurns: yield* Ref.make<ReadonlyArray<CapturedTurn>>([]),
+            failResumeOnce,
+            nativeThreadGeneration: yield* Ref.make(0),
+          }),
+        ]);
+        yield* Effect.gen(function* () {
+          const orchestrator = yield* Orchestrator.OrchestratorV2;
+          const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+          const runToCompletion = Effect.fn("runToCompletion")(function* (ordinal: number) {
+            yield* orchestrator.dispatch({
+              type: "message.dispatch",
+              commandId: CommandId.make(`resume-handoff-item:${ordinal}`),
+              threadId,
+              messageId: MessageId.make(`resume-handoff-item:${ordinal}`),
+              createdBy: "user",
+              creationSource: "web",
+              text: `Request ${ordinal}`,
+              attachments: [],
+              modelSelection: CLAUDE_MODEL_SELECTION,
+              dispatchMode: { type: "start_immediately" },
+            });
+            yield* orchestrator.streamStoredEvents.pipe(
+              Stream.filter(
+                ({ event }) =>
+                  event.type === "run.updated" &&
+                  event.payload.ordinal === ordinal &&
+                  (event.payload.status === "completed" || event.payload.status === "failed"),
+              ),
+              Stream.runHead,
+            );
+            yield* worker.drain();
+          });
+          yield* orchestrator.dispatch({
+            type: "thread.create",
+            commandId: CommandId.make("resume-handoff-item:create"),
+            threadId,
+            projectId,
+            createdBy: "user",
+            creationSource: "web",
+            title: "Resume fallback handoff item",
+            modelSelection: CLAUDE_MODEL_SELECTION,
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            branch: null,
+            worktreePath: null,
+          });
+          yield* runToCompletion(1);
+          const providerSessionId = (yield* orchestrator.getThreadProjection(threadId))
+            .providerThreads[0]?.providerSessionId;
+          if (providerSessionId == null) {
+            return yield* Effect.die("Expected a provider session after the first turn.");
+          }
+          yield* orchestrator.dispatch({
+            type: "provider-session.detach",
+            commandId: CommandId.make("resume-handoff-item:detach"),
+            threadId,
+            providerSessionId,
+          });
+          yield* worker.drain();
+          yield* Ref.set(failResumeOnce, true);
+          yield* runToCompletion(2);
+
+          const projection = yield* orchestrator.getThreadProjection(threadId);
+          const run2 = projection.runs[1]!;
+          assert.equal(run2.status, "completed");
+          const handoff = projection.contextHandoffs.find(
+            (candidate) => candidate.targetRunId === run2.id,
+          );
+          assert.isDefined(handoff, "Expected the resume fallback to record a recovery handoff.");
+          assert.deepInclude(
+            projection.turnItems
+              .filter((item) => item.runId === run2.id)
+              .map((item) => ({
+                type: item.type,
+                contextHandoffId: item.type === "handoff" ? item.contextHandoffId : null,
+              })),
+            { type: "handoff", contextHandoffId: handoff!.id },
+            "Expected a handoff turn item for the recovered run.",
+          );
+          assert.deepEqual(
+            projection.turnItems
+              .filter((item) => item.runId === run2.id)
+              .toSorted((left, right) => left.ordinal - right.ordinal)
+              .map((item) => item.type)
+              .slice(0, 2),
+            ["handoff", "user_message"],
+          );
+        }).pipe(
+          Effect.provide(
+            ProviderReplayHarness.layerWithRegistry(
+              {
+                name: "resume-fallback-handoff-item",
+                runtimePolicyOverride: {
+                  cwd,
+                  approvalPolicy: "never",
+                  sandboxPolicy: { type: "readOnly" },
+                },
+              },
+              layerRegistry,
+            ),
+          ),
+        );
+      }),
+    ),
+  );
+
   it.live.each(["an older handoff", "a missed request"] as const)(
     "keeps the latest turn when a resume fallback also delivers %s",
     (older) =>
