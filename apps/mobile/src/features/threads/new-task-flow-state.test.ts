@@ -111,11 +111,14 @@ describe("resolveRouteDraft", () => {
     ).toMatchObject({ kind: "open", flow: { environmentId: environmentB } });
   });
 
-  it("reports a draft that is gone or whose project is gone", () => {
+  it("reports a draft that is gone", () => {
     expect(resolveRouteDraft({ ...base, stamp: undefined })).toEqual({ kind: "missing" });
+  });
+
+  it("asks for a project for the same draft when its project is gone", () => {
     expect(
       resolveRouteDraft({ ...base, projects: [{ environmentId, id: ProjectId.make("other") }] }),
-    ).toEqual({ kind: "missing" });
+    ).toEqual({ kind: "pickProject", draftId: "new-task:draft-1" });
   });
 });
 

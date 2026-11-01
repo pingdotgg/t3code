@@ -176,11 +176,14 @@ type NewTaskFlowContextValue = {
   /** The flow's project, read when a continuation resumes after an await. */
   readonly getSelectedProjectKey: () => string | null;
   /**
-   * The draft id of the route this flow serves when that draft, or its
-   * project, is gone. Only the topmost draft route is served, so a screen
-   * compares this with its own draft id.
+   * The route this flow serves when its draft cannot open: the draft is gone
+   * (`missing`) or only its project is (`pickProject`). Only the topmost draft
+   * route is served, so a screen compares `draftId` with its own draft id.
    */
-  readonly missingRouteDraftId: string | null;
+  readonly unopenableRouteDraft: {
+    readonly draftId: string;
+    readonly kind: "missing" | "pickProject";
+  } | null;
   readonly selectEnvironment: (environmentId: EnvironmentId) => void;
   readonly switchEnvironment: (environmentId: EnvironmentId) => Promise<boolean>;
   readonly switchingToEnvironmentId: EnvironmentId | null;
@@ -889,8 +892,11 @@ export function NewTaskFlowProvider(
     providerGroups,
     setProject,
     getSelectedProjectKey: () => readFlow().projectKey,
-    missingRouteDraftId:
-      routeDraftResolution.kind === "missing" ? (props.routeDraftId ?? null) : null,
+    unopenableRouteDraft:
+      props.routeDraftId !== undefined &&
+      (routeDraftResolution.kind === "missing" || routeDraftResolution.kind === "pickProject")
+        ? { draftId: props.routeDraftId, kind: routeDraftResolution.kind }
+        : null,
     selectEnvironment,
     switchEnvironment,
     switchingToEnvironmentId,
