@@ -836,9 +836,9 @@ describe("PiAdapterV2", () => {
     }).pipe(Effect.scoped, Effect.provide(layerTest)),
   );
 
-  it.effect.each([false, true])(
-    "preserves native status publications during session switch hooks, cancelled=%s",
-    (cancelled) =>
+  it.effect.each(["success", "cancelled", "error"] as const)(
+    "handles native status publications during session switch hooks, outcome=%s",
+    (outcome) =>
       Effect.gen(function* () {
         const fake = yield* makeFakePi;
         const { runtime, takeEvent } = yield* openRuntime(fake);
@@ -877,13 +877,24 @@ describe("PiAdapterV2", () => {
           type: "response",
           id: request["id"],
           command: "switch_session",
-          success: true,
-          data: { cancelled },
+          success: outcome !== "error",
+          data: { cancelled: outcome === "cancelled" },
+          ...(outcome === "error" ? { error: "Session replacement failed" } : {}),
         });
         const exit = yield* Fiber.join(switching);
-        assert.equal(Exit.isFailure(exit), cancelled);
+        assert.equal(Exit.isFailure(exit), outcome !== "success");
+        if (outcome === "error") {
+          const reuse = yield* runtime.resumeThread({ providerThread }).pipe(Effect.exit);
+          assert.isTrue(Exit.isFailure(reuse));
+          yield* takeEvent(
+            (event) =>
+              event.type === "provider_session.updated" && event.providerSession.status === "error",
+          );
+          assert.deepEqual(runtime.providerSession.extensionStatuses, []);
+          return;
+        }
         assert.deepEqual(runtime.providerSession.extensionStatuses, [
-          ...(cancelled ? [{ key: "lint", text: "Lint clean" }] : []),
+          ...(outcome === "cancelled" ? [{ key: "lint", text: "Lint clean" }] : []),
           { key: "startup", text: "Fresh status" },
         ]);
       }).pipe(Effect.scoped, Effect.provide(layerTest)),

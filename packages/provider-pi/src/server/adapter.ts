@@ -778,7 +778,6 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
         },
         (effect, record) =>
           effect.pipe(
-            // Timeout does not cancel Pi's lifecycle hook; retire the process before fallback can race it.
             Effect.tapError((error) =>
               Effect.logWarning("Pi session lifecycle request failed", {
                 providerSessionId: input.providerSessionId,
@@ -786,10 +785,12 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
                 errorTag: error._tag,
               }),
             ),
-            Effect.catchTags({
-              PiRpcTimeoutError: (error) =>
-                connection.terminate.pipe(Effect.andThen(Effect.fail(error))),
-            }),
+            // A failed lifecycle RPC can leave Pi's previous native session disposed.
+            Effect.tapError((error) =>
+              error._tag === "PiRpcError" || error._tag === "PiRpcTimeoutError"
+                ? connection.terminate
+                : Effect.void,
+            ),
             Effect.onInterrupt(() => connection.terminate),
           ),
       );
