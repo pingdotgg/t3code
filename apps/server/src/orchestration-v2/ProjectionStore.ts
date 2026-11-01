@@ -2976,6 +2976,21 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                     )
                     AND request.type = 'run_interrupt_request'
                   UNION
+                  -- An open question or approval stays in the window: clients
+                  -- build the answer panel from its row, and a run that kept
+                  -- working pushes the row out of the newest turns.
+                  SELECT question.rowid AS item_rowid, question.ordinal, question.turn_item_id
+                  FROM orchestration_v2_projection_runtime_requests AS pending
+                  JOIN orchestration_v2_projection_turn_items AS question
+                    ON question.node_id = pending.node_id
+                  WHERE pending.thread_id = ${threadId}
+                    AND pending.status = 'pending'
+                    AND question.thread_id = ${threadId}
+                    AND question.type IN ('user_input_request', 'approval_request')
+                    AND ${window.rowLimit} > 0
+                    AND ${window.anchorItemId ?? null} IS NULL
+                    AND ${window.requiredRunId ?? null} IS NULL
+                  UNION
                   SELECT latest.item_rowid, latest.ordinal, latest.turn_item_id
                   FROM (
                     SELECT rowid AS item_rowid, ordinal, turn_item_id
