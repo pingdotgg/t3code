@@ -31,7 +31,22 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.restoreAllMocks();
+  __resetClientSettingsPersistenceForTests();
+  vi.unstubAllGlobals();
 });
+
+const otherTabSettings = { ...DEFAULT_CLIENT_SETTINGS, timestampFormat: "12-hour" as const };
+const readFailure = new Error("storage unavailable");
+
+async function saveInOtherTab(failedReads = 0) {
+  vi.stubGlobal("window", new EventTarget());
+  await ensureClientSettingsHydrated();
+  for (let read = 0; read < failedReads; read += 1) {
+    persistenceMocks.getClientSettings.mockRejectedValueOnce(readFailure);
+  }
+  persistenceMocks.getClientSettings.mockResolvedValue(otherTabSettings);
+  window.dispatchEvent(Object.assign(new Event("storage"), { key: "t3code:client-settings:v1" }));
+}
 
 describe("client settings hydration", () => {
   const savedSettings = {
@@ -195,6 +210,30 @@ describe("persistClientSettingsPatch", () => {
     expect(persistenceMocks.setClientSettings).toHaveBeenNthCalledWith(1, firstSettings);
     expect(persistenceMocks.setClientSettings).toHaveBeenNthCalledWith(2, secondSettings);
   });
+
+  it("keeps a setting another tab saved after this tab loaded", async () => {
+    await saveInOtherTab();
+
+    await persistClientSettingsPatch({ wordWrap: false });
+
+    const expected = { ...otherTabSettings, wordWrap: false };
+    expect(persistenceMocks.setClientSettings).toHaveBeenLastCalledWith(expected);
+    expect(getClientSettings()).toEqual(expected);
+  });
+
+  it("writes only after re-reading settings another tab saved when the reload failed", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    // Fails the reload and the first write's re-read.
+    await saveInOtherTab(2);
+
+    await persistClientSettingsPatch({ wordWrap: false });
+    expect(persistenceMocks.setClientSettings).not.toHaveBeenCalled();
+
+    await persistClientSettingsPatch({ snapShotFlash: false });
+    const expected = { ...otherTabSettings, snapShotFlash: false };
+    expect(persistenceMocks.setClientSettings).toHaveBeenCalledExactlyOnceWith(expected);
+    expect(getClientSettings()).toEqual(expected);
+  });
 });
 
 describe("persistClientSettingsUpdate", () => {
@@ -220,19 +259,38 @@ describe("persistClientSettingsUpdate", () => {
     expect(getClientSettings().timestampFormat).toBe("12-hour");
   });
 
+  it("rejects after a failed reload until settings another tab saved can be re-read", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    // Fails the reload and the first write's re-read.
+    await saveInOtherTab(2);
+    const disableWrap = (current: ClientSettings) => ({ ...current, wordWrap: false });
+
+    await expect(persistClientSettingsUpdate(disableWrap)).rejects.toBe(readFailure);
+    expect(persistenceMocks.setClientSettings).not.toHaveBeenCalled();
+
+    const expected = { ...otherTabSettings, wordWrap: false };
+    await expect(persistClientSettingsUpdate(disableWrap)).resolves.toEqual(expected);
+    expect(persistenceMocks.setClientSettings).toHaveBeenCalledExactlyOnceWith(expected);
+  });
+
   it("preserves an optimistic write made while an awaited update persists", async () => {
     let finishFirstPersistence!: () => void;
     let durableSettings = DEFAULT_CLIENT_SETTINGS;
     const firstPersistence = new Promise<void>((resolve) => {
       finishFirstPersistence = resolve;
     });
+    let markFirstPersistenceStarted!: () => void;
+    const firstPersistenceStarted = new Promise<void>((resolve) => {
+      markFirstPersistenceStarted = resolve;
+    });
     const persist = vi
       .fn<(settings: typeof DEFAULT_CLIENT_SETTINGS) => Promise<void>>()
-      .mockImplementationOnce((settings) =>
-        firstPersistence.then(() => {
+      .mockImplementationOnce((settings) => {
+        markFirstPersistenceStarted();
+        return firstPersistence.then(() => {
           durableSettings = settings;
-        }),
-      )
+        });
+      })
       .mockImplementation(async (settings) => {
         durableSettings = settings;
       });
@@ -246,7 +304,7 @@ describe("persistClientSettingsUpdate", () => {
       }),
       persist,
     );
-    await Promise.resolve();
+    await firstPersistenceStarted;
     const patch = persistClientSettingsPatch({ wordWrap: false }, persist);
     finishFirstPersistence();
     await Promise.all([pending, patch]);
