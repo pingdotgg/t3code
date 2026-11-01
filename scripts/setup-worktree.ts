@@ -112,5 +112,14 @@ for (const file of ENV_FILES) {
   const existing = NodeFS.lstatSync(target, { throwIfNoEntry: false });
   if (existing && !existing.isSymbolicLink()) continue;
   if (existing) NodeFS.rmSync(target);
-  NodeFS.symlinkSync(source, target);
+  try {
+    NodeFS.symlinkSync(source, target);
+  } catch (error) {
+    // Windows denies symlinks without Developer Mode or admin rights.
+    if (!(error instanceof Error && "code" in error && error.code === "EPERM")) throw error;
+    NodeFS.copyFileSync(source, target);
+    process.stderr.write(
+      `Copied ${file} because symlinks are not allowed here. The copy will not follow later changes to ${source}.\n`,
+    );
+  }
 }
