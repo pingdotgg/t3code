@@ -47,6 +47,9 @@ import { toastManager } from "../ui/toast";
 import type { CitedHistory } from "./citationProcedure";
 import type { TimelineNavigation } from "./timelineViewport";
 import { rememberTimelinePosition } from "./timelineScrollAnchoring";
+import { useTimelineFollow } from "./useTimelineFollow";
+import { resolveTimelineIsAtEnd } from "./MessagesTimeline.logic";
+import { ScrollToEndButton } from "./TimelineOverlays";
 import {
   COMPOSER_CONTEXT_CLIPBOARD_MIME,
   decodeComposerContextFragment,
@@ -292,6 +295,109 @@ describe("MessagesTimeline work rows", () => {
       }
     },
   );
+});
+
+function FollowedTimeline(props: {
+  readonly base: Omit<TimelineProps, "timelineEntries">;
+  readonly entries: Entry[];
+  readonly isWorking: boolean;
+}) {
+  const follow = useTimelineFollow({
+    legendListRef: props.base.listRef,
+    composerTimelineInset: 0,
+    routeThreadKey: props.base.routeThreadKey,
+    activeThreadKey: props.base.routeThreadKey,
+    isServerThread: false,
+    serverProjection: null,
+    threadStatus: "live",
+    activeActivityRun: null,
+    activeRunningTurnId: null,
+    timelineEntries: props.entries,
+    timelineAnchorMessageId: null,
+    setTimelineAnchor: () => {},
+  });
+  return (
+    <div className="relative min-h-0 flex-1">
+      <MessagesTimeline
+        {...props.base}
+        timelineEntries={props.entries}
+        isWorking={props.isWorking}
+        liveFollowEnabled={follow.timelineLiveFollowEnabled}
+        onIsAtEndChange={follow.onIsAtEndChangeStable}
+        onViewportAttach={follow.attachTimelineViewport}
+      />
+      {follow.showScrollToBottom ? (
+        <ScrollToEndButton summary={null} bottom={4} onScrollToEnd={follow.scrollToEnd} />
+      ) : null}
+    </div>
+  );
+}
+
+describe("MessagesTimeline live follow", () => {
+  it("reaches the end of a long answer when the turn ends mid smooth scroll", async () => {
+    const base = baseProps();
+    const history = Array.from({ length: 6 }, (_, index) => [
+      message(`Question ${index}`, { role: "user" }, `question-${index}`),
+      message(
+        `Answer ${index}.\n\n${"Some detail. ".repeat(60)}`,
+        { role: "assistant" },
+        `answer-${index}`,
+      ),
+    ]).flat();
+    const facts = Array.from(
+      { length: 200 },
+      (_, index) => `${index + 1}. Fact number ${index + 1} about the codebase.`,
+    ).join("\n\n");
+    const answer = (streaming: boolean) =>
+      message(facts, { role: "assistant", streaming }, "long-answer");
+    const ui = (entries: Entry[], isWorking: boolean) => (
+      <FollowedTimeline base={base} entries={entries} isWorking={isWorking} />
+    );
+    const distanceFromEnd = () => {
+      const node = base.listRef.current!.getScrollableNode()!;
+      return node.scrollHeight - node.scrollTop - node.clientHeight;
+    };
+    // LegendList keeps its initial at-end target for a while after mount and jumps to it on data
+    // changes; a thread that has been open longer has dropped it.
+    using mountTimers = fakeTimers();
+    await using screen = await renderElement(ui(history, true));
+    await vi.waitFor(async () => {
+      await act(() => vi.advanceTimersByTime(1000));
+      expect(resolveTimelineIsAtEnd(base.listRef.current?.getState())).toBe(true);
+    });
+    await act(() => vi.advanceTimersByTime(5000));
+    mountTimers[Symbol.dispose]();
+    const historyEnd = base.listRef.current!.getScrollableNode()!.scrollTop;
+
+    await screen.rerender(ui([...history, answer(true)], true));
+    // The answer lays out many viewports tall and the animated maintain-at-end scroll is running.
+    await vi.waitFor(() => {
+      expect(base.listRef.current!.getScrollableNode()!.scrollHeight).toBeGreaterThan(6000);
+      expect(base.listRef.current!.getScrollableNode()!.scrollTop).toBeGreaterThan(
+        historyEnd + 500,
+      );
+    });
+
+    // When the turn ends a row above shrinks, and LegendList keeps the visible content in place
+    // with an instant scroll, which cancels the in-flight smooth one. No user input is involved.
+    await act(() => {
+      const node = base.listRef.current!.getScrollableNode()!;
+      const currentScrollTop = node.scrollTop;
+      node.scrollTop = currentScrollTop;
+    });
+    await screen.rerender(ui([...history, answer(false)], false));
+
+    await vi.waitFor(
+      () => {
+        const pill = screen.buttons(/Scroll to end/).length > 0 ? "shown" : "hidden";
+        expect(
+          distanceFromEnd(),
+          `px short of the end, still following, with the "Scroll to end" pill ${pill}`,
+        ).toBeLessThanOrEqual(40);
+      },
+      { timeout: 5000 },
+    );
+  });
 });
 
 describe("MessagesTimeline messages", () => {
