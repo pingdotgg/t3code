@@ -312,25 +312,42 @@ describe("CLIProxyAPI built-in management API", () => {
     }),
   );
 
-  it.effect("maps Claude scoped windows without a scheduler plugin", () =>
+  const claudeUsage = {
+    five_hour: { utilization: 10, resets_at: null },
+    seven_day: { utilization: 50, resets_at: "2099-01-01T00:00:00Z" },
+    limits: [
+      {
+        kind: "weekly_scoped",
+        percent: 80,
+        resets_at: null,
+        scope: { model: { display_name: "Fable" } },
+      },
+    ],
+    cedar_ember: {
+      eligible: true,
+      grants: [
+        {
+          id: "free_reset",
+          resets_total: 1,
+          resets_left: 1,
+          ends_at: "2099-01-01T00:00:00Z",
+          paused: false,
+          usable_now: true,
+        },
+      ],
+      next_grant_id: "free_reset",
+    },
+  };
+
+  it.effect("maps Claude scoped windows and banked resets without a scheduler plugin", () =>
     Effect.gen(function* () {
       const test = fixture({
         accounts: [{ ...accounts[0]!, provider: "claude" }],
-        // The usage endpoint answers 429 to requests without a Claude Code user agent.
+        // The usage endpoint answers 429, and reports no reset grants, to requests
+        // without a Claude CLI user agent.
         upstream: (request) => ({
-          status: request.header?.["User-Agent"]?.startsWith("claude-code/") ? 200 : 429,
-          body: {
-            five_hour: { utilization: 10, resets_at: null },
-            seven_day: { utilization: 50, resets_at: "2099-01-01T00:00:00Z" },
-            limits: [
-              {
-                kind: "weekly_scoped",
-                percent: 80,
-                resets_at: null,
-                scope: { model: { display_name: "Fable" } },
-              },
-            ],
-          },
+          status: request.header?.["User-Agent"]?.startsWith("claude-cli/") ? 200 : 429,
+          body: claudeUsage,
         }),
       });
       const api = yield* test.api;
@@ -342,6 +359,71 @@ describe("CLIProxyAPI built-in management API", () => {
         ["seven_day", 50],
         ["seven_day_fable", 80],
       ]);
+      expect(result[0]?.usageLimits.resetCredits).toEqual({
+        availableCount: 1,
+        nextCreditId: "free_reset",
+        nextExpiresAt: "2099-01-01T00:00:00.000Z",
+      });
+      expect(test.requests.find((request) => request.body?.url)?.body?.url).toContain(
+        "cedar_ember=1",
+      );
+    }),
+  );
+
+  it.effect("claims a Claude grant through the hub and clears only that account's cooldown", () =>
+    Effect.gen(function* () {
+      let result = "reset";
+      let status = 200;
+      const outcomes = new Map<string, string>();
+      const test = fixture({
+        accounts: [{ ...accounts[0]!, provider: "claude" }],
+        upstream: (request) => {
+          if (request.url?.endsWith("/api/oauth/profile")) {
+            return { status: 200, body: { organization: { uuid: "org-1" } } };
+          }
+          const key = request.data!;
+          const outcome = outcomes.get(key) ?? result;
+          if (status === 200) outcomes.set(key, outcome);
+          return { status, body: { result: outcome } };
+        },
+      });
+      const api = yield* test.api;
+      expect(yield* api.consume(config, "first.json", "free_reset")).toEqual({ outcome: "reset" });
+      result = "not_limited";
+      expect(yield* api.consume(config, "first.json", "free_reset")).toEqual({
+        outcome: "nothingToReset",
+      });
+      status = 503;
+      expect(
+        (yield* api.consume(config, "first.json", "free_reset").pipe(Effect.result))._tag,
+      ).toBe("Failure");
+      status = 200;
+      result = "reset";
+      expect(yield* api.consume(config, "first.json", "free_reset")).toEqual({ outcome: "reset" });
+      result = "cooldown";
+      expect(
+        (yield* api.consume(config, "first.json", "free_reset").pipe(Effect.result))._tag,
+      ).toBe("Failure");
+      result = "reset";
+      expect(yield* api.consume(config, "first.json", "free_reset")).toEqual({ outcome: "reset" });
+      const claims = test.requests.filter((request) =>
+        request.body?.url?.endsWith("/api/organizations/org-1/reset_rate_limits"),
+      );
+      expect(claims).toHaveLength(6);
+      expect(claims[0]?.body?.data).not.toBe(claims[1]?.body?.data);
+      expect(claims[1]?.body?.data).not.toBe(claims[2]?.body?.data);
+      expect(claims[2]?.body?.data).toBe(claims[3]?.body?.data);
+      expect(claims[4]?.body?.data).not.toBe(claims[5]?.body?.data);
+      expect(JSON.parse(claims[0]?.body?.data ?? "{}")).toMatchObject({
+        program: "cedar_ember",
+        grant_id: "free_reset",
+        request_id: expect.stringMatching(/^[0-9a-f-]{36}$/),
+      });
+      expect(
+        test.requests
+          .filter((request) => request.path.endsWith("/reset-quota"))
+          .map((request) => request.body?.auth_index),
+      ).toEqual(["a", "a", "a"]);
     }),
   );
 
