@@ -3802,11 +3802,12 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         ),
     );
 
-    // A foreign build may store the override as a JSON boolean, which json_extract reads as 1.
+    // Foreign builds may store booleans; match the contract's settled/null decoding in SQL.
     const normalizedSettledOverride = (alias: string) => {
       const t = sql.literal(alias);
       return sql`CASE
         WHEN json_type(${t}.payload_json, '$.settledOverride') = 'true' THEN 'settled'
+        WHEN json_type(${t}.payload_json, '$.settledOverride') = 'false' THEN NULL
         ELSE json_extract(${t}.payload_json, '$.settledOverride')
       END`;
     };
@@ -6283,7 +6284,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             )
             WHERE t.deleted_at IS NULL${threadId === undefined ? sql`` : sql` AND t.thread_id = ${threadId}`}
               AND json_extract(t.payload_json, '$.archivedAt') IS NULL
-              AND json_extract(t.payload_json, '$.settledOverride') IS NULL
+              AND ${normalizedSettledOverride("t")} IS NULL
               AND json_extract(t.payload_json, '$.pinnedAt') IS NULL
               AND json_extract(t.payload_json, '$.autoSettleDisabledAt') IS NULL
               AND NOT EXISTS (

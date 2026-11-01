@@ -1643,6 +1643,18 @@ it.effect("reads a boolean settled override consistently in SQL reads", () =>
       (yield* store.getShellSnapshot({ unsettledOnly: true })).threads.map((row) => row.id),
       timelesslySettledId,
     );
+    const automaticId = ThreadId.make("thread:boolean-override-false");
+    yield* createThread(automaticId, null);
+    yield* sql`UPDATE orchestration_v2_projection_threads
+      SET payload_json = json_set(payload_json, '$.settledOverride', json('false'))
+      WHERE thread_id = ${automaticId}`;
+    assert.isNull(
+      (yield* store.listActiveShellIndex()).find((row) => row.id === automaticId)?.settledOverride,
+    );
+    assert.include(
+      (yield* store.getSettlementCandidates()).map((row) => row.id),
+      automaticId,
+    );
   }).pipe(Effect.provide(layerTest)),
 );
 
