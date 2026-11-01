@@ -185,17 +185,25 @@ const pendingSshSetups = new Map<
   { readonly promise: Promise<DesktopSshEnvironmentBootstrap>; signal: AbortSignal }
 >();
 
-const ensureDesktopSshEnvironment = (bridge: DesktopBridge, target: DesktopSshEnvironmentTarget) =>
+// A setup without a pairing token cannot serve a caller that needs one.
+const pendingSshSetupKey = (target: DesktopSshEnvironmentTarget, issuePairingToken: boolean) =>
+  `${sshTargetKey(target)}:${issuePairingToken}`;
+
+const ensureDesktopSshEnvironment = (
+  bridge: DesktopBridge,
+  target: DesktopSshEnvironmentTarget,
+  issuePairingToken: boolean,
+) =>
   Effect.tryPromise({
     try: (signal) => {
-      const key = sshTargetKey(target);
+      const key = pendingSshSetupKey(target, issuePairingToken);
       const pending = pendingSshSetups.get(key);
       if (pending?.signal.aborted) {
         pending.signal = signal;
         return pending.promise;
       }
       const setup = {
-        promise: bridge.ensureSshEnvironment(target, { issuePairingToken: true }),
+        promise: bridge.ensureSshEnvironment(target, { issuePairingToken }),
         signal,
       };
       pendingSshSetups.set(key, setup);
@@ -215,7 +223,7 @@ export const provisionDesktopSshEnvironment = Effect.fn(
   target: DesktopSshEnvironmentTarget,
   expectedEnvironmentId?: EnvironmentId,
 ) {
-  const bootstrap = yield* ensureDesktopSshEnvironment(bridge, target);
+  const bootstrap = yield* ensureDesktopSshEnvironment(bridge, target, true);
   const pairingToken = bootstrap.pairingToken;
   if (pairingToken === null) {
     return yield* new ConnectionBlockedError({
@@ -272,10 +280,7 @@ export const prepareDesktopSshEnvironment = Effect.fn("web.connectionPlatform.ss
   ) {
     const bearerToken = input.bearerToken;
     if (bearerToken !== undefined) {
-      const bootstrap = yield* Effect.tryPromise({
-        try: () => bridge.ensureSshEnvironment(input.target, { issuePairingToken: false }),
-        catch: sshPreparationError,
-      });
+      const bootstrap = yield* ensureDesktopSshEnvironment(bridge, input.target, false);
       // Check identity before sending saved credentials or pairing.
       const descriptor = yield* Effect.tryPromise({
         try: () => bridge.fetchSshEnvironmentDescriptor(bootstrap.httpBaseUrl),
@@ -398,7 +403,8 @@ const layerCapabilities = Layer.effectContext(
         if (bridge === undefined) {
           return;
         }
-        pendingSshSetups.delete(sshTargetKey(target));
+        pendingSshSetups.delete(pendingSshSetupKey(target, true));
+        pendingSshSetups.delete(pendingSshSetupKey(target, false));
         yield* Effect.tryPromise({
           try: () => bridge.disconnectSshEnvironment(target),
           catch: (cause) =>

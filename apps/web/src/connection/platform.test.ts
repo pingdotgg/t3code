@@ -280,6 +280,59 @@ describe("desktop SSH pairing", () => {
     }),
   );
 
+  it.effect("launches SSH once across repeated interrupted reconnects with the saved token", () =>
+    Effect.gen(function* () {
+      const bridge = makeBridge([]);
+      const setup = pendingSetup();
+      const ensure = vi.spyOn(bridge, "ensureSshEnvironment").mockReturnValue(setup.promise);
+      const input = {
+        target: TARGET,
+        expectedEnvironmentId: EnvironmentId.make("environment-ssh"),
+        bearerToken: "saved-token",
+      };
+      for (let attempt = 0; attempt < 2; attempt += 1) {
+        const interrupted = yield* Effect.forkChild(prepareDesktopSshEnvironment(bridge, input), {
+          startImmediately: true,
+        });
+        yield* Fiber.interrupt(interrupted);
+      }
+
+      const retry = yield* Effect.forkChild(prepareDesktopSshEnvironment(bridge, input), {
+        startImmediately: true,
+      });
+      setup.resolve({ ...SSH_BOOTSTRAP, pairingToken: null });
+      const prepared = yield* Fiber.join(retry);
+
+      expect(prepared.bearerToken).toBe("saved-token");
+      expect(ensure).toHaveBeenCalledExactlyOnceWith(TARGET, { issuePairingToken: false });
+    }),
+  );
+
+  it.effect("does not adopt an interrupted saved-token reconnect when pairing", () =>
+    Effect.gen(function* () {
+      const bridge = makeBridge([]);
+      const setup = pendingSetup();
+      const ensure = vi.spyOn(bridge, "ensureSshEnvironment").mockReturnValueOnce(setup.promise);
+      const interrupted = yield* Effect.forkChild(
+        prepareDesktopSshEnvironment(bridge, {
+          target: TARGET,
+          expectedEnvironmentId: EnvironmentId.make("environment-ssh"),
+          bearerToken: "saved-token",
+        }),
+        { startImmediately: true },
+      );
+      yield* Fiber.interrupt(interrupted);
+
+      const provisioned = yield* provisionDesktopSshEnvironment(bridge, TARGET);
+      setup.resolve({ ...SSH_BOOTSTRAP, pairingToken: null });
+      yield* Effect.promise(() => setup.promise);
+
+      expect(provisioned.bearerToken).toBe("bearer-token");
+      expect(ensure).toHaveBeenLastCalledWith(TARGET, { issuePairingToken: true });
+      expect(ensure).toHaveBeenCalledTimes(2);
+    }),
+  );
+
   it.effect("pairs again when the host no longer accepts the saved token", () =>
     Effect.gen(function* () {
       const calls: string[] = [];
