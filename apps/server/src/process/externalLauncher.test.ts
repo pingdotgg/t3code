@@ -650,9 +650,9 @@ it.effect.each<{
   {
     platform: "win32",
     expected: "idea1.cmd",
-    scripts: ({ ide, removed }) => ({
+    scripts: ({ home, ide, removed }) => ({
       "idea.cmd": `@echo off\r\nstart "" "${removed}" %*\r\n`,
-      "idea1.cmd": `@echo off\r\nstart /min "" "${ide}" %*\r\n`,
+      "idea1.cmd": `@echo off\r\nstart /min /d "${home}" "" "${ide}" %*\r\n`,
     }),
   },
   {
@@ -677,8 +677,8 @@ it.effect.each<{
   {
     platform: "linux",
     expected: "idea",
-    scripts: ({ ide }) => ({
-      idea: `#!/bin/sh\nIDE_HOME="${ide}"\nexec "$IDE_HOME" "$@"\n`,
+    scripts: ({ ide, removed }) => ({
+      idea: `#!/bin/sh\n${removed} --version\nIDE_HOME="${ide}"\nexec "$IDE_HOME" "$@"\n`,
       idea1: `#!/bin/sh\nexec "${ide}" "$@"\n`,
     }),
   },

@@ -28,7 +28,7 @@ const isVersionedBundle = (entry: string, name: string) => {
 /**
  * The program a Toolbox script line runs: its first word, or the operand of `exec`, `open -na` or
  * `start`. Other paths on the line, such as `> /dev/null` or `JAVA_HOME="/opt/jdk"`, say nothing
- * about whether the IDE is still installed. */
+ * about whether the IDE is still installed. `command` marks lines that run one of those three. */
 const launchedProgram = (line: string) => {
   const words = [...line.replace(/^\s*\(/, "").matchAll(/"([^"]*)"|'([^']*)'|(\S+)/g)].map(
     (match) => ({
@@ -39,14 +39,26 @@ const launchedProgram = (line: string) => {
   const launcher = words.shift();
   if (!launcher) return undefined;
   const name = launcher.text.toLowerCase();
-  if (name !== "exec" && name !== "open" && name !== "start") return launcher.text;
   if (name === "start") {
-    // `start` reads its first quoted word as the window title, even after `/min`-style switches.
-    const title = words.findIndex((word) => word.quoted);
-    if (title >= 0) words.splice(title, 1);
+    // CMD's `start` takes `/switch` options, some with an operand, and one quoted window title.
+    let title = false;
+    while (words[0]) {
+      const word = words[0];
+      if (!word.quoted && word.text.startsWith("/")) {
+        words.shift();
+        if (/^\/(d|node|affinity)$/i.test(word.text)) words.shift();
+      } else if (word.quoted && !title) {
+        title = true;
+        words.shift();
+      } else break;
+    }
+    return { program: words[0]?.text, command: true };
   }
-  const option = name === "start" ? /^\// : /^-/;
-  return words.find((word) => word.quoted || !option.test(word.text))?.text;
+  if (name !== "exec" && name !== "open") return { program: launcher.text, command: false };
+  return {
+    program: words.find((word) => word.quoted || !word.text.startsWith("-"))?.text,
+    command: true,
+  };
 };
 
 export const resolveEditorCommand = Effect.fn("editor.resolveEditorCommand")(function* (
@@ -73,17 +85,25 @@ export const resolveEditorCommand = Effect.fn("editor.resolveEditorCommand")(fun
   const jetbrains = editor.launchStyle === "line-column";
   // A Toolbox script launches its IDE by absolute path or a HOME-based path, so a script left
   // behind by a removed IDE names only missing paths. The script is read, never run.
-  const launchTarget = Effect.fn("editor.launchTarget")(function* (script: string) {
+  const launchTargetStatus = Effect.fn("editor.launchTargetStatus")(function* (script: string) {
     const text = yield* fs.readFileString(script).pipe(Effect.orElseSucceed(() => ""));
-    const targets = text
+    const programs = text
       .split(/\r?\n/)
       .flatMap((line) => launchedProgram(line) ?? [])
-      .map((target) => (home ? target.replace(/^\$(?:HOME|\{HOME\})(?=\/)/, () => home) : target))
-      .filter((target) => path.isAbsolute(target));
-    for (const target of targets) {
+      .map(({ program = "", command }) => ({
+        path: home ? program.replace(/^\$(?:HOME|\{HOME\})(?=\/)/, () => home) : program,
+        command,
+      }));
+    const targets = programs.filter(({ path: target }) => path.isAbsolute(target));
+    for (const { path: target } of targets) {
       if (yield* fs.exists(target).pipe(Effect.orElseSucceed(() => false))) return "found";
     }
-    return targets.length > 0 ? "missing" : "unknown";
+    // A launch command whose program is not a plain path, such as `exec "$IDE_HOME"`, could still
+    // reach an installed IDE.
+    const ambiguous = programs.some(
+      ({ path: target, command }) => command && !path.isAbsolute(target),
+    );
+    return targets.length > 0 && !ambiguous ? "missing" : "unknown";
   });
   // Toolbox names a launch script `idea1`, `idea2`, ... when another installed version already
   // has `idea`. The canonical script stays unless its IDE is positively gone; a numbered one needs
@@ -104,9 +124,9 @@ export const resolveEditorCommand = Effect.fn("editor.resolveEditorCommand")(fun
       .sort((a, b) => a.length - b.length || a.localeCompare(b))
       .map((entry) => path.join(dir, entry));
     return [
-      ...((yield* launchTarget(canonical)) === "missing" ? [] : [canonical]),
+      ...((yield* launchTargetStatus(canonical)) === "missing" ? [] : [canonical]),
       ...(yield* Effect.filter(numbered, (script) =>
-        launchTarget(script).pipe(Effect.map((target) => target === "found")),
+        launchTargetStatus(script).pipe(Effect.map((status) => status === "found")),
       )),
     ];
   });
