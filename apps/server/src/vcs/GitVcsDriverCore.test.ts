@@ -5052,6 +5052,61 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
         }),
     );
 
+    it.effect.each([
+      { operation: "cherry-pick", stateRef: "CHERRY_PICK_HEAD", author: "Original Author" },
+      { operation: "revert", stateRef: "REVERT_HEAD", author: "Test" },
+    ] as const)(
+      "rejects selected-file commits during a $operation without losing its state",
+      ({ operation, stateRef, author }) =>
+        Effect.gen(function* () {
+          const cwd = yield* makeTmpDir();
+          const { initialBranch } = yield* initRepoWithCommit(cwd);
+          const driver = yield* GitVcsDriver.GitVcsDriver;
+          yield* git(cwd, ["checkout", "-b", "feature"]);
+          yield* writeTextFile(cwd, "README.md", "feature version\n");
+          yield* writeTextFile(cwd, "picked.txt", "picked\n");
+          yield* git(cwd, ["add", "."]);
+          yield* git(cwd, ["commit", "-m", "Feature", "--author", "Original Author <a@test.com>"]);
+          const featureHead = yield* git(cwd, ["rev-parse", "HEAD"]);
+          if (operation === "cherry-pick") yield* git(cwd, ["checkout", initialBranch]);
+          yield* writeTextFile(cwd, "README.md", "other version\n");
+          yield* git(cwd, ["commit", "-am", "Other"]);
+          const head = yield* git(cwd, ["rev-parse", "HEAD"]);
+          const started = yield* driver.execute({
+            operation: "test.sequencer",
+            cwd,
+            args: [operation, "--no-edit", featureHead],
+            allowNonZeroExit: true,
+          });
+          assert.equal(started.exitCode, 1);
+          yield* writeTextFile(cwd, "README.md", "resolved version\n");
+          const gitDir = yield* git(cwd, ["rev-parse", "--absolute-git-dir"]);
+          const names = ["index", stateRef, "MERGE_MSG"];
+          const before = names.map((name) => NodeFS.readFileSync(`${gitDir}/${name}`));
+
+          const result = yield* driver
+            .commit(cwd, "Partial", "", { stage: { filePaths: ["picked.txt"] } })
+            .pipe(Effect.result);
+          if (Result.isSuccess(result)) {
+            assert.fail(`Selected ${operation} commit succeeded`);
+          } else {
+            assert.include(
+              result.failure.detail,
+              `Cannot commit selected files during a ${operation}`,
+            );
+          }
+          assert.deepEqual(
+            names.map((name) => NodeFS.readFileSync(`${gitDir}/${name}`)),
+            before,
+          );
+          assert.equal(yield* git(cwd, ["rev-parse", "HEAD"]), head);
+
+          yield* driver.commit(cwd, "Finish", "", { stage: {} });
+          assert.equal(yield* git(cwd, ["show", "-s", "--format=%an", "HEAD"]), author);
+          assert.isFalse(NodeFS.existsSync(`${gitDir}/${stateRef}`));
+        }),
+    );
+
     it.effect("treats selected file paths literally", () =>
       Effect.gen(function* () {
         const cwd = yield* makeTmpDir();
