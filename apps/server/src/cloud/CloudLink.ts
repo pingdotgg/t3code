@@ -1581,7 +1581,7 @@ const make = Effect.gen(function* () {
         scopes: AuthStandardClientScopes,
         subject: "cloud-connect",
         ttl: Duration.minutes(2),
-        label: "T3 Connect connect",
+        label: "T3 Connect",
         proofKeyThumbprint: proof.clientProofKeyThumbprint,
       });
       const responsePayload = {
