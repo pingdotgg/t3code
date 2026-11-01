@@ -39,6 +39,19 @@ const REPLACEABLE_SHARED_RUNTIME_ENTRIES = new Set([
   "thread-writer-locks",
   ".sqlite-maintenance.lock",
 ]);
+// A local copy of these defeats the shared home, so it is reported instead of kept. Any other
+// regular shadow entry is state Codex created for this account (new releases keep adding
+// databases such as queue_1.sqlite), and it stays local rather than disabling the provider.
+const REQUIRED_SHARED_ENTRY_NAMES = new Set<string>([...KNOWN_SHARED_DIRECTORIES, "config.toml"]);
+const SQLITE_SIDECAR_SUFFIXES = ["-wal", "-shm", "-journal"] as const;
+
+// Groups a SQLite database with its sidecars, which must all live in the same home.
+function sqliteFamilyName(entryName: string): string {
+  const suffix = SQLITE_SIDECAR_SUFFIXES.find(
+    (candidate) => entryName.length > candidate.length && entryName.endsWith(candidate),
+  );
+  return suffix === undefined ? entryName : entryName.slice(0, -suffix.length);
+}
 
 function resolveHomePath(path: Path.Path, home: string, value: string | undefined): string {
   const expanded =
@@ -388,24 +401,55 @@ export const materializeCodexShadowHome = Effect.fn("materializeCodexShadowHome"
     { concurrency: "unbounded" },
   );
 
-  const sharedEntryNames = yield* fileSystem.readDirectory(layout.sharedHomePath).pipe(
-    Effect.catchTags({
-      PlatformError: (cause) =>
-        new CodexShadowHomeFileSystemError({
-          sharedHomePath: layout.sharedHomePath,
-          effectiveHomePath,
-          operation: "readDirectory",
-          path: layout.sharedHomePath,
-          cause,
-        }),
-    }),
-  );
+  const readDirectory = (directoryPath: string) =>
+    fileSystem.readDirectory(directoryPath).pipe(
+      Effect.catchTags({
+        PlatformError: (cause) =>
+          new CodexShadowHomeFileSystemError({
+            sharedHomePath: layout.sharedHomePath,
+            effectiveHomePath,
+            operation: "readDirectory",
+            path: directoryPath,
+            cause,
+          }),
+      }),
+    );
+  const [sharedEntryNames, shadowEntryNames] = yield* Effect.all([
+    readDirectory(layout.sharedHomePath),
+    readDirectory(effectiveHomePath),
+  ]);
+  const isSharable = (entryName: string) =>
+    !PRIVATE_ENTRY_NAMES.has(entryName) && !SHADOW_LOCAL_ENTRY_NAMES.has(entryName);
   const entries = new Set<string>(KNOWN_SHARED_DIRECTORIES);
   for (const entryName of sharedEntryNames) {
-    if (!PRIVATE_ENTRY_NAMES.has(entryName) && !SHADOW_LOCAL_ENTRY_NAMES.has(entryName)) {
+    if (isSharable(entryName)) {
       entries.add(entryName);
     }
   }
+
+  // A family with any regular shadow member stays exactly as it is: linking the rest would
+  // pair a local database with shared sidecars, or the reverse, and only SQLite can merge them.
+  const shadowLocalFamilies = new Set<string>();
+  yield* Effect.forEach(
+    shadowEntryNames,
+    (entryName) =>
+      isSharable(entryName)
+        ? readLinkState({
+            fileSystem,
+            sharedHomePath: layout.sharedHomePath,
+            effectiveHomePath,
+            entryName,
+            linkPath: path.join(effectiveHomePath, entryName),
+          }).pipe(
+            Effect.map((state) => {
+              if (state._tag === "NotSymlink") {
+                shadowLocalFamilies.add(sqliteFamilyName(entryName));
+              }
+            }),
+          )
+        : Effect.void,
+    { discard: true },
+  );
 
   yield* Effect.forEach(
     PRIVATE_ENTRY_NAMES,
@@ -425,6 +469,19 @@ export const materializeCodexShadowHome = Effect.fn("materializeCodexShadowHome"
     entries,
     (entryName) => {
       if (PRIVATE_ENTRY_NAMES.has(entryName)) {
+        return Effect.void;
+      }
+      const familyName = sqliteFamilyName(entryName);
+      // Sidecars follow their base, so they are not linked next to a database the shadow home
+      // may create later.
+      if (familyName !== entryName && !entries.has(familyName)) {
+        return Effect.void;
+      }
+      if (
+        shadowLocalFamilies.has(familyName) &&
+        !REQUIRED_SHARED_ENTRY_NAMES.has(entryName) &&
+        !REPLACEABLE_SHARED_RUNTIME_ENTRIES.has(entryName)
+      ) {
         return Effect.void;
       }
       return ensureSymlink({
