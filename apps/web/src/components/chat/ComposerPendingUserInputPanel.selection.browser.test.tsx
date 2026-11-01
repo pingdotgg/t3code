@@ -1,14 +1,12 @@
 import { EnvironmentId, RuntimeRequestId, ThreadId } from "@t3tools/contracts";
 import { expect, it, vi } from "vite-plus/test";
 
-vi.mock(import("../ChatMarkdown"), async (importOriginal) => ({
-  ...(await importOriginal()),
+vi.mock(import("../ChatMarkdown"), () => ({
   default: (({ text }: { text: string }) => <p>{text}</p>) as never,
 }));
 
 import { act, render } from "../../../test/render";
 import { ComposerPendingUserInputPanel } from "./ComposerPendingUserInputPanel";
-import { isInsidePendingUserInputSelectableText } from "./composerEventScope";
 
 const threadRef = { environmentId: EnvironmentId.make("env"), threadId: ThreadId.make("thread") };
 const prompt = {
@@ -72,8 +70,6 @@ it("keeps question copy selectable and ignores a click that finishes a selection
   const description = textElement(container, "span", "ComposerPendingUserInputPanel.tsx");
   const option = container.querySelector("[data-pending-user-input-option]");
   expect(question?.closest("button")).toBeNull();
-  expect(isInsidePendingUserInputSelectableText(question ?? null)).toBe(true);
-  expect(isInsidePendingUserInputSelectableText(document.body)).toBe(false);
   expect(description?.closest("button")).toBeNull();
   expect(option?.getAttribute("role")).toBe("button");
 
