@@ -129,11 +129,20 @@ describe("createLazyVoiceRecorder", () => {
       const selecting = Promise.withResolvers<void>();
       const selected = Promise.withResolvers<void>();
       let routeActive = false;
+      let waitingForRoute = true;
       const harness = createController(
         true,
         (inputs) => inputs[1] ?? null,
         (native) => {
+          let prepared = false;
+          native.prepareToRecordAsync.mockImplementation(async () => {
+            if (prepared) throw new Error("Recorder is already prepared");
+            prepared = true;
+            native.uri = native.prepared;
+          });
           native.setInput.mockImplementationOnce(() => {
+            if (!waitingForRoute) return;
+            waitingForRoute = false;
             routeActive = true;
             selecting.resolve();
             return selected.promise;
@@ -152,7 +161,10 @@ describe("createLazyVoiceRecorder", () => {
       expect(routeActive).toBe(false);
       expect(harness.controller.currentState.phase).toBe("idle");
       expect(harness.deleted).toEqual(["file:///voice-0.m4a"]);
-      harness.recorder.release();
+
+      await harness.controller.start();
+      expect(harness.controller.currentState.phase).toBe("recording");
+      await harness.controller.stop();
     });
   });
 });
