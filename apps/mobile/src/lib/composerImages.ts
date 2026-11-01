@@ -340,7 +340,7 @@ export async function pickComposerFiles(input: {
           mimeType,
           sizeBytes,
           dataUrl,
-          previewUri: fitted?.uri ?? dataUrl,
+          previewUri: dataUrl,
         });
       } finally {
         await removePersistedComposerAttachmentFile(attachment.fileUri);
@@ -498,7 +498,7 @@ export async function pickComposerMedia(input: {
           base64: fitted?.base64 ?? base64,
           mimeType: originalMimeType,
           name,
-          previewUri: fitted?.uri ?? asset.uri,
+          previewUri: fitted ? `data:${originalMimeType};base64,${fitted.base64}` : asset.uri,
         };
       } else {
         const rendered = await renderPhoto(asset.uri);

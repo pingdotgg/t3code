@@ -14,6 +14,7 @@ import {
   ThreadId,
 } from "@t3tools/contracts";
 import { AtomRegistry } from "effect/reactivity";
+import * as Schema from "effect/Schema";
 import * as RpcClientError from "effect/rpc/RpcClientError";
 import * as Socket from "effect/socket/Socket";
 import { onTestFinished, vi } from "vite-plus/test";
@@ -84,8 +85,10 @@ import {
   resolveThreadOutboxFailureAction,
   resolveQueuedThreadSettings,
   shouldRetryThreadOutboxDelivery,
+  QueuedThreadMessageSchema,
   type QueuedThreadMessage,
 } from "./thread-outbox-model";
+import { DraftComposerAttachmentSchema } from "../lib/composer-image-schema";
 import { createThreadOutboxManager, ThreadOutboxManagerError } from "./thread-outbox-manager";
 import {
   expoThreadOutboxStorage,
@@ -137,6 +140,51 @@ describe("thread outbox", () => {
       decodeQueuedThreadMessage(JSON.parse(JSON.stringify(encodeQueuedThreadMessage(message)))),
     ).toEqual(message);
   });
+
+  it("keeps rollback preview fields and reads compact queued images", async () => {
+    onTestFinished(() => outboxFiles.clear());
+    const image = {
+      id: "inline-image",
+      type: "image" as const,
+      name: "photo.png",
+      mimeType: "image/png",
+      sizeBytes: 3,
+      dataUrl: "data:image/png;base64,YWJj",
+      previewUri: "data:image/png;base64,YWJj",
+    };
+    const fileBacked = { ...image, id: "file-image", fileUri: "file:///documents/photo.png" };
+    const distinctPreview = { ...image, id: "distinct-image", previewUri: "file:///preview.png" };
+    const message = {
+      ...queuedMessage({ messageId: "preview-message", createdAt: "2026-09-06T12:00:00.000Z" }),
+      attachments: [image, fileBacked, distinctPreview],
+    };
+
+    await expoThreadOutboxStorage.write(message);
+
+    const raw = outboxFiles.get("preview-message.json");
+    if (typeof raw !== "string") throw new Error("Queued message was not persisted");
+    const stored = JSON.parse(raw);
+    const legacySchema = QueuedThreadMessageSchema.mapFields((fields) => ({
+      ...fields,
+      attachments: Schema.Array(DraftComposerAttachmentSchema),
+    }));
+    expect(Schema.decodeUnknownSync(legacySchema)(stored)).toEqual({
+      ...message,
+      schemaVersion: 3,
+    });
+    await expect(expoThreadOutboxStorage.load()).resolves.toEqual({
+      messages: [message],
+      errors: [],
+    });
+    delete stored.attachments[0].previewUri;
+    outboxFiles.set("preview-message.json", JSON.stringify(stored));
+    await expect(expoThreadOutboxStorage.load()).resolves.toEqual({
+      messages: [message],
+      errors: [],
+    });
+    expect(decodeQueuedThreadMessage({ ...message, schemaVersion: 1 })).toEqual(message);
+  });
+
   it.each(["read", "json", "schema"] as const)(
     "recovers usable messages without permitting cleanup after a record %s failure",
     async (failure) => {

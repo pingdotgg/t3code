@@ -42,7 +42,7 @@ import {
 } from "@t3tools/shared/composerContextReferences";
 import { imageMimeType } from "@t3tools/shared/image";
 import { videoMimeType } from "@t3tools/shared/video";
-import { DraftComposerAttachmentSchema } from "../lib/composer-image-schema";
+import { PersistedComposerAttachmentSchema } from "../lib/composer-image-schema";
 import {
   composerAttachmentFileReferenceKey,
   isComposerAttachmentFileRetained,
@@ -426,7 +426,7 @@ const PersistedComposerContextSchema = Schema.Struct({
 const ComposerDraftSchema = Schema.Struct({
   text: Schema.String,
   context: Schema.optional(PersistedComposerContextSchema),
-  attachments: Schema.Array(DraftComposerAttachmentSchema),
+  attachments: Schema.Array(PersistedComposerAttachmentSchema),
   importedShareIds: Schema.optional(Schema.Array(Schema.String)),
   modelSelection: Schema.optional(ModelSelectionSchema),
   runtimeMode: Schema.optional(RuntimeModeSchema),
