@@ -60,6 +60,7 @@ import type { PendingNewTask } from "../../state/use-pending-new-tasks";
 import { useQueuedThreadKeys } from "../../state/use-thread-outbox";
 import {
   ThreadListV2PendingRow,
+  ThreadListV2ChildrenToggle,
   ThreadListV2Row,
   ThreadListV2SettledShelfHeader,
   ThreadListV2ShowMoreRow,
@@ -456,6 +457,7 @@ export function HomeScreen(props: HomeScreenProps) {
     items: threadListV2Items,
     contentOnlyThreadKeys,
     olderSettledShelf,
+    toggleExpandedParent,
   } = useThreadListV2({
     threads: props.threads,
     pendingTasks: props.pendingTasks,
@@ -536,6 +538,18 @@ export function HomeScreen(props: HomeScreenProps) {
         />
       );
     }
+    if (item.type === "v2-children") {
+      return (
+        <ThreadListV2ChildrenToggle
+          parentKey={item.parentKey}
+          counts={item.counts}
+          expanded={item.expanded}
+          depth={item.depth}
+          onToggle={toggleExpandedParent}
+          pane={primaryColumn ? "sidebar" : "screen"}
+        />
+      );
+    }
     if (item.type === "v2-working-shelf") {
       return (
         <ThreadListV2WorkingShelfHeader
@@ -575,6 +589,7 @@ export function HomeScreen(props: HomeScreenProps) {
         onNewThreadOnBranch={props.onNewThreadOnBranch}
         thread={thread}
         variant={item.item.variant}
+        depth={item.item.depth}
         hasQueuedMessages={item.hasQueuedMessages}
         snoozed={item.item.snoozed}
         pinned={item.item.pinned}
@@ -618,9 +633,11 @@ export function HomeScreen(props: HomeScreenProps) {
         pinningSupported={pinningEnvironmentIds.has(thread.environmentId)}
         autoSettleOptOutSupported={autoSettleOptOutEnvironmentIds.has(thread.environmentId)}
         reorderSupported={
-          item.item.pinned
+          // A child chat's place follows its parent's.
+          item.item.depth === 0 &&
+          (item.item.pinned
             ? pinReorderEnvironmentIds.has(thread.environmentId)
-            : !workingShelfEnabled && activeReorderEnvironmentIds.has(thread.environmentId)
+            : !workingShelfEnabled && activeReorderEnvironmentIds.has(thread.environmentId))
         }
         canMoveUp={item.canMoveUp}
         canMoveDown={item.canMoveDown}

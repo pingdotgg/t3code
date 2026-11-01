@@ -69,3 +69,16 @@ export function selectChildAvatars<
   const shown = ordered.slice(0, Math.max(limit, urgent));
   return { shown, overflow: ordered.length - shown.length };
 }
+
+// Bounds a saved expanded-parents list; the oldest expansions fall off first.
+const EXPANDED_PARENTS_LIMIT = 200;
+
+/** Opens or closes a parent's child chats in a saved list of `environmentId:threadId` keys. */
+export function toggleExpandedParentKey(
+  keys: readonly string[],
+  parentKey: string,
+): readonly string[] {
+  return keys.includes(parentKey)
+    ? keys.filter((key) => key !== parentKey)
+    : [...keys, parentKey].slice(-EXPANDED_PARENTS_LIMIT);
+}

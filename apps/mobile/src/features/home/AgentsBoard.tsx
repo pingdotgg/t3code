@@ -24,6 +24,12 @@ import {
   type AgentChildOrder,
   type AgentRunPendingWork,
 } from "@t3tools/client-runtime/state/agents";
+import {
+  agentChildStatusBucket,
+  countChildStatusBuckets,
+  selectChildAvatars,
+  type ChildStatusCounts,
+} from "@t3tools/client-runtime/state/child-status-counts";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
 import { resolveGatewayProfileModelSelection } from "@t3tools/client-runtime/gateway";
 import { AgentAvatar } from "../../components/AgentAvatar";
@@ -42,6 +48,8 @@ import {
   type AgentAppearance,
 } from "../../state/agents";
 import { useThreadShells } from "../../state/entities";
+import { useExpandedParents } from "../../state/expanded-parents";
+import { AgentChildSummary, type AgentChildAvatar } from "./AgentChildSummary";
 import { environmentServerConfigsAtom } from "../../state/server";
 import { useEnvironments } from "../../state/environments";
 import { useWorkspaceState } from "../../state/workspace";
@@ -147,6 +155,14 @@ type BoardRow =
       readonly key: string;
       readonly count: number;
       readonly open: boolean;
+    }
+  | {
+      readonly kind: "card-children";
+      readonly key: string;
+      readonly open: boolean;
+      readonly counts: ChildStatusCounts;
+      readonly avatars: readonly AgentChildAvatar[];
+      readonly overflow: number;
     };
 
 function childRollup(
@@ -269,6 +285,9 @@ export function AgentsBoard(props: {
     [],
   );
   const [expandedChildren, setExpandedChildren] = useAtom(agentsBoardExpandedChildrenAtom);
+  // Each card's child list starts collapsed to one summary line; the choice is
+  // saved on the device and shared with the thread sidebar's parent rows.
+  const { expanded: expandedParents, toggle: toggleParent } = useExpandedParents();
   // Child order is held between ticks so rows stay put while the user reads or taps them.
   const [childOrders, setChildOrders] = useState<ReadonlyMap<string, AgentChildOrder>>(
     () => new Map(),
@@ -294,6 +313,18 @@ export function AgentsBoard(props: {
       });
     },
     [setExpandedChildren],
+  );
+  const toggleChildList = useCallback(
+    (key: string) => {
+      // Opening the list sorts it afresh, as a newly shown list would.
+      setChildOrders((current) => {
+        const next = new Map(current);
+        next.delete(key);
+        return next;
+      });
+      toggleParent(key);
+    },
+    [toggleParent],
   );
   const arrangedChildren = useMemo(() => {
     const arranged = new Map<
@@ -330,13 +361,41 @@ export function AgentsBoard(props: {
         const live = children?.live ?? [];
         const childrenOpen = expandedChildren.has(key);
         const arranged = arrangedChildren.get(key);
+        const card: BoardRow = {
+          thread,
+          depth: 0,
+          rollup: live.length > 0 ? childRollup(live) : null,
+          pendingWork: workOf(thread),
+        };
+        if (live.length + settledChildren.length === 0) return [card];
+        const entries = [...live, ...settledChildren].map(({ thread: child }) => {
+          const status = agentThreadStatus(child, workOf(child));
+          return {
+            thread: child,
+            bucket: agentChildStatusBucket(status),
+            updatedAt: child.updatedAt,
+            statusLabel: agentThreadStatusLabel(status),
+          };
+        });
+        const avatars = selectChildAvatars(entries);
+        const listOpen = expandedParents.has(key);
+        const summary: BoardRow = {
+          kind: "card-children",
+          key,
+          open: listOpen,
+          counts: countChildStatusBuckets(entries, (entry) => entry.bucket),
+          avatars: avatars.shown.map(({ thread: child, bucket, statusLabel }) => ({
+            thread: child,
+            bucket,
+            statusLabel,
+            agent: threadAgentAppearance(child.profileSnapshot, profiles),
+          })),
+          overflow: avatars.overflow,
+        };
+        if (!listOpen) return [card, summary];
         return [
-          {
-            thread,
-            depth: 0,
-            rollup: live.length > 0 ? childRollup(live) : null,
-            pendingWork: workOf(thread),
-          },
+          card,
+          summary,
           ...(arranged?.rows ?? []).map((child) => ({
             thread: child.thread,
             depth: child.depth + 1,
@@ -376,7 +435,16 @@ export function AgentsBoard(props: {
         : []),
       ...(settledOpen ? append(board.lists.settled) : []),
     ];
-  }, [board, settledOpen, expandedCards, expandedChildren, arrangedChildren, pendingWork]);
+  }, [
+    board,
+    settledOpen,
+    expandedCards,
+    expandedChildren,
+    expandedParents,
+    arrangedChildren,
+    pendingWork,
+    profiles,
+  ]);
   const jumpItems = useMemo(
     () =>
       rows.flatMap((row) =>
@@ -484,6 +552,19 @@ export function AgentsBoard(props: {
   const selectedProfile = profiles.find((profile) => profile.profileId === profileId);
   const renderRow = useCallback(
     ({ item }: { item: (typeof rows)[number] }) => {
+      if ("kind" in item && item.kind === "card-children") {
+        return (
+          <AgentChildSummary
+            parentKey={item.key}
+            open={item.open}
+            counts={item.counts}
+            avatars={item.avatars}
+            overflow={item.overflow}
+            onToggle={toggleChildList}
+            onSelectThread={props.onSelectThread}
+          />
+        );
+      }
       if ("kind" in item) {
         const showOrHide = `${item.open ? "Hide" : "Show"} ${item.count}`;
         return item.kind === "settled" ? (
@@ -535,6 +616,7 @@ export function AgentsBoard(props: {
     [
       toggleCard,
       toggleChildren,
+      toggleChildList,
       moveTargetsFor,
       moveUnder,
       removeFromParent,
@@ -1141,7 +1223,6 @@ const AgentChatCard = memo(function AgentChatCard(props: AgentChatCardProps) {
                 {[
                   agentThreadStatusLabel(status),
                   agent?.name,
-                  rollup ? childRollupLabel(rollup) : null,
                   props.environmentLabel,
                   props.connected ? null : "Offline",
                 ]
@@ -1177,11 +1258,3 @@ const AgentChatCard = memo(function AgentChatCard(props: AgentChatCardProps) {
     </AgentCardDragSource>
   );
 });
-
-function childRollupLabel(rollup: ChildRollup) {
-  const parts = [`${rollup.total} child${rollup.total === 1 ? "" : "ren"}`];
-  if (rollup.working > 0) parts.push(`${rollup.working} working`);
-  if (rollup.waiting > 0) parts.push(`${rollup.waiting} waiting`);
-  if (rollup.attention > 0) parts.push(`${rollup.attention} need input`);
-  return parts.join(", ");
-}

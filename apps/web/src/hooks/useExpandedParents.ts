@@ -1,3 +1,4 @@
+import { toggleExpandedParentKey } from "@t3tools/client-runtime/state/child-status-counts";
 import * as Schema from "effect/Schema";
 
 import { useLocalStorage, writeLocalStorageValue } from "./useLocalStorage";
@@ -5,8 +6,6 @@ import { useLocalStorage, writeLocalStorageValue } from "./useLocalStorage";
 // Shared by the sidebar and the Agents board, so opening a parent's child
 // chats in one opens them in the other.
 const EXPANDED_PARENTS_KEY = "t3code:sidebar:expanded-parents";
-// Bounds the saved list; the oldest expansions fall off first.
-const EXPANDED_PARENTS_LIMIT = 200;
 const NO_EXPANDED_PARENTS: readonly string[] = [];
 const EXPANDED_PARENTS_SCHEMA = Schema.Array(Schema.String);
 
@@ -19,10 +18,7 @@ export function useExpandedParentKeys(): readonly string[] {
 export function toggleExpandedParent(parentKey: string) {
   writeLocalStorageValue(
     EXPANDED_PARENTS_KEY,
-    (keys) =>
-      keys.includes(parentKey)
-        ? keys.filter((key) => key !== parentKey)
-        : [...keys, parentKey].slice(-EXPANDED_PARENTS_LIMIT),
+    (keys) => toggleExpandedParentKey(keys, parentKey),
     NO_EXPANDED_PARENTS,
     EXPANDED_PARENTS_SCHEMA,
   );

@@ -28,7 +28,18 @@ import {
   sortPinnedThreadsByOrderKey,
   sortSettledThreads,
 } from "@t3tools/client-runtime/state/thread-sort";
-import { isListedThread, type EnvironmentId, type ProjectId } from "@t3tools/contracts";
+import {
+  CHILD_STATUS_BUCKETS,
+  emptyChildStatusCounts,
+  type ChildStatusBucket,
+  type ChildStatusCounts,
+} from "@t3tools/client-runtime/state/child-status-counts";
+import {
+  isListedThread,
+  threadParentRelationship,
+  type EnvironmentId,
+  type ProjectId,
+} from "@t3tools/contracts";
 import type { SnoozePresetSetting } from "@t3tools/contracts/settings";
 
 import type { ThreadListProvider } from "../../state/thread-list-environments";
@@ -299,6 +310,142 @@ export interface ThreadListV2Item {
   readonly pinned: boolean;
   readonly wokeAt: string | null;
   readonly isLast: boolean;
+  /** 0 for a top-level row; child chats sit one level in from their parent. */
+  readonly depth: number;
+  /** The child chats folded under this row, followed by their toggle line. */
+  readonly children: {
+    readonly counts: ChildStatusCounts;
+    readonly expanded: boolean;
+  } | null;
+}
+
+/**
+ * A child chat's bucket in its parent's count line, read from the status its
+ * own row shows; matches web's `sidebarChildBucket`. Guest requests wait on the
+ * owner, so they count as input; a settled child is done unless it still asks.
+ */
+export function threadListV2ChildBucket(
+  thread: Parameters<typeof resolveThreadListV2Status>[0] &
+    Pick<EnvironmentThreadShell, "settledOverride">,
+): ChildStatusBucket {
+  const status = resolveThreadListV2Status(thread);
+  if (status === "approval" || status === "input" || status === "request") return "needsInput";
+  if (thread.settledOverride === "settled") return "done";
+  if (status === "working") return "running";
+  if (status === "waiting") return "waiting";
+  if (status === "failed" || status === "limited") return "failed";
+  return "done";
+}
+
+function threadListV2Key(thread: Pick<EnvironmentThreadShell, "environmentId" | "id">): string {
+  return `${thread.environmentId}:${thread.id}`;
+}
+
+function threadListV2ParentKey(thread: EnvironmentThreadShell): string | null {
+  if (thread.parentThreadId == null || threadParentRelationship(thread) !== "child") return null;
+  return `${thread.parentEnvironmentId ?? thread.environmentId}:${thread.parentThreadId}`;
+}
+
+export interface ThreadListV2Nesting {
+  /** Direct children under each parent, in the order `threads` lists them. */
+  readonly childrenByParentKey: ReadonlyMap<string, readonly EnvironmentThreadShell[]>;
+  /** Bucket counts over each parent's whole subtree. */
+  readonly countsByParentKey: ReadonlyMap<string, ChildStatusCounts>;
+  readonly parentKeyByKey: ReadonlyMap<string, string>;
+}
+
+/**
+ * Child chats fold under their parent when the list draws that parent, so a
+ * child whose parent is filtered out, archived, or on a closed shelf keeps its
+ * own row, and so does a pinned child. As on web, a settled parent holds only
+ * settled children so it cannot bury live work.
+ */
+export function nestThreadListV2Children(
+  threads: readonly EnvironmentThreadShell[],
+  drawnKeys: ReadonlySet<string>,
+): ThreadListV2Nesting {
+  const byKey = new Map(threads.map((thread) => [threadListV2Key(thread), thread]));
+  const nested = new Map<string, boolean>();
+  const isNested = (key: string, visiting: Set<string>): boolean => {
+    const cached = nested.get(key);
+    if (cached !== undefined) return cached;
+    const thread = byKey.get(key)!;
+    const parentKey = threadListV2ParentKey(thread);
+    const parent = parentKey === null ? undefined : byKey.get(parentKey);
+    let result = false;
+    if (
+      parent !== undefined &&
+      parentKey !== null &&
+      thread.pinnedAt == null &&
+      !visiting.has(parentKey)
+    ) {
+      visiting.add(key);
+      result =
+        (parent.settledOverride !== "settled" || thread.settledOverride === "settled") &&
+        (drawnKeys.has(parentKey) || isNested(parentKey, visiting));
+      visiting.delete(key);
+    }
+    nested.set(key, result);
+    return result;
+  };
+  const childrenByParentKey = new Map<string, EnvironmentThreadShell[]>();
+  const parentKeyByKey = new Map<string, string>();
+  for (const [key, thread] of byKey) {
+    if (!isNested(key, new Set())) continue;
+    const parentKey = threadListV2ParentKey(thread)!;
+    parentKeyByKey.set(key, parentKey);
+    const siblings = childrenByParentKey.get(parentKey);
+    if (siblings === undefined) childrenByParentKey.set(parentKey, [thread]);
+    else siblings.push(thread);
+  }
+  const countsByParentKey = new Map<string, Record<ChildStatusBucket, number>>();
+  for (const [key, thread] of byKey) {
+    if (!parentKeyByKey.has(key)) continue;
+    const bucket = threadListV2ChildBucket(thread);
+    const seen = new Set<string>();
+    for (
+      let parentKey = parentKeyByKey.get(key);
+      parentKey !== undefined && !seen.has(parentKey);
+      parentKey = parentKeyByKey.get(parentKey)
+    ) {
+      seen.add(parentKey);
+      let counts = countsByParentKey.get(parentKey);
+      if (counts === undefined) {
+        counts = emptyChildStatusCounts();
+        countsByParentKey.set(parentKey, counts);
+      }
+      counts[bucket] += 1;
+    }
+  }
+  return { childrenByParentKey, countsByParentKey, parentKeyByKey };
+}
+
+/**
+ * The children each parent row shows: all of them while it is expanded,
+ * otherwise only the branch holding the open thread, so collapsing never hides
+ * the thread on screen.
+ */
+function resolveThreadListV2ShownChildren(
+  nesting: ThreadListV2Nesting,
+  expandedParentKeys: ReadonlySet<string>,
+  selectedThreadKey: string | null,
+): ReadonlyMap<string, readonly EnvironmentThreadShell[]> {
+  const selectedBranch = new Set<string>();
+  for (
+    let key = selectedThreadKey ?? undefined;
+    key !== undefined && !selectedBranch.has(key);
+    key = nesting.parentKeyByKey.get(key)
+  ) {
+    selectedBranch.add(key);
+  }
+  const shown = new Map<string, readonly EnvironmentThreadShell[]>();
+  for (const [parentKey, children] of nesting.childrenByParentKey) {
+    const visible = expandedParentKeys.has(parentKey)
+      ? children
+      : children.filter((child) => selectedBranch.has(threadListV2Key(child)));
+    if (visible.length > 0) shown.set(parentKey, visible);
+  }
+  return shown;
 }
 
 export interface ThreadListV2Layout {
@@ -357,6 +504,17 @@ export interface ThreadListV2SnoozedShelfListItem {
   readonly disabled: boolean;
 }
 
+export interface ThreadListV2ChildrenListItem {
+  readonly type: "v2-children";
+  readonly key: string;
+  /** `${environmentId}:${threadId}` of the parent row above. */
+  readonly parentKey: string;
+  readonly counts: ChildStatusCounts;
+  readonly expanded: boolean;
+  /** The parent row's depth; the line sits one level in from it. */
+  readonly depth: number;
+}
+
 export interface ThreadListV2SettledShelfListItem {
   readonly type: "v2-settled-shelf";
   readonly key: "v2-settled-shelf";
@@ -368,6 +526,7 @@ export interface ThreadListV2SettledShelfListItem {
 export type ThreadListV2ListItem =
   | ThreadListV2ThreadListItem
   | ThreadListV2PendingListItem
+  | ThreadListV2ChildrenListItem
   | ThreadListV2WorkingShelfListItem
   | ThreadListV2SnoozedShelfListItem
   | ThreadListV2SettledShelfListItem;
@@ -378,6 +537,7 @@ export function isThreadListV2ListItem(value: {
   return (
     value.type === "v2-thread" ||
     value.type === "v2-pending" ||
+    value.type === "v2-children" ||
     value.type === "v2-working-shelf" ||
     value.type === "v2-snoozed-shelf" ||
     value.type === "v2-settled-shelf"
@@ -399,6 +559,7 @@ export function threadListV2ListItemsAreEqual(
         previous.item.snoozed === item.item.snoozed &&
         previous.item.pinned === item.item.pinned &&
         previous.item.wokeAt === item.item.wokeAt &&
+        previous.item.depth === item.item.depth &&
         previous.snoozeWakeLabelText === item.snoozeWakeLabelText &&
         previous.timeLabel === item.timeLabel &&
         previous.snoozePresetMinute === item.snoozePresetMinute &&
@@ -414,6 +575,14 @@ export function threadListV2ListItemsAreEqual(
         previous.pendingTask === item.pendingTask &&
         previous.showPendingDivider === item.showPendingDivider &&
         previous.showTrailingDivider === item.showTrailingDivider
+      );
+    case "v2-children":
+      return (
+        previous.type === "v2-children" &&
+        previous.key === item.key &&
+        previous.expanded === item.expanded &&
+        previous.depth === item.depth &&
+        CHILD_STATUS_BUCKETS.every((bucket) => previous.counts[bucket] === item.counts[bucket])
       );
     case "v2-working-shelf":
       return (
@@ -478,7 +647,8 @@ export function buildThreadListV2ListItems(input: {
   readonly shelfPreferencesLoading?: boolean;
 }): ThreadListV2ListItem[] {
   const queuedThreadKeys = input.queuedThreadKeys?.size ? input.queuedThreadKeys : undefined;
-  const threadItems = input.items.map((item): ThreadListV2ListItem => {
+  // Each row, then its child chats' toggle line when it has one.
+  const threadItems = input.items.map((item): ThreadListV2ListItem[] => {
     const snoozeWakeLabelText =
       item.snoozed && item.thread.snoozedUntil != null && input.snoozeLabelNow !== undefined
         ? snoozeWakeLabel(item.thread.snoozedUntil, { now: input.snoozeLabelNow })
@@ -491,13 +661,11 @@ export function buildThreadListV2ListItems(input: {
       canSnooze(item.thread, { now: input.snoozeLabelNow })
         ? input.snoozeLabelNow
         : undefined;
-    const move =
-      item.variant === "card"
-        ? input.moveAvailability?.get(`${item.thread.environmentId}:${item.thread.id}`)
-        : undefined;
-    return {
+    const threadKey = threadListV2Key(item.thread);
+    const move = item.variant === "card" ? input.moveAvailability?.get(threadKey) : undefined;
+    const row: ThreadListV2ListItem = {
       type: "v2-thread",
-      key: `v2-thread:${item.thread.environmentId}:${item.thread.id}`,
+      key: `v2-thread:${threadKey}`,
       item,
       snoozeWakeLabelText,
       timeLabel: resolveThreadListV2ItemTimeLabel(item, snoozeWakeLabelText !== undefined),
@@ -508,7 +676,21 @@ export function buildThreadListV2ListItems(input: {
       canMoveUp: move?.canMoveUp === true,
       canMoveDown: move?.canMoveDown === true,
     };
+    return item.children === null
+      ? [row]
+      : [
+          row,
+          {
+            type: "v2-children",
+            key: `v2-children:${threadKey}`,
+            parentKey: threadKey,
+            counts: item.children.counts,
+            expanded: item.children.expanded,
+            depth: item.depth,
+          },
+        ];
   });
+  const rows = (start: number, end?: number) => threadItems.slice(start, end).flat();
   const pendingItems = input.pendingTasks.map((pendingTask, index): ThreadListV2ListItem => ({
     type: "v2-pending",
     key: `v2-${pendingTask.key}`,
@@ -525,7 +707,7 @@ export function buildThreadListV2ListItems(input: {
   const snoozedEnd = settledShelfHeaderIndex ?? threadItems.length;
   const workingEnd = snoozedShelfHeaderIndex ?? snoozedEnd;
   const activeEnd = workingShelfHeaderIndex ?? workingEnd;
-  const result: ThreadListV2ListItem[] = [...pendingItems, ...threadItems.slice(0, activeEnd)];
+  const result: ThreadListV2ListItem[] = [...pendingItems, ...rows(0, activeEnd)];
   const shelfDisabled = input.shelfPreferencesLoading === true;
   if (workingShelfHeaderIndex !== null && workingCount > 0) {
     result.push({
@@ -535,7 +717,7 @@ export function buildThreadListV2ListItems(input: {
       expanded: input.workingShelfExpanded === true,
       disabled: shelfDisabled,
     });
-    result.push(...threadItems.slice(workingShelfHeaderIndex, workingEnd));
+    result.push(...rows(workingShelfHeaderIndex, workingEnd));
   }
   if (snoozedShelfHeaderIndex !== null && snoozedCount > 0) {
     result.push({
@@ -545,7 +727,7 @@ export function buildThreadListV2ListItems(input: {
       expanded: input.snoozedShelfExpanded === true,
       disabled: shelfDisabled,
     });
-    result.push(...threadItems.slice(snoozedShelfHeaderIndex, snoozedEnd));
+    result.push(...rows(snoozedShelfHeaderIndex, snoozedEnd));
   }
   if (settledShelfHeaderIndex !== null && settledCount > 0) {
     result.push({
@@ -555,7 +737,7 @@ export function buildThreadListV2ListItems(input: {
       expanded: input.settledShelfExpanded !== false,
       disabled: shelfDisabled,
     });
-    result.push(...threadItems.slice(settledShelfHeaderIndex));
+    result.push(...rows(settledShelfHeaderIndex));
   }
   return result.map((entry, index) => {
     if (entry.type !== "v2-thread" && entry.type !== "v2-pending") return entry;
@@ -611,6 +793,8 @@ export function buildThreadListV2Items(input: {
   readonly snoozedShelfExpanded?: boolean;
   readonly settledShelfExpanded?: boolean;
   readonly selectedThreadKey?: string | null;
+  /** Parents whose child chats are open; every other parent starts collapsed. */
+  readonly expandedParentKeys?: ReadonlySet<string>;
   readonly queuedThreadKeys?: ReadonlySet<string>;
   /** Whether the shelf may list a settled row yet; older settled rows load in pages. */
   readonly isListedSettled?: (thread: EnvironmentThreadShell) => boolean;
@@ -726,6 +910,9 @@ export function buildThreadListV2Items(input: {
         pinned: pinnedThreads.has(thread),
         wokeAt: slim.has(thread) ? null : resolveThreadListV2WokeAt(thread, { now }),
         isLast: index === results.length - 1,
+        // Matches stay flat, children included, as in the web sidebar's search.
+        depth: 0,
+        children: null,
       })),
       hiddenSettledCount: 0,
       listedSettledThreads: [],
@@ -786,64 +973,67 @@ export function buildThreadListV2Items(input: {
           (thread) => `${thread.environmentId}:${thread.id}` === selectedThreadKey,
         );
 
-  const items: ThreadListV2Item[] = [];
-  for (const thread of applyPendingThreadOrder(
+  const orderedPinned = applyPendingThreadOrder(
     sortPinnedThreadsByOrderKey(pinned),
     "pinned",
     pending,
-  )) {
+  );
+  const nesting = nestThreadListV2Children(
+    [...orderedPinned, ...orderedActive, ...orderedWorking, ...orderedSnoozed, ...orderedSettled],
+    new Set(
+      [
+        ...orderedPinned,
+        ...orderedActive,
+        ...visibleWorking,
+        ...visibleSnoozed,
+        ...visibleSettled,
+      ].map(threadListV2Key),
+    ),
+  );
+  const shownChildren = resolveThreadListV2ShownChildren(
+    nesting,
+    input.expandedParentKeys ?? new Set(),
+    selectedThreadKey,
+  );
+  // Child chats drawn under their parent leave their own section.
+  const topLevel = (threads: readonly EnvironmentThreadShell[]) =>
+    nesting.parentKeyByKey.size === 0
+      ? threads
+      : threads.filter((thread) => !nesting.parentKeyByKey.has(threadListV2Key(thread)));
+  // A child keeps its own section's look under a parent from another section.
+  const snoozedSet = new Set(orderedSnoozed);
+  const settledSet = new Set(settled);
+  const pinnedSet = new Set(pinned);
+  const items: ThreadListV2Item[] = [];
+  const pushTree = (thread: EnvironmentThreadShell, depth: number) => {
+    const key = threadListV2Key(thread);
+    const slim = snoozedSet.has(thread) || settledSet.has(thread);
+    const counts = nesting.countsByParentKey.get(key);
     items.push({
       thread,
-      variant: "card",
-      snoozed: false,
-      pinned: true,
-      wokeAt: resolveThreadListV2WokeAt(thread, { now }),
+      variant: slim ? "slim" : "card",
+      snoozed: snoozedSet.has(thread),
+      pinned: pinnedSet.has(thread),
+      wokeAt: slim ? null : resolveThreadListV2WokeAt(thread, { now }),
       isLast: false,
+      depth,
+      children:
+        counts === undefined
+          ? null
+          : { counts, expanded: input.expandedParentKeys?.has(key) === true },
     });
-  }
-  for (const thread of orderedActive) {
-    items.push({
-      thread,
-      variant: "card",
-      snoozed: false,
-      pinned: false,
-      wokeAt: resolveThreadListV2WokeAt(thread, { now }),
-      isLast: false,
-    });
-  }
-  const workingShelfHeaderIndex = orderedWorking.length > 0 ? items.length : null;
-  for (const thread of visibleWorking) {
-    items.push({
-      thread,
-      variant: "card",
-      snoozed: false,
-      pinned: false,
-      wokeAt: resolveThreadListV2WokeAt(thread, { now }),
-      isLast: false,
-    });
-  }
-  const snoozedShelfHeaderIndex = orderedSnoozed.length > 0 ? items.length : null;
-  for (const thread of visibleSnoozed) {
-    items.push({
-      thread,
-      variant: "slim",
-      snoozed: true,
-      pinned: false,
-      wokeAt: null,
-      isLast: false,
-    });
-  }
+    for (const child of shownChildren.get(key) ?? []) pushTree(child, depth + 1);
+  };
+  for (const thread of topLevel(orderedPinned)) pushTree(thread, 0);
+  for (const thread of topLevel(orderedActive)) pushTree(thread, 0);
+  const topLevelWorking = topLevel(orderedWorking);
+  const workingShelfHeaderIndex = topLevelWorking.length > 0 ? items.length : null;
+  for (const thread of topLevel(visibleWorking)) pushTree(thread, 0);
+  const topLevelSnoozed = topLevel(orderedSnoozed);
+  const snoozedShelfHeaderIndex = topLevelSnoozed.length > 0 ? items.length : null;
+  for (const thread of topLevel(visibleSnoozed)) pushTree(thread, 0);
   const settledShelfHeaderIndex = settledTotal > 0 ? items.length : null;
-  for (const thread of visibleSettled) {
-    items.push({
-      thread,
-      variant: "slim",
-      snoozed: false,
-      pinned: false,
-      wokeAt: null,
-      isLast: false,
-    });
-  }
+  for (const thread of topLevel(visibleSettled)) pushTree(thread, 0);
   const last = items.at(-1);
   if (last) {
     items[items.length - 1] = { ...last, isLast: true };
@@ -852,9 +1042,9 @@ export function buildThreadListV2Items(input: {
     items,
     hiddenSettledCount: Math.max(0, settledTotal - pagedSettled.length),
     listedSettledThreads: listedSettled,
-    workingCount: orderedWorking.length,
+    workingCount: topLevelWorking.length,
     workingShelfHeaderIndex,
-    snoozedCount: orderedSnoozed.length,
+    snoozedCount: topLevelSnoozed.length,
     snoozedShelfHeaderIndex,
     settledCount: settledTotal,
     settledShelfHeaderIndex,

@@ -39,6 +39,7 @@ import {
   resolveThreadListV2Status,
   resolveThreadListV2WokeAt,
   sortThreadsForListV2,
+  threadListV2ChildBucket,
   threadListV2ListItemsAreEqual,
   threadHasUnseenCompletion,
   type ThreadListV2ListItem,
@@ -1725,5 +1726,157 @@ describe("Working section beta", () => {
       "v2-settled-shelf",
       "settled",
     ]);
+  });
+});
+
+describe("child chats under their parent", () => {
+  const running = {
+    status: "running" as const,
+    activeRunId: null,
+    providerInstanceId: ProviderInstanceId.make("codex"),
+    providerName: "Codex",
+    lastError: null,
+    updatedAt: NOW,
+  };
+  const parent = makeThread({
+    id: ThreadId.make("parent"),
+    title: "parent",
+    createdAt: "2026-06-01T03:00:00.000Z",
+  });
+  const child = (id: string, input: Partial<EnvironmentThreadShell> = {}) =>
+    makeThread({
+      id: ThreadId.make(id),
+      title: id,
+      createdAt: "2026-06-01T02:00:00.000Z",
+      parentThreadId: ThreadId.make("parent"),
+      parentRelationship: "child",
+      ...input,
+    });
+  const asking = child("asking", { hasPendingApprovals: true });
+  const working = child("working", { runtime: running });
+  const other = makeThread({
+    id: ThreadId.make("other"),
+    title: "other",
+    createdAt: "2026-06-01T01:00:00.000Z",
+  });
+  const build = (input: Partial<Parameters<typeof buildThreadListV2Items>[0]> = {}) =>
+    buildThreadListV2Items({
+      threads: [parent, asking, working, other],
+      environmentId: null,
+      searchQuery: "",
+      now: NOW,
+      ...input,
+    });
+  const rows = (layout: ReturnType<typeof buildThreadListV2Items>) =>
+    layout.items.map((item) => `${"  ".repeat(item.depth)}${item.thread.id}`);
+  const parentKey = `${environmentId}:parent`;
+
+  it("folds children behind a counted toggle until the parent is expanded", () => {
+    const collapsed = build();
+    expect(rows(collapsed)).toEqual(["parent", "other"]);
+    expect(collapsed.items[0]?.children).toEqual({
+      counts: { needsInput: 1, running: 1, waiting: 0, failed: 0, done: 0 },
+      expanded: false,
+    });
+    expect(
+      buildThreadListV2ListItems({ items: collapsed.items, pendingTasks: [] }).map(
+        (item) => item.key,
+      ),
+    ).toEqual([
+      `v2-thread:${parentKey}`,
+      `v2-children:${parentKey}`,
+      `v2-thread:${environmentId}:other`,
+    ]);
+
+    const expanded = build({ expandedParentKeys: new Set([parentKey]) });
+    expect(rows(expanded)).toEqual(["parent", "  asking", "  working", "other"]);
+    expect(expanded.items[0]?.children?.expanded).toBe(true);
+  });
+
+  it("keeps the open child on screen under its collapsed parent", () => {
+    expect(rows(build({ selectedThreadKey: `${environmentId}:working` }))).toEqual([
+      "parent",
+      "  working",
+      "other",
+    ]);
+  });
+
+  it("keeps a child top-level when its parent is not drawn, pinned, or settled over live work", () => {
+    const snoozedParent = makeThread({
+      id: ThreadId.make("parent"),
+      title: "parent",
+      snoozedAt: NOW,
+      snoozedUntil: "2026-06-03T00:00:00.000Z",
+    });
+    const onClosedShelf = build({ threads: [snoozedParent, working] });
+    expect(rows(onClosedShelf)).toEqual(["working"]);
+    expect(onClosedShelf.snoozedCount).toBe(1);
+    const onOpenShelf = build({ threads: [snoozedParent, working], snoozedShelfExpanded: true });
+    expect(rows(onOpenShelf)).toEqual(["parent"]);
+    expect(onOpenShelf.items[0]).toMatchObject({ variant: "slim", snoozed: true });
+
+    const pinnedChild = child("pinned-child", { pinnedAt: NOW });
+    expect(rows(build({ threads: [parent, pinnedChild] }))).toEqual(["pinned-child", "parent"]);
+
+    const settledParent = makeThread({
+      id: ThreadId.make("parent"),
+      title: "parent",
+      settledOverride: "settled",
+      settledAt: NOW,
+    });
+    const settledChild = child("settled-child", { settledOverride: "settled", settledAt: NOW });
+    expect(rows(build({ threads: [settledParent, working, settledChild] }))).toEqual([
+      "working",
+      "parent",
+    ]);
+  });
+
+  it("does not count nested children on their own shelf", () => {
+    const layout = build({
+      threads: [parent, working],
+      workingShelfEnabled: true,
+      isWorking: (thread) => thread.runtime?.status === "running",
+    });
+    expect(rows(layout)).toEqual(["parent"]);
+    expect(layout.workingCount).toBe(0);
+    expect(layout.workingShelfHeaderIndex).toBeNull();
+  });
+
+  it("lists search matches flat, children included", () => {
+    const layout = build({ searchQuery: "working" });
+    expect(rows(layout)).toEqual(["working"]);
+    expect(layout.items[0]?.children).toBeNull();
+  });
+
+  it("buckets a child by the status its row shows", () => {
+    const cases = [
+      [{ hasPendingApprovals: true }, "needsInput"],
+      [{ hasPendingUserInput: true, settledOverride: "settled" }, "needsInput"],
+      [{ pendingGuestMessageCount: 1 }, "needsInput"],
+      [{ runtime: running }, "running"],
+      [{ runtime: running, settledOverride: "settled" }, "done"],
+      [{ runtime: { ...running, status: "idle" } }, "waiting"],
+      [{ runtime: { ...running, status: "failed" } }, "failed"],
+      [{}, "done"],
+    ] as const;
+    for (const [input, bucket] of cases) {
+      expect(threadListV2ChildBucket(child("c", input as Partial<EnvironmentThreadShell>))).toBe(
+        bucket,
+      );
+    }
+  });
+
+  it("compares toggle items by count value", () => {
+    const toggle = (needsInput: number, expanded = false): ThreadListV2ListItem => ({
+      type: "v2-children",
+      key: `v2-children:${parentKey}`,
+      parentKey,
+      counts: { needsInput, running: 0, waiting: 0, failed: 0, done: 1 },
+      expanded,
+      depth: 0,
+    });
+    expect(threadListV2ListItemsAreEqual(toggle(1), toggle(1))).toBe(true);
+    expect(threadListV2ListItemsAreEqual(toggle(1), toggle(2))).toBe(false);
+    expect(threadListV2ListItemsAreEqual(toggle(1), toggle(1, true))).toBe(false);
   });
 });

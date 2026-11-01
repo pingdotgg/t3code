@@ -5,6 +5,7 @@ import {
   agentChildStatusBucket,
   countChildStatusBuckets,
   selectChildAvatars,
+  toggleExpandedParentKey,
   type ChildStatusBucket,
 } from "./childStatusCounts.ts";
 
@@ -68,5 +69,17 @@ describe("child avatars", () => {
     expect(shown).toHaveLength(6);
     expect(shown.every(({ bucket }) => bucket !== "running")).toBe(true);
     expect(overflow).toBe(1);
+  });
+});
+
+describe("expanded parent keys", () => {
+  it("toggles a parent and drops the oldest past the bound", () => {
+    expect(toggleExpandedParentKey(["a", "b"], "a")).toEqual(["b"]);
+    expect(toggleExpandedParentKey(["a"], "b")).toEqual(["a", "b"]);
+    const full = Array.from({ length: 200 }, (_, index) => `p${index}`);
+    const next = toggleExpandedParentKey(full, "new");
+    expect(next).toHaveLength(200);
+    expect(next[0]).toBe("p1");
+    expect(next.at(-1)).toBe("new");
   });
 });

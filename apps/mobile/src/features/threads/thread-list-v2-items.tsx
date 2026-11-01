@@ -32,6 +32,7 @@ import {
   type EnvironmentMachineKind,
 } from "@t3tools/contracts";
 import type { SnoozePresetSetting } from "@t3tools/contracts/settings";
+import type { ChildStatusCounts } from "@t3tools/client-runtime/state/child-status-counts";
 import { canSnooze } from "@t3tools/client-runtime/state/thread-settled";
 import { threadChipCopyTarget } from "@t3tools/client-runtime/thread-reference";
 import type { MenuAction } from "@react-native-menu/menu";
@@ -45,6 +46,11 @@ import { AppText as Text } from "../../components/ui/AppText";
 import { Menu } from "../../components/ui/Menu";
 import { EnvironmentMachineSymbol } from "../../components/EnvironmentMachineSymbol";
 import { AgentAvatar } from "../../components/AgentAvatar";
+import {
+  ChildStatusSummaryText,
+  childStatusAccessibilityLabel,
+  sameChildStatusCounts,
+} from "../../components/ChildStatus";
 import { ProjectFavicon } from "../../components/ProjectFavicon";
 import { ProviderIcon, ProviderInstanceIcon } from "../../components/ProviderIcon";
 import { useNowAfter } from "../../lib/clock";
@@ -304,6 +310,62 @@ export const ThreadListV2SettledShelfHeader = memo(function ThreadListV2SettledS
 ) {
   return <ThreadListV2ShelfHeader {...props} kind="settled" />;
 });
+
+// Points per nesting level, for child rows and their parent's toggle line.
+const THREAD_LIST_V2_NEST_INSET = 16;
+
+type ThreadListV2ChildrenToggleProps = {
+  readonly parentKey: string;
+  readonly counts: ChildStatusCounts;
+  readonly expanded: boolean;
+  /** The parent row's depth; the line sits one level in from it. */
+  readonly depth: number;
+  readonly pane?: "screen" | "sidebar";
+  readonly onToggle: (parentKey: string) => void;
+};
+
+/** A compact line under a parent row counting its child chats by state; tapping it shows or hides them. */
+export const ThreadListV2ChildrenToggle = memo(
+  function ThreadListV2ChildrenToggle(props: ThreadListV2ChildrenToggleProps) {
+    const sidebarPane = props.pane === "sidebar";
+    return (
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel={childStatusAccessibilityLabel(props.counts)}
+        accessibilityState={{ expanded: props.expanded }}
+        hitSlop={{ top: 4, bottom: 4 }}
+        onPress={() => props.onToggle(props.parentKey)}
+        className="min-h-8 flex-row items-center gap-1.5 py-1 pe-4"
+        style={({ pressed }) => ({
+          opacity: pressed ? 0.6 : 1,
+          paddingStart: (sidebarPane ? 12 : 20) + (props.depth + 1) * THREAD_LIST_V2_NEST_INSET,
+        })}
+      >
+        <SymbolView
+          name="chevron.down"
+          size={10}
+          tintColorClassName={
+            sidebarPane ? "accent-drawer-foreground-muted" : "accent-foreground-muted"
+          }
+          type="monochrome"
+          style={{ transform: [{ rotate: props.expanded ? "0deg" : "-90deg" }] }}
+        />
+        <ChildStatusSummaryText
+          counts={props.counts}
+          className={cn("min-w-0 flex-1", sidebarPane && "text-drawer-foreground-muted")}
+        />
+      </Pressable>
+    );
+  },
+  // The list rebuilds counts on each pass, so compare them by value.
+  (previous, next) =>
+    previous.parentKey === next.parentKey &&
+    previous.expanded === next.expanded &&
+    previous.depth === next.depth &&
+    previous.pane === next.pane &&
+    previous.onToggle === next.onToggle &&
+    sameChildStatusCounts(previous.counts, next.counts),
+);
 
 export const ThreadListV2ShowMoreRow = memo(function ThreadListV2ShowMoreRow(props: {
   readonly pane?: "screen" | "sidebar";
@@ -583,6 +645,8 @@ export const ThreadListV2PendingRow = memo(function ThreadListV2PendingRow(props
 export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
   readonly thread: EnvironmentThreadShell;
   readonly variant: "card" | "slim";
+  /** Nesting level under a parent row; 0 for a top-level row. */
+  readonly depth?: number;
   readonly hasQueuedMessages?: boolean;
   readonly snoozed?: boolean;
   readonly pinned?: boolean;
@@ -1439,11 +1503,16 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
       </RowPressable>
     );
 
+  const nestInset = props.depth
+    ? { marginStart: props.depth * THREAD_LIST_V2_NEST_INSET }
+    : undefined;
   if (!canOperateThread)
-    return <View style={rowAppearance.swipeContainerStyle}>{rowContent(() => {})}</View>;
+    return (
+      <View style={[rowAppearance.swipeContainerStyle, nestInset]}>{rowContent(() => {})}</View>
+    );
 
   return (
-    <View collapsable={false}>
+    <View collapsable={false} style={nestInset}>
       {customSnoozeOpen && (
         <CustomSnoozeSheet onClose={() => setCustomSnoozeOpen(false)} onSnooze={handleSnooze} />
       )}

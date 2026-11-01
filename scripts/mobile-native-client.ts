@@ -709,15 +709,21 @@ const build = Effect.fn("nativeClient.build")(function* (
     } else if (platform === "ios") {
       const output = yield* fs.makeTempDirectoryScoped({ prefix: "t3-native-client-" });
       yield* command("pod", ["install"], true, path.join(mobile, "ios"));
+      // Prebuild names the workspace and scheme after the variant's app name, which forks change.
+      const workspace = (yield* fs.readDirectory(path.join(mobile, "ios"))).find((entry) =>
+        entry.endsWith(".xcworkspace"),
+      );
+      if (workspace === undefined) return yield* Effect.die("Prebuild left no iOS workspace.");
+      const project = workspace.slice(0, -".xcworkspace".length);
       // One device-independent arm64 simulator build installs on every iPhone and iPad simulator.
       yield* command(
         "xcrun",
         [
           "xcodebuild",
           "-workspace",
-          path.join(mobile, "ios/T3CodeDev.xcworkspace"),
+          path.join(mobile, "ios", workspace),
           "-scheme",
-          "T3CodeDev",
+          project,
           "-configuration",
           "Debug",
           "-destination",
@@ -731,7 +737,7 @@ const build = Effect.fn("nativeClient.build")(function* (
         true,
       );
       yield* command("ditto", [
-        path.join(output, "Build/Products/Debug-iphonesimulator", artifactNames.ios),
+        path.join(output, "Build/Products/Debug-iphonesimulator", `${project}.app`),
         path.join(staging, artifactNames.ios),
       ]);
     } else {
