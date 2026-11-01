@@ -1,5 +1,9 @@
 import {
   type EnvironmentId,
+  type ModelSelection,
+  type ServerSettings,
+  type ProjectId,
+  resolveProjectProviderInstanceEnabled,
   type UsageLimitsReport,
   type ProviderInstanceId,
   type ProviderConsumeResetCreditInput,
@@ -17,7 +21,93 @@ const MINUTE = 60_000;
 const HOUR = 60 * MINUTE;
 const DAY = 24 * HOUR;
 
+export function exhaustedUsageWindow(
+  provider: ServerProvider | undefined,
+  now: number,
+  model?: string,
+) {
+  const exhausted = (provider?.usageLimits?.windows ?? []).filter(
+    (window) =>
+      (window.usedPercent ?? 0) >= 100 &&
+      (!window.resetsAt ||
+        !Number.isFinite(Date.parse(window.resetsAt)) ||
+        Date.parse(window.resetsAt) > now),
+  );
+  if (model === undefined) return exhausted[0];
+  switch (provider?.driver) {
+    case "cursor": {
+      const api = exhausted.find((window) => window.id === "apiPercentUsed");
+      const auto = exhausted.find((window) => window.id === "autoPercentUsed");
+      return /^(auto|default|grok|composer)/.test(model) ? auto && api : api;
+    }
+    case "antigravity": {
+      const family = model.match(/^(gemini|claude|gpt)-/)?.[1];
+      return exhausted.find((window) => {
+        const pool = window.id.match(/^(gemini|claude|gpt|3p)-/)?.[1];
+        return (
+          pool === undefined ||
+          family === undefined ||
+          pool === family ||
+          (pool === "3p" && (family === "claude" || family === "gpt"))
+        );
+      });
+    }
+    case "opencode":
+      return exhausted.find(
+        (window) => !window.id.startsWith("go_") || model.startsWith("opencode-go/"),
+      );
+    default:
+      return exhausted[0];
+  }
+}
+
+export function resolveNewThreadModelSelection(input: {
+  readonly defaultSelection: ModelSelection | null;
+  readonly explicitSelection?: ModelSelection | null;
+  readonly fallbackSelection: ModelSelection | null;
+  readonly providers: readonly ServerProvider[];
+  readonly now: number;
+  readonly settings?: ServerSettings;
+  readonly projectId?: ProjectId | null;
+}) {
+  const selection = input.explicitSelection ?? input.defaultSelection;
+  const unchanged = { selection, fallback: null };
+  if (input.explicitSelection || !selection || !input.fallbackSelection) return unchanged;
+  const provider = input.providers.find((entry) => entry.instanceId === selection.instanceId);
+  const window = exhaustedUsageWindow(provider, input.now, selection.model);
+  const fallback = input.providers.find(
+    (entry) => entry.instanceId === input.fallbackSelection?.instanceId,
+  );
+  if (
+    !provider ||
+    !window ||
+    !fallback?.enabled ||
+    !fallback.installed ||
+    fallback.auth.status === "unauthenticated" ||
+    !isProviderAvailable(fallback) ||
+    exhaustedUsageWindow(fallback, input.now, input.fallbackSelection.model) ||
+    (input.settings &&
+      !resolveProjectProviderInstanceEnabled(
+        input.settings,
+        input.projectId ?? null,
+        fallback.instanceId,
+      ))
+  )
+    return unchanged;
+  return {
+    selection: input.fallbackSelection,
+    fallback: { provider, resetsAt: window.resetsAt ?? null },
+  };
+}
+
 export const CHATGPT_USAGE_URL = "https://chatgpt.com/#settings/Usage";
+export const CHATGPT_USAGE_LIMIT_CODE = "subscription_sharing_usage_limit_exceeded";
+/** A ChatGPT Business admin caps plan use in other apps; only the admin can raise it. */
+export const CHATGPT_WORKSPACE_USAGE_LIMIT_CODE =
+  "subscription_sharing_workplace_individual_usage_limit_exceeded";
+/** OpenAI's partner guidelines fix this wording; the user sends it to their admin themselves. */
+export const CHATGPT_WORKSPACE_ADMIN_REQUEST =
+  "I've reached the limit for using my ChatGPT plan in T3 Code. Could you increase our workspace's usage limits so I can continue?\n\nGo to admin.openai.com → Workspace → Usage limits. Thank you!";
 
 export function usesChatGptSharing(provider: ServerProvider | null | undefined): boolean {
   return provider?.auth.status === "authenticated" && provider.auth.subscriptionSharing === true;
@@ -50,9 +140,7 @@ function cursorUsageWindowRank(id: string): number {
   return rank < 0 ? CURSOR_USAGE_WINDOWS.length : rank;
 }
 
-export function providersWithLimits(
-  providers: readonly ServerProvider[],
-): readonly ServerProvider[] {
+function providersWithLimits(providers: readonly ServerProvider[]): readonly ServerProvider[] {
   return providers.filter(
     (provider) =>
       provider.enabled &&
@@ -125,10 +213,7 @@ const nativeReport = (provider: ServerProvider): AccountReport => ({
   usageLimits: provider.usageLimits,
 });
 
-/**
- * Pass every enabled login, read or not, so an unreadable workspace still
- * counts as one.
- */
+// Include every enabled login, even unreadable workspaces.
 function accountKeyResolver(reports: Iterable<AccountReport>) {
   const workspaces = new Map<string, Set<string>>();
   for (const report of reports) {
@@ -170,12 +255,9 @@ export function collectLimitAccounts(presentations: LimitPresentations): readonl
   const accounts = new Map<string, LimitAccount>();
   const creditSources = new Map<string, LimitAccount>();
   const hubRedeems = new Map<string, LimitAccount>();
+  const planSources = new Map<string, LimitAccount>();
   const merge = (key: string, next: LimitAccount) => {
-    // Redeeming through a hub also clears the routing cooldown that hub holds
-    // for the account. Redeeming natively against the same subscription resets
-    // it upstream but leaves the hub refusing to route to the account until
-    // its own cooldown expires, so a hub target wins the redemption outright
-    // while the displayed balance still follows the freshest read.
+    // Prefer hub redemption to clear its routing cooldown too; displayed balance still follows the freshest read.
     const previousHub = hubRedeems.get(key);
     if (
       next.redeem &&
@@ -191,6 +273,14 @@ export function collectLimitAccounts(presentations: LimitPresentations): readonl
         Date.parse(next.limits.checkedAt) > Date.parse(previousCredit.limits.checkedAt))
     ) {
       creditSources.set(key, next);
+    }
+    const previousPlan = planSources.get(key);
+    if (
+      next.plan &&
+      (!previousPlan ||
+        Date.parse(next.limits.checkedAt) > Date.parse(previousPlan.limits.checkedAt))
+    ) {
+      planSources.set(key, next);
     }
     const previous = accounts.get(key);
     if (!previous) {
@@ -210,7 +300,7 @@ export function collectLimitAccounts(presentations: LimitPresentations): readonl
     accounts.set(key, {
       ...previous,
       displayName: previous.displayName ?? next.displayName,
-      plan: previous.plan ?? next.plan,
+      plan: planSources.get(key)?.plan ?? previous.plan ?? next.plan,
       accentColor: previous.accentColor ?? next.accentColor,
       environments,
       sourceLabel: environments.length > 0 ? null : (previous.sourceLabel ?? next.sourceLabel),
@@ -404,11 +494,7 @@ function accountSortName(account: LimitAccount): string {
   return (account.displayName ?? account.email ?? account.key).toLowerCase();
 }
 
-/**
- * Codex ids are slots, not allowances: a weekly-only plan reports its weekly
- * window as `primary`, other plans as `secondary`. Its windows pool by kind;
- * other drivers' ids name distinct allowances.
- */
+// Codex ids name slots, so pool by kind; other drivers' ids identify distinct allowances.
 function poolKey(driver: ServerProvider["driver"], window: ServerProviderUsageWindow): string {
   return driver === "codex" ? window.kind : `${window.kind}:${window.id}`;
 }
@@ -477,9 +563,7 @@ function poolWindows(accounts: readonly LimitAccount[], now: number): readonly L
     const first = members[0]!.window;
     const id = members[0]!.account.driver === "codex" ? key : first.id;
     const usedPercent = members.reduce((sum, m) => sum + m.window.usedPercent, 0) / members.length;
-    // Pace compares spend against the clock, so it is judged only over the
-    // members that have a clock; a window with no reset would otherwise
-    // count as spend with no time elapsed and skew the verdict.
+    // Judge pace only for windows with reset clocks; others add spend without elapsed time.
     const timed = members.flatMap((m) => {
       const share = elapsedShare(m.window, now);
       return share === null ? [] : [{ used: m.window.usedPercent, elapsed: share }];
@@ -544,6 +628,15 @@ export function elapsedShare(window: ServerProviderUsageWindow, now: number): nu
   const length = window.windowDurationMins * MINUTE;
   if (length <= 0) return null;
   return Math.max(0, Math.min(1, (length - (resetsAt - now)) / length));
+}
+
+// Bars show quota remaining, so even pace tracks time remaining.
+export function paceRemainingPercent(
+  window: ServerProviderUsageWindow,
+  now: number,
+): number | null {
+  const elapsed = elapsedShare(window, now);
+  return elapsed === null ? null : Math.round((1 - elapsed) * 100);
 }
 
 export type LimitPace = "ahead" | "on" | "under";
@@ -653,25 +746,52 @@ export function collectProviderUsageLimits(
 ): UsageLimitsReport | null {
   const selected = providers.find((provider) => provider.instanceId === instanceId);
   if (!selected || !hasProviderUsageLimits(selected.driver, providers, sources)) return null;
-  const native = providersWithLimits(providers).filter(
-    (provider) => provider.driver === selected.driver,
-  );
   const resolveKey = accountKeyResolver([
     ...providers.filter((provider) => provider.enabled).map(nativeReport),
     ...sources.flatMap((source) => source.accounts),
   ]);
-  const nativeAccounts = new Set(
-    native.flatMap((provider) => {
+  type NativeSnapshot = { provider: ServerProvider; limits: ServerProviderUsageLimits };
+  const nativeByAccount = new Map<
+    string,
+    { usage: NativeSnapshot; credits: NativeSnapshot | null }
+  >();
+  for (const provider of providersWithLimits(providers)) {
+    if (provider.driver !== selected.driver || !provider.usageLimits) continue;
+    const snapshot = { provider, limits: provider.usageLimits };
+    const key = resolveKey(nativeReport(provider)) ?? `instance:${provider.instanceId}`;
+    const previous = nativeByAccount.get(key);
+    const previousUsable = previous ? limitsNotice(previous.usage.limits) === null : false;
+    const usable = limitsNotice(snapshot.limits) === null;
+    const providerWins =
+      !previous ||
+      (usable && !previousUsable) ||
+      (usable === previousUsable &&
+        Date.parse(snapshot.limits.checkedAt) > Date.parse(previous.usage.limits.checkedAt));
+    const previousCredit = previous?.credits;
+    const credits =
+      snapshot.limits.resetCredits &&
+      (!previousCredit ||
+        Date.parse(snapshot.limits.checkedAt) > Date.parse(previousCredit.limits.checkedAt))
+        ? snapshot
+        : (previousCredit ?? null);
+    nativeByAccount.set(key, {
+      usage: providerWins ? snapshot : previous.usage,
+      credits,
+    });
+  }
+  const native = [...nativeByAccount.values()];
+  const nativeAccountKeys = new Set(
+    native.flatMap(({ usage: { provider, limits } }) => {
       const key = resolveKey(nativeReport(provider));
-      return key && provider.usageLimits?.windows.length && !provider.usageLimits.unavailable
-        ? [key]
-        : [];
+      return key && limits.windows.length && !limits.unavailable ? [key] : [];
     }),
   );
   const accounts: Array<UsageLimitsReport["accounts"][number]> = [];
   const notices: string[] = [];
-  for (const provider of native) {
-    if (!provider.usageLimits) continue;
+  for (const {
+    usage: { provider, limits },
+    credits,
+  } of native) {
     const key = resolveKey(nativeReport(provider));
     const hubCredits = sources
       .flatMap((source) => source.accounts.map((account) => ({ source, account })))
@@ -689,9 +809,12 @@ export function collectProviderUsageLimits(
     const hubCreditId = hubCredits?.account.usageLimits.resetCredits?.nextCreditId;
     const showHubCredits =
       hubCredits &&
-      (!provider.usageLimits.resetCredits ||
+      (!credits ||
         Date.parse(hubCredits.account.usageLimits.checkedAt) >
-          Date.parse(provider.usageLimits.checkedAt));
+          Date.parse(credits.limits.checkedAt));
+    const shownCredits = showHubCredits
+      ? hubCredits.account.usageLimits.resetCredits
+      : credits?.limits.resetCredits;
     accounts.push({
       id: provider.instanceId,
       driver: provider.driver,
@@ -705,20 +828,18 @@ export function collectProviderUsageLimits(
               accountId: hubCredits.account.id,
               creditId: hubCreditId,
             }
-          : { instanceId: provider.instanceId },
+          : { instanceId: credits?.provider.instanceId ?? provider.instanceId },
       ...(provider.displayName ? { displayName: provider.displayName } : {}),
       ...(provider.accentColor ? { accentColor: provider.accentColor } : {}),
       ...(provider.auth.email ? { email: provider.auth.email } : {}),
-      limits: showHubCredits
-        ? { ...provider.usageLimits, resetCredits: hubCredits.account.usageLimits.resetCredits }
-        : provider.usageLimits,
+      limits: shownCredits ? { ...limits, resetCredits: shownCredits } : limits,
     });
   }
   for (const source of sources) {
     const matching = source.accounts.filter((account) => account.driver === selected.driver);
     for (const account of matching) {
       const key = resolveKey(account);
-      if (key && nativeAccounts.has(key)) continue;
+      if (key && nativeAccountKeys.has(key)) continue;
       accounts.push({
         id: `${source.id}:${account.id}`,
         driver: account.driver,

@@ -31,6 +31,8 @@ export const ProjectCloneSnapshot = Schema.Struct({
   stage: ProjectCloneStage,
   percent: Schema.NullOr(Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: 100 }))),
   detail: Schema.NullOr(Schema.String.check(Schema.isMaxLength(PROJECT_CLONE_DETAIL_MAX_LENGTH))),
+  /** Git has printed nothing for a while; `detail` is no longer current. Older servers omit it. */
+  stalled: Schema.optionalKey(Schema.Boolean),
   error: Schema.NullOr(Schema.String.check(Schema.isMaxLength(PROJECT_CLONE_ERROR_MAX_LENGTH))),
   startedAt: IsoDateTime,
   endedAt: Schema.NullOr(IsoDateTime),
@@ -98,10 +100,12 @@ export function projectCloneDisplayName(
 }
 
 export function projectCloneProgressSummary(
-  snapshot: Pick<ProjectCloneSnapshot, "stage" | "percent" | "detail">,
+  snapshot: Pick<ProjectCloneSnapshot, "stage" | "percent" | "detail" | "stalled">,
 ): string {
   const parts = [projectCloneStageLabel(snapshot.stage)];
   if (snapshot.percent !== null) parts.push(`${snapshot.percent}%`);
-  if (snapshot.detail) parts.push(snapshot.detail);
+  // The detail carries git's last transfer speed, which a stall makes a lie.
+  if (snapshot.stalled) parts.push("Stalled");
+  else if (snapshot.detail) parts.push(snapshot.detail);
   return parts.join(" · ");
 }

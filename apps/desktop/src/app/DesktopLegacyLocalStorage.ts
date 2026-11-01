@@ -10,10 +10,7 @@ import * as ElectronProtocol from "../electron/ElectronProtocol.ts";
 import { readChromiumLocalStorage } from "./chromiumLocalStorage.ts";
 import * as DesktopEnvironment from "./DesktopEnvironment.ts";
 
-/**
- * The V1 profile is only read, never opened by Chromium, so this works while V1
- * is still running.
- */
+/** Reads the V1 profile without opening it in Chromium, even while V1 runs. */
 export class DesktopLegacyLocalStorage extends Context.Service<
   DesktopLegacyLocalStorage,
   {
@@ -34,8 +31,8 @@ const make = Effect.gen(function* () {
   const markerPath = yield* Ref.make(Option.none<string>());
 
   /** Newest file mtime in a directory; appending to a log leaves the directory's own mtime alone. */
-  const newestFileMtime = (directory: string) =>
-    Effect.gen(function* () {
+  const newestFileMtime = Effect.fn("DesktopLegacyLocalStorage.newestFileMtime")(
+    function* (directory: string) {
       let newest = 0;
       for (const name of yield* fs.readDirectory(directory)) {
         const info = yield* fs.stat(path.join(directory, name)).pipe(Effect.option);
@@ -47,7 +44,9 @@ const make = Effect.gen(function* () {
         newest = Math.max(newest, mtime);
       }
       return newest;
-    }).pipe(Effect.option);
+    },
+    (effect, _directory) => effect.pipe(Effect.option),
+  );
 
   const findV1LocalStorage = Effect.gen(function* () {
     let newest: { readonly directory: string; readonly mtime: number } | null = null;

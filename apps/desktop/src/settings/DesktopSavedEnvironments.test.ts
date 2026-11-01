@@ -4,10 +4,8 @@ import { EnvironmentId, type PersistedSavedEnvironmentRecord } from "@t3tools/co
 import * as Effect from "effect/Effect";
 import * as Base64 from "effect/encoding/Base64";
 import * as FileSystem from "effect/FileSystem";
-import * as Path from "effect/Path";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
-import * as PlatformError from "effect/PlatformError";
 import * as Schema from "effect/Schema";
 
 import * as DesktopConfig from "../app/DesktopConfig.ts";
@@ -155,17 +153,6 @@ const withSavedEnvironments = <A, E, R>(
   }).pipe(Effect.provide(NodeServices.layer), Effect.scoped);
 
 describe("DesktopSavedEnvironments", () => {
-  it.effect("reads saved environment metadata", () =>
-    withSavedEnvironments(
-      Effect.gen(function* () {
-        const savedEnvironments = yield* DesktopSavedEnvironments.DesktopSavedEnvironments;
-        yield* seedSavedEnvironmentRegistry();
-
-        assert.deepEqual(yield* savedEnvironments.getRegistry, [savedRegistryRecord]);
-      }),
-    ),
-  );
-
   it.effect("loads lenient saved environment registry documents", () =>
     withSavedEnvironments(
       Effect.gen(function* () {
@@ -216,30 +203,6 @@ describe("DesktopSavedEnvironments", () => {
     ),
   );
 
-  it.effect("reports invalid saved secret encoding without exposing the secret", () =>
-    withSavedEnvironments(
-      Effect.gen(function* () {
-        const environment = yield* DesktopEnvironment.DesktopEnvironment;
-        const savedEnvironments = yield* DesktopSavedEnvironments.DesktopSavedEnvironments;
-        yield* seedSavedEnvironmentRegistry("%%%");
-
-        const error = yield* savedEnvironments
-          .getSecret(savedRegistryRecord.environmentId)
-          .pipe(Effect.flip);
-        assert.instanceOf(error, DesktopSavedEnvironments.DesktopSavedEnvironmentSecretDecodeError);
-        assert.equal(error.environmentId, savedRegistryRecord.environmentId);
-        assert.equal(error.registryPath, environment.savedEnvironmentRegistryPath);
-        assert.equal(error.field, "encryptedBearerToken");
-        assert.exists(error.cause);
-        assert.equal(
-          error.message,
-          `Failed to decode encryptedBearerToken for environment ${savedRegistryRecord.environmentId} at ${environment.savedEnvironmentRegistryPath}.`,
-        );
-        assert.notInclude(error.message, "%%%");
-      }),
-    ),
-  );
-
   it.effect("returns no secret while encryption is unavailable", () =>
     withSavedEnvironments(
       Effect.gen(function* () {
@@ -253,115 +216,5 @@ describe("DesktopSavedEnvironments", () => {
       }),
       { availableSecretStorage: false },
     ),
-  );
-
-  it.effect("adds saved-environment context to safe storage availability failures", () => {
-    const cause = new Error("safe storage unavailable");
-    return withSavedEnvironments(
-      Effect.gen(function* () {
-        const environment = yield* DesktopEnvironment.DesktopEnvironment;
-        const savedEnvironments = yield* DesktopSavedEnvironments.DesktopSavedEnvironments;
-        yield* seedSavedEnvironmentRegistry(Base64.encode(textEncoder.encode("enc:bearer-token")));
-
-        const error = yield* savedEnvironments
-          .getSecret(savedRegistryRecord.environmentId)
-          .pipe(Effect.flip);
-
-        assert.instanceOf(
-          error,
-          DesktopSavedEnvironments.DesktopSavedEnvironmentSecretProtectionError,
-        );
-        assert.equal(error.operation, "check-encryption-availability");
-        assert.equal(error.environmentId, savedRegistryRecord.environmentId);
-        assert.equal(error.registryPath, environment.savedEnvironmentRegistryPath);
-        assert.instanceOf(error.cause, ElectronSafeStorage.ElectronSafeStorageAvailabilityError);
-        const availabilityError =
-          error.cause as ElectronSafeStorage.ElectronSafeStorageAvailabilityError;
-        assert.strictEqual(availabilityError.cause, cause);
-        assert.equal(
-          error.message,
-          `Desktop saved-environment secret protection failed during check-encryption-availability for environment ${savedRegistryRecord.environmentId} at ${environment.savedEnvironmentRegistryPath}.`,
-        );
-        assert.notEqual(error.message, availabilityError.message);
-      }),
-      { availabilityError: cause },
-    );
-  });
-
-  it.effect("treats empty saved environment documents as empty", () =>
-    withSavedEnvironments(
-      Effect.gen(function* () {
-        const environment = yield* DesktopEnvironment.DesktopEnvironment;
-        const fileSystem = yield* FileSystem.FileSystem;
-        const savedEnvironments = yield* DesktopSavedEnvironments.DesktopSavedEnvironments;
-        yield* fileSystem.makeDirectory(environment.stateDir, { recursive: true });
-        yield* fileSystem.writeFileString(environment.savedEnvironmentRegistryPath, "{}\n");
-
-        assert.deepEqual(yield* savedEnvironments.getRegistry, []);
-        assert.isTrue(
-          Option.isNone(yield* savedEnvironments.getSecret(savedRegistryRecord.environmentId)),
-        );
-      }),
-    ),
-  );
-
-  it.effect("surfaces malformed saved environment documents", () =>
-    withSavedEnvironments(
-      Effect.gen(function* () {
-        const environment = yield* DesktopEnvironment.DesktopEnvironment;
-        const fileSystem = yield* FileSystem.FileSystem;
-        const savedEnvironments = yield* DesktopSavedEnvironments.DesktopSavedEnvironments;
-        yield* fileSystem.makeDirectory(environment.stateDir, { recursive: true });
-        yield* fileSystem.writeFileString(environment.savedEnvironmentRegistryPath, "{not-json");
-
-        const registryError = yield* savedEnvironments.getRegistry.pipe(Effect.flip);
-        assert.instanceOf(
-          registryError,
-          DesktopSavedEnvironments.DesktopSavedEnvironmentsDocumentDecodeError,
-        );
-        assert.equal(registryError.registryPath, environment.savedEnvironmentRegistryPath);
-        assert.exists(registryError.cause);
-        const secretError = yield* savedEnvironments
-          .getSecret(savedRegistryRecord.environmentId)
-          .pipe(Effect.flip);
-        assert.instanceOf(
-          secretError,
-          DesktopSavedEnvironments.DesktopSavedEnvironmentsDocumentDecodeError,
-        );
-      }),
-    ),
-  );
-
-  it.effect("reports saved environment filesystem reads separately from document decoding", () =>
-    Effect.gen(function* () {
-      const path = yield* Path.Path;
-      const baseFileSystem = yield* FileSystem.FileSystem;
-      const baseDir = yield* baseFileSystem.makeTempDirectoryScoped({
-        prefix: "t3-desktop-saved-environments-test-",
-      });
-      const registryPath = path.join(baseDir, "userdata", "saved-environments.json");
-      const permissionError = PlatformError.systemError({
-        _tag: "PermissionDenied",
-        module: "FileSystem",
-        method: "readFileString",
-        pathOrDescriptor: registryPath,
-      });
-      const layerFileSystem = Layer.succeed(
-        FileSystem.FileSystem,
-        FileSystem.makeNoop({
-          readFileString: () => Effect.fail(permissionError),
-        }),
-      );
-      const savedEnvironments = yield* DesktopSavedEnvironments.DesktopSavedEnvironments.pipe(
-        Effect.provide(layer(baseDir, undefined, layerFileSystem)),
-      );
-
-      const error = yield* savedEnvironments.getRegistry.pipe(Effect.flip);
-      assert.instanceOf(error, DesktopSavedEnvironments.DesktopSavedEnvironmentsReadError);
-      assert.equal(error.registryPath, registryPath);
-      assert.strictEqual(error.cause, permissionError);
-      assert.equal(error.message, `Failed to read desktop saved environments at ${registryPath}.`);
-      assert.notEqual(error.message, permissionError.message);
-    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
   );
 });

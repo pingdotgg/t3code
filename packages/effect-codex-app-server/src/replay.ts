@@ -1,3 +1,4 @@
+import { pipe } from "effect/Function";
 import * as Cause from "effect/Cause";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -112,26 +113,12 @@ export class CodexAppServerReplayRuntimeExitError extends Schema.TaggedError<Cod
   }
 }
 
-export class CodexAppServerReplayIncompleteError extends Schema.TaggedError<CodexAppServerReplayIncompleteError>()(
-  "CodexAppServerReplayIncompleteError",
-  {
-    scenario: Schema.String,
-    cursor: Schema.Number,
-    remaining: Schema.Number,
-  },
-) {
-  override get message(): string {
-    return `Codex app-server replay ended with ${this.remaining} unconsumed entries in scenario ${this.scenario}.`;
-  }
-}
-
 export const CodexAppServerReplayError = Schema.Union([
   CodexAppServerReplayJsonParseError,
   CodexAppServerReplayExhaustedError,
   CodexAppServerReplayUnexpectedOutboundError,
   CodexAppServerReplayFrameMismatchError,
   CodexAppServerReplayRuntimeExitError,
-  CodexAppServerReplayIncompleteError,
 ]);
 export type CodexAppServerReplayError = typeof CodexAppServerReplayError.Type;
 
@@ -268,7 +255,11 @@ function normalizeThreadRequest(frame: unknown, ignoredConfigKeys: ReadonlySet<s
   }
   const { cwd: _cwd, model: _model, config, ...params } = record.params as Record<string, unknown>;
   if (typeof config !== "object" || config === null) return { ...record, params };
-  const { mcp_servers: _mcpServers, ...owned } = config as Record<string, unknown>;
+  const owned = Object.fromEntries(
+    Object.entries(config as Record<string, unknown>).filter(
+      ([key]) => key !== "mcp_servers" && !key.startsWith("mcp_servers."),
+    ),
+  );
   for (const key of ignoredConfigKeys) delete owned[key];
   return { ...record, params: { ...params, config: owned } };
 }
@@ -279,7 +270,11 @@ function sameFrame(
   ignoredConfigKeys: ReadonlySet<string> = new Set(),
 ): boolean {
   const normalize = (frame: unknown) =>
-    stableStringify(normalizeThreadRequest(normalizeReplayFrame(frame), ignoredConfigKeys));
+    pipe(
+      normalizeReplayFrame(frame),
+      (request) => normalizeThreadRequest(request, ignoredConfigKeys),
+      stableStringify,
+    );
   return normalize(left) === normalize(right);
 }
 

@@ -16,17 +16,19 @@ const statKey = (ref: PullRequestRef) =>
 export function persistPullRequestStats(): QueryPersistence<PullRequestListStatsResult> {
   const row = persistQuery(PullRequestDiffStat);
   return {
-    load: (environmentId, key) =>
-      Effect.gen(function* () {
+    load: Effect.fn("pullRequestStatsPersistence.load")(
+      function* (environmentId, key) {
         const [, input] = yield* Schema.decodeEffect(requestKey)(key);
         const rows = yield* Effect.forEach(input.refs, (ref) =>
           row.load(environmentId, statKey(ref)),
         );
         const stats = rows.flatMap((value) => (Option.isSome(value) ? [value.value] : []));
         return stats.length ? Option.some({ stats }) : Option.none();
-      }).pipe(Effect.orElseSucceed(() => Option.none())),
-    save: (environmentId, key, result) =>
-      Effect.gen(function* () {
+      },
+      Effect.orElseSucceed(() => Option.none()),
+    ),
+    save: Effect.fn("pullRequestStatsPersistence.save")(
+      function* (environmentId, key, result) {
         const [, input] = yield* Schema.decodeEffect(requestKey)(key);
         yield* Effect.forEach(result.stats, (stat) => {
           const ref = input.refs.find(
@@ -37,6 +39,8 @@ export function persistPullRequestStats(): QueryPersistence<PullRequestListStats
           );
           return ref ? row.save(environmentId, statKey(ref), stat) : Effect.void;
         });
-      }).pipe(Effect.ignore),
+      },
+      (effect, _environmentId, _key, _result) => effect.pipe(Effect.ignore),
+    ),
   };
 }

@@ -45,10 +45,8 @@ export function resolveChatCanvasLayout({
     ? detailsCard.left - DETAILS_CARD_CLEARANCE
     : container.width - padding;
   const normalWidth = Math.max(0, Math.min(centeredWidth, laneRight - padding));
-  const normalLeft = Math.max(
-    padding,
-    Math.min((container.width - normalWidth) / 2, laneRight - normalWidth),
-  );
+  const canvasCenterLeft = (container.width - normalWidth) / 2;
+  const normalLeft = Math.max(padding, Math.min(canvasCenterLeft, laneRight - normalWidth));
   let chat = {
     left: normalLeft,
     width: normalWidth,
@@ -59,8 +57,7 @@ export function resolveChatCanvasLayout({
   let overlapsChat = false;
   if (preview && container.width > 0 && container.height > 0) {
     frame = resolvePreviewMiniPlayerFrame({ ...preview, container });
-    // Reserve a readable chat lane only while it leaves room to drag. Otherwise
-    // the container's right edge would pin the preview at every pointer position.
+    // Reserve a chat lane only if the preview still has room to drag.
     const minimumPreviewX =
       preview.lastInteraction === "resize" ||
       container.width <= padding + minChatWidth + frame.width + GAP * 2

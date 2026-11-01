@@ -22,6 +22,10 @@ export class SessionControl {
   readonly agentId: string | null;
   private readonly onGenerationChange: () => void;
   private tail: Promise<unknown> = Promise.resolve();
+  private latestHuman: {
+    entry: { viewerId: string; key: string; run: () => Promise<void> };
+    result: Promise<void>;
+  } | null = null;
   private pending: Promise<void> = Promise.resolve();
   private readonly handoff = new Set<Promise<void>>();
   private owner: string | null = null;
@@ -42,6 +46,7 @@ export class SessionControl {
   }
 
   private enqueue<A>(run: () => Promise<A>): Promise<A> {
+    this.latestHuman = null;
     const result = this.tail.then(run);
     this.tail = result.then(
       () => this.pending,
@@ -68,18 +73,25 @@ export class SessionControl {
   }
 
   private changeOwner(owner: string | null) {
+    this.latestHuman = null;
     this.owner = owner;
     this.epoch++;
     this.onGenerationChange();
   }
 
-  private async action<A>(allowed: () => boolean, run: () => Promise<A>) {
+  private async action<A>(allowed: () => boolean, run: () => Promise<A>, deadlineMs?: number) {
     this.assertOpen();
     if (!allowed()) throw new BrowserControlInterrupted("You do not control this browser tab.");
     const epoch = this.epoch;
     return this.enqueue(async () => {
       this.assertOpen();
       if (epoch !== this.epoch || !allowed()) throw new BrowserControlInterrupted();
+      if (deadlineMs !== undefined && performance.now() >= deadlineMs) {
+        throw new DOMException(
+          "This browser request expired before it could start.",
+          "TimeoutError",
+        );
+      }
       return run();
     });
   }
@@ -88,7 +100,7 @@ export class SessionControl {
     return this.agentId === null || this.agentId === agentId;
   }
 
-  agent<A>(agentId: string, run: () => Promise<A>) {
+  agent<A>(agentId: string, run: () => Promise<A>, deadlineMs?: number) {
     if (!this.agentMayAct(agentId))
       return Promise.reject(
         new BrowserControlInterrupted("This tab belongs to another agent.", "agentMismatch"),
@@ -97,17 +109,14 @@ export class SessionControl {
       return Promise.reject(
         new BrowserControlInterrupted("A human controls this tab.", "humanControl"),
       );
-    return this.action(() => this.agentMayAct(agentId) && this.owner === null, run);
+    return this.action(() => this.agentMayAct(agentId) && this.owner === null, run, deadlineMs);
   }
 
   agentCanActNow(agentId: string) {
     return this.agentMayAct(agentId) && this.owner === null;
   }
 
-  /**
-   * A read that needs no control and does not queue, so an agent can look at
-   * a page while a human drives it without holding up the human's input.
-   */
+  /** Read without control or queueing so agents can observe without delaying human input. */
   observe<A>(run: () => Promise<A>) {
     this.assertOpen();
     return run();
@@ -123,6 +132,23 @@ export class SessionControl {
 
   human<A>(viewerId: string, run: () => Promise<A>) {
     return this.action(() => this.owner === viewerId, run);
+  }
+
+  /** Replace only adjacent waiting work; the running action and intervening actions keep their order. */
+  humanLatest(viewerId: string, key: string, run: () => Promise<void>): Promise<void> {
+    if (this.closed || this.owner !== viewerId) return this.human(viewerId, run);
+    const latest = this.latestHuman;
+    if (latest?.entry.viewerId === viewerId && latest.entry.key === key) {
+      latest.entry.run = run;
+      return latest.result;
+    }
+    const entry = { viewerId, key, run };
+    const result = this.human(viewerId, async () => {
+      if (this.latestHuman?.entry === entry) this.latestHuman = null;
+      await entry.run();
+    });
+    this.latestHuman = { entry, result };
+    return result;
   }
 
   async take(viewerId: string) {

@@ -1,5 +1,9 @@
 // @effect-diagnostics nodeBuiltinImport:off - Effect has no incremental digest.
-import { ProviderDriverKind, type ProviderInstallState } from "@t3tools/contracts";
+import {
+  ProviderDriverKind,
+  type ProviderInstallState,
+  type ServerProviderCompatibilityAdvisory,
+} from "@t3tools/contracts";
 import { cliArchiveTarCommand } from "@t3tools/shared/cliRelease";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { resolveCommandPath, resolveSpawnCommand } from "@t3tools/shared/shell";
@@ -96,7 +100,7 @@ const RELEASES: Readonly<Record<string, CodexReleaseAsset>> = {
     archiveBytes: 153839991,
   },
 };
-export const resolveCodexReleaseAsset = (platform: NodeJS.Platform, arch: string) =>
+const resolveCodexReleaseAsset = (platform: NodeJS.Platform, arch: string) =>
   RELEASES[`${platform}-${arch}`] ?? null;
 export class CodexInstallationError extends Schema.TaggedError<CodexInstallationError>()(
   "CodexInstallationError",
@@ -125,6 +129,9 @@ interface CodexInstallationService {
   readonly managedDirectory: string;
   readonly resolve: () => Effect.Effect<CodexExecutable, CodexInstallationError>;
   readonly acquire: () => Effect.Effect<CodexExecutable, CodexInstallationError, Scope.Scope>;
+  readonly compatibility: (
+    version: string,
+  ) => Effect.Effect<ServerProviderCompatibilityAdvisory | undefined>;
   readonly start: Effect.Effect<ProviderInstallState, CodexInstallationError>;
   readonly cancel: (
     operationId: string,
@@ -202,7 +209,7 @@ export const makeCodexInstallation = Effect.fn("makeCodexInstallation")(function
         "resolve",
         "The managed Codex installation record is invalid. Reinstall Codex.",
       );
-    return yield* Schema.decodeUnknownEffect(Schema.fromJsonString(schema))(
+    return yield* Schema.decodeEffect(Schema.fromJsonString(schema))(
       yield* fs.readFileString(file),
     );
   });
@@ -329,6 +336,47 @@ export const makeCodexInstallation = Effect.fn("makeCodexInstallation")(function
       );
     return output;
   }, Effect.scoped);
+  // Native Codex needs its adjacent host; launchers resolve their own payloads.
+  const hasCodeModeHost = Effect.fn("CodexInstallation.hasCodeModeHost")(
+    function* (realExecutablePath: string) {
+      if (/^(?:volta-shim|mise|aqua-proxy)(?:\.exe)?$/iu.test(path.basename(realExecutablePath)))
+        return true;
+      if (platform === "win32") {
+        if (path.extname(realExecutablePath).toLowerCase() !== ".exe") return true;
+        for (const extension of [".bunx", ".shim"]) {
+          const marker = yield* fs
+            .stat(realExecutablePath.slice(0, -4) + extension)
+            .pipe(Effect.option);
+          if (
+            Option.isSome(marker) &&
+            marker.value.type === "File" &&
+            Number(marker.value.size) > 0
+          )
+            return true;
+        }
+      } else {
+        const header = yield* fs.open(realExecutablePath, { flag: "r" }).pipe(
+          Effect.flatMap((file) => file.readAlloc(2)),
+          Effect.orElseSucceed(() => Option.none()),
+        );
+        if (Option.isSome(header) && header.value[0] === 0x23 && header.value[1] === 0x21)
+          return true;
+      }
+      const info = yield* fs.stat(
+        path.join(
+          path.dirname(realExecutablePath),
+          `codex-code-mode-host${platform === "win32" ? ".exe" : ""}`,
+        ),
+      );
+      return (
+        info.type === "File" &&
+        Number(info.size) > 0 &&
+        (platform === "win32" || (info.mode & 0o111) !== 0)
+      );
+    },
+    Effect.scoped,
+    Effect.orElseSucceed(() => false),
+  );
   const localCache = new Map<string, { fingerprint: string; executable: CodexExecutable | null }>();
   const resolveLocal = Effect.fn("CodexInstallation.resolveLocal")(
     function* () {
@@ -347,6 +395,7 @@ export const makeCodexInstallation = Effect.fn("makeCodexInstallation")(function
         )
       )
         return null;
+      if (!(yield* hasCodeModeHost(realExecutablePath))) return null;
       const info = yield* fs.stat(executablePath);
       const fingerprint = `${realExecutablePath}:${info.size}:${Option.getOrUndefined(info.mtime)?.getTime()}:${Option.getOrUndefined(info.ino)}`;
       const cached = localCache.get(executablePath);
@@ -497,6 +546,14 @@ export const makeCodexInstallation = Effect.fn("makeCodexInstallation")(function
         ),
         Stream.run(fs.sink(archivePath, { flag: "wx", mode: 0o600 })),
         Effect.timeout("45 minutes"),
+        Effect.catchTags({
+          TimeoutError: (cause) =>
+            installationError(
+              "download",
+              "The Codex download timed out. Retry installation.",
+              cause,
+            ),
+        }),
       );
       if (downloadedBytes !== release.archiveBytes || hash.digest("hex") !== release.sha256)
         return yield* installationError(
@@ -555,8 +612,7 @@ export const makeCodexInstallation = Effect.fn("makeCodexInstallation")(function
         }),
         { flag: "wx", mode: 0o600 },
       );
-      // On Windows, Defender and kernel process rundown can briefly hold the
-      // verified codex.exe handle open right after `--version` exits.
+      // Windows Defender or process rundown may retain codex.exe handles briefly after --version exits.
       const renameRuntime = fs.rename(runtime, destination);
       yield* platform === "win32"
         ? renameRuntime.pipe(Effect.retry({ times: 10, schedule: Schedule.spaced("100 millis") }))
@@ -564,6 +620,20 @@ export const makeCodexInstallation = Effect.fn("makeCodexInstallation")(function
       yield* activate();
     },
     Effect.scoped,
+    Effect.catchTags({
+      HttpClientError: (cause) => {
+        const httpStatus =
+          cause.reason._tag === "StatusCodeError" ? cause.reason.response.status : undefined;
+        return new CodexInstallationError({
+          operation: "download",
+          detail:
+            httpStatus === undefined
+              ? "The Codex download was interrupted. Check your internet connection, then retry installation."
+              : `The Codex download server returned HTTP ${httpStatus}. Try again later.`,
+          cause,
+        });
+      },
+    }),
     Effect.mapError(
       wrapFailure(
         "install",
@@ -699,9 +769,7 @@ export const makeCodexInstallation = Effect.fn("makeCodexInstallation")(function
   );
 
   yield* Effect.gen(function* () {
-    // Two servers can share a home, and writes below a staging directory do not
-    // refresh its mtime, so only directories far older than any real install
-    // (download is capped at 45 minutes) are treated as abandoned.
+    // Shared-home installs do not refresh parent mtimes; remove only staging directories far older than the 45-minute download cap.
     let canRemove = false;
     if (yield* fs.exists(managedDirectory)) {
       const entries = yield* fs
@@ -720,8 +788,7 @@ export const makeCodexInstallation = Effect.fn("makeCodexInstallation")(function
         if (now - modifiedAt < STAGING_STALE_AFTER_MS) continue;
         yield* fs.remove(target, { recursive: true, force: true }).pipe(Effect.ignore);
       }
-      // The empty root itself stays: deleting it could race another server
-      // creating a staging directory inside. An unreadable root stays removable.
+      // Keep the empty root to avoid racing new staging directories; unreadable roots remain removable.
       const remaining = yield* fs.readDirectory(managedDirectory).pipe(Effect.option);
       canRemove = Option.isNone(remaining) || remaining.value.length > 0;
     }
@@ -758,6 +825,7 @@ export const makeCodexInstallation = Effect.fn("makeCodexInstallation")(function
     managedDirectory,
     resolve,
     acquire,
+    compatibility,
     start,
     cancel,
     state: SubscriptionRef.get(state),
