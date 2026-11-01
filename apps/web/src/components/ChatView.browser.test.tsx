@@ -4,7 +4,7 @@ import { ThreadId } from "@t3tools/contracts";
 import { DEFAULT_CLIENT_SETTINGS } from "@t3tools/contracts/settings";
 import type * as Context from "effect/Context";
 import { expect, it, vi } from "vite-plus/test";
-import { page } from "vite-plus/test/browser";
+import { page, userEvent } from "vite-plus/test/browser";
 
 import { AppRoot } from "~/AppRoot";
 // The route loads ChatView lazily, and its first transform (React Compiler over ~4k lines)
@@ -64,4 +64,60 @@ it("a new draft does not load its reserved thread before the server lists it", a
     .filter((url) => url.includes(`/api/orchestration/threads/${threadId}/`));
   // A 404 here marks the thread deleted, and the view never loads it once the send creates it.
   expect(threadRequests).toEqual([]);
+});
+
+async function draftRouterWithPrompt(prompt: string) {
+  __setClientSettingsForTests({
+    ...DEFAULT_CLIENT_SETTINGS,
+    onboardingCompletedAt: "2026-01-01T00:00:00.000Z",
+  });
+  const draftId = DraftId.make("draft-28338");
+  const drafts = useComposerDraftStore.getState();
+  drafts.setProjectDraftThreadId(scopeProjectRef(ENVIRONMENT_ID, PROJECT_ID), draftId, {
+    threadId: ThreadId.make("thread-28338"),
+  });
+  drafts.setPrompt(draftId, prompt);
+  const router = getRouter(createMemoryHistory({ initialEntries: [`/draft/${draftId}`] }));
+  await router.load();
+  return router;
+}
+
+it("a stashed prompt ending in a file chip restores with the chip", async () => {
+  using _environment = installFakeEnvironment([]);
+  const router = await draftRouterWithPrompt("Check [package.json](package.json) ");
+  await using _app = await render(<AppRoot router={router} />, {
+    // AppRoot brings its own router.
+    router: false,
+  });
+  const chip = page.getByRole("button", { name: "Preview package.json" });
+  await expect.element(chip).toBeVisible();
+
+  await userEvent.click(page.getByTestId("composer-editor"));
+  await userEvent.keyboard("{ControlOrMeta>}s{/ControlOrMeta}");
+  await expect.element(chip).not.toBeInTheDocument();
+  await userEvent.keyboard("{ControlOrMeta>}s{/ControlOrMeta}");
+
+  const editor = page.getByTestId("composer-editor");
+  await vi.waitFor(() => expect(editor.element().textContent).toContain("Check"));
+  expect(editor.element().textContent).not.toContain("[package.json](package.json)");
+  await expect.element(chip).toBeVisible();
+});
+
+it("a stashed unfinished mention query restores as text", async () => {
+  using _environment = installFakeEnvironment([]);
+  const router = await draftRouterWithPrompt("Check @Rea");
+  await using _app = await render(<AppRoot router={router} />, {
+    // AppRoot brings its own router.
+    router: false,
+  });
+  const editor = page.getByTestId("composer-editor");
+  await vi.waitFor(() => expect(editor.element().textContent).toContain("Check @Rea"));
+
+  await userEvent.click(editor);
+  await userEvent.keyboard("{ControlOrMeta>}s{/ControlOrMeta}");
+  await vi.waitFor(() => expect(editor.element().textContent).not.toContain("Check"));
+  await userEvent.keyboard("{ControlOrMeta>}s{/ControlOrMeta}");
+
+  await vi.waitFor(() => expect(editor.element().textContent).toContain("Check @Rea"));
+  await expect.element(page.getByRole("button", { name: "Preview Rea" })).not.toBeInTheDocument();
 });
