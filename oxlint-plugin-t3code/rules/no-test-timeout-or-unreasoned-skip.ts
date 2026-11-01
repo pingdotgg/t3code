@@ -60,24 +60,6 @@ const hasOption = (node: unknown, names: ReadonlySet<string>) => {
   );
 };
 
-const FUNCTION_TYPES = new Set(["ArrowFunctionExpression", "FunctionExpression"]);
-const CALLBACK_OR_OPTIONS_TYPES = new Set([
-  ...FUNCTION_TYPES,
-  "CallExpression",
-  "Identifier",
-  "MemberExpression",
-  "ObjectExpression",
-]);
-
-// After an inline body the third argument can only be a timeout or options. After options or a
-// reference it may be the body itself, so only a value that cannot be one counts as a timeout.
-const isPositionalTimeout = (second: unknown, third: unknown) =>
-  Option.exists(unwrapExpression(third), (expression) =>
-    Option.exists(unwrapExpression(second), (body) => FUNCTION_TYPES.has(body.type))
-      ? expression.type !== "ObjectExpression"
-      : !CALLBACK_OR_OPTIONS_TYPES.has(expression.type),
-  );
-
 const isStringLiteral = (node: unknown) =>
   Option.exists(
     unwrapExpression(node),
@@ -103,6 +85,41 @@ export default defineRule({
   create(context) {
     if (!TEST_FILE_PATTERN.test(context.filename)) return {};
     const checkTimeouts = !LIVE_TEST_FILE_PATTERN.test(context.filename);
+
+    const initializerOf = (identifier: Extract<ESTree.Node, { type: "Identifier" }>): unknown => {
+      let scope = context.sourceCode.getScope(identifier);
+      while (true) {
+        const variable = scope.set.get(identifier.name);
+        if (variable !== undefined) {
+          const [def] = variable.defs;
+          return def?.node.type === "VariableDeclarator" ? def.node.init : undefined;
+        }
+        if (scope.upper === null) return undefined;
+        scope = scope.upper;
+      }
+    };
+
+    // Vitest reads a number after the body as the timeout whatever the second argument is, so
+    // judge the value rather than its position; a body or options object is never a number.
+    const isNumberValued = (node: unknown, followBinding = true): boolean =>
+      Option.exists(unwrapExpression(node), (expression) => {
+        switch (expression.type) {
+          case "Literal":
+            return typeof expression.value === "number";
+          case "BinaryExpression":
+          case "UnaryExpression":
+            return true;
+          case "ConditionalExpression":
+            return (
+              isNumberValued(expression.consequent, followBinding) ||
+              isNumberValued(expression.alternate, followBinding)
+            );
+          case "Identifier":
+            return followBinding && isNumberValued(initializerOf(expression), false);
+          default:
+            return false;
+        }
+      });
 
     const reportUnlessQuarantined = (node: ESTree.Node) => {
       const comments = context.sourceCode.getCommentsBefore(enclosingStatement(node));
@@ -139,7 +156,7 @@ export default defineRule({
         // `test(name, { timeout }, fn)` is the options-first spelling of the same override.
         if (
           checkTimeouts &&
-          (isPositionalTimeout(second, third) ||
+          (isNumberValued(third) ||
             hasOption(third, TIMEOUT_OPTIONS) ||
             hasOption(second, TIMEOUT_OPTIONS))
         ) {

@@ -13,7 +13,9 @@ describe(RULE, () => {
   rule.valid(
     "allows tests without overrides, conditional skips, and waitFor timeouts",
     `
-      import { describe, it, vi } from "vitest";
+      import { describe, it } from "@effect/vitest";
+      import * as Effect from "effect/Effect";
+      import { vi } from "vitest";
 
       const options = { concurrent: true };
       const run = async () => {};
@@ -25,6 +27,8 @@ describe(RULE, () => {
         it("by reference", run);
         it("options first", options, run);
         it("inline options", { tags: ["db"] }, run);
+        it("conditional body", {}, process.platform === "win32" ? run : async () => {});
+        it.effect("options last", () => Effect.void, options);
       });
       vi.setConfig({ restoreMocks: true });
     `,
@@ -75,6 +79,7 @@ describe(RULE, () => {
       import { afterEach, beforeAll, beforeEach, describe, it } from "vitest";
 
       const SECOND = 1_000;
+      const LONG = 30 * SECOND;
       const run = async () => {};
       describe("suite", () => {
         beforeAll(() => {}, 60_000);
@@ -83,13 +88,14 @@ describe(RULE, () => {
         it("flaky", () => {}, { retry: 3 });
         it("slow", { timeout: 30_000 }, () => {});
         it("named", () => {}, SECOND);
-        it("function body", function () {}, 30 * SECOND);
+        it("ci only", () => {}, process.env.CI ? LONG : SECOND);
         it("by reference", run, SECOND * 2);
+        it("named by reference", run, LONG);
       });
     `,
     (output) => {
       assertTimeoutMessage(output);
-      assert.equal(output.match(/no-test-timeout-or-unreasoned-skip/g)?.length, 8);
+      assert.equal(output.match(/no-test-timeout-or-unreasoned-skip/g)?.length, 9);
     },
   );
 
