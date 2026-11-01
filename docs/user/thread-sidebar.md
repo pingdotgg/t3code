@@ -97,7 +97,11 @@ spot where the thread will land. Drops into either section keep the position you
 mobile, open a thread's menu and choose **Arrange threads**. Drag a handle within or between
 **Pinned** and **Active** to reorder, pin, or unpin. Drop onto the **Settled** divider to
 settle a thread. The dragged card shows the action before you release it. Expand **Snoozed**
-or **Settled** to drag a parked thread back into either live section. Each drop saves; close the sheet to return to the thread list.
+or **Settled** to drag a parked thread back into either live section. Your changes save together
+when you tap **Done** or use Android back. Close asks before discarding an unsaved
+arrangement. Unsaved changes stay while the app is in the background, but are lost if the app
+is terminated.
+
 **Move up** and **Move down** are also available in the thread menu. The server
 saves the order, so it survives a refresh and appears on your other connected devices.
 
