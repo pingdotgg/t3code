@@ -182,7 +182,11 @@ class ComposerPasteTest {
 
   @Test
   fun regularPasteSendsPlainThreadUrlsToTheContextImporter() {
-    for (url in listOf("https://app.t3.codes/environment/thread", "t3code://threads/environment/thread")) {
+    val urls = listOf(
+      "https://app.t3.codes/environment/thread",
+      "t3code://threads/environment/thread"
+    )
+    for (url in urls) {
       clipboard.setPrimaryClip(ClipData.newPlainText("test", url))
       editor.setText("before")
       editor.setSelection(6)

@@ -742,7 +742,10 @@ internal class SelectionAwareEditText(
     val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
     val clip = clipboard?.primaryClip
     val plainText = clip?.plainText()
-    if (plainText != null && (plainText.contains("app.t3.codes/") || plainText.contains("://threads/"))) {
+    if (
+      plainText != null &&
+      (plainText.contains("app.t3.codes/") || plainText.contains("://threads/"))
+    ) {
       if (!pasteInterceptedText(clip)) {
         pasteContextListener?.invoke(payload + ("text" to plainText))
       }
