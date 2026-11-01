@@ -35,7 +35,16 @@ function mountPanel(container: HTMLElement, scroller: Scroller, scrollLeft: numb
 }
 
 describe("HistorySwipeNavigation", () => {
-  it.each<[string, Scroller, number, readonly Step[], "back" | "forward" | "both" | null]>([
+  it.each<
+    [
+      string,
+      Scroller,
+      number,
+      readonly Step[],
+      "back" | "forward" | "both" | null,
+      ("back" | "forward")?,
+    ]
+  >([
     ["scrolling left inside a shadow-root scroller", "shadow", 400, [[-130]], null],
     ["scrolling right inside a shadow-root scroller", "shadow", 400, [[130]], null],
     ["swiping left at a shadow-root scroller's left edge", "shadow", 0, [[-130]], null],
@@ -153,6 +162,21 @@ describe("HistorySwipeNavigation", () => {
       "both",
     ],
     [
+      "a reversed swipe needs its first wheel from before a late begin",
+      "none",
+      0,
+      [["begin"], [-130], ["end"], [-23.5560302734375], [60], ["begin"], [100], ["end"]],
+      "both",
+    ],
+    [
+      "a swipe resumes after reversing toward unavailable history",
+      "none",
+      0,
+      [["begin"], [-80], [100], [-130], ["end"]],
+      "back",
+      "forward",
+    ],
+    [
       "a history gesture after zero-delta contact on a scroller",
       "shadow",
       400,
@@ -176,7 +200,7 @@ describe("HistorySwipeNavigation", () => {
     ],
     ["swiping left over content without overflow", "none", 0, [[-130]], "back"],
     ["swiping right over content without overflow", "none", 0, [[130]], "forward"],
-  ])("%s", async (_name, scroller, scrollLeft, steps, navigates) => {
+  ])("%s", async (_name, scroller, scrollLeft, steps, navigates, unavailable) => {
     const listeners = { begin: new Set<() => void>(), end: new Set<() => void>() };
     using _bridge = stubGlobal("desktopBridge", {
       onTrackpadScrollBegin: (listener: () => void) => {
@@ -191,8 +215,12 @@ describe("HistorySwipeNavigation", () => {
     await using screen = await render(<HistorySwipeNavigation />);
     using back = vi.spyOn(window.history, "back").mockImplementation(() => undefined);
     using forward = vi.spyOn(window.history, "forward").mockImplementation(() => undefined);
-    using _canGoBack = vi.spyOn(window.navigation, "canGoBack", "get").mockReturnValue(true);
-    using _canGoForward = vi.spyOn(window.navigation, "canGoForward", "get").mockReturnValue(true);
+    using _canGoBack = vi
+      .spyOn(window.navigation, "canGoBack", "get")
+      .mockReturnValue(unavailable !== "back");
+    using _canGoForward = vi
+      .spyOn(window.navigation, "canGoForward", "get")
+      .mockReturnValue(unavailable !== "forward");
     let { viewport, content } = mountPanel(screen.container, scroller, scrollLeft);
     let pointerX = 0;
 
