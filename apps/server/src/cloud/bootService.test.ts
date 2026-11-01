@@ -954,6 +954,18 @@ it.layer(NodeServices.layer)("boot service install", (it) => {
       expect(outcome).toBe("queued");
       expect(yield* fs.readFileString(statePath)).toBe(state);
       expect(yield* fs.readFileString(plan.unitPath)).toBe(plist);
+
+      // The one-shot job runs the installed launcher's CLI as if from a terminal, once.
+      const handoffPath = `${plan.baseDir}/runtime/com.t3tools.t3code.service.handoff.plist`;
+      expect(commands).toContain(`launchctl bootstrap gui/501 ${handoffPath}`);
+      const handoff = yield* fs.readFileString(handoffPath);
+      expect(BootService.bootServiceProgramOf(handoff)).toBe(plan.program[0]);
+      expect(handoff).toContain(
+        `<string>service</string>\n    <string>restart</string>\n    <string>--base-dir</string>\n    <string>${plan.baseDir}</string>\n  </array>`,
+      );
+      expect(handoff).not.toContain("T3_BOOT_SERVICE_UNIT");
+      expect(handoff).not.toContain("KeepAlive");
+      expect((yield* fs.stat(handoffPath)).mode & 0o777).toBe(0o600);
     }),
   );
 });
