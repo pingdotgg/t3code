@@ -90,11 +90,36 @@ describe("Cursor usage limits", () => {
           billingCycleStart: "1793491200000",
           billingCycleEnd: "1796083200000",
           planUsage: { totalPercentUsed: 0, autoPercentUsed: 0, apiPercentUsed: 0 },
-          spendLimitUsage: {},
+          spendLimitUsage: { pooledLimit: "3000000" },
         },
         checkedAt,
       ),
     ).toEqual(linkOnly);
+    const zeroPercents = { totalPercentUsed: 0, autoPercentUsed: 0, apiPercentUsed: 0 };
+    const zeroPlanWindows = [
+      { id: "apiPercentUsed", kind: "monthly", label: "Other Models", usedPercent: 0 },
+      { id: "autoPercentUsed", kind: "monthly", label: "Cursor Models", usedPercent: 0 },
+      { id: "totalPercentUsed", kind: "monthly", label: "Overall", usedPercent: 0 },
+    ];
+    // Fresh-cycle Pro: an included allowance, or no pool marker, keeps the plan bars.
+    for (const response of [
+      {
+        planUsage: { ...zeroPercents, limit: "2000" },
+        spendLimitUsage: { individualLimit: 5000, individualUsed: 0 },
+      },
+      { planUsage: zeroPercents, spendLimitUsage: { individualLimit: 5000 } },
+    ]) {
+      expect(cursorUsageResponseToLimits(response, checkedAt).windows).toEqual(zeroPlanWindows);
+    }
+    expect(
+      cursorUsageResponseToLimits(
+        {
+          planUsage: { ...zeroPercents, limit: "0" },
+          spendLimitUsage: { pooledLimit: "3000000", overallLimit: 50000, overallUsed: 3211 },
+        },
+        checkedAt,
+      ).windows.map((window) => window.id),
+    ).toEqual(["spendLimit"]);
     expect(
       cursorUsageResponseToLimits({ planUsage: { totalPercentUsed: 0 } }, checkedAt).windows,
     ).toEqual([{ id: "totalPercentUsed", kind: "monthly", label: "Overall", usedPercent: 0 }]);
@@ -161,6 +186,17 @@ describe("Cursor usage limits", () => {
           checkedAt,
         ).windows,
       ).toEqual([{ id: "spendLimit", kind: "monthly", label: "Spend", usedPercent: 25 }]);
+      // Limit and used come from the same pair; protobuf JSON omits a zero used.
+      for (const [spendLimitUsage, usedPercent] of [
+        [{ overallLimit: 50000, individualUsed: 3211 }, 0],
+        [{ overallLimit: 0, individualLimit: "2000", individualUsed: "500" }, 25],
+      ] as const) {
+        expect(
+          cursorUsageResponseToLimits({ spendLimitUsage }, checkedAt).windows.map(
+            (window) => window.usedPercent,
+          ),
+        ).toEqual([usedPercent]);
+      }
     }),
   );
 

@@ -41,11 +41,22 @@ const CursorUsageResponse = Schema.Struct({
       overallUsed: Schema.optional(CursorInt64),
       individualLimit: Schema.optional(CursorInt64),
       individualUsed: Schema.optional(CursorInt64),
+      pooledLimit: Schema.optional(CursorInt64),
     }),
   ),
 });
 
-/** Cursor's dashboard percentages include bonus usage; spend / limit does not. */
+function spendPair(
+  limit: typeof CursorInt64.Type | undefined,
+  used: typeof CursorInt64.Type | undefined,
+) {
+  const cents = Number(limit);
+  return Number.isFinite(cents) && cents > 0
+    ? { limit: cents, used: Number(used ?? 0) }
+    : undefined;
+}
+
+/** Plan bars use Cursor's own percentages; the Spend bar is computed from cents. */
 export function cursorUsageResponseToLimits(
   response: typeof CursorUsageResponse.Type,
   checkedAt: string,
@@ -58,10 +69,10 @@ export function cursorUsageResponseToLimits(
       ? DateTime.formatIso(reset.value)
       : undefined;
   const { planUsage, spendLimitUsage: spend } = response;
-  // Usage-based plans such as Enterprise send zeroed percentages without an allowance.
+  // Enterprise sends a team pool and zeroed percentages without an included allowance.
   const usageBased =
-    spend !== undefined &&
-    planUsage?.limit === undefined &&
+    spend?.pooledLimit !== undefined &&
+    !(Number(planUsage?.limit) > 0) &&
     !planUsage?.totalPercentUsed &&
     !planUsage?.autoPercentUsed &&
     !planUsage?.apiPercentUsed;
@@ -80,14 +91,15 @@ export function cursorUsageResponseToLimits(
       });
     }
   }
-  const spendLimit = Number(spend?.overallLimit ?? spend?.individualLimit);
-  const spent = Number(spend?.overallUsed ?? spend?.individualUsed ?? 0);
-  if (windows.length === 0 && spendLimit > 0 && Number.isFinite(spent)) {
+  const personal =
+    spendPair(spend?.overallLimit, spend?.overallUsed) ??
+    spendPair(spend?.individualLimit, spend?.individualUsed);
+  if (windows.length === 0 && personal && Number.isFinite(personal.used)) {
     windows.push({
       id: "spendLimit",
       kind: "monthly",
       label: "Spend",
-      usedPercent: clampPercent((spent / spendLimit) * 100),
+      usedPercent: clampPercent((personal.used / personal.limit) * 100),
       ...(resetsAt ? { resetsAt } : {}),
     });
   }
