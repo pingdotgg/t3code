@@ -8,20 +8,14 @@ import {
 } from "../ui/number-field";
 import { normalizeIntervalSeconds } from "./SettingsPanels.logic";
 
-/**
- * Keeps typing local and saves on blur or a stepper press. Saving each keystroke would
- * briefly apply partial values, such as 1 second on the way to 120, or 0 (off) after clearing.
- */
 export function IntervalSecondsField({
   label,
-  inputLabel,
   value,
   min,
   step,
   onCommit,
 }: {
   label: string;
-  inputLabel?: string;
   value: number;
   min: number;
   step: number;
@@ -55,7 +49,7 @@ export function IntervalSecondsField({
       <NumberFieldGroup>
         <NumberFieldDecrement aria-label={`Decrease ${label}`} />
         <NumberFieldInput
-          aria-label={inputLabel ?? `${label.charAt(0).toUpperCase()}${label.slice(1)} in seconds`}
+          aria-label={`${label.charAt(0).toUpperCase()}${label.slice(1)} in seconds`}
         />
         <NumberFieldIncrement aria-label={`Increase ${label}`} />
       </NumberFieldGroup>
