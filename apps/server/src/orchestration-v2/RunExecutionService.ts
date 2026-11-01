@@ -686,8 +686,10 @@ export const layer: Layer.Layer<
         }
         const allocateEventId = () => idAllocator.allocate.event({ threadId: input.run.threadId });
         const reason =
-          input.terminal.status === "interrupted" && input.loadRunInterruptReason !== undefined
-            ? yield* input.loadRunInterruptReason()
+          input.terminal.status === "interrupted"
+            ? ((input.loadRunInterruptReason === undefined
+                ? undefined
+                : yield* input.loadRunInterruptReason()) ?? input.terminal.reason)
             : undefined;
         const open = input.openRunOwnedSubagents ?? emptyOpenRunOwnedSubagentProjection();
         const hasOpenSubagentProjection =
@@ -1775,7 +1777,6 @@ export function makeInterruptResultTurnItem(input: {
   readonly run: OrchestrationV2Run;
   readonly rootNode: OrchestrationV2ExecutionNode;
   readonly providerThread: OrchestrationV2ProviderThread;
-  /** The Stop's own reason, from its run_interrupt_request item. */
   readonly reason: string | undefined;
   readonly completedAt: DateTime.Utc;
 }): OrchestrationV2TurnItem {

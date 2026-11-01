@@ -2366,6 +2366,116 @@ describe("CodexAdapterV2 post-settle continuation", () => {
       ),
   );
 
+  it.effect.each([
+    { hook: "stopped", status: "interrupted", expected: true },
+    { hook: "completed", status: "interrupted", expected: false },
+    { hook: "warning", status: "interrupted", expected: false },
+    { hook: "empty", status: "interrupted", expected: false },
+    { hook: "wrong-turn", status: "interrupted", expected: false },
+    { hook: "wrong-thread", status: "interrupted", expected: false },
+    { hook: "unscoped", status: "interrupted", expected: false },
+    { hook: "stopped", status: "completed", expected: false },
+    { hook: "stopped", status: "failed", expected: false },
+  ] as const)(
+    "correlates $hook hook output with a $status turn only",
+    ({ hook, status, expected }) =>
+      Effect.gen(function* () {
+        const nativeThreadId = "hook-thread";
+        const stopReason = "Save a current task checkpoint before compaction.";
+        const hookCompleted = (turnId: string | null) => ({
+          type: "emit_inbound" as const,
+          label: "hook/completed",
+          frame: {
+            method: "hook/completed",
+            params: {
+              threadId: hook === "wrong-thread" ? "other-thread" : nativeThreadId,
+              turnId: hook === "unscoped" ? null : hook === "wrong-turn" ? "other-turn" : turnId,
+              run: {
+                id: "checkpoint-hook",
+                eventName: "preCompact",
+                source: "project",
+                sourcePath: "/workspace/.codex/hooks.json",
+                scope: "turn",
+                executionMode: "sync",
+                handlerType: "command",
+                displayOrder: 1,
+                startedAt: 1782622440,
+                status: hook === "completed" ? "completed" : "stopped",
+                entries: [
+                  { kind: "warning", text: "Unrelated hook diagnostic" },
+                  {
+                    kind: hook === "warning" ? "warning" : "stop",
+                    text: hook === "empty" ? "  " : stopReason,
+                  },
+                ],
+              },
+            },
+          },
+        });
+        const transcript = makeCodexReplayTranscript({
+          scenario: `hook-stop-${hook}-${status}`,
+          entries: [
+            ...codexReplayPreamble({ nativeThreadId, nativeTurnId: "hook-turn", prompt: "work" }),
+            hookCompleted("hook-turn"),
+            {
+              type: "emit_inbound",
+              label: "turn/completed",
+              frame: {
+                method: "turn/completed",
+                params: {
+                  threadId: nativeThreadId,
+                  turn: makeCodexReplayTurn({ id: "hook-turn", status }),
+                },
+              },
+            },
+            ...codexReplayPreamble({ nativeThreadId, nativeTurnId: "next-turn", prompt: "work" })
+              .slice(-3)
+              .map((entry, index) => (index < 2 ? withReplayRequestId(entry, 4) : entry)),
+            hookCompleted("hook-turn"),
+            {
+              type: "emit_inbound",
+              label: "turn/completed/next",
+              frame: {
+                method: "turn/completed",
+                params: {
+                  threadId: nativeThreadId,
+                  turn: makeCodexReplayTurn({ id: "next-turn", status: "interrupted" }),
+                },
+              },
+            },
+          ],
+        });
+        const harness = yield* makeCodexReplayHarness(transcript);
+        for (const turn of ["hook-turn", "next-turn"]) {
+          yield* harness.runtime.startTurn(
+            makeCodexTestTurnInput({
+              threadId: harness.threadId,
+              providerThread: harness.providerThread,
+              now: yield* DateTime.now,
+              attemptId: RunAttemptId.make(turn),
+              text: "work",
+            }),
+          );
+          yield* harness.awaitTerminal(turn === "hook-turn" ? 1 : 2);
+        }
+        assert.deepEqual(
+          harness.terminalEvents().map((event) => ({
+            status: event.status,
+            reason: event.status === "failed" ? undefined : event.reason,
+          })),
+          [
+            { status, reason: expected ? `preCompact hook (project): ${stopReason}` : undefined },
+            { status: "interrupted", reason: undefined },
+          ],
+        );
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+        ),
+      ),
+  );
+
   it.effect("resumes a provider thread without requesting or decoding its history", () =>
     Effect.scoped(
       Effect.gen(function* () {
