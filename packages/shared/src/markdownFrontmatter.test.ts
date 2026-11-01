@@ -21,14 +21,24 @@ describe("maskMarkdownFrontmatter", () => {
   });
 
   it("keeps parser offsets aligned with the source when a byte order mark leads", () => {
-    const markdown = "\uFEFF- [ ] one\n- [ ] two\n";
-    const list = unified().use(remarkParse).parse(maskMarkdownFrontmatter(markdown))
-      .children[0] as List;
+    for (const indentation of ["", "   "]) {
+      const markdown = `\uFEFF${indentation}- [ ] one\n- [ ] two\n`;
+      const list = unified().use(remarkParse).parse(maskMarkdownFrontmatter(markdown))
+        .children[0] as List;
 
-    expect(list.children.map((item) => markdown[item.position?.start.offset ?? -1])).toEqual([
-      "-",
-      "-",
-    ]);
+      expect(list.type).toBe("list");
+      expect(list.children.map((item) => markdown[item.position?.start.offset ?? -1])).toEqual([
+        "-",
+        "-",
+      ]);
+    }
+    const fenced = "\uFEFF   ```\n   code\n   ```\n";
+    expect(
+      unified().use(remarkParse).parse(maskMarkdownFrontmatter(fenced)).children[0],
+    ).toMatchObject({
+      type: "code",
+      value: "code",
+    });
   });
 
   it("leaves unterminated or non-leading fences alone", () => {

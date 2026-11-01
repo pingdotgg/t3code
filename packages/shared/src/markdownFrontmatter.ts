@@ -10,7 +10,7 @@ export function maskMarkdownFrontmatter(markdown: string): string {
   return (
     markdown
       .replace(LEADING_FRONTMATTER, (block) => block.replace(/[^\r\n]/g, " "))
-      // Parsers skip a leading BOM without counting it, which shifts every offset by one.
-      .replace(/^\uFEFF/, " ")
+      // A blank line counts the BOM's offset without adding indentation to the first content line.
+      .replace(/^\uFEFF/, "\n")
   );
 }
