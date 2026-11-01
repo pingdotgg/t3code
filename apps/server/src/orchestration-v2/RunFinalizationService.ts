@@ -92,6 +92,7 @@ const make = Effect.gen(function* () {
         threadId: thread.id,
         branch: input.checkedOutBranch,
         expectedBranch: thread.branch,
+        expectedWorktreePath: input.cwd,
       });
     },
     (effect, input) =>

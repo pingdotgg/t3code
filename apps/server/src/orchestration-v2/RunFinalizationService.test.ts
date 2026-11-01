@@ -177,7 +177,11 @@ it.effect.each(
   const threadId = ThreadId.make("thread-branch-drift");
   const runId = RunId.make("run-branch-drift");
   const scopeId = CheckpointScopeId.make("scope-branch-drift");
-  const updates: Array<{ branch: unknown; expectedBranch: unknown }> = [];
+  const updates: Array<{
+    branch: unknown;
+    expectedBranch: unknown;
+    expectedWorktreePath: unknown;
+  }> = [];
   const layer = RunFinalization.layer.pipe(
     Layer.provide(
       Layer.mergeAll(
@@ -209,7 +213,11 @@ it.effect.each(
             Effect.sync(() => {
               assert.equal(command.type, "thread.metadata.update");
               if (command.type === "thread.metadata.update") {
-                updates.push({ branch: command.branch, expectedBranch: command.expectedBranch });
+                updates.push({
+                  branch: command.branch,
+                  expectedBranch: command.expectedBranch,
+                  expectedWorktreePath: command.expectedWorktreePath,
+                });
               }
               return {} as never;
             }),
@@ -226,7 +234,11 @@ it.effect.each(
     yield* service.finalize({ threadId, runId, scopeId });
     assert.deepEqual(
       updates,
-      scenario.expected.map((branch) => ({ branch, expectedBranch: "fix/original" })),
+      scenario.expected.map((branch) => ({
+        branch,
+        expectedBranch: "fix/original",
+        expectedWorktreePath: "/repo",
+      })),
     );
   }).pipe(Effect.provide(layer));
 });
