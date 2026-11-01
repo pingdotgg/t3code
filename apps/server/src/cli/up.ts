@@ -30,10 +30,6 @@ import { renderTerminalQrCode } from "../startupAccess.ts";
 import * as ProcessRunner from "../processRunner.ts";
 import * as ServerOwnership from "../serverOwnership.ts";
 import * as TailscaleServe from "../tailscaleServe.ts";
-import {
-  isSupportedTailscaleVersion,
-  MINIMUM_TAILSCALE_VERSION,
-} from "../tailscale/TailscaleHost.ts";
 import { projectLocationFlags, resolveCliAuthConfig } from "./config.ts";
 import {
   connectSubcommands,
@@ -45,7 +41,7 @@ import {
 } from "./connect.ts";
 import { resolveHostCliCommand } from "./invocation.ts";
 import * as CliService from "./service.ts";
-import { turnOnRequireGrant } from "./tailscale.ts";
+import { signInBlocker, turnOnRequireGrant } from "./tailscale.ts";
 
 type Route = "tailscale" | "connect" | "lan";
 type Routes = Readonly<Record<Route, boolean>>;
@@ -358,25 +354,8 @@ const checkTailscale = Effect.fn("cli.up.checkTailscale")(function* () {
     } as const;
   }
   const { value } = status;
-  if (value.backendState !== "Running") {
-    return {
-      ok: false,
-      reason: `Tailscale is ${value.backendState ?? "not running"}. Run \`sudo tailscale up\`.`,
-    } as const;
-  }
-  if (value.userspaceNetworking === true) {
-    return {
-      ok: false,
-      reason:
-        "Tailscale sign-in needs device addresses, and userspace networking hides them. Give the container /dev/net/tun and run tailscaled without --tun=userspace-networking.",
-    } as const;
-  }
-  if (!isSupportedTailscaleVersion(value.version)) {
-    return {
-      ok: false,
-      reason: `Tailscale ${value.version ?? "(unknown version)"} is too old for Tailscale sign-in. Update to ${MINIMUM_TAILSCALE_VERSION} or newer.`,
-    } as const;
-  }
+  const blocker = signInBlocker(value);
+  if (blocker !== null) return { ok: false, reason: blocker } as const;
   const address = value.tailnetIpv4Addresses[0];
   if (address === undefined) {
     return { ok: false, reason: "Tailscale reported no IPv4 address for this host." } as const;

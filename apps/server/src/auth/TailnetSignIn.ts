@@ -455,14 +455,15 @@ export const make = Effect.gen(function* () {
       );
       const refusal = hostRefusal(status);
       if (refusal !== null) return yield* refuse(refusal);
-      // The caller must be the peer this status names at its address, as the recheck asks,
-      // so a whois answered before an account switch is not judged by the new account.
+      // The caller must be the peer this status names at its address, with a live key, as the
+      // recheck asks, so a whois answered before an account switch is not judged by the new one.
       if (
         node.stableNodeId !== status.selfNodeId &&
         !status.peers.some(
           (peer) =>
             peer.stableNodeId === node.stableNodeId &&
-            peer.tailnetIpv4Addresses.includes(remoteAddress),
+            peer.tailnetIpv4Addresses.includes(remoteAddress) &&
+            !peer.keyExpired,
         )
       ) {
         return yield* refuse("tailscale_unavailable");

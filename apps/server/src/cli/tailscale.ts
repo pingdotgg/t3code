@@ -2,7 +2,7 @@ import * as NodeUtil from "node:util";
 
 import { ServerTailscaleStatus, TAILNET_APP_CAPABILITY } from "@t3tools/contracts";
 import { fromJsonStringPretty } from "@t3tools/shared/schemaJson";
-import { readTailscaleStatus, readTailscaleWhois } from "@t3tools/tailscale";
+import { readTailscaleStatus, readTailscaleWhois, type TailscaleStatus } from "@t3tools/tailscale";
 import * as Console from "effect/Console";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -55,6 +55,16 @@ export const turnOnRequireGrant = Effect.fn("cli.tailscale.turnOnRequireGrant")(
   );
 });
 
+/** Why Tailscale sign-in cannot work on this host, or null when it can. */
+export const signInBlocker = (status: TailscaleStatus): string | null =>
+  status.backendState !== "Running"
+    ? `Tailscale is ${status.backendState ?? "not running"}. Run \`sudo tailscale up\`.`
+    : status.userspaceNetworking === true
+      ? "Tailscale sign-in needs device addresses, and userspace networking hides them. Give the container /dev/net/tun and run tailscaled without --tun=userspace-networking."
+      : !isSupportedTailscaleVersion(status.version)
+        ? `Tailscale ${status.version ?? "(unknown version)"} is too old for Tailscale sign-in. Update to ${MINIMUM_TAILSCALE_VERSION} or newer.`
+        : null;
+
 /**
  * Peers the tailnet policy grants T3 Code here, and whether this host is tagged. Null when
  * Tailscale cannot say, and "changed" when the account or its devices changed during the
@@ -73,7 +83,7 @@ const readPolicyGrantedPeers = readTailscaleStatus("active").pipe(
                   ...scan,
                   tagged: status.selfTags.length > 0,
                   noNode: status.selfNodeId === null,
-                  version: status.version,
+                  blocker: signInBlocker(status),
                 },
           ),
         ),
@@ -125,11 +135,12 @@ const requireGrantCommand = Command.make("require-grant", {
       const scan = read === "changed" ? null : read;
       const granted = scan?.granted ?? [];
       const lines =
-        scan !== null && !isSupportedTailscaleVersion(scan.version)
+        scan !== null && scan.blocker !== null
           ? [
-              `Tailscale ${scan.version ?? "(unknown version)"} is too old for Tailscale sign-in, so no device`,
-              `signs in here. Update to ${MINIMUM_TAILSCALE_VERSION} or newer.`,
-              ...(since === null ? [] : [`Grant required: yes, turned on ${since}.`]),
+              `No device signs in here. ${scan.blocker}`,
+              since === null
+                ? "The require-grant switch is off."
+                : `Grant required: yes, turned on ${since}.`,
             ]
           : since !== null
             ? [

@@ -413,6 +413,20 @@ it.layer(NodeServices.layer)("TailnetSignIn", (it) => {
       refused: "tailscale_outdated",
     },
     {
+      name: "the device's node key expired",
+      status: hostStatus({
+        Peer: {
+          phone: {
+            ID: "nPhone",
+            TailscaleIPs: [PHONE_ADDRESS],
+            UserID: `int64:${OWNER_ID}`,
+            Expired: true,
+          },
+        },
+      }),
+      refused: "tailscale_unavailable",
+    },
+    {
       name: "the host is tagged with no owner set",
       status: hostStatus({
         Self: { ID: "nBox", Tags: ["tag:server"], TailscaleIPs: [HOST_ADDRESS] },
