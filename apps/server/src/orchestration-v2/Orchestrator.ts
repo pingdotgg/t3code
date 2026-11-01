@@ -782,9 +782,15 @@ function queuedRunModelSelection(
     : run.modelSelection;
 }
 
+/**
+ * The provider's latest run stopped on its usage limit, and either nothing
+ * ran after it or the limit has not reset yet. A run that completed on
+ * another provider since does not lift the limit; an unknown reset never does.
+ */
 function usageLimitHoldsQueue(
   projection: Pick<OrchestrationV2ThreadProjection, "runs" | "turnItems" | "providerSessions">,
   providerInstanceId: ModelSelection["instanceId"],
+  now: DateTime.Utc,
 ): boolean {
   let latestSession: OrchestrationV2ThreadProjection["providerSessions"][number] | undefined;
   for (const session of projection.providerSessions) {
@@ -796,10 +802,15 @@ function usageLimitHoldsQueue(
       latestSession = session;
     }
   }
-  return (
-    usageLimitBlockedRun(projection.runs, projection.turnItems, latestSession?.lastError ?? null)
-      ?.providerInstanceId === providerInstanceId
+  const limited = usageLimitBlockedRun(
+    projection.runs.filter((run) => run.providerInstanceId === providerInstanceId),
+    projection.turnItems,
+    latestSession?.lastError ?? null,
   );
+  if (limited === null) return false;
+  if (latestExecutedRun(projection.runs)?.id === limited.id) return true;
+  const resetAt = latestRootProviderFailure(limited, projection.turnItems)?.resetAt;
+  return resetAt == null || Date.parse(resetAt) > DateTime.toEpochMillis(now);
 }
 
 function latestStableRun(
@@ -1570,7 +1581,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         providerInstanceId: modelSelection.instanceId,
       };
       // A limited provider would fail and consume every waiting message.
-      if (usageLimitHoldsQueue(projection, queuedRun.providerInstanceId)) {
+      if (usageLimitHoldsQueue(projection, queuedRun.providerInstanceId, yield* DateTime.now)) {
         return;
       }
       // Failed worktree creation would run queued work in the project checkout; wait for the user.
@@ -13135,12 +13146,14 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           }
         }
         const nextRun = selectedRun ?? queuedRunsInDeliveryOrder(projection)[0];
+        const now = yield* DateTime.now;
         if (
           usageLimitHoldsQueue(
             projection,
             nextRun === undefined
               ? projection.thread.providerInstanceId
               : queuedRunModelSelection(projection, nextRun).instanceId,
+            now,
           )
         ) {
           return yield* new OrchestratorDispatchError({
@@ -13149,7 +13162,6 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             cause: "Continue the limited thread before resuming its queue.",
           });
         }
-        const now = yield* DateTime.now;
         const queued = projection.runs.filter((run) => run.status === "queued");
         for (const run of queued) {
           yield* emit(
