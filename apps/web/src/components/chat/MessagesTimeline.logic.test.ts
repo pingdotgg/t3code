@@ -1530,10 +1530,12 @@ describe("deriveMessagesTimelineRows", () => {
     expect(byId.get("prompt")).not.toHaveProperty("groupedWithNext");
     expect(byId.get("first-steer")).toMatchObject({
       groupedWithNext: true,
+      groupedWithPrevious: false,
       continuesSteer: false,
     });
     expect(byId.get("second-steer")).toMatchObject({
       groupedWithNext: false,
+      groupedWithPrevious: true,
       continuesSteer: true,
     });
   });
