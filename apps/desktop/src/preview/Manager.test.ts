@@ -797,6 +797,68 @@ describe("PreviewManager", () => {
     ),
   );
 
+  effectIt.effect(
+    "does not fail navigation when the page redirects before it finishes loading",
+    () =>
+      withManager((manager) =>
+        Effect.gen(function* () {
+          // Electron's loadURL rejects this way when a client redirect supersedes the load.
+          const aborted = Object.assign(
+            new Error("ERR_ABORTED (-3) loading 'http://localhost:3456/target'"),
+            { errno: -3, code: "ERR_ABORTED", url: "http://localhost:3456/target" },
+          );
+          const contents = Object.assign(
+            makeTestPreviewWebContents(async () => {
+              throw new Error("unused");
+            }, 42),
+            { loadURL: vi.fn(() => Promise.reject(aborted)) },
+          );
+          fromId.mockReturnValue(contents);
+          yield* manager.createTab("tab_client_redirect");
+          yield* manager.registerWebview("tab_client_redirect", 42);
+
+          const exit = yield* Effect.exit(
+            manager.navigate("tab_client_redirect", "http://localhost:3456/"),
+          );
+
+          expect(contents.loadURL).toHaveBeenCalledWith("http://localhost:3456/");
+          expect(exit).toStrictEqual(Exit.void);
+        }),
+      ),
+  );
+
+  effectIt.effect("fails navigation when the page cannot be reached", () =>
+    withManager((manager) =>
+      Effect.gen(function* () {
+        const refused = Object.assign(
+          new Error("ERR_CONNECTION_REFUSED (-102) loading 'http://localhost:3457/'"),
+          { errno: -102, code: "ERR_CONNECTION_REFUSED", url: "http://localhost:3457/" },
+        );
+        const contents = Object.assign(
+          makeTestPreviewWebContents(async () => {
+            throw new Error("unused");
+          }, 43),
+          { loadURL: vi.fn(() => Promise.reject(refused)) },
+        );
+        fromId.mockReturnValue(contents);
+        yield* manager.createTab("tab_unreachable");
+        yield* manager.registerWebview("tab_unreachable", 43);
+
+        const exit = yield* Effect.exit(
+          manager.navigate("tab_unreachable", "http://localhost:3457/"),
+        );
+
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (Exit.isFailure(exit)) {
+          expect(Option.getOrThrow(Cause.findErrorOption(exit.cause))).toMatchObject({
+            operation: "navigate.loadURL",
+            cause: refused,
+          });
+        }
+      }),
+    ),
+  );
+
   effectIt.effect("detaches through the pinned debugger after the webview is destroyed", () =>
     withManager((manager) =>
       Effect.gen(function* () {
