@@ -207,7 +207,9 @@ resolve_path() (
 # Like the CLI, a quoted ~ at the start means the home folder.
 # shellcheck disable=SC2088 # The ~ here is the literal text to expand.
 case "$t3_home" in "~") t3_home="$HOME" ;; "~/"*) t3_home="${HOME}/${t3_home#"~/"}" ;; esac
-t3_home="$(resolve_path "$t3_home")"
+# The x keeps a trailing newline in the name, which $(...) would drop.
+t3_home="$(resolve_path "$t3_home" && echo x)"
+t3_home="${t3_home%x}"
 stem="t3-${version}-${platform}-${arch}"
 archive="${stem}.tar.gz"
 versions_dir="${t3_home}/runtime/versions"
@@ -269,21 +271,28 @@ mkdir -p "$current_dir"
 if [ -d "$command_link" ] || { [ -e "$command_link" ] && [ ! -L "$command_link" ]; }; then
   fail "${command_link} is not a link to a file. Remove it and run this again."
 fi
-real_versions_dir="$(CDPATH='' cd -P -- "$versions_dir" && pwd)"
-real_command_link="$(CDPATH='' cd -P -- "$current_dir" && pwd)/t3"
+newline="
+"
+# Sets real to folder $1's real path, keeping a trailing newline that $(...) would drop.
+real_dir() {
+  real="$(CDPATH='' cd -P -- "$1" 2>/dev/null && pwd && echo x)" || return 1
+  real="${real%"${newline}x"}"
+}
+real_dir "$versions_dir" || fail "could not read ${versions_dir}"
+real_versions_dir="$real"
+real_dir "$current_dir" || fail "could not read ${current_dir}"
+real_command_link="${real}/t3"
 # Exactly <versions>/<version>/t3 ($1 under $2), never another program inside a version.
 version_t3() {
   case "$1" in "$2"/*) ;; *) return 1 ;; esac
   case "${1#"$2"/}" in */*/*) return 1 ;; */t3) return 0 ;; *) return 1 ;; esac
 }
-newline="
-"
 # Its bin folder may be a link, or missing until the app runs.
-real_desktop_launcher="$(CDPATH='' cd -P -- "$t3_home" && pwd)/bin/t3"
-if real_bin="$(CDPATH='' cd -P -- "${t3_home}/bin" 2>/dev/null && pwd)"; then
-  real_desktop_launcher="${real_bin}/t3"
-fi
-real_bin_dir="$(CDPATH='' cd -P -- "$bin_dir" && pwd)"
+real_dir "$t3_home" || fail "could not read ${t3_home}"
+real_desktop_launcher="${real}/bin/t3"
+if real_dir "${t3_home}/bin"; then real_desktop_launcher="${real}/t3"; fi
+real_dir "$bin_dir" || fail "could not read ${bin_dir}"
+real_bin_dir="$real"
 # The desktop app's launcher carries its marker; a linked bin folder could hold a user's own t3.
 desktop_launcher() {
   # The app writes a file; a link there leads to another home's or another tool's t3.
@@ -309,11 +318,12 @@ link_kind() {
   # The desktop app writes this exact path, also when the home's bin folder is a link.
   if [ "$existing" = "${t3_home}/bin/t3" ] && desktop_launcher "$existing"; then echo older; return 0; fi
   # A folder that is itself a link (another versions/<name>) is not followed.
-  folder="$(dirname -- "$existing")"
+  folder="${existing%/*}"
+  [ -n "$folder" ] || folder=/
   [ ! -L "$folder" ] || return 0
   # Resolved on disk, which sees through a symlinked T3 home.
-  if existing_dir="$(CDPATH='' cd -P -- "$folder" 2>/dev/null && pwd)"; then
-    real_existing="${existing_dir}/${existing##*/}"
+  if real_dir "$folder"; then
+    real_existing="${real}/${existing##*/}"
     if [ "$real_existing" = "$real_command_link" ]; then echo current
     elif version_t3 "$real_existing" "$real_versions_dir" ||
       { [ "$real_existing" = "$real_desktop_launcher" ] && desktop_launcher "$real_existing"; }; then
@@ -324,12 +334,13 @@ link_kind() {
   # Only a missing folder (a pruned version) leaves the text. A folder that cannot be resolved for
   # another reason may be another program's.
   [ ! -e "$folder" ] || return 0
-  parent="$(CDPATH='' cd -P -- "$(dirname -- "$folder")" 2>/dev/null && pwd)" || return 0
-  real_existing="${parent}/${folder##*/}/${existing##*/}"
+  parent="${folder%/*}"
+  real_dir "${parent:-/}" || return 0
+  real_existing="${real}/${folder##*/}/${existing##*/}"
   if version_t3 "$real_existing" "$real_versions_dir"; then echo older; fi
 }
 kind=
-real_public="$(CDPATH='' cd -P -- "$bin_dir" && pwd)/t3"
+real_public="${real_bin_dir}/t3"
 # The command link is replaced in place, which is safe only away from the public name. -ef
 # compares device and inode, so an alias or a bind mount of its folder counts too.
 if [ "$real_public" = "$real_command_link" ] || [ "$bin_dir" -ef "$current_dir" ]; then
@@ -339,14 +350,20 @@ if [ -e "$public" ] || [ -L "$public" ]; then
   kind="$(link_kind "$public")"
   [ -n "$kind" ] || fail "another t3 is already at ${public}. Remove it and run this again, or run ${target_dir}/t3 directly."
 fi
-# Made in a new folder of its own, so nothing already in current is reused or removed.
-staging_dir="$(mktemp -d "${current_dir}/.t3.XXXXXX")" || fail "could not link ${command_link}"
-if ! { ln -s "${target_dir}/t3" "${staging_dir}/t3" && mv -f "${staging_dir}/t3" "$command_link"; }; then
-  rm -f "${staging_dir}/t3"
+# Made in a new folder of its own, so nothing already in current is reused or removed, and moved
+# into current, so a link that replaced current/t3 is replaced itself, never followed.
+switch_command_link() {
+  staging_dir="$(mktemp -d "${current_dir}/.t3.XXXXXX")" || fail "could not link ${command_link}"
+  if ! { ln -s "${target_dir}/t3" "${staging_dir}/t3" && mv -f "${staging_dir}/t3" "${current_dir}/"; }; then
+    rm -f "${staging_dir}/t3"
+    rmdir "$staging_dir"
+    fail "could not link ${command_link}"
+  fi
   rmdir "$staging_dir"
-  fail "could not link ${command_link}"
-fi
-rmdir "$staging_dir"
+}
+# Other bin folders may run the command link already, so it switches only once this one is linked.
+switched=false
+if [ ! -L "$command_link" ]; then switch_command_link; switched=true; fi
 case "$kind" in
   # An empty spot is linked without -f, so a file that appears after the check above is kept.
   # Into the folder, so an entry of any kind already named t3 makes ln fail instead of filling it.
@@ -383,6 +400,7 @@ case "$kind" in
     fi
     ;;
 esac
+"$switched" || switch_command_link
 # Pruning keeps what this launcher points at; a background service cannot see bin_dir otherwise.
 launchers="${t3_home}/runtime/launchers"
 grep -qxF "$real_public" "$launchers" 2>/dev/null || printf '%s\n' "$real_public" >> "$launchers"

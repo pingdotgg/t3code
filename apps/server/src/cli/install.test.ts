@@ -129,7 +129,11 @@ it.layer(NodeServices.layer)("t3 install", (it) => {
       }).pipe(Effect.flip);
       assert.include(inCurrent.message, "T3CODE_INSTALL_BIN_DIR cannot be");
 
-      // When the new link cannot be made, the old command keeps working.
+      // When the new link cannot be made, the old command keeps working, and so does any other
+      // bin folder's: the command link switches only after this one is linked.
+      const otherVersion = path.join(runtimeDir, "versions/0.0.2/t3");
+      yield* fs.remove(commandLink, { force: true });
+      yield* fs.symlink(otherVersion, commandLink);
       const failing = installCli().pipe(
         Effect.provideService(FileSystem.FileSystem, {
           ...fs,
@@ -140,6 +144,13 @@ it.layer(NodeServices.layer)("t3 install", (it) => {
               : fs.symlink(target, to),
         }),
       );
+      for (const before of [older, undefined]) {
+        yield* fs.remove(link).pipe(Effect.ignore);
+        if (before !== undefined) yield* fs.symlink(before, link);
+        yield* provide(failing).pipe(Effect.flip);
+        assert.equal(yield* fs.readLink(commandLink), otherVersion, before);
+      }
+      yield* fs.symlink(older, link);
       yield* provide(failing).pipe(Effect.flip);
       assert.equal(yield* fs.readLink(link), older);
       assert.deepStrictEqual(
@@ -253,23 +264,25 @@ it.layer(NodeServices.layer)("t3 install", (it) => {
       // A foreign link whose target is not UTF-8 goes back byte for byte.
       const bytes = Buffer.from([0x2f, 0x74, 0x6d, 0x70, 0x2f, 0xff, 0x74, 0x33]);
       let swapped = false;
+      // It arrives just before the older link is moved aside, so it is what gets moved.
       const rawRace = installCli().pipe(
         Effect.provideService(FileSystem.FileSystem, {
           ...fs,
-          symlink: (target, to) =>
-            (swapped
+          writeFileString: (file, data, options) =>
+            (swapped || !file.endsWith(".old")
               ? Effect.void
               : Effect.promise(async () => {
                   await NodeFSP.symlink(bytes, `${link}.new`);
                   await NodeFSP.rename(`${link}.new`, link);
                   swapped = true;
                 })
-            ).pipe(Effect.andThen(fs.symlink(target, to))),
+            ).pipe(Effect.andThen(fs.writeFileString(file, data, options))),
         }),
       );
       yield* fs.remove(link);
       yield* fs.symlink(older, link);
       yield* provide(rawRace).pipe(Effect.flip);
+      assert.isTrue(swapped);
       assert.deepStrictEqual(
         yield* Effect.promise(() => NodeFSP.readlink(link, { encoding: "buffer" })),
         bytes,
@@ -282,7 +295,19 @@ it.layer(NodeServices.layer)("t3 install", (it) => {
         const raced = yield* provide(racing).pipe(Effect.result);
         assert.isTrue(fired);
         assert.equal(yield* fs.readFileString(link), "#!/bin/sh\necho raced\n", before);
-        assert.deepStrictEqual(yield* fs.readDirectory(path.dirname(link)), ["t3"]);
+        // An older link that was moved aside when the write came stays beside it, and the error
+        // says where.
+        const entries = yield* fs.readDirectory(path.dirname(link));
+        const kept = entries.filter((name) => name.startsWith(".t3."));
+        assert.deepStrictEqual(
+          entries.filter((name) => !kept.includes(name)),
+          ["t3"],
+        );
+        for (const name of kept) {
+          assert.equal(yield* fs.readLink(path.join(path.dirname(link), name)), older);
+          assert.include(String(raced._tag === "Failure" && raced.failure.message), name);
+          yield* fs.remove(path.join(path.dirname(link), name));
+        }
         // Nothing was replaced over the command link's own spot, so that install succeeds.
         assert.equal(raced._tag === "Success", before === commandLink, before);
       }

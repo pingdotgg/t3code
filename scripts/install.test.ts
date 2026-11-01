@@ -419,9 +419,14 @@ exec ${realLn} "$@"
       const oldLink = NodePath.join(home, "runtime/versions/1.0.0/t3");
       await NodeFSP.rm(link);
       await NodeFSP.symlink(oldLink, link);
+      // Another bin folder's command keeps its version too: the command link switches last.
+      const otherVersion = NodePath.join(home, "runtime/versions/0.0.2/t3");
+      await NodeFSP.rm(commandLink);
+      await NodeFSP.symlink(otherVersion, commandLink);
       const failing = await racing({ RACE: "", FAIL: `${binDir}/` });
       expect(failing.code).not.toBe(0);
       expect(await NodeFSP.readlink(link)).toBe(oldLink);
+      expect(await NodeFSP.readlink(commandLink)).toBe(otherVersion);
       expect((await NodeFSP.readdir(binDir)).filter((name) => name.startsWith(".t3."))).toEqual([]);
     } finally {
       await NodeFSP.rm(root, { recursive: true, force: true });

@@ -168,21 +168,31 @@ export const linkCommand = Effect.fn("cli.install.link_command")(function* (inpu
     });
   }
   // Created exclusively and removed only once it is this call's own.
-  const staging = `${commandLink}.${process.pid}.${yield* Random.nextIntBetween(0, 0x7fffffff)}.tmp`;
-  yield* fs.symlink(input.executable, staging);
-  yield* fs
-    .rename(staging, commandLink)
-    .pipe(Effect.tapError(() => fs.remove(staging, { force: true }).pipe(Effect.ignore)));
-  if (kind === "missing") yield* fs.symlink(commandLink, input.link);
-  if (kind !== "older") return true;
-  return yield* replaceOwnedLink({
-    link: input.link,
-    target: commandLink,
-    owns: (candidate) =>
-      classifyCommandLink(candidate, input.baseDir).pipe(
-        Effect.map((found) => found !== "foreign"),
-      ),
+  const switchCommandLink = Effect.gen(function* () {
+    const staging = `${commandLink}.${process.pid}.${yield* Random.nextIntBetween(0, 0x7fffffff)}.tmp`;
+    yield* fs.symlink(input.executable, staging);
+    yield* fs
+      .rename(staging, commandLink)
+      .pipe(Effect.tapError(() => fs.remove(staging, { force: true }).pipe(Effect.ignore)));
   });
+  // Other bin folders may run the command link already, so it switches only once `link` leads
+  // to it; a new one has nobody to surprise.
+  const existed = Option.isSome(yield* fs.readLink(commandLink).pipe(Effect.option));
+  if (!existed) yield* switchCommandLink;
+  if (kind === "missing") yield* fs.symlink(commandLink, input.link);
+  if (kind === "older") {
+    const moved = yield* replaceOwnedLink({
+      link: input.link,
+      target: commandLink,
+      owns: (candidate) =>
+        classifyCommandLink(candidate, input.baseDir).pipe(
+          Effect.map((found) => found !== "foreign"),
+        ),
+    });
+    if (!moved) return false;
+  }
+  if (existed) yield* switchCommandLink;
+  return true;
 });
 
 /** Links this runtime as the `t3` command the way the install scripts do, never over another t3. */
