@@ -279,6 +279,7 @@ function chooseLiveActivityDelivery(input: {
 function chooseDelivery(input: {
   readonly target: LiveActivities.TargetRow;
   readonly aggregate: RelayAgentActivityAggregateState | null;
+  readonly notificationAggregate: RelayAgentActivityAggregateState | null;
   readonly nowMs: number;
   readonly replay?: boolean;
 }): ChosenDelivery | null {
@@ -289,7 +290,9 @@ function chooseDelivery(input: {
   if (liveActivityDelivery) {
     return liveActivityDelivery;
   }
-  const notification = input.replay ? null : notificationForAggregate(input);
+  const notification = input.replay
+    ? null
+    : notificationForAggregate({ ...input, aggregate: input.notificationAggregate });
   return notification && input.target.push_token
     ? {
         kind: "push_notification",
@@ -484,6 +487,8 @@ export class ApnsDeliveries extends Context.Service<
     readonly sendForTarget: (input: {
       readonly target: LiveActivities.TargetRow;
       readonly aggregate: RelayAgentActivityAggregateState | null;
+      // Alert pushes ring only for the published thread, never for the aggregate's top row.
+      readonly notificationAggregate?: RelayAgentActivityAggregateState | null;
       readonly nowMs: number;
       readonly replay?: boolean;
     }) => Effect.Effect<RelayDeliveryResult | null, ApnsDeliveryError>;
@@ -1041,6 +1046,7 @@ const make = Effect.gen(function* () {
       const delivery = chooseDelivery({
         target: input.target,
         aggregate: input.aggregate,
+        notificationAggregate: input.notificationAggregate ?? null,
         nowMs: input.nowMs,
         replay: input.replay ?? false,
       });
@@ -1062,7 +1068,7 @@ const make = Effect.gen(function* () {
         ? null
         : notificationForAggregate({
             target: input.target,
-            aggregate: input.aggregate,
+            aggregate: input.notificationAggregate ?? null,
             nowMs: input.nowMs,
           });
       // Use the end alert only when no companion notification will ring, preserving feedback for Live-Activity-only users.
