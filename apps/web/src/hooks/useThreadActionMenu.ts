@@ -249,7 +249,9 @@ export function useThreadActionMenu(input: {
           return;
         case "mute":
         case "unmute":
-          await reportFailure("Failed to update notifications", () => setThreadMuted(threadRef, action === "mute"));
+          await reportFailure("Failed to update notifications", () =>
+            setThreadMuted(threadRef, action === "mute"),
+          );
           return;
         case "rename":
           onStartRename();

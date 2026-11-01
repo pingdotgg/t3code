@@ -499,10 +499,16 @@ export function useThreadListActions(): {
   const setThreadMuted = async (thread: EnvironmentThreadShell, muted: boolean) => {
     if (!checkThreadOperationPermission(thread, "Could not update notifications")) return false;
     selectionHaptic();
-    const result = await setMutedMutation({environmentId: thread.environmentId, input: {threadId: thread.id, muted}});
+    const result = await setMutedMutation({
+      environmentId: thread.environmentId,
+      input: { threadId: thread.id, muted },
+    });
     if (result._tag === "Failure") {
       const error = Cause.squash(result.cause);
-      Dialog.alert("Could not update notifications", error instanceof Error ? error.message : "The notification setting could not be changed.");
+      Dialog.alert(
+        "Could not update notifications",
+        error instanceof Error ? error.message : "The notification setting could not be changed.",
+      );
       return false;
     }
     return true;

@@ -2566,7 +2566,8 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
         const supportsAutoSettleOptOut =
           serverConfigs.get(thread.environmentId)?.environment.capabilities
             .threadAutoSettleOptOut === true;
-        const supportsMute = serverConfigs.get(thread.environmentId)?.environment.capabilities.threadMute === true;
+        const supportsMute =
+          serverConfigs.get(thread.environmentId)?.environment.capabilities.threadMute === true;
         const isRegeneratingTitle = thread.titleRegeneration != null;
         const isSettled = settledThreadKeysRef.current.has(threadKey);
         const isSnoozed = snoozedThreadKeysRef.current.has(threadKey);

@@ -536,12 +536,12 @@ export const make = Effect.gen(function* () {
     const project = Option.isSome(thread)
       ? yield* projects.getById(thread.value.projectId)
       : Option.none<Project>();
-    const snapshot = resolveAgentAwarenessRelayPublishSnapshot({
+    let snapshot = resolveAgentAwarenessRelayPublishSnapshot({
       environmentId,
       thread,
       project,
     });
-    const publishIdentity = agentAwarenessPublishIdentity(snapshot.state);
+    if (snapshot.state?.phase === "running") unmutedAtByThread.delete(threadId);
     const publishedStateByThread = yield* Ref.get(publishedStateByThreadRef);
     if (snapshot.state?.phase === "completed" || snapshot.state?.phase === "failed") {
       // Startup has no publish history, and unmuting follows a withdrawal. Only
@@ -553,9 +553,16 @@ export const make = Effect.gen(function* () {
         quietBefore !== undefined &&
         (Option.isNone(thread) || !terminalWorkSinceStart(thread.value, quietBefore))
       ) {
-        return;
+        if (
+          !unmutedAtByThread.has(threadId) ||
+          !publishedStateByThread.has(threadId) ||
+          publishedStateByThread.get(threadId) === agentAwarenessPublishIdentity(null)
+        )
+          return;
+        snapshot = { ...snapshot, state: null };
       }
     }
+    const publishIdentity = agentAwarenessPublishIdentity(snapshot.state);
     if (publishedStateByThread.get(threadId) === publishIdentity) {
       // Clear moot deadlines so later transient nulls cannot skip their deferral window.
       publishConfirmDeadlines.delete(threadId);

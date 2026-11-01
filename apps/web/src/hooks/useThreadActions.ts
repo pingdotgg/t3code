@@ -957,7 +957,11 @@ export function useThreadActions() {
     reorderActiveThread,
     markThreadUnread,
     setThreadAutoSettle,
-    setThreadMuted: (target: ScopedThreadRef, muted: boolean) => setThreadMutedMutation({environmentId: target.environmentId, input: {threadId: target.threadId, muted}}),
+    setThreadMuted: (target: ScopedThreadRef, muted: boolean) =>
+      setThreadMutedMutation({
+        environmentId: target.environmentId,
+        input: { threadId: target.threadId, muted },
+      }),
     turnThreadIntoProject: (target: ScopedThreadRef) =>
       createProjectFromThread({
         environmentId: target.environmentId,

@@ -578,7 +578,7 @@ describe("AgentAwarenessRelay", () => {
 
   // Mute and unmute reach the relay as thread.mute-set events; the unmute
   // event's own time is the cutoff for terminal alerts.
-  const makeMuteRelay = Effect.fnUntraced(function* () {
+  const makeMuteRelay = Effect.fnUntraced(function* (confirmWithdrawal = true) {
     const events = yield* Queue.unbounded<OrchestrationV2DomainEvent>();
     const pulls = yield* Queue.unbounded<void>();
     const harness = yield* makeTestRelay({
@@ -630,10 +630,12 @@ describe("AgentAwarenessRelay", () => {
     const mutedAt = yield* DateTime.now;
     yield* Ref.set(harness.currentShell, shell({ mutedAt }));
     yield* deliverMuteSet(mutedAt, mutedAt);
-    yield* TestClock.adjust("5 seconds");
-    yield* harness.relay.drain;
-    assert.equal(harness.publications.length, 2);
-    assert.equal(harness.publications[1]?.state, null);
+    if (confirmWithdrawal) {
+      yield* TestClock.adjust("5 seconds");
+      yield* harness.relay.drain;
+      assert.equal(harness.publications.length, 2);
+      assert.equal(harness.publications[1]?.state, null);
+    }
     return { ...harness, deliverMuteSet };
   });
 
@@ -651,6 +653,43 @@ describe("AgentAwarenessRelay", () => {
       yield* TestClock.adjust("5 seconds");
       yield* relay.drain;
       assert.equal(publications.length, 2);
+    }),
+  );
+
+  it.effect("alerts when background work restored after unmute finishes", () =>
+    Effect.gen(function* () {
+      const { relay, currentShell, publications, deliverMuteSet } = yield* makeMuteRelay();
+      const finishedAt = yield* DateTime.now;
+      yield* TestClock.adjust("1 second");
+      const waiting = shell({
+        status: "completed",
+        latestRunCompletedAt: finishedAt,
+        pendingBackgroundTasks: [{ taskId: "watch", kind: "monitor", awaited: true }],
+      });
+      yield* Ref.set(currentShell, waiting);
+      yield* deliverMuteSet(null, yield* DateTime.now);
+      assert.equal(publications.at(-1)?.state?.phase, "running");
+      yield* Ref.set(currentShell, { ...waiting, pendingBackgroundTasks: [] });
+      yield* relay.publishThread(THREAD_ID);
+      yield* TestClock.adjust("5 seconds");
+      yield* relay.drain;
+      assert.equal(publications.at(-1)?.state?.phase, "completed");
+    }),
+  );
+
+  it.effect("clears a stale live card when unmuted before withdrawal confirms", () =>
+    Effect.gen(function* () {
+      const { relay, currentShell, publications, deliverMuteSet } = yield* makeMuteRelay(false);
+      const finishedAt = yield* DateTime.now;
+      yield* TestClock.adjust("1 second");
+      yield* Ref.set(
+        currentShell,
+        shell({ status: "completed", latestRunCompletedAt: finishedAt }),
+      );
+      yield* deliverMuteSet(null, yield* DateTime.now);
+      yield* TestClock.adjust("5 seconds");
+      yield* relay.drain;
+      assert.equal(publications.at(-1)?.state, null);
     }),
   );
 
