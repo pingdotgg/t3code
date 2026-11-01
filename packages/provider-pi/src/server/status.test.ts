@@ -8,6 +8,8 @@ import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
 import * as ChildProcess from "effect/process/ChildProcess";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
+import * as Fiber from "effect/Fiber";
+import * as TestClock from "effect/testing/TestClock";
 
 import { checkPiProviderStatus, MINIMUM_PI_VERSION } from "./status.ts";
 
@@ -21,19 +23,22 @@ function processHandle(input: {
   readonly stdout?: string;
   readonly stderr?: string;
   readonly exitCode?: number;
+  /** Holds stdout and the exit back until it completes, like a CLI slow to answer. */
+  readonly answered?: Effect.Effect<void>;
 }) {
+  const answered = input.answered ?? Effect.void;
   const bytes = (value: string | undefined) =>
     value === undefined || value.length === 0
       ? Stream.empty
       : Stream.succeed(encoder.encode(value));
   return ChildProcessSpawner.makeHandle({
     pid: ChildProcessSpawner.ProcessId(900_000_001),
-    exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(input.exitCode ?? 0)),
+    exitCode: Effect.as(answered, ChildProcessSpawner.ExitCode(input.exitCode ?? 0)),
     isRunning: Effect.succeed(false),
     kill: () => Effect.void,
     unref: Effect.succeed(Effect.void),
     stdin: Sink.drain,
-    stdout: bytes(input.stdout),
+    stdout: Stream.unwrap(Effect.as(answered, bytes(input.stdout))),
     stderr: bytes(input.stderr),
     all: Stream.empty,
     getInputFd: () => Sink.drain,
@@ -145,6 +150,48 @@ describe("PiProvider", () => {
         ["default"],
       );
       assert.include(snapshot.message ?? "", "could not refresh its models and commands");
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect.each([
+    {
+      label: "answers after 6 s",
+      versionDelay: "6 seconds",
+      status: "ready",
+      version: "0.84.3",
+      message: "could not refresh its models and commands",
+      probesAfterVersion: true,
+    },
+    {
+      label: "never answers",
+      versionDelay: "Infinity",
+      status: "error",
+      version: null,
+      message: "Pi CLI is installed but timed out while running `pi --version`.",
+      probesAfterVersion: false,
+    },
+  ] as const)("gives `pi --version` 10 s when it $label", (row) =>
+    Effect.gen(function* () {
+      const spawned: Array<string> = [];
+      const spawner = ChildProcessSpawner.make((command) => {
+        const args = ChildProcess.isStandardCommand(command) ? command.args : [];
+        spawned.push(args.join(" "));
+        return Effect.succeed(
+          args.includes("--version")
+            ? processHandle({ stdout: "pi 0.84.3\n", answered: Effect.sleep(row.versionDelay) })
+            : processHandle({ stderr: "RPC startup failed", exitCode: 1 }),
+        );
+      });
+      const fiber = yield* checkPiProviderStatus(settings).pipe(
+        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+        Effect.forkChild,
+      );
+      yield* TestClock.adjust("10 seconds");
+      const snapshot = yield* Fiber.join(fiber);
+      assert.equal(snapshot.status, row.status);
+      assert.equal(snapshot.version, row.version);
+      assert.include(snapshot.message ?? "", row.message);
+      assert.equal(spawned.length > 1, row.probesAfterVersion);
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 

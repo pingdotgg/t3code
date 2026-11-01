@@ -64,7 +64,7 @@ async function alreadyStarred(environmentId: EnvironmentId) {
     },
     { label: "check GitHub star", reportFailure: false, reportDefect: false },
   );
-  return result._tag === "Success" && result.value;
+  return result._tag === "Success" ? result.value : undefined;
 }
 
 /**
@@ -83,7 +83,9 @@ export async function recordPromptSent(environmentId: EnvironmentId): Promise<vo
     return;
   }
   shownThisSession = true;
-  if (await alreadyStarred(environmentId)) return dismiss();
+  const starred = await alreadyStarred(environmentId);
+  if (starred === undefined) return;
+  if (starred) return dismiss();
   try {
     // Another tab can dismiss while the check runs.
     if (getLocalStorageItem(DISMISSED_KEY, Schema.Boolean)) return;
