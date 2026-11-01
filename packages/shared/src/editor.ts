@@ -94,10 +94,10 @@ export const resolveEditorCommand = Effect.fn("editor.resolveEditorCommand")(fun
     for (const target of targets) {
       if (yield* exists(target)) return "found";
     }
-    // Any variable other than HOME or the forwarded arguments, such as `$IDE_HOME` or `%IDE%`,
-    // could point at an installed IDE.
-    const variables = /\$|%[\w~]/.test(text.replace(/\$(?:\{HOME\}|HOME\b|@|\*)|%\*/g, ""));
-    if (targets.length === 0 || variables) return "unknown";
+    // A variable other than HOME or the forwarded arguments (`$IDE_HOME`, `%IDE%`) or an escaped
+    // space (`IntelliJ\ IDEA.app`) can hide an installed IDE from this parser.
+    const ambiguous = /\$|%[\w~]|\\ /.test(text.replace(/\$(?:\{HOME\}|HOME\b|@|\*)|%\*/g, ""));
+    if (targets.length === 0 || ambiguous) return "unknown";
     // Any other existing path, as in `env "/opt/idea/bin/idea"`, may be the IDE behind a launcher
     // this parser does not know.
     for (const { text: word } of lines.flatMap(scriptWords)) {

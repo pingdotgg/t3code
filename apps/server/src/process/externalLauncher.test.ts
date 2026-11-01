@@ -697,6 +697,15 @@ it.effect.each<{
     }),
   },
   {
+    case: "an escaped path",
+    platform: "darwin",
+    expected: "idea",
+    scripts: ({ ide, removed }) => ({
+      idea: `#!/bin/sh\n${removed} --version\nopen -na ${ide.replaceAll(" ", "\\ ")} --args "$@"\n`,
+      idea1: `#!/bin/sh\nopen -na "${ide}" --args "$@"\n`,
+    }),
+  },
+  {
     case: "a single-quoted target",
     platform: "darwin",
     expected: "idea",
