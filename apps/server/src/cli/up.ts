@@ -486,7 +486,10 @@ const formatTailscale = (
     // Other devices look for machines only on the default port.
     ...(port === ServerConfig.DEFAULT_PORT
       ? [
-          "Your own tailnet devices find this machine automatically; others add it by the address above.",
+          // Discovery shows a tagged host to everyone, an untagged one only to its user.
+          tagged
+            ? "Tailnet devices find this machine automatically."
+            : "Your own tailnet devices find this machine automatically; others add it by the address above.",
         ]
       : []),
     "",
