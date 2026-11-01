@@ -137,7 +137,7 @@ import { MARKDOWN_IMAGE_MAX_WIDTH, resolveMarkdownImageDisplaySize } from "./mar
 import { FilePreviewModal, type FilePreviewSource } from "../../components/FilePreviewModal";
 import { inlineFilePreviewKind, isPdfFile } from "../../lib/filePreview";
 import { ThreadInlineFilePreview } from "./ThreadInlineFilePreview";
-import { flattenThemeColor } from "../../lib/mobileTheme";
+import { flattenThemeColor, seeThroughThemeColor } from "../../lib/mobileTheme";
 import { PresentationSource } from "../../components/ui/NativePresentation";
 import { NativeScrollViewMarker } from "../../native/NativeScrollViewMarker";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -1306,6 +1306,11 @@ function useMarkdownStyles(): MarkdownStyleSets {
   const markdownLinkColor = theme["--color-md-link"];
   const markdownBlockquoteBorder = theme["--color-md-blockquote-border"];
   const markdownCodeBg = theme["--color-md-code-bg"];
+  // Enriched paints list code blocks over iOS selection (software-mansion/enriched-markdown#1024).
+  const markdownCodeBlockBg =
+    Platform.OS === "ios"
+      ? seeThroughThemeColor(markdownCodeBg, theme["--color-screen"])
+      : markdownCodeBg;
   const markdownCodeText = theme["--color-md-code-text"];
   const markdownInlineCodeText = theme["--color-foreground-secondary"];
   const markdownHrColor = theme["--color-md-hr"];
@@ -1354,7 +1359,7 @@ function useMarkdownStyles(): MarkdownStyleSets {
         inlineCodeColor: markdownInlineCodeText,
         codeColor: markdownCodeText,
         codeBackgroundColor: markdownCodeBg,
-        codeBlockBackgroundColor: markdownCodeBg,
+        codeBlockBackgroundColor: markdownCodeBlockBg,
         fileTextColor: markdownCodeText,
         quoteMarkerColor: markdownBlockquoteBorder,
         dividerColor: markdownHrColor,
