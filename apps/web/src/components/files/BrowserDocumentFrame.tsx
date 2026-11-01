@@ -320,6 +320,8 @@ export function HtmlRenderDocument(props: {
         title={props.title}
         // Never allow-same-origin: the opaque origin keeps the page out of the app's session.
         sandbox="allow-scripts allow-forms"
+        // Lets a page's video or image viewer take the screen.
+        allow="fullscreen"
         loading="lazy"
         onLoad={() => {
           setLoaded(true);
