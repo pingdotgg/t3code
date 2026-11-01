@@ -1,4 +1,9 @@
-import { isWindowsAbsolutePath, stripSlashPrefixedWindowsDrive } from "./path.ts";
+import {
+  isNetworkPath,
+  isWindowsAbsolutePath,
+  stripSlashPrefixedWindowsDrive,
+  workspaceRelativeFilePath,
+} from "./path.ts";
 import {
   type FilePathPosition,
   formatFilePathPosition,
@@ -9,11 +14,14 @@ import {
 
 const RELATIVE_PATH_PREFIX_PATTERN = /^(~\/|\.{1,2}\/)/;
 
+// Names may use any script (`線性代數/考試.pdf`). The final segment is optional so an
+// explicit folder link may end in `/` (`patches/`, `docs/My Folder/`). A bare name with no
+// slash still fails.
 const RELATIVE_FILE_PATH_PATTERN =
-  /^(?:[A-Za-z0-9._-]+(?: +[A-Za-z0-9._-]+)*\/)+[A-Za-z0-9._-]+(?: +[A-Za-z0-9._-]+)*(?::\d+){0,2}$/;
+  /^(?:[\p{L}\p{M}\p{N}._-]+(?: +[\p{L}\p{M}\p{N}._-]+)*\/)+(?:[\p{L}\p{M}\p{N}._-]+(?: +[\p{L}\p{M}\p{N}._-]+)*(?::\d+){0,2})?$/u;
 
 const RELATIVE_FILE_NAME_PATTERN =
-  /^[A-Za-z0-9._-]+(?: +[A-Za-z0-9._-]+)*\.[A-Za-z0-9_-]+(?::\d+){0,2}$/;
+  /^[\p{L}\p{M}\p{N}._-]+(?: +[\p{L}\p{M}\p{N}._-]+)*\.[\p{L}\p{M}\p{N}_-]+(?::\d+){0,2}$/u;
 
 const EXTERNAL_SCHEME_PATTERN = /^([A-Za-z][A-Za-z0-9+.-]*):(.*)$/;
 
@@ -176,6 +184,9 @@ export function inlineCodeFilePathCandidate(codeText: string): string | null {
     isWindowsAbsolutePath(candidate);
   if (!hasExplicitPathShape) {
     const withoutPosition = candidate.replace(POSITION_SUFFIX_PATTERN, "");
+    // Markdown destinations accept `patches/`. Inline code still needs a
+    // file-shaped final segment, so a trailing slash stays plain code.
+    if (withoutPosition.endsWith("/")) return null;
     const firstSegment = withoutPosition.split("/")[0] ?? withoutPosition;
     if (looksLikeHostname(firstSegment, hasPosition)) return null;
     const basename =
@@ -214,6 +225,22 @@ export function splitMarkdownLinkSearchAndHash(value: string): {
     path: queryIndex >= 0 ? pathWithSearch.slice(0, queryIndex) : pathWithSearch,
     hash,
   };
+}
+
+/**
+ * The decoded path a markdown destination names on the host, before any workspace resolution, or
+ * null for a `file:` URL that does not parse. Clients and the guest media route both read it here.
+ */
+export function markdownDestinationHostPath(source: string): string | null {
+  if (/^file:/i.test(source)) {
+    const target = parseFileUrlHref(source);
+    return target === null
+      ? null
+      : stripSlashPrefixedWindowsDrive(safeDecodeURIComponent(target.path));
+  }
+  return stripSlashPrefixedWindowsDrive(
+    safeDecodeURIComponent(splitMarkdownLinkSearchAndHash(source).path),
+  );
 }
 
 export function isMarkdownFileLinkLabel(label: string, href: string): boolean {
@@ -333,8 +360,7 @@ function markdownLinkDestinationScanner(markdown: string) {
   const whitespaceEnd = markdownRunEndFinder(markdown, /\S/g);
   const angleEnd = markdownRunEndFinder(markdown, /[>\n]/g);
   const bareEnd = markdownRunEndFinder(markdown, /[\s)]/g);
-  // Separate caches keep each branch's searches moving forward even when an
-  // angle destination fails and falls back to an ordinary destination.
+  // Separate caches keep scans moving forward when angle destinations fall back to bare ones.
   const angleTail = markdownLinkTailScanner(markdown);
   const bareTail = markdownLinkTailScanner(markdown);
   return (start: number) => {
@@ -364,8 +390,7 @@ export function extractMarkdownLinkHrefs(markdown: string): string[] {
     const labelEnd = markdown.indexOf("]", labelStart + 1);
     if (labelEnd === -1) break;
 
-    // Nested opening brackets share this closing bracket. On failure, skip the
-    // whole label instead of rescanning its suffix from each opening bracket.
+    // Skip a failed label once; nested openings share its closing bracket.
     cursor = labelEnd + 1;
     const destination = scanDestination(cursor);
     if (!destination) continue;
@@ -386,7 +411,13 @@ export function resolveMarkdownFileLinkTarget(
   if (!target) return null;
 
   const pathWithPosition = formatFilePathPosition(target);
-  if (!isRelativeFilePath(pathWithPosition)) return pathWithPosition;
+  if (!isRelativeFilePath(pathWithPosition)) {
+    // Opening a network path makes Windows sign in to its host with the user's
+    // NTLM credentials, so only the project's own share becomes a file link.
+    return isNetworkPath(target.path) && workspaceRelativeFilePath(target.path, cwd) === null
+      ? null
+      : pathWithPosition;
+  }
   if (!baseDir) return null;
   return resolvePathLinkTarget(pathWithPosition, baseDir);
 }
