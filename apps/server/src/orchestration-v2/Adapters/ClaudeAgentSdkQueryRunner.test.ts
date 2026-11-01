@@ -16,6 +16,7 @@ import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
+import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 import { vi } from "vite-plus/test";
 
@@ -454,6 +455,47 @@ describe.skipIf(HostProcess.Platform.defaultValue() === "win32")("Claude CLI pro
       yield* Effect.promise(() => leftoverStopped);
       assert.strictEqual(yield* Deferred.await(stopped), "t3code-claude-test.scope");
     }),
+  );
+
+  const rootRefusal =
+    "--dangerously-skip-permissions cannot be used with root/sudo privileges for security reasons";
+
+  const startupFailureMessage = (stderr: string) =>
+    Effect.gen(function* () {
+      const cli = fakeClaudeCli(`printf '%s\\n' '${stderr}' >&2\nexit 1`);
+      yield* Effect.addFinalizer(() =>
+        Effect.sync(() => NodeFS.rmSync(NodePath.dirname(cli), { recursive: true, force: true })),
+      );
+      const session = yield* openFakeCli(cli);
+      const exit = yield* Stream.runDrain(session.messages).pipe(Effect.exit);
+      assert.isTrue(Exit.isFailure(exit));
+      return Exit.isFailure(exit)
+        ? makeProviderFailure({ cause: exit.cause, class: "transport_error" }).message
+        : "";
+    });
+
+  // Claude Code refuses bypassPermissions as root and explains why only on
+  // stderr, so the turn failure has to carry that line.
+  it.effect("reports the CLI's root refusal when it exits before answering", () =>
+    Effect.gen(function* () {
+      assert.include(yield* startupFailureMessage(rootRefusal), rootRefusal);
+    }).pipe(Effect.provide(realQueryRunner)),
+  );
+
+  // Startup stderr can carry paths, tokens, or settings, so only the known
+  // refusal reaches the failure the client shows.
+  it.effect("keeps other startup stderr out of the turn failure", () =>
+    Effect.gen(function* () {
+      const surrounded = yield* startupFailureMessage(
+        `token=sk-private-123\n${rootRefusal}\nat /home/private/settings.json`,
+      );
+      assert.include(surrounded, rootRefusal);
+      assert.notInclude(surrounded, "sk-private-123");
+      assert.notInclude(surrounded, "/home/private");
+
+      const unknown = yield* startupFailureMessage("token=sk-private-123");
+      assert.notInclude(unknown, "sk-private-123");
+    }).pipe(Effect.provide(realQueryRunner)),
   );
 
   // The CLI keeps running its turn after its pipes close, so a server that
