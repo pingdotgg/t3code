@@ -2263,10 +2263,7 @@ it.layer(layerTest)("orchestration V2 foundation persistence", (it) => {
 
       let pruneStatement: readonly [string, ReadonlyArray<unknown>] | undefined;
       const capturePrune: Statement.Transformer = (statement) => {
-        const compiled = statement.compile();
-        if (compiled[0].includes("DELETE FROM orchestration_v2_effect_outbox")) {
-          pruneStatement ??= compiled;
-        }
+        pruneStatement = statement.compile();
         return Effect.succeed(statement);
       };
       assert.equal(
@@ -2280,11 +2277,9 @@ it.layer(layerTest)("orchestration V2 foundation persistence", (it) => {
         `EXPLAIN QUERY PLAN ${pruneStatement[0]}`,
         pruneStatement[1],
       );
-      assert.isTrue(
-        plan.some((row) =>
-          row.detail.includes("orchestration_v2_effect_outbox_settled_completed_idx"),
-        ),
+      assert.include(
         plan.map((row) => row.detail).join("\n"),
+        "orchestration_v2_effect_outbox_settled_completed_idx",
       );
 
       const remaining = yield* sql<{ readonly effect_id: string }>`
