@@ -9,6 +9,7 @@ import {
 } from "react";
 import {
   ArchiveIcon,
+  BlocksIcon,
   FlaskConicalIcon,
   BotIcon,
   createLucideIcon,
@@ -99,6 +100,7 @@ const SETTINGS_SECTION_ICONS: Readonly<
   "/settings/browser": GlobeIcon,
   "/settings/devices": SmartphoneIcon,
   "/settings/scheduled-tasks": CalendarClockIcon,
+  "/settings/plugins": BlocksIcon,
   "/settings/source-control": GitBranchIcon,
   "/settings/worktrees": FolderTreeIcon,
   "/settings/connections": ServerIcon,
@@ -133,7 +135,11 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
   const currentSearch = useLocation({ select: (location) => location.search });
   const scopeSearch = validateSettingsScopeSearch(currentSearch);
   const activePath = SETTINGS_DETAIL_PAGE_PARENTS[pathname] ?? pathname;
-  const navPaths = SETTINGS_NAV_GROUPS.flatMap((group) => group.paths);
+  const searchableItems = useAvailableSettingsSearchItems(scopeSearch);
+  const hasPlugins = searchableItems.some((item) => item.to === "/settings/plugins");
+  const navPaths = SETTINGS_NAV_GROUPS.flatMap((group) =>
+    group.paths.filter((to) => to !== "/settings/plugins" || hasPlugins),
+  );
   const sectionNavigation = useSettingsSectionNavigation(
     navPaths.find((to) => activePath === to || activePath.startsWith(`${to}/`)) ??
       navPaths[0] ??
@@ -144,7 +150,6 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
   // Below md the nav is an icon rail; searching expands it over the page.
   const [compactSearchOpen, setCompactSearchOpen] = useState(false);
   const [activeResultIndex, setActiveResultIndex] = useState(0);
-  const searchableItems = useAvailableSettingsSearchItems(scopeSearch);
   const results = searchSettings(query, searchableItems);
   const isSearching = query.trim().length > 0;
   const hasResults = results.length > 0;
@@ -400,30 +405,35 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
                         </h3>
                       ) : null}
                       <SidebarMenu role="presentation">
-                        {group.paths.map((to) => {
-                          const Icon = SETTINGS_SECTION_ICONS[to];
-                          const isActive = activePath === to || activePath.startsWith(`${to}/`);
-                          return (
-                            <SidebarMenuItem key={to} role="presentation">
-                              <SidebarMenuButton
-                                data-settings-section={to}
-                                role="treeitem"
-                                tabIndex={sectionNavigation.tabIndexFor(to)}
-                                aria-selected={isActive}
-                                aria-current={isActive ? "page" : undefined}
-                                isActive={isActive}
-                                onClick={() => handleSectionClick(to)}
-                              >
-                                <Icon />
-                                <span
-                                  className={cn("truncate", !compactSearchOpen && "max-md:sr-only")}
+                        {group.paths
+                          .filter((to) => to !== "/settings/plugins" || hasPlugins)
+                          .map((to) => {
+                            const Icon = SETTINGS_SECTION_ICONS[to];
+                            const isActive = activePath === to || activePath.startsWith(`${to}/`);
+                            return (
+                              <SidebarMenuItem key={to} role="presentation">
+                                <SidebarMenuButton
+                                  data-settings-section={to}
+                                  role="treeitem"
+                                  tabIndex={sectionNavigation.tabIndexFor(to)}
+                                  aria-selected={isActive}
+                                  aria-current={isActive ? "page" : undefined}
+                                  isActive={isActive}
+                                  onClick={() => handleSectionClick(to)}
                                 >
-                                  {SETTINGS_SECTION_LABELS[to]}
-                                </span>
-                              </SidebarMenuButton>
-                            </SidebarMenuItem>
-                          );
-                        })}
+                                  <Icon />
+                                  <span
+                                    className={cn(
+                                      "truncate",
+                                      !compactSearchOpen && "max-md:sr-only",
+                                    )}
+                                  >
+                                    {SETTINGS_SECTION_LABELS[to]}
+                                  </span>
+                                </SidebarMenuButton>
+                              </SidebarMenuItem>
+                            );
+                          })}
                       </SidebarMenu>
                     </div>
                   ))}
