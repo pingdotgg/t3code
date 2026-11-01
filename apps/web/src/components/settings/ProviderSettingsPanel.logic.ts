@@ -142,9 +142,6 @@ export function defaultInstanceResetBaseline(
   if (instance?.driver !== "codex" || readCodexSetupMode(instance.config) !== "managed") {
     return undefined;
   }
-  return {
-    driver: instance.driver,
-    enabled: true,
-    config: { enabled: true, setupMode: "managed" },
-  };
+  // The server folds config.enabled into `enabled`, so this is the stored onboarding shape.
+  return { driver: instance.driver, enabled: true, config: { setupMode: "managed" } };
 }
