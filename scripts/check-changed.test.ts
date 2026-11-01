@@ -35,6 +35,37 @@ describe("check:changed", () => {
     assert.strictEqual(defaultConcurrency(1, 64 * GiB), 1);
   });
 
+  it("typechecks the changed packages and their dependents, or every package for shared inputs", () => {
+    const packages = readWorkspace();
+    const typecheck = (files: ReadonlyArray<string> | null, full = false) =>
+      decide(files, packages, full).outputs.typecheck_packages;
+    assert.strictEqual(
+      typecheck(["oxlint-plugin-t3code/src/index.ts"]),
+      "@t3tools/oxlint-plugin-t3code",
+    );
+    assert.includeMembers(typecheck(["packages/provider-grok/src/index.ts"]).split(" "), [
+      "@t3tools/provider-grok",
+      "@t3tools/client-runtime",
+      "t3",
+    ]);
+    // The server reads these without depending on their packages.
+    for (const file of [
+      "packages/client-runtime/src/state/orchestrationV2Projection.ts",
+      "infra/task-cache/src/remoteCache.ts",
+    ]) {
+      assert.include(typecheck([file]).split(" "), "t3");
+    }
+    for (const files of [
+      ["packages/shared/package.json"],
+      ["pnpm-lock.yaml"],
+      ["packages/shared/src/HostProcess.ts"],
+      null,
+    ]) {
+      assert.strictEqual(typecheck(files), "");
+    }
+    assert.strictEqual(typecheck(["oxlint-plugin-t3code/src/index.ts"], true), "");
+  });
+
   it("runs the server tests for the one guide they read and leaves other docs inert", () => {
     const packages = readWorkspace();
     assert.isTrue(

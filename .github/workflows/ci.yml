@@ -26,6 +26,7 @@ jobs:
     timeout-minutes: 5
     outputs:
       typecheck: ${{ steps.detect.outputs.typecheck }}
+      typecheck_packages: ${{ steps.detect.outputs.typecheck_packages }}
       build: ${{ steps.detect.outputs.build }}
       test: ${{ steps.detect.outputs.test }}
       test_packages: ${{ steps.detect.outputs.test_packages }}
@@ -163,14 +164,22 @@ jobs:
         run: vp run --filter @t3tools/desktop ensure:electron
 
       # Runs in the background while the build runs, and reports in the last
-      # step: neither result hides the other.
+      # step: neither result hides the other. `changes` lists the affected
+      # packages, or nothing when all of them are. Same command as check:changed.
       - name: Start typecheck
         id: typecheck
         if: ${{ !cancelled() && steps.electron.outcome == 'success' && needs.changes.outputs.typecheck != 'false' }}
+        env:
+          TYPECHECK_PACKAGES: ${{ needs.changes.outputs.typecheck_packages }}
         run: |
+          filters=(-r)
+          if [[ -n "$TYPECHECK_PACKAGES" ]]; then
+            filters=()
+            for package in $TYPECHECK_PACKAGES; do filters+=(--filter "$package"); done
+          fi
           (
             set +e
-            vpr typecheck
+            vp run --cache --parallel --concurrency-limit 4 "${filters[@]}" typecheck
             echo "$?" > "$RUNNER_TEMP/typecheck-status"
           ) > "$RUNNER_TEMP/typecheck.log" 2>&1 < /dev/null &
 
