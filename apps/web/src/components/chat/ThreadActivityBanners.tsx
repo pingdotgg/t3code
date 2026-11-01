@@ -9,6 +9,7 @@ import {
   presentProviderGoal,
   type RunStopPresentation,
 } from "@t3tools/client-runtime/state/thread-execution";
+import { commandDisplayText } from "@t3tools/client-runtime/work-log/command-label";
 import { childThreadInputsTitle } from "@t3tools/client-runtime/state/threads";
 import { formatDuration } from "@t3tools/shared/orchestrationTiming";
 import * as DateTime from "effect/DateTime";
@@ -172,7 +173,8 @@ export function backgroundWorkNowItem(input: {
     return {
       task,
       // Claude labels a command with a prose description; only the command itself is code.
-      isRawCommand: item?.type === "command_execution" && item.input.trim() === task.label,
+      isRawCommand:
+        item?.type === "command_execution" && commandDisplayText(item.input.trim()) === task.label,
       activity: subagent?.progress?.replace(/\s+/gu, " ").trim() || null,
       startedAtMs: item?.startedAt ? DateTime.toEpochMillis(item.startedAt) : null,
       updatedAtMs: subagent ? DateTime.toEpochMillis(subagent.updatedAt) : 0,

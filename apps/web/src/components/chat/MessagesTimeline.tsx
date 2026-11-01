@@ -711,6 +711,12 @@ const ConversationTimeline = memo(function ConversationTimeline({
     showAssistantMeta: false,
     showAssistantCopyButton: false,
   };
+  const metaAfterFooter =
+    footerContinuesMessage && lastRow?.kind === "assistant-meta"
+      ? lastRow
+      : messageBeforeFooter
+        ? assistantMetaRow(messageBeforeFooter, messageBeforeFooter.message.updatedAt)
+        : null;
   const matchedApprovalRequestIds = new Set<string>();
   for (const row of pendingApprovalRequestIds.size > 0 ? rows : []) {
     const entries =
@@ -1262,9 +1268,11 @@ const ConversationTimeline = memo(function ConversationTimeline({
           data-timeline-root="true"
         >
           <AudioPreviewUnmountContext value={onAudioUnmount}>
-            <TimelineRowContent
-              row={item.id === messageBeforeFooterRow?.id ? messageBeforeFooterRow : item}
-            />
+            {item.kind === "assistant-meta" && item.id === metaAfterFooter?.id ? null : (
+              <TimelineRowContent
+                row={item.id === messageBeforeFooterRow?.id ? messageBeforeFooterRow : item}
+              />
+            )}
           </AudioPreviewUnmountContext>
         </div>
       </div>
@@ -1275,6 +1283,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
     rowCount: rows.length,
     sharedState,
     messageBeforeFooterRow,
+    metaAfterFooter,
   };
   const timelineListFooter = (
     <TimelineListFooter
@@ -1282,12 +1291,10 @@ const ConversationTimeline = memo(function ConversationTimeline({
       onGrow={onFooterGrow}
     >
       {footer}
-      {messageBeforeFooter ? (
+      {metaAfterFooter ? (
         <TimelineRowCtx value={sharedState}>
           <div className="chat-content-lane">
-            <AssistantMetaTimelineRow
-              row={assistantMetaRow(messageBeforeFooter, messageBeforeFooter.message.updatedAt)}
-            />
+            <AssistantMetaTimelineRow row={metaAfterFooter} />
           </div>
         </TimelineRowCtx>
       ) : null}
