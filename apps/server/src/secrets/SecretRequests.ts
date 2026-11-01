@@ -209,8 +209,10 @@ const make = Effect.gen(function* () {
     const decoded = Option.flatMap(stored, (bytes) =>
       decodeStored(new TextDecoder().decode(bytes)),
     );
-    if (Option.isNone(decoded) || decoded.value.projectId !== input.projectId) {
-      return yield* new SecretRequestError({ reason: "ref_unavailable" });
+    if (Option.isNone(decoded)) return yield* new SecretRequestError({ reason: "ref_unavailable" });
+    // Before the expiry check, so a caller from another project never deletes the value.
+    if (decoded.value.projectId !== input.projectId) {
+      return yield* new SecretRequestError({ reason: "ref_wrong_project" });
     }
     if ((yield* Clock.currentTimeMillis) - decoded.value.savedAt > SECRET_REF_TTL_MS) {
       yield* removeLogged(storeName(input.ref));

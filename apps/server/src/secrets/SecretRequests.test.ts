@@ -228,7 +228,9 @@ it.effect("a ref only works in the project it was entered for", () =>
       const elsewhere = yield* service
         .consume({ ref, projectId: ProjectId.make("project-other") })
         .pipe(Effect.flip);
-      assert.include(elsewhere.message, "does not exist");
+      assert.equal<string>(elsewhere.reason, "ref_wrong_project");
+      assert.notInclude(elsewhere.message, "already used or does not exist");
+      assert.match(elsewhere.message, /another project/);
       assert.equal(yield* service.consume({ ref, projectId }), "ghp_secret");
     }),
   ),
