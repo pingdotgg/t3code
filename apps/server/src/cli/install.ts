@@ -8,6 +8,7 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
+import * as Random from "effect/Random";
 import * as Schema from "effect/Schema";
 import { Command, Prompt } from "effect/cli";
 import * as ChildProcess from "effect/process/ChildProcess";
@@ -166,17 +167,12 @@ export const linkCommand = Effect.fn("cli.install.link_command")(function* (inpu
       reason: `${commandLink} is not a link. Remove it, then run this again.`,
     });
   }
-  const staging = `${commandLink}.${process.pid}.tmp`;
+  // Created exclusively and removed only once it is this call's own.
+  const staging = `${commandLink}.${process.pid}.${yield* Random.nextIntBetween(0, 0x7fffffff)}.tmp`;
+  yield* fs.symlink(input.executable, staging);
   yield* fs
-    .remove(staging, { force: true })
-    .pipe(
-      Effect.andThen(fs.symlink(input.executable, staging)),
-      Effect.andThen(
-        fs
-          .rename(staging, commandLink)
-          .pipe(Effect.tapError(() => fs.remove(staging, { force: true }).pipe(Effect.ignore))),
-      ),
-    );
+    .rename(staging, commandLink)
+    .pipe(Effect.tapError(() => fs.remove(staging, { force: true }).pipe(Effect.ignore)));
   if (kind === "missing") yield* fs.symlink(commandLink, input.link);
   if (kind !== "older") return true;
   return yield* replaceOwnedLink({

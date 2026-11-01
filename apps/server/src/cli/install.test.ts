@@ -198,9 +198,17 @@ it.layer(NodeServices.layer)("t3 install", (it) => {
       const desktopBin = path.join(root, "desktop-bin");
       yield* fs.makeDirectory(desktopBin);
       yield* fs.symlink(desktopBin, path.join(root, ".t3/bin"));
+      // A target naming the marked launcher as a folder never runs it.
+      const marked = `#!/bin/sh\n# ${DESKTOP_CLI_LAUNCHER_MARKER}\n`;
+      yield* fs.writeFileString(path.join(desktopBin, "t3"), marked);
+      const asFolder = `${path.join(root, ".t3/bin/t3")}/.`;
+      yield* fs.remove(link);
+      yield* fs.symlink(asFolder, link);
+      yield* provide(installCli()).pipe(Effect.ignore);
+      assert.equal(yield* fs.readLink(link), asFolder);
       for (const [contents, ours] of [
         ["#!/bin/sh\necho mine\n", false],
-        [`#!/bin/sh\n# ${DESKTOP_CLI_LAUNCHER_MARKER}\n`, true],
+        [marked, true],
       ] as const) {
         yield* fs.writeFileString(path.join(desktopBin, "t3"), contents);
         yield* fs.remove(link);
@@ -212,18 +220,15 @@ it.layer(NodeServices.layer)("t3 install", (it) => {
           contents,
         );
       }
-      // A link at the launcher's name leads to another home's or another tool's t3, and a target
-      // naming it as a folder never runs it.
+      // A link at the launcher's name leads to another home's or another tool's t3.
       const nightly = path.join(root, "nightly-launcher");
       yield* fs.writeFileString(nightly, `#!/bin/sh\n# ${DESKTOP_CLI_LAUNCHER_MARKER}\n`);
       yield* fs.rename(path.join(desktopBin, "t3"), path.join(desktopBin, "t3.real"));
       yield* fs.symlink(nightly, path.join(desktopBin, "t3"));
-      for (const target of [path.join(root, ".t3/bin/t3"), `${path.join(root, ".t3/bin/t3")}/.`]) {
-        yield* fs.remove(link);
-        yield* fs.symlink(target, link);
-        yield* provide(installCli()).pipe(Effect.ignore);
-        assert.equal(yield* fs.readLink(link), target);
-      }
+      yield* fs.remove(link);
+      yield* fs.symlink(path.join(root, ".t3/bin/t3"), link);
+      yield* provide(installCli()).pipe(Effect.ignore);
+      assert.equal(yield* fs.readLink(link), path.join(root, ".t3/bin/t3"));
       yield* fs.remove(path.join(root, ".t3/bin"));
 
       // Another program may write its t3 at any moment, here once, at the first symlink this

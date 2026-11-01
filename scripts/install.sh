@@ -337,11 +337,10 @@ if [ -e "$public" ] || [ -L "$public" ]; then
   kind="$(link_kind "$public")"
   [ -n "$kind" ] || fail "another t3 is already at ${public}. Remove it and run this again, or run ${target_dir}/t3 directly."
 fi
-rm -f "${command_link}.$$.tmp"
-if ! { ln -s "${target_dir}/t3" "${command_link}.$$.tmp" && mv -f "${command_link}.$$.tmp" "$command_link"; }; then
-  rm -f "${command_link}.$$.tmp"
-  fail "could not link ${command_link}"
-fi
+# Created without -f and removed only once it is this install's own.
+staging="${command_link}.$$.tmp"
+ln -s "${target_dir}/t3" "$staging" || fail "could not link ${command_link}"
+mv -f "$staging" "$command_link" || { rm -f "$staging"; fail "could not link ${command_link}"; }
 case "$kind" in
   # An empty spot is linked without -f, so a file that appears after the check above is kept.
   # Into the folder, so an entry of any kind already named t3 makes ln fail instead of filling it.
