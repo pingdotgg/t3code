@@ -1,11 +1,9 @@
-// @effect-diagnostics nodeBuiltinImport:off -- closing an inherited pipe fd has no Effect API.
 import * as NodeStream from "@effect/platform-node/NodeStream";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Stream from "effect/Stream";
 import * as HostProcess from "@t3tools/shared/HostProcess";
-import * as NodeFS from "node:fs";
 import * as NodeNet from "node:net";
 
 import { recordShutdownIntent } from "./shutdownIntent.ts";
@@ -83,7 +81,9 @@ export const awaitLauncherStopOnFds = (fds: { readonly stopFd: number; readonly 
             closeOnDone: true,
             onError: (cause) => (cause instanceof Error ? cause : new Error(String(cause))),
           }),
-          acknowledge: Effect.try(() => NodeFS.closeSync(fds.ackFd)).pipe(
+          acknowledge: Effect.try(() =>
+            new NodeNet.Socket({ fd: fds.ackFd, readable: false, writable: true }).destroy(),
+          ).pipe(
             Effect.catchCause((cause) =>
               Effect.logWarning("could not acknowledge the desktop stop notice", { cause }),
             ),
