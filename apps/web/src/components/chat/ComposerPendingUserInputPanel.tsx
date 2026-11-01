@@ -205,7 +205,11 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
           isCollapsed ? "Show the question and its options" : "Hide the question and its options"
         }
         data-pending-user-input-toggle={isCollapsed ? "collapsed" : "expanded"}
-        className="px-4 pt-1.5"
+        className={cn(
+          "px-4 pt-1.5",
+          // Bleeds to the banner's 1px border so the header reads as its own band.
+          "redesign:data-panel-open:-mx-0.75 redesign:data-panel-open:-mt-0.75 redesign:data-panel-open:w-[calc(100%+--spacing(1.5))] redesign:data-panel-open:rounded-none redesign:data-panel-open:rounded-t-2xl redesign:data-panel-open:bg-black/4 redesign:data-panel-open:px-4.75 redesign:data-panel-open:py-1.5 redesign:dark:data-panel-open:bg-black/15",
+        )}
       >
         <ComposerBanner.Content>
           <span
