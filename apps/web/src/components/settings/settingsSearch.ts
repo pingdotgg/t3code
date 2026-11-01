@@ -575,6 +575,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["proactive automatically open diff pull request pr right panel agent completion"],
   },
   {
+    id: "subscription-usage-bar",
+    title: "Subscription usage bar",
+    to: "/settings/chat",
+    searchTerms: ["status bar footer quota limits remaining provider subscription"],
+  },
+  {
     id: "skills-in-slash-menu",
     title: "Show skills in slash menu",
     to: "/settings/chat",

@@ -1251,6 +1251,9 @@ export default function ChatView(props: ChatViewProps) {
   const canChangeEnvironment =
     hasMultipleEnvironments && !envLocked && draftId !== null && !draftThread?.promotedTo;
 
+  const subscriptionUsageBarEnabled = useClientSettings(
+    (settings) => settings.subscriptionUsageBarEnabled,
+  );
   const loadBalancingSettings = useClientSettings((settings) => ({
     loadBalancingEnabled: settings.loadBalancingEnabled,
     loadBalancingWeights: settings.loadBalancingWeights,
@@ -3922,7 +3925,7 @@ export default function ChatView(props: ChatViewProps) {
             onAddTerminalContext={addTerminalContextToDraftStable}
           />
         )}
-        {embedded ? null : (
+        {embedded || !subscriptionUsageBarEnabled ? null : (
           <UsageStatusBar
             provider={activeProviderStatus}
             connected={
