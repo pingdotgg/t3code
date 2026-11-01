@@ -48,7 +48,7 @@ export function rememberModelOptions(
   }
 }
 
-export function rememberedModelOptions(
+function rememberedModelOptions(
   instanceId: string,
   model: string,
 ): ReadonlyArray<ProviderOptionSelection> | undefined {
