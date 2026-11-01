@@ -1,4 +1,5 @@
 import {
+  composerDraftUserContentSignature,
   mergeDirectPreviewAnnotation,
   resolveBackgroundDraftWorkspaceOptions,
   shouldDockDraftHeroForSubmission,
@@ -942,6 +943,15 @@ export function useComposerSend(input: ComposerSendInput) {
       multipleTargets.push(resolved);
     }
 
+    const draftContentForSend = composerDraftUserContentSignature(
+      useComposerDraftStore.getState().getComposerDraft(composerDraftTarget),
+    );
+    const draftChangedDuringPreparation = () =>
+      composerDraftUserContentSignature(
+        useComposerDraftStore.getState().getComposerDraft(composerDraftTarget),
+      ) !== draftContentForSend;
+    const changedDraftError =
+      "Draft changed while preparing this message. Review it and send again.";
     sendInFlightRef.current = true;
     const sendGeneration = ++composerSendGenerationRef.current;
     const attachmentCapabilitiesBeforeUpload = readLiveAttachmentCapabilities();
@@ -1004,6 +1014,15 @@ export function useComposerSend(input: ComposerSendInput) {
       );
       void dockTransition.catch(() => resolveDockStarted?.());
       await dockStarted;
+    }
+
+    if (draftChangedDuringPreparation()) {
+      sendInFlightRef.current = false;
+      setThreadError(threadIdForSend, changedDraftError);
+      setDockedDraftHeroThreadKey((currentThreadKey) =>
+        currentThreadKey === activeThreadKey ? null : currentThreadKey,
+      );
+      return;
     }
 
     const attachmentCapabilitiesBeforeDispatch = readLiveAttachmentCapabilities();
