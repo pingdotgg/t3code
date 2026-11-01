@@ -194,7 +194,12 @@ esac
 # A path as Node's path.resolve spells it: absolute against the real working folder, with `.`,
 # `..`, and `//` collapsed as text, keeping the names of symlinked folders.
 resolve_path() (
-  case "$1" in /*) rest="$1" ;; *) rest="$(pwd -P)/$1" ;; esac
+  # The x keeps a trailing newline in the working folder's name, which $(...) would drop.
+  case "$1" in
+    /*) rest="$1" ;;
+    *) rest="$(pwd -P && echo x)" && rest="${rest%"
+x"}/$1" ;;
+  esac
   out=
   IFS=/
   set -f
@@ -361,13 +366,17 @@ switch_command_link() {
   fi
   rmdir "$staging_dir"
 }
-# Other bin folders may run the command link already, so it switches only once this one is linked.
-switched=false
-if [ ! -L "$command_link" ]; then switch_command_link; switched=true; fi
+# Checked before the home's command switches, so a bin folder that cannot be written changes nothing.
+[ -w "$bin_dir" ] || fail "cannot write to ${bin_dir}"
+# The home's command switches first: if the public link then fails, the home runs the version asked
+# for and only the public link is missing, never a third version.
+switch_command_link
 case "$kind" in
   # An empty spot is linked without -f, so a file that appears after the check above is kept.
   # Into the folder, so an entry of any kind already named t3 makes ln fail instead of filling it.
-  "") ln -s "$command_link" "${bin_dir}/" || fail "could not link ${public}; something else was created there." ;;
+  # A concurrent install may have made the same link a moment ago.
+  "") ln -s "$command_link" "${bin_dir}/" || [ "$(link_kind "$public")" = current ] ||
+    fail "could not link ${public}; something else was created there." ;;
   older)
     # Moved aside before it is checked again, so the check sees exactly what gets replaced. A new
     # folder of its own, so nothing left by an earlier install is replaced; the entry keeps its
@@ -400,7 +409,6 @@ case "$kind" in
     fi
     ;;
 esac
-"$switched" || switch_command_link
 # Pruning keeps what this launcher points at; a background service cannot see bin_dir otherwise.
 launchers="${t3_home}/runtime/launchers"
 grep -qxF "$real_public" "$launchers" 2>/dev/null || printf '%s\n' "$real_public" >> "$launchers"

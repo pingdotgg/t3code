@@ -175,24 +175,30 @@ export const linkCommand = Effect.fn("cli.install.link_command")(function* (inpu
       .rename(staging, commandLink)
       .pipe(Effect.tapError(() => fs.remove(staging, { force: true }).pipe(Effect.ignore)));
   });
-  // Other bin folders may run the command link already, so it switches only once `link` leads
-  // to it; a new one has nobody to surprise.
-  const existed = Option.isSome(yield* fs.readLink(commandLink).pipe(Effect.option));
-  if (!existed) yield* switchCommandLink;
-  if (kind === "missing") yield* fs.symlink(commandLink, input.link);
-  if (kind === "older") {
-    const moved = yield* replaceOwnedLink({
-      link: input.link,
-      target: commandLink,
-      owns: (candidate) =>
-        classifyCommandLink(candidate, input.baseDir).pipe(
-          Effect.map((found) => found !== "foreign"),
+  // The home's command switches first: if `link` then fails, the home runs the version asked for
+  // and only `link` is missing, never a third version.
+  yield* switchCommandLink;
+  if (kind === "missing") {
+    // A concurrent install may have made the same link a moment ago.
+    yield* fs
+      .symlink(commandLink, input.link)
+      .pipe(
+        Effect.catch((error) =>
+          classifyCommandLink(input.link, input.baseDir).pipe(
+            Effect.flatMap((found) => (found === "current" ? Effect.void : Effect.fail(error))),
+          ),
         ),
-    });
-    if (!moved) return false;
+      );
   }
-  if (existed) yield* switchCommandLink;
-  return true;
+  if (kind !== "older") return true;
+  return yield* replaceOwnedLink({
+    link: input.link,
+    target: commandLink,
+    owns: (candidate) =>
+      classifyCommandLink(candidate, input.baseDir).pipe(
+        Effect.map((found) => found !== "foreign"),
+      ),
+  });
 });
 
 /** Links this runtime as the `t3` command the way the install scripts do, never over another t3. */
@@ -293,6 +299,11 @@ export const installCli = Effect.fn("cli.install.install")(function* () {
       return yield* new CliInstallError({
         reason: `T3CODE_INSTALL_BIN_DIR cannot be ${commandFolder}. Choose another folder.`,
       });
+    }
+    // Checked before the home's command switches, so a bin folder that cannot be written changes
+    // nothing.
+    if (!(yield* fs.access(binDir, { writable: true }).pipe(Effect.isSuccess))) {
+      return yield* new CliInstallError({ reason: `Cannot write to ${binDir}.` });
     }
     const linked = yield* linkCommand({ link, baseDir, executable: spelled }).pipe(
       Effect.catchTags({

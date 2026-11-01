@@ -129,11 +129,35 @@ it.layer(NodeServices.layer)("t3 install", (it) => {
       }).pipe(Effect.flip);
       assert.include(inCurrent.message, "T3CODE_INSTALL_BIN_DIR cannot be");
 
-      // When the new link cannot be made, the old command keeps working, and so does any other
-      // bin folder's: the command link switches only after this one is linked.
+      // A bin folder that cannot be written changes nothing, not even the home's command.
       const otherVersion = path.join(runtimeDir, "versions/0.0.2/t3");
       yield* fs.remove(commandLink, { force: true });
       yield* fs.symlink(otherVersion, commandLink);
+      const readOnly = path.join(root, "read-only-bin");
+      yield* fs.makeDirectory(readOnly);
+      yield* fs.chmod(readOnly, 0o555);
+      const refused = yield* provide(installCli(), { T3CODE_INSTALL_BIN_DIR: readOnly }).pipe(
+        Effect.flip,
+      );
+      assert.include(refused.message, "Cannot write to");
+      assert.equal(yield* fs.readLink(commandLink), otherVersion);
+      yield* fs.chmod(readOnly, 0o755);
+
+      // A concurrent install that made the same link a moment ago is not a failure.
+      const concurrent = installCli().pipe(
+        Effect.provideService(FileSystem.FileSystem, {
+          ...fs,
+          symlink: (target, to) =>
+            to === link && target === commandLink
+              ? fs.symlink(target, to).pipe(Effect.andThen(fs.symlink(target, to)))
+              : fs.symlink(target, to),
+        }),
+      );
+      yield* fs.remove(link);
+      yield* provide(concurrent);
+      assert.equal(yield* fs.readLink(link), commandLink);
+
+      // When the new link cannot be made, the old command keeps working.
       const failing = installCli().pipe(
         Effect.provideService(FileSystem.FileSystem, {
           ...fs,
@@ -144,12 +168,7 @@ it.layer(NodeServices.layer)("t3 install", (it) => {
               : fs.symlink(target, to),
         }),
       );
-      for (const before of [older, undefined]) {
-        yield* fs.remove(link).pipe(Effect.ignore);
-        if (before !== undefined) yield* fs.symlink(before, link);
-        yield* provide(failing).pipe(Effect.flip);
-        assert.equal(yield* fs.readLink(commandLink), otherVersion, before);
-      }
+      yield* fs.remove(link);
       yield* fs.symlink(older, link);
       yield* provide(failing).pipe(Effect.flip);
       assert.equal(yield* fs.readLink(link), older);

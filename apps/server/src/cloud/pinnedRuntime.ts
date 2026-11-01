@@ -450,8 +450,12 @@ export function isVersionExecutable(
   candidate: string,
 ): boolean {
   const relative = path.relative(versionsDir, path.resolve(candidate));
-  // On another Windows drive, relative() returns the absolute path, like `D:\t3.exe`.
-  return !path.isAbsolute(relative) && /^(?!\.\.)[^\\/]+[\\/]t3(?:\.exe)?$/i.test(relative);
+  // On another Windows drive, relative() returns the absolute path, like `D:\t3.exe`. On POSIX,
+  // `\` and case are part of a name, so only `/` separates and `t3` must match exactly.
+  if (path.isAbsolute(relative)) return false;
+  return path.sep === "/"
+    ? /^(?!\.\.)[^/\\]+\/t3(?:\.exe)?$/.test(relative)
+    : /^(?!\.\.)[^\\/]+[\\/]t3(?:\.exe)?$/i.test(relative);
 }
 
 /** The executable a `t3.cmd` shim written by the install script or `t3 update` runs. */

@@ -42,6 +42,12 @@ it.layer(NodeServices.layer)("t3 uninstall launcher", (it) => {
         yield* findOwnedLauncher({ launchedAs: viaCommandLink, versionsDir }),
         viaCommandLink,
       );
+      // On POSIX a backslash is part of a name, so `versions/manager\t3` is not a version's t3.
+      const backslashed = path.join(versionsDir, "manager\\t3");
+      const viaBackslash = path.join(root, "bin/t3-backslash");
+      yield* fs.writeFileString(backslashed, "");
+      yield* fs.symlink(backslashed, viaBackslash);
+      assert.isUndefined(yield* findOwnedLauncher({ launchedAs: viaBackslash, versionsDir }));
       // A version run directly is not a launcher, nor another tool's link that selects it.
       assert.isUndefined(yield* findOwnedLauncher({ launchedAs: exe, versionsDir }));
       const managed = path.join(root, "manager/t3");
