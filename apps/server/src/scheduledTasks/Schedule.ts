@@ -2,6 +2,7 @@ import { MIN_SCHEDULED_TASK_INTERVAL_MS, type ScheduledTaskSchedule } from "@t3t
 import * as Cron from "effect/Cron";
 import * as DateTime from "effect/DateTime";
 import * as Result from "effect/Result";
+import * as Option from "effect/Option";
 
 const MINUTE_MS = 60_000;
 
@@ -27,7 +28,7 @@ export function scheduleProblem(schedule: ScheduledTaskSchedule): string | null 
     : null;
 }
 
-/** One-time schedules disable their task after a run instead of computing another occurrence. */
+/** One-time schedules disable their task once their run is behind them. */
 export const isOneTimeSchedule = (schedule: ScheduledTaskSchedule): boolean =>
   schedule.type === "once";
 
@@ -35,17 +36,19 @@ export function nextScheduledRunAt(
   schedule: ScheduledTaskSchedule,
   from: DateTime.DateTime,
 ): DateTime.DateTime | null {
-  if (schedule.type === "once") {
-    // Arming a one-time task whose time has passed makes it due immediately.
-    const runAt = DateTime.makeUnsafe(schedule.runAt);
-    return DateTime.toEpochMillis(runAt) > DateTime.toEpochMillis(from) ? runAt : from;
-  }
   if (schedule.type === "cron") {
     const parsed = Cron.parse(schedule.expression, schedule.timezone);
     if (Result.isFailure(parsed)) return null;
     return DateTime.makeUnsafe(Cron.next(parsed.success, DateTime.toEpochMillis(from)));
   }
   if (schedule.type === "webhook") return null;
+  if (schedule.type === "once") {
+    const runAt = DateTime.make(schedule.runAt);
+    return Option.isSome(runAt) &&
+      DateTime.toEpochMillis(runAt.value) > DateTime.toEpochMillis(from)
+      ? runAt.value
+      : null;
+  }
   if (schedule.type === "interval") {
     // Intervals advance elapsed time, including across daylight-saving changes.
     return DateTime.addDuration(from, Math.max(schedule.everyMs, MIN_SCHEDULED_TASK_INTERVAL_MS));
@@ -86,14 +89,8 @@ export function isSameSchedule(a: ScheduledTaskSchedule, b: ScheduledTaskSchedul
       a.timezone === b.timezone
     );
   }
-  if (a.type === "once") {
-    return (
-      b.type === "once" &&
-      DateTime.toEpochMillis(DateTime.makeUnsafe(a.runAt)) ===
-        DateTime.toEpochMillis(DateTime.makeUnsafe(b.runAt))
-    );
-  }
   if (a.type === "webhook") return b.type === "webhook";
+  if (a.type === "once") return b.type === "once" && Date.parse(a.runAt) === Date.parse(b.runAt);
   if (b.type !== "fixed_time") return false;
   // Compare parsed times so padded-hour edits do not reschedule pending runs.
   const aTime = parseTimeOfDay(a.timeOfDay);

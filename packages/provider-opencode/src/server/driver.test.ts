@@ -5,11 +5,12 @@ import * as NodePath from "node:path";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
-import { ProviderInstanceId } from "@t3tools/contracts";
+import { DEFAULT_SERVER_SETTINGS, ProviderInstanceId } from "@t3tools/contracts";
 import type { OpenCodeSettings } from "../settings.ts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Duration from "effect/Duration";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Logger from "effect/Logger";
@@ -262,6 +263,177 @@ it.layer(layer)("OpenCodeDriver runtime selection", (it) => {
 
       yield* TestClock.adjust("15 minutes");
       assert.strictEqual(requested.length, readsAfterRejection);
+    }).pipe(Effect.scoped, Effect.provide(TestClock.layer())),
+  );
+
+  it.effect.each(
+    [
+      { name: "recovers" },
+      { name: "skips without demand", demand: false },
+      { name: "respects a disabled interval", intervalOff: true },
+      { name: "skips disabled instances", enabled: false },
+      { name: "skips unsupported usage", unsupported: true },
+    ].map((scenario) => ({
+      enabled: true,
+      demand: true,
+      intervalOff: false,
+      unsupported: false,
+      ...scenario,
+    })),
+  )("Go usage recovery $name without restarting a ready catalog", (scenario) =>
+    Effect.gen(function* () {
+      const usageStarted = yield* Deferred.make<void>();
+      let usageReads = 0;
+      let serverStarts = 0;
+      let modelReads = 0;
+      const server = HttpClient.make((request) => {
+        if (request.url === "https://opencode.ai/zen/go/v1/usage") {
+          usageReads += 1;
+          assert.strictEqual(request.headers.authorization, "Bearer test-go-key");
+          if (scenario.unsupported)
+            return Effect.succeed(
+              HttpClientResponse.fromWeb(request, new Response(null, { status: 403 })),
+            );
+          if (usageReads === 1)
+            return Deferred.succeed(usageStarted, undefined).pipe(Effect.andThen(Effect.never));
+          const window = { percent: 10, resetsAt: "2026-11-01T00:00:00.000Z" };
+          return Effect.succeed(
+            HttpClientResponse.fromWeb(
+              request,
+              Response.json({ usage: { rolling: window, weekly: window, monthly: window } }),
+            ),
+          );
+        }
+        const path = new URL(request.url).pathname;
+        if (path === "/api/model") modelReads += 1;
+        const body =
+          path === "/api/info"
+            ? JSON.parse(OPENCODE_2_RESPONSES["/api/info"].body)
+            : {
+                location: { directory: "/work" },
+                data:
+                  path === "/api/model"
+                    ? [
+                        {
+                          id: "big-pickle",
+                          modelID: "big-pickle",
+                          providerID: "opencode",
+                          name: "Big Pickle",
+                          package: "@opencode/ai/providers/openai-compatible",
+                          settings: {},
+                          compatibility: {},
+                          capabilities: { tools: true, input: ["text"], output: ["text"] },
+                          variants: [],
+                          time: { released: 1789516800000 },
+                          cost: [],
+                          status: "active",
+                          enabled: true,
+                          limit: { context: 1000000, output: 65536 },
+                        },
+                      ]
+                    : [],
+              };
+        return Effect.succeed(HttpClientResponse.fromWeb(request, Response.json(body)));
+      });
+      const runtime = {
+        ...openCode2Runtime,
+        startOpenCodeServerProcess: ({
+          verify,
+        }: Parameters<
+          OpenCodeRuntime.OpenCodeRuntime["Service"]["startOpenCodeServerProcess"]
+        >[0]) =>
+          Effect.gen(function* () {
+            serverStarts += 1;
+            const url = "http://127.0.0.1:4096";
+            const version = verify ? yield* verify(url) : "2.0.18";
+            return { url, version, isRunning: Effect.succeed(true), exitCode: Effect.never };
+          }),
+      };
+      const instance = yield* OpenCodeDriver.create({
+        instanceId: ProviderInstanceId.make("opencode-usage-recovery"),
+        displayName: undefined,
+        environment: [
+          {
+            name: "OPENCODE_AUTH_CONTENT",
+            sensitive: true,
+            value: JSON.stringify({
+              "opencode-go": { type: "api", key: "test-go-key" },
+            }),
+          },
+        ],
+        enabled: scenario.enabled,
+        config: OpenCodeDriver.defaultConfig(),
+      }).pipe(
+        Effect.provide(
+          TestProviderHost.layer({
+            runBackgroundWork: scenario.demand,
+            settings: scenario.intervalOff
+              ? {
+                  ...DEFAULT_SERVER_SETTINGS,
+                  backgroundActivity: {
+                    ...DEFAULT_SERVER_SETTINGS.backgroundActivity,
+                    profile: "custom",
+                    overrides: { providerHealthRefreshInterval: Duration.zero },
+                  },
+                }
+              : DEFAULT_SERVER_SETTINGS,
+          }),
+        ),
+        Effect.provideService(HttpClient.HttpClient, server),
+        Effect.provideService(OpenCodeRuntime.OpenCodeRuntime, runtime),
+      );
+      const initial = scenario.enabled
+        ? yield* instance.snapshot.streamChanges.pipe(
+            Stream.filter((snapshot) => snapshot.usageLimits !== undefined),
+            Stream.take(1),
+            Stream.runCollect,
+            Effect.forkChild,
+          )
+        : undefined;
+      if (scenario.enabled && !scenario.unsupported) yield* Deferred.await(usageStarted);
+      yield* TestClock.adjust("5 seconds");
+      const failed = initial
+        ? Array.from(yield* Fiber.join(initial))[0]
+        : yield* instance.snapshot.getSnapshot;
+      if (scenario.enabled) {
+        assert.strictEqual(failed?.status, "ready");
+        assert.strictEqual(failed?.auth.status, "authenticated");
+      }
+      const initialReason =
+        scenario.enabled && !scenario.unsupported ? "probeFailed" : "unsupported";
+      assert.strictEqual(failed?.usageLimits?.unavailable?.reason, initialReason);
+      const catalogReads = modelReads;
+      const starts = serverStarts;
+
+      const shouldRecover =
+        scenario.enabled && scenario.demand && !scenario.intervalOff && !scenario.unsupported;
+      const recovery = shouldRecover
+        ? yield* instance.snapshot.streamChanges.pipe(
+            Stream.filter((snapshot) => snapshot.usageLimits?.windows.length === 3),
+            Stream.take(1),
+            Stream.runCollect,
+            Effect.forkChild,
+          )
+        : undefined;
+      yield* TestClock.adjust("5 minutes");
+      const recovered = yield* instance.snapshot.getSnapshot;
+      const expectedReads = !scenario.enabled ? 0 : shouldRecover ? 2 : 1;
+      assert.strictEqual(usageReads, expectedReads);
+      if (recovery) assert.deepStrictEqual(Array.from(yield* Fiber.join(recovery)), [recovered]);
+      assert.strictEqual(
+        recovered.usageLimits?.unavailable?.reason,
+        shouldRecover ? undefined : initialReason,
+      );
+      assert.deepStrictEqual(
+        recovered.usageLimits?.windows.map((window) => window.kind),
+        shouldRecover ? ["session", "weekly", "monthly"] : [],
+      );
+      assert.strictEqual(modelReads, catalogReads);
+      assert.strictEqual(serverStarts, starts);
+      yield* TestClock.adjust("15 minutes");
+      assert.strictEqual(usageReads, expectedReads);
+      assert.strictEqual(modelReads, catalogReads);
+      assert.strictEqual(serverStarts, starts);
     }).pipe(Effect.scoped, Effect.provide(TestClock.layer())),
   );
 });

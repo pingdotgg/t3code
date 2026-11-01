@@ -2,7 +2,9 @@ import { assert, it } from "@effect/vitest";
 import {
   NodeId,
   ProviderDriverKind,
+  ProviderInstanceId,
   ProviderSessionId,
+  ProviderSetupError,
   ProviderThreadId,
   ProviderTurnId,
   RunId,
@@ -43,6 +45,20 @@ it("redacts credentials and URL secrets from provider failures", () => {
   assert.notInclude(failure.message, "sk-abcdefghijklmnop");
 });
 
+it("redacts credentials whose key names end in a credential word", () => {
+  const failure = makeProviderFailure({
+    code: '{"refresh_token":"code value"}',
+    message:
+      'oauth refresh failed: client_secret=client-value refresh_token=refresh-value {"client_secret":"json-value"} clientSecret: camel-value X-Auth-Token: header-value max_tokens=4096',
+  });
+
+  assert.equal(failure.code, '{"refresh_token":"[REDACTED]"}');
+  assert.equal(
+    failure.message,
+    'oauth refresh failed: client_secret=[REDACTED] refresh_token=[REDACTED] {"client_secret":"[REDACTED]"} clientSecret: [REDACTED] X-Auth-Token: [REDACTED] max_tokens=4096',
+  );
+});
+
 it("does not split a surrogate pair at the truncation boundary", () => {
   const failure = makeProviderFailure({
     message: `${"a".repeat(MAX_PROVIDER_FAILURE_MESSAGE_LENGTH - 2)}🚀tail`,
@@ -71,8 +87,16 @@ it("does not expose arbitrary cause messages and preserves explicit messages", (
   }
 });
 
-it("preserves actionable handoff errors wrapped by turn startup", () => {
-  for (const error of [new ContextHandoffBudgetError(), new ContextHandoffBackgroundWorkError()]) {
+it("preserves actionable T3 errors wrapped by turn startup", () => {
+  for (const error of [
+    new ContextHandoffBudgetError(),
+    new ContextHandoffBackgroundWorkError(),
+    new ProviderSetupError({
+      instanceId: ProviderInstanceId.make("codex"),
+      operation: "runtime",
+      detail: "Codex 0.144.3 does not work with this T3 Code release.",
+    }),
+  ]) {
     const cause = new ProviderAdapter.ProviderAdapterTurnStartError({
       driver: ProviderDriverKind.make("codex"),
       threadId: ThreadId.make("thread:handoff-error"),

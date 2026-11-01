@@ -83,8 +83,10 @@ function resolveAppVariant(value: string | undefined): AppVariant {
     case "preview":
     case "production":
       return value;
-    default:
+    case undefined:
       return "production";
+    default:
+      throw new Error("APP_VARIANT must be development, preview, or production.");
   }
 }
 

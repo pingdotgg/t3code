@@ -128,9 +128,9 @@ function inferBrowser(userAgent: string | undefined): string | undefined {
     return undefined;
   }
   const normalized = userAgent.toLowerCase();
-  if (/edg\//.test(normalized)) return "Edge";
-  if (/opr\//.test(normalized)) return "Opera";
-  if (/firefox\//.test(normalized)) return "Firefox";
+  if (/edg(?:e|a|ios)?\//.test(normalized)) return "Edge";
+  if (/opr\/|opios\//.test(normalized)) return "Opera";
+  if (/firefox\/|fxios\//.test(normalized)) return "Firefox";
   if (/electron\//.test(normalized)) return "Electron";
   if (/chrome\//.test(normalized) || /crios\//.test(normalized)) return "Chrome";
   if (/safari\//.test(normalized) && !/chrome\//.test(normalized)) return "Safari";

@@ -59,7 +59,7 @@ import Migration0052 from "./Migrations/052_ProjectionThreadTitleState.ts";
 import Migration0053 from "./Migrations/053_PullRequestFilesViewed.ts";
 import Migration0054 from "./Migrations/054_ProjectionThreadsAutoSettleDisabledAt.ts";
 // The fork moves its own scheduled_tasks aside before upstream creates one.
-import Migration0055 from "./Migrations/055_ForkOrchestrationV2.ts";
+import Migration0055 from "./Migrations/fork/OrchestrationV2LegacyScheduledTasks.ts";
 import Migration0056 from "./Migrations/056_RemoveRedundantProjectionIndexes.ts";
 import Migration0057 from "./Migrations/057_ScheduledTaskWebhooks.ts";
 import Migration0058 from "./Migrations/058_WebhookRelayDeliveries.ts";
@@ -77,6 +77,10 @@ import Migration0069 from "./Migrations/069_ThreadMessageSearch.ts";
 import Migration0070 from "./Migrations/070_PeerLinks.ts";
 import Migration0071 from "./Migrations/071_PeerLinkFence.ts";
 import Migration0072 from "./Migrations/072_WaitingLinkRequestIndex.ts";
+import Migration0073 from "./Migrations/073_ActiveTurnItemIndexes.ts";
+import Migration0074 from "./Migrations/074_ExcludeAttachmentPlaceholdersFromSearch.ts";
+import Migration0075 from "./Migrations/075_SubagentDeliveryState.ts";
+import Migration0076 from "./Migrations/076_ProjectionProjectsPinArchive.ts";
 
 import ForkMigration001 from "./Migrations/fork/001_AgentProfileAndPullRequestCompatibility.ts";
 import ForkMigration002 from "./Migrations/fork/002_RepairAgentUpgradeSchema.ts";
@@ -166,6 +170,10 @@ const migrationEntries = [
   [70, "PeerLinks", Migration0070],
   [71, "PeerLinkFence", Migration0071],
   [72, "WaitingLinkRequestIndex", Migration0072],
+  [73, "ActiveTurnItemIndexes", Migration0073],
+  [74, "ExcludeAttachmentPlaceholdersFromSearch", Migration0074],
+  [75, "SubagentDeliveryState", Migration0075],
+  [76, "ProjectionProjectsPinArchive", Migration0076],
 ] as const;
 
 export const migrationManifest = migrationEntries.map(([id, name]) => [id, name] as const);

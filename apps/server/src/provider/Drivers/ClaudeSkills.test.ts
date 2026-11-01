@@ -358,6 +358,8 @@ it.layer(NodeServices.layer)("discoverClaudeSkills", (it) => {
         '--add-dir "extra skills"',
         '--add-dir="extra skills"',
         `--add-dir missing --add-dir "${extraDir}"`,
+        `--add-dir "${extraDir}" --add-dir missing`,
+        `--add-dir missing "${extraDir}"`,
       ]) {
         const settings = { homePath: configDir, launchArgs };
         const skills = yield* discoverClaudeSkills(settings, workspace);

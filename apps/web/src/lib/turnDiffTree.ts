@@ -98,20 +98,6 @@ function toTreeNodes(directory: MutableDirectoryNode): TurnDiffTreeNode[] {
   return [...subdirectories, ...files];
 }
 
-export function summarizeTurnDiffStats(files: ReadonlyArray<TurnDiffFileChange>): TurnDiffStat {
-  return files.reduce(
-    (acc, file) => {
-      const stat = readStat(file);
-      if (!stat) return acc;
-      return {
-        additions: acc.additions + stat.additions,
-        deletions: acc.deletions + stat.deletions,
-      };
-    },
-    { additions: 0, deletions: 0 },
-  );
-}
-
 export function buildTurnDiffTree(files: ReadonlyArray<TurnDiffFileChange>): TurnDiffTreeNode[] {
   const root: MutableDirectoryNode = {
     name: "",

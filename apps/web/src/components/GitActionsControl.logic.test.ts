@@ -94,6 +94,36 @@ describe("when: on default ref without open PR", () => {
   });
 });
 
+describe("when: local changes are behind upstream", () => {
+  it("keeps the commit action available without pushing, with or without an open PR", () => {
+    const behind = status({ hasWorkingTreeChanges: true, behindCount: 2 });
+    const commit = {
+      label: "Commit",
+      disabled: false,
+      kind: "run_action",
+      action: "commit",
+    } as const;
+    assert.deepEqual(resolveQuickAction(behind, false), commit);
+    assert.deepEqual(
+      resolveQuickAction(
+        {
+          ...behind,
+          pr: {
+            number: 13,
+            title: "Open PR",
+            url: "https://example.com/pr/13",
+            baseRef: "main",
+            headRef: "feature/test",
+            state: "open",
+          },
+        },
+        false,
+      ),
+      commit,
+    );
+  });
+});
+
 describe("when: ref has no upstream configured", () => {
   it("resolveQuickAction runs push and create PR when no upstream and commits are ahead", () => {
     const quick = resolveQuickAction(

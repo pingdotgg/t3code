@@ -28,6 +28,12 @@ describe("scheduled task schedule calculation", () => {
 
   it("compares schedules structurally", () => {
     expect(
+      isSameSchedule(
+        { type: "once", runAt: "2026-11-01T03:00:00-05:00" },
+        { type: "once", runAt: "2026-11-01T08:00:00.000Z" },
+      ),
+    ).toBe(true);
+    expect(
       isSameSchedule({ type: "interval", everyMs: 60_000 }, { type: "interval", everyMs: 60_000 }),
     ).toBe(true);
     expect(
@@ -86,15 +92,5 @@ describe("scheduled task schedule calculation", () => {
     expect(isSameSchedule(cron, { ...cron, timezone: "UTC" })).toBe(false);
     expect(scheduleProblem({ ...cron, expression: "0 0 7 * * 1-5" })).toMatch(/five fields/);
     expect(scheduleProblem(cron)).toBeNull();
-  });
-
-  it("arms a one-time run at its time, or immediately once that time has passed", () => {
-    const once = { type: "once", runAt: "2026-09-25T02:00:00.000Z" } as const;
-    const before = nextScheduledRunAt(once, DateTime.makeUnsafe("2026-09-25T01:00:00.000Z"));
-    expect(before ? DateTime.formatIso(DateTime.toUtc(before)) : null).toBe(once.runAt);
-    const after = DateTime.makeUnsafe("2026-09-25T03:00:00.000Z");
-    const late = nextScheduledRunAt(once, after);
-    expect(late ? DateTime.toEpochMillis(late) : null).toBe(DateTime.toEpochMillis(after));
-    expect(isSameSchedule(once, { type: "once", runAt: "2026-09-25T09:00:00+07:00" })).toBe(true);
   });
 });

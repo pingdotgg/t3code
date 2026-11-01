@@ -36,7 +36,9 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 import * as Stream from "effect/Stream";
+import { SqlError, classifySqliteError } from "effect/sql/SqlError";
 
+import { toPersistenceSqlError } from "../persistence/Errors.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as CheckpointService from "./CheckpointService.ts";
 import type { PendingOrchestrationEffectV2 } from "./EffectOutbox.ts";
@@ -1780,6 +1782,74 @@ it.effect("ends a nested native subagent and its thread when the root run is int
   }),
 );
 
+it.effect("keeps ingesting until queued background work clears after the probe goes idle", () =>
+  Effect.gen(function* () {
+    // The adapter's probe runs ahead of its event queue, so only the queued update may release.
+    // A child transferred to another run takes its pending work with it.
+    const pending = yield* Ref.make(true);
+    const consumed = yield* Deferred.make<void>();
+    const result = yield* Effect.raceFirst(
+      runBackgroundItemScenario(
+        "queued-background-work",
+        (ids) => {
+          const childProviderThreadId = ProviderThreadId.make(`${ids.providerThreadId}:child`);
+          const childProviderTurnId = ProviderTurnId.make(`${ids.rootProviderTurnId}:child`);
+          const running = subagentEvent(ids, "running");
+          if (running.type !== "subagent.updated") throw new Error("Missing subagent");
+          const linked = {
+            ...running,
+            subagent: {
+              ...running.subagent,
+              origin: "provider_native" as const,
+              childThreadId: ids.childThreadId,
+              providerThreadId: childProviderThreadId,
+            },
+          };
+          const backgroundWork = (providerTurnId: ProviderTurnId, pending: boolean) =>
+            ({
+              type: "background_work.updated",
+              driver,
+              providerTurnId,
+              pending,
+            }) satisfies ProviderAdapter.ProviderAdapterV2Event;
+          return [
+            childThreadCreatedEvent(ids),
+            linked,
+            {
+              type: "provider_turn.updated",
+              driver,
+              threadId: ids.childThreadId,
+              providerTurn: {
+                id: childProviderTurnId,
+                providerThreadId: childProviderThreadId,
+                runAttemptId: null,
+                status: "completed",
+              },
+            } as ProviderAdapter.ProviderAdapterV2Event,
+            backgroundWork(childProviderTurnId, true),
+            backgroundWork(ids.rootProviderTurnId, true),
+            rootTerminalEvent(ids, "completed"),
+            { ...linked, subagent: { ...linked.subagent, runId: RunId.make("run:replacement") } },
+            backgroundTurnItemEvent(ids, "dynamic_tool", "completed", 1),
+            backgroundWork(ids.rootProviderTurnId, false),
+          ];
+        },
+        {
+          keepEventStreamOpen: true,
+          hasPendingBackgroundWorkForThread: () => Ref.get(pending),
+          onFinalized: () => Ref.set(pending, false),
+          onEventsConsumed: Deferred.succeed(consumed, undefined).pipe(Effect.asVoid),
+        },
+      ).pipe(Effect.asSome),
+      Deferred.await(consumed).pipe(Effect.as(Option.none())),
+    );
+    assert.deepEqual(
+      result,
+      Option.some(["subagent:running", "root-finalized", "turn_item:completed"]),
+    );
+  }),
+);
+
 it.effect("keeps ingesting a child thread's late background item completion", () =>
   Effect.gen(function* () {
     const observed = yield* runBackgroundItemScenario("bg-child-item", (ids) => [
@@ -2585,7 +2655,7 @@ it.effect.each(["failure", "defect", "interrupt-failure", "ownership-lost"] as c
         ReadonlyArray<ProviderAdapter.ProviderAdapterV2InterruptInput>
       >([]);
       const ids = backgroundScenarioIds(`ingestion:${failureMode}`);
-      const { observed, finalEvents } = yield* captureRootRunTermination({
+      const { written, observed, finalEvents } = yield* captureRootRunTermination({
         key: `ingestion:${failureMode}`,
         initialProviderTurnId: null,
         rejectTerminalWrite: failureMode === "ownership-lost",
@@ -2618,7 +2688,13 @@ it.effect.each(["failure", "defect", "interrupt-failure", "ownership-lost"] as c
           const error = new ProviderEventIngestor.ProviderEventPublishError({
             providerSessionId: ProviderSessionId.make(`session:${failureMode}`),
             eventCount: 1,
-            cause: new Error("SQLITE_FULL: database or disk is full"),
+            cause: toPersistenceSqlError("OrchestrationEventStore.appendAgentEvents:insert")(
+              new SqlError({
+                reason: classifySqliteError(
+                  Object.assign(new Error("unable to open database file"), { errcode: 14 }),
+                ),
+              }),
+            ),
           });
           return failureMode === "defect" ? Effect.die(error) : Effect.fail(error);
         },
@@ -2662,6 +2738,8 @@ it.effect.each(["failure", "defect", "interrupt-failure", "ownership-lost"] as c
           failureMode === "interrupt-failure",
         );
         assert.deepEqual(observed, ["run:failed", "pull-requests-refreshed"]);
+        const error = written.find((item) => item.type === "error");
+        assert.include(error?.failure.message ?? "", "(SQLITE_CANTOPEN)");
         const repaired = finalEvents.find((event) => event.type === "provider-turn.updated");
         if (failureMode === "interrupt-failure") {
           assert.isUndefined(repaired);
@@ -3528,6 +3606,9 @@ function runBackgroundItemScenario(
   makeEvents: (ids: BackgroundScenarioIds) => ReadonlyArray<ProviderAdapter.ProviderAdapterV2Event>,
   options?: {
     readonly keepEventStreamOpen?: boolean;
+    readonly hasPendingBackgroundWorkForThread?: (
+      providerThread: OrchestrationV2ProviderThread,
+    ) => Effect.Effect<boolean>;
     readonly loadInheritedBackgroundTurnItems?: () => Effect.Effect<
       ReadonlyArray<{ readonly id: TurnItemId; readonly runId: RunId }>
     >;
@@ -3605,6 +3686,9 @@ function runBackgroundItemScenario(
         providerSessionId: ProviderSessionId.make(`session:${key}`),
         session: {
           events: Stream.empty,
+          ...(options?.hasPendingBackgroundWorkForThread === undefined
+            ? {}
+            : { hasPendingBackgroundWorkForThread: options.hasPendingBackgroundWorkForThread }),
           subscribeEvents: Effect.gen(function* () {
             yield* options?.onSubscribe ?? Effect.void;
             const events = Stream.fromIterable(makeEvents(ids)).pipe(

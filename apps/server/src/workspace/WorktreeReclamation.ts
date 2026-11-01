@@ -254,7 +254,12 @@ export const make = Effect.fn("WorktreeReclamation.make")(function* (runtime: Re
 
     const refusals: Array<WorktreeReclaimRefusal> = [];
     const now = yield* Clock.currentTimeMillis;
-    if (!storageCleanupThreadIdle(thread, now) || threadShellHasActiveWork(thread)) {
+    // An armed usage-limit recovery still holds; a manual reclaim does not wait for one to arm.
+    const holdArmedRecoveryOnly = { autoResumeLimitedThreads: false, snoozeLimitedThreads: false };
+    if (
+      !storageCleanupThreadIdle(thread, now, holdArmedRecoveryOnly) ||
+      threadShellHasActiveWork(thread)
+    ) {
       refusals.push({
         code: "thread_active",
         message: "The thread has a running, queued or pending turn, request or background task.",

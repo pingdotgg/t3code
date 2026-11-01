@@ -183,6 +183,7 @@ export const make = Effect.gen(function* () {
           stdin: "ignore",
           stdout: "ignore",
           stderr: "ignore",
+          forceKillAfter: "1 second",
         },
       );
       const handle = yield* spawner.spawn(command);

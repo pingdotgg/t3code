@@ -1,10 +1,8 @@
 import { pipe } from "effect/Function";
 import type { AuthSessionState, EnvironmentId, ServerConfig } from "@t3tools/contracts";
 import * as Data from "effect/Data";
-import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
-import * as Schedule from "effect/Schedule";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
 import { HttpClient } from "effect/http";
@@ -12,11 +10,11 @@ import { AsyncResult, Atom } from "effect/reactivity";
 
 import * as RemoteEnvironmentAuthorization from "../authorization/service.ts";
 import * as EnvironmentRegistry from "../connection/registry.ts";
-import { mapRemoteEnvironmentError } from "../connection/errors.ts";
 import type { PreparedConnection } from "../connection/model.ts";
 import * as EnvironmentSupervisor from "../connection/supervisor.ts";
 import * as ManagedRelay from "../relay/managedRelay.ts";
 import type { RemoteEnvironmentRequestError } from "../rpc/http.ts";
+import type { RpcSession } from "../rpc/session.ts";
 import { safeErrorLogAttributes } from "../errors/safeLog.ts";
 import { executeAuthenticatedEnvironmentHttpRequest } from "./environmentHttpAuth.ts";
 import { followStreamInEnvironment } from "./environmentStreams.ts";
@@ -41,12 +39,9 @@ function initialConfigOption<E>(
 }
 
 const DEFAULT_SESSION_STATE_TIMEOUT_MS = 6_000;
-const SESSION_STATE_RETRY_SCHEDULE = Schedule.exponential("1 second").pipe(
-  Schedule.modifyDelay(({ duration }) =>
-    Effect.succeed(Duration.min(duration, Duration.seconds(30))),
-  ),
-);
 const MAX_SESSION_STATE_TIMEOUT_MS = 60_000;
+const SESSION_STATE_RETRY_BASE_MS = 2_000;
+const SESSION_STATE_RETRY_MAX_MS = 60_000;
 
 export const fetchEnvironmentSessionState = Effect.fn(
   "clientRuntime.state.fetchEnvironmentSessionState",
@@ -144,12 +139,37 @@ function makeEnvironmentSessionAtoms<R, E>(
     ).pipe(Atom.withLabel(`environment-prepared-connection:${environmentId}`)),
   );
 
-  const sessionStateAtom = Atom.family((environmentId: EnvironmentId) =>
-    runtime
+  const transportSessionAtom = Atom.family((environmentId: EnvironmentId) =>
+    runtime.atom(
+      followStreamInEnvironment(
+        environmentId,
+        Stream.unwrap(
+          EnvironmentSupervisor.EnvironmentSupervisor.pipe(
+            Effect.map((supervisor) => SubscriptionRef.changes(supervisor.session)),
+          ),
+        ),
+      ),
+      { initialValue: Option.none() },
+    ),
+  );
+
+  const sessionStateAtom = Atom.family((environmentId: EnvironmentId) => {
+    let consecutiveFailures = 0;
+    let backoffConnection: RpcSession | null = null;
+    return runtime
       .atom((get) => {
         const prepared = Option.getOrNull(get(preparedConnectionValueAtom(environmentId)));
-        if (prepared === null) {
+        // Each established connection fetches anew, and a failure retries while it stays up,
+        // so a fetch that failed mid-reconnect cannot outlive the socket that recovered.
+        const connection = AsyncResult.getOrElse(get(transportSessionAtom(environmentId)), () =>
+          Option.none(),
+        );
+        if (prepared === null || Option.isNone(connection)) {
           return Effect.never;
+        }
+        if (connection.value !== backoffConnection) {
+          backoffConnection = connection.value;
+          consecutiveFailures = 0;
         }
         return Effect.gen(function* () {
           const signer = yield* Effect.serviceOption(ManagedRelay.ManagedRelayDpopSigner);
@@ -162,25 +182,32 @@ function makeEnvironmentSessionAtoms<R, E>(
             prepared,
             signer,
             remoteAuthorization,
-          }).pipe(
-            Effect.provideService(HttpClient.HttpClient, client.value),
-            // Only a new prepared connection refetches, and swr skips a failure
-            // whose previous success is fresh, so one dropped request would
-            // otherwise deny every scope for the rest of the connection.
-            Effect.retry({
-              schedule: SESSION_STATE_RETRY_SCHEDULE,
-              while: (error) =>
-                mapRemoteEnvironmentError(error)._tag === "ConnectionTransientError",
+          }).pipe(Effect.provideService(HttpClient.HttpClient, client.value));
+        }).pipe(
+          Effect.tap(() =>
+            Effect.sync(() => {
+              consecutiveFailures = 0;
             }),
-          );
-        });
+          ),
+          Effect.tapError(() => {
+            const delayMs = Math.min(
+              SESSION_STATE_RETRY_BASE_MS * 2 ** consecutiveFailures,
+              SESSION_STATE_RETRY_MAX_MS,
+            );
+            consecutiveFailures += 1;
+            return Effect.sleep(delayMs).pipe(
+              Effect.andThen(Effect.sync(() => get.refreshSelf())),
+              Effect.forkScoped,
+            );
+          }),
+        );
       })
       .pipe(
         Atom.swr({ staleTime: 30_000, revalidateOnMount: true }),
         Atom.setIdleTTL(5 * 60_000),
         Atom.withLabel(`environment-session-state:${environmentId}`),
-      ),
-  );
+      );
+  });
 
   const sessionStateValueAtom = Atom.family((environmentId: EnvironmentId) =>
     Atom.make(
