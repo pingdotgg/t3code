@@ -64,6 +64,16 @@ match in a folded file opens it. Escape closes the search. This shortcut is not
 configurable. A very large uncommitted diff loads its files as you scroll, and
 find only searches the files loaded so far.
 
+## Open files outside T3 Code
+
+In a diff, a thread's changed files, or a file link in chat, `mod`-click a file
+to open it in your preferred editor. `mod+Alt`-click reveals it in Finder or
+your file manager. In the Files panel, `mod`-click adds to the selection, so use
+`mod+Shift`-click for the editor; `mod+Alt`-click still reveals. When you're
+connected to another machine, diffs, changed files, and the Files panel open the
+editor on your machine over SSH, like the Open In button, and reveal isn't
+available. These clicks are not configurable.
+
 ## iPad
 
 With a hardware keyboard, use `Cmd+1` through `Cmd+9` to open the first nine

@@ -9,6 +9,7 @@ import { memo, type MouseEvent as ReactMouseEvent } from "react";
 
 import { readLocalApi } from "../../localApi";
 import { cn } from "../../lib/utils";
+import { resolveFileModifierClickAction } from "../../fileContextMenu";
 import { shouldOpenMarkdownFileLinkInEditor } from "../../markdown-links";
 import type { markdownFileCopyPaths } from "../../markdownFileHostPath";
 import { documentChipKindForFileName } from "../../pierre-icons";
@@ -337,6 +338,14 @@ export const MarkdownFileLink = memo(function MarkdownFileLink({
               onClick={(event) => {
                 event.preventDefault();
                 event.stopPropagation();
+                if (
+                  onReveal &&
+                  revealLabel &&
+                  resolveFileModifierClickAction(event, { modClickSelects: false }) === "reveal"
+                ) {
+                  handleRevealInFileManager();
+                  return;
+                }
                 if (onOpen && shouldOpenMarkdownFileLinkInEditor(event)) {
                   handleOpenInEditor();
                   return;
