@@ -1506,40 +1506,45 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
     }),
   );
   describe("structured errors", () => {
-    it.effect.each(["secret-token-value", "prefix123=private-secret", "tiny"])(
-      "does not retain git argument %s in command failures",
-      (secret) =>
-        Effect.gen(function* () {
-          const cwd = yield* makeTmpDir();
-          const driver = yield* GitVcsDriver.GitVcsDriver;
-          yield* driver.initRepo({ cwd });
+    it.effect.each([
+      "secret-token-value",
+      "prefix123=private-secret",
+      "tiny",
+      "status=private-secret",
+      "prefix-status-private-secret",
+      "Bearer token=private-secret",
+    ])("does not retain git argument %s in command failures", (secret) =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+        yield* driver.initRepo({ cwd });
 
-          const error = yield* driver
-            .execute({
-              operation: "GitVcsDriver.test.redactedFailure",
-              cwd,
-              args: ["status", `--unknown-option=${secret}`],
-            })
-            .pipe(Effect.flip);
-
-          assert.deepInclude(error, {
-            _tag: "GitCommandError",
+        const error = yield* driver
+          .execute({
             operation: "GitVcsDriver.test.redactedFailure",
-            command: "git",
-            argumentCount: 2,
             cwd,
-          });
-          assert.isNumber(error.exitCode);
-          assert.isAbove(error.stderrLength ?? 0, 0);
-          assert.include(error.detail, "unknown option");
-          assert.include(error.detail, "[redacted]");
-          assert.notInclude(error.detail, secret);
-          assert.notInclude(error.message, secret.split("=").at(-1)!);
-          assert.notInclude(error.message, secret);
-          assert.notProperty(error, "args");
-          assert.notProperty(error, "stderr");
-          assert.notProperty(error, "reason");
-        }),
+            args: ["status", `--unknown-option=${secret}`],
+          })
+          .pipe(Effect.flip);
+
+        assert.deepInclude(error, {
+          _tag: "GitCommandError",
+          operation: "GitVcsDriver.test.redactedFailure",
+          command: "git",
+          argumentCount: 2,
+          cwd,
+        });
+        assert.isNumber(error.exitCode);
+        assert.isAbove(error.stderrLength ?? 0, 0);
+        assert.include(error.detail, "unknown option");
+        assert.include(error.detail, "[redacted]");
+        assert.notInclude(error.detail, secret);
+        assert.notInclude(error.message, secret.split("=").at(-1)!);
+        assert.notInclude(error.message, secret);
+        assert.notProperty(error, "args");
+        assert.notProperty(error, "stderr");
+        assert.notProperty(error, "reason");
+      }),
     );
 
     it.effect("names a missing author identity behind a failed commit", () =>
@@ -1735,6 +1740,15 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
         label: "a pathspec worded like a diagnostic",
         args: ["checkout", "HEAD", "--", "fatal: invalid reference: missing"],
       },
+      ...[
+        "signing failed",
+        "gpg failed to sign",
+        "no ssh public key",
+        "Author identity unknown",
+      ].map((name) => ({
+        label: `a pathspec named ${name}`,
+        args: ["checkout", "HEAD", "--", name],
+      })),
       // The tag exists; it names a tree, which git reports in the same words.
       {
         label: "a worktree from a non-commit",

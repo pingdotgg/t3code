@@ -469,13 +469,13 @@ const GIT_FAILURE_REASON_PATTERNS: ReadonlyArray<readonly [RegExp, GitCommandFai
     /^[ \t]*![ \t]+\[rejected\][^\n]*\((?:non-fast-forward|fetch first)\)[\s\S]*^error: failed to push some refs/im,
     "push_rejected_non_fast_forward",
   ],
-  [/Author identity unknown|^fatal: empty ident name\b/im, "author_identity_unknown"],
+  [/^Author identity unknown\s*$|^fatal: empty ident name\b/im, "author_identity_unknown"],
   [
     /^fatal: Unable to create ['"](?:index\.lock|[^'"\r\n]*[\\/]index\.lock)['"]: File exists/im,
     "index_locked",
   ],
   [
-    /(?:^error: gpg failed to sign the data|gpg failed to sign|signing failed|no ssh public key)/im,
+    /^error: (?:gpg failed to sign\b|signing failed\b|no ssh public key\b)/im,
     "commit_signing_failed",
   ],
 ];
@@ -530,23 +530,23 @@ const GIT_FAILURE_QUOTED_URL_QUERY = /(['"])([a-z][a-z0-9+.-]*:\/\/[^\s?]*)\?.*\
 const GIT_FAILURE_URL_QUERY = /\b([a-z][a-z0-9+.-]*:\/\/[^\s?]*)\?[^\s]*/gi;
 
 function redactGitFailureText(text: string, args: readonly string[]): string {
-  let redacted = text
+  let redacted = text;
+  // Redact complete argv values before shorter values or credential patterns can split them.
+  const values = args
+    .map((arg) =>
+      arg.startsWith("-") ? (arg.includes("=") ? arg.slice(arg.indexOf("=") + 1) : "") : arg,
+    )
+    .filter((value) => value.length > 0)
+    .sort((left, right) => right.length - left.length);
+  for (const value of values) {
+    redacted = redacted.split(value).join("[redacted]");
+  }
+  return redacted
     .replace(GIT_FAILURE_QUOTED_URL_QUERY, "$1$2$1")
     .replace(GIT_FAILURE_URL_QUERY, "$1")
     .replace(GIT_FAILURE_URL_WITH_USERINFO, "$1")
     .replace(/\b(Bearer|Basic)\s+[^\s,;]+/gi, "$1 [redacted]")
     .replace(/\bsk-[A-Za-z0-9_-]{16,}\b/g, "[redacted]");
-  // Argv can embed tokens that Git echoes back into diagnostics.
-  for (const arg of args) {
-    const value = arg.startsWith("-")
-      ? arg.includes("=")
-        ? arg.slice(arg.indexOf("=") + 1)
-        : ""
-      : arg;
-    if (value.length === 0 || !redacted.includes(value)) continue;
-    redacted = redacted.split(value).join("[redacted]");
-  }
-  return redacted;
 }
 
 function gitFailureExcerpt(
@@ -597,7 +597,7 @@ function classifyGitFailure(
       (line) =>
         GIT_DIAGNOSTIC_LINE_PATTERN.test(line) ||
         (!/^remote:/.test(line) &&
-          (SSH_TRANSPORT_REFUSAL_PATTERN.test(line) || /Author identity unknown/i.test(line))),
+          (SSH_TRANSPORT_REFUSAL_PATTERN.test(line) || /^Author identity unknown\s*$/i.test(line))),
     )
     .join("\n");
   if (diagnostics.length === 0) return null;
