@@ -7,7 +7,9 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, expect, it } from "@effect/vitest";
 import { AgentScope } from "@t3tools/shared/AgentScope";
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Logger from "effect/Logger";
@@ -50,12 +52,18 @@ const withFakeSystemd = <A, E>(
     readonly calls: ReadonlyArray<ReadonlyArray<string>>;
     readonly stateDir: string;
     readonly cgroupRoot: string;
+    readonly manager: { stalled: boolean; timeout: Effect.Effect<void> };
   }) => Effect.Effect<A, E>,
   // A user manager older than systemd 253 rejects OOMPolicy on scopes.
   {
     oomPolicy = true,
     stopFails = false,
-  }: { readonly oomPolicy?: boolean; readonly stopFails?: boolean } = {},
+    stalled = false,
+  }: {
+    readonly oomPolicy?: boolean;
+    readonly stopFails?: boolean;
+    readonly stalled?: boolean;
+  } = {},
 ) =>
   Effect.gen(function* () {
     const bin = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-agent-scope-"));
@@ -65,6 +73,7 @@ const withFakeSystemd = <A, E>(
     const cgroupRoot = NodePath.join(bin, "cgroup");
     const units = new Map<string, FakeUnit>();
     const calls: Array<ReadonlyArray<string>> = [];
+    const manager = { stalled, timeout: Effect.void };
     const output = (stdout: string, code = 0): ProcessRunner.ProcessRunOutput => ({
       stdout,
       stderr: "",
@@ -76,30 +85,42 @@ const withFakeSystemd = <A, E>(
       stderrInvalidUtf8: false,
     });
     const runner = ProcessRunner.ProcessRunner.of({
-      run: ({ args }) =>
-        Effect.sync(() => {
-          calls.push(args);
-          if (!oomPolicy && args.some((arg) => arg.startsWith("--property=OOMPolicy="))) {
-            return output("", 1);
-          }
-          const [, verb, unit = ""] = args;
-          if (stopFails && verb === "stop") {
-            return {
-              ...output(""),
-              stderr: `Failed to stop ${args.at(-1)}: Unit not loaded.`,
-              code: ChildProcessSpawner.ExitCode(5),
-            };
-          }
-          if (verb === "reset-failed") units.delete(unit);
-          if (verb !== "show") return output("");
-          const state = units.get(unit);
-          return output(
-            state === undefined
-              ? "LoadState=not-found\nActiveState=inactive\nResult=success\n"
-              : `LoadState=loaded\nActiveState=${state.activeState}\nResult=${state.result}\n` +
-                  `ControlGroup=${state.controlGroup ?? ""}\n`,
-          );
-        }),
+      run: ({ command, args }) =>
+        manager.stalled
+          ? manager.timeout.pipe(
+              Effect.andThen(
+                Effect.fail(
+                  new ProcessRunner.ProcessTimeoutError({
+                    command,
+                    argumentCount: args.length,
+                    timeoutMs: 5_000,
+                  }),
+                ),
+              ),
+            )
+          : Effect.sync(() => {
+              calls.push(args);
+              if (!oomPolicy && args.some((arg) => arg.startsWith("--property=OOMPolicy="))) {
+                return output("", 1);
+              }
+              const [, verb, unit = ""] = args;
+              if (stopFails && verb === "stop") {
+                return {
+                  ...output(""),
+                  stderr: `Failed to stop ${args.at(-1)}: Unit not loaded.`,
+                  code: ChildProcessSpawner.ExitCode(5),
+                };
+              }
+              if (verb === "reset-failed") units.delete(unit);
+              if (verb !== "show") return output("");
+              const state = units.get(unit);
+              return output(
+                state === undefined
+                  ? "LoadState=not-found\nActiveState=inactive\nResult=success\n"
+                  : `LoadState=loaded\nActiveState=${state.activeState}\nResult=${state.result}\n` +
+                      `ControlGroup=${state.controlGroup ?? ""}\n`,
+              );
+            }),
     });
     const fileSystem = yield* FileSystem.FileSystem;
     const scope = yield* make.pipe(
@@ -115,7 +136,7 @@ const withFakeSystemd = <A, E>(
       }),
     );
     const { stateDir } = yield* ServerConfig.ServerConfig;
-    return yield* body({ scope, units, calls, stateDir, cgroupRoot }).pipe(
+    return yield* body({ scope, units, calls, stateDir, cgroupRoot, manager }).pipe(
       Effect.ensuring(Effect.sync(() => NodeFS.rmSync(bin, { recursive: true, force: true }))),
     );
   }).pipe(
@@ -302,6 +323,34 @@ describe("AgentScope service", () => {
           ],
         ]);
       }),
+    ),
+  );
+
+  it.effect("keeps a recovered detection when another launch hears the old failure late", () =>
+    withFakeSystemd(
+      ({ scope, units, calls, stateDir, manager }) =>
+        Effect.gen(function* () {
+          const timedOut = yield* Deferred.make<void>();
+          manager.timeout = Deferred.await(timedOut);
+          const launch = (threadId: string) =>
+            scope.wrap({ command: "agent", args: [], name: "t", threadId });
+          // Both launches share the stalled probe. The first one launches again,
+          // and finds systemd answering, before the second sees the failure.
+          const first = yield* launch("a").pipe(
+            Effect.andThen(Effect.sync(() => (manager.stalled = false))),
+            Effect.andThen(launch("a")),
+            Effect.forkChild({ startImmediately: true }),
+          );
+          const second = yield* launch("b").pipe(Effect.forkChild({ startImmediately: true }));
+          yield* Deferred.succeed(timedOut, undefined);
+          expect(sliceOf(yield* Fiber.join(first))).toBe(ownedAgentSlice(stateDir));
+          expect(unitOf(yield* Fiber.join(second))).toBe("");
+
+          units.set(ownedAgentSlice(stateDir), { activeState: "active", result: "success" });
+          yield* launch("c");
+          expect(stopsOf(calls)).toEqual([]);
+        }),
+      { stalled: true },
     ),
   );
 
