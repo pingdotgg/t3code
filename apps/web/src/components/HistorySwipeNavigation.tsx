@@ -21,8 +21,10 @@ type SwipeGesture =
       bounds: SwipeBounds;
       origin: EventTarget | undefined;
     }
-  // Not a swipe, or one already decided: the rest of its events are ignored.
-  | { kind: "ignored" };
+  // Not a swipe: the rest of its events are ignored.
+  | { kind: "ignored" }
+  // A decided history swipe. Its momentum is ignored, but content can still claim it.
+  | { kind: "released"; origin: EventTarget | undefined };
 type SwipeIndicatorState = {
   direction: HistoryDirection;
   progress: number;
@@ -53,7 +55,7 @@ function isInHorizontalScroller(path: readonly EventTarget[]): boolean {
 function lockSwipeAxis(
   pending: Extract<SwipeGesture, { kind: "pending" }>,
   origin: EventTarget | undefined,
-): Exclude<SwipeGesture, { kind: "pending" }> {
+): Extract<SwipeGesture, { kind: "ignored" | "tracking" }> {
   const { path, sumX, sumY } = pending;
   if (Math.abs(sumX) <= Math.abs(sumY)) return { kind: "ignored" };
   if (path.some((node) => node instanceof Element && node.matches('[role="dialog"]'))) {
@@ -123,19 +125,17 @@ export function HistorySwipeNavigation() {
       if (!["Alt", "Control", "Meta", "Shift"].includes(event.key)) resetContext();
     };
     // The fingers lifted: navigate if the swipe went far enough, then ignore its momentum.
-    const release = () => {
-      if (gesture?.kind === "tracking" && gesture.distance >= SWIPE_TRIGGER_DISTANCE) {
-        navigateHistory(gesture.direction);
-      }
-      gesture = { kind: "ignored" };
+    const release = (swipe: Extract<SwipeGesture, { kind: "tracking" }>) => {
+      if (swipe.distance >= SWIPE_TRIGGER_DISTANCE) navigateHistory(swipe.direction);
+      gesture = { kind: "released", origin: swipe.origin };
       hideIndicator();
     };
     // Chromium brackets each trackpad scroll, momentum included, with these.
     const unsubscribeScrollBegin = window.desktopBridge?.onTrackpadScrollBegin(() => {
-      if (gesture?.kind === "ignored") gesture = null;
+      if (gesture?.kind === "ignored" || gesture?.kind === "released") gesture = null;
     });
     const unsubscribeScrollEnd = window.desktopBridge?.onTrackpadScrollEnd(() => {
-      if (gesture?.kind === "tracking") release();
+      if (gesture?.kind === "tracking") release(gesture);
       gesture = null;
     });
     const onWheel = (event: WheelEvent) => {
@@ -152,16 +152,22 @@ export function HistorySwipeNavigation() {
             : { kind: "pending", path: event.composedPath(), y: event.clientY, sumX: 0, sumY: 0 };
       }
       if (gesture.kind === "ignored") return;
-      if (gesture.kind === "tracking") {
-        const delta = gesture.direction === "back" ? -event.deltaX : event.deltaX;
-        if (event.deltaX === 0 && event.deltaY === 0) return release();
-        // Content can appear under a still pointer while a stale trailing wheel is tracking.
+      if (gesture.kind !== "pending") {
+        if (event.deltaX === 0 && event.deltaY === 0) {
+          if (gesture.kind === "tracking") release(gesture);
+          return;
+        }
+        // Content can appear under a still pointer before a history swipe's native end.
         // Only a new wheel target is classified, so overflow gained mid-swipe stays history.
         const path = event.composedPath();
         if (path[0] !== gesture.origin) {
           if (isInHorizontalScroller(path)) return claimContent();
           gesture.origin = path[0];
         }
+      }
+      if (gesture.kind === "released") return;
+      if (gesture.kind === "tracking") {
+        const delta = gesture.direction === "back" ? -event.deltaX : event.deltaX;
         const { direction, distance, y } = gesture;
         // Past its start the swipe picks a direction again: a stale trailing wheel may
         // have opened it, and the next swipe's begin can arrive after its first wheels.
@@ -176,7 +182,7 @@ export function HistorySwipeNavigation() {
           hideIndicator();
         } else {
           gesture.deltas = [...gesture.deltas.slice(1 - MOMENTUM_SAMPLE_SIZE), delta];
-          if (isMomentumTail(gesture.deltas)) return release();
+          if (isMomentumTail(gesture.deltas)) return release(gesture);
           gesture.distance = Math.max(0, distance + delta);
         }
       }
