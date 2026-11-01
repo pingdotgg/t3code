@@ -134,6 +134,7 @@ describe("CDP relay", () => {
 describe("CDP relay extra sessions", () => {
   it.each([
     { committed: true, newerSucceeds: false, olderSucceeds: false },
+    { committed: true, newerSucceeds: true, olderSucceeds: false },
     { committed: false, newerSucceeds: true, olderSucceeds: false },
     { committed: false, newerSucceeds: false, olderSucceeds: true },
     { committed: false, newerSucceeds: false, olderSucceeds: false },
@@ -171,7 +172,11 @@ describe("CDP relay extra sessions", () => {
       if (olderSucceeds) older.resolve({});
       else older.reject(new Error("Refused"));
       await settle();
-      if (committed) command(5, "Page.screencastFrameAck", { sessionId: 7 });
+      if (committed) {
+        frame(9);
+        expect(frames()).toEqual([]);
+        command(5, "Page.screencastFrameAck", { sessionId: 7 });
+      }
       frame(9);
       frame(9);
       expect(frames()).toHaveLength(committed || newerSucceeds ? 1 : 0);

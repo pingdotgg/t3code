@@ -70,7 +70,7 @@ interface AttachedTab {
   agentUsed: boolean;
   focusReleasing: boolean;
   /** The sessions streaming the guest; one stopping leaves the others' screencasts running. */
-  readonly screencasts: Map<string | undefined, { committed: boolean }>;
+  readonly screencasts: Map<string | undefined, { committed: boolean; generation: object }>;
   readonly onMessage: (
     event: Electron.Event,
     method: string,
@@ -309,10 +309,14 @@ export const make = Effect.gen(function* () {
     const relay: CdpRelayConnection = createCdpRelayConnection(
       {
         send: (method, params, sessionId, owner) => {
-          let start: { committed: boolean } | undefined;
+          let start: { committed: boolean; generation: object } | undefined;
           // A child session's screencast is not the page's, such as a late one on a detached session.
           if (sessionId === undefined && method === "Page.startScreencast") {
-            start = { committed: tab.screencasts.get(owner)?.committed ?? false };
+            const previous = tab.screencasts.get(owner);
+            start = {
+              committed: previous?.committed ?? false,
+              generation: previous?.generation ?? {},
+            };
             tab.screencasts.set(owner, start);
             if (owner !== undefined) streamingOwners.add(owner);
           } else if (sessionId === undefined && method === "Page.stopScreencast") {
@@ -345,8 +349,9 @@ export const make = Effect.gen(function* () {
             : method === "Page.startScreencast"
               ? holdFocus(tab, method, owner, forward).then(
                   (result) => {
-                    if (start && tab.relay === relay && tab.screencasts.get(owner) === start) {
-                      start.committed = true;
+                    const current = tab.screencasts.get(owner);
+                    if (start && tab.relay === relay && current?.generation === start.generation) {
+                      current.committed = true;
                     }
                     return result;
                   },

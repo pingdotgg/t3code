@@ -679,6 +679,32 @@ describe("DesktopBrowserHost", () => {
       debuggee.releaseFirst();
       expect(yield* Queue.take(replies)).toBe(10);
       expect(painting).toEqual([true, false, true, false, true, false, true, false]);
+      yield* command(host, 11, "Page.startScreencast");
+      yield* command(host, 12, "Page.startScreencast");
+      yield* settle;
+      debuggee.releaseFirst();
+      expect(yield* Queue.take(replies)).toBe(11);
+      debuggee.refuseLast();
+      expect(yield* Queue.take(replies)).toBe(12);
+      expect(painting.at(-1)).toBe(true);
+
+      yield* command(host, 13, "Page.stopScreencast");
+      yield* settle;
+      debuggee.releaseFirst();
+      expect(yield* Queue.take(replies)).toBe(13);
+      expect(painting.at(-1)).toBe(false);
+
+      yield* command(host, 14, "Page.startScreencast");
+      yield* command(host, 15, "Page.stopScreencast");
+      yield* command(host, 16, "Page.startScreencast");
+      yield* settle;
+      debuggee.releaseFirst();
+      expect(yield* Queue.take(replies)).toBe(14);
+      debuggee.releaseFirst();
+      expect(yield* Queue.take(replies)).toBe(15);
+      debuggee.refuseLast();
+      expect(yield* Queue.take(replies)).toBe(16);
+      expect(painting.at(-1)).toBe(false);
       yield* TestClock.adjust("1 minute");
       expect(debuggee.focusEmulation.at(-1)).toBe(false);
     }).pipe(Effect.scoped),

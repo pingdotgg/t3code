@@ -214,7 +214,7 @@ export function createCdpRelayConnection(
         screencastStarts.set(sessionId, start);
         return target.send(command.method, command.params ?? {}, child, owner).then((result) => {
           if (screencastStarts.get(sessionId) === start) {
-            screencasts.set(sessionId, { pendingFrame: null });
+            if (!screencasts.has(sessionId)) screencasts.set(sessionId, { pendingFrame: null });
           }
           return result;
         });
