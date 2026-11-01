@@ -149,8 +149,14 @@ const sideChatKeybindings: ResolvedKeybindingsConfig = [
   ctrl("f", "chat.find"),
 ];
 
-// A side chat in the main chat's panel: no window listeners, only its composer's own chords.
-function SideChat(props: { toggles: string[]; stops: string[]; finds?: string[] }) {
+// A side chat in the main chat's panel: no window listeners, only its pane's find and its
+// composer's own chords. Passing `findCloses` opens its find.
+function SideChat(props: {
+  toggles: string[];
+  stops: string[];
+  finds?: string[];
+  findCloses?: string[];
+}) {
   const [composerElement, setComposerElement] = useState<HTMLDivElement | null>(null);
   useChatShortcuts({
     enabled: false,
@@ -159,14 +165,14 @@ function SideChat(props: { toggles: string[]; stops: string[]; finds?: string[] 
     keybindings: sideChatKeybindings,
     scriptKeybindings: [],
     getShortcutContext: () => shortcutContext,
-    threadFindActive: false,
+    threadFindActive: props.findCloses !== undefined,
     composerRef: {
       current: {
         toggleModelPicker: () => props.toggles.push("model"),
       } as Partial<ChatComposerHandle> as ChatComposerHandle,
     },
     branchToolbarRef: { current: null },
-    closeThreadFind: () => {},
+    closeThreadFind: () => void props.findCloses?.push("side"),
     commands: {
       "thread.stop": () => void props.stops.push("stop"),
       "chat.find": () => void props.finds?.push("side"),
@@ -176,6 +182,7 @@ function SideChat(props: { toggles: string[]; stops: string[]; finds?: string[] 
   return (
     <>
       <div data-side-chat-pane>
+        <input aria-label="Side chat find" />
         <div tabIndex={0} aria-label="Side chat timeline">
           Conversation
         </div>
@@ -218,4 +225,19 @@ it("opens the side chat's own find for mod+F anywhere in its pane, not the main 
   await userEvent.keyboard("{Control>}f{/Control}");
 
   expect(finds).toEqual(["side", "side"]);
+});
+
+it("closes the side chat's find for Escape in its find input and elsewhere in its pane", async () => {
+  const findCloses: string[] = [];
+  await using screen = await render(
+    <SideChat toggles={[]} stops={[]} findCloses={findCloses} />,
+    options,
+  );
+
+  await userEvent.click(screen.getByLabelText("Side chat find"));
+  await userEvent.keyboard("{Escape}");
+  await userEvent.click(screen.getByLabelText("Side chat timeline"));
+  await userEvent.keyboard("{Escape}");
+
+  expect(findCloses).toEqual(["side", "side"]);
 });
