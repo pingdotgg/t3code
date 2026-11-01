@@ -102,6 +102,7 @@ export function createCdpRelayConnection(
   const sessions = new Map<string, "browser" | "page">([[PAGE_SESSION_ID, "page"]]);
   // The manager acknowledges native frames immediately; each relay consumer must bound its own queue.
   const screencasts = new Map<string, { pendingFrame: number | null }>();
+  const screencastStarts = new Map<string, object>();
   let sessionSequence = 0;
   const newSession = (kind: "browser" | "page") => {
     const sessionId = `t3-preview-${kind}-${++sessionSequence}`;
@@ -164,6 +165,7 @@ export function createCdpRelayConnection(
         if (typeof sessionId === "string" && sessionId !== PAGE_SESSION_ID) {
           sessions.delete(sessionId);
           screencasts.delete(sessionId);
+          screencastStarts.delete(sessionId);
           target.sessionDetached?.(sessionId);
         }
         return {};
@@ -203,16 +205,19 @@ export function createCdpRelayConnection(
         }
         return Promise.resolve({});
       }
-      if (command.method === "Page.stopScreencast") screencasts.delete(sessionId);
+      if (command.method === "Page.stopScreencast") {
+        screencasts.delete(sessionId);
+        screencastStarts.delete(sessionId);
+      }
       if (command.method === "Page.startScreencast") {
-        const stream = { pendingFrame: null as number | null };
-        screencasts.set(sessionId, stream);
-        return target
-          .send(command.method, command.params ?? {}, child, owner)
-          .catch((cause: unknown) => {
-            if (screencasts.get(sessionId) === stream) screencasts.delete(sessionId);
-            throw cause;
-          });
+        const start = {};
+        screencastStarts.set(sessionId, start);
+        return target.send(command.method, command.params ?? {}, child, owner).then((result) => {
+          if (screencastStarts.get(sessionId) === start) {
+            screencasts.set(sessionId, { pendingFrame: null });
+          }
+          return result;
+        });
       }
     }
     return target.send(command.method, command.params ?? {}, child, owner);

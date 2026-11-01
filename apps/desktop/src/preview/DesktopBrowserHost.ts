@@ -70,7 +70,7 @@ interface AttachedTab {
   agentUsed: boolean;
   focusReleasing: boolean;
   /** The sessions streaming the guest; one stopping leaves the others' screencasts running. */
-  readonly screencasts: Set<string | undefined>;
+  readonly screencasts: Map<string | undefined, { committed: boolean }>;
   readonly onMessage: (
     event: Electron.Event,
     method: string,
@@ -311,9 +311,11 @@ export const make = Effect.gen(function* () {
     const relay: CdpRelayConnection = createCdpRelayConnection(
       {
         send: (method, params, sessionId, owner) => {
+          let start: { committed: boolean } | undefined;
           // A child session's screencast is not the page's, such as a late one on a detached session.
           if (sessionId === undefined && method === "Page.startScreencast") {
-            tab.screencasts.add(owner);
+            start = { committed: tab.screencasts.get(owner)?.committed ?? false };
+            tab.screencasts.set(owner, start);
             if (owner !== undefined) streamingOwners.add(owner);
           } else if (sessionId === undefined && method === "Page.stopScreencast") {
             tab.screencasts.delete(owner);
@@ -343,13 +345,27 @@ export const make = Effect.gen(function* () {
                   held ? holdFocus(tab, method, owner, () => forward(current)) : forward(current),
               )
             : method === "Page.startScreencast"
-              ? holdFocus(tab, method, owner, forward).catch((cause: unknown) => {
-                  // A viewer can outlive a refused stream; nothing is streaming for it.
-                  if (sessionId === undefined && tab.relay === relay) tab.screencasts.delete(owner);
-                  releaseFocusWhenIdle(tab);
-                  syncPainting(tab);
-                  throw cause;
-                })
+              ? holdFocus(tab, method, owner, forward).then(
+                  (result) => {
+                    if (start && tab.relay === relay && tab.screencasts.get(owner) === start) {
+                      start.committed = true;
+                    }
+                    return result;
+                  },
+                  (cause: unknown) => {
+                    if (
+                      start &&
+                      !start.committed &&
+                      tab.relay === relay &&
+                      tab.screencasts.get(owner) === start
+                    ) {
+                      tab.screencasts.delete(owner);
+                    }
+                    releaseFocusWhenIdle(tab);
+                    syncPainting(tab);
+                    throw cause;
+                  },
+                )
               : holdFocus(tab, method, owner, forward);
         },
         sessionDetached: (owner) => {
@@ -438,7 +454,7 @@ export const make = Effect.gen(function* () {
       painting: false,
       agentUsed: false,
       focusReleasing: false,
-      screencasts: new Set(),
+      screencasts: new Map(),
       onMessage: (_event, method, params, sessionId) => {
         if (method === "Browser.downloadWillBegin") {
           const guid = (params as { guid?: unknown } | undefined)?.guid;

@@ -132,6 +132,55 @@ describe("CDP relay", () => {
 });
 
 describe("CDP relay extra sessions", () => {
+  it.each([
+    { committed: true, newerSucceeds: false, olderSucceeds: false },
+    { committed: false, newerSucceeds: true, olderSucceeds: false },
+    { committed: false, newerSucceeds: false, olderSucceeds: true },
+    { committed: false, newerSucceeds: false, olderSucceeds: false },
+  ])(
+    "preserves only committed streams across overlapping starts (%j)",
+    async ({ committed, newerSucceeds, olderSucceeds }) => {
+      const send = vi.fn<CdpRelayTarget["send"]>(async () => ({}));
+      const written: Array<Record<string, unknown>> = [];
+      const relay = makeRelay(makeTarget(send), (raw) => written.push(JSON.parse(raw)));
+      const command = (id: number, method: string, params = {}) =>
+        relay.receive(JSON.stringify({ id, method, params, sessionId: "t3-preview-page" }));
+      const frame = (sessionId: number) =>
+        relay.event("Page.screencastFrame", { data: "x", sessionId }, undefined);
+      const frames = () =>
+        written.filter((message) => message["method"] === "Page.screencastFrame");
+      relay.receive(JSON.stringify({ id: 1, method: "Target.setAutoAttach" }));
+      if (committed) {
+        command(2, "Page.startScreencast");
+        await settle();
+        frame(7);
+        expect(frames()).toHaveLength(1);
+      }
+      await settle();
+      written.length = 0;
+      const older = Promise.withResolvers<unknown>();
+      const newer = Promise.withResolvers<unknown>();
+      send.mockImplementationOnce(() => older.promise).mockImplementationOnce(() => newer.promise);
+      command(3, "Page.startScreencast");
+      command(4, "Page.startScreencast");
+      frame(8);
+      expect(frames()).toEqual([]);
+      if (newerSucceeds) newer.resolve({});
+      else newer.reject(new Error("Refused"));
+      await settle();
+      if (olderSucceeds) older.resolve({});
+      else older.reject(new Error("Refused"));
+      await settle();
+      if (committed) command(5, "Page.screencastFrameAck", { sessionId: 7 });
+      frame(9);
+      frame(9);
+      expect(frames()).toHaveLength(committed || newerSucceeds ? 1 : 0);
+      expect(written.filter((message) => message["error"])).toHaveLength(
+        Number(!olderSucceeds) + Number(!newerSucceeds),
+      );
+    },
+  );
+
   it("bounds screencast delivery independently for each page session", async () => {
     const send = vi.fn<CdpRelayTarget["send"]>(async () => ({}));
     const written: Array<Record<string, unknown>> = [];
@@ -215,13 +264,17 @@ describe("CDP relay extra sessions", () => {
     frame(8);
     expect(written.map((m) => m["sessionId"])).toEqual([extra]);
 
+    const restarting = Promise.withResolvers<unknown>();
+    send.mockReturnValueOnce(restarting.promise);
+    relay.receive(JSON.stringify({ id: 10, method: "Page.startScreencast", sessionId: extra }));
     relay.receive(
       JSON.stringify({
-        id: 10,
+        id: 11,
         method: "Target.detachFromTarget",
         params: { sessionId: extra },
       }),
     );
+    restarting.resolve({});
     await settle();
     written.length = 0;
     frame(8);
