@@ -107,6 +107,22 @@ describe("claudeUsageResponseToLimits", () => {
     ]);
   });
 
+  it("treats a subscription sign-in without readable limits as a failed probe, not a plan without limits", () => {
+    // Claude Max OAuth whose token lacks `user:profile`, as answered by Claude Code 2.1.316.
+    const subscriber = {
+      subscription_type: "max",
+      rate_limits_available: false,
+      rate_limits: null,
+    };
+    expect(
+      claudeUsageResponseToLimits({ checkedAt, response: subscriber }).limits.unavailable?.reason,
+    ).toBe("probeFailed");
+    const apiKey = { ...subscriber, subscription_type: null };
+    expect(
+      claudeUsageResponseToLimits({ checkedAt, response: apiKey }).limits.unavailable?.reason,
+    ).toBe("unsupported");
+  });
+
   const enterpriseResponse = {
     rate_limits_available: true,
     rate_limits: {
