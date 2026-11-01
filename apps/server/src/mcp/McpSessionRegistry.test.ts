@@ -32,6 +32,33 @@ const makeRegistry = (now: () => number, httpServer = fakeHttpServer) =>
       Effect.provide(NodeServices.layer),
     );
 
+it.effect(
+  "a spare credential only authenticates discovery until bound once to its real thread",
+  () =>
+    Effect.gen(function* () {
+      const registry = yield* makeRegistry(() => 1_000);
+      const providerInstanceId = ProviderInstanceId.make("codex");
+      const issued = yield* registry.issue({
+        threadId: ThreadId.make("unsubmitted"),
+        providerInstanceId,
+        pending: true,
+      });
+      const token = issued.config.authorizationHeader.replace(/^Bearer\s+/, "");
+      expect(yield* registry.resolve(token)).toBeUndefined();
+      expect(yield* registry.resolve(token, true)).toBeDefined();
+      const threadId = ThreadId.make("submitted");
+      expect(yield* registry.bind(issued.config.providerSessionId, threadId)).toBe(true);
+      expect((yield* registry.resolve(token))?.thread.threadId).toBe(threadId);
+      expect(yield* registry.bind(issued.config.providerSessionId, ThreadId.make("another"))).toBe(
+        false,
+      );
+      expect((yield* registry.resolve(token))?.thread.threadId).toBe(threadId);
+      yield* registry.revokeThread(threadId);
+      expect(yield* registry.resolve(token, true)).toBeUndefined();
+      expect(yield* registry.bind(issued.config.providerSessionId, threadId)).toBe(false);
+    }),
+);
+
 it.effect("stores only a token hash, resolves the bearer token, and revokes by thread", () =>
   Effect.gen(function* () {
     let timestamp = 1_000;

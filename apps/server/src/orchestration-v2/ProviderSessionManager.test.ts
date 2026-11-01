@@ -4,6 +4,7 @@ import { assert, it } from "@effect/vitest";
 import { AgentScope } from "@t3tools/shared/AgentScope";
 import {
   EnvironmentId,
+  EventId,
   type ModelSelection,
   type OrchestrationV2AppThread,
   type OrchestrationV2DomainEvent,
@@ -39,6 +40,8 @@ import * as McpProviderSession from "@t3tools/provider-core/server/mcpSession";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import * as McpSessionRegistry from "../mcp/McpSessionRegistry.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
+import * as OrchestrationEventStore from "../persistence/OrchestrationEventStore.ts";
+import * as ProjectStore from "./ProjectStore.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
 import * as EventSink from "./EventSink.ts";
@@ -55,9 +58,12 @@ import * as CommandOutputHub from "./CommandOutputHub.ts";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 
 const layerTestDatabase = SqlitePersistence.layerMemory;
-const layerTestStores = Layer.merge(EventStore.layer, ProjectionStore.layer).pipe(
-  Layer.provide(layerTestDatabase),
-);
+const layerTestStores = Layer.mergeAll(
+  EventStore.layer,
+  ProjectionStore.layer,
+  ProjectStore.layer,
+  OrchestrationEventStore.layer,
+).pipe(Layer.provide(layerTestDatabase));
 const layerTestEventSink = EventSink.layer.pipe(
   Layer.provide(Layer.mergeAll(layerTestStores, layerTestDatabase)),
 );
@@ -174,6 +180,7 @@ interface TestProviderRuntimeState {
   readonly closeCount: number;
   readonly interruptCount: number;
   readonly resumeCount: number;
+  readonly ensureCount: number;
   readonly unloadedNativeThreadIds: ReadonlyArray<string>;
   readonly eventQueues: ReadonlyMap<
     string,
@@ -186,6 +193,7 @@ const emptyState: TestProviderRuntimeState = {
   closeCount: 0,
   interruptCount: 0,
   resumeCount: 0,
+  ensureCount: 0,
   unloadedNativeThreadIds: [],
   eventQueues: new Map(),
 };
@@ -342,9 +350,11 @@ const makeProviderAdapter = Effect.fnUntraced(function* (
     readonly beforeUnload?: Effect.Effect<void>;
     readonly spawnBeforeOpen?: boolean;
     readonly scopeCloseReached?: Deferred.Deferred<void>;
+    readonly prepare?: Effect.Effect<void>;
   } = {},
 ) {
   const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
+  const idAllocator = yield* IdAllocator.IdAllocatorV2;
   const countClose = Effect.addFinalizer(() =>
     Ref.update(state, (current) => ({
       ...current,
@@ -426,7 +436,24 @@ const makeProviderAdapter = Effect.fnUntraced(function* (
             : {
                 hasPendingBackgroundWorkForThread: () => options.hasPendingBackgroundWorkForThread!,
               }),
-          ensureThread: () => unimplemented("ensureThread unused in test"),
+          ensureThread: (threadInput) =>
+            options.prepare === undefined
+              ? unimplemented("ensureThread unused in test")
+              : Ref.update(state, (current) => ({
+                  ...current,
+                  ensureCount: current.ensureCount + 1,
+                })).pipe(
+                  Effect.andThen(options.prepare),
+                  Effect.as(
+                    makeProviderThread({
+                      idAllocator,
+                      threadId: threadInput.threadId,
+                      providerSessionId: input.providerSessionId,
+                      now,
+                      nativeThreadId: "native-spare",
+                    }),
+                  ),
+                ),
           resumeThread: (threadInput) =>
             Ref.update(state, (current) => ({
               ...current,
@@ -492,6 +519,8 @@ function layerTest(input: {
   readonly scopeCloseReached?: Deferred.Deferred<void>;
   readonly serverSettingsLayer?: ReturnType<typeof ServerSettings.layerTest>;
   readonly projectServiceLayer?: Layer.Layer<ProjectService.ProjectService>;
+  readonly failSpareBind?: boolean;
+  readonly prepare?: Effect.Effect<void>;
 }) {
   const layerConfiguredEventSink =
     input.flakyReleaseWrites !== undefined
@@ -505,6 +534,7 @@ function layerTest(input: {
             : layerTestEventSink;
   const layerRegistry = Layer.unwrap(
     makeProviderAdapter(input.state, {
+      ...(input.prepare === undefined ? {} : { prepare: input.prepare }),
       failEventStream: input.failEventStream ?? false,
       ...(input.capabilities === undefined ? {} : { capabilities: input.capabilities }),
       ...(input.mcpConfigs === undefined ? {} : { mcpConfigs: input.mcpConfigs }),
@@ -529,9 +559,19 @@ function layerTest(input: {
         ? {}
         : { scopeCloseReached: input.scopeCloseReached }),
     }).pipe(Effect.map(ProviderAdapterRegistry.layerSingle)),
-  );
-  const layerConfiguredMcpRegistry =
-    input.pauseResolve === undefined
+  ).pipe(Layer.provide(IdAllocator.layer));
+  const layerConfiguredMcpRegistry = input.failSpareBind
+    ? Layer.effect(
+        McpSessionRegistry.McpSessionRegistry,
+        Effect.gen(function* () {
+          const delegate = yield* McpSessionRegistry.McpSessionRegistry;
+          return McpSessionRegistry.McpSessionRegistry.of({
+            ...delegate,
+            bind: () => Effect.die(new Error("spare adoption failed")),
+          });
+        }),
+      ).pipe(Layer.provide(layerTestMcpRegistry))
+    : input.pauseResolve === undefined
       ? layerTestMcpRegistry
       : layerPausingMcpRegistry(input.pauseResolve);
   const layerProviderEventIngestorTest = ProviderEventIngestor.layer.pipe(
@@ -3817,5 +3857,190 @@ it.effect("ProviderSessionManagerV2 gives a delegated child its project's device
       delegatedBy: ThreadId.make("thread-provider-session-manager-parent"),
     });
     assert.isTrue(child?.capabilities?.has("device"));
+  }),
+);
+
+it.effect.each([
+  "match",
+  "session_projection",
+  "live",
+  "ensure_model",
+  "revoked",
+  "bind_error",
+  "subagent",
+  "instructions",
+  "logout",
+  "model",
+  "options",
+  "cwd",
+  "policy",
+  "settings",
+  "expiry",
+  "shutdown",
+] as const)("project native prewarm handles %s without persisting a conversation", (scenario) =>
+  Effect.gen(function* () {
+    const state = yield* Ref.make(emptyState);
+    const ready = yield* Deferred.make<void>();
+    const settingsLayer = ServerSettings.layerTest({ defaultModelSelection: modelSelection });
+    const effect = Effect.gen(function* () {
+      const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+      const eventSink = yield* EventSink.EventSinkV2;
+      const idAllocator = yield* IdAllocator.IdAllocatorV2;
+      const projectId = ProjectId.make(`prewarm-${scenario}`);
+      const threadId = ThreadId.make(`prewarm-${scenario}`);
+      const fileSystem = yield* FileSystem.FileSystem;
+      const cwd = yield* fileSystem.makeTempDirectoryScoped();
+      const policy = { ...runtimePolicy, cwd };
+      const now = yield* DateTime.now;
+      const providerSessionId = idAllocator.derive.providerSession({
+        providerInstanceId: modelSelection.instanceId,
+      });
+      if (scenario === "live") {
+        const existingThread = ThreadId.make("existing");
+        yield* eventSink.write({
+          events: [
+            yield* makeThreadCreatedEvent({
+              idAllocator,
+              threadId: existingThread,
+              projectId,
+              now,
+            }),
+          ],
+        });
+        yield* manager.open({
+          threadId: existingThread,
+          providerSessionId,
+          modelSelection,
+          runtimePolicy: policy,
+        });
+      }
+      const beforeWarm = yield* eventSink.latestSequence();
+      const timestamp = DateTime.formatIso(now);
+      const commandId = yield* idAllocator.allocate.command({
+        fixtureName: "prewarm",
+        commandName: scenario,
+      });
+      yield* eventSink.commitProjectCommand({
+        commandId,
+        projectId,
+        commandType: "project.create",
+        acceptedAt: now,
+        event: {
+          eventId: EventId.make(`prewarm-${scenario}`),
+          aggregateKind: "project",
+          aggregateId: projectId,
+          occurredAt: timestamp,
+          commandId,
+          causationEventId: null,
+          correlationId: null,
+          metadata: {},
+          type: "project.created",
+          payload: {
+            projectId,
+            title: "prewarm",
+            workspaceRoot: cwd,
+            defaultModelSelection: null,
+            scripts: [],
+            createdAt: timestamp,
+            updatedAt: timestamp,
+          },
+        },
+      });
+      yield* Deferred.await(ready);
+      assert.equal((yield* Ref.get(state)).openCount, 1);
+      assert.equal(yield* eventSink.latestSequence(), beforeWarm);
+      if (scenario === "shutdown") {
+        yield* manager.shutdown;
+        assert.equal((yield* Ref.get(state)).closeCount, 1);
+        return;
+      }
+      if (scenario === "expiry") yield* TestClock.adjust("60 seconds");
+      if (scenario === "logout") yield* manager.closeInstance(modelSelection.instanceId);
+      if (scenario === "instructions")
+        yield* fileSystem.writeFileString(`${cwd}/AGENTS.md`, "Use concise replies.");
+      if (scenario === "revoked") {
+        const registry = yield* McpSessionRegistry.McpSessionRegistry;
+        yield* registry.revokeAll;
+      }
+      if (scenario === "settings") {
+        const settings = yield* ServerSettings.ServerSettingsService;
+        yield* settings.updateSettings({ defaultRuntimeMode: "approval-required" });
+      }
+      yield* eventSink.write({
+        events: [
+          yield* makeThreadCreatedEvent({
+            idAllocator,
+            threadId,
+            projectId,
+            now,
+            ...(scenario === "subagent" ? { delegatedBy: ThreadId.make("parent") } : {}),
+          }),
+        ],
+      });
+      const runtime = yield* manager.open({
+        threadId,
+        providerSessionId,
+        ...(scenario === "session_projection"
+          ? { resumeFromSession: makeProviderSession({ providerSessionId, now }) }
+          : {}),
+        modelSelection:
+          scenario === "model"
+            ? { ...modelSelection, model: "different" }
+            : scenario === "options"
+              ? { ...modelSelection, options: [{ id: "reasoningEffort", value: "low" }] }
+              : modelSelection,
+        runtimePolicy:
+          scenario === "cwd"
+            ? { ...policy, cwd: "/tmp" }
+            : scenario === "policy"
+              ? { ...policy, runtimeMode: "approval-required" }
+              : policy,
+      });
+      assert.equal(runtime.providerSessionId, providerSessionId);
+      const counts = yield* Ref.get(state);
+      if (scenario === "settings") assert.isAtLeast(counts.openCount, 2);
+      else
+        assert.equal(
+          counts.openCount,
+          ["match", "session_projection", "live", "ensure_model"].includes(scenario) ? 1 : 2,
+        );
+      assert.equal(counts.openCount - counts.closeCount, 1);
+      const mcp = yield* McpProviderSessions.McpProviderSessions;
+      const credential = yield* mcp.read(threadId);
+      assert.isDefined(credential);
+      const registry = yield* McpSessionRegistry.McpSessionRegistry;
+      const token = credential!.authorizationHeader.replace(/^Bearer\s+/, "");
+      assert.equal((yield* registry.resolve(token))?.thread.threadId, threadId);
+      assert.equal((yield* registry.resolve(token))?.thread.subagent, scenario === "subagent");
+      if (["match", "session_projection", "live", "ensure_model"].includes(scenario)) {
+        const native = yield* runtime.ensureThread({
+          threadId,
+          modelSelection:
+            scenario === "ensure_model"
+              ? { ...modelSelection, model: "different" }
+              : modelSelection,
+          runtimePolicy: policy,
+        });
+        assert.equal((yield* Ref.get(state)).ensureCount, scenario === "ensure_model" ? 2 : 1);
+        if (scenario === "ensure_model")
+          assert.include((yield* Ref.get(state)).unloadedNativeThreadIds, "native-spare");
+        assert.equal(native.nativeThreadRef?.nativeId, "native-spare");
+        assert.equal(native.appThreadId, threadId);
+      }
+      yield* manager.shutdown;
+      const stopped = yield* Ref.get(state);
+      assert.equal(stopped.closeCount, stopped.openCount);
+    });
+    yield* effect.pipe(
+      Effect.provide(
+        layerTest({
+          state,
+          idleTimeoutMs: 100000,
+          prepare: Deferred.succeed(ready, undefined).pipe(Effect.asVoid),
+          serverSettingsLayer: settingsLayer,
+          failSpareBind: scenario === "bind_error",
+        }).pipe(Layer.merge(settingsLayer), Layer.merge(NodeServices.layer)),
+      ),
+    );
   }),
 );
