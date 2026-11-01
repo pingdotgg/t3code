@@ -2429,6 +2429,24 @@ describe("CodexAdapterV2 post-settle continuation", () => {
               label: "thread/resume without an app thread",
               frame: { id: 4, result: { thread: { id: nativeThreadId, updatedAt: 1782622450 } } },
             },
+            {
+              type: "expect_outbound",
+              label: "thread/resume with an explicit app thread",
+              frame: {
+                id: 5,
+                method: "thread/resume",
+                params: {
+                  threadId: nativeThreadId,
+                  excludeTurns: true,
+                  config: CodexAdapterV2.CODEX_THREAD_CONFIG,
+                },
+              },
+            },
+            {
+              type: "emit_inbound",
+              label: "thread/resume with an explicit app thread",
+              frame: { id: 5, result: { thread: { id: nativeThreadId, updatedAt: 1782622450 } } },
+            },
           ],
         });
         const resumeThreadEnvs: Array<unknown> = [];
@@ -2450,11 +2468,18 @@ describe("CodexAdapterV2 post-settle continuation", () => {
           modelSelection: CODEX_TEST_MODEL_SELECTION,
           runtimePolicy: CODEX_TEST_RUNTIME_POLICY,
         });
+        const explicitThreadId = ThreadId.make(`thread-${scenario}-explicit`);
+        yield* harness.runtime.resumeThread({
+          threadId: explicitThreadId,
+          providerThread: harness.providerThread,
+          modelSelection: CODEX_TEST_MODEL_SELECTION,
+          runtimePolicy: CODEX_TEST_RUNTIME_POLICY,
+        });
 
         assert.equal(resumed.nativeThreadRef?.nativeId, nativeThreadId);
         assert.equal(resumed.status, "idle");
         assert.equal(DateTime.toEpochMillis(resumed.updatedAt), 1782622450000);
-        assert.deepEqual(resumeThreadEnvs, [harness.threadId, undefined]);
+        assert.deepEqual(resumeThreadEnvs, [harness.threadId, undefined, explicitThreadId]);
       }).pipe(
         Effect.provide(
           Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
