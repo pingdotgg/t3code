@@ -6543,7 +6543,7 @@ it.layer(layerSharedApplicationDataPlaneTest)("pending provider interruption", (
         ["user_message", "run_interrupt_request", "run_interrupt_result"],
       );
       assert.deepEqual(interrupted.providerTurns, []);
-      assert.isFalse(yield* effectWorker.runOnce);
+      assert.isFalse(yield* effectWorker.runOnce());
     }),
   );
 });
