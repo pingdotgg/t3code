@@ -30,6 +30,7 @@ vi.mock("./projects", () => ({
   projectEnvironment: { searchEntries: () => state.searchAtom },
 }));
 vi.mock("./atom-registry", () => ({ appAtomRegistry: {} }));
+vi.mock("./shell", () => ({ environmentShell: {} }));
 vi.mock("./orchestration", () => ({ orchestrationEnvironment: {} }));
 vi.mock("./threads", () => ({ useEnvironmentThread: vi.fn() }));
 vi.mock("./vcs", () => ({ vcsEnvironment: {} }));

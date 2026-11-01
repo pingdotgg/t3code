@@ -34,6 +34,7 @@ import { AsyncResult, Atom } from "effect/reactivity";
 import { useEffect, useMemo, useState } from "react";
 
 import { appAtomRegistry } from "./atom-registry";
+import { environmentShell } from "./shell";
 import { orchestrationEnvironment } from "./orchestration";
 import { olderSettledThreads, threadFamilies } from "./threads";
 import { projectEnvironment } from "./projects";
@@ -71,6 +72,14 @@ const anyOlderSettledAtom = Atom.family((environmentIdsKey: string) =>
       (environmentId) => get(olderSettledBeforeAtom(environmentId)) !== null,
     ),
   ).pipe(Atom.withLabel(`mobile:any-older-settled:${environmentIdsKey}`)),
+);
+const initialThreadSnapshotPendingAtom = Atom.family((environmentIdsKey: string) =>
+  Atom.make((get) =>
+    (JSON.parse(environmentIdsKey) as ReadonlyArray<EnvironmentId>).some((environmentId) => {
+      const state = get(environmentShell.stateValueAtom(environmentId));
+      return state.generation === 0 && state.status === "synchronizing";
+    }),
+  ).pipe(Atom.withLabel(`mobile:initial-thread-snapshot-pending:${environmentIdsKey}`)),
 );
 const threadSearch = createThreadSearchResultsAtomFamily({
   getSearchAtom: (environmentId, input) =>
@@ -214,6 +223,11 @@ export function useThreadSearch(
   const normalizedQuery = query.trim().slice(0, THREAD_SEARCH_QUERY_MAX_LENGTH).trim();
   const debouncedQuery = useDebouncedValue(normalizedQuery, THREAD_SEARCH_DEBOUNCE_MS);
   const anyOlderSettled = useAtomValue(anyOlderSettledAtom(JSON.stringify(environmentIds)));
+  const initialSnapshotPending = useAtomValue(
+    initialThreadSnapshotPendingAtom(
+      JSON.stringify(scope.titlesOnly === true && normalizedQuery.length > 0 ? environmentIds : []),
+    ),
+  );
   // Messages need a word of three or more letters; older settled titles match from two.
   const canSearch =
     environmentIds.length > 0 &&
@@ -226,7 +240,9 @@ export function useThreadSearch(
   const result = useAtomValue(
     searchKey === null ? EMPTY_THREAD_SEARCH_ATOM : threadSearch.results(searchKey),
   );
-  const isPending = canSearch && (normalizedQuery !== debouncedQuery || result.isLoading);
+  const isPending =
+    initialSnapshotPending ||
+    (canSearch && (normalizedQuery !== debouncedQuery || result.isLoading));
   // What fast environments returned shows without waiting for a slow one;
   // callers keep shown rows in place with `nextShownOrder`.
   const ready =
@@ -396,6 +412,10 @@ export function useComposerPathSearch(target: ComposerPathSearchTarget) {
   const query = normalizeComposerPathSearchQuery(target.query);
   const normalizedTarget = { environmentId: target.environmentId, cwd: target.cwd, query };
   const debouncedTarget = useDebouncedValue(normalizedTarget, COMPOSER_PATH_SEARCH_DEBOUNCE_MS);
+  const isDebouncing =
+    normalizedTarget.environmentId !== debouncedTarget.environmentId ||
+    normalizedTarget.cwd !== debouncedTarget.cwd ||
+    normalizedTarget.query !== debouncedTarget.query;
   const fileAccessSession = useEnvironmentQuery(
     debouncedTarget.environmentId === null
       ? null
@@ -430,14 +450,12 @@ export function useComposerPathSearch(target: ComposerPathSearchTarget) {
   return {
     entries: result.data?.entries ?? [],
     error:
-      !hasTarget || fileAccess.isPending
+      !hasTarget || fileAccess.isPending || isDebouncing
         ? null
         : canReadFiles
           ? result.error
           : (fileAccess.error ?? "This connection cannot search host files."),
-    isPending:
-      normalizedTarget.query !== debouncedTarget.query ||
-      (hasTarget && (fileAccess.isPending || result.isPending)),
+    isPending: isDebouncing || (hasTarget && (fileAccess.isPending || result.isPending)),
     refresh: result.refresh,
   };
 }

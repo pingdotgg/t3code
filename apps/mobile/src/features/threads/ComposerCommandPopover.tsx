@@ -20,6 +20,8 @@ import { ENVIRONMENT_MACHINE_SYMBOLS } from "../../components/EnvironmentMachine
 import { GlassSurface } from "../../components/ui/GlassSurface";
 import { PierreEntryIcon } from "../../components/PierreEntryIcon";
 import { pullRequestStatus } from "../pull-requests/pullRequestStatus";
+import { emptyText, groupLabel } from "./composerCommandLabels";
+
 export type ComposerCommandItem =
   | {
       readonly id: string;
@@ -77,6 +79,7 @@ interface ComposerCommandPopoverProps {
   readonly items: ReadonlyArray<ComposerCommandItem>;
   readonly triggerKind: ComposerTriggerKind | null;
   readonly isLoading: boolean;
+  readonly searchesThreads: boolean;
   readonly error?: string | null;
   readonly onSelect: (item: ComposerCommandItem) => void;
 }
@@ -123,39 +126,6 @@ function itemIcon(item: ComposerCommandItem): AppSymbolName | null {
       return "text.bubble";
     case "environment":
       return ENVIRONMENT_MACHINE_SYMBOLS[item.machine];
-  }
-}
-
-function groupLabel(triggerKind: ComposerTriggerKind | null): string | null {
-  switch (triggerKind) {
-    case "pull-request":
-      return "Pull requests";
-    case "slash-command":
-      return "Commands";
-    case "skill":
-      return "Skills";
-    case "path":
-      return "Files";
-    default:
-      return null;
-  }
-}
-
-function emptyText(triggerKind: ComposerTriggerKind | null, isLoading: boolean): string {
-  if (isLoading) {
-    return triggerKind === "path" ? "Searching files…" : "Loading…";
-  }
-  switch (triggerKind) {
-    case "pull-request":
-      return "No matching pull requests.";
-    case "path":
-      return "No matching files or folders.";
-    case "skill":
-      return "No skills found.";
-    case "slash-command":
-      return "No matching commands.";
-    default:
-      return "No results.";
   }
 }
 
@@ -210,7 +180,7 @@ const CommandRow = memo(function CommandRow(props: {
 export const ComposerCommandPopover = memo(function ComposerCommandPopover(
   props: ComposerCommandPopoverProps,
 ) {
-  const label = groupLabel(props.triggerKind);
+  const label = groupLabel(props.triggerKind, props.searchesThreads);
 
   return (
     <PopoverSurface>
@@ -218,6 +188,13 @@ export const ComposerCommandPopover = memo(function ComposerCommandPopover(
         <View className="px-3.5 pt-2.5 pb-1">
           <Text className="text-3xs font-t3-bold tracking-[0.8px] uppercase text-foreground-muted">
             {label}
+          </Text>
+        </View>
+      ) : null}
+      {(props.triggerKind === "path" && props.error) || props.items.length === 0 ? (
+        <View className="px-3.5 py-2.5">
+          <Text className="text-xs text-foreground-tertiary">
+            {props.error ?? emptyText(props.triggerKind, props.isLoading, props.searchesThreads)}
           </Text>
         </View>
       ) : null}
@@ -237,13 +214,7 @@ export const ComposerCommandPopover = memo(function ComposerCommandPopover(
             />
           ))}
         </ScrollView>
-      ) : (
-        <View className="px-3.5 py-2.5">
-          <Text className="text-xs text-foreground-tertiary">
-            {props.error ?? emptyText(props.triggerKind, props.isLoading)}
-          </Text>
-        </View>
-      )}
+      ) : null}
     </PopoverSurface>
   );
 });

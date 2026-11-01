@@ -1,5 +1,5 @@
 import { AuthFilesystemReadScope, EnvironmentId } from "@t3tools/contracts";
-import { RegistryContext } from "@effect/atom-react";
+import { RegistryContext, RegistryProvider } from "@effect/atom-react";
 import type { VcsRefTarget } from "@t3tools/client-runtime/state/vcs";
 import { AsyncResult, Atom, AtomRegistry } from "effect/reactivity";
 import { act, useLayoutEffect } from "react";
@@ -8,7 +8,9 @@ import { expect, it, vi } from "vite-plus/test";
 
 const mocks = vi.hoisted(() => ({
   sessionAtom: {},
+  searchError: null as string | null,
   searchEntries: vi.fn(() => null),
+  shellState: { generation: 0, status: "synchronizing" },
   listRefs: vi.fn(),
   refresh: vi.fn(),
 }));
@@ -29,14 +31,21 @@ vi.mock("./projects", () => ({
 vi.mock("./atom-registry", () => ({ appAtomRegistry: { refresh: mocks.refresh } }));
 vi.mock("./orchestration", () => ({ orchestrationEnvironment: {} }));
 vi.mock("./vcs", () => ({ vcsEnvironment: { listRefs: mocks.listRefs } }));
-vi.mock("./threads", () => ({ olderSettledThreads: {}, threadFamilies: {} }));
+vi.mock("./shell", async () => {
+  const { Atom } = await import("effect/reactivity");
+  return { environmentShell: { stateValueAtom: Atom.family(() => Atom.make(mocks.shellState)) } };
+});
+vi.mock("./threads", async () => {
+  const { Atom } = await import("effect/reactivity");
+  return { olderSettledThreads: { olderSettledAtom: () => Atom.make(null) }, threadFamilies: {} };
+});
 vi.mock("./query", () => ({
   useEnvironmentQuery: (atom: unknown) => ({
     data:
       atom === mocks.sessionAtom
         ? { authenticated: true, scopes: [AuthFilesystemReadScope] }
         : null,
-    error: null,
+    error: atom === mocks.sessionAtom ? null : mocks.searchError,
     isPending: false,
     refresh: () => {},
   }),
@@ -45,20 +54,62 @@ vi.mock("./query", () => ({
 import {
   useComposerPathSearch,
   usePaginatedBranches,
+  useThreadSearch,
   type ComposerPathSearchTarget,
 } from "./queries";
+
+it.each([
+  { status: "synchronizing", generation: 0, query: "missing", pending: true },
+  { status: "synchronizing", generation: 1, query: "missing", pending: false },
+  { status: "live", generation: 1, query: "missing", pending: false },
+  { status: "cached", generation: 0, query: "missing", pending: false },
+  { status: "empty", generation: 0, query: "missing", pending: false },
+  { status: "synchronizing", generation: 0, query: "", pending: false },
+  { status: "synchronizing", generation: 0, query: "a", pending: true },
+])("reports title search loading for $status generation $generation query '$query'", (state) => {
+  (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+  mocks.shellState = { status: state.status, generation: state.generation };
+  const root = createRoot(document.createElement("div"));
+  using _root = { [Symbol.dispose]: () => act(() => root.unmount()) };
+  let pending: boolean | undefined;
+  function Probe() {
+    const result = useThreadSearch([EnvironmentId.make(JSON.stringify(state))], state.query, {
+      titlesOnly: true,
+    });
+    useLayoutEffect(() => {
+      pending = result.isPending;
+    });
+    return null;
+  }
+  act(() =>
+    root.render(
+      <RegistryProvider>
+        <Probe />
+      </RegistryProvider>,
+    ),
+  );
+  expect(pending).toBe(state.pending);
+});
 
 function setup() {
   (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
   vi.useFakeTimers();
   mocks.searchEntries.mockClear();
+  mocks.searchError = null;
   const root = createRoot(document.createElement("div"));
+  let result: ReturnType<typeof useComposerPathSearch>;
   function Probe({ target }: { readonly target: ComposerPathSearchTarget }) {
-    useComposerPathSearch(target);
+    const state = useComposerPathSearch(target);
+    useLayoutEffect(() => {
+      result = state;
+    });
     return null;
   }
 
   return {
+    get result() {
+      return result;
+    },
     render(target: ComposerPathSearchTarget) {
       act(() => root.render(<Probe target={{ ...target }} />));
     },
@@ -89,6 +140,23 @@ it("keeps the original search deadline when rerenders have equivalent targets", 
     environmentId: target.environmentId,
     input: { cwd: target.cwd, query: target.query, limit: 20 },
   });
+});
+
+it.each([
+  { field: "environment", changed: { ...target, environmentId: EnvironmentId.make("other") } },
+  { field: "project directory", changed: { ...target, cwd: "/other" } },
+  { field: "query", changed: { ...target, query: "test" } },
+])("hides the previous error while the $field change debounces", ({ changed }) => {
+  using harness = setup();
+  mocks.searchError = "File search failed";
+  harness.render(target);
+  expect(harness.result.error).toBe("File search failed");
+
+  harness.render(changed);
+  expect(harness.result).toMatchObject({ error: null, isPending: true });
+
+  act(() => vi.advanceTimersByTime(200));
+  expect(harness.result).toMatchObject({ error: "File search failed", isPending: false });
 });
 
 it.each([

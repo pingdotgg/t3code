@@ -1,11 +1,17 @@
 import { describe, expect, it, vi } from "vite-plus/test";
-import { ProviderDriverKind } from "@t3tools/contracts";
+import { EnvironmentId, ProviderDriverKind } from "@t3tools/contracts";
+import { act, createElement, useLayoutEffect } from "react";
+import { createRoot } from "react-dom/client";
+
+const search = vi.hoisted(() => ({ threadPending: false }));
 
 vi.mock("react-native", () => ({ Alert: { alert: vi.fn() } }));
+vi.mock("@effect/atom-react", () => ({ useAtomRefresh: () => () => {} }));
 
 vi.mock("../../state/queries", () => ({
   useComposerPathSearch: () => ({ entries: [], isPending: false }),
   useComposerPullRequestSearch: () => ({ entries: [], isPending: false, error: null }),
+  useThreadSearch: () => ({ isPending: search.threadPending }),
 }));
 vi.mock("../../state/use-composer-drafts", () => ({
   getComposerDraftSnapshot: vi.fn(),
@@ -23,8 +29,39 @@ vi.mock("../../state/server", () => ({
 import {
   buildComposerSlashCommandItems,
   resolveComposerCommandSelection,
+  useComposerCommandMenu,
   resolveComposerMenuSelection,
 } from "./use-composer-command-menu";
+
+it("keeps a mention search loading until older threads finish", () => {
+  (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+  search.threadPending = true;
+  const root = createRoot(document.createElement("div"));
+  using _root = { [Symbol.dispose]: () => act(() => root.unmount()) };
+  let menu: ReturnType<typeof useComposerCommandMenu> | undefined;
+  function Probe() {
+    const state = useComposerCommandMenu({
+      draftMessage: "@missing",
+      ownerKey: null,
+      environmentId: EnvironmentId.make("test"),
+      projectCwd: "/repo",
+      selectedProviderStatus: null,
+      hasThread: true,
+      hasCompactableConversation: false,
+      onChangeDraftMessage: vi.fn(),
+    });
+    useLayoutEffect(() => {
+      menu = state;
+    });
+    return null;
+  }
+
+  act(() => root.render(createElement(Probe)));
+  expect(menu).toMatchObject({ items: [], isLoading: true });
+  search.threadPending = false;
+  act(() => root.render(createElement(Probe)));
+  expect(menu).toMatchObject({ items: [], isLoading: false });
+});
 
 describe("resolveComposerMenuSelection", () => {
   it("prefers the caret an insertion placed in the current draft text", () => {
