@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState, type ComponentProps } from "react";
+import { useRef, useState, type ComponentProps } from "react";
 import {
   useWindowDimensions,
   View,
@@ -7,21 +7,47 @@ import {
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { NewThreadButton } from "../../components/NewThreadButton";
-import type { AndroidHomeFabLayout as SharedAndroidHomeFabLayout } from "./AndroidHomeFab.shared";
+import {
+  androidHomeFabPosition,
+  type AndroidHomeFabLayout as SharedAndroidHomeFabLayout,
+} from "./AndroidHomeFab.shared";
 import { useWorkspaceState } from "../../state/workspace";
 import { FabScrollContext } from "./FabScrollContext";
 import { updateFabScroll } from "./fab-scroll";
-import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
+import { useAndroidControlSizing } from "../../components/ui/useAndroidControlSizing";
+import { useEnabledNavigationTabs } from "../workspace/navigation-tabs";
+import { WorkspaceTabsContext, useWorkspaceTabs } from "../workspace/WorkspaceTabsContext";
+import { FLOATING_TABS, floatingTabsMetrics } from "../workspace/floating-workspace-tabs";
+import {
+  useAppearancePreferences,
+  useAndroidFloatingTabs,
+} from "../settings/appearance/AppearancePreferencesProvider";
 
 export function AndroidHomeFabLayout(props: ComponentProps<typeof SharedAndroidHomeFabLayout>) {
+  const floatingTabsEnabled = useAndroidFloatingTabs();
   const insets = useSafeAreaInsets();
   const { appearance } = useAppearancePreferences();
   const { fontScale } = useWindowDimensions();
   const [layoutWidth, setLayoutWidth] = useState<number | null>(null);
   const { state } = useWorkspaceState();
   const [expanded, setExpanded] = useState(true);
+  const { scale, fabSize } = useAndroidControlSizing();
+  const tabs = useEnabledNavigationTabs();
+  const floating = floatingTabsMetrics(
+    tabs.length + 1,
+    scale,
+    fabSize,
+    props.paneWidth ?? layoutWidth ?? undefined,
+  );
+  const workspace = useWorkspaceTabs();
+  const bottomClearance =
+    insets.bottom +
+    FLOATING_TABS.bottom +
+    FLOATING_TABS.edge +
+    Math.max(floating.height, floating.fabOffset + fabSize);
+  const context = floatingTabsEnabled && workspace ? { ...workspace, bottomClearance } : workspace;
   const scrollState = useRef({ anchor: 0, expanded: true });
-  const onScroll = useCallback((event: NativeSyntheticEvent<NativeScrollEvent>) => {
+  const onScroll = (event: NativeSyntheticEvent<NativeScrollEvent>) => {
     const { contentOffset, contentSize, layoutMeasurement } = event.nativeEvent;
     const next = updateFabScroll(
       scrollState.current,
@@ -30,24 +56,33 @@ export function AndroidHomeFabLayout(props: ComponentProps<typeof SharedAndroidH
     );
     if (next.expanded !== scrollState.current.expanded) setExpanded(next.expanded);
     scrollState.current = next;
-  }, []);
+  };
 
   // Remount only the FAB when its font or pane changes to clear the cached expanded width.
+  // Floating navigation shares this row; Material split views put New thread in the rail.
   return (
     <View className="flex-1" onLayout={(event) => setLayoutWidth(event.nativeEvent.layout.width)}>
-      <FabScrollContext value={onScroll}>{props.children}</FabScrollContext>
-      {!props.disabled && state.hasConnections && layoutWidth !== null ? (
+      <WorkspaceTabsContext value={context}>
+        <FabScrollContext value={onScroll}>{props.children}</FabScrollContext>
+      </WorkspaceTabsContext>
+      {!props.disabled &&
+      (!props.sidebar || floatingTabsEnabled) &&
+      state.hasConnections &&
+      layoutWidth !== null ? (
         <NewThreadButton
           key={`${appearance.baseFontSize}:${fontScale}:${layoutWidth}`}
           extended
-          expanded={expanded}
+          expanded={floatingTabsEnabled ? false : expanded}
           onPress={props.onStartNewTask}
-          className="absolute right-5"
-          style={{
-            bottom: props.sidebar
-              ? Math.max(insets.bottom, 12) + 6
-              : Math.max(insets.bottom, 16) + 16,
-          }}
+          className="absolute"
+          style={
+            floatingTabsEnabled
+              ? {
+                  right: FLOATING_TABS.edge,
+                  bottom: insets.bottom + FLOATING_TABS.bottom + floating.fabOffset,
+                }
+              : androidHomeFabPosition(insets.bottom, props.sidebar)
+          }
         />
       ) : null}
     </View>

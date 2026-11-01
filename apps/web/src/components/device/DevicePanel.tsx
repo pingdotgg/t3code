@@ -5,22 +5,33 @@ import type {
   DeviceSummary,
   ScopedThreadRef,
 } from "@t3tools/contracts";
-import { Smartphone, X } from "lucide-react";
-import { useEffect, useState } from "react";
+import { ArrowUpRight, CircleAlert, Play, Smartphone, X } from "lucide-react";
+import { useAtomMount } from "@effect/atom-react";
+import { type ReactNode, useState } from "react";
 
 import { usePreviewMiniPlayerStore } from "~/previewMiniPlayerStore";
-import { useRightPanelStore, type RightPanelSurface } from "~/rightPanelStore";
+import {
+  selectThreadRightPanelState,
+  useRightPanelStore,
+  type RightPanelSurface,
+} from "~/rightPanelStore";
 import { Button } from "~/components/ui/button";
-import { DiscoveryList, DiscoveryListRow } from "~/components/ui/discovery-list";
+import { DiscoveryList } from "~/components/ui/discovery-list";
 import { Dialog } from "~/components/ui/dialog";
 import { WizardPopup } from "~/components/ui/wizard";
 import { Spinner } from "~/components/ui/spinner";
 import { cn } from "~/lib/utils";
-import { deviceEnvironment, useDeviceState } from "~/state/device";
+import { focusPanelTerminalAfterClose } from "~/lib/terminalFocus";
+import {
+  deviceEnvironment,
+  deviceHostProbeAtom,
+  NO_DEVICE_PROBE_ATOM,
+  useDeviceState,
+} from "~/state/device";
 import { formatEnvironmentQueryError } from "~/state/query";
 import { useAtomCommand } from "~/state/use-atom-command";
 import { DeviceLoadingView } from "./DeviceLoadingView";
-import { DeviceSetup, deviceHubReadiness } from "./DeviceSetup";
+import { DeviceSetup, deviceHubReadiness, isAndroidDiscoveryUncertain } from "./DeviceSetup";
 import { DeviceWorkspace } from "./DeviceWorkspace";
 import { PreviewPanelShell, type PreviewPanelMode } from "../preview/PreviewPanelShell";
 
@@ -38,7 +49,7 @@ export function DevicePanel(props: {
   readonly onDismissSetup: () => void;
 }) {
   const { environmentId, threadId } = props.threadRef;
-  const { state, loaded } = useDeviceState(environmentId);
+  const { state, loaded, error: stateError, refresh: refreshState } = useDeviceState(environmentId);
   const list = useAtomCommand(deviceEnvironment.list, { reportFailure: false });
   const open = useAtomCommand(deviceEnvironment.open);
   const close = useAtomCommand(deviceEnvironment.close);
@@ -56,11 +67,11 @@ export function DevicePanel(props: {
 
   const hostDisabled = state.hostStatus === "disabled";
 
-  // Opening setup never grants permission to install or start helpers.
-  useEffect(() => {
-    if (!props.visible || !loaded || hostDisabled) return;
-    void list({ environmentId, input: {} });
-  }, [environmentId, list, loaded, props.visible, hostDisabled]);
+  useAtomMount(
+    props.visible && loaded && !hostDisabled
+      ? deviceHostProbeAtom(environmentId)
+      : NO_DEVICE_PROBE_ATOM,
+  );
 
   const sessions = state.sessions.filter((session) => session.threadId === threadId);
   const activeSession = props.surface.target
@@ -74,6 +85,9 @@ export function DevicePanel(props: {
     ? state.devices.find(
         (device) => device.hostId === activeSession.hostId && device.id === activeSession.deviceId,
       )
+    : undefined;
+  const activeHost = activeDevice
+    ? state.hosts.find((host) => host.id === activeDevice.hostId)
     : undefined;
 
   const grouped = groupDevices(state);
@@ -126,9 +140,16 @@ export function DevicePanel(props: {
     useRightPanelStore.getState().close(props.threadRef);
   };
 
+  const closeSurface = () => {
+    const store = useRightPanelStore.getState();
+    const { activeSurfaceId } = selectThreadRightPanelState(store.byThreadKey, props.threadRef);
+    store.closeSurface(props.threadRef, props.surface.id);
+    focusPanelTerminalAfterClose(props.threadRef, activeSurfaceId);
+  };
+
   const closeActive = (powerOff: boolean) => {
     if (!powerOff) {
-      useRightPanelStore.getState().closeSurface(props.threadRef, props.surface.id);
+      closeSurface();
       return;
     }
     if (!activeSession) return;
@@ -143,13 +164,23 @@ export function DevicePanel(props: {
       },
     }).then((result) => {
       if (result._tag === "Failure") settleOperation(formatEnvironmentQueryError(result.cause));
-      else useRightPanelStore.getState().closeSurface(props.threadRef, props.surface.id);
+      else closeSurface();
     });
   };
 
   const bootingDevices =
     state.bootingDevices?.filter((device) => device.threadId === threadId) ?? [];
   const { ready: hostReady, busy: hostBusy } = deviceHubReadiness(state);
+  const loading = !activeDevice && (pendingDevice !== null || hostBusy || !loaded);
+  // Without a first snapshot a failed subscription never settles on its own.
+  const loadError = loaded ? null : stateError;
+  const diagnostics = state.hosts.flatMap((host) => {
+    const status = state.hostStatuses[host.id];
+    const detail = status?.detail ?? (host.kind === "local" ? state.hostStatusDetail : undefined);
+    return detail && (status?.status ?? state.hostStatus) === "ready"
+      ? [{ hostId: host.id, label: host.label, detail }]
+      : [];
+  });
   const unavailablePlatforms = state.hosts.flatMap((host) =>
     host.platforms
       .filter((platform) => !platform.available)
@@ -173,154 +204,217 @@ export function DevicePanel(props: {
 
   return (
     <PreviewPanelShell mode={props.mode}>
-      {hostReady && !activeDevice && state.hostStatusDetail ? (
+      <div className="relative flex min-h-0 flex-1 flex-col">
         <div
-          role="status"
-          aria-label="Device host diagnostics"
-          tabIndex={0}
-          className="max-h-32 shrink-0 overflow-y-auto whitespace-pre-line break-words border-b px-3 py-2 text-xs text-muted-foreground"
+          className={cn(
+            "shrink-0 bg-background",
+            loading && "absolute inset-x-0 top-0 z-10 max-h-[40%] overflow-y-auto",
+          )}
         >
-          {state.hostStatusDetail}
+          <div hidden={!!activeDevice}>
+            {diagnostics.map((diagnostic) => (
+              <DeviceDiscoveryWarning
+                key={`${environmentId}\u0000${diagnostic.hostId}\u0000${diagnostic.detail}`}
+                label={diagnostic.label}
+                detail={diagnostic.detail}
+              />
+            ))}
+          </div>
+          <DeviceHostUpdates state={state} environmentId={environmentId} />
+          {bootingDevices.length > 0 ? (
+            <div role="status" className="border-b px-3 py-2 text-xs text-muted-foreground">
+              Starting {bootingDevices.map((device) => device.name).join(", ")}… This can take a
+              minute.
+            </div>
+          ) : null}
+          {operationError ? (
+            <DeviceNotice tone="error" onDismiss={() => setOperation(null)}>
+              {operationError}
+            </DeviceNotice>
+          ) : null}
         </div>
-      ) : null}
-      <DeviceHostUpdates state={state} environmentId={environmentId} />
-      {bootingDevices.length > 0 ? (
-        <div role="status" className="border-b px-3 py-2 text-xs text-muted-foreground">
-          Starting {bootingDevices.map((device) => device.name).join(", ")}… This can take a minute.
-        </div>
-      ) : null}
-      {operationError ? (
-        <div
-          role="alert"
-          className="flex items-start gap-2 border-b bg-destructive/5 px-3 py-2 text-xs text-destructive"
-        >
-          <p className="min-w-0 flex-1 whitespace-pre-wrap break-words">{operationError}</p>
-          <Button
-            size="icon-xs"
-            variant="ghost"
-            aria-label="Dismiss device error"
-            onClick={() => setOperation(null)}
-          >
-            <X className="size-3" />
-          </Button>
-        </div>
-      ) : null}
-      <div className="@container relative flex min-h-0 flex-1">
-        {activeDevice && activeSession ? (
-          <DeviceWorkspace
-            key={`${environmentId}\u0000${deviceKey(activeDevice)}`}
-            environmentId={environmentId}
-            device={activeDevice}
-            hostLabel={
-              state.hosts.find((host) => host.id === activeDevice.hostId)?.label ?? "Device host"
-            }
-            hostDiagnostics={state.hostStatusDetail}
-            visible={props.visible}
-            onFloat={floatActive}
-            onClose={() => closeActive(false)}
-            onPowerOff={() => closeActive(true)}
-          />
-        ) : pendingDevice || hostBusy || !loaded ? (
-          <DeviceLoadingView
-            name={pendingDevice?.name ?? "Devices"}
-            description={
-              pendingDevice
-                ? `${state.hosts.find((host) => host.id === pendingDevice.hostId)?.label ?? "Device host"} · ${pendingDevice.version}`
-                : ""
-            }
-            stage="opening"
-            message={
-              pendingDevice
-                ? pendingDevice.booted
-                  ? "Opening device…"
-                  : "Starting device…"
-                : state.hostStatus === "installing"
-                  ? (state.hostStatusDetail ?? "Installing device support…")
-                  : "Finding devices…"
-            }
-          />
-        ) : (
-          <div className="scrollbar-gutter-both flex size-full flex-col overflow-y-auto px-5 py-8 text-sm text-muted-foreground">
-            <div
-              className={cn(
-                "mx-auto flex w-full max-w-xl flex-col gap-6",
-                grouped.length === 0 && "my-auto items-center text-center",
-              )}
+        <div className="@container relative flex min-h-0 flex-1">
+          {activeDevice && activeSession ? (
+            <DeviceWorkspace
+              key={`${environmentId}\u0000${deviceKey(activeDevice)}`}
+              environmentId={environmentId}
+              device={activeDevice}
+              hostLabel={activeHost?.label ?? "Device host"}
+              hostKind={activeHost?.kind}
+              hostDiagnostics={
+                diagnostics.find(({ hostId }) => hostId === activeDevice.hostId)?.detail
+              }
+              visible={props.visible}
+              onFloat={floatActive}
+              onClose={() => closeActive(false)}
+              onPowerOff={() => closeActive(true)}
+            />
+          ) : loading ? (
+            <DeviceLoadingView
+              name={pendingDevice?.name ?? "Devices"}
+              description={
+                pendingDevice
+                  ? `${state.hosts.find((host) => host.id === pendingDevice.hostId)?.label ?? "Device host"} · ${pendingDevice.version}`
+                  : ""
+              }
+              stage="opening"
+              message={
+                loadError ??
+                (pendingDevice
+                  ? pendingDevice.booted
+                    ? "Opening device…"
+                    : "Starting device…"
+                  : state.hostStatus === "installing"
+                    ? (state.hostStatusDetail ?? "Installing device support…")
+                    : "Finding devices…")
+              }
+              error={loadError !== null}
             >
-              {grouped.length === 0 ? (
-                <>
-                  <Smartphone className="size-6 opacity-60" />
-                  <p
-                    className="max-h-32 w-full max-w-sm overflow-y-auto whitespace-pre-line break-words"
-                    tabIndex={state.hostStatus === "failed" ? 0 : undefined}
-                  >
-                    {state.hostStatus === "failed"
-                      ? (state.hostStatusDetail ?? "The device hub failed to start.")
-                      : "No simulators or emulators were found on this environment."}
-                  </p>
-                </>
+              {loadError !== null ? (
+                <Button size="sm" variant="outline" onClick={refreshState}>
+                  Retry
+                </Button>
               ) : null}
-              {hostReady && grouped.length > 0 ? (
-                <div className="w-full space-y-6 text-left">
-                  {grouped.map((group) => (
-                    <section key={group.platform} className="space-y-3">
-                      <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                        <Smartphone className="size-4 shrink-0" />
-                        <h3 className="font-medium">{platformLabel(group.platform)}</h3>
-                      </div>
-                      <DiscoveryList>
-                        {group.devices.map((device) => (
-                          <DiscoveryListRow
-                            key={deviceKey(device)}
-                            icon={
+            </DeviceLoadingView>
+          ) : (
+            <div className="scrollbar-gutter-both flex size-full flex-col overflow-y-auto px-5 py-8 text-sm text-muted-foreground">
+              <div
+                className={cn(
+                  "mx-auto flex w-full max-w-xl flex-col gap-6",
+                  grouped.length === 0 && "my-auto items-center text-center",
+                )}
+              >
+                {grouped.length === 0 ? (
+                  <>
+                    <Smartphone className="size-6 opacity-60" />
+                    <p
+                      className="max-h-32 w-full max-w-sm overflow-y-auto whitespace-pre-line break-words"
+                      tabIndex={state.hostStatus === "failed" ? 0 : undefined}
+                    >
+                      {state.hostStatus === "failed"
+                        ? (state.hostStatusDetail ?? "The device hub failed to start.")
+                        : "No simulators or emulators were found on this environment."}
+                    </p>
+                  </>
+                ) : null}
+                {hostReady && grouped.length > 0 ? (
+                  <div className="w-full space-y-6 text-left">
+                    {grouped.map((group) => (
+                      <section key={group.platform} className="space-y-3">
+                        <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                          <Smartphone className="size-4 shrink-0" />
+                          <h3 className="font-medium">{platformLabel(group.platform)}</h3>
+                        </div>
+                        <DiscoveryList>
+                          {group.devices.map((device) => (
+                            <div
+                              key={deviceKey(device)}
+                              className="flex items-center gap-3 px-3 py-3"
+                            >
                               <span className="grid size-8 shrink-0 place-items-center rounded-md border border-border/60">
                                 <Smartphone className="size-4" />
                               </span>
-                            }
-                            title={device.name}
-                            description={`${state.hosts.find((host) => host.id === device.hostId)?.label} · ${device.version} · ${device.booted ? "Running" : "Stopped"}`}
-                            disabled={pendingDeviceKey !== null}
-                            aria-label={`${device.booted ? "Open" : "Start"} ${device.name}`}
-                            onClick={() => void selectDevice(deviceKey(device))}
-                            action={
-                              pendingDeviceKey === deviceKey(device) ? (
-                                <Spinner size="xs" />
-                              ) : (
-                                <span className="text-xs text-muted-foreground">
-                                  {device.booted ? "Open" : "Start"}
+                              <div className="flex min-w-0 flex-1 flex-col">
+                                <span className="truncate text-sm font-medium text-foreground">
+                                  {device.name}
                                 </span>
-                              )
-                            }
-                          />
-                        ))}
-                      </DiscoveryList>
-                    </section>
-                  ))}
-                </div>
-              ) : null}
-              {hostReady &&
-              !state.devices.some((device) => device.platform === "android") &&
-              !unavailablePlatforms.some((platform) => platform.platform === "android") ? (
-                <p className="max-w-sm text-xs">
-                  No Android virtual devices found. Create one in Android Studio's Device Manager,
-                  then refresh.
-                </p>
-              ) : null}
-              {loaded && !hostBusy ? (
-                <Button
-                  className={grouped.length > 0 ? "self-start" : "self-center"}
-                  variant={grouped.length > 0 ? "ghost" : "outline"}
-                  size="sm"
-                  onClick={() => void list({ environmentId, input: {} })}
-                >
-                  Refresh devices
-                </Button>
-              ) : null}
+                                <span className="truncate text-xs text-muted-foreground">
+                                  {`${state.hosts.find((host) => host.id === device.hostId)?.label} · ${device.version} · ${device.booted ? "Running" : "Stopped"}`}
+                                </span>
+                              </div>
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                disabled={pendingDeviceKey !== null}
+                                aria-label={`${device.booted ? "Open" : "Start"} ${device.name}`}
+                                onClick={() => void selectDevice(deviceKey(device))}
+                              >
+                                {pendingDeviceKey === deviceKey(device) ? (
+                                  <Spinner size="xs" />
+                                ) : device.booted ? (
+                                  <ArrowUpRight />
+                                ) : (
+                                  <Play />
+                                )}
+                                {device.booted ? "Open" : "Start"}
+                              </Button>
+                            </div>
+                          ))}
+                        </DiscoveryList>
+                      </section>
+                    ))}
+                  </div>
+                ) : null}
+                {hostReady &&
+                !isAndroidDiscoveryUncertain(state) &&
+                !state.devices.some((device) => device.platform === "android") &&
+                !unavailablePlatforms.some((platform) => platform.platform === "android") ? (
+                  <p className="max-w-sm text-xs">
+                    No Android virtual devices found. Create one in Android Studio's Device Manager,
+                    then refresh.
+                  </p>
+                ) : null}
+                {loaded && !hostBusy ? (
+                  <Button
+                    className={grouped.length > 0 ? "self-start" : "self-center"}
+                    variant="outline"
+                    size="sm"
+                    onClick={() => void list({ environmentId, input: {} })}
+                  >
+                    Refresh devices
+                  </Button>
+                ) : null}
+              </div>
             </div>
-          </div>
-        )}
+          )}
+        </div>
       </div>
     </PreviewPanelShell>
+  );
+}
+
+function DeviceNotice(props: {
+  readonly tone: "warning" | "error";
+  readonly onDismiss: () => void;
+  readonly children: ReactNode;
+}) {
+  return (
+    <div
+      role="alert"
+      className={cn(
+        "flex items-start gap-2 border-b px-3 py-2 text-xs",
+        props.tone === "warning"
+          ? "bg-warning-surface text-warning-foreground"
+          : "bg-destructive/5 text-destructive",
+      )}
+    >
+      <CircleAlert className="mt-1 size-3.5 shrink-0" />
+      <div
+        className="max-h-32 min-w-0 flex-1 overflow-y-auto whitespace-pre-wrap break-words"
+        tabIndex={0}
+      >
+        {props.children}
+      </div>
+      <Button
+        size="icon-xs"
+        variant="ghost"
+        aria-label={props.tone === "warning" ? "Dismiss device warning" : "Dismiss device error"}
+        onClick={props.onDismiss}
+      >
+        <X />
+      </Button>
+    </div>
+  );
+}
+
+function DeviceDiscoveryWarning(props: { readonly label: string; readonly detail: string }) {
+  const [dismissed, setDismissed] = useState(false);
+  if (dismissed) return null;
+  return (
+    <DeviceNotice tone="warning" onDismiss={() => setDismissed(true)}>
+      <p className="font-medium">Device discovery warning · {props.label}</p>
+      {props.detail}
+    </DeviceNotice>
   );
 }
 
