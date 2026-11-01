@@ -59,6 +59,64 @@ it.layer(NodeServices.layer)("discoverClaudeSkills", (it) => {
     }),
   );
 
+  it.effect("picks the session org's synced bucket, applies overrides, and outranks plugins", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const tempDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-claude-skills-" });
+      const configDir = path.join(tempDir, "claude-home");
+      const storedOrg = "11111111-1111-4111-8111-111111111111";
+      const sessionOrg = "44444444-4444-4444-8444-444444444444";
+      const account = "22222222-2222-4222-8222-222222222222";
+      const synced = path.join(configDir, "skills", "synced");
+      const bucket = path.join(synced, `${sessionOrg}_${account}`);
+      yield* writeSkill(path.join(synced, `${storedOrg}_${account}`), "stored-org", "# Stored");
+      yield* writeSkill(bucket, "pdf", "---\ndescription: Synced PDFs.\n---\n");
+      yield* writeSkill(bucket, "docs", "# Docs");
+      yield* writeSkill(bucket, "xlsx", "# Sheets");
+      const plugin = path.join(configDir, "plugins", "cache", "shop", "anthropic-skills");
+      yield* writeSkill(
+        path.join(plugin, "skills"),
+        "pdf",
+        "---\ndescription: Plugin PDFs.\n---\n",
+      );
+      yield* fs.makeDirectory(path.join(plugin, ".claude-plugin"), { recursive: true });
+      yield* fs.writeFileString(
+        path.join(plugin, ".claude-plugin", "plugin.json"),
+        '{"name":"anthropic-skills"}',
+      );
+      yield* fs.writeFileString(
+        path.join(configDir, "plugins", "installed_plugins.json"),
+        JSON.stringify({
+          plugins: { "anthropic-skills@shop": [{ scope: "user", installPath: plugin }] },
+        }),
+      );
+      yield* fs.writeFileString(
+        path.join(configDir, "settings.json"),
+        JSON.stringify({
+          enabledPlugins: { "anthropic-skills@shop": true },
+          skillOverrides: { "anthropic-skills:docs": "off", xlsx: "off" },
+        }),
+      );
+      yield* fs.writeFileString(
+        path.join(configDir, ".claude.json"),
+        JSON.stringify({ oauthAccount: { organizationUuid: storedOrg, accountUuid: account } }),
+      );
+
+      const skills = yield* discoverClaudeSkills({ homePath: configDir }, undefined, {
+        CLAUDE_CODE_ORGANIZATION_UUID: sessionOrg,
+      });
+      assert.deepEqual(
+        skills.map((skill) => [skill.name, skill.enabled, skill.description ?? null]),
+        [
+          ["anthropic-skills:docs", false, null],
+          ["anthropic-skills:pdf", true, "Synced PDFs."],
+          ["anthropic-skills:xlsx", false, null],
+        ],
+      );
+    }),
+  );
+
   it.effect("discovers enabled plugin skills with manifest names and ignores skill overrides", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
