@@ -39,7 +39,7 @@ import type {
   TranscriptUsageFormat,
   UsageRecord,
 } from "@t3tools/provider-core/server/usage";
-import { resolveModelAliases, UsageAggregator } from "./usageAggregation.ts";
+import { canonicalModelFilter, resolveModelAliases, UsageAggregator } from "./usageAggregation.ts";
 import { createOverrideRateTable, parseRateTable, type RateTable } from "./usagePricing.ts";
 import {
   listTranscriptFiles,
@@ -905,12 +905,9 @@ export const make = Effect.gen(function* () {
   const readSummary = Effect.fn("UsageService.readSummary")(function* (
     requested: UsageSummaryInput,
   ) {
-    // A filter that keeps every record is no filter, so it shares scans and merges with unfiltered reads.
-    const { modelFilter, ...unfiltered } = requested;
-    const input =
-      modelFilter?.include === undefined && (modelFilter?.exclude?.length ?? 0) === 0
-        ? unfiltered
-        : requested;
+    const { modelFilter: requestedFilter, ...unfiltered } = requested;
+    const modelFilter = canonicalModelFilter(requestedFilter);
+    const input = modelFilter === undefined ? unfiltered : { ...unfiltered, modelFilter };
     const settings = yield* readSettings;
     const key = scanKey(input, settings);
     const deferred = yield* Effect.uninterruptible(

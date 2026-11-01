@@ -102,6 +102,27 @@ function keepsUsageRecord(filter: UsageModelFilter | undefined, record: UsageRec
   return (filter.include?.some(matches) ?? true) && !(filter.exclude?.some(matches) ?? false);
 }
 
+const selectorKey = (selector: UsageModelSelector) =>
+  JSON.stringify([selector.provider ?? null, selector.model]);
+
+const canonicalSelectors = (selectors: readonly UsageModelSelector[]) =>
+  [...new Map(selectors.map((selector) => [selectorKey(selector), selector]))]
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([, selector]) => selector);
+
+/** Equal filters get one form, so they share scans and clients can compare echoed filters. */
+export function canonicalModelFilter(
+  filter: UsageModelFilter | undefined,
+): UsageModelFilter | undefined {
+  if (filter === undefined) return undefined;
+  const exclude = filter.exclude?.length ? canonicalSelectors(filter.exclude) : undefined;
+  if (filter.include === undefined && exclude === undefined) return undefined;
+  return {
+    ...(filter.include === undefined ? {} : { include: canonicalSelectors(filter.include) }),
+    ...(exclude === undefined ? {} : { exclude }),
+  };
+}
+
 export interface AggregateResult {
   readonly buckets: readonly UsageBucket[];
   readonly duplicatesDropped: number;
