@@ -1204,6 +1204,32 @@ it.effect("GitVcsDriver reports no repository for a deleted cwd or a bare reposi
   }).pipe(Effect.scoped, Effect.provide(layerGitContract)),
 );
 
+it.effect("GitVcsDriver reports no repository when old Git answers false before failing", () =>
+  Effect.gen(function* () {
+    // Git before 2.38 ignores safe.bareRepository, so a bare repo prints "false" and exits 128.
+    const process = yield* VcsProcess.make.pipe(
+      Effect.provideService(ProcessRunner.ProcessRunner, {
+        run: () =>
+          Effect.succeed({
+            code: ChildProcessSpawner.ExitCode(128),
+            stdout: "false\n",
+            stderr: "fatal: this operation must be run in a work tree\n",
+            timedOut: false,
+            stdoutTruncated: false,
+            stderrTruncated: false,
+            stdoutInvalidUtf8: false,
+            stderrInvalidUtf8: false,
+          }),
+      }),
+    );
+    const driver = yield* GitVcsDriver.makeVcsDriverShape().pipe(
+      Effect.provideService(VcsProcess.VcsProcess, process),
+    );
+
+    assert.equal(yield* driver.detectRepository(globalThis.process.cwd()), null);
+  }).pipe(Effect.provide(NodeServices.layer)),
+);
+
 const gitCommandCount = (operation: string, outcome: string) =>
   Metric.value(
     Metric.withAttributes(gitCommandsTotal, [

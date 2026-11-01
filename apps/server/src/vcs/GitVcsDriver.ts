@@ -584,7 +584,9 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
     }).pipe(Effect.catchIf(isMissingExecutable, () => Effect.succeed(null)));
     if (result === null) return null;
     if (result.exitCode === 0) return result.stdout;
+    // Git before 2.38 answers "false" for a bare repo, then fails on --show-toplevel.
     if (
+      result.stdout.startsWith("false") ||
       result.stderr.includes("not a git repository") ||
       result.stderr.includes("cannot use bare repository") ||
       !(yield* fileSystem.exists(cwd).pipe(Effect.orElseSucceed(() => true)))
