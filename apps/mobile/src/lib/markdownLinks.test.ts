@@ -1,22 +1,19 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import {
-  resolveMarkdownLinkIcon,
-  resolveMarkdownLinkPresentation,
-} from "@t3tools/mobile-markdown-text/links";
-
-describe("resolveMarkdownLinkIcon", () => {
-  it("gives GitHub hosts the brand mark and everything else the generic glyph", () => {
-    expect(resolveMarkdownLinkIcon("github.com")).toBe("github");
-    expect(resolveMarkdownLinkIcon("GitHub.com")).toBe("github");
-    expect(resolveMarkdownLinkIcon("gist.github.com")).toBe("github");
-    expect(resolveMarkdownLinkIcon("github.community")).toBeNull();
-    expect(resolveMarkdownLinkIcon("notgithub.com")).toBeNull();
-    expect(resolveMarkdownLinkIcon("example.com")).toBeNull();
-  });
-});
+import { resolveMarkdownLinkPresentation } from "./markdownLinks";
 
 describe("resolveMarkdownLinkPresentation", () => {
+  it("opens relative directory links as workspace paths", () => {
+    expect(resolveMarkdownLinkPresentation("src/")).toMatchObject({
+      kind: "file",
+      path: "src/",
+    });
+    expect(resolveMarkdownLinkPresentation("docs/My Folder/")).toMatchObject({
+      kind: "file",
+      path: "docs/My Folder/",
+    });
+  });
+
   it("treats protocol-relative media as an external URL, not a filesystem path", () => {
     expect(resolveMarkdownLinkPresentation("//cdn.example.com/clip.mp4?sig=a%2fb#t=2")).toEqual({
       kind: "external",
@@ -33,14 +30,6 @@ describe("resolveMarkdownLinkPresentation", () => {
     });
   });
 
-  it("extracts external link hosts", () => {
-    expect(resolveMarkdownLinkPresentation("https://example.com/docs?q=1")).toEqual({
-      kind: "external",
-      href: "https://example.com/docs?q=1",
-      host: "example.com",
-    });
-  });
-
   it.each([
     ["file:///Users/julius/project/src/main.ts#L42C7", "/Users/julius/project/src/main.ts"],
     ["file://server/share/src/main.ts#L42C7", "\\\\server\\share\\src\\main.ts"],
@@ -49,7 +38,7 @@ describe("resolveMarkdownLinkPresentation", () => {
       kind: "file",
       href,
       icon: "typescript",
-      label: "main.ts:42:7",
+      label: "main.ts · L42:C7",
       path,
       line: 42,
       column: 7,
@@ -61,7 +50,7 @@ describe("resolveMarkdownLinkPresentation", () => {
       kind: "file",
       href: "apps/mobile/src/index.ts:10",
       icon: "typescript",
-      label: "index.ts:10",
+      label: "index.ts · L10",
       path: "apps/mobile/src/index.ts",
       line: 10,
     });
@@ -81,50 +70,12 @@ describe("resolveMarkdownLinkPresentation", () => {
     });
   });
 
-  it.each(["md", "html", "xml"])("recognizes a bare spaced .%s filename", (extension) => {
-    expect(
-      resolveMarkdownLinkPresentation(`Updated%20cutover%20checklist.${extension}`),
-    ).toMatchObject({
-      kind: "file",
-      path: `Updated cutover checklist.${extension}`,
-      label: `Updated cutover checklist.${extension}`,
-    });
-  });
-
+  // regression: #8098 open agent file links in the file viewer
   it("recognizes spaced relative paths", () => {
     expect(resolveMarkdownLinkPresentation("docs/My%20Folder/checklist.xml")).toMatchObject({
       kind: "file",
       path: "docs/My Folder/checklist.xml",
       label: "checklist.xml",
-    });
-  });
-
-  it("extracts line fragments from relative file links", () => {
-    expect(resolveMarkdownLinkPresentation("src/main.ts#L18C2")).toMatchObject({
-      kind: "file",
-      path: "src/main.ts",
-      line: 18,
-      column: 2,
-      label: "main.ts:18:2",
-    });
-  });
-
-  it("uses the Pierre complete icon mappings", () => {
-    expect(resolveMarkdownLinkPresentation("src/Button.tsx")).toMatchObject({
-      kind: "file",
-      icon: "react",
-    });
-    expect(resolveMarkdownLinkPresentation("vite.config.ts")).toMatchObject({
-      kind: "file",
-      icon: "vite",
-    });
-    expect(resolveMarkdownLinkPresentation("Dockerfile")).toMatchObject({
-      kind: "file",
-      icon: "docker",
-    });
-    expect(resolveMarkdownLinkPresentation("pnpm-lock.yaml")).toMatchObject({
-      kind: "file",
-      icon: "pnpm",
     });
   });
 

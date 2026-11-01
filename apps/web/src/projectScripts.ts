@@ -13,6 +13,7 @@ export interface ProjectScriptInput {
   readonly icon: ProjectScript["icon"];
   readonly runOnWorktreeCreate: ProjectScript["runOnWorktreeCreate"];
   readonly waitForSetup: boolean;
+  readonly runOnSettle: boolean;
   readonly previewUrl: Exclude<ProjectScript["previewUrl"], undefined> | null;
   readonly autoOpenPreview: boolean;
 }
@@ -25,12 +26,27 @@ export function buildProjectScript(id: string, input: ProjectScriptInput): Proje
     icon: input.icon,
     runOnWorktreeCreate: input.runOnWorktreeCreate,
     ...(input.runOnWorktreeCreate && input.waitForSetup ? { async: false } : {}),
+    ...(input.runOnSettle ? { runOnSettle: true } : {}),
     ...(input.previewUrl === null
       ? {}
       : {
           previewUrl: input.previewUrl,
           autoOpenPreview: input.autoOpenPreview,
         }),
+  };
+}
+
+export function releaseClaimedRoles(
+  script: ProjectScript,
+  saved: ProjectScriptInput,
+): ProjectScript {
+  const releaseSetup = saved.runOnWorktreeCreate && script.runOnWorktreeCreate;
+  const releaseSettle = saved.runOnSettle && script.runOnSettle === true;
+  if (!releaseSetup && !releaseSettle) return script;
+  return {
+    ...script,
+    ...(releaseSetup ? { runOnWorktreeCreate: false } : {}),
+    ...(releaseSettle ? { runOnSettle: false } : {}),
   };
 }
 
@@ -49,7 +65,6 @@ function normalizeScriptId(value: string): string {
   return cleaned.slice(0, MAX_SCRIPT_ID_LENGTH).replace(/-+$/g, "") || "script";
 }
 
-/** Legacy script IDs may not support shortcuts; keep those scripts usable without one. */
 export function commandForProjectScript(scriptId: string): KeybindingCommand | null {
   const command = `script.${scriptId}.run`;
   return isScriptRunCommand(command) ? command : null;
@@ -82,11 +97,10 @@ export function nextProjectScriptId(name: string, existingIds: Iterable<string>)
     suffix += 1;
   }
 
-  // This last-resort fallback only triggers after exhausting thousands of suffixes.
   return `${baseId}-${Date.now()}`.slice(0, MAX_SCRIPT_ID_LENGTH);
 }
 
 export function primaryProjectScript(scripts: ReadonlyArray<ProjectScript>): ProjectScript | null {
-  const regular = scripts.find((script) => !script.runOnWorktreeCreate);
-  return regular ?? scripts[0] ?? null;
+  const regular = scripts.find((script) => !script.runOnWorktreeCreate && !script.runOnSettle);
+  return regular ?? scripts.find((script) => !script.runOnSettle) ?? null;
 }

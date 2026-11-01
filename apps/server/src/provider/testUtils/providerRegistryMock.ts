@@ -3,7 +3,7 @@ import type { ServerProvider } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Stream from "effect/Stream";
-import { makeManualOnlyProviderMaintenanceCapabilities } from "../providerMaintenance.ts";
+import { makeManualOnlyProviderMaintenanceCapabilities } from "@t3tools/provider-core/server/maintenanceResolver";
 
 const makeProviderRegistryMock = (
   providers: ReadonlyArray<ServerProvider> = [],
@@ -11,6 +11,8 @@ const makeProviderRegistryMock = (
   getProviders: Effect.succeed(providers),
   refresh: () => Effect.succeed(providers),
   refreshInstance: () => Effect.succeed(providers),
+  reloadSecretsAndRefresh: () => Effect.succeed(providers),
+  refreshAfterUpdate: () => Effect.succeed(providers),
   refreshWorkspaceSnapshot: () => Effect.succeed(providers),
   getProviderMaintenanceCapabilitiesForInstance: (_instanceId, provider) =>
     Effect.succeed(makeManualOnlyProviderMaintenanceCapabilities({ provider, packageName: null })),

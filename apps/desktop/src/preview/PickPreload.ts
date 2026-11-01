@@ -14,12 +14,14 @@ import type {
   PreviewAnnotationSubmission,
 } from "@t3tools/contracts";
 
+import { createAnnotationIdSource } from "./AnnotationIds.ts";
 import { resolveAnnotationSubmission } from "./AnnotationKeyboard.ts";
 import { previewAnnotationStyles } from "./AnnotationStyles.generated.ts";
 import { installRecordingCursor } from "./RecordingCursor.ts";
 import { DEFAULT_RECORDING_INPUT_OPTIONS } from "./RecordingInput.ts";
 import {
   ANNOTATION_CAPTURED_CHANNEL,
+  ANNOTATION_SEND_ENABLED_CHANNEL,
   ANNOTATION_THEME_CHANNEL,
   CANCEL_PICK_CHANNEL,
   ELEMENT_PICKED_CHANNEL,
@@ -33,11 +35,11 @@ import {
   START_PICK_CHANNEL,
 } from "./GuestProtocol.ts";
 const OVERLAY_ATTRIBUTE = "data-t3code-annotation-ui";
+const INPUT_LAYER_ATTRIBUTE = "data-t3code-annotation-input";
 const Z_INDEX_OVERLAY = 2147483646;
 const PRIMARY = "var(--t3-primary)";
 const PRIMARY_FILL = "color-mix(in srgb, var(--t3-primary) 10%, transparent)";
 const MAX_MARQUEE_ELEMENTS = 20;
-/** Upper bound on one element's React context lookup during submit. */
 const ELEMENT_CONTEXT_TIMEOUT_MS = 5_000;
 const CONTENT_LAYER_Z_INDEX = 1;
 const CHROME_LAYER_Z_INDEX = 10;
@@ -129,10 +131,10 @@ interface SelectedElement {
 interface AnnotationSession {
   teardown: (notifyMain: boolean) => void;
   applyTheme: (theme: DesktopPreviewAnnotationTheme) => void;
+  setSendEnabled: (enabled: boolean) => void;
 }
 
 let activeSession: AnnotationSession | null = null;
-let idSequence = 0;
 let annotationTheme: DesktopPreviewAnnotationTheme | null = null;
 
 const applyAnnotationTheme = (
@@ -186,7 +188,6 @@ const reportHumanKeyInput = (event: KeyboardEvent): void => {
 window.addEventListener("pointerdown", reportHumanPointerInput, true);
 window.addEventListener("keydown", reportHumanKeyInput, true);
 
-// Mouse thumb buttons: `button === 3` is Back, `button === 4` is Forward.
 const MOUSE_BUTTON_BACK = 3;
 const MOUSE_BUTTON_FORWARD = 4;
 
@@ -196,11 +197,7 @@ const navigationDirectionForButton = (button: number): "back" | "forward" | null
   return null;
 };
 
-// Chromium routes thumb-button history navigation to the *focused* WebContents,
-// so hovering this guest without focusing it sends the host app's router back
-// instead of the preview. Suppress Chromium's default here and drive this tab's
-// history explicitly so the buttons always navigate the browser the pointer is
-// over — never the host app.
+// Chromium routes thumb-button navigation to the focused WebContents; navigate this hovered guest explicitly.
 const suppressNavigationButton = (event: MouseEvent): void => {
   if (!event.isTrusted || navigationDirectionForButton(event.button) === null) return;
   event.preventDefault();
@@ -220,10 +217,7 @@ window.addEventListener("mousedown", suppressNavigationButton, true);
 window.addEventListener("mouseup", requestNavigationForButton, true);
 window.addEventListener("auxclick", suppressNavigationButton, true);
 
-const nextId = (prefix: string): string => {
-  idSequence += 1;
-  return `${prefix}_${idSequence.toString(36)}`;
-};
+const nextId = createAnnotationIdSource();
 
 const rectFromDomRect = (rect: DOMRect): PreviewAnnotationRect => ({
   x: rect.left,
@@ -255,15 +249,12 @@ function unionRects(
   const top = Math.min(...rects.map((rect) => rect.y));
   const right = Math.max(...rects.map((rect) => rect.x + rect.width));
   const bottom = Math.max(...rects.map((rect) => rect.y + rect.height));
-  const x = Math.max(0, left - padding);
-  const y = Math.max(0, top - padding);
-  const maxWidth = Math.max(1, window.innerWidth - x);
-  const maxHeight = Math.max(1, window.innerHeight - y);
+  // Main clips to the captured viewport; clipping here would lose offscreen bounds.
   return {
-    x,
-    y,
-    width: Math.min(maxWidth, right - left + padding * 2),
-    height: Math.min(maxHeight, bottom - top + padding * 2),
+    x: left - padding,
+    y: top - padding,
+    width: right - left + padding * 2,
+    height: bottom - top + padding * 2,
   };
 }
 
@@ -274,7 +265,7 @@ function isAnnotationNode(element: Element): boolean {
 function pickFromPoint(clientX: number, clientY: number): Element | null {
   for (const candidate of document.elementsFromPoint(clientX, clientY)) {
     if (!(candidate instanceof Element)) continue;
-    if (isAnnotationNode(candidate)) continue;
+    if (isAnnotationNode(candidate) || candidate.hasAttribute(INPUT_LAYER_ATTRIBUTE)) continue;
     if (candidate === document.documentElement || candidate === document.body) continue;
     return candidate;
   }
@@ -314,10 +305,40 @@ function createBox(color: string, fill: string): HTMLDivElement {
 }
 
 function positionBox(node: HTMLElement, rect: PreviewAnnotationRect): void {
+  if (rect.width <= 0 || rect.height <= 0) {
+    node.style.display = "none";
+    return;
+  }
   node.style.display = "block";
   node.style.transform = `translate(${rect.x}px, ${rect.y}px)`;
   node.style.width = `${rect.width}px`;
   node.style.height = `${rect.height}px`;
+}
+
+function visibleElementRect(element: Element): PreviewAnnotationRect {
+  const rect = element.getBoundingClientRect();
+  let left = Math.max(0, rect.left);
+  let top = Math.max(0, rect.top);
+  let right = Math.min(document.documentElement.clientWidth, rect.right);
+  let bottom = Math.min(document.documentElement.clientHeight, rect.bottom);
+  if (getComputedStyle(element).position !== "fixed") {
+    for (let ancestor = element.parentElement; ancestor; ancestor = ancestor.parentElement) {
+      if (ancestor === document.body || ancestor === document.documentElement) break;
+      const style = getComputedStyle(ancestor);
+      const bounds = ancestor.getBoundingClientRect();
+      const clipLeft = bounds.left + ancestor.clientLeft;
+      const clipTop = bounds.top + ancestor.clientTop;
+      if (style.overflowX !== "visible") {
+        left = Math.max(left, clipLeft);
+        right = Math.min(right, clipLeft + ancestor.clientWidth);
+      }
+      if (style.overflowY !== "visible") {
+        top = Math.max(top, clipTop);
+        bottom = Math.min(bottom, clipTop + ancestor.clientHeight);
+      }
+    }
+  }
+  return { x: left, y: top, width: Math.max(0, right - left), height: Math.max(0, bottom - top) };
 }
 
 function createLabel(): HTMLDivElement {
@@ -341,11 +362,15 @@ function updateSelectedVisual(target: SelectedElement): void {
     target.label.style.display = "none";
     return;
   }
-  const rect = target.element.getBoundingClientRect();
-  positionBox(target.outline, rectFromDomRect(rect));
+  const rect = visibleElementRect(target.element);
+  positionBox(target.outline, rect);
+  if (rect.width === 0 || rect.height === 0) {
+    target.label.style.display = "none";
+    return;
+  }
   target.label.textContent = describeRawElement(target.element);
   target.label.style.display = "block";
-  target.label.style.transform = `translate(${Math.max(4, rect.left)}px, ${Math.max(4, rect.top - 22)}px)`;
+  target.label.style.transform = `translate(${Math.max(4, rect.x)}px, ${Math.max(4, rect.y - 22)}px)`;
 }
 
 function toStackFrame(frame: {
@@ -362,12 +387,7 @@ function toStackFrame(frame: {
   };
 }
 
-/**
- * Resolves to `null` instead of hanging when `promise` outlives `millis`.
- * `getElementContext` walks the inspected page's React internals, and some
- * pages leave it pending forever. Without a bound, the whole submit chain
- * stalls and the overlay sits on "Capturing…".
- */
+/** React-internals lookups can remain pending forever; bound them so submit cannot stall the overlay. */
 function withCaptureTimeout<A>(promise: Promise<A>, millis: number): Promise<A | null> {
   let timer: ReturnType<typeof setTimeout> | undefined;
   return Promise.race([
@@ -378,15 +398,9 @@ function withCaptureTimeout<A>(promise: Promise<A>, millis: number): Promise<A |
   ]).finally(() => clearTimeout(timer));
 }
 
-/** Truncation for the DOM-only preview used when React context is unavailable. */
 const HTML_PREVIEW_MAX_CHARS = 500;
 
-/**
- * Describes a picked element. The React context lookup can stall or throw on
- * some pages, so the element is never dropped: without context it still
- * carries its tag, a short HTML preview, and its rect so the crop stays on the
- * pick instead of falling back to the whole viewport.
- */
+/** Preserve the tag, HTML, and crop rect when React context lookup fails or stalls. */
 async function captureElement(element: Element): Promise<PickedElementPayload> {
   const base = {
     pageUrl: location.href,
@@ -411,9 +425,7 @@ async function captureElement(element: Element): Promise<PickedElementPayload> {
         styles: context.styles ?? "",
       };
     }
-  } catch {
-    // Fall through to the DOM-only payload.
-  }
+  } catch {}
   return {
     ...base,
     selector: null,
@@ -512,11 +524,12 @@ function strokeBounds(
   return { x: left, y: top, width: right - left, height: bottom - top };
 }
 
-function startAnnotation(): void {
+function startAnnotation(sendEnabled: boolean): void {
   activeSession?.teardown(false);
   let finished = false;
   const host = document.createElement("div");
   host.setAttribute(OVERLAY_ATTRIBUTE, "");
+  host.setAttribute("dir", "ltr");
   host.style.cssText = `position:fixed;inset:0;z-index:${Z_INDEX_OVERLAY};pointer-events:none`;
   applyAnnotationTheme(host, annotationTheme);
   const shadowRoot = host.attachShadow({ mode: "closed" });
@@ -526,6 +539,7 @@ function startAnnotation(): void {
 
   const root = document.createElement("div");
   root.setAttribute(OVERLAY_ATTRIBUTE, "");
+  root.setAttribute("dir", "ltr");
   root.className = "fixed inset-0 font-sans text-foreground";
   root.style.cssText = "pointer-events:none";
   const cursorStyle = document.createElement("style");
@@ -575,6 +589,7 @@ function startAnnotation(): void {
 
   const comment = document.createElement("textarea");
   comment.placeholder = "Describe the change…";
+  comment.setAttribute("dir", "auto");
   comment.rows = 1;
   comment.className =
     "min-h-8 max-h-24 min-w-0 flex-1 resize-none overflow-y-hidden border-0 border-b border-b-transparent bg-transparent px-0 py-1.5 font-sans text-sm leading-5 text-foreground outline-none ring-0 placeholder:text-muted-foreground focus:border-b-primary focus:outline-none focus:ring-0";
@@ -589,6 +604,12 @@ function startAnnotation(): void {
   composerRow.appendChild(dragHandle);
 
   const submit = createButton("Attach", "Attach annotation and screenshot (Enter)");
+  const updateSendHint = () => {
+    submit.title = sendEnabled
+      ? "Attach annotation and screenshot (Enter). Send with Cmd/Ctrl+Enter."
+      : "Attach annotation and screenshot (Enter)";
+  };
+  updateSendHint();
   submit.className +=
     " h-8 shrink-0 border-primary bg-primary px-3 text-primary-foreground shadow-sm hover:bg-primary/90";
   composerRow.appendChild(submit);
@@ -604,7 +625,18 @@ function startAnnotation(): void {
   const strokes: PreviewAnnotationStrokeTarget[] = [];
   const styleChanges = new Map<string, PreviewAnnotationStyleChange>();
   const toolButtons = new Map<AnnotationTool, HTMLButtonElement>();
-  let tool: AnnotationTool = "select";
+  // Chromium draws a PDF in its own viewer frame, so pointer and key input over it
+  // never reaches this document. A transparent layer above the viewer catches the
+  // pointer and takes focus for Escape and the tool keys. A PDF has no elements to
+  // select, so it starts on Region.
+  const isPdf = document.contentType === "application/pdf";
+  const inputLayer = isPdf ? document.createElement("div") : null;
+  if (inputLayer) {
+    inputLayer.setAttribute(INPUT_LAYER_ATTRIBUTE, "");
+    inputLayer.tabIndex = -1;
+    inputLayer.style.cssText = `position:fixed;inset:0;z-index:${Z_INDEX_OVERLAY - 1};cursor:crosshair;outline:none`;
+  }
+  let tool: AnnotationTool = isPdf ? "marquee" : "select";
   let dragStart: PreviewAnnotationPoint | null = null;
   let activeStroke: { target: PreviewAnnotationStrokeTarget; path: SVGPathElement } | null = null;
   let pendingCapture = false;
@@ -987,8 +1019,8 @@ function startAnnotation(): void {
   const getAnnotationBounds = (): PreviewAnnotationRect | null =>
     unionRects(
       [
-        ...Array.from(selected.values(), (target) =>
-          rectFromDomRect(target.element.getBoundingClientRect()),
+        ...Array.from(selected.values(), (target) => visibleElementRect(target.element)).filter(
+          (rect) => rect.width > 0 && rect.height > 0,
         ),
         ...regions.map((region) => region.rect),
         ...strokes.map((stroke) => stroke.bounds),
@@ -1100,6 +1132,8 @@ function startAnnotation(): void {
     for (const target of selected.values()) updateSelectedVisual(target);
     queueEditorLayout();
   };
+  // A scrollbar appearing narrows the viewport without a window resize.
+  const rootResizeObserver = new ResizeObserver(repaint);
 
   const removeTargetAtPoint = (x: number, y: number): boolean => {
     for (const target of Array.from(selected.values()).toReversed()) {
@@ -1184,7 +1218,7 @@ function startAnnotation(): void {
     }
     if (tool === "select" && dragStart === null) {
       const target = pickFromPoint(event.clientX, event.clientY);
-      if (target) positionBox(hoverOutline, rectFromDomRect(target.getBoundingClientRect()));
+      if (target) positionBox(hoverOutline, visibleElementRect(target));
       else clearHoverOutline();
       return;
     }
@@ -1302,6 +1336,7 @@ function startAnnotation(): void {
   const teardown = (notifyMain: boolean): void => {
     if (finished) return;
     finished = true;
+    rootResizeObserver.disconnect();
     restoreStyles();
     window.removeEventListener("pointermove", onPointerMove, true);
     window.removeEventListener("pointerdown", onPointerDown, true);
@@ -1321,6 +1356,7 @@ function startAnnotation(): void {
     ipcRenderer.off(ANNOTATION_CAPTURED_CHANNEL, onCaptured);
     document.documentElement.removeAttribute("data-t3code-annotation-tool");
     cursorStyle.remove();
+    inputLayer?.remove();
     host.remove();
     activeSession = null;
     if (notifyMain) ipcRenderer.send(ELEMENT_PICKED_CHANNEL, null);
@@ -1345,14 +1381,13 @@ function startAnnotation(): void {
   };
 
   const submitAnnotation = (submission: PreviewAnnotationSubmission): void => {
+    if (submission === "send" && !sendEnabled) return;
     if (pendingCapture || (selected.size === 0 && regions.length === 0 && strokes.length === 0))
       return;
     pendingCapture = true;
     submit.disabled = true;
     submit.textContent = "Capturing…";
-    // Snapshot everything the annotation will carry before the capture runs.
-    // The element context lookup can take up to its timeout, and the user can
-    // keep editing meanwhile; the annotation must describe what they submitted.
+    // Snapshot the submitted comment before context lookup lets the user edit it.
     const submittedComment = comment.value.trim();
     const submittedRegions = [...regions];
     const submittedStrokes = [...strokes];
@@ -1373,8 +1408,7 @@ function startAnnotation(): void {
       }),
     )
       .then((elements) => {
-        // The overlay may have been cancelled or replaced while the capture
-        // ran. A late submit must not deliver into the next pick's listener.
+        // A late submit must not reach a replacement pick's listener.
         if (finished) return;
         const annotation: PreviewAnnotationPayload = {
           id: nextId("annotation"),
@@ -1396,20 +1430,24 @@ function startAnnotation(): void {
           ...submittedRegions.map((region) => region.rect),
           ...submittedStrokes.map((stroke) => stroke.bounds),
         ]);
-        ipcRenderer.send(ELEMENT_PICKED_CHANNEL, annotation, screenshotRect, submission);
+        ipcRenderer.send(
+          ELEMENT_PICKED_CHANNEL,
+          annotation,
+          screenshotRect,
+          submission === "send" && !sendEnabled ? "attach" : submission,
+          // Main crops a viewport capture, whose pixels are CSS px × this.
+          window.devicePixelRatio,
+        );
       })
       .catch(() => {
-        // Last resort. Main is waiting on this message, so hand it an empty
-        // pick rather than leaving the button stuck on "Capturing…" and the
-        // renderer's pick promise pending. teardown is a no-op once finished.
         teardown(true);
       });
   };
   submit.addEventListener("click", () => submitAnnotation("attach"));
   root.addEventListener("keydown", (event) => {
-    const submission = event.target === comment ? resolveAnnotationSubmission(event) : null;
-    // Keep this in the bubble phase so editor inputs receive the event before
-    // it is isolated from listeners installed by the inspected page.
+    const submission =
+      event.target === comment ? resolveAnnotationSubmission(event, sendEnabled) : null;
+    // Bubble phase lets editor inputs handle events before hiding them from the page.
     event.stopImmediatePropagation();
     if (!submission) return;
     event.preventDefault();
@@ -1427,18 +1465,33 @@ function startAnnotation(): void {
   window.addEventListener("resize", repaint, { passive: true });
   ipcRenderer.on(CANCEL_PICK_CHANNEL, onCancel);
   ipcRenderer.on(ANNOTATION_CAPTURED_CHANNEL, onCaptured);
+  if (inputLayer) {
+    document.documentElement.appendChild(inputLayer);
+    inputLayer.focus({ preventScroll: true });
+  }
   document.documentElement.appendChild(host);
+  rootResizeObserver.observe(document.documentElement);
   refreshToolButtons();
   updateStatus();
   activeSession = {
     teardown,
     applyTheme: (theme) => applyAnnotationTheme(host, theme),
+    setSendEnabled: (enabled) => {
+      sendEnabled = enabled;
+      updateSendHint();
+    },
   };
 }
 
-ipcRenderer.on(START_PICK_CHANNEL, (_event, theme: DesktopPreviewAnnotationTheme | undefined) => {
-  if (theme) annotationTheme = theme;
-  startAnnotation();
+ipcRenderer.on(
+  START_PICK_CHANNEL,
+  (_event, theme: DesktopPreviewAnnotationTheme | undefined, sendEnabled?: boolean) => {
+    if (theme) annotationTheme = theme;
+    startAnnotation(sendEnabled === true);
+  },
+);
+ipcRenderer.on(ANNOTATION_SEND_ENABLED_CHANNEL, (_event, enabled: boolean) => {
+  activeSession?.setSendEnabled(enabled === true);
 });
 ipcRenderer.on(ANNOTATION_THEME_CHANNEL, (_event, theme: DesktopPreviewAnnotationTheme) => {
   annotationTheme = theme;

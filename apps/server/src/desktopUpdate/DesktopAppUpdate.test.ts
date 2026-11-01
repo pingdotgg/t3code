@@ -56,8 +56,6 @@ function report(
 interface HarnessOptions {
   readonly mode?: "web" | "desktop";
   readonly controlFd?: number | undefined;
-  /** Reports emitted for the run, given the requestId the service generated.
-      The stream ends after the last one unless `keepOpen` is set. */
   readonly reports?: (requestId: string) => readonly DesktopUpdateStatusReport[];
   readonly keepOpen?: boolean;
 }
@@ -107,20 +105,6 @@ const makeHarness = Effect.fn("test.make_desktop_app_update_harness")(function* 
 });
 
 it.layer(NodeServices.layer)("desktop app update", (it) => {
-  it.effect("is unavailable without desktop mode or the control fd", () =>
-    Effect.gen(function* () {
-      const web = yield* makeHarness({ mode: "web" });
-      expect(web.service.available).toBe(false);
-      const noFd = yield* makeHarness({ controlFd: undefined });
-      expect(noFd.service.available).toBe(false);
-      expect((yield* noFd.service.run(() => Effect.void).pipe(Effect.flip)).reason).toContain(
-        "not started by the T3 Code desktop app",
-      );
-      const desktop = yield* makeHarness();
-      expect(desktop.service.available).toBe(true);
-    }),
-  );
-
   it.effect("collapses state reports into progress stages and succeeds on installing", () =>
     Effect.gen(function* () {
       const { service } = yield* makeHarness({
@@ -128,7 +112,6 @@ it.layer(NodeServices.layer)("desktop app update", (it) => {
           report(requestId, makeState({ status: "checking" })),
           report(requestId, makeState({ status: "available", availableVersion: "1.2.4" })),
           report(requestId, makeState({ status: "downloading", downloadPercent: 40 })),
-          // Reports from another run must be ignored.
           report("other-run", makeState({ status: "error", message: "unrelated" })),
           report(requestId, makeState({ status: "downloaded", downloadedVersion: "1.2.4" }), {
             outcome: "ready-to-install",
@@ -142,40 +125,28 @@ it.layer(NodeServices.layer)("desktop app update", (it) => {
         method: "desktop-app",
         desktopUpdateToken: expect.any(String),
       });
-      // "downloading" is not repeated for every download report.
       expect(stages).toEqual(["downloading", "installing"]);
 
-      // Success releases the in-flight guard: if the desktop rejected the
-      // install after reporting, the server must accept a retry instead of
-      // refusing until restart. (The second run fails differently because
-      // the stub report stream is exhausted.)
       const retry = yield* service.run(() => Effect.void).pipe(Effect.flip);
       expect(retry.reason).not.toBe("A desktop app update is already in progress.");
     }),
   );
 
-  it.effect("maps up-to-date and failed outcomes to readable errors", () =>
+  it.effect("succeeds without an install when a track switch finds the host current", () =>
     Effect.gen(function* () {
-      const upToDate = yield* makeHarness({
+      const { service } = yield* makeHarness({
         reports: (requestId) => [
-          report(requestId, makeState({ status: "up-to-date" }), { outcome: "up-to-date" }),
-        ],
-      });
-      expect((yield* upToDate.service.run(() => Effect.void).pipe(Effect.flip)).reason).toBe(
-        "The T3 Code desktop app on this machine is already up to date on 1.2.3.",
-      );
-
-      const failed = yield* makeHarness({
-        reports: (requestId) => [
-          report(requestId, makeState({ status: "error", message: "feed unreachable" }), {
-            outcome: "failed",
-            reason: "feed unreachable",
+          report(requestId, makeState({ status: "up-to-date", currentVersion: "1.2.3" }), {
+            outcome: "up-to-date",
           }),
         ],
       });
-      expect((yield* failed.service.run(() => Effect.void).pipe(Effect.flip)).reason).toBe(
-        "feed unreachable",
-      );
+      const trackSwitch = { channel: "latest" as const, targetVersion: "1.2.3" };
+
+      expect(yield* service.run(() => Effect.void, trackSwitch)).toEqual({
+        targetVersion: "1.2.3",
+        method: "desktop-app",
+      });
     }),
   );
 

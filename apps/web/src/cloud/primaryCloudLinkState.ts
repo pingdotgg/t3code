@@ -1,17 +1,20 @@
 import { useAtomValue } from "@effect/atom-react";
-import type { EnvironmentCloudLinkStateResult } from "@t3tools/contracts";
+import {
+  AuthRelayReadScope,
+  EnvironmentId,
+  type EnvironmentCloudLinkStateResult,
+} from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import * as Option from "effect/Option";
 import { AsyncResult, Atom } from "effect/reactivity";
 import { HttpClient } from "effect/http";
-import { useCallback, useMemo } from "react";
 
 import { usePrimaryEnvironment } from "../state/environments";
 import { runtime } from "../lib/runtime";
 import { appAtomRegistry } from "../rpc/atomRegistry";
+import { readEnvironmentScope, useEnvironmentScope } from "../state/session";
 import { readPrimaryCloudLinkState, type CloudLinkTarget } from "./linkEnvironment";
 import { hasCloudPublicConfig } from "./publicConfig";
 
@@ -44,34 +47,41 @@ function targetKey(target: CloudLinkTarget): string {
 }
 
 function refreshPrimaryCloudLinkState(target: CloudLinkTarget | null): void {
-  if (target) {
+  if (
+    target &&
+    readEnvironmentScope(EnvironmentId.make(target.environmentId), AuthRelayReadScope)
+  ) {
     appAtomRegistry.refresh(primaryCloudLinkStateAtom(targetKey(target)));
   }
 }
 
+export function readCachedPrimaryCloudLinkState(target: CloudLinkTarget) {
+  if (!readEnvironmentScope(EnvironmentId.make(target.environmentId), AuthRelayReadScope))
+    return null;
+  const result = appAtomRegistry.get(primaryCloudLinkStateAtom(targetKey(target)));
+  return result._tag === "Success" ? result.value : null;
+}
+
 export function usePrimaryCloudLinkState() {
   const primary = usePrimaryEnvironment();
-  const target = useMemo(
-    () =>
-      primary?.entry.target._tag === "PrimaryConnectionTarget"
-        ? {
-            environmentId: primary.environmentId,
-            label: primary.label,
-            httpBaseUrl: primary.entry.target.httpBaseUrl,
-            wsBaseUrl: primary.entry.target.wsBaseUrl,
-          }
-        : null,
-    [primary],
-  );
-  // Builds without T3 Connect have no link to read; skip the request.
+  const canReadRelay = useEnvironmentScope(primary?.environmentId ?? null, AuthRelayReadScope);
+  const target =
+    primary?.entry.target._tag === "PrimaryConnectionTarget"
+      ? {
+          environmentId: primary.environmentId,
+          label: primary.label,
+          httpBaseUrl: primary.entry.target.httpBaseUrl,
+          wsBaseUrl: primary.entry.target.wsBaseUrl,
+        }
+      : null;
   const atom =
-    target && hasCloudPublicConfig()
+    target && hasCloudPublicConfig() && canReadRelay
       ? primaryCloudLinkStateAtom(targetKey(target))
       : EMPTY_PRIMARY_CLOUD_LINK_STATE_ATOM;
   const result = useAtomValue(atom);
-  const refresh = useCallback(() => {
+  const refresh = () => {
     refreshPrimaryCloudLinkState(target);
-  }, [target]);
+  };
   let error: string | null = null;
   if (result._tag === "Failure") {
     const cause = Cause.squash(result.cause);
@@ -79,7 +89,7 @@ export function usePrimaryCloudLinkState() {
   }
 
   return {
-    data: Option.getOrNull(AsyncResult.value(result)),
+    data: result._tag === "Failure" ? null : AsyncResult.getOrElse(result, () => null),
     error,
     isPending: result.waiting,
     refresh,

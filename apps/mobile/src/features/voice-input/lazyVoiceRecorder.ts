@@ -2,7 +2,12 @@ import type { VoiceRecorder } from "@t3tools/client-runtime/voice-input";
 
 type Subscription = { remove(): void };
 
-// The subset of expo-audio's native `AudioRecorder` the voice input hook uses.
+export interface VoiceRecordingInput {
+  readonly uid: string;
+  readonly name: string;
+  readonly type: string;
+}
+
 export interface NativeVoiceRecorder<TStatus, TRecorderState> {
   readonly uri: string | null;
   prepareToRecordAsync(): Promise<void>;
@@ -13,31 +18,24 @@ export interface NativeVoiceRecorder<TStatus, TRecorderState> {
     eventName: "recordingStatusUpdate",
     listener: (status: TStatus) => void,
   ): Subscription;
+  getAvailableInputs(): ReadonlyArray<VoiceRecordingInput>;
+  setInput(uid: string): void;
   release(): void;
 }
 
 export interface LazyVoiceRecorder<TRecorderState> extends VoiceRecorder {
-  /** Status of the native recorder, or null before a recording has prepared one. */
   getStatus(): TRecorderState | null;
-  /**
-   * Releases the native recorder after its pending prepare and stop calls settle.
-   * A later recording creates a new one, so replayed effects keep working.
-   */
   release(): void;
 }
 
-/**
- * Creates expo-audio's native `AudioRecorder` when a recording first prepares,
- * instead of on composer render. Construction blocks the JS thread for tens of
- * milliseconds on a cold composer, and most composer mounts never record.
- */
+/** Construct lazily: cold startup blocks JS for tens of milliseconds and most composers never record. */
 export function createLazyVoiceRecorder<TStatus, TRecorderState>(input: {
   readonly create: () => NativeVoiceRecorder<TStatus, TRecorderState>;
   readonly onStatus: (status: TStatus) => void;
+  readonly selectInput?: (inputs: ReadonlyArray<VoiceRecordingInput>) => VoiceRecordingInput | null;
 }): LazyVoiceRecorder<TRecorderState> {
   let recorder: NativeVoiceRecorder<TStatus, TRecorderState> | null = null;
   let subscription: Subscription | null = null;
-  // A released recorder still answers `uri` so the controller can delete its file.
   let retired: NativeVoiceRecorder<TStatus, TRecorderState> | null = null;
   let retiredUri: string | null = null;
   let pending: Promise<unknown> = Promise.resolve();
@@ -57,7 +55,16 @@ export function createLazyVoiceRecorder<TStatus, TRecorderState>(input: {
         recorder = input.create();
         subscription = recorder.addListener("recordingStatusUpdate", input.onStatus);
       }
-      return track(recorder.prepareToRecordAsync());
+      const prepared = recorder;
+      return track(
+        prepared.prepareToRecordAsync().then(() => {
+          if (!input.selectInput) return;
+          try {
+            const selected = input.selectInput(prepared.getAvailableInputs());
+            if (selected) prepared.setInput(selected.uid);
+          } catch {}
+        }),
+      );
     },
     record(options) {
       if (!recorder) throw new Error("Voice recorder is not prepared.");

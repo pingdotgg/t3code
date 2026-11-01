@@ -22,13 +22,41 @@
       {
         "name": "@effect/language-service",
         "namespaceImportPackages": ["@effect/platform-node", "effect"],
+        "effectFn": ["span", "inferred-span", "suggested-span"],
         "diagnosticSeverity": {
-          "importFromBarrel": "error",
+          "abortControllerInEffect": "error",
+          "runEffectInsideEffect": "error",
+          "flatMapConditionalToFilterOrFail": "error",
+          "catchConditionalRefailToCatchIf": "error",
+          "tryCatchInEffectGen": "error",
+          "schemaStructWithTag": "error",
+          "preferTypedSchemaDecoder": "error",
+          "catchUnfailableEffect": "error",
+          "raceFirstWithSleepToTimeout": "error",
+          "redundantMapError": "error",
+          "optionMatchToFromOption": "error",
+          "catchToIgnore": "error",
+          "unnecessaryEffectGen": "error",
+          "allOfMapToForEach": "error",
+          "catchToOrElseSucceed": "error",
+          "unnecessaryFailYieldableError": "error",
+          "preferSucceedSomeOrNone": "error",
+          "effectSucceedWithVoid": "error",
+          "provideLayerSucceedToProvideService": "error",
+          "flatMapIgnoredParamToAndThen": "error",
+          "mapSomeToAsSome": "error",
+          "unnecessaryPipeChain": "error",
+          "returnEffectInGen": "off",
+          "effectFnOpportunity": "error",
           "anyUnknownInErrorContext": "error",
           "unsafeEffectTypeAssertion": "error",
           "instanceOfSchema": "error",
           "deterministicKeys": "error",
           "strictEffectProvide": "off",
+          // We use Effect's unstable modules (http, sql) on purpose. These rules
+          // also make effect-tsgo 0.47+ report false TS2790 errors on `delete`.
+          "unstableApiUsage": "off",
+          "experimentalApiUsage": "off",
           "missingEffectServiceDependency": "error",
           "leakingRequirements": "error",
           "globalErrorInEffectCatch": "error",
@@ -52,7 +80,29 @@
           "globalFetch": "error",
           "globalFetchInEffect": "error",
           "schemaNumber": "off"
-        }
+        },
+        "overrides": [
+          {
+            "include": ["**/*.test.ts", "**/*.test.tsx"],
+            "options": {
+              "diagnosticSeverity": {
+                "preferSchemaOverJson": "off",
+                "effectFnOpportunity": "off"
+              }
+            }
+          },
+          {
+            "include": [
+              "**/*.spec.ts",
+              "**/*.spec.tsx",
+              "**/*.testkit.ts",
+              "**/*.testkit.tsx",
+              "**/{test,tests,testkit,testing,fixtures,integration}/**",
+              "packages/provider-testing/**"
+            ],
+            "options": { "diagnosticSeverity": { "effectFnOpportunity": "off" } }
+          }
+        ]
       }
     ]
   }

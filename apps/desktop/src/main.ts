@@ -18,7 +18,7 @@ import * as Option from "effect/Option";
 import * as Electron from "electron";
 
 import * as NetService from "@t3tools/shared/Net";
-import { HostProcessArchitecture, HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import type { RemoteT3RunnerOptions } from "@t3tools/ssh/tunnel";
 import serverPackageJson from "../../server/package.json" with { type: "json" };
 
@@ -35,9 +35,11 @@ import * as ElectronUpdater from "./electron/ElectronUpdater.ts";
 import * as ElectronWindow from "./electron/ElectronWindow.ts";
 import * as DesktopApp from "./app/DesktopApp.ts";
 import * as DesktopAppActivation from "./app/DesktopAppActivation.ts";
+import * as DesktopWebLinks from "./app/DesktopWebLinks.ts";
 import * as DesktopAppIdentity from "./app/DesktopAppIdentity.ts";
 import * as DesktopConnectionCatalogStore from "./app/DesktopConnectionCatalogStore.ts";
 import * as DesktopClerk from "./app/DesktopClerk.ts";
+import * as DesktopCliCommand from "./app/DesktopCliCommand.ts";
 import * as DesktopApplicationMenu from "./window/DesktopApplicationMenu.ts";
 import * as DesktopAssets from "./app/DesktopAssets.ts";
 import * as DesktopBackendConfiguration from "./backend/DesktopBackendConfiguration.ts";
@@ -67,7 +69,9 @@ import * as DesktopUpdates from "./updates/DesktopUpdates.ts";
 import * as BrowserImport from "./preview/BrowserImport/BrowserImport.ts";
 import * as LinuxBrowserSecret from "./preview/BrowserImport/LinuxBrowserSecret.ts";
 import * as BrowserSession from "./preview/BrowserSession.ts";
+import * as DesktopBrowserHost from "./preview/DesktopBrowserHost.ts";
 import * as PreviewManager from "./preview/Manager.ts";
+import * as PreviewPasskeys from "./preview/Passkeys.ts";
 import * as DesktopWindow from "./window/DesktopWindow.ts";
 import * as DesktopWslBackend from "./wsl/DesktopWslBackend.ts";
 import * as DesktopWslEnvironment from "./wsl/DesktopWslEnvironment.ts";
@@ -87,8 +91,8 @@ const layerDesktopEnvironment = Layer.unwrap(
     const metadata = yield* Effect.service(ElectronApp.ElectronApp).pipe(
       Effect.flatMap((app) => app.metadata),
     );
-    const platform = yield* HostProcessPlatform;
-    const processArch = yield* HostProcessArchitecture;
+    const platform = yield* HostProcess.Platform;
+    const processArch = yield* HostProcess.Architecture;
     return DesktopEnvironment.layer({
       dirname: __dirname,
       homeDirectory: NodeOS.homedir(),
@@ -99,9 +103,6 @@ const layerDesktopEnvironment = Layer.unwrap(
   }),
 );
 
-// The remote runs the exact release this app is on, from its self-contained
-// archive, so it needs neither Node nor npm. Development points the remote at
-// a source checkout instead so the two sides can be iterated together.
 const resolveDesktopSshCliRunner = (
   environment: DesktopEnvironment.DesktopEnvironment["Service"],
 ): RemoteT3RunnerOptions => {
@@ -161,10 +162,11 @@ const layerDesktopServerExposure = DesktopServerExposure.layer.pipe(
 );
 
 const layerDesktopPreview = PreviewManager.layer.pipe(
-  // Merged rather than provided so the IPC handlers can reach the import
-  // service alongside the manager; both sit on the same BrowserSession.
+  Layer.provideMerge(DesktopBrowserHost.layer),
+  // IPC needs both services on the same BrowserSession.
   Layer.provideMerge(BrowserImport.layer.pipe(Layer.provide(LinuxBrowserSecret.layer))),
   Layer.provideMerge(BrowserSession.layer),
+  Layer.provideMerge(PreviewPasskeys.layer),
   Layer.provideMerge(layerDesktopFoundation),
 );
 
@@ -181,23 +183,16 @@ const layerDesktopAppActivation = DesktopAppActivation.layer.pipe(
   Layer.provide(layerDesktopWindow),
 );
 
-// Pool layer instantiates the backend factory once for the Windows
-// primary instance and exposes it via pool.primary. Consumers go through
-// the pool now; the legacy DesktopBackendManager service is gone. The
-// WSL second instance gets registered later in the migration. See
-// DesktopBackendPool.ts header for the full rollout plan.
 const layerDesktopBackend = DesktopBackendPool.layer.pipe(
   Layer.provideMerge(DesktopAppIdentity.layer),
   Layer.provideMerge(DesktopBackendConfiguration.layer),
+  Layer.provideMerge(DesktopShellEnvironment.layer),
   Layer.provideMerge(DesktopWslEnvironment.layer),
   Layer.provideMerge(DesktopWslServerTree.layer),
   Layer.provideMerge(DesktopTelemetryPublisher.layer),
   Layer.provideMerge(layerDesktopWindow),
 );
 
-// WSL orchestrator hangs off the backend layer because it needs the
-// pool + configuration + serverExposure; it pulls NetService and the
-// foundation services through the same provideMerge chain.
 const layerDesktopWslBackend = DesktopWslBackend.layer.pipe(
   Layer.provideMerge(layerDesktopBackend),
 );
@@ -209,9 +204,10 @@ const layerDesktopLocalEnvironmentAuth = DesktopLocalEnvironmentAuth.layer.pipe(
 const layerDesktopApplication = Layer.mergeAll(
   DesktopLifecycle.layer,
   layerDesktopAppActivation,
+  DesktopWebLinks.layer,
   DesktopApplicationMenu.layer,
   DesktopLinuxUrlHandler.layer,
-  DesktopShellEnvironment.layer,
+  DesktopCliCommand.layer,
   layerDesktopSsh,
 ).pipe(
   Layer.provideMerge(layerDesktopSnapShot),
@@ -236,8 +232,7 @@ const layerDesktopApplicationRuntime = layerDesktopApplication.pipe(
   Layer.provideMerge(layerElectron),
 );
 
-// Acquire strict pre-ready setup before Clerk. Nothing before the Clerk bridge
-// may yield, or Electron can emit ready before Clerk registers its scheme.
+// Pre-ready setup and Clerk must not yield before Clerk registers its scheme.
 const layerDesktopRuntime = layerDesktopClerk.pipe(
   Layer.flatMap((clerkContext) =>
     layerDesktopApplicationRuntime.pipe(Layer.provideMerge(Layer.succeedContext(clerkContext))),

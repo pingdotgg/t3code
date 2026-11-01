@@ -38,6 +38,11 @@ export function ProjectActionsList({
                 setup
               </span>
             ) : null}
+            {script.runOnSettle ? (
+              <span className="shrink-0 rounded-sm border border-border/60 px-1.5 py-px text-2xs font-normal text-muted-foreground">
+                on settle
+              </span>
+            ) : null}
             {script.previewUrl ? (
               <span className="shrink-0 rounded-sm border border-border/60 px-1.5 py-px text-2xs font-normal text-muted-foreground max-sm:hidden">
                 preview · desktop only
@@ -51,7 +56,7 @@ export function ProjectActionsList({
             {shortcutLabel ? (
               <span className="text-xs text-muted-foreground">{shortcutLabel}</span>
             ) : null}
-            <span className="flex shrink-0 opacity-0 group-focus-within:opacity-100 group-hover:opacity-100">
+            <span className="flex shrink-0 opacity-0 group-focus-within:opacity-100 group-hover:opacity-100 pointer-coarse:opacity-100">
               <Button
                 size="icon-xs"
                 variant="ghost-muted"

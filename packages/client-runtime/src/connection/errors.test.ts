@@ -1,16 +1,12 @@
-import { EnvironmentAuthInvalidError } from "@t3tools/contracts";
 import {
   RelayAuthInvalidError,
+  RelayEnvironmentConnectNotAuthorizedError,
   RelayEnvironmentEndpointTimedOutError,
 } from "@t3tools/contracts/relay";
 import { describe, expect, it } from "@effect/vitest";
 
-import {
-  mapManagedRelayError,
-  mapRemoteDpopEnvironmentError,
-  mapRemoteEnvironmentError,
-} from "./errors.ts";
-import { DPOP_RETRY_HINT, DPOP_UNKNOWN_HINT } from "../relay/errorPresentation.ts";
+import { mapManagedRelayError, mapRemoteDpopEnvironmentError } from "./errors.ts";
+import { DPOP_UNKNOWN_HINT } from "../relay/errorPresentation.ts";
 import { ManagedRelayRequestFailedError } from "../relay/managedRelay.ts";
 import { NETWORK_BLOCKING_HINT } from "../errors/network.ts";
 import { RemoteEnvironmentAuthFetchError, RemoteEnvironmentAuthTimeoutError } from "../rpc/http.ts";
@@ -35,6 +31,39 @@ describe("mapManagedRelayError", () => {
     });
   });
 
+  it("retries a tunnel that is still being set up, and blocks other refusals", () => {
+    const mapConnectRefusal = (reason: RelayEnvironmentConnectNotAuthorizedError["reason"]) => {
+      const relayError = new RelayEnvironmentConnectNotAuthorizedError({
+        code: "environment_connect_not_authorized",
+        reason,
+        traceId: "trace-connect-refused",
+      });
+      return mapManagedRelayError(
+        new ManagedRelayRequestFailedError({
+          action: "connect relay environment",
+          cause: relayError,
+          relayError,
+        }),
+      );
+    };
+
+    expect(mapConnectRefusal("managed_endpoint_allocation_not_ready")).toMatchObject({
+      _tag: "ConnectionTransientError",
+      reason: "endpoint-unavailable",
+      detail: "The environment's T3 Connect tunnel is still being set up.",
+      traceId: "trace-connect-refused",
+    });
+    expect(mapConnectRefusal("endpoint_provider_not_managed")).toMatchObject({
+      _tag: "ConnectionBlockedError",
+      reason: "permission",
+      detail: expect.stringContaining("turn T3 Connect on"),
+    });
+    expect(mapConnectRefusal(undefined)).toMatchObject({
+      _tag: "ConnectionBlockedError",
+      reason: "permission",
+    });
+  });
+
   it("presents clock skew as one possible cause for a generic DPoP error", () => {
     const mapped = mapManagedRelayError(
       new ManagedRelayRequestFailedError({
@@ -56,40 +85,9 @@ describe("mapManagedRelayError", () => {
       traceId: "trace-1",
     });
   });
-
-  it("uses a neutral hint when the relay identifies a non-clock DPoP error", () => {
-    const mapped = mapManagedRelayError(
-      new ManagedRelayRequestFailedError({
-        action: "connect relay environment",
-        cause: new Error("request failed"),
-        relayError: new RelayAuthInvalidError({
-          code: "auth_invalid",
-          reason: "invalid_dpop",
-          dpopFailureReason: "key_mismatch",
-          traceId: "trace-1",
-        }),
-      }),
-    );
-
-    expect(mapped.message).toBe(`Relay rejected the DPoP proof. ${DPOP_RETRY_HINT}`);
-  });
 });
 
 describe("mapRemoteDpopEnvironmentError", () => {
-  it("keeps relay descriptor auth failures distinct from DPoP proof failures", () => {
-    const error = new EnvironmentAuthInvalidError({
-      code: "auth_invalid",
-      reason: "invalid_credential",
-      traceId: "trace-descriptor",
-    });
-    expect(mapRemoteEnvironmentError(error, "relay").message).toBe(
-      "The environment credential is invalid.",
-    );
-    expect(mapRemoteDpopEnvironmentError(error).message).toBe(
-      `The environment credential is invalid. ${DPOP_UNKNOWN_HINT}`,
-    );
-  });
-
   it.each([
     new RemoteEnvironmentAuthFetchError({
       message: "Failed to fetch remote environment endpoint.",
@@ -102,30 +100,5 @@ describe("mapRemoteDpopEnvironmentError", () => {
       _tag: "ConnectionTransientError",
       detail: `${error.message} ${NETWORK_BLOCKING_HINT}`,
     });
-  });
-
-  it("does not present a generic environment auth error as confirmed clock skew", () => {
-    const mapped = mapRemoteDpopEnvironmentError(
-      new EnvironmentAuthInvalidError({
-        code: "auth_invalid",
-        reason: "invalid_credential",
-        traceId: "trace-1",
-      }),
-    );
-
-    expect(mapped.message).toBe(`The environment credential is invalid. ${DPOP_UNKNOWN_HINT}`);
-  });
-
-  it("uses a neutral hint for a non-clock DPoP error from a new server", () => {
-    const mapped = mapRemoteDpopEnvironmentError(
-      new EnvironmentAuthInvalidError({
-        code: "auth_invalid",
-        reason: "invalid_credential",
-        dpopFailureReason: "key_mismatch",
-        traceId: "trace-1",
-      }),
-    );
-
-    expect(mapped.message).toBe(`The environment credential is invalid. ${DPOP_RETRY_HINT}`);
   });
 });

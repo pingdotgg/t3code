@@ -1,15 +1,14 @@
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
-import type {
-  ExecutionEnvironmentCapabilities,
-  ThreadPullRequestLink,
-  VcsStatusResult,
-} from "@t3tools/contracts";
-import { resolveChangeRequestPresentation } from "@t3tools/shared/sourceControl";
+import type { ThreadPullRequestLink, VcsStatusResult } from "@t3tools/contracts";
+import {
+  sourceControlClients,
+  type ChangeRequestTerminology,
+} from "@t3tools/client-runtime/source-control-clients";
 
 import {
   resolveThreadCurrentPullRequestLink,
   resolveThreadPullRequestBadge,
-} from "@t3tools/shared/threadPullRequests";
+} from "@t3tools/client-runtime/thread-pull-requests";
 
 export type ThreadPr = NonNullable<VcsStatusResult["pr"]>;
 
@@ -19,12 +18,10 @@ export interface ThreadPrPresentation {
   readonly kind: "pull-request" | "stack";
   readonly others: number;
   readonly isDraft: boolean;
-  /** Provider-side last activity, bounding when a terminal state landed. */
   readonly updatedAt: string | null;
   readonly url: string;
-  /** Compact pull request number or linked count, e.g. "3774" or "+2". */
+  readonly changeRequest: ChangeRequestTerminology;
   readonly label: string;
-  /** Full, provider-aware label for assistive technologies. */
   readonly accessibilityLabel: string;
   readonly textClassName: string;
 }
@@ -39,7 +36,7 @@ export function presentThreadPr(
   pr: ThreadPr,
   provider: VcsStatusResult["sourceControlProvider"] | null | undefined,
 ): ThreadPrPresentation {
-  const presentation = resolveChangeRequestPresentation(provider);
+  const { changeRequest } = sourceControlClients.get(provider?.kind);
   const isDraft = pr.state === "open" && pr.isDraft === true;
   return {
     kind: "pull-request",
@@ -49,19 +46,21 @@ export function presentThreadPr(
     isDraft,
     updatedAt: pr.updatedAt ?? null,
     url: pr.url,
+    changeRequest,
     label: String(pr.number),
-    accessibilityLabel: `#${pr.number} ${presentation.longName} ${isDraft ? "draft" : pr.state}`,
+    accessibilityLabel: `#${pr.number} ${changeRequest.singular} ${isDraft ? "draft" : pr.state}`,
     textClassName: isDraft ? "text-foreground-muted" : PR_STATE_TEXT_CLASS[pr.state],
   };
 }
 
-/** Persisted links render immediately, including links awaiting their first host sync. */
 export function presentThreadLinkedPullRequests(
   links: ReadonlyArray<ThreadPullRequestLink>,
 ): ThreadPrPresentation | null {
   const link = resolveThreadCurrentPullRequestLink(links);
   const badge = resolveThreadPullRequestBadge(links);
   if (link === null || badge === null) return null;
+  const { changeRequest } =
+    sourceControlClients.findByChangeRequestUrl(link.url) ?? sourceControlClients.get(undefined);
   const snapshot = link.snapshot;
   const linkedCount = badge.kind === "pull-request" && badge.others > 0 ? badge.others + 1 : null;
   const isMultiple = badge.kind === "stack" || linkedCount !== null;
@@ -87,13 +86,14 @@ export function presentThreadLinkedPullRequests(
     isDraft,
     updatedAt: snapshot?.updatedAt ?? null,
     url: link.url,
+    changeRequest,
     label,
     accessibilityLabel:
       badge.kind === "stack"
-        ? `${badge.layers} pull requests in stack, ${isDraft ? "draft" : (state ?? "status pending")}`
+        ? `${badge.layers} ${changeRequest.singular}s in stack, ${isDraft ? "draft" : (state ?? "status pending")}`
         : linkedCount !== null
-          ? `${linkedCount} linked pull requests, overall ${badge.state}`
-          : `#${link.number} pull request ${state === null ? "status pending" : isDraft ? "draft" : state}`,
+          ? `${linkedCount} linked ${changeRequest.plural}, overall ${badge.state}`
+          : `#${link.number} ${changeRequest.singular} ${state === null ? "status pending" : isDraft ? "draft" : state}`,
     textClassName:
       state === null || isDraft
         ? "text-foreground-muted"
@@ -103,14 +103,11 @@ export function presentThreadLinkedPullRequests(
   };
 }
 
-/** Only the array capability replaces legacy references with persisted snapshots. */
 export function resolveThreadPrSource(
   thread: Pick<EnvironmentThreadShell, "pullRequests" | "linkedPullRequest" | "branchPullRequest">,
-  capabilities:
-    | Pick<ExecutionEnvironmentCapabilities, "threadPullRequests" | "threadPullRequestLinking">
-    | undefined,
+  /** False until the server config loads; the stored references serve until then. */
+  supportsSnapshots: boolean,
 ) {
-  const supportsSnapshots = capabilities?.threadPullRequests === true;
   const linkedPresentation = supportsSnapshots
     ? presentThreadLinkedPullRequests(thread.pullRequests)
     : null;
@@ -121,4 +118,27 @@ export function resolveThreadPrSource(
           ? thread.branchPullRequest
           : (thread.linkedPullRequest ?? thread.branchPullRequest)) ?? null);
   return { linkedPresentation, pullRequestRef };
+}
+
+export function resolveThreadPrBadgeAction(pr: ThreadPrPresentation) {
+  return pr.kind === "stack" || pr.others > 0
+    ? { kind: "list" as const, accessibilityLabel: `Show ${pr.accessibilityLabel}` }
+    : { kind: "open" as const, accessibilityLabel: `Open ${pr.accessibilityLabel}` };
+}
+
+/** Records `value` as the newest entry, evicting the least recently answered beyond `limit`. */
+export function rememberBounded<V>(
+  current: ReadonlyMap<string, V>,
+  key: string,
+  value: V,
+  limit: number,
+): ReadonlyMap<string, V> {
+  const next = new Map(current);
+  next.delete(key);
+  next.set(key, value);
+  for (const oldest of next.keys()) {
+    if (next.size <= limit) break;
+    next.delete(oldest);
+  }
+  return next;
 }

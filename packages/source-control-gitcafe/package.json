@@ -1,0 +1,32 @@
+{
+  "name": "@t3tools/source-control-gitcafe",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./shared/definition": {
+      "types": "./src/shared/definition.ts",
+      "import": "./src/shared/definition.ts"
+    },
+    "./server/driver": {
+      "types": "./src/server/driver.ts",
+      "import": "./src/server/driver.ts"
+    }
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "vp test run --config ../../vite.config.ts --dir ."
+  },
+  "dependencies": {
+    "@t3tools/contracts": "workspace:*",
+    "@t3tools/provider-core": "workspace:*",
+    "@t3tools/shared": "workspace:*",
+    "@t3tools/source-control-core": "workspace:*",
+    "effect": "catalog:"
+  },
+  "devDependencies": {
+    "@effect/vitest": "catalog:",
+    "@t3tools/source-control-testing": "workspace:*",
+    "@types/node": "catalog:",
+    "vite-plus": "catalog:"
+  }
+}

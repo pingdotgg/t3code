@@ -1,8 +1,10 @@
 import type * as AcpCompat from "./compat.ts";
 import * as Cause from "effect/Cause";
+import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
 import * as Deferred from "effect/Deferred";
 import * as Exit from "effect/Exit";
+import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import type * as PlatformError from "effect/PlatformError";
@@ -20,6 +22,7 @@ import * as AcpSchema from "./schema.ts";
 import * as AcpSchemaV1 from "./_generated/schema-v1.gen.ts";
 import { CLIENT_METHODS } from "./_generated/meta.gen.ts";
 import * as AcpError from "./errors.ts";
+import { isolateNotificationHandler } from "./_internal/shared.ts";
 const isAcpError = Schema.is(AcpError.AcpError);
 
 export interface AcpProtocolLogEvent {
@@ -28,13 +31,11 @@ export interface AcpProtocolLogEvent {
   readonly payload: unknown;
 }
 
-/** Stable transport identity for an inbound ACP JSON-RPC request. */
 export interface AcpRequestContext {
   readonly requestId: string;
   readonly method: string;
 }
 
-/** Lossless string identity for JSON-RPC request IDs used by callback maps. */
 export function acpRequestIdentity(requestId: AcpError.AcpRequestId): string {
   const prefix = "$t3:jsonrpc:";
   if (typeof requestId === "number") return `${prefix}number:${requestId}`;
@@ -66,7 +67,6 @@ export type AcpIncomingNotification =
       readonly params: unknown;
     };
 
-/** Standard I/O whose input can report provider-specific ACP failures. */
 export interface AcpStdio extends Omit<Stdio.Stdio, "stdin"> {
   readonly stdin: Stream.Stream<Uint8Array, PlatformError.PlatformError | AcpError.AcpError>;
 }
@@ -85,7 +85,10 @@ export interface AcpPatchedProtocolOptions {
   ) => Effect.Effect<void, never>;
 
   readonly transformSessionUpdate?: (
-    notification: AcpSchema.UpdateSessionNotification | AcpSchemaV1.SessionNotification,
+    notification:
+      | AcpSchema.UpdateSessionNotification
+      | AcpSchemaV1.SessionNotification
+      | AcpCompat.SessionNotification,
   ) =>
     | AcpSchema.UpdateSessionNotification
     | AcpSchemaV1.SessionNotification
@@ -106,7 +109,6 @@ export interface AcpPatchedProtocolOptions {
   readonly onOutgoingResponse?: (requestId: string) => Effect.Effect<void, never>;
   readonly testHooks?: {
     readonly onOutgoingWriteAdmitted?: () => Effect.Effect<void>;
-    /** Invoked from the stdout writer exit path (after intentional/unexpected handling). */
     readonly onOutgoingWriterExit?: (input: {
       readonly intentionalEnd: boolean;
     }) => Effect.Effect<void>;
@@ -138,7 +140,22 @@ interface AcpOutgoingWriterState {
 }
 
 const decodeSessionUpdate = Schema.decodeUnknownEffect(
-  Schema.Union([AcpSchema.UpdateSessionNotification, AcpSchemaV1.SessionNotification]),
+  Schema.Union([
+    // Claude ACP v2 reports prompt failures on idle; alpha.3 omits that field.
+    Schema.Struct({
+      ...AcpSchema.UpdateSessionNotification.fields,
+      update: Schema.Struct({
+        sessionUpdate: Schema.Literal("state_update"),
+        state: Schema.Literal("idle"),
+        stopReason: Schema.optionalKey(Schema.NullOr(AcpSchema.StopReason)),
+        usage: Schema.optionalKey(Schema.NullOr(AcpSchema.Usage)),
+        error: Schema.optionalKey(Schema.NullOr(AcpSchema.Error)),
+        _meta: AcpSchema.UpdateSessionNotification.fields._meta,
+      }),
+    }),
+    AcpSchema.UpdateSessionNotification,
+    AcpSchemaV1.SessionNotification,
+  ]),
 );
 const decodeElicitationComplete = Schema.decodeUnknownEffect(
   AcpSchema.CompleteElicitationNotification,
@@ -164,7 +181,16 @@ const makeStrictNdJsonRpcParser = () => {
   };
 };
 const MAX_BUFFERED_RAW_NOTIFICATIONS = 32;
-// Outbound JSON-RPC notification: no `id`, so peers never treat it as a request.
+
+const decodeFailureDiagnostics = (error: AcpError.AcpProtocolParseError) => ({
+  operation: error.operation,
+  ...(error.method === undefined ? {} : { method: error.method }),
+  ...(error.requestId === undefined ? {} : { requestId: error.requestId }),
+  ...(error.issueCount === undefined ? {} : { issueCount: error.issueCount }),
+  ...(error.issueKinds === undefined ? {} : { issueKinds: error.issueKinds }),
+  ...(error.maximumPathDepth === undefined ? {} : { maximumPathDepth: error.maximumPathDepth }),
+  ...(error.issueSummary === undefined ? {} : { issueSummary: error.issueSummary }),
+});
 const encodeJsonRpcNotification = Schema.encodeUnknownExit(
   Schema.fromJsonString(
     Schema.Struct({
@@ -175,14 +201,19 @@ const encodeJsonRpcNotification = Schema.encodeUnknownExit(
   ),
 );
 
+/**
+ * First id for typed Effect RPC requests. Starts within signed int32 for SDKs that reject
+ * larger numeric ids (e.g. the Kotlin ACP SDK decodes ids as `Int`), while staying far
+ * above extension ids, which count up from 1.
+ */
+export const RPC_REQUEST_ID_START = 2 ** 30;
+
 const isEffectRpcRequestId = (requestId: AcpError.AcpRequestId): boolean =>
   typeof requestId === "number" && Number.isSafeInteger(requestId);
 
 /**
  * Effect RPC's JSON-RPC codec treats a standard JSON-RPC error object as a
- * defect unless it carries Effect's private `_tag: "Cause"` envelope. ACP
- * agents correctly send the standard `{ code, message, data? }` shape, so
- * restore it to the typed failure channel before handing it to RpcClient.
+ * defect unless it carries Effect's private `_tag: "Cause"` envelope.
  */
 function normalizeAcpJsonRpcError(
   message: RpcMessage.FromClientEncoded | RpcMessage.FromServerEncoded,
@@ -221,6 +252,7 @@ export const makeAcpPatchedProtocol = Effect.fn("makeAcpPatchedProtocol")(functi
     outstandingAcknowledgements: new Set(),
   });
   const nextRequestId = yield* Ref.make(1);
+  const warnedDecodeFailures = new Set<string>();
   const terminationHandled = yield* Ref.make(false);
   const terminationFailure = yield* Deferred.make<never, AcpError.AcpError>();
   const extPending = yield* Ref.make(new Map<string, AcpPendingRequest>());
@@ -385,8 +417,10 @@ export const makeAcpPatchedProtocol = Effect.fn("makeAcpPatchedProtocol")(functi
   const dispatchNotification = (notification: AcpIncomingNotification) =>
     Queue.offer(notificationQueue, notification).pipe(
       Effect.andThen(
+        // A failing or dying handler must not stop the reader, or every later
+        // message on the connection goes unanswered.
         options.onNotification
-          ? options.onNotification(notification).pipe(Effect.ignore)
+          ? isolateNotificationHandler(options.onNotification(notification))
           : Effect.void,
       ),
       Effect.asVoid,
@@ -458,37 +492,80 @@ export const makeAcpPatchedProtocol = Effect.fn("makeAcpPatchedProtocol")(functi
         method: message.tag,
       })
       .pipe(
-        Effect.matchEffect({
-          onFailure: (error) =>
-            respondWithError(
-              message.id,
-              AcpError.AcpRequestError.fromExtensionHandlerError(error, message.tag),
-            ),
+        Effect.matchCauseEffect({
+          onFailure: (cause) => {
+            const failure = Cause.hasDies(cause) ? Option.none() : Cause.findErrorOption(cause);
+            if (Option.isSome(failure)) {
+              return respondWithError(
+                message.id,
+                AcpError.AcpRequestError.fromExtensionHandlerError(failure.value, message.tag),
+              );
+            }
+            return Effect.logError(
+              `ACP extension request handler failed for '${message.tag}'`,
+              cause,
+            ).pipe(
+              Effect.andThen(
+                respondWithError(
+                  message.id,
+                  AcpError.AcpRequestError.internalError(
+                    `ACP extension request handler failed for method '${message.tag}'`,
+                    undefined,
+                    {
+                      method: message.tag,
+                      operation: "handle-extension-request",
+                      cause: Cause.squash(cause),
+                    },
+                  ),
+                ),
+              ),
+            );
+          },
           onSuccess: (value) => respondWithSuccess(message.id, value),
         }),
       );
+  };
+
+  // Drop undecodable notifications without ending working sessions; newer specs may add unknown shapes.
+  // Warn once per distinct failure per connection because agents repeat bad payloads.
+  const dropUndecodableNotification = (method: string) => (cause: Schema.SchemaError) => {
+    const error = AcpError.AcpProtocolParseError.fromSchemaError(
+      "decode-notification-payload",
+      method,
+      cause,
+    );
+    const diagnostics = decodeFailureDiagnostics(error);
+    const key = `${method}\n${error.issueSummary}`;
+    const firstOfItsKind = !warnedDecodeFailures.has(key);
+    warnedDecodeFailures.add(key);
+    return logProtocol({
+      direction: "incoming",
+      stage: "decode_failed",
+      payload: diagnostics,
+    }).pipe(
+      Effect.andThen(
+        firstOfItsKind
+          ? Effect.logWarning("Dropped an ACP notification that failed to decode").pipe(
+              Effect.annotateLogs(diagnostics),
+            )
+          : Effect.void,
+      ),
+    );
   };
 
   const handleRequestEncoded = (message: RpcMessage.RequestEncoded) => {
     if (message.id === "") {
       if (message.tag === CLIENT_METHODS.session_update) {
         return decodeSessionUpdate(message.payload).pipe(
-          Effect.map(
-            (params) =>
-              ({
+          Effect.matchEffect({
+            onFailure: dropUndecodableNotification(CLIENT_METHODS.session_update),
+            onSuccess: (params) =>
+              dispatchNotification({
                 _tag: "SessionUpdate",
                 method: CLIENT_METHODS.session_update,
                 params: options.transformSessionUpdate?.(params) ?? params,
-              }) satisfies AcpIncomingNotification,
-          ),
-          Effect.mapError((cause) =>
-            AcpError.AcpProtocolParseError.fromSchemaError(
-              "decode-notification-payload",
-              CLIENT_METHODS.session_update,
-              cause,
-            ),
-          ),
-          Effect.flatMap(dispatchNotification),
+              }),
+          }),
         );
       }
       if (
@@ -497,22 +574,11 @@ export const makeAcpPatchedProtocol = Effect.fn("makeAcpPatchedProtocol")(functi
       ) {
         const method = message.tag;
         return decodeElicitationComplete(message.payload).pipe(
-          Effect.map(
-            (params) =>
-              ({
-                _tag: "ElicitationComplete",
-                method,
-                params,
-              }) satisfies AcpIncomingNotification,
-          ),
-          Effect.mapError((cause) =>
-            AcpError.AcpProtocolParseError.fromSchemaError(
-              "decode-notification-payload",
-              method,
-              cause,
-            ),
-          ),
-          Effect.flatMap(dispatchNotification),
+          Effect.matchEffect({
+            onFailure: dropUndecodableNotification(method),
+            onSuccess: (params) =>
+              dispatchNotification({ _tag: "ElicitationComplete", method, params }),
+          }),
         );
       }
       return dispatchNotification({
@@ -666,16 +732,7 @@ export const makeAcpPatchedProtocol = Effect.fn("makeAcpPatchedProtocol")(functi
           logProtocol({
             direction: "incoming",
             stage: "decode_failed",
-            payload: {
-              operation: error.operation,
-              ...(error.method === undefined ? {} : { method: error.method }),
-              ...(error.requestId === undefined ? {} : { requestId: error.requestId }),
-              ...(error.issueCount === undefined ? {} : { issueCount: error.issueCount }),
-              ...(error.issueKinds === undefined ? {} : { issueKinds: error.issueKinds }),
-              ...(error.maximumPathDepth === undefined
-                ? {}
-                : { maximumPathDepth: error.maximumPathDepth }),
-            },
+            payload: decodeFailureDiagnostics(error),
           }),
         ),
         Effect.flatMap((messages) =>
@@ -685,8 +742,12 @@ export const makeAcpPatchedProtocol = Effect.fn("makeAcpPatchedProtocol")(functi
         ),
       ),
     ),
-    Effect.matchEffect({
-      onFailure: (error) => {
+    // Anything that ends the reader, including a defect in a callback it runs,
+    // terminates the connection so pending requests fail instead of hanging.
+    Effect.matchCauseEffect({
+      onFailure: (cause) => {
+        const failure = Cause.findErrorOption(cause);
+        const error = Option.isSome(failure) ? failure.value : Cause.squash(cause);
         const normalized: AcpError.AcpError = isAcpError(error)
           ? error
           : new AcpError.AcpTransportError({
@@ -696,10 +757,16 @@ export const makeAcpPatchedProtocol = Effect.fn("makeAcpPatchedProtocol")(functi
         return handleTermination(() => Effect.succeed(normalized));
       },
       onSuccess: () =>
-        handleTermination(
-          () =>
-            options.terminationError ?? Effect.succeed(new AcpError.AcpInputStreamEndedError({})),
-        ),
+        handleTermination(() => {
+          const ended = new AcpError.AcpInputStreamEndedError({});
+          if (!options.terminationError) return Effect.succeed(ended);
+          // Stdout can close without process exit; use a live-clock diagnostic grace period.
+          return options.terminationError.pipe(
+            Effect.timeoutOption("250 millis"),
+            Effect.provideService(Clock.Clock, Clock.Clock.defaultValue()),
+            Effect.map(Option.getOrElse(() => ended)),
+          );
+        }),
     }),
     Effect.forkScoped,
   );
@@ -781,9 +848,6 @@ export const makeAcpPatchedProtocol = Effect.fn("makeAcpPatchedProtocol")(functi
         onSuccess: () =>
           Ref.get(outgoingWriterState).pipe(
             Effect.flatMap((state) => {
-              // Intentional Queue.end (serverProtocol.end) completes the writer
-              // successfully. Do not invent a transport failure or client protocol
-              // error for a clean RPC shutdown.
               const handled = state.intentionalEnd
                 ? completeOutgoingWrites()
                 : (() => {
@@ -811,14 +875,16 @@ export const makeAcpPatchedProtocol = Effect.fn("makeAcpPatchedProtocol")(functi
     Effect.forkScoped,
   );
 
+  // Protocol loops and per-message sends share the caller's operation span.
   const clientProtocol = RpcClient.Protocol.of({
-    run: (_clientId, f) =>
-      Stream.fromQueue(clientQueue).pipe(
+    run: Effect.fnUntraced(function* (_clientId, f) {
+      return yield* Stream.fromQueue(clientQueue).pipe(
         Stream.runForEach((message) => f(message)),
         Effect.forever,
-      ),
-    send: (_clientId, request) =>
-      offerOutgoing(request).pipe(
+      );
+    }),
+    send: Effect.fnUntraced(function* (_clientId, request) {
+      return yield* offerOutgoing(request).pipe(
         Effect.mapError(
           (error) =>
             new RpcClientError.RpcClientError({
@@ -828,32 +894,36 @@ export const makeAcpPatchedProtocol = Effect.fn("makeAcpPatchedProtocol")(functi
               }),
             }),
         ),
-      ),
+      );
+    }),
     supportsAck: true,
     supportsTransferables: false,
     codecFor: parserFactory.codecFor,
   });
 
   const serverProtocol = RpcServer.Protocol.of({
-    run: (f) =>
-      Stream.fromQueue(serverQueue).pipe(
+    run: Effect.fnUntraced(function* (f) {
+      return yield* Stream.fromQueue(serverQueue).pipe(
         Stream.runForEach((message) => f(0, message)),
         Effect.forever,
-      ),
+      );
+    }),
     disconnects,
-    send: (_clientId, response) =>
-      offerOutgoing(response).pipe(
+    send: Effect.fnUntraced(function* (_clientId, response) {
+      return yield* offerOutgoing(response).pipe(
         Effect.tapError((error) =>
           response._tag === "Exit" && options.onOutgoingResponseFailure !== undefined
             ? options.onOutgoingResponseFailure(acpRequestIdentity(response.requestId), error)
             : Effect.void,
         ),
         Effect.orDie,
-      ),
-    end: (_clientId) =>
-      Ref.update(outgoingWriterState, (state) => ({ ...state, intentionalEnd: true })).pipe(
+      );
+    }),
+    end: Effect.fn("RpcServer.Protocol.end")(function (_clientId) {
+      return Ref.update(outgoingWriterState, (state) => ({ ...state, intentionalEnd: true })).pipe(
         Effect.andThen(Queue.end(outgoing)),
-      ),
+      );
+    }),
     clientIds: Effect.succeed(new Set([0])),
     initialMessage: Effect.succeedNone,
     supportsAck: true,
@@ -865,7 +935,6 @@ export const makeAcpPatchedProtocol = Effect.fn("makeAcpPatchedProtocol")(functi
 
   // JSON-RPC notifications carry no `id`. Encoding a Request without `isNotification`
   // emits an `id`, which real agents (Grok CLI) parse as a malformed request and silently drop.
-  // That made `session/cancel` a no-op against Grok while the lenient mock agent accepted it.
   const sendNotification = Effect.fn("sendNotification")(function* (
     method: string,
     payload: unknown,

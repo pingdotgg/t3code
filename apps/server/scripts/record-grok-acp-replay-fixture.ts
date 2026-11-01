@@ -1,56 +1,42 @@
-/**
- * Records a Grok ACP replay transcript from a live `grok agent stdio` process.
- *
- * The fixture's own scenario (the same commands and steps the replay test
- * dispatches) runs through the real orchestrator and the real GrokAdapterV2;
- * only the ACP runtime's protocol logger is swapped for a tee. Outbound frames
- * are therefore exactly what T3 sends, and inbound frames exactly what Grok
- * answered. Run from apps/server with the Grok CLI on PATH (or T3_GROK_BIN):
- *
- *   node scripts/record-grok-acp-replay-fixture.ts --scenario simple
- */
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { GrokSettings, type ProviderReplayEntry } from "@t3tools/contracts";
-import { HostProcessEnvironment, HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import { type ProviderReplayEntry } from "@t3tools/contracts";
+import { GrokSettings } from "@t3tools/provider-grok/settings";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import { resolveSelfInvocation } from "@t3tools/shared/nodeRuntime";
 import * as Clock from "effect/Clock";
 import * as Console from "effect/Console";
-import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
-import { ChildProcessSpawner } from "effect/process";
 import type * as EffectAcpProtocol from "effect-acp/protocol";
 
-import * as ServerConfig from "../src/config.ts";
+import * as TestProviderHost from "@t3tools/provider-testing/TestProviderHost";
 import {
   GROK_DEFAULT_INSTANCE_ID,
   GROK_PROVIDER,
   grokLaunchRuntimeMode,
   makeGrokAdapterV2,
-} from "../src/orchestration-v2/Adapters/GrokAdapterV2.ts";
-import { ACP_PROTOCOL } from "../src/orchestration-v2/Adapters/AcpAdapterV2.ts";
-import * as IdAllocator from "../src/orchestration-v2/IdAllocator.ts";
-import type { ProviderAdapterV2SessionRuntime } from "../src/orchestration-v2/ProviderAdapter.ts";
-import * as ProviderContinuationRequests from "../src/orchestration-v2/ProviderContinuationRequests.ts";
+} from "@t3tools/provider-grok/testing";
+import { ACP_PROTOCOL } from "@t3tools/provider-acp/server/adapter";
+import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
+import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
+import * as ProviderContinuationRequests from "@t3tools/provider-core/server/ProviderContinuationRequests";
 import * as ProviderAdapterRegistry from "../src/orchestration-v2/ProviderAdapterRegistry.ts";
 import { provideDeterministicTestRuntime } from "../src/orchestration-v2/testkit/DeterministicRuntime.ts";
 import { ORCHESTRATOR_REPLAY_FIXTURES } from "../src/orchestration-v2/testkit/fixtures/index.ts";
 import { materializeFixtureInput } from "../src/orchestration-v2/testkit/fixtures/shared.ts";
 import { runOrchestratorV2Scenario } from "../src/orchestration-v2/testkit/OrchestratorScenario.ts";
-import { makeReplayServerConfig } from "../src/orchestration-v2/testkit/ProviderReplayHarness.ts";
 import * as ProviderReplayHarness from "../src/orchestration-v2/testkit/ProviderReplayHarness.ts";
-import { checkpointWorkspace } from "../src/orchestration-v2/testkit/ReplayFixtureWorkspace.ts";
-import { makeGrokAcpRuntime } from "../src/provider/acp/GrokAcpSupport.ts";
-import { buildRuntimeInstructions } from "../src/provider/RuntimeInstructions.ts";
+import { checkpointWorkspace } from "@t3tools/provider-testing/replayWorkspace";
+import { makeGrokAcpRuntime } from "@t3tools/provider-grok/testing";
+import { buildRuntimeInstructions } from "@t3tools/provider-core/server/runtimeInstructions";
 
 const wallClock = Clock.Clock.defaultValue();
 const encodeJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
 const decodeJson = Schema.decodeUnknownSync(Schema.fromJsonString(Schema.Unknown));
 
-// Broadcasts T3 never reads: account tier, marketing, and client UI settings.
 const DROPPED_INBOUND_METHODS = new Set(["_x.ai/settings/update", "_x.ai/announcements/update"]);
 const HOME_PLACEHOLDER = "/home/grok-replay";
 
@@ -85,7 +71,6 @@ function mapStrings(value: unknown, map: (text: string) => string): unknown {
   );
 }
 
-/** Tees raw ACP lines in wire order. Replay drives one process, so a restart is an error. */
 function makeWireTee() {
   const wire: Array<WireMessage> = [];
   let runtimeCount = 0;
@@ -116,12 +101,7 @@ function makeWireTee() {
         }),
     };
   };
-  // Grok runs its own wake turns (`task-completed-*`, `notifications-*`,
-  // `subagent-completed-*`) after T3's run can already have settled, and its
-  // session roster can report idle before them. Grok is done when no session
-  // has a queued or running prompt (`x.ai/queue/changed` vs `turn_completed`),
-  // no background task still runs (`background_tasks`), and every spawned
-  // subagent finished (`subagent_spawned` vs `subagent_finished`).
+  // Grok can report idle before its wake turns; wait for prompt queues, tasks and subagents to finish.
   const grokHasPendingWork = () => {
     const queues = new Map<unknown, Record<string, unknown>>();
     const tasks = new Map<unknown, ReadonlyArray<unknown>>();
@@ -155,8 +135,6 @@ function makeWireTee() {
 function frameLabel(kind: string, method: string, params: unknown): string {
   const update = isRecord(params) && isRecord(params.update) ? params.update : undefined;
   const updateType = typeof update?.sessionUpdate === "string" ? `:${update.sessionUpdate}` : "";
-  // Frames carry the prompt they belong to, so a fixture can gate on the start
-  // of one of Grok's own wake turns (`task-completed-*`, `subagent-completed-*`).
   const meta = isRecord(params) && isRecord(params._meta) ? params._meta : undefined;
   const promptId =
     update?.sessionUpdate === "turn_completed" && typeof update.prompt_id === "string"
@@ -167,7 +145,6 @@ function frameLabel(kind: string, method: string, params: unknown): string {
   return `${kind}:${method}${updateType}${promptId === undefined ? "" : `:${promptId}`}`;
 }
 
-/** Pairs JSON-RPC ids with their methods and emits the logical frames acp-replay-agent reads. */
 function wireToEntries(wire: ReadonlyArray<WireMessage>): {
   readonly entries: Array<ProviderReplayEntry>;
   readonly droppedFrames: number;
@@ -205,8 +182,7 @@ function wireToEntries(wire: ReadonlyArray<WireMessage>): {
     const pending = direction === "outgoing" ? agentRequests : t3Requests;
     const method = pending.get(String(message.id));
     if (method === undefined) {
-      // Grok answers its own internal requests (e.g. id "skills-reload") on the
-      // shared stream; T3's protocol drops those, so replay never sees them.
+      // Grok answers internal requests on this stream; T3 drops them before replay.
       droppedFrames += 1;
       continue;
     }
@@ -227,15 +203,11 @@ function wireToEntries(wire: ReadonlyArray<WireMessage>): {
 
 const T3_INSTRUCTIONS_BODY = /<t3_code_instructions>\n[\s\S]*?\n<\/t3_code_instructions>/u;
 
-/** Replaces T3-owned request content so prompt wording changes do not invalidate recordings. */
 function normalizeOutboundFrame(frame: Record<string, unknown>, runtimeInstructions: string) {
   const params = isRecord(frame.params) ? frame.params : undefined;
   if (params === undefined) return frame;
   switch (frame.method) {
     case "initialize":
-      // Pin what T3 advertises (fs and terminal capabilities decide whether
-      // Grok routes file and shell work through T3, the client type whether
-      // Auto mode asks); the rest is <any>.
       return {
         ...frame,
         params: Object.fromEntries(
@@ -279,7 +251,6 @@ function normalizeOutboundFrame(frame: Record<string, unknown>, runtimeInstructi
   }
 }
 
-/** Removes machine identity and personal skills the recording machine advertised. */
 function normalizeInboundFrame(frame: Record<string, unknown>): Record<string, unknown> {
   const params = isRecord(frame.params) ? frame.params : undefined;
   const update = isRecord(params?.update) ? params.update : undefined;
@@ -334,7 +305,6 @@ function normalizeInboundFrame(frame: Record<string, unknown>): Record<string, u
 
 const UUID = /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/iu;
 
-/** Collects Grok session and background task ids in first-seen order. */
 function collectSessionIds(entries: ReadonlyArray<ProviderReplayEntry>): ReadonlyArray<string> {
   const ids: Array<string> = [];
   const add = (value: unknown) => {
@@ -348,7 +318,6 @@ function collectSessionIds(entries: ReadonlyArray<ProviderReplayEntry>): Readonl
     }
     if (entry.type === "emit_inbound" && isRecord(frame.params)) {
       add(frame.params.sessionId);
-      // Background task ids name Grok's wake turns (`task-completed-<id>`).
       const update = isRecord(frame.params.update) ? frame.params.update : undefined;
       if (update?.sessionUpdate === "task_backgrounded" && UUID.test(String(update.task_id))) {
         add(update.task_id);
@@ -372,11 +341,9 @@ function normalizeEntries(input: {
         [id, `00000000-0000-4000-8000-${String(index + 1).padStart(12, "0")}`] as const,
     ),
     [input.workspace, "<workspace>"],
-    // Grok keys its session directory by the URL-encoded cwd.
     [encodeURIComponent(input.workspace), "%3Cworkspace%3E"],
     [input.home, HOME_PLACEHOLDER],
   ];
-  // Shell output (e.g. `ls -l`) names the recording user.
   const user = /^[a-z_][a-z0-9_-]*$/iu.test(input.user) ? input.user : "";
   const userPattern = user.length === 0 ? undefined : new RegExp(`\\b${user}\\b`, "gu");
   const replaceAll = (text: string) => {
@@ -400,7 +367,7 @@ function normalizeEntries(input: {
   });
 }
 
-const DEFAULT_GROK_SETTINGS = Schema.decodeUnknownSync(GrokSettings)({});
+const DEFAULT_GROK_SETTINGS = Schema.decodeSync(GrokSettings)({});
 
 const recordScenario = Effect.fn("recordGrokScenario")(function* (fixtureName: string) {
   const fixture = ORCHESTRATOR_REPLAY_FIXTURES.find((candidate) => candidate.name === fixtureName);
@@ -411,8 +378,6 @@ const recordScenario = Effect.fn("recordGrokScenario")(function* (fixtureName: s
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const fixtureInput = fixture.buildInput();
-  // Same README and seeded files as the replay workspace, so client-mediated
-  // fs reads answer identically at replay time.
   const workspace = yield* checkpointWorkspace(fixtureName, fixtureInput.workspaceFiles);
   const realWorkspace = yield* fs.realPath(workspace);
   const materialized = yield* materializeFixtureInput({
@@ -424,10 +389,7 @@ const recordScenario = Effect.fn("recordGrokScenario")(function* (fixtureName: s
   const scenario = {
     name: `${fixtureName}/grok-record`,
     commands: materialized.commands,
-    // Background fixtures pace replay with gates and with receipts that drive
-    // the finish debounce on the test clock. Live, Grok and wall time pace
-    // themselves, so a fixture that gates records its dispatches only and then
-    // waits for Grok to idle, and a held run is simply waited for.
+    // Live Grok needs no replay gates or clock receipts; record dispatches and wait for idle.
     steps: materialized.steps.some(
       (step) =>
         step.type === "release_replay_gate" || step.type === "release_replay_gate_after_waiting",
@@ -444,21 +406,14 @@ const recordScenario = Effect.fn("recordGrokScenario")(function* (fixtureName: s
   const settings = { ...DEFAULT_GROK_SETTINGS, binaryPath: process.env.T3_GROK_BIN ?? "grok" };
   const layerRegistry = ProviderAdapterRegistry.layerFromAdaptersEffect(
     Effect.gen(function* () {
-      const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-      const environment = yield* HostProcessEnvironment;
-      const adapter = makeGrokAdapterV2({
+      const environment = yield* HostProcess.Environment;
+      const adapter = yield* makeGrokAdapterV2({
         instanceId: GROK_DEFAULT_INSTANCE_ID,
         settings,
         environment,
-        hostPlatform: yield* HostProcessPlatform,
-        childProcessSpawner,
-        crypto: yield* Crypto.Crypto,
-        fileSystem: yield* FileSystem.FileSystem,
-        idAllocator: yield* IdAllocator.IdAllocatorV2,
-        serverConfig: yield* ServerConfig.ServerConfig,
+        hostPlatform: yield* HostProcess.Platform,
         selfInvocation: yield* resolveSelfInvocation(),
         continuationRequests: yield* ProviderContinuationRequests.ProviderContinuationRequests,
-        // Production's runtime factory, with the protocol logger teeing raw lines.
         makeRuntime: ({ runtimePolicy, ...input }) =>
           makeGrokAcpRuntime({
             ...input,
@@ -466,13 +421,10 @@ const recordScenario = Effect.fn("recordGrokScenario")(function* (fixtureName: s
             interruptPromptOnCancel: input.interruptPromptOnCancel ?? false,
             grokSettings: settings,
             environment,
-            childProcessSpawner,
             runtimeMode: grokLaunchRuntimeMode(runtimePolicy),
           }),
       });
-      // The scenario runs on the replay TestClock so its clock steps order
-      // dispatches as replay will. Grok itself runs on wall time, so the
-      // adapter's session (finish debounces, safety holds) does too.
+      // Order dispatches on TestClock as in replay, but run Grok's adapter timers on wall time.
       const onWallClock = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
         Effect.provideService(effect, Clock.Clock, wallClock);
       return [
@@ -480,7 +432,7 @@ const recordScenario = Effect.fn("recordGrokScenario")(function* (fixtureName: s
           ...adapter,
           openSession: (input) =>
             adapter.openSession(input).pipe(
-              Effect.map((session): ProviderAdapterV2SessionRuntime => ({
+              Effect.map((session): ProviderAdapter.ProviderAdapterV2SessionRuntime => ({
                 ...session,
                 startTurn: (turnInput) => onWallClock(session.startTurn(turnInput)),
                 steerTurn: (turnInput) => onWallClock(session.steerTurn(turnInput)),
@@ -496,22 +448,14 @@ const recordScenario = Effect.fn("recordGrokScenario")(function* (fixtureName: s
   ).pipe(
     Layer.provide(
       Layer.mergeAll(
-        Layer.effect(
-          ServerConfig.ServerConfig,
-          makeReplayServerConfig(`grok-record-${fixtureName}`),
-        ).pipe(Layer.provide(NodeServices.layer)),
+        TestProviderHost.layer().pipe(Layer.provide(NodeServices.layer)),
         NodeServices.layer,
         IdAllocator.layer,
       ),
     ),
   );
 
-  // Same deterministic runtime as replay (TestClock, seeded ids), so the
-  // scenario's clock steps order dispatches exactly as they will on replay.
-  // Background scenarios keep the session open until Grok's own wake turns
-  // finish, so the transcript holds everything replay will emit.
-  // A wake turn is admitted shortly after the frame that triggers it, so Grok
-  // must also stay quiet for a few seconds.
+  // Wake turns arrive after their triggering frames; require a few quiet seconds too.
   let quietPolls = 0;
   let seenFrames = -1;
   const waitForGrokIdle = Effect.sleep("1 second").pipe(
@@ -597,8 +541,6 @@ const recordScenario = Effect.fn("recordGrokScenario")(function* (fixtureName: s
   );
   yield* Console.log(`Wrote ${transcriptEntries.length} Grok ACP replay entries to ${outputPath}`);
 
-  // The live orchestration must already satisfy the fixture's assertions;
-  // replay then proves the recorded frames reproduce it.
   const liveFailure = yield* Effect.try(() => variant.assertOutput(result, transcript)).pipe(
     Effect.flip,
     Effect.option,

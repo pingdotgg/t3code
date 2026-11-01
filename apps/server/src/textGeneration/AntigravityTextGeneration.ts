@@ -13,8 +13,8 @@ import { type AcpError, AcpRequestError } from "effect-acp/errors";
 
 import { applyAntigravityAcpModelSelection } from "../provider/acp/AntigravityAcpSupport.ts";
 import { removeAntigravitySessionFiles } from "../provider/acp/AntigravitySessionFiles.ts";
-import type { AcpSessionRuntime } from "../provider/acp/AcpSessionRuntime.ts";
-import * as TextGenerationOperations from "./TextGenerationOperations.ts";
+import type * as AcpSessionRuntime from "@t3tools/provider-acp/server/AcpSessionRuntime";
+import * as TextGenerationOperations from "@t3tools/provider-core/server/textGenerationOperations";
 
 const ANTIGRAVITY_TIMEOUT_MS = 180_000;
 const MAX_OUTPUT_CHARS = 128_000;
@@ -25,12 +25,13 @@ const decodeConfiguration = Schema.decodeEffect(Schema.fromJsonString(Configurat
 const decodeConfigurationObject = Schema.decodeUnknownEffect(Configuration);
 
 type AntigravityTextRuntime = Pick<
-  AcpSessionRuntime["Service"],
+  AcpSessionRuntime.AcpSessionRuntime["Service"],
   | "start"
   | "setMode"
   | "getConfigOptions"
   | "getEvents"
   | "setModel"
+  | "setConfigOption"
   | "prompt"
   | "cancel"
   | "handleSessionUpdate"
@@ -48,13 +49,10 @@ type AntigravityTextRuntime = Pick<
 
 export interface AntigravityTextGenerationOptions {
   readonly profileDirectory: string;
-  /** Model the provider default alias selects, when the account offers it. */
   readonly defaultModel?: Effect.Effect<string | undefined>;
-  /** Uses the instance's personal Google login, with no injected MCP servers or client tools. */
   readonly makeRuntime: (
     cwd: string,
   ) => Effect.Effect<AntigravityTextRuntime, AcpError | ProviderSetupError, Scope.Scope>;
-  /** Registers the whole helper so sign-out can stop it before clearing credentials. */
   readonly withProcess: <A, E, R>(
     stop: Effect.Effect<void>,
     task: Effect.Effect<A, E, R>,
@@ -91,18 +89,44 @@ export const isAntigravityTextGenerationAvailable = Effect.fn(
   return true;
 });
 
-/** Runs short-lived subscription helpers without giving them the user's workspace. */
 export const makeAntigravityTextGeneration = Effect.fn("makeAntigravityTextGeneration")(function* (
   options: AntigravityTextGenerationOptions,
 ) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
+  const hasOnlyRuntimeDirectories = Effect.fn(
+    "AntigravityTextGeneration.hasOnlyRuntimeDirectories",
+  )(function* (cwd: string) {
+    const root = yield* fs.realPath(cwd);
+    // ACP creates these empty skill directories before the first prompt.
+    const allowed = new Set([
+      path.join(root, ".agents"),
+      path.join(root, ".agents", "skills"),
+      path.join(root, ".gemini"),
+      path.join(root, ".gemini", "skills"),
+    ]);
+    const directories = [root];
+    for (const directory of directories) {
+      for (const name of yield* fs.readDirectory(directory)) {
+        const entry = path.join(directory, name);
+        if (
+          !allowed.has(entry) ||
+          (yield* fs.realPath(entry)) !== entry ||
+          (yield* fs.stat(entry)).type !== "Directory"
+        ) {
+          return false;
+        }
+        directories.push(entry);
+      }
+    }
+    return true;
+  });
+
   const available = isAntigravityTextGenerationAvailable(options.profileDirectory).pipe(
     Effect.provideService(FileSystem.FileSystem, fs),
     Effect.provideService(Path.Path, path),
   );
 
-  // Ignores `cwd`: the helper runs in an empty temp directory, away from the project.
   const runAntigravityJson = Effect.fn("AntigravityTextGeneration.runJson")(
     function* <S extends Schema.Top>(input: TextGenerationOperations.Request<S>) {
       const { operation } = input;
@@ -257,7 +281,7 @@ export const makeAntigravityTextGeneration = Effect.fn("makeAntigravityTextGener
           );
         }).pipe(Effect.scoped);
 
-        if ((yield* fs.readDirectory(cwd)).length > 0) {
+        if (!(yield* hasOnlyRuntimeDirectories(cwd))) {
           return yield* new TextGenerationError({
             operation,
             detail: "Antigravity wrote files during text generation.",
@@ -306,5 +330,8 @@ export const makeAntigravityTextGeneration = Effect.fn("makeAntigravityTextGener
       ),
   );
 
-  return TextGenerationOperations.fromRunner("AntigravityTextGeneration", runAntigravityJson);
+  return TextGenerationOperations.fromRunner(
+    "AntigravityTextGeneration",
+    TextGenerationOperations.withoutInvestigation("Antigravity", runAntigravityJson),
+  );
 });

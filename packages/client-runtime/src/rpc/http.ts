@@ -27,7 +27,7 @@ export class RemoteEnvironmentAuthFetchError extends Data.TaggedError(
   readonly cause: unknown;
 }> {}
 
-export class RemoteEnvironmentAuthInvalidJsonError extends Data.TaggedError(
+class RemoteEnvironmentAuthInvalidJsonError extends Data.TaggedError(
   "RemoteEnvironmentAuthInvalidJsonError",
 )<{
   readonly message: string;
@@ -113,7 +113,6 @@ export const makeEnvironmentHttpApiGroupClient = <
     }),
   );
 
-/** Contract-derived request URLs for authentication proofs, tracing, and structured errors. */
 export const makeEnvironmentHttpApiUrlBuilder = (httpBaseUrl: string) =>
   HttpApiClient.urlBuilder(EnvironmentHttpApi, {
     baseUrl: remoteApiBaseUrl(httpBaseUrl),

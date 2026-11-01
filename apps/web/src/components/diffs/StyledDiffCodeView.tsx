@@ -12,7 +12,14 @@ import type { Ref } from "react";
 import { DIFF_SURFACE_THEME_UNSAFE_CSS } from "~/lib/diffRendering";
 import { DiffWorkerPoolProvider } from "../DiffWorkerPoolProvider";
 
-const DIFF_VIEW_UNSAFE_CSS = `${DIFF_SURFACE_THEME_UNSAFE_CSS}
+export const DIFF_VIEW_UNSAFE_CSS = `${DIFF_SURFACE_THEME_UNSAFE_CSS}
+/* A 1fr track's automatic minimum grows with the currently mounted lines. In split
+   wrap mode that shifts width between columns, rewraps rows and makes the virtualizer
+   repeatedly correct the scroll position. Keep both code columns at the same width. */
+[data-diff-type="split"][data-overflow="wrap"] {
+  --diffs-code-grid: var(--diffs-grid-number-column-width) minmax(0, 1fr);
+}
+
 :is(
   [data-line],
   [data-line-annotation],
@@ -86,8 +93,11 @@ const DIFF_VIEW_UNSAFE_CSS = `${DIFF_SURFACE_THEME_UNSAFE_CSS}
   font-family: var(--font-sans) !important;
   font-size: 12px !important;
   line-height: 1 !important;
+  /* Collapsed items are never remeasured: the painted header must match diffHeaderHeight.
+     Center controls in that height instead of adding padding to their intrinsic height. */
+  height: 32px !important;
   min-height: 32px !important;
-  padding-block: 6px !important;
+  padding-block: 0 !important;
   padding-inline: 8px 12px !important;
 }
 
@@ -98,101 +108,35 @@ const DIFF_VIEW_UNSAFE_CSS = `${DIFF_SURFACE_THEME_UNSAFE_CSS}
   box-shadow: inset 3px 0 color-mix(in srgb, var(--code-foreground) 24%, transparent);
 }
 
+/* Hunk separators are the way to the unchanged lines between hunks. They keep the library's
+   layout, with the expand button in its own cell, but sit one step off the code surface so they
+   read as quiet controls; hover brings them forward. */
 :is([data-separator="line-info"], [data-separator="line-info-basic"]) {
+  /* Exact and margin-free: the virtualizer places rows from hunkSeparatorHeight below. */
   height: 24px !important;
   margin-block: 0 !important;
-  background-color: var(--code-background) !important;
+  --diffs-bg-separator: color-mix(in srgb, var(--code-background) 97%, var(--code-foreground));
 }
 
-:is([data-separator="line-info"], [data-separator="line-info-basic"])
-  [data-separator-wrapper] {
-  padding-inline: 8px 12px !important;
-  background-color: transparent !important;
-}
-
-:is([data-separator="line-info"], [data-separator="line-info-basic"])
-  [data-separator-content] {
-  gap: 8px;
-  padding-inline: 0 !important;
-  background-color: transparent !important;
-  color: color-mix(in srgb, var(--code-foreground) 52%, var(--code-background)) !important;
+:is([data-separator="line-info"], [data-separator="line-info-basic"]) [data-separator-content] {
+  color: color-mix(in srgb, var(--code-foreground) 50%, var(--code-background)) !important;
   font-family: var(--font-sans) !important;
   font-size: 11px !important;
   text-decoration: none !important;
 }
 
-:is([data-separator="line-info"], [data-separator="line-info-basic"])
-  [data-unmodified-lines] {
-  display: flex !important;
-  min-width: 0;
-  flex: 1 1 auto;
-  align-items: center;
-  gap: 8px;
+:is([data-separator="line-info"], [data-separator="line-info-basic"]) [data-expand-button] {
+  color: color-mix(in srgb, var(--code-foreground) 50%, var(--code-background)) !important;
 }
 
 :is([data-separator="line-info"], [data-separator="line-info-basic"])[data-expand-index]
-  [data-unmodified-lines] {
-  cursor: pointer;
-}
-
-:is([data-separator="line-info"], [data-separator="line-info-basic"])
-  [data-unmodified-lines]::before,
-:is([data-separator="line-info"], [data-separator="line-info-basic"])
-  [data-unmodified-lines]::after {
-  width: auto;
-  height: 1px;
-  flex: 1 1 auto;
-  content: "";
-  background-color: color-mix(in srgb, var(--code-background) 92%, var(--code-foreground));
-}
-
-:is([data-separator="line-info"], [data-separator="line-info-basic"])[data-expand-index]
-  [data-separator-wrapper] {
-  grid-template-columns: 0 minmax(0, 1fr) !important;
-}
-
-:is([data-separator="line-info"], [data-separator="line-info-basic"])[data-expand-index]
-  [data-separator-content] {
-  grid-column: 2 !important;
-}
-
-/* Visually hidden rather than display: none so the expand action stays keyboard-reachable. */
-:is([data-separator="line-info"], [data-separator="line-info-basic"])
-  [data-expand-button] {
-  position: absolute !important;
-  width: 1px !important;
-  height: 1px !important;
-  margin: -1px !important;
-  padding: 0 !important;
-  overflow: hidden !important;
-  clip-path: inset(50%) !important;
-  border: 0 !important;
-  white-space: nowrap !important;
-}
-
-:is([data-separator="line-info"], [data-separator="line-info-basic"]):has(
-    [data-expand-button]
-  )
-  [data-separator-content] {
-  cursor: pointer;
-}
-
-:is([data-separator="line-info"], [data-separator="line-info-basic"]):has(
-    [data-expand-button]
-  ):is(:hover, :focus-within)
-  [data-separator-content] {
-  color: color-mix(in srgb, var(--code-foreground) 76%, var(--code-background)) !important;
-}
-
-:is([data-separator="line-info"], [data-separator="line-info-basic"]):has(
-    [data-expand-button]
-  ):is(:hover, :focus-within)
-  [data-unmodified-lines]::before,
-:is([data-separator="line-info"], [data-separator="line-info-basic"]):has(
-    [data-expand-button]
-  ):is(:hover, :focus-within)
-  [data-unmodified-lines]::after {
-  background-color: color-mix(in srgb, var(--code-background) 84%, var(--code-foreground));
+  :is([data-separator-content], [data-expand-button]):hover {
+  color: var(--code-foreground) !important;
+  background-color: color-mix(
+    in srgb,
+    var(--code-background) 92%,
+    var(--code-foreground)
+  ) !important;
 }
 
 [data-diffs-header] [data-header-content] {
@@ -201,8 +145,7 @@ const DIFF_VIEW_UNSAFE_CSS = `${DIFF_SURFACE_THEME_UNSAFE_CSS}
 }
 
 /* Pierre clips file names with overflow: hidden for its start ellipsis. A 1em line box cuts off
-   descenders. Only the clipped names get room: 16px plus the header's 12px of padding stays
-   inside its 32px min-height, which diffHeaderHeight assumes. */
+   descenders; give the clipped names room inside the fixed-height header. */
 [data-diffs-header] :is([data-title], [data-prev-name]) {
   line-height: 16px !important;
 }
@@ -238,7 +181,7 @@ const DIFF_VIEW_UNSAFE_CSS = `${DIFF_SURFACE_THEME_UNSAFE_CSS}
 }
 
 /* Expanding a file mounts its body all at once; easing it in matches the 200ms the app's
-   collapsibles take. Appearance only — the viewer owns geometry, so height cannot animate.
+   collapsibles take. Appearance only: the viewer owns geometry, so height cannot animate.
    Departing content cuts, the same one-way rule the pull request chrome fold follows. */
 [data-diff],
 [data-file] {
@@ -261,24 +204,19 @@ const DIFF_VIEW_UNSAFE_CSS = `${DIFF_SURFACE_THEME_UNSAFE_CSS}
 `;
 
 export type StyledDiffCodeViewOptions<LAnnotation> = Omit<
-  NonNullable<CodeViewProps<LAnnotation>["options"]>,
+  NonNullable<CodeViewProps<LAnnotation, undefined>["options"]>,
   "unsafeCSS" | "itemMetrics" | "layout"
 >;
 
 type StyledDiffCodeViewProps<LAnnotation> = (
-  | Omit<ControlledCodeViewProps<LAnnotation>, "options">
-  | Omit<UncontrolledCodeViewProps<LAnnotation>, "options">
+  | Omit<ControlledCodeViewProps<LAnnotation, undefined>, "options">
+  | Omit<UncontrolledCodeViewProps<LAnnotation, undefined>, "options">
 ) & {
   readonly options?: StyledDiffCodeViewOptions<LAnnotation>;
-  readonly viewerRef?: Ref<CodeViewHandle<LAnnotation>>;
-  /**
-   * Appended to the shared stylesheet inside the viewer's shadow root, for a surface that has
-   * to restyle chrome the viewer owns — such as replacing its per-file line counts.
-   */
+  readonly viewerRef?: Ref<CodeViewHandle<LAnnotation, undefined>>;
   readonly unsafeCSSExtra?: string;
 };
 
-/** The shared web CodeView surface: app styling and virtualized geometry stay paired here. */
 export function StyledDiffCodeView<LAnnotation = undefined>({
   options,
   viewerRef,
@@ -291,8 +229,6 @@ export function StyledDiffCodeView<LAnnotation = undefined>({
       <CodeView<LAnnotation>
         {...props}
         {...(viewerRef ? { ref: viewerRef } : {})}
-        // The custom element itself is focusable for keyboard scrolling. Its native outline sits
-        // outside the panel clipping boundary; actual controls inside retain their own indicators.
         className={
           className
             ? `diff-render-surface [--code-background:var(--background)] outline-none ${className}`
@@ -306,16 +242,12 @@ export function StyledDiffCodeView<LAnnotation = undefined>({
           itemMetrics: {
             diffHeaderHeight: 32,
             hunkSeparatorHeight: 24,
-            // Pierre uses its general file spacing as a fallback in expanded-file layout paths.
-            // Keep it zero alongside the explicit paddingTop or expanding the first file can
-            // reintroduce the library's default 8px gap above its header.
+            // Zero both spacing and paddingTop; Pierre's expanded-file fallback otherwise adds an 8px header
+            // gap.
             spacing: 0,
             paddingTop: 0,
-            // Unlike the gap above, the 8px under a file's last line is painted
-            // unconditionally by Pierre's stylesheet (`--diffs-gap-fallback`), so the metric has
-            // to count it: at zero every expanded file's virtual height ran 8px short of its
-            // rendered height, and the end of the list sat past the reachable scroll range —
-            // one clipped file row per expanded file above it.
+            // Include Pierre's 8px --diffs-gap-fallback in metrics or each expanded file loses a scrollable
+            // row.
             paddingBottom: 8,
           },
           layout: { paddingTop: 0, paddingBottom: 0, gap: 0 },

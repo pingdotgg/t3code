@@ -1,54 +1,42 @@
 import type { EnvironmentMachineKind } from "@t3tools/contracts";
-import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 
 import * as ProcessRunner from "../processRunner.ts";
 
-/**
- * Best-effort hardware detection for the environment icon. Every probe is
- * allowed to fail: a null result means "no signal", and the client draws a
- * generic server until the user picks something in Settings → Connections.
- */
-
 const DMI_ROOT = "/sys/class/dmi/id";
 const KERNEL_RELEASE_PATH = "/proc/sys/kernel/osrelease";
 
-// SMBIOS 3.x System Enclosure types (table 17). Codes that describe a shape
-// rather than a machine (docking stations, blades enclosures, IoT gateways)
-// fall through to null on purpose.
+// SMBIOS 3.x System Enclosure types (table 17).
 const DMI_CHASSIS_KINDS: Readonly<Record<string, EnvironmentMachineKind>> = {
-  "3": "desktop", // Desktop
-  "4": "desktop", // Low Profile Desktop
-  "5": "desktop", // Pizza Box
-  "6": "desktop", // Mini Tower
-  "7": "desktop", // Tower
-  "8": "laptop", // Portable
-  "9": "laptop", // Laptop
-  "10": "laptop", // Notebook
-  "13": "desktop", // All in One
-  "14": "laptop", // Sub Notebook
-  "15": "desktop", // Space-saving
-  "16": "desktop", // Lunch Box
-  "17": "server", // Main Server Chassis
-  "18": "server", // Expansion Chassis
-  "19": "server", // SubChassis
-  "20": "server", // Bus Expansion Chassis
-  "21": "server", // Peripheral Chassis
-  "22": "server", // RAID Chassis
-  "23": "server", // Rack Mount Chassis
-  "24": "server", // Sealed-case PC
-  "28": "server", // Blade
-  "31": "laptop", // Convertible
-  "32": "laptop", // Detachable
-  "35": "desktop", // Mini PC
+  "3": "desktop",
+  "4": "desktop",
+  "5": "desktop",
+  "6": "desktop",
+  "7": "desktop",
+  "8": "laptop",
+  "9": "laptop",
+  "10": "laptop",
+  "13": "desktop",
+  "14": "laptop",
+  "15": "desktop",
+  "16": "desktop",
+  "17": "server",
+  "18": "server",
+  "19": "server",
+  "20": "server",
+  "21": "server",
+  "22": "server",
+  "23": "server",
+  "24": "server",
+  "28": "server",
+  "31": "laptop",
+  "32": "laptop",
+  "35": "desktop",
 };
 
-// Hypervisors and cloud providers write themselves into the DMI vendor or
-// product strings; any hit means the box is a VM, and a VM reads as "cloud"
-// regardless of the chassis type the hypervisor fakes. Hyper-V is matched on
-// its "Virtual Machine" product, not the "Microsoft Corporation" vendor that
-// physical Surface devices share.
+// VMs read as cloud regardless of chassis. Match Hyper-V's product, since Surface shares its vendor.
 const VIRTUALIZATION_MARKERS = [
   "qemu",
   "kvm",
@@ -75,8 +63,7 @@ function normalize(value: string | null | undefined): string | null {
   return trimmed && trimmed.length > 0 ? trimmed : null;
 }
 
-/** Marketing names and Intel-era model identifiers share these prefixes. */
-export function machineKindFromAppleProductName(name: string): EnvironmentMachineKind | null {
+function machineKindFromAppleProductName(name: string): EnvironmentMachineKind | null {
   const normalized = name.trim().toLowerCase().replaceAll(/\s+/g, "");
   if (normalized.startsWith("macmini")) return "mac-mini";
   if (normalized.startsWith("macstudio")) return "mac-studio";
@@ -85,7 +72,7 @@ export function machineKindFromAppleProductName(name: string): EnvironmentMachin
   return null;
 }
 
-export function machineKindFromDmi(input: {
+function machineKindFromDmi(input: {
   readonly chassisType: string | null;
   readonly sysVendor: string | null;
   readonly productName: string | null;
@@ -95,7 +82,6 @@ export function machineKindFromDmi(input: {
   if (VIRTUALIZATION_MARKERS.some((marker) => vendorAndProduct.includes(marker))) {
     return "cloud";
   }
-  // Apple hardware booting Linux (Asahi) still reports the Apple product name.
   const appleKind = machineKindFromAppleProductName(productName);
   if (appleKind !== null) {
     return appleKind;
@@ -129,9 +115,7 @@ const runProbe = Effect.fn("runMachineProbe")(function* (input: {
     );
 });
 
-// IOKit's `product` node carries the marketing name ("Mac mini (2024)") on
-// Apple silicon; Intel Macs lack it, so `hw.model` ("Macmini8,1") is the
-// fallback. Both are single-digit-millisecond calls.
+// Apple silicon exposes IOKit's marketing name; Intel needs the hw.model fallback.
 const detectDarwinMachineKind = Effect.fn("detectDarwinMachineKind")(function* () {
   const ioreg = yield* runProbe({ command: "ioreg", args: ["-rd1", "-n", "product"] });
   const productName = ioreg?.match(/"product-name"\s*=\s*<"([^"]+)">/)?.[1] ?? null;
@@ -151,8 +135,7 @@ const detectLinuxMachineKind = Effect.fn("detectLinuxMachineKind")(function* () 
     readOptionalFile(`${DMI_ROOT}/sys_vendor`),
     readOptionalFile(`${DMI_ROOT}/product_name`),
   ]);
-  // WSL exposes Microsoft in its kernel release on both WSL 1 and WSL 2.
-  // Check it before DMI because WSL 2 presents as a Hyper-V VM.
+  // Check WSL first; WSL 2 presents as a Hyper-V VM in DMI.
   if (kernelRelease?.toLowerCase().includes("microsoft")) {
     return "linux";
   }
@@ -161,7 +144,7 @@ const detectLinuxMachineKind = Effect.fn("detectLinuxMachineKind")(function* () 
 
 export const detectServerEnvironmentMachineKind = Effect.fn("detectServerEnvironmentMachineKind")(
   function* () {
-    const platform = yield* HostProcessPlatform;
+    const platform = yield* HostProcess.Platform;
     switch (platform) {
       case "darwin":
         return yield* detectDarwinMachineKind();

@@ -1,7 +1,27 @@
+import { type OrchestrationV2ProviderTurn, type RunAttemptId } from "@t3tools/contracts";
+import {
+  deriveLatestThreadRun,
+  deriveThreadRuntime,
+} from "@t3tools/client-runtime/state/thread-execution";
+import { checkpointFileTotals } from "@t3tools/client-runtime/state/thread-checkpoints";
+import { derivePendingBackgroundWork } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
+import {
+  latestUnheldRun,
+  usageLimitRunPresentedAsLatest,
+} from "@t3tools/shared/orchestrationV2ThreadError";
 import * as Option from "effect/Option";
-import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
+import type { SetStateAction } from "react";
+import { applyClaudePromptEffortPrefix, resolvePromptInjectedEffort } from "@t3tools/shared/model";
+import { getProviderModelCapabilities } from "../providerModels";
+import { sanitizeThreadErrorMessage } from "@t3tools/client-runtime/errors";
+import type {
+  EnvironmentThread,
+  ThreadStructure,
+  EnvironmentThreadShell,
+} from "@t3tools/client-runtime/state/shell";
 import {
   ANTIGRAVITY_DEFAULT_MODEL,
+  PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
   type AssetCreateUrlInput,
   type AssetCreateUrlResult,
   type ChatFileAttachment,
@@ -11,7 +31,7 @@ import {
   ProjectId,
   type MessageId,
   type ModelSelection,
-  type OrchestrationV2ProjectedTurnItem,
+  type OrchestrationMessageContext,
   type PreviewAnnotationPayload,
   type ProviderInteractionMode,
   ProviderDriverKind,
@@ -20,6 +40,7 @@ import {
   type ScopedProjectRef,
   type ScopedThreadRef,
   type ThreadContextRecord,
+  type EnvironmentContextRecord,
   type ThreadId,
   type ThreadLinkedPullRequest,
   type RunId,
@@ -27,7 +48,6 @@ import {
 } from "@t3tools/contracts";
 import { worktreeSetupAgentStarted } from "@t3tools/client-runtime/worktree-setup";
 import * as DateTime from "effect/DateTime";
-import { parseScopedThreadKey } from "@t3tools/client-runtime/environment";
 import { resolveAssetUrl } from "@t3tools/client-runtime/state/assets";
 import {
   squashAtomCommandFailure,
@@ -38,7 +58,7 @@ import {
   appendCodexArtifactTemplateUsePrompt,
   codexArtifactTemplateUsePrompt,
   type CodexArtifactTemplate,
-} from "@t3tools/client-runtime/codex-artifact-templates";
+} from "@t3tools/shared/codexArtifactTemplates";
 import { presentThreadShell } from "@t3tools/client-runtime/state/shell";
 import {
   type ChatMessage,
@@ -47,13 +67,31 @@ import {
   type Thread,
   type TurnDiffSummary,
 } from "../types";
-import { type ComposerImageAttachment, type DraftThreadState } from "../composerDraftStore";
+import {
+  type ComposerFileAttachment,
+  type ComposerImageAttachment,
+  type DraftId,
+  type DraftThreadState,
+} from "../composerDraftStore";
 import * as Schema from "effect/Schema";
 import { appAtomRegistry } from "../rpc/atomRegistry";
 import { environmentThreadShells, environmentThreadDetails } from "../state/threads";
 import { waitForAtomValue } from "../state/waitForAtomValue";
-import { filterTerminalContextsWithText, type TerminalContextDraft } from "../lib/terminalContext";
-import { stripInlineContextReferences } from "~/lib/composerContextReferences";
+import {
+  filterTerminalContextsWithText,
+  formatTerminalContextLabel,
+  type TerminalContextDraft,
+} from "../lib/terminalContext";
+import {
+  removeInlineContextReference,
+  stripInlineContextReferences,
+} from "~/lib/composerContextReferences";
+import {
+  previewAnnotationContextLabel,
+  reviewCommentContextLabel,
+  terminalContextReference,
+} from "../lib/composerContextRecords";
+import type { ComposerDispatchMode } from "@t3tools/client-runtime/state/composer-dispatch";
 import type { DraftThreadEnvMode } from "../composerDraftStore";
 import { collapseExpandedComposerCursor, type ComposerSubmissionIntent } from "../composer-logic";
 import type { ReviewCommentContext } from "../reviewCommentContext";
@@ -66,6 +104,9 @@ import {
   resolveSelectableProviderInstanceEntry,
   type ProviderInstanceEntry,
 } from "../providerInstances";
+
+type ThreadProjection = EnvironmentThread["projection"];
+type ThreadStructureRow = ThreadStructure["visibleTurnItems"][number];
 
 export const LAST_INVOKED_SCRIPT_BY_PROJECT_KEY = "t3code:last-invoked-script-by-project";
 export const MAX_HIDDEN_MOUNTED_TERMINAL_THREADS = 10;
@@ -95,7 +136,6 @@ export function agentControlledBrowserCloseConfirmation(
   ].join("\n");
 }
 
-/** The floating player hides only while the same source is rendered in the panel. */
 export function shouldRenderPreviewMiniPlayer(
   source: PreviewMiniPlayerSource | null,
   renderedRightPanelSurface: RightPanelSurface | null,
@@ -129,7 +169,6 @@ interface ProactivePanelObservation {
   userActionRevision: number;
 }
 
-/** Capture user intent before loading or metadata writes can defer panel activation. */
 export function observeProactivePanelUserChoice(
   previous: ProactivePanelObservation | null,
   input: { threadKey: string; runningTurnId: RunId | null; userActionRevision: number },
@@ -147,7 +186,6 @@ export function observeProactivePanelUserChoice(
   };
 }
 
-/** Follow a changed server link only when the panel still shows the previous linked PR. */
 export function shouldRetargetThreadPullRequestPanel(
   previous: ThreadLinkedPullRequest | null,
   current: ThreadLinkedPullRequest | null,
@@ -181,11 +219,9 @@ export function shouldOpenProactiveTurnDiff(input: {
 }
 
 export function resolveProactiveTurnDiffAction(input: {
-  checkpoint: Pick<TurnDiffSummary, "status" | "files"> | undefined;
+  checkpoint: Pick<TurnDiffSummary, "status" | "files" | "filesTotal"> | undefined;
   isGitRepo: boolean | undefined;
-  activeSurfaceKind: RightPanelSurface["kind"] | null;
 }): "defer" | "ignore" | "open" {
-  if (input.activeSurfaceKind === "pull-request") return "ignore";
   if (input.checkpoint === undefined || input.checkpoint.status === "missing") return "defer";
   if (input.isGitRepo === undefined) return "defer";
   if (
@@ -195,11 +231,18 @@ export function resolveProactiveTurnDiffAction(input: {
   ) {
     return "ignore";
   }
-  const changedLines = input.checkpoint.files.reduce(
-    (total, file) => total + file.additions + file.deletions,
-    0,
-  );
-  return input.checkpoint.files.length >= 3 || changedLines >= 50 ? "open" : "ignore";
+  const totals = checkpointFileTotals(input.checkpoint);
+  return totals.count >= 3 || totals.additions + totals.deletions >= 50 ? "open" : "ignore";
+}
+
+/** Mark reactivated Diff tabs to preserve review scope. Already-active tabs must not leave a marker for
+ * the next open. */
+export function resolveExplicitDiffOpenOnActivate(input: {
+  readonly surfaceKind: RightPanelSurface["kind"];
+  readonly diffOpen: boolean;
+  readonly activeThreadRef: ScopedThreadRef;
+}): ScopedThreadRef | null {
+  return input.surfaceKind === "diff" && !input.diffOpen ? input.activeThreadRef : null;
 }
 
 export function codexArtifactTemplatePromptToAppend(
@@ -212,15 +255,6 @@ export function codexArtifactTemplatePromptToAppend(
 }
 
 export const LastInvokedScriptByProjectSchema = Schema.Record(ProjectId, Schema.String);
-
-export function resolveEffectiveInteractionMode(input: {
-  planModeEnabled: boolean;
-  composerInteractionMode: ProviderInteractionMode | null;
-  threadInteractionMode: ProviderInteractionMode | null | undefined;
-}): ProviderInteractionMode {
-  if (!input.planModeEnabled) return "default";
-  return input.composerInteractionMode ?? input.threadInteractionMode ?? "default";
-}
 
 export function shouldDockDraftHeroForSubmission(input: {
   isDraftHeroState: boolean;
@@ -259,12 +293,8 @@ export function shouldReleaseTimelineAnchorForToolActivity(input: {
   });
 }
 
-export {
-  findRecordedWorktreeSetup,
-  resolveVisibleWorktreeSetup,
-} from "@t3tools/client-runtime/worktree-setup";
+export { resolveVisibleWorktreeSetup } from "@t3tools/client-runtime/worktree-setup";
 
-/** Keep setup visible across local dispatch, durable preparation, and the live stream. */
 export function resolveWorktreeSetupProgress(input: {
   threadId: ThreadId;
   localPreparing: boolean;
@@ -290,7 +320,6 @@ export function resolveDraftHeroState(input: {
   isWorking: boolean;
   draftHeroDockRequested: boolean;
   backgroundSubmissionPending: boolean;
-  /** A worktree setup card is on the timeline, so the timeline must stay visible. */
   hasWorktreeSetupCard?: boolean;
 }): boolean {
   if (input.hasWorktreeSetupCard) {
@@ -307,29 +336,16 @@ export function resolveDraftHeroState(input: {
   );
 }
 
-/**
- * Keep painted timelines on screen across thread jumps. Remounting LegendList
- * (or handing it an empty first paint) punches a hole through the chat pane —
- * white in light mode — so cmd+1/2/3 spam flashes even when the destination
- * is already cached.
- *
- * Stored at module scope because ChatView remounts when the thread route
- * changes (same pattern as the thread-error banner session dismissals).
- * Remember more than the last thread so jumping back to cmd+1 does not show
- * cmd+3's messages, and so a cached destination can paint on the first frame.
- */
+/** Remounting or initially emptying LegendList flashes the chat pane, even for cached threads. */
 export type HeldThreadTimeline<T extends readonly unknown[]> = {
   threadKey: string | null;
   entries: T;
-  markdownCwd?: string | null;
-  workspaceRoot?: string | null;
 };
 
 const MAX_REMEMBERED_THREAD_TIMELINES = 16;
 
 let rememberedThreadTimelines = new Map<string, HeldThreadTimeline<readonly unknown[]>>();
 let rememberedThreadTimelineOrder: string[] = [];
-let lastReadyThreadKey: string | null = null;
 
 function rememberThreadTimelineEntries(held: HeldThreadTimeline<readonly unknown[]>): void {
   if (held.threadKey === null) {
@@ -346,7 +362,6 @@ function rememberThreadTimelineEntries(held: HeldThreadTimeline<readonly unknown
       rememberedThreadTimelines.delete(evicted);
     }
   }
-  lastReadyThreadKey = held.threadKey;
 }
 
 export function rememberReadyThreadTimeline<T extends readonly unknown[]>(
@@ -367,42 +382,9 @@ export function peekRememberedThreadTimeline<T extends readonly unknown[]>(
   return (rememberedThreadTimelines.get(threadKey)?.entries as T | undefined) ?? null;
 }
 
-export function peekHeldThreadTimeline<
-  T extends readonly unknown[],
->(): HeldThreadTimeline<T> | null {
-  if (lastReadyThreadKey === null) {
-    return null;
-  }
-  const held = rememberedThreadTimelines.get(lastReadyThreadKey);
-  if (held === undefined || held.entries.length === 0) {
-    return null;
-  }
-  return held as HeldThreadTimeline<T>;
-}
-
 export function resetHeldThreadTimeline(): void {
   rememberedThreadTimelines = new Map();
   rememberedThreadTimelineOrder = [];
-  lastReadyThreadKey = null;
-}
-
-export function threadKeysShareEnvironment(left: string | null, right: string | null): boolean {
-  if (left === null || right === null) {
-    return false;
-  }
-  const leftRef = parseScopedThreadKey(left);
-  const rightRef = parseScopedThreadKey(right);
-  return leftRef !== null && rightRef !== null && leftRef.environmentId === rightRef.environmentId;
-}
-
-/** True while we still paint another thread's last snapshot. */
-export function isPaintOnlyThreadTimeline(
-  displayThreadKey: string | null,
-  activeThreadKey: string | null,
-): boolean {
-  return (
-    displayThreadKey !== null && activeThreadKey !== null && displayThreadKey !== activeThreadKey
-  );
 }
 
 export function resolveThreadSwitchTimeline<T extends readonly unknown[]>(input: {
@@ -410,62 +392,18 @@ export function resolveThreadSwitchTimeline<T extends readonly unknown[]>(input:
   activeThreadKey: string | null;
   nextEntries: T;
   rememberedForActive?: T | null;
-  lastReady?: HeldThreadTimeline<T> | null;
-}): { entries: T; displayThreadKey: string | null } {
+}): T {
   if (input.nextEntries.length > 0) {
-    return { entries: input.nextEntries, displayThreadKey: input.activeThreadKey };
+    return input.nextEntries;
   }
 
   const rememberedForActive =
     input.rememberedForActive ?? peekRememberedThreadTimeline<T>(input.activeThreadKey);
   if (input.loading && rememberedForActive !== null && rememberedForActive.length > 0) {
-    return { entries: rememberedForActive, displayThreadKey: input.activeThreadKey };
+    return rememberedForActive;
   }
 
-  const lastReady = input.lastReady ?? peekHeldThreadTimeline<T>();
-  if (
-    input.loading &&
-    lastReady !== null &&
-    lastReady.threadKey !== null &&
-    lastReady.threadKey !== input.activeThreadKey &&
-    lastReady.entries.length > 0 &&
-    threadKeysShareEnvironment(lastReady.threadKey, input.activeThreadKey)
-  ) {
-    return { entries: lastReady.entries, displayThreadKey: lastReady.threadKey };
-  }
-  return { entries: input.nextEntries, displayThreadKey: input.activeThreadKey };
-}
-
-export function resolveDraftPromotionNavigationTarget(input: {
-  serverThreadRef: ScopedThreadRef | null;
-  serverThread: Pick<Thread, "latestRun" | "latestUserMessageAt"> | null | undefined;
-  backgroundSubmissionPending: boolean;
-}): ScopedThreadRef | null {
-  if (input.backgroundSubmissionPending) {
-    return null;
-  }
-  const latestRun = input.serverThread?.latestRun ?? null;
-  const runStarted = latestRun?.startedAt != null;
-  const startupStopped =
-    latestRun?.status === "failed" ||
-    latestRun?.status === "interrupted" ||
-    latestRun?.status === "cancelled";
-  // Like main, promote once the server owns the send. The shared chat view
-  // keeps the optimistic message and setup progress mounted through the route swap.
-  const messagePersisted = input.serverThread?.latestUserMessageAt != null;
-  return runStarted || startupStopped || messagePersisted ? input.serverThreadRef : null;
-}
-
-export function scheduleEnvironmentReconnectWarning(showWarning: () => void): () => void {
-  const timeoutId = globalThis.setTimeout(showWarning, ENVIRONMENT_RECONNECT_WARNING_GRACE_MS);
-  return () => globalThis.clearTimeout(timeoutId);
-}
-
-export function hasEnvironmentReconnectWarningGraceElapsed(
-  activeEnvironmentId: EnvironmentId | null,
-  elapsedEnvironmentId: EnvironmentId | null,
-): boolean {
-  return activeEnvironmentId !== null && activeEnvironmentId === elapsedEnvironmentId;
+  return input.nextEntries;
 }
 
 export function startNewThreadForProject(
@@ -544,26 +482,6 @@ export function buildLocalDraftThread(
   });
 }
 
-export function shouldWriteThreadErrorToCurrentServerThread(input: {
-  serverThread:
-    | {
-        environmentId: EnvironmentId;
-        id: ThreadId;
-      }
-    | null
-    | undefined;
-  routeThreadRef: ScopedThreadRef;
-  targetThreadId: ThreadId;
-}): boolean {
-  return Boolean(
-    input.serverThread &&
-    input.targetThreadId === input.routeThreadRef.threadId &&
-    input.serverThread.environmentId === input.routeThreadRef.environmentId &&
-    input.serverThread.id === input.targetThreadId,
-  );
-}
-
-/** Use the same enabled instance for the composer, provider status, and chat actions. */
 export function resolveComposerProviderSelection(input: {
   entries: ReadonlyArray<ProviderInstanceEntry>;
   candidateInstanceIds: ReadonlyArray<ProviderInstanceId | null | undefined>;
@@ -613,13 +531,13 @@ export function resolveComposerProviderSelection(input: {
       : requestedInstanceId;
   return {
     selectedProviderEntry,
+    requestedInstanceId,
     requestedDriverKind,
     lockedContinuationGroupKey,
     unavailableProviderInstanceId,
   };
 }
 
-/** Keep restored drafts and every plan control on the selected instance's supported mode. */
 export function resolveComposerInteractionMode(input: {
   planModeEnabled: boolean;
   provider: Pick<ServerProvider, "showInteractionModeToggle"> | null | undefined;
@@ -651,16 +569,10 @@ export function getAntigravitySendBlockReason(
   }
   const slug = model.trim();
   if (slug.length === 0) return "Choose an Antigravity model before sending.";
-  // A restart clears the account status and catalog. Session startup checks
-  // saved credentials and validates the model before sending the prompt.
   if (provider.auth.status === "unknown") return null;
   if (provider.models.length === 0) {
     return "Refresh Antigravity models in provider settings before sending.";
   }
-  // A saved model that left the catalog is kept in the picker as unavailable
-  // so the user sees what the thread used. The server rejects it at turn
-  // start, so block here unless the provider is in an error state, where a
-  // retry with the same model is the right move.
   if (
     provider.status === "ready" &&
     slug !== ANTIGRAVITY_DEFAULT_MODEL &&
@@ -702,14 +614,17 @@ export function reconcileMountedTerminalThreadIds(input: {
   return nextThreadIds;
 }
 
-export function revokeBlobPreviewUrl(previewUrl: string | undefined): void {
-  if (!previewUrl || typeof URL === "undefined" || !previewUrl.startsWith("blob:")) {
-    return;
-  }
-  URL.revokeObjectURL(previewUrl);
+// Null identifies the project checkout when a launch or session is known.
+export function resolveTerminalWorktreePath(input: {
+  launchContext: { readonly worktreePath: string | null } | null;
+  summary: { readonly worktreePath: string | null } | null;
+  threadWorktreePath: string | null;
+}): string | null {
+  if (input.launchContext !== null) return input.launchContext.worktreePath;
+  if (input.summary !== null) return input.summary.worktreePath;
+  return input.threadWorktreePath;
 }
 
-/** Signs an attachment URL without reading its bytes, so video playback can request byte ranges. */
 export async function resolveFileAttachmentUrl(input: {
   attachment: ChatFileAttachment;
   environmentId: EnvironmentId;
@@ -769,18 +684,6 @@ export async function prepareRevertedMessageAttachments(input: {
   );
 }
 
-export function revokeUserMessagePreviewUrls(message: ChatMessage): void {
-  if (message.role !== "user" || !message.attachments) {
-    return;
-  }
-  for (const attachment of message.attachments) {
-    if (!isImageAttachment(attachment)) {
-      continue;
-    }
-    revokeBlobPreviewUrl(attachment.previewUrl);
-  }
-}
-
 export function timelineHasEphemeralPreviewUrls(
   entries: ReadonlyArray<Pick<TimelineEntry, "kind"> & { message?: ChatMessage }>,
 ): boolean {
@@ -805,19 +708,9 @@ export function collectUserMessageBlobPreviewUrls(message: ChatMessage): string[
   return previewUrls;
 }
 
-export interface PullRequestDialogState {
-  initialReference: string | null;
-  key: number;
-}
-
 export { readFileAsDataUrl } from "../lib/imageCompression";
 
-export function resolveSendEnvMode(input: {
-  requestedEnvMode: DraftThreadEnvMode;
-  isGitRepo: boolean;
-}): DraftThreadEnvMode {
-  return input.isGitRepo ? input.requestedEnvMode : "local";
-}
+export { resolveSendEnvMode } from "@t3tools/shared/projectSettings";
 
 export function resolveBackgroundDraftWorkspaceOptions(input: {
   envMode: DraftThreadEnvMode;
@@ -856,12 +749,8 @@ export function cloneComposerImageForRetry(
 export function deriveComposerSendState(options: {
   prompt: string;
   imageCount: number;
+  existingAttachmentCount?: number;
   terminalContexts: ReadonlyArray<TerminalContextDraft>;
-  /**
-   * Optional element-pick attachment count. Element contexts contribute to
-   * "sendable content" exactly like images and (text-bearing) terminal
-   * contexts do: a prompt of just element chips is still a valid send.
-   */
   elementContextCount?: number;
 }): {
   trimmedPrompt: string;
@@ -881,6 +770,7 @@ export function deriveComposerSendState(options: {
     hasSendableContent:
       trimmedPrompt.length > 0 ||
       options.imageCount > 0 ||
+      (options.existingAttachmentCount ?? 0) > 0 ||
       sendableTerminalContexts.length > 0 ||
       elementContextCount > 0,
   };
@@ -892,15 +782,16 @@ export function buildExpiredTerminalContextToastCopy(
 ): { title: string; description: string } {
   const count = Math.max(1, Math.floor(expiredTerminalContextCount));
   const noun = count === 1 ? "Expired terminal context" : "Expired terminal contexts";
+  const pronoun = count === 1 ? "it" : "them";
   if (variant === "empty") {
     return {
       title: `${noun} won't be sent`,
-      description: "Remove it or re-add it to include terminal output.",
+      description: `Remove ${pronoun} or re-add ${pronoun} to include terminal output.`,
     };
   }
   return {
     title: `${noun} omitted from message`,
-    description: "Re-add it if you want that terminal output included.",
+    description: `Re-add ${pronoun} if you want that terminal output included.`,
   };
 }
 
@@ -914,12 +805,7 @@ export function branchMismatchKey(
   return `${threadId}:${mismatch.threadBranch}:${mismatch.currentBranch}`;
 }
 
-// The mismatch banner only matters when the user is about to send: passive
-// reading of an old thread carries no risk (the branch picker tint already
-// covers ambient awareness). Draft content is the intent signal — composer
-// focus is useless here because ChatView autofocuses the composer on every
-// thread open. `wasShownForCurrentMismatch` keeps the banner mounted once
-// revealed so it doesn't flicker away when the draft is cleared.
+// Composer autofocus makes focus unreliable as draft intent.
 export function shouldShowBranchMismatchBanner(input: {
   hasMismatch: boolean;
   isDismissed: boolean;
@@ -948,8 +834,10 @@ export function shouldShowPlanFollowUpPrompt(input: {
   );
 }
 
-// Session-scoped (module-level so it survives ChatView remounts, e.g. route
-// changes). Durable cross-device dismissal is planned as a server-side ack.
+// A typed `/compact`, with or without instructions, is already the compaction. Queueing a
+// bare one ahead of it would run an uninstructed compaction first and charge for two.
+const COMPACT_COMMAND_PATTERN = /^\/compact(?:\s|$)/i;
+
 const sessionDismissedBranchMismatchKeys = new Set<string>();
 
 export function dismissBranchMismatchForSession(key: string): void {
@@ -960,10 +848,7 @@ export function isBranchMismatchDismissedForSession(key: string | null): boolean
   return key !== null && sessionDismissedBranchMismatchKeys.has(key);
 }
 
-// Git status for a checkout arrives after the composer paints, and the branch
-// strip mounts on the assumption that a project is a Git repo. Without a
-// memory, a non-Git project would mount the strip and drop it on every visit.
-// Keyed by environment and checkout for the session; never persisted.
+// Remember non-Git checkouts to avoid flashing the branch strip before delayed Git status arrives.
 const sessionCheckoutIsRepo = new Map<string, boolean>();
 
 function checkoutIsRepoKey(environmentId: EnvironmentId, cwd: string): string {
@@ -987,17 +872,10 @@ export function recallCheckoutIsRepo(
     : sessionCheckoutIsRepo.get(checkoutIsRepoKey(environmentId, cwd));
 }
 
-export function threadHasStarted(thread: Thread | null | undefined): boolean {
+function threadHasStarted(thread: Thread | null | undefined): boolean {
   return Boolean(thread && (thread.latestRun !== null || thread.itemCount > 0 || thread.runtime));
 }
 
-/**
- * Whether a thread ran at least one turn, judged from its shell alone.
- *
- * `threadHasStarted` needs the detail: a thread whose latest turn was cleared
- * still has messages, and the loading shell carries none. The shell records
- * when the last user message landed, which every started thread has.
- */
 export function threadShellHasStarted(
   shell:
     | Pick<EnvironmentThreadShell, "latestRun" | "latestUserMessageAt" | "runtime">
@@ -1010,8 +888,7 @@ export function threadShellHasStarted(
   );
 }
 
-// Imported history has no session until its first prompt. Resolve its instance
-// through the environment's provider catalog before locking to a driver.
+// Imported history lacks a session until its first prompt; resolve its instance before locking the driver.
 export function deriveLockedProvider(input: {
   thread: Thread | null | undefined;
   selectedProvider: string | null;
@@ -1025,8 +902,7 @@ export function deriveLockedProvider(input: {
   if (sessionProvider && isProviderDriverKind(sessionProvider)) {
     return sessionProvider;
   }
-  // Preserve the existing lock while an instance is missing from the catalog;
-  // a started thread must not silently fall back to a different driver.
+  // Missing catalog entries must not switch a started thread's driver.
   const threadProvider =
     input.providers.find((provider) => provider.instanceId === input.threadProvider)?.driver ??
     input.threadProvider;
@@ -1041,7 +917,6 @@ export function deriveLockedProvider(input: {
 }
 
 export function getStartedThreadModelChangeBlockReason(input: {
-  providers: ReadonlyArray<Pick<ServerProvider, "instanceId" | "requiresNewThreadForModelChange">>;
   hasStartedSession: boolean;
   supportsProviderSwitchingViaHandoff?: boolean;
   currentModelSelection: ModelSelection;
@@ -1056,35 +931,14 @@ export function getStartedThreadModelChangeBlockReason(input: {
     instanceId: input.currentProviderInstanceId ?? input.currentModelSelection.instanceId,
   };
   if (
-    currentModelSelection.instanceId === input.nextModelSelection.instanceId &&
-    currentModelSelection.model === input.nextModelSelection.model
-  ) {
-    return null;
-  }
-  if (currentModelSelection.instanceId !== input.nextModelSelection.instanceId) {
-    if (input.supportsProviderSwitchingViaHandoff === true) {
-      return null;
-    }
-    return {
-      title: "Start a new chat to switch providers",
-      description: "This thread does not support switching providers after it has started.",
-    };
-  }
-  const currentProvider = input.providers.find(
-    (snapshot) => snapshot.instanceId === currentModelSelection.instanceId,
-  );
-  const nextProvider = input.providers.find(
-    (snapshot) => snapshot.instanceId === input.nextModelSelection.instanceId,
-  );
-  if (
-    currentProvider?.requiresNewThreadForModelChange !== true &&
-    nextProvider?.requiresNewThreadForModelChange !== true
+    currentModelSelection.instanceId === input.nextModelSelection.instanceId ||
+    input.supportsProviderSwitchingViaHandoff === true
   ) {
     return null;
   }
   return {
-    title: "Start a new chat to change models",
-    description: "This provider does not allow switching models after a conversation has started.",
+    title: "Start a new chat to switch providers",
+    description: "This thread does not support switching providers after it has started.",
   };
 }
 
@@ -1101,14 +955,8 @@ export async function waitForStartedServerThread(
   });
 }
 
-/**
- * Runs `revert` (the rollback command `requestId`) and resolves once the
- * message's run is rolled back. Rejects with the server's reason as soon as
- * the thread records that this rollback failed.
- */
 export async function waitForRevertedMessage(
   threadRef: ScopedThreadRef,
-  messageId: MessageId,
   turnCount: number,
   requestId: CommandId,
   revert: () => Promise<void>,
@@ -1117,10 +965,26 @@ export async function waitForRevertedMessage(
   const threadAtom = environmentThreadDetails.stateAtom(threadRef);
   const readProjection = () => Option.getOrNull(appAtomRegistry.get(threadAtom).data);
   const initial = readProjection();
-  if (!initial?.messages.some((message) => message.id === messageId)) {
-    throw new Error("The message to rewind is no longer available.");
+  const providerThreadId = initial?.thread.activeProviderThreadId;
+  const initialProviderThread = initial?.providerThreads.find(
+    (providerThread) => providerThread.id === providerThreadId,
+  );
+  const initialProviderThreadIds = new Set(initial?.providerThreads.map((thread) => thread.id));
+  // Paging can omit the source run. Rollback commits the entire settled suffix atomically.
+  const witness = initial?.runs.reduce<(typeof initial.runs)[number] | undefined>((latest, run) => {
+    if (
+      run.ordinal <= turnCount ||
+      (run.status !== "completed" &&
+        run.status !== "interrupted" &&
+        run.status !== "failed" &&
+        run.status !== "cancelled")
+    )
+      return latest;
+    return latest === undefined || run.ordinal > latest.ordinal ? run : latest;
+  }, undefined);
+  if (witness === undefined) {
+    throw new Error("The thread has changed. Select a message to rewind again.");
   }
-  const messageRunId = initial.messages.find((message) => message.id === messageId)?.runId;
   return new Promise<void>((resolve, reject) => {
     let settled = false;
     let accepted = false;
@@ -1144,10 +1008,18 @@ export async function waitForRevertedMessage(
       }
       if (
         accepted &&
-        thread.runs.some(
-          (run) =>
-            run.id === messageRunId && run.ordinal > turnCount && run.status === "rolled_back",
-        )
+        thread.providerThreads.some(
+          (providerThread) =>
+            (providerThread.id === providerThreadId ||
+              // Claude resets to a fresh root session when rewinding to thread start.
+              (turnCount === 0 &&
+                providerThread.ownerNodeId === null &&
+                providerThread.appThreadId === initial?.thread.id &&
+                providerThread.providerInstanceId === initialProviderThread?.providerInstanceId &&
+                !initialProviderThreadIds.has(providerThread.id))) &&
+            providerThread.lastRunOrdinal === (turnCount === 0 ? null : turnCount),
+        ) &&
+        thread.runs.some((run) => run.id === witness.id && run.status === "rolled_back")
       )
         finish();
     };
@@ -1201,14 +1073,10 @@ export function createLocalDispatchSnapshot(
   };
 }
 
-/**
- * The timeline renders committed user rows from `visibleTurnItems`, but
- * `message.updated` can land in `projection.messages` one event earlier than
- * the matching `turn-item.updated`. Basing optimistic eviction on visible user
- * turn items avoids dropping steer rows in that gap.
- */
+/** Projection messages can precede visible turn items by one event; evict optimistic rows only when
+ * visible. */
 export function deriveCommittedServerUserMessageIds(
-  visibleTurnItems: ReadonlyArray<OrchestrationV2ProjectedTurnItem>,
+  visibleTurnItems: ReadonlyArray<ThreadStructureRow>,
 ): ReadonlySet<ChatMessage["id"]> {
   return new Set(
     visibleTurnItems.flatMap((row) =>
@@ -1233,17 +1101,15 @@ export function hasServerAcknowledgedLocalDispatch(input: {
   if (input.hasPendingApproval || input.hasPendingUserInput || Boolean(input.threadError)) {
     return true;
   }
-  // The thread shell can report a preparing or starting run before the detail
-  // projection behind `phase` loads, so either source still connecting holds
-  // the send.
+  const latestUserMessageChanged =
+    input.localDispatch.latestUserMessageId !== (input.latestUserMessageId ?? null);
   if (input.phase === "connecting" || derivePhase(input.runtime ?? null) === "connecting") {
-    return false;
+    // A message queued behind other work, such as an idle compaction the shell hides, has landed.
+    return input.runtime?.status === "queued" && latestUserMessageChanged;
   }
 
   const latestRun = input.latestRun ?? null;
   const runtime = input.runtime ?? null;
-  const latestUserMessageChanged =
-    input.localDispatch.latestUserMessageId !== (input.latestUserMessageId ?? null);
   const latestRunChanged =
     input.localDispatch.latestRunId !== (latestRun?.runId ?? null) ||
     input.localDispatch.latestRunRequestedAt !== (latestRun?.requestedAt ?? null) ||
@@ -1279,8 +1145,8 @@ export function hasServerAcknowledgedLocalDispatch(input: {
 
 // Returning to the window should land the caret in the composer, so the reader can type right
 // away. The exceptions are places where focus is deliberate: another text field, a terminal in
-// the drawer or the right panel, or an open dialog or popup. A focused button outside those is
-// not one of them, so it yields to the composer.
+// the drawer or the right panel, an open dialog, menu, or popup, or a region or sidebar row
+// reached from the keyboard. A plain focused button or a clicked row yields to the composer.
 export function shouldRefocusComposerOnWindowFocus(
   activeElement:
     | (Pick<Element, "tagName" | "closest" | "getAttribute"> & { isContentEditable?: boolean })
@@ -1300,7 +1166,7 @@ export function shouldRefocusComposerOnWindowFocus(
   }
   return (
     activeElement.closest(
-      '[role="dialog"], [role="alertdialog"], [data-slot$="-popup"], [data-terminal-owner]',
+      '[data-workspace-area]:focus-visible, [role="treeitem"]:focus-visible, [role="dialog"], [role="alertdialog"], [role="application"], [role="menu"], [role="listbox"], [data-slot$="-popup"], [data-terminal-owner]',
     ) === null
   );
 }
@@ -1311,13 +1177,9 @@ export interface PlanFollowUpComposerSnapshot {
   readonly reviewComments: ReadonlyArray<ReviewCommentContext>;
   readonly previewAnnotations: ReadonlyArray<PreviewAnnotationPayload>;
   readonly threadContexts: ReadonlyArray<ThreadContextRecord>;
+  readonly environmentContexts: ReadonlyArray<EnvironmentContextRecord>;
 }
 
-/**
- * Puts back everything a plan follow-up send cleared when the send fails. The
- * caller clears the composer before awaiting the send, so every field it held
- * has to be written back here: a dropped field silently discards user context.
- */
 export function restorePlanFollowUpComposer(input: {
   readonly snapshot: PlanFollowUpComposerSnapshot;
   readonly writePrompt: (prompt: string) => void;
@@ -1325,6 +1187,7 @@ export function restorePlanFollowUpComposer(input: {
   readonly writeReviewComments: (comments: ReadonlyArray<ReviewCommentContext>) => void;
   readonly writePreviewAnnotations: (annotations: ReadonlyArray<PreviewAnnotationPayload>) => void;
   readonly writeThreadContexts: (records: ReadonlyArray<ThreadContextRecord>) => void;
+  readonly writeEnvironmentContexts: (records: ReadonlyArray<EnvironmentContextRecord>) => void;
   readonly resetCursor: (options: {
     cursor: number;
     prompt: string;
@@ -1336,9 +1199,439 @@ export function restorePlanFollowUpComposer(input: {
   input.writeReviewComments(input.snapshot.reviewComments);
   input.writePreviewAnnotations(input.snapshot.previewAnnotations);
   input.writeThreadContexts(input.snapshot.threadContexts);
+  input.writeEnvironmentContexts(input.snapshot.environmentContexts);
   input.resetCursor({
     cursor: collapseExpandedComposerCursor(input.snapshot.prompt, input.snapshot.prompt.length),
     prompt: input.snapshot.prompt,
     detectTrigger: true,
   });
+}
+
+/** Includes the annotation screenshot only within the attachment cap; exceeding it rejects the whole turn. */
+export function mergeDirectPreviewAnnotation(input: {
+  readonly images: ReadonlyArray<ComposerImageAttachment>;
+  readonly fileCount: number;
+  readonly previewAnnotations: ReadonlyArray<PreviewAnnotationPayload>;
+  readonly direct:
+    | {
+        readonly annotation: PreviewAnnotationPayload;
+        readonly image: ComposerImageAttachment | null;
+      }
+    | undefined;
+}): {
+  readonly images: ReadonlyArray<ComposerImageAttachment>;
+  readonly previewAnnotations: ReadonlyArray<PreviewAnnotationPayload>;
+} {
+  const { direct } = input;
+  if (!direct) return { images: input.images, previewAnnotations: input.previewAnnotations };
+  const imageAlreadyAttached =
+    direct.image !== null && input.images.some((image) => image.id === direct.image?.id);
+  const imageAppended =
+    direct.image !== null &&
+    !imageAlreadyAttached &&
+    input.images.length + input.fileCount < PROVIDER_SEND_TURN_MAX_ATTACHMENTS;
+  const images = direct.image && imageAppended ? [...input.images, direct.image] : input.images;
+  const previewAnnotations = input.previewAnnotations.some(
+    (annotation) => annotation.id === direct.annotation.id,
+  )
+    ? input.previewAnnotations
+    : [
+        ...input.previewAnnotations,
+        {
+          ...direct.annotation,
+          screenshot:
+            direct.annotation.screenshot && (imageAppended || imageAlreadyAttached)
+              ? { ...direct.annotation.screenshot, dataUrl: "" }
+              : null,
+        },
+      ];
+  return { images, previewAnnotations };
+}
+
+export { isThreadWokeUnseen } from "@t3tools/client-runtime/state/thread-settled";
+
+export function formatOutgoingPrompt(params: {
+  provider: ProviderDriverKind;
+  model: string | null;
+  models: ReadonlyArray<ServerProvider["models"][number]>;
+  effort: string | null;
+  text: string;
+}): string {
+  const caps = getProviderModelCapabilities(params.models, params.model, params.provider);
+  const promptEffort = resolvePromptInjectedEffort(caps, params.effort);
+  return applyClaudePromptEffortPrefix(params.text, promptEffort);
+}
+
+export function isCompactCommandMessage(message: ChatMessage): boolean {
+  const text = message.text.trim().toLowerCase();
+  return message.role === "user" && text === "/compact" && !message.attachments?.length;
+}
+
+// Errors surface through two maps (draft-keyed and thread-keyed) whose entries
+// can race around promotion, so each write carries its time to let the latest
+// one win when they collide.
+export type LocalThreadErrorEntry = {
+  readonly message: string | null;
+  readonly at: number;
+};
+
+export function chatActionErrorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : "An error occurred.";
+}
+
+export function releaseChatTimelineAnchor<T extends { readonly messageId: MessageId | null }>(
+  current: T,
+): T {
+  return current.messageId === null ? current : { ...current, messageId: null };
+}
+
+// The factories below build functions ChatView calls during render, or hands
+// to ChatComposer, which can call them after an await. They live outside the
+// component so each closure keeps only its inputs, not a whole render scope
+// (see useStableCallback), while still acting on the render that made them.
+
+/** Records a thread error in local state, keyed by the route the making render saw. */
+export function makeThreadErrorSetter(input: {
+  readonly routeThreadRef: ScopedThreadRef;
+  readonly routeThreadKey: string;
+  readonly draftId: DraftId | null;
+  readonly serverThreadRef: ScopedThreadRef | null;
+  readonly setLocalServerErrorsByThreadKey: (
+    update: SetStateAction<Record<string, LocalThreadErrorEntry>>,
+  ) => void;
+  readonly setLocalDraftErrorsByDraftId: (
+    update: SetStateAction<Record<string, LocalThreadErrorEntry>>,
+  ) => void;
+}) {
+  return (targetThreadId: ThreadId | null, error: string | null) => {
+    if (!targetThreadId) return;
+    const nextError = sanitizeThreadErrorMessage(error);
+    const nextEntry: LocalThreadErrorEntry = { message: nextError, at: Date.now() };
+    const { routeThreadRef, serverThreadRef } = input;
+    if (
+      serverThreadRef &&
+      targetThreadId === routeThreadRef.threadId &&
+      serverThreadRef.environmentId === routeThreadRef.environmentId &&
+      serverThreadRef.threadId === targetThreadId
+    ) {
+      input.setLocalServerErrorsByThreadKey((existing) => {
+        if ((existing[input.routeThreadKey]?.message ?? null) === nextError) {
+          return existing;
+        }
+        return { ...existing, [input.routeThreadKey]: nextEntry };
+      });
+      return;
+    }
+    const localDraftErrorKey = input.draftId ?? targetThreadId;
+    input.setLocalDraftErrorsByDraftId((existing) => {
+      if ((existing[localDraftErrorKey]?.message ?? null) === nextError) {
+        return existing;
+      }
+      return { ...existing, [localDraftErrorKey]: nextEntry };
+    });
+  };
+}
+
+/** Why the model picker should disable a model, or null when it can be chosen. */
+export function makeModelDisabledReason(
+  context: Omit<
+    Parameters<typeof getStartedThreadModelChangeBlockReason>[0],
+    "nextModelSelection"
+  > | null,
+) {
+  return (instanceId: ProviderInstanceId, model: string): string | null => {
+    if (!context) return null;
+    const reason = getStartedThreadModelChangeBlockReason({
+      ...context,
+      nextModelSelection: { instanceId, model },
+    });
+    return reason ? `${reason.description} Start a new thread to use this model.` : null;
+  };
+}
+
+/** What the composer held when the user pressed send, after a direct annotation merged in. */
+export interface ComposerSendContents {
+  readonly prompt: string;
+  readonly images: ReadonlyArray<ComposerImageAttachment>;
+  readonly files: ReadonlyArray<ComposerFileAttachment>;
+  readonly terminalContexts: ReadonlyArray<TerminalContextDraft>;
+  readonly sendableTerminalContexts: ReadonlyArray<TerminalContextDraft>;
+  readonly previewAnnotations: ReadonlyArray<PreviewAnnotationPayload>;
+  readonly reviewComments: ReadonlyArray<ReviewCommentContext>;
+  readonly threadContexts: ReadonlyArray<ThreadContextRecord>;
+  readonly environmentContexts: ReadonlyArray<EnvironmentContextRecord>;
+}
+
+/**
+ * Copies the composer contents a send dispatches, so a failed send can put the
+ * same draft back. Terminal contexts that lost their text are dropped from both
+ * the contexts and the prompt's inline references.
+ */
+export function snapshotComposerSend(contents: ComposerSendContents) {
+  const images = [...contents.images];
+  const files = [...contents.files];
+  const terminalContexts = [...contents.sendableTerminalContexts];
+  return {
+    images,
+    files,
+    attachments: [...images, ...files],
+    terminalContexts,
+    previewAnnotations: [...contents.previewAnnotations],
+    reviewComments: [...contents.reviewComments],
+    threadContexts: [...contents.threadContexts],
+    environmentContexts: [...contents.environmentContexts],
+    messageText: contents.terminalContexts
+      .filter((context) => !terminalContexts.includes(context))
+      .reduce(
+        (text, context) =>
+          removeInlineContextReference(text, terminalContextReference(context).contextId).prompt,
+        contents.prompt,
+      )
+      .trim(),
+  };
+}
+
+export type ComposerSendSnapshot = ReturnType<typeof snapshotComposerSend>;
+
+/** How a composer send dispatches: where it runs and whether it waits behind other work. */
+export function planComposerTurn(input: {
+  readonly messageText: string;
+  readonly sendQueuesBehindSetup: boolean;
+  readonly isServerThread: boolean;
+  readonly activeMessageCount: number;
+  readonly sendEnvMode: DraftThreadEnvMode;
+  readonly worktreePath: string | null;
+  readonly activeThreadBranch: string | null;
+  readonly resumeCompactionTokens: number | null;
+  readonly keepFullHistory: boolean;
+  readonly phase: SessionPhase;
+  readonly dispatchMode: ComposerDispatchMode;
+}) {
+  const isFirstMessage =
+    !input.sendQueuesBehindSetup && (!input.isServerThread || input.activeMessageCount === 0);
+  const shouldCreateWorktree =
+    isFirstMessage && input.sendEnvMode === "worktree" && !input.worktreePath;
+  // A stale Claude session compacts before this message so the turn does not re-read the
+  // old history. The message queues behind the /compact run, since steering into it is
+  // rejected.
+  const compactBeforeSend =
+    input.resumeCompactionTokens !== null &&
+    !input.keepFullHistory &&
+    !COMPACT_COMMAND_PATTERN.test(input.messageText);
+  return {
+    // In worktree mode, require an explicit base branch so we don't silently
+    // fall back to local execution when branch selection is missing.
+    missingWorktreeBaseBranch: shouldCreateWorktree && !input.activeThreadBranch,
+    baseBranchForWorktree: shouldCreateWorktree ? input.activeThreadBranch : null,
+    compactBeforeSend,
+    turnDispatchMode:
+      compactBeforeSend || input.sendQueuesBehindSetup ? ("queue" as const) : input.dispatchMode,
+    shouldQueueBehindActiveRun:
+      compactBeforeSend ||
+      input.sendQueuesBehindSetup ||
+      (input.phase === "running" && input.dispatchMode === "queue"),
+  };
+}
+
+/**
+ * The attachment ids a message's context records bind to: the upload id the
+ * server returned, or the local id on the data-URL path.
+ */
+export function boundAttachmentIds(
+  turnAttachments: ReadonlyArray<{ readonly id?: string | undefined }>,
+  attachments: ReadonlyArray<{ readonly id: string }>,
+): string[] {
+  return turnAttachments.map((attachment, index) =>
+    "id" in attachment && attachment.id !== undefined ? attachment.id : attachments[index]!.id,
+  );
+}
+
+export function withMessageContext(input: {
+  readonly text: string;
+  readonly context: OrchestrationMessageContext | undefined;
+}): { readonly text: string; readonly context?: OrchestrationMessageContext } {
+  const { text, context } = input;
+  if (context === undefined) return { text };
+  return { text, context };
+}
+
+/** The attachments the optimistic user row shows before the server echoes the message. */
+export function optimisticMessageAttachments(
+  attachments: ReadonlyArray<ComposerImageAttachment | ComposerFileAttachment>,
+) {
+  return attachments.map((attachment) =>
+    attachment.type === "image"
+      ? {
+          type: "image" as const,
+          id: attachment.id,
+          name: attachment.name,
+          mimeType: attachment.mimeType,
+          sizeBytes: attachment.sizeBytes,
+          previewUrl: attachment.previewUrl,
+          ...(attachment.source ? { source: attachment.source } : {}),
+        }
+      : {
+          type: "file" as const,
+          id: attachment.id,
+          name: attachment.name,
+          mimeType: attachment.mimeType,
+          sizeBytes: attachment.sizeBytes,
+          downloadable: false,
+          ...(attachment.source ? { source: attachment.source } : {}),
+        },
+  );
+}
+
+/** Fallback title sources for a message with no text of its own. */
+export function sendTitleFallbackLabels(snapshot: ComposerSendSnapshot) {
+  const terminalContext = snapshot.terminalContexts[0];
+  const reviewComment = snapshot.reviewComments[0];
+  const previewAnnotation = snapshot.previewAnnotations[0];
+  return [
+    terminalContext ? formatTerminalContextLabel(terminalContext) : undefined,
+    reviewComment ? `Review: ${reviewCommentContextLabel(reviewComment)}` : undefined,
+    previewAnnotation ? previewAnnotationContextLabel(previewAnnotation) : undefined,
+  ];
+}
+
+/**
+ * A thread shell built from its loaded detail, for direct links that hydrate the detail first.
+ * `updatedAt` and `lastVisitedAt` are passed live: the thread structure leaves them out.
+ */
+export function presentThreadShellFromProjection(
+  environmentId: EnvironmentId,
+  threadId: ThreadId,
+  projection: ThreadStructure,
+  live: {
+    readonly updatedAt: ThreadProjection["updatedAt"];
+    readonly lastVisitedAt: ThreadProjection["thread"]["lastVisitedAt"];
+  },
+) {
+  const { updatedAt, lastVisitedAt } = live;
+  const latestRun = deriveLatestThreadRun(projection);
+  const runtime = deriveThreadRuntime({ ...projection, updatedAt });
+  const pendingRuntimeRequest =
+    projection.runtimeRequests.findLast((request) => request.status === "pending") ?? null;
+  // Direct links can hydrate detail before the thread enters the shell index.
+  return {
+    ...presentThreadShell(environmentId, {
+      ...projection.thread,
+      lastVisitedAt,
+      latestRunId: latestRun?.runId ?? null,
+      activeRunId: runtime?.activeRunId ?? null,
+      status: runtime?.status ?? "idle",
+      pendingRuntimeRequest,
+      latestVisibleMessage: null,
+      latestUserMessageAt:
+        projection.messages.findLast((message) => message.role === "user")?.updatedAt ?? null,
+      hasActionableProposedPlan: projection.plans.some(
+        (plan) => plan.kind === "proposed_plan" && plan.status === "active",
+      ),
+      providerInstanceHistory: [
+        ...new Set(
+          projection.providerThreads
+            .filter((thread) => thread.appThreadId === threadId && thread.ownerNodeId === null)
+            .map((thread) => thread.providerInstanceId),
+        ),
+      ],
+      goal:
+        projection.providerThreads.find(
+          (thread) => thread.id === projection.thread.activeProviderThreadId,
+        )?.goal ?? null,
+      itemCount: projection.turnItems.length,
+      visibleItemCount: projection.visibleTurnItems.length,
+      updatedAt,
+    }),
+    latestRun,
+    runtime,
+  };
+}
+
+/** Background work the provider still runs after the latest run ended. */
+export function deriveThreadPendingBackgroundTasks(projection: ThreadStructure | null) {
+  if (projection === null) return [];
+  const sessionError =
+    projection.providerSessions.findLast(
+      (session) => session.providerInstanceId === projection.thread.providerInstanceId,
+    )?.lastError ?? null;
+  const latestRun =
+    usageLimitRunPresentedAsLatest(projection.runs, projection.turnItems, sessionError) ??
+    latestUnheldRun(projection.runs);
+  return [
+    ...derivePendingBackgroundWork({
+      latestRun,
+      providerThreads: projection.providerThreads,
+      turnItems: projection.turnItems,
+      activeProviderThreadId: projection.thread.activeProviderThreadId,
+      runs: projection.runs,
+      pullRequests: projection.thread.pullRequests,
+    }),
+  ];
+}
+
+/**
+ * Run ordinals the conversation can be reverted to: those whose provider turn belongs to the
+ * active provider thread, plus 0 for the thread start. Empty without a live provider session
+ * on the thread's selected instance.
+ */
+export function deriveAvailableRevertTurnCounts(projection: ThreadStructure | null) {
+  const available = new Set<number>();
+  const providerThread = projection?.providerThreads.find(
+    (candidate) => candidate.id === projection.thread.activeProviderThreadId,
+  );
+  if (
+    !providerThread?.providerSessionId ||
+    providerThread.providerInstanceId !== projection?.thread.modelSelection.instanceId
+  )
+    return available;
+  available.add(0);
+  const attemptsById = new Map(projection.attempts.map((attempt) => [attempt.id, attempt]));
+  const providerTurnsById = new Map<
+    OrchestrationV2ProviderTurn["id"],
+    OrchestrationV2ProviderTurn
+  >();
+  const latestTurnByAttempt = new Map<RunAttemptId, OrchestrationV2ProviderTurn>();
+  for (const turn of projection.providerTurns) {
+    providerTurnsById.set(turn.id, turn);
+    if (turn.runAttemptId === null) continue;
+    const latest = latestTurnByAttempt.get(turn.runAttemptId);
+    if (latest === undefined || turn.ordinal > latest.ordinal) {
+      latestTurnByAttempt.set(turn.runAttemptId, turn);
+    }
+  }
+  for (const run of projection.runs) {
+    if (run.activeAttemptId === null) continue;
+    const attempt = attemptsById.get(run.activeAttemptId);
+    const providerTurn =
+      latestTurnByAttempt.get(run.activeAttemptId) ??
+      (attempt?.providerTurnId == null ? undefined : providerTurnsById.get(attempt.providerTurnId));
+    // A ready file checkpoint alone cannot restore the provider conversation.
+    if (providerTurn?.providerThreadId === providerThread.id) available.add(run.ordinal);
+  }
+  return available;
+}
+
+/**
+ * Changes when the agent may have changed the workspace, so file views refresh. File tools are
+ * explicit; completed commands are included because a shell command can mutate the workspace
+ * without reporting the paths it touched.
+ */
+export function deriveWorkspaceMutationId(
+  visibleTurnItems: ReadonlyArray<ThreadStructureRow>,
+  latestCheckpointCompletedAt: string | null,
+) {
+  let itemId: string | null = null;
+  for (let index = visibleTurnItems.length - 1; index >= 0; index -= 1) {
+    const item = visibleTurnItems[index]?.item;
+    if (!item) continue;
+    if (item.type !== "command_execution" && item.type !== "file_change") continue;
+    if (item.status === "pending" || item.status === "running" || item.status === "waiting") {
+      continue;
+    }
+    itemId = item.id;
+    break;
+  }
+  return itemId === null && latestCheckpointCompletedAt === null
+    ? null
+    : JSON.stringify([itemId, latestCheckpointCompletedAt]);
 }

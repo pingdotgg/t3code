@@ -17,8 +17,12 @@ public final class T3KeyboardCommandsModule: Module {
 public final class T3KeyboardCommandsView: ExpoView {
   let onCommand = EventDispatcher()
   private var enabledCommands = Set<String>()
+  private let shortcutInputView = UIView(frame: .zero)
 
   public override var canBecomeFirstResponder: Bool { true }
+
+  // This responder handles hardware shortcuts, so reclaiming it must not show a software keyboard.
+  public override var inputView: UIView? { shortcutInputView }
 
   public override func canPerformAction(_ action: Selector, withSender sender: Any?) -> Bool {
     if action == #selector(openCommandPalette) || action == #selector(paletteNext) || action == #selector(palettePrevious) || action == #selector(paletteDismiss),
@@ -49,7 +53,7 @@ public final class T3KeyboardCommandsView: ExpoView {
         input: "c",
         modifiers: [.command, .shift],
         action: #selector(copyThreadReference),
-        title: "Copy PR Link or Thread ID"
+        title: "Copy PR Link or Thread"
       ),
       enabledCommand("toggleSidebar", input: "\\", modifiers: .command, action: #selector(handleToggleSidebar), title: "Toggle Sidebar"),
       enabledCommand("cycleHost", input: "h", modifiers: [.command, .shift], action: #selector(cycleHost), title: "Next Machine"),
@@ -89,6 +93,8 @@ public final class T3KeyboardCommandsView: ExpoView {
 
   public required init(appContext: AppContext? = nil) {
     super.init(appContext: appContext)
+    inputAssistantItem.leadingBarButtonGroups = []
+    inputAssistantItem.trailingBarButtonGroups = []
     NotificationCenter.default.addObserver(
       self,
       selector: #selector(reclaimFirstResponderIfAvailable),

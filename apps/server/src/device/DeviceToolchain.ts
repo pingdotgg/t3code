@@ -1,19 +1,5 @@
 import type { DeviceToolVersions } from "@t3tools/contracts";
-/**
- * Pinned installs of the two external tools device support is built on.
- *
- * `expo-device-hub` streams simulator and emulator screens and `agent-device`
- * drives them. Each is npm-installed separately after its matching consent
- * step into `<baseDir>/tools/<name>/<version>` and executed from there with the
- * resolved Node runtime, never `npx`: an ephemeral
- * npx cache would make every first `device_open` after a reboot depend on the
- * registry, and the pinned versions are part of the contract the injected
- * agent instructions describe.
- *
- * Install follows the pinned-runtime recipe: stage into a temp sibling, write a
- * sentinel only after npm exits 0, then rename into place. npm extracts files
- * before it finishes, so an entry file alone does not prove a usable tree.
- */
+// npm exposes entry files before extraction completes; their presence does not prove a usable tree.
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -24,18 +10,18 @@ import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
 
 import * as ProcessRunner from "../processRunner.ts";
+import DEVICE_TOOL_VERSIONS from "./deviceToolVersions.json" with { type: "json" };
 
 const DEVICE_HUB_PACKAGE = "expo-device-hub";
-export const DEVICE_HUB_VERSION = "0.12.0";
+export const DEVICE_HUB_VERSION = DEVICE_TOOL_VERSIONS[DEVICE_HUB_PACKAGE];
 const AGENT_DEVICE_PACKAGE = "agent-device";
-export const AGENT_DEVICE_VERSION = "0.21.12";
+export const AGENT_DEVICE_VERSION = DEVICE_TOOL_VERSIONS[AGENT_DEVICE_PACKAGE];
 
 const INSTALL_TIMEOUT = Duration.minutes(10);
 const installLock = Semaphore.makeUnsafe(1);
 
 export interface DeviceToolPaths {
   readonly installDir: string;
-  /** Absolute path of the tool's entry script, run with a resolved Node runtime. */
   readonly entryPath: string;
   readonly sentinelPath: string;
 }
@@ -92,7 +78,6 @@ const deviceToolchainPaths = (path: Path.Path, baseDir: string): DeviceToolchain
   agentDevice: toolPaths(path, baseDir, AGENT_DEVICE_SPEC),
 });
 
-/** Keep daemon state (daemon.json, sessions) in userdata, separate from tool installs. */
 export const agentDeviceStateDir = (path: Path.Path, stateDir: string): string =>
   path.join(stateDir, "device", "agent-device");
 
@@ -174,16 +159,17 @@ const installTool = Effect.fn("DeviceToolchain.installTool")(function* (
     yield* fs
       .writeFileString(path.join(stagingDir, ".install-complete"), `${spec.version}\n`)
       .pipe(Effect.mapError(fail("recording the completed install")));
-    yield* fs.rename(stagingDir, paths.installDir).pipe(
-      Effect.catch((cause) =>
-        // A concurrent server may have published the same version first.
-        isInstalled(fs, paths, spec.version).pipe(
-          Effect.flatMap((published) =>
-            published ? Effect.void : Effect.fail(fail("publishing the install")(cause)),
+    yield* fs
+      .rename(stagingDir, paths.installDir)
+      .pipe(
+        Effect.catch((cause) =>
+          isInstalled(fs, paths, spec.version).pipe(
+            Effect.flatMap((published) =>
+              published ? Effect.void : Effect.fail(fail("publishing the install")(cause)),
+            ),
           ),
         ),
-      ),
-    );
+      );
     return paths;
   }).pipe(
     Effect.ensuring(fs.remove(stagingDir, { recursive: true, force: true }).pipe(Effect.ignore)),
@@ -223,7 +209,6 @@ export const isDeviceHubInstalled = (baseDir: string) =>
 export const isAgentDeviceInstalled = (baseDir: string) =>
   isToolInstalled(baseDir, AGENT_DEVICE_SPEC, (paths) => paths.agentDevice);
 
-/** Read completed installs without downloading or starting either tool. */
 export const deviceToolVersions = Effect.fn("DeviceToolchain.versions")(function* (
   baseDir: string,
   running: { hub?: string; agent?: string } = {},

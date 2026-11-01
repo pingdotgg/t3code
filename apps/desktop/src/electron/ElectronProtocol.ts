@@ -3,10 +3,10 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
-import * as NodeTimersPromises from "node:timers/promises";
 import * as Path from "effect/Path";
 import * as Mime from "effect/http/Mime";
 import * as Ref from "effect/Ref";
+import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 
@@ -52,8 +52,6 @@ export class ElectronProtocolUnregistrationError extends Schema.TaggedError<Elec
   }
 }
 
-// The scheme either proxies to a dev server (`targetOrigin`) or serves the
-// built client from disk (`assetDirectory`).
 export type DesktopProtocolRegistrationInput = {
   readonly scheme: string;
   readonly clerkFrontendApiHostname: string | undefined;
@@ -68,7 +66,7 @@ export class ElectronProtocol extends Context.Service<
   }
 >()("@t3tools/desktop/electron/ElectronProtocol") {}
 
-export function makeDesktopContentSecurityPolicy(input: DesktopProtocolRegistrationInput): string {
+function makeDesktopContentSecurityPolicy(input: DesktopProtocolRegistrationInput): string {
   const clerkOrigin = input.clerkFrontendApiHostname
     ? `https://${input.clerkFrontendApiHostname}`
     : undefined;
@@ -80,11 +78,8 @@ export function makeDesktopContentSecurityPolicy(input: DesktopProtocolRegistrat
     "https://challenges.cloudflare.com",
   ];
 
-  // The renderer connects directly to user-configured environments in addition to
-  // the build-configured Clerk, relay, and OTLP endpoints. Those environment
-  // origins are not known when this response policy is created, so restrict
-  // connections by the network schemes the client supports instead of by host.
-  // GLTFLoader fetches embedded textures through blob URLs after parsing the model.
+  // User-configured environment origins are unknown here, so allow supported network schemes.
+  // GLTFLoader fetches embedded textures through blob URLs.
   const connectSources = ["'self'", "blob:", "http:", "https:", "ws:", "wss:"];
 
   return [
@@ -96,9 +91,8 @@ export function makeDesktopContentSecurityPolicy(input: DesktopProtocolRegistrat
     "style-src 'self' 'unsafe-inline'",
     `font-src 'self' ${input.scheme}: data:`,
     "worker-src 'self' blob:",
-    // Document viewers use local Blob URLs and signed assets from runtime environments.
-    // HTML viewers retain their own sandbox; the renderer's script policy stays unchanged.
     "frame-src 'self' blob: http: https:",
+    "object-src 'self' blob: http: https:",
     "form-action 'self'",
   ].join("; ");
 }
@@ -113,9 +107,7 @@ function withContentSecurityPolicy(response: Response, policy: string): Response
   });
 }
 
-/**
- * Must run synchronously during process bootstrap, before Electron emits `ready`.
- */
+// Must run synchronously before Electron emits ready.
 function registerDesktopSchemePrivilegesSync(): void {
   Electron.protocol.registerSchemesAsPrivileged([
     {
@@ -126,8 +118,7 @@ function registerDesktopSchemePrivilegesSync(): void {
         supportFetchAPI: true,
         corsEnabled: true,
         stream: true,
-        // Custom schemes skip Chromium's V8 code cache unless they opt in.
-        // Dev stays off: Vite serves changing code at stable URLs.
+        // Custom schemes must opt into V8 caching; dev URLs serve changing code.
         codeCache: true,
       },
     },
@@ -150,17 +141,36 @@ const registerDesktopSchemePrivileges = Effect.sync(registerDesktopSchemePrivile
 
 export const layerSchemePrivileges = Layer.effectDiscard(registerDesktopSchemePrivileges);
 
-async function proxyRequest(
+class ElectronProtocolFetchError extends Schema.TaggedError<ElectronProtocolFetchError>()(
+  "ElectronProtocolFetchError",
+  { cause: Schema.Defect() },
+) {}
+
+const netFetch = (url: string, init: RequestInit) =>
+  Effect.tryPromise({
+    try: () => Electron.net.fetch(url, init),
+    catch: (cause) => new ElectronProtocolFetchError({ cause }),
+  });
+
+const fetchWithTransientRetry = (url: string, init: RequestInit) =>
+  netFetch(url, init).pipe(
+    Effect.retry({ schedule: Schedule.exponential("50 millis", 3), times: 2 }),
+  );
+
+const proxyRequest = Effect.fn("desktop.protocol.proxyRequest")(function* (
   request: Request,
   targetOrigin: URL,
   contentSecurityPolicy: string,
-): Promise<Response> {
+) {
   const requestUrl = new URL(request.url);
   if (requestUrl.host !== DESKTOP_HOST) {
     return new Response(null, { status: 404 });
   }
 
-  const targetUrl = new URL(`${requestUrl.pathname}${requestUrl.search}`, targetOrigin);
+  // Assign the path so leading slashes cannot replace the configured host.
+  const targetUrl = new URL(targetOrigin);
+  targetUrl.pathname = requestUrl.pathname;
+  targetUrl.search = requestUrl.search;
   const headers = new Headers(request.headers);
   const headersToRemove: string[] = [];
   for (const name of headers.keys()) {
@@ -190,16 +200,11 @@ async function proxyRequest(
   }
   const response =
     request.method === "GET" || request.method === "HEAD"
-      ? await fetchWithTransientRetry(targetUrl.toString(), init)
-      : await Electron.net.fetch(targetUrl.toString(), init);
+      ? yield* fetchWithTransientRetry(targetUrl.toString(), init)
+      : yield* netFetch(targetUrl.toString(), init);
   return withContentSecurityPolicy(response, contentSecurityPolicy);
-}
+});
 
-const TRANSIENT_FETCH_RETRY_DELAYS_MS = [0, 50, 150] as const;
-
-// Serves the packaged web client without a backend: files resolve within the
-// asset directory, and any other path falls back to index.html so the SPA
-// router handles it, except for asset-shaped misses (`/missing.js`) which 404.
 const serveDesktopAsset = Effect.fn("desktop.protocol.serveAsset")(function* (
   request: Request,
   assetDirectory: string,
@@ -238,25 +243,7 @@ const serveDesktopAsset = Effect.fn("desktop.protocol.serveAsset")(function* (
   });
 });
 
-async function fetchWithTransientRetry(url: string, init: RequestInit): Promise<Response> {
-  let lastError: unknown;
-
-  for (const delayMs of TRANSIENT_FETCH_RETRY_DELAYS_MS) {
-    if (delayMs > 0) {
-      await NodeTimersPromises.setTimeout(delayMs);
-    }
-
-    try {
-      return await Electron.net.fetch(url, init);
-    } catch (error) {
-      lastError = error;
-    }
-  }
-
-  throw lastError;
-}
-
-/** @public Service construction is part of the canonical Effect module API. */
+/** @public */
 export const make = Effect.gen(function* () {
   const registered = yield* Ref.make(false);
   const context = yield* Effect.context<FileSystem.FileSystem | Path.Path>();
@@ -278,7 +265,13 @@ export const make = Effect.gen(function* () {
                   contentSecurityPolicy,
                 );
               }
-              return proxyRequest(request, input.targetOrigin, contentSecurityPolicy);
+              return runPromise(
+                proxyRequest(request, input.targetOrigin, contentSecurityPolicy).pipe(
+                  Effect.catchTags({
+                    ElectronProtocolFetchError: (error) => Effect.die(error.cause),
+                  }),
+                ),
+              );
             });
           },
           catch: (cause) => new ElectronProtocolRegistrationError({ scheme: input.scheme, cause }),

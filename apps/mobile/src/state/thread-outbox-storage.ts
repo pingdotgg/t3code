@@ -18,10 +18,7 @@ function trackInFlightWrite(operation: Promise<void>): Promise<void> {
   return operation;
 }
 
-/**
- * Awaits queued-message writes so an app update restart cannot tear down the
- * runtime while one is mid-file.
- */
+/** Waits for in-flight writes before app-update restart. */
 export async function flushThreadOutboxWrites(): Promise<void> {
   while (inFlightWrites.size > 0) {
     await Promise.allSettled(inFlightWrites);
@@ -86,8 +83,6 @@ export const expoThreadOutboxStorage: ThreadOutboxStorage = {
         try {
           messages.push(decodeQueuedThreadMessage(JSON.parse(await entry.text()) as unknown));
         } catch (cause) {
-          // Recover readable messages without treating their attachment
-          // owners as the complete inventory needed for cleanup.
           errors.push(
             new ThreadOutboxStorageError({
               operation: "read-message",

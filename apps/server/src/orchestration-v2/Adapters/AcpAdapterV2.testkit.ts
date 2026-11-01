@@ -1,8 +1,19 @@
 import {
+  MessageId,
+  type ModelSelection,
+  NodeId,
+  ProjectId,
+  type ProviderInstanceId,
+  RunAttemptId,
+  RunId,
+  type OrchestrationV2ProviderThread,
+  type ThreadId,
   ProviderDriverKind,
   ProviderReplayEntry,
   type ProviderReplayTranscript,
 } from "@t3tools/contracts";
+import type * as DateTime from "effect/DateTime";
+import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import * as Effect from "effect/Effect";
 import * as Crypto from "effect/Crypto";
 import * as FileSystem from "effect/FileSystem";
@@ -10,12 +21,12 @@ import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import type * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
-import { ChildProcessSpawner } from "effect/process";
+import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import * as EffectAcpErrors from "effect-acp/errors";
 
-import * as AcpSessionRuntime from "../../provider/acp/AcpSessionRuntime.ts";
-import type { ProviderReplayGate } from "../testkit/ProviderReplayGate.testkit.ts";
-import { ACP_PROTOCOL, type AcpAdapterV2RuntimeInput } from "./AcpAdapterV2.ts";
+import * as AcpSessionRuntime from "@t3tools/provider-acp/server/AcpSessionRuntime";
+import type { ProviderReplayGate } from "@t3tools/provider-testing/replayGate";
+import { ACP_PROTOCOL, type AcpAdapterV2RuntimeInput } from "@t3tools/provider-acp/server/adapter";
 
 export const AcpReplayTranscript = Schema.Struct({
   provider: ProviderDriverKind,
@@ -153,12 +164,6 @@ function acpReplayAgentArgs(scriptPath: string): ReadonlyArray<string> {
   return ["--experimental-strip-types", scriptPath];
 }
 
-/**
- * Holds the replay agent's inbound lines at a gate the scenario releases.
- * The agent writes one line per `emit_inbound` entry in transcript order, so
- * the Nth line it writes belongs to the Nth inbound entry and carries its
- * label. Lines after a held one wait with it, which keeps wire order.
- */
 function holdGatedReplayLines(
   transcript: AcpReplayTranscript,
   replayGate: ProviderReplayGate,
@@ -187,7 +192,9 @@ export function makeAcpReplayRuntime(input: {
   readonly scriptPath: string;
   readonly childProcessSpawner: ChildProcessSpawner.ChildProcessSpawner["Service"];
   readonly fileSystem: FileSystem.FileSystem;
+  readonly customModels?: AcpSessionRuntime.AcpSessionRuntimeOptions["customModels"];
   readonly cancelMeta?: AcpSessionRuntime.AcpSessionRuntimeOptions["cancelMeta"];
+  readonly cancelBehavior?: AcpSessionRuntime.AcpSessionRuntimeOptions["cancelBehavior"];
   readonly initializeMeta?: AcpSessionRuntime.AcpSessionRuntimeOptions["initializeMeta"];
   readonly replayGate?: ProviderReplayGate;
 }): (
@@ -197,8 +204,7 @@ export function makeAcpReplayRuntime(input: {
   EffectAcpErrors.AcpError,
   Crypto.Crypto | Scope.Scope
 > {
-  // Recorded transcripts outgrow the kernel's 128 KiB limit on one environment
-  // variable, so the agent reads the transcript from a file beside its status.
+  // Transcripts exceed the kernel's 128 KiB per-environment-variable limit.
   const transcriptPath = `${input.statusPath}.transcript.json`;
   return (runtimeInput) =>
     Effect.gen(function* () {
@@ -228,7 +234,9 @@ export function makeAcpReplayRuntime(input: {
             },
           },
           authMethodId: "replay",
+          ...(input.customModels === undefined ? {} : { customModels: input.customModels }),
           ...(input.cancelMeta === undefined ? {} : { cancelMeta: input.cancelMeta }),
+          ...(input.cancelBehavior === undefined ? {} : { cancelBehavior: input.cancelBehavior }),
           ...(input.initializeMeta === undefined ? {} : { initializeMeta: input.initializeMeta }),
           ...(input.replayGate === undefined
             ? {}
@@ -243,4 +251,67 @@ export function makeAcpReplayRuntime(input: {
         Effect.provide(context),
       );
     });
+}
+
+export function makeTurnInput(input: {
+  readonly threadId: ThreadId;
+  readonly providerThread: OrchestrationV2ProviderThread;
+  readonly instanceId: ProviderInstanceId;
+  readonly runtimePolicy: ProviderAdapter.ProviderAdapterV2RuntimePolicy;
+  readonly now: DateTime.Utc;
+  readonly ordinal?: number;
+  readonly modelSelection?: ModelSelection;
+  readonly messageCreatedBy?: "user" | "agent";
+  readonly messageCreationSource?: "web" | "mobile" | "mcp" | "provider" | "server";
+  readonly messageText?: string;
+}): ProviderAdapter.ProviderAdapterV2TurnInput {
+  const ordinal = input.ordinal ?? 1;
+  const suffix = `${input.threadId}:${ordinal}`;
+  const modelSelection =
+    input.modelSelection ?? ({ instanceId: input.instanceId, model: "default" } as const);
+  return {
+    appThread: {
+      createdBy: "user",
+      creationSource: "web",
+      id: input.threadId,
+      projectId: ProjectId.make(`project:${input.threadId}`),
+      title: "ACP adapter test",
+      providerInstanceId: input.instanceId,
+      modelSelection,
+      runtimeMode: "approval-required",
+      interactionMode: "default",
+      branch: null,
+      worktreePath: null,
+      activeProviderThreadId: input.providerThread.id,
+      lineage: {
+        parentThreadId: null,
+        relationshipToParent: null,
+        rootThreadId: input.threadId,
+      },
+      forkedFrom: null,
+      createdAt: input.now,
+      updatedAt: input.now,
+      archivedAt: null,
+      settledOverride: null,
+      settledAt: null,
+      lastVisitedAt: null,
+      deletedAt: null,
+    },
+    threadId: input.threadId,
+    runId: RunId.make(`run:${suffix}`),
+    runOrdinal: ordinal,
+    providerTurnOrdinal: ordinal,
+    attemptId: RunAttemptId.make(`attempt:${suffix}`),
+    rootNodeId: NodeId.make(`node:${suffix}`),
+    providerThread: input.providerThread,
+    message: {
+      createdBy: input.messageCreatedBy ?? "user",
+      creationSource: input.messageCreationSource ?? "web",
+      messageId: MessageId.make(`message:${suffix}`),
+      text: input.messageText ?? "test prompt",
+      attachments: [],
+    },
+    modelSelection,
+    runtimePolicy: input.runtimePolicy,
+  };
 }
