@@ -136,6 +136,42 @@ const make = Effect.gen(function* () {
       ...(wake === undefined ? {} : { wake }),
     });
 
+  const linkedOutcome = (linked: PeerLink): LinkRequestOutcome => ({
+    linkStatus: "linked",
+    linkedEnvironmentId: linked.environmentId,
+    linkedLabel: linked.label,
+    linkedAccess: linked.access,
+  });
+
+  // One answer per card at a time: two answers racing on one card must not
+  // both link. Other cards go on while a slow peer holds one.
+  const answerLocks = yield* KeyedLock.make<TurnItemId>();
+
+  /**
+   * Closes a card still waiting when its agent retries naming a machine linked
+   * meanwhile. Nothing wakes the agent: the retry itself returns the link.
+   */
+  const closeAsLinked = (threadId: ThreadId, turnItemId: TurnItemId, linked: PeerLink) =>
+    answerLocks.withLock(
+      turnItemId,
+      Effect.gen(function* () {
+        const card = yield* readCard(threadId, turnItemId);
+        if (
+          card === undefined ||
+          card.linkStatus !== "pending" ||
+          card.runId === null ||
+          card.nodeId === null
+        ) {
+          return;
+        }
+        yield* record(
+          { ...card, runId: card.runId, nodeId: card.nodeId },
+          linkedOutcome(linked),
+          CommandId.make(`link-request:${card.id}:linked-on-retry`),
+        );
+      }),
+    );
+
   const request: PeerLinkRequests["Service"]["request"] = Effect.fn("PeerLinkRequests.request")(
     function* (scope, input) {
       // The card is shown in, and answered from, the caller's own thread.
@@ -171,6 +207,21 @@ const make = Effect.gen(function* () {
           ),
         );
         if (Option.isSome(linked)) {
+          if (input.clientRequestId !== undefined) {
+            yield* closeAsLinked(
+              threadId,
+              cardId(threadId, scope.requestNamespace, input.clientRequestId),
+              linked.value,
+            ).pipe(
+              Effect.mapError(
+                (error) =>
+                  new OrchestratorMcpFailure({
+                    code: "orchestration_error",
+                    message: `Could not close the link request: ${errorMessage(error)}`,
+                  }),
+              ),
+            );
+          }
           return {
             status: "linked",
             environmentId: linked.value.environmentId,
@@ -180,12 +231,8 @@ const make = Effect.gen(function* () {
         }
       }
       const key = input.clientRequestId ?? (yield* crypto.randomUUIDv4().pipe(Effect.orDie));
-      // Turn item ids are global; scope the key to this thread and provider
-      // session, since a later session may reuse it. A retry with the same
-      // clientRequestId finds this card and records nothing.
-      const turnItemId = TurnItemId.make(
-        `turn-item:link-request:${encodeURIComponent(threadId)}:${encodeURIComponent(scope.requestNamespace)}:${encodeURIComponent(key)}`,
-      );
+      // A retry with the same clientRequestId finds this card and records nothing.
+      const turnItemId = cardId(threadId, scope.requestNamespace, key);
       if (input.clientRequestId !== undefined) {
         const existing = yield* readCard(threadId, turnItemId).pipe(Effect.mapError(unreadable));
         if (existing !== undefined) return resultOf(existing);
@@ -244,13 +291,6 @@ const make = Effect.gen(function* () {
     Effect.withSpan("PeerLinkRequests.request"),
   );
 
-  const linkedOutcome = (linked: PeerLink): LinkRequestOutcome => ({
-    linkStatus: "linked",
-    linkedEnvironmentId: linked.environmentId,
-    linkedLabel: linked.label,
-    linkedAccess: linked.access,
-  });
-
   /** Links the machine the user picked, or finds the link they chose to keep. */
   const answerOutcome = (
     answer: PeerLinkRequestAnswerInput["answer"],
@@ -300,9 +340,6 @@ const make = Effect.gen(function* () {
     }
   };
 
-  // One answer per card at a time: two answers racing on one card must not
-  // both link. Other cards go on while a slow peer holds one.
-  const answerLocks = yield* KeyedLock.make<TurnItemId>();
   const answer: PeerLinkRequests["Service"]["answer"] = Effect.fn("PeerLinkRequests.answer")(
     function* (input) {
       yield* Effect.annotateCurrentSpan({
@@ -344,6 +381,15 @@ const make = Effect.gen(function* () {
 
   return PeerLinkRequests.of({ request, answer });
 });
+
+/**
+ * Turn item ids are global; scope the key to this thread and provider session,
+ * since a later session may reuse it.
+ */
+const cardId = (threadId: ThreadId, requestNamespace: string, key: string) =>
+  TurnItemId.make(
+    `turn-item:link-request:${encodeURIComponent(threadId)}:${encodeURIComponent(requestNamespace)}:${encodeURIComponent(key)}`,
+  );
 
 const pendingResult = (turnItemId: TurnItemId): OrchestratorMcpEnvironmentLinkResult => ({
   status: "pending",
