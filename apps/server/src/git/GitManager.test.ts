@@ -1,6 +1,7 @@
 import * as BackgroundPolicy from "../background/BackgroundPolicy.ts";
 import * as VcsStatusBroadcaster from "../vcs/VcsStatusBroadcaster.ts";
-import { SourceControlProviderKind } from "@t3tools/contracts";
+import { SourceControlProviderKind, GitResolvePullRequestResult } from "@t3tools/contracts";
+import * as Schema from "effect/Schema";
 // @effect-diagnostics nodeBuiltinImport:off
 import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
@@ -119,6 +120,8 @@ type FakeProviderCall =
     }
   | { readonly operation: "getRepositoryCloneUrls"; readonly repository: string }
   | { readonly operation: "getDefaultBranch" };
+
+const decodeResolvedPullRequest = Schema.decodeEffect(GitResolvePullRequestResult);
 
 const listed = (calls: ReadonlyArray<FakeProviderCall>) =>
   calls.flatMap((call) => (call.operation === "listChangeRequests" ? [call] : []));
@@ -1020,7 +1023,7 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
     }),
   );
 
-  it.effect("branch PR lookup notifies linked threads when draft status changes", () =>
+  it.effect("branch PR lookup notifies linked threads when draft or queue status changes", () =>
     Effect.gen(function* () {
       const repoDir = yield* makeTempDir("t3code-git-manager-");
       yield* initRepo(repoDir);
@@ -1028,7 +1031,16 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
       const remoteDir = yield* createBareRemote();
       yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
       yield* runGit(repoDir, ["push", "-u", "origin", "feature/draft-status"]);
-      const drafts = [false, true, true, false, false, true];
+      const states = [
+        ...[false, true, true, false, false, true].map((isDraft) => ({
+          isDraft,
+          inMergeQueue: false,
+        })),
+        { isDraft: true, inMergeQueue: true },
+        { isDraft: true, inMergeQueue: true },
+        { isDraft: true, inMergeQueue: false },
+        { isDraft: true, inMergeQueue: false },
+      ];
       const pullRequest: FakeChangeRequest = {
         number: 1,
         title: "Draft status",
@@ -1040,7 +1052,7 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
       const { manager } = yield* makeManager({
         providerScenario: {
           prListSequence: [
-            ...drafts.map((isDraft) => [{ ...pullRequest, isDraft }]),
+            ...states.map((status) => [{ ...pullRequest, ...status }]),
             [
               {
                 ...pullRequest,
@@ -1053,12 +1065,13 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
         },
       });
       const changes = yield* manager.subscribePullRequestStateChanges;
-      for (const isDraft of drafts) {
+      for (const { isDraft, inMergeQueue } of states) {
         const pr = yield* manager.branchPullRequest(
           { cwd: repoDir, branch: "feature/draft-status" },
           { refresh: true },
         );
         expect(pr?.isDraft === true).toBe(isDraft);
+        expect(pr?.inMergeQueue).toBe(inMergeQueue);
       }
       // A different PR ends collection without waiting on a background stream consumer.
       yield* manager.branchPullRequest(
@@ -1069,6 +1082,8 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
         changes.pipe(Stream.takeUntil((event) => event.number === 2, { excludeLast: true })),
       );
       expect(events).toEqual([
+        { host: "github.com", repository: "pingdotgg/codething-mvp", number: 1 },
+        { host: "github.com", repository: "pingdotgg/codething-mvp", number: 1 },
         { host: "github.com", repository: "pingdotgg/codething-mvp", number: 1 },
         { host: "github.com", repository: "pingdotgg/codething-mvp", number: 1 },
         { host: "github.com", repository: "pingdotgg/codething-mvp", number: 1 },
@@ -4538,6 +4553,30 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
           (yield* runGit(repoDir, ["rev-parse", "--abbrev-ref", "@{upstream}"])).stdout.trim(),
         ).toBe("origin/feature/pr-local-no-head-repo");
       }),
+  );
+
+  it.effect("preserves queue membership when resolving a PR for checkout", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
+      yield* initRepo(repoDir);
+      yield* runGit(repoDir, ["remote", "add", "origin", "https://github.com/acme/app.git"]);
+      const { manager } = yield* makeManager({
+        providerScenario: {
+          pullRequest: {
+            number: 7,
+            title: "Queued change",
+            url: "https://github.com/acme/app/pull/7",
+            baseRefName: "main",
+            headRefName: "feature",
+            state: "open",
+            inMergeQueue: true,
+          },
+        },
+      });
+      const result = yield* manager.resolvePullRequest({ cwd: repoDir, reference: "7" });
+      const decoded = yield* decodeResolvedPullRequest(result);
+      expect(decoded.pullRequest).toMatchObject({ number: 7, state: "open", inMergeQueue: true });
+    }),
   );
 
   it.effect("prepares a worktree from the head branch when the host has no pull ref", () =>

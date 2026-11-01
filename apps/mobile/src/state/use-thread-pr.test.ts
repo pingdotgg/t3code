@@ -61,6 +61,40 @@ describe("presentThreadLinkedPullRequests", () => {
       ])?.accessibilityLabel,
     ).toBe("#7 merge request open");
   });
+
+  it("presents a queued open link as queued", () => {
+    const link = linkedPr(7, {
+      snapshot: { ...linkedPr(7).snapshot!, inMergeQueue: true },
+    });
+    expect(presentThreadLinkedPullRequests([link])).toMatchObject({
+      inMergeQueue: true,
+      accessibilityLabel: "#7 pull request queued",
+      textClassName: "text-warning-foreground",
+    });
+  });
+
+  it("keeps a partially queued stack open", () => {
+    const bottom = linkedPr(1, {
+      snapshot: {
+        ...linkedPr(1).snapshot!,
+        headBranch: "base",
+        inMergeQueue: false,
+      },
+    });
+    const top = linkedPr(2, {
+      snapshot: {
+        ...linkedPr(2).snapshot!,
+        baseBranch: "base",
+        inMergeQueue: true,
+      },
+    });
+    expect(presentThreadLinkedPullRequests([bottom, top])).toMatchObject({
+      kind: "stack",
+      state: "open",
+      inMergeQueue: false,
+      accessibilityLabel: "2 pull requests in stack, open",
+    });
+  });
 });
 
 describe("resolveThreadPrSource compatibility", () => {

@@ -54,6 +54,7 @@ export function PullRequestStackCard(props: {
             const status = pullRequestStatus({
               state: layer.state,
               isDraft: layer.isDraft === true,
+              inMergeQueue: layer.inMergeQueue === true,
             });
             return (
               <View key={layer.number} className={selected ? "bg-thread-selected" : undefined}>

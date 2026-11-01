@@ -330,6 +330,7 @@ export const PullRequestListEntry = Schema.Struct({
   baseBranch: TrimmedNonEmptyString,
   state: PullRequestState,
   isDraft: Schema.Boolean,
+  inMergeQueue: Schema.optional(Schema.Boolean),
   mergeability: PullRequestMergeability,
   /** Zero until fetched through `PullRequestListStatsInput`; GitHub listings omit counts. */
   additions: NonNegativeInt,
@@ -447,6 +448,7 @@ export const PullRequestPreview = Schema.Struct({
   author: Schema.NullOr(PullRequestActor),
   state: PullRequestState,
   isDraft: Schema.Boolean,
+  inMergeQueue: Schema.optional(Schema.Boolean),
   createdAt: IsoDateTime,
 });
 export type PullRequestPreview = typeof PullRequestPreview.Type;
@@ -460,6 +462,7 @@ export const PullRequestSummary = Schema.Struct({
   url: TrimmedNonEmptyString,
   state: PullRequestState,
   isDraft: Schema.optional(Schema.Boolean),
+  inMergeQueue: Schema.optional(Schema.Boolean),
   headBranch: TrimmedNonEmptyString,
   baseBranch: TrimmedNonEmptyString,
   closedAt: Schema.optional(Schema.NullOr(Schema.String)),
@@ -488,6 +491,7 @@ export const PullRequestStack = Schema.Struct({
       number: PositiveInt,
       title: Schema.optional(Schema.String),
       isDraft: Schema.optional(Schema.Boolean),
+      inMergeQueue: Schema.optional(Schema.Boolean),
       headSha: Schema.optional(TrimmedNonEmptyString),
       headBranch: TrimmedNonEmptyString,
       state: PullRequestState,
@@ -549,6 +553,7 @@ export const PullRequestReportStateInput = Schema.Struct({
   reference: PullRequestRef,
   state: PullRequestState,
   isDraft: Schema.optional(Schema.Boolean),
+  inMergeQueue: Schema.optional(Schema.Boolean),
 });
 export type PullRequestReportStateInput = typeof PullRequestReportStateInput.Type;
 
@@ -567,6 +572,7 @@ export const PullRequestDetail = Schema.Struct({
   author: Schema.NullOr(PullRequestActor),
   state: PullRequestState,
   isDraft: Schema.Boolean,
+  inMergeQueue: Schema.optional(Schema.Boolean),
   mergeability: PullRequestMergeability,
   additions: NonNegativeInt,
   deletions: NonNegativeInt,

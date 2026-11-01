@@ -88,14 +88,16 @@ function pullRequestContextNumber(comment: ReviewCommentPresentation): number | 
   return legacyNumber === undefined ? null : Number(legacyNumber);
 }
 
-export type PullRequestContextDisplayState = "open" | "draft" | "merged" | "closed";
+export type PullRequestContextDisplayState = "open" | "draft" | "merged" | "closed" | "queued";
 
 export function pullRequestContextDisplayState(
   comment: ReviewCommentPresentation,
 ): PullRequestContextDisplayState | null {
   const pullRequest = comment.pullRequest;
   if (pullRequest === undefined) return null;
-  return pullRequest.state === "open" && pullRequest.isDraft ? "draft" : pullRequest.state;
+  if (pullRequest.state !== "open") return pullRequest.state;
+  if (pullRequest.inMergeQueue) return "queued";
+  return pullRequest.isDraft ? "draft" : "open";
 }
 
 export function pullRequestContextKindLabel(comment: ReviewCommentPresentation): string {

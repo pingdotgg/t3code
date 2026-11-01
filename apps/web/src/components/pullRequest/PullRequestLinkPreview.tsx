@@ -90,7 +90,11 @@ export function PullRequestLinkPreview({
   const state =
     preview === null
       ? null
-      : resolvePullRequestState({ state: preview.state, isDraft: preview.isDraft });
+      : resolvePullRequestState({
+          state: preview.state,
+          isDraft: preview.isDraft,
+          inMergeQueue: preview.inMergeQueue,
+        });
   const authorLabel =
     preview?.author === null
       ? "ghost"

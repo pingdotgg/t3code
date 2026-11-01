@@ -135,6 +135,7 @@ import {
   allowedPullRequestMergeMethods,
   allowsSinglePullRequestMerge,
   canDeletePullRequestBranch,
+  canPerformPullRequestAction,
   isPullRequestConflicting,
   resolveBaseFreshness,
   resolvePullRequestMergeMethod,
@@ -985,6 +986,7 @@ export function PullRequestDetailPanel({
         baseBranch: detail.baseBranch,
         state: detail.state,
         isDraft: detail.isDraft,
+        inMergeQueue: detail.inMergeQueue,
       }),
     });
   };
@@ -1000,6 +1002,7 @@ export function PullRequestDetailPanel({
         baseBranch: detail.baseBranch,
         state: detail.state,
         isDraft: detail.isDraft,
+        inMergeQueue: detail.inMergeQueue,
       }),
     });
   };
@@ -1016,6 +1019,7 @@ export function PullRequestDetailPanel({
         baseBranch: detail.baseBranch,
         state: detail.state,
         isDraft: detail.isDraft,
+        inMergeQueue: detail.inMergeQueue,
         stop: {
           index,
           title: stop.title,
@@ -1044,6 +1048,7 @@ export function PullRequestDetailPanel({
         baseBranch: detail.baseBranch,
         state: detail.state,
         isDraft: detail.isDraft,
+        inMergeQueue: detail.inMergeQueue,
         comment: selection.comment,
         request: selection.request,
       }),
@@ -1128,9 +1133,7 @@ export function PullRequestDetailPanel({
     detail?.state === "open" ? (detail.workflowApprovalsRequired ?? 0) : 0;
   const freshness = detail === null ? null : resolveBaseFreshness(detail);
   const visibleTabs = TABS.filter((item) => isTabAvailable(item.value));
-  const can = (action: PullRequestAction) =>
-    detail?.capabilities.actions.includes(action) === true &&
-    detail.viewerPermissions.actions.includes(action);
+  const can = (action: PullRequestAction) => canPerformPullRequestAction(detail, action);
   const detailChecksState = detail ? pullRequestChecksState(detail.checks) : null;
   const latestChecksState =
     sharedSummary?.checksState === undefined ? detailChecksState : sharedSummary.checksState;
@@ -1145,6 +1148,7 @@ export function PullRequestDetailPanel({
     ? resolvePullRequestPrimaryControl({
         state: detail.state,
         isDraft: detail.isDraft,
+        inMergeQueue: detail.inMergeQueue,
         mergeability: detail.mergeability,
         checksState,
         autoMergeEnabled: detail.autoMergeEnabled,
@@ -1156,6 +1160,7 @@ export function PullRequestDetailPanel({
     : null;
   const showsDraftToggle =
     detail?.state === "open" &&
+    !detail.inMergeQueue &&
     can(detail.isDraft ? "ready" : "draft") &&
     !(detail.isDraft && primaryAction === "ready");
   const showsAutoMerge =
@@ -1183,7 +1188,11 @@ export function PullRequestDetailPanel({
     !conflicting &&
     allowedMergeMethods.length > 1;
   const statePresentation = detail
-    ? resolvePullRequestState({ state: detail.state, isDraft: detail.isDraft })
+    ? resolvePullRequestState({
+        state: detail.state,
+        isDraft: detail.isDraft,
+        inMergeQueue: detail.inMergeQueue,
+      })
     : null;
   const showsDeleteBranch = detail !== null && canDeletePullRequestBranch(detail);
   const environmentConnected = environments.some(
@@ -1593,7 +1602,7 @@ export function PullRequestDetailPanel({
               ) : (
                 <PullRequestChecksStatusLine
                   className="text-muted-foreground"
-                  aria-label={checksSummary ? `Checks: ${checksSummary}` : "Checks"}
+                  aria-label={checksSummary ? `PR checks: ${checksSummary}` : "PR checks"}
                   icon={
                     checksState !== null ? (
                       <PullRequestChecksPopover
@@ -1606,7 +1615,7 @@ export function PullRequestDetailPanel({
                       <CircleDotIcon aria-hidden className="size-3.5" />
                     )
                   }
-                  label={checksSummary}
+                  label={checksSummary ? `PR checks: ${checksSummary}` : null}
                 />
               )
             ) : tab === "timeline" ? (

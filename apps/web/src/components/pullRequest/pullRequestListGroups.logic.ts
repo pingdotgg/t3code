@@ -80,6 +80,7 @@ export function pullRequestGroups({
       {
         state: entry.state,
         isDraft: entry.isDraft,
+        inMergeQueue: entry.inMergeQueue,
       },
     ]),
   );

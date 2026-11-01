@@ -1,3 +1,8 @@
+import {
+  GitHubPullRequestQueuedError,
+  GitHubPullRequestQueueReadError,
+  readGitHubPullRequestQueue,
+} from "./gitHubPullRequestQueue.ts";
 import type {
   PullRequestAction,
   PullRequestMergeMethod,
@@ -90,6 +95,8 @@ export class GitHubStackRebaseFailedError extends Schema.TaggedError<GitHubStack
 }
 
 export type GitHubStackActionError =
+  | GitHubPullRequestQueuedError
+  | GitHubPullRequestQueueReadError
   | GitHubStackChangedError
   | GitHubStackUnsupportedError
   | GitHubStackResponseInvalidError
@@ -228,6 +235,17 @@ export const runGitHubStackAction = Effect.fn("runGitHubStackAction")(function* 
   }
   if (open.some((layer) => layer.isDraft))
     return yield* new GitHubStackUnsupportedError({ ...identity });
+  const membership = yield* readGitHubPullRequestQueue({
+    host: input.host,
+    repository: input.repository,
+    numbers: open.map((layer) => layer.number),
+  });
+  const queued = open.find((layer) => membership.get(layer.number) === true);
+  if (queued)
+    return yield* new GitHubPullRequestQueuedError({
+      repository: input.repository,
+      number: queued.number,
+    });
   const decode = (raw: string) =>
     decodeMergeResponse(raw).pipe(
       Effect.mapError((cause) => new GitHubStackResponseInvalidError({ ...identity, cause })),

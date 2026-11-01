@@ -79,9 +79,41 @@ describe("saved stack navigation", () => {
       pullRequestStackView({ ...query, isPending: false, error: "Rate limited" }, saved),
     ).toMatchObject({ data: saved, isFresh: false, notice: expect.stringContaining("stale") });
   });
+  it("keeps the linked layer's queue status on a refreshed stack and clears it after dequeue", () => {
+    const queued = savedPullRequestStack(
+      [{ ...link, snapshot: { ...link.snapshot!, inMergeQueue: true } }],
+      reference,
+    );
+    if (queued === null) throw new Error("The linked pull request should have a saved stack.");
+    const refreshedStack = {
+      ...queued,
+      layers: queued.layers.map((layer) => {
+        const { inMergeQueue: _inMergeQueue, ...serverLayer } = layer;
+        return serverLayer;
+      }),
+    };
+    expect(
+      pullRequestStackView(
+        { data: refreshedStack, isSuccess: true, isPending: false, error: null },
+        queued,
+      ).data?.layers.find((layer) => layer.number === 2)?.inMergeQueue,
+    ).toBe(true);
+
+    const dequeued = savedPullRequestStack(
+      [{ ...link, snapshot: { ...link.snapshot!, inMergeQueue: false } }],
+      reference,
+    );
+    expect(
+      pullRequestStackView(
+        { data: refreshedStack, isSuccess: true, isPending: false, error: null },
+        dequeued,
+      ).data?.layers.find((layer) => layer.number === 2)?.inMergeQueue,
+    ).toBe(false);
+  });
   it("prefers refreshed data and honors a successful absence", () => {
     const saved = savedPullRequestStack([link], reference);
     const query = { data: saved, isSuccess: true, isPending: false, error: null };
+    expect(pullRequestStackView(query, saved).data).toBe(saved);
     expect(pullRequestStackView(query, null)).toEqual({ data: saved, isFresh: true, notice: null });
     expect(pullRequestStackView({ ...query, data: null }, saved)).toEqual({
       data: null,

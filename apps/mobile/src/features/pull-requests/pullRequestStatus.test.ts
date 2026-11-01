@@ -4,6 +4,7 @@ import {
   normalizedReviewState,
   pullRequestChecksSummary,
   pullRequestReviewSummary,
+  pullRequestStatus,
 } from "./pullRequestStatus";
 
 const author = { login: "julius", name: null, avatarUrl: null };
@@ -97,5 +98,25 @@ describe("mobile overview check status", () => {
     expect(
       pullRequestChecksSummary({ checks: [check("success"), check("pending"), check("failure")] }),
     ).toMatchObject({ title: "1 check failing", count: "1 of 3" });
+  });
+});
+
+describe("mobile pull request status", () => {
+  it("shows queued for open PRs before draft, and keeps merged and closed terminal", () => {
+    expect(pullRequestStatus({ state: "open", isDraft: false, inMergeQueue: true }).label).toBe(
+      "Queued",
+    );
+    expect(pullRequestStatus({ state: "open", isDraft: true, inMergeQueue: true }).label).toBe(
+      "Queued",
+    );
+    expect(pullRequestStatus({ state: "open", isDraft: true, inMergeQueue: false }).label).toBe(
+      "Draft",
+    );
+    expect(pullRequestStatus({ state: "merged", isDraft: false, inMergeQueue: true }).label).toBe(
+      "Merged",
+    );
+    expect(pullRequestStatus({ state: "closed", isDraft: false, inMergeQueue: true }).label).toBe(
+      "Closed",
+    );
   });
 });

@@ -96,6 +96,7 @@ export function composerChipSizeSuffix(record?: {
 }
 
 const PULL_REQUEST_CHIP_PRESENTATIONS = {
+  queued: { accent: "#b87501", icon: "git-pull-request-arrow" },
   open: { accent: "#009f6e", icon: "git-pull-request-arrow" },
   draft: { accent: "#7f8793", icon: "git-pull-request-draft" },
   merged: { accent: "#8a70dd", icon: "git-merge" },
@@ -112,6 +113,7 @@ export function contextChipPresentation(
     readonly pullRequest?: {
       readonly state?: string;
       readonly isDraft?: boolean;
+      readonly inMergeQueue?: boolean;
     };
   },
 ): ContextChipPresentation {
@@ -131,9 +133,13 @@ export function contextChipPresentation(
   if (presentationKind === "pull-request") {
     const pullRequest = record?.pullRequest;
     const state =
-      pullRequest?.state === "open" && pullRequest.isDraft === true
-        ? "draft"
-        : (pullRequest?.state ?? "");
+      pullRequest?.state !== "open"
+        ? (pullRequest?.state ?? "")
+        : pullRequest.inMergeQueue
+          ? "queued"
+          : pullRequest.isDraft
+            ? "draft"
+            : "open";
     if (Object.hasOwn(PULL_REQUEST_CHIP_PRESENTATIONS, state)) {
       return PULL_REQUEST_CHIP_PRESENTATIONS[state as keyof typeof PULL_REQUEST_CHIP_PRESENTATIONS];
     }

@@ -100,6 +100,7 @@ const knownRecords: Record<(typeof COMPOSER_CONTEXT_KINDS)[number], Record<strin
       baseBranch: "main",
       state: "open",
       isDraft: false,
+      inMergeQueue: true,
     },
   },
   mention: { ...base, kind: "mention", label: "@src/index.ts", path: "src/index.ts" },
@@ -135,6 +136,12 @@ describe("ComposerContextRecord", () => {
       label: "Future",
       payload: { anything: [1, 2, 3] },
     });
+  });
+
+  it("preserves queue membership in pull request context", () => {
+    expect(Option.getOrThrow(decodeRecord(knownRecords["review-comment"]))).toEqual(
+      knownRecords["review-comment"],
+    );
   });
 
   it("does not let a malformed known kind slide through as unknown", () => {

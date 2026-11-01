@@ -725,6 +725,14 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
 
   const providerInstance = props.providerInstance;
   const pr = useThreadPr(thread);
+  const prStatus =
+    pr?.state === null || !pr
+      ? null
+      : pullRequestStatus({
+          state: pr.state,
+          isDraft: pr.isDraft,
+          inMergeQueue: pr.inMergeQueue,
+        });
   const prBadgeLabel = pr ? resolveThreadPrBadgeAction(pr).accessibilityLabel : null;
   const handleOpenPullRequests = useCallback(() => {
     if (pr) onOpenThreadPullRequests(thread, pr);
@@ -1293,17 +1301,19 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
                   ? PullRequestGlyph.stack
                   : pr.state === null
                     ? PullRequestGlyph.pullRequest
-                    : pullRequestStatus({ state: pr.state, isDraft: pr.isDraft }).icon
+                    : (prStatus?.icon ?? PullRequestGlyph.pullRequest)
               }
               size={12}
               tintColorClassName={
-                pr.state === null || pr.isDraft
-                  ? rowAppearance.mutedIconTintClassName
-                  : pr.state === "open"
-                    ? "accent-adaptive-emerald-600-400"
-                    : pr.state === "closed"
-                      ? "accent-adaptive-rose-600-400"
-                      : "accent-adaptive-violet-600-400"
+                pr.inMergeQueue
+                  ? "accent-warning-foreground"
+                  : pr.state === null || pr.isDraft
+                    ? rowAppearance.mutedIconTintClassName
+                    : pr.state === "open"
+                      ? "accent-adaptive-emerald-600-400"
+                      : pr.state === "closed"
+                        ? "accent-adaptive-rose-600-400"
+                        : "accent-adaptive-violet-600-400"
               }
             />
             <Text

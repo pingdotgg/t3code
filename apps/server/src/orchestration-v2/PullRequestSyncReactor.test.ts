@@ -605,7 +605,9 @@ describe("PullRequestSyncReactor", () => {
         const fixture = yield* makeHarness({
           snapshot: makeSnapshot([makeThread("one", { pullRequests: [makeLink(42)] })]),
           summary: (input) =>
-            Effect.succeed(makeSummary(input, { title: "Ship it", isDraft: true })),
+            Effect.succeed(
+              makeSummary(input, { title: "Ship it", isDraft: true, inMergeQueue: true }),
+            ),
         });
 
         yield* Effect.gen(function* () {
@@ -634,6 +636,7 @@ describe("PullRequestSyncReactor", () => {
                   headBranch: "feature",
                   baseBranch: "main",
                   isDraft: true,
+                  inMergeQueue: true,
                   updatedAt: "2026-08-27T00:00:00.000Z",
                   syncedAt: NOW,
                   closedAt: null,
@@ -794,7 +797,12 @@ describe("PullRequestSyncReactor", () => {
         yield* TestClock.setTime(Date.parse(NOW));
         const fixture = yield* makeHarness({
           snapshot: makeSnapshot([makeThread("one", { pullRequests: [makeLink(42)] })]),
-          summary: (input) => Effect.succeed(makeSummary(input, { updatedAt: NOW })),
+          summary: (input) =>
+            Effect.sync(() =>
+              makeSummary(input, {
+                updatedAt: NOW,
+              }),
+            ),
         });
 
         yield* Effect.gen(function* () {
@@ -1087,6 +1095,45 @@ describe("PullRequestSyncReactor", () => {
           assert.deepStrictEqual(
             (yield* Ref.get(fixture.syncCommands)).map((command) => command.snapshot.isDraft),
             [isDraft],
+          );
+        }).pipe(Effect.provide(fixture.layer));
+      }),
+  );
+
+  it.effect.each([
+    { before: false, after: true },
+    { before: true, after: false },
+    { before: undefined, after: false },
+  ])(
+    "syncs linked merge queue status $before to $after as soon as a reader reports a change",
+    ({ before, after }) =>
+      Effect.gen(function* () {
+        yield* TestClock.setTime(Date.parse(NOW));
+        const queued = yield* Ref.make<boolean | undefined>(before);
+        const fixture = yield* makeHarness({
+          snapshot: makeSnapshot([
+            makeThread("agent", { pullRequests: [makeLink(7, { inMergeQueue: before })] }),
+          ]),
+          summary: (input) =>
+            Ref.get(queued).pipe(
+              Effect.map((value) => makeSummary(input, { inMergeQueue: value })),
+            ),
+        });
+
+        yield* Effect.gen(function* () {
+          const reactor = yield* startAndSweep(fixture);
+          yield* Ref.set(queued, after);
+          yield* Queue.offer(fixture.stateChanges, {
+            host: "github.com",
+            repository: "owner/repository",
+            number: 7,
+          });
+          yield* Queue.take(fixture.snapshotReads);
+          yield* reactor.drain;
+
+          assert.deepStrictEqual(
+            (yield* Ref.get(fixture.syncCommands)).map((command) => command.snapshot.inMergeQueue),
+            [after],
           );
         }).pipe(Effect.provide(fixture.layer));
       }),

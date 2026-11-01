@@ -162,8 +162,8 @@ export function PullRequestChecksPopover({
         nativeButton={variant === "count"}
         aria-label={
           variant === "count"
-            ? `Open checks: ${summary ?? presentation.label}`
-            : `Checks: ${presentation.label}`
+            ? `Open PR checks: ${summary ?? presentation.label}`
+            : `PR checks: ${presentation.label}`
         }
         render={
           variant === "count" ? (
@@ -181,9 +181,10 @@ export function PullRequestChecksPopover({
         <presentation.Icon aria-hidden className={cn("size-3.5", presentation.toneClassName)} />
         {variant === "count" ? (
           <>
+            <span>PR checks</span>
             {checks !== undefined && incompleteCount > 0 ? (
               <span className="tabular-nums">
-                {checks.length - incompleteCount}/{checks.length} checks
+                {checks.length - incompleteCount}/{checks.length}
               </span>
             ) : failedCount > 0 ? (
               <span className="tabular-nums">{failedCount} failed</span>
@@ -192,8 +193,8 @@ export function PullRequestChecksPopover({
         ) : null}
       </PopoverTrigger>
       <PopoverPopup align="start" width="md" side="bottom">
-        <p className="mb-2 font-medium text-sm">{presentation.label}</p>
-        {summary === null ? null : <p className="mb-2 text-muted-foreground text-xs">{summary}</p>}
+        <p className="mb-2 font-medium text-sm">PR checks</p>
+        <p className="mb-2 text-muted-foreground text-xs">{summary ?? presentation.label}</p>
         {stale ? (
           <p className="text-muted-foreground text-xs">
             Check details are out of date. Refresh the pull request to update them.

@@ -141,6 +141,7 @@ export function linkedPullRequestSnapshotStatus(
       title: snapshot.title,
       state: snapshot.state,
       isDraft: snapshot.isDraft,
+      inMergeQueue: snapshot.inMergeQueue,
       headRef: snapshot.headBranch,
       baseRef: snapshot.baseBranch,
       ...(snapshot.updatedAt === null ? {} : { updatedAt: snapshot.updatedAt }),
@@ -339,7 +340,11 @@ export function ThreadPullRequestsMiniList({
         const presentation =
           snapshot === null
             ? null
-            : resolvePullRequestState({ state: snapshot.state, isDraft: snapshot.isDraft });
+            : resolvePullRequestState({
+                state: snapshot.state,
+                isDraft: snapshot.isDraft,
+                inMergeQueue: snapshot.inMergeQueue,
+              });
         return (
           <ThreadPullRequestMiniListItem
             key={`${line.link.host}/${line.link.repository}#${line.link.number}`}
@@ -417,7 +422,11 @@ export function prStatusIndicator(
 ): PrStatusIndicator | null {
   if (!pr) return null;
   const { shortLabel } = sourceControlClients.get(provider?.kind).changeRequest;
-  const state = resolvePullRequestState({ state: pr.state, isDraft: pr.isDraft === true });
+  const state = resolvePullRequestState({
+    state: pr.state,
+    isDraft: pr.isDraft === true,
+    inMergeQueue: pr.inMergeQueue,
+  });
 
   const tooltipLead = `${shortLabel} #${pr.number} - ${state.label}`;
   return {
@@ -434,12 +443,14 @@ export function prStatusIndicator(
 export function ChangeRequestStatusIcon({
   state,
   isDraft = false,
+  inMergeQueue,
   className,
 }: Pick<NonNullable<ThreadPr>, "state"> & {
   readonly isDraft?: boolean | undefined;
+  readonly inMergeQueue?: boolean | undefined;
   readonly className?: string | undefined;
 }) {
-  const presentation = resolvePullRequestState({ state, isDraft });
+  const presentation = resolvePullRequestState({ state, isDraft, inMergeQueue });
   return <presentation.Icon className={className} />;
 }
 
@@ -733,7 +744,12 @@ export function ThreadRowLeadingStatus({ thread }: { thread: SidebarThreadSummar
               />
             }
           >
-            <ChangeRequestStatusIcon state={pr.state} isDraft={pr.isDraft} className="size-3" />
+            <ChangeRequestStatusIcon
+              state={pr.state}
+              isDraft={pr.isDraft}
+              inMergeQueue={pr.inMergeQueue}
+              className="size-3"
+            />
           </TooltipTrigger>
           <TooltipPopup side="top">
             <PrStatusTooltipContent status={prStatus} />
@@ -817,6 +833,8 @@ function settledPrHoverColorClass(state: ThreadPullRequestBadge["state"]): strin
       return "group-hover/sidebar-row:text-zinc-500 dark:group-hover/sidebar-row:text-zinc-400/80";
     case "open":
       return "group-hover/sidebar-row:text-emerald-600 dark:group-hover/sidebar-row:text-emerald-300/90";
+    case "queued":
+      return "group-hover/sidebar-row:text-amber-600 dark:group-hover/sidebar-row:text-amber-400/80";
     case "merged":
       return "group-hover/sidebar-row:text-violet-600 dark:group-hover/sidebar-row:text-violet-300/90";
     case "closed":
@@ -872,9 +890,11 @@ export function ThreadSearchPullRequestNumber({
     ? badge.state
     : pr === null
       ? null
-      : pr.state === "open" && pr.isDraft
-        ? "draft"
-        : pr.state;
+      : pr.state === "open" && pr.inMergeQueue
+        ? "queued"
+        : pr.state === "open" && pr.isDraft
+          ? "draft"
+          : pr.state;
   return (
     <span
       aria-label={presentation.label}

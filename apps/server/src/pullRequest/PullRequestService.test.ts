@@ -2986,9 +2986,10 @@ it.effect(
     }),
 );
 
-it.effect("notifies linked threads when detail changes draft status in either direction", () =>
+it.effect("notifies linked threads when detail changes draft and queue status", () =>
   Effect.gen(function* () {
     let isDraft = true;
+    let inMergeQueue = false;
     let updatedAt = "2026-07-02T00:00:00Z";
     const reference = { projectId: "p1" as ProjectId, repository: "acme/web", number: 1 };
     const service = yield* makeService({
@@ -2996,7 +2997,12 @@ it.effect("notifies linked threads when detail changes draft status in either di
       providers: [
         fakePullRequestProvider(SourceControlProviderKind.make("github"), {
           getChangeRequest: () =>
-            Effect.sync(() => ({ ...hostedChangeRequest("body"), isDraft, updatedAt })),
+            Effect.sync(() => ({
+              ...hostedChangeRequest("body"),
+              isDraft,
+              inMergeQueue,
+              updatedAt,
+            })),
         }),
       ],
     });
@@ -3009,6 +3015,16 @@ it.effect("notifies linked threads when detail changes draft status in either di
     yield* read();
     yield* read();
     isDraft = true;
+    yield* service.invalidate({ reference });
+    yield* read();
+
+    inMergeQueue = true;
+    updatedAt = "2026-07-03T00:00:00Z";
+    yield* service.invalidate({ reference });
+    yield* read();
+    yield* read();
+    inMergeQueue = false;
+    updatedAt = "2026-07-04T00:00:00Z";
     yield* service.invalidate({ reference });
     yield* read();
 
@@ -3026,11 +3042,13 @@ it.effect("notifies linked threads when detail changes draft status in either di
       { host: "github.com", repository: "acme/web", number: 1 },
       { host: "github.com", repository: "acme/web", number: 1 },
       { host: "github.com", repository: "acme/web", number: 1 },
+      { host: "github.com", repository: "acme/web", number: 1 },
+      { host: "github.com", repository: "acme/web", number: 1 },
     ]);
   }),
 );
 
-it.effect("deduplicates routed PR reports without dropping draft changes", () =>
+it.effect("deduplicates routed PR reports without dropping draft or queue changes", () =>
   Effect.gen(function* () {
     const reference = { projectId: "p1" as ProjectId, repository: "acme/web", number: 1 };
     const service = yield* makeService({
@@ -3043,13 +3061,17 @@ it.effect("deduplicates routed PR reports without dropping draft changes", () =>
     }
     yield* service.reportState({ reference, state: "open" });
     yield* service.reportState({ reference, state: "open" });
+    yield* service.reportState({ reference, state: "open", inMergeQueue: true });
+    yield* service.reportState({ reference, state: "open", inMergeQueue: true });
+    yield* service.reportState({ reference, state: "open", inMergeQueue: false });
+    yield* service.reportState({ reference, state: "open", inMergeQueue: false });
     yield* service.reportState({ reference: { ...reference, number: 2 }, state: "open" });
     const events = yield* Stream.runCollect(
       changes.pipe(Stream.takeUntil((event) => event.number === 2, { excludeLast: true })),
     );
     assert.deepStrictEqual(
       events.map((event) => event.number),
-      [1, 1, 1, 1],
+      [1, 1, 1, 1, 1, 1],
     );
   }),
 );

@@ -278,6 +278,10 @@ export const ThreadPullRequestEntry = Schema.Struct({
   headBranch: Schema.NullOr(Schema.String),
   baseBranch: Schema.NullOr(Schema.String),
   isDraft: Schema.NullOr(Schema.Boolean),
+  inMergeQueue: Schema.NullOr(Schema.Boolean).annotate({
+    description:
+      "Last observed merge-queue membership. Null means unknown or unsupported; lifecycle state takes precedence after closure or merge.",
+  }),
   stack: Schema.NullOr(
     Schema.Struct({
       kind: Schema.Literals(["native", "derived"]),
