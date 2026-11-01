@@ -306,6 +306,7 @@ export const make = Effect.gen(function* () {
   const electronApp = yield* ElectronApp.ElectronApp;
   const rendererHistory = yield* DesktopRendererHistory.DesktopRendererHistory;
   const backendReadyRef = yield* Ref.make(false);
+  const mainWindowClosedRef = yield* Ref.make(false);
   const splashWindowRef = yield* Ref.make<Option.Option<Electron.BrowserWindow>>(Option.none());
   const context = yield* Effect.context<DesktopWindowRuntimeServices>();
   const runFork = Effect.runForkWith(context);
@@ -840,7 +841,11 @@ export const make = Effect.gen(function* () {
     window.on("closed", () => {
       clearDevelopmentLoadRetry();
       clearBoundsPersist();
-      void runPromise(electronWindow.clearMain(Option.some(window)));
+      void runPromise(
+        electronWindow
+          .clearMain(Option.some(window))
+          .pipe(Effect.andThen(Ref.set(mainWindowClosedRef, true))),
+      );
     });
 
     return Option.some(window);
@@ -990,6 +995,7 @@ export const make = Effect.gen(function* () {
           return;
         }
       }
+      yield* Ref.set(mainWindowClosedRef, false);
       yield* createMainIfBackendReady;
     }).pipe(Effect.withSpan("desktop.window.activate")),
     createMainIfBackendReady,
@@ -997,6 +1003,9 @@ export const make = Effect.gen(function* () {
     handleBackendReady: Effect.fn("desktop.window.handleBackendReady")(function* (httpBaseUrl) {
       yield* Ref.set(backendReadyRef, true);
       yield* logWindowInfo("backend ready", { source: "http", url: httpBaseUrl.href });
+      // Readiness fires again after every backend restart. On macOS the app outlives its
+      // last window, so a window the user closed waits for activate instead of popping up.
+      if (yield* Ref.get(mainWindowClosedRef)) return;
       yield* createMainIfBackendReady;
     }),
     handleBackendNotReady: Ref.set(backendReadyRef, false).pipe(
