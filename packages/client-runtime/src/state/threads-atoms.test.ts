@@ -242,9 +242,14 @@ const makeHarness = Effect.fn("TestThreadAtoms.makeHarness")(function* (options?
 
   return {
     registry,
-    createThread: () => {
+    createThread: (archived = false) => {
       threadCreated = true;
-      registry.set(shellSnapshotAtom, v2ShellSnapshot);
+      registry.set(
+        shellSnapshotAtom,
+        archived
+          ? { ...v2ShellSnapshot, threads: [], archivedThreads: v2ShellSnapshot.threads }
+          : v2ShellSnapshot,
+      );
     },
     makeRegistry,
     rawAtoms: raw,
@@ -284,7 +289,7 @@ describe("createEnvironmentThreadStateAtoms", () => {
     vi.restoreAllMocks();
   });
 
-  it.effect.each(["mounted", "reopened"] as const)(
+  it.effect.each(["mounted", "reopened", "archived"] as const)(
     "loads a thread the shell lists after an earlier 404 while %s",
     (mode) =>
       Effect.gen(function* () {
@@ -299,7 +304,7 @@ describe("createEnvironmentThreadStateAtoms", () => {
           yield* Deferred.await(h.removalInterrupted);
         }
 
-        h.createThread();
+        h.createThread(mode === "archived");
         const release = reopened ? h.registry.mount(h.stateAtom) : unmount;
         const subscription = yield* Queue.take(h.subscriptions);
         expect(h.registry.get(h.stateAtom).status).toBe("synchronizing");

@@ -1104,12 +1104,16 @@ export function createEnvironmentThreadStateAtoms<R, E>(
   const family = Atom.family((key: string) => {
     const { environmentId, threadId } = parseThreadKey(key);
     const resumeAtom = resumeFamily(key);
-    const listedAtom = Atom.make(
-      (get) =>
-        get(snapshotAtom(environmentId))?.threads.some(
+    const listedAtom = Atom.make((get) => {
+      const snapshot = get(snapshotAtom(environmentId));
+      return (
+        snapshot?.threads.some((thread) => thread.id === threadId && thread.deletedAt === null) ||
+        snapshot?.archivedThreads.some(
           (thread) => thread.id === threadId && thread.deletedAt === null,
-        ) ?? false,
-    );
+        ) ||
+        false
+      );
+    });
     return runtime
       .atom(
         (get) => {
