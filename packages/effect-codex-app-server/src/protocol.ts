@@ -164,6 +164,8 @@ export const makeCodexAppServerPatchedProtocol = Effect.fn("makeCodexAppServerPa
     const protocolScope = yield* Scope.Scope;
     const requestHandlerScope = yield* Scope.fork(protocolScope, "parallel");
     const outgoing = yield* Queue.unbounded<string, Cause.Done<void>>();
+    // Unbounded so stdout keeps draining while a handler runs; Codex disconnects on a full pipe.
+    const incoming = yield* Queue.unbounded<string, CodexError.CodexAppServerError | Cause.Done>();
     const incomingNotifications =
       yield* Queue.sliding<CodexAppServerIncomingNotification>(MAX_BUFFERED_RAW_MESSAGES);
     const incomingRequests =
@@ -439,42 +441,40 @@ export const makeCodexAppServerPatchedProtocol = Effect.fn("makeCodexAppServerPa
             const line = remainder.join("").replace(/\r$/, "");
             remainder.length = 0;
             remainderBytes = 0;
-            yield* handleLine(line);
+            yield* Queue.offer(incoming, line);
             start = newline + 1;
           }
         }),
       ),
       Effect.matchEffect({
         onFailure: (error) =>
-          handleTermination(() =>
-            Effect.succeed(normalizeIncomingError(error, "read-input-stream")),
-          ),
+          Queue.fail(incoming, normalizeIncomingError(error, "read-input-stream")),
         onSuccess: () =>
-          Effect.sync(() => {
-            const line = remainder.join("");
-            remainder.length = 0;
-            return line;
-          }).pipe(
-            Effect.flatMap(handleLine),
-            Effect.matchEffect({
-              onFailure: (error) => handleTermination(() => Effect.succeed(error)),
-              onSuccess: () =>
-                handleTermination(() => {
-                  const ended = new CodexError.CodexAppServerInputStreamEndedError({});
-                  // Node ends stdout before it reports the exit of a crashed process, so
-                  // wait briefly for the exit status. stdout can also close while the
-                  // process keeps running, so the wait must not hang pending requests.
-                  return options.terminationError === undefined
-                    ? Effect.succeed(ended)
-                    : options.terminationError.pipe(
-                        Effect.timeoutOrElse({
-                          duration: EXIT_STATUS_GRACE,
-                          orElse: () => Effect.succeed(ended),
-                        }),
-                      );
-                }),
-            }),
-          ),
+          Queue.offer(incoming, remainder.join("")).pipe(Effect.andThen(Queue.end(incoming))),
+      }),
+      Effect.forkScoped,
+    );
+
+    yield* Stream.fromQueue(incoming).pipe(
+      Stream.interruptWhen(Deferred.await(terminationSignal)),
+      Stream.runForEach(handleLine),
+      Effect.matchEffect({
+        onFailure: (error) => handleTermination(() => Effect.succeed(error)),
+        onSuccess: () =>
+          handleTermination(() => {
+            const ended = new CodexError.CodexAppServerInputStreamEndedError({});
+            // Node ends stdout before it reports the exit of a crashed process, so
+            // wait briefly for the exit status. stdout can also close while the
+            // process keeps running, so the wait must not hang pending requests.
+            return options.terminationError === undefined
+              ? Effect.succeed(ended)
+              : options.terminationError.pipe(
+                  Effect.timeoutOrElse({
+                    duration: EXIT_STATUS_GRACE,
+                    orElse: () => Effect.succeed(ended),
+                  }),
+                );
+          }),
       }),
       Effect.forkScoped,
     );
