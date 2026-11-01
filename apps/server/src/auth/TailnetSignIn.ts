@@ -455,18 +455,17 @@ export const make = Effect.gen(function* () {
       );
       const refusal = hostRefusal(status);
       if (refusal !== null) return yield* refuse(refusal);
-      // The caller must be the peer this status names at its address, with a live key, as the
-      // recheck asks, so a whois answered before an account switch is not judged by the new one.
-      if (
-        node.stableNodeId !== status.selfNodeId &&
-        !status.peers.some(
-          (peer) =>
-            peer.stableNodeId === node.stableNodeId &&
-            peer.tailnetIpv4Addresses.includes(remoteAddress) &&
-            !peer.keyExpired,
-        )
-      ) {
-        return yield* refuse("tailscale_unavailable");
+      // The caller must be the peer this status names at its address, as the recheck asks, so
+      // a whois answered before an account switch is not judged by the new account.
+      if (node.stableNodeId !== status.selfNodeId) {
+        const peer = status.peers.find(
+          (candidate) =>
+            candidate.stableNodeId === node.stableNodeId &&
+            candidate.tailnetIpv4Addresses.includes(remoteAddress),
+        );
+        if (peer === undefined) return yield* refuse("tailscale_unavailable");
+        // Off the tailnet until it logs in to Tailscale again, which only the device can do.
+        if (peer.keyExpired) return yield* refuse("not_direct_tailnet");
       }
       const decision = yield* decide(node, status);
       // The policy names this device, so it decides here now, even when the grant is refused

@@ -355,10 +355,10 @@ const checkTailscale = Effect.fn("cli.up.checkTailscale")(function* () {
   }
   const { value } = status;
   const blocker = signInBlocker(value);
-  if (blocker !== null) return { ok: false, reason: blocker } as const;
+  // signInBlocker already refuses a host with no IPv4 address.
   const address = value.tailnetIpv4Addresses[0];
-  if (address === undefined) {
-    return { ok: false, reason: "Tailscale reported no IPv4 address for this host." } as const;
+  if (blocker !== null || address === undefined) {
+    return { ok: false, reason: blocker ?? "Tailscale reported no IPv4 address." } as const;
   }
   return { ok: true, status: value, address } as const;
 });

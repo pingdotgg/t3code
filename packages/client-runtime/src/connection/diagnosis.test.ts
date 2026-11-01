@@ -338,6 +338,10 @@ describe("Tailscale facts in the diagnosis", () => {
     expect(hostTailscaleNotice("Mac mini", status([expiring]), NOW + 4 * 24 * HOUR)?.headline).toBe(
       "The Tailscale node key on Mac mini has expired (as of 4 days ago)",
     );
+    const outdated = { cause: "outdated", fix: "Update Tailscale." } as const;
+    expect(hostTailscaleNotice("Mac mini", status([https, outdated]), NOW)?.headline).toBe(
+      "Tailscale on Mac mini is too old for Tailscale sign-in",
+    );
   });
 });
 

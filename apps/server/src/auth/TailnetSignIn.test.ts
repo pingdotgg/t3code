@@ -424,7 +424,7 @@ it.layer(NodeServices.layer)("TailnetSignIn", (it) => {
           },
         },
       }),
-      refused: "tailscale_unavailable",
+      refused: "not_direct_tailnet",
     },
     {
       name: "the host is tagged with no owner set",

@@ -63,7 +63,9 @@ export const signInBlocker = (status: TailscaleStatus): string | null =>
       ? "Tailscale sign-in needs device addresses, and userspace networking hides them. Give the container /dev/net/tun and run tailscaled without --tun=userspace-networking."
       : !isSupportedTailscaleVersion(status.version)
         ? `Tailscale ${status.version ?? "(unknown version)"} is too old for Tailscale sign-in. Update to ${MINIMUM_TAILSCALE_VERSION} or newer.`
-        : null;
+        : status.tailnetIpv4Addresses.length === 0
+          ? "Tailscale reported no IPv4 address for this host, and sign-in needs one."
+          : null;
 
 /**
  * Peers the tailnet policy grants T3 Code here, and whether this host is tagged. Null when
