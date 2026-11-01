@@ -1,4 +1,5 @@
 import {
+  EnvironmentAuthorizationError,
   isOrchestrationV2WorkActive,
   ORCHESTRATION_V2_WS_METHODS,
   type EnvironmentId as EnvironmentIdType,
@@ -11,6 +12,7 @@ import {
 import { boundedSnapshotProjection } from "@t3tools/shared/orchestrationV2BoundedSnapshot";
 import { pendingBackgroundTurnItems } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import * as Cause from "effect/Cause";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Scope from "effect/Scope";
@@ -18,6 +20,7 @@ import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Result from "effect/Result";
+import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
@@ -32,7 +35,14 @@ import * as ConnectionWakeups from "../connection/wakeups.ts";
 import * as Persistence from "../platform/persistence.ts";
 import { runCachePersistence } from "./cachePersistence.ts";
 import * as ManagedRelay from "../relay/managedRelay.ts";
-import { request, subscribeDynamic } from "../rpc/client.ts";
+import {
+  isRpcClientError,
+  request,
+  subscribeDynamicWithSession,
+  type EnvironmentRpcStreamFailure,
+  type EnvironmentRpcStreamValue,
+} from "../rpc/client.ts";
+import type { RpcSession } from "../rpc/session.ts";
 import { parseThreadKey, threadKey } from "./entities.ts";
 import { applyOrchestrationV2ProjectionEvent } from "./orchestrationV2Projection.ts";
 import { THREAD_SNAPSHOT_IDLE_TTL_MS } from "./threadRetention.ts";
@@ -60,6 +70,14 @@ function statusWithoutLiveData(
 ): EnvironmentThreadStatus {
   return Option.isSome(data) ? "cached" : "empty";
 }
+
+const isEnvironmentAuthorizationError = Schema.is(EnvironmentAuthorizationError);
+
+class ThreadSynchronizationTimeout extends Schema.TaggedError<ThreadSynchronizationTimeout>()(
+  "ThreadSynchronizationTimeout",
+  {},
+) {}
+const isThreadSynchronizationTimeout = Schema.is(ThreadSynchronizationTimeout);
 
 function formatThreadError(cause: Cause.Cause<unknown>): string {
   const error = Cause.squash(cause);
@@ -392,6 +410,9 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
         })),
       ),
     );
+  const clearStreamError = SubscriptionRef.update(state, (current) =>
+    Option.isNone(current.error) ? current : { ...current, error: Option.none() },
+  );
 
   const setThread = Effect.fn("EnvironmentThreadState.setThread")(function* (
     thread: OrchestrationV2ThreadProjection,
@@ -638,10 +659,16 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
   });
 
   const applyItems = Effect.fn("EnvironmentThreadState.applyItems")(function* (
-    items: ReadonlyArray<OrchestrationV2ThreadStreamItem>,
+    frames: ReadonlyArray<readonly [RpcSession, OrchestrationV2ThreadStreamItem]>,
   ) {
     yield* applyLock.withPermits(1)(
       Effect.gen(function* () {
+        const currentSession = yield* SubscriptionRef.get(supervisor.session);
+        if (Option.isNone(currentSession)) return;
+        const items = frames
+          .filter(([producerSession]) => producerSession === currentSession.value)
+          .map(([, item]) => item);
+        if (items.length === 0) return;
         let events: SequencedItem[] = [];
         for (const item of items) {
           if (
@@ -925,18 +952,27 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
   const resumingLive = yield* Ref.make(initialState.status === "live");
   const markSynchronizing = Effect.gen(function* () {
     if (yield* Ref.get(resumingLive)) return;
-    yield* SubscriptionRef.update(state, (current) =>
-      current.status === "deleted"
-        ? current
-        : { ...current, status: "synchronizing" as const, error: Option.none() },
-    );
+    yield* setConnecting;
   });
 
   yield* markSynchronizing;
-  yield* Effect.forkScoped(
-    subscribeDynamic(
+  const subscribeThread = (
+    retrySnapshot = false,
+  ): Stream.Stream<
+    readonly [
+      RpcSession,
+      EnvironmentRpcStreamValue<typeof ORCHESTRATION_V2_WS_METHODS.subscribeThread>,
+    ],
+    EnvironmentRpcStreamFailure<typeof ORCHESTRATION_V2_WS_METHODS.subscribeThread>,
+    EnvironmentSupervisor.EnvironmentSupervisor
+  > => {
+    let failedSession: RpcSession | undefined;
+    let resumeFailed = false;
+    return subscribeDynamicWithSession(
       ORCHESTRATION_V2_WS_METHODS.subscribeThread,
       Effect.fn("EnvironmentThreadState.makeSubscribeInput")(function* (session) {
+        failedSession = session;
+        resumeFailed = false;
         let current = yield* SubscriptionRef.get(state);
         // A prior definitive miss (or delete event) already cleared this thread.
         // Park the subscription attempt without opening the socket so we do not
@@ -989,6 +1025,7 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
                           latestLocalTurnOrdinal: httpResult.history.latestLocalTurnOrdinal ?? null,
                         }
                       : EMPTY_THREAD_HISTORY_META;
+                  yield* clearStreamError;
                   yield* setThread(httpResult.snapshot.projection, { history });
                   yield* remember;
                 }),
@@ -1009,7 +1046,7 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
         }
 
         const sequence = yield* SubscriptionRef.get(lastSequence);
-        const canResume = Option.isSome(current.data);
+        const canResume = Option.isSome(current.data) && !retrySnapshot;
         const acceptBoundedSnapshot = yield* Ref.get(acceptsBoundedSocketSnapshots);
 
         return {
@@ -1028,13 +1065,123 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
         };
       }),
       {
-        onDefect: () => setStreamError("Could not synchronize the thread."),
+        transform: (stream, input) => {
+          const resumed = input.afterSequence !== undefined;
+          const snapshotRetry = retrySnapshot;
+          retrySnapshot = false;
+          return Stream.unwrap(
+            Effect.gen(function* () {
+              const completed = yield* Deferred.make<void>();
+              let synchronized = false;
+              const needsMarker =
+                (resumed || snapshotRetry) && input.requestCompletionMarker === true;
+              const observed = stream.pipe(
+                Stream.mapArrayEffect((items) => {
+                  const complete = items.some((item) =>
+                    input.requestCompletionMarker === true
+                      ? item.kind === "synchronized"
+                      : item.kind === "snapshot",
+                  );
+                  if (!complete) return Effect.succeed(items);
+                  synchronized = true;
+                  // Clear on receipt so applying buffered frames cannot erase a later failure.
+                  return Deferred.succeed(completed, undefined).pipe(
+                    Effect.andThen(clearStreamError),
+                    Effect.as(items),
+                  );
+                }),
+              );
+              const watched = needsMarker
+                ? observed.pipe(
+                    // Remote interruption ends only the request. Local scope cancellation
+                    // also interrupts the watchdog, so it cannot trigger a retry.
+                    Stream.catchCause((cause) =>
+                      !synchronized && cause.reasons.every((reason) => reason._tag === "Interrupt")
+                        ? Stream.never
+                        : Stream.failCause(cause),
+                    ),
+                    Stream.concat(
+                      Stream.suspend(() =>
+                        synchronized
+                          ? Stream.empty
+                          : Stream.die(new ThreadSynchronizationTimeout()),
+                      ),
+                    ),
+                    // A single deadline bounds all replay traffic until the marker.
+                    Stream.interruptWhen(
+                      Deferred.await(completed).pipe(
+                        Effect.timeoutOrElse({
+                          duration: "15 seconds",
+                          orElse: () => Effect.die(new ThreadSynchronizationTimeout()),
+                        }),
+                        Effect.andThen(Effect.never),
+                      ),
+                    ),
+                  )
+                : observed;
+              return watched.pipe(
+                Stream.catchCause((cause) => {
+                  if (
+                    Cause.hasInterrupts(cause) ||
+                    cause.reasons.some(
+                      (reason) =>
+                        reason._tag === "Fail" && isEnvironmentAuthorizationError(reason.error),
+                    )
+                  )
+                    return Stream.failCause(cause);
+                  const failed = cause.reasons.some(
+                    (reason) =>
+                      reason._tag === "Die" ||
+                      (reason._tag === "Fail" &&
+                        (isRpcClientError(reason.error)
+                          ? reason.error.reason._tag === "RpcClientDefect"
+                          : (needsMarker || snapshotRetry) && !synchronized)),
+                  );
+                  // Transport and authorization failures keep the RPC subscription's
+                  // existing handling; only a failed catch-up gets a snapshot retry.
+                  if (!failed) return Stream.failCause(cause);
+                  resumeFailed = resumed && !synchronized;
+                  return Stream.die(Cause.squash(cause));
+                }),
+              );
+            }),
+          );
+        },
+        onDefect: (cause) =>
+          resumeFailed
+            ? Effect.void
+            : setStreamError(
+                cause.reasons.some(
+                  (reason) =>
+                    reason._tag === "Die" && isThreadSynchronizationTimeout(reason.defect),
+                )
+                  ? "Message synchronization timed out. Reconnect or return to the app to try again."
+                  : "Could not synchronize the thread.",
+              ),
         onExpectedFailure: (cause) => setStreamError(formatThreadError(cause)),
         retryExpectedFailureAfter: "250 millis",
         resubscribe: foregroundResubscriptions,
       },
-    ).pipe(Stream.runForEachArray(applyItems)),
-  );
+    ).pipe(
+      Stream.catchCause((cause) => {
+        if (Cause.hasInterrupts(cause)) return Stream.failCause(cause);
+        if (resumeFailed) return subscribeThread(true);
+        // Running threads stay mounted. Keep the error until a new session or
+        // foreground wakeup can start another catch-up attempt.
+        return Stream.merge(
+          SubscriptionRef.changes(supervisor.session).pipe(
+            Stream.filter((session) => Option.isSome(session) && session.value !== failedSession),
+          ),
+          foregroundResubscriptions,
+        ).pipe(
+          Stream.take(1),
+          Stream.drain,
+          Stream.concat(Stream.suspend(() => subscribeThread())),
+        );
+      }),
+    );
+  };
+  yield* Effect.forkScoped(subscribeThread().pipe(Stream.runForEachArray(applyItems)));
 
   return state;
 });
