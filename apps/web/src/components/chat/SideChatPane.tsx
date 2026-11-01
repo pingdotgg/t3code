@@ -1,4 +1,4 @@
-import { scopeThreadRef } from "@t3tools/client-runtime/environment";
+import { scopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { threadRuntimeIsActive } from "@t3tools/client-runtime/state/shell";
 import { resolveLatestMergeBackRun } from "@t3tools/client-runtime/state/thread-workflows";
 import {
@@ -29,6 +29,7 @@ import { Button } from "../ui/button";
 import { toastManager } from "../ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { BackgroundThreadContext } from "./backgroundThread";
+import { closeThreadFindIn } from "./threadFindStore";
 
 /** A side chat tab: its title, Bring back, Delete and Close, over the side chat's own chat. */
 export default function SideChatPane(props: {
@@ -39,11 +40,15 @@ export default function SideChatPane(props: {
 }) {
   const { parentRef, threadId } = props;
   const threadRef = scopeThreadRef(parentRef.environmentId, threadId);
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- registers the parent panel as host in the panel store
-  useEffect(
-    () => hostRightPanel(scopeThreadRef(parentRef.environmentId, threadId), parentRef),
-    [parentRef, threadId],
-  );
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- registers the parent panel as host in the panel store, and closes this side chat's find with its pane
+  useEffect(() => {
+    const ref = scopeThreadRef(parentRef.environmentId, threadId);
+    const unhost = hostRightPanel(ref, parentRef);
+    return () => {
+      unhost();
+      closeThreadFindIn(scopedThreadKey(ref));
+    };
+  }, [parentRef, threadId]);
   const shell = useQuietThreadShell(threadRef);
   const parent = useQuietThreadShell(parentRef);
   const snapshotLoaded = useEnvironmentShellHasSnapshot(parentRef.environmentId);

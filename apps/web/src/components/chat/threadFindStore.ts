@@ -147,6 +147,11 @@ export function closeThreadFind(): void {
   useThreadFindStore.setState(CLOSED_THREAD_FIND);
 }
 
+/** Closes find if it is open in `threadKey`, leaving another thread's find alone. */
+export function closeThreadFindIn(threadKey: string): void {
+  if (useThreadFindStore.getState().threadKey === threadKey) closeThreadFind();
+}
+
 /**
  * Find belongs to the thread it was opened in: a route showing anything else
  * closes it. Settings and Usage draw over the thread, so they keep it, and a
