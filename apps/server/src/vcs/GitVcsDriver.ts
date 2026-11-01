@@ -144,6 +144,8 @@ export interface CreateWorktreeOptions {
   /** Null or omitted defers to the checkout's t3.json. */
   readonly submodules?: WorktreeSubmodules | null;
   readonly worktreesDirectory?: string;
+  /** Tries `git worktree-fast add` on macOS before `git worktree add`. */
+  readonly worktreeFast?: boolean;
 }
 
 export interface GitCommitProgress {
