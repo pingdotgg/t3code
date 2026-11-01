@@ -168,7 +168,7 @@ export function useThreadLifecycle(input: ThreadLifecycleInput) {
   } = input;
   const navigate = useNavigate();
   const router = useRouter();
-  const { settleThread, pinThread, confirmAndUnpinThread } = useThreadActions();
+  const { settleThread, pinThread, confirmAndUnpinThread, markThreadUnread } = useThreadActions();
   const canWriteSourceControl = useEnvironmentScope(environmentId, AuthSourceControlWriteScope);
   const switchGitRef = useAtomCommand(vcsEnvironment.switchRef, { reportFailure: false });
   const updateThreadMetadata = useOrchestrationCommand(threadEnvironment.updateMetadata, {
@@ -613,6 +613,11 @@ export function useThreadLifecycle(input: ThreadLifecycleInput) {
       );
     };
   const shortcuts = {
+    "thread.markUnread": ({ event }) => {
+      if (!activeThreadShell || !activeThreadRef || document.querySelector('[role="dialog"]'))
+        return false;
+      if (!event.repeat) markThreadUnread(activeThreadRef);
+    },
     "thread.settle": () => {
       if (!readEnvironmentScope(environmentId, AuthOrchestrationOperateScope)) return false;
       if (!activeThreadShell || !activeThreadRef || !serverConfigLoaded) return;
