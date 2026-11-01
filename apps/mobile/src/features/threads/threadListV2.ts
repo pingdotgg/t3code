@@ -79,10 +79,11 @@ export type ThreadListV2SwipeAction = "archive" | "settle" | "unsettle" | "snooz
  */
 export function resolveThreadListV2SnoozePresets(input: {
   readonly secondary: "snooze" | null;
+  readonly snoozed: boolean;
   readonly now: string;
   readonly presets: ReadonlyArray<SnoozePresetSetting> | undefined;
 }): ReadonlyArray<SnoozePreset> {
-  return input.secondary === "snooze"
+  return input.secondary === "snooze" || input.snoozed
     ? resolveSnoozePresets(new Date(input.now), presetOptions(input.presets))
     : [];
 }
@@ -484,11 +485,11 @@ export function buildThreadListV2ListItems(input: {
         ? snoozeWakeLabel(item.thread.snoozedUntil, { now: input.snoozeLabelNow })
         : undefined;
     // Put the clock on items so recycler equality limits ticks to rows displaying snooze preset times.
+    // Snoozed rows show the same presets under Reschedule.
     const snoozePresetMinute =
-      !item.snoozed &&
       input.snoozeLabelNow !== undefined &&
       (input.snoozeEnvironmentIds?.has(item.thread.environmentId) ?? true) &&
-      canSnooze(item.thread, { now: input.snoozeLabelNow })
+      (item.snoozed || canSnooze(item.thread, { now: input.snoozeLabelNow }))
         ? input.snoozeLabelNow
         : undefined;
     const move =

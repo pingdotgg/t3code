@@ -87,6 +87,7 @@ describe("resolveThreadListV2SnoozePresets", () => {
 
     const presets = resolveThreadListV2SnoozePresets({
       secondary: "snooze",
+      snoozed: false,
       now: laterMinute,
       presets: undefined,
     });
@@ -1358,6 +1359,8 @@ describe("threadListV2ListItemsAreEqual", () => {
     };
     expect(rows(earlier).snoozeWakeLabelText).toBe("2h");
     expect(rows(later).snoozeWakeLabelText).toBe("1h");
+    // Snoozed rows show the snooze presets under Reschedule, so they keep the minute clock.
+    expect(rows(later).snoozePresetMinute).toBe(isoAt(BASE_MS + MINUTE_MS));
     expect(threadListV2ListItemsAreEqual(rows(earlier), rows(later))).toBe(false);
   });
 
