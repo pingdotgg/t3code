@@ -370,6 +370,12 @@ it.layer(NodeServices.layer)("discoverClaudeSkills", (it) => {
       );
       assert.deepEqual(
         (yield* discoverClaudeSkills({ homePath: configDir }, undefined, {
+          CLAUDE_CODE_PLUGIN_CACHE_DIR: path.join(configDir, "relocated-cache"),
+        })).map((skill) => skill.name),
+        ["design:design-critique", "pstack:poteto-mode"],
+      );
+      assert.deepEqual(
+        (yield* discoverClaudeSkills({ homePath: configDir }, undefined, {
           CLAUDE_CODE_OAUTH_TOKEN: "token",
           CLAUDE_CODE_ACCOUNT_UUID: "77777777-8888-4999-aaaa-bbbbbbbbbbbb",
         })).map((skill) => skill.name),
@@ -406,6 +412,7 @@ it.layer(NodeServices.layer)("discoverClaudeSkills", (it) => {
         ["pstack-copy", "pstack", "copied"],
         ["tools", "tools", "synced-tool"],
         ["a_b", undefined, "renamed"],
+        ["PSTACK", "PSTACK", "shouted"],
       ] as const) {
         yield* writeSkill(path.join(bucket, directory, "skills"), skill, "# Synced");
         if (prefix === undefined) continue;
@@ -418,7 +425,9 @@ it.layer(NodeServices.layer)("discoverClaudeSkills", (it) => {
       yield* fs.writeFileString(
         path.join(bucket, "manifest.json"),
         JSON.stringify({
-          plugins: ["pstack", "pstack-copy", "tools", "a:b. "].map((name) => ({ name })),
+          plugins: ["pstack", "pstack-copy", "tools", "a:b. ", "PSTACK", "no-id"].map(
+            (name, index) => (name === "no-id" ? { name } : { pluginId: `plugin_0${index}`, name }),
+          ),
         }),
       );
       yield* fs.writeFileString(path.join(synced, `.bucket-${bucketName}`), "");
@@ -426,13 +435,18 @@ it.layer(NodeServices.layer)("discoverClaudeSkills", (it) => {
       yield* writeSkill(path.join(installed, "skills"), "installed-tool", "# Installed");
       yield* fs.writeFileString(
         path.join(configDir, "plugins", "installed_plugins.json"),
-        JSON.stringify({ plugins: { "tools@shop": [{ scope: "user", installPath: installed }] } }),
+        JSON.stringify({
+          plugins: {
+            "tools@shop": [{ scope: "user", installPath: installed }],
+            "pstack@shop": [{ scope: "user", installPath: path.join(configDir, "missing") }],
+          },
+        }),
       );
       const names = (enabled: boolean) =>
         Effect.gen(function* () {
           yield* fs.writeFileString(
             path.join(configDir, "settings.json"),
-            JSON.stringify({ enabledPlugins: { "tools@shop": enabled } }),
+            JSON.stringify({ enabledPlugins: { "tools@shop": enabled, "pstack@shop": true } }),
           );
           const skills = yield* discoverClaudeSkills({ homePath: configDir }, undefined, {
             CLAUDE_CODE_ORGANIZATION_UUID: "11111111-2222-4333-8444-555555555555",
@@ -451,6 +465,13 @@ it.layer(NodeServices.layer)("discoverClaudeSkills", (it) => {
         "pstack:poteto-mode",
         "tools:synced-tool",
       ]);
+      yield* writeSkill(path.join(bucket, "no-id", "skills"), "unlisted", "# Synced");
+      assert.notInclude(
+        (yield* discoverClaudeSkills({ homePath: configDir }, undefined, {
+          CLAUDE_CODE_ORGANIZATION_UUID: "11111111-2222-4333-8444-555555555555",
+        })).map((skill) => skill.name),
+        "no-id:unlisted",
+      );
     }),
   );
 
@@ -467,7 +488,7 @@ it.layer(NodeServices.layer)("discoverClaudeSkills", (it) => {
       yield* writeSkill(path.join(synced, bucketName, "pstack", "skills"), "poteto-mode", "# S");
       yield* fs.writeFileString(
         path.join(synced, bucketName, "manifest.json"),
-        '{"plugins":[{"name":"pstack"}]}',
+        '{"plugins":[{"pluginId":"plugin_01pstack","name":"pstack"}]}',
       );
       yield* fs.writeFileString(path.join(synced, `.bucket-${bucketName}`), "");
       yield* fs.makeDirectory(path.join(workspace, ".claude"), { recursive: true });

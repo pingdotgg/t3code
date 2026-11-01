@@ -319,9 +319,18 @@ const SyncedPlugins = Schema.fromJsonString(
   Schema.Struct({ plugins: Schema.Array(Schema.Unknown) }),
 );
 const decodeSyncedPlugin = Schema.decodeUnknownOption(
-  Schema.Struct({ name: Schema.String, generation: Schema.optional(Schema.Number) }),
+  Schema.Struct({
+    pluginId: Schema.String,
+    name: Schema.String,
+    generation: Schema.optional(Schema.Number),
+  }),
 );
 const ACCOUNT_UUID_PATTERN = /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i;
+
+/** Claude compares plugin names case-insensitively. */
+function pluginNameKey(name: string): string {
+  return name.normalize("NFC").toLowerCase();
+}
 
 /** Claude's folder for a synced row: reserved characters become `_`, trailing dots and spaces go. */
 function syncedPluginDirectoryName(name: string): string {
@@ -406,7 +415,9 @@ const resolveSyncedPluginBucket = Effect.fn("resolveSyncedPluginBucket")(functio
   const environmentAccountId = environment.CLAUDE_CODE_ACCOUNT_UUID;
   const accountId =
     account !== undefined && !environment.CLAUDE_CODE_OAUTH_TOKEN
-      ? account.accountUuid
+      ? typeof account.accountUuid === "string"
+        ? account.accountUuid
+        : undefined
       : environmentAccountId && ACCOUNT_UUID_PATTERN.test(environmentAccountId)
         ? environmentAccountId
         : "unbound";
@@ -479,13 +490,19 @@ const discoverPluginSkillRoots = Effect.fn("discoverPluginSkillRoots")(function*
     const manifest = yield* readPluginManifest(installPath);
     const prefix = manifest?.name ?? key.split("@")[0];
     if (!prefix) continue;
-    claimedPluginNames.add(prefix);
+    // A registry record whose install is gone loads nothing and claims no namespace.
+    if (Option.isSome(existing)) claimedPluginNames.add(pluginNameKey(prefix));
     roots.push(...(yield* pluginSkillRoots(installPath, scope, prefix, manifest)));
   }
   if (syncedBucket === undefined) return roots;
 
-  const syncedPath = path.join(pluginsPath, "synced");
+  const syncedPath = path.join(configDirPath, "plugins", "synced");
   const bucketPath = path.join(syncedPath, syncedBucket);
+  const disabledSyncedPlugins = new Set(
+    [...enabledPlugins].flatMap(([pluginKey, enabled]) =>
+      !enabled && pluginKey.endsWith("@synced") ? [pluginNameKey(pluginKey.slice(0, -7))] : [],
+    ),
+  );
   const hasBucketMarker = yield* fileSystem
     .exists(path.join(syncedPath, `.bucket-${syncedBucket}`))
     .pipe(Effect.orElseSucceed(() => false));
@@ -508,10 +525,9 @@ const discoverPluginSkillRoots = Effect.fn("discoverPluginSkillRoots")(function*
     const manifest = yield* readPluginManifest(pluginPath);
     const prefix = manifest?.name ?? directoryName;
     // An installed plugin of the same name, then the first synced row, holds the namespace.
-    if (claimedPluginNames.has(prefix) || enabledPlugins.get(`${prefix}@synced`) === false) {
-      continue;
-    }
-    claimedPluginNames.add(prefix);
+    const key = pluginNameKey(prefix);
+    if (claimedPluginNames.has(key) || disabledSyncedPlugins.has(key)) continue;
+    claimedPluginNames.add(key);
     roots.push(...(yield* pluginSkillRoots(pluginPath, "user", prefix, manifest)));
   }
   return roots;
@@ -608,9 +624,15 @@ export const discoverClaudeSkills = Effect.fn("discoverClaudeSkills")(function* 
     cwd,
     env,
   );
-  const syncedBucket = syncedPluginsHidden
-    ? undefined
-    : yield* resolveSyncedPluginBucket(config, configDirPath, env);
+  // Most installs have no synced folder; skip reading `.claude.json` for them.
+  const hasSyncedPlugins =
+    !syncedPluginsHidden &&
+    (yield* fileSystem
+      .exists(path.join(configDirPath, "plugins", "synced"))
+      .pipe(Effect.orElseSucceed(() => false)));
+  const syncedBucket = hasSyncedPlugins
+    ? yield* resolveSyncedPluginBucket(config, configDirPath, env)
+    : undefined;
 
   const roots: ReadonlyArray<ClaudeSkillRoot> = [
     { directory: path.join(configDirPath, "skills"), scope: "user" },
