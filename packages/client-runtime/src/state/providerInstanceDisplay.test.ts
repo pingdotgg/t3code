@@ -45,11 +45,11 @@ describe("providerAccentForegroundColor", () => {
 });
 
 describe("shouldShowInstanceBadge", () => {
-  it("distinguishes instances by their icons before adding initials", () => {
+  it("keeps sibling badges available when custom images fail", () => {
     const original = { driverKind: codex, enabled: true };
     const custom = { ...original, iconUrl: "https://example.com/kimi.png" };
-    expect(shouldShowInstanceBadge(original, [original, custom])).toBe(false);
-    expect(shouldShowInstanceBadge(custom, [original, custom])).toBe(false);
+    expect(shouldShowInstanceBadge(original, [original, custom])).toBe(true);
+    expect(shouldShowInstanceBadge(custom, [original, custom])).toBe(true);
     expect(shouldShowInstanceBadge(custom, [custom, { ...custom }])).toBe(true);
   });
 
