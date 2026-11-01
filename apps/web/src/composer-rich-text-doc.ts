@@ -1,4 +1,4 @@
-import { joinBackward, joinTextblockBackward, joinTextblockForward } from "@tiptap/pm/commands";
+import { joinTextblockBackward, joinTextblockForward } from "@tiptap/pm/commands";
 import {
   Fragment,
   Mark,
@@ -6,6 +6,11 @@ import {
   type Node as ProseMirrorNode,
   type ResolvedPos,
 } from "@tiptap/pm/model";
+import {
+  Bold,
+  starInputRegex as boldStarInputRegex,
+  underscoreInputRegex as boldUnderscoreInputRegex,
+} from "@tiptap/extension-bold";
 import { Code } from "@tiptap/extension-code";
 import { Blockquote } from "@tiptap/extension-blockquote";
 import { CodeBlock } from "@tiptap/extension-code-block";
@@ -16,11 +21,13 @@ import {
   type Command,
   type Editor,
   Extension,
+  InputRule,
   markInputRule,
   markPasteRule,
   mergeAttributes,
 } from "@tiptap/core";
 import { BulletList, ListItem, OrderedList } from "@tiptap/extension-list";
+import { Strike, inputRegex as strikeInputRegex } from "@tiptap/extension-strike";
 import { TaskItem } from "@tiptap/extension-task-item";
 import { TaskList } from "@tiptap/extension-task-list";
 import {
@@ -163,6 +170,29 @@ export const ComposerCodeExtension = Code.extend({
   },
 });
 
+// Code permits nested emphasis, so Tiptap's exclusion check cannot protect literal delimiters.
+function markInputRuleOutsideCode(find: RegExp, type: MarkType) {
+  const rule = markInputRule({ find, type });
+  return new InputRule({
+    find,
+    handler: (props) => {
+      const { state, range, match } = props;
+      const code = state.schema.marks.code;
+      const content = match[match.length - 1] ?? "";
+      const textStart = range.from + match[0].indexOf(content);
+      const textEnd = textStart + content.length;
+      if (
+        code &&
+        (state.doc.rangeHasMark(range.from + match[0].search(/\S/), textStart, code) ||
+          state.doc.rangeHasMark(textEnd, state.selection.from, code))
+      ) {
+        return null;
+      }
+      return rule.handler(props);
+    },
+  });
+}
+
 /**
  * The composer writes italic as `*text*`, so it keeps only the `*` shortcuts.
  * Tiptap's `_text_` rules fire on the `_` in names like `node_modules` and
@@ -170,10 +200,25 @@ export const ComposerCodeExtension = Code.extend({
  */
 export const ComposerItalicExtension = Italic.extend({
   addInputRules() {
-    return [markInputRule({ find: starInputRegex, type: this.type })];
+    return [markInputRuleOutsideCode(starInputRegex, this.type)];
   },
   addPasteRules() {
     return [markPasteRule({ find: starPasteRegex, type: this.type })];
+  },
+});
+
+export const ComposerBoldExtension = Bold.extend({
+  addInputRules() {
+    return [
+      markInputRuleOutsideCode(boldStarInputRegex, this.type),
+      markInputRuleOutsideCode(boldUnderscoreInputRegex, this.type),
+    ];
+  },
+});
+
+export const ComposerStrikeExtension = Strike.extend({
+  addInputRules() {
+    return [markInputRuleOutsideCode(strikeInputRegex, this.type)];
   },
 });
 
@@ -1158,7 +1203,8 @@ function backspaceAcrossList(editor: Editor): boolean {
       return moved;
     };
     // can() skips the schema check and can accept tasks with no parent list to lift into.
-    return editor.chain().command(lift).run() || joinBackward(state, editor.view.dispatch);
+    // Those join the line above; joinBackward would re-nest them or select the parent line.
+    return editor.chain().command(lift).run() || joinTextblockBackward(state, editor.view.dispatch);
   }
   const before = $from.depth === 1 ? $from.node(0).maybeChild($from.index(0) - 1) : null;
   if (before && LIST_NODE_NAMES.has(before.type.name) && $from.parent.type.name !== "codeBlock") {

@@ -407,6 +407,8 @@ export interface AcpAdapterV2Flavor {
   readonly reportsPerTurnPromptUsage?: boolean;
   /** Grok can retain task_already_running until process exit. */
   readonly restartRuntimeAfterInterrupt?: boolean;
+  /** Prompt failures after which the agent process keeps failing until replaced. */
+  readonly restartRuntimeAfterPromptError?: (error: unknown) => boolean;
   readonly restartRuntimeOnEveryInterrupt?: boolean;
   readonly terminateRuntimeProcessGroupOnInterrupt?: boolean;
   readonly preserveRuntimeOnSettledInterrupt?: boolean;
@@ -1043,6 +1045,12 @@ function nodeStatus(status: ProjectedToolStatus): OrchestrationV2ExecutionNode["
 
 function completedAtForStatus(status: ProjectedToolStatus, now: DateTime.Utc): DateTime.Utc | null {
   return status === "completed" || status === "failed" || status === "interrupted" ? now : null;
+}
+
+// Copilot advertises URL ids such as `https://agentclientprotocol.com/protocol/session-modes#plan`.
+function isAcpPlanModeId(id: string): boolean {
+  const name = id.slice(id.lastIndexOf("#") + 1);
+  return name === "plan" || name === "architect";
 }
 
 function selectPermissionOptionId(
@@ -6958,8 +6966,8 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                 })),
               });
             }
-            const planMode = effectiveModeState?.availableModes.find(
-              (mode) => mode.id === "plan" || mode.id === "architect",
+            const planMode = effectiveModeState?.availableModes.find((mode) =>
+              isAcpPlanModeId(mode.id),
             );
             if (planMode !== undefined && effectiveModeState?.currentModeId !== planMode.id) {
               yield* runtime.setMode(planMode.id);
@@ -6968,9 +6976,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               const choices = option.options.flatMap((entry) =>
                 "value" in entry ? [entry.value] : entry.options.map((choice) => choice.value),
               );
-              const requested = choices.find(
-                (choice) => choice === "plan" || choice === "architect",
-              );
+              const requested = choices.find(isAcpPlanModeId);
               if (requested !== undefined && option.currentValue !== requested) {
                 yield* runtime.setConfigOption(option.id, requested);
               }
@@ -7840,12 +7846,16 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                         Result.isSuccess(error) &&
                         error.success._tag === "AcpRequestError" &&
                         error.success.code === -32800);
+                    const failure = Cause.squash(cause);
+                    if (!interrupted && flavor.restartRuntimeAfterPromptError?.(failure) === true) {
+                      yield* Ref.set(runtimeRestartRequired, true);
+                    }
                     yield* finalizeTurn(
                       context,
                       interrupted ? "interrupted" : "failed",
-                      flavor.promptFailure?.(Cause.squash(cause)) ??
+                      flavor.promptFailure?.(failure) ??
                         makeProviderFailure({
-                          cause: Cause.squash(cause),
+                          cause: failure,
                           class: "provider_error",
                         }),
                     ).pipe(

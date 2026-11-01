@@ -4274,11 +4274,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     const sourceProjection = yield* projectionStore
       .getThreadRecords(command.sourceThreadId, [
         "runs",
-        "checkpoints",
+        ...(command.sourcePoint.type === "checkpoint" ? (["checkpoints"] as const) : []),
         "providerThreads",
         "providerTurns",
         "attempts",
-        "contextTransfers",
       ])
       .pipe(
         Effect.mapError(
