@@ -70,6 +70,7 @@ export interface SettingsSearchItem {
   readonly peerLinksOnly?: boolean;
   readonly secondary?: boolean;
   readonly requiresThreadAutoSettlement?: boolean;
+  readonly requiresThreadAutoSettleSnoozedOnMerge?: boolean;
 }
 
 export interface SettingsSearchAvailability {
@@ -81,6 +82,7 @@ export interface SettingsSearchAvailability {
   readonly canManageLocalBackend: boolean;
   readonly isWslSettingsRowVisible: boolean;
   readonly hasThreadAutoSettlement: boolean;
+  readonly hasThreadAutoSettleSnoozedOnMerge: boolean;
   readonly managedTunnelActive?: boolean;
   readonly hasPeerLinkHost?: boolean;
 }
@@ -497,6 +499,16 @@ export const SETTINGS_SEARCH_ITEMS = [
     to: "/settings/threads",
     searchTerms: ["pull request merge closed automatically sidebar"],
     requiresThreadAutoSettlement: true,
+    scope: "project-defaults",
+  },
+  {
+    id: "settle-snoozed-threads-on-merge",
+    title: "Settle snoozed threads on merge",
+    to: "/settings/threads",
+    targetId: "auto-settle-merged-threads",
+    searchTerms: ["snooze pull request merge auto-settle sidebar wake"],
+    requiresThreadAutoSettlement: true,
+    requiresThreadAutoSettleSnoozedOnMerge: true,
     scope: "project-defaults",
   },
   {
@@ -1256,6 +1268,34 @@ interface AutoSettlementSearchEnvironment {
   readonly serverConfig: object | null;
 }
 
+export function hasThreadAutoSettleSnoozedOnMergeInScope(
+  environments: readonly AutoSettlementSearchEnvironment[],
+  scope: Pick<ResolvedSettingsScope, "kind" | "environmentIds">,
+): boolean {
+  if (scope.kind === "unavailable") {
+    return false;
+  }
+  const connected = environments.filter(
+    (environment) =>
+      scope.environmentIds.includes(environment.environmentId) &&
+      environment.connection.phase === "connected" &&
+      environment.serverConfig !== null,
+  );
+  return (
+    connected.length > 0 &&
+    connected.every((environment) => {
+      const capabilities = (
+        environment.serverConfig as {
+          readonly environment?: {
+            readonly capabilities?: { readonly threadAutoSettleSnoozedOnMerge?: boolean };
+          };
+        }
+      ).environment?.capabilities;
+      return capabilities?.threadAutoSettleSnoozedOnMerge === true;
+    })
+  );
+}
+
 export function getThreadAutoSettlementSearchAvailability(
   environments: readonly AutoSettlementSearchEnvironment[],
   scope?: Pick<ResolvedSettingsScope, "kind" | "environmentIds">,
@@ -1325,6 +1365,8 @@ export function filterAvailableSettingsSearchItems(
       (!item.localEnvironmentOnly || !availability.localEnvironmentDisabled) &&
       (!item.wslAvailableOnly || availability.isWslSettingsRowVisible) &&
       (!item.requiresThreadAutoSettlement || availability.hasThreadAutoSettlement) &&
+      (!item.requiresThreadAutoSettleSnoozedOnMerge ||
+        availability.hasThreadAutoSettleSnoozedOnMerge) &&
       (!item.managedTunnelOnly || availability.managedTunnelActive === true) &&
       (!item.peerLinksOnly || availability.hasPeerLinkHost === true),
   );

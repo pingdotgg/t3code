@@ -11,6 +11,7 @@ import {
   filterAvailableSettingsSearchItems,
   getSettingsSearchTargetScope,
   getThreadAutoSettlementSearchAvailability,
+  hasThreadAutoSettleSnoozedOnMergeInScope,
   isSettingsSearchScopeAvailable,
   movedSettingsPath,
   searchSettings,
@@ -113,6 +114,7 @@ describe("searchSettings", () => {
       canManageLocalBackend: false,
       isWslSettingsRowVisible: false,
       hasThreadAutoSettlement: false,
+      hasThreadAutoSettleSnoozedOnMerge: false,
     });
 
     const gatedIds = new Set<string>([
@@ -133,6 +135,7 @@ describe("searchSettings", () => {
       "auto-settle-inactive-threads",
       "auto-settle-merged-threads",
       "days-before-auto-settle",
+      "settle-snoozed-threads-on-merge",
       "linked-environments",
     ]);
     expect(available.map((item) => item.id).filter((id) => gatedIds.has(id))).toEqual([]);
@@ -148,6 +151,7 @@ describe("searchSettings", () => {
       localEnvironmentDisabled: true,
       isWslSettingsRowVisible: false,
       hasThreadAutoSettlement: false,
+      hasThreadAutoSettleSnoozedOnMerge: false,
     };
     const results = (hasPeerLinkHost: boolean) =>
       searchSettings(
@@ -215,11 +219,20 @@ describe("settings search targets", () => {
 });
 
 describe("auto-settlement search availability", () => {
-  function environment(id: string, { connected = true, loaded = true } = {}) {
+  function environment(
+    id: string,
+    { connected = true, loaded = true, snoozedOnMerge = true } = {},
+  ) {
     return {
       environmentId: EnvironmentId.make(id),
       connection: { phase: connected ? ("connected" as const) : ("offline" as const) },
-      serverConfig: loaded ? { environment: { capabilities: {} } } : null,
+      serverConfig: loaded
+        ? {
+            environment: {
+              capabilities: snoozedOnMerge ? { threadAutoSettleSnoozedOnMerge: true } : {},
+            },
+          }
+        : null,
     };
   }
 
@@ -239,13 +252,60 @@ describe("auto-settlement search availability", () => {
       canManageLocalBackend: false,
       isWslSettingsRowVisible: false,
       hasThreadAutoSettlement: availability.eligibleEnvironmentIds.length > 0,
+      hasThreadAutoSettleSnoozedOnMerge: true,
     });
     expect(searchSettings("auto-settle", items).map((item) => item.id)).toEqual([
       "auto-settle-inactive-threads",
       "auto-settle-merged-threads",
       "days-before-auto-settle",
+      "settle-snoozed-threads-on-merge",
       "keep-threads-with-pull-requests",
     ]);
+  });
+
+  it("hides snoozed-on-merge search when scoped environments lack the capability", () => {
+    const legacy = environment("legacy", { snoozedOnMerge: false });
+    const scoped = {
+      kind: "environment" as const,
+      environmentIds: [legacy.environmentId],
+    };
+    expect(hasThreadAutoSettleSnoozedOnMergeInScope([legacy, capable], scoped)).toBe(false);
+    const availability = getThreadAutoSettlementSearchAvailability([legacy, capable]);
+    const items = filterAvailableSettingsSearchItems({
+      hasCloudPublicConfig: false,
+      hasEnvironment: true,
+      hasProviderSettingsEnvironment: true,
+      hasMacProviderSettingsEnvironment: false,
+      canManageLocalBackend: false,
+      isWslSettingsRowVisible: false,
+      hasThreadAutoSettlement: availability.eligibleEnvironmentIds.length > 0,
+      hasThreadAutoSettleSnoozedOnMerge: false,
+    });
+    expect(searchSettings("snoozed merge", items).map((item) => item.id)).not.toContain(
+      "settle-snoozed-threads-on-merge",
+    );
+  });
+
+  it("requires every connected environment in scope to advertise snoozed-on-merge", () => {
+    const scoped = {
+      kind: "all" as const,
+      environmentIds: [
+        capable.environmentId,
+        environment("legacy", { snoozedOnMerge: false }).environmentId,
+      ],
+    };
+    expect(
+      hasThreadAutoSettleSnoozedOnMergeInScope(
+        [capable, environment("legacy", { snoozedOnMerge: false })],
+        scoped,
+      ),
+    ).toBe(false);
+    expect(
+      hasThreadAutoSettleSnoozedOnMergeInScope([capable], {
+        kind: "environment",
+        environmentIds: [capable.environmentId],
+      }),
+    ).toBe(true);
   });
 
   it.each([offline, loading])(
