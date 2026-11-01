@@ -4,6 +4,7 @@ import { isMacPlatform, isWindowsPlatform, normalizeSearchText } from "~/lib/uti
 import { STATIC_KEYBINDING_COMMANDS, type KeybindingCommand } from "@t3tools/contracts";
 import type { EnvironmentId } from "@t3tools/contracts";
 import type { EnvironmentConnectionPhase } from "@t3tools/client-runtime/connection";
+import type { MessageKey } from "@t3tools/client-runtime/i18n";
 import {
   sourceControlClients,
   type SourceControlDefinition,
@@ -108,6 +109,32 @@ export const SETTINGS_SECTION_LABELS: Readonly<Record<SettingsPath, string>> = {
   "/settings/labs": "Labs",
   "/settings/about": "About",
   "/settings/archived": "Archive",
+};
+
+/** Display labels as message keys; the English strings above stay the search match source. */
+export const SETTINGS_SECTION_LABEL_KEYS: Readonly<Record<SettingsPath, MessageKey>> = {
+  "/settings/diagnostics": "settings.nav.diagnostics",
+  "/settings/projects": "settings.nav.projects",
+  "/settings/general": "settings.nav.general",
+  "/settings/appearance": "settings.nav.appearance",
+  "/settings/chat": "settings.nav.chat",
+  "/settings/diffs": "settings.nav.diffs",
+  "/settings/keybindings": "settings.nav.keybindings",
+  "/settings/snap-shot": "settings.nav.snapShot",
+  "/settings/providers": "settings.nav.providers",
+  "/settings/threads": "settings.nav.threads",
+  "/settings/browser": "settings.nav.browser",
+  "/settings/devices": "settings.nav.devices",
+  "/settings/scheduled-tasks": "settings.nav.scheduledTasks",
+  "/settings/source-control": "settings.nav.sourceControl",
+  "/settings/worktrees": "settings.nav.worktrees",
+  "/settings/connections": "settings.nav.connections",
+  "/settings/access": "settings.nav.access",
+  "/settings/secrets": "settings.nav.secrets",
+  "/settings/maintenance": "settings.nav.maintenance",
+  "/settings/labs": "settings.nav.labs",
+  "/settings/about": "settings.nav.about",
+  "/settings/archived": "settings.nav.archived",
 };
 
 /** Sidebar order. A group without a heading is set apart by space alone. */
@@ -332,6 +359,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     title: "Chat width",
     to: "/settings/appearance",
     searchTerms: ["wide full width column layout messages composer monitor"],
+  },
+  {
+    id: "ui-language",
+    title: "Language",
+    to: "/settings/appearance",
+    searchTerms: ["language locale translation i18n english chinese 简体中文 语言 界面语言 翻译"],
   },
   {
     id: "thread-details-items",

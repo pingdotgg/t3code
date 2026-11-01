@@ -17,6 +17,7 @@ import {
   PRIMARY_SETTINGS_UNAVAILABLE_MESSAGE,
   usePrimarySettingsAvailable,
 } from "../../hooks/useSettings";
+import { useT } from "../../hooks/useI18n";
 import { cn } from "../../lib/utils";
 import { WorkspacePageContainer, type WorkspacePageWidth } from "../WorkspacePageContainer";
 import { Button } from "../ui/button";
@@ -547,7 +548,7 @@ export function SettingsRow({
 
 export function SettingResetButton({
   label,
-  tooltip = "Reset to default",
+  tooltip,
   disabled = false,
   onClick,
 }: {
@@ -556,6 +557,7 @@ export function SettingResetButton({
   disabled?: boolean;
   onClick: () => void;
 }) {
+  const t = useT();
   return (
     <Tooltip>
       <TooltipTrigger
@@ -563,7 +565,7 @@ export function SettingResetButton({
           <Button
             size="icon-micro"
             variant="ghost-muted"
-            aria-label={`Reset ${label} to default`}
+            aria-label={t("settings.layout.resetToDefault", { label })}
             disabled={disabled}
             onClick={(event) => {
               event.stopPropagation();
@@ -574,7 +576,7 @@ export function SettingResetButton({
           </Button>
         }
       />
-      <TooltipPopup side="top">{tooltip}</TooltipPopup>
+      <TooltipPopup side="top">{tooltip ?? t("settings.layout.resetToDefaultShort")}</TooltipPopup>
     </Tooltip>
   );
 }

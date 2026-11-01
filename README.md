@@ -95,6 +95,14 @@ The package is maintained in [nixpkgs](https://github.com/NixOS/nixpkgs/tree/nix
 and includes the desktop app (`t3code-desktop`) and the `t3` command.
 See [Nix installation](./docs/user/install.md#nix-nixpkgs) for NixOS configuration and updates.
 
+## Interface languages
+
+The UI ships in English and Simplified Chinese. It follows your system language by default; change it in **Settings → Appearance → Language**. To contribute another language, add a catalog under [`packages/client-runtime/src/i18n/`](./packages/client-runtime/src/i18n) — English keys are the source of truth, and a locale missing a key falls back to English.
+
+## 界面语言
+
+界面目前提供英文和简体中文，默认跟随系统语言，可在 **Settings（设置）→ Appearance（外观）→ Language（语言）** 中切换。欢迎贡献更多语言：在 [`packages/client-runtime/src/i18n/`](./packages/client-runtime/src/i18n) 下新增词典即可——英文 key 是事实源，缺失的 key 自动回退英文。
+
 ## Some notes
 
 We are very very early in this project. Expect bugs.
