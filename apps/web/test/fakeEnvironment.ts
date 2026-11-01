@@ -17,6 +17,7 @@ import {
   TurnItemId,
   WS_METHODS,
   WsRpcGroup,
+  type VcsStatusStreamEvent,
   type OrchestrationProjectShell,
   type OrchestrationV2ProjectedTurnItem,
   type OrchestrationV2Run,
@@ -182,6 +183,8 @@ function run(threadId: ThreadId, id: RunId, ordinal: number, userMessageId: stri
 }
 
 export interface FakeThread {
+  /** Makes this a side chat of that thread. */
+  readonly sideChatOf?: ThreadId;
   readonly id: ThreadId;
   readonly title: string;
   readonly runs: ReadonlyArray<OrchestrationV2Run>;
@@ -224,7 +227,12 @@ function shellOf(thread: FakeThread): OrchestrationV2ThreadShell {
     branch: "main",
     worktreePath: null,
     activeProviderThreadId: null,
-    lineage: { rootThreadId: thread.id, parentThreadId: null, relationshipToParent: null },
+    lineage: {
+      rootThreadId: thread.sideChatOf ?? thread.id,
+      parentThreadId: thread.sideChatOf ?? null,
+      relationshipToParent: null,
+      ...(thread.sideChatOf ? { sideChat: true } : {}),
+    },
     forkedFrom: null,
     createdBy: "user",
     creationSource: "web",
@@ -311,6 +319,7 @@ const threadSubscribers = new Map<string, Queue.Queue<OrchestrationV2ThreadStrea
 let terminalMetadataSubscriber: Queue.Queue<TerminalMetadataStreamEvent> | null = null;
 let threads: ReadonlyArray<FakeThread> = [];
 let sequence = 1;
+let vcsStatusSubscriber: Queue.Queue<VcsStatusStreamEvent> | null = null;
 
 const subscribe = <A>(first: ReadonlyArray<A>, register?: (queue: Queue.Queue<A>) => () => void) =>
   Stream.unwrap(
@@ -365,6 +374,13 @@ const handlers: Record<string, (input: never) => unknown> = {
       },
     );
   },
+  [WS_METHODS.subscribeVcsStatus]: () =>
+    subscribe<VcsStatusStreamEvent>([], (queue) => {
+      vcsStatusSubscriber = queue;
+      return () => {
+        if (vcsStatusSubscriber === queue) vcsStatusSubscriber = null;
+      };
+    }),
   [WS_METHODS.subscribeServerConfig]: () =>
     subscribe([{ version: 1 as const, type: "snapshot" as const, config: serverConfig }]),
 };
@@ -482,3 +498,8 @@ export function runningRun(threadId: ThreadId, id: string, ordinal: number, user
 }
 
 export { userItem };
+
+export async function emitVcsStatus(event: VcsStatusStreamEvent): Promise<void> {
+  if (vcsStatusSubscriber === null) throw new Error("No VCS status subscription");
+  await Effect.runPromise(Queue.offer(vcsStatusSubscriber, event));
+}
