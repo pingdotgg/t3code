@@ -37,6 +37,7 @@ import {
   CircleCheckIcon,
   CircleDashedIcon,
   CircleDotDashedIcon,
+  ChevronRightIcon,
   ClockIcon,
   GitBranchIcon,
   MessageCircleQuestionIcon,
@@ -543,6 +544,8 @@ type SidebarThreadRowProps = {
   snoozeSupported: boolean;
   pinningSupported: boolean;
   isPinned: boolean;
+  promptExpanded?: boolean | undefined;
+  onTogglePrompts?: ((threadRef: ScopedThreadRef) => void) | undefined;
   sortable?: SortableThreadRowBag | undefined;
   dropVerb: SidebarDropVerb | null;
   dragOverPinned: boolean;
@@ -835,6 +838,14 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
   };
   const handleKeyDown = (event: ReactKeyboardEvent) => {
     if (event.target !== event.currentTarget) return;
+    if (props.onTogglePrompts && (event.key === "ArrowRight" || event.key === "ArrowLeft")) {
+      const wantsExpanded = event.key === "ArrowRight";
+      if (wantsExpanded !== props.promptExpanded) {
+        event.preventDefault();
+        props.onTogglePrompts(threadRef);
+      }
+      return;
+    }
     if (
       event.key === "F2" &&
       !isRenaming &&
@@ -1214,6 +1225,9 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
                 data-sidebar-parent={props.navigationParent}
                 aria-label={accessibility.label}
                 aria-current={accessibility.current}
+                aria-expanded={
+                  inFolder && props.onTogglePrompts ? (props.promptExpanded ?? false) : undefined
+                }
                 data-testid={inFolder ? "sidebar-row-folder" : "sidebar-row-slim"}
                 aria-busy={isRegeneratingTitle || undefined}
                 className={cn(
@@ -1233,6 +1247,29 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
           >
             {/* `contents` keeps one-line rows a single flex row. */}
             <div className={multiline ? "flex h-6 min-w-0 items-center gap-2.5" : "contents"}>
+              {inFolder && props.onTogglePrompts ? (
+                <button
+                  type="button"
+                  tabIndex={-1}
+                  aria-label={`${props.promptExpanded ? "Hide" : "Show"} prompts in ${thread.title}`}
+                  aria-expanded={props.promptExpanded ?? false}
+                  onPointerDown={(event) => event.stopPropagation()}
+                  onClick={(event) => {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    props.onTogglePrompts?.(threadRef);
+                  }}
+                  className="inline-flex size-4 shrink-0 cursor-pointer items-center justify-center rounded-sm text-sidebar-muted-foreground outline-none hover:text-sidebar-foreground focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+                >
+                  <ChevronRightIcon
+                    aria-hidden
+                    className={cn(
+                      "size-3 transition-transform",
+                      props.promptExpanded && "rotate-90",
+                    )}
+                  />
+                </button>
+              ) : null}
               {accessibleTitle}
               {inFolder ? null : (
                 <span

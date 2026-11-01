@@ -99,6 +99,8 @@ import { type HandoffTimelineRun } from "./V2LifecycleRow";
 import { TimelineSystemDivider } from "./TimelineSystemDivider";
 
 import { forwardWheelToTimeline } from "./timelineMinimapWheel";
+import { PromptIndex } from "./PromptIndex";
+import { usePromptJumpStore } from "./promptJumpStore";
 import { TimelineMinimap } from "./TimelineMinimap";
 import {
   type TimelineRowSharedState,
@@ -304,6 +306,7 @@ interface MessagesTimelineProps {
   /** The footer's content grew, such as a new queued turn or status line. */
   onFooterGrow?: () => void;
   findOpen?: boolean;
+  threadDetailReady?: boolean;
   hideEmptyPlaceholder?: boolean;
   /** Composer space to center the empty state against; held steady through collapse. */
   emptyPlaceholderInset: number;
@@ -353,6 +356,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
   listRef,
   timelineEntries,
   findOpen = false,
+  threadDetailReady = true,
   findExpanded = false,
   findQuery = "",
   activeFindMatch = null,
@@ -405,6 +409,9 @@ const ConversationTimeline = memo(function ConversationTimeline({
   historyControls,
 }: MessagesTimelineProps) {
   const listIdentityKey = displayThreadKey ?? routeThreadKey;
+  const promptJump = usePromptJumpStore((state) =>
+    state.target?.threadKey === routeThreadKey ? state.target : null,
+  );
   // Snapshot restore positions on identity changes; ongoing scroll writes must not move them.
   // Find open at the opening is part of the snapshot: opening find later
   // announces its own navigation (threadFindStore's announceOpening).
@@ -785,6 +792,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
     onManualNavigation: navigateTimeline,
   });
   const [findListReady, setFindListReady] = useState(false);
+  const promptJumpLoadRequestRef = useRef<number | null>(null);
   const handleListLoad = () => {
     onCitationListLoad();
     setFindListReady(true);
@@ -1209,6 +1217,57 @@ const ConversationTimeline = memo(function ConversationTimeline({
     contentInsetEndAdjustment,
   });
 
+  // Sidebar prompt navigation can target history outside the timeline's bounded snapshot.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- resolves a pending sidebar jump against the mounted virtual timeline and loads its history page when needed
+  useEffect(() => {
+    if (promptJump === null) {
+      promptJumpLoadRequestRef.current = null;
+      return;
+    }
+    if (!threadDetailReady || detailBehindShell || !findListReady || restoringThreadPosition)
+      return;
+    if (promptJumpLoadRequestRef.current !== promptJump.requestId)
+      promptJumpLoadRequestRef.current = null;
+    const rowIndex = rows.findIndex(
+      (row) => row.kind === "message" && row.message.id === promptJump.messageId,
+    );
+    if (rowIndex >= 0) {
+      navigateTimeline();
+      void listRef.current?.scrollToIndex({
+        index: rowIndex,
+        animated: !window.matchMedia("(prefers-reduced-motion: reduce)").matches,
+        viewOffset: 24,
+      });
+      usePromptJumpStore.getState().clear(promptJump.requestId);
+      promptJumpLoadRequestRef.current = null;
+      return;
+    }
+    if (historyControls?.error !== null && historyControls?.error !== undefined) {
+      usePromptJumpStore.getState().clear(promptJump.requestId);
+      promptJumpLoadRequestRef.current = null;
+      return;
+    }
+    if (!historyControls?.hasMoreHistory) {
+      usePromptJumpStore.getState().clear(promptJump.requestId);
+      promptJumpLoadRequestRef.current = null;
+      return;
+    }
+    if (!historyControls.loading && promptJumpLoadRequestRef.current !== promptJump.requestId) {
+      promptJumpLoadRequestRef.current = promptJump.requestId;
+      historyControls.onLoadEarlier(promptJump.messageId);
+    }
+  }, [
+    findListReady,
+    threadDetailReady,
+    detailBehindShell,
+    historyControls,
+    navigateTimeline,
+    promptJump,
+    restoringThreadPosition,
+    rows,
+    listRef,
+  ]);
+
   // LegendList moves rows one commit late; per-row providers prevent thread context leaks.
   const onAudioPlaybackChange = (rowId: string, event: SyntheticEvent) => {
     const audio = event.target;
@@ -1310,6 +1369,17 @@ const ConversationTimeline = memo(function ConversationTimeline({
             className="relative h-full min-h-0"
             data-assistant-citation-viewport="true"
           >
+            <PromptIndex
+              items={minimapItems}
+              onSelect={(item) => {
+                navigateTimeline();
+                void listRef.current?.scrollToIndex({
+                  index: item.rowIndex,
+                  animated: !window.matchMedia("(prefers-reduced-motion: reduce)").matches,
+                  viewOffset: 24,
+                });
+              }}
+            />
             {onCiteAssistantText && citationThreadRef ? (
               <AssistantSelectionToolbar
                 viewport={timelineViewportElement}

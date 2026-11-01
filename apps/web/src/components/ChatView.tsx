@@ -3432,6 +3432,7 @@ export default function ChatView(props: ChatViewProps) {
                 listRef={legendListRef}
                 runs={serverProjection?.runs ?? []}
                 latestRun={activeActivityRun}
+                threadDetailReady={serverProjection !== null}
                 announcedRun={announcedRun(activeActivityRun, serverProjection?.runs ?? [])}
                 detailBehindShell={isDetailBehindShell(
                   activeLatestRun,
