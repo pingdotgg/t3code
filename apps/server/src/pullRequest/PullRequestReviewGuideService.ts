@@ -6,6 +6,7 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Path from "effect/Path";
 import * as Ref from "effect/Ref";
 import * as Result from "effect/Result";
 import * as Semaphore from "effect/Semaphore";
@@ -24,6 +25,7 @@ import {
 } from "@t3tools/contracts";
 import type { ReviewGuideStackLayer } from "@t3tools/provider-core/server/textGeneration";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
+import { isSshRemoteUrl } from "@t3tools/shared/sourceControl";
 import { sourceControlDefinitions } from "../sourceControl/sourceControlDefinitions.ts";
 
 import * as ServerConfig from "../config.ts";
@@ -31,9 +33,11 @@ import * as PullRequestReviewGuides from "../persistence/PullRequestReviewGuides
 import * as ProjectService from "../project/ProjectService.ts";
 import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import * as ServerSettings from "../serverSettings.ts";
+import * as SourceControlRepositoryService from "../sourceControl/SourceControlRepositoryService.ts";
 import * as TextGeneration from "../textGeneration/TextGeneration.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import { PATCH_RENDER_PREFIX_ARGS } from "../vcs/GitVcsDriverCore.ts";
+import { removeLinkedWorktree } from "../vcs/worktreeRemoval.ts";
 import * as PullRequestService from "./PullRequestService.ts";
 import { pullRequestSyncKey } from "./pullRequestSyncKey.ts";
 import { reviewGuideInputFromPullRequest } from "./pullRequestReviewGuideInput.ts";
@@ -69,9 +73,40 @@ const make = Effect.gen(function* () {
   const serverSettings = yield* ServerSettings.ServerSettingsService;
   const providerRegistry = yield* ProviderRegistry.ProviderRegistry;
   const textGeneration = yield* TextGeneration.TextGeneration;
+  const repositories = yield* SourceControlRepositoryService.SourceControlRepositoryService;
   const git = yield* GitVcsDriver.GitVcsDriver;
   const fileSystem = yield* FileSystem.FileSystem;
+  const pathService = yield* Path.Path;
   const config = yield* ServerConfig.ServerConfig;
+  // A server launched by a git hook may inherit a different repository or index. Guide checkout
+  // commands must discover their repository from cwd, including reads and cleanup of private refs.
+  const execute = Effect.fn("PullRequestReviewGuideService.execute")(function* (
+    input: GitVcsDriver.ExecuteGitInput,
+  ) {
+    return yield* git.execute({
+      ...input,
+      env: {
+        ...input.env,
+        GIT_DIR: undefined,
+        GIT_WORK_TREE: undefined,
+        GIT_COMMON_DIR: undefined,
+        GIT_INDEX_FILE: undefined,
+        GIT_OBJECT_DIRECTORY: undefined,
+        GIT_ALTERNATE_OBJECT_DIRECTORIES: undefined,
+      },
+    });
+  });
+  const resolveCommit = Effect.fn("PullRequestReviewGuideService.resolveCommit")(function* (
+    cwd: string,
+    revision: string,
+  ) {
+    const result = yield* execute({
+      operation: "PullRequestReviewGuideService.resolveCommit",
+      cwd,
+      args: ["rev-parse", "--verify", `${revision}^{commit}`],
+    });
+    return { commitSha: result.stdout.trim() };
+  });
   const serviceScope = yield* Effect.scope;
   const runs = yield* Ref.make<ReadonlyMap<string, PullRequestReviewGuideRun>>(new Map());
   let runCounter = 0;
@@ -94,34 +129,20 @@ const make = Effect.gen(function* () {
     return { key, workspaceRoot: project.workspaceRoot, identity: project.repositoryIdentity };
   });
 
-  const requireOwnRepository = Effect.fn("PullRequestReviewGuideService.requireOwnRepository")(
-    function* (key: ThreadPullRequestKey, identity: RepositoryIdentity | null | undefined) {
-      const own =
-        identity == null
-          ? null
-          : pullRequestSyncKey(
-              {
-                projectId: ProjectId.make("own"),
-                number: key.number,
-                repository: sourceControlDefinitions.repositorySelector(identity) ?? "",
-              },
-              identity,
-            );
-      if (
-        identity == null ||
-        own === null ||
-        own.host !== key.host ||
-        own.repository !== key.repository
-      ) {
-        return yield* new PullRequestOperationError({
-          operation: "generateReviewGuide",
-          detail:
-            "Guides are written from this project's checkout, and this pull request is in another repository. Write it from a project that is a checkout of that repository.",
-        });
-      }
-      return identity.locator;
-    },
-  );
+  const projectRepositoryKey = (
+    key: ThreadPullRequestKey,
+    identity: RepositoryIdentity | null | undefined,
+  ) =>
+    identity == null
+      ? null
+      : pullRequestSyncKey(
+          {
+            projectId: ProjectId.make("own"),
+            number: key.number,
+            repository: sourceControlDefinitions.repositorySelector(identity) ?? "",
+          },
+          identity,
+        );
 
   const readStored = (key: ThreadPullRequestKey) =>
     guides.get(key).pipe(
@@ -153,77 +174,118 @@ const make = Effect.gen(function* () {
 
   const checkoutHead = Effect.fn("PullRequestReviewGuideService.checkoutHead")(function* (
     workspaceRoot: string,
-    locator: RepositoryIdentity["locator"],
+    key: ThreadPullRequestKey,
+    identity: RepositoryIdentity | null | undefined,
     detail: PullRequestDetail,
     headSha: string,
     stack: PullRequestStack | null,
     runId: string,
   ) {
-    // Identity names can be stale; match effective fetch URLs, including insteadOf rewrites.
-    const names = yield* git
-      .execute({
+    const own = projectRepositoryKey(key, identity);
+    const ownRepository =
+      identity != null &&
+      own !== null &&
+      own.host === key.host &&
+      own.repository === key.repository;
+    let repositoryRoot = workspaceRoot;
+    let path: string | undefined;
+    let remote: string;
+    if (ownRepository) {
+      // Identity names can be stale; match effective fetch URLs, including insteadOf rewrites.
+      const names = yield* execute({
         operation: "PullRequestReviewGuideService.listRemotes",
         cwd: workspaceRoot,
         args: ["remote"],
-      })
-      .pipe(Effect.map((result) => result.stdout.split("\n").filter((name) => name.length > 0)));
-    const remote = yield* Effect.findFirst(
-      [locator.remoteName, ...names.filter((name) => name !== locator.remoteName)],
-      (name) =>
-        git
-          .execute({
+      }).pipe(Effect.map((result) => result.stdout.split("\n").filter((name) => name.length > 0)));
+      const matchedRemote = yield* Effect.findFirst(
+        [
+          identity.locator.remoteName,
+          ...names.filter((name) => name !== identity.locator.remoteName),
+        ],
+        (name) =>
+          execute({
             operation: "PullRequestReviewGuideService.remoteUrl",
             cwd: workspaceRoot,
             args: ["remote", "get-url", "--", name],
-          })
-          .pipe(
-            Effect.map((result) => result.stdout.trim() === locator.remoteUrl),
+          }).pipe(
+            Effect.map((result) => result.stdout.trim() === identity.locator.remoteUrl),
             Effect.orElseSucceed(() => false),
           ),
-    ).pipe(Effect.map(Option.getOrUndefined));
-    if (remote === undefined) {
-      return yield* new PullRequestOperationError({
-        operation: "generateReviewGuide",
-        detail: "This project's checkout no longer has a remote for the pull request's repository.",
+      ).pipe(Effect.map(Option.getOrUndefined));
+      if (matchedRemote === undefined) {
+        return yield* new PullRequestOperationError({
+          operation: "generateReviewGuide",
+          detail:
+            "This project's checkout no longer has a remote for the pull request's repository.",
+        });
+      }
+      remote = matchedRemote;
+    } else {
+      // Resolve linked repositories through their host rather than the unrelated checkout.
+      const repository = yield* repositories.lookupRepository({
+        provider: detail.provider,
+        repository:
+          detail.provider === "github" ||
+          detail.provider === "forgejo" ||
+          detail.provider === "gitcafe"
+            ? `${detail.provider === "forgejo" && detail.url ? new URL(detail.url).origin : `https://${key.host}`}/${key.repository}`
+            : detail.repository,
+        cwd: detail.workspaceRoot,
+      });
+      remote =
+        own?.host === key.host &&
+        identity?.provider === detail.provider &&
+        isSshRemoteUrl(identity.locator.remoteUrl)
+          ? repository.sshUrl
+          : repository.url;
+      const directory = yield* fileSystem.makeTempDirectoryScoped({
+        directory: config.worktreesDir,
+        prefix: "review-guide-",
+      });
+      path = `${directory}/checkout`;
+      yield* fileSystem.makeDirectory(path);
+      repositoryRoot = path;
+      yield* execute({
+        operation: "PullRequestReviewGuideService.initRepository",
+        cwd: repositoryRoot,
+        args: ["init", "--quiet"],
       });
     }
     const fetch = (args: ReadonlyArray<string>) =>
-      git.execute({
+      execute({
         operation: "PullRequestReviewGuideService.fetch",
-        cwd: workspaceRoot,
+        cwd: repositoryRoot,
         args: ["fetch", "--quiet", "--no-tags", "--", remote, ...args],
         timeoutMs: 5 * 60_000,
       });
-    // Reject invalid branch names and refspec operators before fetching host-provided names.
-    yield* git
-      .execute({
-        operation: "PullRequestReviewGuideService.checkBaseBranch",
-        cwd: workspaceRoot,
-        args: ["check-ref-format", "--branch", detail.baseBranch],
-      })
-      .pipe(
-        Effect.filterOrFail(
-          () => !detail.baseBranch.startsWith("+") && !detail.baseBranch.includes(":"),
-          () =>
-            new PullRequestOperationError({
-              operation: "generateReviewGuide",
-              detail: "The pull request's base branch name is not one git can fetch.",
-            }),
-        ),
-      );
-    // FETCH_HEAD is workspace-global; isolate this run's base from concurrent fetches.
+    // The host names the base branch. A name git rejects, or one that would change the refspec
+    // (a leading `+`, a `:`), is refused before it reaches `git fetch`.
+    yield* execute({
+      operation: "PullRequestReviewGuideService.checkBaseBranch",
+      cwd: repositoryRoot,
+      args: ["check-ref-format", "--branch", detail.baseBranch],
+    }).pipe(
+      Effect.filterOrFail(
+        () => !detail.baseBranch.startsWith("+") && !detail.baseBranch.includes(":"),
+        () =>
+          new PullRequestOperationError({
+            operation: "generateReviewGuide",
+            detail: "The pull request's base branch name is not one git can fetch.",
+          }),
+      ),
+    );
+    // Fetched into a ref of this run's own: FETCH_HEAD is shared by every fetch in the
+    // workspace, so a concurrent run could otherwise measure this change from its base.
     const baseRef = `refs/t3/review-guide/${runId}/base`;
     yield* fetch([`+refs/heads/${detail.baseBranch}:${baseRef}`]);
     yield* Effect.addFinalizer(() =>
-      git
-        .execute({
-          operation: "PullRequestReviewGuideService.dropBaseRef",
-          cwd: workspaceRoot,
-          args: ["update-ref", "-d", baseRef],
-        })
-        .pipe(Effect.ignore({ log: true })),
+      execute({
+        operation: "PullRequestReviewGuideService.dropBaseRef",
+        cwd: repositoryRoot,
+        args: ["update-ref", "-d", baseRef],
+      }).pipe(Effect.ignore({ log: true })),
     );
-    const baseTip = yield* git.resolveCommit({ cwd: workspaceRoot, revision: baseRef });
+    const baseTip = yield* resolveCommit(repositoryRoot, baseRef);
     const fetchHead = Effect.fn("PullRequestReviewGuideService.fetchHead")(function* (
       number: number,
       reportedSha: string,
@@ -236,8 +298,8 @@ const make = Effect.gen(function* () {
           detail: `The host reported a head for #${number} that is not a commit hash.`,
         });
       }
-      // rev-parse prefers same-named branches/tags over short hashes.
-      const resolveHead = git.resolveCommit({ cwd: workspaceRoot, revision: sha }).pipe(
+      // Not redundant: rev-parse prefers a branch or tag named like a short hash over the commit.
+      const resolveHead = resolveCommit(repositoryRoot, sha).pipe(
         Effect.filterOrFail(
           ({ commitSha }) => commitSha.startsWith(sha),
           ({ commitSha }) =>
@@ -250,9 +312,9 @@ const make = Effect.gen(function* () {
       const fetchAndResolve = (ref: string) => fetch([ref]).pipe(Effect.andThen(resolveHead));
       const headRef = sourceControlDefinitions.get(detail.provider).changeRequestHeadRef?.(number);
       const branchRef = `refs/heads/${branch}`;
-      const checkBranch = git.execute({
+      const checkBranch = execute({
         operation: "PullRequestReviewGuideService.checkHeadBranch",
-        cwd: workspaceRoot,
+        cwd: repositoryRoot,
         args: ["check-ref-format", branchRef],
       });
       const sources = [
@@ -297,23 +359,48 @@ const make = Effect.gen(function* () {
       },
       { concurrency: 4 },
     );
-    const directory = yield* fileSystem.makeTempDirectoryScoped({
-      directory: config.worktreesDir,
-      prefix: "review-guide-",
-    });
-    const path = `${directory}/checkout`;
-    yield* git.execute({
-      operation: "PullRequestReviewGuideService.addWorktree",
-      cwd: workspaceRoot,
-      args: ["worktree", "add", "--detach", "--quiet", path, resolvedHead.commitSha],
-      timeoutMs: 5 * 60_000,
-    });
-    yield* Effect.addFinalizer(() =>
-      git
-        .removeWorktree({ cwd: workspaceRoot, path, force: true })
-        .pipe(Effect.ignore({ log: true })),
-    );
-    const mergeBase = yield* git.execute({
+    if (path === undefined) {
+      const directory = yield* fileSystem.makeTempDirectoryScoped({
+        directory: config.worktreesDir,
+        prefix: "review-guide-",
+      });
+      path = `${directory}/checkout`;
+      yield* execute({
+        operation: "PullRequestReviewGuideService.addWorktree",
+        cwd: workspaceRoot,
+        args: ["worktree", "add", "--detach", "--quiet", path, resolvedHead.commitSha],
+        timeoutMs: 5 * 60_000,
+      });
+      const worktreePath = path;
+      yield* Effect.addFinalizer(() =>
+        removeLinkedWorktree({
+          operation: "PullRequestReviewGuideService.removeWorktree",
+          cwd: workspaceRoot,
+          worktreePath,
+          force: true,
+          execute,
+          run: (args) =>
+            execute({
+              operation: "PullRequestReviewGuideService.removeWorktree",
+              cwd: workspaceRoot,
+              args,
+              timeoutMs: 5 * 60_000,
+            }),
+        }).pipe(
+          Effect.provideService(FileSystem.FileSystem, fileSystem),
+          Effect.provideService(Path.Path, pathService),
+          Effect.ignore({ log: true }),
+        ),
+      );
+    } else {
+      yield* execute({
+        operation: "PullRequestReviewGuideService.checkoutHead",
+        cwd: path,
+        args: ["checkout", "--detach", "--quiet", resolvedHead.commitSha],
+        timeoutMs: 5 * 60_000,
+      });
+    }
+    const mergeBase = yield* execute({
       operation: "PullRequestReviewGuideService.mergeBase",
       cwd: path,
       args: ["merge-base", baseTip.commitSha, "HEAD"],
@@ -326,23 +413,22 @@ const make = Effect.gen(function* () {
     baseCommit: string,
   ) {
     const diff = (args: ReadonlyArray<string>) =>
-      git
-        .execute({
-          operation: "PullRequestReviewGuideService.readChange",
-          cwd,
-          // Override user diff prefixes so the parser can find headers.
-          args: [
-            "-c",
-            "core.quotePath=false",
-            "diff",
-            ...PATCH_RENDER_PREFIX_ARGS,
-            ...args,
-            `${baseCommit}...HEAD`,
-          ],
-          timeoutMs: 60_000,
-          maxOutputBytes: 64 * 1024 * 1024,
-        })
-        .pipe(Effect.map((result) => result.stdout));
+      execute({
+        operation: "PullRequestReviewGuideService.readChange",
+        cwd,
+        // Fixed prefixes: a user's diff.noPrefix or custom prefixes would hide the headers the
+        // parser reads.
+        args: [
+          "-c",
+          "core.quotePath=false",
+          "diff",
+          ...PATCH_RENDER_PREFIX_ARGS,
+          ...args,
+          `${baseCommit}...HEAD`,
+        ],
+        timeoutMs: 60_000,
+        maxOutputBytes: 64 * 1024 * 1024,
+      }).pipe(Effect.map((result) => result.stdout));
     const [nameOnly, patch] = yield* Effect.all(
       [
         diff(["--name-only", "-z"]),
@@ -357,7 +443,7 @@ const make = Effect.gen(function* () {
     input: PullRequestRef,
     key: ThreadPullRequestKey,
     workspaceRoot: string,
-    locator: RepositoryIdentity["locator"],
+    identity: RepositoryIdentity | null | undefined,
     detail: PullRequestDetail,
     headSha: string,
     runId: string,
@@ -380,7 +466,8 @@ const make = Effect.gen(function* () {
     );
     const { generated, change } = yield* checkoutHead(
       workspaceRoot,
-      locator,
+      key,
+      identity,
       detail,
       headSha,
       stack,
@@ -444,7 +531,6 @@ const make = Effect.gen(function* () {
       });
     }
     const { key, workspaceRoot, identity } = yield* keyFor(input);
-    const locator = yield* requireOwnRepository(key, identity);
     const runKey = keyString(key);
     yield* pullRequests.invalidate({ reference: input });
     const [detail, stored] = yield* Effect.all([pullRequests.detail(input), readStored(key)], {
@@ -495,7 +581,7 @@ const make = Effect.gen(function* () {
         return updated;
       });
     const runId = `${runCounter++}`;
-    yield* write(input, key, workspaceRoot, locator, detail, currentHeadSha, runId, owns).pipe(
+    yield* write(input, key, workspaceRoot, identity, detail, currentHeadSha, runId, owns).pipe(
       Effect.andThen(finish(null)),
       Effect.catchCause((cause) =>
         Cause.hasInterruptsOnly(cause)

@@ -3,20 +3,28 @@ import { assert, it } from "@effect/vitest";
 import * as Context from "effect/Context";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Logger from "effect/Logger";
 import * as Ref from "effect/Ref";
+import * as Scope from "effect/Scope";
 import * as Queue from "effect/Queue";
 import * as Tracer from "effect/Tracer";
 import {
   ProjectId,
   GitCommandError,
+  SourceControlProviderKind,
+  TextGenerationError,
   type PullRequestActivity,
   type PullRequestDetail,
   type PullRequestStack,
   type PullRequestRef,
+  type RepositoryIdentity,
 } from "@t3tools/contracts";
+
+import type { ReviewGuideGenerationInput } from "@t3tools/provider-core/server/textGeneration";
 
 import * as ServerConfig from "../config.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
@@ -24,6 +32,7 @@ import * as PullRequestReviewGuides from "../persistence/PullRequestReviewGuides
 import * as ProjectService from "../project/ProjectService.ts";
 import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import * as ServerSettings from "../serverSettings.ts";
+import * as SourceControlRepositoryService from "../sourceControl/SourceControlRepositoryService.ts";
 import * as TextGeneration from "../textGeneration/TextGeneration.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as VcsProcess from "../vcs/VcsProcess.ts";
@@ -38,7 +47,7 @@ const ACME_APP = {
     remoteName: "origin",
     remoteUrl: "https://github.com/acme/app.git",
   },
-  provider: "github",
+  provider: SourceControlProviderKind.make("github"),
   displayName: "acme/app",
   owner: "acme",
   name: "app",
@@ -102,6 +111,7 @@ const detail = (workspaceRoot: string, headSha: string): PullRequestDetail =>
     headBranch: "feature",
     headSha,
     workspaceRoot,
+    repository: "acme/app",
   }) as PullRequestDetail;
 
 const activity: PullRequestActivity = {
@@ -158,7 +168,10 @@ const makeLayer = (input: {
   readonly stored: Deferred.Deferred<void>;
   readonly enabled?: boolean;
   readonly currentHead?: Ref.Ref<string>;
-  readonly identity?: typeof ACME_APP;
+  readonly identity?: RepositoryIdentity | null;
+  readonly lookup?: SourceControlRepositoryService.SourceControlRepositoryService["Service"]["lookupRepository"];
+  readonly detail?: Partial<PullRequestDetail>;
+  readonly settings?: Parameters<typeof ServerSettings.layerTest>[0];
 }) =>
   PullRequestReviewGuideService.layer.pipe(
     Layer.provide(
@@ -182,7 +195,7 @@ const makeLayer = (input: {
           (input.currentHead === undefined
             ? Effect.succeed(input.headSha)
             : Ref.get(input.currentHead)
-          ).pipe(Effect.map((head) => detail(input.workspace, head))),
+          ).pipe(Effect.map((head) => ({ ...detail(input.workspace, head), ...input.detail }))),
         activity: () => Effect.succeed(activity),
         invalidate: () => Effect.void,
         stack: () => Effect.succeed(stack(input)),
@@ -194,12 +207,18 @@ const makeLayer = (input: {
           Effect.succeedSome({
             id: projectId,
             workspaceRoot: input.workspace,
-            repositoryIdentity: {
-              ...(input.identity ?? ACME_APP),
-              locator: { ...ACME_APP.locator, remoteUrl: input.remote },
-            },
+            repositoryIdentity:
+              input.identity === undefined
+                ? { ...ACME_APP, locator: { ...ACME_APP.locator, remoteUrl: input.remote } }
+                : input.identity,
           }),
       } as unknown as ProjectService.ProjectService["Service"]),
+    ),
+    Layer.provide(
+      Layer.succeed(SourceControlRepositoryService.SourceControlRepositoryService, {
+        lookupRepository:
+          input.lookup ?? (() => Effect.die("a matching checkout must not need a clone lookup")),
+      } as unknown as SourceControlRepositoryService.SourceControlRepositoryService["Service"]),
     ),
     Layer.provide(
       Layer.succeed(ProviderRegistry.ProviderRegistry, {
@@ -211,8 +230,10 @@ const makeLayer = (input: {
         generateReviewGuide: input.generate,
       } as unknown as TextGeneration.TextGeneration["Service"]),
     ),
-    Layer.provide(ServerSettings.layerTest({ reviewGuidesEnabled: input.enabled ?? true })),
-    Layer.provide(ServerConfig.layerTest(input.root, { prefix: "t3-review-guide-config-" })),
+    Layer.provide(
+      ServerSettings.layerTest({ reviewGuidesEnabled: input.enabled ?? true, ...input.settings }),
+    ),
+    Layer.provide(ServerConfig.layerTest(input.root, `${input.root}/server-home`)),
   );
 
 const layerBase = Layer.mergeAll(
@@ -324,6 +345,7 @@ const startSingleBranchRun = (input: {
         identity: {
           ...ACME_APP,
           canonicalKey: `github.com/acme/${input.repositoryName}`,
+          locator: { ...ACME_APP.locator, remoteUrl: repositories.remote },
           displayName: `acme/${input.repositoryName}`,
           name: input.repositoryName,
         },
@@ -400,7 +422,13 @@ it.layer(layerBase, { excludeTestServices: true })("PullRequestReviewGuideServic
               Effect.andThen(
                 shadow === "none"
                   ? Effect.void
-                  : git(workspace, [shadow, repositories.headSha.slice(0, 12), "HEAD"]),
+                  : git(workspace, [
+                      "-c",
+                      "tag.gpgSign=false",
+                      shadow,
+                      repositories.headSha.slice(0, 12),
+                      "HEAD",
+                    ]),
               ),
               Effect.asVoid,
             ),
@@ -561,7 +589,7 @@ it.layer(layerBase, { excludeTestServices: true })("PullRequestReviewGuideServic
     ),
   );
 
-  it.effect("refuses a pull request from a repository the project is not a checkout of", () =>
+  it.effect("refuses to write a guide while the server has review guides off", () =>
     Effect.scoped(
       Effect.gen(function* () {
         const repositories = yield* makeRepositories;
@@ -570,14 +598,8 @@ it.layer(layerBase, { excludeTestServices: true })("PullRequestReviewGuideServic
           makeLayer({
             ...repositories,
             stored,
-            identity: {
-              ...ACME_APP,
-              canonicalKey: "github.com/acme/other",
-              displayName: "acme/other",
-              name: "other",
-            },
-            generate: () =>
-              Effect.die("a guide must not be written from another repository's checkout"),
+            enabled: false,
+            generate: () => Effect.die("a guide must not be written while the beta is off"),
           }),
         );
         const service = Context.get(
@@ -585,8 +607,695 @@ it.layer(layerBase, { excludeTestServices: true })("PullRequestReviewGuideServic
           PullRequestReviewGuideService.PullRequestReviewGuideService,
         );
         const result = yield* Effect.flip(service.generate(reference));
-        assert.include(result.message, "in another repository");
+        assert.include(result.message, "Review guides are off");
       }),
     ),
+  );
+
+  it.effect(
+    "keeps a newer run's guide when an older run for the same pull request finishes late",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const repositories = yield* makeRepositories;
+          const stored = yield* Deferred.make<void>();
+          const currentHead = yield* Ref.make(repositories.headSha);
+          const releaseOld = yield* Deferred.make<void>();
+          const oldStarted = yield* Deferred.make<void>();
+          const answer = (title: string) => ({
+            stops: [
+              {
+                title,
+                summary: "",
+                attention: null,
+                excerpts: [],
+                files: [],
+                notes: [],
+                questions: [],
+              },
+            ],
+          });
+          const context = yield* Layer.build(
+            makeLayer({
+              ...repositories,
+              stored,
+              currentHead,
+              generate: (input) =>
+                input.cwd.length > 0 && input.baseCommit.length > 0
+                  ? Ref.get(currentHead).pipe(
+                      Effect.flatMap((head) =>
+                        head === repositories.headSha
+                          ? Deferred.succeed(oldStarted, undefined).pipe(
+                              Effect.andThen(Deferred.await(releaseOld)),
+                              Effect.as(answer("old head")),
+                            )
+                          : Effect.succeed(answer("new head")),
+                      ),
+                    )
+                  : Effect.die("unreachable"),
+            }),
+          );
+          const service = Context.get(
+            context,
+            PullRequestReviewGuideService.PullRequestReviewGuideService,
+          );
+
+          const runs = yield* watchRuns;
+          yield* runs.generate(service, reference);
+          yield* Deferred.await(oldStarted);
+          yield* Ref.set(currentHead, repositories.upperSha);
+          const second = yield* runs.generate(service, reference);
+          assert.strictEqual(second.run?._tag, "Running");
+          assert.strictEqual(second.run?.headSha, repositories.upperSha);
+          const settled = yield* runs.settled(service, reference);
+          assert.strictEqual(settled.guide?.headSha, repositories.upperSha);
+
+          yield* Deferred.succeed(releaseOld, undefined);
+          const after = yield* runs.settled(service, reference);
+          assert.isNull(after.run);
+          assert.strictEqual(after.guide?.headSha, repositories.upperSha);
+          assert.strictEqual(after.guide?.stops[0]?.title, "new head");
+        }),
+      ),
+  );
+
+  it.effect.each(["private repository", "matching worktree"] as const)(
+    "isolates the %s from inherited git repository variables",
+    (scenario) =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const repositories = yield* makeRepositories;
+          const fs = yield* FileSystem.FileSystem;
+          const unrelated = `${repositories.root}/inherited-repository`;
+          const matching = scenario === "matching worktree";
+          const workspace = matching
+            ? repositories.workspace
+            : `${repositories.root}/scratch-project`;
+          yield* fs.makeDirectory(unrelated);
+          if (!matching) yield* fs.makeDirectory(workspace);
+          yield* git(unrelated, ["init", "--quiet", "--initial-branch=main"]);
+          yield* git(unrelated, ["config", "user.email", "test@example.com"]);
+          yield* git(unrelated, ["config", "user.name", "Test"]);
+          yield* git(unrelated, [
+            "remote",
+            "add",
+            "unrelated",
+            `${repositories.root}/wrong-remote`,
+          ]);
+          yield* fs.writeFileString(`${unrelated}/wrong.txt`, "unrelated history\n");
+          yield* git(unrelated, ["add", "wrong.txt"]);
+          yield* git(unrelated, ["commit", "--quiet", "-m", "unrelated history"]);
+          yield* fs.writeFileString(`${unrelated}/wrong.txt`, "staged work\n");
+          yield* git(unrelated, ["add", "wrong.txt"]);
+          yield* fs.writeFileString(`${unrelated}/wrong.txt`, "uncommitted work\n");
+          yield* fs.writeFileString(`${unrelated}/.git/FETCH_HEAD`, "unrelated fetch\n");
+          const readObjects = Effect.gen(function* () {
+            const directory = `${unrelated}/.git/objects`;
+            const paths = yield* fs.readDirectory(directory, { recursive: true });
+            return yield* Effect.forEach(paths.toSorted(), (path) =>
+              Effect.gen(function* () {
+                const info = yield* fs.stat(`${directory}/${path}`);
+                return {
+                  path,
+                  contents:
+                    info.type === "File" ? yield* fs.readFile(`${directory}/${path}`) : null,
+                };
+              }),
+            );
+          });
+          const before = {
+            refs: yield* git(unrelated, ["show-ref"]),
+            head: yield* git(unrelated, ["rev-parse", "HEAD"]),
+            status: yield* git(unrelated, ["status", "--porcelain"]),
+            index: yield* fs.readFile(`${unrelated}/.git/index`),
+            fetchHead: yield* fs.readFileString(`${unrelated}/.git/FETCH_HEAD`),
+            objects: yield* readObjects,
+            worktrees: yield* git(repositories.workspace, ["worktree", "list", "--porcelain"]),
+          };
+          const stored = yield* Deferred.make<void>();
+          const seen = yield* Deferred.make<{
+            readonly input: ReviewGuideGenerationInput;
+            readonly head: string;
+            readonly changed: string;
+            readonly upper: string;
+          }>();
+          const driver = yield* GitVcsDriver.GitVcsDriver;
+          const cleanEnv = {
+            GIT_DIR: undefined,
+            GIT_WORK_TREE: undefined,
+            GIT_COMMON_DIR: undefined,
+            GIT_INDEX_FILE: undefined,
+            GIT_OBJECT_DIRECTORY: undefined,
+            GIT_ALTERNATE_OBJECT_DIRECTORIES: undefined,
+          };
+          const readCheckout = (cwd: string, args: ReadonlyArray<string>) =>
+            driver.execute({ operation: "test.readCheckout", cwd, args, env: cleanEnv }).pipe(
+              Effect.map((result) => result.stdout.trim()),
+              Effect.orDie,
+            );
+          const context = yield* Layer.build(
+            makeLayer({
+              ...repositories,
+              workspace,
+              identity: matching
+                ? { ...ACME_APP, locator: { ...ACME_APP.locator, remoteUrl: repositories.remote } }
+                : null,
+              stored,
+              lookup: () =>
+                matching
+                  ? Effect.die("A matching worktree must not need a clone lookup.")
+                  : Effect.succeed({
+                      provider: SourceControlProviderKind.make("github"),
+                      nameWithOwner: "acme/app",
+                      url: repositories.remote,
+                      sshUrl: repositories.remote,
+                    }),
+              generate: (input) =>
+                Effect.gen(function* () {
+                  const head = yield* readCheckout(input.cwd, ["rev-parse", "HEAD"]);
+                  const changed = yield* readCheckout(input.cwd, [
+                    "diff",
+                    "--name-only",
+                    `${input.baseCommit}...HEAD`,
+                  ]);
+                  const upper = yield* readCheckout(input.cwd, [
+                    "show",
+                    `${repositories.upperSha}:upper.txt`,
+                  ]);
+                  yield* Deferred.succeed(seen, { input, head, changed, upper });
+                  return { stops: [] };
+                }),
+            }),
+          );
+          const service = Context.get(
+            context,
+            PullRequestReviewGuideService.PullRequestReviewGuideService,
+          );
+          const logger = Logger.make(({ message }) => {
+            if (String(message).includes("Review guide generation failed")) {
+              Deferred.doneUnsafe(
+                stored,
+                Effect.die("The isolated review guide failed before it was stored."),
+              );
+            }
+          });
+          yield* Effect.scoped(
+            Effect.gen(function* () {
+              const inherited = Object.keys(cleanEnv).map(
+                (name) => [name, process.env[name]] as const,
+              );
+              yield* Effect.addFinalizer(() =>
+                Effect.sync(() => {
+                  for (const [name, value] of inherited) {
+                    if (value === undefined) delete process.env[name];
+                    else process.env[name] = value;
+                  }
+                }),
+              );
+              process.env.GIT_DIR = `${unrelated}/.git`;
+              process.env.GIT_WORK_TREE = unrelated;
+              process.env.GIT_COMMON_DIR = `${unrelated}/.git`;
+              process.env.GIT_INDEX_FILE = `${unrelated}/.git/index`;
+              process.env.GIT_OBJECT_DIRECTORY = `${unrelated}/.git/objects`;
+              process.env.GIT_ALTERNATE_OBJECT_DIRECTORIES = `${repositories.remote}/.git/objects`;
+              yield* service
+                .generate(reference)
+                .pipe(Effect.provide(Logger.layer([logger], { mergeWithExisting: false })));
+              yield* Deferred.await(stored);
+            }),
+          );
+          const observed = yield* Deferred.await(seen);
+          assert.strictEqual(observed.head, repositories.headSha);
+          assert.strictEqual(observed.changed, "feature.txt");
+          assert.strictEqual(observed.input.baseCommit, repositories.lowerSha);
+          assert.strictEqual(observed.upper, "upper layer");
+          assert.deepStrictEqual(
+            observed.input.stack?.map((layer) => layer.headSha),
+            [repositories.lowerSha, repositories.headSha, repositories.upperSha, null],
+          );
+          assert.deepStrictEqual(
+            (yield* service.get(reference)).guide?.stops.flatMap((stop) =>
+              stop.files.map((file) => file.path),
+            ),
+            ["feature.txt"],
+          );
+          assert.strictEqual(yield* git(unrelated, ["show-ref"]), before.refs);
+          assert.strictEqual(yield* git(unrelated, ["rev-parse", "HEAD"]), before.head);
+          assert.strictEqual(yield* git(unrelated, ["status", "--porcelain"]), before.status);
+          assert.deepStrictEqual(yield* fs.readFile(`${unrelated}/.git/index`), before.index);
+          assert.deepStrictEqual(yield* readObjects, before.objects);
+          assert.strictEqual(
+            yield* fs.readFileString(`${unrelated}/.git/FETCH_HEAD`),
+            before.fetchHead,
+          );
+          assert.strictEqual(
+            yield* fs.readFileString(`${unrelated}/wrong.txt`),
+            "uncommitted work\n",
+          );
+          assert.isFalse(yield* fs.exists(observed.input.cwd));
+          assert.strictEqual(
+            yield* git(repositories.workspace, ["worktree", "list", "--porcelain"]),
+            before.worktrees,
+          );
+          if (!matching) assert.deepStrictEqual(yield* fs.readDirectory(workspace), []);
+        }),
+      ),
+  );
+
+  it.effect.each(["gitlab", "github"] as const)(
+    "fetches %s change request heads and stack layers when the host rejects commit SHA fetches",
+    (provider) =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const repositories = yield* makeRepositories;
+          const refPrefix = provider === "gitlab" ? "refs/merge-requests" : "refs/pull";
+          for (const [number, sha] of [
+            [6, repositories.lowerSha],
+            [7, repositories.headSha],
+            [8, repositories.upperSha],
+          ] as const) {
+            yield* git(repositories.remote, ["update-ref", `${refPrefix}/${number}/head`, sha]);
+          }
+          yield* git(repositories.remote, ["update-ref", "-d", "refs/heads/feature"]);
+          yield* git(repositories.remote, ["update-ref", "-d", "refs/heads/upper"]);
+          const stored = yield* Deferred.make<void>();
+          const seen = yield* Deferred.make<{
+            readonly input: ReviewGuideGenerationInput;
+            readonly head: string;
+            readonly changed: string;
+            readonly upper: string;
+          }>();
+          const driver = yield* GitVcsDriver.GitVcsDriver;
+          const readCheckout = (cwd: string, args: ReadonlyArray<string>) =>
+            driver.execute({ operation: "test.readCheckout", cwd, args }).pipe(
+              Effect.map((result) => result.stdout.trim()),
+              Effect.orDie,
+            );
+          const rejectShaDriver = GitVcsDriver.GitVcsDriver.of({
+            ...driver,
+            execute: (input) =>
+              input.args[0] === "fetch" && /^[0-9a-f]{40}$/.test(input.args.at(-1) ?? "")
+                ? Effect.fail(
+                    new GitCommandError({
+                      operation: input.operation,
+                      command: "git",
+                      cwd: input.cwd,
+                      detail: "The remote does not accept commit SHA fetches.",
+                    }),
+                  )
+                : driver.execute(input),
+          });
+          const context = yield* Layer.build(
+            makeLayer({
+              ...repositories,
+              identity: null,
+              detail: { provider: SourceControlProviderKind.make(provider) },
+              stored,
+              lookup: () =>
+                Effect.succeed({
+                  provider: SourceControlProviderKind.make(provider),
+                  nameWithOwner: "acme/app",
+                  url: repositories.remote,
+                  sshUrl: repositories.remote,
+                }),
+              generate: (input) =>
+                Effect.gen(function* () {
+                  const head = yield* readCheckout(input.cwd, ["rev-parse", "HEAD"]);
+                  const changed = yield* readCheckout(input.cwd, [
+                    "diff",
+                    "--name-only",
+                    `${input.baseCommit}...HEAD`,
+                  ]);
+                  const upper = yield* readCheckout(input.cwd, [
+                    "show",
+                    `${repositories.upperSha}:upper.txt`,
+                  ]);
+                  yield* Deferred.succeed(seen, { input, head, changed, upper });
+                  return { stops: [] };
+                }),
+            }).pipe(Layer.provide(Layer.succeed(GitVcsDriver.GitVcsDriver, rejectShaDriver))),
+          );
+          const service = Context.get(
+            context,
+            PullRequestReviewGuideService.PullRequestReviewGuideService,
+          );
+          const logger = Logger.make(({ message }) => {
+            if (String(message).includes("Review guide generation failed")) {
+              Deferred.doneUnsafe(stored, Effect.die("The change request ref fallback failed."));
+            }
+          });
+          const input = { ...reference, host: `${provider}.com` };
+          yield* service
+            .generate(input)
+            .pipe(Effect.provide(Logger.layer([logger], { mergeWithExisting: false })));
+          yield* Deferred.await(stored);
+          const observed = yield* Deferred.await(seen);
+          assert.strictEqual(observed.head, repositories.headSha);
+          assert.strictEqual(observed.changed, "feature.txt");
+          assert.strictEqual(observed.input.baseCommit, repositories.lowerSha);
+          assert.strictEqual(observed.upper, "upper layer");
+          assert.deepStrictEqual(
+            observed.input.stack?.map((layer) => layer.headSha),
+            [repositories.lowerSha, repositories.headSha, repositories.upperSha, null],
+          );
+          assert.deepStrictEqual(
+            (yield* service.get(input)).guide?.stops.flatMap((stop) =>
+              stop.files.map((file) => file.path),
+            ),
+            ["feature.txt"],
+          );
+        }),
+      ),
+  );
+
+  it.effect.each([
+    "no checkout",
+    "unrelated checkout",
+    "unrelated SSH host",
+    "same-host SSH",
+  ] as const)("writes a linked pull request guide with %s", (scenario) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const repositories = yield* makeRepositories;
+        const fs = yield* FileSystem.FileSystem;
+        const workspace = `${repositories.root}/other-project`;
+        yield* fs.makeDirectory(workspace);
+        let identity: RepositoryIdentity | null = null;
+        if (scenario !== "no checkout") {
+          yield* git(workspace, ["init", "--quiet", "--initial-branch=main"]);
+          yield* git(workspace, ["config", "user.email", "test@example.com"]);
+          yield* git(workspace, ["config", "user.name", "Test"]);
+          yield* fs.writeFileString(`${workspace}/wrong.txt`, "another repository\n");
+          yield* git(workspace, ["add", "wrong.txt"]);
+          yield* git(workspace, ["commit", "--quiet", "-m", "unrelated history"]);
+          yield* git(workspace, ["remote", "add", "origin", `${repositories.root}/wrong-remote`]);
+          yield* fs.writeFileString(`${workspace}/wrong.txt`, "uncommitted work\n");
+          const host = scenario === "unrelated SSH host" ? "gitlab.com" : "github.com";
+          identity = {
+            ...ACME_APP,
+            canonicalKey: `${host}/acme/other`,
+            displayName: "acme/other",
+            name: "other",
+            provider: SourceControlProviderKind.make(
+              scenario === "unrelated SSH host" ? "gitlab" : "github",
+            ),
+            locator: {
+              ...ACME_APP.locator,
+              remoteUrl:
+                scenario === "unrelated checkout"
+                  ? "https://github.com/acme/other.git"
+                  : `git@${host}:acme/other.git`,
+            },
+          };
+        }
+        const before =
+          identity === null
+            ? null
+            : {
+                refs: yield* git(workspace, ["show-ref"]),
+                worktrees: yield* git(workspace, ["worktree", "list", "--porcelain"]),
+                status: yield* git(workspace, ["status", "--porcelain"]),
+              };
+        const stored = yield* Deferred.make<void>();
+        const seen = yield* Deferred.make<{
+          readonly input: ReviewGuideGenerationInput;
+          readonly head: string;
+          readonly changed: string;
+          readonly shallow: string;
+          readonly upper: string;
+        }>();
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+        const readCheckout = (cwd: string, args: ReadonlyArray<string>) =>
+          git(cwd, args).pipe(
+            Effect.provideService(GitVcsDriver.GitVcsDriver, driver),
+            Effect.orDie,
+          );
+        // Host reads can be routed through a different project; clone lookup must use that cwd.
+        const hostWorkspace = `${repositories.root}/host-project`;
+        yield* fs.makeDirectory(hostWorkspace);
+        const lookupInputs: Array<
+          Parameters<NonNullable<Parameters<typeof makeLayer>[0]["lookup"]>>[0]
+        > = [];
+        const settings = {
+          projectSettingsOverrides: {
+            [projectId]: { reviewGuideInstructions: "Start with the change's behavior." },
+          },
+        };
+        const context = yield* Layer.build(
+          makeLayer({
+            ...repositories,
+            workspace,
+            identity,
+            detail: { workspaceRoot: hostWorkspace },
+            stored,
+            settings,
+            lookup: (input) =>
+              Effect.sync(() => {
+                lookupInputs.push(input);
+                return {
+                  provider: SourceControlProviderKind.make("github"),
+                  nameWithOwner: "acme/app",
+                  url:
+                    scenario === "same-host SSH"
+                      ? `${repositories.root}/unavailable-https`
+                      : repositories.remote,
+                  sshUrl:
+                    scenario === "same-host SSH"
+                      ? repositories.remote
+                      : `${repositories.root}/unavailable-ssh`,
+                };
+              }),
+            generate: (input) =>
+              Effect.gen(function* () {
+                const head = yield* readCheckout(input.cwd, ["rev-parse", "HEAD"]);
+                const changed = yield* readCheckout(input.cwd, [
+                  "diff",
+                  "--name-only",
+                  `${input.baseCommit}...HEAD`,
+                ]);
+                const shallow = yield* readCheckout(input.cwd, [
+                  "rev-parse",
+                  "--is-shallow-repository",
+                ]);
+                const upper = yield* readCheckout(input.cwd, [
+                  "show",
+                  `${repositories.upperSha}:upper.txt`,
+                ]);
+                yield* Deferred.succeed(seen, { input, head, changed, shallow, upper });
+                return { stops: [] };
+              }),
+          }),
+        );
+        const service = Context.get(
+          context,
+          PullRequestReviewGuideService.PullRequestReviewGuideService,
+        );
+        const started = yield* service.generate(reference);
+        assert.isTrue(started.started);
+        yield* Deferred.await(stored);
+        const inspection = yield* Deferred.await(seen);
+        const observed = inspection.input;
+        assert.strictEqual(inspection.head, repositories.headSha);
+        assert.strictEqual(inspection.changed, "feature.txt");
+        assert.strictEqual(inspection.shallow, "false");
+        assert.strictEqual(inspection.upper, "upper layer");
+        assert.strictEqual(observed.baseCommit, repositories.lowerSha);
+        assert.strictEqual(observed.baseBranch, "stack-base");
+        assert.strictEqual(observed.instructions, "Start with the change's behavior.");
+        assert.deepStrictEqual(
+          observed.stack?.map((layer) => layer.headSha),
+          [repositories.lowerSha, repositories.headSha, repositories.upperSha, null],
+        );
+        assert.deepStrictEqual(lookupInputs, [
+          {
+            provider: SourceControlProviderKind.make("github"),
+            repository: "https://github.com/acme/app",
+            cwd: hostWorkspace,
+          },
+        ]);
+        const result = yield* service.get(reference);
+        assert.strictEqual(result.guide?.headSha, repositories.headSha);
+        assert.deepStrictEqual(
+          result.guide?.stops.flatMap((stop) => stop.files.map((file) => file.path)),
+          ["feature.txt"],
+        );
+        assert.isFalse(yield* fs.exists(observed.cwd));
+        assert.deepStrictEqual(
+          yield* fs.readDirectory(`${repositories.root}/server-home/worktrees`),
+          [],
+        );
+        assert.isFalse(yield* fs.exists(`${workspace}/.git/FETCH_HEAD`));
+        if (before !== null) {
+          assert.strictEqual(yield* git(workspace, ["show-ref"]), before.refs);
+          assert.strictEqual(
+            yield* git(workspace, ["worktree", "list", "--porcelain"]),
+            before.worktrees,
+          );
+          assert.strictEqual(yield* git(workspace, ["status", "--porcelain"]), before.status);
+          assert.strictEqual(
+            yield* fs.readFileString(`${workspace}/wrong.txt`),
+            "uncommitted work\n",
+          );
+        } else {
+          assert.deepStrictEqual(yield* fs.readDirectory(workspace), []);
+        }
+      }),
+    ),
+  );
+
+  it.effect.each([
+    {
+      provider: "github",
+      host: "github.enterprise.example:8443",
+      repository: "acme/app",
+      selector: "https://github.enterprise.example:8443/acme/app",
+    },
+    {
+      provider: "forgejo",
+      host: "code.example.com",
+      repository: "acme/app",
+      selector: "https://code.example.com/acme/app",
+    },
+    {
+      provider: "forgejo",
+      host: "code.example.com:3000",
+      repository: "acme/app",
+      selector: "http://code.example.com:3000/acme/app",
+      url: "http://code.example.com:3000/acme/app/pulls/7",
+    },
+    {
+      provider: "gitcafe",
+      host: "staging.git.cafe",
+      repository: "acme/app",
+      selector: "https://staging.git.cafe/acme/app",
+    },
+    {
+      provider: "gitlab",
+      host: "gitlab.com",
+      repository: "group/nested/app",
+      selector: "group/nested/app",
+    },
+    {
+      provider: "azure-devops",
+      host: "dev.azure.com",
+      repository: "org/project/_git/app",
+      selector: "app",
+    },
+    { provider: "bitbucket", host: "bitbucket.org", repository: "acme/app", selector: "acme/app" },
+  ])("resolves the linked repository clone URL for $provider on $host", (target) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const repositories = yield* makeRepositories;
+        const stored = yield* Deferred.make<void>();
+        const lookup =
+          yield* Deferred.make<
+            Parameters<NonNullable<Parameters<typeof makeLayer>[0]["lookup"]>>[0]
+          >();
+        const context = yield* Layer.build(
+          makeLayer({
+            ...repositories,
+            identity: null,
+            stored,
+            detail: {
+              provider: SourceControlProviderKind.make(target.provider),
+              repository: target.selector,
+              ...("url" in target ? { url: target.url } : {}),
+            },
+            lookup: (input) =>
+              Deferred.succeed(lookup, input).pipe(
+                Effect.as({
+                  provider: SourceControlProviderKind.make(target.provider),
+                  nameWithOwner: target.repository,
+                  url: repositories.remote,
+                  sshUrl: `${repositories.root}/unavailable-ssh`,
+                }),
+              ),
+            generate: () => Effect.succeed({ stops: [] }),
+          }),
+        );
+        const service = Context.get(
+          context,
+          PullRequestReviewGuideService.PullRequestReviewGuideService,
+        );
+        yield* service.generate({
+          ...reference,
+          host: target.host,
+          repository: target.repository,
+        });
+        yield* Deferred.await(stored);
+        assert.deepStrictEqual(yield* Deferred.await(lookup), {
+          provider: SourceControlProviderKind.make(target.provider),
+          repository: target.selector,
+          cwd: repositories.workspace,
+        });
+      }),
+    ),
+  );
+
+  it.effect.each(["failure", "interruption"] as const)(
+    "removes the private repository after %s",
+    (outcome) =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const repositories = yield* makeRepositories;
+          const fs = yield* FileSystem.FileSystem;
+          const seen = yield* Deferred.make<string>();
+          const failed = yield* Deferred.make<void>();
+          const stored = yield* Deferred.make<void>();
+          const serviceScope = yield* Scope.make();
+          yield* Effect.addFinalizer(() => Scope.close(serviceScope, Exit.void));
+          const logger = Logger.make(({ message }) => {
+            if (String(message).includes("Review guide generation failed"))
+              Deferred.doneUnsafe(failed, Effect.void);
+          });
+          const context = yield* Layer.buildWithScope(
+            makeLayer({
+              ...repositories,
+              identity: null,
+              stored,
+              lookup: () =>
+                Effect.succeed({
+                  provider: SourceControlProviderKind.make("github"),
+                  nameWithOwner: "acme/app",
+                  url: repositories.remote,
+                  sshUrl: repositories.remote,
+                }),
+              generate: (input) =>
+                Deferred.succeed(seen, input.cwd).pipe(
+                  Effect.andThen(
+                    outcome === "failure"
+                      ? Effect.fail(
+                          new TextGenerationError({
+                            operation: "generateReviewGuide",
+                            detail: "Test model failed.",
+                          }),
+                        )
+                      : Effect.never,
+                  ),
+                ),
+            }).pipe(Layer.provide(Logger.layer([logger], { mergeWithExisting: false }))),
+            serviceScope,
+          );
+          const service = Context.get(
+            context,
+            PullRequestReviewGuideService.PullRequestReviewGuideService,
+          );
+          const previous = yield* service.get(reference);
+          yield* service
+            .generate(reference)
+            .pipe(Effect.provide(Logger.layer([logger], { mergeWithExisting: false })));
+          const checkout = yield* Deferred.await(seen);
+          if (outcome === "failure") yield* Deferred.await(failed);
+          else assert.isTrue(yield* fs.exists(`${checkout}/.git`));
+          yield* Scope.close(serviceScope, Exit.void);
+          assert.isFalse(yield* fs.exists(checkout));
+          assert.deepStrictEqual(
+            yield* fs.readDirectory(`${repositories.root}/server-home/worktrees`),
+            [],
+          );
+          assert.isFalse(yield* Deferred.isDone(stored));
+          assert.deepStrictEqual((yield* service.get(reference)).guide, previous.guide);
+        }),
+      ),
   );
 });

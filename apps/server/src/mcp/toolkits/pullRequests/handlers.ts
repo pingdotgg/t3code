@@ -166,7 +166,7 @@ function projectForPullRequest(
   target: { readonly host: string; readonly repository: string },
   preferred: OrchestrationProjectShell | undefined,
 ): OrchestrationProjectShell | undefined {
-  // Match the guide service's host-level repository key, including Azure DevOps org/project/_git/repo.
+  // Compare host-level keys, including Azure DevOps' org/project/_git/repo.
   const matches = (project: OrchestrationProjectShell) => {
     const own = pullRequestSyncKey(
       { projectId: project.id, host: target.host, repository: target.repository, number: 1 },
@@ -192,7 +192,7 @@ function projectForPullRequest(
     );
   };
   if (preferred !== undefined && matches(preferred)) return preferred;
-  return projects.find(matches);
+  return projects.find(matches) ?? preferred;
 }
 
 const make = Effect.gen(function* () {
