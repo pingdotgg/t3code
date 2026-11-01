@@ -6,10 +6,25 @@ import {
   type GrepResult,
 } from "@ff-labs/fff-node";
 import { afterEach, expect, it } from "@effect/vitest";
+import { VcsProcessSpawnError } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
 import { vi } from "vite-plus/test";
 
+import * as VcsProcess from "../vcs/VcsProcess.ts";
 import * as WorkspaceSearchIndex from "./WorkspaceSearchIndex.ts";
+
+const gitUnavailable = Layer.succeed(VcsProcess.VcsProcess, {
+  run: (input) =>
+    Effect.fail(
+      new VcsProcessSpawnError({
+        operation: input.operation,
+        command: input.command,
+        cwd: input.cwd,
+        cause: new Error("git is unavailable in unit tests"),
+      }),
+    ),
+});
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -51,14 +66,16 @@ it.effect("filters image searches before applying the result limit", () =>
       } as unknown as FileFinder;
       vi.spyOn(FileFinder, "create").mockReturnValueOnce({ ok: true, value: finder });
 
-      const searchIndex = yield* WorkspaceSearchIndex.make("/workspace/project");
+      const searchIndex = yield* WorkspaceSearchIndex.make("/workspace/project").pipe(
+        Effect.provide(gitUnavailable),
+      );
       const resultWithoutKind = yield* searchIndex.search("", 200, undefined, true);
       const resultWithDirectoryKind = yield* searchIndex.search("", 200, "directory", true);
 
       expect(resultWithoutKind.entries).toEqual([{ kind: "file", path: "public/icon.svg" }]);
       expect(resultWithDirectoryKind.entries).toEqual([{ kind: "file", path: "public/icon.svg" }]);
       expect(fileSearch).toHaveBeenCalledTimes(2);
-      expect(fileSearch).toHaveBeenCalledWith("", { pageSize: 25_002 });
+      expect(fileSearch).toHaveBeenCalledWith("!**/.git", { pageSize: 25_002 });
     }),
   ),
 );
@@ -114,7 +131,9 @@ it.effect("continues whole-word searches after a filtered grep page", () =>
       } as unknown as FileFinder;
       vi.spyOn(FileFinder, "create").mockReturnValueOnce({ ok: true, value: finder });
 
-      const searchIndex = yield* WorkspaceSearchIndex.make("/workspace/project", "content");
+      const searchIndex = yield* WorkspaceSearchIndex.make("/workspace/project", "content").pipe(
+        Effect.provide(gitUnavailable),
+      );
       const result = yield* searchIndex.searchContents({
         query: "needle",
         limit: 1,
