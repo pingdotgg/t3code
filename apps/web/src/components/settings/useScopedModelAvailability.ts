@@ -1,7 +1,10 @@
 import type { ProviderInstanceId, UnifiedSettings } from "@t3tools/contracts";
 
 import { mergeEnvironmentSettings } from "../../hooks/useSettings";
-import { getCustomModelOptionsByInstance } from "../../modelSelection";
+import {
+  getCustomModelOptionsByInstance,
+  getTextGenerationModelOptionsByInstance,
+} from "../../modelSelection";
 import {
   applyProviderInstanceSettings,
   deriveProviderInstanceEntries,
@@ -13,6 +16,7 @@ import { useSettingsScope } from "./SettingsScopeContext";
 export function useScopedModelDisabledReason(
   settings: UnifiedSettings,
   entries: readonly ProviderInstanceEntry[],
+  textGeneration = false,
 ) {
   const { targets } = useSettingsScope();
   const { environments } = useEnvironments();
@@ -30,7 +34,10 @@ export function useScopedModelDisabledReason(
         candidate.settings,
         candidate.projectId,
       ).find((option) => option.instanceId === instanceId);
-      const options = getCustomModelOptionsByInstance(
+      const optionsForInstance = textGeneration
+        ? getTextGenerationModelOptionsByInstance
+        : getCustomModelOptionsByInstance;
+      const options = optionsForInstance(
         mergeEnvironmentSettings(candidate.settings, settings),
         providers,
       ).get(instanceId);
