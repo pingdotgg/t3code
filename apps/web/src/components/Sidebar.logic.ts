@@ -26,10 +26,6 @@ import {
 import type { SidebarProjectSortOrder, SidebarThreadSortOrder } from "@t3tools/contracts/settings";
 import type { AsyncResult } from "effect/reactivity";
 import {
-  effectiveSnoozed,
-  type ThreadSnoozeShell,
-} from "@t3tools/client-runtime/state/thread-settled";
-import {
   getThreadSortTimestamp,
   planPinnedReorder,
   sortThreads,
@@ -43,22 +39,6 @@ import { observeIntersection } from "../lib/observeIntersection";
 import { deadlineAfter, deadlineStore } from "@t3tools/client-runtime/clock";
 import { useDeadlinePassed } from "../hooks/useDeadline";
 import { legacyProjectCwdPreferenceKey } from "../uiStateStore";
-
-export function shouldNavigateAfterThreadPark(input: {
-  readonly threadKey: string;
-  readonly currentThreadKey: string | null;
-  readonly action: "settle" | "snooze";
-  readonly now: string;
-  readonly thread: (ThreadSnoozeShell & Pick<SidebarThreadSummary, "settledOverride">) | null;
-}): boolean {
-  return (
-    input.threadKey === input.currentThreadKey &&
-    input.thread !== null &&
-    (input.action === "settle"
-      ? input.thread.settledOverride === "settled"
-      : effectiveSnoozed(input.thread, { now: input.now }))
-  );
-}
 
 const THREAD_JUMP_HINT_SHOW_DELAY_MS = 200;
 
