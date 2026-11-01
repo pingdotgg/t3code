@@ -1719,6 +1719,17 @@ describe("ClaudeAdapterV2 resume compaction", () => {
   );
 });
 
+function claudeSdkFrame(frame: unknown): SDKMessage {
+  if (
+    typeof frame !== "object" ||
+    frame === null ||
+    typeof Reflect.get(frame, "type") !== "string"
+  ) {
+    throw new Error("Frame is not a Claude Agent SDK message.");
+  }
+  return frame as SDKMessage;
+}
+
 describe("ClaudeAdapterV2 attachments", () => {
   it.effect.each([
     ...[
@@ -1805,6 +1816,21 @@ describe("ClaudeAdapterV2 attachments", () => {
           let failOffer = false;
           let cancelAfterQueue = false;
           const queued = yield* Deferred.make<void>();
+          let frames: Queue.Queue<SDKMessage> | undefined;
+          const handled = yield* Queue.unbounded<void>();
+          // Steers are held until the opening prompt streams.
+          const streamPrompt = Effect.suspend(() =>
+            Queue.offer(
+              frames!,
+              claudeSdkFrame({
+                type: "stream_event",
+                event: { type: "message_start", message: { id: "msg-claude-attachments" } },
+                parent_tool_use_id: null,
+                uuid: "00000000-0000-4000-8000-000000000c01",
+                session_id: "native-thread-claude-attachments",
+              }),
+            ),
+          ).pipe(Effect.andThen(Queue.take(handled)));
           const adapter = yield* ClaudeAdapterV2.makeClaudeAdapterV2({
             instanceId: ClaudeAdapterV2.CLAUDE_DEFAULT_INSTANCE_ID,
             settings: { ...DEFAULT_CLAUDE_SETTINGS, homePath: claudeHome },
@@ -1826,8 +1852,17 @@ describe("ClaudeAdapterV2 attachments", () => {
                     });
                   }
                   const messages = yield* Queue.unbounded<SDKMessage>();
+                  frames = messages;
                   return {
-                    messages: Stream.fromQueue(messages),
+                    messages: Stream.fromQueue(messages).pipe(
+                      Stream.flatMap((message) =>
+                        Stream.make(message).pipe(
+                          Stream.concat(
+                            Stream.fromEffect(Queue.offer(handled, undefined)).pipe(Stream.drain),
+                          ),
+                        ),
+                      ),
+                    ),
                     offer: (message, onQueued) =>
                       Effect.suspend(() => {
                         if (failOffer) {
@@ -1939,6 +1974,7 @@ describe("ClaudeAdapterV2 attachments", () => {
             const message = { ...turnInput.message, attachments: [document] };
             if (budget === "cancelled-steer") {
               yield* runtime.startTurn({ ...turnInput, message: { ...message, attachments: [] } });
+              yield* streamPrompt;
             }
             const deliver =
               budget === "cancelled-send"
@@ -2015,6 +2051,7 @@ describe("ClaudeAdapterV2 attachments", () => {
                 nativeThreadHasTurns: true,
                 message,
               });
+              yield* streamPrompt;
               const sent = offeredMessages.at(-1)!.message.content;
               assert.isArray(sent);
               assert.lengthOf(
@@ -2072,6 +2109,7 @@ describe("ClaudeAdapterV2 attachments", () => {
                       : [attachment, attachment],
               },
             });
+            yield* streamPrompt;
             const largePdf = Buffer.concat([
               pdfBytes.subarray(0, pdfBytes.length - 5),
               Buffer.alloc(
@@ -2122,6 +2160,7 @@ describe("ClaudeAdapterV2 attachments", () => {
             );
           }
           yield* runtime.startTurn(turnInput);
+          yield* streamPrompt;
 
           const expectedImageBlock = {
             type: "image",
@@ -2745,17 +2784,6 @@ describe("ClaudeAdapterV2 background wake turns", () => {
   const WAKE_ASSISTANT_TEXT = "WAKE_DONE";
   const WAKE_RESULT_TEXT = "WAKE_DONE";
 
-  function claudeSdkFrame(frame: unknown): SDKMessage {
-    if (
-      typeof frame !== "object" ||
-      frame === null ||
-      typeof Reflect.get(frame, "type") !== "string"
-    ) {
-      throw new Error("Frame is not a Claude Agent SDK message.");
-    }
-    return frame as SDKMessage;
-  }
-
   const wakeTaskStarted = claudeSdkFrame({
     type: "system",
     subtype: "task_started",
@@ -2934,6 +2962,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
   const makeWakeHarnessWithOptions = (options?: {
     readonly close?: (sdkMessages: Queue.Queue<SDKMessage>) => Effect.Effect<void>;
     readonly interrupt?: Effect.Effect<void>;
+    readonly offer?: (message: SDKUserMessage) => Effect.Effect<void>;
     readonly setPermissionMode?: ClaudeAdapterV2.ClaudeAgentSdkQuerySession["setPermissionMode"];
     readonly applyFlagSettings?: ClaudeAdapterV2.ClaudeAgentSdkQuerySession["applyFlagSettings"];
     readonly stopTask?: (
@@ -3054,7 +3083,10 @@ describe("ClaudeAdapterV2 background wake turns", () => {
                   offer: (message: SDKUserMessage) =>
                     Effect.sync(() => {
                       offeredMessages.push(message);
-                    }).pipe(Effect.andThen(changes.notify)),
+                    }).pipe(
+                      Effect.andThen(changes.notify),
+                      Effect.andThen(options?.offer?.(message) ?? Effect.void),
+                    ),
                   setModel: () => Effect.void,
                   applyFlagSettings: () => Effect.void,
                   setPermissionMode: (mode) =>
@@ -3075,7 +3107,10 @@ describe("ClaudeAdapterV2 background wake turns", () => {
                 offer: (message) =>
                   Effect.sync(() => {
                     offeredMessages.push(message);
-                  }).pipe(Effect.andThen(changes.notify)),
+                  }).pipe(
+                    Effect.andThen(changes.notify),
+                    Effect.andThen(options?.offer?.(message) ?? Effect.void),
+                  ),
                 setModel: (model) =>
                   Effect.sync(() => {
                     liveSelectionChanges.push({ model });
@@ -3188,7 +3223,14 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     });
   const makeWakeHarness = makeWakeHarnessWithOptions();
 
-  it.effect.each(["release-after", "cancel-after", "release-before", "resume-pending"] as const)(
+  const compactionOutcomes = [
+    "release-after",
+    "cancel-after",
+    "release-before",
+    "resume-pending",
+    "held",
+  ] as const;
+  it.effect.each(compactionOutcomes)(
     "keeps attachment reservations across compaction: %s boundary",
     (outcome) =>
       Effect.gen(function* () {
@@ -3231,21 +3273,25 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           attachments: [],
         });
         yield* harness.runtime.startTurn(input);
-        yield* harness.offerAndWait(
-          claudeSdkFrame({
-            type: "system",
-            subtype: "task_started",
-            task_id: "compacting-task",
-            tool_use_id: "compacting-tool",
-            description: "Audit",
-            subagent_type: "general-purpose",
-            is_backgrounded: false,
-            task_type: "local_agent",
-            prompt: "Audit.",
-            uuid: "00000000-0000-4000-8000-000000000811",
-            session_id: WAKE_NATIVE_SESSION,
-          }),
-        );
+        const answer = makeAssistantTextFrame({ uuid: "compacting-answer", text: "On it." });
+        if (outcome !== "held") {
+          yield* harness.offerAndWait(answer);
+          yield* harness.offerAndWait(
+            claudeSdkFrame({
+              type: "system",
+              subtype: "task_started",
+              task_id: "compacting-task",
+              tool_use_id: "compacting-tool",
+              description: "Audit",
+              subagent_type: "general-purpose",
+              is_backgrounded: false,
+              task_type: "local_agent",
+              prompt: "Audit.",
+              uuid: "00000000-0000-4000-8000-000000000811",
+              session_id: WAKE_NATIVE_SESSION,
+            }),
+          );
+        }
         const steer = harness.runtime.steerTurn({
           threadId: harness.threadId,
           runId: input.runId,
@@ -3263,7 +3309,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           },
         });
         const pending = yield* Effect.forkScoped(steer);
-        yield* Deferred.await(backgrounding);
+        yield* outcome === "held" ? Fiber.join(pending) : Deferred.await(backgrounding);
         assert.lengthOf(harness.offeredMessages, 1);
         yield* harness.offerAndWait(
           claudeSdkFrame({
@@ -3293,6 +3339,8 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         } else if (outcome === "release-after") {
           yield* Deferred.succeed(release, undefined);
           yield* Fiber.join(pending);
+        } else if (outcome === "held") {
+          yield* harness.offerAndWait(answer);
         }
         // Flush the budget update through the event stream before trying again.
         yield* harness.offerAndWait(
@@ -4528,6 +4576,9 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           sizeBytes: 4,
         });
         const idAllocator = yield* IdAllocator.IdAllocatorV2;
+        yield* harness.offerAndWait(
+          makeAssistantTextFrame({ uuid: "skill-answer", text: "On it." }),
+        );
         yield* harness.runtime.steerTurn({
           threadId: harness.threadId,
           runId: input.runId,
@@ -5352,6 +5403,9 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         });
         yield* harness.runtime.startTurn(input);
         if (steered) {
+          yield* harness.offerAndWait(
+            makeAssistantTextFrame({ uuid: "audit-answer", text: "On it." }),
+          );
           yield* harness.runtime.steerTurn({
             threadId: harness.threadId,
             runId: input.runId,
@@ -10116,6 +10170,181 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         if (terminal?.status !== "failed") return;
         assert.equal(terminal.threadDisposition, "reusable");
         assert.include(terminal.failure.message, "never started a turn");
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+        ),
+      ),
+    ),
+  );
+
+  it.effect.each([true, false])(
+    "holds a steer until its started prompt streams (init echo=%s)",
+    (initEcho) =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const harness = yield* makeWakeHarness;
+          const idAllocator = yield* IdAllocator.IdAllocatorV2;
+          const attemptId = RunAttemptId.make("attempt-claude-startup-steer");
+          const input = makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now: yield* DateTime.now,
+            attemptId,
+            text: "Show the effort level.",
+            attachments: [],
+          });
+          yield* harness.runtime.startTurn(input);
+          const promptUuid = harness.promptUuid(0);
+          yield* harness.runtime.steerTurn({
+            threadId: harness.threadId,
+            runId: input.runId,
+            providerThread: harness.providerThread,
+            providerTurnId: idAllocator.derive.providerTurn({
+              driver: ClaudeAdapterV2.CLAUDE_PROVIDER,
+              nativeTurnId: `turn:${attemptId}`,
+            }),
+            message: {
+              createdBy: "user",
+              creationSource: "web",
+              messageId: MessageId.make("message-claude-startup-steer"),
+              text: "In the icons.",
+              attachments: [],
+            },
+          });
+          // CLI 2.1.304 still ran a "now" steer ahead of a prompt it had reported
+          // started and echoed on init.
+          for (const frame of [
+            {
+              type: "command_lifecycle",
+              command_uuid: promptUuid,
+              state: "queued",
+              uuid: "queued",
+            },
+            {
+              type: "command_lifecycle",
+              command_uuid: promptUuid,
+              state: "started",
+              uuid: "started",
+            },
+            {
+              type: "command_lifecycle",
+              command_uuid: promptUuid,
+              state: "started",
+              uuid: "started-again",
+            },
+            ...(initEcho
+              ? [
+                  {
+                    type: "system",
+                    subtype: "init",
+                    uuid: "init",
+                    user_message_uuids: [promptUuid],
+                  },
+                  makeAssistantTextFrame({ uuid: "untagged", text: "Hi." }),
+                ]
+              : []),
+            {
+              type: "assistant",
+              message: { model: "<synthetic>", id: "goal", role: "assistant", content: [] },
+              parent_tool_use_id: null,
+              uuid: "goal",
+            },
+            {
+              type: "stream_event",
+              event: { type: "message_start", message: { id: "child" } },
+              parent_tool_use_id: "child-tool",
+              uuid: "child",
+              user_message_uuid: promptUuid,
+            },
+            {
+              ...makeAssistantTextFrame({ uuid: "other", text: "Hi." }),
+              user_message_uuid: "other",
+            },
+          ]) {
+            yield* harness.offerAndWait(
+              claudeSdkFrame({ session_id: WAKE_NATIVE_SESSION, ...frame }),
+            );
+          }
+          assert.lengthOf(harness.offeredMessages, 1);
+          assert.equal(lastProviderTurn(harness.events).status, "running");
+
+          // Until a CLI is known to echo early, untagged output counts as the prompt's.
+          yield* harness.offerAndWait(
+            claudeSdkFrame({
+              ...makeAssistantTextFrame({
+                uuid: "prompt-answer",
+                text: "Effort can show as bars.",
+              }),
+              ...(initEcho ? { user_message_uuid: promptUuid } : {}),
+            }),
+          );
+          assert.lengthOf(harness.offeredMessages, 2);
+          assert.equal(harness.offeredMessages[1]?.priority, "now");
+          assert.match(String(harness.offeredMessages[1]?.message.content), /In the icons\./);
+        }).pipe(
+          Effect.provide(
+            Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+          ),
+        ),
+      ),
+  );
+
+  it.effect("keeps held steers ahead of a steer sent while they go out", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const releasing = yield* Deferred.make<void>();
+        const resume = yield* Deferred.make<void>();
+        const harness = yield* makeWakeHarnessWithOptions({
+          offer: (message) =>
+            String(message.message.content).includes("first")
+              ? Deferred.succeed(releasing, undefined).pipe(Effect.andThen(Deferred.await(resume)))
+              : Effect.void,
+        });
+        const idAllocator = yield* IdAllocator.IdAllocatorV2;
+        const attemptId = RunAttemptId.make("attempt-claude-held-steer-order");
+        const input = makeClaudeTestTurnInput({
+          threadId: harness.threadId,
+          providerThread: harness.providerThread,
+          now: yield* DateTime.now,
+          attemptId,
+          text: "Show the effort level.",
+          attachments: [],
+        });
+        yield* harness.runtime.startTurn(input);
+        const steer = (text: string) =>
+          harness.runtime.steerTurn({
+            threadId: harness.threadId,
+            runId: input.runId,
+            providerThread: harness.providerThread,
+            providerTurnId: idAllocator.derive.providerTurn({
+              driver: ClaudeAdapterV2.CLAUDE_PROVIDER,
+              nativeTurnId: `turn:${attemptId}`,
+            }),
+            message: {
+              createdBy: "user",
+              creationSource: "web",
+              messageId: MessageId.make(`message-steer-${text}`),
+              text,
+              attachments: [],
+            },
+          });
+        yield* steer("first");
+        yield* steer("second");
+        const release = yield* harness
+          .offerAndWait(makeAssistantTextFrame({ uuid: "prompt-answer", text: "On it." }))
+          .pipe(Effect.forkScoped);
+        yield* Deferred.await(releasing);
+        yield* steer("third");
+        yield* Deferred.succeed(resume, undefined);
+        yield* Fiber.join(release);
+
+        assert.deepEqual(
+          harness.offeredMessages
+            .slice(1)
+            .map((message) => /first|second|third/.exec(String(message.message.content))?.[0]),
+          ["first", "second", "third"],
+        );
       }).pipe(
         Effect.provide(
           Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
