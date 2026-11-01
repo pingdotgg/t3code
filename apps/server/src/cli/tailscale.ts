@@ -184,7 +184,9 @@ const requireGrantCommand = Command.make("require-grant", {
             : granted.length > 0
               ? [
                   `Grant required: yes, because your tailnet policy grants ${TAILNET_APP_CAPABILITY} here to: ${granted.join(", ")}.`,
-                  "Remove those grants to let your own untagged devices in without one.",
+                  ownerless
+                    ? "This tagged host has no owner, so only granted devices get in either way."
+                    : "Remove those grants to let your own untagged devices in without one.",
                 ]
               : read === "changed"
                 ? [
