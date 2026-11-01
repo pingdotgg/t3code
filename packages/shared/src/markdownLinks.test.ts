@@ -29,6 +29,7 @@ describe("inlineCodeFilePathCandidate", () => {
     ["usr/lib/libfoo.so.1", "usr/lib/libfoo.so.1"],
     ["vendor/jquery-3.6.0.min.js", "vendor/jquery-3.6.0.min.js"],
     ["./models/glm-5.3", "./models/glm-5.3"],
+    ["/D:/Programme/t3code/file.ts", "/D:/Programme/t3code/file.ts"],
     ["/tmp/image.png", "/tmp/image.png"],
     ["/images/ZOOM/provider/te115_2.jpg", null],
     ["/api/v1/users.json", null],

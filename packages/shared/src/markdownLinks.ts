@@ -200,6 +200,7 @@ export function inlineCodeFilePathCandidate(codeText: string, cwd?: string): str
   // `/images/logo.jpg` in code is usually a URL path, not a file.
   if (
     candidate.startsWith("/") &&
+    !isWindowsAbsolutePath(stripSlashPrefixedWindowsDrive(candidate)) &&
     !POSIX_FILE_ROOT_PREFIXES.some((prefix) => candidate.startsWith(prefix)) &&
     workspaceRelativeFilePath(candidate, cwd) === null
   ) {
