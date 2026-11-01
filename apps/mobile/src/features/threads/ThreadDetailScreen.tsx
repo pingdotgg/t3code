@@ -38,7 +38,11 @@ import { resolveProviderSkillsForCwd } from "@t3tools/client-runtime/providerSki
 import type { LegendListRef } from "@legendapp/list/react-native";
 import { HeaderHeightContext } from "@react-navigation/elements";
 import { NativeLayoutObserver } from "../../native/NativeLayoutObserver";
-import { deriveBottomControlInsets, type NativeLayoutMetrics } from "../../lib/reserved-regions";
+import {
+  deriveBottomControlInsets,
+  deriveContentSideInsets,
+  type NativeLayoutMetrics,
+} from "../../lib/reserved-regions";
 import type {
   EnvironmentId,
   MessageId,
@@ -1420,7 +1424,7 @@ function ThreadDetailBody(props: ThreadDetailScreenProps) {
               }
               contentMaxWidth={contentMaxWidth}
               historyControls={props.historyControls}
-              contentSideInsets={nativeMetrics?.safeArea}
+              contentSideInsets={deriveContentSideInsets(nativeMetrics)}
               layoutVariant={layoutVariant}
               usesAutomaticContentInsets={props.usesAutomaticContentInsets}
               onHeaderMaterialVisibilityChange={props.onHeaderMaterialVisibilityChange}
