@@ -14,7 +14,11 @@ import {
 import { settingsScopeEnvironmentLabel } from "./settingsScopeAxis";
 import { searchableSetting } from "./settingsSearch";
 import { WorktreeCleanupSection, WorktreesDirectoryRow } from "./StorageSettings";
-import { useScopedSettings, useUpdateScopedSettings } from "./useScopedSettings";
+import {
+  useScopedSettings,
+  useScopedSettingsMixed,
+  useUpdateScopedSettings,
+} from "./useScopedSettings";
 
 function StartFromRemoteRow() {
   const settings = useScopedSettings();
@@ -59,6 +63,7 @@ function WorktreeFastRow() {
   const { connectedEnvironments } = useSettingsScope();
   const settings = useScopedSettings();
   const updateSettings = useUpdateScopedSettings();
+  const mixed = useScopedSettingsMixed(["enableWorktreeFast"]);
   if (
     connectedEnvironments.length === 0 ||
     connectedEnvironments.some(
@@ -96,7 +101,7 @@ function WorktreeFastRow() {
         )
       }
       resetAction={
-        settings.enableWorktreeFast !== DEFAULT_UNIFIED_SETTINGS.enableWorktreeFast ? (
+        settings.enableWorktreeFast !== DEFAULT_UNIFIED_SETTINGS.enableWorktreeFast || mixed ? (
           <SettingResetButton
             label="git-worktree-fast"
             onClick={() =>

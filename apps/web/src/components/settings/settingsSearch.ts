@@ -69,6 +69,7 @@ export interface SettingsSearchItem {
   readonly wslAvailableOnly?: boolean;
   readonly managedTunnelOnly?: boolean;
   readonly peerLinksOnly?: boolean;
+  readonly worktreeFastOnly?: boolean;
   readonly secondary?: boolean;
   readonly requiresThreadAutoSettlement?: boolean;
 }
@@ -84,6 +85,7 @@ export interface SettingsSearchAvailability {
   readonly hasThreadAutoSettlement: boolean;
   readonly managedTunnelActive?: boolean;
   readonly hasPeerLinkHost?: boolean;
+  readonly hasWorktreeFastEnvironment?: boolean;
 }
 
 export const SETTINGS_SECTION_LABELS: Readonly<Record<SettingsPath, string>> = {
@@ -257,6 +259,7 @@ export const SETTINGS_SEARCH_ITEMS = [
     title: "Use git-worktree-fast",
     to: "/settings/worktrees",
     scope: "environment-defaults",
+    worktreeFastOnly: true,
     searchTerms: ["git-worktree-fast fast worktree checkout apfs clone cache macos speed"],
   },
   {
@@ -1460,7 +1463,8 @@ export function filterAvailableSettingsSearchItems(
       (!item.wslAvailableOnly || availability.isWslSettingsRowVisible) &&
       (!item.requiresThreadAutoSettlement || availability.hasThreadAutoSettlement) &&
       (!item.managedTunnelOnly || availability.managedTunnelActive === true) &&
-      (!item.peerLinksOnly || availability.hasPeerLinkHost === true),
+      (!item.peerLinksOnly || availability.hasPeerLinkHost === true) &&
+      (!item.worktreeFastOnly || availability.hasWorktreeFastEnvironment === true),
   );
 }
 
