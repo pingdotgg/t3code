@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from "vite-plus/test";
+import { describe, expect, it, vi } from "vite-plus/test";
 
 import { start, stop } from "./device-stream.browser";
 
@@ -82,27 +82,27 @@ function viewerFixture(supported: boolean) {
 }
 
 describe("native iOS simulator viewer", () => {
-  afterEach(() => {
-    stop();
-    vi.useRealTimers();
-    vi.unstubAllGlobals();
-  });
-
   it.each([
     { supported: true, image: "" },
     { supported: false, image: "/api/device-hub/vendor/serve-sim/helper/sim/stream.mjpeg" },
   ])(
     "streams H.264 when WebCodecs decodes it, else MJPEG (supported: $supported)",
     async ({ supported, image }) => {
-      const { configured, requested, videoBodies } = viewerFixture(supported);
-      await vi.advanceTimersByTimeAsync(0);
-      expect(requested).toContain("/api/device-hub/vendor/serve-sim/helper/sim/stream.avcc");
-      videoBodies[0]!.enqueue(new Uint8Array(envelope(1, [1, 0x64, 0x00, 0x33])));
-      await vi.advanceTimersByTimeAsync(0);
-      expect(configured).toEqual(supported ? ["avc1.640033"] : []);
-      const img = document.querySelector("img")!;
-      expect(img.src && new URL(img.src).pathname).toBe(image);
-      expect(img.style.display).toBe(supported ? "none" : "block");
+      try {
+        const { configured, requested, videoBodies } = viewerFixture(supported);
+        await vi.advanceTimersByTimeAsync(0);
+        expect(requested).toContain("/api/device-hub/vendor/serve-sim/helper/sim/stream.avcc");
+        videoBodies[0]!.enqueue(new Uint8Array(envelope(1, [1, 0x64, 0x00, 0x33])));
+        await vi.advanceTimersByTimeAsync(0);
+        expect(configured).toEqual(supported ? ["avc1.640033"] : []);
+        const img = document.querySelector("img")!;
+        expect(img.src && new URL(img.src).pathname).toBe(image);
+        expect(img.style.display).toBe(supported ? "none" : "block");
+      } finally {
+        stop();
+        vi.useRealTimers();
+        vi.unstubAllGlobals();
+      }
     },
   );
 });
