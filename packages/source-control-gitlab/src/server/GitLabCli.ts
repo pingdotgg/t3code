@@ -8,6 +8,7 @@ import * as Schema from "effect/Schema";
 import type * as DateTime from "effect/DateTime";
 
 import {
+  ForwardCompatibleOptional,
   TrimmedNonEmptyString,
   type SourceControlRepositoryVisibility,
   type VcsError,
@@ -114,12 +115,31 @@ export class GitLabMergeRequestNotFoundError extends Schema.TaggedError<GitLabMe
   }
 }
 
+// The process boundary classifies glab's stderr into these tags and discards
+// the raw text, so only a tag can reach detail and message. Unclassified exits
+// stay generic rather than claim a cause that was never recognized.
+export const GitLabCliCommandFailureReason = Schema.Literals([
+  "not-found",
+  "timed-out",
+  "stdin-write-failed",
+  "output-read-failed",
+  "output-limit-exceeded",
+  "missing-exit-code",
+  "repository-detection-failed",
+  "unsupported-operation",
+]);
+export type GitLabCliCommandFailureReason = typeof GitLabCliCommandFailureReason.Type;
+
 export class GitLabCliCommandError extends Schema.TaggedError<GitLabCliCommandError>()(
   "GitLabCliCommandError",
-  gitLabCliExecutionErrorContext,
+  {
+    ...gitLabCliExecutionErrorContext,
+    reason: ForwardCompatibleOptional(GitLabCliCommandFailureReason),
+  },
 ) {
   get detail(): string {
-    return "GitLab CLI command failed.";
+    const reason = this.reason === undefined ? "" : ` (${this.reason})`;
+    return `GitLab CLI command failed${reason}.`;
   }
 
   override get message(): string {
@@ -143,18 +163,26 @@ export class GitLabCliCommandError extends Schema.TaggedError<GitLabCliCommandEr
           case "rate-limited":
             return new GitLabCliRateLimitError({ ...context, cause });
           case "not-found":
+            return new GitLabCliCommandError({ ...context, cause, reason: "not-found" });
           case "command-failed":
           case undefined:
             return new GitLabCliCommandError({ ...context, cause });
         }
       },
-      VcsProcessTimeoutError: (cause) => new GitLabCliCommandError({ ...context, cause }),
-      VcsProcessStdinWriteError: (cause) => new GitLabCliCommandError({ ...context, cause }),
-      VcsProcessOutputReadError: (cause) => new GitLabCliCommandError({ ...context, cause }),
-      VcsProcessOutputLimitError: (cause) => new GitLabCliCommandError({ ...context, cause }),
-      VcsProcessMissingExitCodeError: (cause) => new GitLabCliCommandError({ ...context, cause }),
-      VcsRepositoryDetectionError: (cause) => new GitLabCliCommandError({ ...context, cause }),
-      VcsUnsupportedOperationError: (cause) => new GitLabCliCommandError({ ...context, cause }),
+      VcsProcessTimeoutError: (cause) =>
+        new GitLabCliCommandError({ ...context, cause, reason: "timed-out" }),
+      VcsProcessStdinWriteError: (cause) =>
+        new GitLabCliCommandError({ ...context, cause, reason: "stdin-write-failed" }),
+      VcsProcessOutputReadError: (cause) =>
+        new GitLabCliCommandError({ ...context, cause, reason: "output-read-failed" }),
+      VcsProcessOutputLimitError: (cause) =>
+        new GitLabCliCommandError({ ...context, cause, reason: "output-limit-exceeded" }),
+      VcsProcessMissingExitCodeError: (cause) =>
+        new GitLabCliCommandError({ ...context, cause, reason: "missing-exit-code" }),
+      VcsRepositoryDetectionError: (cause) =>
+        new GitLabCliCommandError({ ...context, cause, reason: "repository-detection-failed" }),
+      VcsUnsupportedOperationError: (cause) =>
+        new GitLabCliCommandError({ ...context, cause, reason: "unsupported-operation" }),
     });
   }
 }

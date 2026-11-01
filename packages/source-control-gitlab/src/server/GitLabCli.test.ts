@@ -3,7 +3,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import { ChildProcessSpawner } from "effect/process";
 
-import { VcsProcessExitError } from "@t3tools/contracts";
+import { VcsProcessExitError, VcsProcessTimeoutError } from "@t3tools/contracts";
 
 import type * as SourceControlHost from "@t3tools/source-control-core/server/SourceControlHost";
 import * as TestSourceControlHost from "@t3tools/source-control-testing/TestSourceControlHost";
@@ -195,7 +195,7 @@ layer("GitLabCli.layer", (it) => {
     }),
   );
 
-  it.effect("keeps non-merge-request not-found failures generic", () =>
+  it.effect("names non-merge-request not-found failures without claiming a missing MR", () =>
     Effect.gen(function* () {
       const cause = new VcsProcessExitError({
         operation: "GitLabCli.execute",
@@ -215,8 +215,10 @@ layer("GitLabCli.layer", (it) => {
         });
       }).pipe(Effect.flip);
 
-      assert.strictEqual(error._tag, "GitLabCliCommandError");
       assert.strictEqual(error.cause, cause);
+      assert.strictEqual(error.detail, "GitLab CLI command failed (not-found).");
+      assert(error._tag === "GitLabCliCommandError");
+      assert.strictEqual(error.reason, "not-found");
     }),
   );
 
@@ -239,6 +241,84 @@ layer("GitLabCli.layer", (it) => {
 
       assert.strictEqual(error._tag, "GitLabCliRateLimitError");
       assert.strictEqual(error.cause, cause);
+    }),
+  );
+
+  it.effect("names a not-found exit in a failed command's detail", () =>
+    Effect.gen(function* () {
+      const cause = new VcsProcessExitError({
+        operation: "GitLabCli.execute",
+        command: "glab",
+        cwd: "/repo",
+        exitCode: 1,
+        detail: "Merge request not found.",
+        failureKind: "not-found",
+      });
+      mockedRun.mockReturnValueOnce(Effect.fail(cause));
+
+      const glab = yield* GitLabCli.GitLabCli;
+      const error = yield* glab
+        .listMergeRequests({ cwd: "/repo", headSelector: "main", state: "open" })
+        .pipe(Effect.flip);
+
+      assert.strictEqual(error.cause, cause);
+      assert.strictEqual(error.detail, "GitLab CLI command failed (not-found).");
+      assert(error._tag === "GitLabCliCommandError");
+      assert.strictEqual(error.reason, "not-found");
+      assert.notInclude(error.message, "Merge request not found.");
+    }),
+  );
+
+  it.effect("names recognized failure classes and leaves unclassified exits generic", () =>
+    Effect.gen(function* () {
+      const timeoutCause = new VcsProcessTimeoutError({
+        operation: "GitLabCli.execute",
+        command: "glab",
+        cwd: "/repo",
+        timeoutMs: 30_000,
+      });
+      const exitCause = new VcsProcessExitError({
+        operation: "GitLabCli.execute",
+        command: "glab",
+        cwd: "/repo",
+        exitCode: 1,
+        detail: "Process exited with a non-zero status.",
+        failureKind: "command-failed",
+      });
+      // The boundary always sets failureKind; an absent one is a schema-optional
+      // fallback that must still stay generic.
+      const unclassifiedCause = new VcsProcessExitError({
+        operation: "GitLabCli.execute",
+        command: "glab",
+        cwd: "/repo",
+        exitCode: 1,
+        detail: "Process exited with a non-zero status.",
+      });
+      mockedRun
+        .mockReturnValueOnce(Effect.fail(timeoutCause))
+        .mockReturnValueOnce(Effect.fail(exitCause))
+        .mockReturnValueOnce(Effect.fail(unclassifiedCause));
+
+      const glab = yield* GitLabCli.GitLabCli;
+      const timedOut = yield* glab
+        .execute({ cwd: "/repo", args: ["api", "projects"] })
+        .pipe(Effect.flip);
+      const failed = yield* glab
+        .execute({ cwd: "/repo", args: ["api", "projects"] })
+        .pipe(Effect.flip);
+      const unclassified = yield* glab
+        .execute({ cwd: "/repo", args: ["api", "projects"] })
+        .pipe(Effect.flip);
+
+      assert.strictEqual(timedOut.detail, "GitLab CLI command failed (timed-out).");
+      assert(timedOut._tag === "GitLabCliCommandError");
+      assert.strictEqual(timedOut.reason, "timed-out");
+      assert.strictEqual(failed.detail, "GitLab CLI command failed.");
+      assert(failed._tag === "GitLabCliCommandError");
+      assert.strictEqual(failed.reason, undefined);
+      assert.strictEqual(unclassified.detail, "GitLab CLI command failed.");
+      assert(unclassified._tag === "GitLabCliCommandError");
+      assert.strictEqual(unclassified.reason, undefined);
     }),
   );
 });
