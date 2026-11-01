@@ -842,34 +842,12 @@ jobs:
           fi
 
       # electron-updater reads one manifest per platform and channel and picks
-      # the file entry whose name carries the running arch, so the per-arch
-      # manifests the build jobs wrote are merged back into that one file.
-      - name: Merge macOS updater manifests
+      # the file entry whose name carries the running arch. Require every
+      # platform's two build jobs to have produced matching metadata before
+      # merging it, so a successful release can never strand one architecture.
+      - name: Merge desktop updater manifests
         if: needs.preflight.outputs.release_channel != 'preview'
-        run: |
-          shopt -s nullglob
-          for x64_manifest in release-assets/*-mac-x64.yml; do
-            arm64_manifest="${x64_manifest%-x64.yml}.yml"
-            if [[ -f "$arm64_manifest" ]]; then
-              node scripts/merge-update-manifests.ts --platform mac "$arm64_manifest" "$x64_manifest"
-              rm -f "$x64_manifest"
-            fi
-          done
-
-      - name: Merge Windows updater manifests
-        if: needs.preflight.outputs.release_channel != 'preview'
-        run: |
-          shopt -s nullglob
-          for x64_manifest in release-assets/*-win-x64.yml; do
-            arm64_manifest="${x64_manifest%-x64.yml}-arm64.yml"
-            merged_manifest="${x64_manifest%-win-x64.yml}.yml"
-            if [[ -f "$arm64_manifest" ]]; then
-              node scripts/merge-update-manifests.ts --platform win "$x64_manifest" "$arm64_manifest" "$merged_manifest"
-              rm -f "$x64_manifest" "$arm64_manifest"
-            else
-              mv "$x64_manifest" "$merged_manifest"
-            fi
-          done
+        run: node scripts/merge-release-update-manifests.ts release-assets
 
       # Updater manifests and blockmaps are what electron-updater consumes.
       # They are only listed for channels an updater is meant to follow.

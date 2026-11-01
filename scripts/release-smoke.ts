@@ -293,14 +293,24 @@ try {
   );
 
   const { arm64Path, x64Path } = writeMacManifestFixtures(tempRoot);
+  const { arm64Path: winArm64Path, x64Path: winX64Path } = writeWindowsManifestFixtures(
+    tempRoot,
+    "latest",
+  );
+  const mergedWindowsManifestPath = NodePath.resolve(tempRoot, "release-assets/latest.yml");
+  const { arm64Path: nightlyWinArm64Path, x64Path: nightlyWinX64Path } =
+    writeWindowsManifestFixtures(tempRoot, "nightly");
+  const mergedNightlyWindowsManifestPath = NodePath.resolve(tempRoot, "release-assets/nightly.yml");
+  const { arm64Path: previewWinArm64Path, x64Path: previewWinX64Path } =
+    writeWindowsManifestFixtures(tempRoot, "preview");
+  const mergedPreviewWindowsManifestPath = NodePath.resolve(tempRoot, "release-assets/preview.yml");
+  const { arm64Path: winDebugArm64Path, x64Path: winDebugX64Path } =
+    writeWindowsBuilderDebugFixtures(tempRoot);
   NodeChildProcess.execFileSync(
     process.execPath,
     [
-      NodePath.resolve(repoRoot, "scripts/merge-update-manifests.ts"),
-      "--platform",
-      "mac",
-      arm64Path,
-      x64Path,
+      NodePath.resolve(repoRoot, "scripts/merge-release-update-manifests.ts"),
+      NodePath.resolve(tempRoot, "release-assets"),
     ],
     {
       cwd: repoRoot,
@@ -319,59 +329,7 @@ try {
     "T3-Code-9.9.9-smoke.0-x64.zip",
     "Merged manifest is missing the x64 asset.",
   );
-
-  const { arm64Path: winArm64Path, x64Path: winX64Path } = writeWindowsManifestFixtures(
-    tempRoot,
-    "latest",
-  );
-  const mergedWindowsManifestPath = NodePath.resolve(tempRoot, "release-assets/latest.yml");
-  const { arm64Path: nightlyWinArm64Path, x64Path: nightlyWinX64Path } =
-    writeWindowsManifestFixtures(tempRoot, "nightly");
-  const mergedNightlyWindowsManifestPath = NodePath.resolve(tempRoot, "release-assets/nightly.yml");
-  const { arm64Path: previewWinArm64Path, x64Path: previewWinX64Path } =
-    writeWindowsManifestFixtures(tempRoot, "preview");
-  const mergedPreviewWindowsManifestPath = NodePath.resolve(tempRoot, "release-assets/preview.yml");
-  const { arm64Path: winDebugArm64Path, x64Path: winDebugX64Path } =
-    writeWindowsBuilderDebugFixtures(tempRoot);
-  NodeChildProcess.execFileSync(
-    "bash",
-    [
-      "-lc",
-      `
-        release_assets_dir=${JSON.stringify(NodePath.resolve(tempRoot, "release-assets"))}
-        shopt -s nullglob
-        found_windows_manifest=false
-        for x64_manifest in "$release_assets_dir"/*-win-x64.yml; do
-          if [[ "$(basename "$x64_manifest")" == builder-debug-* ]]; then
-            continue
-          fi
-
-          arm64_manifest="\${x64_manifest/-x64.yml/-arm64.yml}"
-          output_manifest="\${x64_manifest/-win-x64.yml/.yml}"
-          if [[ ! -f "$arm64_manifest" ]]; then
-            echo "Missing matching arm64 Windows manifest for $x64_manifest" >&2
-            exit 1
-          fi
-
-          found_windows_manifest=true
-          ${JSON.stringify(process.execPath)} ${JSON.stringify(NodePath.resolve(repoRoot, "scripts/merge-update-manifests.ts"))} --platform win \
-            "$arm64_manifest" \
-            "$x64_manifest" \
-            "$output_manifest"
-          rm -f "$arm64_manifest" "$x64_manifest"
-        done
-
-        if [[ "$found_windows_manifest" != true ]]; then
-          echo "No Windows updater manifests found to merge." >&2
-          exit 1
-        fi
-      `,
-    ],
-    {
-      cwd: repoRoot,
-      stdio: "inherit",
-    },
-  );
+  assertMissing(x64Path, "Release smoke unexpectedly kept the x64 macOS updater manifest.");
 
   const mergedWindowsManifest = NodeFS.readFileSync(mergedWindowsManifestPath, "utf8");
   assertContains(
