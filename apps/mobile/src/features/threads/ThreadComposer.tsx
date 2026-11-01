@@ -32,7 +32,7 @@ import {
 import { StackActions, useFocusEffect, useNavigation } from "@react-navigation/native";
 import type { ReactNode } from "react";
 import { useEffect, useEffectEvent, useRef, useState, type RefObject } from "react";
-import { Keyboard, Platform, Pressable, View, type ViewStyle } from "react-native";
+import { I18nManager, Keyboard, Platform, Pressable, View, type ViewStyle } from "react-native";
 import { composerImageGallery } from "../../lib/composerImageGallery";
 import { filePreviewGallery } from "../../lib/filePreviewGallery";
 import { FilePreviewModal, type FilePreviewSource } from "../../components/FilePreviewModal";
@@ -97,6 +97,7 @@ import {
   resolveComposerSendPresentation,
   type ComposerSendPresentation,
 } from "./composerSendPresentation";
+import { compactEditorInsets } from "./compactEditorInsets";
 import { ComposerCommandPopover } from "./ComposerCommandPopover";
 import { ComposerPopoverAnchor } from "./ComposerPopoverAnchor";
 import { ComposerQueuedEditAttachments } from "./ComposerQueuedEdit";
@@ -160,14 +161,21 @@ function useCompactComposerEditor(text: ScaledTextRole, value: string) {
     (contentHeight > text.lineHeight * 1.5 ||
       (compactWidth > 0 && contentSize.width > compactWidth));
   const compactRowHeight = Math.max(44, minimum);
+  const isRTL = I18nManager.isRTL;
   const editorStyle = useAnimatedStyle(() => ({
     position: "absolute",
     overflow: "hidden",
     height,
-    left: isExpanded ? 14 : editorX.value + 4,
-    right: isExpanded
-      ? 14
-      : rowWidth.value - editorX.value - editorWidth.value + COMPACT_EDITOR_TRAILING_GAP,
+    ...(isExpanded
+      ? { left: 14, right: 14 }
+      : compactEditorInsets({
+          slotX: editorX.value,
+          slotWidth: editorWidth.value,
+          rowWidth: rowWidth.value,
+          isRTL,
+          trailingGap: COMPACT_EDITOR_TRAILING_GAP,
+        })),
+
     // The full-width editor must move above the controls in the same frame it widens.
     bottom: isExpanded ? 52 : (compactRowHeight - minimum) / 2,
   }));

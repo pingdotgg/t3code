@@ -286,6 +286,8 @@ export interface SourceControlDefinition {
     text: string,
     repositoryUrl: string,
   ) => ReadonlyArray<ReferenceAutolink>;
+  /** True when the host renders a single newline in change request text as a line break. */
+  readonly hardLineBreaks?: boolean;
   /** Where the host lists a change request's checks. Absent means the change request's own page. */
   readonly changeRequestChecksUrl?: (changeRequestUrl: string) => string;
   /**
