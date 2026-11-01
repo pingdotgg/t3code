@@ -118,6 +118,7 @@ export function HistorySwipeNavigation() {
       }
       if (gesture.kind === "ignored") return;
       if (gesture.kind === "pending") {
+        if (event.deltaX === 0 && event.deltaY === 0) return;
         const path = event.composedPath();
         // Claim content scrolling while its layout still exists, before a possible remount.
         if (isInHorizontalScroller(path)) {

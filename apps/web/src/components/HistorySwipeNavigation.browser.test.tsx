@@ -60,6 +60,13 @@ describe("HistorySwipeNavigation", () => {
       "forward",
     ],
     [
+      "a history gesture after zero-delta contact on a scroller",
+      "shadow",
+      400,
+      [[0, "remove"], ["begin"], [130]],
+      "forward",
+    ],
+    [
       "a scroll begin after an ignored zoom wheel",
       "none",
       0,
