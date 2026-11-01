@@ -6,7 +6,7 @@ import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import * as NodeURL from "node:url";
 
-import { cachedTestTasks, matchesTestPath } from "./cached-tests.ts";
+import { cachedTestTasks, matchesTestPath, readRunSummary } from "./cached-tests.ts";
 
 describe("cachedTestTasks", () => {
   it("selects every test for a checkout-root path", () => {
@@ -57,6 +57,26 @@ describe("cachedTestTasks", () => {
 
   it("does not add tasks without an explicit request", () => {
     expect(cachedTestTasks(undefined)).toEqual({});
+  });
+
+  it("reads only a task summary written by the current run", async () => {
+    const directory = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "cached-tests-"));
+    const write = async (version: string, task: string, mtimeSeconds: number) => {
+      const file = NodePath.join(directory, version, "last-summary.json");
+      await NodeFSP.mkdir(NodePath.dirname(file));
+      await NodeFSP.writeFile(file, JSON.stringify({ tasks: [{ task_name: task, result: {} }] }));
+      await NodeFSP.utimes(file, mtimeSeconds, mtimeSeconds);
+    };
+    try {
+      expect(readRunSummary(NodePath.join(directory, "missing"), 0)).toBeUndefined();
+      await write("v17", "stale", 1_000);
+      expect(readRunSummary(directory, 2_000_000)).toBeUndefined();
+      await write("v18", "older", 2_000);
+      await write("v19", "newest", 3_000);
+      expect(readRunSummary(directory, 2_000_000)?.tasks[0]?.task_name).toBe("newest");
+    } finally {
+      await NodeFSP.rm(directory, { recursive: true, force: true });
+    }
   });
 
   it("reuses individual results, invalidates filesystem inputs, and never caches failures", async () => {

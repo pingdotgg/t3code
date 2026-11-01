@@ -15,6 +15,26 @@ interface CachedTestTask {
       };
 }
 
+interface TaskRunSummary {
+  tasks: Array<{
+    task_name: string;
+    result: { CacheHit?: { source: string; saved_duration_ms: number } };
+  }>;
+}
+
+export function readRunSummary(cacheRoot: string, startedAt: number): TaskRunSummary | undefined {
+  if (!NodeFS.existsSync(cacheRoot)) return undefined;
+  const newest = NodeFS.readdirSync(cacheRoot, { withFileTypes: true })
+    .filter((entry) => entry.isDirectory())
+    .map((entry) => NodePath.join(cacheRoot, entry.name, "last-summary.json"))
+    .filter((file) => NodeFS.existsSync(file))
+    .map((file) => ({ file, mtimeMs: NodeFS.statSync(file).mtimeMs }))
+    // vp leaves the previous summary untouched when it fails before running tasks.
+    .filter((summary) => summary.mtimeMs >= startedAt)
+    .sort((a, b) => b.mtimeMs - a.mtimeMs)[0];
+  return newest && JSON.parse(NodeFS.readFileSync(newest.file, "utf8"));
+}
+
 export function matchesTestPath(file: string, filters: Array<string>) {
   return (
     filters.length === 0 ||
