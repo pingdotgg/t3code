@@ -997,6 +997,27 @@ it.layer(NodeServices.layer)("TailnetSignIn", (it) => {
       }).pipe(Effect.provide(layerTest(tailnet)));
     });
 
+    it.effect("a grant sign-in on another account does not lock the owner out here", () => {
+      const tailnet = withLaptop();
+      const home = tailnet.status;
+      return Effect.gen(function* () {
+        yield* signIn(makeDpopKey());
+        // On another account, the laptop signs in through a grant there.
+        tailnet.status = hostStatus({
+          Peer: peers,
+          Self: { ...hostStatus().Self, ID: "nBoxAtWork" },
+        });
+        tailnet.devices = {
+          [LAPTOP_ADDRESS]: { node: laptop, capMap: granted({ scopes: ["read"] }) },
+        };
+        yield* signIn(makeDpopKey(), { remoteAddress: LAPTOP_ADDRESS });
+        // Back home, where nothing is granted, the owner's phone still signs in.
+        tailnet.status = home;
+        tailnet.devices = { [LAPTOP_ADDRESS]: { node: laptop } };
+        yield* signIn(makeDpopKey());
+      }).pipe(Effect.provide(layerTest(tailnet)));
+    });
+
     it.effect(
       "a peer with no ID that replaces another during a scan keeps it from deciding",
       () => {

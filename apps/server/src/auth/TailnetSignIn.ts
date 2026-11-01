@@ -218,9 +218,12 @@ export const make = Effect.gen(function* () {
   const pairingLinks = yield* AuthPairingLinks.AuthPairingLinkRepository;
   const requireGrantPath = path.join(config.stateDir, REQUIRE_GRANT_FILE);
 
-  // Sign-ins through a grant since the last scan that found none. The first stops the owner
-  // rule before the next scan. A scan that finds no grants clears it, unless one came meanwhile.
-  const grantSignIns = yield* Ref.make(0);
+  // Sign-ins through a grant since the last scan that found none, per Tailscale account. The
+  // first stops the owner rule there before the next scan. A scan that finds no grants clears
+  // its account's count, unless one came meanwhile.
+  const grantSignIns = yield* Ref.make<ReadonlyMap<string | null, number>>(new Map());
+  const grantSignInsOn = (account: string | null) =>
+    Ref.get(grantSignIns).pipe(Effect.map((counts) => counts.get(account) ?? 0));
   // The last scan that settled the question: it read every peer, or found a grant. A scan
   // that could not reuses it for a while, so one failed lookup does not lock the owner out.
   // Each scan names the Tailscale account (this machine's node) it read, since switching
@@ -234,13 +237,13 @@ export const make = Effect.gen(function* () {
   const scanFrom = yield* Ref.make<TailscaleStatus | null>(null);
   const [scanPolicy, rescanPolicy] = yield* Effect.cachedInvalidateWithTTL(
     Effect.gen(function* () {
-      const signInsBefore = yield* Ref.get(grantSignIns);
       // A switch after this status is caught below.
       const status = (yield* Ref.get(scanFrom)) ?? (yield* host.status);
       const account = status.selfNodeId;
-      // A grant is kept the moment its lookup confirms it, from the node the list names, so if
-      // the scan is cut short or its checks below cannot finish, a later scan that cannot read every peer falls back to
-      // it, never to an older "no grants".
+      const signInsBefore = yield* grantSignInsOn(account);
+      // A grant is kept the moment its lookup confirms it, from the node the list names. So
+      // if the scan is cut short or its checks below cannot finish, a later scan that cannot
+      // read every peer falls back to it, never to an older "no grants".
       const keepGrant = Clock.currentTimeMillis.pipe(
         Effect.flatMap((at) => Ref.set(lastCleanScan, { account, granted: true, at })),
       );
@@ -264,7 +267,9 @@ export const make = Effect.gen(function* () {
         const found = granted.length > 0;
         yield* Ref.set(lastCleanScan, { account, granted: found, at: now });
         if (!found)
-          yield* Ref.update(grantSignIns, (count) => (count === signInsBefore ? 0 : count));
+          yield* Ref.update(grantSignIns, (counts) =>
+            (counts.get(account) ?? 0) === signInsBefore ? new Map(counts).set(account, 0) : counts,
+          );
         return { account, granted: found, ttl: ttlOf(found) };
       }
       const last = yield* Ref.get(lastCleanScan);
@@ -305,7 +310,7 @@ export const make = Effect.gen(function* () {
       Effect.map(Option.filter((scanned) => scanned.account === account)),
     );
     if (Option.isSome(scan) && scan.value.granted) return "no_grant" as const;
-    if ((yield* Ref.get(grantSignIns)) > 0) return "no_grant" as const;
+    if ((yield* grantSignInsOn(account)) > 0) return "no_grant" as const;
     return Option.isNone(scan) ? ("policy_unknown" as const) : null;
   });
 
@@ -464,7 +469,13 @@ export const make = Effect.gen(function* () {
         }),
       );
       // The policy names who gets in here now; owner-rule sessions end on the next check.
-      if (via === "grant" && (yield* Ref.getAndUpdate(grantSignIns, (count) => count + 1)) === 0) {
+      const firstOnAccount =
+        via === "grant" &&
+        (yield* Ref.modify(grantSignIns, (counts) => {
+          const before = counts.get(status.selfNodeId) ?? 0;
+          return [before === 0, new Map(counts).set(status.selfNodeId, before + 1)] as const;
+        }));
+      if (firstOnAccount) {
         yield* recheckSessions.pipe(Effect.forkDetach);
       }
       return { credential: issued.credential, expiresAt: issued.expiresAt };
