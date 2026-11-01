@@ -62,6 +62,7 @@ function createChapterStorage() {
 export const useChatChapterStore = create<ChatChapterStoreState>()(
   persist(
     (set) => {
+      let revealNonce = 0;
       return {
         chaptersByThreadKey: {},
         revealRequest: null,
@@ -109,11 +110,11 @@ export const useChatChapterStore = create<ChatChapterStoreState>()(
             };
           }),
         requestReveal: (threadRef, messageId) =>
-          set((state) => ({
+          set(() => ({
             revealRequest: {
               threadKey: scopedThreadKey(threadRef),
               messageId,
-              nonce: (state.revealRequest?.nonce ?? 0) + 1,
+              nonce: ++revealNonce,
             },
           })),
       };
