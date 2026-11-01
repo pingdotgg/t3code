@@ -106,7 +106,7 @@ export function repositoryPathFromRemoteUrl(url: string | null): string | null {
   }
 
   const match =
-    /^(?:[^@/\s]+@[^:/\s]+:|(?:ssh|https?|git):\/\/[^/]+\/)((?:[^/\s]+\/)+[^/\s]+?)(?:\.git)?\/?$/iu.exec(
+    /^(?:[^@/\s]+@[^:/\s]+:|(?:ssh|https?|git|entire):\/\/[^/]+\/)((?:[^/\s]+\/)+[^/\s]+?)(?:\.git)?\/?$/iu.exec(
       trimmed,
     );
   const path = match?.[1]?.trim() ?? "";

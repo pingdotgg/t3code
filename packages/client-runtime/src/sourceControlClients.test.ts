@@ -21,6 +21,15 @@ describe("sourceControlClients.parseChangeRequestUrl", () => {
     });
   });
 
+  it("reads an Entire trail's change as Entire's on entire.com", () => {
+    expect(parse("https://entire.io/gh/Acme/Web/-/trails/1070/changes/12")).toEqual({
+      host: "entire.com",
+      repository: "gh/acme/web",
+      number: 12,
+    });
+    expect(kindOf("https://entire.com/gh/acme/web/trails/12")).toBe("entire");
+  });
+
   it("reads a GitCafe pull request at its canonical /pull/ path and the older /pulls/ path", () => {
     for (const path of ["pull", "pulls"]) {
       const url = `https://git.cafe/PingDotGG/T3Code/${path}/23897`;
@@ -249,6 +258,7 @@ describe("sourceControlClients.recognizeRemote", () => {
     expect(kindOfRemote("https://bitbucket.gitlab.example/o/r")).toBe("gitlab");
     expect(kindOfRemote("https://bitbucket.visualstudio.com/p/_git/r")).toBe("azure-devops");
     expect(kindOfRemote("git@git.cafe:pingdotgg/t3code.git")).toBe("gitcafe");
+    expect(kindOfRemote("entire://github.entire.example/gh/acme/web.git")).toBe("entire");
   });
 
   it("reads a remote no host claims as an unknown host, and a local path as no host", () => {
@@ -290,6 +300,7 @@ describe("sourceControlClients repository keys", () => {
     ["git@ssh.dev.azure.com:v3/o/p", "ssh.dev.azure.com/v3/o/p"],
     ["ssh.dev.azure.com/v3/o/p/r", "ssh.dev.azure.com/v3/o/p/r"],
     ["C:/repos/project", "c:/repos/project"],
+    ["entire://aws-us-east-2.entire.io/gh/Acme/Web.git", "entire.com/gh/acme/web"],
   ])("keys %s as %s", (remote, key) => {
     expect(sourceControlClients.repositoryKeyFromRemote(remote)).toBe(key);
   });

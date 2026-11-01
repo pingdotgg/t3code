@@ -166,6 +166,9 @@ export function parseGitRemoteRepository(
  * `repositoryKeyFromRemote` rewrite this, so persisted keys come from that, not from here.
  */
 export function normalizeGitRemoteUrl(value: string): string {
+  // Any cluster serves an Entire repository, so its key is the web path every trail URL shares.
+  const entire = /^entire:\/\/[^/@]+\/((?:gh|et)\/[^/]+\/[^/]+)$/.exec(lowerCaseRemote(value));
+  if (entire?.[1]) return `entire.com/${entire[1]}`;
   const repository = parseGitRemoteRepository(value);
   return repository === null ? lowerCaseRemote(value) : `${repository.host}/${repository.path}`;
 }

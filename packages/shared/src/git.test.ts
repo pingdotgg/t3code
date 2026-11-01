@@ -28,6 +28,22 @@ describe("normalizeGitRemoteUrl", () => {
     );
   });
 
+  it("keys an Entire repository by its web path, whatever cluster it is cloned from", () => {
+    for (const remote of [
+      "entire://aws-us-east-2.entire.io/gh/Acme/Web.git",
+      "entire://aws-eu-west-1.entire.io/gh/acme/web",
+    ]) {
+      expect(normalizeGitRemoteUrl(remote)).toBe("entire.com/gh/acme/web");
+    }
+    expect(normalizeGitRemoteUrl("entire://cluster.entire.io/et/project/repo/")).toBe(
+      "entire.com/et/project/repo",
+    );
+    // Userinfo in the authority is not a cluster.
+    expect(normalizeGitRemoteUrl("entire://a@evil.example/gh/acme/web")).not.toBe(
+      "entire.com/gh/acme/web",
+    );
+  });
+
   it("preserves nested group paths for providers like GitLab", () => {
     expect(normalizeGitRemoteUrl("git@gitlab.com:T3Tools/platform/T3Code.git")).toBe(
       "gitlab.com/t3tools/platform/t3code",

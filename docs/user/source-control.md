@@ -1,7 +1,7 @@
 # Source control
 
-T3 Code integrates with GitHub, GitLab, Forgejo, Gitea, Bitbucket, Azure DevOps, and GitCafe to clone
-and publish repositories, create pull requests, and review changes.
+T3 Code integrates with GitHub, GitLab, Forgejo, Gitea, Bitbucket, Azure DevOps, GitCafe, and Entire
+to clone and publish repositories, create pull requests, and review changes.
 
 ## Review turn changes
 
@@ -128,6 +128,24 @@ sent to `git.cafe`; `CAFE_TOKEN` follows `CAFE_HOST` if you set it. Repositories
 
 Line comments are not available for GitCafe pull requests yet.
 Merging a stack lands it through GitCafe, and updating a branch restacks the layers above it.
+
+### Entire
+
+Install the [Entire CLI](https://entire.com) on the server and sign in:
+
+```bash
+entire login
+```
+
+A project whose remote is an `entire://` clone URL is an Entire repository; one cloned from
+`github.com` stays a GitHub project. A trail belongs to an Entire project and can span
+repositories; T3 Code lists and reviews its change in your repository, and links to a change on
+entire.com open it in T3 Code. Diffs are read from your checkout, fetching the change from the
+`entire://` remote without moving your branches. A line comment is an Entire finding, and the
+repository's gates show as `Entire:` checks. A change shows its trail's description, and editing it
+edits the trail's. Descriptions with formatting Entire can't keep, such
+as strikethrough or nested lists, are edited on entire.com. Create repositories with
+`entire repo create`.
 
 ## Start, clone, or publish a project
 
