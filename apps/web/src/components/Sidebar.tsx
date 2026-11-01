@@ -221,6 +221,7 @@ import {
 } from "./Sidebar.drag";
 import { SidebarPointerSensor } from "./Sidebar.pointer";
 import { createSidebarListMotion } from "./Sidebar.motion";
+import { createSidebarShiftGuard } from "./Sidebar.shiftGuard";
 import {
   pickSnoozePreset,
   resolveSnoozePresets,
@@ -1061,6 +1062,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
   const sidebarContentRef = useRef<HTMLDivElement | null>(null);
   const dragLabelOffsetRef = useRef(0);
   const listMotionRef = useRef<ReturnType<typeof createSidebarListMotion> | null>(null);
+  const shiftGuardRef = useRef<ReturnType<typeof createSidebarShiftGuard> | null>(null);
   const [dragState, setDragState] = useState<{
     readonly activeKey: string;
     readonly activeSection: SidebarSection;
@@ -1704,13 +1706,17 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     const motion = createSidebarListMotion(node);
     listMotionRef.current = motion;
     motion.update(false);
+    const shiftGuard = createSidebarShiftGuard(node);
+    shiftGuardRef.current = shiftGuard;
     return () => {
       // Search replaces this list while the Sidebar stays mounted, and a drag
       // whose rows are gone can never drop. The compiler memoizes this callback
       // with no deps (it reads only refs), so the cleanup runs only on unmount.
       dragSensorRef.current?.cancel();
       motion.dispose();
+      shiftGuard.dispose();
       if (listMotionRef.current === motion) listMotionRef.current = null;
+      if (shiftGuardRef.current === shiftGuard) shiftGuardRef.current = null;
       if (threadListRef.current === node) threadListRef.current = null;
     };
   };
@@ -2001,8 +2007,9 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     ":",
   );
   const previousShelfExpansionKeyRef = useRef(shelfExpansionKey);
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- tells the list motion controller to animate or not after each layout-affecting commit
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- records moved rows and updates list motion after each layout-affecting commit
   useLayoutEffect(() => {
+    shiftGuardRef.current?.update();
     // Shelf rows would travel over stationary headers below the bottom-anchored shelf.
     const shelvesUnchanged = previousShelfExpansionKeyRef.current === shelfExpansionKey;
     previousShelfExpansionKeyRef.current = shelfExpansionKey;
