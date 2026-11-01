@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test"
 
 import {
   createInboxReturnTracker,
+  isThreadWatchingPullRequests,
   isThreadWorking,
   sortInboxThreadsByReturn,
   sortWorkingThreadsBySend,
@@ -239,5 +240,45 @@ describe("sortWorkingThreadsBySend", () => {
     expect(
       sortWorkingThreadsBySend([launched, sentFirst, sentLast]).map((thread) => thread.id),
     ).toEqual(["sent-last", "sent-first", "launched"]);
+  });
+});
+
+describe("isThreadWatchingPullRequests", () => {
+  const watch = {
+    taskId: "pull-request-watch:github.com/acme/app#1",
+    kind: "monitor" as const,
+    awaited: true as const,
+  };
+  const parked = (
+    status: "idle" | "running",
+    pendingBackgroundTasks: ReadonlyArray<
+      typeof watch | { taskId: string; kind: "subagent" | "command" }
+    >,
+  ) => ({
+    runtime: {
+      status,
+      activeRunId: null,
+      providerInstanceId: ProviderInstanceId.make("codex"),
+      providerName: "Codex",
+      lastError: null,
+      updatedAt: "2026-06-01T00:00:00.000Z",
+    },
+    pendingBackgroundTasks,
+  });
+
+  it("holds a thread parked only on pull request watches", () => {
+    expect(isThreadWatchingPullRequests(parked("idle", [watch]))).toBe(true);
+    // A dev server the agent left running does not hold the thread, so it does not count.
+    expect(
+      isThreadWatchingPullRequests(parked("idle", [watch, { taskId: "dev", kind: "command" }])),
+    ).toBe(true);
+  });
+
+  it("leaves threads that are running or waiting on other work as working", () => {
+    expect(isThreadWatchingPullRequests(parked("running", [watch]))).toBe(false);
+    expect(
+      isThreadWatchingPullRequests(parked("idle", [watch, { taskId: "child", kind: "subagent" }])),
+    ).toBe(false);
+    expect(isThreadWatchingPullRequests(parked("idle", []))).toBe(false);
   });
 });
