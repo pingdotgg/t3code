@@ -381,20 +381,18 @@ describe("resolveSidebarRowStatus", () => {
     expect(resolveSidebarRowStatus(failedAgain)).toBe("failed");
   });
 
-  it("dates a failure without a completed run by the runtime update", () => {
+  it("keeps an undated failure unseen, so later thread updates cannot revive or hide it", () => {
     const visitedAfter = "2026-03-09T10:06:00.000Z";
-    const visitedBefore = "2026-03-09T10:00:00.000Z";
     const noCompletedAt = {
       ...failed,
       latestRun: { ...failed.latestRun, completedAt: null },
     };
     expect(resolveSidebarRowStatus({ ...noCompletedAt, lastVisitedAt: visitedAfter })).toBe(
-      "ready",
+      "failed",
     );
 
     const noRun = { ...failed, latestRun: null };
-    expect(resolveSidebarRowStatus({ ...noRun, lastVisitedAt: visitedBefore })).toBe("failed");
-    expect(resolveSidebarRowStatus({ ...noRun, lastVisitedAt: visitedAfter })).toBe("ready");
+    expect(resolveSidebarRowStatus({ ...noRun, lastVisitedAt: visitedAfter })).toBe("failed");
   });
 });
 
@@ -1783,7 +1781,11 @@ describe("resolveSidebarFolderDot", () => {
     expect(resolveSidebarFolderDot([working, unread])).toBe("unread");
     expect(resolveSidebarFolderDot([unread, limited])).toBe("attention");
     // A failure the user already opened clears, like its row.
-    const failed = { ...idle, runtime: { ...runtime, status: "failed" as const } };
+    const failed = {
+      ...idle,
+      latestRun: { ...idle.latestRun, status: "failed" as const },
+      runtime: { ...runtime, status: "failed" as const },
+    };
     expect(resolveSidebarFolderDot([failed])).toBeNull();
     expect(
       resolveSidebarFolderDot([{ ...failed, lastVisitedAt: "2026-03-09T09:00:00.000Z" }]),

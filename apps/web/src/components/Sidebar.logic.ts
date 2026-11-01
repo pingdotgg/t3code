@@ -778,16 +778,17 @@ export function hasUnseenCompletion(thread: ThreadStatusInput): boolean {
 function hasUnseenFailure(
   thread: Pick<ThreadStatusInput, "latestRun" | "runtime" | "lastVisitedAt">,
 ): boolean {
-  // Failed runs can lack completedAt, and a session can fail before any run.
+  // Only a run's completion dates a failure: runtime.updatedAt also moves on renames and
+  // branch changes. An undated failure, such as a session failing before any run, stays unseen.
   const failedAt =
     thread.latestRun?.status === "failed"
-      ? (thread.latestRun.completedAt ?? thread.runtime?.updatedAt)
+      ? thread.latestRun.completedAt
       : thread.runtime?.status === "failed"
-        ? thread.runtime.updatedAt
+        ? null
         : undefined;
   if (failedAt === undefined) return false;
-  if (!thread.lastVisitedAt) return true;
-  const failedAtMs = Date.parse(failedAt ?? "");
+  if (failedAt === null || !thread.lastVisitedAt) return true;
+  const failedAtMs = Date.parse(failedAt);
   const lastVisitedAtMs = Date.parse(thread.lastVisitedAt);
   if (Number.isNaN(failedAtMs) || Number.isNaN(lastVisitedAtMs)) return true;
   return failedAtMs > lastVisitedAtMs;
