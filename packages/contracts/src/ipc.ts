@@ -290,10 +290,11 @@ export interface DesktopUpdateReleaseNote {
   totalItems: number;
   /** ISO time from the update feed for the offered version, else `YYYY-MM-DD` from a prerelease version. */
   releasedAt?: string;
-  /** Generated summaries only: the highlights paragraph. `items` then holds the fixes. */
+  /** Paragraph-style summaries from older releases keep their fixes in `items`. */
   intro?: string;
   /** Generated summaries only, for example "275 changes from 22 contributors". */
   stats?: string;
+  footer?: string;
 }
 
 export const DesktopUpdateReleaseNoteSchema = Schema.Struct({
@@ -303,6 +304,7 @@ export const DesktopUpdateReleaseNoteSchema = Schema.Struct({
   releasedAt: Schema.optionalKey(Schema.String),
   intro: Schema.optionalKey(Schema.String),
   stats: Schema.optionalKey(Schema.String),
+  footer: Schema.optionalKey(Schema.String),
 });
 
 export const DesktopUpdateStateSchema = Schema.Struct({
@@ -1018,6 +1020,7 @@ export interface DesktopBridge {
   getClientPlatform: () => string;
   setNotificationBadge: (badge: { count: number; image: string | null }) => Promise<void>;
   onNotificationBadgeClear: (listener: () => void) => () => void;
+  onTrackpadScrollBegin: (listener: () => void) => () => void;
   onTrackpadScrollEnd: (listener: () => void) => () => void;
   /**
    * Renderer `window.focus()` cannot raise an Electron window, and on Wayland

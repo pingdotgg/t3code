@@ -165,6 +165,32 @@ const sendFor = (
   });
 
 it.layer(NodeServices.layer)("AnalyticsService test", (it) => {
+  it.effect("waits for desktop shell consent and honors a late telemetry opt-out", () =>
+    Effect.gen(function* () {
+      const env: NodeJS.ProcessEnv = { T3CODE_DESKTOP_SHELL_DISCOVERY_PENDING: "1" };
+      const batches = yield* sendFor(
+        0,
+        respondWithStatus(204),
+        Effect.gen(function* () {
+          const analytics = yield* AnalyticsService.AnalyticsService;
+          yield* analytics.record("test.before-discovery");
+          yield* analytics.flush;
+          env.T3CODE_TELEMETRY_ENABLED = "false";
+          delete env.T3CODE_DESKTOP_SHELL_DISCOVERY_PENDING;
+          yield* analytics.record("test.opted-out");
+          yield* analytics.flush;
+          env.T3CODE_TELEMETRY_ENABLED = "true";
+          yield* analytics.record("test.allowed");
+          yield* analytics.flush;
+        }),
+      ).pipe(Effect.provideService(HostProcess.Environment, env));
+      assert.deepEqual(
+        batches.flat().map((event) => event.event),
+        ["test.allowed"],
+      );
+    }),
+  );
+
   it.effect("client owner reports cannot use up the server's owner cap", () =>
     Effect.gen(function* () {
       const batches = yield* sendFor(
