@@ -14,6 +14,7 @@ import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
+import * as Path from "effect/Path";
 import * as Schedule from "effect/Schedule";
 import type * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
@@ -102,6 +103,7 @@ export const make = Effect.gen(function* () {
   const repositoryIdentities = yield* RepositoryIdentityResolver.RepositoryIdentityResolver;
   const crypto = yield* Crypto.Crypto;
   const fileSystem = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
   const backgroundPolicy = yield* BackgroundPolicy.BackgroundPolicy;
   const pendingBackfill = new Map<ThreadId, number>();
 
@@ -188,10 +190,13 @@ export const make = Effect.gen(function* () {
               refresh: request.refresh,
             });
           if (first.branch !== null && repository === null) return finishBackfill(group);
-          const worktreeExists =
-            first.worktreePath !== null && (yield* fileSystem.exists(first.worktreePath));
+          // A worktree folder can outlive its .git, and git there fails with not_a_repository.
+          // An unreadable .git keeps the worktree rather than failing the whole group.
           const cwd =
-            worktreeExists && first.worktreePath !== null
+            first.worktreePath !== null &&
+            (yield* fileSystem
+              .exists(path.join(first.worktreePath, ".git"))
+              .pipe(Effect.orElseSucceed(() => true)))
               ? first.worktreePath
               : project.workspaceRoot;
           const detected =

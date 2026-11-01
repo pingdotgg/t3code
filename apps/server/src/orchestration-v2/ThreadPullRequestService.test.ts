@@ -16,6 +16,8 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Path from "effect/Path";
+import * as PlatformError from "effect/PlatformError";
 import * as Queue from "effect/Queue";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
@@ -155,6 +157,7 @@ describe("ThreadPullRequestServiceV2 reads", () => {
             }),
           ),
           FileSystem.layerNoop({}),
+          Path.layer,
         );
         yield* Effect.gen(function* () {
           const service = yield* ThreadPullRequestService.make;
@@ -177,6 +180,130 @@ describe("ThreadPullRequestServiceV2 reads", () => {
         }).pipe(Effect.provide(dependencies));
       }),
     ),
+  );
+
+  it.effect.each([
+    {
+      worktree: "a linked worktree",
+      existingPaths: ["/workspace/worktree", "/workspace/worktree/.git"],
+      unreadablePaths: [],
+      cwd: "/workspace/worktree",
+    },
+    // A folder that outlived its .git makes git fail with not_a_repository.
+    {
+      worktree: "a folder without .git",
+      existingPaths: ["/workspace/worktree"],
+      unreadablePaths: [],
+      cwd: "/workspace/project",
+    },
+    {
+      worktree: "a folder whose .git cannot be checked",
+      existingPaths: ["/workspace/worktree"],
+      unreadablePaths: ["/workspace/worktree/.git"],
+      cwd: "/workspace/worktree",
+    },
+    {
+      worktree: "a missing folder",
+      existingPaths: [],
+      unreadablePaths: [],
+      cwd: "/workspace/project",
+    },
+  ] as const)(
+    "looks up a branch whose worktree is $worktree in $cwd",
+    ({ existingPaths, unreadablePaths, cwd }) =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const thread = {
+            ...threadShell("worktree-thread"),
+            branch: "feature/worktree",
+            worktreePath: "/workspace/worktree",
+          };
+          const project: OrchestrationProjectShell = {
+            id: thread.projectId,
+            title: "Project",
+            workspaceRoot: "/workspace/project",
+            defaultModelSelection: null,
+            scripts: [],
+            createdAt: "2026-08-01T00:00:00.000Z",
+            updatedAt: "2026-08-01T00:00:00.000Z",
+          };
+          const activation = yield* Deferred.make<void>();
+          const sweepStarted = yield* Deferred.make<void>();
+          const lookupCwds: Array<string> = [];
+          const dependencies = Layer.mergeAll(
+            Layer.mock(Orchestrator.OrchestratorV2)({
+              streamDomainEvents: Stream.never,
+              getShellSnapshot: () =>
+                Deferred.succeed(sweepStarted, undefined).pipe(
+                  Effect.as({
+                    schemaVersion: 2,
+                    snapshotSequence: 1,
+                    threads: [thread],
+                    archivedThreads: [],
+                  }),
+                ),
+            }),
+            Layer.mock(ProjectStore.ProjectStoreV2)({
+              listShells: () => Effect.succeed([project]),
+              getShell: () => Effect.succeedSome(project),
+            }),
+            Layer.mock(GitManager.GitManager)({
+              branchPullRequest: (input) =>
+                Effect.sync(() => {
+                  lookupCwds.push(input.cwd);
+                  return null;
+                }),
+            }),
+            Layer.mock(PullRequestService.PullRequestService)({}),
+            Layer.mock(RepositoryIdentityResolver.RepositoryIdentityResolver)({
+              resolve: () =>
+                Effect.succeed({
+                  canonicalKey: "github.com/acme/project",
+                  locator: {
+                    source: "git-remote" as const,
+                    remoteName: "origin",
+                    remoteUrl: "git@github.com:acme/project.git",
+                  },
+                  provider: SourceControlProviderKind.make("github"),
+                  owner: "acme",
+                  name: "project",
+                }),
+            }),
+            Layer.mock(BackgroundPolicy.BackgroundPolicy)({}),
+            Layer.succeed(ServerActivation.ServerActivation, Deferred.await(activation)),
+            Layer.succeed(
+              Crypto.Crypto,
+              Crypto.make({
+                randomBytes: (size) => new Uint8Array(size).fill(1),
+                digest: (_algorithm, data) => Effect.succeed(data),
+              }),
+            ),
+            FileSystem.layerNoop({
+              exists: (path) =>
+                unreadablePaths.some((entry) => entry === path)
+                  ? Effect.fail(
+                      PlatformError.systemError({
+                        _tag: "PermissionDenied",
+                        module: "FileSystem",
+                        method: "exists",
+                        pathOrDescriptor: path,
+                      }),
+                    )
+                  : Effect.succeed(existingPaths.some((entry) => entry === path)),
+            }),
+            Path.layer,
+          );
+          yield* Effect.gen(function* () {
+            const service = yield* ThreadPullRequestService.make;
+            yield* service.start();
+            yield* Deferred.succeed(activation, undefined);
+            yield* Deferred.await(sweepStarted);
+            yield* service.drain;
+          }).pipe(Effect.provide(dependencies));
+
+          expect(lookupCwds).toEqual([cwd]);
+        }),
+      ),
   );
 
   it.effect("leaves delegated child threads to their own refresh instead of the sweep", () =>
@@ -270,6 +397,7 @@ describe("ThreadPullRequestServiceV2 reads", () => {
             }),
           ),
           FileSystem.layerNoop({}),
+          Path.layer,
         );
         yield* Effect.gen(function* () {
           const service = yield* ThreadPullRequestService.make;
@@ -396,6 +524,7 @@ describe("ThreadPullRequestServiceV2 reads", () => {
               }),
             ),
             FileSystem.layerNoop({}),
+            Path.layer,
           );
           yield* Effect.gen(function* () {
             const service = yield* ThreadPullRequestService.make;
