@@ -276,6 +276,42 @@ describe("pools", () => {
     }
   });
 
+  it("takes figures from a hub that clients route through, even over a fresher native read", () => {
+    const native = provider({
+      driver: claude,
+      instanceId: ProviderInstanceId.make("claude"),
+      auth: { status: "authenticated", email: "same@example.com" },
+      usageLimits: {
+        checkedAt: "2026-09-03T11:30:00.000Z",
+        windows: [{ ...window, usedPercent: 90 }],
+      },
+    });
+    const hubAccount = {
+      id: "claude-same@example.com.json",
+      driver: claude,
+      email: "same@example.com",
+      usageLimits: { checkedAt, windows: [{ ...window, usedPercent: 10 }] },
+    };
+    const withHub = (routesClients: boolean) =>
+      new Map([
+        [
+          EnvironmentId.make("env-a"),
+          {
+            ...laptop,
+            serverConfig: {
+              providers: [native],
+              usageLimitSources: [{ ...source, routesClients, accounts: [hubAccount] }],
+            },
+          },
+        ],
+      ]);
+    const routed = collectLimitAccounts(withHub(true));
+    expect(routed).toHaveLength(1);
+    expect(routed[0]?.limits.windows[0]?.usedPercent).toBe(10);
+    expect(routed[0]?.environments).toEqual([{ environmentId: "env-a", label: "Laptop" }]);
+    expect(collectLimitAccounts(withHub(false))[0]?.limits.windows[0]?.usedPercent).toBe(90);
+  });
+
   it("merges OpenCode Go limits from machines with the same API key", () => {
     const go = provider({
       driver: ProviderDriverKind.make("opencode"),
@@ -1046,6 +1082,37 @@ describe("/usage-limits", () => {
       ],
     },
   ];
+
+  it("reports a routing hub's figures for the selected account, and native ones otherwise", () => {
+    const fresher = provider({
+      ...selected,
+      usageLimits: {
+        checkedAt: "2026-09-03T11:30:00.000Z",
+        windows: [{ ...window, usedPercent: 90 }],
+      },
+    });
+    const usedPercent = (routesClients: boolean) =>
+      collectProviderUsageLimits(
+        fresher.instanceId,
+        [fresher],
+        sources.map((source) => ({ ...source, routesClients })),
+        now,
+      )?.accounts[0]?.limits.windows[0]?.usedPercent;
+    expect(usedPercent(true)).toBe(window.usedPercent);
+    expect(usedPercent(false)).toBe(90);
+
+    const failed = provider({
+      ...selected,
+      usageLimits: { ...limits, unavailable: { reason: "probeFailed" } },
+    });
+    const report = collectProviderUsageLimits(
+      failed.instanceId,
+      [failed],
+      sources.map((source) => ({ ...source, routesClients: true })),
+      now,
+    );
+    expect(report?.accounts.map((account) => account.id)).toEqual([failed.instanceId, "hub:oss"]);
+  });
 
   it("uses hub credit balances and redemption targets in the composer, including native duplicates", () => {
     const hubs = sources.map((source) => ({

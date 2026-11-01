@@ -256,7 +256,8 @@ export function collectLimitAccounts(presentations: LimitPresentations): readonl
   const creditSources = new Map<string, LimitAccount>();
   const hubRedeems = new Map<string, LimitAccount>();
   const planSources = new Map<string, LimitAccount>();
-  const merge = (key: string, next: LimitAccount) => {
+  const routedKeys = new Set<string>();
+  const merge = (key: string, next: LimitAccount, routed = false) => {
     // Prefer hub redemption to clear its routing cooldown too; displayed balance still follows the freshest read.
     const previousHub = hubRedeems.get(key);
     if (
@@ -285,9 +286,11 @@ export function collectLimitAccounts(presentations: LimitPresentations): readonl
     const previous = accounts.get(key);
     if (!previous) {
       accounts.set(key, next);
+      if (routed) routedKeys.add(key);
       return;
     }
     const fresher = Date.parse(next.limits.checkedAt) > Date.parse(previous.limits.checkedAt);
+    const previousRouted = routedKeys.has(key);
     const environments = [
       ...previous.environments,
       ...next.environments.filter(
@@ -295,7 +298,9 @@ export function collectLimitAccounts(presentations: LimitPresentations): readonl
           !previous.environments.some((seen) => seen.environmentId === candidate.environmentId),
       ),
     ];
-    const winner = fresher ? next : previous;
+    const winner =
+      routed !== previousRouted ? (routed ? next : previous) : fresher ? next : previous;
+    if (winner === next && routed) routedKeys.add(key);
     const creditSource = creditSources.get(key);
     accounts.set(key, {
       ...previous,
@@ -350,27 +355,31 @@ export function collectLimitAccounts(presentations: LimitPresentations): readonl
       for (const account of source.accounts) {
         if (limitsNotice(account.usageLimits) !== null) continue;
         const key = `${source.id}:${account.id}${account.workspaceId ? `:${account.workspaceId}` : ""}`;
-        merge(resolveKey(account) ?? key, {
-          key,
-          driver: account.driver,
-          displayName: account.email ? null : account.id.replace(/\.json$/i, ""),
-          email: account.email,
-          plan: account.plan,
-          accentColor: undefined,
-          environments: [],
-          sourceLabel,
-          redeem: account.usageLimits.resetCredits?.nextCreditId
-            ? {
-                environmentId,
-                input: {
-                  sourceId: source.id,
-                  accountId: account.id,
-                  creditId: account.usageLimits.resetCredits.nextCreditId,
-                },
-              }
-            : null,
-          limits: account.usageLimits,
-        });
+        merge(
+          resolveKey(account) ?? key,
+          {
+            key,
+            driver: account.driver,
+            displayName: account.email ? null : account.id.replace(/\.json$/i, ""),
+            email: account.email,
+            plan: account.plan,
+            accentColor: undefined,
+            environments: [],
+            sourceLabel,
+            redeem: account.usageLimits.resetCredits?.nextCreditId
+              ? {
+                  environmentId,
+                  input: {
+                    sourceId: source.id,
+                    accountId: account.id,
+                    creditId: account.usageLimits.resetCredits.nextCreditId,
+                  },
+                }
+              : null,
+            limits: account.usageLimits,
+          },
+          source.routesClients === true,
+        );
       }
     }
   }
@@ -806,6 +815,16 @@ export function collectProviderUsageLimits(
         (a, b) =>
           Date.parse(b.account.usageLimits.checkedAt) - Date.parse(a.account.usageLimits.checkedAt),
       )[0];
+    const routedUsage = sources
+      .filter((source) => source.routesClients === true)
+      .flatMap((source) => source.accounts)
+      .filter(
+        (account) =>
+          key !== null && resolveKey(account) === key && !limitsNotice(account.usageLimits),
+      )
+      .sort((a, b) => Date.parse(b.usageLimits.checkedAt) - Date.parse(a.usageLimits.checkedAt))[0];
+    const shownLimits = routedUsage ? routedUsage.usageLimits : limits;
+    if (routedUsage && key) nativeAccountKeys.add(key);
     const hubCreditId = hubCredits?.account.usageLimits.resetCredits?.nextCreditId;
     const showHubCredits =
       hubCredits &&
@@ -832,7 +851,7 @@ export function collectProviderUsageLimits(
       ...(provider.displayName ? { displayName: provider.displayName } : {}),
       ...(provider.accentColor ? { accentColor: provider.accentColor } : {}),
       ...(provider.auth.email ? { email: provider.auth.email } : {}),
-      limits: shownCredits ? { ...limits, resetCredits: shownCredits } : limits,
+      limits: shownCredits ? { ...shownLimits, resetCredits: shownCredits } : shownLimits,
     });
   }
   for (const source of sources) {
