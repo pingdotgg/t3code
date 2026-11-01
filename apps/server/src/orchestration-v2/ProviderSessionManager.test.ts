@@ -10,6 +10,7 @@ import {
   type OrchestrationV2ProviderCapabilities,
   type OrchestrationV2ProviderSession,
   type OrchestrationV2ProviderThread,
+  PluginInstallationId,
   type Project,
   ProjectId,
   ProviderDriverKind,
@@ -34,6 +35,7 @@ import { HttpServer } from "effect/http";
 
 import { ProviderWorkspaceMissingError } from "../provider/Errors.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
+import * as PluginTools from "../plugins/PluginTools.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as McpProviderSession from "@t3tools/provider-core/server/mcpSession";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
@@ -476,11 +478,9 @@ function layerTest(input: {
   readonly failReleaseEventWrites?: boolean;
   readonly flakyReleaseWrites?: FlakyReleaseWrites;
   readonly pauseAttachWrite?: Parameters<typeof layerPausingAttachEventSink>[0];
+  /** Once armed, the next call of that registry step hangs until interrupted or crashes. */
+  readonly pauseMcpRegistry?: PauseMcpRegistry;
   readonly beforeUnchangedWrite?: Ref.Ref<Effect.Effect<void>>;
-  readonly pauseResolve?: {
-    readonly armed: Ref.Ref<boolean>;
-    readonly paused: Deferred.Deferred<void>;
-  };
   readonly hasPendingBackgroundWork?: Effect.Effect<boolean>;
   readonly hasPendingBackgroundWorkForThread?: Effect.Effect<boolean>;
   readonly backgroundTasksEndWithProcess?: boolean;
@@ -492,6 +492,7 @@ function layerTest(input: {
   readonly scopeCloseReached?: Deferred.Deferred<void>;
   readonly serverSettingsLayer?: ReturnType<typeof ServerSettings.layerTest>;
   readonly projectServiceLayer?: Layer.Layer<ProjectService.ProjectService>;
+  readonly pluginToolsLayer?: Layer.Layer<PluginTools.PluginTools>;
 }) {
   const layerConfiguredEventSink =
     input.flakyReleaseWrites !== undefined
@@ -531,9 +532,9 @@ function layerTest(input: {
     }).pipe(Effect.map(ProviderAdapterRegistry.layerSingle)),
   );
   const layerConfiguredMcpRegistry =
-    input.pauseResolve === undefined
+    input.pauseMcpRegistry === undefined
       ? layerTestMcpRegistry
-      : layerPausingMcpRegistry(input.pauseResolve);
+      : layerPausingMcpRegistry(input.pauseMcpRegistry);
   const layerProviderEventIngestorTest = ProviderEventIngestor.layer.pipe(
     Layer.provide(
       Layer.mergeAll(
@@ -574,6 +575,7 @@ function layerTest(input: {
           layerTestStores,
           ...(input.serverSettingsLayer === undefined ? [] : [input.serverSettingsLayer]),
           ...(input.projectServiceLayer === undefined ? [] : [input.projectServiceLayer]),
+          ...(input.pluginToolsLayer === undefined ? [] : [input.pluginToolsLayer]),
         ),
       ),
     ),
@@ -599,23 +601,41 @@ const layerTestMcpRegistry = Layer.effect(
   Layer.provide(NodeServices.layer),
 );
 
-const layerPausingMcpRegistry = (pause: {
+interface PauseMcpRegistry {
+  readonly step: "resolve" | "setPluginToolGrants";
+  readonly outcome: "hang" | "crash";
   readonly armed: Ref.Ref<boolean>;
   readonly paused: Deferred.Deferred<void>;
-}) =>
+}
+
+const layerPausingMcpRegistry = (pause: PauseMcpRegistry) =>
   Layer.effect(
     McpSessionRegistry.McpSessionRegistry,
     Effect.gen(function* () {
       const delegate = yield* McpSessionRegistry.McpSessionRegistry;
+      const holdIfArmed = <A>(step: PauseMcpRegistry["step"], run: Effect.Effect<A>) =>
+        step !== pause.step
+          ? run
+          : Ref.getAndSet(pause.armed, false).pipe(
+              Effect.flatMap((armed) =>
+                armed
+                  ? Deferred.succeed(pause.paused, undefined).pipe(
+                      Effect.andThen(
+                        pause.outcome === "hang"
+                          ? Effect.never
+                          : Effect.die(new Error(`${step} crashed`)),
+                      ),
+                    )
+                  : run,
+              ),
+            );
       return McpSessionRegistry.McpSessionRegistry.of({
         ...delegate,
-        resolve: (rawToken) =>
-          Ref.getAndSet(pause.armed, false).pipe(
-            Effect.flatMap((armed) =>
-              armed
-                ? Deferred.succeed(pause.paused, undefined).pipe(Effect.andThen(Effect.never))
-                : delegate.resolve(rawToken),
-            ),
+        resolve: (rawToken) => holdIfArmed("resolve", delegate.resolve(rawToken)),
+        setPluginToolGrants: (providerSessionId, grants) =>
+          holdIfArmed(
+            "setPluginToolGrants",
+            delegate.setPluginToolGrants(providerSessionId, grants),
           ),
       });
     }),
@@ -1845,6 +1865,49 @@ it.effect(
     }),
 );
 
+it.effect("ProviderSessionManagerV2 snapshots the enabled tool plugins into the credential", () =>
+  Effect.gen(function* () {
+    const state = yield* Ref.make(emptyState);
+    const mcpConfigs = yield* Ref.make<
+      ReadonlyArray<McpProviderSession.McpProviderSessionConfig | undefined>
+    >([]);
+    const enabled = yield* Ref.make([
+      { installationId: PluginInstallationId.make("installation-1"), generation: 1 },
+    ]);
+    const pluginToolsLayer = Layer.mock(PluginTools.PluginTools)({ grants: Ref.get(enabled) });
+    yield* Effect.gen(function* () {
+      const eventSink = yield* EventSink.EventSinkV2;
+      const idAllocator = yield* IdAllocator.IdAllocatorV2;
+      const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+      const registry = yield* McpSessionRegistry.McpSessionRegistry;
+      const now = yield* DateTime.now;
+      const threadId = ThreadId.make("thread-provider-session-manager-plugin-tools");
+      yield* eventSink.write({
+        events: [yield* makeThreadCreatedEvent({ idAllocator, threadId, now })],
+      });
+      const openAndResolve = Effect.gen(function* () {
+        const providerSessionId = yield* idAllocator.allocate.providerSession({
+          providerInstanceId: modelSelection.instanceId,
+          threadId,
+        });
+        yield* manager.open({ threadId, providerSessionId, modelSelection, runtimePolicy });
+        const config = (yield* Ref.get(mcpConfigs)).at(-1);
+        const token = config!.authorizationHeader.replace(/^Bearer\s+/, "");
+        const resolved = yield* registry.resolve(token);
+        yield* manager.close(providerSessionId);
+        return resolved?.pluginToolGrants;
+      });
+
+      assert.deepEqual(yield* openAndResolve, yield* Ref.get(enabled));
+      // A plugin enabled later reaches the next session, not the one already prepared.
+      yield* Ref.set(enabled, []);
+      assert.deepEqual(yield* openAndResolve, []);
+    }).pipe(
+      Effect.provide(layerTest({ state, idleTimeoutMs: 1_000, mcpConfigs, pluginToolsLayer })),
+    );
+  }),
+);
+
 it.effect("ProviderSessionManagerV2 honors a project browser-access opt-out", () =>
   Effect.gen(function* () {
     const captured = yield* runBrowserAccessScenario({
@@ -2075,10 +2138,14 @@ it.effect(
     }),
 );
 
-// regression: #15571 an interrupted session start did not clean up
-it.effect(
-  "ProviderSessionManagerV2 revokes a reused credential after a resume stopped while checking it",
-  () =>
+it.effect.each([
+  ["stopped while checking it", "resolve", "hang"],
+  ["stopped while updating its plugin tool grants", "setPluginToolGrants", "hang"],
+  ["crashed while checking it", "resolve", "crash"],
+  ["crashed while updating its plugin tool grants", "setPluginToolGrants", "crash"],
+] as const)(
+  "ProviderSessionManagerV2 revokes a reused credential after a resume %s",
+  ([, step, outcome]) =>
     Effect.gen(function* () {
       const state = yield* Ref.make(emptyState);
       const armed = yield* Ref.make(false);
@@ -2090,8 +2157,8 @@ it.effect(
         const registry = yield* McpSessionRegistry.McpSessionRegistry;
         const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
         const now = yield* DateTime.now;
-        const owner = ThreadId.make("thread-provider-session-manager-resolve-stop-owner");
-        const threadId = ThreadId.make("thread-provider-session-manager-resolve-stop");
+        const owner = ThreadId.make(`thread-provider-session-manager-${step}-${outcome}-owner`);
+        const threadId = ThreadId.make(`thread-provider-session-manager-${step}-${outcome}`);
         const providerSessionId = idAllocator.derive.providerSession({
           providerInstanceId: modelSelection.instanceId,
         });
@@ -2114,7 +2181,7 @@ it.effect(
             threadId,
             providerSessionId,
             now,
-            nativeThreadId: "native-resolve-stop",
+            nativeThreadId: `native-${step}-${outcome}`,
           }),
         });
         yield* resume;
@@ -2123,16 +2190,22 @@ it.effect(
         assert.isDefined(config);
         const token = config!.authorizationHeader.replace(/^Bearer\s+/, "");
 
+        // A re-attach is stopped, or crashes, while it reuses that credential.
         yield* Ref.set(armed, true);
         const stopped = yield* resume.pipe(Effect.forkChild({ startImmediately: true }));
         yield* Deferred.await(paused);
-        yield* Fiber.interrupt(stopped);
+        // A crashed attach is logged and rolled back rather than failing the resume.
+        yield* outcome === "hang" ? Fiber.interrupt(stopped) : Fiber.await(stopped);
 
         yield* manager.release({ providerSessionId, reason: "manual_shutdown" });
         assert.isUndefined(yield* registry.resolve(token));
       }).pipe(
         Effect.provide(
-          layerTest({ state, idleTimeoutMs: 60_000, pauseResolve: { armed, paused } }),
+          layerTest({
+            state,
+            idleTimeoutMs: 60_000,
+            pauseMcpRegistry: { step, outcome, armed, paused },
+          }),
         ),
       );
     }),
