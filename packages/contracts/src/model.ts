@@ -34,6 +34,8 @@ export const SelectProviderOptionDescriptor = Schema.Struct({
    * a client substituting another.
    */
   selectsModel: Schema.optional(Schema.Boolean),
+  /** Marks the reasoning control when its id is an agent's own, such as an ACP `thought_level`. */
+  role: Schema.optional(Schema.Literal("reasoning")),
 });
 export type SelectProviderOptionDescriptor = typeof SelectProviderOptionDescriptor.Type;
 
