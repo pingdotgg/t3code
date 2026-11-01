@@ -7,9 +7,16 @@ import { describe, expect, it } from "@effect/vitest";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 import { verifyDpopProof } from "@t3tools/shared/dpop";
+import { p256 } from "@noble/curves/nist";
 
 import { createDpopProof, generateDpopProofKeyPair, loadOrCreateDpopProofKeyPair } from "./dpop";
 import * as Dpop from "./dpop";
+
+const nativeControls = vi.hoisted<{
+  signDpopProof: ((d: string, x: string, y: string, input: string) => string) | undefined;
+}>(() => ({ signDpopProof: undefined }));
+
+vi.mock("expo", () => ({ requireOptionalNativeModule: () => nativeControls }));
 
 vi.mock("expo-crypto", () => ({
   CryptoDigestAlgorithm: {
@@ -74,7 +81,7 @@ describe("mobile DPoP", () => {
     }).pipe(Effect.provide(Dpop.layer)),
   );
 
-  it.effect("persists and reuses the installation proof key", () =>
+  it.effect("preserves the installation proof key across software and native signing", () =>
     Effect.gen(function* () {
       secureStore.clear();
       const first = yield* loadOrCreateDpopProofKeyPair();
@@ -82,7 +89,46 @@ describe("mobile DPoP", () => {
 
       expect(second.thumbprint).toBe(first.thumbprint);
       expect(second.privateJwk).toEqual(first.privateJwk);
-    }).pipe(Effect.provide(Dpop.layer)),
+      nativeControls.signDpopProof = (d, x, y, input) => {
+        const privateKey = NodeCrypto.createPrivateKey({
+          key: { kty: "EC", crv: "P-256", d, x, y },
+          format: "jwk",
+        });
+        return NodeCrypto.sign("sha256", Buffer.from(input), privateKey).toString("base64url");
+      };
+      using _derive = vi.spyOn(p256, "getPublicKey").mockImplementation(() => {
+        throw new Error("Software public-key derivation is unavailable.");
+      });
+      using _sign = vi.spyOn(p256, "sign").mockImplementation(() => {
+        throw new Error("Software signing is unavailable.");
+      });
+
+      const restored = yield* loadOrCreateDpopProofKeyPair();
+      expect(restored).toEqual(first);
+      const { proof } = yield* createDpopProof({
+        method: "POST",
+        url: "https://relay.example.test/v1/environments/env-1/connect",
+        accessToken: "clerk-token",
+        proofKey: restored,
+      });
+      expect(
+        verifyDpopProof({
+          proof,
+          method: "POST",
+          url: "https://relay.example.test/v1/environments/env-1/connect",
+          expectedThumbprint: first.thumbprint,
+          expectedAccessToken: "clerk-token",
+          nowEpochSeconds: proofIat(proof),
+        }),
+      ).toMatchObject({ ok: true });
+    }).pipe(
+      Effect.provide(Dpop.layer),
+      Effect.ensuring(
+        Effect.sync(() => {
+          nativeControls.signDpopProof = undefined;
+        }),
+      ),
+    ),
   );
 
   it.effect("rejects malformed persisted proof keys", () =>

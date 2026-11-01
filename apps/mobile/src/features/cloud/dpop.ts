@@ -8,6 +8,7 @@ import * as Schema from "effect/Schema";
 import * as ExpoCrypto from "expo-crypto";
 import * as SecureStore from "expo-secure-store";
 import { p256 } from "@noble/curves/nist";
+import { requireOptionalNativeModule } from "expo";
 import { DpopPublicJwk, normalizeDpopHtu } from "@t3tools/shared/dpopCommon";
 import * as Layer from "effect/Layer";
 
@@ -87,6 +88,15 @@ export interface DpopProofKeyPair {
 }
 
 const DPOP_PROOF_KEY_STORAGE_KEY = "t3code.cloud.dpop-proof-key";
+
+const NativeControls = requireOptionalNativeModule<{
+  readonly signDpopProof?: (
+    privateKey: string,
+    publicX: string,
+    publicY: string,
+    input: string,
+  ) => string;
+}>("T3NativeControls");
 
 function base64UrlToBytes(value: string): Uint8Array {
   return Result.getOrThrow(Base64Url.decode(value));
@@ -197,19 +207,41 @@ export const loadOrCreateDpopProofKeyPair = Effect.fn("dpop.loadOrCreateDpopProo
       const storedPrivateJwk = yield* decodeDpopPrivateJwkJson(stored).pipe(
         Effect.mapError(cloudDpopError("Stored DPoP proof key is invalid.")),
       );
-      const restored = yield* Effect.try({
-        try: () => {
-          const privateKey = base64UrlToBytes(storedPrivateJwk.d);
-          const publicJwk = publicJwkFromUncompressedPublicKey(
-            p256.getPublicKey(privateKey, false),
-          );
-          if (publicJwk.x !== storedPrivateJwk.x || publicJwk.y !== storedPrivateJwk.y) {
-            throw new Error("Stored DPoP key does not match its public key.");
-          }
+      const restored = yield* Effect.gen(function* () {
+        const signNative = NativeControls?.signDpopProof?.bind(NativeControls);
+        if (signNative !== undefined) {
+          const publicJwk = {
+            kty: storedPrivateJwk.kty,
+            crv: storedPrivateJwk.crv,
+            x: storedPrivateJwk.x,
+            y: storedPrivateJwk.y,
+          };
+          yield* Effect.try({
+            try: () =>
+              signNative(
+                storedPrivateJwk.d,
+                publicJwk.x,
+                publicJwk.y,
+                "T3 Code DPoP key validation",
+              ),
+            catch: cloudDpopError("Stored DPoP proof key is invalid."),
+          });
           return { privateJwk: storedPrivateJwk, publicJwk };
-        },
-        catch: cloudDpopError("Stored DPoP proof key is invalid."),
-      });
+        }
+        return yield* Effect.try({
+          try: () => {
+            const privateKey = base64UrlToBytes(storedPrivateJwk.d);
+            const publicJwk = publicJwkFromUncompressedPublicKey(
+              p256.getPublicKey(privateKey, false),
+            );
+            if (publicJwk.x !== storedPrivateJwk.x || publicJwk.y !== storedPrivateJwk.y) {
+              throw new Error("Stored DPoP key does not match its public key.");
+            }
+            return { privateJwk: storedPrivateJwk, publicJwk };
+          },
+          catch: cloudDpopError("Stored DPoP proof key is invalid."),
+        });
+      }).pipe(Effect.withSpan("dpop.restoreStoredKey"));
       const thumbprint = yield* computeDpopJwkThumbprintEffect(restored.publicJwk);
       return {
         ...restored,
@@ -275,14 +307,40 @@ export const createDpopProof = Effect.fn("dpop.createDpopProof")(function* (inpu
     Effect.map(Base64Url.encode),
     Effect.mapError(cloudDpopError("Could not encode DPoP proof payload.")),
   );
-  const signatureInputHash = yield* sha256Digest(
-    new TextEncoder().encode(`${header}.${payload}`),
-    "Could not hash DPoP signing input.",
-  );
-  const signature = yield* Effect.try({
-    try: () => p256.sign(signatureInputHash, privateKey, { prehash: false }).toCompactRawBytes(),
-    catch: cloudDpopError("Could not sign DPoP proof."),
-  });
+  const signingInput = `${header}.${payload}`;
+  const signNative = NativeControls?.signDpopProof?.bind(NativeControls);
+  const signature = yield* (
+    signNative === undefined
+      ? sha256Digest(
+          new TextEncoder().encode(signingInput),
+          "Could not hash DPoP signing input.",
+        ).pipe(
+          Effect.flatMap((hash) =>
+            Effect.try({
+              try: () => p256.sign(hash, privateKey, { prehash: false }).toCompactRawBytes(),
+              catch: cloudDpopError("Could not sign DPoP proof."),
+            }),
+          ),
+        )
+      : Effect.try({
+          try: () =>
+            signNative(
+              keyPair.privateJwk.d,
+              keyPair.publicJwk.x,
+              keyPair.publicJwk.y,
+              signingInput,
+            ),
+          catch: cloudDpopError("Could not sign DPoP proof."),
+        }).pipe(
+          Effect.flatMap((der) =>
+            Effect.try({
+              try: () =>
+                p256.Signature.fromDER(base64UrlToBytes(der)).normalizeS().toCompactRawBytes(),
+              catch: cloudDpopError("Could not sign DPoP proof."),
+            }),
+          ),
+        )
+  ).pipe(Effect.withSpan("dpop.signProof"));
   return {
     proof: `${header}.${payload}.${Base64Url.encode(signature)}`,
     thumbprint: keyPair.thumbprint,
