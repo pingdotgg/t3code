@@ -214,6 +214,17 @@ function snapshotFieldsOf(summary: PullRequestSummary): SnapshotFields {
   };
 }
 
+// Hosts compute mergeability lazily and answer unknown while recomputing, so a fresh read must
+// not erase a known answer.
+function retainKnownMergeability(
+  fields: SnapshotFields,
+  previous: ThreadPullRequestSnapshot | null,
+): SnapshotFields {
+  if (fields.mergeability !== "unknown") return fields;
+  const known = previous?.mergeability;
+  return known === undefined || known === "unknown" ? fields : { ...fields, mergeability: known };
+}
+
 // Rotating ghe.com avatar tokens should not make otherwise identical snapshots differ.
 function avatarIdentity(avatarUrl: string | null | undefined): string | null {
   if (avatarUrl === null || avatarUrl === undefined) return null;
@@ -396,10 +407,11 @@ export const make = Effect.gen(function* () {
     // cache lookup forked inside keeps those frames, so a plain span leaves the sweep collectable.
     const syncEntry = Effect.fnUntraced(function* (
       entry: LinkEntry,
-      fields: SnapshotFields,
+      readFields: SnapshotFields,
       fetchedStack: { readonly stack: ThreadPullRequestStack | null } | null,
     ) {
       const { thread, link } = entry;
+      const fields = retainKnownMergeability(readFields, link.snapshot);
       const nextStack = fetchedStack === null ? link.stack : fetchedStack.stack;
       const changed =
         link.snapshot === null ||
@@ -475,7 +487,10 @@ export const make = Effect.gen(function* () {
         entries.some(
           (entry) =>
             entry.link.snapshot === null ||
-            !snapshotFieldsEqual(entry.link.snapshot, fields) ||
+            !snapshotFieldsEqual(
+              entry.link.snapshot,
+              retainKnownMergeability(fields, entry.link.snapshot),
+            ) ||
             (summary.stack !== undefined &&
               (entry.link.stack?.number ?? null) !== (summary.stack?.number ?? null)),
         );

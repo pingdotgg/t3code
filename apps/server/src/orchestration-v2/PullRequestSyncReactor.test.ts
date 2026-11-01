@@ -813,6 +813,79 @@ describe("PullRequestSyncReactor", () => {
     ),
   );
 
+  it.effect.each(["mergeable", "conflicting"] as const)(
+    "keeps a known %s snapshot when a refresh reads mergeability as unknown",
+    (mergeability) =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          yield* TestClock.setTime(Date.parse(NOW));
+          const answers = ["unknown", mergeability] as const;
+          const reads = yield* Ref.make(0);
+          const fixture = yield* makeHarness({
+            snapshot: makeSnapshot([
+              makeThread("one", {
+                pullRequests: [makeLink(42, { updatedAt: NOW, mergeability })],
+              }),
+            ]),
+            summary: (input) =>
+              Ref.getAndUpdate(reads, (count) => count + 1).pipe(
+                Effect.map((count) =>
+                  makeSummary(input, {
+                    updatedAt: NOW,
+                    mergeability: count === 0 ? mergeability : answers[count - 1],
+                  }),
+                ),
+              ),
+          });
+
+          yield* Effect.gen(function* () {
+            const reactor = yield* startAndSweep(fixture);
+            yield* requestAndApply(fixture, reactor, 42);
+            yield* requestAndApply(fixture, reactor, 42);
+
+            assert.strictEqual((yield* Ref.get(fixture.summaryCalls)).length, 3);
+            assert.deepStrictEqual(
+              (yield* Ref.get(fixture.syncCommands)).map(
+                (command) => command.snapshot.mergeability,
+              ),
+              [],
+            );
+          }).pipe(Effect.provide(fixture.layer));
+        }),
+      ),
+  );
+
+  it.effect("persists other changes read with unknown mergeability under the known one", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        yield* TestClock.setTime(Date.parse(NOW));
+        const fixture = yield* makeHarness({
+          snapshot: makeSnapshot([
+            makeThread("one", {
+              pullRequests: [makeLink(42, { updatedAt: NOW, mergeability: "conflicting" })],
+            }),
+          ]),
+          summary: (input) =>
+            Effect.succeed(
+              makeSummary(input, { updatedAt: NOW, title: "Renamed", mergeability: "unknown" }),
+            ),
+        });
+
+        yield* Effect.gen(function* () {
+          yield* startAndSweep(fixture);
+
+          assert.deepStrictEqual(
+            (yield* Ref.get(fixture.syncCommands)).map(({ snapshot }) => [
+              snapshot.title,
+              snapshot.mergeability,
+            ]),
+            [["Renamed", "conflicting"]],
+          );
+        }).pipe(Effect.provide(fixture.layer));
+      }),
+    ),
+  );
+
   it.effect("refreshes closed links through each project after reopening elsewhere", () =>
     Effect.scoped(
       Effect.gen(function* () {
