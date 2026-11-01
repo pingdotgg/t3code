@@ -82,6 +82,7 @@ function PdfDocument(props: { src: string; title: string; documentKey: string })
       key={props.documentKey}
       src={props.src}
       title={props.title}
+      positionKey={props.documentKey}
       initialView={view}
       onViewChange={setView}
     />
@@ -92,6 +93,7 @@ function PdfDocument(props: { src: string; title: string; documentKey: string })
 function PdfDocumentRevision(props: {
   src: string;
   title: string;
+  positionKey: string;
   initialView: PdfViewState;
   onViewChange: (view: PdfViewState) => void;
 }) {
@@ -115,6 +117,7 @@ function PdfDocumentRevision(props: {
       <PdfViewer
         src={src}
         title={props.title}
+        positionKey={props.positionKey}
         initialView={props.initialView}
         onViewChange={props.onViewChange}
       />

@@ -15,6 +15,7 @@ import {
   AuthOrchestrationReadScope,
   MCP_PEER_LINK_SOFTWARE_ID,
   mcpClientScopes,
+  type RuntimeMode,
 } from "@t3tools/contracts";
 import { encodeOAuthScope } from "@t3tools/shared/oauthScope";
 import * as Clock from "effect/Clock";
@@ -213,6 +214,10 @@ export class McpOAuth extends Context.Service<
       readonly decision: ApprovalDecision;
     }) => Effect.Effect<string, EnvironmentAuth.ServerAuthMcpApprovalCodeError | McpOAuthPageError>;
     readonly deny: (authorization: AuthorizationRequest) => string;
+    /** A managed policy's runtime-mode ceiling, shown on the approval page. */
+    readonly runtimeModeCeiling:
+      | { readonly organization: string; readonly maxRuntimeMode: RuntimeMode }
+      | undefined;
     readonly exchangeCode: (input: {
       readonly request: HttpServerRequest.HttpServerRequest;
       readonly urls: McpOAuthUrls;
@@ -547,7 +552,13 @@ const make = Effect.gen(function* () {
     },
   );
 
+  const managedPolicy = serverSettings.managedPolicy;
+  const maxRuntimeMode = managedPolicy?.limits?.maxRuntimeMode;
   return McpOAuth.of({
+    runtimeModeCeiling:
+      managedPolicy === undefined || maxRuntimeMode === undefined
+        ? undefined
+        : { organization: managedPolicy.organization, maxRuntimeMode },
     register,
     validateAuthorization,
     approvingBrowserSession,
