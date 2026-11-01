@@ -121,6 +121,7 @@ describe("applyGuestStreamEvent", () => {
         projection,
         historyCursor: "cursor-1",
         hasMoreHistory: true,
+        latestLocalTurnOrdinal: 0,
       },
     };
     const page = (id: string, nextCursor: string | null) => ({
@@ -149,6 +150,9 @@ describe("applyGuestStreamEvent", () => {
     });
     expect(itemIds(merged)).toEqual(["o1", "a1"]);
     expect(merged.historyCursor).toBeNull();
+    // With the whole thread loaded, an item below the old window is new, not unloaded history.
+    const late = { ...reply("late", "Late"), runId: null, ordinal: 0 };
+    expect(itemIds(apply([itemEvent(3, late)], merged))).toEqual(["late", "o1", "a1"]);
   });
 
   it("replaces the thread on a new snapshot, as after a reconnect", () => {

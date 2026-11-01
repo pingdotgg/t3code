@@ -105,6 +105,7 @@ export function applyGuestStreamEvent(
       return {
         ...state,
         projection: mergeOlderHistoryIntoProjection(state.projection, event.page.items),
+        partial: event.page.hasMoreHistory ? state.partial : null,
         historyCursor: event.page.hasMoreHistory ? event.page.nextCursor : null,
       };
     case "view":
