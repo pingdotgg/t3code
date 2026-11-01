@@ -54,6 +54,12 @@ it.each([
     expected: { routes: { ...off, tailscale: true, lan: true }, ask: ["tailscale", "lan"] },
   },
   {
+    label: "another setup flag asks nothing and keeps every route, even on a new machine",
+    setup: { installed: false, current: off, available: both },
+    flags: { ...noFlags, other: true },
+    expected: { routes: off, ask: [] },
+  },
+  {
     label: "a route flag asks nothing and keeps the routes not named, even on a new machine",
     setup: { installed: false, current: off, available: both },
     flags: { ...noFlags, lan: Option.some(true) },
@@ -227,7 +233,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NetService.layer))("t3 up", (it) => 
     {
       label: "a failed update keeps service.env matching the old service",
       // The old service still runs, so no foreground server is offered.
-      prints: "Nothing changed. Fix that, then run `t3 up` again.",
+      prints: "The service kept its old settings. Fix that, then run `t3 up` again.",
       fails: true,
       installed: true,
       status: { current: false },
@@ -290,14 +296,32 @@ it.layer(Layer.mergeAll(NodeServices.layer, NetService.layer))("t3 up", (it) => 
       envAfter: "T3CODE_LAN=false\nT3CODE_TAILSCALE_SIGN_IN=false\nT3CODE_TAILSCALE_SERVE=false\n",
     },
     {
-      // Only turning Serve on implies Tailscale.
-      label: "--no-tailscale-serve leaves Tailscale off",
+      // Only turning Serve on implies Tailscale. Off is written, since it may be inherited.
+      label: "--no-tailscale-serve leaves Tailscale off and pins Serve off",
       installed: true,
       env: "T3CODE_LAN=false\n",
       args: ["--no-tailscale-serve"],
       installs: 0,
-      restarts: 0,
-      envAfter: "T3CODE_LAN=false\n",
+      restarts: 1,
+      envAfter: "T3CODE_LAN=false\nT3CODE_TAILSCALE_SERVE=false\n",
+    },
+    {
+      label: "--no-tailscale pins sign-in off even when the file says nothing",
+      installed: true,
+      env: "T3CODE_LAN=false\n",
+      args: ["--no-tailscale"],
+      installs: 0,
+      restarts: 1,
+      envAfter: "T3CODE_LAN=false\nT3CODE_TAILSCALE_SIGN_IN=false\nT3CODE_TAILSCALE_SERVE=false\n",
+    },
+    {
+      label: "--no-tailscale-serve turns Serve off while Tailscale is down here",
+      installed: true,
+      env: "T3CODE_LAN=false\nT3CODE_TAILSCALE_SIGN_IN=true\nT3CODE_TAILSCALE_SERVE=true\n",
+      args: ["--no-tailscale-serve"],
+      installs: 0,
+      restarts: 1,
+      envAfter: "T3CODE_LAN=false\nT3CODE_TAILSCALE_SIGN_IN=true\nT3CODE_TAILSCALE_SERVE=false\n",
     },
     {
       // Not written as a choice, so status keeps calling it the older install's.

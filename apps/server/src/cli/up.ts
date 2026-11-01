@@ -148,9 +148,12 @@ export const planRoutes = (
     /** False where this machine cannot offer the route. */
     readonly available: Readonly<Record<"tailscale" | "connect", boolean>>;
   },
-  flags: RouteFlags,
+  flags: RouteFlags & {
+    /** Another setup flag was given, such as `--no-tailscale-serve`: nothing is asked. */
+    readonly other?: boolean;
+  },
 ) => {
-  const ask = [flags.tailscale, flags.connect, flags.lan].every(Option.isNone);
+  const ask = [flags.tailscale, flags.connect, flags.lan].every(Option.isNone) && !flags.other;
   const start: Routes =
     ask && !setup.installed
       ? {
@@ -177,7 +180,7 @@ export const planRoutes = (
 const CHOICES = {
   tailscale: {
     title: "Tailscale",
-    description: "Your untagged devices, or those your policy grants. No pairing code.",
+    description: "Devices your policy grants, else your untagged devices. No pairing code.",
   },
   connect: { title: "T3 Connect", description: "Creates a tunnel to control your PC." },
   lan: { title: "Local network", description: "LAN and tailnet. Pairing code required." },
@@ -460,7 +463,9 @@ const tailscaleEntries = Effect.fn("cli.up.tailscale_entries")(function* (
     // A saved owner still names the box in the printed grant when grants are required.
     owner:
       owner ??
-      (saved === undefined ? null : { userId: saved, login: loginOf(tailscale.status, saved) }),
+      (saved === undefined || !tagged
+        ? null
+        : { userId: saved, login: loginOf(tailscale.status, saved) }),
     port,
     entries: {
       T3CODE_TAILSCALE_SIGN_IN: "true",
@@ -545,7 +550,8 @@ const setUp = Effect.fn("cli.up")(function* (
     hasCloudPublicConfig &&
     (yield* CliState.readCliDesiredCloudLink) &&
     (yield* CliState.readCliDesiredLinkMode) === "publish_only";
-  const asks = [flags.tailscale, flags.connect, flags.lan].every(Option.isNone);
+  const other = Option.isSome(flags.tailscaleServe);
+  const asks = [flags.tailscale, flags.connect, flags.lan].every(Option.isNone) && !other;
   const tailscale =
     asks || Option.getOrElse(flags.tailscale, () => current.tailscale)
       ? yield* checkTailscale()
@@ -556,7 +562,7 @@ const setUp = Effect.fn("cli.up")(function* (
       current,
       available: { tailscale: tailscale.ok, connect: before.connect !== null },
     },
-    flags,
+    { ...flags, other },
   );
   const interactive = !flags.yes && interactiveTerminal();
   let routes = plan.routes;
@@ -620,9 +626,21 @@ const setUp = Effect.fn("cli.up")(function* (
     routes.tailscale && tailscale.ok
       ? yield* tailscaleEntries(tailscale, flags, requireGrant)
       : null;
+  // An explicit off is written even when the file says nothing, since the service may
+  // inherit the setting, and a restart applies it.
+  const tailscaleOffChosen = Option.getOrUndefined(flags.tailscale) === false;
+  const serveOffChosen = Option.getOrUndefined(flags.tailscaleServe) === false;
+  const pinsOff =
+    (tailscaleOffChosen && before.entries.T3CODE_TAILSCALE_SIGN_IN !== "false") ||
+    (serveOffChosen && before.entries.T3CODE_TAILSCALE_SERVE !== "false");
   const writes: Readonly<Record<string, string | undefined>> = {
     ...(lanChosen ? { T3CODE_LAN: String(routes.lan) } : {}),
-    ...(routes.tailscale ? (signIn?.entries ?? {}) : current.tailscale ? TAILSCALE_OFF : {}),
+    ...(routes.tailscale
+      ? (signIn?.entries ?? {})
+      : current.tailscale || tailscaleOffChosen
+        ? TAILSCALE_OFF
+        : {}),
+    ...(serveOffChosen ? { T3CODE_TAILSCALE_SERVE: "false" } : {}),
   };
   const planned = Object.fromEntries(
     Object.entries({ ...before.entries, ...writes }).flatMap(([key, value]) =>
@@ -643,6 +661,7 @@ const setUp = Effect.fn("cli.up")(function* (
     (before.service.current || newer) &&
     (!sameSettings(before.settings, serviceSettings(planned, true)) ||
       (routes.connect && !current.connect) ||
+      pinsOff ||
       stopped);
   // An older or broken service is reinstalled, which restarts it too.
   const update = before.service.installed && !before.service.current && !newer && !stopped;
@@ -756,7 +775,7 @@ const setUp = Effect.fn("cli.up")(function* (
       yield* restoreServiceEnv;
       // A failure, so a script sees that the running service kept its old access.
       return yield* upError(
-        `Service setup failed: ${result.failed} Nothing changed. Fix that, then run \`t3 up\` again.`,
+        `Service setup failed: ${result.failed} The service kept its old settings. Fix that, then run \`t3 up\` again.`,
       );
     } else if ("failed" in result) {
       yield* printServeCommand(`Service setup failed: ${result.failed}`);

@@ -662,14 +662,9 @@ export const make = Effect.gen(function* () {
         .filter(({ subject }) => subject.startsWith(TAILNET_SUBJECT_PREFIX))
         .map(({ subject, label }) => [subject.slice(TAILNET_SUBJECT_PREFIX.length), label]),
     );
+    // Fails the start rather than leave a Tailscale session usable with sign-in off.
     yield* Effect.forEach(signedIn, ([stableNodeId, label]) =>
       endAccess(stableNodeId, "sign_in_off", { device: label ?? stableNodeId, user: null }),
-    ).pipe(
-      Effect.catch((cause) =>
-        Effect.logWarning("Could not end Tailscale sessions after sign-in was turned off.", {
-          cause,
-        }),
-      ),
     );
   }
 

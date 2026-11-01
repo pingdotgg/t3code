@@ -61,8 +61,8 @@ export function TailscaleSignInRow({
         wslOnly
           ? "Not available while WSL only is on. Turn off WSL only to use it."
           : enabled
-            ? "Your own Tailscale devices connect with no pairing code."
-            : "Let your own Tailscale devices connect with no pairing code."
+            ? "Devices your tailnet policy grants, else your own untagged devices, connect with no pairing code."
+            : "Let devices your tailnet policy grants, else your own untagged devices, connect with no pairing code."
       }
       status={
         movedPort ? (

@@ -243,6 +243,9 @@ describe("DesktopBackendConfiguration", () => {
         assert.isUndefined(first.env.T3CODE_PORT);
         assert.isUndefined(first.env.T3CODE_MODE);
         assert.isUndefined(first.env.T3CODE_DESKTOP_LAN_HOST);
+        // Removed from what the backend inherits, so the desktop's own switch decides.
+        assert.property(first.env, "T3CODE_TAILSCALE_SIGN_IN");
+        assert.isUndefined(first.env.T3CODE_TAILSCALE_SIGN_IN);
 
         assert.equal(first.bootstrap.mode, "desktop");
         assert.equal(first.bootstrap.noBrowser, true);
