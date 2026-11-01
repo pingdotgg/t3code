@@ -7269,6 +7269,16 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               (followsAgentWorkState &&
                 rootSessionId !== null &&
                 hasWorkingDescendant(rootSessionId)));
+          // Foreground tools of a prompt that failed for good never report their end.
+          if (
+            settledStatus === "failed" &&
+            !childTurnsContinue &&
+            flavor.backgroundTasksIncludeForegroundTools === true
+          ) {
+            for (const taskId of context.toolCallIdsByBackgroundTaskId.keys()) {
+              yield* setBackgroundTaskRunning(taskId, false);
+            }
+          }
           yield* emitProviderEvent(
             settledStatus === "failed"
               ? {
