@@ -21,11 +21,14 @@ import {
 import * as DeliveryAttempts from "./DeliveryAttempts.ts";
 import * as LiveActivities from "./LiveActivities.ts";
 import * as RelayConfiguration from "../Config.ts";
+import * as EnvironmentLinks from "../environments/EnvironmentLinks.ts";
 import * as ApnsDeliveryQueue from "./ApnsDeliveryQueue.ts";
 import * as AgentActivityRows from "./AgentActivityRows.ts";
+import * as AgentActivityPublisher from "./AgentActivityPublisher.ts";
 import * as ApnsDeliveries from "./ApnsDeliveries.ts";
 import * as ApnsClient from "./ApnsClient.ts";
 import * as ApnsProviderTokens from "./ApnsProviderTokens.ts";
+import * as FcmDeliveries from "./FcmDeliveries.ts";
 
 const config = RelayConfiguration.RelayConfiguration.of({
   relayIssuer: "https://relay.example.test",
@@ -504,6 +507,93 @@ describe("ApnsDeliveries", () => {
         ]);
         expect(attempts).toEqual([]);
       }).pipe(Effect.provide(layerFor({ attempts, queuedJobs })));
+    },
+  );
+
+  it.effect(
+    "publishing another thread does not re-alert a waiting thread without a Live Activity",
+    () => {
+      const queuedJobs: Array<SignedApnsDeliveryJob> = [];
+      const waiting: RelayAgentActivityState = {
+        ...state,
+        threadId: ThreadId.make("thread-a"),
+        threadTitle: "Thread A",
+        phase: "waiting_for_input",
+        headline: "Needs input",
+      };
+      const running: RelayAgentActivityState = {
+        ...state,
+        threadId: ThreadId.make("thread-b"),
+        threadTitle: "Thread B",
+      };
+      const device: LiveActivities.TargetRow = {
+        ...target,
+        push_token: "apns-device-token",
+        push_to_start_token: null,
+        activity_push_token: null,
+        remote_started_at: null,
+      };
+
+      return Effect.gen(function* () {
+        const publisher = yield* AgentActivityPublisher.AgentActivityPublisher;
+        yield* publisher.publish({
+          environmentId: running.environmentId,
+          environmentPublicKey: "environment-public-key",
+          threadId: running.threadId,
+          state: running,
+        });
+
+        expect(queuedJobs.map((job) => job.payload.notification ?? null)).toEqual([]);
+      }).pipe(
+        Effect.provide(
+          AgentActivityPublisher.layer.pipe(
+            Layer.provide(
+              Layer.mergeAll(
+                layerFor({
+                  attempts: [],
+                  queuedJobs,
+                  currentTargets: [device],
+                  activityStates: [waiting, running],
+                }),
+                Layer.succeed(AgentActivityRows.AgentActivityRows, {
+                  upsert: () => Effect.void,
+                  remove: () => Effect.void,
+                  pruneTerminal: () => Effect.void,
+                  listForUser: () => Effect.succeed([waiting, running]),
+                  getForUserThread: () => Effect.succeed(null),
+                }),
+                Layer.succeed(LiveActivities.LiveActivities, {
+                  register: () => Effect.void,
+                  listTargets: () => Effect.succeed([device]),
+                  listIdleArmedTargets: () => Effect.succeed([]),
+                  markDelivery: () => Effect.void,
+                  invalidateDeliveryToken: () => Effect.void,
+                }),
+                Layer.succeed(EnvironmentLinks.EnvironmentLinks, {
+                  upsert: () => Effect.void,
+                  listDeliveryUsersForEnvironment: () =>
+                    Effect.succeed([
+                      {
+                        userId: device.user_id,
+                        notificationsEnabled: true,
+                        liveActivitiesEnabled: true,
+                      },
+                    ]),
+                  listForUser: () => Effect.succeed([]),
+                  getForUser: () => Effect.succeed(null),
+                  findActiveManagedForEnvironment: () => Effect.succeed([]),
+                  setHoldWebhooksWhileOffline: () => Effect.void,
+                  revokeForUser: () => Effect.succeed(false),
+                }),
+                Layer.succeed(FcmDeliveries.FcmDeliveries, {
+                  enqueue: () => Effect.succeed(null),
+                  process: () => Effect.void,
+                }),
+              ),
+            ),
+          ),
+        ),
+      );
     },
   );
 
