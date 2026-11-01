@@ -62,6 +62,41 @@ const install = Effect.fn("test.install")(function* (
 });
 
 it.layer(NodeServices.layer)("bundled skill installation", (it) => {
+  it.effect("managed Codex uses its shared home instead of inherited CODEX_HOME", () =>
+    Effect.gen(function* () {
+      const { home, path } = yield* setup;
+      const manager = yield* Skills.BundledSkillManager.pipe(
+        Effect.provide(
+          Skills.layer.pipe(
+            Layer.provide(
+              Settings.layerTest({
+                providerInstances: {
+                  [instanceId]: {
+                    driver: ProviderDriverKind.make("codex"),
+                    config: { setupMode: "managed" },
+                    environment: [
+                      { name: "CODEX_HOME", value: `${home}/wrong-home`, sensitive: false },
+                    ],
+                  },
+                },
+              }),
+            ),
+            Layer.provide(Layer.succeed(Skills.BundledSkillSources, [source])),
+            Layer.provide(Layer.succeed(HostProcess.HomeDirectory, home)),
+          ),
+        ),
+        Effect.provideService(HostProcess.HomeDirectory, home),
+      );
+      const current = yield* skill(manager).pipe(
+        Effect.provideService(HostProcess.HomeDirectory, home),
+      );
+      expect(current.path).toBe(path.join(home, ".codex", "skills", source.id));
+      const installed = yield* install(manager).pipe(
+        Effect.provideService(HostProcess.HomeDirectory, home),
+      );
+      expect(installed.path).toBe(current.path);
+    }),
+  );
   it.effect("includes default providers when no provider overrides have been saved", () =>
     Effect.gen(function* () {
       const { home } = yield* setup;
