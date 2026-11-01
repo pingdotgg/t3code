@@ -134,7 +134,7 @@ import { registerSettleAndAdvance } from "../settleAndAdvance";
 import { startNewThreadFromContext } from "../lib/chatThreadActions";
 import { useBoringSidebarEnabled, useClientSettings } from "../hooks/useSettings";
 import { useCopyToClipboard } from "../hooks/useCopyToClipboard";
-import { useLocalStorage } from "../hooks/useLocalStorage";
+import { useLocalStorage, writeLocalStorageValue } from "../hooks/useLocalStorage";
 import { useNowMinute } from "../hooks/useNowMinute";
 import {
   useEnvironmentIdentities,
@@ -179,7 +179,10 @@ import {
 import {
   applySidebarThreadDrop,
   filterSidebarV2VisibleThreads,
+  flattenSidebarThreadTree,
   groupSidebarThreadsByProject,
+  nestSidebarChildThreads,
+  resolveSidebarShownChildren,
   sidebarFolderExpansionKeys,
   buildBulkTitleRegenerationContextMenuItem,
   buildBulkUnpinContextMenuItem,
@@ -264,6 +267,10 @@ import {
 } from "./sidebar/SidebarThreadRow";
 import { SidebarDraftBlock } from "./sidebar/SidebarDraftBlock";
 import {
+  SidebarChildThreadsToggle,
+  sidebarChildrenRowId,
+} from "./sidebar/SidebarChildThreadsToggle";
+import {
   SidebarProjectFolderHeader,
   sidebarFolderRowId,
 } from "./sidebar/SidebarProjectFolderHeader";
@@ -327,6 +334,24 @@ const EMPTY_THREADS: readonly EnvironmentThreadShell[] = [];
 
 const SETTLED_TAIL_PAGE_COUNT = 25;
 const SETTLED_SHELF_EXPANDED_KEY = "t3code:sidebar:settled-expanded";
+const EXPANDED_PARENTS_KEY = "t3code:sidebar:expanded-parents";
+// Bounds the saved list; the oldest expansions fall off first.
+const EXPANDED_PARENTS_LIMIT = 200;
+const NO_EXPANDED_PARENTS: readonly string[] = [];
+const EXPANDED_PARENTS_SCHEMA = Schema.Array(Schema.String);
+
+// Module scope keeps it stable, so memoized toggle rows skip unrelated renders.
+function toggleThreadChildren(parentKey: string) {
+  writeLocalStorageValue(
+    EXPANDED_PARENTS_KEY,
+    (keys) =>
+      keys.includes(parentKey)
+        ? keys.filter((key) => key !== parentKey)
+        : [...keys, parentKey].slice(-EXPANDED_PARENTS_LIMIT),
+    NO_EXPANDED_PARENTS,
+    EXPANDED_PARENTS_SCHEMA,
+  );
+}
 const SNOOZED_SHELF_EXPANDED_KEY = "t3code:sidebar:snoozed-expanded";
 const WORKING_SHELF_EXPANDED_KEY = "t3code:sidebar:working-expanded";
 
@@ -474,6 +499,12 @@ function useSidebarThreads(input: {
     false,
     Schema.Boolean,
   );
+  // Parents whose child chats are open; every other parent starts collapsed.
+  const [expandedParentKeys] = useLocalStorage(
+    EXPANDED_PARENTS_KEY,
+    NO_EXPANDED_PARENTS,
+    EXPANDED_PARENTS_SCHEMA,
+  );
   // Shared with the old per-project sidebar, so folders keep their open state.
   const projectExpandedById = useUiStateStore((store) => store.projectExpandedById);
   const setProjectExpanded = useUiStateStore((store) => store.setProjectExpanded);
@@ -562,15 +593,60 @@ function useSidebarThreads(input: {
               : EMPTY_THREADS,
           };
         });
-  const orderedThreads = [
-    ...pinnedThreads,
-    ...(projectFolders === null
-      ? activeThreads
-      : projectFolders.flatMap((folder) => folder.threads)),
-    ...visibleWorkingThreads,
-    ...visibleSnoozedThreads,
-    ...renderedSettledThreads,
-  ];
+  const drawnKeys = new Set(
+    [
+      ...pinnedThreads,
+      ...(projectFolders === null
+        ? activeThreads
+        : projectFolders.flatMap((folder) => folder.threads)),
+      ...visibleWorkingThreads,
+      ...visibleSnoozedThreads,
+      ...renderedSettledThreads,
+    ].map(threadShellKey),
+  );
+  const nesting = nestSidebarChildThreads({
+    threads: [
+      ...pinnedThreads,
+      ...activeThreads,
+      ...workingThreads,
+      ...snoozedThreads,
+      ...settledThreads,
+    ],
+    drawnKeys,
+  });
+  const shownChildrenByKey = resolveSidebarShownChildren(
+    nesting,
+    new Set(expandedParentKeys),
+    routeRowThreadKey,
+  );
+  const topLevel = (list: readonly EnvironmentThreadShell[]) =>
+    nesting.parentKeyByKey.size === 0
+      ? list
+      : list.filter((thread) => !nesting.parentKeyByKey.has(threadShellKey(thread)));
+  const topLevelFolders =
+    projectFolders
+      ?.map((folder) => ({
+        ...folder,
+        threads: topLevel(folder.threads),
+        hiddenThreads: topLevel(folder.hiddenThreads),
+      }))
+      .filter((folder) => keepEmpty || folder.threads.length + folder.hiddenThreads.length > 0) ??
+    null;
+  const topLevelRenderedSettledThreads = topLevel(renderedSettledThreads);
+  const topLevelSnoozedThreads = topLevel(visibleSnoozedThreads);
+  const topLevelWorkingThreads = topLevel(visibleWorkingThreads);
+  const orderedThreads = flattenSidebarThreadTree(
+    [
+      ...topLevel(pinnedThreads),
+      ...(topLevelFolders === null
+        ? topLevel(activeThreads)
+        : topLevelFolders.flatMap((folder) => folder.threads)),
+      ...topLevelWorkingThreads,
+      ...topLevelSnoozedThreads,
+      ...topLevelRenderedSettledThreads,
+    ],
+    shownChildrenByKey,
+  );
   const sectionByThreadKey = new Map<string, SidebarSection>();
   for (const [list, section] of [
     [pinnedThreads, "pinned"],
@@ -583,8 +659,16 @@ function useSidebarThreads(input: {
   }
   return {
     ...partition,
+    // Child chats drawn under their parent leave their sections.
+    pinnedThreads: topLevel(pinnedThreads),
+    activeThreads: topLevel(activeThreads),
+    workingThreads: topLevel(workingThreads),
+    snoozedThreads: topLevel(snoozedThreads),
     threads,
     workingShelfEnabled,
+    childCountsByKey: nesting.countsByParentKey,
+    shownChildrenByKey,
+    expandedParentKeys,
     searchableThreads: [
       ...pinnedThreads,
       ...activeThreads,
@@ -607,14 +691,14 @@ function useSidebarThreads(input: {
     toggleSnoozedShelf: () => setSnoozedShelfExpanded((value) => !value),
     workingShelfExpanded,
     toggleWorkingShelf: () => setWorkingShelfExpanded((value) => !value),
-    projectFolders,
+    projectFolders: topLevelFolders,
     toggleProjectFolder: (group: SidebarProjectSnapshot) => {
       const keys = sidebarFolderExpansionKeys(group);
       setProjectExpanded(keys, !resolveProjectExpanded(projectExpandedById, keys));
     },
-    renderedSettledThreads,
-    visibleSnoozedThreads,
-    visibleWorkingThreads,
+    renderedSettledThreads: topLevelRenderedSettledThreads,
+    visibleSnoozedThreads: topLevelSnoozedThreads,
+    visibleWorkingThreads: topLevelWorkingThreads,
     orderedThreadKeys: orderedThreads.map(threadShellKey),
     threadByKey: new Map(orderedThreads.map((thread) => [threadShellKey(thread), thread] as const)),
     settledThreadKeys: new Set(settledThreads.map(threadShellKey)),
@@ -1340,6 +1424,9 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     renderedSettledThreads,
     visibleSnoozedThreads,
     visibleWorkingThreads,
+    childCountsByKey,
+    shownChildrenByKey,
+    expandedParentKeys,
     orderedThreadKeys,
     threadByKey,
     settledThreadKeys,
@@ -1999,6 +2086,9 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
       .join("\n") ?? "",
     visibleDraftSessionCount,
     routeDraftIdForRows ?? "",
+    [...shownChildrenByKey]
+      .map(([parentKey, children]) => `${parentKey}:${children.length}`)
+      .join("\n"),
   ].join("\0");
   const listMotionAnimate =
     dragState === null && sidebarListItems.length + visibleDraftSessionCount > 0;
@@ -3311,6 +3401,8 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                         section: SidebarSection,
                         // The tree row of the project folder this row sits in.
                         folderRow?: string,
+                        // Child chats sit under their parent's children toggle row.
+                        nested?: { readonly depth: number; readonly parentRow: string },
                       ) => {
                         const threadKey = scopedThreadKey(
                           scopeThreadRef(thread.environmentId, thread.id),
@@ -3318,10 +3410,10 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                         const isCard =
                           section === "active" || section === "pinned" || section === "working";
                         const rowVariant = folderRow
-                          ? folderRowsMultiline
+                          ? folderRowsMultiline && nested === undefined
                             ? "folder-multiline"
                             : "folder"
-                          : isCard
+                          : isCard && nested === undefined
                             ? "card"
                             : "slim";
                         return (
@@ -3329,7 +3421,9 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                             key={threadKey}
                             sortableId={threadKey}
                             contextDrag={isContextDrag}
+                            nestDepth={nested?.depth ?? 0}
                             sortableDisabled={
+                              nested !== undefined ||
                               projectFolders !== null ||
                               renamingThreadKey === threadKey ||
                               !draggableThreadKeys.has(threadKey) ||
@@ -3338,6 +3432,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                             thread={thread}
                             variant={rowVariant}
                             navigationParent={
+                              nested?.parentRow ??
                               folderRow ??
                               (section === "working" ||
                               section === "snoozed" ||
@@ -3426,6 +3521,55 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                           />
                         );
                       };
+                      const pushThreadTree = (
+                        items: ReactNode[],
+                        thread: EnvironmentThreadShell,
+                        section: SidebarSection,
+                        folderRow?: string,
+                        nested?: { readonly depth: number; readonly parentRow: string },
+                      ) => {
+                        items.push(renderThreadRow(thread, section, folderRow, nested));
+                        const threadKey = scopedThreadKey(
+                          scopeThreadRef(thread.environmentId, thread.id),
+                        );
+                        const counts = childCountsByKey.get(threadKey);
+                        if (counts === undefined) return;
+                        const depth = nested?.depth ?? 0;
+                        const toggleRow = sidebarChildrenRowId(threadKey);
+                        items.push(
+                          <SidebarChildThreadsToggle
+                            key={toggleRow}
+                            rowId={toggleRow}
+                            parentKey={threadKey}
+                            counts={counts}
+                            expanded={expandedParentKeys.includes(threadKey)}
+                            depth={depth}
+                            inFolder={folderRow !== undefined}
+                            navigationParent={
+                              nested?.parentRow ??
+                              folderRow ??
+                              (section === "working" ||
+                              section === "snoozed" ||
+                              section === "settled"
+                                ? `shelf:${section}`
+                                : undefined)
+                            }
+                            onToggle={toggleThreadChildren}
+                          />,
+                        );
+                        for (const child of shownChildrenByKey.get(threadKey) ?? []) {
+                          const childKey = scopedThreadKey(
+                            scopeThreadRef(child.environmentId, child.id),
+                          );
+                          pushThreadTree(
+                            items,
+                            child,
+                            sectionByThreadKey.get(childKey) ?? section,
+                            folderRow,
+                            { depth: depth + 1, parentRow: toggleRow },
+                          );
+                        }
+                      };
                       const from = isContextDrag ? null : (dragState?.activeSection ?? null);
                       const items: ReactNode[] = [
                         <SidebarDraftBlock
@@ -3442,7 +3586,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                         if (item.kind === "thread") {
                           // Folders draw active rows in their own place below.
                           if (projectFolders !== null && item.section === "active") continue;
-                          items.push(renderThreadRow(threadByKey.get(item.key)!, item.section));
+                          pushThreadTree(items, threadByKey.get(item.key)!, item.section);
                           continue;
                         }
                         if (projectFolders !== null && item.marker === "active-placeholder") {
@@ -3459,12 +3603,11 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                               />,
                             );
                             for (const thread of folder.threads) {
-                              items.push(
-                                renderThreadRow(
-                                  thread,
-                                  "active",
-                                  sidebarFolderRowId(folder.group.projectKey),
-                                ),
+                              pushThreadTree(
+                                items,
+                                thread,
+                                "active",
+                                sidebarFolderRowId(folder.group.projectKey),
                               );
                             }
                           }
