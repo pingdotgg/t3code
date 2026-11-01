@@ -48,6 +48,7 @@ import * as BackgroundPolicy from "../background/BackgroundPolicy.ts";
 import * as AntigravityInstallation from "./AntigravityInstallation.ts";
 import * as ModelManifest from "./ModelManifest.ts";
 import { applyProviderCompatibility } from "./providerCompatibility.ts";
+import { hydrateCachedProvider } from "./providerStatusCache.ts";
 import * as ResetCreditCoordinator from "./resetCreditCoordinator.ts";
 import * as ProviderLatestVersions from "@t3tools/provider-core/server/ProviderLatestVersions";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
@@ -174,6 +175,7 @@ type TestClaudeCapabilities = {
   readonly apiKeySource: string | undefined;
   readonly apiProvider: string | undefined;
   readonly slashCommands: ReadonlyArray<ServerProviderSlashCommand>;
+  readonly restrictedModels?: ReadonlySet<string>;
 };
 
 function claudeCapabilities(overrides: Partial<TestClaudeCapabilities> = {}) {
@@ -819,6 +821,71 @@ it.layer(
         ProviderRegistry.mergeProviderSnapshot(pendingProvider, probedProvider).models,
         [...probedProvider.models],
       );
+    });
+
+    it("keeps models the organization turned off hidden until the account is probed again", () => {
+      const opus = {
+        slug: "claude-opus-5-5",
+        name: "Claude Opus 5.5",
+        isCustom: false,
+        capabilities: null,
+      } as const;
+      const fable = { ...opus, slug: "claude-fable-5-1", name: "Claude Fable 5.1" };
+      const restrictedModels = [{ slug: fable.slug, name: fable.name }];
+      const pendingProvider = {
+        instanceId: ProviderInstanceId.make("claudeAgent"),
+        driver: ProviderDriverKind.make("claudeAgent"),
+        status: "warning",
+        enabled: true,
+        installed: false,
+        auth: { status: "unknown" },
+        checkedAt: "2026-04-14T00:00:00.000Z",
+        version: null,
+        models: [opus, fable],
+        slashCommands: [],
+        skills: [],
+      } as const satisfies ServerProvider;
+      const probedProvider = {
+        ...pendingProvider,
+        status: "ready",
+        installed: true,
+        auth: { status: "authenticated" },
+        version: "2.1.293",
+        models: [opus],
+        restrictedModels,
+      } satisfies ServerProvider;
+      const { restrictedModels: _restricted, ...probedWithoutRestrictions } = probedProvider;
+      const failedProbe = {
+        ...probedWithoutRestrictions,
+        status: "warning",
+        auth: { status: "unknown" },
+        models: [opus, fable],
+      } satisfies ServerProvider;
+
+      const hydrated = hydrateCachedProvider({
+        cachedProvider: probedProvider,
+        fallbackProvider: pendingProvider,
+      });
+      assert.deepStrictEqual(hydrated.models, [opus]);
+      const afterBoot = ProviderRegistry.mergeProviderSnapshot(hydrated, pendingProvider);
+      const afterProbe = ProviderRegistry.mergeProviderSnapshot(pendingProvider, probedProvider);
+      const afterFailedProbe = ProviderRegistry.mergeProviderSnapshot(afterProbe, failedProbe);
+
+      for (const merged of [afterBoot, afterProbe, afterFailedProbe]) {
+        assert.deepStrictEqual(merged.models, [opus]);
+        assert.deepStrictEqual(merged.restrictedModels, restrictedModels);
+      }
+
+      // A probe that reaches the account, or a sign-out, replaces them.
+      for (const auth of [{ status: "authenticated" }, { status: "unauthenticated" }] as const) {
+        const merged = ProviderRegistry.mergeProviderSnapshot(afterFailedProbe, {
+          ...probedWithoutRestrictions,
+          auth,
+          models: [opus, fable],
+        });
+        assert.deepStrictEqual(merged.models, [opus, fable]);
+        assert.strictEqual(merged.restrictedModels, undefined);
+      }
     });
 
     it("retains ACP Registry models while discovery has not completed", () => {
@@ -2706,6 +2773,96 @@ it.layer(
           }),
         ),
       ),
+    );
+    const fableTurnedOff = new Set(["claude-fable-5-1", "claude-fable-5"]);
+    const claudeVersion = (version: string) =>
+      layerMockSpawner((args) => {
+        const joined = args.join(" ");
+        if (joined === "--version")
+          return { stdout: `${version} (Claude Code)\n`, stderr: "", code: 0 };
+        throw new Error(`Unexpected args: ${joined}`);
+      });
+
+    it.effect.each(["firstParty", "gateway"])(
+      "leaves out and names the models the organization turned off on %s",
+      (apiProvider) =>
+        Effect.gen(function* () {
+          const status = yield* checkClaudeProviderStatus(
+            { ...defaultClaudeSettings, customModels: ["claude-fable-5-1", "claude-via-proxy"] },
+            claudeCapabilities({ apiProvider, restrictedModels: fableTurnedOff }),
+          );
+          const slugs = status.models.map((model) => model.slug);
+          assert.notInclude(slugs, "claude-fable-5-1");
+          assert.notInclude(slugs, "claude-fable-5");
+          assert.include(slugs, "claude-opus-5-5");
+          assert.include(slugs, "claude-via-proxy");
+          assert.deepStrictEqual(status.restrictedModels, [
+            { slug: "claude-fable-5-1", name: "Claude Fable 5.1" },
+            { slug: "claude-fable-5", name: "Claude Fable 5" },
+          ]);
+          assert.strictEqual(
+            status.message,
+            "Your organization has turned off Claude Fable 5.1 and Claude Fable 5.",
+          );
+        }).pipe(Effect.provide(claudeVersion("2.1.293"))),
+    );
+
+    it.effect.each([
+      { backend: "Bedrock", apiProvider: "bedrock" },
+      { backend: "Vertex", apiProvider: "vertex" },
+      { backend: "Foundry", apiProvider: "foundry" },
+      { backend: "a backend the CLI does not report", apiProvider: undefined },
+    ])("keeps every model on $backend", ({ apiProvider }) =>
+      Effect.gen(function* () {
+        const status = yield* checkClaudeProviderStatus(
+          defaultClaudeSettings,
+          claudeCapabilities({ apiProvider, restrictedModels: fableTurnedOff }),
+        );
+        assert.include(
+          status.models.map((model) => model.slug),
+          "claude-fable-5-1",
+        );
+        assert.strictEqual(status.restrictedModels, undefined);
+        assert.strictEqual(status.message, undefined);
+      }).pipe(Effect.provide(claudeVersion("2.1.293"))),
+    );
+
+    it.effect("withholds a turned-off custom model, whatever release date it carries", () =>
+      Effect.gen(function* () {
+        const status = yield* checkClaudeProviderStatus(
+          {
+            ...defaultClaudeSettings,
+            customModels: ["claude-opus-4-1-20250805", "claude-via-proxy"],
+          },
+          claudeCapabilities({
+            apiProvider: "firstParty",
+            restrictedModels: new Set(["claude-opus-4-1"]),
+          }),
+        );
+        const slugs = status.models.map((model) => model.slug);
+        assert.notInclude(slugs, "claude-opus-4-1-20250805");
+        assert.include(slugs, "claude-via-proxy");
+        assert.deepStrictEqual(
+          status.restrictedModels?.map((model) => model.slug),
+          ["claude-opus-4-1-20250805"],
+        );
+      }).pipe(Effect.provide(claudeVersion("2.1.293"))),
+    );
+
+    it.effect("does not ask for a CLI update to unlock a model the organization turned off", () =>
+      Effect.gen(function* () {
+        const status = yield* checkClaudeProviderStatus(
+          defaultClaudeSettings,
+          claudeCapabilities({ apiProvider: "firstParty", restrictedModels: fableTurnedOff }),
+        );
+        const gated = (status.updateRequiredModels ?? []).map((model) => model.slug);
+        assert.notInclude(gated, "claude-fable-5-1");
+        assert.include(gated, "claude-opus-5-5");
+        assert.strictEqual(
+          status.message,
+          "Claude Code v2.1.250 is too old for Claude Opus 5.5. Upgrade to v2.1.280 or newer to access it. Your organization has turned off Claude Fable 5.1 and Claude Fable 5.",
+        );
+      }).pipe(Effect.provide(claudeVersion("2.1.250"))),
     );
   });
 });

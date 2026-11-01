@@ -126,7 +126,10 @@ import {
   pendingModelAfterPress,
   providerSectionIsCollapsed,
 } from "./thread-settings-sheet-state";
-import { formatProviderUpdateRequiredNotice } from "@t3tools/client-runtime/providerUpdateRequiredModels";
+import {
+  formatProviderRestrictedModelsNotice,
+  formatProviderUpdateRequiredNotice,
+} from "@t3tools/client-runtime/providerUpdateRequiredModels";
 
 const PRIMARY_PROVIDER_DRIVERS: ReadonlySet<string> = new Set([
   "claudeAgent",
@@ -772,11 +775,15 @@ function buildThreadSettingsCatalogItems(
       ),
       session.favoriteKeys,
     );
-    const updateRequiredNotice =
-      group.updateRequired && session.providerFilter !== FAVORITES_PROVIDER_FILTER
-        ? formatProviderUpdateRequiredNotice(group.updateRequired, session.searchQuery)
-        : null;
-    if (visibleModels.length === 0 && !updateRequiredNotice) {
+    const withheldModels =
+      session.providerFilter !== FAVORITES_PROVIDER_FILTER ? group.withheldModels : undefined;
+    const updateRequiredNotice = withheldModels
+      ? formatProviderUpdateRequiredNotice(withheldModels, session.searchQuery)
+      : null;
+    const restrictedNotice = withheldModels
+      ? formatProviderRestrictedModelsNotice(withheldModels, session.searchQuery)
+      : null;
+    if (visibleModels.length === 0 && !updateRequiredNotice && !restrictedNotice) {
       return [];
     }
     const isPrimary = driver !== undefined && PRIMARY_PROVIDER_DRIVERS.has(driver);
@@ -817,6 +824,15 @@ function buildThreadSettingsCatalogItems(
               kind: "notice" as const,
               key: `notice:${group.providerKey}`,
               text: updateRequiredNotice,
+            },
+          ]
+        : []),
+      ...(!collapsed && restrictedNotice
+        ? [
+            {
+              kind: "notice" as const,
+              key: `restricted:${group.providerKey}`,
+              text: restrictedNotice,
             },
           ]
         : []),

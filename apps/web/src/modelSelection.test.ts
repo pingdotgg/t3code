@@ -25,6 +25,7 @@ import {
 import {
   defaultModelSelectionsAreMixed,
   getAppModelOptionsForInstance,
+  resolveAppModelSelection,
   resolveAppModelSelectionForInstance,
   resolveAppModelSelectionState,
   resolveEffectiveDefaultModelSelection,
@@ -242,6 +243,37 @@ describe("instance-scoped model selection", () => {
         (option) => option.slug,
       ),
     ).toContain("openai/gpt-5.5");
+  });
+
+  it("does not restore organization-restricted custom models from settings", () => {
+    const driver = ProviderDriverKind.make("claudeAgent");
+    const restricted = "claude-opus-4-1-20250805";
+    const settings: UnifiedSettings = {
+      ...settingsWithProviderInstances(),
+      providerInstances: {
+        [ProviderInstanceId.make("claudeAgent")]: {
+          driver,
+          config: { customModels: [restricted, "proxy/allowed"] },
+        },
+      },
+    };
+    const providers = [
+      {
+        ...provider({ provider: driver, instanceId: "claudeAgent", models: ["claude-opus-5-5"] }),
+        restrictedModels: [{ slug: restricted, name: restricted }],
+      },
+    ];
+    const entry = deriveProviderInstanceEntries(providers)[0]!;
+    expect(getAppModelOptionsForInstance(settings, entry).map((option) => option.slug)).toEqual([
+      "claude-opus-5-5",
+      "proxy/allowed",
+    ]);
+    expect(
+      resolveAppModelSelectionForInstance(entry.instanceId, settings, providers, restricted),
+    ).toBe("claude-opus-5-5");
+    expect(resolveAppModelSelection(driver, settings, providers, restricted)).toBe(
+      "claude-opus-5-5",
+    );
   });
 
   it("preserves a custom slug that collides with a provider alias", () => {
