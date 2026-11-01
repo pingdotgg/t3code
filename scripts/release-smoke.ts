@@ -7,57 +7,22 @@ import * as NodeURL from "node:url";
 import * as Console from "effect/Console";
 import * as Effect from "effect/Effect";
 
+import { readWorkspace } from "../.github/scripts/ci-changes.cjs";
+
 const repoRoot = NodePath.resolve(NodePath.dirname(NodeURL.fileURLToPath(import.meta.url)), "..");
 
-const workspaceFiles = [
-  "package.json",
-  "pnpm-lock.yaml",
-  "pnpm-workspace.yaml",
-  "apps/server/package.json",
-  "apps/desktop/package.json",
-  "apps/web/package.json",
-  "apps/mobile/package.json",
-  "apps/mobile/modules/t3-highlights/package.json",
-  "apps/mobile/modules/t3-source-text/package.json",
-  "apps/mobile/modules/t3-review-diff/package.json",
-  "apps/mobile/modules/t3-terminal/package.json",
-  "apps/marketing/package.json",
-  "infra/relay/package.json",
-  "oxlint-plugin-t3code/package.json",
-  "packages/client-runtime/package.json",
-  "packages/contracts/package.json",
-  "packages/shared/package.json",
-  "packages/ssh/package.json",
-  "packages/tailscale/package.json",
-  "packages/provider-core/package.json",
-  "packages/provider-testing/package.json",
-  "packages/provider-pi/package.json",
-  "packages/provider-acp/package.json",
-  "packages/provider-acp-registry/package.json",
-  "packages/provider-cursor/package.json",
-  "packages/provider-fx/package.json",
-  "packages/provider-grok/package.json",
-  "packages/provider-muse/package.json",
-  "packages/provider-opencode/package.json",
-  "packages/secret-provider-core/package.json",
-  "packages/secret-provider-definitions/package.json",
-  "packages/secret-provider-onepassword/package.json",
-  "packages/source-control-azure-devops/package.json",
-  "packages/source-control-bitbucket/package.json",
-  "packages/source-control-core/package.json",
-  "packages/source-control-definitions/package.json",
-  "packages/source-control-forgejo/package.json",
-  "packages/source-control-gitcafe/package.json",
-  "packages/source-control-github/package.json",
-  "packages/source-control-gitlab/package.json",
-  "packages/source-control-testing/package.json",
-  "packages/effect-acp/package.json",
-  "packages/effect-codex-app-server/package.json",
-  "scripts/package.json",
-] as const;
-
 function copyWorkspaceManifestFixture(targetRoot: string): void {
-  for (const relativePath of workspaceFiles) {
+  // Mobile modules are file: dependencies, not workspace packages.
+  const mobileModules = NodeFS.readdirSync(NodePath.resolve(repoRoot, "apps/mobile/modules"))
+    .map((entry) => `apps/mobile/modules/${entry}/package.json`)
+    .filter((manifest) => NodeFS.existsSync(NodePath.resolve(repoRoot, manifest)));
+  for (const relativePath of [
+    "package.json",
+    "pnpm-lock.yaml",
+    "pnpm-workspace.yaml",
+    ...readWorkspace().map((pkg) => `${pkg.dir}/package.json`),
+    ...mobileModules,
+  ]) {
     const sourcePath = NodePath.resolve(repoRoot, relativePath);
     const destinationPath = NodePath.resolve(targetRoot, relativePath);
     NodeFS.mkdirSync(NodePath.dirname(destinationPath), { recursive: true });
@@ -208,6 +173,17 @@ function assertPackageVersion(path: string, version: string): void {
   }
 }
 
+function lockfileImporters(lockfile: string): ReadonlySet<string> {
+  const importers = new Set<string>();
+  let inImporters = false;
+  for (const line of lockfile.split("\n")) {
+    if (/^\S/.test(line)) inImporters = line === "importers:";
+    const importer = inImporters && line.match(/^ {2}(\S[^:]*):$/)?.[1];
+    if (importer) importers.add(importer);
+  }
+  return importers;
+}
+
 function assertMissing(path: string, message: string): void {
   if (NodeFS.existsSync(path)) {
     throw new Error(message);
@@ -248,6 +224,15 @@ try {
 
   const lockfile = NodeFS.readFileSync(NodePath.resolve(tempRoot, "pnpm-lock.yaml"), "utf8");
   assertContains(lockfile, "lockfileVersion:", "Expected pnpm-lock.yaml to be regenerated.");
+  const resolvedImporters = lockfileImporters(lockfile);
+  const missingImporters = [
+    ...lockfileImporters(NodeFS.readFileSync(NodePath.resolve(repoRoot, "pnpm-lock.yaml"), "utf8")),
+  ].filter((importer) => !resolvedImporters.has(importer));
+  if (missingImporters.length > 0) {
+    throw new Error(
+      `Release smoke did not resolve workspace packages: ${missingImporters.join(", ")}.`,
+    );
+  }
 
   for (const relativePath of [
     "apps/server/package.json",
