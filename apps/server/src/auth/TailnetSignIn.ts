@@ -245,10 +245,20 @@ export const make = Effect.gen(function* () {
       // on, never an older "no grants". The account is checked first, as another profile on
       // the same tailnet sees the same peers with other grants; only the first grant reads it.
       const grantKept = yield* Ref.make(false);
+      const switchSeen = yield* Ref.make(false);
       const keepGrant = Effect.gen(function* () {
         if (yield* Ref.getAndSet(grantKept, true)) return;
+        // Dropped until the read settles, so a read cut short or failed leaves no "no grants"
+        // to fall back on. A switch means the grant was another account's, so it comes back,
+        // and the scan fails below.
+        const before = yield* Ref.getAndUpdate(lastCleanScan, (last) =>
+          last?.account === account && !last.granted ? null : last,
+        );
         const now = yield* host.freshStatus;
-        if (now.selfNodeId !== account) return;
+        if (now.selfNodeId !== account) {
+          yield* Ref.set(lastCleanScan, before);
+          return yield* Ref.set(switchSeen, true);
+        }
         const at = yield* Clock.currentTimeMillis;
         yield* Ref.set(lastCleanScan, { account, granted: true, at });
       }).pipe(Effect.ignore);
@@ -261,7 +271,9 @@ export const make = Effect.gen(function* () {
       // device that joined since the scanned list was not looked up, so "no grants" is
       // unproven; a grant found still stands, as it only turns the owner rule off.
       const after = yield* host.freshStatus;
-      if (after.selfNodeId !== account) return yield* Effect.fail(["this host"]);
+      if (after.selfNodeId !== account || (yield* Ref.get(switchSeen))) {
+        return yield* Effect.fail(["this host"]);
+      }
       if (granted.length === 0 && peersJoined(status, after)) {
         return yield* Effect.fail(["a device that joined during the check"]);
       }

@@ -69,6 +69,14 @@ interface Tailnet {
   rateLimited?: boolean;
   /** The read now with this count (1 is the first) fails, as when tailscaled stalls. */
   failFreshReadAt?: number;
+  /** Runs before each read now, with its count, so a test can switch accounts at one. */
+  onFreshRead?: (count: number) => void;
+  /** Holds the read now with this count until `release`. */
+  holdFreshRead?: {
+    readonly at: number;
+    readonly started: Deferred.Deferred<void>;
+    readonly release: Deferred.Deferred<void>;
+  };
   node: JsonObject | null;
   /** The whois `CapMap`: the app capabilities grants give the device. */
   capMap?: JsonObject;
@@ -130,9 +138,16 @@ const layerTailscaleHost = (tailnet: Tailnet) =>
           tailscaleJson(withCaller(tailnet, tailnet.staleStatus ?? tailnet.status)),
         ),
       ),
-      freshStatus: Effect.suspend(() => {
-        tailnet.freshReads = (tailnet.freshReads ?? 0) + 1;
-        return tailnet.freshReads === tailnet.failFreshReadAt
+      freshStatus: Effect.gen(function* () {
+        const count = (tailnet.freshReads ?? 0) + 1;
+        tailnet.freshReads = count;
+        tailnet.onFreshRead?.(count);
+        const hold = tailnet.holdFreshRead;
+        if (hold?.at === count) {
+          yield* Deferred.succeed(hold.started, undefined);
+          yield* Deferred.await(hold.release);
+        }
+        return yield* count === tailnet.failFreshReadAt
           ? parseTailscaleStatus("not json")
           : parseTailscaleStatus(tailscaleJson(withCaller(tailnet, tailnet.status)));
       }),
@@ -997,6 +1012,68 @@ it.layer(NodeServices.layer)("TailnetSignIn", (it) => {
         // Back home, with the laptop unreadable, the older "no grants" decides, not that grant.
         tailnet.status = home;
         tailnet.devices = { ...tailnet.devices, [LAPTOP_ADDRESS]: { node: null } };
+        yield* TestClock.adjust("11 seconds");
+        yield* signIn(makeDpopKey());
+      }).pipe(Effect.provide(layerTest(tailnet)));
+    });
+
+    it.effect('a scan cut short while it confirms a grant leaves no older "no grants"', () => {
+      const tailnet = withLaptop();
+      tailnet.status = hostStatus({ Peer: { ...peers, stranger: strangerPeer } });
+      tailnet.devices = { ...tailnet.devices, [STRANGER_ADDRESS]: { node: stranger } };
+      return Effect.gen(function* () {
+        // A scan that finds no grants, from the refused stranger.
+        yield* refusalOf(signIn(makeDpopKey(), { remoteAddress: STRANGER_ADDRESS }));
+        tailnet.devices = {
+          ...tailnet.devices,
+          [LAPTOP_ADDRESS]: { node: laptop, capMap: granted({ scopes: ["read"] }) },
+        };
+        yield* TestClock.adjust("1 minute");
+        // The phone leaves while the scan confirms the laptop's grant: the sign-in's read, then
+        // the grant's.
+        const started = yield* Deferred.make<void>();
+        const release = yield* Deferred.make<void>();
+        tailnet.holdFreshRead = { at: (tailnet.freshReads ?? 0) + 2, started, release };
+        const phone = yield* signIn(makeDpopKey()).pipe(Effect.forkChild);
+        yield* Deferred.await(started);
+        yield* Fiber.interrupt(phone);
+        // With the laptop unreadable, nothing proves "no grants", so the owner rule stays off.
+        tailnet.devices = { ...tailnet.devices, [LAPTOP_ADDRESS]: { node: null } };
+        expect(yield* refusalOf(signIn(makeDpopKey()))).toBe("policy_unknown");
+      }).pipe(Effect.provide(layerTest(tailnet)));
+    });
+
+    it.effect("a scan that saw another account while it confirmed a grant decides nothing", () => {
+      const tailnet = withLaptop();
+      tailnet.status = hostStatus({ Peer: { ...peers, stranger: strangerPeer } });
+      tailnet.devices = { ...tailnet.devices, [STRANGER_ADDRESS]: { node: stranger } };
+      const home = tailnet.status;
+      return Effect.gen(function* () {
+        yield* refusalOf(signIn(makeDpopKey(), { remoteAddress: STRANGER_ADDRESS }));
+        yield* TestClock.adjust("1 minute");
+        const started = yield* Deferred.make<void>();
+        const release = yield* Deferred.make<void>();
+        tailnet.hold = { address: LAPTOP_ADDRESS, started, release, late: true };
+        const phone = yield* refusalOf(signIn(makeDpopKey())).pipe(Effect.forkChild);
+        yield* Deferred.await(started);
+        // The laptop's lookup answers on another profile, where it is granted, and the host is
+        // back home by the scan's own account check.
+        tailnet.status = hostStatus({
+          Peer: peers,
+          Self: { ...hostStatus().Self, ID: "nBoxAtWork" },
+        });
+        tailnet.devices = {
+          ...tailnet.devices,
+          [LAPTOP_ADDRESS]: { node: laptop, capMap: granted({ scopes: ["read"] }) },
+        };
+        const accountCheck = (tailnet.freshReads ?? 0) + 2;
+        tailnet.onFreshRead = (count) => {
+          if (count === accountCheck) tailnet.status = home;
+        };
+        yield* Deferred.succeed(release, undefined);
+        expect(yield* Fiber.join(phone)).toBe("policy_unknown");
+        // Home grants nothing, so once that failed scan expires the owner's phone signs in.
+        tailnet.devices = { ...tailnet.devices, [LAPTOP_ADDRESS]: { node: laptop } };
         yield* TestClock.adjust("11 seconds");
         yield* signIn(makeDpopKey());
       }).pipe(Effect.provide(layerTest(tailnet)));
