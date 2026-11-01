@@ -1241,16 +1241,17 @@ export const layerQueryRunner: Layer.Layer<
                   }),
                 ),
               ),
+            // Logged before the call: most attempts are expected to fail and should still be visible.
             reconnectMcpServer: (serverName) =>
-              Effect.tryPromise({
-                try: () => queryRuntime.reconnectMcpServer(serverName),
-                catch: (cause) => queryRunnerError(cause, "reconnectMcpServer"),
+              logProtocolEvent({
+                direction: "outgoing",
+                stage: "decoded",
+                payload: { type: "query.reconnect_mcp_server", serverName },
               }).pipe(
-                Effect.tap(() =>
-                  logProtocolEvent({
-                    direction: "outgoing",
-                    stage: "decoded",
-                    payload: { type: "query.reconnect_mcp_server", serverName },
+                Effect.andThen(
+                  Effect.tryPromise({
+                    try: () => queryRuntime.reconnectMcpServer(serverName),
+                    catch: (cause) => queryRunnerError(cause, "reconnectMcpServer"),
                   }),
                 ),
               ),
