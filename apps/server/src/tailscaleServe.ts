@@ -383,7 +383,9 @@ export const releaseRecorded = Effect.fn("TailscaleServe.releaseRecorded")(funct
   stateDir: string,
 ) {
   const records = yield* readRecords(stateDir);
-  if (Object.keys(records).length === 0) return { released: false, otherAccounts: [] };
+  if (Object.keys(records).length === 0) {
+    return { released: false, otherAccounts: [], currentLabel: null };
+  }
   const profiles = yield* readProfiles;
   // Signed out, a record can still be one `tailscale logout` deleted the profile of.
   const now = yield* currentAccount(profiles).pipe(
@@ -412,7 +414,11 @@ export const releaseRecorded = Effect.fn("TailscaleServe.releaseRecorded")(funct
       message: "Tailscale is not signed in here. Run `tailscale up` to sign in.",
     });
   }
-  return { released, otherAccounts: Object.values(others).map((record) => record.label) };
+  return {
+    released,
+    otherAccounts: Object.values(others).map((record) => record.label),
+    currentLabel: now?.label ?? null,
+  };
 });
 
 /**

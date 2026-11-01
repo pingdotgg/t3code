@@ -87,19 +87,42 @@ const granted = (...values: ReadonlyArray<unknown>): JsonObject => ({
   [TAILNET_APP_CAPABILITY]: values,
 });
 
+// `tailscale status` lists the device that asks among its peers, as a real host does.
+const withCaller = (tailnet: Tailnet, status: JsonObject): JsonObject => {
+  const node = tailnet.node;
+  const peers = (status.Peer ?? {}) as Record<string, JsonObject>;
+  if (node === null || Object.values(peers).some((peer) => peer.ID === node.StableID)) {
+    return status;
+  }
+  const addresses = (node.Addresses as ReadonlyArray<string> | undefined) ?? [];
+  return {
+    ...status,
+    Peer: {
+      ...peers,
+      caller: {
+        ID: node.StableID,
+        TailscaleIPs: addresses.map((address) => address.replace(/\/\d+$/u, "")),
+        UserID: node.User,
+      },
+    },
+  };
+};
+
 const layerTailscaleHost = (tailnet: Tailnet) =>
   Layer.succeed(
     TailscaleHost.TailscaleHost,
     TailscaleHost.TailscaleHost.of({
       inUse: Effect.succeed(true),
       status: Effect.suspend(() =>
-        parseTailscaleStatus(tailscaleJson(tailnet.staleStatus ?? tailnet.status)),
+        parseTailscaleStatus(
+          tailscaleJson(withCaller(tailnet, tailnet.staleStatus ?? tailnet.status)),
+        ),
       ),
       // As on the host, a read now also replaces the kept one.
       freshStatus: Effect.suspend(() => {
         tailnet.freshReads = (tailnet.freshReads ?? 0) + 1;
         delete tailnet.staleStatus;
-        return parseTailscaleStatus(tailscaleJson(tailnet.status));
+        return parseTailscaleStatus(tailscaleJson(withCaller(tailnet, tailnet.status)));
       }),
       whois: (address, options) =>
         Effect.gen(function* () {
@@ -483,6 +506,31 @@ it.layer(NodeServices.layer)("TailnetSignIn", (it) => {
       // Over its lookup limit, it is refused before its proof costs a replay-marker write.
       tailnet.rateLimited = true;
       expect(yield* refusalOf(signIn(makeDpopKey(), { dpop: false }))).toBe("rate_limited");
+    }).pipe(Effect.provide(layerTest(tailnet)));
+  });
+
+  it.effect("a whois answered before an account switch is not judged by the new account", () => {
+    const tailnet: Tailnet = {
+      status: hostStatus(),
+      node: phoneNode(),
+      capMap: granted({ scopes: ["admin"] }),
+    };
+    return Effect.gen(function* () {
+      const started = yield* Deferred.make<void>();
+      const release = yield* Deferred.make<void>();
+      tailnet.hold = { address: PHONE_ADDRESS, started, release };
+      const phone = yield* refusalOf(signIn(makeDpopKey())).pipe(Effect.forkChild);
+      yield* Deferred.await(started);
+      // The new account names another device at the phone's address.
+      tailnet.node = phoneNode({ StableID: "nPhoneAtWork" });
+      tailnet.status = hostStatus({
+        Self: { ...hostStatus().Self, ID: "nBoxAtWork" },
+        Peer: {
+          phone: { ID: "nPhoneAtWork", TailscaleIPs: [PHONE_ADDRESS], UserID: `int64:${OWNER_ID}` },
+        },
+      });
+      yield* Deferred.succeed(release, undefined);
+      expect(yield* Fiber.join(phone)).toBe("tailscale_unavailable");
     }).pipe(Effect.provide(layerTest(tailnet)));
   });
 

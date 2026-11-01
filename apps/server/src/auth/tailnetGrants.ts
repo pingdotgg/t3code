@@ -40,13 +40,17 @@ export const policyGrantedPeers = Effect.fn("tailnetGrants.policyGrantedPeers")(
   status: TailscaleStatus,
   whois: (address: string) => Effect.Effect<TailscaleWhois, E, R>,
 ) {
-  const peers = [
+  const peers: ReadonlyArray<{
+    readonly address: string | undefined;
+    readonly name: string;
+    readonly stableNodeId: string | null;
+  }> = [
     ...status.peers.map((peer) => {
       const address = peer.tailnetIpv4Addresses[0] ?? peer.tailnetIpv6Addresses[0];
       return {
         address,
         name: peer.hostName ?? address ?? peer.stableNodeId,
-        stableNodeId: peer.stableNodeId as string | null,
+        stableNodeId: peer.stableNodeId,
       };
     }),
     ...status.unidentifiedPeerAddresses.map((address) => ({
