@@ -32,7 +32,14 @@ export function CollapsibleSectionHeader({
         tones[tone].label,
       )}
     >
-      <span className="shrink-0">{children}</span>
+      <span
+        className={cn(
+          "shrink-0",
+          variant === "default" && "text-3xs font-semibold uppercase tracking-widest",
+        )}
+      >
+        {children}
+      </span>
       <span
         aria-hidden
         // A header with a trailing count drops its rule so it doesn't read as a leader.
