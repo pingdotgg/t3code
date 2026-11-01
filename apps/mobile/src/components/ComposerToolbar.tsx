@@ -60,7 +60,12 @@ export function ComposerInlineControl(props: {
         accessibilityState={
           props.static ? undefined : { disabled: props.disabled, selected: props.selected }
         }
-        className="h-[44px] flex-row items-center gap-2 rounded-xl px-2 active:bg-subtle"
+        // Icon-only, the control sits right after the composer's text, where
+        // leading padding would take taps meant for the text field.
+        className={cn(
+          "h-[44px] flex-row items-center gap-2 rounded-xl pr-2 active:bg-subtle",
+          props.iconOnly ? "pl-1" : "pl-2",
+        )}
         disabled={props.disabled || props.static}
         onPress={props.onPress}
         style={{ opacity: props.disabled ? 0.45 : 1 }}

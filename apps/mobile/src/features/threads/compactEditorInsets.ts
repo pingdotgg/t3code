@@ -9,9 +9,15 @@ export function compactEditorInsets(input: {
   readonly slotWidth: number;
   readonly rowWidth: number;
   readonly isRTL: boolean;
+  readonly trailingGap?: number;
 }): { left: number; right: number } {
   "worklet";
-  const fromLeft = input.slotX + COMPACT_EDITOR_SLOT_INSET;
-  const fromRight = input.rowWidth - input.slotX - input.slotWidth + COMPACT_EDITOR_SLOT_INSET;
+  const trailingGap = input.trailingGap ?? COMPACT_EDITOR_SLOT_INSET;
+  const fromLeft = input.slotX + (input.isRTL ? trailingGap : COMPACT_EDITOR_SLOT_INSET);
+  const fromRight =
+    input.rowWidth -
+    input.slotX -
+    input.slotWidth +
+    (input.isRTL ? COMPACT_EDITOR_SLOT_INSET : trailingGap);
   return input.isRTL ? { left: fromRight, right: fromLeft } : { left: fromLeft, right: fromRight };
 }
