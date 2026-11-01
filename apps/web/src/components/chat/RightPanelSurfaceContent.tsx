@@ -1,3 +1,4 @@
+import { RegisteredSidePanel } from "../../panels/bundledPanels";
 import type {
   EditorId,
   EnvironmentId,
@@ -28,7 +29,7 @@ import { ThreadPullRequestsPanel } from "../pullRequest/ThreadPullRequestsPanel"
 const PreviewPanel = lazy(() =>
   import("../preview/PreviewPanel").then((module) => ({ default: module.PreviewPanel })),
 );
-const DiffPanel = lazy(() => import("../DiffPanel"));
+
 const DevicePanel = lazy(() =>
   import("../device/DevicePanel").then((module) => ({ default: module.DevicePanel })),
 );
@@ -107,9 +108,9 @@ export function RightPanelSurfaceContent(props: {
     case "diff":
       return (
         <Suspense fallback={null}>
-          <DiffPanel
+          <RegisteredSidePanel
+            id="diff"
             key={scopedThreadKey(threadRef)}
-            mode="embedded"
             composerDraftTarget={props.composerDraftTarget}
             workspaceMutationId={props.workspaceMutationId}
             visible={visible}
