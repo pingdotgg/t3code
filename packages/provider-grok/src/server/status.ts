@@ -58,7 +58,7 @@ const EMPTY_CAPABILITIES: ModelCapabilities = createModelCapabilities({
   optionDescriptors: [],
 });
 
-const VERSION_PROBE_TIMEOUT_MS = 4_000;
+const VERSION_PROBE_TIMEOUT_MS = 10_000;
 // Grok writes the initialize result only after startup work (settings,
 // skill discovery, file watching). From a home directory that work measured
 // 9-14s on CLI 1.0.52, so an 8s cap records a healthy CLI as a failed probe.
