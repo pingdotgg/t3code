@@ -561,16 +561,30 @@ describe("DesktopWindow", () => {
           const windows = yield* DesktopWindow.DesktopWindow;
           yield* windows.ensureMain;
           assert.equal(fake.loadURL.mock.calls.length, 1);
+          const requestReveal = Effect.gen(function* () {
+            yield* windows.activate;
+            yield* windows.revealOrCreateMain;
+            yield* windows.dispatchMenuAction("open-settings");
+          });
+          yield* requestReveal;
+          assert.equal(reveal.mock.calls.length, 0);
           if (first === "renderer") fake.windowListeners.get("ready-to-show")?.();
           assert.equal(reveal.mock.calls.length, 0);
+          if (first === "renderer") {
+            yield* requestReveal;
+            assert.equal(reveal.mock.calls.length, 0);
+          }
           yield* windows.handleBackendReady(new URL("http://127.0.0.1:3773"));
           if (first === "backend") {
+            yield* requestReveal;
             assert.equal(reveal.mock.calls.length, 0);
             fake.windowListeners.get("ready-to-show")?.();
           }
           yield* windows.handleBackendReady(new URL("http://127.0.0.1:3773"));
           assert.equal(yield* Ref.get(createCount), 1);
           assert.equal(reveal.mock.calls.length, 1);
+          yield* windows.activate;
+          assert.equal(reveal.mock.calls.length, 2);
         }).pipe(
           Effect.provide(
             layerTest({
@@ -1168,6 +1182,10 @@ describe("DesktopWindow", () => {
       yield* Effect.gen(function* () {
         const desktopWindow = yield* DesktopWindow.DesktopWindow;
         yield* desktopWindow.handleBackendReady(new URL("http://127.0.0.1:3773"));
+        fakeWindow.windowListeners.get("ready-to-show")?.();
+        yield* desktopWindow.handleBackendReady(new URL("http://127.0.0.1:3773"));
+        operations.length = 0;
+        foreground = "Discord";
         yield* desktopWindow.dispatchSnapShotEvent({ type: "started", id: captureOne });
         assert.equal(foreground, "T3 Code");
         foreground = "Explorer";

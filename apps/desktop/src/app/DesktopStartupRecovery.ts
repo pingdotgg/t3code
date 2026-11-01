@@ -231,7 +231,8 @@ export const listen: Effect.Effect<
     function* () {
       if (yield* Ref.get(quitting)) return;
       // A backend that crashes after the app opened is reported by the app itself.
-      if (Option.isSome(yield* electronWindow.main)) return;
+      const main = yield* electronWindow.main;
+      if (Option.isSome(main) && !main.value.isDestroyed() && main.value.isVisible()) return;
       const existing = yield* Ref.get(windowRef);
       if (Option.isSome(existing) && !existing.value.isDestroyed()) {
         yield* electronWindow.reveal(existing.value);

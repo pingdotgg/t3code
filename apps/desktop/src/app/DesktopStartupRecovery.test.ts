@@ -1,8 +1,21 @@
 import type { DesktopUpdateState } from "@t3tools/contracts";
-import { describe, expect, it } from "vite-plus/test";
+import { describe, expect, it } from "@effect/vitest";
+import * as Deferred from "effect/Deferred";
+import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
+import * as Layer from "effect/Layer";
+import * as Stream from "effect/Stream";
+import * as SubscriptionRef from "effect/SubscriptionRef";
+import * as DesktopEnvironment from "./DesktopEnvironment.ts";
+import * as DesktopState from "./DesktopState.ts";
+import * as ElectronApp from "../electron/ElectronApp.ts";
+import * as ElectronShell from "../electron/ElectronShell.ts";
+import * as ElectronTheme from "../electron/ElectronTheme.ts";
+import * as ElectronWindow from "../electron/ElectronWindow.ts";
+import * as DesktopUpdates from "../updates/DesktopUpdates.ts";
 
 import { createInitialDesktopUpdateState } from "../updates/updateMachine.ts";
-import { resolveStartupRecoveryOffer } from "./DesktopStartupRecovery.ts";
+import { listen, resolveStartupRecoveryOffer } from "./DesktopStartupRecovery.ts";
 
 const updateState = (patch: Partial<DesktopUpdateState>): DesktopUpdateState => ({
   ...createInitialDesktopUpdateState(
@@ -68,3 +81,74 @@ describe("resolveStartupRecoveryOffer", () => {
     });
   });
 });
+
+it.effect.each([false, true])("offers recovery unless the main window is visible: %s", (visible) =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const checked = yield* Deferred.make<void>();
+      const closed = Promise.withResolvers<void>();
+      const loaded: string[] = [];
+      const main = { isDestroyed: () => false, isVisible: () => visible };
+      const recovery = {
+        isDestroyed: () => false,
+        close: () => closed.resolve(),
+        loadURL: (url: string) => {
+          loaded.push(url);
+          return Promise.resolve();
+        },
+        once: () => {},
+        webContents: { setWindowOpenHandler: () => {}, on: () => {} },
+      } as unknown as Electron.BrowserWindow;
+      const state = yield* DesktopState.DesktopState;
+      yield* listen.pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            FileSystem.layerNoop({
+              readFileString: () => Effect.succeed("0.1.2"),
+              writeFileString: () => Effect.void,
+            }),
+            Layer.succeed(DesktopEnvironment.DesktopEnvironment, {
+              appVersion: "0.1.3",
+              stateDir: "/task/state",
+              logDir: "/task/logs",
+              path: { join: (...parts: string[]) => parts.join("/") },
+            } as unknown as DesktopEnvironment.DesktopEnvironment["Service"]),
+            Layer.succeed(ElectronApp.ElectronApp, {
+              on: () => Effect.void,
+            } as unknown as ElectronApp.ElectronApp["Service"]),
+            Layer.succeed(
+              ElectronShell.ElectronShell,
+              {} as ElectronShell.ElectronShell["Service"],
+            ),
+            Layer.succeed(ElectronTheme.ElectronTheme, {
+              shouldUseDarkColors: Effect.succeed(false),
+            } as ElectronTheme.ElectronTheme["Service"]),
+            Layer.succeed(ElectronWindow.ElectronWindow, {
+              main: Effect.succeedSome(main),
+              create: () => Effect.succeed(recovery),
+            } as unknown as ElectronWindow.ElectronWindow["Service"]),
+            Layer.succeed(DesktopUpdates.DesktopUpdates, {
+              subscribe: Effect.succeed({
+                latest: updateState({ status: "disabled" }),
+                changes: Stream.empty,
+              }),
+              check: () => Deferred.succeed(checked, undefined),
+            } as unknown as DesktopUpdates.DesktopUpdates["Service"]),
+          ),
+        ),
+      );
+      yield* SubscriptionRef.set(state.primaryBackendStartup, {
+        _tag: "Failing",
+        reason: "Server failed before readiness",
+        output: "Failure details",
+      });
+      yield* Deferred.await(checked);
+      expect(loaded.length).toBe(visible ? 0 : 1);
+      if (!visible) {
+        expect(decodeURIComponent(loaded[0]!)).toContain("Failure details");
+        yield* SubscriptionRef.set(state.primaryBackendStartup, { _tag: "Ready" });
+        yield* Effect.promise(() => closed.promise);
+      }
+    }),
+  ).pipe(Effect.provide(DesktopState.layer)),
+);

@@ -71,8 +71,11 @@ describe("DesktopLocalEnvironmentAuth", () => {
             id: PRIMARY_LOCAL_ENVIRONMENT_ID,
             label: Effect.succeed("Windows"),
             currentConfig: Effect.succeedSome(config),
-            waitForReady: () =>
-              Deferred.succeed(waiting, undefined).pipe(Effect.andThen(Deferred.await(ready))),
+            waitForReady: (timeout: Duration.Duration) =>
+              Deferred.succeed(waiting, undefined).pipe(
+                Effect.andThen(Deferred.await(ready)),
+                Effect.timeout(timeout),
+              ),
           },
         ]),
       } as unknown as DesktopBackendPool.DesktopBackendPool["Service"]);
@@ -86,6 +89,7 @@ describe("DesktopLocalEnvironmentAuth", () => {
           Effect.forkChild,
         );
         yield* Deferred.await(waiting);
+        yield* TestClock.adjust(Duration.seconds(16));
         assert.strictEqual(yield* Ref.get(requestCount), 0);
         yield* Deferred.succeed(ready, true);
         return yield* Fiber.join(tokens);
@@ -94,7 +98,7 @@ describe("DesktopLocalEnvironmentAuth", () => {
       assert.strictEqual(first, "desktop-bearer-token");
       assert.strictEqual(second, "desktop-bearer-token");
       assert.strictEqual(yield* Ref.get(requestCount), 1);
-    }),
+    }).pipe(Effect.provide(TestClock.layer())),
   );
 
   it.effect(
