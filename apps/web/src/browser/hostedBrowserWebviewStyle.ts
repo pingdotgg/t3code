@@ -13,6 +13,7 @@ export interface HostedBrowserWebviewWrapperStyle {
   readonly zIndex: number;
   readonly pointerEvents: "auto" | "none";
   readonly borderRadius?: number;
+  readonly clipPath?: string;
   readonly visibility?: "hidden" | "visible";
 }
 
@@ -25,10 +26,12 @@ export function resolveHostedBrowserWebviewWrapperStyle(input: {
   readonly cornerRadius?: number;
   readonly zIndex?: number;
   readonly rect: BrowserSurfaceRect | null;
+  readonly clip?: BrowserSurfaceRect | null;
   readonly hiddenSize: HostedBrowserWebviewSize;
 }): HostedBrowserWebviewWrapperStyle {
   const {
     active,
+    clip = null,
     cornerRadius = 0,
     hiddenSize,
     keepPaintableWhenInactive = false,
@@ -45,6 +48,12 @@ export function resolveHostedBrowserWebviewWrapperStyle(input: {
       zIndex,
       pointerEvents: "auto",
       ...(cornerRadius > 0 ? { borderRadius: cornerRadius } : {}),
+      // Clips instead of resizing so the page keeps its layout while a panel slides over it.
+      ...(clip
+        ? {
+            clipPath: `inset(${clip.y - rect.y}px ${rect.x + rect.width - clip.x - clip.width}px ${rect.y + rect.height - clip.y - clip.height}px ${clip.x - rect.x}px)`,
+          }
+        : {}),
     };
   }
 

@@ -153,6 +153,7 @@ function PreviewPanelShellFrame(
       {/* Content stays pinned to the right edge, so closing uncovers the chat
           instead of sliding the tab bar under the title bar controls. */}
       <div
+        data-preview-panel-clip={collapsible ? (open ? "open" : "closed") : undefined}
         className={cn(
           "h-full min-h-0 w-full",
           collapsible && "overflow-clip",

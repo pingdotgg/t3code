@@ -86,6 +86,7 @@ export function HostedBrowserWebview(props: {
     useShallow((state) => {
       const current = state.byTabId[runtimeTabId];
       return {
+        clip: current?.clip ?? null,
         content: current?.content ?? null,
         cornerRadius: current?.cornerRadius ?? 0,
         fitSourceContent: current?.fitSourceContent ?? false,
@@ -300,6 +301,7 @@ export function HostedBrowserWebview(props: {
     cornerRadius: presentation.cornerRadius,
     zIndex: presentation.zIndex,
     rect: lastRect,
+    clip: presentation.clip,
     hiddenSize: { width: hiddenWidth, height: hiddenHeight },
   });
 
