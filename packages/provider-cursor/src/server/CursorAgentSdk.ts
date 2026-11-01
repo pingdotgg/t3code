@@ -2,6 +2,7 @@ import type {
   AgentMessage,
   AgentOptions,
   InteractionUpdate,
+  Run,
   RunResult,
   SDKUserMessage,
   SendOptions,
@@ -478,13 +479,24 @@ export const makeCursorAgentSdkRunner = Effect.fn("makeCursorAgentSdkRunner")(fu
               (error) =>
                 Effect.gen(function* () {
                   abandonedRunRecoveryAvailable = false;
-                  const latestRun = yield* Effect.tryPromise({
-                    try: () => Agent.listRuns(agent.agentId, { ...runOptions, limit: 1 }),
-                    catch: (cause) => runnerError(cause, "agent.listRuns"),
-                  });
-                  const activeRun = latestRun.items.find(
-                    (candidate) => candidate.status === "running",
-                  );
+                  // Local stores list runs oldest first, so the active run is on the
+                  // last page and every page has to be read to reach it.
+                  let activeRun: Run | undefined;
+                  let cursor: string | undefined;
+                  do {
+                    const page = yield* Effect.tryPromise({
+                      try: () =>
+                        Agent.listRuns(agent.agentId, {
+                          ...runOptions,
+                          ...(cursor === undefined ? {} : { cursor }),
+                        }),
+                      catch: (cause) => runnerError(cause, "agent.listRuns"),
+                    });
+                    activeRun =
+                      page.items.findLast((candidate) => candidate.status === "running") ??
+                      activeRun;
+                    cursor = page.nextCursor;
+                  } while (cursor !== undefined);
                   if (activeRun === undefined) {
                     return yield* error;
                   }
