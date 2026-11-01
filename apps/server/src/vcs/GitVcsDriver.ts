@@ -1315,14 +1315,11 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
       // On Windows the same clean can remove './' and exit 0.
       yield* recreateWorkspace;
 
-      const headExists = yield* hasHeadCommit(input.cwd);
-      if (headExists) {
-        yield* execute({
-          operation,
-          cwd: input.cwd,
-          args: [...longPaths, "reset", "--quiet", "--", "."],
-        });
-      }
+      yield* execute({
+        operation,
+        cwd: input.cwd,
+        args: [...longPaths, "reset", "--quiet", "--", "."],
+      });
 
       return true;
     }),
