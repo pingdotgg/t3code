@@ -84,6 +84,17 @@ export const BROWSER_IMPORT_SOURCES: ReadonlyArray<BrowserImportSourceDefinition
     linuxSegments: ["google-chrome"],
     linuxSecretApplication: "chrome",
   }),
+  {
+    id: "chromium",
+    name: "Chromium",
+    engine: "chromium",
+    platforms: ["linux"],
+    linuxSecretApplication: "chromium",
+    userDataDirectory: (context) =>
+      context.platform === "linux"
+        ? context.path.join(context.home, ".config", "chromium")
+        : undefined,
+  },
   chromiumSource({
     id: "edge",
     name: "Microsoft Edge",

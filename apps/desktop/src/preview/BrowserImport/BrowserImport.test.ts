@@ -1,18 +1,26 @@
+// @effect-diagnostics nodeBuiltinImport:off - Builds an encrypted Chromium cookie database fixture.
+import * as NodeCrypto from "node:crypto";
+import * as NodeSqlite from "node:sqlite";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
+import { BrowserImportSource } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import type { Session } from "electron";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Schema from "effect/Schema";
 
 import * as BrowserSession from "../BrowserSession.ts";
 import { readManagedPolicyFile } from "@t3tools/shared/managedPolicyFile";
 import * as DesktopManagedPolicy from "../../app/DesktopManagedPolicy.ts";
 import * as BrowserImport from "./BrowserImport.ts";
+import { LinuxBrowserSecretPath } from "./LinuxBrowserSecret.ts";
 import { BROWSER_IMPORT_SOURCES, sourcePathContext } from "./Sources.ts";
 import { symlinksSupported } from "@t3tools/shared/testing/symlinks";
 
 const helium = BROWSER_IMPORT_SOURCES.find((source) => source.id === "helium")!;
+const decodeImportSource = Schema.decodeEffect(BrowserImportSource);
 
 const cookie = {
   url: "https://rejected.example/path",
@@ -66,6 +74,114 @@ const withImporter = Effect.fnUntraced(function* () {
 });
 
 describe("BrowserImport.importCookies", () => {
+  it.effect.each(["Cookies", "Network/Cookies"])(
+    "discovers and imports Linux Chromium cookies from %s",
+    (cookiePath) =>
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const home = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3code-chromium-" });
+        const root = `${home}/.config/chromium`;
+        yield* fileSystem.makeDirectory(`${root}/Default/Network`, { recursive: true });
+        yield* fileSystem.writeFileString(
+          `${root}/Local State`,
+          JSON.stringify({ profile: { info_cache: { Default: { name: "Personal" } } } }),
+        );
+        yield* Effect.sync(() => {
+          const key = NodeCrypto.pbkdf2Sync("peanuts", "saltysalt", 1, 16, "sha1");
+          const cipher = NodeCrypto.createCipheriv("aes-128-cbc", key, Buffer.alloc(16, 0x20));
+          const value = Buffer.concat([
+            Buffer.from("v10"),
+            cipher.update("fixture-session"),
+            cipher.final(),
+          ]);
+          using database = new NodeSqlite.DatabaseSync(`${root}/Default/${cookiePath}`);
+          database.exec(`
+            create table meta (key text primary key, value text not null);
+            insert into meta values ('version', '23');
+            create table cookies (
+              host_key text, name text, value text, encrypted_value blob, path text,
+              expires_utc integer, is_secure integer, is_httponly integer, samesite integer,
+              top_frame_site_key text not null default ''
+            );
+          `);
+          database
+            .prepare("insert into cookies values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
+            .run("chromium.example", "session", "", value, "/", 0, 1, 1, 1, "");
+        });
+
+        const written: Electron.CookiesSetDetails[] = [];
+        let flushed = false;
+        const session = {
+          cookies: {
+            set: (cookie: Electron.CookiesSetDetails) => {
+              written.push(cookie);
+              return Promise.resolve();
+            },
+            flushStore: () => {
+              flushed = true;
+              return Promise.resolve();
+            },
+          },
+        } as unknown as Session;
+        const importer = yield* BrowserImport.BrowserImport.pipe(
+          Effect.provide(
+            BrowserImport.layer.pipe(
+              Layer.provide(
+                Layer.succeed(BrowserSession.BrowserSession, {
+                  getPartition: () => Effect.die("getPartition must not be reached"),
+                  isPartition: () => false,
+                  getSession: () => Effect.succeed(session),
+                  clearCookies: () => Effect.die("clearCookies must not be reached"),
+                  clearCache: () => Effect.die("clearCache must not be reached"),
+                }),
+              ),
+              Layer.provide(Layer.succeed(HostProcess.Environment, { HOME: home })),
+              Layer.provide(Layer.succeed(HostProcess.Platform, "linux")),
+              Layer.provide(Layer.succeed(HostProcess.ExecutablePath, "/fixture/t3code")),
+              Layer.provide(NodeServices.layer),
+            ),
+          ),
+        );
+        const source = (yield* importer.listSources).find(
+          (candidate) => candidate.name === "Chromium",
+        );
+        assert.isDefined(source);
+        assert.deepEqual(yield* decodeImportSource(source!), {
+          id: "chromium",
+          name: "Chromium",
+          profiles: [{ directory: "Default", name: "Personal", cookieCount: 1 }],
+        });
+        assert.deepEqual(
+          yield* importer.importCookies({
+            input: {
+              sourceId: "chromium",
+              sourceProfileDirectory: "Default",
+              targetProfileId: "default",
+            },
+            scope: "persist:t3code-preview-test",
+            persistent: true,
+          }),
+          { imported: 1, skipped: 0, skippedDomains: [] },
+        );
+        assert.deepEqual(written, [
+          {
+            url: "https://chromium.example/",
+            name: "session",
+            value: "fixture-session",
+            path: "/",
+            secure: true,
+            httpOnly: true,
+            sameSite: "lax",
+          },
+        ]);
+        assert.isTrue(flushed);
+      }).pipe(
+        Effect.provideService(LinuxBrowserSecretPath, undefined),
+        Effect.provide(NodeServices.layer),
+        Effect.scoped,
+      ),
+  );
+
   it.effect("rejects a source profile the browser never reported", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
