@@ -1577,6 +1577,76 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     ]);
   });
 
+  const isStaleQuestionWake = Effect.fn("Orchestrator.isStaleQuestionWake")(function* (
+    projection: Pick<OrchestrationV2ThreadProjection, "thread" | "subagents">,
+    messageId: MessageId,
+    notification: OrchestrationV2ThreadProjection["messages"][number]["notification"],
+  ) {
+    if (notification?.source.kind !== "delegated_task" || notification.outcome !== "updated")
+      return false;
+    const source = notification.source;
+    const task = projection.subagents.find((candidate) => source.taskIds.includes(candidate.id));
+    if (
+      task === undefined ||
+      task.childThreadId === null ||
+      ["completed", "failed", "cancelled", "interrupted"].includes(task.status)
+    )
+      return true;
+    const child = yield* projectionStore
+      .getThreadRecords(task.childThreadId, ["runtimeRequests"])
+      .pipe(
+        Effect.mapError(
+          (cause) => new OrchestratorProjectionError({ threadId: task.childThreadId!, cause }),
+        ),
+      );
+    return !child.runtimeRequests.some(
+      (request) =>
+        request.kind === "user_input" &&
+        request.status === "pending" &&
+        messageId === `message:delegated-task-question:${projection.thread.id}:${request.id}`,
+    );
+  });
+
+  const cancelStaleQuestionWakes = Effect.fn("Orchestrator.cancelStaleQuestionWakes")(function* (
+    projection: OrchestrationV2ThreadProjection,
+  ) {
+    const events = yield* Ref.make<Array<OrchestrationV2DomainEvent>>([]);
+    for (const run of projection.runs) {
+      if (run.status !== "queued") continue;
+      const message = projection.messages.find((candidate) => candidate.id === run.userMessageId);
+      if (
+        message === undefined ||
+        !(yield* isStaleQuestionWake(projection, message.id, message.notification).pipe(
+          // A child thread read must not fail the parent's unrelated next queued run.
+          Effect.catchTags({
+            OrchestratorProjectionError: (cause) =>
+              Effect.logWarning("Failed to check a queued task question wake", {
+                runId: run.id,
+                cause,
+              }).pipe(Effect.as(false)),
+          }),
+        ))
+      )
+        continue;
+      yield* emitQueuedRunCancellation({
+        command: {
+          type: "queued-run.cancel",
+          commandId: CommandId.make(`command:system:stale-question:${run.id}`),
+          threadId: projection.thread.id,
+          runId: run.id,
+        },
+        events,
+        projection,
+        run,
+        now: yield* DateTime.now,
+      });
+    }
+    const cancellations = yield* Ref.get(events);
+    if (cancellations.length === 0) return false;
+    yield* writeSystemEvents(cancellations);
+    return true;
+  });
+
   const startNextQueuedRun = Effect.fn("Orchestrator.startNextQueuedRun")(
     function* (
       threadId: ThreadId,
@@ -1587,7 +1657,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       },
     ) {
       if (!(yield* projectionStore.canStartQueuedRun(threadId))) return;
-      const projection = yield* readCommandProjection(threadId);
+      let projection = yield* readCommandProjection(threadId);
       if (
         projection.thread.archivedAt !== null ||
         projection.thread.deletedAt !== null ||
@@ -1596,6 +1666,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         return;
       }
 
+      if (yield* cancelStaleQuestionWakes(projection)) {
+        projection = yield* readCommandProjection(threadId);
+      }
       const storedQueuedRun =
         options?.queuedRunId === undefined
           ? nextQueuedRun(projection)
@@ -5346,6 +5419,18 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     effects: Ref.Ref<Array<PendingOrchestrationEffectV2>>,
   ) {
     let projection = yield* getProjectionWithPendingEvents(command.threadId, events);
+    if (yield* isStaleQuestionWake(projection, command.messageId, command.notification)) {
+      yield* emit(
+        events,
+        command,
+      )({
+        type: "thread.metadata-updated",
+        threadId: command.threadId,
+        occurredAt: yield* DateTime.now,
+        payload: projection.thread,
+      });
+      return;
+    }
     if (command.manualContinuationOfRunId !== undefined) {
       const source = projection.runs.find((run) => run.id === command.manualContinuationOfRunId);
       const limited = latestRootProviderFailure(source ?? null, projection.turnItems);
