@@ -15,6 +15,7 @@ import {
   AlertDialogTitle,
 } from "../ui/alert-dialog";
 import { Button } from "../ui/button";
+import { Checkbox } from "../ui/checkbox";
 import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from "../ui/collapsible";
 import { MiddleTruncate } from "../ui/middle-truncate";
 import { ScrollArea } from "../ui/scroll-area";
@@ -47,6 +48,10 @@ interface UpdateEverythingDialogProps {
   readonly rows: ReadonlyArray<UpdateEverythingRow>;
   readonly restarts: ReadonlyArray<RestartingMachine>;
   readonly onConfirm: () => void;
+  readonly providerUpdates?: {
+    readonly included: boolean;
+    readonly onIncludedChange: (included: boolean) => void;
+  };
   /** Overrides the "Update N machines?" title, for an update-track switch. */
   readonly title?: string;
   readonly confirmLabel?: string;
@@ -96,6 +101,7 @@ function UpdateEverythingDialogContent({
   rows,
   restarts,
   onConfirm,
+  providerUpdates,
   cancelRef,
   title,
   confirmLabel = "Update",
@@ -145,6 +151,16 @@ function UpdateEverythingDialogContent({
       </AlertDialogHeader>
       <ScrollArea scrollFade>
         <div className="flex flex-col gap-3 px-6 pb-4">
+          {providerUpdates ? (
+            <label className="flex items-center gap-2 text-sm">
+              <Checkbox
+                checked={providerUpdates.included}
+                onCheckedChange={providerUpdates.onIncludedChange}
+                disabled={busy}
+              />
+              Include provider updates
+            </label>
+          ) : null}
           {notes.map((note) => (
             <p key={note} className="text-muted-foreground text-sm">
               {note}

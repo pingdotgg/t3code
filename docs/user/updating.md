@@ -14,6 +14,15 @@ background service stays on its current release channel. A remote desktop app
 installs the latest release from its own channel. Hover the button to see what
 it will update.
 
+Clear **Include provider updates** in the confirmation to update T3 Code apps
+and servers while leaving provider CLI updates for later. Your choice is
+remembered on this device. Provider version checks and **Settings → Providers →
+Update all** are unchanged. When only providers have updates, the sidebar button
+still offers to update them.
+
+To update only the desktop app you are using, use **Settings → About**.
+Runtimes managed by T3 Code can still change with an app update.
+
 While it runs, the button widens to show progress. It names a machine that is
 taking longer than usual, and offers **Retry** for a server that failed. Click
 it to see every machine. The desktop app restarts once each server has started
