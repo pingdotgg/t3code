@@ -15,8 +15,8 @@ export function startThreadVisitedMigration(registry: AtomRegistry.AtomRegistry)
   const migratedThreadKeys = new Set<string>();
   const migrate = (threads: ReadonlyArray<EnvironmentThreadShell>) => {
     for (const thread of threads) {
-      // Missing means unsupported; retain the local value until the server upgrades.
-      if (thread.lastVisitedAt === undefined) continue;
+      // An established server watermark may be deliberately older after Mark unread.
+      if (thread.lastVisitedAt !== null) continue;
       const threadKey = scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id));
       if (migratedThreadKeys.has(threadKey)) continue;
       migratedThreadKeys.add(threadKey);
@@ -24,8 +24,6 @@ export function startThreadVisitedMigration(registry: AtomRegistry.AtomRegistry)
       if (!local) continue;
       const localMs = Date.parse(local);
       if (!Number.isFinite(localMs)) continue;
-      const serverMs = thread.lastVisitedAt === null ? null : Date.parse(thread.lastVisitedAt);
-      if (serverMs !== null && Number.isFinite(serverMs) && serverMs >= localMs) continue;
       void runAtomCommand(
         registry,
         threadEnvironment.visit,
