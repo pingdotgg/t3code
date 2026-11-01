@@ -12,6 +12,11 @@ import * as TestSourceControlHost from "@t3tools/source-control-testing/TestSour
 import * as GitLabCli from "./GitLabCli.ts";
 import { parseGitLabAuthStatusHosts } from "./gitLabAuthStatus.ts";
 import * as GitLabSourceControlProvider from "./GitLabSourceControlProvider.ts";
+import {
+  parseGitRemoteHost,
+  unknownRemoteProvider,
+} from "@t3tools/source-control-core/shared/definition";
+import type * as SourceControlHost from "@t3tools/source-control-core/server/SourceControlHost";
 import { definition } from "../shared/definition.ts";
 
 function makeProvider(gitlab: Partial<GitLabCli.GitLabCli["Service"]>) {
@@ -280,4 +285,124 @@ it.effect.each(["read", "decode"] as const)(
       if (stage === "read") assert.strictEqual(error.cause, cause);
       else assert.propertyVal(error.cause, "_tag", "SchemaError");
     }),
+);
+
+function refineRemote(input: {
+  remoteUrl: string;
+  run: SourceControlHost.SourceControlHost["Service"]["process"]["run"];
+}) {
+  return Effect.gen(function* () {
+    const spec = yield* GitLabSourceControlProvider.makeDiscovery;
+    const remote = parseGitRemoteHost(input.remoteUrl)!;
+    return yield* refineUnknownRemoteProvider({
+      specs: [spec],
+      process: { run: input.run },
+      cwd: "/repo",
+      context: {
+        provider: unknownRemoteProvider(remote),
+        remoteName: "origin",
+        remoteUrl: input.remoteUrl,
+      },
+    });
+  }).pipe(Effect.provide(TestSourceControlHost.layer({ process: { run: input.run } })));
+}
+
+it.effect("routes an offline GitLab remote using its exact host config key", () =>
+  Effect.gen(function* () {
+    const commands: Array<ReadonlyArray<string>> = [];
+    const handle = yield* refineRemote({
+      remoteUrl: "git@Self-Hosted.Example.Test:group/project.git",
+      run: ({ command, args }) => {
+        commands.push([command, ...args]);
+        return Effect.succeed(
+          TestSourceControlHost.processOutput("https://self-hosted.example.test/\n"),
+        );
+      },
+    });
+
+    assert.strictEqual(handle.provider?.kind, "gitlab");
+    assert.strictEqual(handle.provider?.baseUrl, "https://self-hosted.example.test");
+    assert.deepStrictEqual(commands, [
+      ["glab", "config", "get", "api_host", "--host", "Self-Hosted.Example.Test"],
+    ]);
+  }),
+);
+
+it.effect.each([
+  { label: "empty", stdout: "" },
+  { label: "a separate API host and port", stdout: "api.example.test:3443\n" },
+])("routes a token-authenticated GitLab remote when api_host config is $label", ({ stdout }) =>
+  Effect.gen(function* () {
+    const commands: Array<ReadonlyArray<string>> = [];
+    const handle = yield* refineRemote({
+      remoteUrl: "https://Self-Hosted.Example.Test:8443/group/project.git",
+      run: ({ command, args }) => {
+        commands.push([command, ...args]);
+        return Effect.succeed(
+          args[0] === "config"
+            ? TestSourceControlHost.processOutput(stdout)
+            : TestSourceControlHost.processOutput("", {
+                stderr:
+                  "Self-Hosted.Example.Test:8443\n  ✓ Logged in to Self-Hosted.Example.Test:8443 as token-user\n",
+              }),
+        );
+      },
+    });
+
+    assert.strictEqual(handle.provider?.kind, "gitlab");
+    assert.strictEqual(handle.provider?.baseUrl, "https://self-hosted.example.test:8443");
+    assert.deepStrictEqual(commands, [
+      ["glab", "config", "get", "api_host", "--host", "Self-Hosted.Example.Test:8443"],
+      ["glab", "auth", "status", "--hostname", "Self-Hosted.Example.Test:8443"],
+    ]);
+  }),
+);
+
+it.effect.each([
+  { label: "empty", stdout: "\n", exitCode: 0 },
+  { label: "failed", stdout: "self-hosted.example.test:8443\n", exitCode: 1 },
+  { label: "another host", stdout: "gitlab.com\n", exitCode: 0 },
+  { label: "a legacy username", stdout: "gitlab-user\n", exitCode: 0 },
+  { label: "another port", stdout: "self-hosted.example.test:9443\n", exitCode: 0 },
+])("leaves a remote unknown when local GitLab config is $label", ({ stdout, exitCode }) =>
+  Effect.gen(function* () {
+    const commands: Array<ReadonlyArray<string>> = [];
+    const handle = yield* refineRemote({
+      remoteUrl: "https://self-hosted.example.test:8443/group/project.git",
+      run: ({ command, args }) => {
+        commands.push([command, ...args]);
+        return Effect.succeed(
+          args[0] === "auth"
+            ? TestSourceControlHost.processOutput("", {
+                stderr:
+                  "You are not authenticated with glab. Run glab auth login to authenticate.\n",
+                exitCode: ChildProcessSpawner.ExitCode(1),
+              })
+            : TestSourceControlHost.processOutput(stdout, {
+                exitCode: ChildProcessSpawner.ExitCode(exitCode),
+              }),
+        );
+      },
+    });
+
+    assert.strictEqual(handle.provider, null);
+    assert.strictEqual(handle.settled, exitCode === 0);
+    const configCommand = [
+      "glab",
+      "config",
+      "get",
+      "api_host",
+      "--host",
+      "self-hosted.example.test:8443",
+    ];
+    assert.deepStrictEqual(
+      commands,
+      exitCode !== 0
+        ? [configCommand]
+        : [
+            configCommand,
+            ["glab", "auth", "status", "--hostname", "self-hosted.example.test:8443"],
+          ],
+    );
+  }),
 );
