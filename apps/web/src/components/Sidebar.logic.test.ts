@@ -18,6 +18,7 @@ import {
   pinOrderKeyBetween,
   resolveProjectStatusIndicator,
   resolveSidebarSweepKeys,
+  resolveSidebarRowStatus,
   resolveSidebarThreadStatus,
   resolveThreadStatusPill,
   resolveWorkingStartedAt,
@@ -345,6 +346,53 @@ describe("resolveSidebarThreadStatus", () => {
         runtime: { ...runtime, status: "idle" as const, lastError: "persisted" },
       }),
     ).toBe("waiting");
+  });
+});
+
+describe("resolveSidebarRowStatus", () => {
+  const failedRuntime = {
+    status: "failed" as const,
+    activeRunId: null,
+    providerInstanceId: ProviderInstanceId.make("codex"),
+    providerName: "Codex",
+    lastError: "Provider turn failed.",
+    updatedAt: "2026-03-09T10:05:00.000Z",
+  };
+  const failed = {
+    hasActionableProposedPlan: false,
+    hasPendingApprovals: false,
+    hasPendingUserInput: false,
+    interactionMode: "default" as const,
+    runtime: failedRuntime,
+    latestRun: { ...makeLatestRun(), status: "failed" as const },
+  };
+
+  it("clears a failure once opened, without showing Done, and shows the next failure", () => {
+    expect(resolveSidebarRowStatus({ ...failed, lastVisitedAt: undefined })).toBe("failed");
+
+    const opened = { ...failed, lastVisitedAt: "2026-03-09T10:06:00.000Z" };
+    expect(resolveSidebarRowStatus(opened)).toBe("ready");
+    expect(hasUnseenCompletion(opened)).toBe(false);
+
+    const failedAgain = {
+      ...opened,
+      latestRun: { ...opened.latestRun, completedAt: "2026-03-09T10:10:00.000Z" },
+    };
+    expect(resolveSidebarRowStatus(failedAgain)).toBe("failed");
+  });
+
+  it("keeps an undated failure unseen, so later thread updates cannot revive or hide it", () => {
+    const visitedAfter = "2026-03-09T10:06:00.000Z";
+    const noCompletedAt = {
+      ...failed,
+      latestRun: { ...failed.latestRun, completedAt: null },
+    };
+    expect(resolveSidebarRowStatus({ ...noCompletedAt, lastVisitedAt: visitedAfter })).toBe(
+      "failed",
+    );
+
+    const noRun = { ...failed, latestRun: null };
+    expect(resolveSidebarRowStatus({ ...noRun, lastVisitedAt: visitedAfter })).toBe("failed");
   });
 });
 
@@ -1732,6 +1780,16 @@ describe("resolveSidebarFolderDot", () => {
     expect(resolveSidebarFolderDot([idle, working])).toBe("working");
     expect(resolveSidebarFolderDot([working, unread])).toBe("unread");
     expect(resolveSidebarFolderDot([unread, limited])).toBe("attention");
+    // A failure the user already opened clears, like its row.
+    const failed = {
+      ...idle,
+      latestRun: { ...idle.latestRun, status: "failed" as const },
+      runtime: { ...runtime, status: "failed" as const },
+    };
+    expect(resolveSidebarFolderDot([failed])).toBeNull();
+    expect(
+      resolveSidebarFolderDot([{ ...failed, lastVisitedAt: "2026-03-09T09:00:00.000Z" }]),
+    ).toBe("failed");
   });
 });
 
