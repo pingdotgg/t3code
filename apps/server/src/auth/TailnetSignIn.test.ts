@@ -1639,11 +1639,15 @@ it.layer(NodeServices.layer)("TailnetSignIn", (it) => {
             const started = yield* Deferred.make<void>();
             const release = yield* Deferred.make<void>();
             tailnet.holdFreshRead = { at: last, started, release };
-            const phone = yield* refusalOf(signIn(makeDpopKey())).pipe(Effect.forkChild);
+            const phone = yield* Effect.flip(signIn(makeDpopKey())).pipe(Effect.forkChild);
             yield* Deferred.await(started);
             yield* requireGrantOn;
             yield* Deferred.succeed(release, undefined);
-            expect(yield* Fiber.join(phone)).toBe("no_grant");
+            // Refused as any no-grant refusal is, with the grant to add.
+            const error = yield* Fiber.join(phone);
+            expect(
+              isRefusal(error) ? [error.reason, error.suggestedGrant !== undefined] : error,
+            ).toEqual(["no_grant", true]);
           }
         }).pipe(Effect.provide(layerTest(tailnet)));
       },

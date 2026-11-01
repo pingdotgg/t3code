@@ -500,11 +500,11 @@ export const make = Effect.gen(function* () {
         .pipe(Effect.mapError((cause) => new TailnetDeviceBlockLookupError({ cause })));
       // Checked before any refusal, as a grant it suggests would not let a blocked device in.
       if (yield* isBlocked) return yield* refuse("blocked");
-      if (decision._tag === "Refused") {
-        return yield* refuse(
-          decision.reason,
+      const refuseWithGrant = (reason: TailnetSignInRefusedReason) =>
+        refuse(
+          reason,
           undefined,
-          GRANT_FIXES.has(decision.reason)
+          GRANT_FIXES.has(reason)
             ? // This device on this machine only: a login or tag would cover others too.
               tailnetGrantSnippet(
                 remoteAddress,
@@ -514,7 +514,7 @@ export const make = Effect.gen(function* () {
               )
             : undefined,
         );
-      }
+      if (decision._tag === "Refused") return yield* refuseWithGrant(decision.reason);
       const { scopes, via } = decision;
       // The owner rule may have waited on a policy scan, during which the device, this host,
       // its owner, or the require-grant setting may have changed.
@@ -533,7 +533,7 @@ export const make = Effect.gen(function* () {
           return yield* refuse("policy_unknown", "this host changed during sign-in");
         }
         if (yield* fs.exists(requireGrantPath).pipe(Effect.orElseSucceed(() => true))) {
-          return yield* refuse("no_grant");
+          return yield* refuseWithGrant("no_grant");
         }
       }
 
