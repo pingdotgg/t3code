@@ -644,15 +644,17 @@ function SidebarFooter({ className, ...props }: React.ComponentProps<"div">) {
 function SidebarContent({
   className,
   fixedHeader,
+  hideScrollbars = true,
   ...props
 }: React.ComponentProps<"div"> & {
   fixedHeader?: React.ReactNode;
+  hideScrollbars?: boolean;
 }) {
   return (
     <>
       {fixedHeader ? <div className="w-full shrink-0">{fixedHeader}</div> : null}
       <ScrollArea
-        hideScrollbars
+        hideScrollbars={hideScrollbars}
         scrollFade
         scrollFadePadding={false}
         // Rows provide keyboard access; exclude the viewport from tab order to flatten VoiceOver's WebKit
