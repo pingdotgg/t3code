@@ -245,6 +245,53 @@ describe("scoped settings writes", () => {
       writerPlan.serverWrites.find((write) => write.environmentId === server.environmentId)?.patch
         .projectSettingsOverrides?.[projectId]?.defaultModelSelection?.instanceId,
     ).toBe("keep-existing");
+    const collidingAccount = {
+      ...remote[0]!,
+      instanceId: local[0]!.instanceId,
+      displayName: "ChatGPT - Revotech",
+      snapshot: {
+        ...remote[0]!.snapshot,
+        instanceId: local[0]!.instanceId,
+        displayName: "ChatGPT - Revotech",
+      },
+    };
+    const partialTarget = environment("Server", {
+      settings: {
+        providerInstances: {
+          [collidingAccount.instanceId]: {
+            driver: ProviderDriverKind.make("codex"),
+            enabled: true,
+          },
+          [remote[0]!.instanceId]: { driver: ProviderDriverKind.make("codex"), enabled: true },
+        },
+        projectSettingsOverrides: {
+          [projectId]: {
+            textGenerationModelSelection: {
+              instanceId: collidingAccount.instanceId,
+              model: selection.model,
+            },
+          },
+        },
+      },
+    });
+    const partialPlan = planScopedSettingsPatch(
+      project,
+      [partialTarget],
+      { textGenerationModelSelection: { options: selection.options } },
+      {
+        ...mapping,
+        byEnvironment: new Map([[server.environmentId, [...remote, collidingAccount]]]),
+      },
+    );
+    expect(partialPlan.unavailableReason).toBeNull();
+    expect(
+      partialPlan.serverWrites[0]?.patch.projectSettingsOverrides?.[projectId]
+        ?.textGenerationModelSelection,
+    ).toEqual({
+      instanceId: collidingAccount.instanceId,
+      model: selection.model,
+      options: selection.options,
+    });
   });
 
   it("edits the effective machine policy without changing other machines' rules", () => {

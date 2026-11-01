@@ -348,7 +348,13 @@ export function planScopedSettingsPatch(
           : [];
   let modelUnavailable: string | null = null;
   if (modelEntries) {
-    const changedModels = new Set(serverKeys.filter((key) => MODEL_KEYS.has(key)));
+    const changedModels = new Set(
+      Object.entries<unknown>(serverPatch).flatMap(([key, value]) =>
+        MODEL_KEYS.has(key) && isPlainObject(value) && typeof value.instanceId === "string"
+          ? [key]
+          : [],
+      ),
+    );
     serverWrites = serverWrites.map((write) => {
       const remap = <T extends object>(value: T): T => {
         const next = Object.fromEntries(Object.entries(value));
