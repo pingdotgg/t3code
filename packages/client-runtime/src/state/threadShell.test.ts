@@ -246,6 +246,49 @@ describe("v2 thread shell lists", () => {
     registry.dispose();
   });
 
+  it("keeps a stopped parent in Working while its side chat is still running", () => {
+    const { registry, threads, snapshotAtom } = makeHarness();
+    const root = {
+      ...v2ThreadShell,
+      latestRunId: RunId.make("root-run"),
+      status: "interrupted" as const,
+    };
+    const sideChat = {
+      ...v2ThreadShell,
+      id: ThreadId.make("side-chat"),
+      status: "running" as const,
+      activityRunStatus: "running" as const,
+      latestRunId: RunId.make("side-chat-run"),
+      activeRunId: RunId.make("side-chat-run"),
+      lineage: {
+        ...v2ThreadShell.lineage,
+        parentThreadId: root.id,
+        relationshipToParent: "fork" as const,
+        sideChat: true,
+      },
+    };
+    const parentRef = { environmentId, threadId: root.id };
+    const parent = threads.threadShellAtom(parentRef);
+    const sideChatShell = threads.threadShellAtom({ environmentId, threadId: sideChat.id });
+    const disposeParent = registry.mount(parent);
+    const disposeSideChat = registry.mount(sideChatShell);
+    registry.set(snapshotAtom(environmentId), { ...v2ShellSnapshot, threads: [root, sideChat] });
+    expect(isThreadWorking(registry.get(sideChatShell)!)).toBe(true);
+    expect(isThreadWorking(registry.get(parent)!)).toBe(true);
+
+    registry.set(snapshotAtom(environmentId), {
+      ...v2ShellSnapshot,
+      threads: [
+        root,
+        { ...sideChat, status: "completed" as const, activityRunStatus: null, activeRunId: null },
+      ],
+    });
+    expect(isThreadWorking(registry.get(parent)!)).toBe(false);
+    disposeSideChat();
+    disposeParent();
+    registry.dispose();
+  });
+
   it("brings a parent back from Working while a nested subagent waits for approval", () => {
     const { registry, threads, snapshotAtom } = makeHarness();
     const child = {
