@@ -46,6 +46,7 @@ import {
 } from "../startupAccess.ts";
 import { authScopesFlag } from "./authScopes.ts";
 import { baseDirFlag, DurationFromString } from "./config.ts";
+import { resolveHostCliCommand } from "./invocation.ts";
 
 const WELL_KNOWN_ENVIRONMENT_PATH = "/.well-known/t3/environment";
 const PAIR_PROBE_TIMEOUT = Duration.millis(2_500);
@@ -63,6 +64,8 @@ export class NoRunningServerError extends Schema.TaggedError<NoRunningServerErro
   {
     checkedStatePaths: Schema.Array(Schema.String),
     inLinkedWorktree: Schema.Boolean,
+    serveCommand: Schema.String,
+    connectCommand: Schema.String,
   },
 ) {
   override get message(): string {
@@ -72,7 +75,7 @@ export class NoRunningServerError extends Schema.TaggedError<NoRunningServerErro
       ...(this.inLinkedWorktree
         ? ["In a linked worktree, pass --base-dir to pair with a server outside it."]
         : []),
-      "Start one with `npx t3 serve`, or connect this machine with T3 Connect: `npx t3 connect`.",
+      `Start one with \`${this.serveCommand}\`, or connect this machine with T3 Connect: \`${this.connectCommand}\`.`,
     ].join("\n");
   }
 }
@@ -290,7 +293,12 @@ const discoverPairTarget = Effect.fn("pair.discoverPairTarget")(function* (
       } satisfies DiscoveredPairTarget;
     }
   }
-  return yield* new NoRunningServerError({ checkedStatePaths, inLinkedWorktree });
+  return yield* new NoRunningServerError({
+    checkedStatePaths,
+    inLinkedWorktree,
+    serveCommand: (yield* resolveHostCliCommand("serve")).command,
+    connectCommand: (yield* resolveHostCliCommand("connect")).command,
+  });
 });
 
 /** Use the discovered state directory, independent of ambient config variables. */
