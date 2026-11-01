@@ -27,7 +27,6 @@ import { safeErrorLogAttributes } from "../errors/safeLog.ts";
 import * as Persistence from "../platform/persistence.ts";
 import { runCachePersistence } from "./cachePersistence.ts";
 import { subscribeDynamic } from "../rpc/client.ts";
-import type { RpcSession } from "../rpc/session.ts";
 import * as ShellSnapshotLoader from "./shellSnapshotHttp.ts";
 import type { DeferredShellSnapshot } from "./shellPullRequests.ts";
 import {
@@ -105,8 +104,10 @@ export const makeEnvironmentShellState = Effect.fn("EnvironmentShellState.make")
     status: shellStatusForSnapshot(cachedSnapshot),
   });
   const awaitingCompletion = yield* Ref.make(false);
-  const lastAuthoritativeSession = yield* Ref.make<RpcSession | null>(null);
-  const activeSubscriptionSession = yield* Ref.make<RpcSession | null>(null);
+  // The omission options of the subscription whose snapshot the in-memory
+  // shell last came from; null while it holds only cached data.
+  const authoritativeOmission = yield* Ref.make<string | null>(null);
+  const activeSubscriptionOmission = yield* Ref.make<string | null>(null);
   const latestLiveSnapshot = yield* Ref.make<Option.Option<OrchestrationV2ShellSnapshot>>(
     Option.none(),
   );
@@ -274,9 +275,9 @@ export const makeEnvironmentShellState = Effect.fn("EnvironmentShellState.make")
     }
     yield* SubscriptionRef.set(state, next);
     if (receivedSnapshot) {
-      const session = yield* Ref.get(activeSubscriptionSession);
-      if (session !== null) {
-        yield* Ref.set(lastAuthoritativeSession, session);
+      const omission = yield* Ref.get(activeSubscriptionOmission);
+      if (omission !== null) {
+        yield* Ref.set(authoritativeOmission, omission);
       }
     }
     if (next.snapshot !== initial.snapshot && Option.isSome(next.snapshot)) {
@@ -362,7 +363,6 @@ export const makeEnvironmentShellState = Effect.fn("EnvironmentShellState.make")
     subscribeDynamic(
       ORCHESTRATION_V2_WS_METHODS.subscribeShell,
       Effect.fn("EnvironmentShellState.makeSubscribeInput")(function* (session) {
-        yield* Ref.set(activeSubscriptionSession, session);
         const { omitIdleSubagents, omitOlderSettled } = yield* session.initialConfig.pipe(
           Effect.map((config) => ({
             omitIdleSubagents: config.shellThreadFamilies === true,
@@ -371,13 +371,16 @@ export const makeEnvironmentShellState = Effect.fn("EnvironmentShellState.make")
           })),
           Effect.orElseSucceed(() => ({ omitIdleSubagents: false, omitOlderSettled: false })),
         );
+        const omissionKey = `${omitIdleSubagents}:${omitOlderSettled}`;
+        yield* Ref.set(activeSubscriptionOmission, omissionKey);
         yield* Ref.set(awaitingCompletion, true);
         yield* setSynchronizing;
 
-        // Foreground resubscriptions on the same live session can resume from
-        // the in-memory cursor. A new session reloads the authoritative HTTP
-        // snapshot so a valid cursor cannot preserve incomplete cached data.
-        const hasAuthoritativeSnapshot = (yield* Ref.get(lastAuthoritativeSession)) === session;
+        // A shell that came from a server snapshot resumes from its in-memory
+        // cursor, on this session or a new one. Cached data, or a snapshot taken
+        // with other omissions, reloads the authoritative HTTP snapshot so a
+        // valid cursor cannot preserve incomplete data.
+        const hasAuthoritativeSnapshot = (yield* Ref.get(authoritativeOmission)) === omissionKey;
         let canResume = hasAuthoritativeSnapshot;
         let current = yield* SubscriptionRef.get(state);
         if (!hasAuthoritativeSnapshot || Option.isNone(current.snapshot)) {
