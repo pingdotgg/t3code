@@ -100,7 +100,16 @@ export const linkCommand = Effect.fn("cli.install.link_command")(function* (inpu
   const kind = yield* classifyCommandLink(input.link, input.baseDir);
   if (kind === "foreign") return false;
   const commandLink = pinnedRuntimeCommandLink(path, input.baseDir);
-  // Inside the T3 home, so swapping it in place cannot replace another program's file.
+  // Inside the T3 home, so swapping it in place cannot replace another program's file. Still,
+  // only a link is ever replaced there.
+  if (
+    Option.isNone(yield* fs.readLink(commandLink).pipe(Effect.option)) &&
+    (yield* fs.exists(commandLink))
+  ) {
+    return yield* new CliInstallError({
+      reason: `${commandLink} is not a link. Remove it, then run this again.`,
+    });
+  }
   const staging = `${commandLink}.${process.pid}.tmp`;
   yield* fs
     .remove(staging, { force: true })

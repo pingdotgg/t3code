@@ -173,6 +173,30 @@ describe.skipIf(HostProcess.Platform.defaultValue() !== "linux")("install.sh t3 
         `printf '\\n%s\\n' 'export PATH="$PATH:$HOME/bin"' >> ~/.zshrc`,
       );
 
+      // A version folder that is another tool's folder only looks like ours.
+      await NodeFSP.rm(link);
+      await NodeFSP.mkdir(NodePath.join(root, "tool"));
+      await NodeFSP.writeFile(NodePath.join(root, "tool/t3"), "#!/bin/sh\n");
+      await NodeFSP.symlink(
+        NodePath.join(root, "tool"),
+        NodePath.join(home, "runtime/versions/0.9.0"),
+      );
+      await NodeFSP.symlink(NodePath.join(home, "runtime/versions/0.9.0/t3"), link);
+      const borrowed = await installOver({ script: "install.sh", home, binDir });
+      expect(borrowed.code).not.toBe(0);
+      expect(await NodeFSP.readlink(link)).toBe(NodePath.join(home, "runtime/versions/0.9.0/t3"));
+
+      // Only a link is ever replaced at the command link, even inside the T3 home.
+      const commandLink = NodePath.join(home, "runtime/t3");
+      await NodeFSP.rm(commandLink, { force: true });
+      await NodeFSP.writeFile(commandLink, "mine\n");
+      const notLink = await installOver({ script: "install.sh", home, binDir });
+      expect(notLink.code).not.toBe(0);
+      expect(await NodeFSP.readFile(commandLink, "utf8")).toBe("mine\n");
+      await NodeFSP.rm(commandLink);
+      await NodeFSP.rm(link);
+      await NodeFSP.symlink(NodePath.join(home, "runtime/versions/1.0.0/t3"), link);
+
       // Containers and CI often have no SHELL; `set -u` must not stop the installer there.
       const noShell = await installOver({
         script: "install.sh",

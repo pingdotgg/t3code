@@ -94,6 +94,16 @@ it.layer(NodeServices.layer)("t3 install", (it) => {
       yield* fs.symlink(path.join(runtimeDir, "versions/0.0.1/node"), link);
       const sibling = yield* provide(installCli()).pipe(Effect.flip);
       assert.include(sibling.message, "Another t3 is already at");
+      // Only a link is ever replaced at the command link, even inside the T3 home.
+      yield* fs.remove(link);
+      yield* fs.symlink(older, link);
+      yield* fs.remove(commandLink);
+      yield* fs.writeFileString(commandLink, "mine\n");
+      assert.include((yield* provide(installCli()).pipe(Effect.flip)).message, "Could not link");
+      assert.equal(yield* fs.readFileString(commandLink), "mine\n");
+      assert.equal(yield* fs.readLink(link), older);
+      yield* fs.remove(commandLink);
+
       // A relative older link still resolves the same once moved aside.
       const rootLink = path.join(root, "t3");
       yield* fs.symlink(`.t3/runtime/versions/${VERSION}/t3`, rootLink);

@@ -248,30 +248,33 @@ version_t3() {
   case "$1" in "$2"/*) ;; *) return 1 ;; esac
   case "${1#"$2"/}" in */*/*) return 1 ;; */t3) return 0 ;; *) return 1 ;; esac
 }
+real_desktop_launcher=
+if real_bin="$(CDPATH='' cd -P -- "${t3_home}/bin" 2>/dev/null && pwd)"; then
+  real_desktop_launcher="${real_bin}/t3"
+fi
 # Prints what the link at $1 is to this home: current (its command link), older (a version's t3
 # or the desktop app's launcher), or nothing. Anything that is not a symlink is someone else's.
 link_kind() {
   [ -L "$1" ] || return 0
   existing="$(readlink "$1" 2>/dev/null || true)"
+  # A target naming a folder (t3/, t3/.) never runs the file it would resolve to.
+  case "$existing" in "" | . | .. | */ | */. | */..) return 0 ;; esac
   case "$existing" in /*) ;; *) existing="${bin_dir}/${existing}" ;; esac
-  # Through a symlinked T3 home the link text names the alias; resolve its folder to compare.
-  existing_dir="$(CDPATH='' cd -P -- "$(dirname -- "$existing")" 2>/dev/null && pwd || true)"
-  real_existing="${existing_dir}/${existing##*/}"
-  # The text alone counts only without . or .. segments (a pruned version leaves a dangling link).
-  case "$existing" in
-    */./* | */../* | */. | */..) ;;
-    "$command_link") echo current; return 0 ;;
-    "${t3_home}/bin/t3") echo older; return 0 ;;
-    *)
-      if version_t3 "$existing" "$versions_dir" || version_t3 "$existing" "$real_versions_dir"; then
-        echo older; return 0
-      fi
-      ;;
-  esac
-  [ -n "$existing_dir" ] || return 0
-  if [ "$real_existing" = "$real_command_link" ]; then echo current
-  elif version_t3 "$real_existing" "$real_versions_dir"; then echo older
+  # Resolved on disk, which sees through a symlinked T3 home and follows `..` as the OS does.
+  if existing_dir="$(CDPATH='' cd -P -- "$(dirname -- "$existing")" 2>/dev/null && pwd)"; then
+    real_existing="${existing_dir}/${existing##*/}"
+    if [ "$real_existing" = "$real_command_link" ]; then echo current
+    elif [ "$real_existing" = "$real_desktop_launcher" ] || version_t3 "$real_existing" "$real_versions_dir"; then
+      echo older
+    fi
+    return 0
   fi
+  # Only a gone folder (a pruned version) leaves the text, and only without . or .. segments.
+  case "$existing" in
+    */./* | */../*) ;;
+    "${t3_home}/bin/t3") echo older ;;
+    *) if version_t3 "$existing" "$versions_dir" || version_t3 "$existing" "$real_versions_dir"; then echo older; fi ;;
+  esac
 }
 kind=
 real_public="$(CDPATH='' cd -P -- "$bin_dir" && pwd)/t3"
@@ -282,7 +285,11 @@ elif [ -e "$public" ] || [ -L "$public" ]; then
   kind="$(link_kind "$public")"
   [ -n "$kind" ] || fail "another t3 is already at ${public}. Remove it and run this again, or run ${target_dir}/t3 directly."
 fi
-# Inside the T3 home, so swapping it in place cannot replace another program's file.
+# Inside the T3 home, so swapping it in place cannot replace another program's file. Still,
+# only a link is ever replaced there.
+if [ -e "$command_link" ] && [ ! -L "$command_link" ]; then
+  fail "${command_link} is not a link. Remove it and run this again."
+fi
 rm -f "${command_link}.$$.tmp"
 if ! { ln -s "${target_dir}/t3" "${command_link}.$$.tmp" && mv -f "${command_link}.$$.tmp" "$command_link"; }; then
   rm -f "${command_link}.$$.tmp"

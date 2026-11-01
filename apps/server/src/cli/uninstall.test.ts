@@ -59,6 +59,11 @@ it.layer(NodeServices.layer)("t3 uninstall launcher", (it) => {
       yield* fs.symlink(path.join(root, "other/runtime/inner"), hop);
       yield* fs.symlink(`${hop}/../versions/1.0.0/t3`, hopped);
       assert.isUndefined(yield* findOwnedLauncher({ launchedAs: hopped, versionsDir }));
+      // A version folder that is itself another tool's folder only looks like ours.
+      yield* fs.symlink(path.dirname(otherExe), path.join(versionsDir, "2.0.0"));
+      const borrowed = path.join(root, "bin/t3-borrowed");
+      yield* fs.symlink(path.join(versionsDir, "2.0.0/t3"), borrowed);
+      assert.isUndefined(yield* findOwnedLauncher({ launchedAs: borrowed, versionsDir }));
       assert.isUndefined(yield* findOwnedLauncher({ launchedAs: theirs, versionsDir }));
       assert.isUndefined(yield* findOwnedLauncher({ launchedAs: copy, versionsDir }));
       assert.isUndefined(yield* findOwnedLauncher({ launchedAs: undefined, versionsDir }));

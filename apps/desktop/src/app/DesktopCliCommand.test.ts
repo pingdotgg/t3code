@@ -187,6 +187,12 @@ it.layer(NodeServices.layer)("DesktopCliCommand", (it) => {
       yield* fs.symlink(managed, path.join(home, "bin", "t3"));
       yield* command.uninstall;
       expect(yield* fs.readLink(path.join(home, "bin", "t3"))).toBe(managed);
+      // A target that names a folder never runs the launcher, so it is not this app's.
+      const asFolder = `${path.join(home, ".t3", "bin", "t3")}/.`;
+      yield* fs.remove(path.join(home, "bin", "t3"));
+      yield* fs.symlink(asFolder, path.join(home, "bin", "t3"));
+      yield* command.uninstall;
+      expect(yield* fs.readLink(path.join(home, "bin", "t3"))).toBe(asFolder);
 
       const launcher = path.join(home, ".t3", "bin", "t3");
       yield* fs.writeFileString(launcher, "npm's t3\n");

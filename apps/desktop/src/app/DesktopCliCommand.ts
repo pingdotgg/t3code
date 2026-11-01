@@ -99,8 +99,10 @@ export const make = Effect.gen(function* () {
 
   const isOurLink = Effect.fn("DesktopCliCommand.isOurLink")(
     function* (link: string) {
-      // Only a direct link: a chain through another tool's link is that tool's.
-      const target = path.resolve(path.dirname(link), yield* fs.readLink(link));
+      // Only a direct link: a chain through another tool's link is that tool's. Unnormalized,
+      // so a target the OS would refuse (`t3/.`) fails here too.
+      const text = yield* fs.readLink(link);
+      const target = path.isAbsolute(text) ? text : `${path.dirname(link)}${path.sep}${text}`;
       if (Option.isSome(yield* fs.readLink(target).pipe(Effect.option))) return false;
       // The launcher is a few KB; never read a large binary another `t3` links to.
       const info = yield* fs.stat(target);

@@ -399,8 +399,8 @@ export function launcherOwnsVersionsDir(
 
 /**
  * Where the symlink at `link` points, not following that target any further: the target with its
- * folder resolved on disk, which sees through a symlinked T3 home, and, for a dangling link, its
- * text when it has no `.` or `..`. Empty for a non-link.
+ * folder resolved on disk, which sees through a symlinked T3 home. Only when that folder is gone
+ * (a pruned version) does the text count, and only without `.` or `..`. Empty for a non-link.
  */
 export const directLinkTargets = Effect.fn("cloud.pinned_runtime.direct_link_targets")(function* (
   link: string,
@@ -418,8 +418,9 @@ export const directLinkTargets = Effect.fn("cloud.pinned_runtime.direct_link_tar
     Effect.map((directory) => [path.join(directory, path.basename(raw))]),
     Effect.orElseSucceed(() => []),
   );
+  if (physical.length > 0) return physical;
   const plain = !text.value.split(/[\\/]/).some((part) => part === "." || part === "..");
-  return plain ? [path.resolve(raw), ...physical] : physical;
+  return plain ? [path.resolve(raw)] : [];
 });
 
 /** Whether `candidate` is a version's own executable, `<versionsDir>/<version>/t3[.exe]`. */
