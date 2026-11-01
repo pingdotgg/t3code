@@ -15,8 +15,18 @@
   "types": "./index.ts",
   "react-native": "./index.ts",
   "peerDependencies": {
+    "@types/react": "*",
+    "@types/react-native": "*",
     "react": "*",
     "react-native": "*"
+  },
+  "peerDependenciesMeta": {
+    "@types/react": {
+      "optional": true
+    },
+    "@types/react-native": {
+      "optional": true
+    }
   },
   "codegenConfig": {
     "name": "T3SourceTextSpec",

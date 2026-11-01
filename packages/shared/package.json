@@ -3,6 +3,11 @@
   "private": true,
   "type": "module",
   "exports": {
+    "./pnpmVirtualStore": {
+      "types": "./src/pnpmVirtualStore.ts",
+      "import": "./src/pnpmVirtualStore.ts",
+      "require": "./src/pnpmVirtualStore.ts"
+    },
     "./changedFileKind": {
       "types": "./src/changedFileKind.ts",
       "import": "./src/changedFileKind.ts"
