@@ -2032,8 +2032,9 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
             lastRunOrdinal: turnInput.runOrdinal,
           });
           yield* updateSession("running");
-          const held = wake;
-          wake = undefined;
+          // Compaction cannot join a running wake, so the wake stays held for its continuation.
+          const held = compact ? undefined : wake;
+          if (held) wake = undefined;
           if (continuation && !held) return yield* finish(turn, "completed");
           if (held && !continuation) turn.joined.add(held.nativeId);
           for (const [method, data] of held?.events ?? [])
