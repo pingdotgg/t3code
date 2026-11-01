@@ -1,8 +1,10 @@
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
+import * as PlatformError from "effect/PlatformError";
 import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
+import * as Sink from "effect/Sink";
 import * as Stdio from "effect/Stdio";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
@@ -737,6 +739,43 @@ it.layer(NodeServices.layer)("effect-codex-app-server protocol", (it) => {
         }),
       );
       assert.instanceOf(failure, CodexError.CodexAppServerInputStreamEndedError);
+    }),
+  );
+
+  it.effect("fails pending requests when a write fails while input stays open", () =>
+    Effect.gen(function* () {
+      const { stdio: baseStdio } = yield* makeInMemoryStdio();
+      const writeFailure = PlatformError.systemError({
+        _tag: "Unknown",
+        module: "Stdio",
+        method: "stdout",
+        cause: new Error("EPIPE"),
+      });
+      const terminated = yield* Deferred.make<CodexError.CodexAppServerError>();
+      const transport = yield* CodexProtocol.makeCodexAppServerPatchedProtocol({
+        stdio: Stdio.make({
+          args: baseStdio.args,
+          stdin: baseStdio.stdin,
+          stdout: () => Sink.forEach(() => Effect.fail(writeFailure)),
+          stderr: baseStdio.stderr,
+        }),
+        onTermination: (error) => Deferred.succeed(terminated, error).pipe(Effect.asVoid),
+      });
+      const pending = yield* transport.request("thread/read", {}).pipe(Effect.forkScoped);
+
+      const failure = yield* Deferred.await(terminated);
+      assert.instanceOf(failure, CodexError.CodexAppServerTransportError);
+      assert.equal(failure.operation, "write-output-stream");
+      assert.strictEqual(failure.cause, writeFailure);
+      for (const request of [Fiber.join(pending), transport.request("thread/read", {})]) {
+        const requestFailure = yield* request.pipe(
+          Effect.match({
+            onFailure: (error) => error,
+            onSuccess: () => assert.fail("Expected the broken transport to reject the request"),
+          }),
+        );
+        assert.strictEqual(requestFailure, failure);
+      }
     }),
   );
 
