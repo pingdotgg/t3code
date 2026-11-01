@@ -1,0 +1,551 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta
+      name="description"
+      content="A practical plan for a personal T3 Code fork with isolated development and project, prompt, subagent, and Bitbucket improvements."
+    />
+    <title>T3 Code Fork Plan</title>
+    <style>
+      :root {
+        color-scheme: light dark;
+        --bg: #f5f7fb;
+        --paper: #fff;
+        --ink: #172033;
+        --muted: #5b667a;
+        --line: #dce3ee;
+        --accent: #635bdb;
+        --soft: #eeedff;
+        --good: #087f65;
+      }
+      @media (prefers-color-scheme: dark) {
+        :root {
+          --bg: #0e1420;
+          --paper: #151e2c;
+          --ink: #e9eef8;
+          --muted: #a6b2c7;
+          --line: #2b394d;
+          --accent: #aaa4ff;
+          --soft: #272546;
+          --good: #54d6b1;
+        }
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        background: var(--bg);
+        color: var(--ink);
+        font:
+          16px/1.62 system-ui,
+          -apple-system,
+          "Segoe UI",
+          sans-serif;
+      }
+      .shell {
+        display: grid;
+        grid-template-columns: 260px minmax(0, 850px);
+        gap: 38px;
+        max-width: 1200px;
+        margin: auto;
+        padding: 44px 28px 80px;
+      }
+      nav {
+        position: sticky;
+        top: 24px;
+        align-self: start;
+        padding: 20px;
+        border: 1px solid var(--line);
+        border-radius: 16px;
+        background: var(--paper);
+      }
+      nav strong {
+        display: block;
+        margin-bottom: 10px;
+      }
+      nav a {
+        display: block;
+        padding: 5px 0;
+        color: var(--muted);
+        text-decoration: none;
+        font-size: 14px;
+      }
+      nav a:hover,
+      a {
+        color: var(--accent);
+      }
+      main {
+        min-width: 0;
+      }
+      header {
+        padding: 34px;
+        border-radius: 22px;
+        color: #fff;
+        background: linear-gradient(130deg, #25234e, #635bdb 65%, #8a84f0);
+        box-shadow: 0 14px 40px #29246724;
+      }
+      header p {
+        max-width: 700px;
+        color: #ebeaff;
+      }
+      .eyebrow {
+        font-size: 12px;
+        text-transform: uppercase;
+        letter-spacing: 0.13em;
+        font-weight: 700;
+        opacity: 0.8;
+      }
+      h1 {
+        margin: 0.25em 0;
+        font-size: clamp(34px, 6vw, 54px);
+        line-height: 1.08;
+        letter-spacing: -0.04em;
+      }
+      h2 {
+        margin: 0 0 14px;
+        font-size: 27px;
+        letter-spacing: -0.025em;
+      }
+      h3 {
+        margin: 22px 0 7px;
+        font-size: 18px;
+      }
+      section {
+        margin-top: 26px;
+        padding: 28px 32px;
+        border: 1px solid var(--line);
+        border-radius: 18px;
+        background: var(--paper);
+      }
+      p,
+      li {
+        color: var(--muted);
+      }
+      strong {
+        color: var(--ink);
+      }
+      ul,
+      ol {
+        padding-left: 23px;
+      }
+      li {
+        padding: 3px 0;
+      }
+      code {
+        padding: 0.12em 0.38em;
+        border-radius: 5px;
+        background: var(--soft);
+        color: var(--ink);
+        font:
+          0.9em ui-monospace,
+          SFMono-Regular,
+          Consolas,
+          monospace;
+      }
+      .callout {
+        margin: 18px 0;
+        padding: 16px 18px;
+        border-left: 4px solid var(--accent);
+        border-radius: 8px;
+        background: var(--soft);
+      }
+      .done {
+        color: var(--good);
+      }
+      .meta {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        margin-top: 22px;
+      }
+      .tag {
+        padding: 5px 10px;
+        border: 1px solid #ffffff55;
+        border-radius: 999px;
+        font-size: 13px;
+      }
+      footer {
+        padding: 22px 4px;
+        color: var(--muted);
+        font-size: 13px;
+      }
+      @media (max-width: 800px) {
+        .shell {
+          display: block;
+          padding: 18px 14px 50px;
+        }
+        nav {
+          position: static;
+          margin-bottom: 18px;
+        }
+        header,
+        section {
+          padding: 23px;
+        }
+      }
+      @media print {
+        :root {
+          color-scheme: light;
+          --bg: #fff;
+          --paper: #fff;
+          --ink: #111;
+          --muted: #333;
+          --line: #bbb;
+        }
+        .shell {
+          display: block;
+          max-width: none;
+          padding: 0;
+        }
+        nav {
+          display: none;
+        }
+        header {
+          color: #111;
+          background: #eee;
+          box-shadow: none;
+        }
+        header p {
+          color: #333;
+        }
+        section {
+          break-inside: avoid;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="shell">
+      <nav aria-label="Plan sections">
+        <strong>Plan contents</strong>
+        <a href="#overview">Overview</a>
+        <a href="#phase-0">0 · Fork and remotes</a>
+        <a href="#phase-1">1 · Isolated development</a>
+        <a href="#phase-2">2 · Project sidebar</a>
+        <a href="#phase-3">3 · Prompt index</a>
+        <a href="#phase-4">4 · Subagent tree</a>
+        <a href="#phase-5">5 · Bitbucket via bkt</a>
+        <a href="#phase-6">6 · Integration</a>
+        <a href="#sequence">Dependencies and assumptions</a>
+      </nav>
+      <main>
+        <header id="overview">
+          <div class="eyebrow">Personal fork · implementation roadmap</div>
+          <h1>T3 Code Fork Plan</h1>
+          <p>
+            A maintainable fork with a contained development setup and focused improvements to
+            project navigation, long-thread retrieval, subagent inspection, and Bitbucket
+            authentication.
+          </p>
+          <div class="meta">
+            <span class="tag">Upstream-syncable</span><span class="tag">Container-first</span
+            ><span class="tag">Local-state isolated</span
+            ><span class="tag">Four product goals</span>
+          </div>
+        </header>
+
+        <section>
+          <h2>Goals and acceptance criteria</h2>
+          <ol>
+            <li>
+              Keep a repeatable path for bringing upstream changes into the personal fork without
+              losing custom work.
+            </li>
+            <li>
+              Run development in a container with its own dependencies, credential boundary, and T3
+              state. Do not use the normal T3 installation or live data.
+            </li>
+            <li>
+              Make projects the sidebar's primary level; expand a project to find its threads,
+              including projects with no active threads.
+            </li>
+            <li>
+              Provide an at-a-glance index of user prompts inside a thread; selecting one jumps to
+              the prompt and its response.
+            </li>
+            <li>
+              Show parent agents and nested subagents with status in the Agents view. Selecting a
+              child opens its own full inspection view, including attributable changes and diff when
+              available.
+            </li>
+            <li>
+              Use the existing <code>bkt</code> CLI login for Bitbucket API workflows, without a
+              separate T3 Bitbucket credential. Keep Git transport authentication separate.
+            </li>
+          </ol>
+          <div class="callout">
+            <strong>Checkout snapshot:</strong> this folder is currently on <code>main</code>,
+            tracking <code>origin/main</code>; <code>origin</code> points to the official T3
+            repository and no personal fork remote exists yet. The stack is a TypeScript monorepo
+            with Vite+, pnpm, Node 26, and some Rust/native tooling. There is no Python project
+            manifest or <code>uv.lock</code>; Python files are utility/build scripts.
+          </div>
+        </section>
+
+        <section id="phase-0">
+          <h2>Phase 0 — establish the fork and upstream workflow</h2>
+          <ol>
+            <li>
+              Create a GitHub fork of <code>pingdotgg/t3code</code> under the intended account or
+              organization.
+            </li>
+            <li>
+              Set <code>origin</code> to the personal fork and add <code>upstream</code> for
+              <code>https://github.com/pingdotgg/t3code.git</code>. Verify fetch/push URLs and
+              tracking before any push.
+            </li>
+            <li>
+              Keep local <code>main</code> aligned with <code>upstream/main</code>; make custom
+              changes on named feature branches. Keep UI, subagent, and Bitbucket work in focused
+              branches/commits.
+            </li>
+            <li>
+              Sync routinely: fetch, inspect upstream changes, merge or rebase them into the fork
+              integration branch, resolve conflicts, and run affected checks. Avoid force-pushing
+              shared branches; record known-good integration points.
+            </li>
+            <li>
+              Record the starting upstream SHA and verify a clean build/start in the isolated
+              environment. Do not publish binaries or open an upstream PR unless separately
+              requested.
+            </li>
+          </ol>
+          <p class="done">
+            <strong>Done when:</strong> remotes clearly separate personal fork from upstream, the
+            sync routine is documented, and custom work is not done directly on upstream-tracking
+            <code>main</code>.
+          </p>
+        </section>
+
+        <section id="phase-1">
+          <h2>Phase 1 — isolate the development environment</h2>
+          <ol>
+            <li>
+              Use the repository's Dev Container by default. It provisions Ubuntu, Node 26, Rust,
+              Vite+ (<code>vp</code>), and the pnpm workspace dependencies. Dependency volumes stay
+              in Docker; the host does not need the T3 toolchain globally.
+            </li>
+            <li>
+              Keep runtime state under the checkout's ignored <code>.t3</code> directory. Disable DB
+              seeding for the first start (<code>T3CODE_DEV_SEED=0</code> or <code>--no-seed</code>)
+              so no personal data is copied. Start with synthetic data and the free
+              <code>Replay (dev)</code> provider.
+            </li>
+            <li>
+              Keep <code>.env</code>, credentials, and pairing URLs out of Git. Do not connect the
+              dev server to production T3 Connect or production credentials by default. If
+              credentials become necessary, use a separate test account and minimum scopes.
+            </li>
+            <li>
+              Defer host-only Electron GUI and mobile native builds; begin with web/server
+              development.
+            </li>
+            <li>
+              Do not add <code>uv</code> merely to imitate a Python virtual environment. There is no
+              current Python package/dependency project. If a maintained Python tool later gains
+              external dependencies, give that tool its own <code>pyproject.toml</code>,
+              <code>uv.lock</code>, and project-local <code>.venv</code>, or run it in the
+              container. Keep Blender asset scripts tied to their documented Blender runtime.
+            </li>
+          </ol>
+          <p class="done">
+            <strong>Done when:</strong> a fresh container starts web/server T3 with state in
+            <code>.t3</code>, requires no global Node/pnpm/vp on the host, and cannot read or mutate
+            normal T3 userdata or credentials.
+          </p>
+        </section>
+
+        <section id="phase-2">
+          <h2>Phase 2 — project-first sidebar</h2>
+          <ol>
+            <li>
+              Inspect sidebar code and project/thread query contracts; reuse existing grouping and
+              ordering where possible.
+            </li>
+            <li>
+              Make projects stable top-level rows. Expand/collapse each project for its threads.
+              Define findable homes for pinned, archived, settled, snoozed, and no-project threads.
+            </li>
+            <li>
+              Show projects even when they have no active threads; add counts/status where useful.
+              Preserve keyboard navigation, search, responsive layouts, and existing actions.
+            </li>
+            <li>
+              Keep the change presentational unless the server demonstrably lacks required metadata.
+            </li>
+          </ol>
+          <p class="done">
+            <strong>Acceptance:</strong> all configured projects are discoverable; expanding one
+            reveals its threads; selecting a thread opens its conversation; empty/archived projects
+            and no-project threads have intentional access paths; wide and narrow layouts work.
+          </p>
+        </section>
+
+        <section id="phase-3">
+          <h2>Phase 3 — prompt index inside a thread</h2>
+          <ol>
+            <li>
+              Reuse message history, search, and timeline/minimap data. Build a compact outline of
+              user-authored prompts with a readable preview and optional time/order.
+            </li>
+            <li>
+              Selecting a prompt scrolls to the user message and its corresponding assistant answer.
+              Handle long prompts, attachments, queued/steered messages, and multiple assistant/tool
+              messages without listing tools as prompts.
+            </li>
+            <li>
+              Make the outline easy to open and dismiss without permanently taking chat space.
+              Preserve keyboard and mobile usability. Choose side panel, popover, or minimap
+              extension after inspecting the UI.
+            </li>
+            <li>
+              Keep search for known keywords; the index is for scanning prior questions, especially
+              advice-only threads.
+            </li>
+          </ol>
+          <p class="done">
+            <strong>Acceptance:</strong> long threads expose scannable user prompts; choosing one
+            reliably lands at the prompt/answer pair; navigation state is predictable; no
+            schema/server change unless data gaps require it.
+          </p>
+        </section>
+
+        <section id="phase-4">
+          <h2>Phase 4 — Agents tree and full subagent inspection</h2>
+          <ol>
+            <li>
+              Trace Agents-view lineage, status, and activity data. Identify provider capability
+              differences before changing the UI.
+            </li>
+            <li>
+              Add expandable parent rows with nested subagents and clear live/terminal statuses.
+              Avoid duplicating expanded children as peers; keep a way to locate a child directly.
+            </li>
+            <li>
+              Selecting a child opens its own inspection view: prompt/task, messages, tool/activity
+              timeline, status, files, and diff where attributable.
+            </li>
+            <li>
+              Keep controls accurate: stop/cancel targets the selected execution. If a child cannot
+              accept messages, direct the user back to its parent instead of showing a misleading
+              composer.
+            </li>
+            <li>
+              Check whether checkpoints/worktrees provide child-level changes. If a child shares a
+              checkout or a provider does not report separate changes, do not present the parent's
+              aggregate diff as the child's work. Determine whether server attribution/checkpoints
+              need extension.
+            </li>
+          </ol>
+          <p class="done">
+            <strong>Acceptance:</strong> hierarchy/status are clear at a glance; a child is one
+            click away; attributable changes show when supported; unsupported attribution is
+            explicit; lifecycle controls stay correct.
+          </p>
+        </section>
+
+        <section id="phase-5">
+          <h2>Phase 5 — Bitbucket through <code>bkt</code></h2>
+          <ol>
+            <li>
+              Audit <code>packages/source-control-bitbucket</code> and the source-control contract:
+              repo/PR listing, create/update, reviews/comments/status, identity checks, pagination,
+              Cloud/DC, and errors. Map each operation to a supported
+              <code>bkt</code> command/output.
+            </li>
+            <li>
+              Add a CLI-backed adapter on the T3 server environment. Use <code>bkt</code>'s existing
+              auth/keyring/context; never copy raw credentials into T3's secret store or logs.
+              Detect executable/version/host/context/auth and explain missing setup in Settings.
+            </li>
+            <li>
+              Keep Git transport separate: <code>bkt</code> API auth does not itself configure
+              SSH/HTTPS clone, fetch, or push. Preserve normal Git credential-helper/SSH behavior.
+            </li>
+            <li>
+              Match existing Bitbucket capabilities where supported; report unsupported actions
+              instead of silently reverting to the old token flow. Confirm Cloud scope; include Data
+              Center only if needed.
+            </li>
+            <li>
+              Add executable-path configuration only if discovery requires it. The CLI path must not
+              require Premium-only token setup in T3.
+            </li>
+          </ol>
+          <p class="done">
+            <strong>Acceptance:</strong> an already-authenticated <code>bkt</code> user can use
+            supported T3 Bitbucket workflows without entering a token into T3; credentials remain in
+            bkt storage; errors are actionable; Git continues to use its own credentials; no unsafe
+            fallback exists.
+          </p>
+        </section>
+
+        <section id="phase-6">
+          <h2>Phase 6 — integration, verification, and maintenance</h2>
+          <ol>
+            <li>
+              Integrate focused branches into the fork as each feature is reviewable. Sync upstream
+              routinely instead of allowing long divergence.
+            </li>
+            <li>
+              Use focused checks for changed areas, not repo-wide checks unless requested. Review
+              web changes in an integrated client. Use synthetic data and Replay; use a dedicated
+              Bitbucket test repo/context for API verification.
+            </li>
+            <li>
+              Capture before/after evidence for sidebar, prompt index, and Agents view. Document
+              provider limits and the bkt version/commands used.
+            </li>
+            <li>
+              Update user docs after behavior/settings settle. Keep fork-specific planning separate
+              from upstream product docs.
+            </li>
+          </ol>
+          <p>
+            <strong>Release gate:</strong> fresh-container setup works; all four product goals meet
+            acceptance criteria; scoped checks pass; no live userdata, credentials, repositories, or
+            Bitbucket projects were changed; upstream sync has been tested.
+          </p>
+        </section>
+
+        <section id="sequence">
+          <h2>Dependencies and assumptions</h2>
+          <ul>
+            <li>
+              Phase 0 comes before code changes; Phase 1 comes before running/testing the fork.
+            </li>
+            <li>Phases 2 and 3 are mainly independent web/client navigation work.</li>
+            <li>
+              Phase 4 depends on confirming lineage and child-diff attribution before choosing UI
+              versus server scope.
+            </li>
+            <li>Phase 5 starts with an API/CLI capability map and keeps Git transport distinct.</li>
+            <li>
+              Assume Bitbucket Cloud because the user has working free-plan bkt auth; confirm if
+              Data Center is also in scope.
+            </li>
+            <li>
+              Prompt index lists user messages and navigates to each prompt's associated answer.
+            </li>
+            <li>
+              Subagent inspection aims for top-level richness but preserves truthful child-level
+              attribution; provider limits may prevent a per-child diff.
+            </li>
+            <li>
+              This is a personal fork first. Upstream PRs, publishing builds, production
+              connections, and writes to real Bitbucket repos are out of scope unless requested
+              later.
+            </li>
+          </ul>
+        </section>
+        <footer>
+          Standalone document: no JavaScript, remote fonts, or external runtime assets. Companion
+          agent plan: FORK_PLAN.md.
+        </footer>
+      </main>
+    </div>
+  </body>
+</html>
