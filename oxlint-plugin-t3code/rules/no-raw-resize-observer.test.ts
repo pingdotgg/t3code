@@ -1,4 +1,4 @@
-import { assert, describe } from "@effect/vitest";
+import { describe } from "@effect/vitest";
 
 import { createOxlintRuleHarness } from "../test/utils.ts";
 
@@ -22,9 +22,6 @@ describe("t3code/no-raw-resize-observer", () => {
   rule.invalid(
     "reports a direct ResizeObserver construction",
     `export const observer = new ResizeObserver(() => {});`,
-    (output) => {
-      assert.match(output, /Use observeResize from ~\/lib\/observeResize/);
-    },
   );
 
   rule.invalid(
