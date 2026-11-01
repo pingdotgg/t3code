@@ -127,13 +127,13 @@ const settings = {
 } as const;
 
 describe("PiProvider", () => {
-  it.effect("requires the first published Pi version with entries and settlement hooks", () =>
+  it.effect("requires session-scoped thinking changes", () =>
     Effect.gen(function* () {
       const snapshot = yield* checkPiProviderStatus(settings).pipe(
-        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, piProbeSpawner("0.80.3")),
+        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, piProbeSpawner("0.84.2")),
       );
       assert.equal(snapshot.status, "error");
-      assert.equal(snapshot.version, "0.80.3");
+      assert.equal(snapshot.version, "0.84.2");
       assert.include(snapshot.message ?? "", `Pi ${MINIMUM_PI_VERSION} or newer`);
     }).pipe(Effect.provide(NodeServices.layer)),
   );
@@ -234,10 +234,10 @@ describe("PiProvider", () => {
       message: "Pi default (openai/gpt-5) uses openai, which has no available models in Pi.",
     },
     {
-      label: "a pinned model on Pi without auth check",
+      label: "a pinned model on the first supported Pi release",
       version: MINIMUM_PI_VERSION,
       activeModel: { provider: "openai", id: "gpt-5" },
-      authCheck: undefined,
+      authCheck: '{"status":"not_ready","provider":"openai","reason":"provider_not_found"}',
       message: "Pi default (openai/gpt-5) uses openai, which has no available models in Pi.",
     },
     {
