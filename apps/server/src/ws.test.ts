@@ -787,7 +787,7 @@ it.effect.each(["pending", "cached"] as const)(
           resolved.config.settings,
           ServerSettings.redactServerSettingsForClient(latestSettings),
         );
-        assert.deepEqual(resolved.config.keybindings, latestKeybindings);
+        assert.deepEqual(resolved.config.keybindings, latestKeybindings.keybindings);
         yield* acknowledge;
       }
       yield* server.write(0, { _tag: "Interrupt", requestId, interruptors: [] });
