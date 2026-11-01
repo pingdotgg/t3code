@@ -41,7 +41,7 @@ jobs:
             if (context.eventName === "issue_comment") {
               const issue = context.payload.issue;
               const body = context.payload.comment?.body ?? "";
-              if (!issue?.pull_request || !body.toLowerCase().includes("/recheck-vouch")) {
+              if (!issue?.pull_request || !body.includes("/recheck-vouch")) {
                 core.setOutput("targets", "[]");
                 return;
               }
