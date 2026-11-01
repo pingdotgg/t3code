@@ -587,6 +587,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["composer rich text tiptap bold italic markdown styled wysiwyg"],
   },
   {
+    id: "thread-details-default",
+    title: "Open thread details by default",
+    to: "/settings/chat",
+    searchTerms: ["thread details card panel header project actions git new thread popover"],
+  },
+  {
     id: "send-shortcut",
     title: "Send shortcut",
     to: "/settings/chat",
