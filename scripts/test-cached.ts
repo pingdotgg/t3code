@@ -93,7 +93,10 @@ if (values.report || verifyHits > 0) {
   const cacheRoot =
     process.env.VITE_CACHE_PATH || NodePath.join(root, "node_modules/.vite/task-cache");
   const summary = readRunSummary(cacheRoot, startedAt);
-  if (!summary) console.error(`No task summary from this run in ${cacheRoot}`);
+  if (!summary) {
+    console.error(`No task summary from this run in ${cacheRoot}`);
+    process.exitCode ||= 1;
+  }
   const rank = (task: string) =>
     NodeCrypto.createHash("sha256")
       .update(
