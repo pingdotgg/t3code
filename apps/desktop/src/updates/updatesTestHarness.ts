@@ -11,6 +11,7 @@ import * as DesktopConfig from "../app/DesktopConfig.ts";
 import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
 import * as ElectronUpdater from "../electron/ElectronUpdater.ts";
 import * as ElectronWindow from "../electron/ElectronWindow.ts";
+import * as DesktopSshEnvironment from "../ssh/DesktopSshEnvironment.ts";
 import * as DesktopAppSettings from "../settings/DesktopAppSettings.ts";
 import * as DesktopState from "../app/DesktopState.ts";
 import * as DesktopUpdatePolicy from "./DesktopUpdatePolicy.ts";
@@ -134,6 +135,16 @@ export function makeHarness(options: UpdatesHarnessOptions = {}) {
     }),
     syncAllAppearance: () => Effect.void,
   } satisfies ElectronWindow.ElectronWindow["Service"]);
+
+  const layerSsh = Layer.succeed(DesktopSshEnvironment.DesktopSshEnvironment, {
+    discoverHosts: () => Effect.die("unexpected SSH host discovery"),
+    resolveHost: () => Effect.die("unexpected SSH host resolution"),
+    ensureEnvironment: () => Effect.die("unexpected SSH environment launch"),
+    disconnectEnvironment: () => Effect.die("unexpected SSH environment disconnect"),
+    stopTunnels: Effect.sync(() => {
+      installSteps.push("stopSshTunnels");
+    }),
+  } satisfies DesktopSshEnvironment.DesktopSshEnvironment["Service"]);
 
   let backendDesiredRunning = options.backendDesiredRunning ?? true;
   const stubBackendInstance: DesktopBackendPool.DesktopBackendInstance = {
@@ -276,6 +287,7 @@ export function makeHarness(options: UpdatesHarnessOptions = {}) {
     Layer.provide(DesktopUpdatePolicy.layerTest(options.policy)),
     Layer.provideMerge(layerUpdater),
     Layer.provideMerge(layerWindow),
+    Layer.provideMerge(layerSsh),
     Layer.provideMerge(layerBackend),
     Layer.provideMerge(DesktopState.layer),
     Layer.provideMerge(layerSettings),

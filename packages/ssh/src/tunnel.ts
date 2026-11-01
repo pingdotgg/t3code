@@ -70,6 +70,7 @@ export interface RemoteT3RunnerOptions {
 
 export interface SshEnvironmentManagerOptions {
   readonly resolveCliRunner?: Effect.Effect<RemoteT3RunnerOptions>;
+  readonly acceptsNewTunnels?: Effect.Effect<boolean>;
 }
 
 interface SshTunnelEntry {
@@ -141,6 +142,7 @@ export interface SshEnvironmentManagerShape {
   readonly disconnectEnvironment: (
     target: DesktopSshEnvironmentTarget,
   ) => Effect.Effect<void, SshEnvironmentEffectError, SshEnvironmentEffectContext>;
+  readonly stopTunnels: Effect.Effect<void>;
 }
 
 const RemoteLaunchResult = Schema.Struct({
@@ -1341,11 +1343,17 @@ const startSshTunnel = Effect.fn("ssh/tunnel.startSshTunnel")(function* (input: 
   return tunnelEntry;
 });
 
+const tunnelsClosedError = () =>
+  new SshLaunchError({ message: "SSH tunnels are closed while T3 Code quits.", stdout: "" });
+
 const makeSshEnvironmentManager = Effect.fn("ssh/tunnel.SshEnvironmentManager.make")(function* (
   options: SshEnvironmentManagerOptions = {},
 ): Effect.fn.Return<SshEnvironmentManagerShape, never, Scope.Scope> {
   const managerScope = yield* Scope.Scope;
   const tunnels = new Map<string, SshTunnelEntry>();
+  // Includes tunnels still waiting for readiness, which are not in `tunnels` yet.
+  const entryScopes = new Set<Scope.Closeable>();
+  const acceptsNewTunnels = options.acceptsNewTunnels ?? Effect.succeed(true);
   const targetLocks = yield* KeyedLock.make<string>();
   const authSecrets = new Map<string, string>();
 
@@ -1533,6 +1541,16 @@ const makeSshEnvironmentManager = Effect.fn("ssh/tunnel.SshEnvironmentManager.ma
       remotePort,
     });
     const entryScope = yield* Scope.make("sequential");
+    entryScopes.add(entryScope);
+    yield* Scope.addFinalizer(
+      entryScope,
+      Effect.sync(() => entryScopes.delete(entryScope)),
+    );
+    // Checked after tracking the scope, so a concurrent stopTunnels either closes it or is seen here.
+    if (!(yield* acceptsNewTunnels)) {
+      yield* Scope.close(entryScope, Exit.void);
+      return yield* tunnelsClosedError();
+    }
     const tunnelEntry = yield* runWithSshAuth({
       key: input.key,
       target: input.resolvedTarget,
@@ -1549,10 +1567,17 @@ const makeSshEnvironmentManager = Effect.fn("ssh/tunnel.SshEnvironmentManager.ma
           scope: entryScope,
         }),
     }).pipe(
+      // Closing the scope interrupts the tunnel's fibers; report that as the quit, not an interrupt.
+      Effect.catchCause((cause) =>
+        entryScopes.has(entryScope) ? Effect.failCause(cause) : Effect.fail(tunnelsClosedError()),
+      ),
       Effect.onExit((exit) =>
         Exit.isSuccess(exit) ? Effect.void : Scope.close(entryScope, Exit.void).pipe(Effect.ignore),
       ),
     );
+    if (!entryScopes.has(entryScope)) {
+      return yield* tunnelsClosedError();
+    }
     tunnels.set(input.key, tunnelEntry);
     const spawnerService = yield* ChildProcessSpawner.ChildProcessSpawner;
     const cryptoService = yield* Crypto.Crypto;
@@ -1774,7 +1799,22 @@ const makeSshEnvironmentManager = Effect.fn("ssh/tunnel.SshEnvironmentManager.ma
     );
   });
 
-  return SshEnvironmentManager.of({ ensureEnvironment, disconnectEnvironment });
+  // Update installs exit before scopes close; remote servers stay up for the relaunched app.
+  const stopTunnels = Effect.sync(() => {
+    tunnels.clear();
+    return [...entryScopes];
+  }).pipe(
+    Effect.flatMap((scopes) =>
+      Effect.forEach(scopes, (scope) => Scope.close(scope, Exit.void).pipe(Effect.ignore), {
+        concurrency: "unbounded",
+        discard: true,
+      }),
+    ),
+    Effect.uninterruptible,
+    Effect.withSpan("ssh/tunnel.stopTunnels"),
+  );
+
+  return SshEnvironmentManager.of({ ensureEnvironment, disconnectEnvironment, stopTunnels });
 });
 
 /**

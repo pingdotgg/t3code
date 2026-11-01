@@ -63,12 +63,9 @@ export class DesktopSshEnvironment extends Context.Service<
     readonly disconnectEnvironment: (
       target: DesktopSshEnvironmentTarget,
     ) => Effect.Effect<void, DesktopSshEnvironmentOperationError>;
+    readonly stopTunnels: Effect.Effect<void>;
   }
 >()("@t3tools/desktop/ssh/DesktopSshEnvironment") {}
-
-export interface DesktopSshEnvironmentLayerOptions {
-  readonly resolveCliRunner?: Effect.Effect<SshTunnel.RemoteT3RunnerOptions>;
-}
 
 function discoverDesktopSshHostsEffect(input?: { readonly homeDir?: string }) {
   return discoverSshHosts(input ?? {});
@@ -153,16 +150,11 @@ export const make = Effect.gen(function* () {
       Effect.provideService(SshAuth.SshPasswordPrompt, passwordPrompt),
       Effect.provide(runtimeContext),
     ),
+    stopTunnels: manager.stopTunnels,
   });
 });
 
-export const layer = (options: DesktopSshEnvironmentLayerOptions = {}) =>
+export const layer = (options: SshTunnel.SshEnvironmentManagerOptions = {}) =>
   Layer.effect(DesktopSshEnvironment, make).pipe(
-    Layer.provide(
-      SshTunnel.SshEnvironmentManager.layer(
-        options.resolveCliRunner === undefined
-          ? {}
-          : { resolveCliRunner: options.resolveCliRunner },
-      ),
-    ),
+    Layer.provide(SshTunnel.SshEnvironmentManager.layer(options)),
   );
