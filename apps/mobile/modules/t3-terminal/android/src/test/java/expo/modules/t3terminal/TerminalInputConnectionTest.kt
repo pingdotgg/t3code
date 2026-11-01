@@ -43,5 +43,37 @@ class TerminalInputConnectionTest {
     connection.deleteSurroundingText(1, 0)
 
     assertEquals(listOf(1, 1), deletes)
+
+    deletes.clear()
+    type("a😀")
+    connection.deleteSurroundingText(1, 0)
+    connection.deleteSurroundingText(1, 0)
+    connection.deleteSurroundingText(1, 0)
+
+    assertEquals(listOf(1, 0, 1), deletes)
+
+    deletes.clear()
+    type("a😀")
+    connection.deleteSurroundingText(1, 0)
+    connection.deleteSurroundingTextInCodePoints(1, 0)
+
+    assertEquals(listOf(1, 1), deletes)
+
+    deletes.clear()
+    type("a😀")
+    connection.deleteSurroundingText(1, 0)
+    type("b")
+    connection.deleteSurroundingText(1, 0)
+    connection.deleteSurroundingText(1, 0)
+
+    assertEquals(listOf(1, 1, 1), deletes)
+
+    deletes.clear()
+    type("x😀a")
+    sentText.removeCodePoints(1)
+    connection.deleteSurroundingText(2, 0)
+    connection.deleteSurroundingText(1, 0)
+
+    assertEquals(listOf(1, 1), deletes)
   }
 }

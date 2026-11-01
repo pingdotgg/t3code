@@ -291,6 +291,7 @@ class T3TerminalView(context: Context, appContext: AppContext) : ExpoView(contex
       if (event.action != KeyEvent.ACTION_DOWN) return@setOnKeyListener false
       when {
         keyCode == KeyEvent.KEYCODE_DEL -> {
+          sentText.removeCodePoints(1)
           onInput(mapOf("data" to "\u007F"))
           true
         }
