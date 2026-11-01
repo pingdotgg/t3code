@@ -126,7 +126,7 @@ import {
   subscribeOrchestrationV2Shell,
   subscribeOrchestrationV2Thread,
   WS_RPC_SERVER_OPTIONS,
-  withLateEditorConfig,
+  withLateConfigDiscovery,
 } from "./ws.ts";
 
 const snapshotConfig = (fields: Partial<ServerConfig>) =>
@@ -141,7 +141,7 @@ const settingsUpdated = (settings: object): ServerConfigStreamEvent => ({
 it.effect("resends late editors without rolling back updates already sent", () =>
   Effect.gen(function* () {
     const settingsSent = yield* Deferred.make<void>();
-    const events = yield* withLateEditorConfig(
+    const events = yield* withLateConfigDiscovery(
       snapshotConfig({ settings: { enableProviderUpdateChecks: true } as never }),
       Stream.make(settingsUpdated({ enableProviderUpdateChecks: false })),
       {
@@ -149,6 +149,7 @@ it.effect("resends late editors without rolling back updates already sent", () =
         resolveFileManagerRevealKind: () =>
           Deferred.await(settingsSent).pipe(Effect.as("file-explorer" as const)),
       },
+      { resolveTargets: () => Effect.succeed([]) },
     ).pipe(
       Stream.tap((event) =>
         event.type === "settingsUpdated" ? Deferred.succeed(settingsSent, undefined) : Effect.void,
@@ -170,13 +171,14 @@ it.effect("resends late editors without rolling back updates already sent", () =
 
 it.effect("resends a file manager reveal kind that missed the snapshot", () =>
   Effect.gen(function* () {
-    const events = yield* withLateEditorConfig(
+    const events = yield* withLateConfigDiscovery(
       snapshotConfig({ availableEditors: ["file-manager"] }),
       Stream.empty,
       {
         resolveAvailableEditors: () => Effect.succeed(["file-manager"]),
         resolveFileManagerRevealKind: () => Effect.succeed("file-explorer"),
       },
+      { resolveTargets: () => Effect.succeed([]) },
     ).pipe(Stream.runCollect);
 
     const [late] = Array.from(events);
@@ -568,7 +570,7 @@ const layerConfigSources = Layer.mergeAll(
 );
 
 it.effect(
-  "preserves settings during discovery and keybindings during snapshot ACK at the config RPC boundary",
+  "sends initial config before remote discovery and preserves updates through discovery and ACK",
   () =>
     Effect.gen(function* () {
       const keybindings = yield* Keybindings.Keybindings;
@@ -584,6 +586,9 @@ it.effect(
       const initialKeybindings = (yield* keybindings.getSnapshot).keybindings;
       const discoveryStarted = yield* Deferred.make<void>();
       const finishDiscovery = yield* Deferred.make<void>();
+      const remoteDiscoveryStarted = yield* Deferred.make<void>();
+      const finishRemoteDiscovery = yield* Deferred.make<void>();
+      const targets = [{ kind: "mdns" as const, host: "test.local" }];
       const responses = yield* Queue.unbounded<ServerConfigStreamEvent>();
       const configRpcServices = Layer.mergeAll(
         layerUnusedConfigRpcServices,
@@ -602,7 +607,11 @@ it.effect(
         }),
         Layer.mock(UsageLimitSources.UsageLimitSources)({ streamChanges: Stream.make([]) }),
         Layer.mock(RemoteOpenTargets.RemoteOpenTargets)({
-          resolveTargets: () => Effect.succeed([]),
+          resolveTargets: () =>
+            Deferred.succeed(remoteDiscoveryStarted, undefined).pipe(
+              Effect.andThen(Deferred.await(finishRemoteDiscovery)),
+              Effect.as(targets),
+            ),
         }),
         Layer.mock(DirectEndpoints.DirectEndpoints)({ resolve: () => Effect.succeed([]) }),
         Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
@@ -680,9 +689,15 @@ it.effect(
 
       const duringDiscovery = yield* settings.updateSettings({ defaultAutoPull: true });
       yield* Deferred.succeed(finishDiscovery, undefined);
-      const snapshot = yield* Queue.take(responses);
+      const snapshot = yield* Effect.raceFirst(
+        Queue.take(responses),
+        Deferred.await(remoteDiscoveryStarted).pipe(
+          Effect.as({ type: "discovery-blocked-snapshot" as const }),
+        ),
+      );
       assert.equal(snapshot.type, "snapshot");
       if (snapshot.type !== "snapshot") return yield* Effect.die("Missing initial snapshot");
+      assert.deepEqual(snapshot.config.remoteOpenTargets, []);
       assert.isFalse(snapshot.config.settings.defaultAutoPull);
       assert.deepEqual(snapshot.config.keybindings, initialKeybindings);
       const duringAck = yield* keybindings.upsertKeybindingRule({
@@ -719,6 +734,18 @@ it.effect(
       }
       assert.isEmpty(expectedSettings);
       assert.isEmpty(expectedKeybindings);
+      yield* Deferred.await(remoteDiscoveryStarted);
+      yield* Deferred.succeed(finishRemoteDiscovery, undefined);
+      const resolved = yield* Queue.take(responses);
+      assert.equal(resolved.type, "snapshot");
+      if (resolved.type !== "snapshot") return yield* Effect.die("Missing remote targets");
+      assert.deepEqual(resolved.config.remoteOpenTargets, targets);
+      assert.deepEqual(
+        resolved.config.settings,
+        ServerSettings.redactServerSettingsForClient(latestSettings),
+      );
+      assert.deepEqual(resolved.config.keybindings, latestKeybindings);
+      yield* acknowledge;
       yield* server.write(0, { _tag: "Interrupt", requestId, interruptors: [] });
     }).pipe(
       Effect.provide(
