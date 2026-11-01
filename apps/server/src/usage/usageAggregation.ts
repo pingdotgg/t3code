@@ -7,7 +7,7 @@ import type {
   UsageTokenTotals,
 } from "@t3tools/contracts";
 
-import { EMPTY_TOTALS, type UsageRecord } from "@t3tools/provider-core/server/usage";
+import { EMPTY_TOTALS, totalTokens, type UsageRecord } from "@t3tools/provider-core/server/usage";
 import { cacheSavingsUsd, priceUsage, type RateTable } from "./usagePricing.ts";
 
 // en-CA gives ISO-ordered parts in the requested zone; Date getters are host-local.
@@ -56,6 +56,7 @@ interface MutableBucket {
   speedPremiumUsd: number;
   records: number;
   unpricedRecords: number;
+  unpricedTokens: number;
   providerReportedRecords: number;
   sessions: Set<string>;
 }
@@ -193,7 +194,10 @@ export class UsageAggregator {
       this.#options.priceOverrides,
     );
     bucket.records += 1;
-    if (priced.costSource === "unpriced") bucket.unpricedRecords += 1;
+    if (priced.costSource === "unpriced") {
+      bucket.unpricedRecords += 1;
+      bucket.unpricedTokens += totalTokens(record.totals);
+    }
     if (priced.costSource === "providerReported") bucket.providerReportedRecords += 1;
     if (record.sessionId.length > 0) bucket.sessions.add(record.sessionId);
     return true;
@@ -242,6 +246,7 @@ export class UsageAggregator {
         speedPremiumUsd: 0,
         records: 0,
         unpricedRecords: 0,
+        unpricedTokens: 0,
         providerReportedRecords: 0,
         sessions: new Set<string>(),
       };
@@ -285,6 +290,7 @@ export class UsageAggregator {
         costSource: resolveCostSource(bucket),
         records: bucket.records,
         unpricedRecords: bucket.unpricedRecords,
+        unpricedTokens: bucket.unpricedTokens,
         sessions: bucket.sessions.size,
       });
     }

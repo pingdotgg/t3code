@@ -60,7 +60,12 @@ export function UsageModelDialog({
   const stats = [
     { label: "Cost", value: costUnknown ? "Unpriced" : formatUsd(model.costUsd) },
     { label: "Tokens", value: formatTokens(model.totalTokens) },
-    perMillion === null ? null : { label: "Per 1M tokens", value: formatUsd(perMillion) },
+    perMillion === null
+      ? null
+      : {
+          label: model.unpricedTokensEstimated ? "Per 1M tokens (estimated)" : "Per 1M tokens",
+          value: formatUsd(perMillion),
+        },
     hitRate === null ? null : { label: "Cache hit", value: formatPercent(hitRate) },
   ].filter((stat) => stat !== null);
 
@@ -138,6 +143,7 @@ export function UsageModelDialog({
         {model.unpricedTokens > 0 ? (
           <DialogFooter variant="bare" className="items-center sm:justify-between">
             <span className="text-xs text-muted-foreground">
+              {model.unpricedTokensEstimated ? "About " : ""}
               {formatTokens(model.unpricedTokens)} tokens have no known price
             </span>
             <Button onClick={onSetPrice}>Set price</Button>

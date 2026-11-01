@@ -34,6 +34,7 @@ export interface ModelTotals {
   readonly records: number;
   readonly unpricedRecords: number;
   readonly unpricedTokens: number;
+  readonly unpricedTokensEstimated: boolean;
   readonly costShare: number;
   readonly tokenShare: number;
 }
@@ -356,6 +357,7 @@ export function mergeUsage(
       records: number;
       unpricedRecords: number;
       unpricedTokens: number;
+      unpricedTokensEstimated: boolean;
     }
   >();
   const dailyAccumulator = new Map<
@@ -449,6 +451,7 @@ export function mergeUsage(
         records: 0,
         unpricedRecords: 0,
         unpricedTokens: 0,
+        unpricedTokensEstimated: false,
       };
       model.costUsd += bucket.costUsd;
       model.totalTokens += tokens;
@@ -461,8 +464,13 @@ export function mergeUsage(
       };
       model.records += bucket.records;
       model.unpricedRecords += bucket.unpricedRecords;
-      if (bucket.records > 0) {
+      if (bucket.unpricedTokens !== undefined) {
+        model.unpricedTokens += bucket.unpricedTokens;
+      } else if (bucket.records > 0) {
+        // Legacy mixed buckets cannot attribute tokens to individual records.
         model.unpricedTokens += (tokens * bucket.unpricedRecords) / bucket.records;
+        model.unpricedTokensEstimated ||=
+          bucket.unpricedRecords > 0 && bucket.unpricedRecords < bucket.records;
       }
       modelAccumulator.set(modelKey, model);
 
@@ -525,6 +533,7 @@ export function mergeUsage(
       records: totals.records,
       unpricedRecords: totals.unpricedRecords,
       unpricedTokens: totals.unpricedTokens,
+      unpricedTokensEstimated: totals.unpricedTokensEstimated,
       costShare: costUsd === 0 ? 0 : totals.costUsd / costUsd,
       tokenShare: totalTokens === 0 ? 0 : totals.totalTokens / totalTokens,
     }))
