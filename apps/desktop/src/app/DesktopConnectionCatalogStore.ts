@@ -53,8 +53,14 @@ const decodeRuntimeConnectionCatalogDocumentJsonOption = Schema.decodeOption(
   RuntimeConnectionCatalogDocumentJson,
 );
 
-// safeStorage keys the Linux keyring entry by app name, which differs between packaged and source builds.
-const LINUX_KEYRING_APPLICATIONS = ["t3code", "T3 Code (Beta)", "T3 Code (Alpha)"] as const;
+// safeStorage keys the Linux keyring entry by the startup app name: `t3code` when packaged, the
+// productName when run from apps/desktop, and `Electron` when launched with a script path.
+const LINUX_KEYRING_APPLICATIONS = [
+  "t3code",
+  "T3 Code (Beta)",
+  "T3 Code (Alpha)",
+  "Electron",
+] as const;
 const LINUX_KEYRING_PREFIX = "v11";
 
 const DesktopConnectionCatalogStoreWriteOperation = Schema.Literals([
@@ -540,6 +546,14 @@ export const make = Effect.gen(function* () {
         document.value.encryptedCatalog,
       );
       const decrypted = yield* safeStorage.decryptString(encryptedCatalog).pipe(
+        // A wrong AES-CBC key passes the padding check about once in 256 tries and yields garbage.
+        Effect.filterOrElse(
+          (plaintext) => Option.isSome(decodeRuntimeConnectionCatalogDocumentJsonOption(plaintext)),
+          (plaintext) =>
+            recoverLinuxCatalog(encryptedCatalog).pipe(
+              Effect.map(Option.getOrElse(() => plaintext)),
+            ),
+        ),
         Effect.catch((cause) =>
           recoverLinuxCatalog(encryptedCatalog).pipe(
             Effect.flatMap(

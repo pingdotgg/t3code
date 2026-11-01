@@ -44,13 +44,20 @@ const encodeLegacySavedEnvironments = Schema.encodeEffect(
     Schema.Struct({ version: Schema.Literal(1), records: Schema.Array(Schema.Unknown) }),
   ),
 );
-function layerSafeStorageFor(available: boolean, failDecrypt: Ref.Ref<boolean> | null = null) {
+function layerSafeStorageFor(
+  available: boolean,
+  failDecrypt: Ref.Ref<boolean> | null = null,
+  foreignPlaintext: string | null = null,
+) {
   return Layer.succeed(ElectronSafeStorage.ElectronSafeStorage, {
     isEncryptionAvailable: Effect.succeed(available),
     encryptString: (value) => Effect.succeed(textEncoder.encode(`encrypted:${value}`)),
     decryptString: (value) => {
       return Effect.gen(function* () {
         const decoded = textDecoder.decode(value);
+        if (!decoded.startsWith("encrypted:") && foreignPlaintext !== null) {
+          return foreignPlaintext;
+        }
         if (
           !decoded.startsWith("encrypted:") ||
           (failDecrypt !== null && (yield* Ref.get(failDecrypt)))
@@ -73,6 +80,7 @@ function layerFor(
   fileSystemLayer: Layer.Layer<FileSystem.FileSystem> = NodeServices.layer,
   platform: NodeJS.Platform = "darwin",
   keyringLayer: Layer.Layer<never> = Layer.empty,
+  foreignPlaintext: string | null = null,
 ) {
   const layerEnvironment = DesktopEnvironment.layer({
     dirname: "/repo/apps/desktop/src",
@@ -89,7 +97,7 @@ function layerFor(
       Layer.mergeAll(NodeServices.layer, DesktopConfig.layerTest({ T3CODE_HOME: baseDir })),
     ),
   );
-  const layerSafeStorage = layerSafeStorageFor(encryptionAvailable, failDecrypt);
+  const layerSafeStorage = layerSafeStorageFor(encryptionAvailable, failDecrypt, foreignPlaintext);
   const layerDependencies = Layer.mergeAll(
     layerEnvironment,
     layerSafeStorage,
@@ -151,6 +159,57 @@ const withStore = <A, E, R>(
     });
     return yield* effect.pipe(Effect.provide(layerFor(baseDir, encryptionAvailable)));
   }).pipe(Effect.provide(NodeServices.layer), Effect.scoped);
+
+const makeLinuxCatalogFixture = Effect.fn("test.makeLinuxCatalogFixture")(function* (
+  keyringPasswords: Readonly<Record<string, string>>,
+  foreignPlaintext: string | null = null,
+) {
+  const path = yield* Path.Path;
+  const fileSystem = yield* FileSystem.FileSystem;
+  const baseDir = yield* fileSystem.makeTempDirectoryScoped({
+    prefix: "t3-desktop-connection-catalog-test-",
+  });
+  const catalogPath = path.join(baseDir, "userdata", "connection-catalog.json");
+  const catalog = yield* encodeConnectionCatalog({
+    schemaVersion: 1,
+    targets: [
+      new RelayConnectionTarget({
+        environmentId: EnvironmentId.make("relay-environment"),
+        label: "Relay",
+      }),
+    ],
+    profiles: [],
+    credentials: [],
+    remoteDpopTokens: [],
+    disabledEnvironmentIds: [],
+  });
+  yield* fileSystem.makeDirectory(path.dirname(catalogPath), { recursive: true });
+  yield* fileSystem.writeFileString(
+    catalogPath,
+    yield* encodeEncryptedCatalogDocument({
+      version: 1,
+      encryptedCatalog: Base64.encode(encryptLinuxV11(catalog, "synthetic-source-password")),
+    }),
+  );
+  const store = yield* DesktopConnectionCatalogStore.DesktopConnectionCatalogStore.pipe(
+    Effect.provide(
+      layerFor(
+        baseDir,
+        true,
+        null,
+        NodeServices.layer,
+        "linux",
+        layerLinuxKeyring(keyringPasswords),
+        foreignPlaintext,
+      ),
+    ),
+  );
+  const readStoredCatalog = fileSystem.readFileString(catalogPath).pipe(
+    Effect.flatMap(decodeEncryptedCatalogDocument),
+    Effect.flatMap((document) => Effect.fromResult(Base64.decodeString(document.encryptedCatalog))),
+  );
+  return { store, catalog, catalogPath, fileSystem, readStoredCatalog };
+});
 
 describe("DesktopConnectionCatalogStore", () => {
   it.effect("persists and reads an encrypted connection catalog", () =>
@@ -354,54 +413,41 @@ describe("DesktopConnectionCatalogStore", () => {
 
   it.effect("recovers a Linux catalog encrypted under another T3 Code keyring identity", () =>
     Effect.gen(function* () {
-      const path = yield* Path.Path;
-      const fileSystem = yield* FileSystem.FileSystem;
-      const baseDir = yield* fileSystem.makeTempDirectoryScoped({
-        prefix: "t3-desktop-connection-catalog-test-",
+      const { store, catalog, readStoredCatalog } = yield* makeLinuxCatalogFixture({
+        "T3 Code (Beta)": "synthetic-source-password",
       });
-      const catalogPath = path.join(baseDir, "userdata", "connection-catalog.json");
-      const catalog = yield* encodeConnectionCatalog({
-        schemaVersion: 1,
-        targets: [
-          new RelayConnectionTarget({
-            environmentId: EnvironmentId.make("relay-environment"),
-            label: "Relay",
-          }),
-        ],
-        profiles: [],
-        credentials: [],
-        remoteDpopTokens: [],
-        disabledEnvironmentIds: [],
-      });
-      yield* fileSystem.makeDirectory(path.dirname(catalogPath), { recursive: true });
-      yield* fileSystem.writeFileString(
-        catalogPath,
-        yield* encodeEncryptedCatalogDocument({
-          version: 1,
-          encryptedCatalog: Base64.encode(encryptLinuxV11(catalog, "synthetic-source-password")),
-        }),
-      );
-      const store = yield* DesktopConnectionCatalogStore.DesktopConnectionCatalogStore.pipe(
-        Effect.provide(
-          layerFor(
-            baseDir,
-            true,
-            null,
-            NodeServices.layer,
-            "linux",
-            layerLinuxKeyring({ "T3 Code (Beta)": "synthetic-source-password" }),
-          ),
-        ),
+
+      assert.deepStrictEqual(yield* store.get, Option.some(catalog));
+      assert.equal(yield* readStoredCatalog, `encrypted:${catalog}`);
+    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+  );
+
+  it.effect("recovers a Linux catalog that the current key decrypts to garbage", () =>
+    Effect.gen(function* () {
+      const { store, catalog, readStoredCatalog } = yield* makeLinuxCatalogFixture(
+        { "T3 Code (Beta)": "synthetic-source-password" },
+        "\u0007garbage",
       );
 
       assert.deepStrictEqual(yield* store.get, Option.some(catalog));
-      const document = yield* decodeEncryptedCatalogDocument(
-        yield* fileSystem.readFileString(catalogPath),
+      assert.equal(yield* readStoredCatalog, `encrypted:${catalog}`);
+    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+  );
+
+  it.effect("leaves a Linux catalog untouched when no T3 Code keyring identity decrypts it", () =>
+    Effect.gen(function* () {
+      const { store, catalogPath, fileSystem } = yield* makeLinuxCatalogFixture({
+        t3code: "synthetic-other-password",
+      });
+      const original = yield* fileSystem.readFileString(catalogPath);
+
+      const error = yield* store.get.pipe(Effect.flip);
+      assert.instanceOf(
+        error,
+        DesktopConnectionCatalogStore.DesktopConnectionCatalogStoreProtectionError,
       );
-      assert.equal(
-        yield* Effect.fromResult(Base64.decodeString(document.encryptedCatalog)),
-        `encrypted:${catalog}`,
-      );
+      assert.equal(error.operation, "decrypt-catalog");
+      assert.equal(yield* fileSystem.readFileString(catalogPath), original);
     }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
   );
 });
