@@ -86,13 +86,6 @@ export function AndroidWorkspaceNavigation(props: {
   const rail = Boolean(props.rail);
   const floating = !rail && Boolean(props.floating);
   const tabs = [...visibleNavigationTabs(order, hidden, rail ? 5 : 4), "settings"];
-  const metrics = floatingTabsMetrics(
-    tabs.length,
-    scale,
-    fabSize,
-    props.paneWidth ?? window.width,
-    props.fillWidth,
-  );
   const { containerColor, indicatorColor, selectedColor, unselectedColor } =
     androidWorkspaceNavigationColors(colors, rail, floating);
   const selectedTab = selectedNavigationTab(
@@ -102,6 +95,11 @@ export function AndroidWorkspaceNavigation(props: {
     hidden,
     rail ? 5 : 4,
   );
+  // FloatingWorkspaceTabs starts the bar at the left inset, so a cutout narrows the room.
+  const barWidth =
+    props.paneWidth ??
+    window.width - (Math.max(insets.left, FLOATING_TABS.edge) - FLOATING_TABS.edge);
+  const metrics = floatingTabsMetrics(tabs.length, scale, fabSize, barWidth, props.fillWidth);
   if (!rail && keyboardVisible) return null;
 
   return (

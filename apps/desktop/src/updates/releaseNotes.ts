@@ -1,6 +1,6 @@
 import type { DesktopUpdateChannel, DesktopUpdateReleaseNote } from "@t3tools/contracts";
 
-import { resolveDefaultDesktopUpdateChannel } from "./updateChannels.ts";
+import { desktopUpdateChannelOf } from "@t3tools/shared/cliRelease";
 
 interface ElectronReleaseNoteInfo {
   readonly version: string;
@@ -54,17 +54,18 @@ function decodeHtmlEntities(input: string): string {
   );
 }
 
-function stripMarkup(input: string): string {
-  return decodeHtmlEntities(
+function stripMarkup(input: string, keepBold = false): string {
+  const markdown = decodeHtmlEntities(
     input
       .replace(/<br\s*\/?>/gi, "\n")
       .replace(/<li\b[^>]*>/gi, "\n- ")
       .replace(/<h([1-6])\b[^>]*>/gi, (_, level: string) => `\n${"#".repeat(Number(level))} `)
       .replace(/<\/(?:p|div|li|h[1-6]|ul|ol|blockquote)>/gi, "\n")
+      .replace(/<\/?(?:strong|b)\b[^>]*>/gi, "**")
       .replace(/<[^>]*>/g, "")
-      .replace(/\[([^\]]+)\]\([^)]+\)/g, "$1")
-      .replace(/\*\*([^*]+)\*\*/g, "$1"),
+      .replace(/\[([^\]]+)\]\([^)]+\)/g, "$1"),
   );
+  return keepBold ? markdown : markdown.replace(/\*\*([^*]+)\*\*/g, "$1");
 }
 
 function truncateReleaseNoteItem(item: string): string {
@@ -86,18 +87,57 @@ function isIgnoredReleaseNoteLine(line: string): boolean {
     normalized === "what's changed" ||
     normalized === "whats changed" ||
     normalized.startsWith("compare: ") ||
-    normalized.includes("/compare/")
+    normalized.includes("/compare/") ||
+    // The feed's HTML footer loses its compare URL to stripMarkup, leaving only the range.
+    /^full changelog: \S+\.\.\.\S+$/.test(normalized)
   );
 }
 
-interface ExtractedReleaseNoteItems {
-  readonly items: ReadonlyArray<string>;
-  readonly totalItems: number;
+type ExtractedReleaseNoteItems = Omit<DesktopUpdateReleaseNote, "version" | "releasedAt">;
+
+/** Older generated notes have a highlights paragraph followed by a separate list of fixes. */
+function extractReleaseNoteSummary(summary: string): ExtractedReleaseNoteItems {
+  let stats: string | undefined;
+  let footer: string | undefined;
+  const intro: string[] = [];
+  const items: string[] = [];
+  for (const rawLine of stripMarkup(summary, true).split("\n")) {
+    const line = rawLine
+      .trim()
+      .replace(/\s+/g, " ")
+      .replace(/\s*\((?:#\d+(?:,\s*)?)+\)\.?$/, "")
+      .trim();
+    const plain = line.replace(/\*\*([^*]+)\*\*/g, "$1");
+    if (/^### Plus \d+ more /.test(plain)) {
+      footer = plain.slice(4);
+      continue;
+    }
+    if (plain === "" || /^#{1,6}\s+/.test(plain)) continue;
+    if (stats === undefined && /^v\S+ · /.test(plain)) {
+      stats = plain.slice(plain.indexOf(" · ") + 3);
+      continue;
+    }
+    if (/^[-*]\s+/.test(line)) {
+      items.push(line.replace(/^[-*]\s+/, ""));
+    } else {
+      intro.push(plain);
+    }
+  }
+  return {
+    items,
+    totalItems: items.length + intro.length,
+    ...(intro.length > 0 ? { intro: intro.join(" ") } : {}),
+    ...(stats ? { stats } : {}),
+    ...(footer ? { footer } : {}),
+  };
 }
 
 function extractReleaseNoteItems(note: string | null | undefined): ExtractedReleaseNoteItems {
   if (!note) return { items: [], totalItems: 0 };
 
+  // Generated summaries fold GitHub's full list under this exact <details> block.
+  const summaryEnd = note.search(/<details>\s*<summary>\s*Full changelog\s*<\/summary>/i);
+  if (summaryEnd >= 0) return extractReleaseNoteSummary(note.slice(0, summaryEnd));
   const items: string[] = [];
   let totalItems = 0;
   for (const rawLine of stripMarkup(note).split("\n")) {
@@ -117,6 +157,15 @@ function extractReleaseNoteItems(note: string | null | undefined): ExtractedRele
   return { items: items.toReversed(), totalItems };
 }
 
+// The update feed dates only the offered version; prerelease versions carry their UTC build day.
+const PRERELEASE_BUILD_DAY = /-(?:nightly|preview)\.(\d{4})(\d{2})(\d{2})\.\d+$/;
+
+function resolveReleasedAt(version: string, offeredVersion: string, releaseDate?: string) {
+  if (version === offeredVersion && releaseDate) return releaseDate;
+  const day = PRERELEASE_BUILD_DAY.exec(version);
+  return day ? `${day[1]}-${day[2]}-${day[3]}` : undefined;
+}
+
 interface NormalizedDesktopUpdateReleaseNotes {
   readonly releaseNotes: ReadonlyArray<DesktopUpdateReleaseNote>;
   readonly omittedReleaseCount: number;
@@ -127,6 +176,7 @@ export function normalizeDesktopUpdateReleaseNotes(
   releaseNotes: unknown,
   fallbackVersion: string,
   channel: DesktopUpdateChannel,
+  releaseDate?: string,
 ): NormalizedDesktopUpdateReleaseNotes {
   const rawNotes = (
     typeof releaseNotes === "string"
@@ -134,16 +184,17 @@ export function normalizeDesktopUpdateReleaseNotes(
       : Array.isArray(releaseNotes)
         ? releaseNotes.filter(isElectronReleaseNoteInfo)
         : []
-  ).filter((entry) => resolveDefaultDesktopUpdateChannel(entry.version) === channel);
+  ).filter((entry) => desktopUpdateChannelOf(entry.version) === channel);
 
   const normalizedNotes = rawNotes.flatMap((entry) => {
-    const { items, totalItems } = extractReleaseNoteItems(entry.note);
-    if (totalItems === 0) return [];
+    const note = extractReleaseNoteItems(entry.note);
+    if (note.totalItems === 0 && !note.stats) return [];
+    const releasedAt = resolveReleasedAt(entry.version, fallbackVersion, releaseDate);
     return [
       {
         version: entry.version,
-        items,
-        totalItems,
+        ...note,
+        ...(releasedAt ? { releasedAt } : {}),
       },
     ];
   });
