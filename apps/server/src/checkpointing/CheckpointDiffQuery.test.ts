@@ -7,7 +7,10 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 
-import { checkpointRefForScopeOrdinal } from "../orchestration-v2/CheckpointService.ts";
+import {
+  checkpointRefForScopeOrdinal,
+  checkpointStartRefForScopeOrdinal,
+} from "../orchestration-v2/CheckpointService.ts";
 import { OrchestratorProjectionError } from "../orchestration-v2/Orchestrator.ts";
 import type { ProjectionCheckpointContext } from "../orchestration-v2/ProjectionStore.ts";
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
@@ -51,6 +54,7 @@ function layerFor(input: {
   readonly projection: Effect.Effect<ProjectionCheckpointContext, OrchestratorProjectionError>;
   readonly diffCheckpoints?: CheckpointStore.CheckpointStore["Service"]["diffCheckpoints"];
   readonly authoredPaths?: ReadonlySet<string>;
+  readonly hasStartRef?: boolean;
 }) {
   return CheckpointDiffQuery.layer.pipe(
     Layer.provide(
@@ -60,6 +64,8 @@ function layerFor(input: {
         }),
         Layer.mock(CheckpointStore.CheckpointStore)({
           diffCheckpoints: input.diffCheckpoints ?? (() => Effect.succeed("diff")),
+          hasCheckpointRef: ({ checkpointRef }) =>
+            Effect.succeed(input.hasStartRef === true && checkpointRef.includes("/start/")),
           listAuthoredPaths: () => Effect.succeed(input.authoredPaths ?? null),
         }),
       ),
@@ -189,6 +195,35 @@ it.effect.each([false, true])(
     }).pipe(Effect.provide(layer));
   },
 );
+
+it.effect("diffs a single turn from its start snapshot when one exists", () => {
+  const diffCheckpoints = vi.fn((_input: CheckpointStore.DiffCheckpointsInput) =>
+    Effect.succeed("diff --git a/file b/file"),
+  );
+  const layer = layerFor({
+    projection: Effect.succeed(makeProjection()),
+    diffCheckpoints,
+    hasStartRef: true,
+  });
+
+  return Effect.gen(function* () {
+    const query = yield* CheckpointDiffQuery.CheckpointDiffQuery;
+    const result = yield* query.getTurnDiff({ threadId, fromTurnCount: 1, toTurnCount: 2 });
+    const startRef = yield* checkpointStartRefForScopeOrdinal({
+      scopeId: secondScopeId,
+      ordinalWithinScope: 1,
+    });
+
+    assert.strictEqual(result.diff, "diff --git a/file b/file");
+    assert.deepEqual(
+      diffCheckpoints.mock.calls.map(([input]) => ({
+        from: input.fromCheckpointRef,
+        to: input.toCheckpointRef,
+      })),
+      [{ from: startRef, to: secondRef }],
+    );
+  }).pipe(Effect.provide(layer));
+});
 
 const layerVcsProcess = VcsProcess.layer.pipe(Layer.provide(NodeServices.layer));
 const layerStore = CheckpointStore.layer.pipe(
