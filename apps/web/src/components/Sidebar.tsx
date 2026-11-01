@@ -3,6 +3,7 @@ import { attachSidebarTree, SIDEBAR_TREE_PROPS } from "../lib/sidebarTree";
 import { type EnvironmentId, type ScopedProjectRef } from "@t3tools/contracts";
 import type { EnvironmentServerConfig } from "@t3tools/client-runtime/connection";
 import { ThreadContextDragGhost } from "./chat/ThreadContextDragGhost";
+import { CollapsibleSectionHeader } from "./ui/collapsible-section-header";
 import {
   dropThreadContext,
   endThreadContextDrag,
@@ -189,6 +190,8 @@ import {
   belongsInSidebarWorkingShelf,
   isSidebarEnvironmentDisconnected,
   isSidebarNestedLinkClick,
+  isOptimisticDropReleased,
+  type SidebarOptimisticDrop,
   isTrailingDoubleClick,
   orderItemsByPreferredIds,
   planSidebarThreadDrop,
@@ -330,19 +333,9 @@ const SETTLED_TAIL_PAGE_COUNT = 25;
 const SETTLED_SHELF_EXPANDED_KEY = "t3code:sidebar:settled-expanded";
 const SNOOZED_SHELF_EXPANDED_KEY = "t3code:sidebar:snoozed-expanded";
 const WORKING_SHELF_EXPANDED_KEY = "t3code:sidebar:working-expanded";
+const PINNED_SHELF_EXPANDED_KEY = "t3code:sidebar:pinned-expanded";
 
 const inboxReturns = createInboxReturnTracker();
-
-type SidebarOptimisticDrop = {
-  readonly key: string;
-  readonly sourceSection: SidebarSection;
-  readonly section: "pinned" | "active" | "settled";
-  readonly occurredAt: string;
-  readonly clearsSnooze: boolean;
-  readonly order: readonly string[] | null;
-  readonly keysAtDrop: ReadonlyMap<string, string | null>;
-  readonly assignedKeys: ReadonlyMap<string, string>;
-};
 
 interface SidebarThreadPartitionInput {
   readonly threads: readonly EnvironmentThreadShell[];
@@ -475,6 +468,11 @@ function useSidebarThreads(input: {
     false,
     Schema.Boolean,
   );
+  const [pinnedShelfExpanded, setPinnedShelfExpanded] = useLocalStorage(
+    PINNED_SHELF_EXPANDED_KEY,
+    true,
+    Schema.Boolean,
+  );
   // Shared with the old per-project sidebar, so folders keep their open state.
   const projectExpandedById = useUiStateStore((store) => store.projectExpandedById);
   const setProjectExpanded = useUiStateStore((store) => store.setProjectExpanded);
@@ -535,6 +533,9 @@ function useSidebarThreads(input: {
   const visibleWorkingThreads = workingShelfExpanded
     ? workingThreads
     : routeThreadOnly(workingThreads, routeRowThreadKey);
+  const visiblePinnedThreads = pinnedShelfExpanded
+    ? pinnedThreads
+    : routeThreadOnly(pinnedThreads, routeRowThreadKey);
   const projectFolders =
     folderGroups === null
       ? null
@@ -556,7 +557,7 @@ function useSidebarThreads(input: {
           };
         });
   const orderedThreads = [
-    ...pinnedThreads,
+    ...visiblePinnedThreads,
     ...(projectFolders === null
       ? activeThreads
       : projectFolders.flatMap((folder) => folder.threads)),
@@ -600,6 +601,9 @@ function useSidebarThreads(input: {
     toggleSnoozedShelf: () => setSnoozedShelfExpanded((value) => !value),
     workingShelfExpanded,
     toggleWorkingShelf: () => setWorkingShelfExpanded((value) => !value),
+    pinnedShelfExpanded,
+    togglePinnedShelf: () => setPinnedShelfExpanded((value) => !value),
+    visiblePinnedThreads,
     projectFolders,
     toggleProjectFolder: (group: SidebarProjectSnapshot) => {
       const keys = sidebarFolderExpansionKeys(group);
@@ -613,7 +617,7 @@ function useSidebarThreads(input: {
     settledThreadKeys: new Set(settledThreads.map(threadShellKey)),
     snoozedThreadKeys: new Set(snoozedThreads.map(threadShellKey)),
     sectionByThreadKey,
-    pinnedKeys: pinnedThreads.map(threadShellKey),
+    pinnedKeys: visiblePinnedThreads.map(threadShellKey),
     activeKeys: activeThreads.map(threadShellKey),
     pinnedKeysById: new Map(
       threads.map((thread) => [threadShellKey(thread), thread.pinOrderKey ?? null] as const),
@@ -745,77 +749,6 @@ function olderSettledScopes(
     );
     return projectIds.length === 0 ? [] : [{ environmentId, projectIds }];
   });
-}
-
-function isOptimisticDropReleased(input: {
-  readonly optimisticDrop: SidebarOptimisticDrop;
-  readonly threads: readonly EnvironmentThreadShell[];
-  readonly pinnedKeys: readonly string[];
-  readonly activeKeys: readonly string[];
-  readonly now: string;
-}): boolean {
-  const { optimisticDrop, threads, pinnedKeys, activeKeys, now } = input;
-  const canonicalByKey = new Map(
-    threads.map((thread) => [
-      scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)),
-      thread,
-    ]),
-  );
-  const thread = canonicalByKey.get(optimisticDrop.key);
-  if (thread === undefined || thread.archivedAt !== null) {
-    return true;
-  }
-  const canonicalSection = effectiveSnoozed(thread, { now })
-    ? "snoozed"
-    : thread.settledOverride === "settled"
-      ? "settled"
-      : thread.pinnedAt != null
-        ? "pinned"
-        : "active";
-  if (
-    canonicalSection !== optimisticDrop.sourceSection &&
-    canonicalSection !== optimisticDrop.section
-  ) {
-    return true;
-  }
-  if (optimisticDrop.order === null) {
-    // Settle emits unpin/unsnooze too; hold projected fields and sort times until the whole move completes.
-    if (
-      canonicalSection === optimisticDrop.section &&
-      thread.pinnedAt == null &&
-      (!optimisticDrop.clearsSnooze || thread.snoozedUntil == null)
-    ) {
-      return true;
-    }
-    return false;
-  }
-  if (canonicalSection !== optimisticDrop.section) return false;
-  if (optimisticDrop.clearsSnooze && thread.snoozedUntil != null) return false;
-  const destinationKeys = optimisticDrop.section === "pinned" ? pinnedKeys : activeKeys;
-  const canonicalDestination = destinationKeys.flatMap((key) => {
-    const canonical = canonicalByKey.get(key);
-    return canonical === undefined ? [] : [canonical];
-  });
-  const keyByThread = new Map(
-    canonicalDestination.map((thread) => [
-      scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)),
-      (optimisticDrop.section === "pinned" ? thread.pinOrderKey : thread.activeOrderKey) ?? null,
-    ]),
-  );
-  const heldOrder = optimisticDrop.order;
-  const heldKeys = new Set(heldOrder);
-  const membershipChanged =
-    destinationKeys.length !== heldOrder.length ||
-    destinationKeys.some((key) => !heldKeys.has(key));
-  const foreignKeyLanded = destinationKeys.some((threadKey) => {
-    const currentKey = keyByThread.get(threadKey) ?? null;
-    if (currentKey === (optimisticDrop.keysAtDrop.get(threadKey) ?? null)) return false;
-    return currentKey !== optimisticDrop.assignedKeys.get(threadKey);
-  });
-  const allAssignmentsLanded = [...optimisticDrop.assignedKeys].every(
-    ([threadKey, orderKey]) => keyByThread.get(threadKey) === orderKey,
-  );
-  return membershipChanged || foreignKeyLanded || allAssignmentsLanded;
 }
 
 // Build maps in a hook so the compiler can prove they are frozen and cache them.
@@ -1328,6 +1261,9 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     toggleSnoozedShelf,
     workingShelfExpanded,
     toggleWorkingShelf,
+    pinnedShelfExpanded,
+    togglePinnedShelf,
+    visiblePinnedThreads,
     projectFolders,
     toggleProjectFolder,
     renderedSettledThreads,
@@ -1849,13 +1785,14 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
       });
     },
   );
+  const fullPinnedKeys = pinnedThreads.map(threadShellKey);
   // Release during render when server state catches up so canonical order appears in the same frame.
   if (
     optimisticDrop !== null &&
     isOptimisticDropReleased({
       optimisticDrop,
       threads,
-      pinnedKeys,
+      pinnedKeys: fullPinnedKeys,
       activeKeys,
       now: snoozeNow,
     })
@@ -1942,7 +1879,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
       return [];
     }
     const items: SidebarListItem[] = [{ kind: "marker", marker: "pinned-header" }];
-    const pinnedRows = rowsOf(pinnedThreads, "pinned");
+    const pinnedRows = rowsOf(visiblePinnedThreads, "pinned");
     items.push(...pinnedRows);
     items.push({ kind: "marker", marker: "pinned-divider" });
     const activeRows = rowsOf(activeThreads, "active");
@@ -2018,6 +1955,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
         : { ...current, targetSection: target?.section ?? null },
     );
   };
+  const collapsedPinnedOrder = pinnedShelfExpanded ? undefined : fullPinnedKeys;
   const sortableIds = sidebarListItems.map(sidebarListItemId);
   // Keep non-drag orders constant to preserve sorting strategy and row identity during streaming.
   const { settledOrder: draggedSettledOrder, activeOrder: draggedActiveOrder } =
@@ -2051,7 +1989,12 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     if (source === undefined) return createSidebarCollisionDetection(() => false);
     return createSidebarCollisionDetection(
       (id) => {
-        const target = resolveSidebarDropTarget(sidebarListItems, draggedThreadKey, id);
+        const target = resolveSidebarDropTarget(
+          sidebarListItems,
+          draggedThreadKey,
+          id,
+          collapsedPinnedOrder,
+        );
         if (target === null) return false;
         return (
           planSidebarThreadDrop({
@@ -2083,7 +2026,12 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     const target =
       event.over === null
         ? null
-        : resolveSidebarDropTarget(sidebarListItems, activeKey, String(event.over.id));
+        : resolveSidebarDropTarget(
+            sidebarListItems,
+            activeKey,
+            String(event.over.id),
+            collapsedPinnedOrder,
+          );
     const activeThread = threadByKey.get(activeKey);
     if (activeSection === undefined || target === null || activeThread === undefined) return;
     const threadRef = scopeThreadRef(activeThread.environmentId, activeThread.id);
@@ -2104,6 +2052,8 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     });
     if (plan.kind === "none") return;
     if (plan.kind === "settle" && settlingThreadKeysRef.current.has(activeKey)) return;
+    // Rebalancing can assign keys to pins hidden by a collapsed shelf.
+    const operationThreadByKey = new Map(threads.map((thread) => [threadShellKey(thread), thread]));
     const assignments =
       plan.kind === "pin"
         ? [
@@ -2116,12 +2066,28 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     if (
       !checkThreadOperations(
         [activeKey, ...assignments.map(({ id }) => id)].flatMap((key) => {
-          const thread = threadByKey.get(key);
+          const thread = operationThreadByKey.get(key);
           return thread ? [thread] : [];
         }),
       )
     )
       return;
+    const assignedKeys = new Map(assignments.map(({ id, orderKey }) => [id, orderKey]));
+    let order = plan.kind === "settle" ? null : plan.order;
+    if (plan.kind === "pin" || plan.kind === "reorder-pinned") {
+      // Hold hidden pins in the order their planned keys will produce on expansion.
+      order =
+        target.pinnedKeyOrder ??
+        sortPinnedThreadsForSidebar(
+          [
+            activeThread,
+            ...pinnedThreads.filter((thread) => threadShellKey(thread) !== activeKey),
+          ].map((thread) => ({
+            ...thread,
+            pinOrderKey: assignedKeys.get(threadShellKey(thread)) ?? thread.pinOrderKey,
+          })),
+        ).map(threadShellKey);
+    }
     const drop = {
       key: activeKey,
       sourceSection: activeSection,
@@ -2131,9 +2097,9 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
         plan.kind === "pin" ||
         plan.kind === "settle" ||
         (plan.kind === "move-active" && plan.unsnooze),
-      order: plan.kind === "settle" ? null : plan.order,
+      order,
       keysAtDrop: target.section === "active" ? activeKeysById : pinnedKeysById,
-      assignedKeys: new Map(assignments.map(({ id, orderKey }) => [id, orderKey])),
+      assignedKeys,
     };
     setOptimisticDrop(drop);
     void (async () => {
@@ -2200,7 +2166,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
       }
       const keyWrites = plan.kind === "pin" ? plan.extraAssignments : plan.assignments;
       for (const assignment of keyWrites) {
-        const thread = threadByKey.get(assignment.id);
+        const thread = operationThreadByKey.get(assignment.id);
         if (thread === undefined) continue;
         if (
           !(await run(
@@ -3467,12 +3433,45 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                         }
                         switch (item.marker) {
                           case "pinned-header":
+                            // The sortable boundary reserves only drag-label height.
+                            if (pinnedThreads.length > 0) {
+                              items.push(
+                                <li
+                                  key="pinned-shelf-header"
+                                  data-thread-selection-safe
+                                  className="mx-0.5 h-8 list-none"
+                                >
+                                  <CollapsibleSectionHeader
+                                    role="treeitem"
+                                    tabIndex={-1}
+                                    data-sidebar-row="shelf:pinned"
+                                    onClick={togglePinnedShelf}
+                                    expanded={pinnedShelfExpanded}
+                                    tone={
+                                      dragTargetSection === "pinned"
+                                        ? "accent"
+                                        : from !== null
+                                          ? "emphasized"
+                                          : "muted"
+                                    }
+                                    data-testid="sidebar-pinned-shelf-toggle"
+                                    accessory={
+                                      <span className="font-normal tabular-nums">
+                                        {pinnedThreads.length}
+                                      </span>
+                                    }
+                                  >
+                                    Pinned
+                                  </CollapsibleSectionHeader>
+                                </li>,
+                              );
+                            }
                             items.push(
                               <SidebarDragBoundary
                                 key="pinned-header"
                                 marker="pinned-header"
                                 label="Pinned"
-                                visible={from !== null}
+                                visible={from !== null && pinnedThreads.length === 0}
                                 isDropTarget={dragTargetSection === "pinned"}
                               />,
                             );
