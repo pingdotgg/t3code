@@ -3239,12 +3239,11 @@ describe("ClaudeAdapterV2 background wake turns", () => {
               message: { ...first.message, text: "Next." },
             }),
           );
-          assert.deepEqual(harness.liveSelectionChanges[0], { model: selection.model });
-          assert.lengthOf(
+          assert.deepEqual(
             harness.liveSelectionChanges.filter(
               (change) => typeof change === "object" && change !== null && "model" in change,
             ),
-            1,
+            manualModel === null ? [] : [{ model: selection.model }],
           );
           assert.lengthOf(harness.offeredMessages, 2);
           yield* harness.offerAndWait(
