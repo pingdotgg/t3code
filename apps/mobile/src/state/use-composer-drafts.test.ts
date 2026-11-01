@@ -28,6 +28,9 @@ import {
 } from "@t3tools/contracts";
 import { onTestFinished, vi } from "vite-plus/test";
 
+import { buildIncomingShareDraft } from "../features/sharing/incoming-share-model";
+import { composerContextSendBlockReason } from "../lib/composerContext";
+
 const composerDraftFileMocks = vi.hoisted(() => {
   let document = JSON.stringify({ schemaVersion: 1, drafts: {} });
   let readError: Error | null = null;
@@ -2152,7 +2155,7 @@ describe("mobile composer drafts", () => {
   it("merges shared content into a project draft without duplicating retries", () => {
     const draftKey = "new-task:environment-1:project-1";
     const sharedAttachment = {
-      id: "share-1:image:0",
+      id: "share-1-image-0",
       type: "image" as const,
       name: "Screenshot.png",
       mimeType: "image/png",
@@ -2187,7 +2190,7 @@ describe("mobile composer drafts", () => {
   it("shows a shared non-image file as a composer chip", () => {
     const draftKey = "new-task:environment-1:project-1";
     const sharedFile = {
-      id: "share-1:file:0",
+      id: "share-1-file-0",
       type: "file" as const,
       name: "backup.json",
       mimeType: "application/json",
@@ -2220,6 +2223,37 @@ describe("mobile composer drafts", () => {
     const once = mergeComposerDraftContentState({}, draftKey, recovered);
     expect(once[draftKey]?.text).toBe("Retry this");
     expect(mergeComposerDraftContentState(once, draftKey, recovered)).toBe(once);
+  });
+
+  it("lets a shared file through the send check", async () => {
+    const { attachments } = await buildIncomingShareDraft({
+      id: "share-1",
+      createdAt: "2026-07-15T10:00:00.000Z",
+      payloads: [
+        {
+          shareType: "file",
+          value: "file:///shared/report.xlsx",
+          mimeType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+          originalName: "report.xlsx",
+        },
+      ],
+      resolvedPayloads: [],
+      fileReader: {
+        readBase64: async () => "",
+        readSize: async () => 42,
+        removeOwnedFile: async () => {},
+      },
+    });
+    const draftKey = "new-task:environment-1:project-1";
+
+    const merged = mergeComposerDraftContentState({}, draftKey, {
+      text: "",
+      attachments,
+      sourceShareId: "share-1",
+    })[draftKey]!;
+
+    expect(merged.context?.records).toHaveLength(1);
+    expect(composerContextSendBlockReason(merged.context)).toBeNull();
   });
 
   it("preserves existing images when shared content exceeds the draft attachment limit", () => {
