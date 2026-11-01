@@ -92,8 +92,17 @@ export function HistorySwipeNavigation() {
   useEffect(() => {
     let gesture: SwipeGesture | null = null;
     // Begin and end IPC race the wheels, so they cannot say which gesture a wheel belongs to.
-    // Trackpad scrolling never moves the pointer: a content claim holds until it does.
+    // A content claim holds while wheel events stay at the same pointer position.
     let claimedAt: { x: number; y: number } | null = null;
+    const onPointerMove = (event: PointerEvent) => {
+      if (claimedAt && (event.clientX !== claimedAt.x || event.clientY !== claimedAt.y)) {
+        claimedAt = null;
+      }
+    };
+    // Keyboard shortcuts can replace content without moving the pointer.
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (!["Alt", "Control", "Meta", "Shift"].includes(event.key)) claimedAt = null;
+    };
     const hideIndicator = () =>
       setSwipe((current) => (current === null ? null : { ...current, tracking: false }));
     // The fingers lifted: navigate if the swipe went far enough, then ignore its momentum.
@@ -153,10 +162,14 @@ export function HistorySwipeNavigation() {
         tracking: true,
       });
     };
+    window.addEventListener("pointermove", onPointerMove, { capture: true, passive: true });
+    window.addEventListener("keydown", onKeyDown, { capture: true });
     window.addEventListener("wheel", onWheel, { capture: true, passive: true });
     return () => {
       unsubscribeScrollBegin?.();
       unsubscribeScrollEnd?.();
+      window.removeEventListener("pointermove", onPointerMove, { capture: true });
+      window.removeEventListener("keydown", onKeyDown, { capture: true });
       window.removeEventListener("wheel", onWheel, { capture: true });
     };
   }, []);
