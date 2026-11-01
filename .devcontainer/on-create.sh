@@ -3,6 +3,11 @@
 # (dependency install, Chromium) lives in update-content.sh.
 set -euo pipefail
 
+# Linux AppImage packaging needs libsecret headers and ImageMagick. The
+# devcontainer base/node features already provide the C build toolchain.
+sudo apt-get update
+sudo apt-get install -y libsecret-1-dev pkg-config imagemagick
+
 # The Vite+ CLI is the repo task runner (vp i, vp run dev, vp test run).
 # Download to a file first: a curl failure inside $( ) would yield an empty
 # script and a false success. VP_NODE_MANAGER=no skips the installer's node
