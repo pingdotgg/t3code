@@ -1,3 +1,6 @@
+// @effect-diagnostics nodeBuiltinImport:off -- exclusive copy and streaming hashes are filesystem boundaries missing from Effect's API.
+import * as NodeCrypto from "node:crypto";
+import * as NodeFSP from "node:fs/promises";
 import {
   ATTACHMENT_UPLOAD_URL_TTL_MS,
   type AttachmentCreateUploadUrlInput,
@@ -10,6 +13,7 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
+import * as PlatformError from "effect/PlatformError";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import type * as HttpServerRequest from "effect/http/HttpServerRequest";
@@ -32,6 +36,7 @@ import {
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import * as ServerConfig from "../config.ts";
 import { inferImageExtension } from "../imageMime.ts";
+import * as DocumentText from "../provider/DocumentText.ts";
 
 export const ATTACHMENT_UPLOAD_ROUTE_PREFIX = "/api/attachments/upload";
 
@@ -205,7 +210,52 @@ export const storeAttachmentUpload = Effect.fn("AttachmentUpload.store")(functio
         detail: `Body was ${receivedBytes} bytes, expected ${claims.sizeBytes}.`,
       } satisfies StoreAttachmentUploadResult;
     }
-    yield* fileSystem.rename(partPath, finalPath);
+    // Publishing without replacement keeps an upload and its cached text immutable.
+    const published = yield* fileSystem.link(partPath, finalPath).pipe(
+      Effect.map(() => true),
+      Effect.catch((error) => {
+        if (error.reason._tag === "AlreadyExists") return Effect.succeed(false);
+        return Effect.tryPromise({
+          try: () => NodeFSP.copyFile(partPath, finalPath, NodeFSP.constants.COPYFILE_EXCL),
+          catch: (cause) =>
+            PlatformError.systemError({
+              _tag:
+                cause instanceof Error && "code" in cause && cause.code === "EEXIST"
+                  ? "AlreadyExists"
+                  : "Unknown",
+              module: "FileSystem",
+              method: "copyFile",
+              pathOrDescriptor: finalPath,
+              cause,
+            }),
+        }).pipe(
+          Effect.as(true),
+          Effect.catchIf(
+            (error) => error.reason._tag === "AlreadyExists",
+            () => Effect.succeed(false),
+          ),
+        );
+      }),
+    );
+    if (!published) {
+      if (Number((yield* fileSystem.stat(finalPath)).size) !== receivedBytes) {
+        return { ok: false, status: 409, detail: "Attachment already uploaded." };
+      }
+      const hashes = yield* Effect.forEach([partPath, finalPath], (file) =>
+        fileSystem.stream(file).pipe(
+          Stream.runFold(
+            () => NodeCrypto.createHash("sha256"),
+            (hash, chunk) => hash.update(chunk),
+          ),
+          Effect.map((hash) => hash.digest("hex")),
+        ),
+      );
+      if (hashes[0] !== hashes[1]) {
+        return { ok: false, status: 409, detail: "Attachment already uploaded." };
+      }
+    }
+    const documents = yield* DocumentText.DocumentText;
+    yield* documents.ensure(finalPath);
     return { ok: true } satisfies StoreAttachmentUploadResult;
   }).pipe(
     Effect.catch((cause) =>
@@ -244,4 +294,5 @@ export const deletePendingAttachment = Effect.fn("AttachmentUpload.deletePending
 
   const fileSystem = yield* FileSystem.FileSystem;
   yield* fileSystem.remove(attachmentPath, { force: true }).pipe(Effect.orElseSucceed(() => {}));
+  yield* fileSystem.remove(`${attachmentPath}.txt`, { force: true }).pipe(Effect.ignore);
 });

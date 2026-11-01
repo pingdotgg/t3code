@@ -1,7 +1,7 @@
 # T3 Code Mobile
 
-> [!WARNING]
-> T3 Code Mobile is currently in development and is not distributed yet. If you want to try it out, you can build it from source.
+> [!NOTE]
+> To install the released app from the App Store or Google Play, see [Mobile app](../../docs/user/install.md#mobile-app). This guide covers building it from source.
 
 ## Quickstart
 
@@ -40,6 +40,11 @@ ABI (x86_64 or arm64-v8a) serves every emulator and phone of that ABI. Build out
 log file it prints (`T3_NATIVE_CLIENT_VERBOSE=1` streams it instead). Builds are shared back when
 your task-cache login (`bash infra/task-cache/install.sh`) can write. `T3_NATIVE_CLIENT_CACHE=read`
 skips the upload and `off` skips the shared cache. Physical iPhones still use `vp run ios:dev`.
+
+`--session <name>` installs into an agent-device session opened elsewhere, such as a device pool
+or a cloud simulator, instead of a local device: `vp run mobile:install android --session pool-1
+--metro http://<this-machine>:8081`. It uses only the cached build (x86_64 by default; `--abi`
+for ARM) and fails with the next step when no machine has built this fingerprint yet.
 
 For a read-only decision, run `node ../../scripts/mobile-native-client.ts check <ios|android>
 [device]`: exit 0 means compatible, 2 means an install is needed, and 1 means an operational error.

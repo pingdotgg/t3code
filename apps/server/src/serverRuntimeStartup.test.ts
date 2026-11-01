@@ -186,13 +186,8 @@ it.effect.each([
                 }),
         }),
         Layer.mock(ThreadManagement.ThreadManagementService)({
-          getShellSnapshot: () =>
-            Effect.succeed({
-              threads: [],
-              archivedThreads: [],
-              schemaVersion: 1,
-              snapshotSequence: 0,
-            }),
+          countThreads: () => Effect.succeed(0),
+          listActiveShellIndex: () => Effect.succeed([]),
         }),
         Layer.mock(ThreadLaunch.ThreadLaunchService)({
           launch: (input) => {
@@ -216,6 +211,7 @@ it.effect.each([
         }),
         Layer.mock(ServiceLauncherClient.ServiceLauncherClient)({
           managed: false,
+          // @effect-diagnostics-next-line effectSucceedWithVoid:off - This optional result requires undefined, not the wider void type.
           prepareTrial: Effect.succeed(undefined),
         }),
         Layer.mock(GitVcsDriver.GitVcsDriver)({}),

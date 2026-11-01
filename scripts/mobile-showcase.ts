@@ -206,6 +206,11 @@ export function validateStoreAsset(
       throw new Error(`${label} must use Google Play's recommended portrait 9:16 aspect ratio.`);
     }
   }
+  try {
+    PNG.sync.read(Buffer.from(bytes));
+  } catch (cause) {
+    throw new Error(`${label} is not a valid PNG.`, { cause });
+  }
   return metadata;
 }
 
@@ -553,7 +558,7 @@ async function waitForFileContent(
   throw new Error(`${label} was not written to ${filePath} within ${timeoutMs}ms.`);
 }
 
-async function reserveAvailablePort(): Promise<number> {
+export async function reserveAvailablePort(): Promise<number> {
   return await new Promise<number>((resolve, reject) => {
     const server = NodeNet.createServer();
     server.once("error", reject);

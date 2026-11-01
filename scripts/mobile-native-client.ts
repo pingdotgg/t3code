@@ -14,7 +14,7 @@ import * as Path from "effect/Path";
 import * as Random from "effect/Random";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
-import { Argument, Command } from "effect/cli";
+import { Argument, Command, Flag } from "effect/cli";
 import { FetchHttpClient, HttpClient, HttpClientRequest, HttpClientResponse } from "effect/http";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 
@@ -226,7 +226,9 @@ const command = Effect.fn("nativeClient.command")(function* (
 const fingerprint = Effect.fn("nativeClient.fingerprint")(function* (platform: NativePlatform) {
   const output = yield* command(yield* HostProcess.ExecutablePath, [
     "--eval",
-    `require('expo/fingerprint').createFingerprintAsync(process.cwd(), { platforms: [process.argv[1]], silent: true }).then(fp => console.log('T3_NATIVE_FINGERPRINT=' + fp.hash)).catch(e => { console.error(e); process.exitCode = 1; });`,
+    // Same hash on every machine: generated native projects and the config's `extra` (env-specific
+    // values a dev client reads from Metro) stay out, so a Mac and a Linux VM share builds.
+    `const f = require('expo/fingerprint'); f.createFingerprintAsync(process.cwd(), { platforms: [process.argv[1]], silent: true, ignorePaths: ['android/**', 'ios/**'], sourceSkips: f.DEFAULT_SOURCE_SKIPS | f.SourceSkips.ExpoConfigExtraSection }).then(fp => console.log('T3_NATIVE_FINGERPRINT=' + fp.hash)).catch(e => { console.error(e); process.exitCode = 1; });`,
     platform,
   ]);
   const hash = output
@@ -418,6 +420,11 @@ const decodeUpload = Schema.decodeUnknownEffect(
   ]),
 );
 const decodePart = Schema.decodeUnknownEffect(Schema.Struct({ etag: Schema.String }));
+const decodeEasBuilds = Schema.decodeUnknownEffect(
+  Schema.fromJsonString(
+    Schema.Array(Schema.Struct({ artifacts: Schema.Struct({ buildUrl: Schema.String }) })),
+  ),
+);
 
 interface RemoteCache {
   readonly url: string;
@@ -448,7 +455,33 @@ const remoteCache = Effect.fn("nativeClient.remoteCache")(
       ...login,
     } satisfies RemoteCache;
   },
-  Effect.catch(() => Effect.succeed(null)),
+  Effect.orElseSucceed(() => null),
+);
+
+const ReaderLogin = Schema.fromJsonString(
+  Schema.Struct({ name: Schema.String, token: Schema.String }),
+);
+
+/**
+ * A URL another machine can download `key` from. The header goes to that machine, so only a
+ * read-only login (`ci-reader`) is ever handed out, never a developer's writer token.
+ */
+const sharedSource = Effect.fn("nativeClient.sharedSource")(
+  function* (home: string, key: string) {
+    const remote = yield* remoteCache(home);
+    if (!remote) return null;
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const reader =
+      remote.name === "ci-reader"
+        ? remote
+        : yield* fs
+            .readFileString(path.join(home, ".config/t3-task-cache/ci-reader.json"))
+            .pipe(Effect.flatMap(Schema.decodeUnknownEffect(ReaderLogin)));
+    const basic = Buffer.from(`${reader.name}:${reader.token}`).toString("base64");
+    return { url: `${remote.url}/${key}`, header: `authorization:Basic ${basic}` };
+  },
+  Effect.orElseSucceed(() => null),
 );
 
 const authorized = (remote: RemoteCache, request: HttpClientRequest.HttpClientRequest) =>
@@ -593,6 +626,57 @@ const publish = Effect.fn("nativeClient.publish")(function* (staging: string, ta
   yield* fs.rename(staging, target);
 });
 
+const easCli = "eas-cli@25.3.0";
+
+/** Xcode builds iOS locally; without it (Linux, or a Mac with no Xcode) EAS builds in the cloud. */
+const hasXcode = Effect.gen(function* () {
+  if ((yield* HostProcess.Platform) !== "darwin") return false;
+  return yield* command("xcrun", ["--find", "xcodebuild"]).pipe(
+    Effect.as(true),
+    Effect.orElseSucceed(() => false),
+  );
+});
+
+/** Without Xcode, EAS builds the same simulator client from this checkout. */
+const buildIosOnEas = Effect.fn("nativeClient.buildIosOnEas")(function* (staging: string) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  // Fail before any work when neither builder is available.
+  yield* command("npx", ["-y", easCli, "whoami"]).pipe(
+    Effect.mapError(
+      () =>
+        new NativeClientError({
+          message:
+            "iOS builds need Xcode on macOS, or an EAS login (`npx eas-cli login`, or EXPO_TOKEN) to build in the cloud.",
+        }),
+    ),
+  );
+  yield* Console.error("No Xcode here; building the iOS simulator client on EAS (10-30 min).");
+  const [build] = yield* decodeEasBuilds(
+    yield* command("npx", [
+      "-y",
+      easCli,
+      "build",
+      "--platform",
+      "ios",
+      "--profile",
+      "development-simulator",
+      "--non-interactive",
+      "--wait",
+      "--json",
+    ]),
+  );
+  if (!build) return yield* new NativeClientError({ message: "EAS returned no build." });
+  const archive = path.join(staging, "eas-build.tar.gz");
+  yield* command("curl", ["-fsSL", "--retry", "3", "-o", archive, build.artifacts.buildUrl]);
+  yield* command("tar", ["-xzf", archive, "-C", staging]);
+  yield* fs.remove(archive);
+  const app = (yield* fs.readDirectory(staging)).find((name) => name.endsWith(".app"));
+  if (!app) return yield* new NativeClientError({ message: "The EAS build archive has no .app." });
+  if (app !== artifactNames.ios)
+    yield* fs.rename(path.join(staging, app), path.join(staging, artifactNames.ios));
+});
+
 const build = Effect.fn("nativeClient.build")(function* (
   platform: NativePlatform,
   abi: string | null,
@@ -612,13 +696,17 @@ const build = Effect.fn("nativeClient.build")(function* (
     ["exec", "expo", "prebuild", "--clean", "--platform", platform, "--no-install"],
     true,
   ).pipe(Effect.asVoid);
-  yield* platform === "android" ? prebuildAndroid(mobile, prebuild) : prebuild;
+  const onEas = platform === "ios" && !(yield* hasXcode);
+  if (platform === "android") yield* prebuildAndroid(mobile, prebuild);
+  else if (!onEas) yield* prebuild;
   const staging = yield* fs.makeTempDirectory({
     directory: path.dirname(target),
     prefix: ".build-",
   });
   yield* Effect.gen(function* () {
-    if (platform === "ios") {
+    if (onEas) {
+      yield* buildIosOnEas(staging);
+    } else if (platform === "ios") {
       const output = yield* fs.makeTempDirectoryScoped({ prefix: "t3-native-client-" });
       yield* command("pod", ["install"], true, path.join(mobile, "ios"));
       // One device-independent arm64 simulator build installs on every iPhone and iPad simulator.
@@ -830,15 +918,190 @@ const reportTelemetry = Effect.fn("nativeClient.reportTelemetry")(
   (effect) => effect.pipe(Effect.timeout("5 seconds"), Effect.ignore),
 );
 
+/**
+ * Install into an agent-device session the caller already opened (a device pool, a cloud
+ * provider, or a local device). A cache miss builds here, as for a local device: the device
+ * only runs the client.
+ */
+const installIntoSession = Effect.fn("nativeClient.installIntoSession")(function* (
+  home: string,
+  platform: NativePlatform,
+  session: string,
+  abi: string,
+  metro: string | undefined,
+) {
+  const started = yield* Clock.currentTimeMillis;
+  const path = yield* Path.Path;
+  const node = yield* HostProcess.ExecutablePath;
+  const agentDevice = path.join(
+    (yield* roots).repo,
+    "scripts/node_modules/agent-device/bin/agent-device.mjs",
+  );
+  // agent-device scopes session ownership to the workspace (working directory) it runs in.
+  const workspace = yield* HostProcess.WorkingDirectory;
+  const deviceAbi = platform === "android" ? abi : null;
+  const task = deviceAbi ? `native-client:android-${deviceAbi}` : `native-client:${platform}`;
+  const current = yield* fingerprint(platform);
+  const key = `${platform}/${deviceAbi ? `development-${deviceAbi}` : "development"}/${current}`;
+  const source = yield* sharedSource(home, key);
+  // The session's host downloads the client itself; uploading a 166 MB APK through a
+  // gateway from here takes minutes and can outlast the remote install timeout.
+  const downloadOnDevice = source
+    ? command(
+        node,
+        [
+          agentDevice,
+          "install-from-source",
+          source.url,
+          "--header",
+          source.header,
+          "--session",
+          session,
+        ],
+        true,
+        workspace,
+      ).pipe(
+        Effect.as(true),
+        Effect.catch((error) =>
+          Console.error(`The device could not download ${key} (${describe(error)}).`).pipe(
+            Effect.as(false),
+          ),
+        ),
+      )
+    : Effect.succeed(false);
+  const fetched = yield* downloadOnDevice;
+  const artifact = fetched
+    ? { source: "remote" as const, buildMs: 0 }
+    : yield* Effect.gen(function* () {
+        const local = yield* resolveArtifact(home, platform, deviceAbi, current).pipe(
+          Effect.tapError(() => reportTelemetry(home, task, "failed", 0)),
+        );
+        // A build just shared the client, so the device can fetch it now too.
+        if (local.source === "build" && (yield* downloadOnDevice)) return local;
+        yield* Console.error(`Installing into agent-device session ${session}...`);
+        yield* command(
+          node,
+          [agentDevice, "install", bundleId, local.file, "--session", session],
+          true,
+          workspace,
+        );
+        return local;
+      });
+  if (metro) {
+    const url = encodeURIComponent(metro);
+    yield* command(
+      node,
+      [
+        agentDevice,
+        "open",
+        bundleId,
+        `t3code-dev://expo-development-client/?url=${url}&disableOnboarding=1&disableFab=1&disableAutoLaunch=1`,
+        "--session",
+        session,
+      ],
+      true,
+      workspace,
+    );
+  }
+  yield* reportTelemetry(
+    home,
+    task,
+    artifact.source === "build" ? "executed" : artifact.source,
+    artifact.buildMs,
+  );
+  const seconds = Math.round(((yield* Clock.currentTimeMillis) - started) / 1000);
+  yield* Console.error(
+    `Installed into session ${session} in ${seconds}s (${artifact.source}).${metro ? "" : " Open it with Metro: --metro http://<this-machine>:8081."}`,
+  );
+  yield* Console.log(
+    yield* encodeOutput({
+      status: "installed",
+      source: artifact.source,
+      fingerprint: current,
+      session,
+      seconds,
+    }),
+  );
+});
+
 const main = Command.make(
   "mobile-native-client",
   {
     mode: Argument.Literals("mode", ["check", "ensure"]),
     platform: Argument.Literals("platform", ["ios", "android"]),
     device: Argument.String("device").pipe(Argument.optional),
+    session: Flag.String("session").pipe(
+      Flag.withDescription(
+        "Install into this already-open agent-device session (a device pool, cloud, or remote host) instead of a local device.",
+      ),
+      Flag.optional,
+    ),
+    abi: Flag.Literals("abi", ["x86_64", "arm64-v8a"]).pipe(
+      Flag.withDescription("Android ABI of the session's device (default x86_64)."),
+      Flag.withDefault("x86_64" as const),
+    ),
+    metro: Flag.String("metro").pipe(
+      Flag.withDescription("With --session, open the dev client against this Metro URL."),
+      Flag.optional,
+    ),
+    prepare: Flag.Boolean("prepare").pipe(
+      Flag.withDescription(
+        "Fetch or build the client for this checkout without a device (Android: for --abi). Run it before leasing a device: a build can outlast the lease.",
+      ),
+      Flag.withDefault(false),
+    ),
   },
-  Effect.fn("nativeClient.main")(function* ({ mode, platform, device: requested }) {
+  Effect.fn("nativeClient.main")(function* ({
+    mode,
+    platform,
+    device: requested,
+    session,
+    abi: sessionAbi,
+    metro,
+    prepare,
+  }) {
     const started = yield* Clock.currentTimeMillis;
+    if (prepare) {
+      if (mode !== "ensure" || Option.isSome(requested) || Option.isSome(session))
+        return yield* new NativeClientError({
+          message: "--prepare needs no device; use it with ensure and no device id or --session.",
+        });
+      const environment = yield* HostProcess.Environment;
+      const home = environment.HOME ?? environment.USERPROFILE;
+      if (!home)
+        return yield* new NativeClientError({ message: "HOME or USERPROFILE must be set." });
+      const current = yield* fingerprint(platform);
+      const artifact = yield* resolveArtifact(
+        home,
+        platform,
+        platform === "android" ? sessionAbi : null,
+        current,
+      );
+      yield* Console.error(
+        `Client ready for ${platform} (${artifact.source}); lease a device and install.`,
+      );
+      return yield* Console.log(
+        yield* encodeOutput({ status: "ready", source: artifact.source, fingerprint: current }),
+      );
+    }
+    if (Option.isSome(session)) {
+      if (mode !== "ensure" || Option.isSome(requested))
+        return yield* new NativeClientError({
+          message:
+            "--session installs into an agent-device session; use it with ensure and no device id.",
+        });
+      const environment = yield* HostProcess.Environment;
+      const home = environment.HOME ?? environment.USERPROFILE;
+      if (!home)
+        return yield* new NativeClientError({ message: "HOME or USERPROFILE must be set." });
+      return yield* installIntoSession(
+        home,
+        platform,
+        session.value,
+        sessionAbi,
+        Option.getOrUndefined(metro),
+      );
+    }
     const target = yield* resolveDevice(platform, Option.getOrUndefined(requested));
     const device = target.id;
     yield* Console.error(`Device: ${target.label} (${device})`);
