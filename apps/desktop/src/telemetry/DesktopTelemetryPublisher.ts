@@ -8,6 +8,7 @@ import {
   type DesktopUpdateStatusReport,
   type HostPowerSnapshot,
 } from "@t3tools/contracts";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
@@ -147,6 +148,7 @@ export const make = Effect.fn("desktop.telemetryPublisher.make")(function* () {
   const electronApp = yield* ElectronApp.ElectronApp;
   const powerMonitor = yield* ElectronPowerMonitor.ElectronPowerMonitor;
   const rendererHistory = yield* DesktopRendererHistory.DesktopRendererHistory;
+  const platform = yield* HostProcess.Platform;
   yield* electronApp.whenReady;
 
   const initialPowerState: PowerState = {
@@ -253,7 +255,7 @@ export const make = Effect.fn("desktop.telemetryPublisher.make")(function* () {
           };
           return [next, next] as const;
         });
-        const linuxPower = yield* process.platform === "linux"
+        const linuxPower = yield* platform === "linux"
           ? LinuxHostPower.sample("/sys").pipe(
               Effect.map((linuxSample) =>
                 LinuxHostPower.fillElectronGaps(
