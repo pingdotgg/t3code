@@ -181,7 +181,7 @@ export function ProviderInstanceIcon(props: {
               paddingHorizontal: 2,
               borderRadius: 999,
               borderWidth: 1,
-              borderColor: props.surfaceColor,
+              ...(props.surfaceColor ? { borderColor: props.surfaceColor } : {}),
               backgroundColor: accentColor,
               alignItems: "center",
               justifyContent: "center",
