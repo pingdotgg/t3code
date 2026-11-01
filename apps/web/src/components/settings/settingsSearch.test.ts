@@ -72,6 +72,18 @@ describe("searchSettings", () => {
       }).map((item) => item.id);
     expect(itemIds(false)).not.toContain("plugins");
     expect(itemIds(true)).toContain("plugins");
+    for (const query of [
+      "npm",
+      "install",
+      "package",
+      "registry",
+      "version",
+      "update",
+      "apply",
+      "discard",
+    ]) {
+      expect(searchSettings(query).map((item) => item.id)).toContain("plugins");
+    }
   });
 
   it("matches titles, sections, and remembered setting details", () => {

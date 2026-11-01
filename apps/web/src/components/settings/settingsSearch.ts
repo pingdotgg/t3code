@@ -1185,7 +1185,7 @@ export const SETTINGS_SEARCH_ITEMS = [
     title: "Plugins",
     to: "/settings/plugins",
     searchTerms: [
-      "extensions trusted local code add directory review approve consent digest enable disable remove resume",
+      "extensions trusted local code add directory review approve consent digest enable disable remove resume npm install package registry version update apply discard",
     ],
     requiresPlugins: true,
   },
