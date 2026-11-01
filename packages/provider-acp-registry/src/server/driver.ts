@@ -1,6 +1,8 @@
 import {
+  ACP_REGISTRY_ICON_FILE_MAX_BYTES,
   officialAcpRegistryIconUrlForAgentId,
   ProviderDriverKind,
+  resolveAcpRegistryIconUrl,
   resolveOfficialAcpRegistryIconUrl,
   TextGenerationError,
   type AcpRegistryOperationError,
@@ -14,7 +16,9 @@ import * as Clock from "effect/Clock";
 import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
+import * as Path from "effect/Path";
 import * as Ref from "effect/Ref";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
@@ -178,7 +182,40 @@ interface SnapshotIdentity {
   readonly displayName: string | undefined;
   readonly accentColor: string | undefined;
   readonly continuationKey: string;
+  /** Inline data URL from a local command's icon file. */
+  readonly iconFileUrl?: string | null;
 }
+
+const ICON_FILE_MIME_TYPES: Record<string, "image/svg+xml" | "image/png"> = {
+  ".svg": "image/svg+xml",
+  ".png": "image/png",
+};
+
+/** Reads an instance's icon file into the inline data URL its snapshots carry, or null. */
+export const readAcpRegistryIconFile = Effect.fn("AcpRegistryDriver.readIconFile")(function* (
+  iconPath: string,
+) {
+  if (iconPath === "") return null;
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const mimeType = ICON_FILE_MIME_TYPES[path.extname(iconPath).toLowerCase()];
+  const skip = (reason: string) =>
+    Effect.logWarning(`Ignoring ACP icon file ${iconPath}: ${reason}`).pipe(Effect.as(null));
+  if (mimeType === undefined) return yield* skip("use an .svg or .png file.");
+  if (!path.isAbsolute(iconPath)) return yield* skip("use an absolute path.");
+  const info = yield* Effect.option(fs.stat(iconPath));
+  if (Option.isNone(info) || info.value.type !== "File") return yield* skip("file not found.");
+  if (Number(info.value.size) > ACP_REGISTRY_ICON_FILE_MAX_BYTES) {
+    return yield* skip(`larger than ${ACP_REGISTRY_ICON_FILE_MAX_BYTES} bytes.`);
+  }
+  const bytes = yield* Effect.option(fs.readFile(iconPath));
+  if (Option.isNone(bytes)) return yield* skip("file could not be read.");
+  return (
+    resolveAcpRegistryIconUrl(
+      `data:${mimeType};base64,${Buffer.from(bytes.value).toString("base64")}`,
+    ) ?? (yield* skip(`larger than ${ACP_REGISTRY_ICON_FILE_MAX_BYTES} bytes.`))
+  );
+});
 
 function baseSnapshot(
   input: SnapshotIdentity & {
@@ -196,7 +233,7 @@ function baseSnapshot(
 ): ServerProvider {
   const iconUrl =
     input.settings.source === "local"
-      ? null
+      ? (input.iconFileUrl ?? null)
       : (resolveOfficialAcpRegistryIconUrl(input.probe?.probe.icon) ??
         officialAcpRegistryIconUrlForAgentId(input.settings.agentId));
   return {
@@ -508,6 +545,8 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
       displayName,
       accentColor,
       continuationKey: continuationIdentity.continuationKey,
+      iconFileUrl:
+        config.source === "local" ? yield* readAcpRegistryIconFile(config.iconPath) : null,
     };
     const effectiveConfig = { ...config, enabled } satisfies AcpRegistrySettings;
     const processEnvironment = yield* mergeProviderInstanceEnvironment(

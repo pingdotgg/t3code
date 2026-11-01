@@ -590,4 +590,25 @@ describe("provider icon metadata", () => {
     expect(restoredEntry?.acpRegistryIconUrl).toBe(iconUrl);
     expect(restoredEntry?.enabled).toBe(true);
   });
+
+  it("keeps a local command's icon file", () => {
+    const instanceId = ProviderInstanceId.make("steed");
+    const driver = ProviderDriverKind.make("acpRegistry");
+    const iconUrl = "data:image/svg+xml;base64,PHN2Zz48L3N2Zz4=";
+    const [entry] = applyProviderInstanceSettings(
+      deriveProviderInstanceEntries([{ ...provider({ provider: driver, instanceId }), iconUrl }]),
+      {
+        providerInstances: {
+          [instanceId]: {
+            driver,
+            enabled: true,
+            config: { source: "local", commandPath: "steed-acp", iconPath: "/icons/steed.svg" },
+          },
+        },
+        projectSettingsOverrides: {},
+      },
+      null,
+    );
+    expect(entry?.acpRegistryIconUrl).toBe(iconUrl);
+  });
 });

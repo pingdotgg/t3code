@@ -1,6 +1,6 @@
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
-import { AcpRegistryUrlAuthAction } from "./acpRegistry.ts";
+import { ACP_REGISTRY_ICON_URL_MAX_LENGTH, AcpRegistryUrlAuthAction } from "./acpRegistry.ts";
 import {
   type EnvironmentMachineKind,
   ExecutionEnvironmentDescriptor,
@@ -209,8 +209,11 @@ export const ServerProvider = Schema.Struct({
   driver: ProviderDriverKind,
   displayName: Schema.optional(TrimmedNonEmptyString),
   accentColor: Schema.optional(TrimmedNonEmptyString),
-  // Validate driver-supplied remote icons against the driver's trusted origin.
-  iconUrl: Schema.optional(TrimmedNonEmptyString.check(Schema.isMaxLength(2_048))),
+  // Validate driver-supplied remote icons against the driver's trusted origin. Local ACP
+  // instances may send a small inline data URL instead.
+  iconUrl: Schema.optional(
+    TrimmedNonEmptyString.check(Schema.isMaxLength(ACP_REGISTRY_ICON_URL_MAX_LENGTH)),
+  ),
   badgeLabel: Schema.optional(TrimmedNonEmptyString),
   continuation: Schema.optional(ServerProviderContinuation),
   showInteractionModeToggle: Schema.optional(Schema.Boolean),
