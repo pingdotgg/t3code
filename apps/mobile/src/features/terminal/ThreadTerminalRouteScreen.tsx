@@ -27,7 +27,9 @@ import {
   KeyboardEvents,
   KeyboardStickyView,
   useKeyboardState,
+  useReanimatedKeyboardAnimation,
 } from "react-native-keyboard-controller";
+import Animated, { useAnimatedStyle } from "react-native-reanimated";
 
 import {
   ComposerToolbarButton,
@@ -589,6 +591,47 @@ function ThreadTerminal(props: {
     height: state.height,
     isVisible: state.isVisible,
   }));
+  const { height: keyboardTranslation } = useReanimatedKeyboardAnimation();
+  const isIos = Platform.OS === "ios";
+  const accessoryStyle = useAnimatedStyle(() => {
+    if (!isIos) return { paddingLeft: 0, paddingRight: 0 };
+    const accessoryInsets = { left: insets.left, right: insets.right };
+    if (
+      nativeColumnMetrics?.hasHinge &&
+      nativeColumnMetrics.verticalBarEdge !== "none" &&
+      // In short landscape columns, UIKit's floating tabs sit beside this row.
+      nativeColumnMetrics.width < nativeColumnMetrics.height
+    ) {
+      const edge = nativeColumnMetrics.verticalBarEdge;
+      // Match KeyboardStickyView's live translation so this stays in column
+      // coordinates when the keyboard or window changes without a show event.
+      const top =
+        nativeColumnMetrics.height + keyboardTranslation.value - TERMINAL_ACCESSORY_HEIGHT;
+      // UIKit reserves the whole rail in its safe area. At keyboard height, keep
+      // clearance only for occlusions that actually overlap the accessory row.
+      accessoryInsets[edge] = 0;
+      for (const region of nativeColumnMetrics.reservedRegions) {
+        if (
+          region.kind !== "occlusion" ||
+          region.y >= top + TERMINAL_ACCESSORY_HEIGHT ||
+          region.y + region.height <= top
+        )
+          continue;
+        if (edge === "left" && region.x < insets.left) {
+          accessoryInsets.left = Math.max(accessoryInsets.left, region.x + region.width);
+        } else if (
+          edge === "right" &&
+          region.x + region.width > nativeColumnMetrics.width - insets.right
+        ) {
+          accessoryInsets.right = Math.max(
+            accessoryInsets.right,
+            nativeColumnMetrics.width - region.x,
+          );
+        }
+      }
+    }
+    return { paddingLeft: accessoryInsets.left, paddingRight: accessoryInsets.right };
+  });
   const keyboardShowing = useSyncExternalStore(subscribeKeyboardShowing, getKeyboardShowing);
   // The accessory follows the keyboard, except that the dismiss and show
   // buttons flip it ahead of the keyboard animation.
@@ -860,6 +903,8 @@ function ThreadTerminal(props: {
             // Measured top reservation is zero when UIKit already inset the body or moved the bar.
             paddingTop:
               Platform.OS === "ios" ? (nativeColumnMetrics?.safeArea.top ?? insets.top) : 0,
+            paddingLeft: Platform.OS === "ios" ? insets.left : 0,
+            paddingRight: Platform.OS === "ios" ? insets.right : 0,
             paddingBottom:
               Platform.OS === "android" && !keyboardState.isVisible ? insets.bottom : 0,
           }}
@@ -993,13 +1038,16 @@ function ThreadTerminal(props: {
                   style={{ position: "absolute", bottom: 0, left: 0, right: 0 }}
                   offset={{ closed: 0, opened: 0 }}
                 >
-                  <View
+                  <Animated.View
                     className="border-t"
-                    style={{
-                      backgroundColor: terminalTheme.background,
-                      borderTopColor: terminalTheme.border,
-                      minHeight: TERMINAL_ACCESSORY_HEIGHT,
-                    }}
+                    style={[
+                      {
+                        backgroundColor: terminalTheme.background,
+                        borderTopColor: terminalTheme.border,
+                        minHeight: TERMINAL_ACCESSORY_HEIGHT,
+                      },
+                      accessoryStyle,
+                    ]}
                   >
                     <ComposerToolbarRow paddingBottom={4} paddingHorizontal={8} paddingTop={4}>
                       <ComposerToolbarScroller
@@ -1036,7 +1084,7 @@ function ThreadTerminal(props: {
                         showChevron={false}
                       />
                     </ComposerToolbarRow>
-                  </View>
+                  </Animated.View>
                 </KeyboardStickyView>
               ) : canOperateTerminal && !keyboardState.isVisible && Platform.OS !== "android" ? (
                 <Pressable
@@ -1048,7 +1096,7 @@ function ThreadTerminal(props: {
                     borderRadius: 28,
                     opacity: pressed ? 0.72 : 1,
                     position: "absolute",
-                    right: 16,
+                    right: 16 + insets.right,
                   })}
                 >
                   <GlassSurface

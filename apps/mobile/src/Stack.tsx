@@ -198,6 +198,11 @@ const SOLID_HEADER_OPTIONS: AppScreenOptions = {
   unstable_navigationItemStyle: Platform.OS === "ios" ? "editor" : undefined,
 };
 
+const TERMINAL_SCREEN_OPTIONS = {
+  ...SOLID_HEADER_OPTIONS,
+  nativeContentInsetHorizontally: false,
+};
+
 const SHEET_SOLID_HEADER_OPTIONS: AppScreenOptions = {
   ...SOLID_HEADER_OPTIONS,
   unstable_navigationItemStyle: undefined,
@@ -799,7 +804,7 @@ const RootStackConfig = createWorkspaceStackNavigator({
     ThreadTerminal: createNativeStackScreen({
       screen: ThreadTerminalRouteScreen,
       linking: `${THREAD_LINKING_PREFIX}/terminal`,
-      options: SOLID_HEADER_OPTIONS,
+      options: TERMINAL_SCREEN_OPTIONS,
     }),
     ThreadInspectorFullscreen: createNativeStackScreen({
       screen: FullscreenThreadRouteScreen,
