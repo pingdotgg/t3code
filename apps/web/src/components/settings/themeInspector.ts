@@ -280,7 +280,13 @@ function getThemePaintSnapshot(
 
   const foregroundPaints: Array<string> = [];
   if (forHitTest || elementHasVisibleText(element)) foregroundPaints.push(style.color);
-  if (element instanceof SVGElement) foregroundPaints.push(style.fill, style.stroke);
+  // Opted-in canvases expose their current CSS paint dependencies for probing.
+  if (
+    element instanceof SVGElement ||
+    (element instanceof HTMLCanvasElement && element.hasAttribute("data-theme-canvas-paint"))
+  ) {
+    foregroundPaints.push(style.fill, style.stroke);
+  }
   if (element.matches("input, textarea")) foregroundPaints.push(style.caretColor);
   if (style.textDecorationLine !== "none") foregroundPaints.push(style.textDecorationColor);
   if (style.textShadow !== "none") foregroundPaints.push(style.textShadow);
