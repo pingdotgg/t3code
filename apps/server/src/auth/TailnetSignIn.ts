@@ -41,7 +41,7 @@ import { verifyRequestDpopProof } from "./dpop.ts";
 import * as EnvironmentAuth from "./EnvironmentAuth.ts";
 import * as ServerSecretStore from "./ServerSecretStore.ts";
 import * as SessionStore from "./SessionStore.ts";
-import { policyGrantedPeers, tailnetGrantScopes } from "./tailnetGrants.ts";
+import { peersJoined, policyGrantedPeers, tailnetGrantScopes } from "./tailnetGrants.ts";
 
 const GRANT_TTL = Duration.minutes(2);
 const RECHECK_INTERVAL = Duration.seconds(30);
@@ -241,17 +241,13 @@ export const make = Effect.gen(function* () {
       const { granted, unreadable } = yield* policyGrantedPeers(status, (address) =>
         host.whois(address, { fromServer: true }),
       );
-      // Lookups that ran after a switch read another tailnet, and a device that joined since
-      // the scanned list was not looked up, so either way the scan says nothing.
+      // Lookups that ran after a switch read another tailnet, so the scan says nothing. A
+      // device that joined since the scanned list was not looked up, so "no grants" is
+      // unproven; a grant found still stands, as it only turns the owner rule off.
       const after = yield* host.freshStatus;
       if (after.selfNodeId !== account) return yield* Effect.fail(["this host"]);
-      const scanned = new Set(status.peers.map((peer) => peer.stableNodeId));
-      const joined = after.peers.filter((peer) => !scanned.has(peer.stableNodeId));
-      if (
-        joined.length > 0 ||
-        after.unidentifiedPeerAddresses.length > status.unidentifiedPeerAddresses.length
-      ) {
-        return yield* Effect.fail(joined.map((peer) => peer.hostName ?? peer.stableNodeId));
+      if (granted.length === 0 && peersJoined(status, after)) {
+        return yield* Effect.fail(["a device that joined during the check"]);
       }
       const now = yield* Clock.currentTimeMillis;
       // "No grants" is rechecked sooner, so a new grant is noticed within a minute.

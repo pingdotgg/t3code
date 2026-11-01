@@ -14,7 +14,7 @@ import { Argument, Command, Flag, GlobalFlag } from "effect/cli";
 
 import { REQUIRE_GRANT_FILE } from "../auth/TailnetSignIn.ts";
 import { SERVICE_ENV_FILE } from "../cloud/serviceProtocol.ts";
-import { policyGrantedPeers } from "../auth/tailnetGrants.ts";
+import { peersJoined, policyGrantedPeers } from "../auth/tailnetGrants.ts";
 import { formatTailscaleHealth, readTailscaleHealth } from "../environment/TailscaleHealth.ts";
 import { projectLocationFlags, resolveCliAuthConfig } from "./config.ts";
 
@@ -55,10 +55,15 @@ export const turnOnRequireGrant = Effect.fn("cli.tailscale.turnOnRequireGrant")(
 const readPolicyGrantedPeers = readTailscaleStatus("active").pipe(
   Effect.flatMap((status) =>
     policyGrantedPeers(status, readTailscaleWhois).pipe(
-      // Lookups that ran after an account switch read another tailnet, so they say nothing.
-      Effect.tap(() =>
+      // Lookups that ran after an account switch read another tailnet, and "no grants" is
+      // unproven if a device joined meanwhile, as the server's own scan treats them.
+      Effect.tap((scan) =>
         readTailscaleStatus("active").pipe(
-          Effect.filterOrFail((after) => after.selfNodeId === status.selfNodeId),
+          Effect.filterOrFail(
+            (after) =>
+              after.selfNodeId === status.selfNodeId &&
+              (scan.granted.length > 0 || !peersJoined(status, after)),
+          ),
         ),
       ),
       Effect.map((scan) => ({

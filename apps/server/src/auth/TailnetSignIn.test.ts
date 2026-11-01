@@ -832,6 +832,76 @@ it.layer(NodeServices.layer)("TailnetSignIn", (it) => {
       }).pipe(Effect.provide(layerTest(tailnet)));
     });
 
+    it.effect("a grant a scan found stands when a device joins during it", () => {
+      const TABLET_ADDRESS = "100.88.1.9";
+      const tablet = { ID: "nTablet", TailscaleIPs: [TABLET_ADDRESS], UserID: `int64:${OWNER_ID}` };
+      const tabletDevice = {
+        node: phoneNode({ StableID: "nTablet", Addresses: [`${TABLET_ADDRESS}/32`] }),
+      };
+      const tailnet = withLaptop();
+      return Effect.gen(function* () {
+        // A scan finds no grants, then the laptop gets one and the next scan reads it.
+        yield* signIn(makeDpopKey());
+        tailnet.devices = {
+          [LAPTOP_ADDRESS]: { node: laptop, capMap: granted({ scopes: ["read"] }) },
+        };
+        yield* TestClock.adjust("1 minute");
+        const started = yield* Deferred.make<void>();
+        const release = yield* Deferred.make<void>();
+        tailnet.hold = { address: LAPTOP_ADDRESS, started, release };
+        const phone = yield* refusalOf(signIn(makeDpopKey())).pipe(Effect.forkChild);
+        yield* Deferred.await(started);
+        // A tablet joins while that scan runs.
+        tailnet.status = hostStatus({ Peer: { ...peers, tablet } });
+        tailnet.devices = { ...tailnet.devices, [TABLET_ADDRESS]: tabletDevice };
+        yield* Deferred.succeed(release, undefined);
+        expect(yield* Fiber.join(phone)).toBe("no_grant");
+        // The laptop can no longer be read; the grant found stands, not the older "no grants".
+        tailnet.devices = { [LAPTOP_ADDRESS]: { node: null }, [TABLET_ADDRESS]: tabletDevice };
+        yield* TestClock.adjust("11 seconds");
+        expect(yield* refusalOf(signIn(makeDpopKey()))).toBe("no_grant");
+      }).pipe(Effect.provide(layerTest(tailnet)));
+    });
+
+    it.effect(
+      "a peer with no ID that replaces another during a scan keeps it from deciding",
+      () => {
+        const FIRST = "100.88.1.21";
+        const SECOND = "100.88.1.22";
+        const unidentified = (address: string) => ({
+          TailscaleIPs: [address],
+          UserID: `int64:${OWNER_ID}`,
+        });
+        const tailnet: Tailnet = {
+          status: hostStatus({ Peer: { phone: peers.phone, other: unidentified(FIRST) } }),
+          node: phoneNode(),
+          devices: {
+            [FIRST]: { node: phoneNode({ StableID: "nFirst", Addresses: [`${FIRST}/32`] }) },
+          },
+        };
+        return Effect.gen(function* () {
+          const started = yield* Deferred.make<void>();
+          const release = yield* Deferred.make<void>();
+          tailnet.hold = { address: FIRST, started, release };
+          const phone = yield* refusalOf(signIn(makeDpopKey())).pipe(Effect.forkChild);
+          yield* Deferred.await(started);
+          // As many peers with no ID as before, but a granted laptop at another address.
+          tailnet.status = hostStatus({
+            Peer: { phone: peers.phone, other: unidentified(SECOND) },
+          });
+          tailnet.devices = {
+            ...tailnet.devices,
+            [SECOND]: {
+              node: phoneNode({ StableID: "nSecond", Addresses: [`${SECOND}/32`] }),
+              capMap: granted({ scopes: ["read"] }),
+            },
+          };
+          yield* Deferred.succeed(release, undefined);
+          expect(yield* Fiber.join(phone)).toBe("policy_unknown");
+        }).pipe(Effect.provide(layerTest(tailnet)));
+      },
+    );
+
     it.effect("with no node ID for this host, the owner rule does not apply", () => {
       const { ID: _, ...self } = hostStatus().Self;
       const tailnet = withLaptop();

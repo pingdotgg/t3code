@@ -32,6 +32,24 @@ export const tailnetGrantScopes = (
 };
 
 /**
+ * Whether `after` lists a device `before` did not, so a scan of `before` never looked it up.
+ * Peers with no ID are compared by address, so one replacing another still counts.
+ */
+export const peersJoined = (before: TailscaleStatus, after: TailscaleStatus): boolean => {
+  const known = new Set(before.peers.map((peer) => peer.stableNodeId));
+  if (after.peers.some((peer) => !known.has(peer.stableNodeId))) return true;
+  const unidentified = new Map<string | null, number>();
+  for (const address of before.unidentifiedPeerAddresses) {
+    unidentified.set(address, (unidentified.get(address) ?? 0) + 1);
+  }
+  return after.unidentifiedPeerAddresses.some((address) => {
+    const left = unidentified.get(address) ?? 0;
+    unidentified.set(address, left - 1);
+    return left === 0;
+  });
+};
+
+/**
  * The peers this host's tailnet policy grants T3 Code, by name, and the peers
  * whois could not read. A box cannot read its policy without root, but whois
  * shows each peer's grants toward it.
