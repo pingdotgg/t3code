@@ -55,6 +55,7 @@ export interface AppBarSearch {
 
 export interface AppBarProps {
   readonly title: string;
+  readonly titleContent?: ReactNode;
   readonly subtitle?: string;
   readonly actions?: ReadonlyArray<AppBarAction>;
   readonly menus?: ReadonlyArray<AppBarMenu>;

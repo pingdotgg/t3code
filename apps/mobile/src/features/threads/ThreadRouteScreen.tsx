@@ -1010,6 +1010,8 @@ function ThreadRouteContent(
           header={
             props.inspectorPresentation ? null : (
               <ThreadHeader
+                thread={selectedThreadDetailRef === null ? null : selectedThread}
+                canMutateThread={creationState?.kind !== "preparing" || creationState.serverOwned}
                 title={selectedThread.title}
                 subtitle={headerSubtitle}
                 headerColor={headerColor}

@@ -254,6 +254,11 @@ export function sortThreadsForListV2<
   return sortActiveThreadsByOrderKey(threads);
 }
 
+/** Matches the server and title menu: the override or the settle timestamp alone counts. */
+function threadIsSettled(thread: EnvironmentThreadShell) {
+  return thread.settledOverride === "settled" || thread.settledAt != null;
+}
+
 export function getThreadListV2OrderedSection(input: {
   readonly threads: readonly EnvironmentThreadShell[];
   readonly section: "pinned" | "active";
@@ -268,7 +273,7 @@ export function getThreadListV2OrderedSection(input: {
     if (thread.archivedAt !== null || !isListedThreadLineage(thread.lineage)) return false;
     if (
       (input.settlementEnvironmentIds?.has(thread.environmentId) ?? true) &&
-      thread.settledOverride === "settled" &&
+      threadIsSettled(thread) &&
       queuedThreadKeys?.has(`${thread.environmentId}:${thread.id}`) !== true
     ) {
       return false;
@@ -689,7 +694,7 @@ export function buildThreadListV2Items(input: {
     }
     const hasQueuedMessages =
       queuedThreadKeys?.has(`${thread.environmentId}:${thread.id}`) === true;
-    if (supportsSettlement && thread.settledOverride === "settled" && !hasQueuedMessages) {
+    if (supportsSettlement && threadIsSettled(thread) && !hasQueuedMessages) {
       settled.push(thread);
     } else if (thread.pinnedAt != null) {
       pinned.push(thread);
