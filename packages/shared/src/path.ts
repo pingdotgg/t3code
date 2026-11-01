@@ -124,6 +124,35 @@ export function isHostPath(value: string): boolean {
   return isAbsolutePath(value) || value.startsWith("~/");
 }
 
+// Finder and Explorer copy a path ready for a shell: `'/a b'`, `/a\'s\ b`, or `"C:\a b"`.
+const QUOTED_PATH_AT_END = /(?:'((?:[^']|'\\'')+)'|"([^"]+)")\s*$/;
+const SHELL_ESCAPE = /\\([\s'"\\()[\]{}<>|&;$`!*?#~^=])/g;
+
+/**
+ * What a folder box holds after a change. A full path pasted into it replaces the box, even after
+ * the text already there, because `~/'/a b'` would create that nested folder.
+ */
+export function resolvePastedPath(previous: string, next: string): string {
+  const isTyping = next.startsWith(previous)
+    ? next.length === previous.length + 1
+    : previous.startsWith(next);
+  if (isTyping) return next;
+
+  const match = QUOTED_PATH_AT_END.exec(next);
+  // Text before the quote that wasn't in the box is a search, not a folder to paste after.
+  if (match && previous.startsWith(next.slice(0, match.index).trimEnd())) {
+    const quoted = match[1]?.replaceAll("'\\''", "'") ?? match[2] ?? "";
+    if (isHostPath(quoted)) return quoted;
+  }
+
+  // Without a trailing separator, `/a` then `/a/b` is a longer path, not one pasted after a folder.
+  const afterFolder = /[/\\]$/.test(previous) && next.startsWith(previous);
+  const path = afterFolder ? next.slice(previous.length) : next;
+  if (!isHostPath(path)) return next;
+  // `\` separates folders in Windows paths, so it only escapes in `/` and `~/` paths.
+  return isWindowsAbsolutePath(path) ? path : path.replace(SHELL_ESCAPE, "$1");
+}
+
 export function resolveWorkspaceFilePath(path: string, workspaceRoot: string): string {
   if (isAbsolutePath(path) || path.startsWith("~/") || path.startsWith("~\\")) return path;
   const base = workspaceRoot.replace(/[/\\]+$/, "");
