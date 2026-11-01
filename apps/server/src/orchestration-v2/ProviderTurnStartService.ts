@@ -774,6 +774,9 @@ export const layer: Layer.Layer<
           providerSessionId,
           modelSelection: run.modelSelection,
           runtimePolicy: resolvedRuntimePolicy,
+          // Buffered provider continuations drain the live process before a new mode can replace it.
+          preserveRuntimeMode:
+            message.createdBy === "agent" && message.creationSource === "provider",
           ...(existingSessionProjection === undefined
             ? {}
             : { resumeFromSession: existingSessionProjection }),

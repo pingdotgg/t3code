@@ -10,6 +10,7 @@ import {
   OrchestrationV2RuntimeRequest,
   ProviderInstanceId,
   ProviderSessionId,
+  type RuntimeMode,
   ThreadId,
   type ProviderThreadId,
 } from "@t3tools/contracts";
@@ -92,6 +93,17 @@ export class ProviderSessionOpenError extends Schema.TaggedError<ProviderSession
   }
 }
 
+export class ProviderSessionBackgroundWorkBlocksModeChangeError extends Schema.TaggedError<ProviderSessionBackgroundWorkBlocksModeChangeError>()(
+  "ProviderSessionBackgroundWorkBlocksModeChangeError",
+  {
+    providerSessionId: ProviderSessionId,
+  },
+) {
+  override get message(): string {
+    return "The agent is still running background agents or commands, and applying the new permission mode would end them. Wait for them to finish, or press Stop, then send the message again.";
+  }
+}
+
 export class ProviderSessionLookupError extends Schema.TaggedError<ProviderSessionLookupError>()(
   "ProviderSessionLookupError",
   {
@@ -143,6 +155,7 @@ export class ProviderSessionActivityError extends Schema.TaggedError<ProviderSes
 
 export const ProviderSessionManagerV2Error = Schema.Union([
   ProviderSessionOpenError,
+  ProviderSessionBackgroundWorkBlocksModeChangeError,
   ProviderWorkspaceMissingError,
   ProviderSessionLookupError,
   ProviderSessionCloseError,
@@ -158,6 +171,7 @@ export interface ProviderSessionManagerV2Shape {
     readonly providerSessionId: ProviderSessionId;
     readonly modelSelection: ModelSelection;
     readonly runtimePolicy: ProviderAdapter.ProviderAdapterV2RuntimePolicy;
+    readonly preserveRuntimeMode?: boolean;
     readonly resumeFromSession?: OrchestrationV2ProviderSession;
     readonly initialNativeThreadId?: string;
     readonly initialProviderItemIdentityVersion?: 2;
@@ -221,6 +235,12 @@ interface LiveSessionEntry {
   /** Scope revocation to recorded credential ids so superseded sessions cannot revoke replacements opened before detach. */
   readonly mcpCredentialIdByThread: ReadonlyMap<ThreadId, string>;
   readonly supportsMultipleProviderThreads: boolean;
+  /**
+   * The mode the session opened with. A session that cannot switch modes in
+   * place is restarted when a later turn needs another one; a mode change
+   * never ends the turn it lands in.
+   */
+  readonly runtimeMode: RuntimeMode;
   readonly runtime: ProviderAdapter.ProviderAdapterV2SessionRuntime;
   readonly exposedRuntime: ProviderAdapter.ProviderAdapterV2SessionRuntime;
   readonly eventSubscribers: Ref.Ref<
@@ -2135,7 +2155,42 @@ export const layerWithOptions = (
                 }
               }
               const key = sessionKey(input.providerSessionId);
-              const existing = (yield* Ref.get(sessions)).get(key);
+              let existing = (yield* Ref.get(sessions)).get(key);
+              if (
+                existing !== undefined &&
+                input.preserveRuntimeMode !== true &&
+                existing.runtimeMode !== input.runtimePolicy.runtimeMode &&
+                !existing.runtime.providerSession.capabilities.sessions
+                  .supportsRuntimeModeSwitchInSession
+              ) {
+                if (existing.supportsMultipleProviderThreads) {
+                  return yield* new ProviderSessionOpenError({
+                    instanceId: input.modelSelection.instanceId,
+                    providerSessionId: input.providerSessionId,
+                    cause:
+                      "Cannot restart a shared provider session to change its permission mode.",
+                  });
+                }
+                // Restarting ends the process's background agents and commands,
+                // so it waits for them like a Claude model change does.
+                const probedRuntime = existing.runtime;
+                if (
+                  probedRuntime.hasPendingBackgroundWork !== undefined &&
+                  (yield* probedRuntime.hasPendingBackgroundWork.pipe(
+                    Effect.catchCause(() => Effect.succeed(false)),
+                  ))
+                ) {
+                  return yield* new ProviderSessionBackgroundWorkBlocksModeChangeError({
+                    providerSessionId: input.providerSessionId,
+                  });
+                }
+                yield* releaseEntry({
+                  providerSessionId: input.providerSessionId,
+                  reason: "manual_shutdown",
+                  detail: "Runtime mode changed.",
+                });
+                existing = undefined;
+              }
               if (existing !== undefined) {
                 const attached = existing.attachedThreadIds.has(input.threadId);
                 if (!attached && !existing.supportsMultipleProviderThreads) {
@@ -2243,6 +2298,7 @@ export const layerWithOptions = (
                 supportsMultipleProviderThreads:
                   runtime.providerSession.capabilities.sessions
                     .supportsMultipleProviderThreadsPerSession,
+                runtimeMode: input.runtimePolicy.runtimeMode,
                 runtime,
                 exposedRuntime,
                 eventSubscribers,
