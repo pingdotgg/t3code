@@ -198,6 +198,7 @@ import { ThreadGuestShareBar } from "./ThreadGuestShareBar";
 import { ThreadSideChatsRow } from "./ThreadSideChatsRow";
 import type { ThreadContentPresentation } from "./threadContentPresentation";
 import { resolveThreadFeedSubmissionAnchor } from "./thread-feed-live-follow";
+import { createThreadEndRepin, type ThreadEndRepinDeps } from "./thread-end-repin";
 import { useOpenLinkedThread } from "./useOpenLinkedThread";
 import { useGlobalVoiceInput } from "../voice-input/VoiceInputProvider";
 
@@ -1021,18 +1022,25 @@ function ThreadDetailBody(props: ThreadDetailScreenProps) {
   // state from the ref the writers below keep in step with it.
   const endFollowEnabledRef = useRef(true);
   const overlayRepinTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [keyboardClosing, setKeyboardClosing] = useState(false);
+  const [endRepin] = useState(createThreadEndRepin);
+  const endRepinDeps: ThreadEndRepinDeps = {
+    canFollowEnd: () => endFollowEnabledRef.current,
+    scrollToEnd: (animated) => scrollMessageToEnd({ animated, closeKeyboard: false }),
+    onScrollFailed: () => freeze.set(false),
+    isKeyboardOpen: () => KeyboardController.isVisible(),
+    blurComposer: () => composerEditorRef.current?.blur(),
+    dismissKeyboard: () => KeyboardController.dismiss(),
+    nextFrame: () => new Promise((resolve) => requestAnimationFrame(() => resolve())),
+    onKeyboardClosingChange: setKeyboardClosing,
+  };
   const scheduleOverlayRepin = (delayMs: number) => {
     if (overlayRepinTimerRef.current !== null) {
       clearTimeout(overlayRepinTimerRef.current);
     }
     overlayRepinTimerRef.current = setTimeout(() => {
       overlayRepinTimerRef.current = null;
-      if (!endFollowEnabledRef.current) {
-        return;
-      }
-      void scrollMessageToEnd({ animated: false, closeKeyboard: false }).catch(() => {
-        freeze.set(false);
-      });
+      endRepin.repin(endRepinDeps);
     }, delayMs);
   };
   // LegendList does not re-anchor short followed conversations when floating
@@ -1045,13 +1053,32 @@ function ThreadDetailBody(props: ThreadDetailScreenProps) {
     scheduleOverlayRepin(50);
   };
   const floatingCoverageTarget = showFloatingStatus ? FLOATING_WORKING_CONTROL_COVERAGE : 0;
+  // A turn's last row grows the list as its coverage collapses. Scrolling along with the
+  // shrinking inset would pull the list down just before that row pushes it back up. A frozen
+  // list misses keyboard inset events, so skip this while the keyboard is up or moving.
+  const coverageCollapseFroze = useSharedValue(false);
+  useAnimatedReaction(
+    () => floatingCoverageTarget,
+    (target, previous) => {
+      if (target === 0 && previous !== null && previous > 0 && keyboardTranslation.value === 0) {
+        coverageCollapseFroze.set(true);
+        freeze.set(true);
+      }
+    },
+    [floatingCoverageTarget],
+  );
   const floatingControlCoverage = useDerivedValue(
     () =>
       withTiming(
         floatingCoverageTarget,
         { duration: 180, reduceMotion: ReduceMotion.System },
         (finished) => {
-          if (finished) runOnJS(repinAfterCoverageSettles)(floatingCoverageTarget);
+          if (!finished) return;
+          if (coverageCollapseFroze.get()) {
+            coverageCollapseFroze.set(false);
+            freeze.set(false);
+          }
+          runOnJS(repinAfterCoverageSettles)(floatingCoverageTarget);
         },
       ),
     [floatingCoverageTarget],
@@ -1236,26 +1263,20 @@ function ThreadDetailBody(props: ThreadDetailScreenProps) {
     });
     feedRef.current?.resetEndFollow();
     setAnchorMessageId(nextAnchorMessageId);
-    composerEditorRef.current?.blur();
-    // The send enqueued the message optimistically, so it is in the feed or
-    // the queue by the next frame, once the new anchor has rendered.
-    if (nextAnchorMessageId === messageId && contentPresentationKind === "ready") {
-      requestAnimationFrame(() => {
-        if (scope.aborted) return;
-        // Wait for the keyboard to finish dismissing: scrollMessageToEnd freezes
-        // keyboard-driven inset updates, and a close event swallowed by that
-        // freeze leaves a phantom bottom inset.
-        void KeyboardController.dismiss()
-          .then(() => {
-            // A scroll during the dismissal turns end-follow off; leave the reader where they are.
-            if (scope.aborted || !endFollowEnabledRef.current) return;
-            return scrollMessageToEnd({ animated: !reduceMotion, closeKeyboard: false });
-          })
-          .catch(() => {
-            if (!scope.aborted) freeze.set(false);
-          });
+    void endRepin
+      .closeKeyboard(endRepinDeps, !reduceMotion)
+      .then((pinned) => {
+        // The send enqueued the message optimistically, so it is in the feed or the queue.
+        if (pinned || nextAnchorMessageId !== messageId || contentPresentationKind !== "ready") {
+          return;
+        }
+        // A scroll during the send turns end-follow off; leave the reader where they are.
+        if (scope.aborted || !endFollowEnabledRef.current) return;
+        return scrollMessageToEnd({ animated: !reduceMotion, closeKeyboard: false });
+      })
+      .catch(() => {
+        if (!scope.aborted) freeze.set(false);
       });
-    }
     return messageId;
   };
 
@@ -1401,6 +1422,7 @@ function ThreadDetailBody(props: ThreadDetailScreenProps) {
               listRef={listRef}
               freeze={freeze}
               anchorMessageId={anchorMessageId}
+              keyboardClosing={keyboardClosing}
               jumpToMessageId={jumpMessageLoaded ? jumpMessageId : null}
               onJumpedToMessage={() => finishThreadMessageJump(selectedThreadKey)}
               ref={feedRef}
