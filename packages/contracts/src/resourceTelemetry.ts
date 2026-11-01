@@ -328,6 +328,7 @@ export type ShellEnvironmentPatch = typeof ShellEnvironmentPatch.Type;
 export const DesktopShellEnvironmentSnapshot = Schema.Struct({
   version: Schema.Literal(1),
   type: Schema.Literal("shellEnvironment"),
+  discovered: Schema.Boolean,
   platform: Schema.String,
   environment: ShellEnvironmentPatch,
 });

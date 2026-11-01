@@ -566,11 +566,13 @@ export const make = Effect.gen(function* () {
   const discovered = yield* Deferred.make<boolean>();
   const publish = Effect.fn("desktop.shellEnvironment.publish")(function* (
     patch: ShellEnvironmentPatch,
+    discovered = false,
   ) {
     applyShellEnvironment(env, patch);
     const message: DesktopShellEnvironmentSnapshot = {
       version: 1,
       type: "shellEnvironment",
+      discovered,
       platform: environment.platform,
       environment: patch,
     };
@@ -584,7 +586,7 @@ export const make = Effect.gen(function* () {
     const patch = Object.fromEntries(
       Object.keys(ShellEnvironmentPatch.fields).map((name) => [name, fresh[name] ?? null]),
     );
-    if (prepared || Option.isNone(yield* Ref.get(latest))) yield* publish(patch);
+    if (prepared || Option.isNone(yield* Ref.get(latest))) yield* publish(patch, prepared);
     if (prepared) {
       const cached = Object.fromEntries(
         CACHED_ENV_NAMES.flatMap((name) => (fresh[name] ? [[name, fresh[name]]] : [])),

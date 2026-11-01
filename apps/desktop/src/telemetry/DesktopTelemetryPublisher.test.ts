@@ -94,6 +94,7 @@ describe("DesktopTelemetryPublisher", () => {
                 updates: Stream.make({
                   version: 1,
                   type: "shellEnvironment",
+                  discovered: true,
                   platform: "darwin",
                   environment: { PATH: "/discovered/bin" },
                 }),

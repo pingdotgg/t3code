@@ -1056,6 +1056,7 @@ describe("desktop shell environment updates", () => {
     const message = decodeDesktopHostMessage({
       version: 1,
       type: "shellEnvironment",
+      discovered: true,
       platform: "win32",
       environment: {
         PATH: "C:\\fresh",

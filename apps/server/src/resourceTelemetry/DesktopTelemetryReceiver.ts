@@ -531,8 +531,10 @@ export const make = Effect.fn("resourceTelemetry.desktopTelemetryReceiver.make")
           return recordContact.pipe(
             Effect.andThen(
               Effect.sync(() => {
-                if (message.platform === platform)
+                if (message.platform === platform) {
                   applyShellEnvironment(environment, message.environment);
+                  if (message.discovered) delete environment.T3CODE_DESKTOP_SHELL_DISCOVERY_PENDING;
+                }
               }),
             ),
           );

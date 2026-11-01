@@ -231,7 +231,10 @@ describe("DesktopShellEnvironment", () => {
               assert.equal(env.__MISE_DIFF, "fresh-mise");
               const fresh = yield* Stream.runHead(service.updates);
               assert.isTrue(Option.isSome(fresh));
-              if (Option.isSome(fresh)) assert.equal(fresh.value.environment.PATH, env.PATH);
+              if (Option.isSome(fresh)) {
+                assert.equal(fresh.value.environment.PATH, env.PATH);
+                assert.isTrue(fresh.value.discovered);
+              }
               return true;
             }),
         });
