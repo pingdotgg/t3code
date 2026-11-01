@@ -2524,6 +2524,19 @@ code {
   margin: 0;
 }
 
+/* Typed so the details card toggle can ease the chat lane instead of snapping it. */
+@property --chat-lane-inset-start {
+  syntax: "<length>";
+  inherits: true;
+  initial-value: 0px;
+}
+
+@property --chat-lane-inset-end {
+  syntax: "<length>";
+  inherits: true;
+  initial-value: 0px;
+}
+
 @layer components {
   .chat-composer-lane {
     padding-inline-start: calc(

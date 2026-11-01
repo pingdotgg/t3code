@@ -67,6 +67,8 @@ function Card({
           detailsCardTopInset: 0,
           preferredDetailsCard: placement,
           detailsCardPlacement: inline ? placement : null,
+          canvasSettling: false,
+          detailsCardLaneShift: 0,
         }}
       >
         <ThreadDetailsCard

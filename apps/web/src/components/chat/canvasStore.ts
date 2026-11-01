@@ -13,6 +13,8 @@ interface CanvasEdges {
 
 export interface ChatCanvasMeasurements {
   readonly width: number;
+  /** The width once running panel width transitions end. */
+  readonly settledWidth: number;
   readonly height: number;
   readonly padding: number;
   readonly maxChatWidth: number;
@@ -32,6 +34,7 @@ interface ChatCanvasStoreState {
 
 const INITIAL_MEASUREMENTS: ChatCanvasMeasurements = {
   width: 0,
+  settledWidth: 0,
   height: 0,
   padding: 48,
   maxChatWidth: 768,
@@ -47,6 +50,7 @@ const sameEdges = (a: CanvasEdges | null, b: CanvasEdges | null) =>
 
 const sameMeasurements = (a: ChatCanvasMeasurements, b: ChatCanvasMeasurements) =>
   a.width === b.width &&
+  a.settledWidth === b.settledWidth &&
   a.height === b.height &&
   a.padding === b.padding &&
   a.maxChatWidth === b.maxChatWidth &&
@@ -94,13 +98,16 @@ export function resolveChatCanvasModel({
   detailsCardInlineOpen: boolean;
 }) {
   const container = { width: measurements.width, height: measurements.height };
+  // The card decides whether it fits, and where the lane leaves room for it, from
+  // the width the canvas settles at, so a panel animation never squeezes the lane.
+  const settled = { width: measurements.settledWidth, height: measurements.height };
   const { findBar } = measurements;
   const detailsCardTopInset = findBar?.bottom ?? 0;
   const lane = { padding: measurements.padding, minChatWidth: measurements.minChatWidth };
   // The preview avoids where an open inline card would sit, whether or not a
   // preview overlap has pushed the card itself into popover mode.
   const preferredDetailsCard = resolveThreadDetailsCardLayout({
-    container,
+    container: settled,
     lane,
     frame: null,
     topInset: detailsCardTopInset,
@@ -114,8 +121,7 @@ export function resolveChatCanvasModel({
     detailsCardMeasurement.threadRef.threadId === threadRef.threadId
       ? detailsCardMeasurement
       : null;
-  const detailsCard =
-    detailsCardInlineOpen &&
+  const claimableDetailsCard =
     preferredDetailsCard &&
     detailsCardMeasured?.width === preferredDetailsCard.width &&
     detailsCardMeasured.fullContentHeight > 0
@@ -127,18 +133,28 @@ export function resolveChatCanvasModel({
             Math.min(detailsCardMeasured.fullContentHeight, preferredDetailsCard.height),
         }
       : null;
-  const layout = resolveChatCanvasLayout({
-    container,
-    preview,
-    padding: measurements.padding,
-    maxChatWidth: measurements.maxChatWidth,
-    minChatWidth: measurements.minChatWidth,
-    composerHeight: measurements.composerHeight,
-    detailsCard,
-    findBar,
-  });
+  const detailsCard = detailsCardInlineOpen ? claimableDetailsCard : null;
+  const resolveLayout = (card: typeof detailsCard) =>
+    resolveChatCanvasLayout({
+      container,
+      preview,
+      padding: measurements.padding,
+      maxChatWidth: measurements.maxChatWidth,
+      minChatWidth: measurements.minChatWidth,
+      composerHeight: measurements.composerHeight,
+      detailsCard: card,
+      findBar,
+    });
+  const layout = resolveLayout(detailsCard);
+  // How far the lane's right edge moves when the card claims or frees space.
+  const toggled = claimableDetailsCard
+    ? resolveLayout(detailsCard ? null : claimableDetailsCard)
+    : layout;
+  const detailsCardLaneShift = Math.abs(
+    layout.chat.left + layout.chat.width - toggled.chat.left - toggled.chat.width,
+  );
   const detailsCardPlacement = resolveThreadDetailsCardLayout({
-    container,
+    container: settled,
     lane,
     frame: layout.frame,
     overlapsDetailsCard: layout.overlapsDetailsCard,
@@ -153,5 +169,9 @@ export function resolveChatCanvasModel({
     preferredDetailsCard,
     detailsCardPlacement,
     detailsCardMode,
+    laneAvoidsDetailsCard: detailsCard !== null,
+    detailsCardLaneShift,
+    /** A panel is animating the canvas width toward settledWidth. */
+    canvasSettling: measurements.settledWidth !== measurements.width,
   };
 }
