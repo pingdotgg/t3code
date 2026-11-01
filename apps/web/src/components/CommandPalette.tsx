@@ -58,6 +58,7 @@ import {
   ChartNoAxesColumnIcon,
   CheckIcon,
   ChevronRightIcon,
+  CircleCheckIcon,
   CornerLeftUpIcon,
   FileSearchIcon,
   FolderGit2Icon,
@@ -74,6 +75,7 @@ import {
   PinOffIcon,
   SquarePenIcon,
   TextSearchIcon,
+  Undo2Icon,
   UserPlusIcon,
 } from "lucide-react";
 import { openThreadFind } from "./chat/threadFindStore";
@@ -92,6 +94,7 @@ import { useAtomValue } from "@effect/atom-react";
 import { isDesktopLocalConnectionTarget } from "../connection/desktopLocal";
 import { useDesktopLocalBootstraps } from "../connection/useDesktopLocalBootstraps";
 import { useHandleNewThread } from "../hooks/useHandleNewThread";
+import { useThreadActions } from "../hooks/useThreadActions";
 import { useOpenPanelPullRequestUrl } from "../hooks/useOpenPanelPullRequestUrl";
 import { copyThreadReference } from "../lib/copyThreadReference";
 import {
@@ -459,6 +462,11 @@ function OpenCommandPaletteDialog(props: {
   const openPanelPullRequestUrl = useOpenPanelPullRequestUrl(referenceThreadRef);
   const activeThreadServerConfig = useServerConfigs().get(
     activeThread?.environmentId ?? ("" as EnvironmentId),
+  );
+  const { settleThread, unsettleThread } = useThreadActions();
+  const canOperateActiveThread = useEnvironmentScope(
+    activeThread?.environmentId ?? null,
+    AuthOrchestrationOperateScope,
   );
   const canShareActiveThreadWithGuest = useAtomValue(
     canShareWithGuestAtom(activeThread?.environmentId ?? ("" as EnvironmentId)),
@@ -1381,6 +1389,36 @@ function OpenCommandPaletteDialog(props: {
       icon: <PullRequestGlyph.link className={ITEM_ICON_CLASS} />,
       run: async () => {
         useRightPanelStore.getState().open(threadRef, "pull-requests");
+      },
+    });
+  }
+
+  if (
+    activeThread !== null &&
+    canOperateActiveThread &&
+    activeThreadServerConfig?.environment.capabilities.threadSettlement === true
+  ) {
+    const threadRef = scopeThreadRef(activeThread.environmentId, activeThread.id);
+    const settled = activeThread.settledOverride === "settled";
+    actionItems.push({
+      kind: "action",
+      value: settled ? "action:unsettle-thread" : "action:settle-thread",
+      searchTerms: settled
+        ? ["unsettle", "un-settle", "reopen", "thread"]
+        : ["settle", "done", "finish", "close", "thread"],
+      title: settled ? "Un-settle thread" : "Settle thread",
+      icon: settled ? (
+        <Undo2Icon className={ITEM_ICON_CLASS} />
+      ) : (
+        <CircleCheckIcon className={ITEM_ICON_CLASS} />
+      ),
+      shortcutCommand: "thread.settle",
+      // Failures throw into executeItem's error toast.
+      run: async () => {
+        const result = await (settled ? unsettleThread(threadRef) : settleThread(threadRef));
+        if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
+          throw squashAtomCommandFailure(result);
+        }
       },
     });
   }
@@ -2463,6 +2501,15 @@ function OpenCommandPaletteDialog(props: {
           title: "Thread search is unavailable on this server.",
           description: "Update the server to enable it.",
         });
+      return;
+    }
+    // ChatView ignores shortcuts while the palette is open, so the palette runs
+    // its own settle item, even when the query has filtered it out.
+    if (command === "thread.settle") {
+      event.preventDefault();
+      event.stopPropagation();
+      const settleItem = actionItems.find((item) => item.shortcutCommand === "thread.settle");
+      if (settleItem) executeItem(settleItem);
       return;
     }
 
