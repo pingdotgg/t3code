@@ -235,7 +235,18 @@ export const make = Effect.fn("RpcSessionFactory.make")(function* (
         retryTransientErrors: false,
         retryPolicy: Schedule.recurs(0),
         onPingTimeout: Ref.set(pingTimedOut, true),
-      }),
+      }).pipe(
+        // Teardown sends an interrupt per open stream, and a write to a closed
+        // socket waits out the client's 1s interrupt timeout before reconnecting.
+        // Requests still go through, so they fail with the protocol error.
+        Effect.map((protocol) => ({
+          ...protocol,
+          send: (clientId, request, transferables) =>
+            request._tag !== "Request" && Deferred.isDoneUnsafe(disconnected)
+              ? Effect.void
+              : protocol.send(clientId, request, transferables),
+        })),
+      ),
     ).pipe(
       Layer.provide(
         Layer.mergeAll(
