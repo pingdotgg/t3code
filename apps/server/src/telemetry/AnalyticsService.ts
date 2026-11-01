@@ -117,6 +117,23 @@ function serverOsFromNodePlatform(platform: string): ClientOs {
   }
 }
 
+/**
+ * Whether `T3CODE_TELEMETRY_ENABLED` in `env` turns telemetry off. A value that does not parse counts
+ * as off. Reads the live environment, which desktop shell discovery updates after startup.
+ */
+export const environmentOptsOut = (env: NodeJS.ProcessEnv): Effect.Effect<boolean> => {
+  const value = env.T3CODE_TELEMETRY_ENABLED;
+  if (value === undefined) return Effect.succeed(false);
+  return Config.Boolean("T3CODE_TELEMETRY_ENABLED").pipe(
+    Effect.provideService(
+      ConfigProvider.ConfigProvider,
+      ConfigProvider.fromEnv({ env: { T3CODE_TELEMETRY_ENABLED: value } }),
+    ),
+    Effect.map((enabled) => !enabled),
+    Effect.orElseSucceed(() => true),
+  );
+};
+
 /** @public */
 /** @public */
 export const make = Effect.gen(function* () {
@@ -127,23 +144,17 @@ export const make = Effect.gen(function* () {
   const policyAllows =
     ManagedPolicy.deniedBy(yield* ManagedPolicy.ManagedPolicy, "telemetry") === undefined;
   // What decides over the setting, when anything does: the policy's opt-out, then the variable.
-  // A desktop launch waits for the login shell's value, since a cached PATH does not establish
-  // consent from the current login shell.
+  // A desktop launch waits for the login shell, since a cached PATH does not establish consent from
+  // the current login shell. Clients were told the setting decides by then, so the shell's value
+  // can only opt out.
   const variableEnabled = Effect.suspend((): Effect.Effect<Option.Option<boolean>> => {
     if (!policyAllows || Option.contains(telemetryConfig.enabled, false))
       return Effect.succeedSome(false);
     if (!awaitingShellConsent) return Effect.succeed(telemetryConfig.enabled);
     if (hostEnvironment.T3CODE_DESKTOP_SHELL_DISCOVERY_PENDING === "1")
       return Effect.succeedSome(false);
-    const preference = hostEnvironment.T3CODE_TELEMETRY_ENABLED;
-    if (preference === undefined) return Effect.succeedNone;
-    return Config.Boolean("T3CODE_TELEMETRY_ENABLED").pipe(
-      Effect.provideService(
-        ConfigProvider.ConfigProvider,
-        ConfigProvider.fromEnv({ env: { T3CODE_TELEMETRY_ENABLED: preference } }),
-      ),
-      Effect.asSome,
-      Effect.orElseSucceed(() => Option.some(false)),
+    return environmentOptsOut(hostEnvironment).pipe(
+      Effect.map((optsOut) => (optsOut ? Option.some(false) : telemetryConfig.enabled)),
     );
   });
   const httpClient = yield* HttpClient.HttpClient;

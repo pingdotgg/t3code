@@ -221,24 +221,26 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("AnalyticsService
     }),
   );
 
-  it.effect(
-    "after desktop shell discovery, the setting decides when the shell sets no variable",
-    () =>
-      Effect.gen(function* () {
-        const env: NodeJS.ProcessEnv = { T3CODE_DESKTOP_SHELL_DISCOVERY_PENDING: "1" };
-        const batches = yield* sendFor(
-          0,
-          respondWithStatus(204),
-          Effect.gen(function* () {
-            const analytics = yield* AnalyticsService.AnalyticsService;
-            delete env.T3CODE_DESKTOP_SHELL_DISCOVERY_PENDING;
-            yield* analytics.record("test.setting-off");
-            yield* analytics.flush;
-          }),
-          { variable: null, setting: false },
-        ).pipe(Effect.provideService(HostProcess.Environment, env));
-        assert.equal(batches.length, 0);
-      }),
+  it.effect("after desktop shell discovery, only a shell opt-out outranks the setting", () =>
+    Effect.gen(function* () {
+      const env: NodeJS.ProcessEnv = { T3CODE_DESKTOP_SHELL_DISCOVERY_PENDING: "1" };
+      const batches = yield* sendFor(
+        0,
+        respondWithStatus(204),
+        Effect.gen(function* () {
+          const analytics = yield* AnalyticsService.AnalyticsService;
+          delete env.T3CODE_DESKTOP_SHELL_DISCOVERY_PENDING;
+          yield* analytics.record("test.setting-off");
+          yield* analytics.flush;
+          // Clients already show the setting as deciding, so a late shell value cannot turn it back on.
+          env.T3CODE_TELEMETRY_ENABLED = "true";
+          yield* analytics.record("test.late-shell-true");
+          yield* analytics.flush;
+        }),
+        { variable: null, setting: false },
+      ).pipe(Effect.provideService(HostProcess.Environment, env));
+      assert.equal(batches.length, 0);
+    }),
   );
 
   it.effect("client owner reports cannot use up the server's owner cap", () =>
