@@ -82,6 +82,7 @@ import {
   acpPostSettleContinuationOfferEvidence,
   acpPostSettleWakeEvidence,
   acpToolCallDiffPatch,
+  acpToolCallSnippetEdit,
   makeAcpAdapterV2,
   type AcpAdapterV2ExtensionContext,
   type AcpAdapterV2Flavor,
@@ -136,6 +137,32 @@ describe("acpPerTurnPromptUsage", () => {
         cachedInputTokens: 512,
         cacheCreationTokens: 32,
         reasoningTokens: 3,
+      },
+    );
+    // Antigravity 1.4.5 for usageMetadata {prompt 42, cached 24, candidates 3, thoughts 9, total 54}.
+    assert.deepEqual(
+      acpPerTurnPromptUsage(
+        {
+          inputTokens: 42,
+          outputTokens: 3,
+          totalTokens: 54,
+          cachedReadTokens: 24,
+          cachedWriteTokens: 0,
+          thoughtTokens: 9,
+        },
+        false,
+        "completed",
+        true,
+      ),
+      {
+        usageScope: "main_agent",
+        usageStatus: "complete",
+        hasSubagents: false,
+        inputTokens: 42,
+        outputTokens: 12,
+        cachedInputTokens: 24,
+        cacheCreationTokens: 0,
+        reasoningTokens: 9,
       },
     );
   });
@@ -231,6 +258,25 @@ describe("acpPerTurnPromptUsage", () => {
 });
 
 describe("acpToolCallDiffPatch", () => {
+  it("keeps an unplaced snippet as recorded text instead of numbering it from line 1", () => {
+    const content = [
+      {
+        type: "diff",
+        path: "/repo/a.ts",
+        oldText: "const target = 10;",
+        newText: "const target = 100;",
+        patch: { format: "snippet", text: "@@ -1,1 +1,1 @@ snippet, line unknown\n" },
+      },
+    ];
+    assert.isUndefined(acpToolCallDiffPatch(content));
+    // An omitted preview is not re-diffed from the bare snippets either.
+    assert.isUndefined(acpToolCallDiffPatch([{ ...content[0], patch: { format: "omitted" } }]));
+    assert.deepEqual(acpToolCallSnippetEdit(content), {
+      oldStr: "const target = 10;",
+      newStr: "const target = 100;",
+    });
+  });
+
   it("builds per-file patches from ACP hunks and recorded old/new text", () => {
     for (const operation of ["add", "delete"]) {
       const text = operation === "add" ? "@@ -0,0 +1 @@\n+content\n" : "@@ -1 +0,0 @@\n-content\n";
@@ -659,6 +705,97 @@ describe("AcpAdapterV2", () => {
         outputTokens: 30,
       });
       assert.equal(promptOrdinal, 2, "continuation turn must not dispatch session/prompt");
+    }).pipe(Effect.provide(layerTest), Effect.scoped),
+  );
+  it.live("fails an end_turn the outcome check rejects and restarts before the next turn", () =>
+    Effect.gen(function* () {
+      const path = yield* Path.Path;
+      const instanceId = ProviderInstanceId.make("acp-test-prompt-outcome");
+      const threadId = ThreadId.make("thread-acp-prompt-outcome");
+      const quota = {
+        class: "usage_limit",
+        message: "Quota reached.",
+        code: "RESOURCE_EXHAUSTED",
+        retryable: true,
+        resetAt: "2030-01-01T00:00:00.000Z",
+      } as const;
+      // The runtime ordinal of each prompt, and the session each check watched.
+      const promptRuntimes: Array<number> = [];
+      const watchedSessions: Array<string> = [];
+      const adapter = yield* makeAcpAdapterV2({
+        instanceId,
+        selfInvocation: yield* resolveSelfInvocation(),
+        flavor: {
+          driver: ACP_TEST_DRIVER,
+          capabilities: AcpProviderCapabilitiesV2,
+          watchPromptOutcome: (sessionId) =>
+            Effect.sync(() => {
+              watchedSessions.push(sessionId);
+              const failed = watchedSessions.length === 1;
+              return () => Effect.succeed(failed ? quota : undefined);
+            }),
+          makeRuntime: makeMockRuntime({
+            childProcessSpawner: yield* ChildProcessSpawner.ChildProcessSpawner,
+            mockAgentPath: yield* path.fromFileUrl(
+              new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
+            ),
+            wrapRuntime: (runtime, runtimeOrdinal) => ({
+              ...runtime,
+              prompt: () =>
+                Effect.sync(() => {
+                  promptRuntimes.push(runtimeOrdinal);
+                  return { stopReason: "end_turn" as const };
+                }),
+            }),
+          }),
+        },
+      });
+      const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        cwd: process.cwd(),
+      });
+      const modelSelection = { instanceId, model: "default" } as const;
+      const runtime = yield* adapter.openSession({
+        threadId,
+        providerSessionId: ProviderSessionId.make("provider-session-acp-prompt-outcome"),
+        modelSelection,
+        runtimePolicy,
+      });
+      const providerThread = yield* runtime.ensureThread({
+        threadId,
+        modelSelection,
+        runtimePolicy,
+      });
+      const runTurn = (ordinal: number) =>
+        Effect.gen(function* () {
+          yield* runtime.startTurn(
+            makeTurnInput({
+              threadId,
+              providerThread,
+              instanceId,
+              runtimePolicy,
+              now: yield* DateTime.now,
+              ordinal,
+            }),
+          );
+          const events = yield* runtime.events.pipe(
+            Stream.takeUntil((event) => event.type === "turn.terminal"),
+            Stream.runCollect,
+          );
+          return events.at(-1);
+        });
+
+      const failed = yield* runTurn(1);
+      if (failed?.type !== "turn.terminal" || failed.status !== "failed") {
+        return assert.fail("expected a failed terminal");
+      }
+      assert.deepEqual(failed.failure, quota);
+      const completed = yield* runTurn(2);
+      assert.equal(completed?.type === "turn.terminal" ? completed.status : null, "completed");
+      assert.deepEqual(promptRuntimes, [1, 2], "the next turn runs on a fresh runtime");
+      assert.equal(watchedSessions.length, 2);
+      assert.equal(watchedSessions[0], watchedSessions[1]);
     }).pipe(Effect.provide(layerTest), Effect.scoped),
   );
   it.live("retains returned usage when Stop finalizes before the prompt callback", () =>

@@ -3559,6 +3559,7 @@ export const ORCHESTRATION_V2_WS_METHODS = {
   getOlderSettledThreads: "orchestration.getOlderSettledThreads",
   getThreadProjection: "orchestration.getThreadProjection",
   getWorkflowScript: "orchestration.getWorkflowScript",
+  getNativeChildWork: "orchestration.getNativeChildWork",
   stopWorkflow: "orchestration.stopWorkflow",
   forceStopThread: "orchestration.forceStopThread",
   getTurnItem: "orchestration.getTurnItem",
@@ -3998,6 +3999,53 @@ export const OrchestrationV2GetWorkflowScriptResult = Schema.Struct({
 export type OrchestrationV2GetWorkflowScriptResult =
   typeof OrchestrationV2GetWorkflowScriptResult.Type;
 
+/** Names a provider-native subagent's child thread. */
+export const OrchestrationV2GetNativeChildWorkInput = Schema.Struct({
+  threadId: ThreadId,
+});
+export type OrchestrationV2GetNativeChildWorkInput =
+  typeof OrchestrationV2GetNativeChildWorkInput.Type;
+
+export const OrchestrationV2NativeChildStep = Schema.Struct({
+  index: NonNegativeInt,
+  type: Schema.String,
+  status: Schema.NullOr(Schema.String),
+  text: Schema.NullOr(Schema.String),
+  toolCalls: Schema.Array(Schema.Struct({ name: Schema.String, input: Schema.String })),
+});
+export type OrchestrationV2NativeChildStep = typeof OrchestrationV2NativeChildStep.Type;
+
+/** Read-only: native children cannot take messages. */
+export const OrchestrationV2NativeChildWork = Schema.Struct({
+  conversationId: TrimmedNonEmptyString,
+  role: Schema.String,
+  prompt: Schema.String,
+  /** Null when the provider has no readable transcript for this child. */
+  steps: Schema.NullOr(Schema.Array(OrchestrationV2NativeChildStep)),
+  /** Earlier steps were left out to keep the read bounded. */
+  truncated: Schema.Boolean,
+});
+export type OrchestrationV2NativeChildWork = typeof OrchestrationV2NativeChildWork.Type;
+
+/** Empty when the provider's records do not prove which children the subagent launched. */
+export const OrchestrationV2GetNativeChildWorkResult = Schema.Struct({
+  children: Schema.Array(OrchestrationV2NativeChildWork),
+});
+export type OrchestrationV2GetNativeChildWorkResult =
+  typeof OrchestrationV2GetNativeChildWorkResult.Type;
+
+export class OrchestrationV2GetNativeChildWorkError extends Schema.TaggedError<OrchestrationV2GetNativeChildWorkError>()(
+  "OrchestrationV2GetNativeChildWorkError",
+  {
+    threadId: ThreadId,
+    cause: Schema.optional(Schema.Defect()),
+  },
+) {
+  override get message(): string {
+    return "Failed to read the subagent's work.";
+  }
+}
+
 const WORKFLOW_FILE_ERROR_MESSAGES = {
   "invalid-path": "Workflow files must be absolute paths with the expected extension.",
   "root-unavailable": "Workflow file root unavailable.",
@@ -4176,6 +4224,10 @@ export const OrchestrationV2RpcSchemas = {
   getWorkflowScript: {
     input: OrchestrationV2GetWorkflowScriptInput,
     output: OrchestrationV2GetWorkflowScriptResult,
+  },
+  getNativeChildWork: {
+    input: OrchestrationV2GetNativeChildWorkInput,
+    output: OrchestrationV2GetNativeChildWorkResult,
   },
   getTurnItem: {
     input: OrchestrationV2GetTurnItemInput,

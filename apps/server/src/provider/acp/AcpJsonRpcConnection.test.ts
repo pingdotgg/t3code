@@ -966,6 +966,16 @@ describe("AcpSessionRuntime", () => {
           "logout",
         ]),
       );
+      // Omitted roots clear an agent's stored ones, so every activation resends them.
+      for (const method of ["session/new", "session/fork", "session/resume"]) {
+        expect(
+          requestEvents.find((event) => event.method === method && event.status === "started")
+            ?.payload,
+        ).toMatchObject({
+          additionalDirectories: ["/tmp/t3-thread-uploads"],
+          _meta: { negotiated: "0.0.0" },
+        });
+      }
     }).pipe(
       Effect.provide(
         AcpSessionRuntime.layer({
@@ -977,6 +987,10 @@ describe("AcpSessionRuntime", () => {
               T3_ACP_SESSION_LIFECYCLE: "1",
             },
           },
+          additionalDirectories: ["/tmp/t3-thread-uploads"],
+          sessionMeta: (initializeResult) => ({
+            negotiated: initializeResult.agentInfo?.version ?? "none",
+          }),
           cwd: process.cwd(),
           clientInfo: { name: "t3-test", version: "0.0.0" },
           requestLogger: (event) =>

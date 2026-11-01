@@ -3,6 +3,7 @@ import type {
   ChatAttachment,
   ServerSettings,
   ServerSettingsError,
+  ThreadId,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import type * as Effect from "effect/Effect";
@@ -46,6 +47,8 @@ export class ProviderHost extends Context.Service<
     readonly shouldRunBackgroundWork: (scope: BackgroundScope) => Effect.Effect<boolean>;
     /** Absolute attachment path, or null if the ID does not resolve inside attachmentsDir. */
     readonly resolveAttachmentPath: (attachment: ChatAttachment) => string | null;
+    /** Stored uploads this thread's agent may read: its own and its run-forked history. */
+    readonly readableAttachmentPaths?: (threadId: ThreadId) => Effect.Effect<ReadonlyArray<string>>;
     readonly resolveExtractedTextPath?: (path: string) => Effect.Effect<string | undefined>;
     readonly credentials: (
       namespace: string,

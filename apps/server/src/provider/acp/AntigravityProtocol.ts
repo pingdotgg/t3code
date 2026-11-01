@@ -12,6 +12,13 @@ import * as AcpWireSchema from "effect-acp/schema-v1";
 
 import type { AcpToolCallState } from "@t3tools/provider-acp/server/runtimeModel";
 
+import {
+  ANTIGRAVITY_EDIT_DIFF_OMITTED,
+  antigravityEditPatch,
+  isAntigravitySnippetPatch,
+  readAntigravityPreEditFile,
+} from "./AntigravityEditLocation.ts";
+
 const TOOL_TEXT_LIMIT = 8_000;
 const TOOL_TEXT_TRUNCATED = "[Earlier output truncated]\n\n";
 const QUESTION_LABEL_LIMIT = 512;
@@ -350,7 +357,37 @@ function localImagePath(imagePath: string | undefined): string | undefined {
   return /^[a-z][a-z\d+.-]*:/i.test(path) && !/^[a-z]:[\\/]/i.test(path) ? undefined : path;
 }
 
-export function normalizeAntigravityToolCall(toolCall: AcpToolCallState): AcpToolCallState {
+/** The ACP adapter renders a diff's `patch.text` ahead of its bare old/new snippets. */
+function withAntigravityEditPatches(
+  content: ReadonlyArray<unknown>,
+  data: Record<string, unknown>,
+  readPreEditFile: ((path: string) => string | undefined) | undefined,
+) {
+  return content.map((entry) => {
+    if (!Predicate.isObject(entry) || entry.type !== "diff" || typeof entry.path !== "string")
+      return entry;
+    // Keep the first patch: once the edit runs, the file no longer holds the old text.
+    if (entry.patch !== undefined) return entry;
+    const text = antigravityEditPatch({
+      path: entry.path,
+      rawInput: data.rawInput,
+      locations: data.locations,
+      readPreEditFile,
+    });
+    // A truncated patch would no longer parse, so the snippets stay the fallback.
+    if (text === ANTIGRAVITY_EDIT_DIFF_OMITTED) return { ...entry, patch: { format: "omitted" } };
+    if (text === undefined || text.length > TOOL_TEXT_LIMIT) return entry;
+    return {
+      ...entry,
+      patch: isAntigravitySnippetPatch(text) ? { format: "snippet", text } : { text },
+    };
+  });
+}
+
+export function normalizeAntigravityToolCall(
+  toolCall: AcpToolCallState,
+  readPreEditFile = readAntigravityPreEditFile,
+): AcpToolCallState {
   const input = Option.getOrUndefined(decodeNativeToolFields(toolCall.data.rawInput));
   const output = Option.getOrUndefined(decodeNativeToolFields(toolCall.data.rawOutput));
   const nativeCommand =
@@ -382,6 +419,17 @@ export function normalizeAntigravityToolCall(toolCall: AcpToolCallState): AcpToo
   if (command !== undefined) data.command = command;
   if (cwd !== undefined) data.cwd = cwd;
   if (imagePath !== undefined) data.imagePath = imagePath;
+  if (kind === "edit") {
+    const content = Array.isArray(data.content) ? data.content : [];
+    // Full-access edits report only a path; without a hunk the checkpoint diff is the review.
+    data.content = content.some((entry) => Predicate.isObject(entry) && entry.type === "diff")
+      ? withAntigravityEditPatches(
+          content,
+          data,
+          toolCall.status === "pending" ? readPreEditFile : undefined,
+        )
+      : [...content, { type: "diff", patch: { format: "omitted" } }];
+  }
   if (kind === "execute") {
     data.item = {
       ...(Predicate.isObject(data.item) ? data.item : {}),
