@@ -404,6 +404,7 @@ function markdownLinkDestinationScanner(markdown: string) {
 }
 
 export function decodeMarkdownLinkEscapes(href: string): string {
+  if (isWindowsAbsolutePath(href) && !href.includes("&")) return href;
   return href.replace(/\\([!-/:-@[-`{-~])/g, "$1");
 }
 
