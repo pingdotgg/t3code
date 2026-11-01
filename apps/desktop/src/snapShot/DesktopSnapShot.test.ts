@@ -427,6 +427,7 @@ import * as DesktopClientSettings from "../settings/DesktopClientSettings.ts";
 import * as DesktopWindow from "../window/DesktopWindow.ts";
 import * as DesktopSnapShot from "./DesktopSnapShot.ts";
 import * as SnapShotAccessibility from "./SnapShotAccessibility.ts";
+import { CaptureSetupRequiredError } from "./linuxCaptureSession.ts";
 
 const accessibilityApp = {
   byPid: accessibilityByPidMock,
@@ -1873,6 +1874,22 @@ it.effect("capture fails closed while snapshots are disabled", () => {
       assert.lengthOf(regionCaptureMock.mock.calls, 0);
     }),
   ).pipe(Effect.provide(layerTest("win32")));
+});
+
+it.effect("points capture setup failures at SnapShot settings", () => {
+  vi.stubEnv("XDG_SESSION_TYPE", "wayland");
+  linuxCaptureMock.mockRejectedValueOnce(new CaptureSetupRequiredError("Install the helper."));
+  return Effect.scoped(
+    Effect.gen(function* () {
+      const service = yield* DesktopSnapShot.make;
+      yield* service.configure(enabledSettings());
+      const failure = yield* Effect.flip(service.capture);
+      assert.equal(failure.operation, "setup-required");
+    }),
+  ).pipe(
+    Effect.provide(layerTest("linux", { makeDirectory: () => Effect.void })),
+    Effect.ensuring(Effect.sync(() => vi.unstubAllEnvs())),
+  );
 });
 
 it.effect(
