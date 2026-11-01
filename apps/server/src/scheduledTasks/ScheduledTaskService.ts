@@ -918,11 +918,13 @@ export const layer = Layer.effect(
         readonly dispatched: Ref.Ref<boolean>;
       },
     ) {
-      const dispatchGeneration = runEventGeneration;
-      const markedAtIso = yield* Ref.make<string | null>(null);
       // Read before reserving: nothing between the reservation and its release may fail.
       const startedAt = yield* localNow;
       const startedAtIso = iso(startedAt);
+      const dispatchGeneration = runEventGeneration;
+      // Set once this run owns the row, so a failure before that cannot
+      // release a turn an earlier run left in flight.
+      const marked = yield* Ref.make(false);
       const run = Effect.gen(function* () {
         // Re-read stale poll snapshots so deleted, paused or postponed tasks cannot fire.
         const active = yield* findTask(task.id);
@@ -989,7 +991,7 @@ export const layer = Layer.effect(
                 ),
               );
 
-          yield* Ref.set(markedAtIso, startedAtIso);
+          yield* Ref.set(marked, true);
         }).pipe(Effect.uninterruptible);
         yield* notifyChanged;
 
@@ -1098,9 +1100,9 @@ export const layer = Layer.effect(
             ),
             lastRunStatus,
             lastRunError,
-            runCount: scheduleSource.runCount + (runSucceeded ? 0 : 1),
+            runCount: scheduleSource.runCount + (lastRunStatus === "running" ? 0 : 1),
           };
-          if (current === null) return { recorded: completed, written: false };
+          if (current === null) return { recorded: completed, written: false, deleted: true };
           // startedAtIso in the guard ensures this writes only to the row this
           // run marked as running — a task deleted mid-run and recreated with
           // the same id (idempotent commandId replay) must not be stamped.
@@ -1126,9 +1128,9 @@ export const layer = Layer.effect(
             }
           }
           // A row recreated mid-run is not this run's, so report what is stored.
-          return { recorded: written ? completed : current, written };
+          return { recorded: written ? completed : current, written, deleted: false };
         });
-        const { recorded, written } = yield* sql
+        const { recorded, written, deleted } = yield* sql
           .withTransaction(record)
           .pipe(
             Effect.mapError((cause) =>
@@ -1142,34 +1144,32 @@ export const layer = Layer.effect(
                   ),
             ),
           );
-        if (written) {
-          yield* notifyChanged;
+        if (written) yield* notifyChanged;
+        if (deleted) trackedRuns.forgetTask(task.id);
+        else if (runSucceeded) {
           // Only now can an outcome replace the bookkeeping just written; one that
           // landed since the dispatch returned is settled here.
-          if (runSucceeded) {
-            const ended = trackedRuns.dispatched(messageId, threadId);
-            if (ended !== null) yield* settleOutcome(ended);
-            // Reconnect may have skipped this message before dispatch bookkeeping finished.
-            if (dispatchGeneration !== runEventGeneration) {
-              const pending = trackedRuns.pending().find((run) => run.messageId === messageId);
-              if (pending !== undefined)
-                yield* catchUpRun(pending).pipe(Effect.forkIn(serviceScope));
-            }
+          const ended = trackedRuns.dispatched(messageId, threadId);
+          if (ended !== null) yield* settleOutcome(ended);
+          // Reconnect may have skipped this message before dispatch bookkeeping finished.
+          if (dispatchGeneration !== runEventGeneration) {
+            const pending = trackedRuns.pending().find((run) => run.messageId === messageId);
+            if (pending !== undefined) yield* catchUpRun(pending).pipe(Effect.forkIn(serviceScope));
           }
-        } else trackedRuns.forgetTask(task.id);
+        }
         // The stored row can belong to a replacement, so report this dispatch separately.
         return { task: recorded, threadId, dispatchFailed: !runSucceeded };
       }).pipe(
         Effect.onError((cause) =>
-          Ref.get(markedAtIso).pipe(
-            Effect.flatMap((startedAtIso) =>
-              startedAtIso === null
-                ? Effect.void
-                : Effect.sync(() => trackedRuns.forgetTask(task.id)).pipe(
+          Ref.get(marked).pipe(
+            Effect.flatMap((owned) =>
+              owned
+                ? Effect.sync(() => trackedRuns.forgetTask(task.id)).pipe(
                     Effect.andThen(
                       releaseStuckRun(task, startedAtIso, errorMessage(cause), webhook?.deliveryId),
                     ),
-                  ),
+                  )
+                : Effect.void,
             ),
           ),
         ),

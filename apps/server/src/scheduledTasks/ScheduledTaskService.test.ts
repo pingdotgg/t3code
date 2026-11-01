@@ -1061,6 +1061,44 @@ it.effect("catches an outcome missed by reconnect while dispatch is still in fli
   }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
 );
 
+it.effect(
+  "a run interrupted mid-dispatch is released and the next run records its real outcome",
+  () =>
+    Effect.gen(function* () {
+      const dispatches = yield* Ref.make(0);
+      const harness = yield* makeTurnHarness({
+        // Only the first dispatch hangs, so the run can be interrupted in flight.
+        duringDispatch: () =>
+          Ref.getAndUpdate(dispatches, (n) => n + 1).pipe(
+            Effect.flatMap((n) => (n === 0 ? Effect.never : Effect.void)),
+          ),
+      });
+      yield* Effect.gen(function* () {
+        const service = yield* ScheduledTaskService.ScheduledTaskService;
+        const { task } = yield* upsertBoundTask(service);
+        const interrupted = yield* service.runNow({ id: task.id }).pipe(Effect.forkChild);
+        yield* Queue.take(harness.dispatched);
+        yield* Fiber.interrupt(interrupted);
+        const [released] = (yield* service.list()).tasks;
+        assert.equal(released?.lastRunStatus, "failed");
+        assert.equal(released?.runCount, 1);
+
+        yield* TestClock.adjust("1 second");
+        const next = yield* service.runNow({ id: task.id });
+        assert.equal(next.task.lastRunStatus, "running");
+        const messageId = yield* Queue.take(harness.dispatched);
+        yield* Queue.offerAll(harness.events, [
+          runEvent(runOf("run:after-interrupt", messageId, "running")),
+          runEvent(runOf("run:after-interrupt", messageId, "completed")),
+        ]);
+        yield* untilStatus(service, task.id, "succeeded");
+        const [settled] = (yield* service.list()).tasks;
+        assert.isNull(settled?.lastRunError);
+        assert.equal(settled?.runCount, 2);
+      }).pipe(Effect.provide(harness.layer));
+    }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
+);
+
 it.effect("a run interrupted right after it reserves the task does not block the next run", () =>
   Effect.gen(function* () {
     const launches = yield* Ref.make(0);
