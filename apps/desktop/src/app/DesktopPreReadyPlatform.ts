@@ -93,12 +93,15 @@ export const make = Effect.gen(function* () {
         if (iconPath !== undefined) {
           try {
             NodeFS.mkdirSync(NodePath.posix.dirname(iconPath), { recursive: true });
-            NodeFS.copyFileSync(
-              NodePath.posix.join(
-                Electron.app.getAppPath(),
-                "apps/desktop/prod-resources/icon.png",
-              ),
+            // Electron's copyFileSync from app.asar extracts to a temp file it never deletes.
+            NodeFS.writeFileSync(
               iconPath,
+              NodeFS.readFileSync(
+                NodePath.posix.join(
+                  Electron.app.getAppPath(),
+                  "apps/desktop/prod-resources/icon.png",
+                ),
+              ),
             );
           } catch {}
         }
