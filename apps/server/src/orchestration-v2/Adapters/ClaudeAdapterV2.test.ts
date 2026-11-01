@@ -1005,6 +1005,84 @@ describe("ClaudeAdapterV2 Auto-accept edits", () => {
   );
 });
 
+describe("ClaudeAdapterV2 custom model names", () => {
+  it.effect("sends a custom model that shares a built-in alias under its own name", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const opened: Array<ClaudeAdapterV2.ClaudeAgentSdkQueryOptions> = [];
+        const adapter = yield* ClaudeAdapterV2.makeClaudeAdapterV2({
+          instanceId: ClaudeAdapterV2.CLAUDE_DEFAULT_INSTANCE_ID,
+          settings: CUSTOM_MODEL_CLAUDE_SETTINGS,
+          environment: {},
+          attachmentsDir: yield* fileSystem.makeTempDirectoryScoped({
+            prefix: "t3-claude-custom-",
+          }),
+          fileSystem,
+          path: yield* Path.Path,
+          crypto: yield* Crypto.Crypto,
+          idAllocator: yield* IdAllocator.IdAllocatorV2,
+          queryRunner: {
+            allocateSessionId: Effect.succeed("native-thread-claude-custom"),
+            open: (input) =>
+              Effect.sync(() => {
+                opened.push(input.options);
+                return {
+                  messages: Stream.never,
+                  offer: () => Effect.void,
+                  setModel: () => Effect.void,
+                  applyFlagSettings: () => Effect.void,
+                  setPermissionMode: () => Effect.void,
+                  backgroundTasks: () => Effect.succeed(false),
+                  stopTask: () => Effect.void,
+                  interrupt: Effect.void,
+                  close: Effect.void,
+                };
+              }),
+            forkSession: () => Effect.die("unused"),
+            subagentLaunchToolUseId: () => Effect.succeed(null),
+            assertComplete: Effect.void,
+          },
+        });
+        // "opus" is a built-in alias, and a proxy may serve its own model of that name.
+        const modelSelection = { ...CLAUDE_TEST_MODEL_SELECTION, model: "opus", options: [] };
+        const threadId = ThreadId.make("thread-claude-custom");
+        const runtime = yield* adapter.openSession({
+          threadId,
+          providerSessionId: ProviderSessionId.make("provider-session-claude-custom"),
+          modelSelection,
+          runtimePolicy: CLAUDE_TEST_RUNTIME_POLICY,
+        });
+        const providerThread = yield* runtime.ensureThread({
+          threadId,
+          modelSelection,
+          runtimePolicy: CLAUDE_TEST_RUNTIME_POLICY,
+        });
+        yield* runtime
+          .startTurn(
+            makeClaudeTestTurnInput({
+              threadId,
+              providerThread,
+              now: yield* DateTime.now,
+              attemptId: RunAttemptId.make("attempt-claude-custom"),
+              text: "Hello",
+              attachments: [],
+              modelSelection,
+            }),
+          )
+          .pipe(Effect.exit);
+
+        assert.lengthOf(opened, 1);
+        assert.equal(opened[0]!.model, "opus");
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+        ),
+      ),
+    ),
+  );
+});
+
 describe("ClaudeAdapterV2 append-system-prompt-file launch argument", () => {
   const startTurnWithLaunchArgs = Effect.fnUntraced(function* (launchArgs: string, cwd: string) {
     const fileSystem = yield* FileSystem.FileSystem;
