@@ -1,8 +1,6 @@
 interface MarkdownPosition {
-  readonly start?: {
-    readonly line?: number;
-    readonly offset?: number;
-  };
+  readonly start?: { readonly line?: number; readonly column?: number; readonly offset?: number };
+  readonly end?: { readonly line?: number; readonly column?: number; readonly offset?: number };
 }
 
 interface MarkdownAstNode {
@@ -23,6 +21,7 @@ interface MarkdownParser {
 interface RecoveredMarkdown {
   readonly blocks: MarkdownAstNode[];
   readonly source: string;
+  readonly restorePositions?: () => void;
 }
 
 const INLINE_PARSE_PREFIX = "t3-markdown-inline-prefix:";
@@ -88,12 +87,48 @@ function parseRecoveredMarkdown(value: string, parser: MarkdownParser): Recovere
   };
 }
 
-function blocksFromIndentedCode(node: MarkdownAstNode, parser: MarkdownParser): RecoveredMarkdown {
+function blocksFromIndentedCode(
+  node: MarkdownAstNode,
+  parser: MarkdownParser,
+  markdown: string,
+): RecoveredMarkdown {
   const value = typeof node.value === "string" ? node.value.trim() : "";
   const recovered = parseRecoveredMarkdown(value, parser);
+  // Reparsed children must still point into the authored file for source-aware transforms.
+  const offsets = new Map<number, number>();
+  let originalOffset = node.position?.start?.offset ?? 0;
+  let recoveredOffset = INLINE_PARSE_PREFIX.length;
+  for (const line of value.split("\n")) {
+    const start = markdown.indexOf(line, originalOffset);
+    if (start === -1) break;
+    for (let index = 0; index <= line.length; index += 1)
+      offsets.set(recoveredOffset + index, start + index);
+    originalOffset = start + line.length + 1;
+    recoveredOffset += line.length + 1;
+  }
+  const point = (position: NonNullable<MarkdownPosition["start"]>) => {
+    const offset =
+      position.offset === undefined
+        ? undefined
+        : offsets.get(Math.max(INLINE_PARSE_PREFIX.length, position.offset));
+    if (offset === undefined) return position;
+    const lines = markdown.slice(0, offset).split("\n");
+    return { offset, line: lines.length, column: lines.at(-1)!.length + 1 };
+  };
+  const restorePositions = (child: MarkdownAstNode) => {
+    if (child.position)
+      Object.assign(child, {
+        position: {
+          ...(child.position.start ? { start: point(child.position.start) } : {}),
+          ...(child.position.end ? { end: point(child.position.end) } : {}),
+        },
+      });
+    child.children?.forEach(restorePositions);
+  };
   const first = recovered.blocks[0];
   return {
     ...recovered,
+    restorePositions: () => recovered.blocks.forEach(restorePositions),
     blocks:
       first && node.position
         ? [{ ...first, position: node.position }, ...recovered.blocks.slice(1)]
@@ -119,10 +154,11 @@ function attachListItemIndentationNormalizer(this: MarkdownParser) {
       }
       node.children = node.children.flatMap((child) => {
         if (isSameLineOverIndentedCode(child, node, source)) {
-          const recovered = blocksFromIndentedCode(child, this);
+          const recovered = blocksFromIndentedCode(child, this, source);
           for (const block of recovered.blocks) {
             visit(block, recovered.source);
           }
+          recovered.restorePositions?.();
           return recovered.blocks;
         }
         visit(child, source);
