@@ -159,6 +159,20 @@ seconds after the latest action. Right after an action, the shortcut works even
 in a text field such as the composer. Once you type or press another key, the
 field gets its own undo back. Terminals always keep their native shortcut.
 
+`thread.next` and `thread.previous` (default `mod+shift+]` and `mod+shift+[`) move
+to the next or previous thread in the sidebar's active order and stop at the
+ends of the list.
+
+`thread.cycleNext` and `thread.cyclePrevious` move through the threads the
+sidebar is showing, including the results of an active search, and wrap around:
+`thread.cycleNext` goes from the last thread back to the first, and
+`thread.cyclePrevious` from the first back to the last. They have no default
+shortcut. Bind them in **Settings → Keybindings** for browser-style rotation, such
+as `ctrl+tab` for `thread.cycleNext` and `ctrl+shift+tab` for
+`thread.cyclePrevious` in the desktop app. A browser keeps those keys for its own
+tabs, so on the web choose chords the page receives, such as `ctrl+alt+arrowdown`
+and `ctrl+alt+arrowup`. A list with a single thread stays where it is.
+
 `navigation.back` (`mod+[` by default) and `navigation.forward` (`mod+]`) move
 through the pages you have visited, like a browser's back and forward buttons.
 
