@@ -22,7 +22,7 @@ export const PeerLink = Schema.Struct({
 });
 export type PeerLink = typeof PeerLink.Type;
 
-/** Whether a link can be used now, as worked out when it is listed. */
+/** Last recorded call outcome, with current expiry taking precedence; not a live probe. */
 export const PeerLinkStatus = Schema.Literals(["reachable", "unreachable", "expired"]);
 export type PeerLinkStatus = typeof PeerLinkStatus.Type;
 
