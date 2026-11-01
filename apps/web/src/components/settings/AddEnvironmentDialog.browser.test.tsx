@@ -140,12 +140,10 @@ describe("AddEnvironmentDialog", () => {
     await expect.element(page.getByText(/dismissed SSH attempt/)).not.toBeInTheDocument();
 
     let finishSuccessfulConnection!: (result: AtomCommandResult<void, Error>) => void;
-    mocks.connectSshEnvironment.mockImplementationOnce(
-      () =>
-        new Promise((resolve) => {
-          finishSuccessfulConnection = resolve;
-        }),
-    );
+    const pendingSuccess = new Promise<AtomCommandResult<void, Error>>((resolve) => {
+      finishSuccessfulConnection = resolve;
+    });
+    mocks.connectSshEnvironment.mockImplementationOnce(() => pendingSuccess);
     await userEvent.click(sshCard());
     await userEvent.type(page.getByPlaceholder("Search hosts or type devbox"), "devbox");
     await userEvent.click(
