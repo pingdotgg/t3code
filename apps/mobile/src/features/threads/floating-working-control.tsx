@@ -16,6 +16,7 @@ import Animated, {
   ReduceMotion,
   type SharedValue,
   useAnimatedStyle,
+  useReducedMotion,
   useSharedValue,
   withTiming,
 } from "react-native-reanimated";
@@ -80,6 +81,7 @@ export function FloatingWorkingControl(props: {
   readonly lift?: SharedValue<number>;
 }) {
   const { width: windowWidth } = useWindowDimensions();
+  const reducedMotion = useReducedMotion();
   const [overlayWidth, setOverlayWidth] = useState(windowWidth);
   const [queueWidth, setQueueWidth] = useState(0);
   const [actionWidth, setActionWidth] = useState(0);
@@ -303,8 +305,8 @@ export function FloatingWorkingControl(props: {
       className="absolute left-0 right-0 z-20 items-center"
       style={[{ top: -CONTROL_OVERLAY_OFFSET }, liftStyle]}
       onLayout={(event) => setOverlayWidth(event.nativeEvent.layout.width)}
-      entering={useGlass || extensionOnly ? undefined : CONTROL_ENTERING}
-      exiting={useGlass || extensionOnly ? undefined : CONTROL_EXITING}
+      entering={useGlass || extensionOnly || reducedMotion ? undefined : CONTROL_ENTERING}
+      exiting={useGlass || extensionOnly || reducedMotion ? undefined : CONTROL_EXITING}
     >
       {hasCapsule && useGlass ? (
         <UniwindGlassContainer
@@ -601,12 +603,13 @@ function StatusLabelRow(props: {
   readonly onLayout: (event: LayoutChangeEvent) => void;
   readonly onPress?: () => void;
 }) {
+  const reducedMotion = useReducedMotion();
   const rowClassName = `h-11 flex-row items-center px-4 ${props.className ?? ""}`;
   return (
     <Animated.View
       className="absolute max-w-full"
-      entering={props.animated === false ? undefined : LABEL_ENTERING}
-      exiting={props.animated === false ? undefined : LABEL_EXITING}
+      entering={props.animated === false || reducedMotion ? undefined : LABEL_ENTERING}
+      exiting={props.animated === false || reducedMotion ? undefined : LABEL_EXITING}
       onLayout={props.onLayout}
     >
       {props.onPress ? (
