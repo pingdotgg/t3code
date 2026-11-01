@@ -7,6 +7,7 @@ import type { AppBarProps } from "../../../components/ui/AppBar.types";
 import { AppBar } from "../../../components/ui/AppBar";
 import { ScreenContent as SettingsScreenContent } from "../../../components/ui/ScreenContent";
 import { useWorkspaceTabs } from "../../workspace/WorkspaceTabsContext";
+import { WorkspaceTabToolbar } from "../../workspace/WorkspaceTabToolbar";
 import { useWorkspaceSurface } from "../../workspace/useWorkspaceSurface";
 import { useDeviceType } from "../../../native/native-layout-metrics";
 import { useCompactWorkspaceTabs } from "../../workspace/useSystemWorkspaceTabBar";
@@ -52,6 +53,8 @@ export function SettingsScreen(
           onBack={() => navigation.goBack()}
           hideBottomBorder
         />
+      ) : Platform.OS === "android" && workspaceRoot ? (
+        <WorkspaceTabToolbar title={props.title} search={props.search} trailing={props.trailing} />
       ) : (
         <AppBar
           title={props.title}

@@ -15,7 +15,7 @@ import { AndroidAnchoredMenu } from "../../components/ui/AndroidAnchoredMenu";
 import { Menu } from "../../components/ui/Menu";
 import { SearchField } from "../../components/ui/SearchField";
 import { useHardwareKeyboardCommand } from "../keyboard/hardwareKeyboardCommands";
-import { WorkspaceListToolbarRow } from "../workspace/WorkspaceListToolbarRow";
+import { WorkspaceBrandTitle, WorkspaceListToolbarRow } from "../workspace/WorkspaceListToolbarRow";
 import { useWorkspaceConnectionState } from "../../state/workspace";
 import { useToolbarLayout } from "../../components/ui/useToolbarLayout";
 
@@ -107,13 +107,19 @@ export function ThreadListToolbar(props: {
       style={{ paddingTop, paddingBottom }}
     >
       <WorkspaceListToolbarRow
-        searching={searching}
-        searchField={searchField}
-        onCloseSearch={closeSearch}
-        onOpenSearch={openSearch}
-        searchAccessibilityLabel="Search threads"
-        titleAccessibilityLabel="T3 Code, Threads"
-        onOpenEnvironments={props.onOpenEnvironments}
+        title={
+          <WorkspaceBrandTitle
+            accessibilityLabel="T3 Code, Threads"
+            onOpenEnvironments={props.onOpenEnvironments}
+          />
+        }
+        search={{
+          searching,
+          field: searchField,
+          onClose: closeSearch,
+          onOpen: openSearch,
+          accessibilityLabel: "Search threads",
+        }}
         filter={filterButton}
       />
     </View>
