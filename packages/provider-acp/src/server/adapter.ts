@@ -187,6 +187,10 @@ export interface AcpAdapterV2ExtensionContext {
     readonly status: "completed" | "failed" | "cancelled";
     readonly result: string | null;
   }) => Effect.Effect<void>;
+  readonly emitAssistantText: (input: {
+    readonly sessionId: string;
+    readonly text: string;
+  }) => Effect.Effect<void, EffectAcpErrors.AcpError>;
   readonly applyBackgroundTaskMutation: (mutation: {
     readonly sessionId: string;
     readonly taskId: string;
@@ -6389,6 +6393,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             }).pipe(holdingAgentRequest(handlerGeneration)),
           );
           if (flavor.registerExtensions !== undefined) {
+            let emittedAssistantTexts = 0;
             yield* flavor.registerExtensions({
               runtime: targetRuntime,
               reportProviderRetry: (notice) =>
@@ -6405,6 +6410,32 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                     if (yield* Ref.get(stoppedRunQuarantine)) return;
                     if ((yield* Ref.get(activeSessionId)) !== notice.sessionId) return;
                     yield* finishSubagentFromNotice(notice);
+                  }),
+                ).pipe(Effect.asVoid),
+              emitAssistantText: ({ sessionId, text }) =>
+                runRuntimeCallbackAtGeneration(
+                  handlerGeneration,
+                  Effect.gen(function* () {
+                    if (yield* Ref.get(stoppedRunQuarantine)) return;
+                    if ((yield* Ref.get(activeSessionId)) !== sessionId) return;
+                    emittedAssistantTexts += 1;
+                    // Its own message id keeps it out of a progress message left open across tools.
+                    yield* handleSessionUpdate({
+                      sessionId,
+                      update: {
+                        sessionUpdate: "agent_message_chunk",
+                        messageId: `t3-emitted:${handlerGeneration}:${emittedAssistantTexts}`,
+                        content: { type: "text", text },
+                      },
+                    }).pipe(
+                      Effect.mapError(
+                        (cause) =>
+                          new EffectAcpErrors.AcpTransportError({
+                            detail: "Failed to project agent-reported assistant text",
+                            cause,
+                          }),
+                      ),
+                    );
                   }),
                 ).pipe(Effect.asVoid),
               applyBackgroundTaskMutation: (incoming) =>
