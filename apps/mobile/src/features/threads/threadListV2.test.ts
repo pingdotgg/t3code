@@ -100,6 +100,74 @@ describe("resolveThreadListV2SnoozePresets", () => {
 });
 
 describe("resolveThreadListV2Status", () => {
+  it.each(["preparing", "queued", "starting", "running", "waiting"] as const)(
+    "qualifies a cached %s runtime while reconnecting",
+    (status) => {
+      const thread = presentThreadShell(
+        environmentId,
+        makeRawThreadShell({
+          status,
+          activeRunId: RunId.make("run-disconnected"),
+          latestRunId: RunId.make("run-disconnected"),
+        }),
+      );
+      expect(resolveThreadListV2Status({ ...thread, connectionPhase: "reconnecting" })).toBe(
+        "reconnecting",
+      );
+    },
+  );
+
+  it.each(["failed", "completed", "cancelled", "interrupted"] as const)(
+    "preserves a cached %s outcome while disconnected",
+    (status) => {
+      const thread = presentThreadShell(
+        environmentId,
+        makeRawThreadShell({
+          status,
+          latestRunId: RunId.make("run-ended"),
+          latestRunCompletedAt: DateTime.makeUnsafe(NOW),
+          lastVisitedAt: DateTime.makeUnsafe("2026-06-01T23:59:00.000Z"),
+        }),
+      );
+      const disconnected = { ...thread, connectionPhase: "reconnecting" as const };
+      expect(resolveThreadListV2Status(disconnected)).toBe(
+        status === "failed" ? "failed" : "ready",
+      );
+      expect(threadHasUnseenCompletion(disconnected)).toBe(threadHasUnseenCompletion(thread));
+    },
+  );
+
+  it.each([
+    ["connecting", "connecting"],
+    ["reconnecting", "reconnecting"],
+    ["offline", "offline"],
+    ["error", "offline"],
+    ["unsupported", "offline"],
+    ["available", "offline"],
+    ["connected", "working"],
+    [undefined, "working"],
+  ] as const)(
+    "presents cached running work with connection phase %s",
+    (connectionPhase, expected) => {
+      const thread = makeThread({
+        id: ThreadId.make("disconnected"),
+        title: "Disconnected",
+        runtime: {
+          status: "running",
+          activeRunId: RunId.make("run-disconnected"),
+          providerInstanceId: ProviderInstanceId.make("codex"),
+          providerName: "Codex",
+          lastError: null,
+          updatedAt: NOW,
+        },
+        connectionPhase,
+      });
+      expect(resolveThreadListV2Status(thread)).toBe(expected);
+      expect(resolveThreadListV2Status({ ...thread, hasPendingApprovals: true })).toBe("approval");
+      expect(resolveThreadListV2Status({ ...thread, hasPendingUserInput: true })).toBe("input");
+    },
+  );
+
   it("presents decoded thread waits as Waiting while preserving requests and older servers", () => {
     const raw = makeRawThreadShell({
       status: "running",
@@ -1623,6 +1691,20 @@ describe("Working section beta", () => {
     const off = build({ workingShelfEnabled: false });
     expect(ids(off)).toContain("working");
     expect(off.workingCount).toBe(0);
+  });
+
+  it("preserves pins and Working membership across connection loss and recovery", () => {
+    const before = build({ workingShelfExpanded: true });
+    for (const connectionPhase of ["reconnecting", "offline", "connected"] as const) {
+      const layout = build({
+        workingShelfExpanded: true,
+        threads: threads.map((thread) => ({ ...thread, connectionPhase })),
+      });
+      expect(ids(layout)).toEqual(ids(before));
+      expect(layout.workingCount).toBe(before.workingCount);
+      expect(layout.items[0]?.thread.id).toBe("pinned-working");
+      expect(layout.items[0]?.thread.runtime?.status).toBe("running");
+    }
   });
 
   it("keeps an inactive row in Working during the shared grace and returns it on expiry", () => {
