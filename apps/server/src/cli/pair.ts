@@ -449,7 +449,7 @@ const mintPairingLink = Effect.fn("pair.mintPairingLink")(function* (input: {
 const ttlFlag = Flag.String("ttl").pipe(
   Flag.withSchema(DurationFromString),
   Flag.withDescription(
-    "Token TTL, for example `5m`, `1h`, or `15 minutes`. Defaults to 5 minutes.",
+    "Pairing code TTL, for example `5m`, `1h`, or `15 minutes`. Defaults to 5 minutes.",
   ),
   Flag.optional,
 );
@@ -481,7 +481,7 @@ export const pairCommand = Command.make("pair", {
   tailscaleServePort: tailscaleServePortFlag,
 }).pipe(
   Command.withDescription(
-    "Mint a pairing token for a running T3 Code server and print it as a QR code.",
+    "Mint a pairing code for a running T3 Code server and print it as a QR code.",
   ),
   Command.withHandler((flags) =>
     Effect.gen(function* () {

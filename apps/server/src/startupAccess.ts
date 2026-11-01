@@ -274,7 +274,7 @@ export const formatHeadlessServeOutput = (accessInfo: HeadlessServeAccessInfo): 
   [
     "T3 Code server is ready.",
     `Connection string: ${accessInfo.connectionString}`,
-    `Token: ${accessInfo.token}`,
+    `Pairing code: ${accessInfo.token}`,
     `Pairing URL: ${accessInfo.pairingUrl}`,
     `App link: ${buildPairingAppLink(accessInfo.pairingUrl)}`,
     "",
