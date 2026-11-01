@@ -8,6 +8,7 @@ import { useSupportsMultiplePullRequests } from "~/hooks/useSupportsMultiplePull
 import { useStableCallback } from "~/hooks/useStableCallback";
 
 import { pullRequestDetailToVcsStatus } from "@t3tools/client-runtime/state/pull-requests";
+import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
 import {
   resolveEnvironmentMachineKind,
   type EnvironmentId,
@@ -114,6 +115,41 @@ export function useLinkedThreadPullRequest(
           baseUrl: "",
         },
       };
+}
+
+/** The pull request a thread shows: its current link, else the one found for its branch. */
+export function useThreadDisplayedPullRequest(
+  environmentId: EnvironmentId,
+  thread: Pick<
+    EnvironmentThreadShell,
+    "pullRequests" | "linkedPullRequest" | "branchPullRequest"
+  > | null,
+  branchPr: ThreadPr = null,
+  branchSourceControlProvider?: VcsStatusResult["sourceControlProvider"],
+) {
+  const supportsLinks = useSupportsMultiplePullRequests(environmentId);
+  const linkedStatus = useLinkedThreadPullRequest(
+    environmentId,
+    thread?.linkedPullRequest,
+    true,
+    thread?.pullRequests,
+    thread?.branchPullRequest,
+  );
+  const currentLink = supportsLinks
+    ? resolveThreadCurrentPullRequestLink(thread?.pullRequests ?? [])
+    : null;
+  const pr = linkedStatus?.pr ?? (currentLink === null ? branchPr : null);
+  return {
+    currentLink,
+    badge: supportsLinks ? resolveThreadPullRequestBadge(thread?.pullRequests) : null,
+    pr,
+    status: prStatusIndicator(
+      pr,
+      linkedStatus?.sourceControlProvider ?? branchSourceControlProvider,
+    ),
+    number: currentLink?.number ?? pr?.number,
+    url: currentLink?.url ?? pr?.url,
+  };
 }
 
 function linkedPullRequestReference(fallback: ThreadLinkedPullRequest) {
