@@ -6,7 +6,7 @@ import {
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
 import { safeErrorLogAttributes } from "@t3tools/client-runtime/errors";
-import type { ReviewBranchCommitsResult, ScopedThreadRef, RunId } from "@t3tools/contracts";
+import type { ReviewBranchCommitsResult, RunId } from "@t3tools/contracts";
 import {
   ArrowRightIcon,
   CheckIcon,
@@ -20,14 +20,13 @@ import {
 } from "lucide-react";
 import { ChevronDown, ChevronRight, ChevronsDownUp, ChevronsUpDown } from "lucide";
 import * as Schema from "effect/Schema";
-import { type MouseEvent, useEffect, useRef, useState } from "react";
-import { useCodeViewFileReveal } from "./diffs/useCodeViewFileReveal";
+import { type MouseEvent, type ReactNode, useEffect, useRef, useState } from "react";
+import { useCodeViewFileReveal } from "~/components/diffs/useCodeViewFileReveal";
 import { useFilesystemReadAccess } from "~/state/filesystem";
-import { useOpenInPreferredEditor } from "../editorPreferences";
-import { useFileContextMenuHandler } from "../fileContextMenu";
-import { type DraftId } from "../composerDraftStore";
-import { openDiffFilePrimaryAction } from "../diffFileActions";
-import { toolCallDiff } from "../lib/toolCallDiff";
+import { useOpenInPreferredEditor } from "~/editorPreferences";
+import { useFileContextMenuHandler } from "~/fileContextMenu";
+import { openDiffFilePrimaryAction } from "~/diffFileActions";
+import { toolCallDiff } from "~/lib/toolCallDiff";
 import { useCheckpointDiff, useTurnItemDetail } from "~/state/queries";
 import { revisionedQuery } from "~/state/revisionedQuery";
 import { cn } from "~/lib/utils";
@@ -37,12 +36,12 @@ import {
   selectThreadDiffPanelSelection,
   useDiffPanelSessionStore,
   useDiffPanelStore,
-} from "../diffPanelStore";
-import { useLocalStorage } from "../hooks/useLocalStorage";
+} from "~/diffPanelStore";
+import { useLocalStorage } from "~/hooks/useLocalStorage";
 import { isTestChangedFile } from "@t3tools/shared/changedFileKind";
-import { useHideTestFiles } from "./diffs/useHideTestFiles";
-import { useRenderedAppearance } from "../hooks/useTheme";
-import { useStableCallback } from "../hooks/useStableCallback";
+import { useHideTestFiles } from "~/components/diffs/useHideTestFiles";
+import { useRenderedAppearance } from "~/hooks/useTheme";
+import { useStableCallback } from "~/hooks/useStableCallback";
 import {
   buildFileDiffContentVersion,
   buildFileDiffIdentityKey,
@@ -50,29 +49,30 @@ import {
   getRenderablePatch,
   resolveDiffThemeName,
   resolveFileDiffPath,
-} from "../lib/diffRendering";
-import { PREFERRED_HIGHLIGHTER } from "../lib/syntaxHighlighting";
-import { areAllDiffFilesCollapsed, toggleAllDiffFiles } from "../lib/diffCollapse";
-import { LIVE_REFRESH_MIN_INTERVAL_MS, useLiveRefresh } from "../hooks/useLiveRefresh";
+} from "~/lib/diffRendering";
+import { PREFERRED_HIGHLIGHTER } from "~/lib/syntaxHighlighting";
+import { areAllDiffFilesCollapsed, toggleAllDiffFiles } from "~/lib/diffCollapse";
+import { LIVE_REFRESH_MIN_INTERVAL_MS, useLiveRefresh } from "~/hooks/useLiveRefresh";
 import {
   useProject,
   useThreadCheckpointSummaries,
   useQuietThreadShell,
   useQuietThreadVisibleTurnItems,
-} from "../state/entities";
-import { useClientSettings, updateClientSettings } from "../hooks/useSettings";
-import { formatRelativeTimeLabel, formatShortTimestamp } from "../timestampFormat";
-import { DiffFilePathCopyButton } from "./DiffFilePathCopyButton";
-import { DiffPanelLoadingState, DiffPanelShell, type DiffPanelMode } from "./DiffPanelShell";
-import { DiffStatLabel } from "./chat/DiffStatLabel";
-import { AnnotatableCodeView } from "./diffs/AnnotatableCodeView";
-import { DiffFileTree } from "./diffs/DiffFileTree";
-import { FileExplorerPane } from "./files/FileExplorerPane";
-import { diffFileTreeEntries } from "./diffs/diffFileTree.logic";
-import { Button } from "./ui/button";
+} from "~/state/entities";
+import { useClientSettings, updateClientSettings } from "~/hooks/useSettings";
+import { formatRelativeTimeLabel, formatShortTimestamp } from "~/timestampFormat";
+import { DiffFilePathCopyButton } from "~/components/DiffFilePathCopyButton";
+import { DiffPanelLoadingState } from "~/components/diffs/DiffLoadingState";
+import { usePanelHost } from "../panelHost";
+import { DiffStatLabel } from "~/components/chat/DiffStatLabel";
+import { AnnotatableCodeView } from "~/components/diffs/AnnotatableCodeView";
+import { DiffFileTree } from "~/components/diffs/DiffFileTree";
+import { diffFileTreeEntries } from "~/components/diffs/diffFileTree.logic";
+import { Button } from "~/components/ui/button";
+import { FileExplorerPane } from "~/components/files/FileExplorerPane";
 import { MorphIcon } from "~/components/MorphIcon";
-import { ToggleGroup, Toggle } from "./ui/toggle-group";
-import { Switch } from "./ui/switch";
+import { ToggleGroup, Toggle } from "~/components/ui/toggle-group";
+import { Switch } from "~/components/ui/switch";
 import {
   Combobox,
   ComboboxEmpty,
@@ -81,7 +81,7 @@ import {
   ComboboxList,
   ComboboxPopup,
   ComboboxTrigger,
-} from "./ui/combobox";
+} from "~/components/ui/combobox";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -92,22 +92,22 @@ import {
   DropdownMenuSubContent,
   DropdownMenuSubTrigger,
   DropdownMenuTrigger,
-} from "./ui/menu";
-import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
-import { useEnvironmentQuery } from "../state/query";
-import { useAtomCommand } from "../state/use-atom-command";
-import { serverEnvironment } from "../state/server";
-import { reviewEnvironment } from "../state/review";
-import { vcsEnvironment } from "../state/vcs";
-import { buildBaseRefChoices, filterBaseRefChoices } from "../lib/baseRefChoices";
-import { createGitDiffFileContentsLoader } from "../lib/diffFileContents";
+} from "~/components/ui/menu";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
+import { useEnvironmentQuery } from "~/state/query";
+import { useAtomCommand } from "~/state/use-atom-command";
+import { serverEnvironment } from "~/state/server";
+import { reviewEnvironment } from "~/state/review";
+import { vcsEnvironment } from "~/state/vcs";
+import { buildBaseRefChoices, filterBaseRefChoices } from "~/lib/baseRefChoices";
+import { createGitDiffFileContentsLoader } from "~/lib/diffFileContents";
 
-import { useReviewFilePatches } from "./diffs/useReviewFilePatches";
-import { DiffFileLoadingBoundary } from "./diffs/DiffFileLoadingBoundary";
-import { DiffFileStatus } from "./diffs/DiffFileStatus";
-import { useThreadRouteRef } from "../hooks/useThreadRouteTarget";
+import { useReviewFilePatches } from "~/components/diffs/useReviewFilePatches";
+import { DiffFileLoadingBoundary } from "~/components/diffs/DiffFileLoadingBoundary";
+import { DiffFileStatus } from "~/components/diffs/DiffFileStatus";
+import { useThreadRouteRef } from "~/hooks/useThreadRouteTarget";
 import { projectCommitUrl } from "@t3tools/client-runtime/change-request-links";
-import { useOpenLink } from "../browser/useOpenLink";
+import { useOpenLink } from "~/browser/useOpenLink";
 
 type DiffThemeType = "light" | "dark";
 const AUTOMATIC_BASE_REF = "__automatic_base_ref__";
@@ -197,19 +197,23 @@ function DiffFileHeaderSuffix({
   );
 }
 
-interface DiffPanelProps {
-  mode?: DiffPanelMode;
-  composerDraftTarget: ScopedThreadRef | DraftId;
-  workspaceMutationId: string | null;
-  visible: boolean;
+// RightPanelTabs owns placement and desktop chrome; Diff keeps its embedded toolbar.
+function DiffSidePanelFrame({ header, children }: { header: ReactNode; children: ReactNode }) {
+  return (
+    <div className="flex h-full min-w-0 flex-col bg-background w-full">
+      <div
+        className="flex items-center justify-between gap-2 px-2 h-10 min-h-10 shrink-0 border-b border-border/60 bg-background in-data-[preview-panel-mode=inline]:mb-3 in-data-[preview-panel-mode=inline]:h-7 in-data-[preview-panel-mode=inline]:min-h-7 in-data-[preview-panel-mode=inline]:border-b-transparent"
+        data-surface-subheader
+      >
+        {header}
+      </div>
+      {children}
+    </div>
+  );
 }
 
-export default function DiffPanel({
-  mode = "inline",
-  composerDraftTarget,
-  workspaceMutationId,
-  visible,
-}: DiffPanelProps) {
+export default function DiffSidePanel() {
+  const { composerDraftTarget, workspaceMutationId, visible } = usePanelHost();
   const resolvedTheme = useRenderedAppearance();
   const settings = useClientSettings((settings) => ({
     diffFilesCollapsed: settings.diffFilesCollapsed,
@@ -1249,7 +1253,7 @@ export default function DiffPanel({
   );
 
   return (
-    <DiffPanelShell mode={mode} header={headerRow}>
+    <DiffSidePanelFrame header={headerRow}>
       {!activeThread ? (
         <div className="flex flex-1 items-center justify-center px-5 text-center text-xs text-muted-foreground/70">
           Select a thread to inspect turn diffs.
@@ -1490,6 +1494,6 @@ export default function DiffPanel({
           </div>
         </>
       )}
-    </DiffPanelShell>
+    </DiffSidePanelFrame>
   );
 }

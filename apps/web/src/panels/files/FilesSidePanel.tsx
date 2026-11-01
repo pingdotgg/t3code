@@ -1,3 +1,6 @@
+import { usePanelHost } from "../panelHost";
+import { primaryServerKeybindingsAtom } from "~/state/server";
+import { useRightPanelStore } from "~/rightPanelStore";
 import { DownloadIcon, CopyIcon, CheckIcon } from "lucide-react";
 import { useCopyToClipboard } from "~/hooks/useCopyToClipboard";
 import { Spinner } from "~/components/ui/spinner";
@@ -5,7 +8,6 @@ import {
   AuthPreviewOperateScope,
   type EditorId,
   type EnvironmentId,
-  type ResolvedKeybindingsConfig,
   type ScopedThreadRef,
 } from "@t3tools/contracts";
 import { filePreviewDelimiter } from "@t3tools/shared/delimitedPreview";
@@ -37,7 +39,7 @@ import {
 } from "@pierre/diffs/edit";
 import type { WorkerPoolManager } from "@pierre/diffs/worker";
 import { EditProvider, File, Virtualizer, useWorkerPool } from "@pierre/diffs/react";
-import { DiffWorkerPoolProvider } from "../DiffWorkerPoolProvider";
+import { DiffWorkerPoolProvider } from "~/components/DiffWorkerPoolProvider";
 import { useFilesystemReadAccess } from "~/state/filesystem";
 import {
   isAtomCommandInterrupted,
@@ -78,16 +80,20 @@ import { useEnvironmentScope } from "~/state/session";
 import { useAtomCommand } from "~/state/use-atom-command";
 import { useAtomQueryRunner } from "~/state/use-atom-query-runner";
 
-import { AttachmentFilePreview } from "./AttachmentFilePreview";
-import { AudioPreview } from "./AudioPreview";
-import { BrowserDocumentFrame, isPdfPreviewFile } from "./BrowserDocumentFrame";
-import { DelimitedTablePreview } from "./DelimitedTablePreview";
-import { PreviewImage } from "./PreviewImage";
-import FileBrowserPanel from "./FileBrowserPanel";
-import { FileExplorerPane } from "./FileExplorerPane";
-import { FileBreadcrumbs } from "./FileBreadcrumbs";
-import { breadcrumbPathOf, retainedBreadcrumbTrail, trailChildOf } from "./filePath";
-import { FileMarkdownPreview } from "./FileMarkdownPreview";
+import { AttachmentFilePreview } from "~/components/files/AttachmentFilePreview";
+import { AudioPreview } from "~/components/files/AudioPreview";
+import { BrowserDocumentFrame, isPdfPreviewFile } from "~/components/files/BrowserDocumentFrame";
+import { DelimitedTablePreview } from "~/components/files/DelimitedTablePreview";
+import { PreviewImage } from "~/components/files/PreviewImage";
+import FileBrowserPanel from "~/components/files/FileBrowserPanel";
+import { FileExplorerPane } from "~/components/files/FileExplorerPane";
+import { FileBreadcrumbs } from "~/components/files/FileBreadcrumbs";
+import {
+  breadcrumbPathOf,
+  retainedBreadcrumbTrail,
+  trailChildOf,
+} from "~/components/files/filePath";
+import { FileMarkdownPreview } from "~/components/files/FileMarkdownPreview";
 import {
   type FileCommentAnnotationEntry,
   type FileCommentAnnotationGroup,
@@ -96,8 +102,8 @@ import {
   nextFileCommentId,
   normalizeFileCommentRange,
   remapFileCommentAnnotations,
-} from "./fileCommentAnnotations";
-import { installFileEditorDismissal } from "./fileEditorDismissal";
+} from "~/components/files/fileCommentAnnotations";
+import { installFileEditorDismissal } from "~/components/files/fileEditorDismissal";
 import {
   FILE_LINK_REVEAL_ATTRIBUTE,
   FILE_LINK_REVEAL_UNSAFE_CSS,
@@ -105,11 +111,11 @@ import {
   FileSurfaceAction,
   FileSurfaceFailure,
   FileSurfaceLoading,
-} from "./fileSurfaceChrome";
-import SourceFilePreview from "./ReadOnlySourcePreview";
-import { resolveCenteredFileLineScrollTop } from "./fileLineReveal";
-import { DiffCommentAnnotation } from "../diffs/DiffCommentAnnotation";
-import { projectFileCacheKey } from "./fileContentRevision";
+} from "~/components/files/fileSurfaceChrome";
+import SourceFilePreview from "~/components/files/ReadOnlySourcePreview";
+import { resolveCenteredFileLineScrollTop } from "~/components/files/fileLineReveal";
+import { DiffCommentAnnotation } from "~/components/diffs/DiffCommentAnnotation";
+import { projectFileCacheKey } from "~/components/files/fileContentRevision";
 import {
   filePreviewReadErrorMessage,
   isMarkdownPreviewFile,
@@ -117,8 +123,8 @@ import {
   setMarkdownTaskChecked,
   shouldShowFileExplorer,
   workspaceAssetResource,
-} from "./filePreviewMode";
-import { changeFileSaveSession, useFileSaveSession } from "./fileSaveSessions";
+} from "~/components/files/filePreviewMode";
+import { changeFileSaveSession, useFileSaveSession } from "~/components/files/fileSaveSessions";
 import { revisionedQuery } from "~/state/revisionedQuery";
 import {
   getOptimisticProjectFileQueryData,
@@ -126,34 +132,31 @@ import {
   getProjectFileQueryAtom,
   setProjectFileQueryData,
   useProjectFileQuery,
-} from "./projectFilesQueryState";
+} from "~/components/files/projectFilesQueryState";
 
 const NO_FILE_REVISION_ATOM = Atom.make(null);
 
-interface FilePreviewPanelProps {
-  environmentId: EnvironmentId;
+interface FilesSidePanelProps {
   cwd: string;
   projectName: string;
   relativePath: string | null;
   attachment?: ChatFileAttachment;
-  threadRef: ScopedThreadRef;
-  composerDraftTarget: ScopedThreadRef | DraftId;
-  keybindings: ResolvedKeybindingsConfig;
   availableEditors: ReadonlyArray<EditorId>;
   openInShortcutEnabled: boolean;
   revealLine: number | null;
   revealRequestId: number;
-  onOpenFile: (relativePath: string) => void;
+  /** Moves this folder browser to another folder in place; see `navigateFolder`. */
   onNavigateFolder: (relativePath: string, folderTrail: string, keepSource: boolean) => void;
-  /** Retained descendant breadcrumb path after navigating up; see navigateFolder. */
+  /** The deeper path breadcrumbs keep after the browser moved up; see `navigateFolder`. */
   folderTrail: string | undefined;
   onPendingChange: (relativePath: string, pending: boolean) => void;
   selectedFilePending: boolean;
-  workspaceMutationId: string | null;
 }
 
 const MermaidFilePreview = lazy(() =>
-  import("./MermaidFilePreview").then((module) => ({ default: module.MermaidFilePreview })),
+  import("~/components/files/MermaidFilePreview").then((module) => ({
+    default: module.MermaidFilePreview,
+  })),
 );
 
 const FILE_EXPLORER_STORAGE_KEY = "t3code.fileExplorerOpen";
@@ -985,26 +988,24 @@ function initialExplorerOpen(): boolean {
   }
 }
 
-export default function FilePreviewPanel({
-  environmentId,
+export default function FilesSidePanel({
   cwd,
   projectName,
   relativePath: requestedPath,
   attachment,
-  threadRef,
-  composerDraftTarget,
-  keybindings,
   availableEditors,
   openInShortcutEnabled,
   revealLine,
   revealRequestId,
-  onOpenFile,
   onNavigateFolder,
   folderTrail,
   onPendingChange,
   selectedFilePending,
-  workspaceMutationId,
-}: FilePreviewPanelProps) {
+}: FilesSidePanelProps) {
+  const { threadRef, composerDraftTarget, workspaceMutationId } = usePanelHost();
+  const environmentId = threadRef.environmentId;
+  const keybindings = useAtomValue(primaryServerKeybindingsAtom);
+  const onOpenFile = (path: string) => useRightPanelStore.getState().openFile(threadRef, path);
   const relativePath =
     attachment === undefined ? resolveFilePreviewPath(requestedPath, cwd) : requestedPath;
   const draft = typeof composerDraftTarget === "string";
@@ -1557,7 +1558,7 @@ export default function FilePreviewPanel({
   );
 }
 
-const LargeTextViewer = lazy(() => import("./LargeTextViewer"));
+const LargeTextViewer = lazy(() => import("~/components/files/LargeTextViewer"));
 export function WorkspaceLargeTextPreview(props: {
   environmentId: EnvironmentId;
   threadRef: ScopedThreadRef;
