@@ -81,6 +81,7 @@ export interface AntigravityAdapterV2Options {
   readonly onSessionEvent?: AcpAdapterV2Flavor["onSessionEvent"];
   readonly nativeLogging?: Parameters<typeof makeAcpAdapterV2>[0]["nativeLogging"];
   readonly continuationRequests?: Parameters<typeof makeAcpAdapterV2>[0]["continuationRequests"];
+  readonly testHooks?: Parameters<typeof makeAcpAdapterV2>[0]["testHooks"];
 }
 
 /** Native subagent tools report no child session ids. */
@@ -203,6 +204,17 @@ export function makeAntigravityAcpAdapterFlavor(
       ),
     // Loading history replays tool calls; resume avoids replay.
     subagentsIdleOnTurnCompletion: true,
+    // Antigravity answers end_turn while commands it started keep running.
+    // Their terminal updates can omit the kind, so any terminal id clears tracking.
+    extractBackgroundTaskId: (toolCall) =>
+      (toolCall.kind === "execute" && toolCall.status === "inProgress") ||
+      toolCall.status === "completed" ||
+      toolCall.status === "failed"
+        ? toolCall.toolCallId
+        : undefined,
+    backgroundTasksIncludeForegroundTools: true,
+    deferFinalizeForBackgroundWork: true,
+    enablePostSettleContinuation: true,
     ...(options.onSessionEvent === undefined ? {} : { onSessionEvent: options.onSessionEvent }),
     applyModelSelection: Effect.fn("AntigravityAdapterV2.applyModelSelection")(function* ({
       runtime,
@@ -263,5 +275,6 @@ export const makeAntigravityAdapterV2 = Effect.fn("makeAntigravityAdapterV2")(fu
     ...(options.continuationRequests === undefined
       ? {}
       : { continuationRequests: options.continuationRequests }),
+    ...(options.testHooks === undefined ? {} : { testHooks: options.testHooks }),
   });
 });
