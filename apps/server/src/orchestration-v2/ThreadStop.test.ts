@@ -1723,24 +1723,19 @@ it.effect.each(["Stop", "Force stop"] as const)(
       });
       yield* send(threadId, "follow", "queue_after_active");
 
-      yield* orchestrator.dispatch(
-        action === "Stop"
-          ? {
-              type: "thread.stop",
-              commandId: CommandId.make("stop-completed-turn"),
-              threadId,
-            }
-          : {
-              type: "thread.background-work.settle",
-              commandId: CommandId.make("stop-completed-turn:settle"),
-              threadId,
-              providerThreadId,
-              providerTurnId,
-              reason: "Force stopped by user",
-            },
-      );
+      if (action === "Stop") {
+        yield* orchestrator.dispatch({
+          type: "thread.stop",
+          commandId: CommandId.make("stop-completed-turn"),
+          threadId,
+        });
+      } else {
+        const threads = yield* ThreadManagementService.ThreadManagementService;
+        yield* threads.forceStopThread({ threadId });
+      }
       const stopped = yield* orchestrator.getThreadProjection(threadId);
       assert.notEqual(stopped.runs[0]?.status, "running", "the stopped run is still running");
+      assert.deepInclude(stopped.attempts[0], { status: "completed", completedAt: now });
       assert.isTrue(
         stopped.turnItems.some((item) => item.type === "run_interrupt_result"),
         "the stopped run has no interrupt result",
