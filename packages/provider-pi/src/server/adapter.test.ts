@@ -426,7 +426,13 @@ const makeAdapter = Effect.fnUntraced(function* (
       displayName: undefined,
       enabled: true,
       environment: [],
-      config: { enabled: true, binaryPath: "pi", launchArgs, customModels: [] },
+      config: {
+        enabled: true,
+        binaryPath: "pi",
+        launchArgs,
+        eagerCompletionGatewayTools: true,
+        customModels: [],
+      },
     }).pipe(
       Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
       Effect.provideService(HostProcess.Environment, {}),
@@ -438,7 +444,13 @@ const makeAdapter = Effect.fnUntraced(function* (
   }
   return yield* makePiAdapterV2({
     instanceId: PI_INSTANCE_ID,
-    settings: { enabled: true, binaryPath: "pi", launchArgs, customModels: [] },
+    settings: {
+      enabled: true,
+      binaryPath: "pi",
+      launchArgs,
+      eagerCompletionGatewayTools: true,
+      customModels: [],
+    },
     environment: {},
   }).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner));
 });
@@ -1562,30 +1574,46 @@ describe("PiAdapterV2", () => {
     }).pipe(Effect.scoped, Effect.provide(layerTest)),
   );
 
-  it.effect("injects the T3 MCP extension and bearer when a session exists", () =>
-    Effect.gen(function* () {
-      yield* (yield* McpProviderSessions.McpProviderSessions).set({
-        environmentId: EnvironmentId.make("environment-pi-mcp"),
-        threadId: THREAD_ID,
-        providerSessionId: "mcp-session-pi",
-        providerInstanceId: PI_INSTANCE_ID,
-        endpoint: "http://127.0.0.1:43123/mcp",
-        authorizationHeader: "Bearer secret-pi-token",
-        browserToolsAvailable: true,
-      });
-      const fake = yield* makeFakePi;
-      yield* openRuntime(fake);
-      const spawn = fake.lastSpawn();
-      assert.isTrue(spawn.args.includes("--extension"));
-      const extensions = spawn.args.flatMap((arg, index) =>
-        arg === "--extension" ? [spawn.args[index + 1]] : [],
-      );
-      assert.isFalse(spawn.args.includes("--no-extensions"));
-      assert.isTrue(extensions.some((path) => path?.endsWith("pi-t3-mcp-extension.ts")));
-      assert.equal(spawn.env.T3_MCP_URL, "http://127.0.0.1:43123/mcp");
-      assert.equal(spawn.env.T3_MCP_BEARER_TOKEN, "secret-pi-token");
-      assert.equal(spawn.env.T3_PI_RUNTIME_MODE, "full-access");
-    }).pipe(Effect.scoped, Effect.provide(layerTest)),
+  it.effect.each([true, false])(
+    "injects the T3 MCP session with eager completion gateway tools=%s",
+    (eagerCompletionGatewayTools) =>
+      Effect.gen(function* () {
+        yield* (yield* McpProviderSessions.McpProviderSessions).set({
+          environmentId: EnvironmentId.make("environment-pi-mcp"),
+          threadId: THREAD_ID,
+          providerSessionId: "mcp-session-pi",
+          providerInstanceId: PI_INSTANCE_ID,
+          endpoint: "http://127.0.0.1:43123/mcp",
+          authorizationHeader: "Bearer secret-pi-token",
+          browserToolsAvailable: true,
+        });
+        const fake = yield* makeFakePi;
+        const adapter = yield* makePiAdapterV2({
+          instanceId: PI_INSTANCE_ID,
+          settings: { ...PiAdapterV2Driver.defaultConfig(), eagerCompletionGatewayTools },
+          environment: {},
+        }).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, fake.spawner));
+        yield* adapter.openSession({
+          threadId: THREAD_ID,
+          providerSessionId: SESSION_ID,
+          modelSelection: modelSelection("default"),
+          runtimePolicy,
+        });
+        const spawn = fake.lastSpawn();
+        assert.isTrue(spawn.args.includes("--extension"));
+        const extensions = spawn.args.flatMap((arg, index) =>
+          arg === "--extension" ? [spawn.args[index + 1]] : [],
+        );
+        assert.isFalse(spawn.args.includes("--no-extensions"));
+        assert.isTrue(extensions.some((path) => path?.endsWith("pi-t3-mcp-extension.ts")));
+        assert.equal(spawn.env.T3_MCP_URL, "http://127.0.0.1:43123/mcp");
+        assert.equal(spawn.env.T3_MCP_BEARER_TOKEN, "secret-pi-token");
+        assert.equal(spawn.env.T3_PI_RUNTIME_MODE, "full-access");
+        assert.equal(
+          spawn.env.T3_PI_GATEWAY_TOOLS,
+          eagerCompletionGatewayTools ? undefined : "called",
+        );
+      }).pipe(Effect.scoped, Effect.provide(layerTest)),
   );
 
   it.effect("rejects a resume while a turn is active", () =>

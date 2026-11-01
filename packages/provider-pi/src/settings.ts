@@ -29,13 +29,22 @@ export const PiSettings = makeProviderSettingsSchema(
         providerSettingsForm: { clearWhenEmpty: "omit" },
       }),
     ),
+    eagerCompletionGatewayTools: Schema.Boolean.pipe(
+      Schema.withDecodingDefault(Effect.succeed(true)),
+      Schema.annotateKey({
+        title: "Load every T3 tool on completion gateways",
+        description:
+          "Send all T3 tool schemas to OpenAI-compatible completion gateways. Turn off if your gateway supports tools loaded through tool_search. Smaller requests require Pi 0.99 or newer and built-in tool_search. Start a new thread to avoid keeping an earlier eager loadout.",
+        providerSettingsForm: { control: "switch" },
+      }),
+    ),
     customModels: Schema.Array(CustomModelSetting).pipe(
       Schema.withDecodingDefault(Effect.succeed([])),
       Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
     ),
   },
   {
-    order: ["binaryPath", "launchArgs"],
+    order: ["binaryPath", "launchArgs", "eagerCompletionGatewayTools"],
   },
 );
 export type PiSettings = typeof PiSettings.Type;
