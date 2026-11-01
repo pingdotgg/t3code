@@ -6,7 +6,12 @@ import {
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
 import { safeErrorLogAttributes } from "@t3tools/client-runtime/errors";
-import type { ReviewBranchCommitsResult, ScopedThreadRef, RunId } from "@t3tools/contracts";
+import type {
+  ReviewBranchCommitsResult,
+  ScopedThreadRef,
+  RunId,
+  ReviewDiffPreviewInput,
+} from "@t3tools/contracts";
 import {
   ArrowRightIcon,
   CheckIcon,
@@ -355,14 +360,21 @@ export default function DiffPanel({
     },
     { enabled: isGitRepo && selectedTurn !== undefined },
   );
+  const selectedGitSourceKind =
+    selectedGitScope === "unstaged"
+      ? "working-tree"
+      : selectedGitScope === "commit"
+        ? "commit"
+        : "branch-range";
   const branchDiffPreviewInput =
     canReadFiles && isGitSelection && activeThread && activeCwd
-      ? {
+      ? ({
           cwd: activeCwd,
+          sourceKind: selectedGitSourceKind,
           ...(selectedBaseRef ? { baseRef: selectedBaseRef } : {}),
           ...(selectedCommitSha !== null ? { commitSha: selectedCommitSha } : {}),
           ignoreWhitespace: diffIgnoreWhitespace,
-        }
+        } satisfies ReviewDiffPreviewInput)
       : undefined;
   const canRefreshGitDiff =
     isGitRepo && isGitSelection && activeThread != null && activeCwd != null;
@@ -396,13 +408,7 @@ export default function DiffPanel({
     : null;
 
   const selectedGitSource = branchDiffPreview.data?.sources.find(
-    (source) =>
-      source.kind ===
-      (selectedGitScope === "unstaged"
-        ? "working-tree"
-        : selectedGitScope === "commit"
-          ? "commit"
-          : "branch-range"),
+    (source) => source.kind === selectedGitSourceKind,
   );
   const comparisonHeadRef = selectedGitSource?.headRef ?? gitStatusQuery.data?.refName ?? "HEAD";
   const comparisonBaseRef = selectedGitSource?.baseRef ?? selectedBaseRef ?? "Automatic";

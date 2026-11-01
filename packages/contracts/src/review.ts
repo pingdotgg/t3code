@@ -3,16 +3,25 @@ import { TrimmedNonEmptyString } from "./baseSchemas.ts";
 import { GitCommandError } from "./git.ts";
 import { VcsError } from "./vcs.ts";
 
+export const ReviewDiffPreviewSourceKind = Schema.Literals([
+  "working-tree",
+  "branch-range",
+  "commit",
+]);
+export type ReviewDiffPreviewSourceKind = typeof ReviewDiffPreviewSourceKind.Type;
+
 export const ReviewDiffPreviewInput = Schema.Struct({
   cwd: TrimmedNonEmptyString,
   baseRef: Schema.optional(TrimmedNonEmptyString),
   commitSha: Schema.optional(TrimmedNonEmptyString),
   ignoreWhitespace: Schema.optionalKey(Schema.Boolean),
+  // Omitted by clients that predate source selection; the server then returns every source.
+  sourceKind: Schema.optionalKey(ReviewDiffPreviewSourceKind),
   file: Schema.optionalKey(
     Schema.Struct({
       path: Schema.NonEmptyString,
       previousPath: Schema.NullOr(Schema.NonEmptyString),
-      sourceKind: Schema.Literals(["working-tree", "branch-range", "commit"]),
+      sourceKind: ReviewDiffPreviewSourceKind,
     }),
   ),
 });
@@ -35,13 +44,6 @@ export const ReviewBranchCommitsResult = Schema.Struct({
   truncated: Schema.Boolean,
 });
 export type ReviewBranchCommitsResult = typeof ReviewBranchCommitsResult.Type;
-
-export const ReviewDiffPreviewSourceKind = Schema.Literals([
-  "working-tree",
-  "branch-range",
-  "commit",
-]);
-export type ReviewDiffPreviewSourceKind = typeof ReviewDiffPreviewSourceKind.Type;
 
 export const ReviewDiffFileStat = Schema.Struct({
   path: Schema.String,
