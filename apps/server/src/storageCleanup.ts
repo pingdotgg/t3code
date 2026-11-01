@@ -833,7 +833,17 @@ const make = Effect.gen(function* () {
         return reason;
       };
       yield* Effect.gen(function* () {
-        if (!(yield* fs.exists(worktreePath))) return;
+        const exists = yield* fs.exists(worktreePath).pipe(
+          // A stored path under a regular file cannot exist, but access() fails with ENOTDIR.
+          Effect.catchIf(
+            (error) =>
+              error.cause instanceof Error &&
+              "code" in error.cause &&
+              error.cause.code === "ENOTDIR",
+            () => Effect.succeed(false),
+          ),
+        );
+        if (!exists) return;
         if (deleted && !settings.worktreeOnDelete) return keep("no rules apply");
         if (members.length > 1 && worktreeOwner(members) === undefined)
           return keep(`shared by ${members.length} threads`);

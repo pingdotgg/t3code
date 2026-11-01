@@ -1775,6 +1775,21 @@ describe("storage cleanup reports and local file policies", () => {
       }),
     ),
   );
+  it.live("skips a stored worktree path whose parent is a regular file", () =>
+    runCleanupTest(
+      Effect.gen(function* () {
+        const fixture = yield* cleanupFixture();
+        const legacyRoot = `${fixture.config.worktreesDir}/legacy-root`;
+        yield* fixture.fs.writeFileString(legacyRoot, "");
+        fixture.setThreads([
+          shell({ branch: "feature", worktreePath: `${legacyRoot}/stored-workspace` }),
+        ]);
+        const report = yield* fixture.service.runNow;
+        expect(report.entries).toEqual([]);
+        expect(report.counts).toEqual({ removed: 0, kept: 0, failed: 0 });
+      }),
+    ),
+  );
   it.live.each(["before-check", "while-measuring"] as const)(
     "keeps a worktree protected by a missing project root (%s)",
     (timing) =>
