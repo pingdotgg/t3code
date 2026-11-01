@@ -11,11 +11,20 @@ import {
   createOlderSettledThreadAtoms,
   createThreadEnvironmentAtoms,
   createThreadFamilyAtoms,
+  threadFamilyRead,
 } from "@t3tools/client-runtime/state/threads";
-import type { EnvironmentId, OrchestrationV2ThreadShell, ThreadId } from "@t3tools/contracts";
+import type {
+  EnvironmentId,
+  OrchestrationV2ThreadFamily,
+  OrchestrationV2ThreadShell,
+  ScopedThreadRef,
+  ThreadId,
+} from "@t3tools/contracts";
 import * as Option from "effect/Option";
 import { AsyncResult, Atom } from "effect/reactivity";
+import { useEffect, useState } from "react";
 
+import { appAtomRegistry } from "../rpc/atomRegistry";
 import { environmentCatalog } from "../connection/catalog";
 import { connectionAtomRuntime } from "../connection/runtime";
 import { environmentShell } from "./shell";
@@ -44,6 +53,43 @@ export const childThreadApprovalsAtom = createChildThreadApprovalsAtom({
   childThreadInputsAtom: environmentThreadShells.childThreadInputsAtom,
   pendingRequestsAtom: environmentThreadDetails.pendingRequestsAtom,
 });
+
+const familyRemovalAtom = Atom.family((key: string) => {
+  const [environmentId, threadId] = JSON.parse(key) as [EnvironmentId, ThreadId];
+  return Atom.make(
+    (get) => get(environmentShell.stateValueAtom(environmentId)).removedAt.get(threadId) ?? -1,
+  );
+});
+const NO_REMOVAL_ATOM = Atom.make(-1);
+const EMPTY_FAMILY_ATOM = Atom.make(AsyncResult.initial<OrchestrationV2ThreadFamily, never>());
+
+export function useThreadFamilyIfMissing(ref: ScopedThreadRef | null, missing: boolean) {
+  const [lookup, setLookup] = useState(missing ? ref : null);
+  const active =
+    ref !== null && lookup?.environmentId === ref.environmentId && lookup.threadId === ref.threadId;
+  // Family rows make their own shell visible, so retain the lookup until its target changes.
+  if (!active && (lookup !== null || missing)) setLookup(missing ? ref : null);
+  const environmentId = active ? ref.environmentId : null;
+  const threadId = active ? ref.threadId : null;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- retains fetched family rows in the registry while the link targets this thread
+  useEffect(() => {
+    if (environmentId === null || threadId === null) return;
+    return threadFamilies.mount(appAtomRegistry, environmentId, threadId);
+  }, [environmentId, threadId]);
+  const family = useAtomValue(
+    active ? threadFamilies.familyAtom(ref.environmentId, ref.threadId) : EMPTY_FAMILY_ATOM,
+  );
+  const removedAt = useAtomValue(
+    active ? familyRemovalAtom(JSON.stringify([ref.environmentId, ref.threadId])) : NO_REMOVAL_ATOM,
+  );
+  const read = threadFamilyRead(family);
+  if (ref === null || read !== "settled" || !AsyncResult.isSuccess(family)) return read;
+  return missing &&
+    (removedAt > family.value.snapshotSequence ||
+      !family.value.threads.some((thread) => thread.id === ref.threadId))
+    ? "missing"
+    : read;
+}
 
 const EMPTY_THREAD_STATE_ATOM = Atom.make(AsyncResult.success(EMPTY_ENVIRONMENT_THREAD_STATE)).pipe(
   Atom.withLabel("web-environment-thread:empty"),
