@@ -191,7 +191,8 @@ finished background work or a pull request watch starts on its own does not.
 To keep one thread out of the settled shelf no matter how long it sits idle, open its menu,
 choose **Auto-settle behavior**, and pick **Disabled**. The current option is checked. Pick
 **Enabled** to return to the usual rules. Manual settle, snooze, and archive still work while it
-is disabled.
+is disabled. An agent can turn this off and on too, for example to keep a thread whose pull request
+merged open while it finishes follow-up work.
 
 Change these rules in **Settings → Threads**.
 They continue to run when your apps are closed. On web and desktop, choose an environment at the
