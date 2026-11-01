@@ -101,7 +101,8 @@ import {
 import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
 import { useEnvironmentQuery } from "../state/query";
 import { useAtomCommand } from "../state/use-atom-command";
-import { serverEnvironment } from "../state/server";
+import { primaryServerKeybindingsAtom, serverEnvironment } from "../state/server";
+import { shortcutLabelForCommand } from "../keybindings";
 import { reviewEnvironment } from "../state/review";
 import { vcsEnvironment } from "../state/vcs";
 import { buildBaseRefChoices, filterBaseRefChoices } from "../lib/baseRefChoices";
@@ -193,21 +194,33 @@ function DiffFileCollapseToggle({
 function DiffFileViewedToggle({
   filePath,
   viewed,
+  shortcutLabel,
   onViewedChange,
 }: {
   filePath: string;
   viewed: boolean;
+  shortcutLabel: string | null;
   onViewedChange: (viewed: boolean) => void;
 }) {
+  const action = viewed ? "Mark as not viewed" : "Mark as viewed";
   return (
-    <label className="inline-flex cursor-pointer items-center gap-1.5 text-2xs text-muted-foreground">
-      <Checkbox
-        aria-label={`Viewed ${filePath}`}
-        checked={viewed}
-        onCheckedChange={(checked) => onViewedChange(checked)}
-      />
-      Viewed
-    </label>
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <label className="inline-flex cursor-pointer items-center gap-1.5 text-2xs text-muted-foreground" />
+        }
+      >
+        <Checkbox
+          aria-label={`Viewed ${filePath}`}
+          checked={viewed}
+          onCheckedChange={(checked) => onViewedChange(checked)}
+        />
+        Viewed
+      </TooltipTrigger>
+      <TooltipPopup side="top">
+        {shortcutLabel ? `${action} (${shortcutLabel})` : action}
+      </TooltipPopup>
+    </Tooltip>
   );
 }
 
@@ -723,6 +736,13 @@ export default function DiffPanel({
     rendered: isFileReady(fileDiff) && !isFilePending(fileDiff),
   }));
   const viewedFileCount = shownFileEntries.filter(({ fileDiff }) => isFileViewed(fileDiff)).length;
+  const keybindings = useAtomValue(primaryServerKeybindingsAtom);
+  const viewedShortcutLabel = shortcutLabelForCommand(keybindings, "diff.toggleFileViewed", {
+    context: { diffFocus: true },
+  });
+  const commentShortcutLabel = shortcutLabelForCommand(keybindings, "diff.comment", {
+    context: { diffFocus: true, diffLineMode: true },
+  });
   const codeViewReveal = useCodeViewFileReveal();
   const viewerHandleRef = useRef<AnnotatableCodeViewHandle | null>(null);
   const attachViewer = useStableCallback((handle: AnnotatableCodeViewHandle | null) => {
@@ -1536,6 +1556,7 @@ export default function DiffPanel({
                     selectedLines={review.selectedLines}
                     onSelectedLinesChange={review.onSelectedLinesChange}
                     onDraftClose={review.onDraftClose}
+                    commentShortcutLabel={commentShortcutLabel}
                     codeViewKey={`${codeViewMountKey}:${lazySource ? filePatchScope : "preview"}`}
                     className="h-full min-h-0 overflow-auto"
                     files={codeViewFiles}
@@ -1575,6 +1596,7 @@ export default function DiffPanel({
                             <DiffFileViewedToggle
                               filePath={path}
                               viewed={isFileViewed(fileDiff)}
+                              shortcutLabel={viewedShortcutLabel}
                               onViewedChange={(viewed) => {
                                 setFileViewed(fileDiff, viewed);
                                 setDiffFileCollapsed(getCachedFileEntry(fileDiff).fileKey, viewed);

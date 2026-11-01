@@ -11,7 +11,6 @@ import {
   stepRow,
   topToBottomRange,
   visibleDiffRows,
-  wholeFileExpansions,
 } from "./diffReviewCursor";
 
 const lines = (count: number, edit: (line: number) => string) =>
@@ -107,35 +106,12 @@ describe("nearestGapExpansion", () => {
 
   it("finds nothing once the file is fully shown", () => {
     const expanded = new Map(
-      wholeFileExpansions(fileDiff, unified, NO_EXPANSIONS).map((expansion) => [
-        expansion.hunkIndex,
-        { fromStart: expansion.lineCount, fromEnd: 0 },
-      ]),
+      [0, 1, 2].map((hunkIndex) => [hunkIndex, { fromStart: 1_000_000, fromEnd: 0 }]),
     );
     const rows = visibleDiffRows(fileDiff, "unified", expanded);
     expect(rows).toHaveLength(32);
     expect(nearestGapExpansion(fileDiff, rows, rowAt(rows, 1), "below")).toBeNull();
     expect(nearestGapExpansion(fileDiff, rows, rowAt(rows, 30), "above")).toBeNull();
-  });
-});
-
-describe("wholeFileExpansions", () => {
-  it("expands every gap while lines are hidden, then folds back what was expanded", () => {
-    expect(wholeFileExpansions(fileDiff, unified, NO_EXPANSIONS).map((e) => e.hunkIndex)).toEqual([
-      0, 1, 2,
-    ]);
-    const expanded = new Map([
-      [0, { fromStart: 1_000_000, fromEnd: 0 }],
-      [1, { fromStart: 1_000_000, fromEnd: 3 }],
-      [2, { fromStart: 1_000_000, fromEnd: 0 }],
-    ]);
-    const rows = visibleDiffRows(fileDiff, "unified", expanded);
-    expect(wholeFileExpansions(fileDiff, rows, expanded)).toEqual([
-      { hunkIndex: 0, direction: "up", lineCount: -1_000_000 },
-      { hunkIndex: 1, direction: "up", lineCount: -1_000_000 },
-      { hunkIndex: 1, direction: "down", lineCount: -3 },
-      { hunkIndex: 2, direction: "up", lineCount: -1_000_000 },
-    ]);
   });
 });
 

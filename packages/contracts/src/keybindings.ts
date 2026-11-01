@@ -79,7 +79,6 @@ export const STATIC_KEYBINDING_COMMANDS = [
   "diff.previousUnviewedFile",
   "diff.toggleFileCollapsed",
   "diff.toggleFileViewed",
-  "diff.expandFile",
   "diff.toggleSingleFile",
   "diff.enterLineMode",
   "diff.nextLine",

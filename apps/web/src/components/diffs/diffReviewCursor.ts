@@ -116,40 +116,6 @@ export function nearestGapExpansion(
   return null;
 }
 
-// Expansion regions are clamped to their gap when read, so this reveals any gap in full,
-// including the trailing gap of a partial diff whose size is unknown until it loads.
-const WHOLE_GAP_LINE_COUNT = 1_000_000;
-
-export interface DiffGapExpansionCount extends DiffGapExpansion {
-  readonly lineCount: number;
-}
-
-/**
- * Shows the whole file while anything is hidden or nothing was expanded yet; otherwise folds back
- * exactly what the viewer reports as expanded.
- */
-export function wholeFileExpansions(
-  fileDiff: FileDiffMetadata,
-  rows: ReadonlyArray<DiffRow>,
-  expandedHunks: ReadonlyMap<number, HunkExpansionRegion>,
-): ReadonlyArray<DiffGapExpansionCount> {
-  const hasHiddenLines = rows.some((row) => row.hiddenBefore > 0 || row.hiddenAfter > 0);
-  const folds = [...expandedHunks].flatMap(([hunkIndex, region]) => [
-    ...(region.fromStart > 0
-      ? [{ hunkIndex, direction: "up" as const, lineCount: -region.fromStart }]
-      : []),
-    ...(region.fromEnd > 0
-      ? [{ hunkIndex, direction: "down" as const, lineCount: -region.fromEnd }]
-      : []),
-  ]);
-  if (!hasHiddenLines && folds.length > 0) return folds;
-  return Array.from({ length: fileDiff.hunks.length + 1 }, (_, hunkIndex) => ({
-    hunkIndex,
-    direction: "up" as const,
-    lineCount: WHOLE_GAP_LINE_COUNT,
-  }));
-}
-
 /** The cursor as a viewer selection, from where it started to where it is now. */
 export function cursorSelectedRange(cursor: DiffReviewCursor): SelectedLineRange | null {
   if (cursor.mode === "file") return null;

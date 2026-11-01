@@ -938,6 +938,8 @@ describe("Diff review shortcuts", () => {
     ],
     [event({ key: "v" }), { diffFocus: true, diffLineMode: true }, "diff.toggleFileViewed"],
     [event({ key: " ", code: "Space" }), { diffFocus: true, diffLineMode: true }, "diff.comment"],
+    [event({ key: " ", code: "Space" }), { diffFocus: true }, "diff.toggleFileCollapsed"],
+    [event({ key: "Enter" }), { diffFocus: true }, "diff.toggleFileCollapsed"],
     [event({ key: "Escape" }), { diffFocus: true, diffLineMode: true }, "diff.back"],
     [event({ key: "Escape" }), { diffFocus: true }, null],
   ] as const)("resolves %o with %o to %s", (shortcut, context, command) => {

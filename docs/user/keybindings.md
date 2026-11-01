@@ -74,8 +74,7 @@ On files:
 - `j` and `k` move to the next or previous file.
 - `n` and `Shift+n` jump to the next or previous file you have not viewed.
 - `v` marks the file viewed, which also folds it. Press it again to unmark.
-- `o` folds or unfolds the file.
-- `x` shows the whole file. Press it again to hide the unchanged lines.
+- Enter or `Space` folds or unfolds the file.
 - `f` shows only the current file. `j`, `k`, and `n` switch which file it shows.
 
 On lines:

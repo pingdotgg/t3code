@@ -22,7 +22,6 @@ import {
   stepRow,
   topToBottomRange,
   visibleDiffRows,
-  wholeFileExpansions,
 } from "./diffReviewCursor";
 
 const DIFF_REVIEW_COMMANDS = [
@@ -32,7 +31,6 @@ const DIFF_REVIEW_COMMANDS = [
   "diff.previousUnviewedFile",
   "diff.toggleFileCollapsed",
   "diff.toggleFileViewed",
-  "diff.expandFile",
   "diff.toggleSingleFile",
   "diff.enterLineMode",
   "diff.nextLine",
@@ -58,6 +56,19 @@ const REPEATABLE_COMMANDS: ReadonlySet<DiffReviewCommand> = new Set([
 ]);
 
 const NO_EXPANSIONS: ReadonlyMap<number, HunkExpansionRegion> = new Map();
+
+// A control reached with Tab keeps Enter and Space; one focused by a click hands them to the cursor.
+function activatesFocusedControl(event: KeyboardEvent, root: HTMLElement | null): boolean {
+  return (
+    (event.key === "Enter" || event.key === " ") &&
+    event.target instanceof Element &&
+    event.target !== root &&
+    event.target.matches(":focus-visible") &&
+    event.target.closest(
+      'button, a[href], input, select, [role="button"], [role="checkbox"], [role="switch"]',
+    ) !== null
+  );
+}
 
 export interface DiffReviewFile {
   readonly fileKey: string;
@@ -214,22 +225,6 @@ export function useDiffReviewKeyboard(input: DiffReviewKeyboardInput) {
         moveToFile(nextKey ?? cursorFile.fileKey);
         return true;
       }
-      case "diff.expandFile": {
-        if (!cursorFile) return false;
-        if (!cursorFile.rendered || !canExpand(cursorFile)) return true;
-        input.setCollapsed(cursorFile.fileKey, false);
-        const instance = fileDiffInstance(cursorFile.fileKey);
-        if (!instance) return true;
-        const expansions = wholeFileExpansions(
-          cursorFile.fileDiff,
-          rowsFor(cursorFile),
-          instance.getExpandedHunks(),
-        );
-        for (const { hunkIndex, direction, lineCount } of expansions) {
-          instance.expandHunk(hunkIndex, direction, lineCount);
-        }
-        return true;
-      }
       case "diff.toggleSingleFile": {
         const file = cursorFile ?? files[0];
         if (!file) return false;
@@ -327,7 +322,9 @@ export function useDiffReviewKeyboard(input: DiffReviewKeyboardInput) {
     // Capture phase, so the keys reach the panel before type-to-focus sends them to the composer.
     return registerCommands(handlers, {
       capture: true,
-      when: () => rootRef.current?.contains(document.activeElement) === true,
+      when: (event) =>
+        rootRef.current?.contains(document.activeElement) === true &&
+        !activatesFocusedControl(event, rootRef.current),
       context: () => ({ diffLineMode: isLineMode() }),
     });
   }, [handleCommand, isLineMode]);
