@@ -69,6 +69,7 @@ import { AnnotatableCodeView } from "~/components/diffs/AnnotatableCodeView";
 import { DiffFileTree } from "~/components/diffs/DiffFileTree";
 import { diffFileTreeEntries } from "~/components/diffs/diffFileTree.logic";
 import { Button } from "~/components/ui/button";
+import { FileExplorerPane } from "~/components/files/FileExplorerPane";
 import { MorphIcon } from "~/components/MorphIcon";
 import { ToggleGroup, Toggle } from "~/components/ui/toggle-group";
 import { Switch } from "~/components/ui/switch";
@@ -1455,7 +1456,12 @@ export default function DiffSidePanel() {
                   />
                 </div>
                 {fileTreeOpen ? (
-                  <aside className="flex w-[min(16rem,40%)] min-w-40 shrink-0 border-l border-border/60">
+                  <FileExplorerPane
+                    resizable
+                    storageKey="t3code:diff-file-tree-width"
+                    defaultWidthFraction={0.4}
+                    resizeLabel="Resize Changes files"
+                  >
                     <DiffFileTree
                       ariaLabel={`${reviewSectionTitle} files`}
                       entries={fileTreeEntries}
@@ -1463,7 +1469,7 @@ export default function DiffSidePanel() {
                       revealRequestId={selectedFileRevealRequestId}
                       onSelectFile={revealDiffFile}
                     />
-                  </aside>
+                  </FileExplorerPane>
                 ) : null}
               </div>
             ) : (
