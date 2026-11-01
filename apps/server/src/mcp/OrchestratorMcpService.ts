@@ -92,7 +92,7 @@ import {
   DispatchModeLimit,
   type DispatchModeRefusal,
 } from "../orchestration-v2/DispatchModeLimit.ts";
-import { runOutcome } from "../orchestration-v2/RestartBackgroundNote.ts";
+import { neverStarted, runOutcome } from "../orchestration-v2/RestartBackgroundNote.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
 import * as ThreadLaunchService from "../orchestration-v2/ThreadLaunchService.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
@@ -1495,11 +1495,20 @@ const make = Effect.gen(function* () {
             .filter((run) => run.delegatedTaskId === task.id)
             .toSorted((a, b) => b.ordinal - a.ordinal)[0]
         : progress.resultRun;
+    const taskRuns = childControls.runs.filter((run) => run.delegatedTaskId === task.id);
     const taskWorkState =
       childRun?.delegatedTaskId === task.id
-        ? isTerminalTaskStatus(taskStatusForRun(taskResultRun))
+        ? taskResultRun !== undefined &&
+          isTerminalTaskStatus(taskStatusForRun(taskResultRun)) &&
+          taskRuns.every(neverStarted)
           ? "result_available"
-          : "working"
+          : delegatedTaskProgress({
+              ...childControls,
+              runs: taskRuns,
+              subagents: childControls.subagents.filter((subagent) =>
+                taskRuns.some((run) => run.id === subagent.runId),
+              ),
+            }).state
         : progress.state;
     const resultRunIds = [
       ...new Set(
