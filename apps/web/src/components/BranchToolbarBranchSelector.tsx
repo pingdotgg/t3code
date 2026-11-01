@@ -46,7 +46,9 @@ import { parsePullRequestReference } from "@t3tools/client-runtime/pull-request-
 import { getSourceControlPresentation } from "../sourceControlPresentation";
 import { useComposerMenuProps } from "./chat/composerEventScope";
 import {
+  type BranchHold,
   deriveLocalBranchNameFromRemoteRef,
+  isBranchHoldCurrent,
   resolveBranchTriggerLabel,
   resolveBranchToolbarPrBranch,
   resolveBranchSelectionTarget,
@@ -286,8 +288,17 @@ export function BranchToolbarBranchSelector({
     activeThreadBranch,
     currentGitBranch,
   });
+  const [branchHold, setBranchHold] = useState<BranchHold | null>(null);
+  const branchHoldCurrent =
+    branchHold !== null &&
+    isBranchHoldCurrent(branchHold, {
+      canonicalBranch: canonicalActiveBranch,
+      environmentId,
+      cwd: branchCwd,
+    });
+  if (branchHold !== null && !branchHoldCurrent) setBranchHold(null);
   const [resolvedActiveBranch, setOptimisticBranch] = useOptimistic(
-    canonicalActiveBranch,
+    branchHoldCurrent ? branchHold.branch : canonicalActiveBranch,
     (_currentBranch: string | null, optimisticBranch: string | null) => optimisticBranch,
   );
   const listedActiveBranch =
@@ -376,7 +387,6 @@ export function BranchToolbarBranchSelector({
     startBranchActionTransition(async () => {
       await action();
       branchRefState.refresh();
-      branchStatusQuery.refresh();
     });
   };
 
@@ -425,6 +435,12 @@ export function BranchToolbarBranchSelector({
           ? (checkoutResult.value.refName ?? selectedBranchName)
           : selectedBranchName;
         setOptimisticBranch(nextBranchName);
+        setBranchHold({
+          branch: nextBranchName,
+          replaces: canonicalActiveBranch,
+          environmentId,
+          cwd: selectionTarget.checkoutCwd,
+        });
         setThreadBranch(nextBranchName, selectionTarget.nextWorktreePath);
         return;
       }
@@ -462,6 +478,12 @@ export function BranchToolbarBranchSelector({
       });
       if (createBranchResult._tag === "Success") {
         setOptimisticBranch(createBranchResult.value.refName);
+        setBranchHold({
+          branch: createBranchResult.value.refName,
+          replaces: canonicalActiveBranch,
+          environmentId,
+          cwd: branchCwd,
+        });
         setThreadBranch(createBranchResult.value.refName, activeWorktreePath);
         return;
       }
