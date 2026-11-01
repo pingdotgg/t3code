@@ -2,6 +2,7 @@
 import * as NodeFSP from "node:fs/promises";
 import { pipe } from "effect/Function";
 
+import { UsageProviderKind, UsageTokenTotals } from "@t3tools/contracts";
 import type { UsageRecord } from "@t3tools/provider-core/server/usage";
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import * as Effect from "effect/Effect";
@@ -331,6 +332,47 @@ interface CachedDatabase {
 
 /** Fingerprint canonical DB/WAL paths by size, mtime and ctime; WAL holds new rows, and ctime catches restored mtimes. */
 export const makeAntigravityUsageCache = () => new Map<string, CachedDatabase>();
+
+// A UsageRecord without its optional fields, as persisted in the cache file.
+const CachedUsageRecord = Schema.Struct({
+  provider: UsageProviderKind,
+  timestampMs: Schema.Number,
+  model: Schema.String,
+  sessionId: Schema.String,
+  totals: UsageTokenTotals,
+  reportedCostUsd: Schema.NullOr(Schema.Number),
+  speed: Schema.Literals(["standard", "fast", "ultrafast"]),
+  dedupeKey: Schema.NullOr(Schema.String),
+});
+// Rename when usageCandidates output changes; cached models also pin MODEL_IDS.
+export const ANTIGRAVITY_USAGE_CACHE_FILE_NAME = "usage-antigravity-cache-v1.json";
+const MODEL_IDS_SIGNATURE = Object.entries(MODEL_IDS).join();
+// Plain records and arrays; ReadonlyMap codecs made encode and decode several times slower.
+const AntigravityUsageCacheFile = Schema.fromJsonString(
+  Schema.Struct({
+    models: Schema.Literal(MODEL_IDS_SIGNATURE),
+    databases: Schema.Record(
+      Schema.String,
+      Schema.Struct({
+        fingerprint: Schema.String,
+        candidates: Schema.Array(
+          Schema.Struct({
+            record: CachedUsageRecord,
+            keys: Schema.Array(Schema.String),
+            timestampQuality: Schema.Number,
+          }),
+        ),
+      }),
+    ),
+  }),
+);
+export const decodeAntigravityUsageCache = Schema.decodeUnknownEffect(AntigravityUsageCacheFile);
+const encodeCacheFile = Schema.encodeEffect(AntigravityUsageCacheFile);
+export const encodeAntigravityUsageCache = (databases: ReadonlyMap<string, CachedDatabase>) =>
+  encodeCacheFile({
+    models: MODEL_IDS_SIGNATURE,
+    databases: Object.fromEntries(databases),
+  });
 
 export const readAntigravityUsage = Effect.fn("readAntigravityUsage")(function* (
   conversationsDirectories: string | readonly string[],

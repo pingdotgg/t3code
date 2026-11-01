@@ -3,15 +3,29 @@ import * as NodeFSP from "node:fs/promises";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
+import { ProviderInstanceId } from "@t3tools/contracts";
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as SqlClient from "effect/sql/SqlClient";
 
-import { makeAntigravityUsageCache, readAntigravityUsage } from "./antigravityUsageReader.ts";
+import * as ServerSecretStore from "../../auth/ServerSecretStore.ts";
+import * as BackgroundPolicy from "../../background/BackgroundPolicy.ts";
+import * as ServerConfig from "../../config.ts";
+import * as ServerSettings from "../../serverSettings.ts";
+import * as ProviderHostLive from "../ProviderHostLive.ts";
+import * as AntigravityUsage from "./AntigravityUsage.ts";
+import {
+  ANTIGRAVITY_USAGE_CACHE_FILE_NAME,
+  decodeAntigravityUsageCache,
+  encodeAntigravityUsageCache,
+  makeAntigravityUsageCache,
+  readAntigravityUsage,
+} from "./antigravityUsageReader.ts";
 
 const openDatabase = Effect.fn("openDatabase")(function* (filename: string) {
   const context = yield* Layer.build(NodeSqliteClient.layer({ filename }));
@@ -339,6 +353,94 @@ describe("readAntigravityUsage", () => {
       ]),
     );
 
+  it.effect("persists the service cache, retrying after a failed write, and restores it", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* tempDir;
+      const baseDir = path.join(root, "state");
+      const configLayer = ServerConfig.layerTest(root, baseDir);
+      const { stateDir } = yield* ServerConfig.ServerConfig.pipe(Effect.provide(configLayer));
+      const conversations = path.join(root, "data", "conversations");
+      yield* fileSystem.makeDirectory(conversations, { recursive: true });
+      yield* seedDatabase(path.join(conversations, "session-1.db"), (db) =>
+        db
+          .exec("CREATE TABLE gen_metadata (idx INTEGER, data BLOB)")
+          .pipe(
+            Effect.andThen(
+              db.run("INSERT INTO gen_metadata VALUES (0, ?)", [antigravityGeneration("r-1")]),
+            ),
+          ),
+      );
+      // Open the database once so the scans below see a stable fingerprint.
+      yield* readAntigravityUsage(conversations, 0);
+      const cacheFile = path.join(stateDir, ANTIGRAVITY_USAGE_CACHE_FILE_NAME);
+      const instances = [
+        {
+          instanceId: ProviderInstanceId.make("antigravity"),
+          config: undefined,
+          environment: { ANTIGRAVITY_DATA_DIR: path.join(root, "data") },
+          configured: false,
+        },
+      ];
+      let failures = 1;
+      const flakyFileSystem = Layer.effect(
+        FileSystem.FileSystem,
+        Effect.map(FileSystem.FileSystem, (inner) => ({
+          ...inner,
+          // Writing under a missing directory fails with a real PlatformError.
+          writeFileString: (target: string, contents: string) =>
+            failures-- > 0
+              ? inner.writeFileString(path.join(target, "missing", "file"), contents)
+              : inner.writeFileString(target, contents),
+        })),
+      );
+      const layer = AntigravityUsage.layer.pipe(
+        Layer.provideMerge(flakyFileSystem),
+        Layer.provideMerge(ProviderHostLive.layer),
+        Layer.provideMerge(Layer.mock(BackgroundPolicy.BackgroundPolicy)({})),
+        Layer.provideMerge(Layer.mock(ServerSecretStore.ServerSecretStore)({})),
+        Layer.provideMerge(configLayer),
+        Layer.provideMerge(ServerSettings.layerTest({})),
+        Layer.provideMerge(NodeServices.layer),
+      );
+      const withService = <A, E>(
+        use: (
+          scan: () => Effect.Effect<
+            Effect.Success<ReturnType<AntigravityUsage.AntigravityUsage["Service"]["scan"]>>
+          >,
+        ) => Effect.Effect<A, E>,
+      ) =>
+        Effect.gen(function* () {
+          const service = yield* AntigravityUsage.AntigravityUsage;
+          return yield* use(() => service.scan({ instances, windowStartMs: 0 }).pipe(Effect.orDie));
+        }).pipe(Effect.provide(layer));
+      // One service: the first write fails, and an unchanged second scan must write again.
+      const first = yield* withService((scan) =>
+        Effect.gen(function* () {
+          const result = yield* scan();
+          assert.isFalse(yield* fileSystem.exists(cacheFile));
+          yield* scan();
+          return result;
+        }),
+      );
+      const saved = yield* fileSystem.readFileString(cacheFile);
+      const databases = (yield* decodeAntigravityUsageCache(saved)).databases;
+      assert.strictEqual(Object.keys(databases).length, 1);
+      // A new service on the same state dir must take its records from the saved file, not a rescan:
+      // an edited cached record shows up in the result while the database fingerprint is unchanged.
+      const edited = JSON.parse(saved);
+      for (const entry of Object.values<any>(edited.databases)) {
+        for (const candidate of entry.candidates)
+          candidate.record.sessionId = "restored-from-cache";
+      }
+      yield* fileSystem.writeFileString(cacheFile, JSON.stringify(edited));
+      const restored = yield* withService((scan) => scan());
+      assert.notInclude(JSON.stringify(first), "restored-from-cache");
+      assert.include(JSON.stringify(restored), "restored-from-cache");
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
   it.effect("rereads an Antigravity database when only its WAL changed", () =>
     Effect.gen(function* () {
       const pathService = yield* Path.Path;
@@ -366,6 +468,38 @@ describe("readAntigravityUsage", () => {
         records(next).map((record) => record.dedupeKey),
         ["antigravity:11:r-1", "antigravity:11:r-2"],
       );
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("restores a persisted cache without rereading unchanged databases", () =>
+    Effect.gen(function* () {
+      const dir = yield* tempDir;
+      const path = (yield* Path.Path).join(dir, "session-1.db");
+      yield* seedDatabase(path, (db) =>
+        db
+          .exec("CREATE TABLE gen_metadata (idx INTEGER, data BLOB)")
+          .pipe(
+            Effect.andThen(
+              db.run("INSERT INTO gen_metadata VALUES (0, ?)", [antigravityGeneration("r-1")]),
+            ),
+          ),
+      );
+      const cache = makeAntigravityUsageCache();
+      const first = yield* readAntigravityUsage(dir, 0, cache);
+      const saved = yield* encodeAntigravityUsageCache(cache);
+      const restored = makeAntigravityUsageCache();
+      for (const [key, entry] of Object.entries(
+        (yield* decodeAntigravityUsageCache(saved)).databases,
+      )) {
+        restored.set(key, entry);
+      }
+      const [entry] = restored.values();
+      assert.deepStrictEqual(yield* readAntigravityUsage(dir, 0, restored), first);
+      assert.strictEqual([...restored.values()][0], entry);
+      // Unreadable files, and files written for another MODEL_IDS table, are not used.
+      for (const bad of ["{", saved.replace(/"models":"[^"]*"/, '"models":""')]) {
+        assert.isTrue(Exit.isFailure(yield* Effect.exit(decodeAntigravityUsageCache(bad))));
+      }
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 
