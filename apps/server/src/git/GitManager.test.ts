@@ -724,8 +724,9 @@ function makeManager(input?: {
     if (input?.seed !== undefined) {
       yield* input.seed.pipe(Effect.provideContext(stores), Effect.orDie);
     }
+    const services = yield* Layer.build(layerManager);
     const manager = yield* GitManager.make.pipe(
-      Effect.provide(layerManager),
+      Effect.provideContext(services),
       Effect.provideContext(stores),
     );
     return { manager, providerCalls };
