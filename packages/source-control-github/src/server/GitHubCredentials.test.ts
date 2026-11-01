@@ -193,7 +193,7 @@ describe("GitHubCredentials", () => {
         ["config", "get", "http_unix_socket", "--host", "github.com"],
         ["config", "get", "http_unix_socket", "--host", "ghe.example.com"],
       ]);
-    }).pipe(Effect.provide(layer));
+    }).pipe(Effect.provide(layer), Effect.provideService(HostProcess.Platform, "linux"));
   });
 
   it.effect("sends straight to the host on Windows, which cannot open gh's socket files", () => {
