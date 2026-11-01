@@ -16,6 +16,7 @@ import {
   type RightPanelSurface,
 } from "~/rightPanelStore";
 import { Button } from "~/components/ui/button";
+import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from "~/components/ui/collapsible";
 import { DiscoveryList } from "~/components/ui/discovery-list";
 import { Dialog } from "~/components/ui/dialog";
 import { WizardPopup } from "~/components/ui/wizard";
@@ -408,13 +409,25 @@ function DeviceNotice(props: {
 }
 
 function DeviceDiscoveryWarning(props: { readonly label: string; readonly detail: string }) {
-  const [dismissed, setDismissed] = useState(false);
-  if (dismissed) return null;
+  const [open, setOpen] = useState(false);
   return (
-    <DeviceNotice tone="warning" onDismiss={() => setDismissed(true)}>
-      <p className="font-medium">Device discovery warning · {props.label}</p>
-      {props.detail}
-    </DeviceNotice>
+    <Collapsible open={open} onOpenChange={setOpen}>
+      <div
+        role="status"
+        className="flex items-center gap-2 border-b px-3 py-1.5 text-xs text-muted-foreground"
+      >
+        <CircleAlert className="size-3.5 shrink-0" />
+        <span className="min-w-0 flex-1 truncate">
+          Some devices on {props.label} could not be listed.
+        </span>
+        <CollapsibleTrigger aria-label={`Details for ${props.label}`}>Details</CollapsibleTrigger>
+      </div>
+      <CollapsiblePanel>
+        <DeviceNotice tone="warning" onDismiss={() => setOpen(false)}>
+          {props.detail}
+        </DeviceNotice>
+      </CollapsiblePanel>
+    </Collapsible>
   );
 }
 

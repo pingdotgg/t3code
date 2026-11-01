@@ -36,6 +36,7 @@ import { SshCommandError } from "@t3tools/ssh/errors";
 import * as FileSystem from "effect/FileSystem";
 import { resolveNodeExecutable, nodeRuntimeUnavailableMessage } from "@t3tools/shared/nodeRuntime";
 import * as Path from "effect/Path";
+import * as RcMap from "effect/RcMap";
 import { ensureAgentDevice, ensureDeviceHub } from "./DeviceToolchain.ts";
 import {
   agentDeviceCloseOutcome,
@@ -529,11 +530,13 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
     );
 
   const fetchDevices = Effect.fn("DeviceService.fetchDevices")(function* (ready: DeviceReadiness) {
-    const { devices, detail, androidDiscoveryIncomplete } = yield* ready.devices.list;
+    const { devices, detail, androidDiscoveryIncomplete, incompletePlatforms } =
+      yield* ready.devices.list;
     return {
       devices: devices.map((device): DeviceSummary => ({ ...device, hostId: ready.hostId })),
       detail,
       androidDiscoveryIncomplete,
+      incompletePlatforms: incompletePlatforms ?? [],
     };
   });
 
@@ -544,7 +547,8 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
     const sessionKey = (session: DeviceSession) =>
       `${session.hostId}\u0000${session.deviceId}\u0000${session.threadId}\u0000${session.openedAt}`;
     const before = new Set((yield* SynchronizedRef.get(stateRef)).state.sessions.map(sessionKey));
-    const { devices, detail, androidDiscoveryIncomplete } = yield* fetchDevices(ready);
+    const { devices, detail, androidDiscoveryIncomplete, incompletePlatforms } =
+      yield* fetchDevices(ready);
     const hostSummaries = yield* Effect.forEach(hosts.values(), (host) => host.summary);
     return yield* lifecycleLock.withPermit(
       Effect.gen(function* () {
@@ -555,8 +559,11 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
           hosts: hostSummaries,
           ...(ready.hostId === LOCAL_DEVICE_HOST_ID ? { hostStatusDetail: detail } : {}),
           devices: [
-            ...state.devices.filter((device) => device.hostId !== ready.hostId),
-            ...devices,
+            ...state.devices.filter(
+              (device) =>
+                device.hostId !== ready.hostId || incompletePlatforms.includes(device.platform),
+            ),
+            ...devices.filter((device) => !incompletePlatforms.includes(device.platform)),
           ],
           // A host that ends devices itself (EAS stops sessions at their limits)
           // leaves sessions on devices it no longer lists with nothing to stream.
@@ -728,6 +735,11 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
     }
   });
 
+  // serve-sim rejects overlapping iOS stream setup on the same device.
+  const openLocks = yield* RcMap.make({
+    lookup: (_key: string) => Semaphore.make(1),
+  });
+
   const open: DeviceService["Service"]["open"] = Effect.fn("DeviceService.open")(
     function* (input, context) {
       const host = yield* resolveHost(input.hostId);
@@ -735,7 +747,7 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
       const ready = yield* readiness(host.id);
       let state = yield* refresh(ready);
       let device = findDevice(state, host.id, input.deviceId);
-      if (!device) {
+      if (!device || device.platform !== input.platform) {
         return yield* new DeviceNotFoundError({ hostId: host.id, deviceId: input.deviceId });
       }
       // Hosts that route their own streams never encode emulator video with serve-emu's ffmpeg.
@@ -835,6 +847,16 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
       );
       return session;
     },
+    (effect, input) =>
+      input.platform === "ios"
+        ? RcMap.get(
+            openLocks,
+            `${input.hostId ?? LOCAL_DEVICE_HOST_ID}\u0000${input.deviceId}`,
+          ).pipe(
+            Effect.flatMap((lock) => lock.withPermit(effect)),
+            Effect.scoped,
+          )
+        : effect,
   );
 
   const refreshAfterShutdown = (ready: DeviceReadiness) =>
