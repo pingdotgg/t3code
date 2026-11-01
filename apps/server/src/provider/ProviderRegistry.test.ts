@@ -788,7 +788,7 @@ it.layer(
       );
     });
 
-    it("does not bring back models the installed CLI is too old to run", () => {
+    it("does not bring back models omitted by a completed Claude probe", () => {
       const pendingProvider = {
         instanceId: ProviderInstanceId.make("claudeAgent"),
         driver: ProviderDriverKind.make("claudeAgent"),
@@ -801,6 +801,7 @@ it.layer(
         models: [
           { slug: "claude-old", name: "Old", isCustom: false, capabilities: null },
           { slug: "claude-next", name: "Next", isCustom: false, capabilities: null },
+          { slug: "claude-removed", name: "Removed", isCustom: false, capabilities: null },
         ],
         slashCommands: [],
         skills: [],

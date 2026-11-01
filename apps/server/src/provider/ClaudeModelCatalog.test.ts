@@ -1,5 +1,8 @@
 import { assert, describe, it } from "@effect/vitest";
 import { ProviderDriverKind, ProviderInstanceId } from "@t3tools/contracts";
+import { buildServerProvider } from "@t3tools/provider-core/server/snapshotProbe";
+
+import { applyClaudeGatewayModels } from "./Drivers/ClaudeGatewayModels.ts";
 
 import { resolveProviderCatalog, type ModelManifestData } from "./ModelManifest.ts";
 import {
@@ -69,6 +72,39 @@ const catalogFromManifest = (data: ModelManifestData) =>
   resolveClaudeModelCatalog(resolveProviderCatalog(data, CLAUDE) ?? undefined);
 
 describe("Claude model catalog", () => {
+  it("advertises discovered gateway models without requiring saved custom model settings", () => {
+    const provider = buildServerProvider({
+      presentation: { displayName: "Claude" },
+      enabled: true,
+      checkedAt: "2026-11-01T00:00:00Z",
+      models: [
+        { slug: "known", name: "Known", isCustom: false, capabilities: null },
+        { slug: "omitted", name: "Omitted", isCustom: false, capabilities: null },
+        { slug: "saved", name: "Saved", isCustom: true, capabilities: null },
+      ],
+      probe: {
+        installed: true,
+        version: "2.1.316",
+        status: "ready",
+        auth: { status: "authenticated" },
+      },
+    });
+    const result = applyClaudeGatewayModels(provider, [
+      { id: "known" },
+      { id: "claude-haiku-4-5-20251001", display_name: "Gateway Haiku" },
+    ]);
+    assert.deepStrictEqual(result.models, [
+      { slug: "known", name: "Known", isCustom: false, capabilities: null },
+      {
+        slug: "claude-haiku-4-5-20251001",
+        name: "Gateway Haiku",
+        isCustom: false,
+        capabilities: { optionDescriptors: [] },
+      },
+      { slug: "saved", name: "Saved", isCustom: true, capabilities: null },
+    ]);
+  });
+
   it("resolves capacity from selected options and fixed catalog windows without guessing custom models", () => {
     const source = manifest();
     const profile = source.providers!.claudeAgent!.profiles.synthetic!;

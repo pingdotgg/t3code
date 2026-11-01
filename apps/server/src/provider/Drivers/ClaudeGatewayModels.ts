@@ -135,7 +135,7 @@ export function applyClaudeGatewayModels(
             known.get(model.id) ?? {
               slug: model.id,
               name: model.display_name || model.id,
-              isCustom: true,
+              isCustom: false,
               capabilities: { optionDescriptors: [] },
             },
         ),
