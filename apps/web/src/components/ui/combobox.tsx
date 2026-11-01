@@ -69,7 +69,7 @@ function ComboboxInput({
           <Input
             className={cn(
               "has-disabled:opacity-100",
-              unstyled && "rounded-none bg-transparent text-sm",
+              unstyled && "w-full rounded-none bg-transparent text-sm",
             )}
             nativeInput
             size={sizeValue}
