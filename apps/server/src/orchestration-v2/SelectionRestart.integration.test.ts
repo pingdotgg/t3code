@@ -1,7 +1,10 @@
+import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import {
   CommandId,
   EventId,
+  EnvironmentId,
+  type Project,
   MessageId,
   type ModelSelection,
   type OrchestrationV2ProviderCapabilities,
@@ -23,6 +26,17 @@ import * as Layer from "effect/Layer";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Stream from "effect/Stream";
+
+import { ClaudeProviderCapabilitiesV2 } from "./Adapters/ClaudeAdapterV2.ts";
+import * as CommandReceiptStore from "./CommandReceiptStore.ts";
+import * as ThreadManagementService from "./ThreadManagementService.ts";
+import * as SqlitePersistence from "../persistence/Sqlite.ts";
+import * as ServerSettings from "../serverSettings.ts";
+import * as WorktreeMcpService from "../mcp/WorktreeMcpService.ts";
+import * as GitWorkflowService from "../git/GitWorkflowService.ts";
+import * as ProjectService from "../project/ProjectService.ts";
+import * as ProjectSetupScriptRunner from "../project/ProjectSetupScriptRunner.ts";
+import * as VcsStatusBroadcaster from "../vcs/VcsStatusBroadcaster.ts";
 
 import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
 import * as EffectWorker from "./EffectWorker.ts";
@@ -72,6 +86,7 @@ interface RestartAdapterState {
     readonly model: string;
     readonly cwd: string | null;
     readonly attemptId: string;
+    readonly text: string;
   }>;
   readonly closedSessionCount: number;
   readonly failedReplacementOpen: boolean;
@@ -81,6 +96,7 @@ function makeRestartAdapter(
   state: Ref.Ref<RestartAdapterState>,
   sessionCapabilities: OrchestrationV2ProviderCapabilities = pooledCapabilities,
   providerInstanceId = initialSelection.instanceId,
+  driver = ProviderDriverKind.make("codex"),
 ): ProviderAdapter.ProviderAdapterV2["Service"] {
   return {
     instanceId: providerInstanceId,
@@ -218,6 +234,7 @@ function makeRestartAdapter(
                     model: input.modelSelection.model,
                     cwd: input.runtimePolicy.cwd,
                     attemptId: input.attemptId,
+                    text: input.message.text,
                   },
                 ],
               }));
@@ -883,6 +900,240 @@ it.live.each(["active", "idle", "selection-command", "pooled", "separate-home"] 
           assert.isEmpty(third.contextHandoffs);
           assert.deepEqual(messages, ["first", "second", "third"]);
         }).pipe(Effect.provide(ProviderReplayHarness.layerWithRegistry({ name }, layerRegistry)));
+      }),
+    ),
+);
+
+it.live.each(["claudeAgent", "codex"] as const)(
+  "continues a delegated %s child after t3_worktree_handoff without notifying its parent early",
+  (provider) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const name = `delegated-worktree-handoff-${provider}`;
+        const destination = yield* checkpointWorkspace(name);
+        const instanceId = ProviderInstanceId.make(provider);
+        const selection = { instanceId, model: initialSelection.model };
+        const state = yield* Ref.make<RestartAdapterState>({
+          activeTurn: null,
+          opened: [],
+          started: [],
+          closedSessionCount: 0,
+          failedReplacementOpen: true,
+        });
+        const capabilities =
+          provider === "codex" ? CodexProviderCapabilitiesV2 : ClaudeProviderCapabilitiesV2;
+        const layerRegistry = ProviderAdapterRegistry.layerSingle(
+          makeRestartAdapter(state, capabilities, instanceId, ProviderDriverKind.make(provider)),
+        );
+        // Hold the outbox until the MCP call has durably queued its continuation.
+        const layerOrchestrator = ProviderReplayHarness.layerWithRegistry({ name }, layerRegistry, {
+          runEffectWorker: false,
+        });
+        const layerThreadManagement = ThreadManagementService.layer.pipe(
+          Layer.provide(layerOrchestrator),
+          Layer.provide(ServerSettings.layerTest()),
+          Layer.provide(
+            CommandReceiptStore.layer.pipe(Layer.provide(SqlitePersistence.layerMemory)),
+          ),
+        );
+        const projectId = ProjectId.make(`project:${name}`);
+        const project: Project = {
+          id: projectId,
+          title: name,
+          workspaceRoot: destination,
+          defaultModelSelection: null,
+          scripts: [],
+          createdAt: "2026-01-01T00:00:00.000Z",
+          updatedAt: "2026-01-01T00:00:00.000Z",
+          deletedAt: null,
+        };
+        const layerHandoff = WorktreeMcpService.layer.pipe(
+          Layer.provide(layerThreadManagement),
+          Layer.provide(
+            Layer.mergeAll(
+              NodeServices.layer,
+              ServerSettings.layerTest(),
+              Layer.mock(ProjectService.ProjectService)({
+                getById: () => Effect.succeedSome(project),
+              }),
+              Layer.mock(GitWorkflowService.GitWorkflowService)({
+                localStatus: () =>
+                  Effect.succeed({
+                    isRepo: true,
+                    hasPrimaryRemote: false,
+                    isDefaultRef: true,
+                    refName: "main",
+                    hasWorkingTreeChanges: false,
+                    workingTree: { files: [], insertions: 0, deletions: 0 },
+                  }),
+                listLocalBranchNames: () => Effect.succeed(["main"]),
+                createWorktree: () =>
+                  Effect.succeed({
+                    worktree: { path: destination, refName: "handoff-destination" },
+                  }),
+              }),
+              Layer.mock(ProjectSetupScriptRunner.ProjectSetupScriptRunner)({}),
+              Layer.mock(VcsStatusBroadcaster.VcsStatusBroadcaster)({
+                refreshStatus: () =>
+                  Effect.succeed({
+                    isRepo: true,
+                    hasPrimaryRemote: false,
+                    isDefaultRef: false,
+                    refName: "handoff-destination",
+                    hasWorkingTreeChanges: false,
+                    workingTree: { files: [], insertions: 0, deletions: 0 },
+                    hasUpstream: false,
+                    aheadCount: 0,
+                    behindCount: 0,
+                    pr: null,
+                  }),
+              }),
+            ),
+          ),
+        );
+
+        yield* Effect.gen(function* () {
+          const orchestrator = yield* Orchestrator.OrchestratorV2;
+          const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+          const handoff = yield* WorktreeMcpService.WorktreeMcpService;
+          const parentThreadId = ThreadId.make(`thread:${name}:parent`);
+          const running = () =>
+            orchestrator.streamDomainEvents.pipe(
+              Stream.filter(
+                (event) =>
+                  event.type === "provider-turn.updated" && event.payload.status === "running",
+              ),
+              Stream.take(1),
+              Stream.runDrain,
+              Effect.forkScoped,
+            );
+          yield* orchestrator.dispatch({
+            type: "thread.create",
+            commandId: CommandId.make(`${name}:create`),
+            threadId: parentThreadId,
+            projectId,
+            title: name,
+            modelSelection: selection,
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            branch: null,
+            worktreePath: null,
+            createdBy: "user",
+            creationSource: "web",
+          });
+          const parentRunning = yield* running();
+          yield* orchestrator.dispatch({
+            type: "message.dispatch",
+            commandId: CommandId.make(`${name}:start`),
+            threadId: parentThreadId,
+            messageId: MessageId.make(`${name}:start`),
+            text: "Delegate the work",
+            attachments: [],
+            dispatchMode: { type: "start_immediately" },
+            createdBy: "user",
+            creationSource: "web",
+          });
+          yield* worker.drain();
+          yield* Fiber.join(parentRunning);
+          const parentRun = (yield* orchestrator.getThreadProjection(parentThreadId)).runs[0]!;
+          const childRunning = yield* running();
+          yield* orchestrator.dispatch({
+            type: "delegated_task.request",
+            commandId: CommandId.make(`${name}:delegate`),
+            parentThreadId,
+            parentRunId: parentRun.id,
+            parentNodeId: parentRun.rootNodeId!,
+            task: "Move to a worktree and continue",
+            modelSelection: selection,
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            completionWake: "always",
+            createdBy: "agent",
+            creationSource: "mcp",
+          });
+          yield* worker.drain();
+          yield* Fiber.join(childRunning);
+          const task = (yield* orchestrator.getThreadProjection(parentThreadId)).subagents[0]!;
+          const childThreadId = task.childThreadId!;
+          const childBefore = yield* orchestrator.getThreadProjection(childThreadId);
+          const result = yield* handoff.handoff(
+            {
+              environmentId: EnvironmentId.make(name),
+              requestNamespace: name,
+              thread: {
+                threadId: childThreadId,
+                providerSessionId: childBefore.providerThreads[0]!.providerSessionId!,
+                providerInstanceId: instanceId,
+              },
+              client: undefined,
+              capabilities: new Set(["worktree"]),
+              issuedAt: 1,
+            },
+            {
+              branch: "handoff-destination",
+              startFromOrigin: false,
+              runSetupScript: false,
+              continuationPrompt: "Continue in the destination worktree",
+            },
+          );
+          assert.equal(result.continuation.status, "scheduled");
+          const queued = yield* orchestrator.getThreadProjection(childThreadId);
+          assert.lengthOf(queued.runs, 2);
+          assert.equal(queued.runs[1]?.status, "queued");
+          const continuationDecision = yield* orchestrator.streamDomainEvents.pipe(
+            Stream.filter(
+              (event) =>
+                event.type === "run.updated" &&
+                event.payload.id === queued.runs[1]!.id &&
+                (event.payload.status === "starting" || event.payload.queueHeld === true),
+            ),
+            Stream.take(1),
+            Stream.runCollect,
+            Effect.forkScoped,
+          );
+          const continuationRunning = yield* running();
+          yield* worker.drain();
+          const [decision] = yield* Fiber.join(continuationDecision);
+          yield* worker.drain();
+          if (decision?.type === "run.updated" && decision.payload.status === "starting") {
+            yield* Fiber.join(continuationRunning);
+          }
+          // Queue promotion and parent completion take different thread locks.
+          // Reconcile the parent before checking that no terminal result escaped.
+          yield* orchestrator.recoverDelegatedTasks;
+          const childAfter = yield* orchestrator.getThreadProjection(childThreadId);
+          const parentAfter = yield* orchestrator.getThreadProjection(parentThreadId);
+          const captured = yield* Ref.get(state);
+          assert.deepEqual(
+            {
+              oldRunStatus: childAfter.runs[0]?.status,
+              continuationStatus: childAfter.runs[1]?.status,
+              queueHeld: childAfter.runs[1]?.queueHeld === true,
+              continuationStarted: childAfter.runs[1]?.startedAt != null,
+              destination: captured.started[2]?.cwd,
+              continuationText: captured.started[2]?.text,
+              parentRunStatus: parentAfter.runs[0]?.status,
+              taskStatus: parentAfter.subagents.find((entry) => entry.id === task.id)?.status,
+              earlyCompletionMessages: parentAfter.messages.filter(
+                (message) => message.delegatedCompletion !== undefined,
+              ).length,
+            },
+            {
+              oldRunStatus: "interrupted",
+              continuationStatus: "running",
+              queueHeld: false,
+              continuationStarted: true,
+              destination,
+              continuationText: "Continue in the destination worktree",
+              parentRunStatus: "running",
+              taskStatus: "running",
+              earlyCompletionMessages: 0,
+            },
+          );
+          assert.equal(childAfter.thread.worktreePath, destination);
+          assert.lengthOf(captured.started, 3);
+          assert.equal(captured.closedSessionCount, provider === "codex" ? 0 : 1);
+        }).pipe(Effect.provide(Layer.merge(layerOrchestrator, layerHandoff)));
       }),
     ),
 );
