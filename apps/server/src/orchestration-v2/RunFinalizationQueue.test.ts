@@ -11,6 +11,7 @@ import * as VcsStatusBroadcaster from "../vcs/VcsStatusBroadcaster.ts";
 import * as WorkspaceEntries from "../workspace/WorkspaceEntries.ts";
 import * as CheckpointCapture from "./CheckpointCaptureService.ts";
 import * as CheckpointRollback from "./CheckpointRollbackService.ts";
+import * as EventSink from "./EventSink.ts";
 import * as EffectOutbox from "./EffectOutbox.ts";
 import * as EffectWorker from "./EffectWorker.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
@@ -37,6 +38,15 @@ it.effect.each([
     cause: "checkpoint storage unavailable",
   });
   const projections = Layer.mock(ProjectionStore.ProjectionStoreV2)({
+    getCheckpointCaptureContext: () =>
+      Effect.succeed({
+        run: undefined,
+        rootNode: undefined,
+        scope: undefined,
+        providerThread: undefined,
+        readyCheckpointOrdinals: [],
+        sideChat: false,
+      }),
     getCheckpointContext: () =>
       Effect.succeed({
         runs: [],
@@ -70,6 +80,9 @@ it.effect.each([
       Layer.mergeAll(
         projections,
         observer,
+        Layer.mock(EventSink.EventSinkV2)({
+          hasRunFinalization: () => Effect.succeed(false),
+        }),
         Layer.mock(CheckpointCapture.CheckpointCaptureServiceV2)({
           execute: () =>
             Effect.gen(function* () {

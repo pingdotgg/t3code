@@ -9,6 +9,7 @@ import { HttpServer } from "effect/http";
 import * as NetAddress from "effect/net/NetAddress";
 
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
+import type { PluginToolGrant } from "../plugins/PluginTools.ts";
 import * as McpInvocationContext from "./McpInvocationContext.ts";
 import * as McpProviderSession from "@t3tools/provider-core/server/mcpSession";
 
@@ -18,6 +19,8 @@ export interface McpCredentialRequest {
   /** False omits the preview capability wherever the token is honored. Defaults to full access. */
   readonly browserToolsAvailable?: boolean;
   readonly capabilities?: ReadonlySet<McpInvocationContext.McpCapability>;
+  /** Tool plugins the session may use; none when omitted. */
+  readonly pluginToolGrants?: ReadonlyArray<PluginToolGrant>;
   readonly subagent?: boolean;
 }
 
@@ -31,6 +34,14 @@ export interface McpSessionRegistryShape {
     rawToken: string,
   ) => Effect.Effect<McpInvocationContext.McpThreadInvocationScope | undefined>;
   readonly touch: (threadId: ThreadId) => Effect.Effect<void>;
+  /**
+   * Replaces the tool plugin grants of a live credential without rotating it,
+   * for a session prepared again on a credential its provider still holds.
+   */
+  readonly setPluginToolGrants: (
+    providerSessionId: string,
+    grants: ReadonlyArray<PluginToolGrant>,
+  ) => Effect.Effect<void>;
   readonly revokeProviderSession: (providerSessionId: string) => Effect.Effect<void>;
   readonly revokeThread: (threadId: ThreadId) => Effect.Effect<void>;
   readonly revokeAll: Effect.Effect<void>;
@@ -116,6 +127,9 @@ const makeWithOptions = Effect.fn("McpSessionRegistry.make")(function* (
           ...(request.capabilities ?? (browserToolsAvailable ? (["preview"] as const) : [])),
         ]),
         issuedAt,
+        ...(request.pluginToolGrants === undefined
+          ? {}
+          : { pluginToolGrants: request.pluginToolGrants }),
       };
       yield* SynchronizedRef.update(state, ({ records }) => {
         const next = new Map(records);
@@ -178,6 +192,22 @@ const makeWithOptions = Effect.fn("McpSessionRegistry.make")(function* (
     issue,
     resolve,
     touch,
+    setPluginToolGrants: Effect.fn("McpSessionRegistry.setPluginToolGrants")(
+      function* (providerSessionId, grants) {
+        yield* SynchronizedRef.update(state, ({ records }) => {
+          const next = new Map(records);
+          for (const [tokenHash, record] of records) {
+            if (record.scope.thread.providerSessionId === providerSessionId) {
+              next.set(tokenHash, {
+                ...record,
+                scope: { ...record.scope, pluginToolGrants: grants },
+              });
+            }
+          }
+          return { records: next };
+        });
+      },
+    ),
     revokeProviderSession: Effect.fn("McpSessionRegistry.revokeProviderSession")(
       function* (providerSessionId) {
         yield* revokeWhere((record) => record.scope.thread.providerSessionId === providerSessionId);
