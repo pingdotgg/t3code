@@ -82,10 +82,16 @@ describe("resolveStartupRecoveryOffer", () => {
   });
 });
 
-it.effect.each([false, true])("offers recovery unless the main window is visible: %s", (visible) =>
+it.effect.each([
+  { visible: false, started: false },
+  { visible: true, started: false },
+  { visible: true, started: true },
+])("keeps recovery available with visible=$visible and started=$started", ({ visible, started }) =>
   Effect.scoped(
     Effect.gen(function* () {
       const checked = yield* Deferred.make<void>();
+      const remembered = yield* Deferred.make<void>();
+      const shouldRecover = !visible || !started;
       const closed = Promise.withResolvers<void>();
       const loaded: string[] = [];
       const main = { isDestroyed: () => false, isVisible: () => visible };
@@ -100,12 +106,13 @@ it.effect.each([false, true])("offers recovery unless the main window is visible
         webContents: { setWindowOpenHandler: () => {}, on: () => {} },
       } as unknown as Electron.BrowserWindow;
       const state = yield* DesktopState.DesktopState;
+      if (started) yield* SubscriptionRef.set(state.primaryBackendStartup, { _tag: "Ready" });
       yield* listen.pipe(
         Effect.provide(
           Layer.mergeAll(
             FileSystem.layerNoop({
               readFileString: () => Effect.succeed("0.1.2"),
-              writeFileString: () => Effect.void,
+              writeFileString: () => Deferred.succeed(remembered, undefined).pipe(Effect.asVoid),
             }),
             Layer.succeed(DesktopEnvironment.DesktopEnvironment, {
               appVersion: "0.1.3",
@@ -137,14 +144,15 @@ it.effect.each([false, true])("offers recovery unless the main window is visible
           ),
         ),
       );
+      if (started) yield* Deferred.await(remembered);
       yield* SubscriptionRef.set(state.primaryBackendStartup, {
         _tag: "Failing",
         reason: "Server failed before readiness",
         output: "Failure details",
       });
       yield* Deferred.await(checked);
-      expect(loaded.length).toBe(visible ? 0 : 1);
-      if (!visible) {
+      expect(loaded.length).toBe(shouldRecover ? 1 : 0);
+      if (shouldRecover) {
         expect(decodeURIComponent(loaded[0]!)).toContain("Failure details");
         yield* SubscriptionRef.set(state.primaryBackendStartup, { _tag: "Ready" });
         yield* Effect.promise(() => closed.promise);

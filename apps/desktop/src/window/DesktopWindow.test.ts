@@ -550,39 +550,33 @@ describe("DesktopWindow", () => {
   );
 
   it.effect.each(["renderer", "backend"] as const)(
-    "loads early and reveals once when %s becomes ready first",
+    "reveals the painted boot shell when %s becomes ready first",
     (first) =>
       Effect.gen(function* () {
         const fake = makeFakeBrowserWindow();
         const createCount = yield* Ref.make(0);
         const mainWindow = yield* Ref.make<Option.Option<Electron.BrowserWindow>>(Option.none());
         const reveal = vi.fn();
+        const painted = Promise.withResolvers<void>();
         yield* Effect.gen(function* () {
           const windows = yield* DesktopWindow.DesktopWindow;
           yield* windows.ensureMain;
           assert.equal(fake.loadURL.mock.calls.length, 1);
-          const requestReveal = Effect.gen(function* () {
-            yield* windows.activate;
-            yield* windows.revealOrCreateMain;
-            yield* windows.dispatchMenuAction("open-settings");
-          });
-          yield* requestReveal;
+          yield* windows.activate;
+          yield* windows.revealOrCreateMain;
+          yield* windows.dispatchMenuAction("open-settings");
           assert.equal(reveal.mock.calls.length, 0);
-          if (first === "renderer") fake.windowListeners.get("ready-to-show")?.();
-          assert.equal(reveal.mock.calls.length, 0);
-          if (first === "renderer") {
-            yield* requestReveal;
-            assert.equal(reveal.mock.calls.length, 0);
-          }
-          yield* windows.handleBackendReady(new URL("http://127.0.0.1:3773"));
           if (first === "backend") {
-            yield* requestReveal;
+            yield* windows.handleBackendReady(new URL("http://127.0.0.1:3773"));
             assert.equal(reveal.mock.calls.length, 0);
-            fake.windowListeners.get("ready-to-show")?.();
           }
+          fake.windowListeners.get("ready-to-show")?.();
+          yield* Effect.promise(() => painted.promise);
+          assert.equal(reveal.mock.calls.length, 1);
           yield* windows.handleBackendReady(new URL("http://127.0.0.1:3773"));
           assert.equal(yield* Ref.get(createCount), 1);
           assert.equal(reveal.mock.calls.length, 1);
+          yield* windows.handleBackendNotReady;
           yield* windows.activate;
           assert.equal(reveal.mock.calls.length, 2);
         }).pipe(
@@ -591,7 +585,10 @@ describe("DesktopWindow", () => {
               window: fake.window,
               createCount,
               mainWindow,
-              onReveal: reveal,
+              onReveal: () => {
+                reveal();
+                painted.resolve();
+              },
             }),
           ),
         );

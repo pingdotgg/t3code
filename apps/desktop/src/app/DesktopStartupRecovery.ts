@@ -167,6 +167,7 @@ export const listen: Effect.Effect<
   const failureRef = yield* Ref.make(Option.none<BackendStartupFailure>());
   const renderedHtmlRef = yield* Ref.make("");
   const checkedRef = yield* Ref.make(false);
+  let backendHasStarted = false;
   const { latest, changes: updateChanges } = yield* updates.subscribe;
   const updateStateRef = yield* Ref.make(latest);
 
@@ -230,9 +231,15 @@ export const listen: Effect.Effect<
   const show = Effect.fn("desktop.startupRecovery.show")(
     function* () {
       if (yield* Ref.get(quitting)) return;
-      // A backend that crashes after the app opened is reported by the app itself.
+      // A visible boot shell still needs recovery if the backend has never started.
       const main = yield* electronWindow.main;
-      if (Option.isSome(main) && !main.value.isDestroyed() && main.value.isVisible()) return;
+      if (
+        backendHasStarted &&
+        Option.isSome(main) &&
+        !main.value.isDestroyed() &&
+        main.value.isVisible()
+      )
+        return;
       const existing = yield* Ref.get(windowRef);
       if (Option.isSome(existing) && !existing.value.isDestroyed()) {
         yield* electronWindow.reveal(existing.value);
@@ -304,6 +311,7 @@ export const listen: Effect.Effect<
     Stream.runForEach(
       Effect.fn("desktop.startupRecovery.onStartupChange")(function* (startup) {
         if (startup._tag === "Ready") {
+          backendHasStarted = true;
           yield* Ref.set(failureRef, Option.none());
           yield* close;
           yield* rememberStartedVersion;

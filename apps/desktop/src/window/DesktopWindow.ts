@@ -312,7 +312,6 @@ export const make = Effect.gen(function* () {
   const runFork = Effect.runForkWith(context);
   const runPromise = Effect.runPromiseWith(context);
   const mainWindowMutex = yield* Semaphore.make(1);
-  let pendingFirstReveal: Effect.Effect<void> = Effect.void;
   const pendingMainReveals = new WeakMap<Electron.BrowserWindow, Effect.Effect<void>>();
   const revealMain = Effect.fn("desktop.window.revealMain")((window: Electron.BrowserWindow) =>
     Effect.suspend(() => pendingMainReveals.get(window) ?? electronWindow.reveal(window)),
@@ -840,7 +839,6 @@ export const make = Effect.gen(function* () {
         (yield* Ref.get(desktopState.quitting))
       )
         return;
-      if (yield* waitingForBackend) return;
       firstRevealComplete = true;
       pendingMainReveals.delete(window);
       window.webContents.setBackgroundThrottling(true);
@@ -848,7 +846,6 @@ export const make = Effect.gen(function* () {
       yield* electronWindow.reveal(window);
       yield* dismissConnectingSplash;
     });
-    pendingFirstReveal = revealWhenReady;
     pendingMainReveals.set(window, revealWhenReady);
     bindFirstRevealTrigger(revealSubscribers, () => {
       rendererReady = true;
@@ -1019,7 +1016,6 @@ export const make = Effect.gen(function* () {
       yield* Ref.set(backendReadyRef, true);
       yield* logWindowInfo("backend ready", { source: "http", url: httpBaseUrl.href });
       yield* createMainIfBackendReady;
-      yield* pendingFirstReveal;
     }),
     handleBackendNotReady: Ref.set(backendReadyRef, false).pipe(
       Effect.withSpan("desktop.window.handleBackendNotReady"),
