@@ -3,6 +3,7 @@ import { DEFAULT_RESOLVED_KEYBINDINGS } from "@t3tools/shared/keybindings";
 import { Cause } from "effect";
 import { AsyncResult } from "effect/reactivity";
 import { describe, expect, it, vi } from "vite-plus/test";
+import { page } from "vite-plus/test/browser";
 
 import { act, fakeTimers, render as renderUi } from "../../../test/render";
 import type { RemoteOpenState } from "../../remoteOpen";
@@ -10,7 +11,6 @@ import type { RemoteOpenState } from "../../remoteOpen";
 const state = vi.hoisted(() => ({
   allowed: new Set<string>(),
   remote: { mode: "local-exec" } as RemoteOpenState,
-  clientEditors: ["vscode"] as readonly EditorId[],
   run: vi.fn(),
   openUrl: vi.fn(),
   setPreferred: vi.fn(),
@@ -47,8 +47,8 @@ vi.mock(import("../../editorPreferences"), async (importOriginal) => {
   const actual = await importOriginal();
   return {
     ...actual,
-    usePreferredEditor: (available: readonly EditorId[]) => {
-      const [preferred, setPreferred] = actual.usePreferredEditor(available);
+    usePreferredEditor: (...args: Parameters<typeof actual.usePreferredEditor>) => {
+      const [preferred, setPreferred] = actual.usePreferredEditor(...args);
       const recordPreferred: typeof setPreferred = (editor) => {
         state.setPreferred(editor);
         setPreferred(editor);
@@ -60,7 +60,6 @@ vi.mock(import("../../editorPreferences"), async (importOriginal) => {
 vi.mock(import("../../remoteOpen"), async (importOriginal) => ({
   ...(await importOriginal()),
   useRemoteOpenState: () => state.remote,
-  useRemoteCapableEditors: () => state.clientEditors,
   useRemoteOpenHint: () => [false, state.markHintSeen] as const,
   openRemoteEditorUrl: state.openUrl,
 }));
@@ -78,7 +77,6 @@ const editors: readonly EditorId[] = ["vscode"];
 async function setup() {
   state.allowed.clear();
   state.remote = { mode: "local-exec" };
-  state.clientEditors = editors;
   state.run.mockReset().mockResolvedValue(AsyncResult.success(undefined));
   state.openUrl.mockReset().mockResolvedValue(true);
   state.setPreferred.mockReset();
@@ -233,4 +231,37 @@ describe("open in editor announcement", () => {
     await pressOpenFavorite();
     expect(await spoken()).toBe("Opened in VS Code");
   });
+});
+
+it("offers remote browser editors without changing the default or forgetting a selection", async () => {
+  await using fixture = await setup();
+  state.remote = { mode: "remote-links", host: { kind: "mdns", host: "test.local" } };
+  await fixture.renderPicker();
+  await fixture.click(fixture.primaryButton());
+  expect(state.openUrl).toHaveBeenLastCalledWith(
+    "vscode://vscode-remote/ssh-remote+test.local/work/project",
+  );
+  await fixture.click(fixture.byLabel("Choose editor"));
+  await expect.element(page.getByRole("menuitem", { name: /^Cursor/ })).toBeVisible();
+  await expect.element(page.getByRole("menuitem", { name: "WebStorm", exact: true })).toBeVisible();
+  await expect
+    .element(page.getByRole("menuitem", { name: "File Manager", exact: true }))
+    .not.toBeInTheDocument();
+  await page.getByRole("menuitem", { name: "Zed", exact: true }).click();
+  await fixture.click(fixture.primaryButton());
+  expect(state.openUrl).toHaveBeenLastCalledWith("zed://ssh/test.local/work/project");
+  await fixture.renderPicker();
+  state.openUrl.mockClear();
+  await fixture.pressOpenFavorite();
+  expect(state.openUrl).toHaveBeenCalledExactlyOnceWith("zed://ssh/test.local/work/project");
+  expect(state.run).not.toHaveBeenCalled();
+});
+
+it("keeps local choices limited to installed host editors", async () => {
+  await using fixture = await setup();
+  state.allowed.add(selected);
+  await fixture.renderPicker();
+  await fixture.click(fixture.byLabel("Choose editor"));
+  await expect.element(page.getByRole("menuitem", { name: /^VS Code/ })).toBeVisible();
+  await expect.element(page.getByRole("menuitem", { name: /^Cursor/ })).not.toBeInTheDocument();
 });
