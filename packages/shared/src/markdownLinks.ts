@@ -195,7 +195,11 @@ export function inlineCodeFilePathCandidate(codeText: string): string | null {
         .split(/[\\/]/)
         .at(-1) ?? "";
     if (VERSION_SUFFIX_PATTERN.test(basename)) return null;
-    if (!hasPosition && !FILE_EXTENSION_PATTERN.test(basename)) return null;
+    if (!FILE_EXTENSION_PATTERN.test(basename)) {
+      if (!hasPosition) return null;
+      // A `:line` suffix alone does not make `I/W217:220` a file reference.
+      if (withoutPosition.includes("/") && !EXTENSIONLESS_FILE_NAMES.has(basename)) return null;
+    }
   }
   return candidate;
 }
