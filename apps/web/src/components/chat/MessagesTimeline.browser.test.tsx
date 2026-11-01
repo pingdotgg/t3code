@@ -382,7 +382,8 @@ describe("MessagesTimeline live follow", () => {
     // with an instant scroll, which cancels the in-flight smooth one. No user input is involved.
     await act(() => {
       const node = base.listRef.current!.getScrollableNode()!;
-      node.scrollTop = node.scrollTop;
+      const currentScrollTop = node.scrollTop;
+      node.scrollTop = currentScrollTop;
     });
     await screen.rerender(ui([...history, answer(false)], false));
 
