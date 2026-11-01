@@ -469,24 +469,13 @@ const GIT_FAILURE_REASON_PATTERNS: ReadonlyArray<readonly [RegExp, GitCommandFai
     /^[ \t]*![ \t]+\[rejected\][^\n]*\((?:non-fast-forward|fetch first)\)[\s\S]*^error: failed to push some refs/im,
     "push_rejected_non_fast_forward",
   ],
+  [/Author identity unknown|^fatal: empty ident name\b/im, "author_identity_unknown"],
+  [/^fatal: Unable to create ['"].+\.lock['"]: File exists/im, "index_locked"],
+  [
+    /(?:^error: gpg failed to sign the data|gpg failed to sign|signing failed|no ssh public key)/im,
+    "commit_signing_failed",
+  ],
 ];
-
-// Reasons the user can act on get a sentence in place of the generic detail.
-const GIT_FAILURE_REASON_DETAILS: Partial<Record<GitCommandFailureReason, string>> = {
-  push_rejected_by_remote:
-    "The remote rejected the push. Push this branch from a terminal to see the server's message.",
-  push_rejected_non_fast_forward:
-    "The remote has commits this branch doesn't have. Pull or rebase, then push again.",
-  config_locked:
-    "Another Git process kept the repository's config locked. Wait for it to finish, then retry.",
-};
-
-function gitFailureDetail(reason: GitCommandFailureReason | null): string {
-  return (
-    (reason === null ? undefined : GIT_FAILURE_REASON_DETAILS[reason]) ??
-    "Git command exited with a non-zero status."
-  );
-}
 
 // Existing non-commit objects share the missing-ref fatal diagnostic; Git
 // distinguishes them with a separate error line.
@@ -498,14 +487,106 @@ const GIT_DIAGNOSTIC_LINE_PATTERN = /^(?:fatal|error):|^!\s|^\s+!\s/;
 // SSH credential refusals are unprefixed; Git's later generic error would otherwise misclassify them as unreachable.
 const SSH_TRANSPORT_REFUSAL_PATTERN =
   /Permission denied \((?:publickey|password|keyboard-interactive)|Permission denied, please try again|Host key verification failed/i;
+const NOTHING_TO_COMMIT_PATTERN =
+  /nothing to commit|nothing added to commit but untracked files present/i;
 
-function classifyGitFailure(stderr: string): GitCommandFailureReason | null {
+// Reasons the user can act on get a sentence in place of the generic detail.
+const GIT_FAILURE_REASON_DETAILS: Partial<Record<GitCommandFailureReason, string>> = {
+  authentication_failed:
+    "Git could not authenticate with the remote. Check your credentials or SSH keys, then try again.",
+  author_identity_unknown:
+    "Git doesn't know your name or email. Set user.name and user.email, then try again.",
+  branch_already_exists: "A branch with that name already exists. Choose a different name.",
+  branch_checked_out_in_worktree:
+    "That branch is already checked out in another worktree. Switch it there, or pick a different branch.",
+  commit_signing_failed:
+    "Git couldn't sign the commit. Check your signing key setup, or disable commit signing, then try again.",
+  config_locked:
+    "Another Git process kept the repository's config locked. Wait for it to finish, then retry.",
+  host_key_unverified:
+    "The remote host's SSH key is not trusted yet. Verify it once in a terminal with ssh, then try again.",
+  index_locked: "Git's index is locked. Wait for other Git operations to finish, then try again.",
+  not_a_repository: "This folder is not a Git repository.",
+  nothing_to_commit:
+    "Nothing to commit. Stage changes first, or make sure the selected files have changes.",
+  path_already_exists: "That path already exists. Choose a different location or name.",
+  push_rejected_by_remote:
+    "The remote rejected the push. Push this branch from a terminal to see the server's message.",
+  push_rejected_non_fast_forward:
+    "The remote has commits this branch doesn't have. Pull or rebase, then push again.",
+  ref_not_found: "Git could not find that branch or commit.",
+  remote_unreachable:
+    "Git could not reach the remote repository. Check the remote URL and your network, then try again.",
+  tag_would_be_clobbered: "Updating would overwrite an existing tag. Delete or move the tag first.",
+};
+
+const GIT_FAILURE_EXCERPT_MAX_CHARS = 400;
+// Userinfo can contain @; remove through the last one before the host boundary.
+const GIT_FAILURE_URL_WITH_USERINFO = /\b([a-z][a-z0-9+.-]*:\/\/)[^\s/?#]+@/gi;
+const GIT_FAILURE_QUOTED_URL_QUERY = /(['"])([a-z][a-z0-9+.-]*:\/\/[^\s?]*)\?.*\1(?=[\s:]|$)/gi;
+const GIT_FAILURE_URL_QUERY = /\b([a-z][a-z0-9+.-]*:\/\/[^\s?]*)\?[^\s]*/gi;
+
+function redactGitFailureText(text: string, args: readonly string[]): string {
+  let redacted = text
+    .replace(GIT_FAILURE_QUOTED_URL_QUERY, "$1$2$1")
+    .replace(GIT_FAILURE_URL_QUERY, "$1")
+    .replace(GIT_FAILURE_URL_WITH_USERINFO, "$1")
+    .replace(/\b(Bearer|Basic)\s+[^\s,;]+/gi, "$1 [redacted]")
+    .replace(/\bsk-[A-Za-z0-9_-]{16,}\b/g, "[redacted]");
+  // Argv can embed tokens that Git echoes back into diagnostics.
+  for (const arg of args) {
+    const value = arg.startsWith("-") ? (arg.split("=", 2)[1] ?? "") : arg;
+    if (value.length < 8 || !redacted.includes(value)) continue;
+    redacted = redacted.split(value).join("[redacted]");
+  }
+  return redacted;
+}
+
+function gitFailureExcerpt(
+  stderr: string,
+  stdout: string,
+  args: readonly string[],
+): string | undefined {
+  const diagnosticLines = stderr
+    .split(/\r?\n/)
+    .map((line) => line.trimEnd())
+    .filter((line) => GIT_DIAGNOSTIC_LINE_PATTERN.test(line));
+  const raw =
+    diagnosticLines.length > 0
+      ? diagnosticLines.join("\n")
+      : stderr.trim().length > 0
+        ? stderr.trim()
+        : stdout.trim();
+  if (raw.length === 0) return undefined;
+  const redacted = redactGitFailureText(raw, args).replace(/\s+\n/g, "\n").trim();
+  if (redacted.length === 0) return undefined;
+  if (redacted.length <= GIT_FAILURE_EXCERPT_MAX_CHARS) return redacted;
+  return `${redacted.slice(0, GIT_FAILURE_EXCERPT_MAX_CHARS - 1)}…`;
+}
+
+function gitFailureDetail(
+  reason: GitCommandFailureReason | null,
+  output: { readonly stderr: string; readonly stdout: string; readonly args: readonly string[] },
+): string {
+  const staticDetail = reason === null ? undefined : GIT_FAILURE_REASON_DETAILS[reason];
+  if (staticDetail !== undefined) return staticDetail;
+  return (
+    gitFailureExcerpt(output.stderr, output.stdout, output.args) ??
+    "Git command exited with a non-zero status."
+  );
+}
+
+function classifyGitFailure(stderr: string, stdout = ""): GitCommandFailureReason | null {
+  if (NOTHING_TO_COMMIT_PATTERN.test(stdout) || NOTHING_TO_COMMIT_PATTERN.test(stderr)) {
+    return "nothing_to_commit";
+  }
   const diagnostics = stderr
     .split(/\r?\n/)
     .filter(
       (line) =>
         GIT_DIAGNOSTIC_LINE_PATTERN.test(line) ||
-        (!/^remote:/.test(line) && SSH_TRANSPORT_REFUSAL_PATTERN.test(line)),
+        (!/^remote:/.test(line) &&
+          (SSH_TRANSPORT_REFUSAL_PATTERN.test(line) || /Author identity unknown/i.test(line))),
     )
     .join("\n");
   if (diagnostics.length === 0) return null;
@@ -1049,11 +1130,15 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         yield* trace2Monitor.flush;
 
         if (!input.allowNonZeroExit && exitCode !== 0) {
-          const reason = classifyGitFailure(stderr.text);
+          const reason = classifyGitFailure(stderr.text, stdout.text);
           return yield* new GitCommandError({
             ...gitCommandContext(commandInput),
             ...(reason === null ? {} : { reason }),
-            detail: gitFailureDetail(reason),
+            detail: gitFailureDetail(reason, {
+              stderr: stderr.text,
+              stdout: stdout.text,
+              args: commandInput.args,
+            }),
             exitCode,
             stdoutLength: stdout.text.length,
             stderrLength: stderr.text.length,
@@ -1159,12 +1244,20 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         if (options.allowNonZeroExit || result.exitCode === 0) {
           return Effect.succeed(result);
         }
-        const reason = classifyGitFailure(result.stderr);
+        const reason = classifyGitFailure(result.stderr, result.stdout);
+        const classifiedDetail = reason === null ? undefined : GIT_FAILURE_REASON_DETAILS[reason];
         return Effect.fail(
           new GitCommandError({
             ...gitCommandContext({ operation, cwd, args }),
             ...(reason === null ? {} : { reason }),
-            detail: options.fallbackErrorDetail ?? gitFailureDetail(reason),
+            detail:
+              classifiedDetail ??
+              options.fallbackErrorDetail ??
+              gitFailureDetail(null, {
+                stderr: result.stderr,
+                stdout: result.stdout,
+                args,
+              }),
             ...(result.exitCode === null ? {} : { exitCode: result.exitCode }),
             stdoutLength: result.stdout.length,
             stderrLength: result.stderr.length,
@@ -2860,11 +2953,17 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       }
     }
     if (result.exitCode !== 0) {
-      const reason = classifyGitFailure(result.stderr);
+      const reason = classifyGitFailure(result.stderr, result.stdout);
       return yield* new GitCommandError({
         ...gitCommandContext({ operation: "GitVcsDriver.pullCurrentBranch.pull", cwd, args }),
         ...(reason === null ? {} : { reason }),
-        detail: fetchFailureDetail(result.stderr) ?? "git pull failed",
+        detail:
+          fetchFailureDetail(result.stderr) ??
+          gitFailureDetail(reason, {
+            stderr: result.stderr,
+            stdout: result.stdout,
+            args,
+          }),
         exitCode: result.exitCode,
         stdoutLength: result.stdout.length,
         stderrLength: result.stderr.length,
