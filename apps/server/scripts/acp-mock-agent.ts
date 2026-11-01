@@ -1104,6 +1104,18 @@ const program = Effect.gen(function* () {
               entries: [{ content: "Ship B", priority: "high", status: "in_progress" }],
             },
           },
+          {
+            sessionUpdate: "plan_update",
+            plan: {
+              type: "items",
+              planId: "plan-c",
+              entries: [
+                { content: "Write the fix", priority: "high", status: "completed" },
+                { content: "Try another approach", priority: "low", status: "cancelled" },
+                { content: "Add a test", priority: "medium", status: "completed" },
+              ],
+            },
+          },
           { sessionUpdate: "plan_removed", planId: "plan-a" },
           {
             sessionUpdate: "terminal_update",
