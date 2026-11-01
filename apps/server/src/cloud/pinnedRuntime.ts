@@ -54,11 +54,13 @@ export function pinnedRuntimeVersionsDir(path: Path.Path, baseDir: string): stri
 }
 
 /**
- * `<T3 home>/runtime/t3`, the link the public `t3` command points at. Upgrades switch only this
- * link, so the public name, where other programs write too, is never replaced.
+ * `<T3 home>/runtime/versions/current/t3`, the link the public `t3` command points at. Upgrades
+ * switch only this link, so the public name, where other programs write too, is never replaced.
+ * It sits in versions so a t3 from before it still updates and uninstalls that command; prune
+ * skips `current`, which is not a version.
  */
 export function pinnedRuntimeCommandLink(path: Path.Path, baseDir: string): string {
-  return path.join(baseDir, PINNED_RUNTIME_DIR, "t3");
+  return path.join(pinnedRuntimeVersionsDir(path, baseDir), "current", "t3");
 }
 
 export function pinnedRuntimePaths(
@@ -401,8 +403,8 @@ export function launcherOwnsVersionsDir(
 /**
  * Where the symlink at `link` points, not following that target any further: the target with its
  * folder resolved on disk, which sees through a symlinked T3 home. A folder that is itself a link
- * (`versions/current`) is not followed. Only when the folder is missing (a pruned version) does
- * the text count, and only without `.` or `..`. Empty for a non-link.
+ * (another `versions/<name>`) is not followed. Only when the folder is missing (a pruned version)
+ * does the text count. Empty for a non-link, or a target t3 never writes.
  */
 export const directLinkTargets = Effect.fn("cloud.pinned_runtime.direct_link_targets")(function* (
   link: string,
@@ -410,24 +412,30 @@ export const directLinkTargets = Effect.fn("cloud.pinned_runtime.direct_link_tar
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const text = yield* fs.readLink(link).pipe(Effect.option);
-  // A target naming a folder (`t3/`, `t3/.`) never runs the file it would resolve to.
-  if (Option.isNone(text) || /(?:^|[\\/])\.{0,2}$/.test(text.value)) return [];
-  const raw = path.isAbsolute(text.value)
-    ? text.value
-    : `${path.dirname(link)}${path.sep}${text.value}`;
-  const folder = path.dirname(raw);
+  if (Option.isNone(text)) return [];
+  // t3 writes plain targets; `.`, `..`, or an empty segment (`t3/`, `a//t3`) is someone else's.
+  const parts = text.value.split(/[\\/]/);
+  if (parts.some((part, index) => part === "." || part === ".." || (part === "" && index > 0))) {
+    return [];
+  }
+  const target = path.resolve(path.dirname(link), text.value);
+  const folder = path.dirname(target);
   if (Option.isSome(yield* fs.readLink(folder).pipe(Effect.option))) return [];
-  // Native and unnormalized, so `..` after a symlinked folder goes where the OS takes it.
   const physical = yield* Effect.tryPromise({
     try: () => NodeFSP.realpath(folder),
     catch: (error) => (error as NodeJS.ErrnoException).code,
   }).pipe(
-    Effect.map((directory) => path.join(directory, path.basename(raw))),
+    Effect.map((directory) => path.join(directory, path.basename(target))),
     Effect.result,
   );
   if (Result.isSuccess(physical)) return [physical.success];
-  const plain = !text.value.split(/[\\/]/).some((part) => part === "." || part === "..");
-  return physical.failure === "ENOENT" && plain ? [path.resolve(raw)] : [];
+  if (physical.failure !== "ENOENT") return [];
+  // The folder's own parent still resolves, which sees through a symlinked T3 home.
+  const parent = yield* Effect.tryPromise(() => NodeFSP.realpath(path.dirname(folder))).pipe(
+    Effect.map((directory) => [path.join(directory, path.basename(folder), path.basename(target))]),
+    Effect.orElseSucceed(() => []),
+  );
+  return [target, ...parent];
 });
 
 /** Whether `candidate` is a version's own executable, `<versionsDir>/<version>/t3[.exe]`. */

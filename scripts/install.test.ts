@@ -165,9 +165,10 @@ describe.skipIf(HostProcess.Platform.defaultValue() !== "linux")("install.sh t3 
         env: { HOME: root, SHELL: "/bin/zsh", PATH: "/usr/bin:/bin" },
       });
       expect(upgrade.code, upgrade.output).toBe(0);
-      expect(await NodeFSP.readlink(link)).toBe(NodePath.join(root, "alias/runtime/t3"));
-      expect(await NodeFSP.readlink(NodePath.join(home, "runtime/t3"))).toBe(
-        NodePath.join(root, "alias/runtime/versions/1.2.3/t3"),
+      // The links name the T3 home by its real path.
+      expect(await NodeFSP.readlink(link)).toBe(NodePath.join(home, "runtime/versions/current/t3"));
+      expect(await NodeFSP.readlink(NodePath.join(home, "runtime/versions/current/t3"))).toBe(
+        NodePath.join(home, "runtime/versions/1.2.3/t3"),
       );
       expect(upgrade.output).toContain(
         `printf '\\n%s\\n' 'export PATH="$PATH:$HOME/bin"' >> ~/.zshrc`,
@@ -186,17 +187,17 @@ describe.skipIf(HostProcess.Platform.defaultValue() !== "linux")("install.sh t3 
       expect(borrowed.code).not.toBe(0);
       expect(await NodeFSP.readlink(link)).toBe(NodePath.join(home, "runtime/versions/0.9.0/t3"));
 
-      // A version folder that is a link (versions/current) is not followed, and a target that
+      // A version folder that is a link (versions/latest) is not followed, and a target that
       // only ends in t3 before a newline is not ours either.
       await NodeFSP.rm(link);
       await NodeFSP.mkdir(NodePath.join(home, "runtime/versions/1.1.0"), { recursive: true });
       await NodeFSP.writeFile(NodePath.join(home, "runtime/versions/1.1.0/t3"), "");
       await NodeFSP.symlink(
         NodePath.join(home, "runtime/versions/1.1.0"),
-        NodePath.join(home, "runtime/versions/current"),
+        NodePath.join(home, "runtime/versions/latest"),
       );
       for (const target of [
-        NodePath.join(home, "runtime/versions/current/t3"),
+        NodePath.join(home, "runtime/versions/latest/t3"),
         `${NodePath.join(home, "runtime/versions/1.0.0/t3")}\n`,
       ]) {
         await NodeFSP.rm(link, { force: true });
@@ -205,12 +206,12 @@ describe.skipIf(HostProcess.Platform.defaultValue() !== "linux")("install.sh t3 
         expect(notOurs.code).not.toBe(0);
         expect(await NodeFSP.readlink(link)).toBe(target);
       }
-      await NodeFSP.rm(NodePath.join(home, "runtime/versions/current"));
+      await NodeFSP.rm(NodePath.join(home, "runtime/versions/latest"));
 
       // Only a link to a file is ever replaced at the command link, even inside the T3 home.
       await NodeFSP.rm(link);
       await NodeFSP.symlink(NodePath.join(home, "runtime/versions/1.0.0/t3"), link);
-      const commandLink = NodePath.join(home, "runtime/t3");
+      const commandLink = NodePath.join(home, "runtime/versions/current/t3");
       await NodeFSP.mkdir(NodePath.join(root, "folder"));
       for (const make of [
         () => NodeFSP.writeFile(commandLink, "mine\n"),
@@ -224,14 +225,14 @@ describe.skipIf(HostProcess.Platform.defaultValue() !== "linux")("install.sh t3 
         expect(await NodeFSP.readdir(NodePath.join(root, "folder"))).toEqual([]);
       }
       await NodeFSP.rm(commandLink);
-      // The command link is replaced in place, so it can never be the public name.
-      const inRuntime = await installOver({
+      // A bin folder that is the command link's own folder only switches that link.
+      const inCurrent = await installOver({
         script: "install.sh",
         home,
-        binDir: NodePath.join(home, "runtime"),
+        binDir: NodePath.join(home, "runtime/versions/current"),
       });
-      expect(inRuntime.code).not.toBe(0);
-      expect(inRuntime.output).toContain("T3CODE_INSTALL_BIN_DIR cannot be");
+      expect(inCurrent.code, inCurrent.output).toBe(0);
+      expect(await NodeFSP.readlink(commandLink)).toBe(NodePath.join(inCurrent.target, "t3"));
 
       // Containers and CI often have no SHELL; `set -u` must not stop the installer there.
       const noShell = await installOver({
@@ -262,7 +263,7 @@ describe.skipIf(HostProcess.Platform.defaultValue() !== "linux")("install.sh t3 
         cwd: root,
       });
       expect(relativeHome.code, relativeHome.output).toBe(0);
-      expect(await NodeFSP.readlink(link)).toBe(NodePath.join(home, "runtime/t3"));
+      expect(await NodeFSP.readlink(link)).toBe(NodePath.join(home, "runtime/versions/current/t3"));
 
       await NodeFSP.rm(link);
       await NodeFSP.symlink(NodePath.join(home, "bin/t3"), link);
@@ -272,7 +273,7 @@ describe.skipIf(HostProcess.Platform.defaultValue() !== "linux")("install.sh t3 
         binDir: `${binDir}/`,
       });
       expect(overDesktop.code, overDesktop.output).toBe(0);
-      expect(await NodeFSP.readlink(link)).toBe(NodePath.join(home, "runtime/t3"));
+      expect(await NodeFSP.readlink(link)).toBe(NodePath.join(home, "runtime/versions/current/t3"));
     } finally {
       await NodeFSP.rm(root, { recursive: true, force: true });
     }
@@ -284,7 +285,7 @@ describe.skipIf(HostProcess.Platform.defaultValue() !== "linux")("install.sh t3 
       const home = NodePath.join(root, "home");
       const binDir = NodePath.join(root, "bin");
       const link = NodePath.join(binDir, "t3");
-      const commandLink = NodePath.join(home, "runtime/t3");
+      const commandLink = NodePath.join(home, "runtime/versions/current/t3");
       const tools = NodePath.join(root, "tools");
       await NodeFSP.mkdir(binDir, { recursive: true });
       await NodeFSP.mkdir(tools);

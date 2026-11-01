@@ -33,8 +33,9 @@ it.layer(NodeServices.layer)("t3 uninstall launcher", (it) => {
 
       assert.equal(yield* findOwnedLauncher({ launchedAs: ours, versionsDir }), ours);
       // Installs link to the command link, which points at the version.
-      const commandLink = path.join(root, "runtime/t3");
+      const commandLink = path.join(versionsDir, "current/t3");
       const viaCommandLink = path.join(root, "bin/t3-command");
+      yield* fs.makeDirectory(path.dirname(commandLink));
       yield* fs.symlink(exe, commandLink);
       yield* fs.symlink(commandLink, viaCommandLink);
       assert.equal(
@@ -64,11 +65,11 @@ it.layer(NodeServices.layer)("t3 uninstall launcher", (it) => {
       const borrowed = path.join(root, "bin/t3-borrowed");
       yield* fs.symlink(path.join(versionsDir, "2.0.0/t3"), borrowed);
       assert.isUndefined(yield* findOwnedLauncher({ launchedAs: borrowed, versionsDir }));
-      // A version folder that is a link to one of ours (versions/current) is not followed.
-      yield* fs.symlink(path.join(versionsDir, "1.0.0"), path.join(versionsDir, "current"));
-      const current = path.join(root, "bin/t3-current");
-      yield* fs.symlink(path.join(versionsDir, "current/t3"), current);
-      assert.isUndefined(yield* findOwnedLauncher({ launchedAs: current, versionsDir }));
+      // A version folder that is a link to one of ours (versions/latest) is not followed.
+      yield* fs.symlink(path.join(versionsDir, "1.0.0"), path.join(versionsDir, "latest"));
+      const latest = path.join(root, "bin/t3-latest");
+      yield* fs.symlink(path.join(versionsDir, "latest/t3"), latest);
+      assert.isUndefined(yield* findOwnedLauncher({ launchedAs: latest, versionsDir }));
       // A version folder link that leads nowhere is not missing; it may be another tool's.
       yield* fs.symlink(path.join(root, "unmounted"), path.join(versionsDir, "2.1.0"));
       const unmounted = path.join(root, "bin/t3-unmounted");
@@ -121,12 +122,10 @@ it.layer(NodeServices.layer)("t3 uninstall launcher", (it) => {
       // The command link leads to a pruned version, so only its name says it is ours.
       const otherRoot = path.join(root, "pruned-home");
       const prunedCommand = path.join(root, "bin/t3-pruned-command");
-      yield* fs.makeDirectory(path.join(otherRoot, "runtime/versions"), { recursive: true });
-      yield* fs.symlink(
-        path.join(otherRoot, "runtime/versions/0.9.0/t3"),
-        path.join(otherRoot, "runtime/t3"),
-      );
-      yield* fs.symlink(path.join(otherRoot, "runtime/t3"), prunedCommand);
+      const prunedCommandLink = path.join(otherRoot, "runtime/versions/current/t3");
+      yield* fs.makeDirectory(path.dirname(prunedCommandLink), { recursive: true });
+      yield* fs.symlink(path.join(otherRoot, "runtime/versions/0.9.0/t3"), prunedCommandLink);
+      yield* fs.symlink(prunedCommandLink, prunedCommand);
       yield* fs.writeFileString(path.join(otherRoot, "runtime/launchers"), `${prunedCommand}\n`);
       assert.deepStrictEqual(
         yield* findRecordedLaunchers(path.join(otherRoot, "runtime/versions")),

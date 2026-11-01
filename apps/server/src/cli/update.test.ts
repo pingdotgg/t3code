@@ -44,7 +44,7 @@ it.layer(NodeServices.layer)("t3 update launcher", (it) => {
       const oldExe = path.join(root, "runtime/versions/1.0.0/t3");
       const newExe = path.join(root, "runtime/versions/2.0.0/t3");
       const newerExe = path.join(root, "runtime/versions/3.0.0/t3");
-      const commandLink = path.join(root, "runtime/t3");
+      const commandLink = path.join(root, "runtime/versions/current/t3");
       const launcher = path.join(root, "bin/t3");
       for (const file of [oldExe, newExe, newerExe]) {
         yield* fs.makeDirectory(path.dirname(file), { recursive: true });

@@ -389,7 +389,11 @@ it.layer(NodeServices.layer)("prunePinnedRuntimes", (it) => {
       yield* fs.symlink(path.join(baseDir, "alias-t3"), path.join(binDir, "t3"));
       yield* fs.symlink(path.join(versionsDir, "1.2.5", "t3"), path.join(customBinDir, "t3"));
       // The command link, which no launcher that can be found leads to.
-      yield* fs.symlink(path.join(versionsDir, "1.1.0", "t3"), path.join(baseDir, "runtime", "t3"));
+      yield* fs.makeDirectory(path.join(versionsDir, "current"));
+      yield* fs.symlink(
+        path.join(versionsDir, "1.1.0", "t3"),
+        path.join(versionsDir, "current", "t3"),
+      );
       yield* fs.writeFileString(
         path.join(baseDir, "runtime", "launchers"),
         `${path.join(customBinDir, "t3")}\n`,
@@ -438,6 +442,7 @@ it.layer(NodeServices.layer)("prunePinnedRuntimes", (it) => {
         "1.4.0",
         "1.5.0",
         "2.0.0",
+        "current",
         "other",
       ]);
     }),

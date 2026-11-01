@@ -66,7 +66,7 @@ export const replaceOwnedLink = Effect.fn("ownedLink.replace")(function* <E, R>(
     // if it cannot, it stays beside `link`.
     yield* fs
       .symlink(input.target, input.link)
-      .pipe(Effect.tapError(() => putBack.pipe(Effect.andThen(discard), Effect.ignore)));
+      .pipe(Effect.tapError(() => putBack.pipe(Effect.andThen(discard.pipe(Effect.ignore)))));
   }
   yield* discard.pipe(Effect.ignore);
   return true;

@@ -62,7 +62,20 @@ const classifyCommandLink = Effect.fn("cli.install.classify_command_link")(funct
     );
   const commandLink = pinnedRuntimeCommandLink(path, baseDir);
   const realCommandLink = yield* real(commandLink);
-  if ((yield* real(link)) === realCommandLink) return "current";
+  // The command link itself, whatever its folder is called (an alias or a bind mount).
+  const folderId = (file: string) =>
+    fs.stat(path.dirname(file)).pipe(
+      Effect.map((info) => Option.map(info.ino, (ino) => `${info.dev}:${ino}`)),
+      Effect.orElseSucceed(() => Option.none<string>()),
+    );
+  const linkFolder = yield* folderId(link);
+  if (
+    path.basename(link) === path.basename(commandLink) &&
+    Option.isSome(linkFolder) &&
+    Option.getOrUndefined(yield* folderId(commandLink)) === linkFolder.value
+  ) {
+    return "current";
+  }
   // Only the direct target: a chain through another tool's link is that tool's.
   const targets = yield* directLinkTargets(link);
   if (targets.length === 0 && Option.isNone(yield* fs.readLink(link).pipe(Effect.option))) {
@@ -101,7 +114,14 @@ export const linkCommand = Effect.fn("cli.install.link_command")(function* (inpu
   if (kind === "foreign") return false;
   const commandLink = pinnedRuntimeCommandLink(path, input.baseDir);
   // Inside the T3 home, so swapping it in place cannot replace another program's file. Still,
-  // only a link is ever replaced there.
+  // only a link in a real folder is ever replaced there.
+  const folder = path.dirname(commandLink);
+  if (Option.isSome(yield* fs.readLink(folder).pipe(Effect.option))) {
+    return yield* new CliInstallError({
+      reason: `${folder} is a link, not a folder. Remove it, then run this again.`,
+    });
+  }
+  yield* fs.makeDirectory(folder, { recursive: true });
   if (
     Option.isNone(yield* fs.readLink(commandLink).pipe(Effect.option)) &&
     (yield* fs.exists(commandLink))
@@ -204,23 +224,6 @@ export const installCli = Effect.fn("cli.install.install")(function* () {
     yield* fs
       .makeDirectory(binDir, { recursive: true })
       .pipe(Effect.mapError(failed(`Could not create ${binDir}.`)));
-    // The command link is replaced in place, which is safe only away from the public name. Same
-    // device and inode, so an alias or a bind mount of the runtime folder counts too.
-    const identity = (directory: string) =>
-      fs.stat(directory).pipe(
-        Effect.map((info) =>
-          Option.match(info.ino, {
-            onSome: (ino) => `${info.dev}:${ino}`,
-            onNone: () => directory,
-          }),
-        ),
-        Effect.orElseSucceed(() => directory),
-      );
-    if ((yield* identity(binDir)) === (yield* identity(runtimeDir))) {
-      return yield* new CliInstallError({
-        reason: `T3CODE_INSTALL_BIN_DIR cannot be ${runtimeDir}. Choose another folder.`,
-      });
-    }
     const linked = yield* linkCommand({ link, baseDir: path.dirname(runtimeDir), executable }).pipe(
       Effect.catchTags({
         PlatformError: (cause) =>

@@ -61,7 +61,7 @@ export const findOwnedLauncher = Effect.fn("cli.uninstall.find_launcher")(functi
   return (yield* ownsLauncher(input.launchedAs, input.versionsDir)) ? input.launchedAs : undefined;
 });
 
-/** Whether `launcher` is a link to this home's command link or a version, or an unedited `t3.cmd`. */
+/** Whether `launcher` links to this home's command link or a version, or is an unedited `t3.cmd`. */
 const ownsLauncher = Effect.fn("cli.uninstall.owns_launcher")(function* (
   launcher: string,
   versionsDir: string,
@@ -82,18 +82,11 @@ const ownsLauncher = Effect.fn("cli.uninstall.owns_launcher")(function* (
           ),
         ]
       : yield* directLinkTargets(launcher);
-  // The command link sits beside versions, in the runtime folder itself; versions may be a link.
-  const runtimeDir = path.dirname(versionsDir);
-  const commandLinks = [
-    runtimeDir,
-    yield* fs.realPath(runtimeDir).pipe(Effect.orElseSucceed(() => runtimeDir)),
-  ].map((dir) => path.join(dir, "t3"));
   return targets.some(
     (target) =>
       target !== undefined &&
       (isVersionExecutable(path, versionsDir, target) ||
-        isVersionExecutable(path, realVersionsDir, target) ||
-        (platform !== "win32" && commandLinks.includes(target))),
+        isVersionExecutable(path, realVersionsDir, target)),
   );
 });
 

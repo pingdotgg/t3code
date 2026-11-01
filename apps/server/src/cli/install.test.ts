@@ -57,7 +57,7 @@ it.layer(NodeServices.layer)("t3 install", (it) => {
       const { root, runtimeDir, executable, link, provide } = yield* setup;
 
       const older = path.join(runtimeDir, "versions/0.0.1/t3");
-      const commandLink = path.join(runtimeDir, "t3");
+      const commandLink = path.join(runtimeDir, "versions/current/t3");
       yield* fs.makeDirectory(path.dirname(link), { recursive: true });
       yield* fs.symlink(older, link);
       const installed = yield* provide(installCli());
@@ -107,11 +107,9 @@ it.layer(NodeServices.layer)("t3 install", (it) => {
       assert.equal(yield* fs.readLink(link), older);
       yield* fs.remove(commandLink);
 
-      // The command link is replaced in place, so it can never be the public name.
-      const inRuntime = yield* provide(installCli(), { T3CODE_INSTALL_BIN_DIR: runtimeDir }).pipe(
-        Effect.flip,
-      );
-      assert.include(inRuntime.message, "T3CODE_INSTALL_BIN_DIR cannot be");
+      // A bin folder that is the command link's own folder only switches that link.
+      yield* provide(installCli(), { T3CODE_INSTALL_BIN_DIR: path.dirname(commandLink) });
+      assert.equal(yield* fs.readLink(commandLink), executable);
 
       // When the new link cannot be made, the old command keeps working.
       const failing = installCli().pipe(
@@ -159,11 +157,16 @@ it.layer(NodeServices.layer)("t3 install", (it) => {
       yield* provide(installCli(), { T3CODE_INSTALL_BIN_DIR: root });
       assert.equal(yield* fs.readLink(rootLink), commandLink);
       yield* fs.remove(rootLink);
-      // install.sh keeps a T3 home spelled with `.` as given.
-      yield* fs.remove(link);
-      yield* fs.symlink(`${root}/./.t3/runtime/versions/${VERSION}/t3`, link);
-      yield* provide(installCli());
-      assert.equal(yield* fs.readLink(link), commandLink);
+      // t3 writes plain targets, so one with `.` or `//` is left as it is.
+      for (const spelled of [
+        `${root}/./.t3/runtime/versions/${VERSION}/t3`,
+        `${root}//.t3/runtime/versions/${VERSION}/t3`,
+      ]) {
+        yield* fs.remove(link);
+        yield* fs.symlink(spelled, link);
+        assert.include((yield* provide(installCli()).pipe(Effect.flip)).message, "Another t3");
+        assert.equal(yield* fs.readLink(link), spelled);
+      }
 
       // This home's desktop launcher is replaced, as install.sh does.
       yield* fs.remove(link);
