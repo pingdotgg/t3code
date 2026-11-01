@@ -33,6 +33,7 @@ import {
   type ThreadStructure,
   type ThreadStructureRuntime,
 } from "./models.ts";
+import { commandDisplayText } from "../work-log/commandLabel.ts";
 import { formatSubagentDisplayTitle } from "./subagentDisplay.ts";
 
 const ACTIVITY_RUN_STATUSES = new Set(["preparing", "starting", "running", "waiting"]);
@@ -370,9 +371,13 @@ export function presentPendingBackgroundWork(
     .map((task): PendingBackgroundWorkItem => {
       const description = task.description?.trim();
       const label =
-        task.kind === "subagent" && description !== undefined
-          ? formatSubagentDisplayTitle(description).trim()
-          : description;
+        description === undefined
+          ? undefined
+          : task.kind === "subagent"
+            ? formatSubagentDisplayTitle(description).trim()
+            : task.kind === "command" || task.kind === "monitor"
+              ? commandDisplayText(description)
+              : description;
       return {
         taskId: task.taskId,
         kind: task.kind,
