@@ -81,18 +81,23 @@ const badRequest = HttpServerResponse.json(
 const sessionFor = (request: HttpServerRequest.HttpServerRequest, shareId: string | null) =>
   shareId === null ? "" : (request.cookies[guestSessionCookieName(shareId)] ?? "");
 
+const searchParams = (request: HttpServerRequest.HttpServerRequest) =>
+  new URLSearchParams(request.url.split("?", 2)[1] ?? "");
+
 const requestedShareId = (request: HttpServerRequest.HttpServerRequest) =>
-  new URLSearchParams(request.url.split("?", 2)[1] ?? "").get(GUEST_SHARE_PARAM);
+  searchParams(request).get(GUEST_SHARE_PARAM);
 
 /** The session for the share the request names in `?share=`. */
 const sessionToken = Effect.map(HttpServerRequest.HttpServerRequest, (request) =>
   sessionFor(request, requestedShareId(request)),
 );
 
-/** The `?item=` a per-item route names. */
-const itemParam = Effect.map(HttpServerRequest.HttpServerRequest, (request) =>
-  new URLSearchParams(request.url.split("?", 2)[1] ?? "").get("item"),
-);
+/** The `?share=` session and the `?<name>=` value a per-resource route names. */
+const sessionAndParam = (name: string) =>
+  Effect.map(HttpServerRequest.HttpServerRequest, (request) => {
+    const params = searchParams(request);
+    return { session: sessionFor(request, params.get(GUEST_SHARE_PARAM)), value: params.get(name) };
+  });
 
 /** Server-sent events with a heartbeat, never cached or buffered on the way. */
 const eventStreamResponse = <A>(
@@ -262,10 +267,10 @@ const renderRoute = HttpRouter.add(
   "GET",
   GUEST_RENDER_ROUTE,
   Effect.gen(function* () {
-    const itemId = yield* itemParam;
+    const { session, value: itemId } = yield* sessionAndParam("item");
     if (!itemId) return yield* badRequest;
     const guestShares = yield* GuestShareService;
-    return yield* guestShares.render(yield* sessionToken, itemId).pipe(
+    return yield* guestShares.render(session, itemId).pipe(
       Effect.flatMap(({ path, title }) =>
         assetFileResponse({ path, mimeType: "text/html", fileName: htmlRenderFileName(title) }),
       ),
@@ -280,10 +285,10 @@ const itemRoute = HttpRouter.add(
   "GET",
   GUEST_ITEM_ROUTE,
   Effect.gen(function* () {
-    const itemId = yield* itemParam;
+    const { session, value: itemId } = yield* sessionAndParam("item");
     if (!itemId) return yield* badRequest;
     const guestShares = yield* GuestShareService;
-    return yield* guestShares.item(yield* sessionToken, itemId).pipe(
+    return yield* guestShares.item(session, itemId).pipe(
       Effect.flatMap((result) =>
         encodeItem(result).pipe(
           Effect.mapError(() => new GuestShareAccessError({ reason: "unavailable" })),
@@ -299,11 +304,10 @@ const historyRoute = HttpRouter.add(
   "GET",
   GUEST_HISTORY_ROUTE,
   Effect.gen(function* () {
-    const request = yield* HttpServerRequest.HttpServerRequest;
-    const cursor = new URLSearchParams(request.url.split("?", 2)[1] ?? "").get("cursor");
+    const { session, value: cursor } = yield* sessionAndParam("cursor");
     if (!cursor) return yield* badRequest;
     const guestShares = yield* GuestShareService;
-    return yield* guestShares.history(yield* sessionToken, cursor).pipe(
+    return yield* guestShares.history(session, cursor).pipe(
       Effect.flatMap((page) =>
         encodeHistoryPage(page).pipe(
           Effect.mapError(() => new GuestShareAccessError({ reason: "unavailable" })),
@@ -321,10 +325,10 @@ const commandOutputRoute = HttpRouter.add(
   "GET",
   GUEST_COMMAND_OUTPUT_ROUTE,
   Effect.gen(function* () {
-    const itemId = yield* itemParam;
+    const { session, value: itemId } = yield* sessionAndParam("item");
     if (!itemId) return yield* badRequest;
     const guestShares = yield* GuestShareService;
-    return yield* guestShares.commandOutput(yield* sessionToken, itemId).pipe(
+    return yield* guestShares.commandOutput(session, itemId).pipe(
       Effect.map((frames) => eventStreamResponse(frames, encodeOutputFrame)),
       Effect.catchTags({ GuestShareAccessError: errorResponse }),
     );
@@ -337,11 +341,10 @@ const attachmentRoute = HttpRouter.add(
   "GET",
   GUEST_ATTACHMENT_ROUTE,
   Effect.gen(function* () {
-    const request = yield* HttpServerRequest.HttpServerRequest;
-    const attachmentId = new URLSearchParams(request.url.split("?", 2)[1] ?? "").get("id");
+    const { session, value: attachmentId } = yield* sessionAndParam("id");
     if (!attachmentId) return yield* badRequest;
     const guestShares = yield* GuestShareService;
-    return yield* guestShares.attachment(yield* sessionToken, attachmentId).pipe(
+    return yield* guestShares.attachment(session, attachmentId).pipe(
       Effect.flatMap(({ path, attachment }) =>
         HttpServerResponse.file(path, {
           headers: {
@@ -367,11 +370,10 @@ const mediaRoute = HttpRouter.add(
   "GET",
   GUEST_MEDIA_ROUTE,
   Effect.gen(function* () {
-    const request = yield* HttpServerRequest.HttpServerRequest;
-    const path = new URLSearchParams(request.url.split("?", 2)[1] ?? "").get("path");
+    const { session, value: path } = yield* sessionAndParam("path");
     if (!path) return yield* badRequest;
     const guestShares = yield* GuestShareService;
-    return yield* guestShares.media(yield* sessionToken, path).pipe(
+    return yield* guestShares.media(session, path).pipe(
       Effect.flatMap(({ path, mimeType }) =>
         HttpServerResponse.file(path, { headers: { ...FILE_HEADERS, "content-type": mimeType } }),
       ),
