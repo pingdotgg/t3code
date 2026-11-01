@@ -2,6 +2,8 @@ import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import { afterEach, beforeEach, describe, expect, it, vi } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Logger from "effect/Logger";
+import * as Option from "effect/Option";
 import * as Redacted from "effect/Redacted";
 import { HttpClient } from "effect/http";
 import { ChildProcessSpawner } from "effect/process";
@@ -9,6 +11,7 @@ import { ChildProcessSpawner } from "effect/process";
 import { DEFAULT_SERVER_SETTINGS } from "@t3tools/contracts";
 import type * as SourceControlHost from "@t3tools/source-control-core/server/SourceControlHost";
 import { applyServerSettingsPatch } from "@t3tools/shared/serverSettings";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as TestSourceControlHost from "@t3tools/source-control-testing/TestSourceControlHost";
 import * as GitHubCredentials from "./GitHubCredentials.ts";
 
@@ -30,11 +33,22 @@ function harness(
   hosts: Record<string, { readonly account?: string; readonly enabled?: boolean }> = {},
   signedOut: ReadonlyArray<string> = [],
   tokens: Record<string, string> = {},
+  unixSockets: Record<string, string> = {},
 ) {
   const calls: Array<ReadonlyArray<string>> = [];
   const run: SourceControlHost.SourceControlHost["Service"]["process"]["run"] = (input) =>
     Effect.sync(() => {
       calls.push(input.args);
+      if (input.args[0] === "config") {
+        const host = input.args[input.args.indexOf("--host") + 1] ?? "";
+        return {
+          exitCode: ChildProcessSpawner.ExitCode(0),
+          stdout: `${unixSockets[host] ?? ""}\n`,
+          stderr: "",
+          stdoutTruncated: false,
+          stderrTruncated: false,
+        };
+      }
       const user = input.args[input.args.indexOf("--user") + 1];
       if (input.args.includes("--user") && user !== undefined && signedOut.includes(user)) {
         return {
@@ -167,5 +181,41 @@ describe("GitHubCredentials", () => {
       }
       expect(calls).toEqual([]);
     }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("reads gh's http_unix_socket once per host, and none when it is unset", () => {
+    const { layer, calls } = harness({}, [], {}, { "github.com": "/run/gh.sock" });
+    return Effect.gen(function* () {
+      const credentials = yield* GitHubCredentials.GitHubCredentials;
+      expect(yield* credentials.unixSocket(" GitHub.com ")).toEqual(Option.some("/run/gh.sock"));
+      expect(yield* credentials.unixSocket("github.com")).toEqual(Option.some("/run/gh.sock"));
+      expect(yield* credentials.unixSocket("ghe.example.com")).toEqual(Option.none());
+      expect(calls).toEqual([
+        ["config", "get", "http_unix_socket", "--host", "github.com"],
+        ["config", "get", "http_unix_socket", "--host", "ghe.example.com"],
+      ]);
+    }).pipe(Effect.provide(layer), Effect.provideService(HostProcess.Platform, "linux"));
+  });
+
+  it.effect("sends straight to the host on Windows, and says it skipped gh's socket", () => {
+    const { layer, calls } = harness({}, [], {}, { "github.com": "C:\\gh\\gh.sock" });
+    const logs: Array<unknown> = [];
+    const logger = Logger.make(({ message }) => logs.push(message));
+    return Effect.gen(function* () {
+      const credentials = yield* GitHubCredentials.GitHubCredentials;
+      expect(yield* credentials.unixSocket("github.com")).toEqual(Option.none());
+      expect(yield* credentials.unixSocket("github.com")).toEqual(Option.none());
+      expect(calls).toEqual([["config", "get", "http_unix_socket", "--host", "github.com"]]);
+      expect(logs).toEqual([
+        [
+          "Sending GitHub requests straight to the host: Windows cannot use gh's http_unix_socket.",
+          { host: "github.com", socket: "C:\\gh\\gh.sock" },
+        ],
+      ]);
+    }).pipe(
+      Effect.provide(layer),
+      Effect.provideService(HostProcess.Platform, "win32"),
+      Effect.provide(Logger.layer([logger], { mergeWithExisting: false })),
+    );
   });
 });

@@ -37,6 +37,7 @@ it.effect("keeps branch deletion on the credential that passed source repository
           })),
         saved: () => Effect.succeedNone,
         fingerprint: (host, token) => Effect.succeed(`${host}:${token}`),
+        unixSocket: () => Effect.succeedNone,
         invalidate: () => Effect.void,
       }),
     );
