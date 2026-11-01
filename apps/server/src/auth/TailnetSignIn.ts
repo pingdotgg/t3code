@@ -542,7 +542,7 @@ export const make = Effect.gen(function* () {
   const recheckDevice = Effect.fn("TailnetSignIn.recheckDevice")(function* (
     stableNodeId: string,
     status: TailscaleStatus,
-    /** Whether the host is still on `status`'s account; read once per recheck. */
+    /** Whether a status read shows the host still on `status`'s account; once per recheck. */
     stillOnAccount: Effect.Effect<boolean>,
   ) {
     // Gone from the peer list means removed from the tailnet, or cut off by the policy.
@@ -564,7 +564,7 @@ export const make = Effect.gen(function* () {
     const decision = yield* decide(node, status);
     // A grant, usable or not, may be this account's, so no "no grants" stands from here, kept
     // or from a scan running meanwhile. Once the host is shown still on this account, it
-    // counts as a grant sign-in does; after a switch it may be either account's.
+    // counts as a grant sign-in does; unconfirmed, it may be another account's.
     if (tailnetGrantScopes(node.capabilities) !== null) {
       yield* Ref.update(grantsInDoubt, (count) => count + 1);
       yield* Ref.update(lastCleanScan, (last) => (last?.granted === false ? null : last));
