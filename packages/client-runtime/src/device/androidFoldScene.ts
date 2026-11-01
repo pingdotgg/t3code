@@ -77,8 +77,11 @@ function roundedRectPath(width: number, height: number, radius: number) {
   return path;
 }
 
-function coverPath(halfWidth: number) {
-  return roundedRectPath(halfWidth - INSET * 2 - 0.02, HEIGHT - INSET * 2 - 0.04, 0.07);
+function fitFrame(layout: PhoneDisplayLayout, width: number, height: number) {
+  const aspect = layout.rawLandscape ? 1 / layout.aspect : layout.aspect;
+  return aspect > width / height
+    ? { width, height: width / aspect }
+    : { width: height * aspect, height };
 }
 
 export function createAndroidFoldScene(
@@ -198,19 +201,32 @@ export function createAndroidFoldScene(
   const screenGeometry = new PlaneGeometry(screenWidth, screenHeight, 40, 48);
   const screenPositions = screenGeometry.getAttribute("position");
   const screenUvs = screenGeometry.getAttribute("uv");
+  const gridX = Float32Array.from({ length: screenPositions.count }, (_, i) =>
+    screenPositions.getX(i),
+  );
+  const gridY = Float32Array.from({ length: screenPositions.count }, (_, i) =>
+    screenPositions.getY(i),
+  );
   const baseX = new Float32Array(screenPositions.count);
-  for (let i = 0; i < screenPositions.count; i++) {
-    const y = screenPositions.getY(i);
-    const outerX = screenWidth / 2;
-    const outerY = screenHeight / 2;
+  const baseY = new Float32Array(screenPositions.count);
+  let innerContent = { width: screenWidth, height: screenHeight };
+  const fitInnerScreen = (displayLayout: PhoneDisplayLayout) => {
+    innerContent = fitFrame(displayLayout, screenWidth, screenHeight);
     const radius = 0.076;
-    const cornerY = Math.max(0, Math.abs(y) - (outerY - radius));
-    const limit = outerX - radius + Math.sqrt(Math.max(0, radius * radius - cornerY * cornerY));
-    const x = Math.max(-limit, Math.min(limit, screenPositions.getX(i)));
-    baseX[i] = x;
-    screenUvs.setXY(i, x / screenWidth + 0.5, y / screenHeight + 0.5);
-  }
-  screenUvs.needsUpdate = true;
+    for (let i = 0; i < screenPositions.count; i++) {
+      const y = Math.max(-innerContent.height / 2, Math.min(innerContent.height / 2, gridY[i]!));
+      const cornerY = Math.max(0, Math.abs(y) - (screenHeight / 2 - radius));
+      const limit = Math.min(
+        innerContent.width / 2,
+        screenWidth / 2 - radius + Math.sqrt(Math.max(0, radius * radius - cornerY * cornerY)),
+      );
+      const x = Math.max(-limit, Math.min(limit, gridX[i]!));
+      baseX[i] = x;
+      baseY[i] = y;
+      screenUvs.setXY(i, x / innerContent.width + 0.5, y / innerContent.height + 0.5);
+    }
+    screenUvs.needsUpdate = true;
+  };
   const innerSurface = new Mesh(screenGeometry, displayMaterial);
   innerSurface.name = "continuous-inner-screen";
   orientation.add(innerSurface);
@@ -232,7 +248,9 @@ export function createAndroidFoldScene(
   spine.position.z = PIVOT_Z;
   orientation.add(spine);
 
-  const cover = new Mesh(new ShapeGeometry(coverPath(halfWidth)), coverMaterial);
+  const coverWidth = halfWidth - INSET * 2 - 0.02;
+  const coverHeight = HEIGHT - INSET * 2 - 0.04;
+  const cover = new Mesh(undefined, coverMaterial);
   cover.name = "cover-screen";
   cover.position.set(-halfWidth / 2, 0, -DEPTH / 2 - 0.003);
   cover.rotation.y = Math.PI;
@@ -321,11 +339,11 @@ export function createAndroidFoldScene(
         screenPositions.setXYZ(
           i,
           x * cosine + frontZ * sine,
-          screenPositions.getY(i),
+          baseY[i]!,
           -x * sine + frontZ * cosine + PIVOT_Z,
         );
       } else {
-        screenPositions.setXYZ(i, x, screenPositions.getY(i), frontZ + PIVOT_Z);
+        screenPositions.setXYZ(i, x, baseY[i]!, frontZ + PIVOT_Z);
       }
     }
     screenPositions.needsUpdate = true;
@@ -337,6 +355,15 @@ export function createAndroidFoldScene(
     activeLayout = nextLayout;
     displayMaterial.map = nextTexture;
     coverMaterial.map = nextTexture;
+    const coverContent = fitFrame(nextLayout, coverWidth, coverHeight);
+    cover.geometry.dispose();
+    cover.geometry = new ShapeGeometry(
+      roundedRectPath(
+        coverContent.width,
+        coverContent.height,
+        Math.min(0.07, coverContent.width / 2, coverContent.height / 2),
+      ),
+    );
     cover.geometry.computeBoundingBox();
     const bounds = cover.geometry.boundingBox!;
     const uv = cover.geometry.getAttribute("uv");
@@ -347,9 +374,9 @@ export function createAndroidFoldScene(
       uv.setXY(i, u, v);
     }
     uv.needsUpdate = true;
-    updateVisibleScreen();
+    fitInnerScreen(nextLayout);
+    setAngle(angle);
   };
-  setAngle(initialAngle);
   setDisplay(texture, layout);
 
   return {
@@ -390,7 +417,21 @@ export function createAndroidFoldScene(
       const u = Math.max(0, Math.min(1, (local.x - bounds.min.x) / (bounds.max.x - bounds.min.x)));
       const v = Math.max(0, Math.min(1, (bounds.max.y - local.y) / (bounds.max.y - bounds.min.y)));
       const across = display === cover ? u : (display === innerLeft ? u : 1 + u) / 2;
-      return activeLayout.rotation === Math.PI ? { x: 1 - across, y: 1 - v } : { x: across, y: v };
+      const zoom =
+        display === cover
+          ? { x: 1, y: 1 }
+          : { x: screenWidth / innerContent.width, y: screenHeight / innerContent.height };
+      const frameU = 0.5 + (across - 0.5) * zoom.x;
+      const frameV = 0.5 + (v - 0.5) * zoom.y;
+      if (!captured && (frameU < 0 || frameU > 1 || frameV < 0 || frameV > 1)) {
+        capturedDisplay = null;
+        return null;
+      }
+      const frameX = Math.max(0, Math.min(1, frameU));
+      const frameY = Math.max(0, Math.min(1, frameV));
+      return activeLayout.rotation === Math.PI
+        ? { x: 1 - frameX, y: 1 - frameY }
+        : { x: frameX, y: frameY };
     },
     dispose() {
       root.traverse((object) => {
