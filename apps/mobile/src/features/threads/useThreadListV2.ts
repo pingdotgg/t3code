@@ -1,29 +1,34 @@
+import { useAtomValue } from "@effect/atom-react";
 import type { OlderSettledScope } from "@t3tools/client-runtime/state/threads";
 import type { EnvironmentId } from "@t3tools/contracts";
+import { Atom } from "effect/reactivity";
 import { useMemo, useSyncExternalStore } from "react";
 
 import { scopedProjectKey } from "../../lib/scopedEntities";
 import { useOlderSettledShelf, useOlderSettledShelfGrowth } from "../../state/olderSettledShelf";
 import type { PendingNewTask } from "../../state/use-pending-new-tasks";
+import { environmentShell } from "../../state/shell";
+import { workspaceConnections } from "../../state/workspace";
 import {
   buildThreadListV2Items,
   buildThreadListV2ListItems,
   getThreadListV2OrderedSection,
+  isThreadListV2EnvironmentDisconnected,
   threadListInboxReturns,
 } from "./threadListV2";
 import { computeThreadMoveAvailability } from "./threadOrder";
+import { useKeySet } from "./useKeySet";
 
-/**
- * Screens' select handlers read the content-only key set; a fresh one per list rebuild gave
- * every row a new handler whenever any thread shell changed. Keyed by a string, the set keeps
- * its identity until its keys change.
- */
-function useKeySet(newlineSeparatedKeys: string): ReadonlySet<string> {
-  return useMemo(
-    () => new Set(newlineSeparatedKeys.length === 0 ? [] : newlineSeparatedKeys.split("\n")),
-    [newlineSeparatedKeys],
-  );
-}
+const disconnectedEnvironmentIdsAtom = Atom.make((get) =>
+  get(workspaceConnections.environmentsAtom)
+    .filter((environment) =>
+      isThreadListV2EnvironmentDisconnected(
+        environment.connectionState,
+        get(environmentShell.statusAtom(environment.environmentId)),
+      ),
+    )
+    .map((environment) => environment.environmentId),
+);
 
 type LayoutInput = Parameters<typeof buildThreadListV2Items>[0];
 
@@ -76,6 +81,7 @@ export function useThreadListV2(input: {
     () => observeInbox(workingShelfEnabled ? threads : null, inboxVersion),
     [threads, workingShelfEnabled, inboxVersion],
   );
+  const disconnectedEnvironmentIds = useKeySet(useAtomValue(disconnectedEnvironmentIdsAtom));
   // Up/down menu availability for every card, computed once per section per
   // rebuild (see computeThreadMoveAvailability): per-thread planner calls made
   // list construction quadratic, and this list rebuilds on every minute tick.
@@ -117,6 +123,7 @@ export function useThreadListV2(input: {
     matchedThreadKeys: new Set(input.searchMatches.keys()),
     settlementEnvironmentIds: input.settlementEnvironmentIds,
     snoozeEnvironmentIds: input.snoozeEnvironmentIds,
+    disconnectedEnvironmentIds,
     queuedThreadKeys: input.queuedThreadKeys,
     settledLimit: input.settledLimit,
     now: input.now,
@@ -141,7 +148,7 @@ export function useThreadListV2(input: {
     ),
   });
   useOlderSettledShelfGrowth(olderSettledShelf, layout.listedSettledThreads);
-  const contentOnlyThreadKeys = useKeySet([...layout.contentOnlyThreadKeys].sort().join("\n"));
+  const contentOnlyThreadKeys = useKeySet([...layout.contentOnlyThreadKeys]);
   const scopedProjectKeys =
     input.projectRefs == null
       ? null
