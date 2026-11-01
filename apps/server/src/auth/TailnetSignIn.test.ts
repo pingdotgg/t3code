@@ -1238,6 +1238,65 @@ it.layer(NodeServices.layer)("TailnetSignIn", (it) => {
       },
     );
 
+    it.effect(
+      "a grant the recheck cannot tie to an account keeps a running scan from deciding",
+      () => {
+        const DESK_ADDRESS = "100.88.1.40";
+        const TABLET_ADDRESS = "100.88.1.9";
+        const ownDevice = (id: string, address: string) =>
+          phoneNode({ StableID: id, Addresses: [`${address}/32`], AllowedIPs: [`${address}/32`] });
+        const ownPeer = (id: string, address: string) => ({
+          ID: id,
+          TailscaleIPs: [address],
+          UserID: `int64:${OWNER_ID}`,
+        });
+        const tailnet = withLaptop();
+        tailnet.status = hostStatus({
+          Peer: {
+            ...peers,
+            desk: ownPeer("nDesk", DESK_ADDRESS),
+            tablet: ownPeer("nTablet", TABLET_ADDRESS),
+          },
+        });
+        // An admin grant holds the owner rule's scopes, so the desk's sign-in code outlives it.
+        const deskGranted = (on: boolean) => {
+          tailnet.devices = {
+            [LAPTOP_ADDRESS]: { node: laptop },
+            [DESK_ADDRESS]: {
+              node: ownDevice("nDesk", DESK_ADDRESS),
+              ...(on ? { capMap: granted({ scopes: ["admin"] }) } : {}),
+            },
+            [TABLET_ADDRESS]: { node: ownDevice("nTablet", TABLET_ADDRESS) },
+          };
+        };
+        // A recheck whose account check after the desk's grant cannot read Tailscale.
+        const recheckInDoubt = Effect.gen(function* () {
+          const service = yield* TailnetSignIn.TailnetSignIn;
+          tailnet.failFreshReadAt = (tailnet.freshReads ?? 0) + 2;
+          yield* service.recheckSessions;
+        });
+        return Effect.gen(function* () {
+          deskGranted(false);
+          yield* signIn(makeDpopKey(), { remoteAddress: DESK_ADDRESS });
+          // A grant in doubt throws away the cached scan, so the phone scans afresh.
+          deskGranted(true);
+          yield* recheckInDoubt;
+          deskGranted(false);
+          const started = yield* Deferred.make<void>();
+          const release = yield* Deferred.make<void>();
+          tailnet.hold = { address: TABLET_ADDRESS, started, release };
+          const phone = yield* refusalOf(signIn(makeDpopKey())).pipe(Effect.forkChild);
+          yield* Deferred.await(started);
+          // The scan has read the desk with no grant; the grant comes back, and a recheck sees
+          // it but cannot tie it to this account. The scan then ends on "no grants".
+          deskGranted(true);
+          yield* recheckInDoubt;
+          yield* Deferred.succeed(release, undefined);
+          expect(yield* Fiber.join(phone)).toBe("policy_unknown");
+        }).pipe(Effect.provide(layerTest(tailnet)));
+      },
+    );
+
     it.effect("a grant sign-in on another account does not lock the owner out here", () => {
       const tailnet = withLaptop();
       const home = tailnet.status;

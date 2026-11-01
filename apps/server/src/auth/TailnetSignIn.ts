@@ -224,6 +224,9 @@ export const make = Effect.gen(function* () {
   const grantsSeen = yield* Ref.make<ReadonlyMap<string | null, number>>(new Map());
   const grantsSeenOn = (account: string | null) =>
     Ref.get(grantsSeen).pipe(Effect.map((counts) => counts.get(account) ?? 0));
+  // Bumped when a grant is seen but its account cannot be confirmed: a scan already running
+  // then may not end on "no grants", as that grant may be this account's.
+  const grantsInDoubt = yield* Ref.make(0);
   /** Counts a grant seen on `account`; true when it is the first there. */
   const countGrant = (account: string | null) =>
     Ref.modify(grantsSeen, (counts) => {
@@ -247,6 +250,7 @@ export const make = Effect.gen(function* () {
       const status = (yield* Ref.get(scanFrom)) ?? (yield* host.status);
       const account = status.selfNodeId;
       const seenBefore = yield* grantsSeenOn(account);
+      const doubtBefore = yield* Ref.get(grantsInDoubt);
       // Kept once confirmed, so a scan cut short still leaves it for a later scan to fall back
       // on, never an older "no grants". The account is checked first, as another profile on
       // the same tailnet sees the same peers with other grants; one grant reads it at a time.
@@ -282,8 +286,11 @@ export const make = Effect.gen(function* () {
       if (after.selfNodeId !== account || (yield* Ref.get(switchSeen))) {
         return yield* Effect.fail(["this host"]);
       }
-      if (granted.length === 0 && peersJoined(status, after)) {
-        return yield* Effect.fail(["a device that joined during the check"]);
+      if (
+        granted.length === 0 &&
+        (peersJoined(status, after) || (yield* Ref.get(grantsInDoubt)) !== doubtBefore)
+      ) {
+        return yield* Effect.fail(["devices or grants that changed during the check"]);
       }
       const now = yield* Clock.currentTimeMillis;
       // "No grants" is rechecked sooner, so a new grant is noticed within a minute.
@@ -562,6 +569,7 @@ export const make = Effect.gen(function* () {
       if (yield* stillOnAccount) {
         yield* countGrant(status.selfNodeId);
       } else {
+        yield* Ref.update(grantsInDoubt, (count) => count + 1);
         yield* Ref.update(lastCleanScan, (last) => (last?.granted === false ? null : last));
         yield* rescanPolicy;
       }
