@@ -125,3 +125,24 @@ it("re-enables Save when a When editor closes on an expression it could not pars
   await expect.element(expression).toHaveValue("terminalFocus");
   await expect.element(screen.getByRole("button", { name: "Save" })).toBeEnabled();
 });
+
+it("filters actions and keeps assigned commands disabled with their shortcuts", async () => {
+  await using screen = await render(<KeybindingsSettingsPanel />);
+  await screen.getByRole("button", { name: "Add keybinding" }).click();
+  await screen.getByRole("combobox", { name: "Command", exact: true }).click();
+  const search = screen.getByRole("combobox", { name: "Search actions" });
+  await userEvent.type(search, "sidebar.toggle");
+  const assigned = screen.getByRole("option", { name: /Sidebar: Toggle/ });
+  await expect.element(assigned).toHaveAttribute("aria-disabled", "true");
+  await expect.element(assigned.element().querySelector("kbd")!).toBeVisible();
+  expect(screen.getByRole("option").elements()).toHaveLength(1);
+  await search.fill("no-such-action");
+  await expect.element(screen.getByText("No actions found.")).toBeVisible();
+  await search.fill("composer.cycleHost");
+  const available = screen.getByRole("option", { name: "Composer: Cycle Host" });
+  await expect.element(available).not.toHaveAttribute("aria-disabled", "true");
+  await available.click();
+  await expect
+    .element(screen.getByRole("combobox", { name: "Command", exact: true }))
+    .toHaveTextContent("Composer: Cycle Host");
+});
