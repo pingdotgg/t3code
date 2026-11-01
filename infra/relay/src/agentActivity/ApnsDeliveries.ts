@@ -20,6 +20,7 @@ import * as Schema from "effect/Schema";
 import {
   notificationForActivity,
   sanitizeAgentActivityAggregateState,
+  sanitizeAgentActivityAggregateRow,
   sanitizeApnsNotificationPayload,
 } from "./agentActivityPayloads.ts";
 import { makeAggregateState } from "./agentActivityAggregate.ts";
@@ -578,10 +579,15 @@ const make = Effect.gen(function* () {
         );
         return input.aggregate.activities.every((row) => {
           const current = currentByThread.get(`${row.environmentId}\u0000${row.threadId}`);
+          if (current === undefined) return false;
+          const metadata = sanitizeAgentActivityAggregateRow({ ...row, ...current });
           return (
-            current !== undefined &&
             current.phase === row.phase &&
-            current.updatedAt === row.updatedAt
+            current.updatedAt === row.updatedAt &&
+            metadata.threadTitle === row.threadTitle &&
+            metadata.projectTitle === row.projectTitle &&
+            metadata.modelTitle === row.modelTitle &&
+            metadata.deepLink === row.deepLink
           );
         });
       }),

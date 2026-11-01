@@ -164,6 +164,14 @@ function agentAwarenessPublishIdentity(state: RelayAgentActivityState | null): s
   return JSON.stringify(meaningfulState);
 }
 
+// The relay treats a new time as a new alert, so same-phase changes like renames keep the old one.
+function withPublishedPhaseTime(
+  state: RelayAgentActivityState,
+  published: RelayAgentActivityState | undefined,
+): RelayAgentActivityState {
+  return published?.phase === state.phase ? { ...state, updatedAt: published.updatedAt } : state;
+}
+
 function resolveAgentActivityPublishingStartupState(input: {
   readonly relayConfigured: boolean;
   readonly publishEnabled: boolean;
@@ -370,7 +378,7 @@ export const make = Effect.gen(function* () {
   const cloudLinkKeyPair = yield* getOrCreateEnvironmentKeyPairFromSecretStore(secrets);
   const startedAt = (yield* DateTime.now).epochMilliseconds;
   const catchUpRequests = yield* Queue.dropping<void>(1);
-  const publishedStateByThreadRef = yield* Ref.make(new Map<ThreadId, string>());
+  const publishedStateByThreadRef = yield* Ref.make(new Map<ThreadId, RelayAgentActivityState>());
 
   const readSecretString = (name: string) =>
     secrets
@@ -533,15 +541,19 @@ export const make = Effect.gen(function* () {
       thread,
       project,
     });
-    const publishIdentity = agentAwarenessPublishIdentity(snapshot.state);
     const publishedStateByThread = yield* Ref.get(publishedStateByThreadRef);
+    const publishedState = publishedStateByThread.get(threadId);
+    const state = snapshot.state && withPublishedPhaseTime(snapshot.state, publishedState);
     if (
       (snapshot.state?.phase === "completed" || snapshot.state?.phase === "failed") &&
       !publishedStateByThread.has(threadId)
     ) {
       if (Option.isNone(thread) || !terminalWorkSinceStart(thread.value, startedAt)) return;
     }
-    if (publishedStateByThread.get(threadId) === publishIdentity) {
+    if (
+      publishedState !== undefined &&
+      agentAwarenessPublishIdentity(publishedState) === agentAwarenessPublishIdentity(state)
+    ) {
       // Clear moot deadlines so later transient nulls cannot skip their deferral window.
       publishConfirmDeadlines.delete(threadId);
       heldCompletions.delete(threadId);
@@ -556,10 +568,7 @@ export const make = Effect.gen(function* () {
     // Confirm tombstones over live state to avoid removing active cards.
     // Confirm completion: a run can end moments before its continuation starts, and the relay
     // alerts on every move into completed.
-    const requiresConfirmation =
-      (snapshot.state === null &&
-        publishedStateByThread.get(threadId) !== agentAwarenessPublishIdentity(null)) ||
-      snapshot.state?.phase === "completed";
+    const requiresConfirmation = snapshot.state === null || snapshot.state.phase === "completed";
     if (requiresConfirmation) {
       if (snapshot.state?.phase === "completed") heldCompletions.add(threadId);
       const nowMs = (yield* DateTime.now).epochMilliseconds;
@@ -600,7 +609,7 @@ export const make = Effect.gen(function* () {
             })
           : null;
       if (unsettled?.state?.phase === "completed") {
-        const completion = unsettled.state;
+        const completion = withPublishedPhaseTime(unsettled.state, publishedState);
         yield* publishState({
           projectId: unsettled.projectId,
           state: completion,
@@ -609,7 +618,7 @@ export const make = Effect.gen(function* () {
         heldCompletions.delete(threadId);
         publishConfirmDeadlines.set(threadId, nowMs + 5_000);
         yield* Ref.update(publishedStateByThreadRef, (publishedStates) =>
-          new Map(publishedStates).set(threadId, agentAwarenessPublishIdentity(completion)),
+          new Map(publishedStates).set(threadId, completion),
         );
         yield* schedulePublishConfirm(threadId);
         return;
@@ -634,17 +643,17 @@ export const make = Effect.gen(function* () {
 
     yield* publishState({
       projectId: snapshot.projectId,
-      state: snapshot.state,
+      state,
       reason: snapshot.reason,
     }).pipe(withRelayClientTracing);
     publishConfirmDeadlines.delete(threadId);
     heldCompletions.delete(threadId);
     yield* Ref.update(publishedStateByThreadRef, (publishedStates) => {
       const nextPublishedStates = new Map(publishedStates);
-      if (snapshot.state === null) {
+      if (state === null) {
         nextPublishedStates.delete(threadId);
       } else {
-        nextPublishedStates.set(threadId, publishIdentity);
+        nextPublishedStates.set(threadId, state);
       }
       return nextPublishedStates;
     });

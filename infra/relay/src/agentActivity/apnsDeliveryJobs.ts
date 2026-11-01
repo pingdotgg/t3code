@@ -39,6 +39,33 @@ export const ApnsNotificationPayload = Schema.Struct({
 });
 export type ApnsNotificationPayload = typeof ApnsNotificationPayload.Type;
 
+export function notificationJobId(input: {
+  readonly userId: string;
+  readonly deviceId: string;
+  readonly token: string;
+  readonly bundleId?: string | null;
+  readonly apsEnvironment?: "sandbox" | "production" | null;
+  readonly notification: ApnsNotificationPayload;
+}): string | null {
+  const { notification } = input;
+  if (notification.phase === undefined || notification.updatedAt === undefined) return null;
+  return NodeCrypto.createHash("sha256")
+    .update(
+      JSON.stringify([
+        input.userId,
+        input.deviceId,
+        input.token,
+        input.bundleId ?? null,
+        input.apsEnvironment ?? null,
+        notification.environmentId,
+        notification.threadId,
+        notification.phase,
+        notification.updatedAt,
+      ]),
+    )
+    .digest("hex");
+}
+
 export const ApnsLiveActivityAlert = Schema.Struct({
   title: Schema.String,
   body: Schema.String,

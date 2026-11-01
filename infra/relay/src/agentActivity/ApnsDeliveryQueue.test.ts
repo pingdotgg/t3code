@@ -8,6 +8,7 @@ import * as Redacted from "effect/Redacted";
 
 import * as RelayConfiguration from "../Config.ts";
 import * as ApnsDeliveryQueue from "./ApnsDeliveryQueue.ts";
+import type { SignedApnsDeliveryJob } from "./apnsDeliveryJobs.ts";
 
 const config: RelayConfiguration.RelayConfiguration["Service"] = {
   relayIssuer: "https://relay.example.com",
@@ -29,6 +30,55 @@ const config: RelayConfiguration.RelayConfiguration["Service"] = {
 };
 
 describe("ApnsDeliveryQueue", () => {
+  it.effect("keeps alert jobs stable across renames and retries, independently per target", () => {
+    const sent: SignedApnsDeliveryJob[] = [];
+    const layer = ApnsDeliveryQueue.layer.pipe(
+      Layer.provide(NodeCryptoLayer.layer),
+      Layer.provide(RelayConfiguration.layer(config)),
+      Layer.provide(
+        Layer.succeed(ApnsDeliveryQueue.ApnsDeliveryQueueSender, {
+          send: (job) =>
+            Effect.sync(() => {
+              sent.push(job);
+            }),
+        }),
+      ),
+    );
+    return Effect.gen(function* () {
+      const queue = yield* ApnsDeliveryQueue.ApnsDeliveryQueue;
+      const input = {
+        userId: "user-1",
+        deviceId: "device-1",
+        token: "push-token",
+        notification: {
+          title: "Thread",
+          body: "Input: Project",
+          environmentId: "env-1",
+          threadId: "thread-1",
+          deepLink: "/threads/env-1/thread-1",
+          phase: "waiting_for_input" as const,
+          updatedAt: "2026-09-04T12:00:00.000Z",
+        },
+      };
+      yield* queue.enqueuePushNotification(input);
+      yield* queue.enqueuePushNotification({
+        ...input,
+        notification: { ...input.notification, title: "Renamed" },
+      });
+      yield* queue.enqueuePushNotification({ ...input, deviceId: "device-2" });
+      yield* queue.enqueuePushNotification({
+        ...input,
+        notification: { ...input.notification, updatedAt: "2026-09-04T13:00:00.000Z" },
+      });
+      yield* queue.enqueuePushNotification({ ...input, token: "rotated-token" });
+      expect(sent[4]!.payload.jobId).not.toBe(sent[0]!.payload.jobId);
+      expect(sent[1]!.payload.jobId).toBe(sent[0]!.payload.jobId);
+      expect(sent[2]!.payload.jobId).not.toBe(sent[0]!.payload.jobId);
+      expect(sent[3]!.payload.jobId).not.toBe(sent[0]!.payload.jobId);
+      expect(sent[1]!.payload.notification?.title).toBe("Renamed");
+    }).pipe(Effect.provide(layer));
+  });
+
   it.effect("does not require the deployment RuntimeContext when building the Worker layer", () => {
     const sent: unknown[] = [];
     const sender: Cloudflare.Queues.WriteQueueClient = {
