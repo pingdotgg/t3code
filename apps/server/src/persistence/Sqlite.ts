@@ -41,7 +41,7 @@ const layerSetup = Layer.effectDiscard(
       yield* sql`DELETE FROM sqlite_stat1;`;
       yield* sql`ANALYZE sqlite_schema;`;
     }
-  }),
+  }).pipe(Effect.withSpan("Sqlite.setup")),
 );
 
 export const layerFromPath = Effect.fn("makeSqlitePersistenceLive")(function* (dbPath: string) {
