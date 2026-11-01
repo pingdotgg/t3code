@@ -785,7 +785,7 @@ const make = Effect.gen(function* () {
         ? await connectDesktop(snapshot)
         : null;
     // Otherwise a desktop that attaches late shows its own page, and the agent drives another.
-    // A WSL backend has no desktop channel, yet its Windows app still treats the environment as primary.
+    // WSL has no channel, but its Windows app still draws any tab not marked headless.
     if (!desktop) {
       await runPromise(
         manager
