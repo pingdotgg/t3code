@@ -12,6 +12,7 @@ import { markdownFileEmbedLabel, resolveMarkdownMediaPreview } from "./markdownM
 import { resolveMarkdownLinkPresentation } from "./markdownLinks";
 import { ENRICHED_INLINE_FILE_LINK_REGEX } from "./enrichedLinkPresentation";
 import { EnvironmentId, ThreadId } from "@t3tools/contracts";
+import { collectBlocks } from "react-native-enriched-markdown/src/web/blockSlots";
 import { parseMarkdown } from "react-native-enriched-markdown/src/web/parseMarkdown";
 
 describe("HTML in native Markdown", () => {
@@ -206,6 +207,7 @@ describe("file embeds in native thread and file Markdown", () => {
     "sound.mp3",
     "clip.mp4",
   ])("uses filename links throughout prose, lists, and tables for %s", (name) => {
+    const media = name.endsWith(".mp3") || name.endsWith(".mp4");
     for (const href of [
       `./${name}`,
       `/tmp/${name}`,
@@ -219,7 +221,7 @@ describe("file embeds in native thread and file Markdown", () => {
         `| file |\n| --- |\n| ![sheet](<${href}>) |`,
         `download: ![sheet][file]\n\n[file]: <${href}>`,
         `download: <img src="${href}" alt="sheet">`,
-      ]) {
+      ].filter((candidate) => !(media && candidate.startsWith("download:")))) {
         const converted = markdownWithFileEmbeds(markdownWithHtml(source), (url, standalone) =>
           markdownFileEmbedLabel(url, input, standalone),
         );
@@ -253,6 +255,109 @@ describe("file embeds in native thread and file Markdown", () => {
     expect(converted.markdown).toBe(source);
     expect(converted.fileHrefs.size).toBe(0);
     expect(resolveMarkdownMediaPreview("./sound.mp3", input)?.kind).toBe("audio");
+  });
+
+  describe("video and audio embeds that share a paragraph", () => {
+    const video = "![t](C:/path/x.mp4)";
+    const audio = "![s](C:/path/s.mp3)";
+    const link = "[x.mp4](<C:/path/x.mp4>)";
+    const slots = async (markdown: string) =>
+      collectBlocks(await parseMarkdown(markdown)).blocks.flatMap((block) =>
+        block.kind === "image" ? [`${block.placement}:${block.url}`] : [],
+      );
+    const convert = (source: string) =>
+      markdownWithFileEmbeds(source, (href, standalone) =>
+        markdownFileEmbedLabel(href, input, standalone),
+      );
+
+    it.each([
+      ["text above", `text\n${video}`, `text\n\n${video}`, ["root:C:/path/x.mp4"]],
+      [
+        "text on both sides",
+        `see ${video} here`,
+        `see \n\n${video}\n\n here`,
+        ["root:C:/path/x.mp4"],
+      ],
+      [
+        "two videos on adjacent lines",
+        `${video}\n![u](C:/path/y.mp4)`,
+        `${video}\n\n![u](C:/path/y.mp4)`,
+        ["root:C:/path/x.mp4", "root:C:/path/y.mp4"],
+      ],
+      ["audio", `text\n${audio}`, `text\n\n${audio}`, ["root:C:/path/s.mp3"]],
+      ["alone in a block quote", `> ${video}`, `> ${video}`, ["blockquote:C:/path/x.mp4"]],
+      [
+        "text above in a block quote",
+        `> text\n> ${video}`,
+        `> text\n>\n> ${video}`,
+        ["blockquote:C:/path/x.mp4"],
+      ],
+      [
+        "text above in an admonition",
+        "> [!NOTE]\n> ![t](C:/path/x.mp4)",
+        "> [!NOTE]\n>\n> ![t](C:/path/x.mp4)",
+        ["admonition:C:/path/x.mp4"],
+      ],
+      [
+        "text on both sides in a nested block quote",
+        `> > see ${video} here`,
+        `> > see \n> >\n> > ${video}\n> >\n> >  here`,
+        ["blockquote:C:/path/x.mp4"],
+      ],
+    ])("gives a video or audio embed its own paragraph: %s", async (_, source, expected, slot) => {
+      const converted = convert(source);
+      expect(converted.markdown).toBe(expected);
+      expect(converted.fileHrefs.size).toBe(0);
+      expect(await slots(converted.markdown)).toEqual(slot);
+    });
+
+    // The native collector offers no media slot inside a list item, so these stay filename links.
+    it.each([
+      ["a list item", `- ${video}`, `- ${link}`],
+      ["a list item under text", `- text\n  ${video}`, `- text\n  ${link}`],
+      ["a task item", `- [ ] ${video}`, `- [ ] ${link}`],
+      ["a list in a block quote", `> - ${video}`, `> - ${link}`],
+      ["a block quote in a list", `- > ${video}`, `- > ${link}`],
+      ["a heading", `# ${video}`, `# ${link}`],
+      ["a spoiler", `||see ${video}||`, `||see ${link}||`],
+      ["text that would open a list", `${video} - demo`, `${link} - demo`],
+      ["a lazy block quote line", `> text\n${video}`, `> text\n${link}`],
+      ["a line indented like code", `text\n    ${video}`, `text\n    ${link}`],
+      ["a quote line indented like code", `> text\n>     ${video}`, `> text\n>     ${link}`],
+      ["a tab-indented line", `text\n\t${video}`, `text\n\t${link}`],
+      ["text before a code-indented line", `${video}\n    tail`, `${link}\n    tail`],
+      ["a line after a backslash break", `text\\\n${video}`, `text\\\n${link}`],
+      ["a line before a backslash break", `${video}\\\nnext`, `${link}\\\nnext`],
+      [
+        "text that a split would turn into a setext heading",
+        `intro\n--- ${video}`,
+        `intro\n--- ${link}`,
+      ],
+      [
+        "text that a split would turn into a setext heading",
+        `intro\n=== ${video}`,
+        `intro\n=== ${link}`,
+      ],
+      ["a next line that would open a list", `${video}\n2. next`, `${link}\n2. next`],
+      ["a table cell", `| a |\n| --- |\n| ${video} |`, `| a |\n| --- |\n| ${link} |`],
+      ["a link", `text [${video}](https://example.com)`, "text [x.mp4](https://example.com)"],
+      ["a PDF", `text\n![d](C:/path/x.pdf)`, "text\n[x.pdf](<C:/path/x.pdf>)"],
+    ])("keeps a filename link for an embed in %s", async (_, source, expected) => {
+      const converted = convert(source);
+      expect(converted.markdown).toBe(expected);
+      expect(await slots(converted.markdown)).toEqual([]);
+    });
+
+    it.each([
+      ["an image under text", "text\n![p](C:/path/x.png)"],
+      ["an image in a list item", "- ![p](C:/path/x.png)"],
+      ["a video in a code span", `text \`${video}\``],
+      ["a video in a code block", `text\n\n\`\`\`md\n${video}\n\`\`\``],
+    ])("leaves %s unchanged", (_, source) => {
+      const converted = convert(source);
+      expect(converted.markdown).toBe(source);
+      expect(converted.fileHrefs.size).toBe(0);
+    });
   });
 
   it("uses audio filenames in file previews and draft workspaces", () => {
