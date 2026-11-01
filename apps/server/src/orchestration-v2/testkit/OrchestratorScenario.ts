@@ -18,9 +18,9 @@ import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Option from "effect/Option";
-import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
+import * as SubscriptionRef from "effect/SubscriptionRef";
 import { TestClock } from "effect/testing";
 
 import * as Orchestrator from "../Orchestrator.ts";
@@ -265,10 +265,12 @@ export function runOrchestratorV2Scenario(
     Effect.gen(function* () {
       const orchestrator = yield* Orchestrator.OrchestratorV2;
       const storedEventGroups: Array<ReadonlyArray<OrchestrationV2StoredEvent>> = [];
-      const observedStoredEvents = yield* Ref.make<Array<OrchestrationV2StoredEvent>>([]);
+      const observedStoredEvents = yield* SubscriptionRef.make<
+        ReadonlyArray<OrchestrationV2StoredEvent>
+      >([]);
       yield* orchestrator.streamStoredEvents.pipe(
         Stream.runForEach((event) =>
-          Ref.update(observedStoredEvents, (existing) => [...existing, event]),
+          SubscriptionRef.update(observedStoredEvents, (existing) => [...existing, event]),
         ),
         Effect.forkScoped,
       );
@@ -408,38 +410,33 @@ export function runOrchestratorV2Scenario(
           return yield* waitForRunSteerable(threadId, runId, attemptsRemaining - 1, deadlineAt);
         });
 
-      const waitForRunStatus = (
+      const waitForRunStatus = Effect.fn("scenario.waitForRunStatus")(function* (
         threadId: ThreadId,
         runId: OrchestrationV2Run["id"],
         status: OrchestrationV2Run["status"],
-        attemptsRemaining = SCENARIO_WAIT_ATTEMPTS,
-        deadlineAt = scenarioWaitDeadline(),
-      ): Effect.Effect<
-        void,
-        Orchestrator.OrchestratorV2Error | OrchestratorV2ScenarioStepError,
-        never
-      > =>
-        Effect.gen(function* () {
-          const projection = yield* orchestrator.getThreadProjection(threadId);
-          const run = projection.runs.find((candidate) => candidate.id === runId);
-          if (run?.status === status) {
-            return;
-          }
-          if (scenarioWaitExhausted(attemptsRemaining, deadlineAt)) {
-            return yield* new OrchestratorV2ScenarioStepError({
-              scenario: scenario.name,
-              step: `await_run_status:${runId}:${status}:actual=${run?.status ?? "missing"}`,
-            });
-          }
-          yield* yieldToRuntime;
-          return yield* waitForRunStatus(
-            threadId,
-            runId,
-            status,
-            attemptsRemaining - 1,
-            deadlineAt,
+      ) {
+        const runStatus = orchestrator
+          .getThreadProjection(threadId)
+          .pipe(
+            Effect.map(
+              (projection) => projection.runs.find((candidate) => candidate.id === runId)?.status,
+            ),
           );
-        });
+        // changes replays the current value on subscribe, so the first read cannot miss a commit.
+        const reached = yield* SubscriptionRef.changes(observedStoredEvents).pipe(
+          Stream.mapEffect(() => runStatus),
+          Stream.takeUntil((actual) => actual === status),
+          Stream.runDrain,
+          Effect.timeoutOption(Duration.millis(SCENARIO_WAIT_DEADLINE_MS)),
+          Effect.provideService(Clock.Clock, Clock.Clock.defaultValue()),
+        );
+        if (Option.isNone(reached)) {
+          return yield* new OrchestratorV2ScenarioStepError({
+            scenario: scenario.name,
+            step: `await_run_status:${runId}:${status}:actual=${(yield* runStatus) ?? "missing"}`,
+          });
+        }
+      });
 
       const waitForRunTurnItem = (
         threadId: ThreadId,
@@ -712,7 +709,7 @@ export function runOrchestratorV2Scenario(
 
       yield* Effect.yieldNow;
 
-      const observedEvents = yield* Ref.get(observedStoredEvents);
+      const observedEvents = yield* SubscriptionRef.get(observedStoredEvents);
       const storedEvents = (
         observedEvents.length > 0 ? observedEvents : storedEventGroups.flat()
       ).toSorted((left, right) => left.sequence - right.sequence);
