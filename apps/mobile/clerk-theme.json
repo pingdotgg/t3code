@@ -11,7 +11,7 @@
     "primaryForeground": "#ffffff",
     "inputForeground": "#27272a",
     "neutral": "#fafafa",
-    "border": "#e4e4e7",
+    "border": "#000000",
     "ring": "#1b4ed8",
     "muted": "#fafafa",
     "shadow": "#000000"
@@ -28,7 +28,7 @@
     "primaryForeground": "#ffffff",
     "inputForeground": "#f5f5f5",
     "neutral": "#111111",
-    "border": "#191919",
+    "border": "#ffffff",
     "ring": "#346bf1",
     "muted": "#111111",
     "shadow": "#000000"
