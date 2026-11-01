@@ -201,7 +201,8 @@ Who gets in:
   the last grant, your own untagged devices can sign in again within five
   minutes, once the machine can read every device on your tailnet. The machine
   sees grants through the devices they name, so the same happens when every
-  granted device leaves your tailnet; `--require-grant` keeps them out.
+  granted device leaves your tailnet; `--require-grant` keeps your untagged devices
+  out.
 - **To require a grant before you write one,** run `t3 up --require-grant` or
   `t3 tailscale require-grant on`. `t3 tailscale require-grant` shows which rule
   applies and why; `off` undoes `on`, but not your policy.

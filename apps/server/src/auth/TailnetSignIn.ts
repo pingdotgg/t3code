@@ -524,6 +524,8 @@ export const make = Effect.gen(function* () {
         );
         const finalRefusal = hostRefusal(final);
         if (finalRefusal !== null) return yield* refuse(finalRefusal);
+        // A block that landed meanwhile answers first, as no grant would let the device in.
+        if (yield* isBlocked) return yield* refuse("blocked");
         yield* checkCaller(final);
         if (
           final.selfNodeId !== status.selfNodeId ||

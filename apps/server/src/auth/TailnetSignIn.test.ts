@@ -1634,7 +1634,10 @@ it.layer(NodeServices.layer)("TailnetSignIn", (it) => {
                 });
               }
             };
-            expect(yield* refusalOf(signIn(makeDpopKey()))).toBe("policy_unknown");
+            const error = yield* Effect.flip(signIn(makeDpopKey()));
+            expect(
+              isRefusal(error) ? [error.reason, error.suggestedGrant !== undefined] : error,
+            ).toEqual(["policy_unknown", true]);
           } else {
             const started = yield* Deferred.make<void>();
             const release = yield* Deferred.make<void>();
