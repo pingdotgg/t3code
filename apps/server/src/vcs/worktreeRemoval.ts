@@ -146,10 +146,8 @@ export const removeLinkedWorktree = Effect.fn("WorktreeRemoval.removeLinkedWorkt
       );
   }
 
-  // A file held open can stop the delete partway, e.g. while a deleted thread's
-  // provider exits. Only a forced delete retries, since it already discards
-  // edits. Putting `.git` back after a failure or interruption leaves a
-  // worktree that a later retry can remove.
+  // Only forced deletes retry: a later attempt must not discard newly written edits.
+  // Restore `.git` on failure or interruption so Git can retry a partial deletion.
   const gitFileContents = yield* fileSystem
     .readFileString(gitFile)
     .pipe(Effect.mapError(() => notAWorktree));

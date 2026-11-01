@@ -4467,58 +4467,72 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
       }),
     );
 
-    it.effect("retries a Windows delete while a stopped provider still holds the worktree", () =>
-      Effect.gen(function* () {
-        const cwd = yield* makeTmpDir();
-        const { initialBranch } = yield* initRepoWithCommit(cwd);
-        const pathService = yield* Path.Path;
-        const fileSystem = yield* FileSystem.FileSystem;
-        const worktreePath = pathService.join(yield* makeTmpDir("git-worktrees-"), "held");
-        // The first deletes fail the way Windows fails them while an exiting
-        // provider process still has files in the worktree open. The last one
-        // deletes the folder anyway, so the next attempt finds nothing left.
-        let heldAttempts = 2;
-        const driver = yield* makeGitVcsDriverCore().pipe(
-          Effect.provideService(FileSystem.FileSystem, {
-            ...fileSystem,
-            remove: (target, options) =>
-              Effect.suspend(() => {
-                if (target !== worktreePath || heldAttempts === 0) {
-                  return fileSystem.remove(target, options);
-                }
-                heldAttempts--;
-                const held = Effect.fail(
-                  PlatformError.systemError({
-                    _tag: "Busy",
-                    module: "FileSystem",
-                    method: "remove",
-                    pathOrDescriptor: target,
-                  }),
-                );
-                return heldAttempts === 0
-                  ? fileSystem.remove(target, options).pipe(Effect.andThen(held))
-                  : held;
-              }),
-          }),
-          Effect.provide(layerServerConfig),
-        );
-        yield* driver.createWorktree({
-          cwd,
-          path: worktreePath,
-          refName: initialBranch,
-          newRefName: "feature/held",
-        });
+    it.effect.each([false, true])(
+      "retries a Windows delete (already removed: %s)",
+      (alreadyRemoved) =>
+        Effect.gen(function* () {
+          const cwd = yield* makeTmpDir();
+          const { initialBranch } = yield* initRepoWithCommit(cwd);
+          const pathService = yield* Path.Path;
+          const fileSystem = yield* FileSystem.FileSystem;
+          const worktreePath = pathService.join(yield* makeTmpDir("git-worktrees-"), "held");
+          // Windows can report Busy after partially removing a held worktree.
+          let heldAttempts = 2;
+          const firstAttempt = yield* Deferred.make<void>();
+          const secondAttempt = yield* Deferred.make<void>();
+          const driver = yield* makeGitVcsDriverCore().pipe(
+            Effect.provideService(FileSystem.FileSystem, {
+              ...fileSystem,
+              remove: (target, options) =>
+                Effect.suspend(() => {
+                  if (target !== worktreePath || heldAttempts === 0) {
+                    return fileSystem.remove(target, options);
+                  }
+                  heldAttempts--;
+                  const held = Effect.fail(
+                    PlatformError.systemError({
+                      _tag: "Busy",
+                      module: "FileSystem",
+                      method: "remove",
+                      pathOrDescriptor: target,
+                    }),
+                  );
+                  return (
+                    alreadyRemoved && heldAttempts === 0
+                      ? fileSystem.remove(target, options)
+                      : Effect.void
+                  ).pipe(
+                    Effect.andThen(
+                      Deferred.succeed(
+                        heldAttempts === 0 ? secondAttempt : firstAttempt,
+                        undefined,
+                      ),
+                    ),
+                    Effect.andThen(held),
+                  );
+                }),
+            }),
+            Effect.provide(layerServerConfig),
+          );
+          yield* driver.createWorktree({
+            cwd,
+            path: worktreePath,
+            refName: initialBranch,
+            newRefName: "feature/held",
+          });
 
-        // The retry waits on the real clock.
-        yield* TestClock.withLive(
-          driver
+          const removal = yield* driver
             .removeWorktree({ cwd, path: worktreePath, force: true })
-            .pipe(Effect.provideService(HostProcess.Platform, "win32")),
-        );
+            .pipe(Effect.provideService(HostProcess.Platform, "win32"), Effect.forkChild);
+          yield* Deferred.await(firstAttempt);
+          yield* TestClock.adjust("250 millis");
+          yield* Deferred.await(secondAttempt);
+          yield* TestClock.adjust("250 millis");
+          yield* Fiber.join(removal);
 
-        assert.equal(yield* fileSystem.exists(worktreePath), false);
-        assert.notInclude(yield* git(cwd, ["worktree", "list", "--porcelain"]), "held");
-      }),
+          assert.equal(yield* fileSystem.exists(worktreePath), false);
+          assert.notInclude(yield* git(cwd, ["worktree", "list", "--porcelain"]), "held");
+        }),
     );
 
     it.effect("keeps the junctions of a worktree that git refuses to remove", () =>
