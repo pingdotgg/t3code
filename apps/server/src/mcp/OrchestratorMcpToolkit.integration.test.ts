@@ -606,14 +606,13 @@ describe("orchestrator MCP toolkit", () => {
               span.end = (endTime, exit) => {
                 end(endTime, exit);
                 const query = span.attributes.get("db.query.text");
+                if (typeof query !== "string") return;
                 if (
-                  typeof query === "string" &&
                   /SELECT[\s\S]*FROM orchestration_v2_projection_context_transfers/i.test(query)
                 ) {
                   transferReads.push(query);
                 }
                 if (
-                  typeof query === "string" &&
                   /SELECT\s+payload_json\s+FROM orchestration_v2_projection_messages/i.test(query)
                 ) {
                   messageReads.push(query);
@@ -689,6 +688,13 @@ describe("orchestrator MCP toolkit", () => {
             afterRead.subagents.find((task) => task.id === queuedFollowup.taskId)
               ?.completionDelivery?.state,
           ).toBe("acknowledged");
+
+          const messageReadsBeforeCapabilities = messageReads.length;
+          const capabilities = yield* invoke("orchestrator_capabilities", {}).pipe(
+            Effect.withTracer(tracer),
+          );
+          expect(capabilities.isError).not.toBe(true);
+          expect(messageReads).toHaveLength(messageReadsBeforeCapabilities);
         }).pipe(Effect.provide(layerTest));
       }),
     ),

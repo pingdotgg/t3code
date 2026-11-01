@@ -1119,7 +1119,6 @@ const make = Effect.gen(function* () {
 
   const loadCaller = Effect.fn("OrchestratorMcpService.loadCaller")(function* (
     scope: McpInvocationScope,
-    includeUserMessages = true,
   ) {
     yield* requireCapability(scope);
     if (scope.thread === undefined) {
@@ -1128,7 +1127,8 @@ const make = Effect.gen(function* () {
         limits: clientModeCeiling(scope.client),
       } as const;
     }
-    const parent = yield* loadProjection(scope.thread.threadId, includeUserMessages);
+    // No loadCaller consumer reads the caller's own prompts.
+    const parent = yield* loadProjection(scope.thread.threadId, false);
     return {
       parent,
       limits: {
@@ -1244,8 +1244,7 @@ const make = Effect.gen(function* () {
     scope: McpInvocationScope,
     threadId: ThreadId,
   ) {
-    // Caller prompts are not used to read a timeline or acknowledge a child result.
-    const { parent } = yield* loadCaller(scope, false);
+    const { parent } = yield* loadCaller(scope);
     const shell = yield* threadManagement
       .getThreadShell(threadId)
       .pipe(Effect.mapError(threadManagementFailure));
