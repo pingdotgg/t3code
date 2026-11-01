@@ -426,6 +426,42 @@ const make = Effect.gen(function* () {
         };
       }),
     ),
+    unlink_pull_requests: writesThread((input) =>
+      Effect.gen(function* () {
+        const thread = yield* requireThread(PullRequestUnlinkFailedError, input.threadId);
+        const visible = visibleThreadPullRequests(threadPullRequestsOf(thread));
+        const matching = visible.flatMap((link) => {
+          const state = link.snapshot?.state;
+          return state !== undefined && input.states.includes(state)
+            ? [{ ...normalizeThreadPullRequestKey(link), state }]
+            : [];
+        });
+        yield* Effect.forEach(matching, ({ host, repository, number }) =>
+          Effect.gen(function* () {
+            yield* engine.dispatch({
+              type: "thread.pull-request.unlink",
+              commandId: yield* commandId("mcp-pr-unlink", thread.id),
+              threadId: thread.id,
+              host,
+              repository,
+              number,
+            });
+          }).pipe(Effect.catchCause(dispatchFailure(PullRequestUnlinkFailedError))),
+        );
+        // Numbers grouped by repository and state keep a large batch's result small.
+        const groups = Map.groupBy(matching, (pr) => `${pr.host}/${pr.repository}/${pr.state}`);
+        return {
+          unlinked: [...groups.values()].map((prs) => ({
+            host: prs[0]!.host,
+            repository: prs[0]!.repository,
+            state: prs[0]!.state,
+            numbers: prs.map((pr) => pr.number),
+          })),
+          unlinkedCount: matching.length,
+          remaining: visible.length - matching.length,
+        };
+      }),
+    ),
     list_thread_pull_requests: McpToolAccess.reads((input) =>
       requireThread(PullRequestListFailedError, input.threadId).pipe(
         Effect.map(listThreadPullRequests),
