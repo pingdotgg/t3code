@@ -32,6 +32,7 @@ import {
   ChatImageAttachment,
   CheckpointId,
   ClaudeSettings,
+  CommandId,
   EnvironmentId,
   MessageId,
   type ModelSelection,
@@ -63,6 +64,7 @@ import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
+import * as PlatformError from "effect/PlatformError";
 import * as PubSub from "effect/PubSub";
 import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
@@ -99,7 +101,11 @@ import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import { ClaudeOrchestratorReplayHarness } from "./ClaudeAdapterV2.testkit.ts";
 import { provideDeterministicTestRuntime } from "../testkit/DeterministicRuntime.ts";
 import { runOrchestratorV2Scenario } from "../testkit/OrchestratorScenario.ts";
-import { layerProviderReplay } from "../testkit/ProviderReplayHarness.ts";
+import { layerProviderReplay, layerWithRegistry } from "../testkit/ProviderReplayHarness.ts";
+import * as ProviderAdapterRegistry from "../ProviderAdapterRegistry.ts";
+import * as Orchestrator from "../Orchestrator.ts";
+import * as EffectWorker from "../EffectWorker.ts";
+import { checkpointWorkspace } from "@t3tools/provider-testing/replayWorkspace";
 import {
   assertBaseProjection,
   assertSemanticProjectionIntegrity,
@@ -1382,7 +1388,61 @@ describe("ClaudeAdapterV2 executable path", () => {
 });
 
 describe("ClaudeAdapterV2 resumeThread", () => {
-  it.effect("fails for a transcript without messages so a fresh session replaces it", () =>
+  const openRuntime = Effect.fnUntraced(function* (
+    configDir: string,
+    fileSystem: FileSystem.FileSystem,
+    environment: NodeJS.ProcessEnv = { CLAUDE_CONFIG_DIR: configDir },
+  ) {
+    const adapter = yield* ClaudeAdapterV2.makeClaudeAdapterV2({
+      instanceId: ClaudeAdapterV2.CLAUDE_DEFAULT_INSTANCE_ID,
+      settings: DEFAULT_CLAUDE_SETTINGS,
+      environment,
+      attachmentsDir: configDir,
+      fileSystem,
+      path: yield* Path.Path,
+      crypto: yield* Crypto.Crypto,
+      idAllocator: yield* IdAllocator.IdAllocatorV2,
+      queryRunner: {
+        allocateSessionId: Effect.succeed("native-thread-empty"),
+        open: () =>
+          Effect.succeed({
+            messages: Stream.never,
+            offer: () => Effect.void,
+            setModel: () => Effect.void,
+            applyFlagSettings: () => Effect.void,
+            setPermissionMode: () => Effect.void,
+            backgroundTasks: () => Effect.succeed(false),
+            stopTask: () => Effect.void,
+            interrupt: Effect.void,
+            close: Effect.void,
+          }),
+        forkSession: () => Effect.die("unused"),
+        subagentLaunchToolUseId: () => Effect.succeed(null),
+        assertComplete: Effect.void,
+      },
+    });
+    const threadId = ThreadId.make("thread-claude-empty-session");
+    const runtime = yield* adapter.openSession({
+      threadId,
+      providerSessionId: ProviderSessionId.make("provider-session-claude-empty-session"),
+      modelSelection: CLAUDE_TEST_MODEL_SELECTION,
+      runtimePolicy: CLAUDE_TEST_RUNTIME_POLICY,
+    });
+    const providerThread = yield* runtime.ensureThread({
+      threadId,
+      modelSelection: CLAUDE_TEST_MODEL_SELECTION,
+      runtimePolicy: CLAUDE_TEST_RUNTIME_POLICY,
+    });
+    return { runtime, providerThread, threadId };
+  });
+
+  const testLayer = Layer.mergeAll(
+    IdAllocator.layer,
+    McpProviderSessions.layer,
+    NodeServices.layer,
+  );
+
+  it.effect("fails for missing or empty transcripts and retains saved conversations", () =>
     Effect.scoped(
       Effect.gen(function* () {
         const fileSystem = yield* FileSystem.FileSystem;
@@ -1392,6 +1452,7 @@ describe("ClaudeAdapterV2 resumeThread", () => {
         });
         const projectDir = path.join(configDir, "projects", "-workspace");
         yield* fileSystem.makeDirectory(projectDir, { recursive: true });
+        yield* fileSystem.writeFileString(path.join(configDir, "projects", "stray-file"), "");
         yield* fileSystem.writeFileString(
           path.join(projectDir, "native-thread-empty.jsonl"),
           [
@@ -1405,35 +1466,7 @@ describe("ClaudeAdapterV2 resumeThread", () => {
           path.join(projectDir, "native-thread-saved.jsonl"),
           `{"type":"user","message":{"role":"user","content":"hello"},"sessionId":"native-thread-saved"}\n`,
         );
-        const adapter = yield* ClaudeAdapterV2.makeClaudeAdapterV2({
-          instanceId: ClaudeAdapterV2.CLAUDE_DEFAULT_INSTANCE_ID,
-          settings: DEFAULT_CLAUDE_SETTINGS,
-          environment: { CLAUDE_CONFIG_DIR: configDir },
-          attachmentsDir: configDir,
-          fileSystem,
-          path,
-          crypto: yield* Crypto.Crypto,
-          idAllocator: yield* IdAllocator.IdAllocatorV2,
-          queryRunner: {
-            allocateSessionId: Effect.succeed("native-thread-empty"),
-            open: () => Effect.die("unused"),
-            forkSession: () => Effect.die("unused"),
-            subagentLaunchToolUseId: () => Effect.succeed(null),
-            assertComplete: Effect.void,
-          },
-        });
-        const threadId = ThreadId.make("thread-claude-empty-session");
-        const runtime = yield* adapter.openSession({
-          threadId,
-          providerSessionId: ProviderSessionId.make("provider-session-claude-empty-session"),
-          modelSelection: CLAUDE_TEST_MODEL_SELECTION,
-          runtimePolicy: CLAUDE_TEST_RUNTIME_POLICY,
-        });
-        const providerThread = yield* runtime.ensureThread({
-          threadId,
-          modelSelection: CLAUDE_TEST_MODEL_SELECTION,
-          runtimePolicy: CLAUDE_TEST_RUNTIME_POLICY,
-        });
+        const { runtime, providerThread } = yield* openRuntime(configDir, fileSystem);
 
         const error = yield* Effect.flip(runtime.resumeThread({ providerThread }));
         assert.equal(error._tag, "ProviderAdapterResumeThreadError");
@@ -1450,23 +1483,300 @@ describe("ClaudeAdapterV2 resumeThread", () => {
         });
         assert.equal(saved.nativeThreadRef?.nativeId, "native-thread-saved");
 
-        const missing = yield* runtime.resumeThread({
-          providerThread: {
-            ...providerThread,
-            nativeThreadRef: {
-              driver: ClaudeAdapterV2.CLAUDE_PROVIDER,
-              nativeId: "native-thread-missing",
-              strength: "strong",
+        const missing = yield* Effect.flip(
+          runtime.resumeThread({
+            providerThread: {
+              ...providerThread,
+              nativeThreadRef: {
+                driver: ClaudeAdapterV2.CLAUDE_PROVIDER,
+                nativeId: "native-thread-missing",
+                strength: "strong",
+              },
             },
+          }),
+        );
+        assert.equal(missing._tag, "ProviderAdapterResumeThreadError");
+      }),
+    ).pipe(Effect.provide(testLayer)),
+  );
+
+  it.effect.each(["HOME", "relative CLAUDE_CONFIG_DIR"] as const)(
+    "retains a saved conversation using %s in the thread runtime cwd",
+    (location) =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const fileSystem = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const root = yield* fileSystem.makeTempDirectoryScoped({
+            prefix: "t3-claude-resume-location-",
+          });
+          const cwd = path.join(root, "thread");
+          const configDir = path.join(cwd, ".claude");
+          const projectDir = path.join(configDir, "projects", "-workspace");
+          yield* fileSystem.makeDirectory(projectDir, { recursive: true });
+          yield* fileSystem.writeFileString(
+            path.join(projectDir, "native-thread-empty.jsonl"),
+            '{"type":"user","message":{"role":"user","content":"saved conversation"}}\n',
+          );
+          const { runtime, providerThread } = yield* openRuntime(
+            configDir,
+            fileSystem,
+            location === "HOME"
+              ? { HOME: cwd, USERPROFILE: cwd }
+              : { CLAUDE_CONFIG_DIR: ".claude" },
+          );
+          const resumed = yield* runtime
+            .resumeThread({
+              providerThread,
+              runtimePolicy: { ...CLAUDE_TEST_RUNTIME_POLICY, cwd },
+            })
+            .pipe(Effect.provideService(HostProcess.HomeDirectory, path.join(root, "server-home")));
+
+          assert.deepEqual(resumed.nativeThreadRef, providerThread.nativeThreadRef);
+        }),
+      ).pipe(Effect.provide(testLayer)),
+  );
+
+  it.effect("replaces an unpersisted native session after warm Stop and immediate retry", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const cwd = yield* checkpointWorkspace("claude-warm-resume");
+        const configDir = yield* fileSystem.makeTempDirectoryScoped({
+          prefix: "t3-claude-warm-resume-",
+        });
+        const opens: ClaudeAdapterV2.ClaudeAgentSdkQueryOpenInput[] = [];
+        const offers: SDKUserMessage[] = [];
+        let nativeId = 0;
+        let interrupts = 0;
+        const adapter = yield* ClaudeAdapterV2.makeClaudeAdapterV2({
+          instanceId: CLAUDE_TEST_MODEL_SELECTION.instanceId,
+          settings: DEFAULT_CLAUDE_SETTINGS,
+          environment: { CLAUDE_CONFIG_DIR: configDir },
+          attachmentsDir: configDir,
+          fileSystem,
+          path,
+          crypto: yield* Crypto.Crypto,
+          idAllocator: yield* IdAllocator.IdAllocatorV2,
+          queryRunner: {
+            allocateSessionId: Effect.sync(() => `native-warm-${++nativeId}`),
+            open: (input) =>
+              Effect.gen(function* () {
+                opens.push(input);
+                const messages = yield* Queue.unbounded<SDKMessage>();
+                return {
+                  messages: Stream.fromQueue(messages),
+                  offer: (message) =>
+                    Effect.sync(() => {
+                      offers.push(message);
+                    }),
+                  setModel: () => Effect.void,
+                  applyFlagSettings: () => Effect.void,
+                  setPermissionMode: () => Effect.void,
+                  backgroundTasks: () => Effect.succeed(false),
+                  stopTask: () => Effect.void,
+                  interrupt: Effect.sync(() => {
+                    interrupts++;
+                  }),
+                  close: Queue.shutdown(messages),
+                };
+              }),
+            forkSession: () => Effect.die("unused"),
+            subagentLaunchToolUseId: () => Effect.succeed(null),
+            assertComplete: Effect.void,
           },
         });
-        assert.equal(missing.nativeThreadRef?.nativeId, "native-thread-missing");
+        yield* Effect.gen(function* () {
+          const orchestrator = yield* Orchestrator.OrchestratorV2;
+          const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+          const threadId = ThreadId.make("thread-claude-warm-resume");
+          yield* orchestrator.dispatch({
+            type: "thread.create",
+            commandId: CommandId.make("warm-create"),
+            threadId,
+            projectId: ProjectId.make("project-claude-warm-resume"),
+            title: "Warm resume",
+            modelSelection: CLAUDE_TEST_MODEL_SELECTION,
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            branch: null,
+            worktreePath: cwd,
+            createdBy: "user",
+            creationSource: "web",
+          });
+          const dispatch = Effect.fnUntraced(function* (id: string, text: string) {
+            const running = yield* orchestrator.streamDomainEvents.pipe(
+              Stream.filter(
+                (event) =>
+                  event.type === "provider-turn.updated" && event.payload.status === "running",
+              ),
+              Stream.take(1),
+              Stream.runDrain,
+              Effect.forkScoped,
+            );
+            yield* orchestrator.dispatch({
+              type: "message.dispatch",
+              commandId: CommandId.make(id),
+              threadId,
+              messageId: MessageId.make(id),
+              text,
+              attachments: [],
+              dispatchMode: { type: "start_immediately" },
+              createdBy: "user",
+              creationSource: "web",
+            });
+            yield* worker.drain();
+            yield* Fiber.join(running);
+            return yield* orchestrator.getThreadProjection(threadId);
+          });
+          const first = yield* dispatch("warm-first", "Remember the launch code is apricot.");
+          assert.equal(first.providerTurns[0]?.status, "running");
+          assert.equal(opens[0]?.options.sessionId, "native-warm-1");
+          assert.isUndefined(opens[0]?.options.resume);
+          assert.lengthOf(offers, 1);
+          assert.isFalse(yield* fileSystem.exists(path.join(configDir, "projects")));
+
+          const stopped = yield* orchestrator.streamDomainEvents.pipe(
+            Stream.filter(
+              (event) =>
+                event.type === "run.updated" &&
+                event.payload.id === first.runs[0]?.id &&
+                event.payload.status === "interrupted",
+            ),
+            Stream.take(1),
+            Stream.runDrain,
+            Effect.forkScoped,
+          );
+          yield* orchestrator.dispatch({
+            type: "thread.stop",
+            commandId: CommandId.make("warm-stop"),
+            threadId,
+          });
+          yield* worker.drain();
+          yield* Fiber.join(stopped);
+          yield* worker.drain();
+          assert.equal(interrupts, 1);
+          assert.isFalse(yield* fileSystem.exists(path.join(configDir, "projects")));
+
+          // No clock advance, detach, policy change, or adapter resume call between turns.
+          const second = yield* dispatch("warm-retry", "What is the launch code?");
+          assert.equal(second.providerTurns.at(-1)?.status, "running");
+          assert.lengthOf(opens, 2);
+          assert.equal(opens[1]?.providerSessionId, opens[0]?.providerSessionId);
+          assert.equal(opens[1]?.options.cwd, opens[0]?.options.cwd);
+          assert.equal(opens[1]?.options.model, opens[0]?.options.model);
+          assert.equal(opens[1]?.options.permissionMode, opens[0]?.options.permissionMode);
+          assert.deepEqual(
+            opens.map(({ options }) => ({ sessionId: options.sessionId, resume: options.resume })),
+            [
+              { sessionId: "native-warm-1", resume: undefined },
+              { sessionId: "native-warm-2", resume: undefined },
+            ],
+          );
+          assert.equal(second.providerThreads[0]?.nativeThreadRef?.nativeId, "native-warm-2");
+          assert.lengthOf(second.contextHandoffs, 1);
+          assert.equal(second.contextHandoffs[0]?.strategy, "full_thread_summary");
+          assert.lengthOf(second.contextTransfers, 1);
+          assert.equal(second.contextTransfers[0]?.type, "provider_handoff");
+          assert.equal(second.contextTransfers[0]?.targetRunId, second.runs[1]?.id);
+          assert.include(JSON.stringify(offers[1]), "apricot");
+        }).pipe(
+          Effect.provide(
+            layerWithRegistry(
+              { name: "claude-warm-resume" },
+              ProviderAdapterRegistry.layerSingle(adapter),
+              { runEffectWorker: false },
+            ),
+          ),
+        );
       }),
-    ).pipe(
-      Effect.provide(
-        Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
-      ),
-    ),
+    ).pipe(Effect.provide(testLayer)),
+  );
+
+  it.effect("fails when the Claude home has no projects directory", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const configDir = yield* fileSystem.makeTempDirectoryScoped({
+          prefix: "t3-claude-missing-projects-",
+        });
+        const { runtime, providerThread } = yield* openRuntime(configDir, fileSystem);
+
+        const error = yield* Effect.flip(runtime.resumeThread({ providerThread }));
+
+        assert.equal(error._tag, "ProviderAdapterResumeThreadError");
+      }),
+    ).pipe(Effect.provide(testLayer)),
+  );
+
+  it.effect.each(["readDirectory", "exists", "stream"] as const)(
+    "retains the native session when transcript storage fails at %s",
+    (method) =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const fileSystem = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const configDir = yield* fileSystem.makeTempDirectoryScoped({
+            prefix: "t3-claude-unreadable-session-",
+          });
+          const projectDir = path.join(configDir, "projects", "-workspace");
+          yield* fileSystem.makeDirectory(projectDir, { recursive: true });
+          yield* fileSystem.writeFileString(
+            path.join(projectDir, "native-thread-empty.jsonl"),
+            '{"type":"user","message":{"role":"user","content":"hello"}}\n',
+          );
+          const storageError = PlatformError.systemError({
+            _tag: "PermissionDenied",
+            module: "FileSystem",
+            method,
+            pathOrDescriptor: projectDir,
+          });
+          const { runtime, providerThread } = yield* openRuntime(configDir, {
+            ...fileSystem,
+            readDirectory:
+              method === "readDirectory"
+                ? () => Effect.fail(storageError)
+                : fileSystem.readDirectory,
+            exists: method === "exists" ? () => Effect.fail(storageError) : fileSystem.exists,
+            stream: method === "stream" ? () => Stream.fail(storageError) : fileSystem.stream,
+          });
+
+          const resumed = yield* runtime.resumeThread({ providerThread });
+
+          assert.deepEqual(resumed.nativeThreadRef, providerThread.nativeThreadRef);
+        }),
+      ).pipe(Effect.provide(testLayer)),
+  );
+
+  it.effect("retains a live query before its first transcript is persisted", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const configDir = yield* fileSystem.makeTempDirectoryScoped({
+          prefix: "t3-claude-live-session-",
+        });
+        yield* fileSystem.makeDirectory(path.join(configDir, "projects", "-workspace"), {
+          recursive: true,
+        });
+        const { runtime, providerThread, threadId } = yield* openRuntime(configDir, fileSystem);
+        yield* runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId,
+            providerThread,
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make("attempt-claude-resume-live"),
+            text: "hello",
+            attachments: [],
+          }),
+        );
+
+        const resumed = yield* runtime.resumeThread({ providerThread });
+
+        assert.deepEqual(resumed.nativeThreadRef, providerThread.nativeThreadRef);
+      }),
+    ).pipe(Effect.provide(testLayer)),
   );
 });
 
@@ -3213,6 +3523,21 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       };
     });
   const makeWakeHarness = makeWakeHarnessWithOptions();
+  // resumeThread refuses a native session the CLI never saved.
+  const makeResumableWakeHarness = Effect.fnUntraced(function* (nativeSessionId: string) {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const configDir = yield* fileSystem.makeTempDirectoryScoped({
+      prefix: "t3-claude-v2-wake-home-",
+    });
+    const projectDir = path.join(configDir, "projects", "-workspace");
+    yield* fileSystem.makeDirectory(projectDir, { recursive: true });
+    yield* fileSystem.writeFileString(
+      path.join(projectDir, `${nativeSessionId}.jsonl`),
+      `{"type":"user","message":{"role":"user","content":"hello"},"sessionId":"${nativeSessionId}"}\n`,
+    );
+    return yield* makeWakeHarnessWithOptions({ environment: { CLAUDE_CONFIG_DIR: configDir } });
+  });
 
   it.effect.each(["release-after", "cancel-after", "release-before", "resume-pending"] as const)(
     "keeps attachment reservations across compaction: %s boundary",
@@ -3339,7 +3664,10 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         assert.equal(usage?.pagesUsed, undelivered ? 0 : 60);
         if (undelivered) assert.equal(usage?.bytesUsed, 0);
         else assert.isAbove(usage?.bytesUsed ?? 0, 25 * 1024 * 1024);
-        const next = outcome === "resume-pending" ? yield* makeWakeHarness : harness;
+        const next =
+          outcome === "resume-pending"
+            ? yield* makeResumableWakeHarness(WAKE_NATIVE_SESSION)
+            : harness;
         const providerThread =
           outcome === "resume-pending"
             ? yield* next.runtime.resumeThread({ providerThread: persisted })
@@ -3555,7 +3883,9 @@ describe("ClaudeAdapterV2 background wake turns", () => {
               }),
             )
           : persisted;
-        const resumed = yield* makeWakeHarness;
+        const resumed = yield* makeResumableWakeHarness(
+          fork ? "forked-native-session" : WAKE_NATIVE_SESSION,
+        );
         const providerThread = yield* resumed.runtime.resumeThread({ providerThread: inherited });
         yield* fileSystem.writeFileString(
           path.join(resumed.attachmentsDir, attachmentRelativePath(document)!),

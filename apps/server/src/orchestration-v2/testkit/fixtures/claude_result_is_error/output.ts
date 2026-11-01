@@ -46,7 +46,12 @@ export function assertClaudeResultIsErrorOutput(
   );
   assert.isDefined(errorItem);
   if (errorItem?.type !== "error") throw new Error("expected error item");
-  assert.equal(errorItem.failure.message, AUTH_FAILURE_TEXT);
+  const replayLocation =
+    / from "[^"]+", with CLAUDE_CONFIG_DIR set to "[^"]+[/\\]claude-replay-home-[^"]+"/.exec(
+      errorItem.failure.message,
+    );
+  assert.isNotNull(replayLocation);
+  assert.equal(errorItem.failure.message.replace(replayLocation[0], ""), AUTH_FAILURE_TEXT);
   assert.equal(errorItem.failure.code, "api_error_401");
   assert.equal(errorItem.failure.class, "provider_error");
 
