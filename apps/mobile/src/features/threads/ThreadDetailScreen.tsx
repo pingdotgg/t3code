@@ -15,7 +15,7 @@ import { createThreadVisitTracker } from "@t3tools/client-runtime/state/thread-v
 import { useChildThreadInputs, useThreadReportedModelSelection } from "../../state/entities";
 import { UsageLimitRecoveryCard } from "./UsageLimitRecoveryCard";
 import { ChatGptUsageLimitNotice } from "./ChatGptUsageLimitNotice";
-import { ScrollEdgeEffect, ScrollEdgeEffectProvider } from "@bsky.app/expo-scroll-edge-effect";
+import { ScrollEdgeEffectProvider } from "@bsky.app/expo-scroll-edge-effect";
 import { useFocusEffect, useNavigation } from "@react-navigation/native";
 import {
   effectiveSnoozed,
@@ -1685,7 +1685,7 @@ function ThreadDetailBody(props: ThreadDetailScreenProps) {
                       />
                     </View>
                   ) : (
-                    <ScrollEdgeEffect edge="bottom" effect="soft">
+                    <>
                       <ThreadComposer
                         isDraft={Boolean(props.draftMode)}
                         canOperateThread={props.canOperateThread}
@@ -1756,7 +1756,7 @@ function ThreadDetailBody(props: ThreadDetailScreenProps) {
                         onHeightChange={handleComposerHeightChange}
                         onEditorFocusChange={handleOwnedInputFocusChange}
                       />
-                    </ScrollEdgeEffect>
+                    </>
                   )}
                 </View>
               </View>
