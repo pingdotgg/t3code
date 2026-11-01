@@ -5038,6 +5038,18 @@ describe("CodexAdapterV2 post-settle continuation", () => {
 
   it.effect.each([
     {
+      name: "first-request-reset",
+      code: "usageLimitExceeded",
+      notification: false,
+      expectedClass: "usage_limit",
+    },
+    {
+      name: "first-request-read-failed",
+      code: "usageLimitExceeded",
+      notification: false,
+      expectedClass: "usage_limit",
+    },
+    {
       name: "usage",
       code: "usageLimitExceeded",
       notification: false,
@@ -5114,6 +5126,19 @@ describe("CodexAdapterV2 post-settle continuation", () => {
           scenario: `codex-limit-${scenario.name}`,
           entries: [
             ...codexReplayPreamble({ nativeThreadId, nativeTurnId, prompt: "Continue." }),
+            ...(scenario.name.startsWith("first-request-")
+              ? [
+                  {
+                    ...snapshot,
+                    frame: {
+                      method: "account/rateLimits/updated",
+                      params: {
+                        rateLimits: { limitId: "premium", primary: null, secondary: null },
+                      },
+                    },
+                  },
+                ]
+              : []),
             ...(scenario.name === "deferred-reset" ? [snapshot] : []),
             ...(scenario.name === "deferred-reset"
               ? [
@@ -5198,6 +5223,42 @@ describe("CodexAdapterV2 post-settle continuation", () => {
                 },
               },
             },
+            ...(scenario.name === "first-request-reset"
+              ? [
+                  {
+                    type: "expect_outbound" as const,
+                    label: "account/rateLimits/read",
+                    frame: { id: 4, method: "account/rateLimits/read", params: null },
+                  },
+                  {
+                    type: "emit_inbound" as const,
+                    label: "account/rateLimits/read",
+                    frame: {
+                      id: 4,
+                      result: {
+                        rateLimits: { limitId: "premium", primary: null, secondary: null },
+                        rateLimitsByLimitId: {
+                          codex: snapshot.frame.params.rateLimits,
+                        },
+                      },
+                    },
+                  },
+                ]
+              : []),
+            ...(scenario.name === "first-request-read-failed" || scenario.name === "late-reset"
+              ? [
+                  {
+                    type: "expect_outbound" as const,
+                    label: "account/rateLimits/read",
+                    frame: { id: 4, method: "account/rateLimits/read", params: null },
+                  },
+                  {
+                    type: "emit_inbound" as const,
+                    label: "account/rateLimits/read",
+                    frame: { id: 4, error: { code: -32600, message: "Not signed in." } },
+                  },
+                ]
+              : []),
             ...(scenario.name === "late-reset" ? [snapshot] : []),
             ...(scenario.name === "deferred-reset"
               ? [
@@ -5258,7 +5319,10 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         if (terminal?.status !== "failed") return;
         assert.equal(terminal.failure.class, scenario.expectedClass);
         assert.equal(terminal.threadDisposition, "reusable");
-        if (scenario.name === "deferred-reset") assert.equal(terminal.failure.resetAt, resetAt);
+        if (scenario.name === "deferred-reset" || scenario.name === "first-request-reset")
+          assert.equal(terminal.failure.resetAt, resetAt);
+        if (scenario.name === "first-request-read-failed" || scenario.name === "late-reset")
+          assert.isNull(terminal.failure.resetAt);
         if (scenario.name === "matching-details")
           assert.equal(terminal.failure.message, "Detailed provider allowance explanation.");
         if (scenario.name === "late-reset") {
