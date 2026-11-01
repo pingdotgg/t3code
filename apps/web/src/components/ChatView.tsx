@@ -300,7 +300,7 @@ import { NativeChildWorkDialog } from "./chat/NativeChildWorkDialog";
 import { ProviderSubagentBar } from "./chat/ProviderSubagentBar";
 import { getTriggerDisplayModelName } from "./chat/providerIconUtils";
 import { resolveScrollToEndClearance } from "./composerFooterLayout";
-import { ChatHeader } from "./chat/ChatHeader";
+import { ChatHeader, type ChatHeaderHandle } from "./chat/ChatHeader";
 import { useSideChat } from "./chat/useSideChat";
 import { useRemoteOpenState } from "~/remoteOpen";
 import { shouldShowOpenInPicker } from "./chat/OpenInPicker.logic";
@@ -441,6 +441,7 @@ const DismissedFallbackWindowSchema = Schema.NullOr(Schema.String);
 const ignoreComposerFocus = () => {};
 
 export default function ChatView(props: ChatViewProps) {
+  const chatHeaderRef = useRef<ChatHeaderHandle>(null);
   const {
     environmentId,
     threadId,
@@ -2762,6 +2763,28 @@ export default function ChatView(props: ChatViewProps) {
       ...terminalShortcuts,
       ...rightPanelShortcuts,
       ...threadLifecycleShortcuts,
+      "thread.rename": ({ event }) => {
+        if (!isServerThread || !canOperateThread || document.querySelector('[role="dialog"]'))
+          return false;
+        if (!event.repeat) chatHeaderRef.current?.startRename();
+      },
+      "thread.regenerateTitle": ({ event }) => {
+        if (!isServerThread || !canOperateThread || document.querySelector('[role="dialog"]'))
+          return false;
+        if (event.repeat) return;
+        void updateThreadMetadata({
+          environmentId,
+          input: { threadId: activeThreadId, regenerateTitle: true },
+        }).then((result) => {
+          if (result._tag !== "Failure" || isAtomCommandInterrupted(result)) return;
+          const error = squashAtomCommandFailure(result);
+          toastManager.add({
+            type: "error",
+            title: "Failed to regenerate thread title",
+            description: error instanceof Error ? error.message : "An error occurred.",
+          });
+        });
+      },
       "thread.copyReference": ({ event }) => {
         if (!event.repeat) copyActiveThreadReference();
       },
@@ -3373,6 +3396,7 @@ export default function ChatView(props: ChatViewProps) {
             {!rightPanelControlsAtRoot && !rightPanelControlsInPanel ? panelLayoutControls : null}
             {inlineRightPanelOwnsTitleBar ? threadPanelHeaderControl : null}
             <ChatHeader
+              ref={chatHeaderRef}
               activeThreadEnvironmentId={activeThread.environmentId}
               activeThreadId={activeThread.id}
               isServerThread={isServerThread}
