@@ -380,8 +380,66 @@ function markdownLinkDestinationScanner(markdown: string) {
   };
 }
 
-export function extractMarkdownLinkHrefs(markdown: string): string[] {
+// Stands in for a space inside a drive path destination while CommonMark parses it. One UTF-16
+// unit, so every source offset the renderers read stays where it was.
+const DESTINATION_SPACE = "\uE020";
+
+// `](C:\Users\Jo Doe\shot.png)` or with a title. Parentheses inside the path must balance.
+const SPACED_DRIVE_DESTINATION =
+  /\]\([ \t]*([A-Za-z]:[\\/](?:[^()\n]|\([^()\n]*\))*?)(?=(?:[ \t]+"[^"\n]*")?[ \t]*\))/g;
+const HAS_SPACED_DRIVE_DESTINATION = /\]\([ \t]*[A-Za-z]:[\\/][^)\n]* [^)\n]*\)/;
+const CODE_FENCE = /^ {0,3}(`{3,}|~{3,})/;
+const INLINE_CODE = /(`+)[^`]*?\1/g;
+
+function protectDestinationsOutsideInlineCode(line: string): string {
+  let result = "";
+  let cursor = 0;
+  const protect = (segment: string) =>
+    segment.replace(
+      SPACED_DRIVE_DESTINATION,
+      (match: string, destination: string) =>
+        match.slice(0, match.length - destination.length) +
+        destination.replaceAll(" ", DESTINATION_SPACE),
+    );
+  for (const code of line.matchAll(INLINE_CODE)) {
+    result += protect(line.slice(cursor, code.index)) + code[0];
+    cursor = code.index + code[0].length;
+  }
+  return result + protect(line.slice(cursor));
+}
+
+/**
+ * CommonMark ends a bare destination at its first space, so `![shot](C:\Users\Jo Doe\a.png)`
+ * renders as text. Agents write Windows paths that way, so a drive path destination keeps its
+ * spaces until the parser has read it. Code stays as written.
+ */
+export function protectSpacedWindowsDestinations(markdown: string): string {
+  if (!HAS_SPACED_DRIVE_DESTINATION.test(markdown)) return markdown;
+  let fence: string | null = null;
+  return markdown
+    .split("\n")
+    .map((line) => {
+      const marker = CODE_FENCE.exec(line)?.[1];
+      if (fence !== null) {
+        if (marker && marker[0] === fence[0] && marker.length >= fence.length) fence = null;
+        return line;
+      }
+      if (marker) {
+        fence = marker;
+        return line;
+      }
+      return line.includes("](") ? protectDestinationsOutsideInlineCode(line) : line;
+    })
+    .join("\n");
+}
+
+export function restoreWindowsDestinationSpaces(value: string): string {
+  return value.includes(DESTINATION_SPACE) ? value.replaceAll(DESTINATION_SPACE, " ") : value;
+}
+
+export function extractMarkdownLinkHrefs(source: string): string[] {
   const hrefs: string[] = [];
+  const markdown = protectSpacedWindowsDestinations(source);
   const scanDestination = markdownLinkDestinationScanner(markdown);
   let cursor = 0;
   while (cursor < markdown.length) {
@@ -396,7 +454,7 @@ export function extractMarkdownLinkHrefs(markdown: string): string[] {
     if (!destination) continue;
     cursor = destination.end;
     const href = markdown.slice(destination.hrefStart, destination.hrefEnd).trim();
-    if (href) hrefs.push(href);
+    if (href) hrefs.push(restoreWindowsDestinationSpaces(href));
   }
   return hrefs;
 }

@@ -99,6 +99,10 @@ describe("extractMarkdownLinkHrefs", () => {
     ["[".repeat(32_000), []],
     ["[a](<foo)bar> invalid [b](ok)", ["<foo", "ok"]],
     ["[[[nested](src/main.ts) [unfinished", ["src/main.ts"]],
+    [
+      String.raw`[a](C:\Users\Jo Doe\.t3\a.png) [b](C:\Jo Doe\b.html "B")`,
+      [String.raw`C:\Users\Jo Doe\.t3\a.png`, String.raw`C:\Jo Doe\b.html`],
+    ],
   ])("extracts links from incomplete and nested text", (markdown, hrefs) => {
     expect(extractMarkdownLinkHrefs(markdown)).toEqual(hrefs);
   });
