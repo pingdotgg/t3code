@@ -66,6 +66,7 @@ import {
   LinkIcon,
   MessageSquareIcon,
   PaletteIcon,
+  PlugIcon,
   RotateCcwIcon,
   SettingsIcon,
   MonitorIcon,
@@ -141,6 +142,8 @@ import {
   isUnsupportedWindowsProjectPath,
   resolveProjectPathForDispatch,
 } from "@t3tools/client-runtime/state/projects";
+import { runPluginAction } from "../pluginActions";
+import { usePluginActions } from "../state/pluginActions";
 import {
   dispatchCommandPalette,
   getCommandPaletteReturnFocus,
@@ -171,6 +174,7 @@ import {
   buildBrowseGroups,
   buildRootGroups,
   buildLinkedThreadActionItems,
+  buildPluginActionItems,
   buildCommandPaletteRows,
   enumerateCommandPaletteItems,
   newThreadNoProjectIndex,
@@ -651,6 +655,13 @@ function OpenCommandPaletteDialog(props: {
   const currentProjectEnvironmentId =
     activeThread?.environmentId ?? activeDraftThread?.environmentId ?? null;
   const currentProjectId = activeThread?.projectId ?? activeDraftThread?.projectId ?? null;
+  // Plugin actions belong to the environment the palette was opened in.
+  const pluginActionEnvironmentId = currentProjectEnvironmentId ?? primaryEnvironmentId;
+  const pluginActions = usePluginActions(pluginActionEnvironmentId);
+  const canRunPluginActions = useEnvironmentScope(
+    pluginActionEnvironmentId,
+    AuthOrchestrationOperateScope,
+  );
   const scratchTargetEnvironmentId = scratchEnvironmentId(currentProjectEnvironmentId);
   const supportsTriage = (environmentId: EnvironmentId | null) =>
     environments.find((environment) => environment.environmentId === environmentId)?.serverConfig
@@ -1433,6 +1444,20 @@ function OpenCommandPaletteDialog(props: {
         if (refreshed._tag === "Failure") throw squashAtomCommandFailure(refreshed);
       },
     });
+  }
+
+  if (pluginActionEnvironmentId !== null) {
+    actionItems.push(
+      ...buildPluginActionItems({
+        environmentId: pluginActionEnvironmentId,
+        actions: pluginActions,
+        canOperate: canRunPluginActions,
+        threadId: activeThread?.id ?? null,
+        projectId: currentProjectId,
+        icon: <PlugIcon className={ITEM_ICON_CLASS} />,
+        runAction: runPluginAction,
+      }),
+    );
   }
 
   actionItems.push({
