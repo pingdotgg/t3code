@@ -7,6 +7,7 @@ import type { PiSettings } from "../settings.ts";
 import { causeErrorTag } from "@t3tools/shared/observability";
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
 import { compareSemverVersions } from "@t3tools/shared/semver";
+import * as Cause from "effect/Cause";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Stream from "effect/Stream";
@@ -164,13 +165,31 @@ const makePiDiscoveryConnection = Effect.fnUntraced(function* (
   return connection;
 });
 
+const PI_PROJECT_TRUST_ARGUMENTS = new Set(["--approve", "-a", "--no-approve", "-na"]);
+
+/**
+ * The machine probe skips project-local files unless the user picked a trust mode. Pi's RPC mode
+ * reads stdin only after session_start, so an extension dialog raised there (an MCP adapter asking
+ * to approve a project server) can never be answered and Pi exits 0 without replying.
+ */
+function machineProbeLaunchArgs(launchArgs: ReadonlyArray<string>): ReadonlyArray<string> {
+  return launchArgs.some((arg) => PI_PROJECT_TRUST_ARGUMENTS.has(arg))
+    ? launchArgs
+    : [...launchArgs, "--no-approve"];
+}
+
 const discoverPiViaRpc = Effect.fn("PiProviderStatus.discoverPiViaRpc")(function* (
   piSettings: PiSettings,
   environment: NodeJS.ProcessEnv,
   launchArgs: ReadonlyArray<string>,
   cwd?: string,
 ) {
-  const connection = yield* makePiDiscoveryConnection(piSettings, environment, launchArgs, cwd);
+  const connection = yield* makePiDiscoveryConnection(
+    piSettings,
+    environment,
+    machineProbeLaunchArgs(launchArgs),
+    cwd,
+  );
   const stateData = yield* connection.request({ type: "get_state" });
   const modelsData = yield* connection.request({ type: "get_available_models" });
   const commandsData = yield* connection
@@ -465,8 +484,11 @@ export const checkPiProviderStatus = Effect.fn("checkPiProviderStatus")(function
     cwd,
   ).pipe(Effect.timeoutOption(PI_RPC_DISCOVERY_TIMEOUT_MS), Effect.exit);
   if (Exit.isFailure(discoveryExit)) {
+    const failure = Cause.findErrorOption(discoveryExit.cause);
     yield* Effect.logWarning("Pi RPC discovery failed.", {
       errorTag: causeErrorTag(discoveryExit.cause),
+      // Pi RPC error messages are bounded and carry no stderr.
+      ...(Option.isSome(failure) ? { detail: failure.value.message } : {}),
     });
     return buildServerProvider({
       presentation: PI_PRESENTATION,
