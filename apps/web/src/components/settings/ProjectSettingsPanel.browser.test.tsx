@@ -134,7 +134,7 @@ vi.mock(import("../files/projectFilesQueryState"), async (original) => ({
 
 import { useComposerDraftStore } from "../../composerDraftStore";
 import { appAtomRegistry } from "../../rpc/atomRegistry";
-import { buildSidebarProjectSnapshots } from "../../sidebarProjectGrouping";
+import { buildSettingsProjectSnapshots } from "../../sidebarProjectGrouping";
 import { ProjectSettingsPanel } from "./ProjectSettingsPanel";
 import { ProjectsSettings } from "./ProjectsSettings";
 import { SettingsScopeProvider } from "./SettingsScopeContext";
@@ -216,7 +216,7 @@ function setup() {
 }
 
 function projectKey() {
-  return buildSidebarProjectSnapshots({
+  return buildSettingsProjectSnapshots({
     projects: state.projects,
     settings: DEFAULT_CLIENT_SETTINGS,
     primaryEnvironmentId: primaryId,
@@ -511,13 +511,14 @@ describe("project identity reset", () => {
     );
   });
 
-  it("resets each member of a mixed group to its own default icon", async () => {
+  it("resets each scratch member without changing an ordinary project", async () => {
     setup();
     const [primary, remote] = state.projects;
-    state.projects = [asScratch(primary!), { ...remote!, faviconPath: "logo.png" }];
+    const ordinary = { ...remote!, id: ProjectId.make("ordinary"), faviconPath: "logo.png" };
+    state.projects = [asScratch(primary!), asScratch(remote!), ordinary];
     await using screen = await mountPanel();
 
-    expect(resetButton(screen, "project name")).toBeNull();
+    expect(resetButton(screen, "project name")).not.toBeNull();
     await userEvent.click(resetButton(screen, "project icon")!);
     await vi.waitFor(() => expect(state.update).toHaveBeenCalledTimes(2));
     expect(state.update.mock.calls.map(([request]) => request)).toEqual([
@@ -527,9 +528,10 @@ describe("project identity reset", () => {
       },
       {
         environmentId: remoteId,
-        input: { projectId: remote!.id, faviconPath: null, projectIcon: null },
+        input: { projectId: remote!.id, faviconPath: null, projectIcon: scratchIcon },
       },
     ]);
+    expect(state.projects.find((project) => project.id === ordinary.id)).toEqual(ordinary);
   });
 });
 
