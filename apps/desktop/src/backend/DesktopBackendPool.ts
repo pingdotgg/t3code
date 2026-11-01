@@ -113,6 +113,17 @@ export const layer = Layer.effect(
     const layerScope = yield* Scope.Scope;
     const factoryContext = yield* Effect.context<BackendInstanceFactoryRequirements>();
 
+    // In memory only: the saved WSL preference is retried on the next launch.
+    const useWindowsForThisLaunch = Effect.fn("desktop.backendPool.useWindowsForThisLaunch")(
+      function* (reason: string) {
+        yield* electronDialog.showErrorBox(
+          "WSL backend is still unavailable",
+          `${reason}\n\nT3 Code will use the Windows backend for this launch and retry WSL the next time the app starts.`,
+        );
+        yield* appSettings.applyWslWindowsFallbackInMemory;
+      },
+    );
+
     // Persist fatal Windows fallbacks; transient transport failures must preserve the user's WSL preference.
     const handlePrimaryPreflightFailure = Effect.fn("desktop.backendPool.primaryPreflightFailed")(
       function* (failure: DesktopBackendManager.PreflightFailure) {
@@ -122,11 +133,7 @@ export const layer = Layer.effect(
             "primary WSL preflight retry window exhausted; using Windows for this launch",
             { reason },
           );
-          yield* electronDialog.showErrorBox(
-            "WSL backend is still unavailable",
-            `${reason}\n\nT3 Code will use the Windows backend for this launch and retry WSL the next time the app starts.`,
-          );
-          yield* appSettings.applyWslWindowsFallbackInMemory;
+          yield* useWindowsForThisLaunch(reason);
           return true;
         }
 
@@ -153,7 +160,25 @@ export const layer = Layer.effect(
       },
     );
 
-    const primary = yield* DesktopBackendManager.makeBackendInstance({
+    // Only a crash loop falls back: a live WSL process past its readiness window is often a slow cold boot.
+    const handlePrimaryStartupFailure = Effect.fn("desktop.backendPool.primaryStartupFailed")(
+      function* (failure: DesktopBackendManager.BackendStartupFailure) {
+        const config = yield* primary.currentConfig;
+        const runningOnWsl = Option.exists(config, (value) => value.runningDistro !== undefined);
+        const crashed = Option.isNone((yield* primary.snapshot).activePid);
+        if (!runningOnWsl || !crashed || !(yield* appSettings.get).wslOnly) {
+          return yield* SubscriptionRef.set(primaryBackendStartup, { _tag: "Failing", ...failure });
+        }
+        yield* logBackendPoolWarning(
+          "primary WSL backend failed to start; using Windows for this launch",
+          { reason: failure.reason },
+        );
+        // The manager's scheduled restart re-resolves settings and comes up on Windows.
+        yield* useWindowsForThisLaunch(failure.reason);
+      },
+    );
+
+    const primary: DesktopBackendInstance = yield* DesktopBackendManager.makeBackendInstance({
       id: DesktopBackendManager.PRIMARY_INSTANCE_ID,
       // Resolve lazily: startup loads persisted settings after pool initialization.
       label: configuration.resolvePrimaryLabel,
@@ -169,8 +194,7 @@ export const layer = Layer.effect(
             }),
           ),
         ),
-      onStartupFailure: (failure) =>
-        SubscriptionRef.set(primaryBackendStartup, { _tag: "Failing", ...failure }),
+      onStartupFailure: handlePrimaryStartupFailure,
       onShutdown: () => desktopWindow.handleBackendNotReady,
       onPreflightFailed: handlePrimaryPreflightFailure,
       onStateDirOwned: () =>

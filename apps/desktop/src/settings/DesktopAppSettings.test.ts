@@ -376,6 +376,29 @@ describe("DesktopSettings", () => {
     ),
   );
 
+  it.effect("keeps the in-memory WSL fallback out of later persisted writes", () =>
+    withSettings(
+      Effect.gen(function* () {
+        const settings = yield* DesktopAppSettings.DesktopAppSettings;
+        yield* settings.setWslBackendEnabled(true);
+        yield* settings.setWslOnly(true);
+        yield* settings.applyWslWindowsFallbackInMemory;
+
+        const moved = yield* settings.setMainWindowBounds(
+          { x: 10, y: 20, width: 1200, height: 800 },
+          false,
+        );
+        assert.isTrue(moved.changed);
+        assert.isFalse(moved.settings.wslOnly);
+
+        const reloaded = yield* settings.load;
+        assert.isTrue(reloaded.wslBackendEnabled);
+        assert.isTrue(reloaded.wslOnly);
+        assert.equal(reloaded.mainWindowBounds?.width, 1200);
+      }),
+    ),
+  );
+
   it.effect("migrates legacy wslMode=wsl to wslBackendEnabled on load", () =>
     withSettings(
       Effect.gen(function* () {
