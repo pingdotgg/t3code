@@ -101,6 +101,33 @@ Home Manager, update your configuration's nixpkgs input or channel and rebuild.
 Nix manages both the desktop app and the bundled
 `t3` command; use Nix to update them instead of the in-app updater or `t3 update`.
 
+### Nix (upstream desktop flake)
+
+On x86_64 Linux, run the desktop app:
+
+```bash
+nix run github:pingdotgg/t3code
+```
+
+For a declarative install, add `inputs.t3code.url = "github:pingdotgg/t3code";`
+to your system flake and pass `specialArgs = { inherit inputs; };` to
+`nixpkgs.lib.nixosSystem`. Then select the package in a NixOS module:
+
+```nix
+{ inputs, pkgs, ... }:
+{
+  environment.systemPackages = [
+    inputs.t3code.packages.${pkgs.stdenv.hostPlatform.system}.default
+  ];
+}
+```
+
+The package tracks stable releases. From the system flake directory, run
+`nix flake update t3code`, then `sudo nixos-rebuild switch --flake .#<hostname>`
+to upgrade. The lock file keeps the installed version pinned until you update
+it. The app's automatic updater is disabled for this package; use Nix to
+upgrade it.
+
 ### The `t3` command
 
 The desktop app includes the `t3` command-line tool. To run it from any

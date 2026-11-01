@@ -260,6 +260,9 @@ jobs:
       - name: Test release checks
         run: node --test .github/scripts/check-nightly-release.test.cjs .github/scripts/vercel-deployment-output.test.cjs
 
+      - name: Test Nix release pin
+        run: node --test .github/scripts/update-nix-release.test.cjs
+
       - name: Finish installing browser secret helper build libraries
         timeout-minutes: 5
         run: |

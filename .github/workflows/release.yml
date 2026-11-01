@@ -1373,21 +1373,29 @@ jobs:
         if: steps.update_versions.outputs.changed == 'true'
         run: vp install --lockfile-only --ignore-scripts
 
-      - name: Commit and push version bump
-        if: steps.update_versions.outputs.changed == 'true'
+      - name: Update Nix release pin
+        if: needs.preflight.outputs.is_prerelease == 'false'
+        env:
+          GH_TOKEN: ${{ steps.app_token.outputs.token }}
+          RELEASE_TAG: ${{ needs.preflight.outputs.tag }}
+        run: |
+          gh api "repos/$GITHUB_REPOSITORY/releases/tags/$RELEASE_TAG" > "$RUNNER_TEMP/nix-release.json"
+          node .github/scripts/update-nix-release.cjs "$RUNNER_TEMP/nix-release.json"
+
+      - name: Commit and push release metadata
         shell: bash
         env:
           RELEASE_TAG: ${{ needs.preflight.outputs.tag }}
         run: |
-          if git diff --quiet -- apps/server/package.json apps/desktop/package.json apps/web/package.json packages/contracts/package.json pnpm-lock.yaml; then
-            echo "No version changes to commit."
+          if git diff --quiet -- apps/server/package.json apps/desktop/package.json apps/web/package.json packages/contracts/package.json pnpm-lock.yaml packaging/nix/release.json; then
+            echo "No release metadata changes to commit."
             exit 0
           fi
 
           git config user.name "${{ steps.app_bot.outputs.name }}"
           git config user.email "${{ steps.app_bot.outputs.email }}"
 
-          git add apps/server/package.json apps/desktop/package.json apps/web/package.json packages/contracts/package.json pnpm-lock.yaml
+          git add apps/server/package.json apps/desktop/package.json apps/web/package.json packages/contracts/package.json pnpm-lock.yaml packaging/nix/release.json
           git commit --no-verify -m "chore(release): prepare $RELEASE_TAG"
           git push origin HEAD:main
 
