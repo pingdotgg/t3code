@@ -49,13 +49,16 @@ const establishmentTimeout = Duration.fromInputUnsafe(CONNECTION_ESTABLISHMENT_T
 const synchronizationTimeout = Duration.fromInputUnsafe("75 seconds");
 const CONNECTION_PROBE_TIMEOUT = "15 seconds";
 const QUICK_CONNECTION_PROBE_TIMEOUT = "3 seconds";
+// After a long suspension pooled connections are often dead too, so the host
+// check can hang with the socket. A replacement is cheaper than the wait.
+const LONG_RESUME_PROBE_TIMEOUT = "1500 millis";
 // A probe still unanswered this long checks the host with a fresh request. If
 // the host answers while the socket stays silent, the socket is dead.
 const SILENT_SOCKET_CHECK_AFTER = "500 millis";
 const SILENT_SOCKET_RECHECK_EVERY = "1 second";
 // Off the LAN one lost packet can stall a live socket for a second, so a remote
-// socket must stay silent this long. It must end before
-// QUICK_CONNECTION_PROBE_TIMEOUT so a long resume replaces a silent socket
+// socket must stay silent this long, except after a long resume. It must end
+// before QUICK_CONNECTION_PROBE_TIMEOUT so a resume replaces a silent socket
 // instead of timing out.
 const REMOTE_SILENT_SOCKET_AFTER = "2500 millis";
 const BACKOFF_RESET_AFTER_MS = 30_000;
@@ -643,7 +646,7 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
         // answer reconnects as quickly as a missing one, even on a remote
         // route where a reconnect takes longer than the wait it replaces.
         if (next.reason === "application-active-long") {
-          return QUICK_CONNECTION_PROBE_TIMEOUT;
+          return LONG_RESUME_PROBE_TIMEOUT;
         }
         if (next.reason !== "application-active-probe" && next.reason !== "network-changed") {
           return undefined;
@@ -668,6 +671,7 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
   const awaitSilentSocket = Effect.fn("EnvironmentSupervisor.awaitSilentSocket")(function* (
     lease: ConnectionDriver.EnvironmentConnectionLease,
     routeKind: ConnectionRouteKind | undefined,
+    longResume: boolean,
   ) {
     const startedAt = yield* Clock.monotonicTimeNanos;
     yield* Effect.sleep(SILENT_SOCKET_CHECK_AFTER);
@@ -687,7 +691,7 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
       if (!(yield* socketSilent)) return "alive" as const;
       yield* Effect.sleep(SILENT_SOCKET_RECHECK_EVERY);
     }
-    if (!answersQuickly(routeKind)) {
+    if (!answersQuickly(routeKind) && !longResume) {
       const silentFor = (yield* Clock.monotonicTimeNanos) - startedAt;
       const remaining = Duration.toNanosUnsafe(REMOTE_SILENT_SOCKET_AFTER) - silentFor;
       if (remaining > 0n) yield* Effect.sleep(Duration.nanos(remaining));
@@ -741,7 +745,7 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
       let recheck = false;
       let longResume = isLongResume(next);
       const startSilentSocketCheck = Effect.gen(function* () {
-        silentSocket = yield* Effect.forkChild(awaitSilentSocket(lease, routeKind));
+        silentSocket = yield* Effect.forkChild(awaitSilentSocket(lease, routeKind, longResume));
         recheck = false;
       });
       // The web and desktop foreground probe allows a busy host 15 seconds,
