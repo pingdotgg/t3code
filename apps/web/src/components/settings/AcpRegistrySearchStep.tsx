@@ -1,3 +1,4 @@
+import { resolveOfficialAcpRegistryIconUrl } from "@t3tools/contracts";
 import { pipe } from "effect/Function";
 import { ACP_REGISTRY_MAX_AGENTS, AuthProvidersManageScope } from "@t3tools/contracts";
 import { readEnvironmentScope, useEnvironmentScope } from "../../state/session";
@@ -270,7 +271,7 @@ function AcpRegistryAgentRow({
             driverKind={ProviderDriverKind.make("acpRegistry")}
             displayName={agent.name}
             acpRegistryAgentId={agent.id}
-            iconUrl={agent.icon ?? undefined}
+            iconUrl={resolveOfficialAcpRegistryIconUrl(agent.icon) ?? undefined}
             iconClassName="size-6 rounded-md text-muted-foreground"
           />
           <div className="min-w-0 flex-1">

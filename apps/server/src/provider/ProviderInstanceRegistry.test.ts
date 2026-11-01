@@ -902,7 +902,20 @@ describe("ProviderInstanceRegistry secret environment", () => {
         Effect.sync(() => {
           created.push(input.environment);
           configs.push(input.config);
-          return { instanceId: input.instanceId, enabled: input.enabled } as ProviderInstance;
+          const instance = {
+            instanceId: input.instanceId,
+            enabled: input.enabled,
+          } as ProviderInstance;
+          return {
+            ...instance,
+            snapshot: {
+              resolveMaintenance: () => Effect.die("unused"),
+              applyUsageLimits: () => Effect.void,
+              getSnapshot: Effect.die("unused"),
+              refresh: Effect.die("unused"),
+              streamChanges: Stream.empty,
+            },
+          };
         }),
     };
     const gate = Deferred.makeUnsafe<void>();
@@ -925,6 +938,7 @@ describe("ProviderInstanceRegistry secret environment", () => {
     const configMap: ProviderInstanceConfigMap = {
       [instanceId]: {
         driver: driverKind,
+        iconUrl: "https://example.com/secret-instance.png",
         config,
         environment: [
           { name: "OPENAI_API_KEY", value: secret, sensitive: true },
@@ -981,6 +995,7 @@ describe("ProviderInstanceRegistry secret environment", () => {
       yield* mutator.reconcile({ ...fixture.configMap });
       expect(fixture.reads).toHaveLength(readsAtStartup);
       expect(yield* registry.listUnavailable).toHaveLength(1);
+      expect(unavailable?.iconUrl).toBe("https://example.com/secret-instance.png");
     }).pipe(Effect.scoped);
   });
 
@@ -1078,6 +1093,7 @@ describe("ProviderInstanceRegistry secret environment", () => {
       expect(yield* registry.getInstance(instanceId)).toBeUndefined();
       const [pending] = yield* registry.listUnavailable;
       expect(pending?.unavailableReason).toBe("Reading secrets…");
+      expect(pending?.iconUrl).toBe("https://example.com/secret-instance.png");
 
       yield* Deferred.succeed(fixture.gate, undefined);
       yield* PubSub.take(changes);
