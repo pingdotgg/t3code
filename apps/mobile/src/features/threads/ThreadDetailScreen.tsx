@@ -1387,7 +1387,8 @@ function ThreadDetailBody(
       {!usesNativeWorkspaceColumns ? <NativeLayoutObserver onChange={setScreenMetrics} /> : null}
       {props.draftMode ? (
         props.draftMode.content(
-          navigationHeaderHeight,
+          // Not centered: the header and composer settle mid-push, which would move the hero.
+          Math.max(navigationHeaderHeight, (windowHeight - liveKeyboardHeight) * 0.3),
           liveKeyboardHeight + estimatedOverlayHeight + 24,
           screenAreaHeight -
             navigationHeaderHeight -
