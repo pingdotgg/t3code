@@ -23,6 +23,7 @@ import {
   parseServiceState,
   SERVICE_ENV_FILE,
   SERVICE_LAUNCHER_CONTEXT_ENV,
+  SERVICE_LOG_FILE,
   SERVICE_LAUNCHER_PROTOCOL,
   SERVICE_STATE_FILE,
   SERVICE_RESTART_PENDING_FILE,
@@ -38,6 +39,9 @@ const PREPARED_TIMEOUT_MS = 30 * 60_000;
 const TERMINATE_GRACE_MS = 5_000;
 // Match contracts' SERVER_EXIT_CODE_STATE_DIR_OWNED without depending on Effect.
 const STATE_DIR_OWNED_EXIT_CODE = 78;
+// Matches the server trace log's per-file cap.
+const SERVICE_LOG_MAX_BYTES = 10 * 1024 * 1024;
+const SERVICE_LOG_CHECK_INTERVAL_MS = 10 * 60_000;
 
 type TerminalStatus = "committed" | "rolled-back" | "failed";
 type ChildRole = "active" | "trial";
@@ -81,6 +85,28 @@ async function pathExists(target: string): Promise<boolean> {
     if (cause instanceof Error && "code" in cause && cause.code === "ENOENT") return false;
     throw cause;
   }
+}
+
+/**
+ * systemd and launchd hold the log open in append mode, so it is copied aside and truncated in
+ * place rather than renamed: their writes keep landing in the live file. Lines appended between
+ * the copy and the truncate are lost.
+ */
+export async function boundServiceLog(baseDir: string): Promise<void> {
+  // Installs render `<home>/userdata/logs`; a maintainer install from a dev config renders
+  // `<home>/dev/logs`, which is left unbounded.
+  const logPath = NodePath.join(baseDir, "userdata", "logs", SERVICE_LOG_FILE);
+  const archivePath = `${logPath}.1`;
+  try {
+    if ((await NodeFSP.stat(logPath)).size <= SERVICE_LOG_MAX_BYTES) return;
+  } catch {
+    return;
+  }
+  // The archive is best effort: on a full disk the copy fails, and the truncate is what frees space.
+  await NodeFSP.copyFile(logPath, archivePath).catch(() =>
+    NodeFSP.rm(archivePath, { force: true }).catch(() => undefined),
+  );
+  await NodeFSP.truncate(logPath, 0).catch(() => undefined);
 }
 
 const MANAGED_SERVICE_ENV_NAMES = new Set([
@@ -440,6 +466,7 @@ export class Launcher {
   #state: ServiceState;
   #child: ManagedChild | null = null;
   #timer: NodeJS.Timeout | undefined;
+  #logTimer: NodeJS.Timeout | undefined;
   #transitions: Promise<void> = Promise.resolve();
   #stopRequested = false;
   #stopping = false;
@@ -468,10 +495,18 @@ export class Launcher {
     const onSigint = () => void this.stop("SIGINT");
     process.once("SIGTERM", onSigterm);
     process.once("SIGINT", onSigint);
+    this.#logTimer = setInterval(
+      () => this.#enqueue(() => boundServiceLog(this.#baseDir)),
+      SERVICE_LOG_CHECK_INTERVAL_MS,
+    ).unref();
     try {
-      this.#enqueue(() => this.#recover());
+      this.#enqueue(async () => {
+        await boundServiceLog(this.#baseDir);
+        await this.#recover();
+      });
       await this.#completion.promise;
     } finally {
+      clearInterval(this.#logTimer);
       process.off("SIGTERM", onSigterm);
       process.off("SIGINT", onSigint);
     }
