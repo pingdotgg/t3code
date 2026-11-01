@@ -53,7 +53,10 @@ import * as VcsProcess from "../vcs/VcsProcess.ts";
 import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
 import * as VcsProjectConfig from "../vcs/VcsProjectConfig.ts";
 import * as GitWorkflowService from "./GitWorkflowService.ts";
-import type { SourceControlProvider } from "@t3tools/source-control-core/server/SourceControlProvider";
+import type {
+  SourceControlProvider,
+  SourceControlRefSelector,
+} from "@t3tools/source-control-core/server/SourceControlProvider";
 import * as SourceControlProviderRegistry from "../sourceControl/SourceControlProviderRegistry.ts";
 import * as ServerConfig from "../config.ts";
 import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
@@ -107,6 +110,7 @@ type FakeProviderCall =
     }
   | {
       readonly operation: "createChangeRequest";
+      readonly source: SourceControlRefSelector | undefined;
       readonly baseRefName: string;
       readonly headSelector: string;
       readonly title: string;
@@ -469,6 +473,7 @@ function createFakeSourceControlProvider(scenario: FakeProviderScenario = {}): {
       createChangeRequest: (input) =>
         record(input.cwd, {
           operation: "createChangeRequest",
+          source: input.source,
           baseRefName: input.baseRefName,
           headSelector: input.headSelector,
           title: input.title,
@@ -3822,75 +3827,88 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
       }),
   );
 
-  it.effect("creates cross-repo PRs with the fork owner selector and default base branch", () =>
-    Effect.gen(function* () {
-      const repoDir = yield* makeTempDir("t3code-git-manager-");
-      yield* initRepo(repoDir);
-      const forkDir = yield* createBareRemote();
-      yield* runGit(repoDir, ["remote", "add", "fork-seed", forkDir]);
-      // A lone remote would be treated as the base repository.
-      yield* runGit(repoDir, [
-        "remote",
-        "add",
-        "origin",
-        "git@github.com:pingdotgg/codething-mvp.git",
-      ]);
-      yield* runGit(repoDir, ["checkout", "-b", "statemachine"]);
-      NodeFS.writeFileSync(NodePath.join(repoDir, "changes.txt"), "change\n");
-      yield* runGit(repoDir, ["add", "changes.txt"]);
-      yield* runGit(repoDir, ["commit", "-m", "Feature commit"]);
-      yield* runGit(repoDir, ["push", "-u", "fork-seed", "statemachine"]);
-      yield* runGit(repoDir, ["checkout", "-b", "t3code/pr-91/statemachine"]);
-      yield* runGit(repoDir, ["branch", "--set-upstream-to", "fork-seed/statemachine"]);
-      yield* configureVisibleRemoteUrlWithLocalRewrite(
-        repoDir,
-        "fork-seed",
-        "git@github.com:octocat/codething-mvp.git",
-        forkDir,
-      );
+  it.effect.each(["github", "gitlab", "bitbucket"] as const)(
+    "creates fork requests with provider-specific source identity (%s)",
+    (kind) =>
+      Effect.gen(function* () {
+        const sourceRepository =
+          kind === "gitlab" ? "octocat/subgroup/renamed-fork" : "octocat/renamed-fork";
+        const repoDir = yield* makeTempDir("t3code-git-manager-");
+        yield* initRepo(repoDir);
+        const forkDir = yield* createBareRemote();
+        yield* runGit(repoDir, ["remote", "add", "fork-seed", forkDir]);
+        // A lone remote would be treated as the base repository.
+        yield* runGit(repoDir, [
+          "remote",
+          "add",
+          "origin",
+          `git@${kind}.com:pingdotgg/codething-mvp.git`,
+        ]);
+        yield* runGit(repoDir, ["checkout", "-b", "statemachine"]);
+        NodeFS.writeFileSync(NodePath.join(repoDir, "changes.txt"), "change\n");
+        yield* runGit(repoDir, ["add", "changes.txt"]);
+        yield* runGit(repoDir, ["commit", "-m", "Feature commit"]);
+        yield* runGit(repoDir, ["push", "-u", "fork-seed", "statemachine"]);
+        yield* runGit(repoDir, ["checkout", "-b", "t3code/pr-91/statemachine"]);
+        yield* runGit(repoDir, ["branch", "--set-upstream-to", "fork-seed/statemachine"]);
+        yield* configureVisibleRemoteUrlWithLocalRewrite(
+          repoDir,
+          "fork-seed",
+          `git@${kind}.com:${sourceRepository}.git`,
+          forkDir,
+        );
 
-      const { manager, providerCalls } = yield* makeManager({
-        providerScenario: {
-          prListSequenceByHeadSelector: {
-            statemachine: [
-              [],
-              [
-                {
-                  number: 188,
-                  title: "Add stacked git actions",
-                  url: "https://github.com/pingdotgg/codething-mvp/pull/188",
-                  baseRefName: "main",
-                  headRefName: "statemachine",
-                  state: "open",
-                  isCrossRepository: true,
-                  headRepositoryNameWithOwner: "octocat/codething-mvp",
-                  headRepositoryOwnerLogin: "octocat",
-                },
+        const { manager, providerCalls } = yield* makeManager({
+          providerScenario: {
+            kind,
+            prListSequenceByHeadSelector: {
+              statemachine: [
+                [],
+                [
+                  {
+                    number: 188,
+                    title: "Add stacked git actions",
+                    url: "https://github.com/pingdotgg/codething-mvp/pull/188",
+                    baseRefName: "main",
+                    headRefName: "statemachine",
+                    state: "open",
+                    isCrossRepository: true,
+                    headRepositoryNameWithOwner: sourceRepository,
+                    headRepositoryOwnerLogin: "octocat",
+                  },
+                ],
               ],
-            ],
+            },
           },
-        },
-      });
+        });
 
-      const result = yield* runStackedAction(manager, {
-        cwd: repoDir,
-        action: "commit_push_pr",
-      });
+        const result = yield* runStackedAction(manager, {
+          cwd: repoDir,
+          action: "commit_push_pr",
+        });
 
-      expect(result.pr.status).toBe("created");
-      expect(result.pr.number).toBe(188);
-      expect(
-        created(providerCalls).some(
-          (call) => call.baseRefName === "main" && call.headSelector === "octocat:statemachine",
-        ),
-      ).toBe(true);
-      expect(
-        created(providerCalls).some(
-          (call) =>
-            call.baseRefName === "statemachine" && call.headSelector === "octocat:statemachine",
-        ),
-      ).toBe(false);
-    }),
+        expect(result.pr.status).toBe("created");
+        expect(result.pr.number).toBe(188);
+        expect(
+          providerCalls.find((call) => call.operation === "createChangeRequest"),
+        ).toMatchObject({
+          source:
+            kind === "gitlab"
+              ? { repository: sourceRepository, refName: "statemachine" }
+              : undefined,
+        });
+        expect(
+          created(providerCalls).some(
+            (call) => call.baseRefName === "main" && call.headSelector === "octocat:statemachine",
+          ),
+        ).toBe(true);
+        expect(
+          created(providerCalls).some(
+            (call) =>
+              call.baseRefName === "statemachine" && call.headSelector === "octocat:statemachine",
+          ),
+        ).toBe(false);
+      }),
   );
 
   it.effect("rejects push/pr actions from detached HEAD", () =>
