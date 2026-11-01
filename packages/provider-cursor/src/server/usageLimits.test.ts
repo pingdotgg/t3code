@@ -5,6 +5,7 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as HttpClient from "effect/http/HttpClient";
+import type * as HttpClientRequest from "effect/http/HttpClientRequest";
 import * as HttpClientResponse from "effect/http/HttpClientResponse";
 import * as CursorKeychain from "./CursorKeychain.ts";
 import { cursorUsageResponseToLimits, readCursorUsageLimits } from "./usageLimits.ts";
@@ -268,4 +269,103 @@ describe("Cursor usage limits", () => {
       }
     }),
   );
+
+  describe("T3 browser login", () => {
+    const exchangeUrl = "https://instance.example/auth/exchange_user_api_key";
+    const usageUrl = "https://instance.example/aiserver.v1.DashboardService/GetCurrentPeriodUsage";
+    const login = {
+      status: "valid",
+      apiKey: "stored-browser-key",
+      backendUrl: "https://instance.example/path",
+    } as const;
+    // A stored login names this instance's account, so host CLI files and Keychain must stay untouched.
+    const readWithLogin = (
+      storedLogin: Parameters<typeof readCursorUsageLimits>[3],
+      respond: (request: HttpClientRequest.HttpClientRequest) => Response,
+    ) => {
+      const requests: Array<{
+        url: string;
+        authorization: string | undefined;
+        body: string | null;
+      }> = [];
+      const read = withNodeServices(
+        readCursorUsageLimits(
+          { apiEndpoint: "https://settings.example" },
+          { CURSOR_AUTH_TOKEN: "other-host-account-token" },
+          true,
+          storedLogin,
+        ).pipe(
+          Effect.provideService(HostProcess.Platform, "darwin"),
+          Effect.provideService(
+            FileSystem.FileSystem,
+            FileSystem.makeNoop({
+              readFileString: () => Effect.die("must not read the host CLI login"),
+            }),
+          ),
+          Effect.provideService(
+            HttpClient.HttpClient,
+            HttpClient.make((request) => {
+              requests.push({
+                url: request.url,
+                authorization: request.headers.authorization,
+                body:
+                  request.body._tag === "Uint8Array"
+                    ? new TextDecoder().decode(request.body.body)
+                    : null,
+              });
+              return Effect.succeed(HttpClientResponse.fromWeb(request, respond(request)));
+            }),
+          ),
+        ),
+      );
+      return { read, requests };
+    };
+
+    it.effect(
+      "exchanges the stored key at the stored backend and reads usage with the result",
+      () =>
+        Effect.gen(function* () {
+          const { read, requests } = readWithLogin(login, (request) =>
+            request.url === exchangeUrl
+              ? Response.json({ accessToken: "exchanged-access-token" })
+              : Response.json({ planUsage: { totalPercentUsed: 37 } }),
+          );
+          expect((yield* read).windows[0]?.usedPercent).toBe(37);
+          expect(requests).toEqual([
+            { url: exchangeUrl, authorization: "Bearer stored-browser-key", body: "{}" },
+            { url: usageUrl, authorization: "Bearer exchanged-access-token", body: "{}" },
+          ]);
+        }),
+    );
+
+    it.effect(
+      "clears expired or rejected login usage and reports transient failures without using host logins",
+      () =>
+        Effect.gen(function* () {
+          const expired = readWithLogin({ status: "expired" }, () => {
+            throw new Error("must not request usage for an expired login");
+          });
+          const rejected = readWithLogin(login, () => new Response("rejected", { status: 401 }));
+          for (const { read } of [expired, rejected]) {
+            expect(yield* read).toMatchObject({
+              windows: [],
+              unavailable: {
+                reason: "unsupported",
+                message: expect.stringContaining("Sign in again"),
+              },
+            });
+          }
+          for (const failedUrl of [exchangeUrl, usageUrl]) {
+            const transient = readWithLogin(login, (request) =>
+              request.url === failedUrl
+                ? new Response(null, { status: 500 })
+                : Response.json({ accessToken: "exchanged-access-token" }),
+            );
+            expect((yield* transient.read).unavailable?.reason).toBe("probeFailed");
+          }
+          expect(expired.requests).toEqual([]);
+          expect(rejected.requests.map((request) => request.url)).toEqual([exchangeUrl]);
+        }),
+    );
+  });
 });

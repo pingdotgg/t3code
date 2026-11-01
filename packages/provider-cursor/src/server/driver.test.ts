@@ -20,6 +20,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
 import { vi } from "vite-plus/test";
+import * as HttpClientResponse from "effect/http/HttpClientResponse";
 import * as HttpClient from "effect/http/HttpClient";
 
 import {
@@ -29,6 +30,7 @@ import {
 import * as ProviderEventLoggers from "@t3tools/provider-core/server/ProviderEventLoggers";
 import * as TestProviderHost from "@t3tools/provider-testing/TestProviderHost";
 import { CursorDriver } from "./driver.ts";
+import { makeCursorCredentialStore } from "./credentialStore.ts";
 import * as CursorAgentSdk from "./CursorAgentSdk.ts";
 import * as CursorSdk from "./CursorSdk.ts";
 import * as CursorKeychain from "./CursorKeychain.ts";
@@ -107,7 +109,30 @@ it.layer(layerTest)("CursorDriver", (it) => {
         };
         const openedKeys: Array<string | undefined> = [];
         let closed = 0;
+        const requests: string[] = [];
+        let failureUrl: string | undefined;
+        let failureStatus = 500;
+        const usageClient = HttpClient.make((request) => {
+          requests.push(request.url);
+          const exchange = request.url.endsWith("/auth/exchange_user_api_key");
+          expect(request.headers.authorization).toBe(
+            exchange ? "Bearer instance-browser-key" : "Bearer browser-access-token",
+          );
+          return Effect.succeed(
+            HttpClientResponse.fromWeb(
+              request,
+              request.url === failureUrl
+                ? new Response(null, { status: failureStatus })
+                : Response.json(
+                    exchange
+                      ? { accessToken: "browser-access-token" }
+                      : { planUsage: { totalPercentUsed: 23 } },
+                  ),
+            ),
+          );
+        });
         const instance = yield* CursorDriver.create(input).pipe(
+          Effect.provideService(HttpClient.HttpClient, usageClient),
           Effect.provideService(CursorAgentSdk.CursorAgentSdkRunner, {
             assertComplete: Effect.void,
             open: (request) =>
@@ -134,6 +159,7 @@ it.layer(layerTest)("CursorDriver", (it) => {
         expect(me).toHaveBeenCalledWith({ apiKey: "instance-browser-key" });
         expect(yield* instance.snapshot.getSnapshot).toMatchObject({
           status: "ready",
+          usageLimits: { windows: [{ id: "totalPercentUsed", usedPercent: 23 }] },
           auth: {
             status: "authenticated",
             type: "browser",
@@ -158,8 +184,43 @@ it.layer(layerTest)("CursorDriver", (it) => {
         yield* runtime.ensureThread({ threadId, modelSelection, runtimePolicy });
         expect(openedKeys).toEqual(["instance-browser-key"]);
         expect(closed).toBe(0);
-        const recreated = yield* CursorDriver.create(input);
+        expect(requests.slice(0, 2)).toEqual([
+          "https://api2.cursor.sh/auth/exchange_user_api_key",
+          "https://api2.cursor.sh/aiserver.v1.DashboardService/GetCurrentPeriodUsage",
+        ]);
+        const recreated = yield* CursorDriver.create(input).pipe(
+          Effect.provideService(HttpClient.HttpClient, usageClient),
+        );
         expect((yield* recreated.snapshot.refresh).auth.status).toBe("authenticated");
+        for (const url of requests.slice(0, 2)) {
+          failureUrl = url;
+          const snapshot = yield* instance.snapshot.refresh;
+          expect(snapshot).toMatchObject({
+            status: "ready",
+            auth: { status: "authenticated" },
+            usageLimits: { windows: [{ id: "totalPercentUsed", usedPercent: 23 }] },
+          });
+          expect(snapshot.message).toBeUndefined();
+        }
+        failureUrl = requests[0];
+        failureStatus = 401;
+        expect(yield* instance.snapshot.refresh).toMatchObject({
+          status: "ready",
+          auth: { status: "authenticated" },
+          usageLimits: { windows: [], unavailable: { reason: "unsupported" } },
+        });
+        failureUrl = undefined;
+        expect((yield* instance.snapshot.refresh).usageLimits?.windows[0]?.usedPercent).toBe(23);
+        const { store } = yield* makeCursorCredentialStore(input.instanceId);
+        yield* Effect.promise(async () => {
+          const credentials = await store.load();
+          await store.save({ ...credentials!, apiKeyExpiresAtMs: 0 });
+        });
+        const requestCount = requests.length;
+        const expired = yield* instance.snapshot.refresh;
+        expect(expired.auth.status).toBe("unauthenticated");
+        expect(expired.usageLimits).toBeUndefined();
+        expect(requests).toHaveLength(requestCount);
         yield* instance.auth!.logout(Effect.void);
         expect(closed).toBe(1);
         expect((yield* instance.snapshot.getSnapshot).auth.status).toBe("unauthenticated");
@@ -170,6 +231,56 @@ it.layer(layerTest)("CursorDriver", (it) => {
         ).toBe("Failure");
         expect(openedKeys).toEqual(["instance-browser-key"]);
         expect(closed).toBe(1);
+      }).pipe(Effect.scoped),
+  );
+
+  it.effect(
+    "keeps a configured CURSOR_API_KEY instance off its stored browser login for limits",
+    () =>
+      Effect.gen(function* () {
+        const me = vi.spyOn(Cursor, "me").mockResolvedValue({
+          apiKeyName: "Configured key",
+          createdAt: "2026-01-01T00:00:00.000Z",
+        });
+        const models = vi.spyOn(Cursor.models, "list").mockResolvedValue([]);
+        yield* Effect.addFinalizer(() =>
+          Effect.sync(() => {
+            me.mockRestore();
+            models.mockRestore();
+          }),
+        );
+        const instanceId = ProviderInstanceId.make("cursor-configured-key-with-login");
+        const { store } = yield* makeCursorCredentialStore(instanceId);
+        yield* Effect.promise(() =>
+          store.save({
+            version: 1,
+            backendUrl: "https://api2.cursor.sh",
+            apiKey: "stored-browser-key",
+            createdAtMs: 0,
+            apiKeyExpiresAtMs: 4_000_000_000_000,
+          }),
+        );
+        const requests: string[] = [];
+        const instance = yield* CursorDriver.create({
+          instanceId,
+          displayName: "Configured Cursor",
+          enabled: true,
+          environment: [{ name: "CURSOR_API_KEY", value: "configured-key", sensitive: true }],
+          config: CursorDriver.defaultConfig(),
+        }).pipe(
+          Effect.provideService(
+            HttpClient.HttpClient,
+            HttpClient.make((request) => {
+              requests.push(request.url);
+              return Effect.die("must not exchange credentials or request usage");
+            }),
+          ),
+        );
+        expect((yield* instance.snapshot.refresh).usageLimits?.unavailable?.reason).toBe(
+          "unsupported",
+        );
+        expect(requests).toEqual([]);
+        expect(me).toHaveBeenCalledWith({ apiKey: "configured-key" });
       }).pipe(Effect.scoped),
   );
 
