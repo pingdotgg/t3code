@@ -306,6 +306,14 @@ export function showContextMenuFallback<T extends string>(
       [...menu.querySelectorAll<HTMLButtonElement>("button")].filter((item) => !item.disabled);
 
     const onKeyDown = (event: KeyboardEvent) => {
+      if (
+        event.defaultPrevented ||
+        event.isComposing ||
+        event.altKey ||
+        event.ctrlKey ||
+        event.metaKey
+      )
+        return;
       const level = menuStack.findIndex((menu) =>
         isNodeWithinMenuStack(document.activeElement, [menu]),
       );
@@ -463,8 +471,6 @@ export function showContextMenuFallback<T extends string>(
 
         const button = document.createElement("button");
         button.type = "button";
-        button.setAttribute("role", "menuitem");
-        button.tabIndex = -1;
         button.dataset.label = item.label;
         const isDisabled = item.disabled === true;
         button.disabled = isDisabled;
