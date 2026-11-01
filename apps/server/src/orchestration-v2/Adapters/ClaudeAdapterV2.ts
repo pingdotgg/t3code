@@ -10848,13 +10848,32 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             if (Option.isSome(closed)) {
               return;
             }
-            // The turn stays open: the CLI may still be working, and the user decides
-            // whether to Force stop it.
             yield* Effect.logWarning("orchestration-v2.claude-query-interrupt-timeout", {
               providerSessionId: input.providerSessionId,
               providerThreadId: turnInput.providerThread.id,
               providerTurnId: turnInput.providerTurnId,
             });
+            if (turnInput.endOnTimeout === true) {
+              const completedAt = yield* DateTime.now;
+              const ownedLiveQuery = yield* Ref.modify(queryContext, (current) =>
+                current?.query === existing.query ? [true, null] : [false, current],
+              );
+              if (ownedLiveQuery) {
+                existing.stopping = true;
+                yield* finalizeActiveTurnAfterQueryExit(existing);
+                yield* endSubagentCallsOfClosedQuery(existing.nativeThreadId, "interrupted");
+              } else if ((yield* Ref.get(activeTurn)) === currentTurn) {
+                yield* finalizeActiveTurn({
+                  context: currentTurn,
+                  status: "interrupted",
+                  completedAt,
+                });
+              }
+              yield* Deferred.succeed(existing.closed, undefined);
+              return;
+            }
+            // The turn stays open: the CLI may still be working, and the user decides
+            // whether to Force stop it.
             return yield* new ProviderAdapter.ProviderAdapterInterruptTimeoutError({
               driver: CLAUDE_PROVIDER,
               providerThreadId: turnInput.providerThread.id,
