@@ -67,7 +67,7 @@ import { readSourceControlHostSettings } from "@t3tools/source-control-core/shar
 import * as GitHubClient from "../shared/definition.ts";
 import {
   PullRequestByNumber,
-  PullRequestNode,
+  PullRequest,
   PullRequestsByHead,
 } from "./sourceControlProvider.graphql.ts";
 
@@ -84,7 +84,7 @@ const LenientPullRequestsByHead = GraphQL.query(PullRequestsByHead.name, {
     ),
   }),
 });
-const decodePullRequestNode = Schema.decodeUnknownOption(PullRequestNode);
+const decodePullRequestNode = Schema.decodeUnknownOption(PullRequest);
 
 const decodeLinkSubject = Schema.decodeUnknownEffect(
   Schema.fromJsonString(
@@ -406,7 +406,7 @@ function trimmed(value: string): string | null {
 }
 
 /** Null isolates unusable PRs from the rest of a listing. */
-function toPullRequestRecord(node: PullRequestNode): NormalizedGitHubPullRequestRecord | null {
+function toPullRequestRecord(node: PullRequest): NormalizedGitHubPullRequestRecord | null {
   const title = trimmed(node.title);
   const url = trimmed(node.url);
   const baseRefName = trimmed(node.baseRefName);
@@ -561,6 +561,7 @@ export const make = Effect.gen(function* () {
           head: headRefName,
           states: GRAPHQL_STATES[input.state],
           first: ownerMatch ? OWNER_HEAD_SCAN_LIMIT : limit,
+          mergeQueue: locator.host.toLowerCase() === "github.com",
         },
         input.allowReserve ? interactiveHeadResolver : backgroundHeadResolver,
       ),
@@ -612,6 +613,7 @@ export const make = Effect.gen(function* () {
           owner: locator.owner,
           name: locator.name,
           number: parsed.number,
+          mergeQueue: locator.host.toLowerCase() === "github.com",
         }),
       );
       const node = result.repository?.pullRequest;

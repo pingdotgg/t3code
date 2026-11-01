@@ -29,6 +29,7 @@ export const ChangeRequest = Schema.Struct({
   headSha: Schema.optional(TrimmedNonEmptyString),
   state: ChangeRequestState,
   isDraft: Schema.optional(Schema.Boolean),
+  inMergeQueue: Schema.optional(Schema.Boolean),
   closedAt: Schema.optional(Schema.NullOr(Schema.String)),
   mergedAt: Schema.optional(Schema.NullOr(Schema.String)),
   updatedAt: Schema.Option(Schema.DateTimeUtc),

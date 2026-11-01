@@ -905,7 +905,7 @@ export function pullRequestHostActions(
 }
 
 export function pullRequestQuickActions(
-  entry: Pick<EnvironmentPullRequestEntry, "state" | "isDraft">,
+  entry: Pick<EnvironmentPullRequestEntry, "state" | "isDraft" | "inMergeQueue">,
   hostActions: ReadonlySet<PullRequestAction>,
 ): ReadonlyArray<PullRequestQuickAction> {
   const forState: ReadonlyArray<PullRequestQuickAction> =
@@ -916,7 +916,9 @@ export function pullRequestQuickActions(
         : entry.isDraft
           ? ["close", "ready"]
           : ["close", "merge"];
-  return forState.filter((action) => hostActions.has(action));
+  return forState.filter(
+    (action) => hostActions.has(action) && !(entry.inMergeQueue && action === "merge"),
+  );
 }
 
 export function largestPullRequestReadCount(

@@ -8,6 +8,7 @@ export const CONTEXT_CHIP_ACCENTS = {
   "preview-annotation": "oklch(0.62 0.134 70)",
   "review-comment": "oklch(0.62 0.16 292)",
   "pull-request": "oklch(0.62 0.16 277)",
+  "pr-queued": "oklch(0.62 0.134 70)",
   "pr-open": "oklch(0.62 0.134 163)",
   "pr-draft": "oklch(0.62 0.02 259)",
   "pr-merged": "oklch(0.62 0.16 292)",

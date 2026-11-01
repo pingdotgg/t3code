@@ -870,6 +870,7 @@ layer("GitHubPullRequestApi.layer", (it) => {
       });
       expect(mockedExecute).toHaveBeenCalledTimes(1);
       expect(callAt(0)).toMatchObject({ kind: "graphql", host: "github.example" });
+      expect(queryAt(0)).not.toContain("isInMergeQueue");
     }),
   );
 
@@ -936,6 +937,7 @@ layer("GitHubPullRequestApi.layer", (it) => {
         headRefName: `feat/${number}`,
         state: "OPEN",
         isDraft: false,
+        isInMergeQueue: number === 7,
         mergeable: "MERGEABLE",
         reviewDecision: null,
         latestReviews: {
@@ -981,6 +983,7 @@ layer("GitHubPullRequestApi.layer", (it) => {
         {
           number: seven?.number,
           state: seven?.state,
+          inMergeQueue: seven?.inMergeQueue,
           headBranch: seven?.headBranch,
           author: seven?.author?.login,
           changedFiles: seven?.changedFiles,
@@ -991,6 +994,7 @@ layer("GitHubPullRequestApi.layer", (it) => {
         {
           number: 7,
           state: "open",
+          inMergeQueue: true,
           headBranch: "feat/7",
           author: "octocat",
           changedFiles: 2,
@@ -1000,6 +1004,7 @@ layer("GitHubPullRequestApi.layer", (it) => {
         },
       );
       assert.strictEqual(eight?.headBranch, "feat/8");
+      expect(eight?.inMergeQueue).toBe(false);
       expect(mockedExecute).toHaveBeenCalledOnce();
       expect(queryAt(0)).toContain(
         "_0_repository:repository(owner:$_0_owner name:$_0_name){pullRequest(number:$_0_number)",
@@ -1135,6 +1140,53 @@ layer("GitHubPullRequestApi.layer", (it) => {
         path: "repos/acme/web/stacks?pull_request=7",
       });
     }),
+  );
+
+  it.effect.each(["available", "missing", "error"] as const)(
+    "reads detailed native stack layers when queue membership is %s",
+    (membership) =>
+      Effect.gen(function* () {
+        const stack = {
+          id: 3,
+          number: 3,
+          url: "https://api.github.com/repos/acme/web/stacks/3",
+          base: { ref: "main" },
+          pull_requests: [
+            { number: 7, head: { ref: "middle", sha: "bbb" }, state: "open", draft: false },
+            { number: 8, head: { ref: "top", sha: "ccc" }, state: "open", draft: false },
+          ],
+        };
+        mockedExecute.mockReturnValueOnce(Effect.succeed(output(encodeJson([stack]))));
+        mockedExecute.mockReturnValueOnce(Effect.succeed(output(encodeJson(stack))));
+        mockedExecute.mockReturnValueOnce(
+          Effect.succeed(
+            output(
+              encodeJson(
+                membership === "error"
+                  ? { errors: [{ message: "Queue data unavailable", type: "NOT_FOUND" }] }
+                  : {
+                      data: {
+                        _0_repository: { pullRequest: { isInMergeQueue: true } },
+                        _1_repository: {
+                          pullRequest: membership === "missing" ? null : { isInMergeQueue: false },
+                        },
+                      },
+                    },
+              ),
+            ),
+          ),
+        );
+        const cli = yield* GitHubPullRequestApi.GitHubPullRequestApi;
+        const detail = yield* cli.getPullRequestStack({
+          ...pullRequestInput,
+          includeDetails: true,
+        });
+        expect(detail?.number).toBe(3);
+        expect(detail?.layers.map((layer) => layer.inMergeQueue)).toEqual(
+          membership === "available" ? [true, false] : [undefined, undefined],
+        );
+        expect(mockedExecute).toHaveBeenCalledTimes(3);
+      }),
   );
 
   it.effect("revalidates a polled stack, per credential, so an unchanged one costs no quota", () =>
@@ -1545,7 +1597,14 @@ layer("GitHubPullRequestApi.layer", (it) => {
         Effect.succeed(output(listedPullRequests(3, 1, () => ({ isDraft: true })))),
       );
       mockedExecute.mockReturnValueOnce(
-        Effect.succeed(output(listedPullRequests(6, 1, (number) => ({ isDraft: number < 4 })))),
+        Effect.succeed(
+          output(
+            listedPullRequests(6, 1, (number) => ({
+              isDraft: number < 4,
+              isInMergeQueue: number === 4,
+            })),
+          ),
+        ),
       );
       mockedStackMemberships.mockReturnValueOnce(
         Effect.succeed(
@@ -1576,6 +1635,9 @@ layer("GitHubPullRequestApi.layer", (it) => {
         filters: { draft: "hide" },
       });
       expect(batch.items.map((item) => item.number)).toEqual([4, 5]);
+      expect(batch.items.map((item) => item.inMergeQueue)).toEqual([true, false]);
+      expect(queryAt(0)).toContain("isInMergeQueue");
+      expect(queryAt(1)).toContain("isInMergeQueue");
       expect(batch.items[0]?.stack).toEqual({ number: 3, size: 2, base: "main", position: 1 });
       expect(batch.items[1]?.stack).toBeUndefined();
       expect(batch.truncated).toBe(true);
@@ -2228,6 +2290,29 @@ layer("GitHubPullRequestApi.layer", (it) => {
       expect(variablesOf("mergePullRequest(")).toEqual([]);
       expect(variablesOf("closePullRequest(")).toEqual([]);
     }),
+  );
+
+  it.effect.each(["merge", "enable-auto-merge"] as const)(
+    "rejects %s when fresh mutation state is queued despite an earlier unqueued detail",
+    (action) =>
+      Effect.gen(function* () {
+        route(
+          ["query PullRequestCore", coreResponse({ isInMergeQueue: false })],
+          ["query PullRequestActionState", actionState({ isInMergeQueue: true })],
+        );
+        const cli = yield* GitHubPullRequestApi.GitHubPullRequestApi;
+        const detail = yield* cli.getPullRequestDetail(pullRequestInput);
+        expect(detail.inMergeQueue).toBe(false);
+        const result = yield* cli
+          .runPullRequestAction({ ...pullRequestInput, action })
+          .pipe(Effect.result);
+        expect(result).toMatchObject({
+          _tag: "Failure",
+          failure: { _tag: "GitHubPullRequestQueuedError" },
+        });
+        expect(variablesOf("mergePullRequest(")).toEqual([]);
+        expect(variablesOf("enablePullRequestAutoMerge(")).toEqual([]);
+      }),
   );
 
   it.effect.each(["merge", "enable-auto-merge"] as const)(

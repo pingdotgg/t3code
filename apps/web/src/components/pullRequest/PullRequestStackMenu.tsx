@@ -69,6 +69,7 @@ export function PullRequestStackMenu({
   const mergeLayers = stack.layers.slice(0, position).filter((layer) => layer.state !== "merged");
   const selectedLayer = stack.layers[position - 1];
   const mergeHasClosed = mergeLayers.some((layer) => layer.state !== "open");
+  const mergeHasQueued = mergeLayers.some((layer) => layer.inMergeQueue === true);
   const expectedStackHeads = unmerged.flatMap((layer) =>
     layer.headSha ? [{ number: layer.number, headSha: layer.headSha }] : [],
   );
@@ -80,7 +81,8 @@ export function PullRequestStackMenu({
     mergeLayers.some((layer) => !layer.headSha) ||
     mergeHasClosed ||
     mergeLayers.length === 0 ||
-    mergeLayers.some((layer) => layer.isDraft);
+    mergeLayers.some((layer) => layer.isDraft) ||
+    mergeHasQueued;
   const rebaseDisabled = pending || stale || hasUnknownHead || hasClosed || unmerged.length === 0;
   const run = async () => {
     if (
@@ -199,7 +201,11 @@ export function PullRequestStackMenu({
                   Rebase stack
                 </MenuItem>
               ) : null}
-              {mergeHasClosed || mergeLayers.some((layer) => layer.isDraft) ? (
+              {mergeHasQueued ? (
+                <p className="px-2 py-1 text-xs text-muted-foreground">
+                  A queued layer cannot be merged again.
+                </p>
+              ) : mergeHasClosed || mergeLayers.some((layer) => layer.isDraft) ? (
                 <p className="px-2 py-1 text-xs text-muted-foreground">
                   Every layer being merged must be open and ready for review.
                 </p>

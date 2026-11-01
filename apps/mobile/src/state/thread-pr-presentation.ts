@@ -18,6 +18,7 @@ export interface ThreadPrPresentation {
   readonly kind: "pull-request" | "stack";
   readonly others: number;
   readonly isDraft: boolean;
+  readonly inMergeQueue: boolean;
   readonly updatedAt: string | null;
   readonly url: string;
   readonly changeRequest: ChangeRequestTerminology;
@@ -44,12 +45,18 @@ export function presentThreadPr(
     number: pr.number,
     state: pr.state,
     isDraft,
+    inMergeQueue: pr.state === "open" && pr.inMergeQueue === true,
     updatedAt: pr.updatedAt ?? null,
     url: pr.url,
     changeRequest,
     label: String(pr.number),
-    accessibilityLabel: `#${pr.number} ${changeRequest.singular} ${isDraft ? "draft" : pr.state}`,
-    textClassName: isDraft ? "text-foreground-muted" : PR_STATE_TEXT_CLASS[pr.state],
+    accessibilityLabel: `#${pr.number} ${changeRequest.singular} ${pr.state === "open" && pr.inMergeQueue ? "queued" : isDraft ? "draft" : pr.state}`,
+    textClassName:
+      pr.state === "open" && pr.inMergeQueue
+        ? "text-warning-foreground"
+        : isDraft
+          ? "text-foreground-muted"
+          : PR_STATE_TEXT_CLASS[pr.state],
   };
 }
 
@@ -65,13 +72,15 @@ export function presentThreadLinkedPullRequests(
   const linkedCount = badge.kind === "pull-request" && badge.others > 0 ? badge.others + 1 : null;
   const isMultiple = badge.kind === "stack" || linkedCount !== null;
   const state = isMultiple
-    ? badge.state === "draft"
+    ? badge.state === "draft" || badge.state === "queued"
       ? "open"
       : badge.state
     : (snapshot?.state ?? null);
   const isDraft = isMultiple
     ? badge.state === "draft"
     : snapshot?.isDraft === true && state === "open";
+  const inMergeQueue =
+    state === "open" && (isMultiple ? badge.state === "queued" : snapshot?.inMergeQueue === true);
   const label =
     badge.kind === "stack"
       ? String(badge.layers)
@@ -84,18 +93,20 @@ export function presentThreadLinkedPullRequests(
     number: link.number,
     state,
     isDraft,
+    inMergeQueue,
     updatedAt: snapshot?.updatedAt ?? null,
     url: link.url,
     changeRequest,
     label,
     accessibilityLabel:
       badge.kind === "stack"
-        ? `${badge.layers} ${changeRequest.singular}s in stack, ${isDraft ? "draft" : (state ?? "status pending")}`
+        ? `${badge.layers} ${changeRequest.singular}s in stack, ${inMergeQueue ? "queued" : isDraft ? "draft" : (state ?? "status pending")}`
         : linkedCount !== null
-          ? `${linkedCount} linked ${changeRequest.plural}, overall ${badge.state}`
-          : `#${link.number} ${changeRequest.singular} ${state === null ? "status pending" : isDraft ? "draft" : state}`,
-    textClassName:
-      state === null || isDraft
+          ? `${linkedCount} linked ${changeRequest.plural}, overall ${inMergeQueue ? "queued" : badge.state}`
+          : `#${link.number} ${changeRequest.singular} ${state === null ? "status pending" : inMergeQueue ? "queued" : isDraft ? "draft" : state}`,
+    textClassName: inMergeQueue
+      ? "text-warning-foreground"
+      : state === null || isDraft
         ? "text-foreground-muted"
         : isMultiple && state === "closed"
           ? "text-adaptive-rose-600-400"

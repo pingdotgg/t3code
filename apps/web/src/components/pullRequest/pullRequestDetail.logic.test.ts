@@ -205,6 +205,11 @@ describe("pull request primary control", () => {
       }),
     ).toBe("merge");
   });
+
+  it("does not offer a redundant merge action while the host has queued the pull request", () => {
+    expect(resolvePullRequestPrimaryControl({ ...open, inMergeQueue: true })).toBe("queued");
+    expect(resolvePullRequestPrimaryControl({ ...open, inMergeQueue: false })).toBe("merge");
+  });
 });
 
 describe("stacked pull request classification", () => {
@@ -1235,6 +1240,11 @@ describe("the compact row's single action slot", () => {
         openDetail({ checks: [check("failure"), check("pending")] }),
       ),
     ).toBe("fix");
+    expect(
+      resolveThreadPanelPullRequestAction(
+        openDetail({ inMergeQueue: true, checks: [check("failure")] }),
+      ),
+    ).toBe("fix");
   });
 
   it("offers nothing the viewer may not do, and nothing on settled pull requests", () => {
@@ -1248,6 +1258,8 @@ describe("the compact row's single action slot", () => {
       ),
     ).toBeNull();
     expect(resolveThreadPanelPullRequestAction(openDetail({ state: "merged" }))).toBeNull();
+    expect(resolveThreadPanelPullRequestAction(openDetail({ inMergeQueue: true }))).toBeNull();
+    expect(resolveThreadPanelPullRequestAction(openDetail({ inMergeQueue: false }))).toBe("merge");
     expect(resolveThreadPanelPullRequestAction(null)).toBeNull();
   });
 });

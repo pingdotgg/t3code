@@ -62,7 +62,11 @@ const writes = new Set<string>([
 ]);
 const isRef = Schema.is(PullRequestRef);
 const hasState = Schema.is(
-  Schema.Struct({ state: PullRequestState, isDraft: Schema.optional(Schema.Boolean) }),
+  Schema.Struct({
+    state: PullRequestState,
+    isDraft: Schema.optional(Schema.Boolean),
+    inMergeQueue: Schema.optional(Schema.Boolean),
+  }),
 );
 const isInvalidation = Schema.is(PullRequestInvalidateInput);
 const readTimeout = (environmentId: EnvironmentId) =>
@@ -226,12 +230,17 @@ const invalidateTarget = Effect.fn("PullRequestRouting.invalidateTarget")(functi
  */
 const reportState = (
   { allowStale: _allowStale, expectedAccountId: _expectedAccountId, ...reference }: PullRequestRef,
-  status: { readonly state: PullRequestState; readonly isDraft?: boolean | undefined },
+  status: {
+    readonly state: PullRequestState;
+    readonly isDraft?: boolean | undefined;
+    readonly inMergeQueue?: boolean | undefined;
+  },
 ) =>
   request(WS_METHODS.pullRequestsReportState, {
     reference,
     state: status.state,
     ...(status.isDraft === undefined ? {} : { isDraft: status.isDraft }),
+    ...(status.inMergeQueue === undefined ? {} : { inMergeQueue: status.inMergeQueue }),
   }).pipe(Effect.timeoutOption("5 seconds"), Effect.ignore, Effect.forkDetach, Effect.asVoid);
 
 /** Credentials stay on their environments. Only a verified host and account cross the wire. */

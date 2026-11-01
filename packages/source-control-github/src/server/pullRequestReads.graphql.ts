@@ -367,6 +367,8 @@ export const PullRequestCoreRepositoryPullRequestPullRequest = Schema.Struct({
   state: GraphQL.enumLiterals(Shared.PullRequestState.literals),
   /** Identifies if the pull request is a draft. */
   isDraft: Schema.Boolean,
+  /** Indicates whether the pull request is in a merge queue */
+  isInMergeQueue: Schema.optionalKey(Schema.Boolean),
   /** Whether or not the pull request can be merged based on the existence of merge conflicts. */
   mergeable: GraphQL.enumLiterals(Shared.MergeableState.literals),
   /** Detailed information about the current pull request merge state status. */
@@ -459,7 +461,7 @@ export const PullRequestCore = GraphQL.query("PullRequestCore", {
       { name: "requestedReviewers", body: "Int!" }
     ],
     selections: [
-      { name: "repository", body: ["(owner:$", "owner", " name:$", "name", "){mergeCommitAllowed squashMergeAllowed rebaseMergeAllowed autoMergeAllowed viewerPermission pullRequest(number:$", "number", "){number title url body state isDraft mergeable mergeStateStatus reviewDecision additions deletions changedFiles createdAt updatedAt mergedAt closedAt headRefName baseRefName headRefOid isCrossRepository maintainerCanModify headRepositoryOwner{__typename login}headRepository{nameWithOwner viewerPermission}headRef{id}author{__typename login avatarUrl...on User{id name}}autoMergeRequest{mergeMethod}viewerCanUpdate viewerDidAuthor viewerCanUpdateBranch baseRef{compare(headRef:$", "headRef", "){behindBy}}reviewRequests(first:$", "requestedReviewers", "){nodes{requestedReviewer{__typename...on User{login name}...on Bot{login}...on Team{slug combinedSlug teamName:name teamAvatarUrl:avatarUrl}}}}labels(first:100){nodes{name color}}commits(last:1){nodes{commit{statusCheckRollup{contexts(first:100){nodes{__typename...", "CheckContext", "}pageInfo{hasNextPage}}}}}}}}"] }
+      { name: "repository", body: ["(owner:$", "owner", " name:$", "name", "){mergeCommitAllowed squashMergeAllowed rebaseMergeAllowed autoMergeAllowed viewerPermission pullRequest(number:$", "number", "){number title url body state isDraft isInMergeQueue@include(if:$", "required", ")mergeable mergeStateStatus reviewDecision additions deletions changedFiles createdAt updatedAt mergedAt closedAt headRefName baseRefName headRefOid isCrossRepository maintainerCanModify headRepositoryOwner{__typename login}headRepository{nameWithOwner viewerPermission}headRef{id}author{__typename login avatarUrl...on User{id name}}autoMergeRequest{mergeMethod}viewerCanUpdate viewerDidAuthor viewerCanUpdateBranch baseRef{compare(headRef:$", "headRef", "){behindBy}}reviewRequests(first:$", "requestedReviewers", "){nodes{requestedReviewer{__typename...on User{login name}...on Bot{login}...on Team{slug combinedSlug teamName:name teamAvatarUrl:avatarUrl}}}}labels(first:100){nodes{name color}}commits(last:1){nodes{commit{statusCheckRollup{contexts(first:100){nodes{__typename...", "CheckContext", "}pageInfo{hasNextPage}}}}}}}}"] }
     ],
     fragments: [
       { name: "CheckContext", body: ["on StatusCheckRollupContext{__typename...on StatusContext{context state targetUrl createdAt description isRequired(pullRequestNumber:$", "number", ")@include(if:$", "required", ")}...on CheckRun{name status conclusion startedAt completedAt detailsUrl isRequired(pullRequestNumber:$", "number", ")@include(if:$", "required", ")checkSuite{workflowRun{workflow{name}}}}}"] }
@@ -601,6 +603,8 @@ export const PullRequestPreviewRepositoryPullRequestPullRequest = Schema.Struct(
   url: Shared.URI,
   /** Identifies the state of the pull request. */
   state: GraphQL.enumLiterals(Shared.PullRequestState.literals),
+  /** Indicates whether the pull request is in a merge queue */
+  isInMergeQueue: Schema.optionalKey(Schema.Boolean),
   /** Identifies if the pull request is a draft. */
   isDraft: Schema.Boolean,
   /** Identifies the date and time when the object was created. */
@@ -626,17 +630,19 @@ export const PullRequestPreview = GraphQL.query("PullRequestPreview", {
     variables: [
       { name: "owner", body: "String!" },
       { name: "name", body: "String!" },
-      { name: "number", body: "Int!" }
+      { name: "number", body: "Int!" },
+      { name: "mergeQueue", body: "Boolean!" }
     ],
     selections: [
-      { name: "repository", body: ["(owner:$", "owner", " name:$", "name", "){pullRequest(number:$", "number", "){number title url state isDraft createdAt author{__typename login avatarUrl...on User{name}}}}"] }
+      { name: "repository", body: ["(owner:$", "owner", " name:$", "name", "){pullRequest(number:$", "number", "){number title url state isInMergeQueue@include(if:$", "mergeQueue", ")isDraft createdAt author{__typename login avatarUrl...on User{name}}}}"] }
     ],
     fragments: []
   },
   variables: {
     owner: Schema.String,
     name: Schema.String,
-    number: Shared.Int
+    number: Shared.Int,
+    mergeQueue: Schema.Boolean
   },
   result: Schema.Struct({
     /** Lookup a given repository by the owner and repository name. */
@@ -1553,6 +1559,8 @@ export const PullRequestActionStateRepositoryPullRequestPullRequest = Schema.Str
   id: Shared.ID,
   /** Identifies the oid of the head ref associated with the pull request, even if the ref has been deleted. */
   headRefOid: Shared.GitObjectID,
+  /** Indicates whether the pull request is in a merge queue */
+  isInMergeQueue: Schema.optionalKey(Schema.Boolean),
   /** Indicates whether the pull request's base ref has a merge queue enabled. */
   isMergeQueueEnabled: Schema.Boolean,
   /** Detailed information about the current pull request merge state status. */
@@ -1576,10 +1584,11 @@ export const PullRequestActionState = GraphQL.query("PullRequestActionState", {
       { name: "owner", body: "String!" },
       { name: "name", body: "String!" },
       { name: "number", body: "Int!" },
-      { name: "headRef", body: "String!" }
+      { name: "headRef", body: "String!" },
+      { name: "mergeQueue", body: "Boolean!" }
     ],
     selections: [
-      { name: "repository", body: ["(owner:$", "owner", " name:$", "name", "){pullRequest(number:$", "number", "){id headRefOid isMergeQueueEnabled mergeStateStatus baseRef{compare(headRef:$", "headRef", "){behindBy}}}}"] }
+      { name: "repository", body: ["(owner:$", "owner", " name:$", "name", "){pullRequest(number:$", "number", "){id headRefOid isInMergeQueue@include(if:$", "mergeQueue", ")isMergeQueueEnabled mergeStateStatus baseRef{compare(headRef:$", "headRef", "){behindBy}}}}"] }
     ],
     fragments: []
   },
@@ -1587,7 +1596,8 @@ export const PullRequestActionState = GraphQL.query("PullRequestActionState", {
     owner: Schema.String,
     name: Schema.String,
     number: Shared.Int,
-    headRef: Schema.String
+    headRef: Schema.String,
+    mergeQueue: Schema.Boolean
   },
   result: Schema.Struct({
     /** Lookup a given repository by the owner and repository name. */

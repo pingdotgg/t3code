@@ -2,10 +2,13 @@ import { EnvironmentId, ProjectId, ThreadId, type PullRequestCheck } from "@t3to
 import { DraftId } from "~/composerDraftStore";
 import { AsyncResult } from "effect/reactivity";
 import { expect, it, vi } from "vite-plus/test";
+import { page } from "vite-plus/test/browser";
 
 const state = vi.hoisted(() => ({
   status: "success" as PullRequestCheck["status"],
   extraStatus: null as PullRequestCheck["status"] | null,
+  lifecycle: "open",
+  inMergeQueue: false,
   mergeMethods: ["merge"] as Array<"merge" | "squash" | "rebase">,
   perform: vi.fn(),
   newThread: vi.fn(),
@@ -32,7 +35,8 @@ const queryData = () => ({
   url: "https://github.com/owner/repo/pull/1",
   number: 1,
   title: "Test PR",
-  state: "open",
+  state: state.lifecycle,
+  inMergeQueue: state.inMergeQueue,
   isDraft: false,
   mergeability: "mergeable",
   headBranch: "feature",
@@ -177,6 +181,45 @@ it("requires a new merge click after passing checks become pending and pass agai
   expect(state.perform).not.toHaveBeenCalled();
 });
 
+it("updates merge controls as mocked PR data enters and leaves the merge queue", async () => {
+  await using screen = await setup();
+  const row = () => (
+    <ThreadDetailsPrRow
+      environmentId={EnvironmentId.make("environment")}
+      pr={null}
+      number={1}
+      status={null}
+      project={null}
+      label="Test PR"
+      openAriaLabel="Open PR"
+      onOpen={vi.fn()}
+    />
+  );
+  await screen.rerender(row());
+  await screen.getByRole("button", { name: "Merge", exact: true }).click();
+  await expect.element(page.getByRole("alertdialog")).toBeVisible();
+
+  state.inMergeQueue = true;
+  await screen.rerender(row());
+  await expect
+    .element(screen.getByRole("button", { name: "Merge", exact: true }))
+    .not.toBeInTheDocument();
+  await expect.element(page.getByRole("alertdialog")).not.toBeInTheDocument();
+  expect(state.perform).not.toHaveBeenCalled();
+
+  state.inMergeQueue = false;
+  await screen.rerender(row());
+  await screen.getByRole("button", { name: "Merge", exact: true }).click();
+  await expect.element(page.getByRole("alertdialog")).toBeVisible();
+
+  state.lifecycle = "merged";
+  await screen.rerender(row());
+  await expect
+    .element(screen.getByRole("button", { name: "Merge", exact: true }))
+    .not.toBeInTheDocument();
+  await expect.element(page.getByRole("alertdialog")).not.toBeInTheDocument();
+});
+
 async function setup() {
   state.perform.mockReset();
   state.checkoutError = null;
@@ -190,6 +233,8 @@ async function setup() {
 
   state.status = "success";
   state.extraStatus = null;
+  state.lifecycle = "open";
+  state.inMergeQueue = false;
   state.mergeMethods = ["merge"];
   useUiStateStore.getState().setPullRequestMergeMethod("merge");
   return renderUi(null);

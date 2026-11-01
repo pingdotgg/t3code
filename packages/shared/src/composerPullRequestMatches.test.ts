@@ -84,7 +84,7 @@ describe("linked pull requests", () => {
     const linked = composerPullRequestsFromLinks(
       [
         link("owner/repo", 7, {
-          snapshot: { ...link("owner/repo", 7).snapshot!, title: "Fix login" },
+          snapshot: { ...link("owner/repo", 7).snapshot!, title: "Fix login", inMergeQueue: true },
         }),
         link("owner/repo", 8),
       ],
@@ -97,6 +97,7 @@ describe("linked pull requests", () => {
       limit: 10,
     });
     expect(searching.map((match) => match.number)).toEqual([7]);
+    expect(searching[0]).toMatchObject({ inMergeQueue: true });
     const searched = withLinkedComposerPullRequestsFirst({
       matches: [entry(9, "2026-01-05"), entry(8, "2026-01-03")],
       linked,

@@ -124,6 +124,7 @@ export function usePullRequestThreads(
           baseBranch: pr.baseBranch,
           state: pr.state,
           isDraft: pr.isDraft,
+          inMergeQueue: pr.inMergeQueue,
         },
         uuidv4(),
         filePath,

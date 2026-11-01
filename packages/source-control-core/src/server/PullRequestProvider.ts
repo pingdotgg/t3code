@@ -88,6 +88,7 @@ export interface ProviderChangeRequest {
   readonly baseBranch: string;
   readonly state: PullRequestState;
   readonly isDraft: boolean;
+  readonly inMergeQueue?: boolean;
   readonly mergeability: PullRequestMergeability;
   readonly additions: number;
   readonly deletions: number;
@@ -109,6 +110,7 @@ export interface ProviderChangeRequestSummary {
   readonly baseBranch: string;
   readonly state: PullRequestState;
   readonly isDraft?: boolean;
+  readonly inMergeQueue?: boolean;
   readonly closedAt?: string | null;
   readonly mergedAt?: string | null;
   readonly updatedAt: string;

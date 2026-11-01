@@ -90,6 +90,7 @@ interface ListItemFields {
   readonly baseRefName: string;
   readonly state?: string | null | undefined;
   readonly isDraft?: boolean | undefined;
+  readonly isInMergeQueue?: boolean | undefined;
   readonly mergeable?: string | null | undefined;
   readonly reviewDecision?: string | null | undefined;
   readonly additions?: number | undefined;
@@ -225,8 +226,10 @@ export function toPullRequestPreview(
 ): Omit<PullRequestPreview, "projectId" | "repository"> | null {
   const pullRequest = result.repository?.pullRequest;
   if (pullRequest == null) return null;
+  const { isInMergeQueue, ...preview } = pullRequest;
   return {
-    ...pullRequest,
+    ...preview,
+    ...(isInMergeQueue === undefined ? {} : { inMergeQueue: isInMergeQueue }),
     author: toActor(pullRequest.author),
     state: toState(pullRequest),
   };
@@ -332,6 +335,7 @@ export interface GitHubPullRequestListItem {
   readonly baseBranch: string;
   readonly state: PullRequestState;
   readonly isDraft: boolean;
+  readonly inMergeQueue?: boolean;
   readonly mergeability: PullRequestMergeability;
   readonly reviewDecision: PullRequestReviewDecision | null;
   readonly additions: number;
@@ -709,6 +713,7 @@ function toListItem(raw: ListItemFields): GitHubPullRequestListItem {
     baseBranch: raw.baseRefName,
     state: toState(raw),
     isDraft: raw.isDraft ?? false,
+    ...(raw.isInMergeQueue === undefined ? {} : { inMergeQueue: raw.isInMergeQueue }),
     mergeability: toMergeability(raw.mergeable),
     reviewDecision: toReviewDecisionWithReviews(raw.reviewDecision, raw.latestReviews),
     additions: raw.additions ?? 0,
@@ -896,6 +901,7 @@ export interface GitHubPullRequestSummary {
   readonly baseBranch: string;
   readonly state: PullRequestState;
   readonly isDraft: boolean;
+  readonly inMergeQueue?: boolean;
   readonly closedAt: string | null;
   readonly mergedAt: string | null;
   readonly updatedAt: string;
@@ -919,6 +925,7 @@ export function toPullRequestSummary(pr: SummarizedPullRequest): GitHubPullReque
     baseBranch: pr.baseRefName,
     state: toState(pr),
     isDraft: pr.isDraft,
+    ...(pr.isInMergeQueue === undefined ? {} : { inMergeQueue: pr.isInMergeQueue }),
     closedAt: trimmed(pr.closedAt),
     mergedAt: trimmed(pr.mergedAt),
     updatedAt: pr.updatedAt,
@@ -1734,6 +1741,7 @@ const RawStackSchema = Schema.Struct({
 const decodeStacks = decodeJsonResult(Schema.Array(RawStackSchema));
 
 export interface GitHubPullRequestStackLayer {
+  readonly inMergeQueue?: boolean;
   readonly title?: string;
   readonly isDraft?: boolean;
   readonly headSha?: string;

@@ -251,6 +251,13 @@ function expectSuccess<A>(result: Result.Result<A, unknown>): A {
 }
 
 describe("pull request list decoding", () => {
+  it.each([true, false, undefined])("preserves queue membership in listings: %s", (queued) => {
+    const batch = expectSuccess(
+      decodePullRequestListJson(listJson([queued === undefined ? {} : { isInMergeQueue: queued }])),
+    );
+    expect(batch.items[0]).toMatchObject(queued === undefined ? {} : { inMergeQueue: queued });
+    if (queued === undefined) expect(batch.items[0]).not.toHaveProperty("inMergeQueue");
+  });
   it("treats a merge timestamp as merged even when the state still says closed", () => {
     const [entry] = expectSuccess(
       decodePullRequestListJson(listJson([{ state: "CLOSED", mergedAt: "2026-07-03T00:00:00Z" }])),
@@ -394,6 +401,12 @@ describe("pull request detail decoding", () => {
     rollup: ReadonlyArray<Record<string, unknown>>,
     pullRequest?: Record<string, unknown>,
   ) => expectSuccess(decodePullRequestCoreJson(coreJson(rollup, pullRequest)));
+
+  it.each([true, false, undefined])("preserves queue membership in detail: %s", (queued) => {
+    const detail = detailOf([], queued === undefined ? {} : { isInMergeQueue: queued });
+    expect(detail).toMatchObject(queued === undefined ? {} : { inMergeQueue: queued });
+    if (queued === undefined) expect(detail).not.toHaveProperty("inMergeQueue");
+  });
 
   it.each([
     [{}, true],

@@ -381,7 +381,9 @@ export function PullRequestPrimaryAction({
                   : selectedMergeMethodLabel)}
           </TooltipPopup>
         </Tooltip>
-      ) : (primaryAction === "merged" || primaryAction === "closed") &&
+      ) : (primaryAction === "queued" ||
+          primaryAction === "merged" ||
+          primaryAction === "closed") &&
         statePresentation !== null ? (
         <Badge size="control" variant="outline">
           <span className={cn("flex items-center gap-1", statePresentation.toneClassName)}>

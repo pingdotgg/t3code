@@ -655,6 +655,12 @@ describe("pull request quick actions", () => {
       "close",
       "ready",
     ]);
+    expect(
+      pullRequestQuickActions({ state: "open", isDraft: false, inMergeQueue: true }, github),
+    ).toEqual(["close"]);
+    expect(
+      pullRequestQuickActions({ state: "open", isDraft: false, inMergeQueue: false }, github),
+    ).toContain("merge");
     const gitlab = actionsOf({
       host: "gitlab.com",
       provider: SourceControlProviderKind.make("gitlab"),

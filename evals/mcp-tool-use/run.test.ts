@@ -427,6 +427,37 @@ it("stops a sample only once a must-not check has failed", () => {
 });
 
 const decodeDeviceCase = Schema.decodeSync(Schema.fromJsonString(McpToolUseCase));
+it.each([
+  { number: 7, text: "7: queued", pass: true },
+  { number: 7, text: "- **PR #7**: open, queued", pass: true },
+  { number: 7, text: "| #7 | open | queued |", pass: true },
+  { number: 7, text: "7: not queued\n8: queued", pass: false },
+  { number: 7, text: "7: open\n8: queued", pass: false },
+  { number: 7, text: "17: queued\n7: not queued", pass: false },
+  { number: 8, text: "8: not queued", pass: true },
+  { number: 8, text: "- **PR #8**: open, not in the merge queue", pass: true },
+  { number: 8, text: "| #8 | open | false |", pass: true },
+  { number: 8, text: "7: queued\n8: queued\n9: not queued\n10: unknown", pass: false },
+  { number: 8, text: "18: not queued\n8: queued", pass: false },
+  { number: 9, text: "9: unknown", pass: true },
+  { number: 9, text: "| #9 | open | not known |", pass: true },
+  { number: 9, text: "9: not queued\n10: unknown", pass: false },
+  { number: 9, text: "19: unknown\n9: queued", pass: false },
+  { number: 9, text: "9: not unknown", pass: false },
+])("grades queue membership on PR $number's own line: $text", ({ number, text, pass }) => {
+  const testCase = decodeDeviceCase(
+    NodeFS.readFileSync(new URL("./cases/merge-queue.ndjson", import.meta.url), "utf8").trim(),
+  );
+  const checks = gradeSample(
+    { textMust: testCase.expect.textMust?.slice(number - 7, number - 6) },
+    { calls: [], text, stopReason: "end_turn" },
+  );
+  assert.deepEqual(
+    checks.map((check) => check.pass),
+    [pass],
+  );
+});
+
 const deviceCases = () =>
   NodeFS.readFileSync(new URL("./cases/device-manager.ndjson", import.meta.url), "utf8")
     .trim()

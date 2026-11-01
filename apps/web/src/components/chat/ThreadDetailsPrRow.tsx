@@ -226,6 +226,7 @@ export function ThreadDetailsPrRow({
       : resolvePullRequestState({
           state: detail.state,
           isDraft: detail.isDraft,
+          inMergeQueue: detail.inMergeQueue,
         });
   const icon = statePresentation ? (
     <statePresentation.Icon
@@ -235,6 +236,7 @@ export function ThreadDetailsPrRow({
   ) : pr && status ? (
     <ChangeRequestStatusIcon
       state={pr.state}
+      inMergeQueue={pr.inMergeQueue}
       className={cn(THREAD_DETAILS_PANEL_ICON_CLASS, status.colorClass)}
     />
   ) : (
@@ -285,7 +287,7 @@ export function ThreadDetailsPrRow({
                   }
                 />
                 <div className="min-w-0 truncate text-foreground/75">
-                  {describePullRequestChecks(detail.checks)}
+                  PR checks: {describePullRequestChecks(detail.checks)}
                 </div>
               </div>
             ) : null}

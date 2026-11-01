@@ -602,8 +602,24 @@ describe("pull request toolkit handlers", () => {
     Effect.gen(function* () {
       const harness = yield* makeHarness({
         thread: makeThread([
-          makeLink(3, { headBranch: "feat-c", baseBranch: "feat-b", source: "agent" }),
-          makeLink(1, { headBranch: "feat-a", baseBranch: "main", source: "created" }),
+          makeLink(3, {
+            headBranch: "feat-c",
+            baseBranch: "feat-b",
+            source: "agent",
+            snapshot: {
+              ...makeLink(3, { headBranch: "feat-c", baseBranch: "feat-b" }).snapshot!,
+              inMergeQueue: true,
+            },
+          }),
+          makeLink(1, {
+            headBranch: "feat-a",
+            baseBranch: "main",
+            source: "created",
+            snapshot: {
+              ...makeLink(1, { headBranch: "feat-a", baseBranch: "main" }).snapshot!,
+              inMergeQueue: false,
+            },
+          }),
           makeLink(2, { headBranch: "feat-b", baseBranch: "feat-a", source: "agent" }),
           makeLink(9, { source: "stack-dismissed" }),
           makeLink(10),
@@ -623,15 +639,19 @@ describe("pull request toolkit handlers", () => {
         headBranch: "feat-c",
         baseBranch: "feat-b",
         isDraft: false,
+        inMergeQueue: true,
         stack: { kind: "derived", position: 3, size: 3 },
       });
       expect(result.pullRequests[3]).toMatchObject({
         number: 10,
         state: null,
+        inMergeQueue: null,
         title: null,
         headBranch: null,
         stack: null,
       });
+      expect(result.pullRequests[1]).toMatchObject({ number: 1, inMergeQueue: false });
+      expect(result.pullRequests[2]).toMatchObject({ number: 2, inMergeQueue: null });
       expect(result.chains).toEqual([
         { kind: "derived", numbers: [1, 2, 3] },
         { kind: "derived", numbers: [10] },

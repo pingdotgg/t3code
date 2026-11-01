@@ -10,6 +10,7 @@ query PullRequestSummary($owner: String!, $name: String!, $number: Int!, $stacks
       url
       state
       isDraft
+      isInMergeQueue @include(if: $stacks)
       mergeable
       reviewDecision
       additions
@@ -123,6 +124,14 @@ query PullRequestWatchFingerprint($owner: String!, $name: String!, $number: Int!
           }
         }
       }
+    }
+  }
+}
+
+query PullRequestQueueMembership($owner: String!, $name: String!, $number: Int!) {
+  repository(owner: $owner, name: $name) {
+    pullRequest(number: $number) {
+      isInMergeQueue
     }
   }
 }

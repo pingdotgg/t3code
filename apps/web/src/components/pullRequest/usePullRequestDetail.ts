@@ -127,6 +127,7 @@ export function usePullRequestDetail(
               ? resolvedCoreDetail.mergedAt
               : sharedSummary.mergedAt,
           isDraft: sharedSummary.isDraft ?? resolvedCoreDetail.isDraft,
+          inMergeQueue: sharedSummary.inMergeQueue ?? resolvedCoreDetail.inMergeQueue,
         };
   const detail =
     coreDetail === null

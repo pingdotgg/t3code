@@ -104,7 +104,7 @@ export interface PullRequestMergeEvent extends PullRequestRef {
 
 type PullRequestReading = Pick<
   PullRequestSummary,
-  "state" | "isDraft" | "updatedAt" | "observedAt"
+  "state" | "isDraft" | "inMergeQueue" | "updatedAt" | "observedAt"
 >;
 
 function supersedesReading(current: PullRequestReading | undefined, next: PullRequestReading) {
@@ -1239,6 +1239,7 @@ export const make = Effect.gen(function* () {
       baseBranch: input.item.baseBranch,
       state: input.item.state,
       isDraft: input.item.isDraft,
+      ...(input.item.inMergeQueue === undefined ? {} : { inMergeQueue: input.item.inMergeQueue }),
       mergeability: input.item.mergeability,
       additions: input.item.additions,
       deletions: input.item.deletions,
@@ -1681,6 +1682,9 @@ export const make = Effect.gen(function* () {
             updatedAt: changeRequest.updatedAt,
             observedAt,
             ...(changeRequest.isDraft === undefined ? {} : { isDraft: changeRequest.isDraft }),
+            ...(changeRequest.inMergeQueue === undefined
+              ? {}
+              : { inMergeQueue: changeRequest.inMergeQueue }),
             ...(changeRequest.author === undefined ? {} : { author: changeRequest.author }),
             ...(changeRequest.additions === undefined
               ? {}
@@ -1770,6 +1774,9 @@ export const make = Effect.gen(function* () {
             author: changeRequest.author,
             state: changeRequest.state,
             isDraft: changeRequest.isDraft,
+            ...(changeRequest.inMergeQueue === undefined
+              ? {}
+              : { inMergeQueue: changeRequest.inMergeQueue }),
             mergeability: changeRequest.mergeability,
             additions: changeRequest.additions,
             deletions: changeRequest.deletions,
@@ -1821,6 +1828,7 @@ export const make = Effect.gen(function* () {
     author: value.author,
     state: value.state,
     isDraft: value.isDraft,
+    ...(value.inMergeQueue === undefined ? {} : { inMergeQueue: value.inMergeQueue }),
     createdAt: value.createdAt,
   });
   const previewUncached: PullRequestService["Service"]["preview"] = (input) =>
@@ -3147,6 +3155,7 @@ export const make = Effect.gen(function* () {
     url: detail.url,
     state: detail.state,
     isDraft: detail.isDraft,
+    ...(detail.inMergeQueue === undefined ? {} : { inMergeQueue: detail.inMergeQueue }),
     author: detail.author,
     additions: detail.additions,
     deletions: detail.deletions,
@@ -3176,10 +3185,13 @@ export const make = Effect.gen(function* () {
       detailStates.set(scope, {
         state: next.state,
         isDraft: next.isDraft,
+        inMergeQueue: next.inMergeQueue,
         updatedAt: next.updatedAt,
         observedAt: next.observedAt,
       });
-      return (current?.state !== next.state || current?.isDraft !== next.isDraft) &&
+      return (current?.state !== next.state ||
+        current?.isDraft !== next.isDraft ||
+        current?.inMergeQueue !== next.inMergeQueue) &&
         ref.host !== undefined
         ? PubSub.publish(stateChanges, {
             host: ref.host,
@@ -3194,6 +3206,7 @@ export const make = Effect.gen(function* () {
     {
       readonly state: PullRequestState;
       readonly isDraft: boolean | undefined;
+      readonly inMergeQueue: boolean | undefined;
       readonly atMs: number;
     }
   >();
@@ -3201,6 +3214,7 @@ export const make = Effect.gen(function* () {
     reference,
     state,
     isDraft,
+    inMergeQueue,
   }) =>
     Effect.all([canonicalRef(reference), Clock.currentTimeMillis]).pipe(
       Effect.flatMap(([ref, nowMs]) =>
@@ -3210,6 +3224,7 @@ export const make = Effect.gen(function* () {
           if (
             reported?.state === state &&
             reported.isDraft === isDraft &&
+            reported.inMergeQueue === inMergeQueue &&
             nowMs - reported.atMs < REPORTED_STATE_DEDUPE_MS
           )
             return Effect.void;
@@ -3218,7 +3233,7 @@ export const make = Effect.gen(function* () {
             const oldest = reportedStates.keys().next().value;
             if (oldest !== undefined) reportedStates.delete(oldest);
           }
-          reportedStates.set(scope, { state, isDraft, atMs: nowMs });
+          reportedStates.set(scope, { state, isDraft, inMergeQueue, atMs: nowMs });
           return ref.host === undefined
             ? Effect.void
             : PubSub.publish(stateChanges, {

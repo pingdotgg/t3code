@@ -363,6 +363,7 @@ export function useComposerMenuItems({
           baseBranch: pullRequest.baseBranch,
           state: pullRequest.state,
           isDraft: pullRequest.isDraft,
+          inMergeQueue: pullRequest.inMergeQueue,
         },
         label: `#${pullRequest.number}`,
         description:
