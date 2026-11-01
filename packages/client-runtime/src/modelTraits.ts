@@ -106,14 +106,35 @@ export function buildTraitsTriggerDisplay(input: {
   label: string;
   /** "Fast" or "Ultrafast" when a speed option is on. */
   speedLabel: string | null;
-  /** Labels other than reasoning and speed, such as context window or thinking. */
+  /** Labels other than reasoning and speed, such as context window. */
   otherLabels: ReadonlyArray<string>;
+  thinkingOff: boolean;
 } {
+  const thinkingOff = input.descriptors.some(
+    (descriptor) =>
+      descriptor.id === "thinking" &&
+      descriptor.type === "boolean" &&
+      descriptor.currentValue === false,
+  );
   let fastModeFallbackLabel: string | null = null;
   let speedLabel: string | null = null;
   let reasoningLabelIndex = -1;
   const labels: Array<string> = [];
   for (const descriptor of input.descriptors) {
+    if (descriptor.id === "thinking" && descriptor.type === "boolean") {
+      if (thinkingOff) {
+        reasoningLabelIndex = labels.length;
+        labels.push("Off");
+      }
+      continue;
+    }
+    if (
+      thinkingOff &&
+      descriptor.type === "select" &&
+      REASONING_SELECT_DESCRIPTOR_IDS.has(descriptor.id)
+    ) {
+      continue;
+    }
     if (descriptor.id === "fastMode" && descriptor.type === "boolean") {
       speedLabel = descriptor.currentValue === true ? "Fast" : null;
       fastModeFallbackLabel = speedLabel ?? "Normal";
@@ -167,7 +188,7 @@ export function buildTraitsTriggerDisplay(input: {
 
   const otherLabels = labels.filter((_, index) => index !== reasoningLabelIndex);
   if (labels.length === 0 && fastModeFallbackLabel !== null) {
-    return { label: fastModeFallbackLabel, speedLabel, otherLabels };
+    return { label: fastModeFallbackLabel, speedLabel, otherLabels, thinkingOff };
   }
   if (speedLabel) {
     if (reasoningLabelIndex >= 0) {
@@ -176,5 +197,5 @@ export function buildTraitsTriggerDisplay(input: {
       labels.push(speedLabel);
     }
   }
-  return { label: labels.join(" · "), speedLabel, otherLabels };
+  return { label: labels.join(" · "), speedLabel, otherLabels, thinkingOff };
 }

@@ -95,7 +95,7 @@ export function describeComposerEffort(
     reportedModelSelection: traits.reportedModelSelection,
   });
   const glyph =
-    primary && REASONING_SELECT_DESCRIPTOR_IDS.has(primary.id)
+    !display.thinkingOff && primary && REASONING_SELECT_DESCRIPTOR_IDS.has(primary.id)
       ? resolveEffortGlyph(
           primary,
           visibility.ultrathinkPromptControlled
