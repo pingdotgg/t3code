@@ -802,6 +802,35 @@ it.layer(layerTest)("ThreadSearch across scripts and without the index", (it) =>
   );
 });
 
+it.layer(layerTest)("ThreadSearch without the index", (it) => {
+  it.effect("finds a curly apostrophe for a straight one and back", () =>
+    Effect.gen(function* () {
+      const projections = yield* ProjectionStore.ProjectionStoreV2;
+      const search = yield* ThreadSearch.ThreadSearch;
+      const sql = yield* SqlClient.SqlClient;
+      const project = ProjectId.make("project:scan-apostrophes");
+      const curly = ThreadId.make("thread:scan-apostrophe-curly");
+      const straight = ThreadId.make("thread:scan-apostrophe-straight");
+      yield* createProject(project);
+      yield* Effect.forEach(
+        [
+          thread(curly, project),
+          message(curly, "scan-apostrophe-curly", "user", "the gannet’s nest"),
+          thread(straight, project),
+          message(straight, "scan-apostrophe-straight", "user", "a kittiwake's nest"),
+        ],
+        projections.apply,
+        { discard: true },
+      );
+      yield* sql`DROP TABLE orchestration_v2_message_search`;
+      const threadIds = (query: string) =>
+        search.search({ query }).pipe(Effect.map(({ matches }) => matches.map((m) => m.threadId)));
+      assert.deepEqual(yield* threadIds("gannet's"), [curly]);
+      assert.deepEqual(yield* threadIds("kittiwake’s"), [straight]);
+    }),
+  );
+});
+
 it.layer(layerTest)("ThreadSearch.searchOlderSettled", (it) => {
   it.effect("returns older settled title matches in scope, then older message hits", () =>
     Effect.gen(function* () {
