@@ -700,6 +700,8 @@ export const layer: Layer.Layer<
                 }),
               ];
             }
+            case "background_work.updated":
+              return [];
             case "command_output.delta":
               // Live output is routed to the command output hub before ingestion.
               return [];
