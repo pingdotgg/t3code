@@ -526,6 +526,10 @@ function parseGitRemoteVerboseOutput(
   return remotes;
 }
 
+// Trace output and deprecation warnings can precede Git's own message, so check every line.
+const hasStderrLine = (stderr: string, prefixes: ReadonlyArray<string>) =>
+  stderr.split("\n").some((line) => prefixes.some((prefix) => line.startsWith(prefix)));
+
 const gitCommand = Effect.fn("GitVcsDriver.gitCommand")(
   (
     process: VcsProcess.VcsProcess["Service"],
@@ -585,11 +589,13 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
     if (result === null) return null;
     if (result.exitCode === 0) return result.stdout;
     // Git before 2.38 answers "false" for a bare repo, then fails on --show-toplevel.
-    // Match message prefixes only: a path inside a diagnostic may contain the same words.
+    // Match line prefixes only: a path inside a diagnostic may contain the same words.
     if (
       result.stdout.startsWith("false") ||
-      result.stderr.startsWith("fatal: not a git repository") ||
-      result.stderr.startsWith("fatal: cannot use bare repository") ||
+      hasStderrLine(result.stderr, [
+        "fatal: not a git repository",
+        "fatal: cannot use bare repository",
+      ]) ||
       !(yield* fileSystem.exists(cwd).pipe(Effect.orElseSucceed(() => true)))
     ) {
       return null;
@@ -834,12 +840,15 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
       operation: "GitVcsDriver.checkpoints.resolveCheckpointCommit",
       cwd,
       args: ["rev-parse", "--verify", "--quiet", `${checkpointRef}^{commit}`],
+      env: { LC_ALL: "C" },
       allowNonZeroExit: true,
     }).pipe(
       Effect.flatMap((result) => {
-        // --quiet reports an absent ref as a silent exit 1; an unreadable object also exits 1 but
-        // says why on stderr.
-        if (result.exitCode === 1 && result.stderr.trim().length === 0) return Effect.succeed(null);
+        // --quiet reports an absent ref as exit 1 with no error; an unreadable object also exits 1
+        // but reports an error line.
+        if (result.exitCode === 1 && !hasStderrLine(result.stderr, ["error:", "fatal:"])) {
+          return Effect.succeed(null);
+        }
         if (result.exitCode !== 0) {
           return Effect.fail(
             new VcsProcessExitError({

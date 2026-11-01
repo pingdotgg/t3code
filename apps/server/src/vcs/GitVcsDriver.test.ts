@@ -1270,6 +1270,36 @@ it.effect("GitVcsDriver fails a checkpoint ref lookup when git cannot read its o
   }).pipe(Effect.provide(NodeServices.layer)),
 );
 
+it.effect("GitVcsDriver reads no repository through GIT_TRACE output", () =>
+  Effect.gen(function* () {
+    const driver = yield* makeStubbedDriver({
+      code: 128,
+      stdout: "",
+      stderr: [
+        "23:21:56.378959 git.c:463               trace: built-in: git rev-parse --is-inside-work-tree",
+        "fatal: not a git repository (or any of the parent directories): .git",
+        "",
+      ].join("\n"),
+    });
+
+    assert.equal(yield* driver.detectRepository(globalThis.process.cwd()), null);
+  }).pipe(Effect.provide(NodeServices.layer)),
+);
+
+it.effect("GitVcsDriver reads an absent checkpoint ref as absent despite a Git warning", () =>
+  Effect.gen(function* () {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const cwd = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-git-warning-" });
+    yield* runGit(cwd, ["init"]);
+    // Valid legacy config that makes every Git command print a deprecation warning.
+    yield* runGit(cwd, ["config", "core.fsyncObjectFiles", "true"]);
+    const driver = yield* GitVcsDriver.makeVcsDriverShape();
+    const checkpointRef = CheckpointRef.make("refs/t3/checkpoints/absent/0");
+
+    assert.isFalse(yield* driver.checkpoints.hasCheckpointRef({ cwd, checkpointRef }));
+  }).pipe(Effect.scoped, Effect.provide(layerGitContract)),
+);
+
 const gitCommandCount = (operation: string, outcome: string) =>
   Metric.value(
     Metric.withAttributes(gitCommandsTotal, [
