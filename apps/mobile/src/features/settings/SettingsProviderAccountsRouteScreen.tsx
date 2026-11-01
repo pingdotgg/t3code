@@ -34,6 +34,8 @@ import {
 } from "./components/SettingsEnvironmentFilterHeader";
 import { SettingsScreen } from "./components/SettingsScreen";
 import { SettingsSection } from "./components/SettingsSection";
+import { AddClaudeAccount, ClaudeAccount } from "./ClaudeAccounts";
+import { CLAUDE_DRIVER } from "./claude-accounts";
 import { useSettingsEnvironmentFilter, type SettingsTarget } from "./settings-environment-filter";
 
 export function SettingsProviderAccountsRouteScreen() {
@@ -64,31 +66,55 @@ export function SettingsProviderAccountsRouteScreen() {
                     </Text>
                   </View>
                 ) : (
-                  <>
-                    {managedProviders(environment, providersByEnvironment)
-                      .filter(canManageProvider)
-                      .map((provider, index) => (
-                        <ProviderAccount
-                          key={provider.instanceId}
-                          environment={environment}
-                          provider={provider}
-                          divider={index > 0}
-                        />
-                      ))}
-                    {!managedProviders(environment, providersByEnvironment).some(
-                      canManageProvider,
-                    ) ? (
-                      <Text className="p-4 text-foreground-muted">
-                        Configure a provider with in-app sign-in in web or desktop Settings.
-                      </Text>
-                    ) : null}
-                  </>
+                  <EnvironmentProviders
+                    environment={environment}
+                    providers={managedProviders(environment, providersByEnvironment)}
+                  />
                 )}
               </SettingsSection>
             ))
           )}
         </ScreenScrollView>
       </SettingsScreen>
+    </>
+  );
+}
+
+function EnvironmentProviders({
+  environment,
+  providers,
+}: {
+  readonly environment: SettingsTarget;
+  readonly providers: ReadonlyArray<ServerProvider>;
+}) {
+  const accounts = providers.filter(canManageProvider);
+  // Claude has no in-app sign-in; each account is its own instance on a signed-in config folder.
+  const claudeAccounts = providers.filter(
+    (provider) => provider.driver === CLAUDE_DRIVER && !canManageProvider(provider),
+  );
+  const canAddClaude = isManagedDriverAllowed(
+    environment.serverConfig.managedPolicy,
+    CLAUDE_DRIVER,
+  );
+  return (
+    <>
+      {accounts.map((provider, index) => (
+        <ProviderAccount
+          key={provider.instanceId}
+          environment={environment}
+          provider={provider}
+          divider={index > 0}
+        />
+      ))}
+      {accounts.length === 0 ? (
+        <Text className="p-4 text-foreground-muted">
+          Configure a provider with in-app sign-in in web or desktop Settings.
+        </Text>
+      ) : null}
+      {claudeAccounts.map((provider) => (
+        <ClaudeAccount key={provider.instanceId} environment={environment} provider={provider} />
+      ))}
+      {canAddClaude ? <AddClaudeAccount environment={environment} /> : null}
     </>
   );
 }
