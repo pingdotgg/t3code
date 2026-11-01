@@ -1,3 +1,7 @@
+// @effect-diagnostics nodeBuiltinImport:off - real HTTP servers stand in for an outbound proxy and the metadata server.
+import * as NodeHttp from "node:http";
+import type * as NodeNet from "node:net";
+
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodePath from "@effect/platform-node/NodePath";
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -5,14 +9,18 @@ import { ProviderInstanceId } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
+import { FetchHttpClient, HttpClient, HttpClientError, HttpClientResponse } from "effect/http";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
+import * as TestClock from "effect/testing/TestClock";
 import * as Ndjson from "effect/encoding/Ndjson";
 import * as AcpErrors from "effect-acp/errors";
+import * as Undici from "undici";
 import { symlinksSupported } from "@t3tools/shared/testing/symlinks";
 
 import {
@@ -21,12 +29,14 @@ import {
   ANTIGRAVITY_SIGN_IN_REQUIRED_MESSAGE,
   type AntigravityAuthConfig,
   type AntigravityProfile,
+  antigravityAuthIssue,
   buildAntigravityAcpSpawnInput,
   isAntigravitySignInRequiredError,
   makeAntigravityStderrHandler,
   makeAntigravityStdoutTransform,
   parseAntigravityAuthorizationUrl,
   prepareAntigravityProfile,
+  probeGoogleMetadataServer,
   resolveAntigravityInstanceDirectories,
 } from "./antigravityAuthSupport.ts";
 
@@ -673,5 +683,161 @@ it.layer(NodeServices.layer)("Antigravity profile preparation", (it) => {
         expect(yield* fs.exists(profileDirectory)).toBe(false);
       }
     }),
+  );
+});
+
+it.layer(NodeServices.layer)("Antigravity Agent Platform credentials", (it) => {
+  it.effect("finds application default credentials where the runtime looks for them", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const userHome = yield* fs.makeTempDirectoryScoped();
+      const sdkConfig = path.join(userHome, "sdk-config");
+      yield* fs.makeDirectory(sdkConfig);
+      yield* fs.makeDirectory(path.join(userHome, ".config", "gcloud"), { recursive: true });
+      const adcPath = path.join(
+        userHome,
+        ".config",
+        "gcloud",
+        "application_default_credentials.json",
+      );
+      yield* fs.writeFileString(adcPath, "{}");
+      const auth: AntigravityAuthConfig = {
+        authMethod: "agent-platform",
+        apiKey: "",
+        gcpProject: "proj",
+        gcpLocation: "us-central1",
+      };
+      const issueWith = (
+        environment: NodeJS.ProcessEnv,
+        platform: NodeJS.Platform = "darwin",
+        onGoogleCloud = false,
+      ) =>
+        antigravityAuthIssue(auth, {
+          platform,
+          environment,
+          userHome,
+          onGoogleCloud: Effect.succeed(onGoogleCloud),
+        });
+
+      // The bundled Go harness ignores CLOUDSDK_CONFIG when finding ADC.
+      expect(yield* issueWith({ CLOUDSDK_CONFIG: sdkConfig })).toBeNull();
+      yield* fs.writeFileString(path.join(sdkConfig, "application_default_credentials.json"), "{}");
+      yield* fs.remove(adcPath);
+      expect(yield* issueWith({ CLOUDSDK_CONFIG: sdkConfig })).toContain(
+        "gcloud auth application-default login",
+      );
+      expect(
+        yield* issueWith({
+          CLOUDSDK_CONFIG: path.join(userHome, "missing"),
+          GCE_METADATA_HOST: "metadata.google.internal",
+        }),
+      ).toContain("gcloud auth application-default login");
+      expect(
+        yield* issueWith(
+          {
+            CLOUDSDK_CONFIG: path.join(userHome, "missing"),
+            GCE_METADATA_HOST: "metadata.google.internal",
+          },
+          "linux",
+          true,
+        ),
+      ).toBeNull();
+
+      yield* fs.writeFileString(adcPath, "{}");
+      // Windows reads %APPDATA%\gcloud and never the POSIX path.
+      expect(yield* issueWith({ APPDATA: userHome }, "win32")).toContain(
+        "gcloud auth application-default login",
+      );
+      yield* fs.makeDirectory(path.join(userHome, "gcloud"));
+      yield* fs.writeFileString(
+        path.join(userHome, "gcloud", "application_default_credentials.json"),
+        "{}",
+      );
+      expect(yield* issueWith({ APPDATA: userHome }, "win32")).toBeNull();
+
+      yield* fs.remove(adcPath);
+      // A metadata server supplies credentials without any local file.
+      const missing = { CLOUDSDK_CONFIG: path.join(userHome, "missing") };
+      expect(yield* issueWith(missing, "linux")).toContain("gcloud auth application-default login");
+      expect(yield* issueWith(missing, "linux", true)).toBeNull();
+      expect(
+        yield* issueWith({ APPDATA: path.join(userHome, "missing") }, "win32", true),
+      ).toBeNull();
+    }),
+  );
+
+  it.effect("detects the metadata server the way the Go client does", () =>
+    Effect.gen(function* () {
+      const probeWith = (respond: Parameters<typeof HttpClient.make>[0]) =>
+        probeGoogleMetadataServer().pipe(
+          Effect.provideService(HttpClient.HttpClient, HttpClient.make(respond)),
+        );
+      const respondWith = (headers: Record<string, string>) =>
+        probeWith((request) =>
+          Effect.succeed(HttpClientResponse.fromWeb(request, new Response(null, { headers }))),
+        );
+
+      expect(yield* respondWith({ "Metadata-Flavor": "Google" })).toBe(true);
+      expect(yield* respondWith({})).toBe(false);
+      expect(
+        yield* probeWith((request) =>
+          Effect.fail(
+            new HttpClientError.HttpClientError({
+              reason: new HttpClientError.TransportError({ request }),
+            }),
+          ),
+        ),
+      ).toBe(false);
+      const unanswered = yield* probeWith(() => Effect.never).pipe(Effect.forkChild);
+      yield* TestClock.adjust("1 second");
+      expect(yield* Fiber.join(unanswered)).toBe(false);
+    }),
+  );
+});
+
+describe("Google metadata server probe", () => {
+  it.live("reaches the metadata server directly when outbound fetch uses an env proxy", () =>
+    Effect.gen(function* () {
+      const listen = (handler: NodeHttp.RequestListener) =>
+        Effect.acquireRelease(
+          Effect.promise(async () => {
+            const server = NodeHttp.createServer(handler);
+            await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+            return server;
+          }),
+          (server) => Effect.promise(() => new Promise((resolve) => server.close(resolve))),
+        ).pipe(
+          Effect.map(
+            (server) => `http://127.0.0.1:${(server.address() as NodeNet.AddressInfo).port}`,
+          ),
+        );
+      const metadataServer = yield* listen((_request, response) =>
+        response.writeHead(200, { "Metadata-Flavor": "Google" }).end(),
+      );
+      const proxied: Array<string | undefined> = [];
+      const proxy = yield* listen((request, response) => {
+        proxied.push(request.url);
+        response.writeHead(403).end();
+      });
+      yield* Effect.acquireRelease(
+        Effect.sync(() => {
+          const previous = Undici.getGlobalDispatcher();
+          const envProxy = new Undici.EnvHttpProxyAgent({ httpProxy: proxy, noProxy: "" });
+          Undici.setGlobalDispatcher(envProxy);
+          return { previous, envProxy };
+        }),
+        ({ previous, envProxy }) =>
+          Effect.promise(() => {
+            Undici.setGlobalDispatcher(previous);
+            return envProxy.destroy();
+          }),
+      );
+
+      const onGoogleCloud = yield* probeGoogleMetadataServer(new URL(metadataServer).host).pipe(
+        Effect.provide(FetchHttpClient.layer),
+      );
+      expect({ onGoogleCloud, proxied }).toEqual({ onGoogleCloud: true, proxied: [] });
+    }).pipe(Effect.scoped),
   );
 });

@@ -29,11 +29,13 @@ import * as AntigravityInstallation from "../AntigravityInstallation.ts";
 import * as AntigravityUsage from "./AntigravityUsage.ts";
 import {
   antigravityAuthConfigIssue,
+  antigravityAuthIssue,
   antigravityAuthLabel,
   antigravityAuthUsesBrowser,
   buildAntigravityAcpSpawnInput,
   isAntigravitySignInRequiredError,
   prepareAntigravityProfile,
+  probeGoogleMetadataServer,
   resolveAntigravityInstanceDirectories,
   type AntigravityAuthConfig,
 } from "../antigravityAuthSupport.ts";
@@ -122,12 +124,28 @@ export const AntigravityDriver: ProviderDriver<
       gcpProject: settings.gcpProject,
       gcpLocation: settings.gcpLocation,
     };
-    const authConfigIssue = antigravityAuthConfigIssue(auth);
     const processEnvironment = yield* mergeProviderInstanceEnvironment(environment);
+    const platform = yield* HostProcess.Platform;
     const userHome = resolveAntigravityUserHome(
-      yield* HostProcess.Platform,
+      platform,
       processEnvironment,
       yield* HostProcess.HomeDirectory,
+    );
+    // Probe the metadata server at most once per instance, as the Go client does per process.
+    const onGoogleCloud = yield* Effect.cached(
+      probeGoogleMetadataServer(processEnvironment.GCE_METADATA_HOST || undefined).pipe(
+        Effect.provideService(HttpClient.HttpClient, httpClient),
+      ),
+    );
+    // Recheck on every use so credentials created after startup take effect.
+    const authIssue = antigravityAuthIssue(auth, {
+      platform,
+      environment: processEnvironment,
+      userHome,
+      onGoogleCloud,
+    }).pipe(
+      Effect.provideService(FileSystem.FileSystem, fileSystem),
+      Effect.provideService(Path.Path, path),
     );
     const directories = yield* resolveAntigravityInstanceDirectories(
       host.paths.stateDir,
@@ -172,11 +190,14 @@ export const AntigravityDriver: ProviderDriver<
 
     const makeRuntime = Effect.fn("AntigravityDriver.makeRuntime")(function* (
       input: Omit<AntigravityAcpRuntimeInput, "spawn" | "childProcessSpawner">,
+      options: { readonly signOut?: boolean } = {},
     ): Effect.fn.Return<
       AcpSessionRuntime.AcpSessionRuntime["Service"],
       AcpError | ProviderSetupError,
       Scope.Scope
     > {
+      // Sign-out needs no Google Cloud credentials, so removing them must not block it.
+      const authConfigIssue = options.signOut ? antigravityAuthConfigIssue(auth) : yield* authIssue;
       if (authConfigIssue !== null) {
         return yield* new ProviderSetupError({
           instanceId,
@@ -269,7 +290,9 @@ export const AntigravityDriver: ProviderDriver<
     });
 
     const makeDisposableRuntime = Effect.fn("AntigravityDriver.makeDisposableRuntime")(function* (
-      input: Pick<AntigravityAcpRuntimeInput, "onAuthorizationUrl">,
+      input: Pick<AntigravityAcpRuntimeInput, "onAuthorizationUrl"> & {
+        readonly signOut?: boolean;
+      },
     ) {
       const cwd = yield* fileSystem
         .makeTempDirectoryScoped({ prefix: "t3-antigravity-setup-" })
@@ -294,11 +317,14 @@ export const AntigravityDriver: ProviderDriver<
           Effect.provideService(Path.Path, path),
         ),
       );
-      const runtime = yield* makeRuntime({
-        cwd,
-        mcpServers: [],
-        ...(input.onAuthorizationUrl ? { onAuthorizationUrl: input.onAuthorizationUrl } : {}),
-      });
+      const runtime = yield* makeRuntime(
+        {
+          cwd,
+          mcpServers: [],
+          ...(input.onAuthorizationUrl ? { onAuthorizationUrl: input.onAuthorizationUrl } : {}),
+        },
+        { signOut: input.signOut === true },
+      );
       return {
         ...runtime,
         start: () =>
@@ -355,6 +381,7 @@ export const AntigravityDriver: ProviderDriver<
     // minute.
     const probe = Effect.gen(function* () {
       yield* modelCatalog.refreshInBackground;
+      const authConfigIssue = yield* authIssue;
       if (authConfigIssue !== null) {
         return yield* new ProviderSetupError({
           instanceId,

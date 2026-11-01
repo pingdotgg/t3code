@@ -82,6 +82,7 @@ export interface AntigravityAuthOptions<
   readonly instanceId: ProviderInstanceId;
   readonly makeRuntime: (input: {
     readonly onAuthorizationUrl?: (url: string) => Effect.Effect<void, AcpErrors.AcpError>;
+    readonly signOut?: boolean;
   }) => Effect.Effect<Runtime, AcpErrors.AcpError | ProviderSetupError, Scope.Scope>;
   readonly onAuthenticated: (
     result: AcpSessionRuntime.AcpSessionRuntimeStartResult,
@@ -497,7 +498,7 @@ export const makeAntigravityAuth = Effect.fn("makeAntigravityAuth")(function* <
           const result = yield* restore(
             Effect.gen(function* () {
               yield* stopSessions.pipe(Effect.ensuring(stopRemaining));
-              const runtime = yield* options.makeRuntime({});
+              const runtime = yield* options.makeRuntime({ signOut: true });
               const initialized = yield* runtime.initialize();
               if (!initialized.agentCapabilities?.auth?.logout) {
                 return yield* setupError(

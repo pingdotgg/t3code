@@ -8,6 +8,7 @@ import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 import * as Hex from "effect/encoding/Hex";
 import * as FileSystem from "effect/FileSystem";
+import { FetchHttpClient, HttpClient } from "effect/http";
 import * as Path from "effect/Path";
 import type * as PlatformError from "effect/PlatformError";
 import * as Schema from "effect/Schema";
@@ -22,6 +23,7 @@ import {
   antigravityUserSkillDirectories,
   resolveAntigravityUserHome,
 } from "./Drivers/AntigravitySkills.ts";
+import { makeDirectFetch } from "../outboundHttp.ts";
 
 export const ANTIGRAVITY_AUTH_STDOUT_PREFIX =
   "Open the following link to authenticate the ACP server: ";
@@ -135,6 +137,58 @@ export function antigravityAuthConfigIssue(auth: AntigravityAuthConfig): string 
         : "Agent Platform needs an API key, or a GCP project and location, in the Antigravity provider settings.";
   }
 }
+
+/**
+ * The runtime starts sessions without credentials and fails on the first prompt. Mirror its Go
+ * credential lookup, minus GOOGLE_APPLICATION_CREDENTIALS, which the launch environment drops.
+ */
+export const antigravityAuthIssue = Effect.fn("antigravityAuthIssue")(function* (
+  auth: AntigravityAuthConfig,
+  host: {
+    readonly platform: NodeJS.Platform;
+    readonly environment: NodeJS.ProcessEnv;
+    readonly userHome: string;
+    readonly onGoogleCloud: Effect.Effect<boolean>;
+  },
+) {
+  const configIssue = antigravityAuthConfigIssue(auth);
+  if (configIssue !== null || auth.authMethod !== "agent-platform" || auth.apiKey) {
+    return configIssue;
+  }
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const gcloudDirectory =
+    host.platform === "win32"
+      ? host.environment.APPDATA && path.join(host.environment.APPDATA, "gcloud")
+      : path.join(host.userHome, ".config", "gcloud");
+  if (
+    gcloudDirectory &&
+    (yield* fs
+      .exists(path.join(gcloudDirectory, "application_default_credentials.json"))
+      .pipe(Effect.orElseSucceed(() => false)))
+  ) {
+    return null;
+  }
+  return (yield* host.onGoogleCloud)
+    ? null
+    : "Agent Platform without an API key needs Google Cloud application default credentials. Run `gcloud auth application-default login`, or enter an API key in the Antigravity provider settings.";
+});
+
+// The Go client's metadata server check. Like Go's transport it never uses a proxy, which cannot
+// reach this host's link-local address. Unreachable link-local addresses can hang, so bound it.
+export const probeGoogleMetadataServer = (host = "169.254.169.254") =>
+  Effect.acquireUseRelease(
+    Effect.try(makeDirectFetch),
+    (direct) =>
+      HttpClient.get(`http://${host}`).pipe(
+        Effect.map((response) => response.headers["metadata-flavor"] === "Google"),
+        Effect.provideService(FetchHttpClient.Fetch, direct.fetch),
+      ),
+    (direct) => Effect.promise(direct.close),
+  ).pipe(
+    Effect.timeoutOrElse({ duration: "1 second", orElse: () => Effect.succeed(false) }),
+    Effect.orElseSucceed(() => false),
+  );
 
 /**
  * `auth.type` names the selected method so a native logout clears only that method's credentials
