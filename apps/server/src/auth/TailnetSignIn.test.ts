@@ -428,6 +428,22 @@ it.layer(NodeServices.layer)("TailnetSignIn", (it) => {
       refused: "tailscale_unavailable",
     },
     {
+      name: "the device's tags changed after its lookup",
+      status: hostStatus({
+        Peer: {
+          phone: {
+            ID: "nPhone",
+            TailscaleIPs: [PHONE_ADDRESS],
+            UserID: `int64:${OWNER_ID}`,
+            Tags: ["tag:reader"],
+          },
+        },
+      }),
+      node: phoneNode({ Tags: ["tag:admin"] }),
+      capMap: granted({ scopes: ["admin"] }),
+      refused: "tailscale_unavailable",
+    },
+    {
       name: "the device's node key expired",
       status: hostStatus({
         Peer: {
@@ -1576,6 +1592,22 @@ it.layer(NodeServices.layer)("TailnetSignIn", (it) => {
         }).pipe(Effect.provide(layerTest(tailnet)));
       },
     );
+
+    it.effect("a device tagged during its owner-rule scan is not let in as the owner's", () => {
+      const tailnet = withLaptop();
+      return Effect.gen(function* () {
+        const started = yield* Deferred.make<void>();
+        const release = yield* Deferred.make<void>();
+        tailnet.hold = { address: LAPTOP_ADDRESS, started, release };
+        const phone = yield* refusalOf(signIn(makeDpopKey())).pipe(Effect.forkChild);
+        yield* Deferred.await(started);
+        tailnet.status = hostStatus({
+          Peer: { ...peers, phone: { ...peers.phone, Tags: ["tag:ci"] } },
+        });
+        yield* Deferred.succeed(release, undefined);
+        expect(yield* Fiber.join(phone)).toBe("tailscale_unavailable");
+      }).pipe(Effect.provide(layerTest(tailnet)));
+    });
 
     it.effect("a host tagged during a scan does not admit its former owner", () => {
       const tailnet = withLaptop();

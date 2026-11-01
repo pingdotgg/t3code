@@ -194,6 +194,9 @@ const label = (node: TailscaleWhois, status: TailscaleStatus): string | null => 
   return otherUser && name !== node.loginName ? `${name} (${node.loginName})` : name;
 };
 
+const sameTags = (a: ReadonlyArray<string>, b: ReadonlyArray<string>) =>
+  a.length === b.length && a.every((tag) => b.includes(tag));
+
 /** With no grant: the first check this node fails, or null when it is the owner's own device. */
 const refuseNode = (
   node: TailscaleWhois,
@@ -464,22 +467,24 @@ export const make = Effect.gen(function* () {
       );
       const refusal = hostRefusal(status);
       if (refusal !== null) return yield* refuse(refusal);
-      // The caller must be the peer this status names at its address, as the recheck asks, so
-      // a whois answered before an account switch is not judged by the new account.
-      if (node.stableNodeId !== status.selfNodeId) {
-        const peer = status.peers.find(
+      // The caller must be the peer a status names at its address, as the recheck asks, with a
+      // live key and the tags its lookup saw: a whois answered before an account switch or a
+      // tag change is not judged as the device it no longer is.
+      const checkCaller = (current: TailscaleStatus) => {
+        if (node.stableNodeId === current.selfNodeId) return Effect.void;
+        const peer = current.peers.find(
           (candidate) =>
             candidate.stableNodeId === node.stableNodeId &&
             candidate.tailnetIpv4Addresses.includes(remoteAddress),
         );
-        if (peer === undefined) return yield* refuse("tailscale_unavailable");
+        if (peer === undefined) return refuse("tailscale_unavailable");
         // Off the tailnet until it logs in to Tailscale again, which only the device can do.
-        if (peer.keyExpired) return yield* refuse("not_direct_tailnet", "node key expired");
-        // Tagged or untagged since its lookup, the device would be judged as it no longer is.
-        if ((peer.tags.length === 0) !== (node.tags.length === 0)) {
-          return yield* refuse("tailscale_unavailable", "device tags changed during sign-in");
-        }
-      }
+        if (peer.keyExpired) return refuse("not_direct_tailnet", "node key expired");
+        return sameTags(peer.tags, node.tags)
+          ? Effect.void
+          : refuse("tailscale_unavailable", "device tags changed during sign-in");
+      };
+      yield* checkCaller(status);
       const decision = yield* decide(node, status);
       // The policy names this device, so it decides here now, even when the grant is refused
       // as unusable; owner-rule sessions end on the recheck this starts.
@@ -510,6 +515,14 @@ export const make = Effect.gen(function* () {
         );
       }
       const { scopes, via } = decision;
+      // The owner rule waited on a policy scan, during which the device may have changed.
+      if (via === "owner") {
+        yield* checkCaller(
+          yield* host.freshStatus.pipe(
+            Effect.catch((cause) => refuse("tailscale_unavailable", cause)),
+          ),
+        );
+      }
 
       knownUsers.set(node.stableNodeId, node.loginName ?? node.userId);
       const deviceLabel = label(node, status);
