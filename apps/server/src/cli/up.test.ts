@@ -365,6 +365,15 @@ it.layer(Layer.mergeAll(NodeServices.layer, NetService.layer))("t3 up", (it) => 
       envAfter: "T3CODE_TAILSCALE_SIGN_IN=false\nT3CODE_TAILSCALE_SERVE=false\n",
     },
     {
+      label: "--no-tailscale-serve writes Serve off with no service to run",
+      installed: false,
+      env: "T3CODE_TAILSCALE_SIGN_IN=false\nT3CODE_TAILSCALE_SERVE=true\n",
+      args: ["--no-tailscale-serve"],
+      installs: 0,
+      restarts: 0,
+      envAfter: "T3CODE_TAILSCALE_SIGN_IN=false\nT3CODE_TAILSCALE_SERVE=false\n",
+    },
+    {
       // With no saved owner and no terminal, choosing Tailscale would fail with "Pass --owner".
       label: "--no-tailscale-serve on a tagged host asks for no owner",
       installed: true,
