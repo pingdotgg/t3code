@@ -464,6 +464,60 @@ it.layer(NodeServices.layer)("effect-codex-app-server protocol", (it) => {
     }),
   );
 
+  it.effect("keeps reading input in order while a notification handler is still running", () =>
+    Effect.gen(function* () {
+      const { stdio, input, output } = yield* makeInMemoryStdio();
+      const handlerStarted = yield* Deferred.make<void>();
+      const releaseHandler = yield* Deferred.make<void>();
+      const laterChunkPulled = yield* Deferred.make<void>();
+      const laterNotificationHandled = yield* Deferred.make<void>();
+      const handled: Array<string> = [];
+      // stdin.pipe(Stream.interruptWhen) already holds one chunk ahead of the reader.
+      const heldChunk = encodeJsonl({ id: 1, result: { threadId: "thread-1" } });
+      const laterChunk = encodeJsonl({ method: "turn/started", params: {} });
+      const transport = yield* CodexProtocol.makeCodexAppServerPatchedProtocol({
+        stdio: Stdio.make({
+          ...stdio,
+          stdin: stdio.stdin.pipe(
+            Stream.tap((chunk) =>
+              chunk === laterChunk ? Deferred.succeed(laterChunkPulled, undefined) : Effect.void,
+            ),
+          ),
+        }),
+        onNotification: (notification) =>
+          Effect.gen(function* () {
+            if (notification.method === "thread/started") {
+              yield* Deferred.succeed(handlerStarted, undefined);
+              yield* Deferred.await(releaseHandler);
+            }
+            handled.push(notification.method);
+            if (notification.method === "turn/started") {
+              yield* Deferred.succeed(laterNotificationHandled, undefined);
+            }
+          }),
+      });
+      const pending = yield* transport.request("thread/read", {}).pipe(Effect.forkScoped);
+      yield* Queue.take(output);
+
+      yield* Queue.offer(input, encodeJsonl({ method: "thread/started", params: {} }));
+      yield* Deferred.await(handlerStarted);
+      yield* Queue.offer(input, heldChunk);
+      yield* Queue.offer(input, laterChunk);
+
+      // On main the reader stays blocked behind the handler, so this never completes.
+      yield* Deferred.await(laterChunkPulled);
+      assert.isUndefined(
+        pending.pollUnsafe(),
+        "Expected the response to wait for the earlier notification handler",
+      );
+
+      yield* Deferred.succeed(releaseHandler, undefined);
+      assert.deepEqual(yield* Fiber.join(pending), { threadId: "thread-1" });
+      yield* Deferred.await(laterNotificationHandled);
+      assert.deepEqual(handled, ["thread/started", "turn/started"]);
+    }),
+  );
+
   it.effect("rejects incoming requests after the active handler limit is reached", () =>
     Effect.gen(function* () {
       const { stdio, input, output } = yield* makeInMemoryStdio();
