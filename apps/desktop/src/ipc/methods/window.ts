@@ -178,6 +178,7 @@ export const pickFolder = DesktopIpc.makeIpcMethod({
     const environment = yield* DesktopEnvironment.DesktopEnvironment;
     const appSettings = yield* DesktopAppSettings.DesktopAppSettings;
     const wslEnvironment = yield* DesktopWslEnvironment.DesktopWslEnvironment;
+    const pool = yield* DesktopBackendPool.DesktopBackendPool;
     const settings = yield* appSettings.get;
     // A picked path only means something to a backend on this machine.
     if (!settings.localEnvironmentEnabled) {
@@ -194,12 +195,13 @@ export const pickFolder = DesktopIpc.makeIpcMethod({
       targetId.startsWith(DesktopWslBackend.WSL_INSTANCE_ID_PREFIX);
     // Match the orchestrator's persisted distro fallback for wsl:default.
     const wslDistro = useWsl ? (wslDistroFromTarget ?? settings.wslDistro) : null;
+    const distros = useWsl ? yield* wslEnvironment.listDistros : [];
     const defaultPath = useWsl
       ? Option.fromNullishOr(
           resolveWslPickFolderDefaultPath(
             options,
             { distro: wslDistro },
-            yield* wslEnvironment.listDistros,
+            distros,
             Option.getOrNull(yield* wslEnvironment.getUserHome(wslDistro)),
           ),
         )
@@ -212,6 +214,24 @@ export const pickFolder = DesktopIpc.makeIpcMethod({
       return null;
     }
     if (!useWsl) {
+      return selectedPath.value;
+    }
+
+    // Another distro's folder stays UNC so the renderer routes it to that distro or refuses it.
+    const selectedDistro = extractDistroFromUncPath(selectedPath.value);
+    const targetInstance = yield* pool.get(DesktopBackendPool.BackendInstanceId(targetId));
+    // WSL-only mode runs the WSL backend as the primary, under no wsl:* id.
+    const targetBackend = Option.isSome(targetInstance)
+      ? targetInstance.value
+      : yield* pool.primary;
+    const runningDistro = Option.getOrUndefined(yield* targetBackend.currentConfig)?.runningDistro;
+    const targetDistro =
+      runningDistro ?? wslDistro ?? distros.find((distro) => distro.isDefault)?.name ?? null;
+    if (
+      selectedDistro !== null &&
+      targetDistro !== null &&
+      selectedDistro.toLowerCase() !== targetDistro.toLowerCase()
+    ) {
       return selectedPath.value;
     }
 
