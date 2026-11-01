@@ -346,10 +346,16 @@ describe("ProviderInstanceRegistry — multi-instance codex slice", () => {
         enabled: false,
         config: makeCodexConfig({}),
       };
+      let closes = 0;
       const driver = {
         ...CodexDriver,
         create: Effect.fn("ProviderInstanceRegistry.test.createIconSource")(function* (input) {
           const instance = yield* CodexDriver.create(input);
+          yield* Effect.addFinalizer(() =>
+            Effect.sync(() => {
+              closes++;
+            }),
+          );
           return {
             ...instance,
             snapshot: {
@@ -377,9 +383,36 @@ describe("ProviderInstanceRegistry — multi-instance codex slice", () => {
         "https://example.com/first.png",
       );
       expect((yield* second!.snapshot.getSnapshot).iconUrl).toBe("https://example.com/second.png");
-      yield* mutator.reconcile({ [firstId]: entry });
+      const changes = yield* registry.subscribeChanges;
+      yield* mutator.reconcile({
+        [firstId]: { ...entry, iconUrl: "https://example.com/updated.png" },
+        [secondId]: { ...entry, iconUrl: "https://example.com/second.png" },
+      });
+      expect(closes).toBe(0);
+      yield* PubSub.take(changes);
+      const updated = yield* registry.getInstance(firstId);
+      expect(updated!.orchestrationAdapter).toBe(first!.orchestrationAdapter);
+      expect((yield* updated!.snapshot.getSnapshot).iconUrl).toBe(
+        "https://example.com/updated.png",
+      );
+      yield* mutator.reconcile({
+        [firstId]: entry,
+        [secondId]: { ...entry, iconUrl: "https://example.com/second.png" },
+      });
+      expect(closes).toBe(0);
+      yield* PubSub.take(changes);
       const reset = yield* registry.getInstance(firstId);
       expect((yield* reset!.snapshot.getSnapshot).iconUrl).toBeUndefined();
+      yield* mutator.reconcile({
+        [firstId]: { ...entry, iconUrl: "https://example.com/restored.png" },
+        [secondId]: { ...entry, iconUrl: "https://example.com/second.png" },
+      });
+      expect(closes).toBe(0);
+      yield* PubSub.take(changes);
+      const restored = yield* registry.getInstance(firstId);
+      expect((yield* restored!.snapshot.getSnapshot).iconUrl).toBe(
+        "https://example.com/restored.png",
+      );
     }).pipe(Effect.provide(layerTest)),
   );
 
