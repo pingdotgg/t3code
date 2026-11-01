@@ -170,7 +170,15 @@ export const readOpenCodeUsage = Effect.fn("readOpenCodeUsage")(function* (
         const timestamp = columns.has("time_created") ? "time_created" : "NULL";
         const predicates = table === "session_message" ? ["type = 'assistant'"] : [];
         if (timestamp !== "NULL") predicates.push("time_created >= ?");
-        predicates.push("rowid > ?", "rowid <= ?");
+        // User messages can hold hundreds of MB of diffs, so filter and project usage fields in SQL.
+        // JSON functions raise on malformed rows; the guard skips them as JSON.parse did. It goes
+        // last so rows outside the window are rejected before their bodies are parsed.
+        predicates.push(
+          "rowid > ?",
+          "rowid <= ?",
+          `CASE WHEN typeof(data) = 'text' AND json_valid(data)
+           THEN json_type(data, '$.role') IS NULL OR data ->> '$.role' = 'assistant' END`,
+        );
         const [range] = yield* sql.unsafe<{
           readonly first_row_id: number | null;
           readonly last_row_id: number | null;
@@ -190,7 +198,11 @@ export const readOpenCodeUsage = Effect.fn("readOpenCodeUsage")(function* (
               readonly data: unknown;
               readonly created: unknown;
             }>(
-              `SELECT id, session_id, data, ${timestamp} AS created
+              `SELECT id, session_id, ${timestamp} AS created, json_object(
+                 'tokens', data -> '$.tokens', 'cost', data -> '$.cost',
+                 'model', data -> '$.model', 'modelID', data -> '$.modelID',
+                 'time', data -> '$.time', 'id', data -> '$.id', 'sessionID', data -> '$.sessionID'
+               ) AS data
                FROM ${table} WHERE ${predicates.join(" AND ")} ORDER BY rowid`,
               [
                 ...(timestamp === "NULL" ? [] : [sinceMs]),

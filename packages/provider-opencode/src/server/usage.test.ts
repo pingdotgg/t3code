@@ -1,6 +1,7 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
 import { DEFAULT_SERVER_SETTINGS, ProviderInstanceId } from "@t3tools/contracts";
+import { totalTokens } from "@t3tools/provider-core/server/usage";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import * as Context from "effect/Context";
@@ -81,6 +82,76 @@ describe("readOpenCodeUsage", () => {
         13000,
       );
       assert.isAbove(largestRawResult, 0);
+      assert.isBelow(largestRawResult, 6 * 1024 * 1024);
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("does not materialize user message diffs that share a page with usage", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const dir = yield* fileSystem.makeTempDirectoryScoped({ prefix: "usage-reader-user-test-" });
+      const db = yield* openDatabase(path.join(dir, "opencode.db"));
+      yield* db.unsafe(
+        "CREATE TABLE message (id TEXT, session_id TEXT, data TEXT, time_created INTEGER)",
+      );
+      const sinceMs = 1780000000000;
+      const insert = (rowId: number, id: string, message: object) =>
+        db.unsafe(
+          "INSERT INTO message (rowid, id, session_id, data, time_created) VALUES (?, ?, ?, ?, ?)",
+          [rowId, id, "session-1", JSON.stringify(message), sinceMs],
+        );
+      yield* insert(1, "assistant", {
+        role: "assistant",
+        modelID: "claude-sonnet-4-5",
+        time: { created: sinceMs },
+        tokens: { input: 1000, output: 500 },
+      });
+      const patch = "x".repeat(1024 * 1024);
+      for (let rowId = 2; rowId <= 33; rowId++) {
+        yield* insert(rowId, `user-${rowId}`, {
+          role: "user",
+          time: { created: sinceMs },
+          summary: { diffs: [{ file: "a.ts", patch }] },
+        });
+      }
+
+      let largestRawResult = 0;
+      const originalAll = NodeSqlite.StatementSync.prototype.all;
+      yield* Effect.acquireRelease(
+        Effect.sync(() =>
+          vi.spyOn(NodeSqlite.StatementSync.prototype, "all").mockImplementation(function (
+            this: NodeSqlite.StatementSync,
+            ...params
+          ) {
+            const rows = originalAll.apply(this, params);
+            const rawSize = rows.reduce(
+              (size, row) =>
+                Object.values(row).reduce<number>(
+                  (rowSize, value) =>
+                    rowSize +
+                    (typeof value === "string"
+                      ? value.length
+                      : ArrayBuffer.isView(value)
+                        ? value.byteLength
+                        : 0),
+                  size,
+                ),
+              0,
+            );
+            largestRawResult = Math.max(largestRawResult, rawSize);
+            return rows;
+          }),
+        ),
+        (spy) => Effect.sync(() => spy.mockRestore()),
+      );
+      const result = yield* readOpenCodeUsage(dir, sinceMs);
+      assert.isFalse(result.error);
+      const records = result.files.flatMap((file) => file.records);
+      assert.deepStrictEqual(
+        records.map((record) => [record.dedupeKey, totalTokens(record.totals)]),
+        [["opencode:assistant", 1500]],
+      );
       assert.isBelow(largestRawResult, 6 * 1024 * 1024);
     }).pipe(Effect.provide(NodeServices.layer)),
   );
