@@ -353,9 +353,14 @@ it("replays earlier capability results with the model under test as the caller",
 });
 
 const decodeCase = Schema.decodeSync(Schema.fromJsonString(McpToolUseCase));
+const casesIn = (file: string) =>
+  NodeFS.readFileSync(new URL(`./cases/${file}`, import.meta.url), "utf8")
+    .trim()
+    .split("\n")
+    .map((line) => decodeCase(line));
 const decodeTaskResult = Schema.decodeUnknownResult(OrchestratorMcpDelegateTaskResult);
-const taskIdOf = (value: unknown) =>
-  typeof value === "object" && value !== null && "taskId" in value ? value.taskId : undefined;
+const isFailureMock = (mock: unknown) =>
+  typeof mock === "object" && mock !== null && "_tag" in mock;
 
 it.effect("gives the model every delegated-task result in T3's contract shape", () =>
   Effect.gen(function* () {
@@ -364,55 +369,47 @@ it.effect("gives the model every delegated-task result in T3's contract shape", 
       ...buildBase(template, { model: "gpt-6.1-sol", keepUserInstructions: false }),
       codex: { input: [], reasoning: { effort: "high" } },
     };
+    const cases = NodeFS.readdirSync(new URL("./cases/", import.meta.url))
+      .filter((file) => file.endsWith(".ndjson"))
+      .flatMap(casesIn);
     const invalid: Array<string> = [];
-    for (const file of NodeFS.readdirSync(new URL("./cases/", import.meta.url))) {
-      const lines = NodeFS.readFileSync(new URL(`./cases/${file}`, import.meta.url), "utf8");
-      for (const [index, line] of lines.trim().split("\n").entries()) {
-        const testCase = decodeCase(line);
-        const sample = makeSample(testCase, base);
-        yield* withDevices(sample);
-        const blocks = buildMessages(sample).flatMap((message) => message.content);
-        const seen = blocks.flatMap((use) => {
-          const tool = normalizeToolName(String(use.name));
-          if (use.type !== "tool_use" || !["delegate_task", "task_status"].includes(tool))
-            return [];
-          const result = blocks.find((block) => block.tool_use_id === use.id);
-          return [{ source: "prior", tool, value: JSON.parse(String(result?.content)) }];
+    for (const testCase of cases) {
+      const sample = makeSample(testCase, base);
+      yield* withDevices(sample);
+      const blocks = buildMessages(sample).flatMap((message) => message.content);
+      const seen = blocks.flatMap((use) => {
+        const tool = normalizeToolName(String(use.name));
+        if (use.type !== "tool_use" || !["delegate_task", "task_status"].includes(tool)) return [];
+        const result = blocks.find((block) => block.tool_use_id === use.id);
+        return [{ tool, value: JSON.parse(String(result?.content)), live: false }];
+      });
+      const delegated = t3Result(sample, "delegate_task", { task: "Review the diff." });
+      seen.push({ tool: "delegate_task", value: delegated, live: true });
+      const taskIds = new Set(seen.map(({ value }) => value.taskId).filter(Boolean));
+      for (const taskId of taskIds.size > 0 ? taskIds : ["task-1"]) {
+        seen.push({
+          tool: "task_status",
+          value: t3Result(sample, "task_status", { taskId }),
+          live: true,
         });
-        const delegated = t3Result(sample, "delegate_task", { task: "Review the diff." });
-        seen.push({ source: "live", tool: "delegate_task", value: delegated });
-        const taskIds = new Set(seen.map(({ value }) => taskIdOf(value)).filter(Boolean));
-        for (const taskId of taskIds.size > 0 ? taskIds : ["task-1"]) {
-          seen.push({
-            source: "live",
-            tool: "task_status",
-            value: t3Result(sample, "task_status", { taskId }),
-          });
-        }
-        for (const { source, tool, value } of seen) {
-          const mock = testCase.setup.mocks?.[tool];
-          const decoded = decodeTaskResult(value);
-          if (source === "live" && typeof mock === "object" && mock !== null && "_tag" in mock) {
-            assert.deepEqual(value, mock);
-            assert.isTrue(Result.isFailure(decoded));
-          } else if (Result.isFailure(decoded)) {
-            invalid.push(`${file}:${index + 1} ${source} ${tool}: ${decoded.failure.message}`);
-          }
+      }
+      for (const { tool, value, live } of seen) {
+        const mock = testCase.setup.mocks?.[tool];
+        const decoded = decodeTaskResult(value);
+        if (live && isFailureMock(mock)) {
+          assert.deepEqual(value, mock);
+          assert.isTrue(Result.isFailure(decoded));
+        } else if (Result.isFailure(decoded)) {
+          invalid.push(
+            `${testCase.id} ${live ? "live" : "prior"} ${tool}: ${decoded.failure.message}`,
+          );
         }
       }
     }
     assert.deepEqual(invalid, []);
 
     // A later status names the child and model the task's earlier results gave it.
-    const lines = NodeFS.readFileSync(
-      new URL("./cases/orchestration.ndjson", import.meta.url),
-      "utf8",
-    );
-    const stale = lines
-      .trim()
-      .split("\n")
-      .map((line) => decodeCase(line))
-      .find(({ id }) => id === "stale-review-not-cancelled-on-ship")!;
+    const stale = cases.find(({ id }) => id === "stale-review-not-cancelled-on-ship")!;
     const sample = makeSample(stale, base);
     buildMessages(sample);
     assert.deepInclude(t3Result(sample, "task_status", { taskId: "task-1" }), {
@@ -507,12 +504,7 @@ it("stops a sample only once a must-not check has failed", () => {
   assert.isTrue(failedEarly({ textMustNot: ["paste"] }, run("Bash", "paste it here")));
 });
 
-const decodeDeviceCase = Schema.decodeSync(Schema.fromJsonString(McpToolUseCase));
-const deviceCases = () =>
-  NodeFS.readFileSync(new URL("./cases/device-manager.ndjson", import.meta.url), "utf8")
-    .trim()
-    .split("\n")
-    .map((line) => decodeDeviceCase(line));
+const deviceCases = () => casesIn("device-manager.ndjson");
 
 it.effect("builds device cases from product-backed worlds and synthetic prior turns", () =>
   Effect.gen(function* () {

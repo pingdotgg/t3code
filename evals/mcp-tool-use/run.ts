@@ -38,6 +38,7 @@ import { advertisedJsonSchema } from "../../apps/server/src/mcp/advertisedJsonSc
 import {
   EnvironmentId,
   ORCHESTRATOR_MCP_RUNNING_TASK_NEXT,
+  OrchestratorMcpTerminalDelegatedTaskStatus,
   PullRequestState,
   ThreadId,
 } from "@t3tools/contracts";
@@ -744,7 +745,7 @@ type Sample = {
   readonly linked: Set<string>;
   readonly codeStore: Record<string, unknown>;
   nextTask: number;
-  /** Each delegated task's child and model, from the sample's earlier results for it. */
+  /** Each task's child and model from its latest result; `buildMessages` replays prior ones. */
   readonly tasks: Map<string, Readonly<Record<string, unknown>>>;
   /** T3's device tools, once `withDevices` builds them for a world with devices. */
   devices?: DeviceTools;
@@ -907,10 +908,12 @@ export const buildMessages = (sample: Sample) => {
     // One call per step, as most real turns run them.
     for (const { id, name, input, result, tool, prior } of calls) {
       push("assistant", { type: "tool_use", id, name, input });
-      const bare = normalizeToolName(tool.name);
-      const replayed = ["orchestrator_capabilities", "delegate_task", "task_status"].includes(bare)
-        ? t3Fields(sample, bare, isRecord(input) ? input : {}, result)
-        : (sample.priorResults.get(prior) ?? result);
+      const replayed = completeResult(
+        sample,
+        normalizeToolName(tool.name),
+        isRecord(input) ? input : {},
+        sample.priorResults.get(prior) ?? result,
+      );
       push("user", toolResult(id, replayed));
     }
     if (turn.text) push(turn.role, text(turn.text));
@@ -1175,13 +1178,7 @@ const capabilities = ({ base }: Sample, value: unknown) =>
       }
     : value;
 
-const TERMINAL_TASK_STATUSES: ReadonlyArray<unknown> = [
-  "completed",
-  "failed",
-  "cancelled",
-  "interrupted",
-];
-const TASK_IDENTITY = ["childThreadId", "childRunId", "providerInstanceId", "model", "options"];
+const isTerminalTaskStatus = Schema.is(OrchestratorMcpTerminalDelegatedTaskStatus);
 
 /**
  * A successful delegate_task or task_status result in full, as T3 sends it: the case's fields,
@@ -1197,7 +1194,7 @@ const delegatedTask = (
   const taskId = valueText(value.taskId ?? input.taskId);
   const n = Number(/\d+$/.exec(taskId)?.[0] ?? 0);
   const target = isRecord(input.target) ? input.target : {};
-  const task: Readonly<Record<string, unknown>> = {
+  const task = {
     childThreadId: uuid(n),
     childRunId: `run-${n}`,
     providerInstanceId: target.providerInstanceId ?? (sample.base.codex ? "codex" : "claudeAgent"),
@@ -1206,11 +1203,9 @@ const delegatedTask = (
     ...value,
     taskId,
   };
-  sample.tasks.set(
-    taskId,
-    Object.fromEntries(TASK_IDENTITY.filter((key) => key in task).map((key) => [key, task[key]])),
-  );
-  const terminal = TERMINAL_TASK_STATUSES.includes(task.status);
+  const { childThreadId, childRunId, providerInstanceId, model } = task;
+  sample.tasks.set(taskId, { childThreadId, childRunId, providerInstanceId, model });
+  const terminal = isTerminalTaskStatus(value.status);
   return {
     childNodeId: taskId,
     workState: terminal ? "result_available" : "working",
@@ -1218,7 +1213,7 @@ const delegatedTask = (
     summary: null,
     resultContextTransferId: null,
     latestTerminalRunId: terminal ? task.childRunId : null,
-    latestTerminalStatus: terminal ? task.status : null,
+    latestTerminalStatus: terminal ? value.status : null,
     latestTerminalSummary: null,
     latestTerminalResultContextTransferId: null,
     hasPendingQuestion: false,
@@ -1228,22 +1223,23 @@ const delegatedTask = (
   };
 };
 
-/** `value` with the fields T3 adds for the model under test and the sample's tasks. */
-const t3Fields = (
+/** A case's result for `name` with the fields it leaves to T3, live or replayed. */
+const completeResult = (
   sample: Sample,
   name: string,
   input: Readonly<Record<string, unknown>>,
   value: unknown,
-) =>
-  name === "orchestrator_capabilities"
-    ? capabilities(sample, value)
-    : withProductFields(
-        name,
-        name === "delegate_task" || name === "task_status"
-          ? delegatedTask(sample, input, value)
-          : value,
-        sample.testCase.setup.role === "delegated-child",
-      );
+) => {
+  switch (name) {
+    case "orchestrator_capabilities":
+      return capabilities(sample, value);
+    case "delegate_task":
+    case "task_status":
+      return delegatedTask(sample, input, value);
+    default:
+      return value;
+  }
+};
 
 /** The result for a call to `name`: the case's mock, else the runner's T3 result. */
 export const t3Result = (
@@ -1253,7 +1249,11 @@ export const t3Result = (
 ) => {
   const mock = sample.testCase.setup.mocks?.[name];
   const value = mock === undefined || mock === "default" ? t3Default(sample, name, input) : mock;
-  return t3Fields(sample, name, input, value);
+  return withProductFields(
+    name,
+    completeResult(sample, name, input, value),
+    sample.testCase.setup.role === "delegated-child",
+  );
 };
 
 /** ToolSearch: `select:a,b` loads those tools. Other queries load tools whose name has a word. */
