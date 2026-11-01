@@ -261,6 +261,28 @@ DMGs default to the host architecture. Use `--arch` to choose another target and
 to retain packaging files for inspection. Run `vp run dist:desktop:artifact --help` for other
 options.
 
+### Prepared server bytecode
+
+Native desktop artifact builds generate server bytecode with the packaged Electron executable,
+after ASAR creation and before signing. Cross-platform and cross-architecture builds skip this
+step explicitly. CLI, SEA and WSL runtimes keep their existing behavior; only desktop backend
+imports covered by generation receive prepared bytecode. Worker-only modules compile normally.
+
+Electron's Node 24 cache has no read-only option and includes the producer UID in its directory
+name. The backend links individual prepared files into its writable cache with keys for the
+installed module paths. Node replaces files atomically, so regeneration cannot write through those
+links into signed resources. Windows uses hard links and falls back to normal caching when volumes
+differ or resource permissions prevent linking. Protected installations therefore may not reuse
+prepared bytecode. No cache bytes are copied during startup. AppImage backends discard their links
+on normal exit because each mount changes module paths.
+
+The key calculation follows Node's internal portable ESM format. Generation checks that the
+packaged engine produced the expected CLI entry and fails the build if that format changes.
+The manifest also checks Electron, Node, OS, architecture and V8's flags-sensitive version tag.
+Missing or rejected entries compile from the shipped JavaScript. Prepared backends skip the
+explicit startup flush; Node can persist missing entries on normal exit. The writable fallback
+keeps the explicit flush needed when Windows force-kills the backend.
+
 ### Linux AppImage prerequisites
 
 Build on Linux because the browser-secret helper links against the host's libsecret. Install
