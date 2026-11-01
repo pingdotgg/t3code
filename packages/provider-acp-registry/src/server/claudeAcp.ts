@@ -2,9 +2,10 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import type * as AcpSchema from "effect-acp/compat";
 import type { AcpToolCallState } from "@t3tools/provider-acp/server/runtimeModel";
-import type {
-  AcpAdapterV2SubagentUpdate,
-  AcpSubagentSessionEvent,
+import {
+  acpUnfinishedStopMessage,
+  type AcpAdapterV2SubagentUpdate,
+  type AcpSubagentSessionEvent,
 } from "@t3tools/provider-acp/server/adapter";
 
 const decodeAgentInput = Schema.decodeUnknownOption(
@@ -86,6 +87,7 @@ export function extractClaudeSubagentSessionEvent(
     const child = decodeChildState(update.raw);
     if (Option.isNone(child)) return;
     const { sessionId, state } = child.value;
+    const unfinishedMessage = acpUnfinishedStopMessage(state.stopReason);
     return {
       type: "state",
       childSessionId: sessionId,
@@ -93,12 +95,12 @@ export function extractClaudeSubagentSessionEvent(
       status:
         state.state === "running" || state.state === "requires_action"
           ? "running"
-          : state.stopReason === "error"
+          : state.stopReason === "error" || unfinishedMessage !== undefined
             ? "failed"
             : state.stopReason === "cancelled" || state.state === "unknown"
               ? "cancelled"
               : "completed",
-      result: state.error?.message ?? null,
+      result: state.error?.message ?? unfinishedMessage ?? null,
     };
   }
   if (update.originalSessionUpdate === "session_message") {

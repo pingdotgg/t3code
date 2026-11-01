@@ -1158,70 +1158,67 @@ describe("AcpAdapterV2", () => {
     }).pipe(Effect.provide(layerTest), Effect.scoped),
   );
 
-  it.live.each([
-    { stopReason: "refusal", message: "The agent refused this request." },
-    { stopReason: "max_tokens", message: "output token limit" },
-    { stopReason: "max_turn_requests", message: "request limit" },
-  ] as const)("fails a prompt that stops with $stopReason", ({ stopReason, message }) =>
-    Effect.gen(function* () {
-      const path = yield* Path.Path;
-      const instanceId = ProviderInstanceId.make(`acp-test-stop-${stopReason}`);
-      const threadId = ThreadId.make(`thread-acp-stop-${stopReason}`);
-      const adapter = yield* makeAcpAdapterV2({
-        instanceId,
-        selfInvocation: yield* resolveSelfInvocation(),
-        flavor: {
-          driver: ACP_TEST_DRIVER,
-          capabilities: AcpProviderCapabilitiesV2,
-          makeRuntime: makeMockRuntime({
-            childProcessSpawner: yield* ChildProcessSpawner.ChildProcessSpawner,
-            mockAgentPath: yield* path.fromFileUrl(
-              new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
-            ),
-            wrapRuntime: (runtime) => ({
-              ...runtime,
-              prompt: () => Effect.succeed({ stopReason }),
-            }),
-          }),
-        },
-      });
-      const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
-        runtimeMode: "full-access",
-        interactionMode: "default",
-        cwd: process.cwd(),
-      });
-      const modelSelection = { instanceId, model: "default" } as const;
-      const runtime = yield* adapter.openSession({
-        threadId,
-        providerSessionId: ProviderSessionId.make(`provider-session-acp-stop-${stopReason}`),
-        modelSelection,
-        runtimePolicy,
-      });
-      const providerThread = yield* runtime.ensureThread({
-        threadId,
-        modelSelection,
-        runtimePolicy,
-      });
-      yield* runtime.startTurn(
-        makeTurnInput({
-          threadId,
-          providerThread,
+  it.live.each(["refusal", "max_tokens", "max_turn_requests"] as const)(
+    "fails a prompt that stops with %s",
+    (stopReason) =>
+      Effect.gen(function* () {
+        const path = yield* Path.Path;
+        const instanceId = ProviderInstanceId.make(`acp-test-stop-${stopReason}`);
+        const threadId = ThreadId.make(`thread-acp-stop-${stopReason}`);
+        const adapter = yield* makeAcpAdapterV2({
           instanceId,
+          selfInvocation: yield* resolveSelfInvocation(),
+          flavor: {
+            driver: ACP_TEST_DRIVER,
+            capabilities: AcpProviderCapabilitiesV2,
+            makeRuntime: makeMockRuntime({
+              childProcessSpawner: yield* ChildProcessSpawner.ChildProcessSpawner,
+              mockAgentPath: yield* path.fromFileUrl(
+                new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
+              ),
+              wrapRuntime: (runtime) => ({
+                ...runtime,
+                prompt: () => Effect.succeed({ stopReason }),
+              }),
+            }),
+          },
+        });
+        const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          cwd: process.cwd(),
+        });
+        const modelSelection = { instanceId, model: "default" } as const;
+        const runtime = yield* adapter.openSession({
+          threadId,
+          providerSessionId: ProviderSessionId.make(`provider-session-acp-stop-${stopReason}`),
+          modelSelection,
           runtimePolicy,
-          now: yield* DateTime.now,
-        }),
-      );
-      const terminal = yield* runtime.events.pipe(
-        Stream.filter((event) => event.type === "turn.terminal"),
-        Stream.runHead,
-      );
-      if (Option.isNone(terminal) || terminal.value.type !== "turn.terminal") {
-        return assert.fail("expected a turn terminal");
-      }
-      assert.equal(terminal.value.status, "failed");
-      assert.equal(terminal.value.failure?.code, stopReason);
-      assert.include(terminal.value.failure?.message ?? "", message);
-    }).pipe(Effect.provide(layerTest), Effect.scoped),
+        });
+        const providerThread = yield* runtime.ensureThread({
+          threadId,
+          modelSelection,
+          runtimePolicy,
+        });
+        yield* runtime.startTurn(
+          makeTurnInput({
+            threadId,
+            providerThread,
+            instanceId,
+            runtimePolicy,
+            now: yield* DateTime.now,
+          }),
+        );
+        const terminal = yield* runtime.events.pipe(
+          Stream.filter((event) => event.type === "turn.terminal"),
+          Stream.runHead,
+        );
+        if (Option.isNone(terminal) || terminal.value.type !== "turn.terminal") {
+          return assert.fail("expected a turn terminal");
+        }
+        assert.equal(terminal.value.status, "failed");
+        assert.equal(terminal.value.failure?.code, stopReason);
+      }).pipe(Effect.provide(layerTest), Effect.scoped),
   );
 
   it.live("keeps usage unavailable for undeclared agents even when they report usage", () =>

@@ -765,7 +765,9 @@ function makeProviderThread(input: {
 }
 
 /** Stop reasons where the agent ended without finishing. ACP asks clients to show refusals. */
-function acpUnfinishedStopMessage(stopReason: string | null | undefined): string | undefined {
+export function acpUnfinishedStopMessage(
+  stopReason: EffectAcpSchema.StopReason | null | undefined,
+): string | undefined {
   switch (stopReason) {
     case "refusal":
       return "The agent refused this request. The agent's next turn won't include this message or its reply.";
@@ -3350,18 +3352,18 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           const update = notification.update;
           if (update.sessionUpdate === "state_update") {
             const child = nativeChild(notification.sessionId);
-            const unfinished =
+            const unfinishedMessage =
               update.state === "idle" ? acpUnfinishedStopMessage(update.stopReason) : undefined;
             setNativeChildState(
               child,
               update.state !== "idle"
                 ? "running"
-                : update.stopReason === "error" || unfinished !== undefined
+                : update.stopReason === "error" || unfinishedMessage !== undefined
                   ? "failed"
                   : update.stopReason === "cancelled"
                     ? "cancelled"
                     : "completed",
-              update.state === "idle" ? (update.error?.message ?? unfinished ?? null) : null,
+              update.state === "idle" ? (update.error?.message ?? unfinishedMessage ?? null) : null,
             );
           }
           if (context !== null) yield* syncNativeChildren(context);
@@ -4557,7 +4559,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           });
 
         const stopReasonFailure = (
-          stopReason: string | null | undefined,
+          stopReason: EffectAcpSchema.StopReason | null | undefined,
           error: EffectAcpSchema.PromptResponse["error"],
         ) => {
           if (stopReason === "error") return idleErrorFailure(error);
@@ -7819,7 +7821,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                   promptGeneration,
                   Effect.gen(function* () {
                     if (context.finalized || followsAgentWorkState) return;
-                    // ACP v2 reports a failed prompt as an idle `error`, not an RPC error.
+                    // ACP v2 reports a failed prompt through its idle stop reason, not an RPC error.
                     const failure = context.interrupted
                       ? undefined
                       : stopReasonFailure(result.stopReason, result.error);
