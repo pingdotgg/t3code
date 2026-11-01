@@ -609,6 +609,37 @@ describe("instance-scoped model selection", () => {
     ).toEqual(createModelSelection(instanceId, "openai/gpt-5.5"));
   });
 
+  it("keeps the default instance's draft model off a custom instance of the same driver", () => {
+    const driver = ProviderDriverKind.make("opencode");
+    const defaultInstanceId = ProviderInstanceId.make("opencode");
+    const kimiInstanceId = ProviderInstanceId.make("kimi_api");
+    const kimiModel = "kimi-code-plan-global/k3.1-pro";
+    const providers = [
+      provider({
+        provider: driver,
+        instanceId: defaultInstanceId,
+        models: ["opencode-go/kimi-k3.1-pro"],
+      }),
+      provider({ provider: driver, instanceId: kimiInstanceId, models: [kimiModel] }),
+    ];
+    const state = deriveEffectiveComposerModelState({
+      draft: {
+        activeProvider: kimiInstanceId,
+        modelSelectionByProvider: {
+          [defaultInstanceId]: createModelSelection(defaultInstanceId, "opencode-go/kimi-k3.1-pro"),
+        },
+      },
+      providers,
+      selectedProvider: driver,
+      selectedInstanceId: kimiInstanceId,
+      threadModelSelection: null,
+      projectModelSelection: null,
+      settings: DEFAULT_UNIFIED_SETTINGS,
+    });
+
+    expect(state.selectedModel).toBe(kimiModel);
+  });
+
   it("self-heals a persisted selection pointing at a text-generation-incapable instance", () => {
     const providers = [
       provider({
