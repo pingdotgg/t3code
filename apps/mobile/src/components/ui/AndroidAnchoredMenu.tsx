@@ -181,8 +181,7 @@ export function AndroidAnchoredMenu(props: AndroidAnchoredMenuProps) {
                 onClose={close}
               />
             ) : (
-              // Reanimated loses frame changes made before a pending entering animation starts, and
-              // the menu grows once Compose measures it, so the fade runs on a fixed-size wrapper.
+              // Keep the fade on a fixed-size wrapper so Compose measurement can resize the menu.
               <Animated.View
                 entering={FadeIn.duration(120)}
                 pointerEvents="box-none"
