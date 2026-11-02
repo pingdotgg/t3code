@@ -5,7 +5,6 @@ import { visibleLinkedThreads } from "@t3tools/client-runtime/state/threads";
 import { settlePromise, squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import type { EnvironmentId, PullRequestRef, ScopedThreadRef, ThreadId } from "@t3tools/contracts";
 import { CheckIcon, MessageSquareIcon } from "lucide-react";
-import { Atom } from "effect/reactivity";
 import { useState } from "react";
 import { threadPullRequestLinkMode } from "@t3tools/client-runtime/thread-pull-request-compatibility";
 import { usePullRequestLinking } from "~/hooks/usePullRequestLinking";
@@ -13,6 +12,7 @@ import { usePullRequestLinking } from "~/hooks/usePullRequestLinking";
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
 import { normalizeThreadPullRequestKey } from "@t3tools/client-runtime/thread-pull-requests";
 import {
+  useLoadedThreadIdsWhileHiding,
   useProjects,
   useServerConfigs,
   useThreadShell,
@@ -40,8 +40,6 @@ interface PullRequestThreadLinksProps {
   display: "count" | "menu-item" | "picker";
   onPickerOpenChange?: (open: boolean) => void;
 }
-
-const NO_LOADED_THREADS_ATOM = Atom.make((): ReadonlyMap<ThreadId, unknown> => new Map());
 
 export function PullRequestThreadLinks(props: PullRequestThreadLinksProps) {
   const configs = useServerConfigs();
@@ -72,11 +70,9 @@ function EnabledPullRequestThreadLinks({
   const linkedHere = linking.isLinked(thread, url);
   const hiddenKeys = useAtomValue(environmentThreadShells.hiddenThreadKeysAtom);
   const hiddenTags = useAtomValue(serverEnvironment.hiddenThreadTagsAtom(environmentId));
-  // The index changes on every streaming tick; read it only while something is hidden.
-  const loadedThreadIds = useAtomValue(
-    hiddenKeys.size === 0 && hiddenTags === null
-      ? NO_LOADED_THREADS_ATOM
-      : environmentThreadShells.environmentThreadIndexAtom(environmentId),
+  const loadedThreadIds = useLoadedThreadIdsWhileHiding(
+    environmentId,
+    hiddenKeys.size > 0 || hiddenTags !== null,
   );
   const relations = useEnvironmentQuery(
     linking.mode === "multiple" && display !== "menu-item"

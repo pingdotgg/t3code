@@ -64,11 +64,13 @@ export function hasHiddenTag(
 /**
  * Keys of threads the tag filter hides. Children (subagents, side chats, delegated tasks) follow
  * their parent; while the parent's environment hides tags, an unloaded parent hides them too.
- * `alreadyHidden` seeds keys known hidden elsewhere, such as live parents for an archive page.
+ * For a partial list such as an archive page, `alreadyHidden` and `loadedElsewhere` give the
+ * hidden and loaded keys of live threads, so a live parent counts as loaded.
  */
 export function hiddenThreadKeys(
   environments: ReadonlyArray<TagFilteredEnvironment>,
   alreadyHidden: ReadonlySet<string> = NO_HIDDEN_THREADS,
+  loadedElsewhere: ReadonlySet<string> = NO_HIDDEN_THREADS,
 ): ReadonlySet<string> {
   if (
     alreadyHidden.size === 0 &&
@@ -102,6 +104,10 @@ export function hiddenThreadKeys(
     const parentKey = visibilityParentKey(environment.environmentId, thread);
     const followsParent =
       parentKey !== null && (byKey.has(parentKey) || alreadyHidden.has(parentKey));
+    if (parentKey !== null && !followsParent && loadedElsewhere.has(parentKey)) {
+      hiddenByKey.set(key, false);
+      return false;
+    }
     if (
       parentKey !== null &&
       !followsParent &&

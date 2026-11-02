@@ -1,4 +1,8 @@
-import { EnvironmentId, type OrchestrationV2ArchivedShellSnapshot } from "@t3tools/contracts";
+import {
+  EnvironmentId,
+  type OrchestrationV2ArchivedShellSnapshot,
+  type ScopedThreadRef,
+} from "@t3tools/contracts";
 import * as Arr from "effect/Array";
 import { pipe } from "effect/Function";
 import * as Order from "effect/Order";
@@ -48,6 +52,8 @@ export function createArchivedThreadSnapshotsAtomFamily<E>(options: {
   ) => Atom.Atom<ReadonlyArray<string> | null>;
   /** Live threads the tag filter hides, so archived children of hidden parents stay hidden. */
   readonly hiddenThreadKeysAtom: Atom.Atom<ReadonlySet<string>>;
+  /** Live threads, so archived children of loaded, visible parents stay visible. */
+  readonly liveThreadRefsAtom: Atom.Atom<ReadonlyArray<ScopedThreadRef>>;
   readonly labelPrefix: string;
 }) {
   return Atom.family((environmentKey: string) =>
@@ -78,6 +84,7 @@ export function createArchivedThreadSnapshotsAtomFamily<E>(options: {
           hiddenTags: get(options.hiddenThreadTagsAtom(environmentId)),
         })),
         get(options.hiddenThreadKeysAtom),
+        new Set(get(options.liveThreadRefsAtom).map(threadKey)),
       );
       if (hidden.size === 0) return { snapshots, error, isLoading };
       return {

@@ -77,7 +77,7 @@ export function usePullRequestThreads(
     setLastRelations({ key, data: relations.data });
   const hiddenKeys = useAtomValue(environmentThreadShells.hiddenThreadKeysAtom);
   const hiddenTags = useAtomValue(serverEnvironment.hiddenThreadTagsAtom(target.environmentId));
-  // The index changes on every streaming tick; read it only while something is hidden.
+  // The index changes on every streaming tick; read it only while this filter is on.
   const loadedThreadIds = useAtomValue(
     hiddenKeys.size === 0 && hiddenTags === null
       ? NO_LOADED_THREADS_ATOM

@@ -70,6 +70,7 @@ vi.mock("../state/entities", async (original) => ({
   useVisibleThreadShells: () => [],
   useHiddenThreadKeys: () => new Set(),
   useHiddenThreadTags: () => null,
+  useLoadedThreadIdsWhileHiding: () => new Map(),
   useServerConfigs: () => new Map(),
   waitForProject: async () => undefined,
 }));
