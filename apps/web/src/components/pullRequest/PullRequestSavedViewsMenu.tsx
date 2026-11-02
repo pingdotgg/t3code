@@ -102,6 +102,7 @@ export function PullRequestSavedViewsMenu({
         : [...current, { id, name, preferences: pullRequestListPreferences(preferences) }];
     });
     if (missing) {
+      setEditor((current) => (current ? { name: current.name } : null));
       toastManager.add({
         type: "error",
         title: "This saved view was removed",

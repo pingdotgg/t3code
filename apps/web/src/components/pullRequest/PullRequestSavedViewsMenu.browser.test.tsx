@@ -118,6 +118,36 @@ describe("PullRequestSavedViewsMenu", () => {
     expect(storedViews().map((view) => view.id)).toEqual(["authored"]);
   });
 
+  it("saves a preserved rename as a new view after another tab deletes its target", async () => {
+    using fixture = setup();
+    const { menu } = fixture;
+    localStorage.setItem(
+      PULL_REQUEST_SAVED_VIEWS_KEY,
+      JSON.stringify([{ id: "reviewing", name: "Review queue", preferences: reviewing }]),
+    );
+    await using screen = await render(menu());
+    await openMenu(screen);
+    await choose("Rename view…");
+    await nameView("Recovered queue");
+    await act(() => {
+      localStorage.setItem(PULL_REQUEST_SAVED_VIEWS_KEY, "[]");
+      window.dispatchEvent(
+        new StorageEvent("storage", { key: PULL_REQUEST_SAVED_VIEWS_KEY, newValue: "[]" }),
+      );
+    });
+    await submit();
+    expect(document.querySelector("input")?.value).toBe("Recovered queue");
+    expect(toastAdd).toHaveBeenCalledWith(
+      expect.objectContaining({ title: "This saved view was removed" }),
+    );
+    await submit();
+    expect(storedViews()).toEqual([
+      { id: expect.any(String), name: "Recovered queue", preferences: reviewing },
+    ]);
+    expect(storedViews()[0]?.id).not.toBe("reviewing");
+    await vi.waitFor(() => expect(document.querySelector('[role="dialog"]')).toBeNull());
+  });
+
   it("keeps the dialog open and reports a failed storage write", async () => {
     using fixture = setup();
     const { menu } = fixture;
