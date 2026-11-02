@@ -816,6 +816,8 @@ export function PullRequestRouteScreen({ route }: StaticScreenProps<PullRequestP
                               />
                               {pr ? (
                                 <PullRequestOverview
+                                  // Android swaps the shown PR in place; checkbox saves belong to one.
+                                  key={`${params.environmentId}:${params.projectId}:${params.host}:${params.repository}#${params.number}`}
                                   pr={pr}
                                   params={params}
                                   stack={stack}
