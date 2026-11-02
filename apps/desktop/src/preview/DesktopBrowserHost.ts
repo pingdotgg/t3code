@@ -24,7 +24,7 @@ const AGENT_INPUT_COMMAND =
   /"method":"(?:Input\.|Page\.navigate"|Runtime\.(?:evaluate|callFunctionOn)")/;
 /** The same commands as above, by method, for the relay's sends. */
 const AGENT_INPUT_METHOD = /^(?:Input\.|Page\.navigate$|Runtime\.(?:evaluate|callFunctionOn)$)/;
-const AGENT_DOWNLOAD_WINDOW_MS = 5_000;
+const AGENT_INPUT_WINDOW_MS = 5_000;
 const FOCUS_IDLE = "5 seconds";
 
 export interface DesktopBrowserTabKey {
@@ -87,7 +87,7 @@ export class DesktopBrowserHost extends Context.Service<
     readonly handleCommandLine: (line: string) => Effect.Effect<void>;
     readonly attach: (key: DesktopBrowserTabKey, debuggee: DesktopBrowserTabDebugger) => void;
     readonly detach: (key: DesktopBrowserTabKey) => void;
-    readonly humanStartedDownload: (source: Electron.WebContents) => boolean;
+    readonly agentActedRecently: (source: Electron.WebContents) => boolean;
     readonly placeDownload: (source: Electron.WebContents, item: Electron.DownloadItem) => boolean;
     readonly pointers: Stream.Stream<{
       readonly key: DesktopBrowserTabKey;
@@ -482,9 +482,9 @@ export const make = Effect.gen(function* () {
       relayFor(tab).receive(command.value.message);
     });
 
-  const humanStartedDownload = (source: Electron.WebContents) => {
+  const agentActedRecently = (source: Electron.WebContents) => {
     const tab = [...tabs.values()].find((candidate) => candidate.debuggee.webContents === source);
-    return tab !== undefined && performance.now() - tab.agentInputAt > AGENT_DOWNLOAD_WINDOW_MS;
+    return tab !== undefined && performance.now() - tab.agentInputAt <= AGENT_INPUT_WINDOW_MS;
   };
 
   const announceAll = Effect.suspend(() => {
@@ -515,7 +515,7 @@ export const make = Effect.gen(function* () {
     attach,
     detach,
     placeDownload,
-    humanStartedDownload,
+    agentActedRecently,
   });
 });
 

@@ -1548,7 +1548,8 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
               emitOpenLink({
                 tabId,
                 url: details.url,
-                background: details.disposition === "background-tab",
+                background:
+                  details.disposition === "background-tab" || browserHost.agentActedRecently(wc),
               }),
             );
             return { action: "deny" };
@@ -3598,8 +3599,8 @@ export const make = Effect.gen(function* PreviewManagerMake() {
     downloadSessions.add(session);
     session.on("will-download", (_event, item, source) => {
       // Decided before the server's path is set: placing it consumes the guid.
-      const human = browserHost.humanStartedDownload(source);
-      if (!browserHost.placeDownload(source, item) || !human) return;
+      const agentStarted = browserHost.agentActedRecently(source);
+      if (!browserHost.placeDownload(source, item) || agentStarted) return;
       item.once("done", (_doneEvent, state) => {
         if (state !== "completed") return;
         runForkDownload(
