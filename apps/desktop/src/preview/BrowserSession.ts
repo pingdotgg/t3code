@@ -31,6 +31,19 @@ const ALLOWED_PREVIEW_PERMISSIONS: ReadonlySet<string> = new Set([
   // Deny notifications: pages could impersonate T3 Code; app notifications use the default session.
 ]);
 
+const PROMPTED_PREVIEW_PERMISSIONS: ReadonlyMap<string, string> = new Map([
+  ["clipboard-read", "wants to see text and images copied to the clipboard"],
+  ["local-network", "wants to connect to apps on this device and devices on your local network"],
+  [
+    "local-network-access",
+    "wants to connect to apps on this device and devices on your local network",
+  ],
+]);
+
+// The legacy permission includes loopback access, which this browser already grants.
+const permissionDecisionKey = (permission: string): string =>
+  permission === "local-network-access" ? "local-network" : permission;
+
 const NEVER_EXTERNAL_PROTOCOLS: ReadonlySet<string> = new Set([
   "about:",
   "blob:",
@@ -286,19 +299,25 @@ export const make = Effect.gen(function* BrowserSessionMake() {
       return Effect.try({
         try: () => {
           const browserSession = session.fromPartition(partition);
-          // Like Chrome, clipboard reads ask once per origin; both answers last for the session.
-          const clipboardReadDecisions = new Map<string, boolean>();
-          const confirmClipboardRead = (
+          // Remember each site permission only for this browser session.
+          const permissionDecisions = new Map<string, Map<string, boolean>>();
+          const confirmSitePermission = (
+            permission: string,
+            message: string,
             requester: WebContents,
             rawUrl: string | undefined,
             callback: (granted: boolean) => void,
+            detail?: string,
           ): void => {
             const origin = permissionOrigin(rawUrl);
             if (origin === null) {
               callback(false);
               return;
             }
-            const remembered = clipboardReadDecisions.get(origin);
+            const key = permissionDecisionKey(permission);
+            const decisions = permissionDecisions.get(key) ?? new Map<string, boolean>();
+            permissionDecisions.set(key, decisions);
+            const remembered = decisions.get(origin);
             if (remembered !== undefined) {
               callback(remembered);
               return;
@@ -307,10 +326,11 @@ export const make = Effect.gen(function* BrowserSessionMake() {
               requester,
               {
                 buttons: ["Allow", "Block"],
-                message: `${truncateForPrompt(origin)} wants to see text and images copied to the clipboard`,
+                message: `${truncateForPrompt(origin)} ${message}`,
+                ...(detail === undefined ? {} : { detail }),
               },
               (answer) => {
-                if (answer !== undefined) clipboardReadDecisions.set(origin, answer);
+                if (answer !== undefined) decisions.set(origin, answer);
                 callback(answer === true);
               },
             );
@@ -326,8 +346,11 @@ export const make = Effect.gen(function* BrowserSessionMake() {
                 );
                 return;
               }
-              if (permission === "clipboard-read") {
-                confirmClipboardRead(
+              const permissionMessage = PROMPTED_PREVIEW_PERMISSIONS.get(permission);
+              if (permissionMessage !== undefined) {
+                confirmSitePermission(
+                  permission,
+                  permissionMessage,
                   webContents,
                   "requestingUrl" in details ? details.requestingUrl : undefined,
                   callback,
@@ -337,11 +360,32 @@ export const make = Effect.gen(function* BrowserSessionMake() {
               callback(ALLOWED_PREVIEW_PERMISSIONS.has(permission));
             },
           );
-          browserSession.setPermissionCheckHandler((_webContents, permission, requestingOrigin) =>
-            permission === "clipboard-read"
-              ? clipboardReadDecisions.get(permissionOrigin(requestingOrigin) ?? "") === true
-              : ALLOWED_PREVIEW_PERMISSIONS.has(permission),
-          );
+          browserSession.setPermissionCheckHandler((webContents, permission, requestingOrigin) => {
+            const message = PROMPTED_PREVIEW_PERMISSIONS.get(permission);
+            if (message === undefined) return ALLOWED_PREVIEW_PERMISSIONS.has(permission);
+            const origin = permissionOrigin(requestingOrigin);
+            const decision = permissionDecisions
+              .get(permissionDecisionKey(permission))
+              ?.get(origin ?? "");
+            // Electron reports unchecked permissions as denied, so query-first sites never request access.
+            if (
+              permission !== "clipboard-read" &&
+              decision === undefined &&
+              origin !== null &&
+              webContents !== null &&
+              !webContents.isDestroyed()
+            ) {
+              confirmSitePermission(
+                permission,
+                message,
+                webContents,
+                origin,
+                () => undefined,
+                "After allowing access, reload this page to retry.",
+              );
+            }
+            return decision === true;
+          });
           const next = new Map(sessions);
           next.set(partition, browserSession);
           return [browserSession, next] as const;

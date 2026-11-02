@@ -185,13 +185,7 @@ describe("BrowserSession", () => {
       // `clipboard-write` is not a real Electron permission — the async write API
       // uses `clipboard-sanitized-write` — so the stale name must not be granted,
       // and unrelated permissions stay denied.
-      for (const permission of [
-        "clipboard-write",
-        "notifications",
-        "midi",
-        "local-network",
-        "local-network-access",
-      ]) {
+      for (const permission of ["clipboard-write", "notifications", "midi"]) {
         assert.isFalse(requestAllows(permission), `request handler should deny ${permission}`);
         assert.isFalse(
           checkHandler(null, permission) as boolean,
@@ -233,53 +227,112 @@ describe("BrowserSession", () => {
     }).pipe(Effect.provide(layer)),
   );
 
-  it.effect("asks once per origin before a page reads the clipboard", () =>
-    Effect.gen(function* () {
-      const browserSessions = yield* BrowserSession.BrowserSession;
-      const partition = yield* browserSessions.getPartition("scope-a");
-      yield* browserSessions.getSession("scope-a");
-      const browserSession = sessions.get(partition);
-      assert.isDefined(browserSession);
-      const requestHandler = browserSession.setPermissionRequestHandler.mock.calls[0]?.[0];
-      const checkHandler = browserSession.setPermissionCheckHandler.mock.calls[0]?.[0];
-      assert.isFunction(requestHandler);
-      assert.isFunction(checkHandler);
+  it.effect.each(["clipboard-read", "local-network", "local-network-access"])(
+    "asks once per origin before granting %s",
+    (permission) =>
+      Effect.gen(function* () {
+        const browserSessions = yield* BrowserSession.BrowserSession;
+        const partition = yield* browserSessions.getPartition("scope-a");
+        yield* browserSessions.getSession("scope-a");
+        const browserSession = sessions.get(partition);
+        assert.isDefined(browserSession);
+        const requestHandler = browserSession.setPermissionRequestHandler.mock.calls[0]?.[0];
+        const checkHandler = browserSession.setPermissionCheckHandler.mock.calls[0]?.[0];
+        assert.isFunction(requestHandler);
+        assert.isFunction(checkHandler);
 
-      const readClipboard = (requestingUrl: string) =>
-        Effect.callback<boolean>((resume) => {
-          requestHandler(
+        const requestPermission = (requestingUrl: string) =>
+          Effect.callback<boolean>((resume) => {
+            requestHandler(
+              null,
+              permission,
+              (granted: boolean) => resume(Effect.succeed(granted)),
+              { requestingUrl, isMainFrame: true },
+            );
+          });
+        const checkPermission = (origin: string): boolean =>
+          checkHandler(null, permission, origin, {}) as boolean;
+
+        showMessageBox.mockReset();
+        showMessageBox.mockReturnValueOnce(0).mockReturnValueOnce(1);
+
+        assert.isFalse(checkPermission("https://allowed.test"));
+        assert.isTrue(yield* requestPermission("https://allowed.test/page"));
+        assert.strictEqual(showMessageBox.mock.calls.length, 1);
+        assert.strictEqual(
+          showMessageBox.mock.calls[0]?.[0].message,
+          permission === "clipboard-read"
+            ? "https://allowed.test wants to see text and images copied to the clipboard"
+            : "https://allowed.test wants to connect to apps on this device and devices on your local network",
+        );
+        assert.deepStrictEqual(showMessageBox.mock.calls[0]?.[0].buttons, ["Allow", "Block"]);
+        // Enter must not accept a prompt the page raised while the user was typing.
+        assert.strictEqual(showMessageBox.mock.calls[0]?.[0].defaultId, 1);
+
+        assert.isTrue(yield* requestPermission("https://allowed.test/other"));
+        assert.isTrue(checkPermission("https://allowed.test"));
+
+        assert.isFalse(yield* requestPermission("https://blocked.test/"));
+        assert.isFalse(yield* requestPermission("https://blocked.test/again"));
+        assert.isFalse(checkPermission("https://blocked.test"));
+        assert.isTrue(checkPermission("https://allowed.test"));
+        assert.strictEqual(showMessageBox.mock.calls.length, 2);
+        assert.isFalse(yield* requestPermission("data:text/html,opaque"));
+        assert.isFalse(yield* requestPermission("invalid-url"));
+        assert.strictEqual(showMessageBox.mock.calls.length, 2);
+        assert.isFalse(
+          checkHandler(
             null,
-            "clipboard-read",
-            (granted: boolean) => resume(Effect.succeed(granted)),
-            { requestingUrl, isMainFrame: true },
-          );
+            permission === "clipboard-read" ? "local-network" : "clipboard-read",
+            "https://allowed.test",
+            {},
+          ),
+        );
+        const otherPartition = yield* browserSessions.getPartition("scope-other");
+        yield* browserSessions.getSession("scope-other");
+        const otherCheck =
+          sessions.get(otherPartition)?.setPermissionCheckHandler.mock.calls[0]?.[0];
+        assert.isFunction(otherCheck);
+        assert.isFalse(otherCheck(null, permission, "https://allowed.test", {}));
+      }).pipe(Effect.provide(layer)),
+  );
+
+  it.effect.each(["local-network", "local-network-access"])(
+    "offers consent when a site checks %s before requesting access",
+    (permission) =>
+      Effect.gen(function* () {
+        const browserSessions = yield* BrowserSession.BrowserSession;
+        const partition = yield* browserSessions.getPartition("query-first");
+        yield* browserSessions.getSession("query-first");
+        const check = sessions.get(partition)?.setPermissionCheckHandler.mock.calls[0]?.[0];
+        assert.isFunction(check);
+        const guest = { isDestroyed: () => false };
+        showMessageBox.mockReset();
+        yield* Effect.callback<void>((resume) => {
+          showMessageBox.mockImplementationOnce(() => {
+            resume(Effect.void);
+            return 0;
+          });
+          assert.isFalse(check(guest, permission, "https://query.test", {}));
+          assert.strictEqual(showMessageBox.mock.calls.length, 1);
         });
-      const checkClipboard = (origin: string): boolean =>
-        checkHandler(null, "clipboard-read", origin, {}) as boolean;
-
-      showMessageBox.mockReset();
-      showMessageBox.mockReturnValueOnce(0).mockReturnValueOnce(1);
-
-      assert.isFalse(checkClipboard("https://allowed.test"));
-      assert.isTrue(yield* readClipboard("https://allowed.test/page"));
-      assert.strictEqual(showMessageBox.mock.calls.length, 1);
-      assert.strictEqual(
-        showMessageBox.mock.calls[0]?.[0].message,
-        "https://allowed.test wants to see text and images copied to the clipboard",
-      );
-      assert.deepStrictEqual(showMessageBox.mock.calls[0]?.[0].buttons, ["Allow", "Block"]);
-      // Enter must not accept a prompt the page raised while the user was typing.
-      assert.strictEqual(showMessageBox.mock.calls[0]?.[0].defaultId, 1);
-
-      assert.isTrue(yield* readClipboard("https://allowed.test/other"));
-      assert.isTrue(checkClipboard("https://allowed.test"));
-
-      assert.isFalse(yield* readClipboard("https://blocked.test/"));
-      assert.isFalse(yield* readClipboard("https://blocked.test/again"));
-      assert.isFalse(checkClipboard("https://blocked.test"));
-      assert.isTrue(checkClipboard("https://allowed.test"));
-      assert.strictEqual(showMessageBox.mock.calls.length, 2);
-    }).pipe(Effect.provide(layer)),
+        assert.isTrue(check(guest, permission, "https://query.test", {}));
+        assert.isTrue(
+          check(
+            guest,
+            permission === "local-network" ? "local-network-access" : "local-network",
+            "https://query.test",
+            {},
+          ),
+        );
+        assert.strictEqual(showMessageBox.mock.calls.length, 1);
+        assert.strictEqual(
+          showMessageBox.mock.calls[0]?.[0].detail,
+          "After allowing access, reload this page to retry.",
+        );
+        assert.isFalse(check(null, permission, "https://other.test", {}));
+        assert.strictEqual(showMessageBox.mock.calls.length, 1);
+      }).pipe(Effect.provide(layer)),
   );
 
   it.effect("clears a partition whose session has not been opened yet", () =>
