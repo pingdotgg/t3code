@@ -28,6 +28,7 @@ interface DiffCommentAnnotationEntry {
   range: SelectedLineRange;
   rangeLabel: string;
   text: string;
+  createdAt?: string | undefined;
 }
 
 interface DiffCommentAnnotationGroup {
@@ -96,6 +97,8 @@ interface AnnotatableCodeViewProps {
     fileKey: string,
     collapsed: boolean,
   ) => ReactNode;
+  /** Told each time a comment from this view lands in the composer draft. */
+  onCommentAdded?: (commentId: string) => void;
   onRevealSearchMatch: (fileKey: string) => void;
 }
 
@@ -118,6 +121,7 @@ export function AnnotatableCodeView({
   renderHeaderMetadata,
   renderHeaderFilenameSuffix,
   renderHeaderPrefix,
+  onCommentAdded,
   onRevealSearchMatch,
 }: AnnotatableCodeViewProps) {
   const addReviewComment = useComposerDraftStore((store) => store.addReviewComment);
@@ -170,6 +174,7 @@ export function AnnotatableCodeView({
             range,
             rangeLabel: comment.rangeLabel,
             text: comment.text,
+            createdAt: comment.createdAt,
           });
         }, []);
       const annotations = draft?.fileKey === fileKey ? [...persisted, draft.annotation] : persisted;
@@ -215,7 +220,11 @@ export function AnnotatableCodeView({
       range: entry.range,
       text,
     });
-    if (comment) addReviewComment(composerDraftTarget, comment);
+    if (comment) {
+      // oxlint-disable-next-line react/purity -- Submission timestamps are read in this event handler (oxc#27309).
+      addReviewComment(composerDraftTarget, { ...comment, createdAt: new Date().toISOString() });
+      onCommentAdded?.(comment.id);
+    }
     setSelectedLines(null);
     setDraft(null);
     setDraftText("");
@@ -284,14 +293,17 @@ export function AnnotatableCodeView({
           : null
       }
       renderAnnotation={(...[annotation]) => {
-        const hasDraft = annotation.metadata.entries.some((entry) => entry.kind === "draft");
         return (
-          <div className={hasDraft ? "py-1" : "divide-y divide-border border-y border-border"}>
+          <div className="flex flex-col gap-2 pt-1.5 pr-3 pb-2 pl-10">
             {annotation.metadata.entries.map((entry) => (
               <DiffCommentAnnotation
                 key={entry.id}
                 kind={entry.kind}
                 rangeLabel={entry.rangeLabel}
+                createdAt={entry.createdAt}
+                // Saved comments here are read back from the composer draft they live in.
+                stateLabel={entry.kind === "comment" ? "In composer" : undefined}
+                submitLabel="Done"
                 text={entry.kind === "draft" ? draftText : entry.text}
                 onTextChange={setDraftText}
                 onCancel={() => removeEntry(entry.id)}

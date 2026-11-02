@@ -35,9 +35,9 @@ import { PullRequestsUnavailableState } from "./PullRequestsUnavailableState";
 import { threadEnvironment } from "~/state/threads";
 import { useAtomCommand } from "~/state/use-atom-command";
 import { RelativeTime } from "~/components/RelativeTime";
+import { PanelEmptyState } from "../PanelEmptyState";
 import { Button } from "../ui/button";
 import { Menu, MenuItem, MenuPopup, MenuTrigger } from "../ui/menu";
-import { MiddleTruncate } from "../ui/middle-truncate";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { openLinkPullRequestDialog } from "./LinkPullRequestDialog";
 import {
@@ -183,8 +183,10 @@ function LinkRowImpl({
               <TooltipTrigger render={<span className={PULL_REQUEST_ROW_NUMBER_CLASS} />}>
                 #{link.number}
               </TooltipTrigger>
+              {/* The repository lives here, not on the meta line, so the branches get its room. */}
               <TooltipPopup>
-                {SOURCE_LABELS[link.source]} · <RelativeTime timestamp={link.linkedAt} />
+                {link.repository} · {SOURCE_LABELS[link.source]} ·{" "}
+                <RelativeTime timestamp={link.linkedAt} />
               </TooltipPopup>
             </Tooltip>
           }
@@ -260,12 +262,6 @@ function LinkRowImpl({
               ) : null}
               {snapshot !== null ? (
                 <>
-                  <Tooltip>
-                    <TooltipTrigger render={<span className="flex min-w-0 max-w-32 font-mono" />}>
-                      <MiddleTruncate value={link.repository} showTitle={false} />
-                    </TooltipTrigger>
-                    <TooltipPopup>{link.repository}</TooltipPopup>
-                  </Tooltip>
                   <PullRequestRowBranches head={snapshot.headBranch} base={snapshot.baseBranch} />
                 </>
               ) : (
@@ -428,17 +424,18 @@ function EnabledThreadPullRequestsPanel({ threadRef }: { threadRef: ScopedThread
 
   if (linkCount === 0) {
     return (
-      <div className="flex h-full flex-col items-center justify-center gap-2 p-6 text-center">
-        <PullRequestGlyph.link aria-hidden className="size-6 text-muted-foreground/60" />
-        <p className="text-sm font-medium">No linked pull requests</p>
-        <p className="max-w-60 text-xs text-muted-foreground">
-          Pull requests the agent opens from this thread land here. Link one yourself from a URL or
-          a number.
-        </p>
-        <Button size="sm" variant="secondary" onClick={openLinkDialog}>
-          <PlusIcon className="size-3.5" />
-          Link pull request
-        </Button>
+      <div className="flex h-full flex-col">
+        <PanelEmptyState
+          icon={<PullRequestGlyph.link />}
+          title="No linked pull requests"
+          description="Pull requests the agent opens from this thread land here. Link one yourself from a URL or a number."
+          action={
+            <Button size="sm" variant="secondary" onClick={openLinkDialog}>
+              <PlusIcon className="size-3.5" />
+              Link pull request
+            </Button>
+          }
+        />
       </div>
     );
   }

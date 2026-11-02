@@ -6,6 +6,8 @@ export interface FileCommentAnnotationEntry {
   startLine: number;
   endLine: number;
   text: string;
+  /** ISO time the comment was saved, for its card's relative time. */
+  createdAt?: string | undefined;
 }
 
 export interface FileCommentAnnotationGroup {

@@ -3313,6 +3313,7 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
           path: "HEAD",
           insertions: 1,
           deletions: 0,
+          status: "modified",
         });
       }),
     );
@@ -3333,9 +3334,9 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
         const status = yield* driver.statusDetails(cwd);
 
         assert.deepEqual(status.workingTree.files, [
-          { path: "café notes.md", insertions: 1, deletions: 0 },
-          { path: "src/new.ts", insertions: 1, deletions: 0 },
-          { path: "src/old.ts", insertions: 0, deletions: 0 },
+          { path: "café notes.md", insertions: 1, deletions: 0, status: "modified" },
+          { path: "src/new.ts", insertions: 1, deletions: 0, status: "renamed" },
+          { path: "src/old.ts", insertions: 0, deletions: 0, status: "deleted" },
         ]);
         yield* driver.commit(cwd, "Commit selection", "", {
           stage: { filePaths: status.workingTree.files.map((file) => file.path) },
@@ -3363,9 +3364,9 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
         const status = yield* driver.statusDetails(nestedCwd);
 
         assert.deepEqual(status.workingTree.files, [
-          { path: "nested/new.txt", insertions: 0, deletions: 0 },
-          { path: "nested/tracked.txt", insertions: 1, deletions: 0 },
-          { path: "README.md", insertions: 1, deletions: 0 },
+          { path: "nested/new.txt", insertions: 0, deletions: 0, status: "untracked" },
+          { path: "nested/tracked.txt", insertions: 1, deletions: 0, status: "modified" },
+          { path: "README.md", insertions: 1, deletions: 0, status: "modified" },
         ]);
         // The root is what the paths above are relative to, not the nested cwd, and it keeps
         // the trailing space so the resolved editor target is the file that exists.
@@ -3398,13 +3399,61 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
         const status = yield* driver.statusDetails(nestedCwd);
 
         assert.deepEqual(status.workingTree.files, [
-          { path: "nested/new.txt", insertions: 0, deletions: 0 },
-          { path: "nested/tracked.txt", insertions: 1, deletions: 0 },
+          { path: "nested/new.txt", insertions: 0, deletions: 0, status: "untracked" },
+          { path: "nested/tracked.txt", insertions: 1, deletions: 0, status: "modified" },
         ]);
         assert.equal(
           NodeFS.realpathSync.native(status.workingTree.rootPath!),
           NodeFS.realpathSync.native(worktreePath),
         );
+      }),
+    );
+
+    it.effect("reports how each working-tree file changed", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        yield* initRepoWithCommit(cwd);
+        yield* writeTextFile(cwd, "keep.ts", "keep\n");
+        yield* writeTextFile(cwd, "remove.ts", "remove\n");
+        yield* writeTextFile(cwd, "old name.ts", "rename me\n");
+        yield* git(cwd, ["add", "."]);
+        yield* git(cwd, ["commit", "-m", "add files"]);
+        yield* writeTextFile(cwd, "keep.ts", "keep\nedited\n");
+        yield* git(cwd, ["rm", "-q", "remove.ts"]);
+        yield* git(cwd, ["mv", "old name.ts", "new name.ts"]);
+        yield* writeTextFile(cwd, "staged.ts", "staged\n");
+        yield* git(cwd, ["add", "staged.ts"]);
+        yield* writeTextFile(cwd, "untracked.ts", "untracked\n");
+        const blob = yield* git(cwd, ["rev-parse", "HEAD:keep.ts"]);
+        const conflicts = [
+          ["AU", [2]],
+          ["UD", [1, 2]],
+          ["UA", [3]],
+          ["DU", [1, 3]],
+          ["AA", [2, 3]],
+          ["UU", [1, 2, 3]],
+        ] as const;
+        for (const [xy, stages] of conflicts) {
+          yield* writeTextFile(cwd, `${xy}.ts`, "conflicted\n");
+          yield* (yield* GitVcsDriver.GitVcsDriver).execute({
+            operation: "test.unmergedIndex",
+            cwd,
+            args: ["update-index", "--index-info"],
+            stdin: stages.map((stage) => `100644 ${blob} ${stage}\t${xy}.ts\n`).join(""),
+          });
+        }
+
+        const status = yield* (yield* GitVcsDriver.GitVcsDriver).statusDetails(cwd);
+        const statuses = Object.fromEntries(
+          status.workingTree.files.map((file) => [file.path, file.status]),
+        );
+
+        assert.equal(statuses["keep.ts"], "modified");
+        assert.equal(statuses["remove.ts"], "deleted");
+        assert.equal(statuses["new name.ts"], "renamed");
+        assert.equal(statuses["staged.ts"], "added");
+        assert.equal(statuses["untracked.ts"], "untracked");
+        for (const [xy] of conflicts) assert.equal(statuses[`${xy}.ts`], "modified", xy);
       }),
     );
 

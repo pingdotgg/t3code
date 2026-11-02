@@ -6,6 +6,7 @@ import {
   collectLimitPools,
   cursorUsageWindowDetails,
   displayLimitWindows,
+  formatDuration,
   formatResetsIn,
   type LimitAccount,
   type LimitPool,
@@ -16,7 +17,13 @@ import {
 } from "@t3tools/shared/usageLimits";
 import type { Popover as PopoverPrimitive } from "@base-ui/react/popover";
 import { normalizeProviderAccentColor } from "@t3tools/client-runtime/state/provider-instance-display";
-import { AlertTriangleIcon, ExternalLinkIcon, TicketIcon } from "lucide-react";
+import {
+  AlertTriangleIcon,
+  ExternalLinkIcon,
+  GaugeIcon,
+  RotateCwIcon,
+  TicketIcon,
+} from "lucide-react";
 import {
   createContext,
   Fragment,
@@ -38,6 +45,7 @@ import { RedactedSensitiveText } from "../settings/RedactedSensitiveText";
 import { Button } from "../ui/button";
 import { OpenAI } from "../Icons";
 import { Alert, AlertTitle } from "../ui/alert";
+import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from "../ui/empty";
 import { Popover, PopoverCreateHandle, PopoverPopup, PopoverTrigger } from "../ui/popover";
 import {
   PaceIcon,
@@ -403,7 +411,11 @@ function SegmentTriggers({
               account={account}
               className="min-w-0 truncate font-medium text-foreground"
             />
-          ) : null}
+          ) : (
+            <span className="min-w-0 truncate font-medium text-foreground">
+              {providerClients.get(account.driver)?.label ?? String(account.driver)}
+            </span>
+          )}
           {/* A single-account bar repeats the headline percentage. */}
           {showAccountName ? (
             <span className="shrink-0 font-semibold text-foreground tabular-nums">
@@ -543,21 +555,23 @@ function PoolWindowCard({
 }) {
   const nextRefill = pool.resets.find((reset) => reset.restoresPercent > 0);
   return (
-    <div className="grid items-center gap-x-6 gap-y-3 rounded-lg border border-border/60 p-4 md:grid-cols-[11rem_minmax(0,1fr)]">
+    <div className="grid items-center gap-x-6 gap-y-3 rounded-card border border-transparent surface-card-settings p-4 md:grid-cols-[11rem_minmax(0,1fr)]">
       <div className="flex flex-col gap-1">
-        <span className="text-sm font-medium text-foreground">{label ?? pool.label}</span>
+        <span className="text-label text-foreground">{label ?? pool.label}</span>
         <span className="flex items-baseline gap-2">
           <span className="text-3xl font-semibold text-foreground tabular-nums">
             {pool.remainingPercent}%
           </span>
-          <span className="inline-flex items-center gap-2 text-sm text-muted-foreground">
+          <span className="inline-flex items-center gap-2 text-body text-muted-foreground">
             <span>left</span>
             {pool.pace ? <PaceIcon pace={pool.pace} /> : null}
           </span>
         </span>
-        {nextRefill && pool.columns.length > 1 ? (
-          <span className="text-xs font-medium text-foreground tabular-nums">
-            ↻ +{nextRefill.restoresPercent}%
+        {nextRefill ? (
+          <span className="flex items-center gap-1 text-xs text-muted-foreground tabular-nums">
+            <RotateCwIcon className="size-3 text-foreground" aria-hidden />
+            <span className="font-semibold text-foreground">+{nextRefill.restoresPercent}%</span>
+            {nextRefill.at <= now ? "now" : `in ${formatDuration(nextRefill.at - now)}`}
           </span>
         ) : null}
       </div>
@@ -574,8 +588,9 @@ function PoolSection({ pool, now }: { readonly pool: LimitPool; readonly now: nu
   const label = providerClients.get(pool.driver)?.label ?? String(pool.driver);
   const windows = displayLimitWindows(pool);
   return (
-    <section className="flex flex-col gap-3">
-      <h2 className="flex items-center gap-2 text-sm font-medium text-foreground">
+    // The heading row and its 8px gap match the settings sections; the cards keep 10px.
+    <section className="flex flex-col gap-2">
+      <h2 className="flex min-h-7 items-center gap-2 text-label text-foreground">
         <ProviderInstanceIcon
           driverKind={pool.driver}
           displayName={label}
@@ -584,20 +599,28 @@ function PoolSection({ pool, now }: { readonly pool: LimitPool; readonly now: nu
           iconClassName="size-4 text-foreground/80"
         />
         {label}
+        {pool.accounts.length > 1 ? (
+          <span className="text-xs font-normal text-dim-foreground">
+            {pool.accounts.length} accounts, pooled
+          </span>
+        ) : null}
       </h2>
-      {windows.map((window) => {
-        const details = pool.driver === "cursor" ? cursorUsageWindowDetails(window.id) : undefined;
-        return (
-          <PoolWindowCard
-            key={`${window.kind}:${window.id}`}
-            pool={window}
-            color={color}
-            now={now}
-            label={details?.label}
-            description={details?.description}
-          />
-        );
-      })}
+      <div className="flex flex-col gap-2.5">
+        {windows.map((window) => {
+          const details =
+            pool.driver === "cursor" ? cursorUsageWindowDetails(window.id) : undefined;
+          return (
+            <PoolWindowCard
+              key={`${window.kind}:${window.id}`}
+              pool={window}
+              color={color}
+              now={now}
+              label={details?.label}
+              description={details?.description}
+            />
+          );
+        })}
+      </div>
     </section>
   );
 }
@@ -622,11 +645,17 @@ export function UsageLimitsPooled({
       pools.findIndex((pool) => pool.driver === "claudeAgent"),
     ) + 1;
   return (
-    <div className="flex flex-col gap-8">
+    <div className="flex flex-col gap-7">
       {pools.length === 0 && notices.length === 0 && !cursorPrompt && externalLinks.length === 0 ? (
-        <p className="text-sm text-muted-foreground">
-          No provider on the selected environments reports subscription limits.
-        </p>
+        <Empty size="compact">
+          <GaugeIcon aria-hidden className="size-5.5 text-dim-foreground" />
+          <EmptyHeader>
+            <EmptyTitle>No limits to show</EmptyTitle>
+            <EmptyDescription>
+              No provider on the selected environments reports subscription limits.
+            </EmptyDescription>
+          </EmptyHeader>
+        </Empty>
       ) : null}
       <SegmentPopoverContext value={segmentPopover}>
         {pools.map((pool, index) => (
@@ -653,7 +682,7 @@ export function UsageLimitsPooled({
       {externalLinks.map((link) => (
         <section
           key={link.url}
-          className="flex flex-wrap items-center justify-between gap-3 rounded-xl border p-4"
+          className="flex flex-wrap items-center justify-between gap-3 rounded-card border border-transparent surface-card-settings p-4"
         >
           <div className="flex min-w-0 flex-1 items-center gap-3">
             {link.url === CHATGPT_USAGE_URL ? (
@@ -661,7 +690,7 @@ export function UsageLimitsPooled({
             ) : null}
             <div className="min-w-0 space-y-1">
               <h2 className="text-sm font-medium">{link.label}</h2>
-              <p className="text-xs break-words text-muted-foreground">
+              <p className="text-caption break-words text-muted-foreground">
                 {link.accounts.join(", ")}
               </p>
               {link.url === CHATGPT_USAGE_URL ? (
