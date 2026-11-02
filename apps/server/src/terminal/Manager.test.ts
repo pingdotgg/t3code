@@ -1161,10 +1161,11 @@ it.layer(
     { name: "C1 CSI", sequence: "\u009b5" },
   ])("keeps output after a cancelled $name sequence in history", ({ sequence }) =>
     Effect.gen(function* () {
-      const { manager, ptyAdapter } = yield* createManager();
+      const { manager, ptyAdapter } = yield* createManager(10);
       yield* manager.open(openInput());
       const process = ptyAdapter.processes[0]!;
-      for (const cancel of ["\u0018", "\u001a"]) {
+      // A new escape sequence also aborts one, as in xterm.js; keep it last so CAN cannot end it.
+      for (const cancel of ["\u0018", "\u001a", "\u001b[0m"]) {
         process.emitData(sequence);
         process.emitData(cancel);
         process.emitData("next line\n");
@@ -1173,7 +1174,7 @@ it.layer(
       yield* manager.close({ threadId: "thread-1" });
 
       const reopened = yield* manager.open(openInput());
-      expect(reopened.history.match(/next line/g)).toHaveLength(4);
+      expect(reopened.history.match(/next line/g)).toHaveLength(6);
     }),
   );
 

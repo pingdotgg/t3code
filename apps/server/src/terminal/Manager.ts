@@ -1142,8 +1142,10 @@ function findStringTerminatorIndex(input: string, start: number): number | null 
     if (codePoint === 0x07 || codePoint === 0x9c || isControlSequenceCancel(codePoint)) {
       return index + 1;
     }
-    if (codePoint === 0x1b && input.charCodeAt(index + 1) === 0x5c) {
-      return index + 2;
+    // Like xterm.js, an ESC that does not start ST ends the string and begins the next sequence.
+    if (codePoint === 0x1b) {
+      if (index + 1 >= input.length) return null;
+      return input.charCodeAt(index + 1) === 0x5c ? index + 2 : index;
     }
   }
   return null;
