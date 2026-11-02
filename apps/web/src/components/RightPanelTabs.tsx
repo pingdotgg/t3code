@@ -82,7 +82,7 @@ import { FOLDED_TAB_CLASS, usePaneTabStripFit } from "~/hooks/usePaneTabStripFit
 import { COLLAPSED_SIDEBAR_TITLEBAR_INSET_CLASS } from "~/workspaceTitlebar";
 
 import { PreviewPanelShell, type PreviewPanelMode } from "./preview/PreviewPanelShell";
-import { PanelTabSlotsContext } from "./PanelTabBreadcrumb";
+import { PanelTabSlotsContext, usePanelTabActionsHost } from "./PanelTabBreadcrumb";
 import { PANE_BODY_UNDER_HEADER_CLASS, PANE_TAB_TITLE_CLASS, PaneNotch } from "./PaneNotch";
 import { previewBridge } from "./preview/previewBridge";
 import { PullRequestGlyph } from "~/components/pullRequest/pullRequestIcons";
@@ -296,8 +296,9 @@ function PanelTabsNotch(props: { notched: boolean; addButton: ReactNode; childre
   );
 }
 
-function PanelActionsNotch(props: { notched: boolean; children: ReactNode }) {
+function PanelActionsNotch(props: { notched: boolean; hasActions: boolean; children: ReactNode }) {
   if (!props.notched) return props.children;
+  if (!props.hasActions) return null;
   return (
     <PaneNotch side="right" className="ms-auto shrink-0">
       {props.children}
@@ -752,7 +753,8 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
   // portals its header into them (PanelTabBreadcrumb, PanelTabActions).
   const [breadcrumbSlot, setBreadcrumbSlot] = useState<HTMLSpanElement | null>(null);
   const [actionsSlot, setActionsSlot] = useState<HTMLDivElement | null>(null);
-  const tabSlots = { breadcrumb: breadcrumbSlot, actions: actionsSlot };
+  const { hasActions, registerActions } = usePanelTabActionsHost();
+  const tabSlots = { breadcrumb: breadcrumbSlot, actions: actionsSlot, registerActions };
   // A layout pane's tabs sit in its notch (pen JiaZk), like a chat's.
   const notched = props.mode === "embedded" || props.pane === true;
   const [addSurfaceMenuOpen, setAddSurfaceMenuOpen] = useState(false);
@@ -1322,7 +1324,10 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
             </Tooltip>
           </div>
         ) : null}
-        <PanelActionsNotch notched={notched && props.activeSurfaceId !== null}>
+        <PanelActionsNotch
+          notched={notched && props.activeSurfaceId !== null}
+          hasActions={hasActions || props.layoutControls !== undefined}
+        >
           <div
             ref={setActionsSlot}
             className="ms-auto flex shrink-0 items-center gap-0.5 empty:hidden [-webkit-app-region:no-drag]"
