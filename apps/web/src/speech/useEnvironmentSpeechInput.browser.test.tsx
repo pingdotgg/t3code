@@ -166,13 +166,23 @@ vi.mock("./browserVoiceInput", () => ({
   }),
 }));
 
-function Probe() {
+function Probe({
+  ownerKey,
+  draftText,
+  disabled,
+  projectId,
+}: {
+  ownerKey: string;
+  draftText: string;
+  disabled: boolean;
+  projectId: ProjectId | undefined;
+}) {
   const value = useEnvironmentSpeechInput({
     environmentId: "project-environment" as EnvironmentId,
-    projectId: mocks.projectId,
-    ownerKey: mocks.ownerKey,
-    draftText: mocks.draft,
-    disabled: mocks.disabled,
+    projectId,
+    ownerKey,
+    draftText,
+    disabled,
     readDraft: () => ({
       text: mocks.draft,
       selection: { start: mocks.draft.length, end: mocks.draft.length },
@@ -183,6 +193,17 @@ function Probe() {
     mocks.voice = value;
   });
   return null;
+}
+
+function probe() {
+  return (
+    <Probe
+      ownerKey={mocks.ownerKey}
+      draftText={mocks.draft}
+      disabled={mocks.disabled}
+      projectId={mocks.projectId}
+    />
+  );
 }
 
 function mountProbe() {
@@ -197,7 +218,7 @@ function mountProbe() {
         config={{ sessionId: "annotation-session", keybindings: [] }}
       />
     ) : (
-      <Probe />
+      probe()
     ),
   );
 }
@@ -348,7 +369,7 @@ it("discards a queued recording when the draft owner changes", async () => {
     for (let i = 0; i < 10; i++) await Promise.resolve();
   });
   mocks.ownerKey = "another-draft";
-  await screen.rerender(<Probe />);
+  await screen.rerender(probe());
   mocks.busy = false;
   await act(async () => {
     await vi.advanceTimersByTimeAsync(250);
@@ -390,7 +411,7 @@ it("abandons setup recording when the editor becomes disabled", async () => {
   await act(() => mocks.voice.setup.download());
   const startRecording = mocks.voice.setup.startRecording;
   mocks.disabled = true;
-  await screen.rerender(<Probe />);
+  await screen.rerender(probe());
   await act(() => startRecording());
   expect(mocks.microphoneRequests).toBe(0);
   expect(mocks.voice.setup.open).toBe(false);
@@ -410,10 +431,10 @@ it("abandons queued dictation when the editor becomes disabled, even if re-enabl
   });
   expect(mocks.voice.state.phase).toBe("preparing");
   mocks.disabled = true;
-  await screen.rerender(<Probe />);
+  await screen.rerender(probe());
   expect(mocks.voice.state.phase).toBe("idle");
   mocks.disabled = false;
-  await screen.rerender(<Probe />);
+  await screen.rerender(probe());
   mocks.busy = false;
   await act(async () => {
     await vi.advanceTimersByTimeAsync(250);
@@ -436,7 +457,7 @@ it("discards a pending transcript when the editor becomes disabled", async () =>
   });
   expect(mocks.voice.state.phase).toBe("transcribing");
   mocks.disabled = true;
-  await screen.rerender(<Probe />);
+  await screen.rerender(probe());
   await act(async () => {
     transcript.resolve("Late words");
     await stopping;
@@ -451,7 +472,7 @@ it("uses the primary environment for transcription by default", async () => {
   expect(mocks.preparedEnvironmentIds).toContain(mocks.primaryEnvironmentId);
 
   mocks.transcriptionEnvironmentId = "voice-environment" as EnvironmentId;
-  await screen.rerender(<Probe />);
+  await screen.rerender(probe());
   expect(mocks.preparedEnvironmentIds).toContain(mocks.transcriptionEnvironmentId);
 });
 it.each(["prepared", "originPrepared"] as const)(
@@ -463,10 +484,10 @@ it.each(["prepared", "originPrepared"] as const)(
     expect(mocks.voice.state.phase).toBe("error");
     const previousConnection = mocks[connection];
     mocks[connection] = {} as PreparedConnection;
-    await screen.rerender(<Probe />);
+    await screen.rerender(probe());
     expect(mocks.voice.state).toEqual({ phase: "idle", error: null, errorAction: null });
     mocks[connection] = previousConnection;
-    await screen.rerender(<Probe />);
+    await screen.rerender(probe());
     expect(mocks.voice.state).toEqual({ phase: "idle", error: null, errorAction: null });
   },
 );
@@ -478,7 +499,7 @@ it(" replacing post-processing settings does not strand recording state", async 
   await act(() => mocks.voice.start());
   expect(mocks.voice.state.phase).toBe("recording");
   mocks.postProcessingEnabled = true;
-  await screen.rerender(<Probe />);
+  await screen.rerender(probe());
   await act(() => mocks.voice.cancel());
   expect(mocks.voice.state.phase).toBe("idle");
   mocks.postProcessingEnabled = false;
@@ -521,7 +542,7 @@ it("transcribes on the selected host and cleans on the thread environment using 
     speechCustomWords: [],
   };
   mocks.postProcessingEnabled = false;
-  await screen.rerender(<Probe />);
+  await screen.rerender(probe());
   expect(mocks.voice.state.phase).toBe("recording");
   await act(() => mocks.voice.stop());
   expect(mocks.cleanup).toHaveBeenCalledWith(
@@ -616,11 +637,11 @@ it.each(["cancel", "owner", "error", "disabled"] as const)(
     if (reason === "cancel") await act(() => mocks.voice.cancel());
     if (reason === "owner") {
       mocks.ownerKey = "other";
-      await screen.rerender(<Probe />);
+      await screen.rerender(probe());
     }
     if (reason === "disabled") {
       mocks.disabled = true;
-      await screen.rerender(<Probe />);
+      await screen.rerender(probe());
     }
     await act(async () => {
       if (reason === "error") transcript.reject(new Error("Transcription failed"));
@@ -670,7 +691,7 @@ it("starts probing when an environment advertises voice support after connecting
   await using screen = await mountProbe();
   expect(mocks.statusRequests).not.toHaveBeenCalled();
   mocks.voiceCapability = true;
-  await screen.rerender(<Probe />);
+  await screen.rerender(probe());
   expect(mocks.statusRequests).toHaveBeenCalledOnce();
 });
 it.each([false, undefined])(
