@@ -13,6 +13,7 @@ import {
   refreshUsage,
   usageFallbackWindow,
   dailyUsageWindow,
+  usageSummaryInput,
 } from "@t3tools/client-runtime/state/usage";
 import { resolveUsageAccess } from "@t3tools/client-runtime/state/usage-access";
 import * as Cause from "effect/Cause";
@@ -69,7 +70,15 @@ const usageByWindowAtom: (key: string) => Atom.Atom<UsageWindowResult> = Atom.fa
           });
           continue;
         }
-        const result = get(serverEnvironment.usageSummary({ environmentId, input }));
+        const result = get(
+          serverEnvironment.usageSummary({
+            environmentId,
+            input: usageSummaryInput(
+              input,
+              get(serverEnvironment.usageModelFilterAtom(environmentId)),
+            ),
+          }),
+        );
         if (
           result._tag === "Failure" &&
           (selectedIds === null || selectedIds.includes(environmentId))
