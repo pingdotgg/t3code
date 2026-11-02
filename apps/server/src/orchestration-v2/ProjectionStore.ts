@@ -329,6 +329,8 @@ export interface ProjectionRuntimeResponseContext {
 }
 
 export interface ProjectionRecordFilter {
+  readonly providerThreadIds?: ReadonlyArray<ProviderThreadId>;
+  readonly providerTurnAttemptIds?: ReadonlyArray<RunAttemptId>;
   readonly messageRoles?: ReadonlyArray<OrchestrationV2ConversationMessage["role"]>;
   readonly monitorNotificationsOnly?: boolean;
   readonly turnItemRunId?: RunId;
@@ -3387,13 +3389,14 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 OR threads.provider_thread_id IN (SELECT value FROM json_each(${cohortProviderThreadIds})))
             ORDER BY sessions.updated_at ASC, sessions.provider_session_id ASC
           `,
-          fields !== undefined && !fields.includes("providerThreads")
+          (fields !== undefined && !fields.includes("providerThreads")) ||
+          (window === undefined && matchesNothing(filter?.providerThreadIds))
             ? Effect.succeed([])
             : window === undefined
               ? sql<PayloadRow>`
             SELECT payload_json
             FROM orchestration_v2_projection_provider_threads
-            WHERE thread_id = ${threadId}
+            WHERE (thread_id = ${threadId}
                OR owner_node_id IN (
                  SELECT node_id
                  FROM orchestration_v2_projection_nodes
@@ -3404,7 +3407,8 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                  FROM orchestration_v2_projection_subagents
                  WHERE thread_id = ${threadId}
                    AND provider_thread_id IS NOT NULL
-               )
+               ))
+              ${filter?.providerThreadIds === undefined ? sql`` : sql`AND provider_thread_id IN (SELECT value FROM json_each(${encodeIdList(filter.providerThreadIds)}))`}
             ORDER BY COALESCE(first_run_ordinal, 0), provider_thread_id ASC
           `
               : sql<PayloadRow>`
@@ -3416,13 +3420,15 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 AND provider_thread_id = ${latestTodoList?.provider_thread_id ?? null})
             ORDER BY COALESCE(first_run_ordinal, 0), provider_thread_id ASC
           `,
-          fields !== undefined && !fields.includes("providerTurns")
+          (fields !== undefined && !fields.includes("providerTurns")) ||
+          (window === undefined && matchesNothing(filter?.providerTurnAttemptIds))
             ? Effect.succeed([])
             : window === undefined
               ? sql<PayloadRow>`
             SELECT payload_json
             FROM orchestration_v2_projection_provider_turns
             WHERE thread_id = ${threadId}
+              ${filter?.providerTurnAttemptIds === undefined ? sql`` : sql`AND run_attempt_id IN (SELECT value FROM json_each(${encodeIdList(filter.providerTurnAttemptIds)}))`}
             ORDER BY provider_thread_id ASC, ordinal ASC
           `
               : sql<PayloadRow>`

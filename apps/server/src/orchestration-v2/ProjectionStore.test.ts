@@ -215,6 +215,98 @@ const addRolledBackRecoveryCandidate = Effect.fn("addRolledBackRecoveryCandidate
   return threadId;
 });
 
+it.effect("record reads restrict provider histories to delivery identities", () =>
+  Effect.gen(function* () {
+    const store = yield* ProjectionStore.ProjectionStoreV2;
+    const threadId = yield* addRolledBackRecoveryCandidate("delivery-identities");
+    const sql = yield* SqlClient.SqlClient;
+    const now = yield* DateTime.now;
+    for (const suffix of ["selected", "history"]) {
+      const id = ProviderThreadId.make(`provider-thread:${suffix}`);
+      yield* store.apply({
+        id: EventId.make(`event:delivery-identities:${suffix}`),
+        type: "provider-thread.updated",
+        threadId,
+        occurredAt: now,
+        payload: {
+          id,
+          appThreadId: threadId,
+          driver,
+          providerInstanceId,
+          providerSessionId: null,
+          ownerNodeId: null,
+          nativeThreadRef: null,
+          nativeConversationHeadRef: null,
+          lastRunOrdinal: null,
+          handoffIds: [],
+          forkedFrom: null,
+          status: "active",
+          firstRunOrdinal: 1,
+          createdAt: now,
+          updatedAt: now,
+        },
+      });
+    }
+    for (const [suffix, attempt] of [
+      ["selected", "current"],
+      ["history", "old"],
+      ["runless", null],
+    ] as const) {
+      yield* store.apply({
+        id: EventId.make(`event:delivery-turn:${suffix}`),
+        type: "provider-turn.updated",
+        threadId,
+        occurredAt: now,
+        payload: {
+          id: ProviderTurnId.make(`turn:${suffix}`),
+          providerThreadId: ProviderThreadId.make("provider-thread:selected"),
+          nodeId: NodeId.make("node:delivery"),
+          runAttemptId: attempt === null ? null : RunAttemptId.make(attempt),
+          nativeTurnRef: null,
+          ordinal: suffix === "selected" ? 1 : suffix === "history" ? 2 : 3,
+          status: "completed",
+          startedAt: now,
+          completedAt: now,
+        },
+      });
+    }
+    assert.deepEqual(
+      (yield* store.getThreadRecords(threadId, ["providerTurns"], {
+        providerTurnAttemptIds: [RunAttemptId.make("current")],
+      })).providerTurns.map((turn) => turn.id),
+      ["turn:selected"],
+    );
+    assert.deepEqual(
+      (yield* store.getThreadRecords(threadId, ["providerTurns"], {
+        providerTurnAttemptIds: [],
+      })).providerTurns,
+      [],
+    );
+    const selected = yield* store.getThreadRecords(threadId, ["providerThreads"], {
+      providerThreadIds: [ProviderThreadId.make("provider-thread:selected")],
+    });
+    assert.deepEqual(
+      selected.providerThreads.map((row) => row.id),
+      ["provider-thread:selected"],
+    );
+    assert.deepEqual(
+      (yield* store.getThreadRecords(threadId, ["providerThreads"], {
+        providerThreadIds: [],
+      })).providerThreads,
+      [],
+    );
+    // Unselected history must not be decoded, even if its payload is unreadable.
+    yield* sql`UPDATE orchestration_v2_projection_provider_threads SET payload_json = '{}'
+      WHERE provider_thread_id = 'provider-thread:history'`;
+    assert.lengthOf(
+      (yield* store.getThreadRecords(threadId, ["providerThreads"], {
+        providerThreadIds: [ProviderThreadId.make("provider-thread:selected")],
+      })).providerThreads,
+      1,
+    );
+  }).pipe(Effect.provide(layerTest)),
+);
+
 it.effect("record reads filter notification sources without dropping matching message bodies", () =>
   Effect.gen(function* () {
     const store = yield* ProjectionStore.ProjectionStoreV2;
