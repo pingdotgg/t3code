@@ -24,6 +24,7 @@ import type { SelectableMarkdownTextProps } from "./SelectableMarkdownText.types
 import { useAppearancePreferences } from "../features/settings/appearance/AppearancePreferencesProvider";
 import { Menu } from "../components/ui/Menu";
 import { useEnrichedLinkVariants } from "./useEnrichedLinkVariants";
+import { useExistingInlineFiles } from "./useExistingInlineFiles";
 import { useRetryingImageSource } from "./useRetryingImageSource";
 import { copyTextWithHaptic } from "../lib/copyTextWithHaptic";
 import {
@@ -164,20 +165,25 @@ function enrichedStyle(
 export function MobileEnrichedMarkdownText(props: SelectableMarkdownTextProps) {
   const { renderImage, resolveImageSource, fileEmbedLabel } = props;
   const { themeAppearance, mathRenderingEnabled } = useAppearancePreferences();
-  const { markdown, fileHrefs } = useMemo(() => {
+  const inlineFileExists = useExistingInlineFiles(props.markdown, props.inlineFileScope);
+  const { markdown, fileHrefs, inlineFileHrefKey } = useMemo(() => {
+    const fileLinks = { pattern: ENRICHED_INLINE_FILE_LINK_REGEX, exists: inlineFileExists };
     if (!fileEmbedLabel) {
+      const native = markdownForNativeRendering(props.markdown, fileLinks);
       return {
-        markdown: markdownForNativeRendering(props.markdown, ENRICHED_INLINE_FILE_LINK_REGEX),
+        markdown: native.markdown,
         fileHrefs: new Set<string>(),
+        inlineFileHrefKey: [...native.inlineFileHrefs].join("\n"),
       };
     }
-    const content = markdownWithInlineFileLinks(
-      markdownForNativeParsing(props.markdown),
-      ENRICHED_INLINE_FILE_LINK_REGEX,
-    );
-    const files = markdownWithFileEmbeds(content, fileEmbedLabel);
-    return { ...files, markdown: markdownWithTableBreaks(files.markdown) };
-  }, [props.markdown, fileEmbedLabel]);
+    const content = markdownWithInlineFileLinks(markdownForNativeParsing(props.markdown), fileLinks);
+    const files = markdownWithFileEmbeds(content.markdown, fileEmbedLabel);
+    return {
+      ...files,
+      markdown: markdownWithTableBreaks(files.markdown),
+      inlineFileHrefKey: [...content.inlineFileHrefs].join("\n"),
+    };
+  }, [props.markdown, fileEmbedLabel, inlineFileExists]);
   const [parsedLinkUrls, setParsedLinkUrls] = useState<ReadonlyArray<string>>([]);
   const onLinksChange = (links: MarkdownLinkOccurrence[]) => {
     const urls = [...new Set(links.map((link) => link.url))];
@@ -200,7 +206,12 @@ export function MobileEnrichedMarkdownText(props: SelectableMarkdownTextProps) {
   const linkUrls = skillLinkKey
     ? [...new Set([...parsedLinkUrls, ...skillLinkKey.split("\n")])]
     : parsedLinkUrls;
-  const { linkVariants, linkPillContent } = useEnrichedLinkVariants(linkUrls, props, fileHrefs);
+  const { linkVariants, linkPillContent } = useEnrichedLinkVariants(
+    linkUrls,
+    props,
+    fileHrefs,
+    inlineFileHrefKey,
+  );
   const linkRecognition = useMemo(() => ({ text: skillRegex ?? undefined }), [skillRegex]);
   const [activeMenu, setActiveMenu] = useState<{
     url: string;

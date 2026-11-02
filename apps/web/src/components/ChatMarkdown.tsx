@@ -164,6 +164,7 @@ import { previewEnvironment } from "../state/preview";
 import { useAtomCommand } from "../state/use-atom-command";
 import { useAtomQueryRunner } from "../state/use-atom-query-runner";
 import { projectEnvironment } from "../state/projects";
+import { FileMetadataThreadContext } from "../hooks/FileMetadataThreadProvider";
 import { filesystemEnvironment } from "../state/filesystem";
 import {
   claimWorkspaceBasenameLookup,
@@ -683,6 +684,32 @@ function useChatMarkdownState({
   const fileLinksKey = `${fileLinkSourcesKey(text, cwd, imageBaseDir)}`;
   const { markdownFileLinkMetaByHref, inlineCodeFileLinkMetaByText, fileLinkParentSuffixByPath } =
     resolveFileLinkSources(fileLinksKey, cwd, imageBaseDir);
+  const canReadFiles = useEnvironmentScope(environmentId, AuthFilesystemReadScope);
+  const metadataThreadRef = use(FileMetadataThreadContext);
+  // Inline code becomes a file chip only once the file is known to exist, so examples stay code.
+  const existingInlineCodeFiles = useAtomValue(
+    projectEnvironment.existingFiles(
+      environmentId !== null && cwd && canReadFiles
+        ? {
+            environmentId,
+            threadId:
+              metadataThreadRef?.environmentId === environmentId
+                ? metadataThreadRef.threadId
+                : undefined,
+            cwd,
+            candidates: [...inlineCodeFileLinkMetaByText.values()].map((meta) => ({
+              path: meta.filePath,
+              lookup: meta.workspaceLookupPath,
+            })),
+          }
+        : null,
+    ),
+  );
+  const existingInlineCodeFileLinkMetaByText = new Map(
+    [...inlineCodeFileLinkMetaByText].filter(([, meta]) =>
+      existingInlineCodeFiles.has(meta.filePath),
+    ),
+  );
   const resolveThreadPullRequest = (
     href: string,
   ): (ThreadPullRequestKey & { readonly url: string }) | null => {
@@ -909,7 +936,7 @@ function useChatMarkdownState({
     headingLevelOffset,
     imageBaseDir,
     workspaceMutationId,
-    inlineCodeFileLinkMetaByText,
+    inlineCodeFileLinkMetaByText: existingInlineCodeFileLinkMetaByText,
     inline,
     mathEnabled,
     isStreaming,
@@ -1337,7 +1364,7 @@ const CHAT_MARKDOWN_COMPONENTS = {
     );
   },
   code: function MarkdownCode({ node, children, className, ...props }) {
-    const { cwd, imageBaseDir, inlineCodeFileLinkMetaByText, fileLinkChip, mathEnabled, inline } =
+    const { inlineCodeFileLinkMetaByText, fileLinkChip, mathEnabled, inline } =
       use(ChatMarkdownRendererContext);
     const math = mathEnabled ? mathKind(className) : null;
     if (math) {
@@ -1351,9 +1378,7 @@ const CHAT_MARKDOWN_COMPONENTS = {
     }
     if (node?.properties?.dataInlineCode != null) {
       const codeText = nodeToPlainText(children);
-      const fileLinkMeta =
-        inlineCodeFileLinkMetaByText.get(codeText.trim()) ??
-        resolveInlineCodeFileLinkMeta(codeText, cwd, imageBaseDir ?? cwd);
+      const fileLinkMeta = inlineCodeFileLinkMetaByText.get(codeText.trim());
       if (fileLinkMeta) {
         return fileLinkChip(
           fileLinkMeta,

@@ -62,6 +62,14 @@ export interface MarkdownLinkCustomization {
   readonly chip?: { readonly accent?: string; readonly tintsIcon: boolean };
 }
 
+/** Where inline code paths are checked before they become file chips. */
+export interface InlineFileScope {
+  readonly environmentId: import("@t3tools/contracts").EnvironmentId;
+  readonly workspaceRoot: string;
+  /** Whether a bare file name may match a file elsewhere in the workspace. */
+  readonly searchBasenames: boolean;
+}
+
 export interface SelectableMarkdownTextProps {
   readonly markdown: string;
   readonly textStyle: NativeMarkdownTextStyle;
@@ -74,6 +82,8 @@ export interface SelectableMarkdownTextProps {
   readonly contextClipboardFragment?: string;
   readonly renderImage?: MarkdownImageRenderer;
   readonly fileEmbedLabel?: (href: string, standalone: boolean) => string | null;
+  /** Without a scope, inline code paths stay inline code. */
+  readonly inlineFileScope?: InlineFileScope;
   readonly resolveImageSource?: MarkdownImageSourceResolver;
   readonly onImagePress?: (href: string) => void;
   readonly marginTop?: number;

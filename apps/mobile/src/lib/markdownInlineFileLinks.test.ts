@@ -10,8 +10,9 @@ import {
   markdownWithHtml,
 } from "./markdownDocument";
 
+const EVERY_FILE_EXISTS = { pattern: ENRICHED_INLINE_FILE_LINK_REGEX, exists: () => true };
 const rewrite = (markdown: string) =>
-  markdownWithInlineFileLinks(markdown, ENRICHED_INLINE_FILE_LINK_REGEX);
+  markdownWithInlineFileLinks(markdown, EVERY_FILE_EXISTS).markdown;
 
 describe("inline code that names a file", () => {
   it.each([
@@ -61,7 +62,7 @@ describe("inline code that names a file", () => {
           previousFileLinks(markdownWithHtml(prefix), ENRICHED_INLINE_FILE_LINK_REGEX),
         );
         expect(
-          markdownForNativeRendering(prefix, ENRICHED_INLINE_FILE_LINK_REGEX),
+          markdownForNativeRendering(prefix, EVERY_FILE_EXISTS).markdown,
           JSON.stringify(prefix),
         ).toBe(expected);
       }
@@ -72,6 +73,28 @@ describe("inline code that names a file", () => {
     expect(rewrite("See `src/math.ts:2` and `./README.md`.")).toBe(
       "See [src/math.ts:2](<src/math.ts:2>) and [./README.md](<./README.md>).",
     );
+  });
+
+  it("stays code unless the file exists", () => {
+    const exists = (path: string) => path === "src/a.ts";
+    expect(
+      markdownWithInlineFileLinks("See `avatars/u1.webp` and `src/a.ts`.", {
+        pattern: ENRICHED_INLINE_FILE_LINK_REGEX,
+        exists,
+      }).markdown,
+    ).toBe("See `avatars/u1.webp` and [src/a.ts](<src/a.ts>).");
+  });
+
+  it("reports only inline code hrefs, leaving an authored link's URL to that link", () => {
+    expect(
+      markdownWithInlineFileLinks(
+        "[the file](src/a.ts) `src/a.ts` `` src/b.ts ``\n\n```\n`src/c.ts`\n```",
+        EVERY_FILE_EXISTS,
+      ),
+    ).toEqual({
+      markdown: "[the file](src/a.ts) `src/a.ts` [src/b.ts](<src/b.ts>)\n\n```\n`src/c.ts`\n```",
+      inlineFileHrefs: new Set(["src/b.ts"]),
+    });
   });
 
   it("keeps commands, identifiers and URLs as code", () => {

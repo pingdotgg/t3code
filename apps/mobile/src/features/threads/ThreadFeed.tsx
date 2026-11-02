@@ -159,6 +159,7 @@ import { splitMarkdownDetails } from "../../lib/markdownDetails";
 import { hasWideMarkdownBlock } from "../../lib/wideMarkdownBlocks";
 import {
   SelectableMarkdownText,
+  type InlineFileScope,
   type MarkdownFileContextMenu,
   type MarkdownImageRenderer,
   type MarkdownImageSourceResolver,
@@ -1113,6 +1114,7 @@ interface MarkdownLinkHandlers {
   readonly onImagePress?: (href: string) => void;
   readonly resolveImageSource?: MarkdownImageSourceResolver;
   readonly fileEmbedLabel?: (href: string, standalone: boolean) => string | null;
+  readonly inlineFileScope?: InlineFileScope;
   readonly linkCustomization?: (href: string) => MarkdownLinkCustomization | undefined;
 }
 
@@ -3018,6 +3020,15 @@ export const ThreadFeed = memo(function ThreadFeed({
         standalone,
       ),
     onLinkPress: onMarkdownLinkPress,
+    ...(props.workspaceRoot
+      ? {
+          inlineFileScope: {
+            environmentId: props.environmentId,
+            workspaceRoot: props.workspaceRoot,
+            searchBasenames: true,
+          },
+        }
+      : {}),
     linkCustomization: enrichedThreadLinkCustomization,
     onImagePress: (href) => onMarkdownLinkPress(href, true),
     resolveImageSource,

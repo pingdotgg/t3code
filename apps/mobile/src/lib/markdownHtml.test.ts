@@ -325,7 +325,10 @@ describe("Windows paths in native Markdown", () => {
     ].join("\n\n");
 
     const native = await parseMarkdown(
-      markdownForNativeRendering(markdown, ENRICHED_INLINE_FILE_LINK_REGEX),
+      markdownForNativeRendering(markdown, {
+        pattern: ENRICHED_INLINE_FILE_LINK_REGEX,
+        exists: () => true,
+      }).markdown,
     );
     const urls: string[] = [];
     const collect = (node: { attributes?: { url?: string }; children?: unknown[] }) => {

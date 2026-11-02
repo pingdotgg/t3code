@@ -6,6 +6,7 @@ import { themeColorWithAlpha } from "../lib/mobileTheme";
 import { useUniwindTheme } from "../lib/useUniwindTheme";
 
 export type {
+  InlineFileScope,
   MarkdownFileContextMenu,
   MarkdownFileContextMenuAction,
   MarkdownImageRenderer,

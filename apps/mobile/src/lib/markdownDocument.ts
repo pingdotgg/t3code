@@ -287,29 +287,48 @@ export function markdownWithHtml(markdown: string): string {
 // Start only at the beginning of a backtick run to avoid retrying every suffix.
 const INLINE_CODE_SPAN = /(?<!`)`+([^`\r\n]+)`+/g;
 
-export function markdownWithInlineFileLinks(markdown: string, fileLink: RegExp): string {
-  return transformNativeMarkdown(markdown, fileLink, false);
+export interface InlineFileLinks {
+  readonly pattern: RegExp;
+  /** Whether the written path names a file known to exist; others stay inline code. */
+  readonly exists: (path: string) => boolean;
+}
+
+export interface NativeMarkdown {
+  readonly markdown: string;
+  /** Link URLs that came from inline code, never shared with an authored link. */
+  readonly inlineFileHrefs: ReadonlySet<string>;
+}
+
+const NO_INLINE_FILE_HREFS: ReadonlySet<string> = new Set();
+
+/** Inline code that may name a file. May include spans the rewrite skips, such as fenced code. */
+export function inlineCodeFileCandidates(markdown: string, pattern: RegExp): ReadonlyArray<string> {
+  const candidates = new Set<string>();
+  for (const [, code] of markdown.matchAll(INLINE_CODE_SPAN)) {
+    const value = code!.trim();
+    if (pattern.test(value)) candidates.add(value);
+  }
+  return [...candidates];
+}
+
+export function markdownWithInlineFileLinks(
+  markdown: string,
+  fileLinks: InlineFileLinks,
+): NativeMarkdown {
+  return transformNativeMarkdown(markdown, fileLinks, false);
 }
 
 function transformNativeMarkdown(
   markdown: string,
-  fileLink: RegExp | undefined,
+  fileLinks: InlineFileLinks | undefined,
   tableBreaks: boolean,
-): string {
+): NativeMarkdown {
   const breakTables = tableBreaks && mayHaveTableUnderText(markdown);
-  let linkFiles = false;
-  if (fileLink) {
-    for (const [, code] of markdown.matchAll(INLINE_CODE_SPAN)) {
-      if (fileLink.test(code!.trim())) {
-        linkFiles = true;
-        break;
-      }
-    }
-  }
-  if (!linkFiles && !breakTables) return markdown;
-  const edits: MarkdownEdit[] = [];
-  const fileEdits: MarkdownEdit[] = [];
-  let rewritesPipe = false;
+  const linkFiles =
+    fileLinks !== undefined && inlineCodeFileCandidates(markdown, fileLinks.pattern).length > 0;
+  if (!linkFiles && !breakTables) return { markdown, inlineFileHrefs: NO_INLINE_FILE_HREFS };
+  const edits: Array<MarkdownEdit & { readonly href?: string }> = [];
+  const authoredUrls = new Set<string>();
   const visit = (node: MarkdownNode) => {
     if (linkFiles && node.type === "inlineCode") {
       const start = node.position?.start.offset;
@@ -318,19 +337,16 @@ function transformNativeMarkdown(
       if (
         start !== undefined &&
         end !== undefined &&
-        fileLink?.test(node.value) &&
-        !/[<>]/.test(node.value)
+        fileLinks !== undefined &&
+        fileLinks.pattern.test(node.value) &&
+        !/[<>]/.test(node.value) &&
+        fileLinks.exists(node.value)
       ) {
-        const edit = {
-          start,
-          end,
-          content: `[${escaped}](<${escaped}>)`,
-        };
-        edits.push(edit);
-        fileEdits.push(edit);
-        if (node.value.includes("|")) rewritesPipe = true;
+        edits.push({ start, end, content: `[${escaped}](<${escaped}>)`, href: node.value });
       }
-    } else if (node.type !== "link" && node.type !== "linkReference" && "children" in node)
+    } else if (node.type === "link" || node.type === "image" || node.type === "definition") {
+      authoredUrls.add(node.url);
+    } else if (node.type !== "linkReference" && "children" in node)
       node.children.forEach((child, index) => {
         const previous = node.children[index - 1];
         const start = child.position?.start;
@@ -356,10 +372,18 @@ function transformNativeMarkdown(
       });
   };
   visit(parser.parse(markdown));
+  // Native pill content is keyed by URL, so inline code naming an authored link's or image's
+  // URL stays code rather than relabeling that link.
+  const kept = edits.filter((edit) => edit.href === undefined || !authoredUrls.has(edit.href));
+  const fileEdits = kept.filter((edit) => edit.href !== undefined);
+  const inlineFileHrefs = new Set(fileEdits.map((edit) => edit.href!));
   // Rewritten pipes can change table structure, so preserve the original pass ordering.
-  if (breakTables && rewritesPipe)
-    return markdownWithTableBreaks(applyMarkdownEdits(markdown, fileEdits));
-  return applyMarkdownEdits(markdown, edits);
+  if (breakTables && fileEdits.some((edit) => edit.href!.includes("|")))
+    return {
+      markdown: markdownWithTableBreaks(applyMarkdownEdits(markdown, fileEdits)),
+      inlineFileHrefs,
+    };
+  return { markdown: applyMarkdownEdits(markdown, kept), inlineFileHrefs };
 }
 
 // A delimiter row such as `|---|:--:|`, possibly inside a blockquote or list item.
@@ -383,7 +407,7 @@ function mayHaveTableUnderText(markdown: string): boolean {
 
 /** md4c starts tables only at paragraph starts; insert breaks to match GFM. */
 export function markdownWithTableBreaks(markdown: string): string {
-  return transformNativeMarkdown(markdown, undefined, true);
+  return transformNativeMarkdown(markdown, undefined, true).markdown;
 }
 
 // `>` covers a destination continued on a blockquote line.
@@ -440,8 +464,11 @@ export function parseMarkdownDocument(markdown: string): Root {
   return parser.parse(markdownForNativeParsing(markdown));
 }
 
-export function markdownForNativeRendering(markdown: string, fileLink: RegExp): string {
-  return transformNativeMarkdown(markdownForNativeParsing(markdown), fileLink, true);
+export function markdownForNativeRendering(
+  markdown: string,
+  fileLinks: InlineFileLinks,
+): NativeMarkdown {
+  return transformNativeMarkdown(markdownForNativeParsing(markdown), fileLinks, true);
 }
 
 /** Native media slots only cover standalone images; nested file embeds must become links. */
