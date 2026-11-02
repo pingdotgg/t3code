@@ -346,6 +346,11 @@ export function createPreviewStreamClient(
       if (socket !== ws) return;
       socket = null;
       control = null;
+      // The server re-offers a picker still open, under a new id, when this viewer reattaches.
+      if (fileChooser !== null) {
+        fileChooser = null;
+        events.onFileChooser?.(null);
+      }
       if (opened) events.onConnectedChange(false);
       if (stopped) return;
       if (event.code === 4404) {
