@@ -315,7 +315,7 @@ it.layer(NodeServices.layer)("AntigravityAuth", (it) => {
     }),
   );
 
-  it.effect("leaves the network hint behind once sign-in authenticates", () =>
+  it.effect("shows verification as soon as authenticate succeeds", () =>
     Effect.gen(function* () {
       const harness = yield* makeHarness({ interactive: false });
       yield* harness.auth.controller.start(owner);

@@ -40,7 +40,7 @@ const UNREACHABLE_MESSAGE =
   "Antigravity could not reach Google. Check this machine's network connection, then start sign-in again.";
 const FORWARDING_FAILED_MESSAGE = "Could not deliver the sign-in response. Start sign-in again.";
 const NO_SESSION_MESSAGE =
-  "Antigravity signed in, but its runtime did not open a session. Start sign-in again.";
+  "Antigravity signed in, but did not finish loading its session and models. Start sign-in again.";
 const isSetupError = Schema.is(ProviderSetupError);
 const isAcpRequestError = Schema.is(AcpErrors.AcpRequestError);
 
