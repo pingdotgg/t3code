@@ -3996,8 +3996,8 @@ export default function ChatView(props: ChatViewProps) {
         <ChatDockSurfaces
           threadRef={activeThreadRef}
           tabBar={rightPanelTabBarProps}
-          renderSurface={(surface, activeSurfaceId) =>
-            renderRightPanelSurface(surface, activeSurfaceId, activeThreadRef, true)
+          renderSurface={(surface, activeSurfaceId, visible) =>
+            renderRightPanelSurface(surface, activeSurfaceId, activeThreadRef, visible)
           }
           onCloseOtherSurfaces={closeOtherRightPanelSurfacesStable}
           onCloseSurfacesToRight={closeRightPanelSurfacesToRightStable}

@@ -55,14 +55,17 @@ function DockGroupFrame(props: { readonly context: DockContext; readonly group: 
   });
   const hasTabBar = group.launcher || group.surfaces.length > 0;
   const maximized = maximizedGroupId === id;
+  const covered = maximizedGroupId !== null && !maximized;
   return (
     <section
       data-dock-group={id}
       data-dock-titlebar-left={edges.left === id}
-      inert={maximizedGroupId !== null && !maximized}
+      inert={covered}
       className={cn(
         "flex size-full min-h-0 min-w-0 flex-col bg-background",
         maximized ? "absolute inset-0 z-20" : "relative",
+        // Contains layers like the composer's, which would otherwise rise over the maximized group.
+        covered && "isolate",
       )}
       style={
         {

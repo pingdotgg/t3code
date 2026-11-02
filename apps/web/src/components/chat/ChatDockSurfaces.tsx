@@ -41,7 +41,11 @@ type ChatDockTabBarProps = Omit<
 interface ChatDockSurfacesProps {
   readonly threadRef: ScopedThreadRef;
   readonly tabBar: ChatDockTabBarProps;
-  readonly renderSurface: (surface: RightPanelSurface, activeSurfaceId: string | null) => ReactNode;
+  readonly renderSurface: (
+    surface: RightPanelSurface,
+    activeSurfaceId: string | null,
+    visible: boolean,
+  ) => ReactNode;
   readonly onCloseOtherSurfaces: (
     surface: RightPanelSurface,
     scope: readonly RightPanelSurface[],
@@ -194,7 +198,11 @@ export function ChatDockSurfaces(props: ChatDockSurfacesProps) {
           >
             <DockSurfaceFrame focusKey={`panel:${tabBar.environmentId}:${surface?.id ?? "empty"}`}>
               {surface ? (
-                props.renderSurface(surface, activeSurfaceId)
+                props.renderSurface(
+                  surface,
+                  activeSurfaceId,
+                  view.maximizedGroupId === null || view.maximizedGroupId === group.id,
+                )
               ) : (
                 <ChatDockLauncher group={group} tabBar={tabBar} />
               )}
