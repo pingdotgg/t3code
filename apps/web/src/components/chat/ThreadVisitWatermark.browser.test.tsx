@@ -37,13 +37,14 @@ const ENVIRONMENT = EnvironmentId.make("environment-visit-watermark");
 const threadA: ScopedThreadRef = { environmentId: ENVIRONMENT, threadId: ThreadId.make("a") };
 const threadB: ScopedThreadRef = { environmentId: ENVIRONMENT, threadId: ThreadId.make("b") };
 
-function setShell(ref: ScopedThreadRef, updatedAt: string) {
+function setShell(ref: ScopedThreadRef, updatedAt: string, snoozedUntil: string | null = null) {
   appAtomRegistry.set(shellAtom(shellKey(ref)), {
     environmentId: ref.environmentId,
     id: ref.threadId,
     updatedAt,
     lastVisitedAt: "2026-01-01T00:00:00.000Z",
     latestRun: null,
+    snoozedUntil,
   });
 }
 
@@ -57,7 +58,8 @@ it("records the visit of the next thread at once after switching threads", async
   mocks.visitRun.mockReset();
   mocks.visitRun.mockResolvedValue(AsyncResult.success(undefined));
   setShell(threadA, "2026-01-02T00:00:00.000Z");
-  setShell(threadB, "2026-01-03T00:00:00.000Z");
+  const wokeAt = "2026-01-03T12:00:00.000Z";
+  setShell(threadB, "2026-01-03T00:00:00.000Z", wokeAt);
   using _timers = fakeTimers();
   vi.setSystemTime(NOW);
   // A palette pick already sent B's open with its query, so B's visit is a plain watermark advance.
@@ -79,4 +81,7 @@ it("records the visit of the next thread at once after switching threads", async
   // Thread A's throttle must not hold back B's first watermark: leaving B
   // within the throttle window would otherwise keep it unread.
   expect(visitedThreadIds()).toEqual(["a", "b"]);
+  expect(mocks.visitRun.mock.calls.at(-1)?.[1]).toMatchObject({
+    input: { threadId: threadB.threadId, visitedAt: wokeAt },
+  });
 });

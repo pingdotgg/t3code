@@ -27,6 +27,7 @@ export const RelayAgentAwarenessPhase = Schema.Literals([
   "completed",
   "failed",
   "stale",
+  "woke",
 ]);
 export type RelayAgentAwarenessPhase = typeof RelayAgentAwarenessPhase.Type;
 
@@ -122,7 +123,10 @@ export const RelayAgentActivityState = Schema.Struct({
   projectTitle: TrimmedNonEmptyString,
   threadTitle: TrimmedNonEmptyString,
   phase: RelayAgentAwarenessPhase,
+  unread: Schema.optional(Schema.Boolean),
+  completedAt: Schema.optional(TrimmedNonEmptyString),
   headline: TrimmedNonEmptyString,
+  retained: Schema.optional(Schema.Boolean),
   detail: Schema.optional(TrimmedNonEmptyString),
   modelTitle: TrimmedNonEmptyString,
   updatedAt: TrimmedNonEmptyString,
@@ -137,6 +141,8 @@ export const RelayAgentActivityAggregateRow = Schema.Struct({
   threadTitle: TrimmedNonEmptyString,
   modelTitle: TrimmedNonEmptyString,
   phase: RelayAgentAwarenessPhase,
+  unread: Schema.optional(Schema.Boolean),
+  completedAt: Schema.optional(TrimmedNonEmptyString),
   status: TrimmedNonEmptyString,
   updatedAt: TrimmedNonEmptyString,
   deepLink: TrimmedNonEmptyString,
@@ -147,6 +153,11 @@ export const RelayAgentActivityAggregateState = Schema.Struct({
   title: TrimmedNonEmptyString,
   subtitle: TrimmedNonEmptyString,
   activeCount: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
+  workingCount: Schema.optional(Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))),
+  attentionCount: Schema.optional(Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))),
+  totalCount: Schema.optional(Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))),
+  unreadCount: Schema.optional(Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))),
+  pendingCount: Schema.optional(Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))),
   updatedAt: TrimmedNonEmptyString,
   activities: Schema.Array(RelayAgentActivityAggregateRow),
 });
@@ -263,11 +274,13 @@ export const RelayAgentActivityPublishProofPayload = Schema.Struct({
   environmentId: EnvironmentId,
   threadId: ThreadId,
   state: Schema.NullOr(RelayAgentActivityState),
+  replay: Schema.optional(Schema.Boolean),
 });
 export type RelayAgentActivityPublishProofPayload =
   typeof RelayAgentActivityPublishProofPayload.Type;
 
 export const RelayAgentActivityPublishRequest = Schema.Struct({
+  replay: Schema.optional(Schema.Boolean),
   state: Schema.NullOr(RelayAgentActivityState).annotate({
     description: "Current agent-awareness state, or null to remove the published state.",
   }),

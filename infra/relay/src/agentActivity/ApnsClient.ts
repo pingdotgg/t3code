@@ -181,7 +181,12 @@ function buildLiveActivityRequest(input: MakeLiveActivityRequestInput): ApnsLive
           ...(input.state ? { "content-state": contentState(input.state) } : {}),
           ...(input.alert ? liveActivityAlertPayload(input.alert) : {}),
           "dismissal-date":
-            timestamp + (input.state ? DISMISS_AFTER_SECONDS : CONTENTLESS_DISMISS_AFTER_SECONDS),
+            timestamp +
+            (input.state?.pendingCount === 0
+              ? 0
+              : input.state
+                ? DISMISS_AFTER_SECONDS
+                : CONTENTLESS_DISMISS_AFTER_SECONDS),
         },
       },
     };

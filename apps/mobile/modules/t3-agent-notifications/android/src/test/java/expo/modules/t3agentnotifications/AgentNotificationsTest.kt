@@ -342,7 +342,7 @@ class AgentNotificationsTest {
     AgentNotifications.receive(context, data)
     val card = manager.activeNotifications.single().notification
     assertEquals("1 needs you", card.extras.getCharSequence(Notification.EXTRA_TITLE).toString())
-    assertEquals("8 active", card.extras.getString(Notification.EXTRA_SUB_TEXT))
+    assertEquals("7 working", card.extras.getString(Notification.EXTRA_SUB_TEXT))
     assertEquals(
       "Approval $title · Project\nWorking Another thread · Other project",
       card.extras.getCharSequence(Notification.EXTRA_BIG_TEXT).toString()
@@ -380,8 +380,12 @@ class AgentNotificationsTest {
   fun waitingCardsIgnoreMutableThreadTimestampsEvenAfterRename() {
     lifecycle.currentState = Lifecycle.State.RESUMED
     val now = System.currentTimeMillis()
-    for (phase in listOf("waiting_for_approval", "waiting_for_input")) {
-      val status = if (phase == "waiting_for_approval") "Approval" else "Input"
+    for (phase in listOf("waiting_for_approval", "waiting_for_input", "woke")) {
+      val status = when (phase) {
+        "waiting_for_approval" -> "Approval"
+        "woke" -> "Woke"
+        else -> "Input"
+      }
       for ((title, updatedAt) in listOf("Original" to now - 1200000L, "Renamed" to now)) {
         AgentNotifications.receive(
           context,
@@ -422,6 +426,7 @@ class AgentNotificationsTest {
     for (phase in listOf(
       "waiting_for_approval",
       "waiting_for_input",
+      "woke",
       "stale",
       "failed",
       "completed"
@@ -477,7 +482,7 @@ class AgentNotificationsTest {
     val card = manager.activeNotifications.single().notification
     assertEquals("2 live", card.extras.getString(NotificationCompat.EXTRA_SHORT_CRITICAL_TEXT))
     assertEquals("2 working", card.extras.getCharSequence(Notification.EXTRA_TITLE).toString())
-    assertEquals("Project · 2 active", card.extras.getString(Notification.EXTRA_SUB_TEXT))
+    assertEquals("Project · 2 working", card.extras.getString(Notification.EXTRA_SUB_TEXT))
     assertEquals(
       "Working Build feature\nDone Write tests",
       card.extras.getCharSequence(Notification.EXTRA_BIG_TEXT).toString()

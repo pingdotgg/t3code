@@ -137,6 +137,22 @@ describe("EnvironmentPublishSignatures", () => {
     );
   });
 
+  it.effect("rejects an unsigned backfill flag", () =>
+    Effect.gen(function* () {
+      const request = yield* freshRequest;
+      const signatures = yield* EnvironmentPublishSignatures.EnvironmentPublishSignatures;
+      const result = yield* Effect.result(
+        signatures.verify({
+          environmentId: state.environmentId,
+          environmentPublicKey: keyPair.publicKey,
+          threadId: state.threadId,
+          request: { ...request, replay: true },
+        }),
+      );
+      expect(Result.isFailure(result)).toBe(true);
+    }).pipe(Effect.provide(layer())),
+  );
+
   it.effect("rejects top-level state tampering", () =>
     Effect.gen(function* () {
       const request = yield* freshRequest;

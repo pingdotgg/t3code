@@ -1455,6 +1455,7 @@ describe("relay routing fallback", () => {
           environmentPublicKey,
           threadId,
           state: null,
+          replay: false,
         })),
       );
       expect(verified.map((input) => input.threadId)).toEqual(threadIds);

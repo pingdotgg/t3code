@@ -20,6 +20,7 @@ import {
   clearAgentAwarenessRegistrationRecord,
   loadAgentAwarenessRegistrationRecord,
   loadOrCreateAgentAwarenessDeviceId,
+  loadPreferences,
   saveAgentAwarenessRegistrationRecord,
 } from "../../persistence/imperative";
 import { makeRelayDeviceRegistrationRequest } from "./registrationPayload";
@@ -247,8 +248,70 @@ describe("makeRelayDeviceRegistrationRequest", () => {
     widgetMocks.getInstances.mockReset();
     widgetMocks.getInstances.mockReturnValue([]);
     widgetMocks.start.mockClear();
+    vi.mocked(loadPreferences).mockResolvedValue({ liveActivitiesEnabled: false });
     widgetMocks.dismissEnded.mockReset();
     environmentConfigsMock.configs.clear();
+  });
+
+  it.effect.each([true, false])("primes unread Done without live work: unread=%s", (unread) => {
+    const aggregate = {
+      title: "T3 Code",
+      subtitle: "Agent work completed",
+      activeCount: 0,
+      workingCount: 0,
+      attentionCount: 0,
+      unreadCount: unread ? 1 : 0,
+      pendingCount: unread ? 1 : 0,
+      totalCount: 1,
+      updatedAt: "2026-10-27T12:00:00.000Z",
+      activities: [
+        {
+          environmentId: "env",
+          threadId: "thread",
+          projectTitle: "Project",
+          threadTitle: "Completed task",
+          modelTitle: "Test",
+          phase: "completed",
+          unread,
+          status: "Done",
+          updatedAt: "2026-10-27T12:00:00.000Z",
+          completedAt: "2026-10-27T12:00:00.000Z",
+          deepLink: "/",
+        },
+      ],
+    };
+    vi.mocked(loadPreferences).mockResolvedValue({ liveActivitiesEnabled: true });
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      const url = input instanceof Request ? input.url : String(input);
+      if (url.endsWith("/v1/client/dpop-token"))
+        return Response.json({
+          access_token: "relay-dpop-token",
+          issued_token_type: "urn:ietf:params:oauth:token-type:access_token",
+          token_type: "DPoP",
+          expires_in: 300,
+          scope: "mobile:registration",
+        });
+      if (url.endsWith("/v1/mobile/agent-activity")) return Response.json({ aggregate });
+      return Response.json({ ok: true });
+    });
+    widgetMocks.start.mockReturnValue({
+      getId: () => "activity-1",
+      getPushToken: () => Promise.resolve(null),
+      addPushTokenListener: vi.fn(),
+    });
+    Constants.expoConfig!.extra = { relay: { url: "https://relay.example.test" } };
+    setAgentAwarenessRelayTokenProvider(() => Promise.resolve("clerk-token"), "user-a");
+    return Effect.gen(function* () {
+      yield* runBackgroundOperations();
+      if (unread) {
+        expect(widgetMocks.start).toHaveBeenCalledWith(aggregate, expect.any(Date));
+      } else {
+        expect(widgetMocks.start).not.toHaveBeenCalled();
+      }
+    }).pipe(
+      Effect.provideService(FetchHttpClient.Fetch, globalThis.fetch),
+      Effect.provide(layerRelayTest),
+    );
   });
 
   it("disables push features in Personal Team relay registrations", () => {

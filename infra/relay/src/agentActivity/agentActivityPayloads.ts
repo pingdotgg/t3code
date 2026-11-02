@@ -37,6 +37,7 @@ export function isExpiredAgentActivityState(
   state: RelayAgentActivityState,
   nowMs: number,
 ): boolean {
+  if (state.phase === "woke" && state.retained === true) return false;
   const expiresAt = agentActivityExpiresAt(state);
   return !Number.isFinite(expiresAt) || nowMs > expiresAt;
 }

@@ -213,8 +213,11 @@ const make = Effect.gen(function* () {
         : null;
       let alert: ReturnType<typeof androidAlertForState | typeof androidAlertForAggregate> = null;
       // Deletions update the card but must not consume another thread's pending completion alert.
-      let acknowledgeAggregate = job.state !== null || job.replay === true || aggregate === null;
-      if (job.state && preferences.value.notificationsEnabled) {
+      // Full registration replays establish a baseline; per-thread replays cannot consume other alerts.
+      let acknowledgeAggregate = job.replay
+        ? job.state === null
+        : job.state !== null || aggregate === null;
+      if (job.state && !job.replay && preferences.value.notificationsEnabled) {
         const state = yield* rows.getForUserThread({
           userId: job.userId,
           environmentId: job.state.environmentId,
@@ -261,17 +264,31 @@ const make = Effect.gen(function* () {
               allowedEnvironments.add(environmentId);
             }
           }
-          alert = androidAlertForAggregate({
-            previousAggregate,
-            nextAggregate: {
-              ...aggregate,
-              activities: aggregate.activities.filter((row) =>
-                allowedEnvironments.has(row.environmentId),
-              ),
-            },
-            preferences: preferences.value,
-            nowMs: now.epochMilliseconds,
-          });
+          const hiddenCurrentState =
+            state?.phase === job.state.phase &&
+            state.updatedAt === job.state.updatedAt &&
+            !aggregate.activities.some(
+              (row) => row.environmentId === state.environmentId && row.threadId === state.threadId,
+            ) &&
+            deliveryUser.notificationsEnabled &&
+            !isExpiredAgentActivityState(state, now.epochMilliseconds)
+              ? state
+              : null;
+          alert =
+            androidAlertForAggregate({
+              previousAggregate,
+              nextAggregate: {
+                ...aggregate,
+                activities: aggregate.activities.filter((row) =>
+                  allowedEnvironments.has(row.environmentId),
+                ),
+              },
+              preferences: preferences.value,
+              nowMs: now.epochMilliseconds,
+            }) ??
+            (hiddenCurrentState
+              ? androidAlertForState(hiddenCurrentState, preferences.value, now.epochMilliseconds)
+              : null);
         } else if (
           deliveryUser?.notificationsEnabled &&
           state?.phase === job.state.phase &&
@@ -281,18 +298,54 @@ const make = Effect.gen(function* () {
           alert = androidAlertForState(state, preferences.value, now.epochMilliseconds);
         }
       }
+      let deliveryBaseline = aggregate;
+      if (job.replay && job.state) {
+        const replayedAggregate = makeAggregateState({
+          activeStates: states.filter(
+            (state) =>
+              state.environmentId === job.state?.environmentId &&
+              state.threadId === job.state.threadId &&
+              state.phase === job.state.phase &&
+              state.updatedAt === job.state.updatedAt,
+          ),
+          terminalState: null,
+          nowMs: now.epochMilliseconds,
+        });
+        const replayedRow = replayedAggregate?.activities[0];
+        if (replayedAggregate && replayedRow) {
+          // A silent thread replay acknowledges only itself, preserving other pending transitions.
+          const previousRows = previousAggregate?.activities ?? [];
+          const index = previousRows.findIndex(
+            (row) =>
+              row.environmentId === replayedRow.environmentId &&
+              row.threadId === replayedRow.threadId,
+          );
+          deliveryBaseline = {
+            ...(previousAggregate ?? replayedAggregate),
+            activities:
+              index === -1
+                ? [...previousRows, replayedRow]
+                : previousRows.toSpliced(index, 1, replayedRow),
+          };
+          acknowledgeAggregate = true;
+        }
+      }
       const displayedAggregate =
         preferences.value.notificationsEnabled && preferences.value.liveActivitiesEnabled
           ? aggregate
           : null;
-      const active = (displayedAggregate?.activeCount ?? 0) > 0;
+      const active = (displayedAggregate?.pendingCount ?? displayedAggregate?.activeCount ?? 0) > 0;
       if (!displayedAggregate && !alert && !previousAggregate && job.state !== null) return;
       const data: Record<string, string> = {
         t3_kind: "agent_activity",
         device_id: job.deviceId,
         user_id: job.userId,
         updated_at: String(now.epochMilliseconds),
-        ...androidActivityData(displayedAggregate),
+        ...androidActivityData(
+          displayedAggregate,
+          now.epochMilliseconds,
+          displayedAggregate ? states : [],
+        ),
         ...alert,
       };
       if (alert) {
@@ -328,7 +381,7 @@ const make = Effect.gen(function* () {
           deviceId: job.deviceId,
           kind: active ? "live_activity_update" : "live_activity_end",
           // Retain terminal rows as the baseline so finished-card replays cannot alert again.
-          aggregate: preferences.value.liveActivitiesEnabled ? aggregate : null,
+          aggregate: preferences.value.liveActivitiesEnabled ? deliveryBaseline : null,
           deliveredAt: DateTime.formatIso(now),
         });
       }
