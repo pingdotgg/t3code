@@ -1,5 +1,5 @@
 import type { VoiceInputPhase, VoiceInputState } from "@t3tools/client-runtime/voice-input";
-import { memo, useCallback, useState, type ReactNode } from "react";
+import { memo, useState, type ReactNode } from "react";
 import { Linking, Pressable, Text as SystemText, View, type LayoutChangeEvent } from "react-native";
 import Animated, {
   Easing,
@@ -15,6 +15,7 @@ import Animated, {
 import { AppActivityIndicator } from "../../components/ui/AppActivityIndicator";
 import { AppText as Text } from "../../components/ui/AppText";
 import { SymbolView, type AppSymbolName } from "../../components/ui/AppSymbol";
+import { useAndroidControlSizing } from "../../components/ui/useAndroidControlSizing";
 import { cn } from "../../lib/cn";
 import type { VoiceComposerPresentation } from "./voiceInputPresentation";
 import { VOICE_WAVEFORM_SAMPLE_COUNT } from "./voiceInputMetering";
@@ -144,7 +145,7 @@ export function ComposerDictationToolbar(props: {
 }
 
 const WaveformBar = memo(function WaveformBar(props: {
-  readonly audioLevels: SharedValue<number[]>;
+  readonly audioLevels: SharedValue<ReadonlyArray<number>>;
   readonly sampleIndex: number;
   readonly height?: number;
 }) {
@@ -177,7 +178,7 @@ const COMPACT_WAVEFORM_BAR_COUNT = 8;
 const COMPACT_WAVEFORM_BAR_HEIGHT = 14;
 
 export const CompactVoiceWaveform = memo(function CompactVoiceWaveform(props: {
-  readonly audioLevels: SharedValue<number[]>;
+  readonly audioLevels: SharedValue<ReadonlyArray<number>>;
 }) {
   return (
     <View
@@ -199,10 +200,10 @@ export const CompactVoiceWaveform = memo(function CompactVoiceWaveform(props: {
 });
 
 const VoiceWaveform = memo(function VoiceWaveform(props: {
-  readonly audioLevels: SharedValue<number[]>;
+  readonly audioLevels: SharedValue<ReadonlyArray<number>>;
 }) {
   const [barCount, setBarCount] = useState(0);
-  const handleLayout = useCallback((event: LayoutChangeEvent) => {
+  const handleLayout = (event: LayoutChangeEvent) => {
     setBarCount(
       Math.max(
         1,
@@ -212,7 +213,7 @@ const VoiceWaveform = memo(function VoiceWaveform(props: {
         ),
       ),
     );
-  }, []);
+  };
 
   return (
     <View
@@ -258,8 +259,14 @@ function VoiceActionButton(props: {
   readonly onPress: () => void;
   readonly variant?: "plain" | "primary";
 }) {
+  const { scale } = useAndroidControlSizing();
   const variant = props.variant ?? "plain";
   const loading = props.loading === true;
+  const large = props.size === "large";
+  const circleSize = Math.round((large ? 44 : 30) * scale);
+  const iconSize = Math.round(
+    (variant === "primary" ? (large ? 20 : 16) : large ? 24 : 20) * scale,
+  );
   const primaryStyle = useAnimatedStyle(() => ({
     opacity: withTiming(loading ? 0 : 1, DICTATION_TIMING),
   }));
@@ -272,17 +279,19 @@ function VoiceActionButton(props: {
       className="size-[44px] shrink-0 items-center justify-center active:opacity-70"
       disabled={props.disabled}
       onPress={props.onPress}
-      style={{ opacity: props.disabled && !props.loading ? 0.4 : 1 }}
+      style={{
+        opacity: props.disabled && !props.loading ? 0.4 : 1,
+        // Matches ComposerActionButton so the circle stays concentric with the large composer corner.
+        // An undefined width would still override the class's 44px width.
+        ...(variant === "primary" && large ? { width: 62 } : null),
+      }}
     >
       <View
         className={cn(
           "items-center justify-center",
-          variant === "primary"
-            ? props.size === "large"
-              ? "size-[44px] rounded-full bg-subtle"
-              : "size-[30px] rounded-full bg-subtle"
-            : "size-[44px]",
+          variant === "primary" ? "rounded-full bg-subtle" : "size-[44px]",
         )}
+        style={variant === "primary" ? { width: circleSize, height: circleSize } : undefined}
       >
         {variant === "primary" ? (
           <Animated.View
@@ -296,7 +305,7 @@ function VoiceActionButton(props: {
           ) : (
             <SymbolView
               name={props.icon}
-              size={props.size === "large" ? 24 : variant === "primary" ? 16 : 20}
+              size={iconSize}
               weight={variant === "primary" ? "semibold" : "regular"}
               tintColorClassName={
                 variant === "primary" ? "accent-primary-foreground" : "accent-icon"
@@ -311,7 +320,7 @@ function VoiceActionButton(props: {
 }
 
 export function ComposerDictationStatus(props: {
-  readonly audioLevels: SharedValue<number[]>;
+  readonly audioLevels: SharedValue<ReadonlyArray<number>>;
   readonly elapsedSeconds: number;
   readonly phase: VoiceInputPhase;
   readonly presentation: VoiceComposerPresentation;

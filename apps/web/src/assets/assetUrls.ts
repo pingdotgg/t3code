@@ -86,7 +86,7 @@ export function makeRevisionedAssetUrlFamily(
     family(JSON.stringify([target.environmentId, target.input.resource, target.revision]));
 }
 
-export const revisionedAssetUrl = makeRevisionedAssetUrlFamily(assetEnvironment.createUrl);
+const revisionedAssetUrl = makeRevisionedAssetUrlFamily(assetEnvironment.createUrl);
 
 /**
  * Pass `revision` for a workspace file whose bytes can change under the same

@@ -60,6 +60,7 @@ export function HtmlRenderFrame(props: {
   // Tied to the viewer's lifetime: unmounting while expanded must still release
   // the timeline's follow pin, which a close handler alone never reaches.
   const expanded = expandedSrc !== null;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- holds the parent's fullscreen pin while expanded and releases it on collapse or unmount
   useEffect(() => {
     if (!expanded) return;
     onFullscreenChange?.(true);

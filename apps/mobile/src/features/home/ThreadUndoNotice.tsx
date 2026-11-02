@@ -1,3 +1,4 @@
+import { useAndroidFloatingTabs } from "../settings/appearance/AppearancePreferencesProvider";
 import { useState } from "react";
 import { useKeyboardState } from "react-native-keyboard-controller";
 import { Platform, View } from "react-native";
@@ -18,6 +19,7 @@ import {
 } from "./thread-undo-notice";
 
 export function ThreadUndoNotice(props: { readonly visible: boolean }) {
+  const floatingTabsEnabled = useAndroidFloatingTabs();
   const notice = useThreadUndoNotice();
   const insets = useSafeAreaInsets();
   const columnMetrics = useNativeColumnLayoutMetrics();
@@ -64,7 +66,9 @@ export function ThreadUndoNotice(props: { readonly visible: boolean }) {
               columnMetrics?.safeArea.bottom ?? 0,
               (workspace?.bottomClearance ?? 0) - workspacePadding,
             ) + 8
-      : insets.bottom + 12;
+      : floatingTabsEnabled && keyboardHeight === 0
+        ? Math.max(insets.bottom + 12, workspace?.bottomClearance ?? 0)
+        : insets.bottom + 12;
   return (
     <View
       key={instance.key}

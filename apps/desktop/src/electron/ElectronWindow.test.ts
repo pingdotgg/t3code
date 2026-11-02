@@ -162,4 +162,20 @@ describe("ElectronWindow", () => {
       assert.equal(vi.mocked(laterWindow.destroy).mock.calls.length, 1);
     }).pipe(Effect.provide(layerTest)),
   );
+
+  it.effect("never falls back to an auxiliary window as the main window", () =>
+    Effect.gen(function* () {
+      const electronWindow = yield* ElectronWindow.ElectronWindow;
+      const auxiliary = yield* electronWindow.create({}, { auxiliary: true });
+      const ordinary = { isDestroyed: () => false } as unknown as Electron.BrowserWindow;
+      Object.assign(auxiliary, { isDestroyed: () => false });
+
+      getAllWindowsMock.mockReturnValue([auxiliary]);
+      assert.isTrue((yield* electronWindow.currentMainOrFirst)._tag === "None");
+
+      getAllWindowsMock.mockReturnValue([auxiliary, ordinary]);
+      const current = yield* electronWindow.currentMainOrFirst;
+      assert.isTrue(current._tag === "Some" && current.value === ordinary);
+    }).pipe(Effect.provide(layerTest)),
+  );
 });
