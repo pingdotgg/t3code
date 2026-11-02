@@ -45,7 +45,7 @@ export function SettingsBreadcrumb({ pathname }: { pathname: string }) {
               to="/settings/tools"
               search={skill === undefined && server !== undefined ? { tab: "mcp" } : {}}
               replace
-              className="rounded-sm transition-colors hover:text-foreground focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring"
+              className="rounded-sm transition-colors hover:text-foreground focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
             >
               {sectionLabel}
             </Link>

@@ -671,9 +671,10 @@ function useUpdateSettingsTarget(environmentId: EnvironmentId | null) {
           const session = appAtomRegistry.get(environmentSession.sessionStateAtom(targetId));
           if (
             session._tag !== "Initial" &&
-            !requiredScopesForServerSettingsPatch(sharedPatch, target?.serverConfig?.settings).every(
-              (scope) => readEnvironmentScope(targetId, scope),
-            )
+            !requiredScopesForServerSettingsPatch(
+              sharedPatch,
+              target?.serverConfig?.settings,
+            ).every((scope) => readEnvironmentScope(targetId, scope))
           ) {
             deniedLabels.push(target?.label ?? targetId);
             continue;

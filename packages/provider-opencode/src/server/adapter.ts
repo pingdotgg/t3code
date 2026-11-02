@@ -2872,7 +2872,13 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
           state: OpenCodeThreadState,
           policy: ProviderAdapter.ProviderAdapterV2RuntimePolicy,
         ) {
-          const parentRules = openCodePermissionRules(policy);
+          // Settings → Tools skill switches ride along, or a turn would drop them.
+          const appThreadId = state.providerThread.appThreadId;
+          const disabledSkills =
+            appThreadId === null
+              ? []
+              : ((yield* mcpSessions.read(appThreadId))?.tools?.disabledSkills ?? []);
+          const parentRules = openCodePermissionRules(policy, disabledSkills);
           const pending = [state];
           for (let target = pending.pop(); target !== undefined; target = pending.pop()) {
             const previous = target.permission;
@@ -3161,24 +3167,6 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
                 client.session.get({ sessionID: sessionId }),
               );
               const nativeSession = unwrapData("session.get", response);
-              // The saved rules may predate a skill switched off since; a
-              // resume that knows its policy brings them up to date.
-              const appThreadId = threadInput.threadId ?? threadInput.providerThread.appThreadId;
-              if (threadInput.runtimePolicy !== undefined && appThreadId !== null) {
-                const permission = openCodePermissionRules(
-                  threadInput.runtimePolicy,
-                  (yield* mcpSessions.read(appThreadId))?.tools?.disabledSkills ?? [],
-                );
-                const saved = nativeSession.permission ?? [];
-                const unchanged =
-                  saved.length === permission.length &&
-                  saved.every((rule, index) => permissionRuleEquals(rule, permission[index]!));
-                if (!unchanged) {
-                  yield* sdkCall("session.update", { sessionID: sessionId, permission }, () =>
-                    client.session.update({ sessionID: sessionId, permission }),
-                  );
-                }
-              }
               const resumedAt = yield* DateTime.now;
               const providerThread = {
                 ...threadInput.providerThread,

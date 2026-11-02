@@ -69,6 +69,7 @@ export function McpServerDetail({
   const transportKey = row === null ? "" : JSON.stringify(row.config.transport);
   const listedFor = useRef(transportKey);
   const { refresh } = query;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- re-lists on the server; the query is keyed by name.
   useEffect(() => {
     if (listedFor.current === transportKey) return;
     listedFor.current = transportKey;

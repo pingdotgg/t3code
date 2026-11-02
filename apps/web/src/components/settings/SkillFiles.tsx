@@ -1,7 +1,7 @@
 import { FileTree, useFileTree } from "@pierre/trees/react";
 import type { EnvironmentId, SkillFileEntry } from "@t3tools/contracts";
 import { ChevronDownIcon, ChevronRightIcon } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useState } from "react";
 import ReactMarkdown, { type Components } from "react-markdown";
 
 import { useTheme } from "../../hooks/useTheme";
@@ -18,8 +18,7 @@ const PANE_HEIGHT = "h-[26rem]";
 
 /**
  * A skill's files as a tree beside a read-only viewer. Loaded when a skill
- * opens, since the tree and the highlighter are large. Adapted from the
- * skills page in #17513.
+ * opens, since the tree and the highlighter are large.
  */
 export default function SkillFiles({
   environmentId,
@@ -32,11 +31,8 @@ export default function SkillFiles({
   files: ReadonlyArray<SkillFileEntry>;
 }) {
   const { resolvedTheme } = useTheme();
-  const fileSet = useMemo(() => new Set(files.map((file) => file.path)), [files]);
-  const scripts = useMemo(
-    () => new Set(files.filter((file) => file.script).map((file) => file.path)),
-    [files],
-  );
+  const fileSet = new Set(files.map((file) => file.path));
+  const scripts = new Set(files.filter((file) => file.script).map((file) => file.path));
   const [current, setCurrent] = useState(
     fileSet.has(SKILL_FILE) ? SKILL_FILE : (files[0]?.path ?? ""),
   );

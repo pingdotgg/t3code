@@ -102,12 +102,9 @@ const GROUP_ORDER: ReadonlyArray<SkillGroupKind> = ["project", "personal", "plug
 const isFilePath = (path: string) => path.startsWith("/") || /^[A-Za-z]:[\\/]/.test(path);
 
 /**
- * The skills every enabled provider instance on one environment discovers,
- * for the checkout at `cwd` when one is given. A provider's own list is read
- * in the folder it was launched from, so its project skills belong to no
- * project picked here: they show only from a scan of `cwd`.
- * A skill reached from a project folder by any provider counts as a project
- * skill, so the group follows the most specific location.
+ * The skills every enabled provider on one environment finds, for the checkout at `cwd`.
+ * A provider's own list is read where it was launched, so project skills show only from a
+ * scan of `cwd`. A skill any provider reaches from a project folder is a project skill.
  */
 export function collectSkillRows(
   providers: ReadonlyArray<ServerProvider>,

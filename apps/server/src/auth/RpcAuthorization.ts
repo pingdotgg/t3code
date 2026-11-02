@@ -291,11 +291,9 @@ const requiredScopesForRpcCall = (
 };
 
 /**
- * `onAuthorized` runs once after an authorized request succeeds; for a stream
- * RPC, that is when the stream completes. Every RPC passes through here, so it
- * is the one place to observe requests without wrapping each handler.
- * `currentSettings` lets a settings update that only resends a project's
- * stored MCP servers pass with `settings:write`.
+ * `onAuthorized` runs once after an authorized request succeeds (a stream RPC: when it
+ * completes), the one place to observe every request. `currentSettings` lets a settings
+ * update that only resends a project's stored MCP servers pass with `settings:write`.
  */
 export const layer = (
   scopes: ReadonlyArray<AuthEnvironmentScope>,

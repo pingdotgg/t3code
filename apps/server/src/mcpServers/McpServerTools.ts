@@ -293,21 +293,22 @@ const make = Effect.gen(function* () {
         ),
       );
 
-    const listPages = (client: InstanceType<Sdk["Client"]>) =>
-      Effect.gen(function* () {
-        const tools: McpServerTool[] = [];
-        let cursor: string | undefined;
-        for (let page = 0; page < MAX_TOOL_PAGES; page += 1) {
-          const result = yield* Effect.tryPromise({
-            try: () => client.listTools(cursor === undefined ? undefined : { cursor }),
-            catch: (cause) => fail(failureReason(sdk, transport, cause, "list"), cause),
-          });
-          tools.push(...result.tools.map(describeTool));
-          cursor = result.nextCursor;
-          if (cursor === undefined) break;
-        }
-        return tools;
-      });
+    const listPages = Effect.fn("McpServerTools.listPages")(function* (
+      client: InstanceType<Sdk["Client"]>,
+    ) {
+      const tools: McpServerTool[] = [];
+      let cursor: string | undefined;
+      for (let page = 0; page < MAX_TOOL_PAGES; page += 1) {
+        const result = yield* Effect.tryPromise({
+          try: () => client.listTools(cursor === undefined ? undefined : { cursor }),
+          catch: (cause) => fail(failureReason(sdk, transport, cause, "list"), cause),
+        });
+        tools.push(...result.tools.map(describeTool));
+        cursor = result.nextCursor;
+        if (cursor === undefined) break;
+      }
+      return tools;
+    });
 
     return yield* Effect.scoped(
       Effect.gen(function* () {

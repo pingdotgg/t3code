@@ -21,6 +21,7 @@ export function useEscapeToList(onBack: () => void) {
     event.stopImmediatePropagation();
     onBack();
   });
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- a window keydown listener while mounted.
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => goBack(event);
     window.addEventListener("keydown", onKeyDown, { capture: true });

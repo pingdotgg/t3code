@@ -61,7 +61,6 @@ import {
   useId,
   useImperativeHandle,
   useLayoutEffect,
-  useMemo,
   useRef,
   useState,
 } from "react";
@@ -955,39 +954,31 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const compactCommandAvailable = providerSupportsManualCompaction(selectedProviderEntry);
   // Skills switched off in Settings → Tools leave the menu; the server keeps
   // them out of the session where the provider allows it.
-  const disabledSkillNames = useMemo(() => {
-    const disabled = mergeProjectDisabledSkills(
+  const disabledSkillNames = new Set(
+    mergeProjectDisabledSkills(
       settings.disabledSkills,
       skillsProjectId === null
         ? undefined
         : settings.projectSettingsOverrides[skillsProjectId]?.disabledSkills,
-    );
-    return new Set(disabled.map((name) => name.toLowerCase()));
-  }, [settings.disabledSkills, settings.projectSettingsOverrides, skillsProjectId]);
+    ).map((name) => name.toLowerCase()),
+  );
   const providerSkills = selectedProviderStatus
     ? resolveProviderSkillsForCwd(selectedProviderStatus, gitCwd)
     : NO_PROVIDER_SKILLS;
-  // Memoized so the composer menu memo below can cache between renders.
-  const selectedProviderSkills = useMemo(
-    () =>
-      disabledSkillNames.size === 0
-        ? providerSkills
-        : providerSkills.filter((skill) => !disabledSkillNames.has(skill.name.toLowerCase())),
-    [disabledSkillNames, providerSkills],
-  );
+  const selectedProviderSkills =
+    disabledSkillNames.size === 0
+      ? providerSkills
+      : providerSkills.filter((skill) => !disabledSkillNames.has(skill.name.toLowerCase()));
   const providerSlashCommands = selectedProviderStatus
     ? resolveProviderSlashCommandsForCwd(selectedProviderStatus, gitCwd)
     : NO_PROVIDER_SLASH_COMMANDS;
   // Claude also lists each skill as a slash command; a disabled one leaves both.
-  const selectedProviderSlashCommands = useMemo(
-    () =>
-      disabledSkillNames.size === 0
-        ? providerSlashCommands
-        : providerSlashCommands.filter(
-            (command) => !disabledSkillNames.has(command.name.toLowerCase()),
-          ),
-    [disabledSkillNames, providerSlashCommands],
-  );
+  const selectedProviderSlashCommands =
+    disabledSkillNames.size === 0
+      ? providerSlashCommands
+      : providerSlashCommands.filter(
+          (command) => !disabledSkillNames.has(command.name.toLowerCase()),
+        );
   const { refresh: refreshWorkspaceSnapshotOnTyping, scanning: workspaceSkillsScanning } =
     useProviderWorkspaceSnapshotRefresh({
       environmentId,

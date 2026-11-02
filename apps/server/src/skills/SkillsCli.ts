@@ -1,12 +1,7 @@
 /**
- * SkillsCli - runs the bundled `skills` CLI (vercel-labs/skills) through the
- * hidden `t3 skills-cli` subcommand, so installs write exactly what
- * `npx skills` would: the same folders, links and lock files.
- *
- * Arguments are built here from typed input only. Telemetry is off, git never
- * prompts, and stdin is closed, so the CLI can't wait on anyone.
- *
- * @module SkillsCli
+ * Runs the bundled `skills` CLI through the hidden `t3 skills-cli` subcommand, so installs
+ * write what `npx skills` would. Arguments come from typed input only; telemetry is off,
+ * git never prompts and stdin is closed, so the CLI can't wait on anyone.
  */
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";

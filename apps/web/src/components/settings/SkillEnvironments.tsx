@@ -7,7 +7,7 @@ import { RegistryContext, useAtomValue } from "@effect/atom-react";
 import { NetworkIcon } from "lucide-react";
 import * as Option from "effect/Option";
 import { AsyncResult, Atom } from "effect/reactivity";
-import { useCallback, useContext, useMemo } from "react";
+import { useContext } from "react";
 
 import { serverEnvironment } from "../../state/server";
 import { EnvironmentMachineIcon } from "../EnvironmentMachineIcon";
@@ -75,23 +75,19 @@ export function useEnvironmentSkillFolders(environments: ReadonlyArray<SkillEnvi
   const keys = JSON.stringify(environments.map(folderKey));
   const results = useAtomValue(foldersByEnvironment(keys));
   const registry = useContext(RegistryContext);
-  const refresh = useCallback(() => {
+  const refresh = () => {
     for (const key of JSON.parse(keys) as string[]) registry.refresh(inspectAtom(key));
-  }, [keys, registry]);
-  const folders = useMemo(
-    () =>
-      new Map(
-        results.map(({ environmentId, result }) => [
-          environmentId,
-          new Map<string, SkillFolderInfo>(
-            (Option.getOrNull(AsyncResult.value(result))?.folders ?? []).map((folder) => [
-              folder.path,
-              folder,
-            ]),
-          ),
+  };
+  const folders = new Map(
+    results.map(({ environmentId, result }) => [
+      environmentId,
+      new Map<string, SkillFolderInfo>(
+        (Option.getOrNull(AsyncResult.value(result))?.folders ?? []).map((folder) => [
+          folder.path,
+          folder,
         ]),
       ),
-    [results],
+    ]),
   );
   return { folders, refresh };
 }

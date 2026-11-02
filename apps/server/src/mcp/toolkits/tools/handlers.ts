@@ -95,35 +95,35 @@ const access = Effect.gen(function* () {
 });
 
 /** The project's checkout, as the target of an install. */
-const projectTarget = (projectId: ProjectId | undefined) =>
-  Effect.gen(function* () {
-    if (projectId === undefined) return { kind: "environment" } satisfies SkillInstallTarget;
-    const projects = yield* ProjectService.ProjectService;
-    const project = yield* projects.getById(projectId).pipe(Effect.mapError(unavailable));
-    if (Option.isNone(project))
-      return yield* new OrchestratorMcpFailure({
-        code: "invalid_request",
-        message: "The project was not found.",
-      });
-    return { kind: "project", cwd: project.value.workspaceRoot } satisfies SkillInstallTarget;
-  });
+const projectTarget = Effect.fn("ToolsHandlers.projectTarget")(function* (
+  projectId: ProjectId | undefined,
+) {
+  if (projectId === undefined) return { kind: "environment" } satisfies SkillInstallTarget;
+  const projects = yield* ProjectService.ProjectService;
+  const project = yield* projects.getById(projectId).pipe(Effect.mapError(unavailable));
+  if (Option.isNone(project))
+    return yield* new OrchestratorMcpFailure({
+      code: "invalid_request",
+      message: "The project was not found.",
+    });
+  return { kind: "project", cwd: project.value.workspaceRoot } satisfies SkillInstallTarget;
+});
 
 const libraryFailure = (error: { readonly message: string }) =>
   new OrchestratorMcpFailure({ code: "invalid_request", message: error.message });
 
 /** Run a change while the calling thread holds its lock, re-checking it first. */
-const asCaller = <A, E, R, CR>(
+const asCaller = Effect.fn("ToolsHandlers.asCaller")(function* <A, E, R, CR>(
   check: Effect.Effect<unknown, OrchestratorMcpFailure, CR>,
   change: Effect.Effect<A, E, R>,
-) =>
-  Effect.gen(function* () {
-    const scope = yield* McpInvocationContext.McpInvocationContext;
-    const executor = yield* ThreadCommandExecutor.ThreadCommandExecutor;
-    const guarded = check.pipe(Effect.andThen(change));
-    return yield* scope.thread === undefined
-      ? guarded
-      : executor.withLock(scope.thread.threadId, guarded);
-  });
+) {
+  const scope = yield* McpInvocationContext.McpInvocationContext;
+  const executor = yield* ThreadCommandExecutor.ThreadCommandExecutor;
+  const guarded = check.pipe(Effect.andThen(change));
+  return yield* scope.thread === undefined
+    ? guarded
+    : executor.withLock(scope.thread.threadId, guarded);
+});
 
 export const layer = McpToolAccess.toLayer(ToolsToolkit, {
   t3_tools_read: McpToolAccess.reads((input) =>

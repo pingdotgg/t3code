@@ -1,24 +1,7 @@
 /**
- * AgentSkillFolders - where each agent reads skills from, and which `skills`
- * CLI agent id installs into them.
- *
- * Paths are relative to the home folder (`home`) or the project root
- * (`project`), in the order the agent looks. `.agents/skills` is the folder the
- * `skills` CLI writes every install to; agents that read only their own folder
- * get a link there, made by naming their CLI id. Sources for each agent:
- * - Claude: `ClaudeSkills.ts` (`~/.claude/skills`, `.claude/skills`; it does
- *   not read `.agents/skills`).
- * - Codex: https://developers.openai.com/codex/skills (`.agents/skills` at both
- *   levels; `~/.codex/skills` is the deprecated user folder).
- * - Cursor: provider-cursor's `skills.ts`.
- * - OpenCode: https://opencode.ai/docs/skills/ (its own folders plus the
- *   `.claude` and `.agents` ones).
- * - Grok: https://docs.x.ai/build/features/skills-plugins-marketplaces.md.
- * - Antigravity: `AntigravitySkills.ts` (`.agents/skills` only in a project).
- * - Pi: its docs/skills.md (`.pi/skills`, `~/.pi/agent/skills`, `.agents`).
- * The CLI ids and folders follow vercel-labs/skills' `src/agents.ts`.
- *
- * @module AgentSkillFolders
+ * Where each agent reads skills (relative to home or the project root, in lookup order),
+ * and the `skills` CLI agent id that links an install there; ids and folders follow
+ * vercel-labs/skills' `src/agents.ts`. The CLI writes every install to `.agents/skills`.
  */
 import type { ProviderDriverKind } from "@t3tools/contracts";
 

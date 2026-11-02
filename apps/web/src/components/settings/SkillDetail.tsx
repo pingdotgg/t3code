@@ -27,8 +27,7 @@ const SkillFiles = lazy(() => import("./SkillFiles"));
 
 /**
  * One skill: what it says, which agents load it, and its files. The settings
- * header names it and leads back to the list. Adapted from the skill page in
- * #17513.
+ * header names it and leads back to the list.
  */
 export function SkillDetail({
   row,

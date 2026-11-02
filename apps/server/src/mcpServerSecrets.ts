@@ -1,13 +1,7 @@
 /**
- * Sensitive MCP server variables (env values, HTTP headers) live in the
- * secret store, never in settings.json or on the wire. Servers sit in two
- * places, the environment's `mcpServers` and each project's override entry,
- * so every helper here walks both.
- *
- * On disk and towards clients a sensitive variable is `{value: "",
- * valueRedacted: true}`. A client that sends that back keeps the stored
- * secret; a new value replaces it; turning `sensitive` off moves the value
- * back into settings.
+ * Sensitive MCP server variables live in the secret store, never in settings.json or on
+ * the wire, as `{value: "", valueRedacted: true}`; sending that back keeps the secret.
+ * Servers sit in the environment's `mcpServers` and each project's entry; helpers walk both.
  */
 import type {
   McpServerConfig,
@@ -164,13 +158,9 @@ export type McpSecretChange =
   | { readonly kind: "remove"; readonly secretName: string };
 
 /**
- * Plan the secret-store writes for moving from `current` to `next`, and the
- * settings to persist (sensitive values replaced by the redaction flag).
- * A sensitive variable sent back redacted with no value keeps its secret,
- * moved to its new name when `storedAs` says it was renamed, and a value still
- * inline in `current` (hand-edited into settings.json) moves into the store.
- * A value the user typed replaces it; an empty value or a variable that is
- * no longer sensitive (or no longer exists) removes it.
+ * The secret-store changes from `current` to `next`, and the redacted settings to persist.
+ * A redacted variable keeps its secret (moved when `storedAs` names a rename, or taken from
+ * a hand-edited inline value); a typed value replaces it; empty or non-sensitive removes it.
  */
 export function planMcpServerSecrets(
   current: ServerSettings,

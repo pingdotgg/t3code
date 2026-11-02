@@ -27,7 +27,7 @@ import {
   PlusIcon,
   SearchIcon,
 } from "lucide-react";
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 
 import { useAfterDelay } from "../../hooks/useAfterDelay";
 import { cn } from "../../lib/utils";
@@ -106,32 +106,30 @@ interface ToolsTarget {
  */
 function useToolsTargets(): ReadonlyArray<ToolsTarget> {
   const { scope, connectedEnvironments } = useSettingsScope();
-  return useMemo(() => {
-    const connected = new Map(
-      connectedEnvironments.map((environment) => [environment.environmentId, environment]),
-    );
-    if (scope.kind === "project" || scope.kind === "checkout") {
-      return scope.members.flatMap((member) => {
-        const environment = connected.get(member.environmentId);
-        return environment
-          ? [
-              {
-                environmentId: member.environmentId,
-                label: environment.label,
-                projectId: member.id,
-                cwd: member.workspaceRoot,
-              },
-            ]
-          : [];
-      });
-    }
-    return connectedEnvironments.map((environment) => ({
-      environmentId: environment.environmentId,
-      label: environment.label,
-      projectId: null,
-      cwd: null,
-    }));
-  }, [connectedEnvironments, scope]);
+  const connected = new Map(
+    connectedEnvironments.map((environment) => [environment.environmentId, environment]),
+  );
+  if (scope.kind === "project" || scope.kind === "checkout") {
+    return scope.members.flatMap((member) => {
+      const environment = connected.get(member.environmentId);
+      return environment
+        ? [
+            {
+              environmentId: member.environmentId,
+              label: environment.label,
+              projectId: member.id,
+              cwd: member.workspaceRoot,
+            },
+          ]
+        : [];
+    });
+  }
+  return connectedEnvironments.map((environment) => ({
+    environmentId: environment.environmentId,
+    label: environment.label,
+    projectId: null,
+    cwd: null,
+  }));
 }
 
 type ToolsSettingsSnapshot = NonNullable<
@@ -139,13 +137,9 @@ type ToolsSettingsSnapshot = NonNullable<
 >["settings"];
 
 /**
- * Write a Tools change to every target. `apply` receives the target's raw
- * environment settings and returns its patch: the environment's own key at
- * environment scope, or the project's override entry at project scope.
- *
- * Each patch replaces a whole list or project entry, so it is built on the
- * settings this page last wrote rather than the last ones the server pushed:
- * a second click before the first save comes back must not undo it.
+ * Write a Tools change to every target: `apply` returns the patch for the environment key or
+ * the project's entry. A patch replaces a whole list or entry, so it builds on what this page
+ * last wrote, not the last push: a second click before the first save returns must not undo it.
  */
 function usePersistToolsPatch() {
   const targets = useToolsTargets();
@@ -159,32 +153,29 @@ function usePersistToolsPatch() {
       { readonly base: ToolsSettingsSnapshot; readonly next: ToolsSettingsSnapshot }
     >(),
   );
-  return useCallback(
-    (
-      apply: (input: {
-        readonly settings: ToolsSettingsSnapshot;
-        readonly projectId: ProjectId | null;
-      }) => ServerSettingsPatch | null,
-    ) => {
-      for (const target of targets) {
-        const pushed = connectedEnvironments.find(
-          (environment) => environment.environmentId === target.environmentId,
-        )?.serverConfig?.settings;
-        if (!pushed) continue;
-        const pending = written.current.get(target.environmentId);
-        // Once the server pushes newer settings, they are the base again.
-        const settings = pending !== undefined && pending.base === pushed ? pending.next : pushed;
-        const patch = apply({ settings, projectId: target.projectId });
-        if (patch === null) continue;
-        written.current.set(target.environmentId, {
-          base: pushed,
-          next: applyServerSettingsPatch(settings, patch),
-        });
-        void updateSettings({ environmentId: target.environmentId, input: { patch } });
-      }
-    },
-    [connectedEnvironments, targets, updateSettings],
-  );
+  return (
+    apply: (input: {
+      readonly settings: ToolsSettingsSnapshot;
+      readonly projectId: ProjectId | null;
+    }) => ServerSettingsPatch | null,
+  ) => {
+    for (const target of targets) {
+      const pushed = connectedEnvironments.find(
+        (environment) => environment.environmentId === target.environmentId,
+      )?.serverConfig?.settings;
+      if (!pushed) continue;
+      const pending = written.current.get(target.environmentId);
+      // Once the server pushes newer settings, they are the base again.
+      const settings = pending !== undefined && pending.base === pushed ? pending.next : pushed;
+      const patch = apply({ settings, projectId: target.projectId });
+      if (patch === null) continue;
+      written.current.set(target.environmentId, {
+        base: pushed,
+        next: applyServerSettingsPatch(settings, patch),
+      });
+      void updateSettings({ environmentId: target.environmentId, input: { patch } });
+    }
+  };
 }
 
 /** Settings → Tools: the skills and MCP servers agents get, as two tabs. */
@@ -248,27 +239,24 @@ function SkillsPanel({
   const cwd = targets.find((candidate) => candidate.environmentId === environmentId)?.cwd ?? null;
   // Every environment the scope covers, the representative one first: rows
   // show its copy of a skill when it has one.
-  const environments = useMemo((): ReadonlyArray<SkillEnvironment> => {
-    const ordered = [
-      ...targets.filter((candidate) => candidate.environmentId === environmentId),
-      ...targets.filter((candidate) => candidate.environmentId !== environmentId),
-    ];
-    return ordered.flatMap((candidate) => {
-      const connected = connectedEnvironments.find(
-        (environment) => environment.environmentId === candidate.environmentId,
-      );
-      return connected === undefined
-        ? []
-        : [
-            {
-              environmentId: candidate.environmentId,
-              label: connected.label,
-              serverConfig: connected.serverConfig,
-              cwd: candidate.cwd,
-            },
-          ];
-    });
-  }, [connectedEnvironments, environmentId, targets]);
+  const environments: ReadonlyArray<SkillEnvironment> = [
+    ...targets.filter((candidate) => candidate.environmentId === environmentId),
+    ...targets.filter((candidate) => candidate.environmentId !== environmentId),
+  ].flatMap((candidate) => {
+    const connected = connectedEnvironments.find(
+      (environment) => environment.environmentId === candidate.environmentId,
+    );
+    return connected === undefined
+      ? []
+      : [
+          {
+            environmentId: candidate.environmentId,
+            label: connected.label,
+            serverConfig: connected.serverConfig,
+            cwd: candidate.cwd,
+          },
+        ];
+  });
   const fleet = environments.length > 1;
   const environmentProviders = useEnvironmentProviders(environments);
   const providers =
@@ -328,30 +316,27 @@ function SkillsPanel({
   const refresh = async (fresh: boolean) => {
     if (environments.length === 0) return;
     setRefreshing(true);
-    try {
-      await Promise.all(
-        environments.flatMap((environment) =>
-          (
-            environmentProviders.find((entry) => entry.environmentId === environment.environmentId)
-              ?.providers ?? EMPTY_PROVIDERS
-          )
-            .filter((provider) => provider.enabled)
-            .map((provider) =>
-              refreshProviders({
-                environmentId: environment.environmentId,
-                input: {
-                  instanceId: provider.instanceId,
-                  ...(environment.cwd === null ? {} : { cwd: environment.cwd }),
-                  ...(fresh ? { fresh: true } : {}),
-                },
-              }),
-            ),
-        ),
-      );
-    } finally {
-      setRefreshing(false);
-      inspected.refresh();
-    }
+    await Promise.all(
+      environments.flatMap((environment) =>
+        (
+          environmentProviders.find((entry) => entry.environmentId === environment.environmentId)
+            ?.providers ?? EMPTY_PROVIDERS
+        )
+          .filter((provider) => provider.enabled)
+          .map((provider) =>
+            refreshProviders({
+              environmentId: environment.environmentId,
+              input: {
+                instanceId: provider.instanceId,
+                ...(environment.cwd === null ? {} : { cwd: environment.cwd }),
+                ...(fresh ? { fresh: true } : {}),
+              },
+            }),
+          ),
+      ),
+    );
+    setRefreshing(false);
+    inspected.refresh();
   };
 
   const afterSkillChange = () => {
@@ -401,6 +386,7 @@ function SkillsPanel({
     .map((provider) => provider.instanceId)
     .join(",")}`;
   const scannedKeyRef = useRef<string | null>(null);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- asks each environment's agents to scan the checkout.
   useEffect(() => {
     if (!environments.some((environment) => environment.cwd !== null)) return;
     if (scannedKeyRef.current === scanKey) return;
@@ -412,75 +398,51 @@ function SkillsPanel({
     environments.find((environment) => environment.environmentId === id)?.label ?? "Environment";
 
   // Each environment's rows, merged by name: a row shows the first copy found.
-  const fleetRows = useMemo(
-    () =>
-      mergeEnvironmentSkillRows(
-        environments.map((environment) => ({
-          environmentId: environment.environmentId,
-          rows: collectSkillRows(
-            environmentProviders.find((entry) => entry.environmentId === environment.environmentId)
-              ?.providers ?? EMPTY_PROVIDERS,
-            environment.cwd,
-          ),
-        })),
+  const fleetRows = mergeEnvironmentSkillRows(
+    environments.map((environment) => ({
+      environmentId: environment.environmentId,
+      rows: collectSkillRows(
+        environmentProviders.find((entry) => entry.environmentId === environment.environmentId)
+          ?.providers ?? EMPTY_PROVIDERS,
+        environment.cwd,
       ),
-    [environmentProviders, environments],
+    })),
   );
-  const fleetByName = useMemo(
-    () => new Map(fleetRows.map((entry) => [entry.row.name, entry])),
-    [fleetRows],
-  );
-  const rows = useMemo(() => fleetRows.map((entry) => entry.row), [fleetRows]);
+  const fleetByName = new Map(fleetRows.map((entry) => [entry.row.name, entry]));
+  const rows = fleetRows.map((entry) => entry.row);
   // Agents on the environment whose copy a row shows.
-  const agentsByEnvironment = useMemo(
-    () =>
-      new Map(
-        environmentProviders.map((entry) => [entry.environmentId, skillAgents(entry.providers)]),
-      ),
-    [environmentProviders],
+  const agentsByEnvironment = new Map(
+    environmentProviders.map((entry) => [entry.environmentId, skillAgents(entry.providers)]),
   );
-  const agents = useMemo(() => skillAgents(providers), [providers]);
+  const agents = skillAgents(providers);
   const fleetOf = (row: SkillRow): FleetSkillRow =>
     fleetByName.get(row.name) ?? {
       row,
       environmentId: environmentId ?? ("" as EnvironmentId),
       on: [],
     };
-  const detailsByName = useMemo(
-    () =>
-      new Map(
-        fleetRows.map((entry) => [
-          entry.row.name,
-          skillRowDetails(entry.row, inspected.folders.get(entry.environmentId) ?? EMPTY_FOLDERS),
-        ]),
-      ),
-    [fleetRows, inspected.folders],
+  const detailsByName = new Map(
+    fleetRows.map((entry) => [
+      entry.row.name,
+      skillRowDetails(entry.row, inspected.folders.get(entry.environmentId) ?? EMPTY_FOLDERS),
+    ]),
   );
   const detailsOf = (row: SkillRow) =>
     detailsByName.get(row.name) ?? skillRowDetails(row, foldersOf(fleetOf(row).environmentId));
-  const attentionNames = useMemo(
-    () =>
-      new Set(
-        rows
-          .filter((row) => {
-            const details = detailsByName.get(row.name);
-            return details !== undefined && skillConflict(row, details) !== null;
-          })
-          .map((row) => row.name),
-      ),
-    [detailsByName, rows],
+  const attentionNames = new Set(
+    rows
+      .filter((row) => {
+        const details = detailsByName.get(row.name);
+        return details !== undefined && skillConflict(row, details) !== null;
+      })
+      .map((row) => row.name),
   );
-  const visibleRows = useMemo(
-    () =>
-      filterSkillRows(rows, query).filter((row) => !onlyAttention || attentionNames.has(row.name)),
-    [attentionNames, onlyAttention, query, rows],
+  const visibleRows = filterSkillRows(rows, query).filter(
+    (row) => !onlyAttention || attentionNames.has(row.name),
   );
-  const groups = useMemo(() => groupSkillRows(visibleRows), [visibleRows]);
-  const totals = useMemo(() => {
-    const counts = new Map<SkillGroupKind, number>();
-    for (const row of rows) counts.set(row.group, (counts.get(row.group) ?? 0) + 1);
-    return counts;
-  }, [rows]);
+  const groups = groupSkillRows(visibleRows);
+  const totals = new Map<SkillGroupKind, number>();
+  for (const row of rows) totals.set(row.group, (totals.get(row.group) ?? 0) + 1);
 
   const setSkillsDisabled = (skillRows: ReadonlyArray<SkillRow>, disabled: boolean) =>
     persist(({ settings, projectId }) =>
@@ -524,6 +486,15 @@ function SkillsPanel({
     if (missing.length === 0 || removable === null || syncing.has(row.name)) return null;
     return () => void syncSkill(row.name, from, removable, missing);
   };
+  // Commands settle to results rather than throwing, so no `finally` (the React Compiler can't compile one).
+  const doneSyncing = (name: string) => {
+    setSyncing((current) => {
+      const next = new Set(current);
+      next.delete(name);
+      return next;
+    });
+    afterSkillChange();
+  };
   const syncSkill = async (
     name: string,
     from: EnvironmentId,
@@ -532,42 +503,35 @@ function SkillsPanel({
   ) => {
     setSkillActionError(null);
     setSyncing((current) => new Set([...current, name]));
-    try {
-      const bundle = await exportSkill({ environmentId: from, input: { name, target: level } });
-      if (bundle._tag === "Failure") {
-        setSkillActionError(
-          `Couldn't copy ${name} from ${environmentLabel(from)}: ${formatEnvironmentQueryError(bundle.cause)}`,
-        );
-        return;
-      }
-      const failures = await Promise.all(
-        to.map(async (environment) => {
-          const result = await importSkill({
-            environmentId: environment.environmentId,
-            input: {
-              bundle: bundle.value,
-              // Project skills go into the project's checkout on each environment.
-              target:
-                level.kind === "project" && environment.cwd !== null
-                  ? { kind: "project", cwd: environment.cwd }
-                  : { kind: "environment" },
-            },
-          });
-          return result._tag === "Failure"
-            ? `${environment.label}: ${formatEnvironmentQueryError(result.cause)}`
-            : null;
-        }),
+    const bundle = await exportSkill({ environmentId: from, input: { name, target: level } });
+    if (bundle._tag === "Failure") {
+      setSkillActionError(
+        `Couldn't copy ${name} from ${environmentLabel(from)}: ${formatEnvironmentQueryError(bundle.cause)}`,
       );
-      const messages = failures.filter((message) => message !== null);
-      if (messages.length > 0) setSkillActionError(`Couldn't copy ${name}. ${messages.join(" ")}`);
-    } finally {
-      setSyncing((current) => {
-        const next = new Set(current);
-        next.delete(name);
-        return next;
-      });
-      afterSkillChange();
+      doneSyncing(name);
+      return;
     }
+    const failures = await Promise.all(
+      to.map(async (environment) => {
+        const result = await importSkill({
+          environmentId: environment.environmentId,
+          input: {
+            bundle: bundle.value,
+            // Project skills go into the project's checkout on each environment.
+            target:
+              level.kind === "project" && environment.cwd !== null
+                ? { kind: "project", cwd: environment.cwd }
+                : { kind: "environment" },
+          },
+        });
+        return result._tag === "Failure"
+          ? `${environment.label}: ${formatEnvironmentQueryError(result.cause)}`
+          : null;
+      }),
+    );
+    const messages = failures.filter((message) => message !== null);
+    if (messages.length > 0) setSkillActionError(`Couldn't copy ${name}. ${messages.join(" ")}`);
+    doneSyncing(name);
   };
 
   /** Update and remove reach every environment in scope that has the skill. */
@@ -869,17 +833,13 @@ function McpServersPanel({
         (environment) => environment.environmentId === target.environmentId,
       )?.serverConfig?.settings
     : undefined;
-  const rows = useMemo(
-    () =>
-      listMcpServerRows({
-        environment: environmentSettings?.mcpServers ?? {},
-        project:
-          projectId === null
-            ? null
-            : (environmentSettings?.projectSettingsOverrides[projectId]?.mcpServers ?? {}),
-      }),
-    [environmentSettings, projectId],
-  );
+  const rows = listMcpServerRows({
+    environment: environmentSettings?.mcpServers ?? {},
+    project:
+      projectId === null
+        ? null
+        : (environmentSettings?.projectSettingsOverrides[projectId]?.mcpServers ?? {}),
+  });
   const [editor, setEditor] = useState<ServerEditor | null>(null);
   const [removing, setRemoving] = useState<McpServerRow | null>(null);
   const scopeLabel = isProjectScope
@@ -1151,7 +1111,7 @@ function OpenServerButton({ name, children }: { name: string; children: ReactNod
     <button
       type="button"
       aria-label={`Open ${name}`}
-      className="flex min-w-0 cursor-pointer items-center gap-1.5 rounded-md text-left outline-none focus-visible:ring-2 focus-visible:ring-ring"
+      className="flex min-w-0 cursor-pointer items-center gap-1.5 rounded-md text-left outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
     >
       {children}
     </button>

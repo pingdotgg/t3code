@@ -22,7 +22,7 @@ import {
 
 /*
  * The Skills list: dense one-line rows grouped by section and by the source a
- * pack was installed from. Adapted from the skills list in #17513.
+ * pack was installed from.
  */
 
 const GitHubIcon = getSourceControlPresentationForKind("github").Icon;
@@ -69,7 +69,7 @@ const SkillListItem = memo(function SkillListItem({
       >
         <button
           type="button"
-          className="min-w-0 flex-1 cursor-pointer rounded-md text-left outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          className="min-w-0 flex-1 cursor-pointer rounded-md text-left outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
         >
           <span
             className={cn(
@@ -154,7 +154,7 @@ function SourceGroup({
           <button
             type="button"
             aria-expanded={open}
-            className="flex min-w-0 flex-1 cursor-pointer items-center gap-2 rounded-md text-left outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            className="flex min-w-0 flex-1 cursor-pointer items-center gap-2 rounded-md text-left outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
           >
             {github ? (
               <GitHubIcon className="size-3.5 shrink-0 text-muted-foreground" />
