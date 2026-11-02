@@ -575,6 +575,7 @@ describe("EnvironmentThreads", () => {
         },
       });
       const state = yield* awaitThreadState(h.observed, (value) => value.status === "live");
+      expect(yield* Ref.get(h.removedThreads)).toEqual([THREAD_ID]);
       expect(yield* Ref.get(h.loaderCalls)).toBe(1);
       expect(Option.getOrThrow(state.data)).toEqual(BASE_PROJECTION);
       yield* TestClock.adjust("500 millis");

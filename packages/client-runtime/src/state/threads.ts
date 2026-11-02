@@ -241,8 +241,14 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
   const cached =
     retained === undefined
       ? yield* cache.loadThread(environmentId, threadId).pipe(
-          // An oversized cache predates the size limit; a fresh bounded snapshot replaces it.
-          Effect.map(Option.filter((snapshot) => isBoundedProjection(snapshot.projection))),
+          // An oversized cache predates the size limit. Drop it so no later open decodes it again.
+          Effect.flatMap((loaded) =>
+            Option.isSome(loaded) && !isBoundedProjection(loaded.value.projection)
+              ? cache
+                  .removeThread(environmentId, threadId)
+                  .pipe(Effect.as(Option.none<OrchestrationV2ThreadDetailSnapshot>()))
+              : Effect.succeed(loaded),
+          ),
           Effect.catch((error) =>
             Effect.logWarning("Could not load cached thread.").pipe(
               Effect.annotateLogs({
