@@ -36,7 +36,7 @@ export function resolvePendingTaskInteractionMode(input: {
 /** The Build/Plan control a thread already in plan keeps, so it can leave plan with the setting off. */
 export function resolvePlanThreadModeControl(input: {
   readonly isDraft: boolean;
-  readonly persistedInteractionMode: ProviderInteractionMode;
+  readonly persistedInteractionMode: ProviderInteractionMode | undefined;
   readonly draftInteractionMode: ProviderInteractionMode | undefined;
   readonly provider: InteractionModeProvider | null | undefined;
 }): ProviderInteractionMode | null {

@@ -260,6 +260,7 @@ export interface ThreadComposerProps {
   readonly onShowUsageLimits: (report: UsageLimitsReport | null) => void;
   readonly canSwitchProvider: boolean;
   readonly onUpdateInteractionMode?: (interactionMode: ProviderInteractionMode) => void;
+  readonly persistedInteractionMode?: ProviderInteractionMode;
   readonly onHeightChange?: (height: number) => void;
   readonly onEditorFocusChange?: (focused: boolean) => void;
 }
@@ -512,14 +513,15 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
       ) ?? null
     );
   })();
-  const planThreadMode = props.onUpdateInteractionMode
-    ? resolvePlanThreadModeControl({
-        isDraft: props.isDraft === true,
-        persistedInteractionMode: props.selectedThread.interactionMode,
-        draftInteractionMode,
-        provider: selectedProviderStatus,
-      })
-    : null;
+  const planThreadMode =
+    props.onUpdateInteractionMode && queuedEdit === null
+      ? resolvePlanThreadModeControl({
+          isDraft: props.isDraft === true,
+          persistedInteractionMode: props.persistedInteractionMode,
+          draftInteractionMode,
+          provider: selectedProviderStatus,
+        })
+      : null;
   const openDraftDocument = (attachment: ComposerDocumentAttachment) => {
     Keyboard.dismiss();
     navigation.navigate("ThreadAttachment", {

@@ -973,6 +973,7 @@ function ThreadRouteContent(
           }
           canOperateThread={canOperateThread}
           selectedThread={selectedThreadWithDraftSettings ?? selectedThread}
+          persistedInteractionMode={selectedThread.interactionMode}
           selectedThreadDetailRef={selectedThreadDetailRef}
           contentPresentation={contentPresentation}
           screenTone={connectionTone(routeConnectionState)}
