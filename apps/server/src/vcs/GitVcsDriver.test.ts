@@ -677,8 +677,9 @@ it.effect.each(
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
       const driver = yield* GitVcsDriver.makeVcsDriverShape();
+      const hostPlatform = yield* HostProcess.Platform;
       const cwd = yield* fs.makeTempDirectoryScoped({
-        prefix: `t3-checkpoint-sparse-${process.platform === "win32" ? ";" : ":"}`,
+        prefix: `t3-checkpoint-sparse-${hostPlatform === "win32" ? ";" : ":"}`,
       });
       const { git } = yield* makeCheckpointFixture(driver, cwd);
       const write = Effect.fn(function* (name: string, contents: string) {
