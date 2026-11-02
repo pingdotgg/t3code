@@ -598,6 +598,8 @@ describe("EnvironmentSupervisor", () => {
   it.effect.each([
     { from: "connected", stall: "handshake" },
     { from: "backoff", stall: "preparation" },
+    { from: "connected, then offline", stall: "preparation" },
+    { from: "offline", stall: "handshake" },
   ] as const)(
     "retries a $stall that stalls after a long resume from $from once, at 3 seconds",
     ({ from, stall }) =>
@@ -618,13 +620,26 @@ describe("EnvironmentSupervisor", () => {
           initiallyDesired: true,
         }).pipe(Effect.provide(harness.dependencies));
         yield* awaitState(supervisor.state, (state) => state.phase === "connected");
+        // The socket dies with the network, so the supervisor waits offline.
+        const goOffline = harness
+          .setNetworkStatus("offline")
+          .pipe(
+            Effect.andThen(harness.closeLatestSession()),
+            Effect.andThen(awaitState(supervisor.state, (state) => state.phase === "offline")),
+          );
         if (from === "backoff") {
           yield* harness.closeLatestSession();
           yield* awaitState(supervisor.state, (state) => state.phase === "backoff");
         }
+        if (from === "offline") yield* goOffline;
 
         yield* harness.wake("application-active-long");
         if (from === "connected") yield* TestClock.adjust("3 seconds");
+        if (from === "connected, then offline" || from === "offline") {
+          yield* TestClock.adjust("0 millis");
+          if (from === "connected, then offline") yield* goOffline;
+          yield* harness.setNetworkStatus("online");
+        }
         yield* Deferred.await(stalled);
         yield* TestClock.adjust("2999 millis");
         expect(yield* Ref.get(harness.prepareCount)).toBe(2);

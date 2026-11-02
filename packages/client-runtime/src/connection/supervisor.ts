@@ -1156,6 +1156,7 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
 
   const waitForSignal = Queue.take(signals).pipe(
     Effect.repeat({ while: (next) => next._tag === "BetterRouteAvailable" }),
+    Effect.tap((next) => (isLongResume(next) ? Ref.set(wakeRecoveryPending, true) : Effect.void)),
     Effect.map(
       (next) => next._tag === "Wakeup" && ConnectionWakeups.resetsRetryBackoff(next.reason),
     ),
@@ -1189,7 +1190,6 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
         continue;
       }
       if (currentIntent.network === "offline" && !replacing) {
-        yield* Ref.set(wakeRecoveryPending, false);
         yield* clearLease;
         yield* setState(offlineState(currentIntent, generation, failureCount + 1, latestFailure));
         const applicationActivated = yield* waitForSignal;
