@@ -2673,6 +2673,7 @@ export const ThreadFeed = memo(function ThreadFeed({
   const listHeaderSizeRef = useRef(0);
   const loadedListKeyRef = useRef<string | null>(null);
   const jumpLandingRef = useRef(false);
+  const jumpOverriddenRef = useRef(false);
   const cancelReflow = () => {
     if (reflowAnchorRef.current === undefined) return;
     reflowAnchorRef.current = undefined;
@@ -3199,6 +3200,7 @@ export const ThreadFeed = memo(function ThreadFeed({
   const handleScrollBeginDrag = () => {
     clearUserScrollSettle();
     userScrollSessionRef.current = true;
+    jumpOverriddenRef.current = true;
     cancelReflow();
     // Pause before the first scroll event. Otherwise a stream update can run
     // maintainScrollAtEnd between touch-down and the drag leaving its threshold.
@@ -3235,6 +3237,7 @@ export const ThreadFeed = memo(function ThreadFeed({
   // ThreadDetailScreen remounts the feed per thread, so only a send resets following.
   useImperativeHandle(ref, () => ({
     resetEndFollow: () => {
+      jumpOverriddenRef.current = true;
       clearUserScrollSettle();
       userScrollSessionRef.current = false;
       cancelReflow();
@@ -3299,6 +3302,7 @@ export const ThreadFeed = memo(function ThreadFeed({
       return;
     }
     jumpLandingRef.current = true;
+    jumpOverriddenRef.current = false;
     setEndFollow(false);
     void settleThreadFeedJump({
       land: async () => {
@@ -3313,7 +3317,7 @@ export const ThreadFeed = memo(function ThreadFeed({
         await nextFrames(4);
       },
       position: () => list.getState().positionAtIndex(index),
-      cancelled: () => cancelled() || userScrollSessionRef.current,
+      cancelled: () => cancelled() || jumpOverriddenRef.current,
     }).then(finish);
   });
   // Z: a native list scroll after the commit that rendered its target row. The
@@ -3326,6 +3330,7 @@ export const ThreadFeed = memo(function ThreadFeed({
     landJump(jumpIndex, () => cancelled);
     return () => {
       cancelled = true;
+      jumpLandingRef.current = false;
     };
     // oxlint-disable-next-line react/exhaustive-effect-dependencies -- Jumping to a different message whose row index is unchanged must still land the jump.
   }, [jumpToMessageId, jumpIndex]);
