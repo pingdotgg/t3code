@@ -82,17 +82,19 @@ const makeHarness = Effect.fn("makeAuthTestHarness")(function* (
             yield* Deferred.succeed(closed, undefined);
           }),
         );
+        const initialize = () =>
+          Effect.gen(function* () {
+            events.push("initialize");
+            yield* options.beforeInitialize ?? Effect.void;
+            return options.supportsLogout === false
+              ? { ...initialized, agentCapabilities: {} }
+              : initialized;
+          });
         return {
-          initialize: () =>
-            Effect.gen(function* () {
-              events.push("initialize");
-              yield* options.beforeInitialize ?? Effect.void;
-              return options.supportsLogout === false
-                ? { ...initialized, agentCapabilities: {} }
-                : initialized;
-            }),
+          initialize,
           start: () =>
             Effect.gen(function* () {
+              yield* initialize();
               events.push("authenticate");
               yield* Deferred.succeed(authenticateCalled, undefined);
               if (options.interactive !== false && input.onAuthorizationUrl) {
@@ -278,6 +280,35 @@ it.layer(NodeServices.layer)("AntigravityAuth", (it) => {
     }),
   );
 
+  it.effect("does not blame the network when the agent never answers initialize", () =>
+    Effect.gen(function* () {
+      const initializing = yield* Deferred.make<void>();
+      const harness = yield* makeHarness({
+        beforeInitialize: Deferred.succeed(initializing, undefined).pipe(
+          Effect.andThen(Effect.never),
+        ),
+      });
+      yield* harness.auth.controller.start(owner);
+      yield* Deferred.await(initializing);
+      const blamesNetwork = /reach(ed)? Google|network|ipv6/i;
+
+      yield* TestClock.adjust("30 seconds");
+      const stalled = yield* harness.auth.controller.subscribe(owner).pipe(
+        Stream.filter((state) => state.message !== "Starting Google sign-in."),
+        Stream.runHead,
+        Effect.map(Option.getOrThrow),
+      );
+      assert.equal(stalled.phase, "starting");
+      assert.notMatch(stalled.message ?? "", blamesNetwork);
+      assert.match(stalled.message ?? "", /not responded|stuck/i);
+
+      yield* TestClock.adjust("270 seconds");
+      const failed = yield* phase(harness.auth, "failed");
+      assert.notMatch(failed.message ?? "", blamesNetwork);
+      assert.match(failed.message ?? "", /not respond|stuck/i);
+    }),
+  );
+
   it.effect("keeps the expired message once the Google link was shown", () =>
     Effect.gen(function* () {
       const harness = yield* makeHarness();
@@ -383,7 +414,7 @@ it.layer(NodeServices.layer)("AntigravityAuth", (it) => {
       assert.isTrue(Exit.isFailure(competing));
       const resumed = yield* phase(harness.auth, "waiting");
       assert.equal(resumed.flowId, first.flowId);
-      assert.deepEqual(harness.events, ["process-open", "authenticate"]);
+      assert.deepEqual(harness.events, ["process-open", "initialize", "authenticate"]);
       yield* harness.auth.controller.cancel(owner, first.flowId!);
     }),
   );
