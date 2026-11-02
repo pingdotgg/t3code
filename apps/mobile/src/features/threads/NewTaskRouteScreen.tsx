@@ -324,7 +324,7 @@ export function NewTaskRouteScreen({ route }: StaticScreenProps<NewTaskRoutePara
         },
       },
     });
-  }, [incomingShare, isFocused, reservedDestinationProject, selectDetail]);
+  }, [explicitProjectChoice, incomingShare, isFocused, reservedDestinationProject, selectDetail]);
 
   return (
     <View collapsable={false} className="flex-1 bg-sheet">
