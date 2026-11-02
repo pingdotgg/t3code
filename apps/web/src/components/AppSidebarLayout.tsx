@@ -1,6 +1,8 @@
 import { useAtomValue } from "@effect/atom-react";
 import * as Schema from "effect/Schema";
 import {
+  lazy,
+  Suspense,
   useEffect,
   useState,
   useSyncExternalStore,
@@ -51,6 +53,7 @@ import { BackgroundThreadAnnouncer } from "./BackgroundThreadAnnouncer";
 import { HistorySwipeNavigation } from "./HistorySwipeNavigation";
 import ThreadSidebar from "./Sidebar";
 import { isAppModalPage } from "./sidebar/mainAppLocation";
+import { SidebarChromeHeader } from "./sidebar/SidebarChrome";
 import type { SidebarRouteReveal } from "./sidebar/routeReveal";
 import { ChromeChannelArt, useSidebarStageBackdropVariant } from "./SidebarStageBackdrop";
 import {
@@ -467,6 +470,15 @@ function NavigationHistoryButton({
   );
 }
 
+// Dev only, and loaded on demand so production bundles never carry it.
+const DesignSystemSidebarNav = import.meta.env.DEV
+  ? lazy(() =>
+      import("./design-system/DesignSystemSidebarNav").then((module) => ({
+        default: module.DesignSystemSidebarNav,
+      })),
+    )
+  : null;
+
 export function AppSidebarLayout({ children }: { children: ReactNode }) {
   const sidebarArea = workspaceAreaProps("sidebar", 0, "Threads");
   const [sidebarRouteReveal] = useState<SidebarRouteReveal>(() => ({
@@ -478,6 +490,9 @@ export function AppSidebarLayout({ children }: { children: ReactNode }) {
   const pathname = useLocation({ select: (location) => location.pathname });
   const panelAnimationsSuppressed = usePanelNavigationSuppression(pathname);
   const routePanelAnimationsActive = panelAnimationsActive && !panelAnimationsSuppressed;
+  const isOnDesignSystem =
+    DesignSystemSidebarNav !== null &&
+    (pathname === "/design-system" || pathname.startsWith("/design-system/"));
   const isMacosDesktop = isElectron && isMacPlatform(navigator.platform);
   const [sidebarWidth, setSidebarWidth] = useState(readInitialThreadSidebarWidth);
   // A clamped drag may not change width, so viewport changes need a separate subscription.
@@ -554,7 +569,7 @@ export function AppSidebarLayout({ children }: { children: ReactNode }) {
           data-app-sidebar=""
           {...sidebarArea}
           role="navigation"
-          aria-label="Threads"
+          aria-label={isOnDesignSystem ? "Design system" : "Threads"}
           // Light, black chrome paints the sidebar with the dark tokens (index.css).
           data-chrome-scope=""
           resizable={{
@@ -568,7 +583,16 @@ export function AppSidebarLayout({ children }: { children: ReactNode }) {
           }}
           style={windowControlsInsetStyle}
         >
-          <ThreadSidebar routeReveal={sidebarRouteReveal} />
+          {isOnDesignSystem && DesignSystemSidebarNav ? (
+            <>
+              <SidebarChromeHeader isElectron={isElectron} />
+              <Suspense fallback={null}>
+                <DesignSystemSidebarNav />
+              </Suspense>
+            </>
+          ) : (
+            <ThreadSidebar routeReveal={sidebarRouteReveal} />
+          )}
           <SidebarRail onDoubleClick={resetSidebarWidth} />
         </Sidebar>
         {children}

@@ -250,28 +250,27 @@ export function branchMismatchBannerItem(input: {
   const { mismatch } = input;
   return {
     id: `branch-mismatch:${input.mismatchKey}`,
-    variant: "info",
+    variant: "warning",
     icon: <GitBranchIcon />,
-    title: (
-      <span className="flex min-w-0 items-baseline gap-1.5">
-        <span className="shrink-0 font-normal text-muted-foreground">Branch changed from</span>
-        <Tooltip>
-          <TooltipTrigger
-            render={
-              <code className="min-w-0 truncate font-medium text-foreground">
-                {mismatch.threadBranch}
-              </code>
-            }
-          />
-          <TooltipPopup side="top">
-            This thread last ran on {mismatch.threadBranch}. Sending will continue on{" "}
-            {mismatch.currentBranch}.
-          </TooltipPopup>
-        </Tooltip>
-      </span>
+    title: "Branch changed",
+    description: (
+      <Tooltip>
+        <TooltipTrigger render={<span className="min-w-0 truncate" />}>
+          was {mismatch.threadBranch}
+        </TooltipTrigger>
+        <TooltipPopup side="top">
+          This thread last ran on {mismatch.threadBranch}. Sending will continue on{" "}
+          {mismatch.currentBranch}.
+        </TooltipPopup>
+      </Tooltip>
     ),
     actions: (
-      <Button size="xs" variant="ghost" disabled={input.restoreDisabled} onClick={input.onRestore}>
+      <Button
+        size="xs"
+        variant="secondary"
+        disabled={input.restoreDisabled}
+        onClick={input.onRestore}
+      >
         {input.restoring ? "Restoring..." : "Restore branch"}
       </Button>
     ),

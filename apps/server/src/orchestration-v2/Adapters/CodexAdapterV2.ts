@@ -1798,6 +1798,18 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
         );
         const activeTurns = yield* Ref.make(new Map<string, ActiveCodexTurnContext>());
         const turnTokenUsageByThread = new Map<string, CodexTurnTokenUsageState>();
+        const contextUsageByThread = new Map<
+          string,
+          {
+            tokens: number | undefined;
+            compaction?: {
+              nativeItemId: string;
+              nativeTurnId: string;
+              before?: number;
+              after?: number;
+            };
+          }
+        >();
         const usageStateForThread = (nativeThreadId: string) => {
           let state = turnTokenUsageByThread.get(nativeThreadId);
           if (!state) {
@@ -4437,6 +4449,28 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
 
         yield* client.handleServerNotification("thread/tokenUsage/updated", (payload) =>
           Effect.gen(function* () {
+            const last = payload.tokenUsage.last;
+            const usage = contextUsageByThread.get(payload.threadId) ?? { tokens: undefined };
+            usage.tokens =
+              Number.isSafeInteger(last.totalTokens) && last.totalTokens >= 0
+                ? last.totalTokens
+                : undefined;
+            // Codex resets `last` to context size with zero usage breakdown
+            // after compaction. The preceding summarization request is billable
+            // usage, not the reduced context, so never use it as the after count.
+            if (
+              usage.compaction &&
+              usage.tokens !== undefined &&
+              usage.compaction.nativeTurnId === payload.turnId &&
+              last.inputTokens === 0 &&
+              last.cachedInputTokens === 0 &&
+              (last.cacheWriteInputTokens ?? 0) === 0 &&
+              last.outputTokens === 0 &&
+              last.reasoningOutputTokens === 0
+            ) {
+              usage.compaction.after = usage.tokens;
+            }
+            contextUsageByThread.set(payload.threadId, usage);
             accumulateCodexTurnTokenUsage(
               usageStateForThread(payload.threadId),
               payload.turnId,
@@ -4684,6 +4718,24 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
           status: "running" | "completed" | "failed" | "interrupted" | "cancelled",
           updatedAt: DateTime.Utc,
         ) {
+          const nativeThreadId = context.providerThread.nativeThreadRef?.nativeId;
+          if (nativeThreadId && status === "running") {
+            const tokens = contextUsageByThread.get(nativeThreadId)?.tokens;
+            contextUsageByThread.set(nativeThreadId, {
+              tokens,
+              compaction: {
+                nativeItemId,
+                nativeTurnId: context.nativeTurnId,
+                ...(tokens === undefined ? {} : { before: tokens }),
+              },
+            });
+          }
+          const usage = nativeThreadId ? contextUsageByThread.get(nativeThreadId) : undefined;
+          const compaction =
+            usage?.compaction?.nativeItemId === nativeItemId ? usage.compaction : undefined;
+          if (status !== "running" && compaction && usage) {
+            delete usage.compaction;
+          }
           const { ordinal, startedAt } = yield* resolveItemPosition(
             context,
             nativeItemId,
@@ -4718,6 +4770,10 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                     : status === "failed"
                       ? "Context compaction failed"
                       : "Context compaction stopped",
+              ...(compaction?.before === undefined ? {} : { beforeTokenCount: compaction.before }),
+              ...(status === "completed" && compaction?.after !== undefined
+                ? { afterTokenCount: compaction.after }
+                : {}),
               startedAt,
               completedAt: status === "running" ? null : updatedAt,
               updatedAt,

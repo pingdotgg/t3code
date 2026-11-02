@@ -129,6 +129,11 @@ row to see when it resets and your pace. Turn on **Context window** to also show
 context use against the model's limit. A tick on the bar marks where the provider compacts
 automatically, when it reports that point.
 
+On web and desktop, when the selected provider's session has less than 25% left, the composer says
+so, with the time until it resets and, when the pace so far would run it dry first, about when it
+runs out. **Switch to** moves the thread to another ready provider when the thread allows it.
+Dismissing the notice hides it until that window resets.
+
 OpenCode Go reports its session, weekly, and monthly allowance when OpenCode runs locally in
 the environment. T3 cannot report limits for external OpenCode servers because their credentials
 belong to the remote server. Limits need an OpenCode Go API key, or an OpenCode Console connected

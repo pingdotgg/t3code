@@ -9,6 +9,7 @@ import {
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
 import { WifiOffIcon } from "lucide-react";
+import { secondTick } from "@t3tools/client-runtime/clock";
 import { stackedThreadToast, toastManager } from "../ui/toast";
 import { environmentCatalog } from "../../connection/catalog";
 import { ConnectionDiagnosisHeadline } from "../settings/ConnectionDiagnosisDetails";
@@ -190,24 +191,39 @@ export function useSystemComposerBanners(input: SystemComposerBannersInput) {
         group: "environment",
         icon: <WifiOffIcon />,
         title: `${activeEnvironmentUnavailableState.label} is ${environmentReconnecting ? "reconnecting" : "offline"}`,
-        description: activeEnvironment ? (
-          <ConnectionDiagnosisHeadline environment={activeEnvironment} />
-        ) : undefined,
+        description:
+          environmentReconnecting && typeof unavailableConnection.retryAt === "number" ? (
+            <RetryCountdown retryAt={unavailableConnection.retryAt} />
+          ) : activeEnvironment ? (
+            <ConnectionDiagnosisHeadline environment={activeEnvironment} />
+          ) : undefined,
+        descriptionDetails:
+          environmentReconnecting &&
+          typeof unavailableConnection.retryAt === "number" &&
+          activeEnvironment ? (
+            <ConnectionDiagnosisHeadline environment={activeEnvironment} />
+          ) : undefined,
         actions: (
           <>
-            {!environmentReconnecting ? (
-              <Button
-                size="xs"
-                variant="ghost"
-                onClick={() =>
-                  void handleReconnectActiveEnvironmentStable(
-                    activeEnvironmentUnavailableState.environmentId,
-                  )
-                }
-              >
-                Reconnect
-              </Button>
-            ) : null}
+            {/* While backing off, Reconnect skips the wait and tries now. */}
+            <Button
+              size="xs"
+              variant="secondary"
+              onClick={() =>
+                void handleReconnectActiveEnvironmentStable(
+                  activeEnvironmentUnavailableState.environmentId,
+                )
+              }
+            >
+              Reconnect
+            </Button>
+            <Button
+              size="xs"
+              variant="secondary"
+              onClick={() => void navigate({ to: "/settings/connections" })}
+            >
+              Connections
+            </Button>
             {disconnectAction}
           </>
         ),
@@ -227,11 +243,11 @@ export function useSystemComposerBanners(input: SystemComposerBannersInput) {
         variant: updateFailed ? "error" : "default",
         group: "environment",
         icon: <ComposerServerUpdateIcon status={serverUpdateState.status} />,
-        title: `${updateFailed ? "Could not update" : "Updating"} ${versionMismatchServerLabel}`,
+        title: updateFailed ? "Could not update" : "Updating",
         description:
           serverUpdateState.status === "failed"
-            ? serverUpdateState.message
-            : serverUpdateStageLabel(serverUpdateState.stage),
+            ? `${versionMismatchServerLabel}: ${serverUpdateState.message}`
+            : `${versionMismatchServerLabel} to ${serverUpdateState.targetVersion} · ${serverUpdateStageLabel(serverUpdateState.stage)}`,
         actions: !updateFailed ? (
           disconnectAction
         ) : !versionMismatch ||
@@ -245,7 +261,7 @@ export function useSystemComposerBanners(input: SystemComposerBannersInput) {
             desktopAppUpdate={versionMismatchDesktopAppUpdate}
             targetVersion={versionMismatch.clientVersion}
             label="Retry"
-            variant="ghost"
+            variant="secondary"
           />
         ),
         ...(updateFailed
@@ -262,4 +278,27 @@ export function useSystemComposerBanners(input: SystemComposerBannersInput) {
     if (autoBalanceUpdateBanner) items.push(autoBalanceUpdateBanner);
     return items;
   })() as ComposerBannerStackItem[];
+}
+
+/** The reconnect countdown updates its text from the shared clock. */
+function RetryCountdown({ retryAt }: { readonly retryAt: number }) {
+  const attachText = (element: HTMLSpanElement | null) => {
+    if (!element) return;
+    const update = () => {
+      const now = Date.now();
+      const seconds = Math.ceil((retryAt - now) / 1000);
+      element.textContent = seconds > 0 ? `Trying again in ${seconds}s` : "Trying again";
+      return now < retryAt;
+    };
+    if (!update()) return;
+    const stop = secondTick.subscribe(() => {
+      if (!update()) stop();
+    });
+    return stop;
+  };
+  return (
+    <span ref={attachText} className="tabular-nums">
+      Trying again
+    </span>
+  );
 }

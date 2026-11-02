@@ -1,5 +1,6 @@
 import { worktreeSetupAgentStarted } from "@t3tools/client-runtime/worktree-setup";
 import { resolveUserMessagePresentation } from "@t3tools/client-runtime/user-message";
+import { checkpointFileTotals } from "@t3tools/client-runtime/state/thread-checkpoints";
 import { isLiveSubagentTurnItem } from "@t3tools/client-runtime/state/subagentRuntime";
 import * as DateTime from "effect/DateTime";
 import * as Equal from "effect/Equal";
@@ -53,6 +54,7 @@ import {
   isCompactionCommandMessage,
   type MessageId,
   type OrchestrationV2IdleCompaction,
+  type OrchestrationV2Notification,
   type WorktreeSetupSnapshot,
   type OrchestrationV2ProjectedTurnItem,
   type RunAttemptId,
@@ -63,7 +65,7 @@ import {
 } from "@t3tools/contracts";
 import type { ThreadRunSummary } from "@t3tools/client-runtime/state/shell";
 import { resolveT3McpToolDefinition } from "@t3tools/shared/t3McpToolPresentation";
-import { compactDynamicToolOutput } from "@t3tools/shared/toolOutput";
+import { commandRunsTests, compactDynamicToolOutput } from "@t3tools/shared/toolOutput";
 import { htmlRenderReferencesEqual, type HtmlRenderReference } from "@t3tools/shared/htmlRender";
 import { mcpAppReferencesEqual, type McpAppReference } from "@t3tools/shared/mcpApp";
 import { dynamicToolTitle } from "@t3tools/shared/toolActivity";
@@ -74,6 +76,14 @@ import {
   formatSearchToolLabel,
 } from "@t3tools/shared/toolActivity";
 import { isWindowsAbsolutePath } from "@t3tools/shared/path";
+import { formatTokens } from "@t3tools/shared/usageFormat";
+import {
+  EMPTY_SLASH_COMMAND_CATALOG,
+  parseSlashCommandMessage,
+  type SlashCommandCatalog,
+  type SlashCommandMessage,
+  type SlashCommandState,
+} from "./timelineSlashCommands";
 
 function timelineEntryRunId(entry: TimelineEntry): RunId | null {
   if (entry.kind === "message") {
@@ -250,19 +260,22 @@ export function liveWorkEntryLabel(
   if (toolPresentation) return toolPresentation.displayName;
   const command = entry.command?.trim();
   if (command) {
-    const verb =
-      status === "inProgress"
-        ? "Running"
-        : status === "failed"
-          ? "Failed"
-          : status === "declined"
-            ? "Declined"
-            : status === "stopped"
-              ? "Stopped"
-              : "Ran";
-    return `${verb} ${commandProgramName(command) ?? "command"}`;
+    return `${commandEntryVerb(entry.toolLifecycleStatus, active)} ${commandProgramName(command) ?? "command"}`;
   }
   return workEntryDisplayLabel(entry, workspaceRoot);
+}
+
+function commandEntryVerb(lifecycleStatus: WorkLogEntry["toolLifecycleStatus"], active: boolean) {
+  const status = liveActivityToolStatus(lifecycleStatus, active);
+  return status === "inProgress"
+    ? "Running"
+    : status === "failed"
+      ? "Failed"
+      : status === "declined"
+        ? "Declined"
+        : status === "stopped"
+          ? "Stopped"
+          : "Ran";
 }
 
 export function workEntryIsVisibleInGroup(
@@ -495,9 +508,21 @@ const LIVE_ACTIVITY_ROW_ID = "live-activity-row";
 
 export type MessagesTimelineRow = MessagesTimelineRowContent & {
   readonly continuesWorkLog?: boolean;
+  /** A user prompt followed directly by another prompt sits in the same prompt stack. */
+  readonly continuesPromptStack?: boolean;
 };
 
 type MessagesTimelineRowContent =
+  | {
+      kind: "background-activity";
+      id: string;
+      createdAt: string | null;
+      runIds: readonly RunId[];
+      updateCount: number;
+      updates: readonly OrchestrationV2Notification[];
+      active: boolean;
+      expanded: boolean;
+    }
   | {
       kind: "worktree-setup";
       id: string;
@@ -528,6 +553,8 @@ type MessagesTimelineRowContent =
       kind: "working";
       id: string;
       createdAt: string | null;
+      /** The running turn's live work, drawn under the bar instead of as rows. */
+      window?: WorkingWindow;
       /** A running compaction owns the working row, so its divider appears only once it ends. */
       compacting?: true;
     }
@@ -559,7 +586,13 @@ type MessagesTimelineRowContent =
       createdAt: string;
       runId: RunId;
       label: string;
+      ending: TurnFoldEnding;
+      diff: DiffLineStat | null;
       expanded: boolean;
+      /** False when the fold holds only what its ending line already says. */
+      foldable: boolean;
+      failureMessage: string | null;
+      noticeMessage: string | null;
     }
   | {
       kind: "attempt-fold";
@@ -603,6 +636,10 @@ type MessagesTimelineRowContent =
       groupedWithPrevious?: boolean;
       /** Set when the message above is a steer too, so the label shows once. */
       continuesSteer?: boolean;
+      /** Milliseconds from the turn's start to a steer landing in it. */
+      steerOffsetMs?: number | undefined;
+      /** A prompt that opens with a provider command. A standalone one renders as a work row. */
+      command?: TimelineSlashCommand | undefined;
     }
   | {
       kind: "assistant-meta";
@@ -642,6 +679,12 @@ type MessagesTimelineRowContent =
       revision: string;
       mcpApp: McpAppReference;
     };
+
+export interface TimelineSlashCommand extends SlashCommandMessage {
+  readonly state: SlashCommandState;
+  /** What the provider reported, such as a compaction's token counts. */
+  readonly result: string | null;
+}
 
 export interface StableMessagesTimelineRowsState {
   byId: Map<string, MessagesTimelineRow>;
@@ -709,6 +752,8 @@ function deriveTerminalAssistantMessageIds(timelineEntries: ReadonlyArray<Timeli
   return new Set(lastAssistantMessageIdByResponseKey.values());
 }
 
+export type TurnFoldEnding = "worked" | "stopped" | "failed" | "limited";
+
 interface TurnFold {
   runId: RunId;
   anchorEntryId: string;
@@ -717,6 +762,15 @@ interface TurnFold {
   /** Every entry in the segment, including the cards a fold never hides. */
   entryIds: ReadonlySet<string>;
   label: string;
+  ending: TurnFoldEnding;
+  diff: DiffLineStat | null;
+  /**
+   * The run's terminal error, usage-limit notices and stop. They stay out of
+   * the timeline at any fold state; the fold's ending line carries their text.
+   */
+  endingEntryIds: ReadonlySet<string>;
+  failureMessage: string | null;
+  noticeMessage: string | null;
 }
 
 interface SupersededAttemptFold {
@@ -886,7 +940,10 @@ function timelineEntryFoldRunId(entry: TimelineEntry, runlessKey: RunId | null):
   }
   if (
     entry.kind === "event" &&
-    (timelineEntryIsPersistentResourceCard(entry) || entry.projectedItem.item.type === "subagent")
+    (timelineEntryIsPersistentResourceCard(entry) ||
+      entry.projectedItem.item.type === "subagent" ||
+      // The stopped fold says so itself and drops the divider.
+      entry.projectedItem.item.type === "run_interrupt_result")
   ) {
     return entry.projectedItem.item.runId ?? runlessKey;
   }
@@ -1000,16 +1057,101 @@ function itemizedFailedRunIds(
   );
 }
 
+/** Runs the user stopped: their interrupt result, or the latest run's own status. */
+function stoppedTimelineRunIds(
+  entries: ReadonlyArray<TimelineEntry>,
+  latestRun: TimelineLatestRun | null,
+) {
+  const stopped = new Set<RunId>();
+  if (latestRun?.status === "interrupted" || latestRun?.status === "cancelled") {
+    stopped.add(latestRun.runId);
+  }
+  for (const entry of entries) {
+    if (entry.kind !== "event") continue;
+    const item = entry.projectedItem.item;
+    if (item.type === "run_interrupt_result" && item.runId) stopped.add(item.runId);
+  }
+  return stopped;
+}
+
+function timelineEntryTurnItem(entry: TimelineEntry) {
+  return entry.kind === "event"
+    ? entry.projectedItem.item
+    : entry.kind === "work"
+      ? entry.entry.projectedItem?.item
+      : undefined;
+}
+
+/** Runs whose terminal failure is a provider usage limit. */
+function usageLimitedTimelineRunIds(entries: ReadonlyArray<TimelineEntry>): ReadonlySet<RunId> {
+  const limited = new Set<RunId>();
+  for (const entry of entries) {
+    const item = timelineEntryTurnItem(entry);
+    if (
+      item?.type === "error" &&
+      item.status === "failed" &&
+      item.failure.class === "usage_limit" &&
+      item.parentItemId === null &&
+      item.runId !== null
+    ) {
+      limited.add(item.runId);
+    }
+  }
+  return limited;
+}
+
+function timelineEntryIsFailure(entry: TimelineEntry): boolean {
+  const item = timelineEntryTurnItem(entry);
+  return (
+    (item?.type === "error" && item.status === "failed") ||
+    (entry.kind === "work" &&
+      (entry.entry.tone === "error" || entry.entry.sourceActivityKind === "runtime.error"))
+  );
+}
+
+export interface DiffLineStat {
+  readonly additions: number;
+  readonly deletions: number;
+}
+
+/** Sums the counts providers report on file_change items; null when none report any. */
+function sumFileChangeLineStat(entries: Iterable<WorkLogEntry>): DiffLineStat | null {
+  let additions = 0;
+  let deletions = 0;
+  let reported = false;
+  for (const entry of entries) {
+    const item = entry.projectedItem?.item;
+    if (item?.type !== "file_change") continue;
+    if (item.additions === undefined && item.deletions === undefined) continue;
+    reported = true;
+    additions += item.additions ?? 0;
+    deletions += item.deletions ?? 0;
+  }
+  return reported ? { additions, deletions } : null;
+}
+
+function sumCheckpointLineStat(summary: TurnDiffSummary): DiffLineStat | null {
+  const { count, additions, deletions } = checkpointFileTotals(summary);
+  return count === 0 ? null : { additions, deletions };
+}
+
+/**
+ * and work still in progress stay visible. A stopped, failed or limited turn
+ * folds the same way and names how it ended. A prompt without a run (a
+ */
 function deriveTurnFolds(input: {
   timelineEntries: ReadonlyArray<TimelineEntry>;
   terminalAssistantMessageIds: ReadonlySet<string>;
   latestRun: TimelineLatestRun | null;
   unfoldedRunIds: ReadonlySet<RunId>;
   runlessWorkActive: boolean;
+  failedRunIds: ReadonlySet<RunId>;
+  turnDiffSummaries: ReadonlyArray<TurnDiffSummary>;
   liveSubagentEntryIds: ReadonlySet<string>;
   completeSupersededReplyEntryIds: ReadonlySet<string>;
 }): ReadonlyMap<string, TurnFold> {
   const interruptedRunIds = new Set<RunId>();
+  const usageLimitedRunIds = usageLimitedTimelineRunIds(input.timelineEntries);
   const promptIndexByRunId = new Map<RunId, number>();
   for (const [index, entry] of input.timelineEntries.entries()) {
     if (timelineEntryStartsResponse(entry)) {
@@ -1019,8 +1161,7 @@ function deriveTurnFolds(input: {
     if (
       entry.kind === "event" &&
       entry.projectedItem.item.runId !== null &&
-      (entry.projectedItem.item.type === "run_interrupt_request" ||
-        entry.projectedItem.item.type === "run_interrupt_result")
+      entry.projectedItem.item.type === "run_interrupt_result"
     ) {
       interruptedRunIds.add(entry.projectedItem.item.runId);
     }
@@ -1069,7 +1210,15 @@ function deriveTurnFolds(input: {
       }
       continue;
     }
-    const ownRunId = timelineEntryFoldRunId(entry, runlessKey);
+    // A failed run's notices join its fold, which names the failure itself.
+    const ownRunId =
+      timelineEntryFoldRunId(entry, runlessKey) ??
+      (entry.kind === "work" &&
+      entry.entry.itemType === "system_notice" &&
+      entry.entry.runId &&
+      input.failedRunIds.has(entry.entry.runId)
+        ? entry.entry.runId
+        : null);
     if (!ownRunId) {
       continue;
     }
@@ -1105,20 +1254,30 @@ function deriveTurnFolds(input: {
     }
   }
 
+  const readyCheckpointByRunId = new Map<RunId, TurnDiffSummary>();
+  for (const summary of input.turnDiffSummaries) {
+    if (summary.runId && summary.status === "ready")
+      readyCheckpointByRunId.set(summary.runId, summary);
+  }
   const foldsByAnchorEntryId = new Map<string, TurnFold>();
   for (const [runId, group] of groupsByRunId) {
-    if (
-      input.unfoldedRunIds.has(runId) ||
-      interruptedRunIds.has(runId) ||
-      runlessFailedKeys.has(runId) ||
-      (input.runlessWorkActive && runId === runlessKey)
-    ) {
+    if (input.unfoldedRunIds.has(runId) || (input.runlessWorkActive && runId === runlessKey)) {
       continue;
     }
     if (group.hasStreamingMessage) {
       continue;
     }
+    const failed = input.failedRunIds.has(runId) || runlessFailedKeys.has(runId);
+    const prompt = input.timelineEntries[promptIndexByRunId.get(runId) ?? -1];
+    const compactionHasStopRow =
+      prompt?.kind === "message" &&
+      isCompactionCommandMessage(prompt.message) &&
+      idleCompactionOf(prompt.message) !== undefined &&
+      group.entries.some(timelineEntryIsCompaction);
     const hiddenEntryIds = new Set<string>();
+    const endingEntryIds = new Set<string>();
+    let failureMessage: string | null = null;
+    let noticeMessage: string | null = null;
     const terminalEntryIndex = group.terminalEntry
       ? group.entries.findIndex((entry) => entry.id === group.terminalEntry?.id)
       : group.entries.length;
@@ -1126,11 +1285,31 @@ function deriveTurnFolds(input: {
       if (entry.id === group.terminalEntry?.id) {
         continue;
       }
+      if (failed) {
+        const failedItem = timelineEntryFailedItem(entry);
+        const notice =
+          entry.kind === "work" && entry.entry.itemType === "system_notice" ? entry.entry : null;
+        if (failedItem !== null || notice !== null) {
+          if (failedItem !== null) failureMessage = failedItem.failure.message;
+          if (notice !== null) noticeMessage = notice.label;
+          hiddenEntryIds.add(entry.id);
+          endingEntryIds.add(entry.id);
+          continue;
+        }
+      }
+      // A failed turn keeps its other failures below the fold; the rest folds away.
+      if (failed && timelineEntryIsFailure(entry)) {
+        continue;
+      }
       const isCompaction = timelineEntryIsCompaction(entry);
+      const isInterruptResult =
+        entry.kind === "event" && entry.projectedItem.item.type === "run_interrupt_result";
+      if (isInterruptResult && compactionHasStopRow) continue;
       const isFoldableTrailingActivity =
-        entry.kind === "work" &&
-        entry.entry.toolLifecycleStatus !== "inProgress" &&
-        !workEntryDisplayIndicatesToolFailure(entry.entry);
+        isInterruptResult ||
+        (entry.kind === "work" &&
+          entry.entry.toolLifecycleStatus !== "inProgress" &&
+          !workEntryDisplayIndicatesToolFailure(entry.entry));
       if (!isCompaction && index > terminalEntryIndex && !isFoldableTrailingActivity) {
         continue;
       }
@@ -1145,13 +1324,13 @@ function deriveTurnFolds(input: {
       if (entry.kind === "work" && entry.entry.itemType === "notification") continue;
       if (entry.kind === "work" && entry.entry.questionAnswer !== undefined) continue;
       hiddenEntryIds.add(entry.id);
-    }
-    if (hiddenEntryIds.size === 0) {
-      continue;
+      // A stopped fold says so itself; its interrupt divider never shows.
+      if (isInterruptResult && !failed) endingEntryIds.add(entry.id);
     }
     const hidesNonCompactionWork = (entries: ReadonlyArray<TimelineEntry>) =>
       entries.some((entry) => hiddenEntryIds.has(entry.id) && !timelineEntryIsCompaction(entry));
-    if (!hidesNonCompactionWork(group.entries)) {
+    // A reply still owns its duration bar when there was no work to expand.
+    if (!hidesNonCompactionWork(group.entries) && group.terminalEntry === null) {
       continue;
     }
 
@@ -1175,13 +1354,37 @@ function deriveTurnFolds(input: {
               lastEntryEnd,
           );
     const duration = elapsedMs !== null ? formatDuration(elapsedMs) : null;
-    const label = isLatestInterruptedTurn
-      ? duration
-        ? `You stopped after ${duration}`
-        : "You stopped this response"
-      : duration
-        ? `Worked for ${duration}`
-        : "Worked";
+    const ending: TurnFoldEnding = failed
+      ? usageLimitedRunIds.has(runId)
+        ? "limited"
+        : "failed"
+      : isLatestInterruptedTurn || interruptedRunIds.has(runId)
+        ? "stopped"
+        : "worked";
+    const label =
+      ending === "stopped"
+        ? duration
+          ? `Stopped at ${duration}`
+          : "Stopped"
+        : ending === "failed"
+          ? duration
+            ? `Failed after ${duration}`
+            : "Failed"
+          : ending === "limited"
+            ? duration
+              ? `Limited at ${duration}`
+              : "Limited"
+            : duration
+              ? `Worked for ${duration}`
+              : "Worked";
+    // The checkpoint diff is what the changed-files card shows; provider
+    // counts are the fallback for turns without a checkpoint.
+    const checkpoint = readyCheckpointByRunId.get(runId);
+    const diff =
+      (checkpoint ? sumCheckpointLineStat(checkpoint) : null) ??
+      sumFileChangeLineStat(
+        group.entries.flatMap((entry) => (entry.kind === "work" ? [entry.entry] : [])),
+      );
 
     // The top row keeps the whole turn's time, steers included. Work after a
     // steer folds under its own row below that steer, keyed apart from the run
@@ -1196,6 +1399,11 @@ function deriveTurnFolds(input: {
       hiddenEntryIds: segmentHiddenIds(firstSegment),
       entryIds: new Set(firstSegment.map((entry) => entry.id)),
       label,
+      ending,
+      diff,
+      endingEntryIds,
+      failureMessage,
+      noticeMessage,
     });
     for (const [index, { startIndex, steer }] of group.steerSegments.entries()) {
       const entries = group.entries.slice(startIndex, group.steerSegments[index + 1]?.startIndex);
@@ -1213,6 +1421,16 @@ function deriveTurnFolds(input: {
         hiddenEntryIds: segmentHiddenIds(entries),
         entryIds: new Set(entries.map((entry) => entry.id)),
         label: segmentMs !== null ? `Continued for ${formatDuration(segmentMs)}` : "Continued",
+        // The turn summary owns its terminal message; each segment keeps its own disclosure.
+        ending: failed ? ending : "worked",
+        diff: sumFileChangeLineStat(
+          entries.flatMap((entry) => (entry.kind === "work" ? [entry.entry] : [])),
+        ),
+        endingEntryIds: new Set(
+          entries.flatMap((entry) => (endingEntryIds.has(entry.id) ? [entry.id] : [])),
+        ),
+        failureMessage: null,
+        noticeMessage: null,
       });
     }
   }
@@ -1385,8 +1603,11 @@ function deriveTimelineTurnFolds(
     timelineEntries,
     terminalAssistantMessageIds: deriveTerminalAssistantMessageIds(timelineEntries),
     latestRun: input.latestRun ?? null,
-    unfoldedRunIds: new Set([...activeVisualResponseRunIds, ...failedRunIds]),
+    unfoldedRunIds: activeVisualResponseRunIds,
+    failedRunIds,
     runlessWorkActive: input.isWorking && input.runlessWorkActive === true,
+    // Fold membership does not depend on the diff stat the fold header shows.
+    turnDiffSummaries: [],
     liveSubagentEntryIds: liveSubagentCardEntryIds(timelineEntries),
     completeSupersededReplyEntryIds: completeSupersededReplyEntryIds(timelineEntries),
   });
@@ -1409,6 +1630,8 @@ export function deriveMessagesTimelineRows(input: {
   threadStartCheckpointReady?: boolean;
   availableRevertTurnCounts?: ReadonlySet<number> | undefined;
   worktreeSetup?: WorktreeSetupSnapshot | null;
+  /** Commands and skills of the thread's provider, for telling a command from a path. */
+  slashCommands?: SlashCommandCatalog;
 }): MessagesTimelineRow[] {
   const timelineEntries = timelineRowEntries(input.timelineEntries);
   const isPendingApproval = (entry: WorkLogEntry) => {
@@ -1435,9 +1658,22 @@ export function deriveMessagesTimelineRows(input: {
       })
     : new Map<MessageId, number>();
   const nextRows: MessagesTimelineRow[] = [];
+  const steerOffsetStartByRunId = deriveSteerOffsetStartByRunId(
+    timelineEntries,
+    input.latestRun ?? null,
+  );
   const terminalAssistantMessageIds = deriveTerminalAssistantMessageIds(timelineEntries);
   const failedRunIds = failedTimelineRunIds(timelineEntries, input.latestRun ?? null);
   const itemizedRunIds = itemizedFailedRunIds(timelineEntries, failedRunIds);
+  const stoppedRunIds = stoppedTimelineRunIds(timelineEntries, input.latestRun ?? null);
+  // A standalone `/compact` and the compaction its run reports are one row.
+  const compactionByRunId = new Map<RunId, WorkLogEntry>();
+  for (const entry of timelineEntries) {
+    if (entry.kind !== "work" || entry.entry.sourceActivityKind !== "context-compaction") continue;
+    const runId = entry.entry.runId;
+    if (runId != null && !compactionByRunId.has(runId)) compactionByRunId.set(runId, entry.entry);
+  }
+  const mergedCompactionIds = new Set<string>();
   const liveSubagentEntryIds = liveSubagentCardEntryIds(timelineEntries);
   const completeSupersededReplyIds = completeSupersededReplyEntryIds(timelineEntries);
   const supersededFoldsByAnchorEntryId = deriveSupersededAttemptFolds(
@@ -1459,19 +1695,23 @@ export function deriveMessagesTimelineRows(input: {
     timelineEntries: timelineEntries,
     terminalAssistantMessageIds,
     latestRun: input.latestRun ?? null,
-    unfoldedRunIds: new Set([...activeVisualResponseRunIds, ...failedRunIds]),
+    unfoldedRunIds: activeVisualResponseRunIds,
+    failedRunIds,
     runlessWorkActive,
+    turnDiffSummaries: input.turnDiffSummaries,
     liveSubagentEntryIds,
     completeSupersededReplyEntryIds: completeSupersededReplyIds,
   });
   const timelineEntryById = new Map(timelineEntries.map((entry) => [entry.id, entry]));
+  const turnFoldExpanded = (fold: TurnFold) =>
+    (input.expandedRunIds?.has(fold.runId) ?? false) !== turnFoldStartsOpen(fold.ending);
   const collapsedEntryIds = new Set<string>();
   const collapsedFoldMemberIds = new Set<string>();
   for (const fold of foldsByAnchorEntryId.values()) {
-    if (!input.expandedRunIds?.has(fold.runId)) {
-      for (const entryId of fold.hiddenEntryIds) {
-        collapsedEntryIds.add(entryId);
-      }
+    for (const entryId of turnFoldExpanded(fold) ? fold.endingEntryIds : fold.hiddenEntryIds) {
+      collapsedEntryIds.add(entryId);
+    }
+    if (!turnFoldExpanded(fold)) {
       for (const entryId of fold.entryIds) {
         collapsedFoldMemberIds.add(entryId);
       }
@@ -1593,7 +1833,8 @@ export function deriveMessagesTimelineRows(input: {
       entry.message.runId !== null &&
       isCompactionCommandMessage(entry.message)
     ) {
-      compactionRuns.set(entry.message.runId, idleCompactionOf(entry.message));
+      const reason = idleCompactionOf(entry.message);
+      if (reason !== undefined) compactionRuns.set(entry.message.runId, reason);
     } else if (entry.kind === "work" && entry.entry.runId) {
       if (timelineEntryIsCompaction(entry)) {
         compactedRunIds.add(entry.entry.runId);
@@ -1682,6 +1923,45 @@ export function deriveMessagesTimelineRows(input: {
     );
   };
 
+  const timelineSlashCommand = (message: ChatMessage): TimelineSlashCommand | null => {
+    const parsed = parseSlashCommandMessage(
+      message.text,
+      input.slashCommands ?? EMPTY_SLASH_COMMAND_CATALOG,
+    );
+    if (!parsed) return null;
+    const standalone = parsed.standalone && (message.attachments?.length ?? 0) === 0;
+    const runId = message.runId ?? null;
+    const compaction =
+      standalone && !parsed.skill && parsed.name === "compact" && runId !== null
+        ? compactionByRunId.get(runId)
+        : undefined;
+    if (compaction) mergedCompactionIds.add(compaction.id);
+    const compactionItem = compaction?.projectedItem?.item;
+    const state: SlashCommandState =
+      runId === null
+        ? input.isWorking
+          ? "running"
+          : "done"
+        : runId === unsettledRunId
+          ? "running"
+          : failedRunIds.has(runId)
+            ? "failed"
+            : stoppedRunIds.has(runId)
+              ? "stopped"
+              : "done";
+    return {
+      ...parsed,
+      standalone,
+      state,
+      result:
+        compactionItem?.type === "compaction" &&
+        compactionItem.beforeTokenCount !== undefined &&
+        compactionItem.afterTokenCount !== undefined
+          ? `${formatTokens(compactionItem.beforeTokenCount)} → ${formatTokens(compactionItem.afterTokenCount)} tokens`
+          : null,
+    };
+  };
+
   for (let index = 0; index < timelineEntries.length; index += 1) {
     const timelineEntry = timelineEntries[index];
     if (!timelineEntry) {
@@ -1694,18 +1974,6 @@ export function deriveMessagesTimelineRows(input: {
 
     if (timelineEntry.id === activeWorkPlacementEntryId) {
       appendActiveWorkRows();
-    }
-
-    // A stopped compaction's own divider already says it stopped.
-    if (
-      timelineEntry.kind === "event" &&
-      (timelineEntry.projectedItem.item.type === "run_interrupt_request" ||
-        (timelineEntry.projectedItem.item.type === "run_interrupt_result" &&
-          timelineEntry.projectedItem.item.runId !== null &&
-          compactionRuns.has(timelineEntry.projectedItem.item.runId) &&
-          compactedRunIds.has(timelineEntry.projectedItem.item.runId)))
-    ) {
-      continue;
     }
 
     const turnFold = foldsByAnchorEntryId.get(timelineEntry.id);
@@ -1725,11 +1993,27 @@ export function deriveMessagesTimelineRows(input: {
         createdAt: turnFold.createdAt,
         runId: turnFold.runId,
         label: turnFold.label,
-        expanded: input.expandedRunIds?.has(turnFold.runId) ?? false,
+        ending: turnFold.ending,
+        diff: turnFold.diff,
+        expanded: turnFoldExpanded(turnFold),
+        foldable: [...turnFold.hiddenEntryIds].some(
+          (entryId) => !turnFold.endingEntryIds.has(entryId),
+        ),
+        failureMessage: turnFold.failureMessage,
+        noticeMessage: turnFold.noticeMessage,
       });
     }
 
-    if (collapsedEntryIds.has(timelineEntry.id)) {
+    // A turn stopped before any work anchors its fold here, so it goes after it.
+    if (
+      collapsedEntryIds.has(timelineEntry.id) ||
+      (timelineEntry.kind === "event" &&
+        (timelineEntry.projectedItem.item.type === "run_interrupt_request" ||
+          (timelineEntry.projectedItem.item.type === "run_interrupt_result" &&
+            timelineEntry.projectedItem.item.runId !== null &&
+            compactionRuns.has(timelineEntry.projectedItem.item.runId) &&
+            compactedRunIds.has(timelineEntry.projectedItem.item.runId))))
+    ) {
       continue;
     }
 
@@ -1760,6 +2044,7 @@ export function deriveMessagesTimelineRows(input: {
       timelineEntry.entry.sourceActivityKind === "context-compaction"
     ) {
       const active = workEntryIsInActiveRun(timelineEntry.entry);
+      if (mergedCompactionIds.has(timelineEntry.id)) continue;
       if (
         active &&
         activeCompactionRunId !== null &&
@@ -2004,7 +2289,9 @@ export function deriveMessagesTimelineRows(input: {
 
     const compactionRunId = timelineEntry.message.runId;
     const compactionRun =
-      compactionRunId !== null && isCompactionCommandMessage(timelineEntry.message);
+      compactionRunId !== null &&
+      isCompactionCommandMessage(timelineEntry.message) &&
+      idleCompactionOf(timelineEntry.message) !== undefined;
     if (compactionRun) {
       if (!compactedRunIds.has(compactionRunId) && compactionRunId !== activeCompactionRunId) {
         const pending = compactionRunId === runningCompactionRunId;
@@ -2034,11 +2321,17 @@ export function deriveMessagesTimelineRows(input: {
       terminalAssistantMessageIds.has(timelineEntry.message.id);
     const showAssistantMeta = isTerminalAssistantMessage && !assistantResponseStillInProgress;
 
+    const command =
+      timelineEntry.message.role === "user" && !userMessageIsSteer(timelineEntry.message)
+        ? timelineSlashCommand(timelineEntry.message)
+        : null;
+
     nextRows.push({
       kind: "message",
       id: timelineEntry.id,
       createdAt: timelineEntry.createdAt,
       message: timelineEntry.message,
+      ...(command ? { command } : {}),
       ...(timelineEntry.projectedItem === undefined
         ? {}
         : { projectedItem: timelineEntry.projectedItem }),
@@ -2057,6 +2350,7 @@ export function deriveMessagesTimelineRows(input: {
         timelineEntry.message.role === "user"
           ? revertTurnCountByUserMessageId.get(timelineEntry.message.id)
           : undefined,
+      steerOffsetMs: steerOffsetMs(timelineEntry.message, steerOffsetStartByRunId),
     });
   }
 
@@ -2148,18 +2442,32 @@ export function deriveMessagesTimelineRows(input: {
     attachCreatedThreadSummaries(nextRows, timelineEntries, collapsedFoldMemberIds),
   );
   return result.map((row, index) => {
-    if (timelineRowIsWorkLog(row) && timelineRowIsWorkLog(result[index + 1])) {
+    const next = result[index + 1];
+    if (timelineRowIsWorkLog(row) && timelineRowIsWorkLog(next)) {
       return { ...row, continuesWorkLog: true };
     }
-    if (!timelineRowIsOwnUserMessage(row)) return row;
+    if (!timelineRowIsUserPrompt(row)) return row;
+    const promptRow = timelineRowIsUserPrompt(next) ? { ...row, continuesPromptStack: true } : row;
+    if (!timelineRowIsOwnUserMessage(promptRow)) return promptRow;
     const previous = result[index - 1];
-    const groupedWithNext = timelineRowIsOwnUserMessage(result[index + 1]);
     const groupedWithPrevious = timelineRowIsOwnUserMessage(previous);
+    const groupedWithNext = timelineRowIsOwnUserMessage(next);
     const continuesSteer =
-      groupedWithPrevious && messageIsSteer(row.message) && messageIsSteer(previous.message);
-    if (!groupedWithNext && !groupedWithPrevious) return row;
-    return { ...row, groupedWithNext, groupedWithPrevious, continuesSteer };
+      timelineRowIsOwnUserMessage(previous) &&
+      userMessageIsSteer(promptRow.message) &&
+      userMessageIsSteer(previous.message);
+    if (!groupedWithNext && !groupedWithPrevious && !continuesSteer) return promptRow;
+    return { ...promptRow, groupedWithNext, groupedWithPrevious, continuesSteer };
   });
+}
+
+function timelineRowIsUserPrompt(row: MessagesTimelineRow | undefined): boolean {
+  return (
+    row !== undefined &&
+    row.kind === "message" &&
+    row.message.role === "user" &&
+    !row.command?.standalone
+  );
 }
 
 function timelineRowIsOwnUserMessage(
@@ -2168,12 +2476,49 @@ function timelineRowIsOwnUserMessage(
   return (
     row?.kind === "message" &&
     row.message.role === "user" &&
+    !row.command?.standalone &&
     resolveUserMessagePresentation(row.message).attribution === null
   );
 }
 
-function messageIsSteer(message: ChatMessage): boolean {
+function userMessageIsSteer(message: ChatMessage): boolean {
   return message.inputIntent === "steer" || message.inputIntent === "promoted_queued_to_steer";
+}
+
+/**
+ * Where each run's clock starts for steer offsets: the latest run's own start
+ * when known, otherwise the prompt that opened the run.
+ */
+function deriveSteerOffsetStartByRunId(
+  timelineEntries: ReadonlyArray<TimelineEntry>,
+  latestRun: TimelineLatestRun | null,
+): ReadonlyMap<RunId, number> {
+  const starts = new Map<RunId, number>();
+  for (const entry of timelineEntries) {
+    if (entry.kind !== "message" || entry.message.role !== "user") continue;
+    const runId = entry.message.runId;
+    if (runId == null || starts.has(runId) || userMessageIsSteer(entry.message)) continue;
+    const ms = Date.parse(entry.message.createdAt);
+    if (Number.isFinite(ms)) starts.set(runId, ms);
+  }
+  if (latestRun?.startedAt) {
+    const ms = Date.parse(latestRun.startedAt);
+    if (Number.isFinite(ms)) starts.set(latestRun.runId, ms);
+  }
+  return starts;
+}
+
+function steerOffsetMs(
+  message: ChatMessage,
+  startByRunId: ReadonlyMap<RunId, number>,
+): number | undefined {
+  if (message.role !== "user" || !userMessageIsSteer(message) || message.runId == null) {
+    return undefined;
+  }
+  const start = startByRunId.get(message.runId);
+  const at = Date.parse(message.createdAt);
+  if (start === undefined || !Number.isFinite(at) || at < start) return undefined;
+  return at - start;
 }
 
 function timelineRowIsWorkLog(row: MessagesTimelineRow | undefined): boolean {
@@ -2240,6 +2585,471 @@ const WORKTREE_SETUP_ROW_ID = "worktree-setup-row";
 
 export type MessagesTimelineRowsInput = Parameters<typeof deriveMessagesTimelineRows>[0];
 
+export type WorkingWindowItem =
+  | { readonly kind: "work"; readonly id: string; readonly entry: WorkLogEntry }
+  | {
+      readonly kind: "text";
+      readonly id: string;
+      readonly message: ChatMessage;
+      readonly projectedItemId?: string;
+    }
+  | {
+      readonly kind: "agents";
+      readonly id: string;
+      readonly row: Extract<MessagesTimelineRow, { kind: "event" }>;
+    };
+
+export interface WorkingWindow {
+  /** Changes with each prompt or steer, which closes an open history. */
+  readonly key: string;
+  readonly items: ReadonlyArray<WorkingWindowItem>;
+  readonly diff: DiffLineStat | null;
+  /** The latest test command failed; the count comes from the runner summary. */
+  readonly failedTests: { readonly count: number | null } | null;
+  /** Attempt number while the provider retries a dropped stream. */
+  readonly retryAttempt: number | null;
+  /** Stop was requested and the provider has not let go yet. */
+  readonly stopping: boolean;
+  readonly historyOpen: boolean;
+  /** A standalone /compact owns its progress row and clock. */
+  readonly compactCommand?: boolean;
+}
+
+function sameWorkingWindowItem(a: WorkingWindowItem, b: WorkingWindowItem): boolean {
+  if (a.kind !== b.kind || a.id !== b.id) return false;
+  switch (a.kind) {
+    case "work":
+      return Equal.equals(a.entry, (b as typeof a).entry);
+    case "text":
+      return (
+        a.message === (b as typeof a).message &&
+        a.projectedItemId === (b as typeof a).projectedItemId
+      );
+    case "agents":
+      return isRowUnchanged(a.row, (b as typeof a).row);
+  }
+}
+
+function sameDiffLineStat(a: DiffLineStat | null, b: DiffLineStat | null): boolean {
+  return a === b || (a?.additions === b?.additions && a?.deletions === b?.deletions);
+}
+
+function sameWorkingWindow(a: WorkingWindow | undefined, b: WorkingWindow | undefined): boolean {
+  if (a === b) return true;
+  if (a === undefined || b === undefined) return false;
+  return (
+    a.key === b.key &&
+    a.historyOpen === b.historyOpen &&
+    a.stopping === b.stopping &&
+    a.compactCommand === b.compactCommand &&
+    a.retryAttempt === b.retryAttempt &&
+    a.failedTests?.count === b.failedTests?.count &&
+    (a.failedTests === null) === (b.failedTests === null) &&
+    sameDiffLineStat(a.diff, b.diff) &&
+    a.items.length === b.items.length &&
+    a.items.every((item, index) => sameWorkingWindowItem(item, b.items[index]!))
+  );
+}
+
+function workEntryCommandInput(entry: WorkLogEntry): string | null {
+  const item = entry.projectedItem?.item;
+  return item?.type === "command_execution" ? item.input : (entry.command ?? null);
+}
+
+function deriveFailedTests(items: ReadonlyArray<WorkingWindowItem>): WorkingWindow["failedTests"] {
+  // The latest test run decides: a passing rerun clears the slot.
+  for (let index = items.length - 1; index >= 0; index -= 1) {
+    const item = items[index]!;
+    if (item.kind !== "work" || item.entry.itemType !== "command_execution") continue;
+    const input = workEntryCommandInput(item.entry);
+    if (input === null || !commandRunsTests(input)) continue;
+    if (item.entry.toolLifecycleStatus === "inProgress") return null;
+    if (!workEntryDisplayIndicatesToolFailure(item.entry)) return null;
+    const turnItem = item.entry.projectedItem?.item;
+    return {
+      count: turnItem?.type === "command_execution" ? (turnItem.failedTestCount ?? null) : null,
+    };
+  }
+  return null;
+}
+
+function deriveRetryAttempt(items: ReadonlyArray<WorkingWindowItem>): number | null {
+  const last = items.findLast(
+    (item) => item.kind === "work" && item.entry.projectedItem?.item.type === "error",
+  );
+  const turnItem = last?.kind === "work" ? last.entry.projectedItem?.item : undefined;
+  return turnItem?.type === "error" && turnItem.retry !== undefined && turnItem.status === "running"
+    ? turnItem.retry.attempt
+    : null;
+}
+
+/** Row ids and work entry ids that a working window item replaces. */
+function collectWindowIds(items: ReadonlyArray<WorkingWindowItem>) {
+  const ids = new Set<string>();
+  for (const item of items) {
+    ids.add(item.id);
+    if (item.kind === "work") ids.add(item.entry.id);
+    if (item.kind === "agents") {
+      for (const member of item.row.subagents ?? []) ids.add(member.item.id);
+    }
+  }
+  return ids;
+}
+
+function rowIsReplacedByWindow(row: MessagesTimelineRow, ids: ReadonlySet<string>): boolean {
+  switch (row.kind) {
+    case "thinking":
+      return true;
+    case "work":
+      return (
+        row.groupedEntries.length > 0 && row.groupedEntries.every((entry) => ids.has(entry.id))
+      );
+    case "work-live":
+      return ids.has(row.entry.id);
+    case "work-toggle":
+      return ids.has(row.id.slice("work-toggle:".length));
+    case "context-compaction":
+    case "event":
+      return ids.has(row.id);
+    case "message":
+      return row.message.role === "assistant" && ids.has(row.id);
+    case "assistant-meta":
+      return ids.has(row.message.id);
+    default:
+      return false;
+  }
+}
+
+/**
+ * Moves the running turn's work under the working bar. Tool calls, commentary
+ * and subagents become window items; steers move above the bar so the prompt
+ * stack reads top to bottom. Everything else (plans, resource cards, notices)
+ * keeps its row.
+ */
+export function applyWorkingWindow(
+  rows: ReadonlyArray<MessagesTimelineRow>,
+  input: Pick<
+    MessagesTimelineRowsInput,
+    | "timelineEntries"
+    | "latestRun"
+    | "runningRunId"
+    | "isWorking"
+    | "runlessWorkActive"
+    | "pendingApprovalRequestIds"
+  >,
+  historyOpenKey: string | null = null,
+): MessagesTimelineRow[] {
+  const workingIndex = input.isWorking ? rows.findIndex((row) => row.kind === "working") : -1;
+  if (workingIndex < 0) return rows as MessagesTimelineRow[];
+  const entries = timelineRowEntries(input.timelineEntries);
+  const workingRow = rows[workingIndex] as Extract<MessagesTimelineRow, { kind: "working" }>;
+  const compactionRowIds = new Set(
+    rows.filter((row) => row.kind === "context-compaction").map((row) => row.id),
+  );
+  const compactedRunIds = new Set(
+    entries.flatMap((entry) =>
+      timelineEntryIsCompaction(entry) ? [timelineEntryRunId(entry)] : [],
+    ),
+  );
+  const unsettledRunId = deriveUnsettledRunId(input.latestRun ?? null, input.runningRunId ?? null);
+  const runIds = deriveActiveVisualResponseRunIds({
+    timelineEntries: entries,
+    unsettledRunId,
+    isWorking: true,
+  });
+  const boundaryIndex = lastResponseBoundaryIndex(entries);
+  let key = entries[boundaryIndex]?.id ?? "working";
+  const items: WorkingWindowItem[] = [];
+  // A standalone `/compact` row already shows its run's compaction.
+  const compactCommandRunIds = new Set(
+    rows.flatMap((row) =>
+      row.kind === "message" &&
+      row.command?.standalone &&
+      row.command.name === "compact" &&
+      !row.command.skill
+        ? [row.message.runId ?? null]
+        : [],
+    ),
+  );
+  let interruptRequested = false;
+  let interruptSettled = false;
+  for (let index = boundaryIndex + 1; index < entries.length; index += 1) {
+    const entry = entries[index]!;
+    if (entry.kind === "message" && entry.message.role === "user") {
+      key = entry.id;
+      continue;
+    }
+    if (entry.attempt?.status === "superseded") continue;
+    const runId =
+      entry.kind === "event" ? entry.projectedItem.item.runId : timelineEntryRunId(entry);
+    // A provider-native subagent thread's live work has no app run.
+    if (runId === null ? input.runlessWorkActive !== true : !runIds.has(runId)) continue;
+    if (entry.kind === "work") {
+      const item = entry.entry.projectedItem?.item;
+      if (
+        (item?.type === "approval_request" &&
+          input.pendingApprovalRequestIds?.has(item.requestId)) ||
+        entry.entry.itemType === "notification" ||
+        entry.entry.itemType === "system_notice" ||
+        (entry.entry.sourceActivityKind === "context-compaction" &&
+          (compactCommandRunIds.has(runId) ||
+            compactionRowIds.has(entry.id) ||
+            workingRow.compacting !== undefined)) ||
+        (compactedRunIds.has(runId) &&
+          entry.entry.questionAnswer !== undefined &&
+          claudeResumeCompactionAge(entry.entry.questionAnswer) !== null) ||
+        !workEntryIsVisibleInGroup(entry.entry, true)
+      ) {
+        continue;
+      }
+      items.push({ kind: "work", id: entry.id, entry: entry.entry });
+    } else if (entry.kind === "message" && entry.message.role === "assistant") {
+      items.push({
+        kind: "text",
+        id: entry.id,
+        message: entry.message,
+        ...(entry.projectedItem ? { projectedItemId: entry.projectedItem.item.id } : {}),
+      });
+    } else if (entry.kind === "event") {
+      const turnItem = entry.projectedItem.item;
+      if (turnItem.type === "run_interrupt_request") interruptRequested = true;
+      if (turnItem.type === "run_interrupt_result") interruptSettled = true;
+      if (turnItem.type !== "subagent") continue;
+      const previous = items.at(-1);
+      if (
+        previous?.kind === "agents" &&
+        previous.row.projectedItem.item.providerTurnId === turnItem.providerTurnId
+      ) {
+        items[items.length - 1] = {
+          ...previous,
+          row: {
+            ...previous.row,
+            subagents: [
+              ...(previous.row.subagents ?? [previous.row.projectedItem]),
+              entry.projectedItem,
+            ],
+          },
+        };
+        continue;
+      }
+      items.push({
+        kind: "agents",
+        id: entry.id,
+        row: {
+          kind: "event",
+          id: entry.id,
+          createdAt: entry.createdAt,
+          projectedItem: entry.projectedItem,
+          subagents: [entry.projectedItem],
+        },
+      });
+    }
+  }
+
+  const ids = collectWindowIds(items);
+  const before: MessagesTimelineRow[] = [];
+  const after: MessagesTimelineRow[] = [];
+  for (const [index, row] of rows.entries()) {
+    if (index <= workingIndex) continue;
+    if (row.kind === "message" && row.message.role === "user") {
+      before.push(row);
+    } else if (!rowIsReplacedByWindow(row, ids)) {
+      after.push(row);
+    }
+  }
+  const window: WorkingWindow = {
+    key,
+    items,
+    compactCommand: compactCommandRunIds.has(unsettledRunId),
+    diff: sumFileChangeLineStat(
+      items.flatMap((item) => (item.kind === "work" ? [item.entry] : [])),
+    ),
+    failedTests: deriveFailedTests(items),
+    retryAttempt: deriveRetryAttempt(items),
+    stopping: interruptRequested && !interruptSettled,
+    historyOpen: historyOpenKey === key,
+  };
+  return [
+    ...rows.slice(0, workingIndex),
+    ...before,
+    { ...workingRow, window },
+    ...after.map((row) => (row.continuesWorkLog ? { ...row, continuesWorkLog: false } : row)),
+  ];
+}
+
+/** `expanded` with every "Handled N updates" group that holds the run open. */
+export function withRunGroupsOpen(
+  expanded: ReadonlySet<string>,
+  rows: ReadonlyArray<MessagesTimelineRow>,
+  runId: RunId,
+): ReadonlySet<string> {
+  const closed = rows.flatMap((row) =>
+    row.kind === "background-activity" && row.runIds.includes(runId) && !expanded.has(row.id)
+      ? [row.id]
+      : [],
+  );
+  return closed.length === 0 ? expanded : new Set([...expanded, ...closed]);
+}
+
+/** Fold persisted notification deliveries; ordinary prompts and actionable runs stay visible. */
+export function applyBackgroundActivityGroups(
+  rows: MessagesTimelineRow[],
+  input: Pick<
+    MessagesTimelineRowsInput,
+    "timelineEntries" | "latestRun" | "runningRunId" | "expandedWorkGroupIds"
+  > & {
+    hasPendingRequest: boolean;
+    hasThreadError: boolean;
+  },
+  previousRows: ReadonlyArray<MessagesTimelineRow> = [],
+): MessagesTimelineRow[] {
+  const notifications = new Map<RunId, Map<string, OrchestrationV2Notification>>();
+  const excluded = new Set<RunId>();
+  const entryRuns = new Map<string, RunId>();
+  for (const entry of input.timelineEntries) {
+    const item =
+      timelineEntryTurnItem(entry) ??
+      (entry.kind === "work" ? entry.entry.structuredPayload : undefined);
+    const runId =
+      entry.kind === "message" ? entry.message.runId : (item?.runId ?? timelineEntryRunId(entry));
+    if (runId == null) continue;
+    entryRuns.set(entry.id, runId);
+    if (item?.type === "notification") {
+      const ids = notifications.get(runId) ?? new Map<string, OrchestrationV2Notification>();
+      ids.set(item.id, item);
+      notifications.set(runId, ids);
+    }
+    if (
+      (entry.kind === "message" && entry.message.role === "user") ||
+      entry.kind === "proposed-plan" ||
+      item?.type === "error" ||
+      item?.type === "system_notice" ||
+      item?.status === "failed" ||
+      (item?.type === "notification" && item.outcome === "failed") ||
+      ((item?.type === "approval_request" || item?.type === "user_input_request") &&
+        (item.status === "pending" || item.status === "running" || item.status === "waiting")) ||
+      (entry.kind === "work" &&
+        (entry.entry.tone === "error" || workEntryDisplayIndicatesToolFailure(entry.entry)))
+    ) {
+      excluded.add(runId);
+    }
+  }
+  const activeRunId = deriveUnsettledRunId(input.latestRun ?? null, input.runningRunId ?? null);
+  const latestRunId = input.latestRun?.runId ?? activeRunId;
+  if (
+    latestRunId &&
+    (input.hasPendingRequest || input.hasThreadError || input.latestRun?.status === "failed")
+  ) {
+    excluded.add(latestRunId);
+  }
+  for (const runId of excluded) notifications.delete(runId);
+  if (notifications.size === 0) return rows;
+  const previousGroupIds = new Map<RunId, string>();
+  for (const row of previousRows) {
+    if (row.kind !== "background-activity") continue;
+    for (const runId of row.runIds) previousGroupIds.set(runId, row.id);
+  }
+
+  const rowRunId = (row: MessagesTimelineRow): RunId | null => {
+    switch (row.kind) {
+      case "message":
+      case "assistant-meta":
+        return row.message.runId ?? null;
+      case "event":
+        return row.projectedItem.item.runId;
+      case "turn-fold":
+      case "attempt-fold":
+        return row.runId;
+      case "work": {
+        const runId = row.groupedEntries[0]?.runId;
+        return runId && row.groupedEntries.every((entry) => entry.runId === runId) ? runId : null;
+      }
+      case "work-live":
+        return row.entry.runId ?? null;
+      case "working":
+      case "thinking":
+        return activeRunId;
+      case "work-toggle":
+        return row.runId ?? entryRuns.get(row.id.slice("work-toggle:".length)) ?? null;
+      default:
+        return entryRuns.get(row.id) ?? null;
+    }
+  };
+  const result: MessagesTimelineRow[] = [];
+  for (let index = 0; index < rows.length;) {
+    const first = rows[index]!;
+    const runId = rowRunId(first);
+    // Start at the delivery itself, never at unrelated rows belonging to its run.
+    if (runId === null || !notifications.get(runId)?.has(first.id)) {
+      result.push(first);
+      index += 1;
+      continue;
+    }
+    const start = index;
+    const runIds = new Set<RunId>();
+    const updateIds = new Set<string>();
+    const updates: OrchestrationV2Notification[] = [];
+    while (index < rows.length) {
+      const nextRow = rows[index]!;
+      const nextRunId = rowRunId(nextRow);
+      if (nextRunId === null || !notifications.has(nextRunId)) break;
+      runIds.add(nextRunId);
+      const update = notifications.get(nextRunId)!.get(nextRow.id);
+      if (update) {
+        updateIds.add(nextRow.id);
+        updates.push(update);
+      }
+      index += 1;
+    }
+    // Keep a mounted anchor across history prepends; restored open groups keep their key too.
+    const expandedId = [...updateIds]
+      .map((id) => `background-activity:${id}`)
+      .find((id) => input.expandedWorkGroupIds?.has(id));
+    const previousId = [...runIds]
+      .map((id) => previousGroupIds.get(id))
+      .find((id) => id !== undefined && updateIds.has(id.slice("background-activity:".length)));
+    const id = expandedId ?? previousId ?? `background-activity:${first.id}`;
+    const expanded = input.expandedWorkGroupIds?.has(id) ?? false;
+    result.push({
+      kind: "background-activity",
+      id,
+      createdAt: first.createdAt,
+      runIds: [...runIds],
+      updateCount: updateIds.size,
+      updates,
+      active: activeRunId !== null && runIds.has(activeRunId),
+      expanded,
+    });
+    // Expansion returns the original virtual rows, identities, disclosures and actions.
+    const groupRows = rows.slice(start, index);
+    if (expanded) {
+      result.push(...groupRows);
+    } else {
+      const lastRunId = [...runIds].at(-1);
+      const finalAnswer =
+        activeRunId === lastRunId
+          ? undefined
+          : groupRows.findLast(
+              (row) =>
+                row.kind === "message" &&
+                row.message.role === "assistant" &&
+                row.message.runId === lastRunId &&
+                !row.message.streaming,
+            );
+      if (finalAnswer?.kind === "message") {
+        result.push(
+          ...groupRows.filter(
+            (row) =>
+              row === finalAnswer ||
+              (row.kind === "assistant-meta" && row.message.id === finalAnswer.message.id),
+          ),
+        );
+      }
+    }
+  }
+  return result;
+}
+
 interface MessagesTimelineRowsProjection {
   readonly input: MessagesTimelineRowsInput;
   readonly rows: MessagesTimelineRow[];
@@ -2249,17 +3059,45 @@ interface MessagesTimelineRowsProjection {
  * Runless (imported V1) turns and work after a steer fold under synthetic
  * keys, so the entry's own run id is not enough to open them.
  */
+export type TimelineTurnFoldKey = Pick<TurnFold, "runId" | "ending">;
+
+/** Every folded entry's fold, computed once for callers that check many entries. */
 export function timelineTurnFoldRunIdsByEntryId(
   input: Pick<
     MessagesTimelineRowsInput,
     "timelineEntries" | "latestRun" | "isWorking" | "runlessWorkActive" | "runningRunId"
   >,
-): ReadonlyMap<string, RunId> {
-  const byEntryId = new Map<string, RunId>();
+): ReadonlyMap<string, TimelineTurnFoldKey> {
+  const byEntryId = new Map<string, TimelineTurnFoldKey>();
   for (const fold of deriveTimelineTurnFolds(input).values()) {
-    for (const entryId of fold.hiddenEntryIds) byEntryId.set(entryId, fold.runId);
+    const key = { runId: fold.runId, ending: fold.ending };
+    for (const entryId of fold.hiddenEntryIds) {
+      // Ending entries stay hidden at any fold state; the fold line carries them.
+      if (!fold.endingEntryIds.has(entryId)) byEntryId.set(entryId, key);
+    }
   }
   return byEntryId;
+}
+
+/**
+ * A failed turn stays open by default: its fold names how it ended,
+ * so its key in `expandedRunIds` means the user collapsed it.
+ */
+export function turnFoldStartsOpen(ending: TurnFoldEnding): boolean {
+  return ending === "failed" || ending === "limited";
+}
+
+/** `expanded` with the fold open. */
+export function withTurnFoldOpen(
+  expanded: ReadonlySet<RunId>,
+  fold: TimelineTurnFoldKey,
+): ReadonlySet<RunId> {
+  const startsOpen = turnFoldStartsOpen(fold.ending);
+  if (expanded.has(fold.runId) !== startsOpen) return expanded;
+  const next = new Set(expanded);
+  if (startsOpen) next.delete(fold.runId);
+  else next.add(fold.runId);
+  return next;
 }
 
 function sameCheckpointSummaries(
@@ -2379,7 +3217,8 @@ export function computeStableMessagesTimelineRows(
 
   const result = rows.map((row, index) => {
     const prevRow = previous.byId.get(row.id);
-    const nextRow = prevRow && isRowUnchanged(prevRow, row) ? prevRow : row;
+    const nextRow =
+      prevRow && isRowUnchanged(prevRow, row) ? prevRow : withPreviousWindowItems(row, prevRow);
     next.set(row.id, nextRow);
     if (!anyChanged && previous.result[index] !== nextRow) {
       anyChanged = true;
@@ -2390,13 +3229,46 @@ export function computeStableMessagesTimelineRows(
   return anyChanged ? { byId: next, result } : previous;
 }
 
+/** A changed working window keeps its unchanged items, so their rows skip rendering. */
+function withPreviousWindowItems(
+  row: MessagesTimelineRow,
+  prevRow: MessagesTimelineRow | undefined,
+): MessagesTimelineRow {
+  if (row.kind !== "working" || prevRow?.kind !== "working" || !row.window || !prevRow.window) {
+    return row;
+  }
+  const previousItems = new Map(prevRow.window.items.map((item) => [item.id, item]));
+  let reused = false;
+  const items = row.window.items.map((item) => {
+    const previousItem = previousItems.get(item.id);
+    if (previousItem === undefined || !sameWorkingWindowItem(previousItem, item)) return item;
+    reused = true;
+    return previousItem;
+  });
+  return reused ? { ...row, window: { ...row.window, items } } : row;
+}
+
 function isRowUnchanged(a: MessagesTimelineRow, b: MessagesTimelineRow): boolean {
   if (a.kind !== b.kind || a.id !== b.id) return false;
+  if (a.continuesPromptStack !== b.continuesPromptStack) return false;
 
   switch (a.kind) {
+    case "background-activity": {
+      const bg = b as typeof a;
+      return (
+        a.createdAt === bg.createdAt &&
+        a.updateCount === bg.updateCount &&
+        shallow(a.updates, bg.updates) &&
+        a.active === bg.active &&
+        a.expanded === bg.expanded &&
+        shallow(a.runIds, bg.runIds)
+      );
+    }
     case "working":
       return (
-        a.createdAt === (b as typeof a).createdAt && a.compacting === (b as typeof a).compacting
+        a.createdAt === (b as typeof a).createdAt &&
+        sameWorkingWindow(a.window, (b as typeof a).window) &&
+        a.compacting === (b as typeof a).compacting
       );
     case "thinking": {
       const bt = b as typeof a;
@@ -2416,17 +3288,30 @@ function isRowUnchanged(a: MessagesTimelineRow, b: MessagesTimelineRow): boolean
       );
     }
 
-    case "attempt-fold":
     case "turn-fold": {
       const bf = b as typeof a;
-      const anchors = a.deferredWorkItemIds ?? [];
-      const nextAnchors = bf.deferredWorkItemIds ?? [];
+      return (
+        a.createdAt === bf.createdAt &&
+        a.label === bf.label &&
+        a.ending === bf.ending &&
+        sameDiffLineStat(a.diff, bf.diff) &&
+        a.expanded === bf.expanded &&
+        a.foldable === bf.foldable &&
+        a.failureMessage === bf.failureMessage &&
+        a.noticeMessage === bf.noticeMessage &&
+        (a.deferredWorkItemIds ?? []).length === (bf.deferredWorkItemIds ?? []).length &&
+        (a.deferredWorkItemIds ?? []).every((id, index) => id === bf.deferredWorkItemIds?.[index])
+      );
+    }
+
+    case "attempt-fold": {
+      const bf = b as typeof a;
       return (
         a.createdAt === bf.createdAt &&
         a.label === bf.label &&
         a.expanded === bf.expanded &&
-        anchors.length === nextAnchors.length &&
-        anchors.every((id, index) => id === nextAnchors[index])
+        (a.deferredWorkItemIds ?? []).length === (bf.deferredWorkItemIds ?? []).length &&
+        (a.deferredWorkItemIds ?? []).every((id, index) => id === bf.deferredWorkItemIds?.[index])
       );
     }
 
@@ -2517,9 +3402,38 @@ function isRowUnchanged(a: MessagesTimelineRow, b: MessagesTimelineRow): boolean
         a.revertTurnCount === bm.revertTurnCount &&
         a.groupedWithNext === bm.groupedWithNext &&
         a.groupedWithPrevious === bm.groupedWithPrevious &&
-        a.continuesSteer === bm.continuesSteer
+        a.continuesSteer === bm.continuesSteer &&
+        a.steerOffsetMs === bm.steerOffsetMs &&
+        shallow(a.command, bm.command)
       );
     }
+  }
+}
+
+/** The working bar's short name for a pending approval, like "Approve git push". */
+export function pendingApprovalSlotLabel(approval: {
+  readonly requestKind: string;
+  readonly detail?: string | undefined;
+  readonly appName?: string | undefined;
+}): string {
+  switch (approval.requestKind) {
+    case "command": {
+      const words = (approval.detail ?? "")
+        .trim()
+        .split(/\s+/u)
+        .filter((word) => word.length > 0 && !/^[A-Z_][A-Z0-9_]*=/u.test(word))
+        .slice(0, 2)
+        .join(" ");
+      return words ? `Approve ${words}` : "Approve command";
+    }
+    case "file-read":
+      return "Approve file read";
+    case "file-change":
+      return "Approve file change";
+    case "mcp-elicitation":
+      return approval.appName ? `Approve ${approval.appName}` : "Approve app access";
+    default:
+      return "Approve permission";
   }
 }
 

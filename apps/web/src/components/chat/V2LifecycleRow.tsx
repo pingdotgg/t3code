@@ -13,7 +13,7 @@ import { environmentThreadDetails } from "../../state/threads";
 import { EMPTY_SERVER_PROVIDERS, serverEnvironment } from "../../state/server";
 import { MiddleTruncate } from "../ui/middle-truncate";
 import * as DateTime from "effect/DateTime";
-import { WorkLogRow } from "./WorkLog";
+import { WorkLogRow, WorkLogTarget, WorkLogVerb } from "./WorkLog";
 import {
   resolveHandoffEndpoints,
   type HandoffEndpoints,
@@ -69,6 +69,8 @@ export function V2LifecycleRow(props: {
   readonly resourceSummary?: boolean | undefined;
   readonly runs: ReadonlyArray<HandoffTimelineRun>;
   readonly onOpenThread: (threadId: ThreadId) => void;
+  /** Subagent members listed inside a group header render as flat one-line rows. */
+  readonly subagentLayout?: "card" | "flat";
 }) {
   const { item } = props;
   if (item.type === "run_interrupt_result") {
@@ -129,7 +131,12 @@ export function V2LifecycleRow(props: {
       <WorkLogRow
         data-v2-item-type={item.type}
         icon={<T3Wordmark className="size-4 text-icon-muted" aria-hidden />}
-        label={<>Created thread{item.title ? ` · ${item.title}` : ""}</>}
+        label={
+          <span className="flex min-w-0 items-baseline gap-1.5">
+            <WorkLogVerb>Created thread</WorkLogVerb>
+            {item.title ? <WorkLogTarget>{item.title}</WorkLogTarget> : null}
+          </span>
+        }
         trailing={
           <InlineButton
             aria-label={`Open ${item.title ?? "created thread"}`}
@@ -158,6 +165,7 @@ export function V2LifecycleRow(props: {
         threadId={item.childThreadId}
         remote={item.remoteChild}
         onOpenThread={props.onOpenThread}
+        layout={props.subagentLayout ?? "card"}
       />
     );
   }
@@ -407,6 +415,7 @@ function SubagentTimelineLink(props: {
   /** The thread in a linked environment that runs this task, when it runs there. */
   readonly remote?: OrchestrationV2RemoteTaskChild | undefined;
   readonly onOpenThread: (threadId: ThreadId) => void;
+  readonly layout?: "card" | "flat";
   readonly event?: {
     readonly status: OrchestrationV2TurnItem["status"] | null;
     readonly label: string;
@@ -447,7 +456,43 @@ function SubagentTimelineLink(props: {
     startedAt: isoOrNull(agent?.startedAt ?? props.startedAt),
     completedAt: isoOrNull(agent?.completedAt ?? props.completedAt),
   };
-  const content = (
+  const flat = props.layout === "flat";
+  // Group members: status dot, title, status, elapsed, chevron on one line.
+  const flatContent = (
+    <>
+      <span
+        aria-hidden
+        className={cn(
+          "size-1.5 shrink-0 rounded-full",
+          subagentStatusVisual(status ?? liveStatus).dotClass,
+        )}
+      />
+      <span className="min-w-0 truncate text-meta text-foreground">{props.title}</span>
+      {remote !== undefined ? (
+        <span className="min-w-0 truncate text-caption text-dim-foreground">on {remote.label}</span>
+      ) : null}
+      <span
+        className={cn(
+          "shrink-0 text-caption",
+          failed ? "text-error-foreground" : "text-dim-foreground",
+        )}
+      >
+        {statusLabel}
+      </span>
+      <span className="ms-auto shrink-0 text-caption text-dim-foreground tabular-nums">
+        <SubagentElapsed agent={timing} />
+      </span>
+      {open !== null ? (
+        <ChevronRightIcon
+          aria-hidden
+          className="size-3 shrink-0 text-dim-foreground transition-colors group-hover/subagent:text-foreground"
+        />
+      ) : null}
+    </>
+  );
+  const content = flat ? (
+    flatContent
+  ) : (
     <>
       <EnvironmentSubagentAvatar
         environmentId={props.parentRef.environmentId}
@@ -458,11 +503,9 @@ function SubagentTimelineLink(props: {
       />
       <span className="min-w-0 flex-1">
         <span className="flex items-baseline gap-2">
-          <span className="min-w-0 truncate text-xs font-medium text-strong-foreground">
-            {props.title}
-          </span>
+          <span className="min-w-0 truncate text-meta text-strong-foreground">{props.title}</span>
           {remote !== undefined ? (
-            <span className="shrink-0 text-xs text-muted-foreground">on {remote.label}</span>
+            <span className="shrink-0 text-meta text-muted-foreground">on {remote.label}</span>
           ) : null}
         </span>
         <span
@@ -496,13 +539,15 @@ function SubagentTimelineLink(props: {
       {open !== null ? (
         <ChevronRightIcon
           aria-hidden
-          className="size-3.5 shrink-0 text-dim-foreground transition-colors group-hover/subagent:text-foreground"
+          className="ms-1.5 size-3.5 shrink-0 text-dim-foreground transition-colors group-hover/subagent:text-foreground"
         />
       ) : null}
     </>
   );
-  const className =
-    "group/subagent flex w-full min-w-0 items-center gap-2.5 rounded-row px-2 py-1.5 text-left";
+  // Timeline rows share the tool rows' columns: avatar on the text line, title on the label line.
+  const className = flat
+    ? "group/subagent flex h-[30px] w-full min-w-0 items-center gap-2 rounded-row px-2.5 text-left"
+    : "group/subagent flex w-full min-w-0 items-center gap-1 rounded-row px-1 py-1.5 text-left";
   return (
     <Tooltip>
       <TooltipTrigger

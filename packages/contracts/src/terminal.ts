@@ -116,6 +116,12 @@ export const TerminalSummary = Schema.Struct({
   exitCode: Schema.NullOr(Schema.Int),
   exitSignal: Schema.NullOr(Schema.Int),
   hasRunningSubprocess: Schema.Boolean,
+  /**
+   * Exit code of the last command the live shell finished, from OSC 133/633
+   * shell-integration marks. Absent when the shell reports none or the last
+   * mark had no code.
+   */
+  lastCommandExitCode: Schema.optionalKey(Schema.Int),
   label: Schema.String.check(Schema.isMaxLength(128)),
   updatedAt: Schema.String,
 });
@@ -195,6 +201,7 @@ const TerminalActivityEvent = Schema.Struct({
   ...TerminalEventBaseSchema.fields,
   type: Schema.Literal("activity"),
   hasRunningSubprocess: Schema.Boolean,
+  lastCommandExitCode: Schema.optionalKey(Schema.Int),
   label: Schema.String.check(Schema.isMaxLength(128)),
   // Shared PTY grid changes ride on activity because older clients reject unknown event types.
   cols: Schema.optional(TerminalColsSchema),

@@ -17,7 +17,11 @@ const variantColors: Record<ComposerBannerVariant, string> = {
   warning: "[--surface-tint:var(--warning-foreground)]",
 };
 
-/** Opaque banner paint, attached under the next card or detached as a whole card. */
+/**
+ * A status line section inside the composer tray. Lines paint nothing of their
+ * own: the tray is their surface. Floating layers (the command and stash menus)
+ * pick an opaque surface instead.
+ */
 function Surface({
   surface = "tint",
   variant = "default",
@@ -29,6 +33,7 @@ function Surface({
   detached?: boolean;
   surface?: "tint" | "popover" | "panel" | "card";
 }) {
+  const resolvedSurface = detached && surface === "tint" ? "card" : surface;
   return (
     <div
       data-composer-banner-surface={detached ? "detached" : "attached"}
@@ -36,21 +41,15 @@ function Surface({
       className={cn(
         "relative isolate border-0 shadow-none",
         variantColors[variant],
-        detached
-          ? surface !== "tint"
-            ? "[--chat-composer-attachment-overlap:0px] rounded-card before:rounded-card"
-            : "[--chat-composer-attachment-overlap:0px] rounded-2xl before:rounded-2xl"
-          : surface !== "tint"
-            ? "[--chat-composer-attachment-overlap:calc(1rem+1px)] rounded-t-card before:rounded-t-card"
-            : "[--chat-composer-attachment-overlap:calc(1rem+1px)] rounded-t-2xl before:rounded-t-2xl",
-        "before:pointer-events-none before:absolute! before:inset-0 before:-z-1",
-        surface === "popover"
+        resolvedSurface !== "tint" &&
+          "rounded-card before:pointer-events-none before:absolute! before:inset-0 before:-z-1 before:rounded-card",
+        resolvedSurface === "popover"
           ? "bg-transparent before:surface-popover"
-          : surface === "panel"
+          : resolvedSurface === "panel"
             ? "before:surface-panel"
-            : surface === "card"
+            : resolvedSurface === "card"
               ? "before:surface-card"
-              : "before:surface-tray",
+              : null,
         className,
       )}
       {...props}
@@ -58,26 +57,24 @@ function Surface({
   );
 }
 
+/** One section of the tray's status region. */
 function Attachment({ className, ...props }: ComponentProps<"div">) {
   return (
     <div
       data-slot="composer-banner-attachment"
-      className={cn(
-        "mx-auto -mb-[calc(1rem+1px)] w-[calc(100%-2*var(--chat-composer-drawer-inset))]",
-        "[&+[data-slot=composer-banner-attachment]_[data-composer-banner-surface=attached]]:before:rounded-none [&+[data-slot=composer-banner-attachment]_[data-composer-banner-surface=attached]]:before:border-t-0",
-        "[&+*_[data-chat-composer-form]>[data-slot=composer-banner-attachment]:first-child_[data-composer-banner-surface=attached]]:before:rounded-none [&+*_[data-chat-composer-form]>[data-slot=composer-banner-attachment]:first-child_[data-composer-banner-surface=attached]]:before:border-t-0",
-        className,
-      )}
+      className={cn("w-full min-w-0", className)}
       {...props}
     />
   );
 }
 
+/** The status region above the composer. Empty regions take no space. */
 function Dock({ className, ...props }: ComponentProps<"div">) {
   return (
-    <Attachment
+    <div
+      data-slot="composer-status-region"
       className={cn(
-        "flex items-end gap-1 not-has-data-[composer-banner-surface=attached]:hidden",
+        "flex w-full min-w-0 flex-col not-has-data-[composer-banner-surface=attached]:hidden",
         className,
       )}
       {...props}
@@ -86,16 +83,7 @@ function Dock({ className, ...props }: ComponentProps<"div">) {
 }
 
 function Column({ className, ...props }: ComponentProps<"div">) {
-  return (
-    <div
-      className={cn(
-        "flex min-w-0 flex-1 flex-col empty:hidden",
-        "[&>[data-slot=composer-banner-attachment]]:w-full [&>[data-slot=composer-banner-attachment]:last-child]:mb-0",
-        className,
-      )}
-      {...props}
-    />
-  );
+  return <div className={cn("flex min-w-0 flex-1 flex-col empty:hidden", className)} {...props} />;
 }
 
 function Root({
@@ -110,12 +98,13 @@ function Root({
   width?: "fill" | "content";
   surface?: "tint" | "popover" | "panel" | "card";
 }) {
+  // The icon starts on the composer's text line and actions end on the send pill's edge.
   return (
     <Surface
       className={cn(
-        "min-w-0 px-1 py-(--composer-banner-padding-block) after:block after:h-(--chat-composer-attachment-overlap) text-xs/4 [--composer-banner-icon-column:--spacing(7)] [--composer-banner-padding-block:--spacing(1)] sm:[--composer-banner-icon-column:--spacing(6)]",
-        density === "comfortable" && "[--composer-banner-padding-block:--spacing(1.25)]",
-        density === "spacious" && "px-3 [--composer-banner-padding-block:--spacing(3)]",
+        "min-w-0 ps-3.5 pe-2 py-(--composer-banner-padding-block) text-xs/4 font-medium [--composer-banner-icon-column:--spacing(3)] [--composer-banner-padding-block:--spacing(2.5)]",
+        density === "comfortable" && "[--composer-banner-padding-block:--spacing(2.5)]",
+        density === "spacious" && "[--composer-banner-padding-block:--spacing(3)]",
         width === "content" ? "w-fit max-w-full flex-none" : "@container",
         // A corner button nests inside the banner's radius only when the padding
         // is tight; spacious padding already leaves the default radius concentric.
@@ -145,7 +134,7 @@ function Row({
 }) {
   const rowProps = {
     className: cn(
-      "group/banner-row grid min-h-(--composer-banner-icon-column) w-full min-w-0 grid-cols-[var(--composer-banner-icon-column)_minmax(0,1fr)_auto] items-center gap-x-1 text-start",
+      "group/banner-row grid min-h-4 w-full min-w-0 grid-cols-[var(--composer-banner-icon-column)_minmax(0,1fr)_auto] items-center gap-x-2 text-start",
       "not-has-[>[data-slot=composer-banner-actions]]:grid-cols-[var(--composer-banner-icon-column)_minmax(0,1fr)]",
       "[&:is(button)]:cursor-pointer [&:is(button)]:rounded-xl [&:is(button)]:hover:bg-foreground/5 [&:is(button)]:focus-visible:outline-2 [&:is(button)]:focus-visible:-outline-offset-2 [&:is(button)]:focus-visible:outline-ring",
       layout === "wrap-actions" &&
@@ -183,10 +172,9 @@ function Content({ className, ...props }: ComponentProps<"span">) {
     <span
       data-slot="composer-banner-content"
       className={cn(
-        "col-start-2 row-start-1 flex min-w-0 items-center gap-1 *:data-[slot=composer-banner-separator]:mx-0",
+        "col-start-2 row-start-1 flex min-w-0 items-center gap-2 *:data-[slot=composer-banner-separator]:mx-0",
         "@max-[560px]:group-data-[composer-banner-layout=approval]/banner-row:col-end-4",
-        "group-not-has-[>[data-slot=composer-banner-icon]]/banner-row:col-[1/3] group-not-has-[>[data-slot=composer-banner-icon]]/banner-row:ps-2 sm:group-not-has-[>[data-slot=composer-banner-icon]]/banner-row:ps-1.5",
-        "group-not-has-[>[data-slot=composer-banner-icon],>[data-slot=composer-banner-actions]]/banner-row:pe-2 sm:group-not-has-[>[data-slot=composer-banner-icon],>[data-slot=composer-banner-actions]]/banner-row:pe-1.5",
+        "group-not-has-[>[data-slot=composer-banner-icon]]/banner-row:col-[1/3]",
         className,
       )}
       {...props}
@@ -211,8 +199,8 @@ function Actions({ className, ...props }: ComponentProps<"span">) {
     <span
       data-slot="composer-banner-actions"
       className={cn(
-        "col-start-3 row-start-1 flex flex-wrap items-center justify-end gap-1",
-        "group-data-[composer-banner-layout=approval]/banner-row:self-center group-data-[composer-banner-layout=approval]/banner-row:gap-1.5 @max-[560px]:group-data-[composer-banner-layout=approval]/banner-row:col-start-2 @max-[560px]:group-data-[composer-banner-layout=approval]/banner-row:col-end-4 @max-[560px]:group-data-[composer-banner-layout=approval]/banner-row:row-start-2",
+        "col-start-3 row-start-1 flex flex-wrap items-center justify-end gap-1.5",
+        "group-data-[composer-banner-layout=approval]/banner-row:self-center @max-[560px]:group-data-[composer-banner-layout=approval]/banner-row:col-start-2 @max-[560px]:group-data-[composer-banner-layout=approval]/banner-row:col-end-4 @max-[560px]:group-data-[composer-banner-layout=approval]/banner-row:row-start-2",
         "group-data-[composer-banner-layout=wrap-actions]/banner-row:ms-auto",
         className,
       )}
@@ -226,7 +214,7 @@ function Children({ className, render, ...props }: useRender.ComponentProps<"div
     defaultTagName: "div",
     render,
     props: mergeProps<"div">(
-      { className: cn("grid gap-px [&_[data-composer-banner-row]]:min-h-5", className) },
+      { className: cn("grid gap-px pt-1.5 [&_[data-composer-banner-row]]:min-h-5.5", className) },
       props,
     ),
   });
@@ -250,7 +238,7 @@ function Count({ className, ...props }: ComponentProps<"span">) {
   return (
     <span
       className={cn(
-        "inline-flex min-w-(--composer-banner-icon-column,1em) flex-none justify-center font-medium text-muted-foreground tabular-nums",
+        "inline-flex flex-none justify-center font-medium text-muted-foreground tabular-nums",
         className,
       )}
       {...props}
@@ -259,7 +247,7 @@ function Count({ className, ...props }: ComponentProps<"span">) {
 }
 
 function Body({ className, ...props }: ComponentProps<"div">) {
-  return <div className={cn("min-w-0 ps-8 sm:ps-7", className)} {...props} />;
+  return <div className={cn("min-w-0 ps-5", className)} {...props} />;
 }
 
 function Dot({ className, ...props }: ComponentProps<"span">) {
@@ -268,23 +256,19 @@ function Dot({ className, ...props }: ComponentProps<"span">) {
   );
 }
 
+// Decorative: the row itself is the control. Chevron up opens the line upward.
 function ToggleIcon({ expanded }: { expanded: boolean }) {
   return (
-    <Button
-      render={<span aria-hidden />}
-      size="icon-xs"
-      variant="ghost"
-      tabIndex={-1}
-      className="pointer-events-none"
-    >
-      <ChevronDownIcon className={cn("size-3 text-dim-foreground", !expanded && "rotate-180")} />
-    </Button>
+    <ChevronDownIcon
+      aria-hidden
+      className={cn("size-3 shrink-0 text-muted-foreground", !expanded && "rotate-180")}
+    />
   );
 }
 
 function Dismiss({ className, children, ...props }: ComponentProps<typeof Button>) {
   return (
-    <Button size="icon-xs" variant="ghost" className={className} {...props}>
+    <Button size="icon-xs" variant="ghost-muted" className={className} {...props}>
       {children ?? <XIcon className="size-3.5" />}
     </Button>
   );

@@ -19,30 +19,62 @@ function elementInlineMarginWidth(element: HTMLElement): number {
   );
 }
 
+function horizontalBoxWidth(style: CSSStyleDeclaration): number {
+  return (
+    (Number.parseFloat(style.paddingInlineStart) || 0) +
+    (Number.parseFloat(style.paddingInlineEnd) || 0) +
+    (Number.parseFloat(style.borderInlineStartWidth) || 0) +
+    (Number.parseFloat(style.borderInlineEndWidth) || 0)
+  );
+}
+
+function providerModelPickerLabel(picker: HTMLElement): HTMLElement | null {
+  return picker.querySelector<HTMLElement>('[data-chat-provider-model-picker-label="true"]');
+}
+
+/** Measure padding, border and icon independently of label visibility to keep fitting stable. */
+function providerModelPickerIconOnlyWidth(picker: HTMLElement, scale: number): number | undefined {
+  const label = providerModelPickerLabel(picker);
+  const wrapper = label?.parentElement?.firstElementChild;
+  const icon =
+    wrapper instanceof HTMLElement && getComputedStyle(wrapper).display === "contents"
+      ? wrapper.firstElementChild
+      : wrapper;
+  if (!label || !(icon instanceof HTMLElement) || icon === label) return undefined;
+  return (
+    horizontalBoxWidth(getComputedStyle(picker)) +
+    elementOuterWidth(icon, scale) +
+    elementInlineMarginWidth(picker)
+  );
+}
+
 function providerModelPickerNaturalWidth(picker: HTMLElement, scale: number): number {
   const renderedWidth = picker.getBoundingClientRect().width / scale;
   if (renderedWidth === 0) return 0;
   const style = getComputedStyle(picker);
-  const label = picker.querySelector<HTMLElement>('[data-chat-provider-model-picker-label="true"]');
-  const labelIsCollapsed = label?.clientWidth === 0 && getComputedStyle(label).flexGrow === "0";
+  const label = providerModelPickerLabel(picker);
   // A label with its own max width, such as a long model name, never grows past it.
   const labelMaxWidth = label ? Number.parseFloat(getComputedStyle(label).maxWidth) : Number.NaN;
-  const hiddenLabelWidth =
-    label && !labelIsCollapsed
-      ? Math.max(
-          0,
-          Math.min(
-            label.scrollWidth,
-            Number.isFinite(labelMaxWidth) ? labelMaxWidth : Number.POSITIVE_INFINITY,
-          ) - label.clientWidth,
-        )
-      : 0;
+  const labelWidth = label
+    ? Math.min(
+        label.scrollWidth,
+        Number.isFinite(labelMaxWidth) ? labelMaxWidth : Number.POSITIVE_INFINITY,
+      )
+    : 0;
+  let naturalWidth = renderedWidth;
+  if (label && getComputedStyle(label).position === "absolute") {
+    // Recover the capped label width while the provider icon is the visible trigger.
+    const content = label.parentElement!;
+    naturalWidth += (Number.parseFloat(getComputedStyle(content).columnGap) || 0) + labelWidth;
+  } else if (label) {
+    // A flexible label squeezed below its text still needs its width recovered.
+    naturalWidth += Math.max(0, labelWidth - label.clientWidth);
+  }
   const maxWidth = Number.parseFloat(style.maxWidth);
-  const naturalWidth = Math.min(
-    renderedWidth + hiddenLabelWidth,
-    Number.isFinite(maxWidth) ? maxWidth : Number.POSITIVE_INFINITY,
+  return (
+    Math.min(naturalWidth, Number.isFinite(maxWidth) ? maxWidth : Number.POSITIVE_INFINITY) +
+    elementInlineMarginWidth(picker)
   );
-  return naturalWidth + elementInlineMarginWidth(picker);
 }
 
 function providerModelPickerMinimumWidth(picker: HTMLElement): number {
@@ -68,12 +100,9 @@ function controlBlockWidths(
     natural += labelWidth - renderedWidth + (inFlow ? 0 : gap);
     iconOnly -= renderedWidth + (inFlow ? gap : 0);
   }
-  for (const icon of block.querySelectorAll<HTMLElement>("[data-composer-control-compact-icon]")) {
-    const width = elementOuterWidth(icon, scale);
-    const gap = Number.parseFloat(getComputedStyle(icon.parentElement!).columnGap) || 0;
-    natural -= compact ? width + gap : 0;
-    iconOnly += compact ? 0 : width + gap;
-  }
+  // Compact icons stay in flow beside their label, so both variants already
+  // include them. Adjusting for them here made each variant measure the other
+  // 16px off, and the layout flipped between labels and icons every frame.
   return { natural, iconOnly: Math.min(natural, iconOnly) };
 }
 
@@ -105,18 +134,32 @@ export function measureRestingComposerControls(
   const separatorAndGapWidth = separatorWidth > 0 ? separatorWidth + gap : 0;
   const blocks = Array.from(controls.querySelectorAll<HTMLElement>("[data-resting-block]"));
   const widths = blocks.map((block) => controlBlockWidths(block, scale));
+  const pickerIconOnlyWidth = picker ? providerModelPickerIconOnlyWidth(picker, scale) : undefined;
+  const fixedControls = Array.from(
+    controls.querySelectorAll<HTMLElement>("[data-resting-fixed-control]"),
+  );
+  const fixedWidths = fixedControls.map((control) => controlBlockWidths(control, scale));
+  const fixedNatural = fixedWidths.reduce((sum, width) => sum + width.natural + gap, 0);
+  const fixedIconOnly = fixedWidths.reduce((sum, width) => sum + width.iconOnly + gap, 0);
   return {
     gap,
     naturalFixedWidth:
       (picker
         ? providerModelPickerNaturalWidth(picker, scale)
-        : elementOuterWidth(leadingControl, scale)) + separatorAndGapWidth,
+        : elementOuterWidth(leadingControl, scale)) +
+      separatorAndGapWidth +
+      fixedNatural,
     minimumFixedWidth:
       (picker
         ? providerModelPickerMinimumWidth(picker)
-        : elementOuterWidth(leadingControl, scale)) + separatorAndGapWidth,
+        : elementOuterWidth(leadingControl, scale)) +
+      separatorAndGapWidth +
+      fixedNatural,
     blockWidths: widths.map((width) => width.natural),
     iconOnlyBlockWidths: widths.map((width) => width.iconOnly),
     overflowWidth: overflow ? elementOuterWidth(overflow, scale) : 0,
+    ...(pickerIconOnlyWidth === undefined
+      ? {}
+      : { iconOnlyFixedWidth: pickerIconOnlyWidth + separatorAndGapWidth + fixedIconOnly }),
   };
 }

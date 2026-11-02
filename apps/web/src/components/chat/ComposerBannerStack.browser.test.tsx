@@ -12,6 +12,7 @@ import {
   NoticeText,
   type ComposerBannerStackItem,
 } from "./ComposerBannerStack";
+import { ComposerSurface } from "./ComposerSurface";
 
 function notice(title: string, group?: ComposerBannerStackItem["group"]): ComposerBannerStackItem {
   return { id: title, variant: "default", icon: <InfoIcon />, title, ...(group ? { group } : {}) };
@@ -19,25 +20,43 @@ function notice(title: string, group?: ComposerBannerStackItem["group"]): Compos
 
 it("puts machine notices first, whatever order the notices arrive in", async () => {
   await using screen = await render(
-    <ComposerBannerStack items={[notice("Branch changed"), notice("Offline", "environment")]} />,
+    <ComposerBannerStack
+      items={[{ ...notice("Branch changed"), variant: "error" }, notice("Offline", "environment")]}
+    />,
   );
 
-  expect(screen.container.textContent).toBe("OfflineBranch changed");
+  await expect.element(screen.getByText("Offline", { exact: true })).toBeVisible();
+  await expect.element(screen.getByText("Branch changed", { exact: true })).not.toBeInTheDocument();
+  await screen.getByRole("button", { name: "1 more notices" }).click();
+  await expect.element(screen.getByText("Branch changed", { exact: true })).toBeVisible();
 });
 
-it("leaves the next attachment its own top edge when there are no notices", async () => {
+it("keeps the tray's top edge without leaving an empty notice region", async () => {
   await using screen = await render(
-    <ComposerBanner.Column>
-      <ComposerBannerStack items={[]} />
-      <ComposerBanner.Attachment>
-        <ComposerBanner.Root data-testid="drawer">Approval</ComposerBanner.Root>
-      </ComposerBanner.Attachment>
-    </ComposerBanner.Column>,
+    <ComposerSurface.Shell data-testid="tray">
+      <ComposerBanner.Dock data-testid="notices">
+        <ComposerBannerStack items={[]} />
+      </ComposerBanner.Dock>
+      <ComposerSurface.Main data-testid="composer" style={{ height: 48 }}>
+        Message
+      </ComposerSurface.Main>
+      <ComposerSurface.ContextStrip>Branch</ComposerSurface.ContextStrip>
+    </ComposerSurface.Shell>,
   );
 
-  const surface = getComputedStyle(screen.getByTestId("drawer").element(), "::before");
-  expect(surface.borderTopWidth).toBe("1px");
+  const tray = screen.getByTestId("tray").element();
+  const surface = getComputedStyle(tray);
+  const rim = getComputedStyle(tray, "::after");
+  expect(rim.borderTopWidth).toBe("1px");
+  expect(rim.borderTopStyle).toBe("solid");
+  expect(rim.borderTopColor).not.toBe("rgba(0, 0, 0, 0)");
+  expect(rim.pointerEvents).toBe("none");
   expect(surface.borderTopLeftRadius).not.toBe("0px");
+  expect(screen.getByTestId("notices").element().getBoundingClientRect().height).toBe(0);
+  expect(screen.getByTestId("composer").element().getBoundingClientRect().top).toBe(
+    tray.getBoundingClientRect().top,
+  );
+  expect(tray.getBoundingClientRect().height).toBe(78);
 });
 
 function noticeRow(width: string, children: ReactNode) {

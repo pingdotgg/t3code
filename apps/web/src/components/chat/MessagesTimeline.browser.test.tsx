@@ -1,6 +1,6 @@
 import { flushSync } from "react-dom";
 import { AudioPreview } from "../files/AudioPreview";
-import { page } from "vite-plus/test/browser";
+import { page, userEvent } from "vite-plus/test/browser";
 import {
   ComposerContextId,
   EnvironmentId,
@@ -8,6 +8,7 @@ import {
   NodeId,
   ProviderDriverKind,
   ProviderInstanceId,
+  ProviderSessionId,
   RunAttemptId,
   RunId,
   RuntimeRequestId,
@@ -15,6 +16,7 @@ import {
   ScheduledTaskId,
   ThreadId,
   type OrchestrationV2Subagent,
+  type OrchestrationV2ProjectedTurnItem,
 } from "@t3tools/contracts";
 import { LegendList, type LegendListRef } from "@legendapp/list/react";
 import {
@@ -22,6 +24,7 @@ import {
   Profiler,
   StrictMode,
   useState,
+  useRef,
   type ComponentProps,
   type ReactElement,
 } from "react";
@@ -35,7 +38,9 @@ import { environmentThreadDetails } from "../../state/threads";
 import { act, fakeTimers, render, stubGlobal } from "../../../test/render";
 import { ChangedFilesCard } from "./ChangedFilesTree";
 import { MessagesTimeline } from "./MessagesTimeline";
-import { makeStreamingTimelineFixture } from "../../test-fixtures";
+import { ComposerApprovalPanel } from "./ComposerApprovalPanel";
+import { usePendingThreadRequests } from "./usePendingThreadRequests";
+import { makeStreamingTimelineFixture, makeThreadProjectionFixture } from "../../test-fixtures";
 import {
   type PendingApproval,
   deriveTimelineEntriesFromVisibleTurnItems,
@@ -52,6 +57,7 @@ import {
   decodeComposerContextFragment,
 } from "@t3tools/shared/composerContextClipboard";
 import { collectComposerContextReferences } from "@t3tools/shared/composerContextReferences";
+import { useRightPanelStore } from "../../rightPanelStore";
 
 const environmentQuery = vi.hoisted(() => ({
   error: "Pull request not found",
@@ -216,7 +222,129 @@ function setup({ scheduledTasks = [] as ReadonlyArray<{ id: string; title: strin
 const TASK_ID = ScheduledTaskId.make("task-1");
 const AUTOMATION_PROMPT = "Triage the inbox\n\nLabel every new issue and close duplicates.";
 
+it("keeps collapsed approval shortcuts and disabled cancel actions inert", async () => {
+  const requestId = RuntimeRequestId.make("guarded-approval");
+  const onRespond = vi.fn(async () => {});
+  const ui = (disabled = false, isResponding = false) => (
+    <ComposerApprovalPanel
+      approval={{
+        requestId,
+        requestKind: "file-change",
+        createdAt: "2026-11-01T12:00:00.000Z",
+        responseCapability: "live",
+        files: [{ path: "src/index.ts", additions: 1 }],
+      }}
+      count={1}
+      disabled={disabled}
+      isResponding={isResponding}
+      onRespond={onRespond}
+    />
+  );
+  await using screen = await renderElement(ui());
+  const header = screen.container.querySelector<HTMLButtonElement>(
+    '[data-chat-composer-request-card="approval"] > button',
+  )!;
+  await click(header);
+  await expect.element(screen.getByText("src/index.ts")).not.toBeInTheDocument();
+  for (const key of ["Enter", "Escape"]) {
+    const event = new KeyboardEvent("keydown", { key, bubbles: true, cancelable: true });
+    document.body.dispatchEvent(event);
+    expect(event.defaultPrevented).toBe(false);
+  }
+  expect(onRespond).not.toHaveBeenCalled();
+  await click(header);
+  await expect.element(screen.getByText("src/index.ts")).toBeVisible();
+  document.body.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+  expect(onRespond).toHaveBeenLastCalledWith(requestId, "accept");
+  onRespond.mockClear();
+  for (const [disabled, isResponding] of [
+    [true, false],
+    [false, true],
+  ]) {
+    await screen.rerender(ui(disabled, isResponding));
+    const cancel = screen.getByRole("button", { name: "Cancel approval", exact: true }).element();
+    cancel.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    for (const key of ["Enter", " "]) {
+      cancel.dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true }));
+    }
+    expect(onRespond).not.toHaveBeenCalled();
+  }
+});
+
 describe("MessagesTimeline work rows", () => {
+  it("loads a streamed approval patch when review opens and hides it again", async () => {
+    setup();
+    const itemId = TurnItemId.make("approval-patch");
+    environmentQuery.data = {
+      item: { type: "file_change", id: itemId, diffStr: "@@ -1 +1 @@\n-old\n+proposed" },
+    };
+    onTestFinished(() => setup());
+    await using screen = await renderTimeline([], {
+      onRespondToApproval: async () => {},
+      pendingApprovals: [
+        {
+          requestId: RuntimeRequestId.make("patch-request"),
+          requestKind: "file-change",
+          createdAt: CREATED_AT,
+          detail: "Update two files",
+          responseCapability: "live",
+          files: ["src/one.ts", "src/two.ts"].map((path) => ({
+            path,
+            source: { threadId: ThreadId.make("thread-1"), itemId, revision: "live" },
+          })),
+        },
+      ],
+    });
+    expect(screen.text()).not.toContain("+proposed");
+    await screen.getByRole("button", { name: "Review diff" }).click();
+    await vi.waitFor(() => {
+      expect(screen.getByLabelText("Proposed diff").element().textContent).toContain("+proposed");
+    });
+    expect(screen.getByLabelText("Proposed diff").element().querySelectorAll("pre")).toHaveLength(
+      1,
+    );
+    await screen.getByRole("button", { name: "Hide diff" }).click();
+    await expect.element(screen.getByLabelText("Proposed diff")).not.toBeInTheDocument();
+  });
+
+  it("keeps live assistant text citable and bounds expanded history mounts", async () => {
+    const runId = RunId.make("history-run");
+    await using screen = await renderTimeline(
+      [
+        message("Build it", { runId }),
+        ...Array.from({ length: 2000 }, (_, index) =>
+          message(`History answer ${index}`, { runId, role: "assistant" }, `history-${index}`),
+        ),
+        message("Live answer", { runId, role: "assistant", streaming: true }, "live-answer"),
+      ],
+      {
+        isWorking: true,
+        activeTurnStartedAt: CREATED_AT,
+        latestRun: { runId, status: "running", startedAt: CREATED_AT, completedAt: null },
+      },
+    );
+    await expect.element(screen.getByText("Live answer", { exact: true })).toBeVisible();
+    expect(
+      screen
+        .getByText("Live answer", { exact: true })
+        .element()
+        .closest('[data-assistant-citation-source="live-answer"]'),
+    ).not.toBeNull();
+    await screen.getByRole("button", { name: "Open work history" }).click();
+    await expect.element(screen.getByRole("region", { name: "Work history" })).toBeVisible();
+    const history = screen.getByRole("region", { name: "Work history" }).element();
+    await expect.element(screen.getByText("History answer 0", { exact: true })).toBeVisible();
+    expect(history.clientHeight).toBeGreaterThan(0);
+    expect(history.scrollHeight).toBeGreaterThan(history.clientHeight);
+    expect(
+      screen.container.querySelectorAll("[data-assistant-citation-source]").length,
+    ).toBeLessThan(60);
+    await act(() => {
+      history.scrollTop = history.scrollHeight;
+    });
+    await expect.element(screen.getByText("Live answer", { exact: true })).toBeVisible();
+  });
+
   it.each(["delegated", "legacy", "missing"] as const)(
     "uses the reported task for %s completion notifications",
     async (source) => {
@@ -478,6 +606,43 @@ describe("MessagesTimeline messages", () => {
     await act(() => vi.advanceTimersByTime(300));
     const turns = turnsInDomOrder();
     expect(turns).toEqual(turns.toSorted((a, b) => a - b));
+  });
+
+  it("omits queue intent beneath sent user messages", async () => {
+    await using screen = await renderTimeline([
+      message("Queued prompt", { inputIntent: "queued_turn" }),
+    ]);
+    expect(screen.text()).toContain("Queued prompt");
+    expect(screen.container.querySelector("[data-user-message-intent]")).toBeNull();
+  });
+
+  it("opens standalone skill details and its instructions", async () => {
+    setup();
+    const threadRef = {
+      environmentId: ENVIRONMENT_ID,
+      threadId: ThreadId.make("thread-skill"),
+    };
+    await using screen = await renderTimeline([message("$review")], {
+      routeThreadKey: "environment-local:thread-skill",
+      skills: [
+        {
+          name: "review",
+          displayName: "Review",
+          description: "Reviews the current branch.",
+          path: "/skills/review/SKILL.md",
+          enabled: true,
+        },
+      ],
+    });
+    using openFile = vi
+      .spyOn(useRightPanelStore.getState(), "openFile")
+      .mockImplementation(() => {});
+
+    await userEvent.click(screen.getByRole("button", { name: "Skill Review. Show details" }));
+    await expect.element(page.getByText("Reviews the current branch.")).toBeVisible();
+    await userEvent.click(page.getByRole("button", { name: "View instructions" }));
+
+    expect(openFile).toHaveBeenCalledExactlyOnceWith(threadRef, "/skills/review/SKILL.md");
   });
 
   it("preserves XML-like tags and comparisons in user messages as text", async () => {
@@ -1331,31 +1496,110 @@ it("keeps concurrent approvals actionable outside collapsed work and restores se
     });
   const props = baseProps();
   const onRespondToApproval = vi.fn(async () => {});
-  const ui = (overrides: Partial<TimelineProps> = {}) => (
-    <MessagesTimeline
-      {...props}
-      timelineEntries={entries()}
-      pendingApprovals={approvals}
-      canOperateThread
-      onRespondToApproval={onRespondToApproval}
-      isWorking
-      runningRunId={fixture.runId}
-      {...overrides}
-    />
-  );
+  const projection = makeThreadProjectionFixture();
+  function ApprovalTimeline({ overrides }: { overrides: Partial<TimelineProps> }) {
+    const timelineProps = {
+      ...props,
+      timelineEntries: entries(),
+      pendingApprovals: approvals,
+      canOperateThread: true,
+      onRespondToApproval,
+      isWorking: true,
+      runningRunId: fixture.runId,
+      ...overrides,
+    };
+    const promptRef = useRef("");
+    const composerRef = useRef(null);
+    const requests = usePendingThreadRequests({
+      environmentId: ENVIRONMENT_ID,
+      activeThreadId: projection.thread.id,
+      serverProjection: {
+        ...projection,
+        runtimeRequests: timelineProps.pendingApprovals.map((approval) => ({
+          id: approval.requestId,
+          nodeId: NodeId.make(approval.requestId),
+          providerTurnId: null,
+          nativeRequestRef: null,
+          kind: approval.requestKind,
+          status: "pending",
+          responseCapability:
+            approval.responseCapability === "live"
+              ? { type: "live", providerSessionId: ProviderSessionId.make("approval-session") }
+              : { type: "not_resumable", reason: "Provider process is gone" },
+          createdAt: DateTime.makeUnsafe(approval.createdAt),
+          resolvedAt: null,
+        })),
+        turnItems: timelineProps.pendingApprovals.map((approval) => ({
+          ...sourceItem,
+          type: "approval_request",
+          id: TurnItemId.make(approval.requestId),
+          requestId: approval.requestId,
+          requestKind: approval.requestKind,
+          prompt: approval.detail ?? "",
+          reason: approval.reason,
+          fullAccessOverride: approval.fullAccessOverride,
+          appName: approval.appName,
+          options: approval.options,
+        })),
+      },
+      supportsQuestionAttachments: false,
+      composerDraftTarget: { environmentId: ENVIRONMENT_ID, threadId: projection.thread.id },
+      setComposerDraftPrompt: () => {},
+      promptRef,
+      composerRef,
+      setThreadError: () => {},
+    });
+    const active = requests.activePendingApproval;
+    return (
+      <>
+        <MessagesTimeline {...timelineProps} pendingApprovals={requests.pendingApprovals} />
+        <a href="#approval-test">Approval test link</a>
+        <span role="link" tabIndex={0}>
+          Approval role link
+        </span>
+        <details>
+          <summary>Approval summary</summary>Details
+        </details>
+        <div contentEditable="plaintext-only" aria-label="Approval editable" />
+        {active && !timelineProps.heldApprovalRequestIds?.has(active.requestId) ? (
+          <ComposerApprovalPanel
+            key={active.requestId}
+            approval={active}
+            count={requests.pendingApprovals.length}
+            disabled={!timelineProps.canOperateThread}
+            isResponding={timelineProps.respondingRequestIds?.includes(active.requestId) ?? false}
+            onRespond={onRespondToApproval}
+          />
+        ) : null}
+      </>
+    );
+  }
+  const ui = (overrides: Partial<TimelineProps> = {}) => <ApprovalTimeline overrides={overrides} />;
   await using screen = await renderElement(ui());
+  for (const target of [
+    screen.getByRole("link", { name: "Approval test link" }),
+    screen.getByRole("link", { name: "Approval role link" }),
+    screen.getByText("Approval summary"),
+    screen.getByLabelText("Approval editable"),
+  ]) {
+    const key = new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true });
+    target.element().dispatchEvent(key);
+    expect(key.defaultPrevented).toBe(false);
+  }
+  expect(onRespondToApproval).not.toHaveBeenCalled();
   await expect.element(screen.getByRole("group", { name: "Command approval" })).toBeVisible();
   await expect
     .element(screen.getByRole("group", { name: "App permission approval" }))
     .toBeVisible();
-  await expect.element(screen.getByText(approvals[0]!.detail!, { exact: true })).toBeVisible();
-  await expect.element(screen.getByText("Needs permission to run the command")).toBeVisible();
+  const commandRow = screen.getByRole("group", { name: "Command approval" });
+  await expect.element(commandRow.getByText(approvals[0]!.detail!, { exact: true })).toBeVisible();
+  await expect.element(commandRow.getByText("Needs permission to run the command")).toBeVisible();
   await vi.waitFor(() => {
     expect(
       getComputedStyle(screen.getByLabelText("Command", { exact: true }).element()).userSelect,
     ).toBe("text");
     expect(
-      getComputedStyle(screen.getByText("Needs permission to run the command").element())
+      getComputedStyle(commandRow.getByText("Needs permission to run the command").element())
         .userSelect,
     ).toBe("text");
   });
@@ -1363,18 +1607,19 @@ it("keeps concurrent approvals actionable outside collapsed work and restores se
   await click(screen.button("Why am I being asked this?"));
   await expect.element(page.getByText(/an ask rule in the agent's own settings/)).toBeVisible();
   await click(screen.button("Why am I being asked this?"));
-  await click(screen.buttons("More approval options")[1]!);
-  await expect.element(page.getByRole("menuitem", { name: "Always allow Safari" })).toBeVisible();
-  await page.getByRole("menuitem", { name: "Always allow Safari" }).click();
-  expect(onRespondToApproval).toHaveBeenLastCalledWith(appRequest, "acceptAlways");
-  await click(screen.buttons("More approval options")[0]!);
+  await expect.element(screen.getByText("1/2", { exact: true })).toBeVisible();
+  await click(screen.button("More approval options"));
   await expect.element(page.getByRole("menuitem", { name: "Cancel", exact: true })).toBeVisible();
-  await page.getByRole("menuitem", { name: "Always allow this session" }).click();
+  await userEvent.keyboard("{Escape}");
+  const sessionToggle = screen.getByRole("button", { name: "Always allow this session" });
+  await sessionToggle.click();
+  await expect.element(sessionToggle).toHaveAttribute("aria-pressed", "true");
+  await screen.getByRole("button", { name: "Approve", exact: true }).click();
   expect(onRespondToApproval).toHaveBeenLastCalledWith(commandRequest, "acceptForSession");
-  await click(screen.button("Decline"));
+  await sessionToggle.click();
+  await expect.element(sessionToggle).toHaveAttribute("aria-pressed", "false");
+  await screen.getByRole("button", { name: "Decline", exact: true }).click();
   expect(onRespondToApproval).toHaveBeenLastCalledWith(commandRequest, "decline");
-  await click(screen.button("Allow once"));
-  expect(onRespondToApproval).toHaveBeenLastCalledWith(appRequest, "accept");
   for (const timelineEntries of [entries(), []]) {
     await screen.rerender(
       ui({ timelineEntries, heldApprovalRequestIds: new Set([commandRequest]) }),
@@ -1382,19 +1627,32 @@ it("keeps concurrent approvals actionable outside collapsed work and restores se
     await expect
       .element(screen.getByRole("group", { name: "Command approval" }))
       .not.toBeInTheDocument();
-    await vi.waitFor(() => expect(screen.buttons("Approve")).toHaveLength(0));
     await expect
-      .element(screen.getByRole("button", { name: "Allow once", exact: true }))
+      .element(screen.getByRole("button", { name: "Approve", exact: true }))
+      .not.toBeInTheDocument();
+    await expect
+      .element(screen.getByRole("group", { name: "App permission approval" }))
       .toBeVisible();
     await screen.rerender(ui({ timelineEntries }));
     await expect.element(screen.getByRole("group", { name: "Command approval" })).toBeVisible();
-    await vi.waitFor(() => expect(screen.buttons("Approve")).toHaveLength(1));
+    await expect
+      .element(screen.getByRole("button", { name: "Approve", exact: true }))
+      .toBeVisible();
   }
   await screen.rerender(ui({ timelineEntries: [], isWorking: false }));
   await expect.element(screen.getByRole("group", { name: "Command approval" })).toBeVisible();
-  await click(screen.button("Approve"));
+  await screen.getByRole("button", { name: "Approve", exact: true }).click();
   expect(onRespondToApproval).toHaveBeenLastCalledWith(commandRequest, "accept");
-  await click(screen.button("Deny"));
+  // The resolved request leaves the projection, so the real tray queue advances.
+  await screen.rerender(ui({ pendingApprovals: [approvals[1]!] }));
+  await expect.element(screen.getByRole("button", { name: "Allow once" })).toBeVisible();
+  await click(screen.button("More approval options"));
+  await expect.element(page.getByRole("menuitem", { name: "Always allow Safari" })).toBeVisible();
+  await page.getByRole("menuitem", { name: "Always allow Safari" }).click();
+  expect(onRespondToApproval).toHaveBeenLastCalledWith(appRequest, "acceptAlways");
+  await screen.getByRole("button", { name: "Allow once", exact: true }).click();
+  expect(onRespondToApproval).toHaveBeenLastCalledWith(appRequest, "accept");
+  await screen.getByRole("button", { name: "Decline", exact: true }).click();
   expect(onRespondToApproval).toHaveBeenLastCalledWith(appRequest, "decline");
   await screen.rerender(
     ui({
@@ -1415,6 +1673,9 @@ it("keeps concurrent approvals actionable outside collapsed work and restores se
   );
   await screen.rerender(ui({ respondingRequestIds: [commandRequest] }));
   await expect.element(screen.getByRole("button", { name: "Approve", exact: true })).toBeDisabled();
+  await screen.rerender(
+    ui({ pendingApprovals: [approvals[1]!], respondingRequestIds: [commandRequest] }),
+  );
   await expect
     .element(screen.getByRole("button", { name: "Allow once", exact: true }))
     .toBeEnabled();
@@ -1424,7 +1685,7 @@ it("keeps concurrent approvals actionable outside collapsed work and restores se
   await expect
     .element(screen.getByText("Provider process is gone. Interrupt or restart the run to respond."))
     .toBeVisible();
-  await vi.waitFor(() => expect(screen.buttons("Approve")).toHaveLength(0));
+  await expect.element(screen.getByRole("button", { name: "Approve", exact: true })).toBeDisabled();
   await screen.rerender(
     ui({ pendingApprovals: [], timelineEntries: entries(true), isWorking: false }),
   );
@@ -1439,4 +1700,168 @@ it("keeps concurrent approvals actionable outside collapsed work and restores se
   await expect
     .element(screen.getByRole("button", { name: "Open the current tab", exact: true }))
     .toBeVisible();
+});
+
+describe("MessagesTimeline work rows", () => {
+  it("keeps working through an async question and pauses only when it blocks", async () => {
+    const runId = RunId.make("async-question-run");
+    const pendingRequest = {
+      kind: "question" as const,
+      label: "Which approach should I use?",
+      createdAt: CREATED_AT,
+      blocking: false,
+    };
+    const props = {
+      ...baseProps(),
+      timelineEntries: [message("Continue working", { runId })],
+      isWorking: true,
+      activeTurnInProgress: true,
+      activeTurnStartedAt: CREATED_AT,
+      latestRun: { runId, status: "running" as const, startedAt: CREATED_AT, completedAt: null },
+      pendingRequest,
+    };
+    await using screen = await renderElement(<MessagesTimeline {...props} />);
+    expect(screen.text()).toContain("Working for");
+    expect(screen.text()).not.toContain("Paused at");
+
+    await screen.rerender(
+      <MessagesTimeline {...props} pendingRequest={{ ...pendingRequest, blocking: true }} />,
+    );
+    expect(screen.text()).toContain("Paused at");
+    expect(screen.text()).toContain(pendingRequest.label);
+
+    await screen.rerender(<MessagesTimeline {...props} />);
+    expect(screen.text()).toContain("Working for");
+    expect(screen.text()).not.toContain("Paused at");
+  });
+
+  it("stops showing Thinking in the working window when the provider turn ends", async () => {
+    const runId = RunId.make("ended-provider-run");
+    const props = {
+      ...baseProps(),
+      timelineEntries: [message("Continue the queue", { runId })],
+      isWorking: true,
+      activeTurnInProgress: true,
+      activeTurnStartedAt: CREATED_AT,
+      latestRun: { runId, status: "running" as const, startedAt: CREATED_AT, completedAt: null },
+    };
+    await using screen = await renderElement(<MessagesTimeline {...props} />);
+    expect(screen.text()).toContain("Thinking");
+
+    await screen.rerender(
+      <MessagesTimeline {...props} latestRun={{ ...props.latestRun, turnEnded: true }} />,
+    );
+    expect(screen.text()).not.toContain("Thinking");
+    expect(screen.text()).toContain("Working for");
+  });
+
+  it("updates reset labels across midnight and expires snooze at the deadline", async () => {
+    const now = new Date(2026, 9, 18, 23, 59, 30);
+    const resetAt = new Date(2026, 9, 19, 0, 0, 15).toISOString();
+    const runId = RunId.make("limited-run");
+    using _timers = fakeTimers({ now });
+    await using screen = await renderTimeline(
+      [
+        message("Build it", { runId }),
+        work("usage-limit", {
+          runId,
+          label: "Usage limit reached.",
+          tone: "error",
+          itemType: "error",
+          toolLifecycleStatus: "failed",
+          projectedItem: v2Item("error", {
+            runId,
+            status: "failed",
+            failure: { class: "usage_limit", message: "Limit reached", resetAt },
+          }),
+        }),
+      ],
+      {
+        latestRun: { runId, status: "failed", startedAt: CREATED_AT, completedAt: CREATED_AT },
+        usageLimit: { runId, resetAt, snoozed: false, onToggleSnooze: vi.fn() },
+      },
+    );
+    expect(screen.text()).toContain("resumes tomorrow at ");
+    await act(async () => vi.advanceTimersByTimeAsync(30_000));
+    expect(screen.text()).toContain("resumes ");
+    expect(screen.text()).not.toContain("tomorrow at ");
+    await act(async () => vi.advanceTimersByTimeAsync(14_999));
+    expect(screen.buttons("Snooze")).toHaveLength(1);
+    await act(async () => vi.advanceTimersByTimeAsync(1));
+    expect(screen.text()).not.toContain("resumes ");
+    expect(screen.buttons("Snooze")).toHaveLength(0);
+  });
+
+  it("expands every background group for a cited run and allows collapsing them again", async () => {
+    const fixture = makeStreamingTimelineFixture("Cited response after the second update.");
+    const entries = deriveTimelineEntriesFromVisibleTurnItems({
+      visibleTurnItems: fixture.visibleTurnItems
+        .filter(
+          (row) =>
+            row.item.type === "user_message" ||
+            (row.item.type === "assistant_message" && row.item.runId === fixture.runId),
+        )
+        .map((row): OrchestrationV2ProjectedTurnItem => ({
+          ...row,
+          item:
+            row.item.type === "user_message"
+              ? {
+                  ...row.item,
+                  runId: fixture.runId,
+                  type: "notification",
+                  source: { kind: "background_task" },
+                  outcome: "updated",
+                  summary: "Background task updated",
+                }
+              : row.item.type === "assistant_message"
+                ? { ...row.item, status: "completed", streaming: false }
+                : row.item,
+        })),
+      optimisticMessages: [],
+    });
+    const feedback = message("Feedback sent between updates.") as Extract<
+      Entry,
+      { kind: "message" }
+    >;
+    const timelineEntries = [entries[0]!, feedback, ...entries.slice(1)];
+    const props = { ...baseProps(), timelineEntries };
+    const citationRequest = {
+      key: "second-background-group",
+      citation: {
+        version: 1 as const,
+        environmentId: ENVIRONMENT_ID,
+        threadId: fixture.threadId,
+        messageId: MessageId.make("live-assistant"),
+        text: "Cited response",
+        start: 0,
+        end: 14,
+        prefix: "",
+        suffix: "",
+      },
+    };
+    await using screen = await renderElement(<MessagesTimeline {...props} />);
+    const groups = () => screen.buttons("1 wake-up: Background task updated");
+    await vi.waitFor(() =>
+      expect(groups().map((node) => node.getAttribute("aria-expanded"))).toEqual([
+        "false",
+        "false",
+      ]),
+    );
+    expect(screen.text()).toContain(feedback.message.text);
+    expect(screen.text()).toContain("Cited response");
+
+    await screen.rerender(<MessagesTimeline {...props} citationRequest={citationRequest} />);
+    await vi.waitFor(() =>
+      expect(groups().map((node) => node.getAttribute("aria-expanded"))).toEqual(["true", "true"]),
+    );
+    expect(screen.text()).toContain("Cited response");
+
+    await screen.rerender(<MessagesTimeline {...props} />);
+    await click(groups()[1]!);
+    await vi.waitFor(() =>
+      expect(groups().map((node) => node.getAttribute("aria-expanded"))).toEqual(["true", "false"]),
+    );
+    expect(screen.text()).toContain("Cited response");
+    expect(screen.text()).toContain(feedback.message.text);
+  });
 });

@@ -5,12 +5,16 @@ import {
   ThreadId,
   type ScopedThreadRef,
   NodeId,
+  ProviderDriverKind,
   ProviderSessionId,
   RuntimeRequestId,
   TurnItemId,
+  type OrchestrationV2TurnItem,
   type OrchestrationV2ThreadProjection,
 } from "@t3tools/contracts";
 import { describe, expect, it, vi } from "vite-plus/test";
+import * as DateTime from "effect/DateTime";
+import { projectTurnItemForWire } from "@t3tools/shared/wireProjection";
 import { Atom, AtomRegistry, AsyncResult } from "effect/reactivity";
 import * as Cause from "effect/Cause";
 import { v2Now, v2Projection, v2ThreadShell } from "./orchestrationV2TestFixtures.ts";
@@ -414,4 +418,107 @@ it("loads only child approvals and retains their destination across environments
   expect(readDetails).not.toHaveBeenCalled();
   unmount();
   registry.dispose();
+});
+
+describe("pending v2 approvals", () => {
+  it.each([false, true])("lists approval files and their detail source (wire: %s)", (wire) => {
+    const approvalId = RuntimeRequestId.make("file-approval");
+    const approvalNode = NodeId.make("file-approval-node");
+    const nativeItemRef = {
+      driver: ProviderDriverKind.make("codex"),
+      nativeId: "item-7",
+      strength: "strong" as const,
+    };
+    const base = {
+      threadId: v2Projection.thread.id,
+      runId: null,
+      nodeId,
+      providerThreadId: null,
+      providerTurnId: null,
+      parentItemId: null,
+      ordinal: 0,
+      status: "completed" as const,
+      title: null,
+      startedAt: v2Now,
+      completedAt: v2Now,
+      updatedAt: v2Now,
+    };
+    const approvals = derivePendingThreadRequests({
+      runtimeRequests: [
+        {
+          ...projection.runtimeRequests[0]!,
+          id: approvalId,
+          nodeId: approvalNode,
+          kind: "file-change",
+          responseCapability: {
+            type: "live",
+            providerSessionId: ProviderSessionId.make("live-session"),
+          },
+        },
+      ],
+      turnItems: [
+        (wire ? projectTurnItemForWire : (item: OrchestrationV2TurnItem) => item)({
+          ...base,
+          id: TurnItemId.make("file-change-item"),
+          nativeItemRef,
+          type: "file_change",
+          fileName: "src/app.ts",
+          additions: 4,
+          deletions: 1,
+          diffStr: "@@ -1 +1 @@\n-a\n+b",
+        }),
+        {
+          ...base,
+          id: TurnItemId.make("multi-file-item"),
+          nativeItemRef,
+          type: "file_change",
+          fileName: "src/one.ts",
+          changes: [
+            { path: "src/one.ts", operation: "update" },
+            { path: "src/two.ts", operation: "add" },
+          ],
+        },
+        {
+          ...base,
+          id: TurnItemId.make("other-file-change-item"),
+          nativeItemRef: { ...nativeItemRef, nativeId: "item-8" },
+          type: "file_change",
+          fileName: "src/other.ts",
+        },
+        {
+          ...base,
+          id: TurnItemId.make("file-approval-item"),
+          nodeId: approvalNode,
+          nativeItemRef,
+          type: "approval_request",
+          requestId: approvalId,
+          requestKind: "file-change",
+          prompt: "update src/app.ts",
+        },
+      ],
+    }).approvals;
+    expect(approvals).toHaveLength(1);
+    expect(approvals[0]?.files).toEqual([
+      {
+        path: "src/app.ts",
+        source: {
+          threadId: v2Projection.thread.id,
+          itemId: TurnItemId.make("file-change-item"),
+          revision: DateTime.formatIso(v2Now),
+        },
+        additions: 4,
+        deletions: 1,
+        ...(wire ? {} : { diff: "@@ -1 +1 @@\n-a\n+b" }),
+      },
+      ...["src/one.ts", "src/two.ts"].map((path, index) => ({
+        path,
+        operation: index === 0 ? "update" : "add",
+        source: {
+          threadId: v2Projection.thread.id,
+          itemId: TurnItemId.make("multi-file-item"),
+          revision: DateTime.formatIso(v2Now),
+        },
+      })),
+    ]);
+  });
 });

@@ -28,7 +28,7 @@ import {
   projectTurnItemForWire,
   projectTurnItemForDetail,
   projectDomainEventForWire,
-} from "./WireProjection.ts";
+} from "@t3tools/shared/wireProjection";
 import { threadShellFromProjection } from "./ProjectionStore.ts";
 import { MAX_TOOL_OUTPUT_IMAGES, toolOutputImages } from "@t3tools/shared/toolOutput";
 
@@ -280,6 +280,68 @@ describe("orchestration V2 wire projection", () => {
     });
     expect(projected).not.toHaveProperty("outputIndicatesFailure");
     expect(projected).toMatchObject({ exitCode: 0, outputOmitted: true });
+  });
+
+  it("keeps the failed test count from a test runner summary", () => {
+    const item = {
+      ...base,
+      type: "command_execution" as const,
+      input: "pnpm vitest run ChatComposer",
+      output: `${"x".repeat(40_000)}\n      Tests  2 failed | 12 passed (14)`,
+      exitCode: 1,
+    };
+    const projected = projectTurnItemForWire(item);
+    expect(projected).not.toHaveProperty("output");
+    expect(projected).toMatchObject({ outputIndicatesFailure: true, failedTestCount: 2 });
+    expect(
+      projectTurnItemForWire({ ...item, input: "bun typecheck", output: "Tests  2 failed" }),
+    ).not.toHaveProperty("failedTestCount");
+  });
+
+  it("derives change counts from the diffs providers report", () => {
+    const fileChange = { ...base, type: "file_change" as const, fileName: "src/main.ts" };
+    expect(
+      projectTurnItemForWire({
+        ...fileChange,
+        diffStr: "@@ -1,3 +1,3 @@\n a\n-b\n+c\n+d\n@@ -9 +10 @@\n-e",
+      }),
+    ).toMatchObject({ additions: 2, deletions: 2 });
+    const claudeEdit = JSON.stringify({
+      filePath: "src/main.ts",
+      oldString: '-"not counted"',
+      originalFile: '+ "[\\"-x\\"]"',
+      structuredPatch: [{ oldStart: 1, lines: [" keep", "-old", "+new", '+"quoted"'] }],
+    });
+    const projected = projectTurnItemForWire({ ...fileChange, diffStr: claudeEdit });
+    expect(projected).toMatchObject({ additions: 2, deletions: 1 });
+    expect(projected).not.toHaveProperty("diffStr");
+    expect(
+      projectTurnItemForWire({
+        ...fileChange,
+        diffStr: JSON.stringify({ type: "create", content: "a\nb\nc\n", structuredPatch: [] }),
+      }),
+    ).toMatchObject({ additions: 3, deletions: 0 });
+    expect(
+      projectTurnItemForWire({ ...fileChange, oldStr: "a\nb\nc", newStr: "a\nx\ny\nc" }),
+    ).toMatchObject({ additions: 2, deletions: 1 });
+    expect(projectTurnItemForWire({ ...fileChange, diffStr: "not a diff" })).not.toHaveProperty(
+      "additions",
+    );
+    for (const operation of ["add", "delete"] as const) {
+      for (const content of ["hi\n", "\nhi\n\n", '{"hello": true}\n', ""]) {
+        const lines = content === "" ? 0 : content.split("\n").length - 1;
+        expect(
+          projectTurnItemForWire({
+            ...fileChange,
+            diffStr: content,
+            changes: [{ operation, path: fileChange.fileName }],
+          }),
+        ).toMatchObject({
+          additions: operation === "add" ? lines : 0,
+          deletions: operation === "delete" ? lines : 0,
+        });
+      }
+    }
   });
 
   it("omits inline file bodies but preserves file identity and change counts", () => {

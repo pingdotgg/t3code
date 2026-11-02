@@ -106,13 +106,13 @@ import {
 import { collectInlineContextIds } from "~/lib/composerContextReferences";
 import { resolveDiffThemeName } from "~/lib/diffRendering";
 import { cn, isMacPlatform } from "~/lib/utils";
+import { AtSignIcon } from "lucide-react";
 import { basenameOfPath } from "~/pierre-icons";
 import { WorkspaceEntryTooltip } from "./chat/WorkspaceEntryIcon";
-import { FileTagChipContent } from "./chat/FileTagChip";
 import { SkillChipPopover, skillPopoverDescription } from "./chat/SkillInlineText";
 import { AssistantCitationChip } from "./chat/AssistantCitationChip";
 import { getTimelinePageScrollKey } from "./chat/pageScrollController";
-import { ContextChip } from "./ContextChip";
+import { ContextChip, ContextChipLabel } from "./ContextChip";
 import {
   ComposerContextActionsContext,
   ComposerContextReferenceChip,
@@ -158,6 +158,7 @@ export interface ComposerPromptEditorProps {
   skills: ReadonlyArray<ServerProviderSkill>;
   disabled: boolean;
   placeholder: string;
+  narrowPlaceholder?: string | undefined;
   ariaLabel?: string | undefined;
   suggestionListId?: string | undefined;
   activeSuggestionId?: string | undefined;
@@ -228,10 +229,6 @@ const SURROUND_CLOSE: Record<string, string> = {
   _: "_",
 };
 
-function resolvedThemeFromDocument(): "light" | "dark" {
-  return document.documentElement.classList.contains("dark") ? "dark" : "light";
-}
-
 const CHIP_NODE_SELECTION_CLASS_NAME =
   "relative inline-flex min-w-0 max-w-full select-none items-baseline data-[composer-chip-selected]:after:pointer-events-none data-[composer-chip-selected]:after:absolute data-[composer-chip-selected]:after:inset-0 data-[composer-chip-selected]:after:rounded-sm data-[composer-chip-selected]:after:bg-[Highlight] data-[composer-chip-selected]:after:opacity-30 data-[composer-chip-selected]:after:content-['']";
 
@@ -272,13 +269,8 @@ function ComposerMentionNodeView({ node }: NodeViewProps) {
       spellCheck={false}
       data-composer-mention-chip="true"
     >
-      <FileTagChipContent
-        path={path}
-        environmentId={actions.environmentId}
-        cwd={actions.cwd}
-        label={basenameOfPath(path)}
-        theme={resolvedThemeFromDocument()}
-      />
+      <AtSignIcon aria-hidden="true" />
+      <ContextChipLabel>{basenameOfPath(path)}</ContextChipLabel>
     </ContextChip>
   );
   return (
@@ -939,6 +931,7 @@ function ComposerPromptEditorTiptapInner(
     skills,
     disabled,
     placeholder,
+    narrowPlaceholder,
     ariaLabel,
     suggestionListId,
     activeSuggestionId,
@@ -1079,7 +1072,7 @@ function ComposerPromptEditorTiptapInner(
 
   const editorAttributes = {
     class: cn(
-      "composer-tiptap -m-1 block max-h-52 min-h-[calc(2lh+--spacing(2))] overflow-y-auto p-1 whitespace-pre-wrap wrap-break-word bg-transparent leading-relaxed text-foreground focus:outline-none",
+      "composer-tiptap -m-1 block max-h-42 min-h-5 overflow-y-auto p-1 whitespace-pre-wrap wrap-break-word bg-transparent leading-5 text-foreground focus:outline-none",
       className,
     ),
     "data-testid": "composer-editor",
@@ -1517,78 +1510,89 @@ function ComposerPromptEditorTiptapInner(
 
   // The one place the controlled value reaches the editor. Imperative handlers compare against
   // the committed value, so it is recorded here even before the editor exists.
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- writes the controlled value and cursor into the Tiptap document before paint
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- reconciles the controlled Tiptap document before paint, outside React's commit
   useLayoutEffect(() => {
     latestValueRef.current = value;
     if (!editor) return;
-    const initialSelection = !hasAppliedControlledSelectionRef.current;
-    hasAppliedControlledSelectionRef.current = true;
-    const normalizedCursor = clampEditorCursor(value, cursor);
-    const previousSnapshot = snapshotRef.current;
-    if (
-      !initialSelection &&
-      previousSnapshot.value === value &&
-      previousSnapshot.cursor === normalizedCursor
-    ) {
-      return;
-    }
-    const normalizedExpandedCursor = initialSelection
-      ? initialExpandedCursor
-      : expandEditorCursor(value, normalizedCursor);
-    snapshotRef.current = {
-      value,
-      cursor: normalizedCursor,
-      expandedCursor: normalizedExpandedCursor,
-      contextIds: collectInlineContextIds(value),
-    };
-    selectionRangeRef.current = {
-      start: normalizedExpandedCursor,
-      end: normalizedExpandedCursor,
-    };
-    setIsEmpty(value.length === 0);
-    const rootElement = editor.view.dom;
-    const isFocused = Boolean(rootElement && document.activeElement === rootElement);
-    if (!initialSelection && previousSnapshot.value === value && !isFocused) return;
+    // Tiptap mounts React node views with flushSync; leave React's commit before updating them.
+    let active = true;
+    const applyControlledUpdate = () => {
+      if (!active || editor.isDestroyed) return;
+      const initialSelection = !hasAppliedControlledSelectionRef.current;
+      hasAppliedControlledSelectionRef.current = true;
+      const normalizedCursor = clampEditorCursor(value, cursor);
+      const previousSnapshot = snapshotRef.current;
+      if (
+        !initialSelection &&
+        previousSnapshot.value === value &&
+        previousSnapshot.cursor === normalizedCursor
+      ) {
+        return;
+      }
+      const normalizedExpandedCursor = initialSelection
+        ? initialExpandedCursor
+        : expandEditorCursor(value, normalizedCursor);
+      snapshotRef.current = {
+        value,
+        cursor: normalizedCursor,
+        expandedCursor: normalizedExpandedCursor,
+        contextIds: collectInlineContextIds(value),
+      };
+      selectionRangeRef.current = {
+        start: normalizedExpandedCursor,
+        end: normalizedExpandedCursor,
+      };
+      setIsEmpty(value.length === 0);
+      const rootElement = editor.view.dom;
+      const isFocused = Boolean(rootElement && document.activeElement === rootElement);
+      if (!initialSelection && previousSnapshot.value === value && !isFocused) return;
 
-    isApplyingControlledUpdateRef.current = true;
-    const pendingCitation =
-      citationRequestRef.current?.value === value ? citationRequestRef.current : null;
-    if (previousSnapshot.value !== value) {
-      saveCitationDraft(editor, previousSnapshot.value);
-      editor.commands.setContent(
-        buildDocJson(value, skillLabelFor, { styling: richText, literalText }),
-        {
-          emitUpdate: false,
-        },
-      );
-    }
-    const map = serializeEditorDoc(editor.state.doc);
-    const flat = markdownToFlat(map, normalizedExpandedCursor);
-    editor.commands.setTextSelection(flatToPm(map, flat));
-    if (isFocused) scrollTiptapCaretIntoView(editor);
-    if (pendingCitation) {
-      citationRequestRef.current = null;
-      const target = map.runs.find(
-        (run) =>
-          run.kind === "token" &&
-          run.nodeName === "composer-citation" &&
-          run.mdStart === pendingCitation.citationStart,
-      );
-      if (target) {
-        const node = editor.state.doc.nodeAt(target.pmPos);
-        const citeKey = (node?.attrs as { citeKey?: string } | undefined)?.citeKey;
-        if (citeKey) {
-          setOpenCitation({
-            key: citeKey,
-            sourceAnchor: pendingCitation.sourceAnchor,
-            removeOnCancel: pendingCitation.insertedSpaces,
-          });
+      isApplyingControlledUpdateRef.current = true;
+      const pendingCitation =
+        citationRequestRef.current?.value === value ? citationRequestRef.current : null;
+      if (previousSnapshot.value !== value) {
+        saveCitationDraft(editor, previousSnapshot.value);
+        editor.commands.setContent(
+          buildDocJson(value, skillLabelFor, { styling: richText, literalText }),
+          {
+            emitUpdate: false,
+          },
+        );
+      }
+      const map = serializeEditorDoc(editor.state.doc);
+      const flat = markdownToFlat(map, normalizedExpandedCursor);
+      editor.commands.setTextSelection(flatToPm(map, flat));
+      if (isFocused) scrollTiptapCaretIntoView(editor);
+      if (pendingCitation) {
+        citationRequestRef.current = null;
+        const target = map.runs.find(
+          (run) =>
+            run.kind === "token" &&
+            run.nodeName === "composer-citation" &&
+            run.mdStart === pendingCitation.citationStart,
+        );
+        if (target) {
+          const node = editor.state.doc.nodeAt(target.pmPos);
+          const citeKey = (node?.attrs as { citeKey?: string } | undefined)?.citeKey;
+          if (citeKey) {
+            setOpenCitation({
+              key: citeKey,
+              sourceAnchor: pendingCitation.sourceAnchor,
+              removeOnCancel: pendingCitation.insertedSpaces,
+            });
+          }
         }
       }
-    }
-    queueMicrotask(() => {
-      isApplyingControlledUpdateRef.current = false;
-    });
+      queueMicrotask(() => {
+        isApplyingControlledUpdateRef.current = false;
+      });
+    };
+    // Cursor-only updates must precede focus restoration on a rich/plain remount.
+    if (snapshotRef.current.value === value) applyControlledUpdate();
+    else queueMicrotask(applyControlledUpdate);
+    return () => {
+      active = false;
+    };
   }, [
     clampEditorCursor,
     cursor,
@@ -1825,7 +1829,16 @@ function ComposerPromptEditorTiptapInner(
                   placeholderClassName,
                 )}
               >
-                {placeholder}
+                {narrowPlaceholder ? (
+                  <>
+                    <span className="@max-[440px]/composer-surface:hidden">{placeholder}</span>
+                    <span className="hidden @max-[440px]/composer-surface:inline">
+                      {narrowPlaceholder}
+                    </span>
+                  </>
+                ) : (
+                  placeholder
+                )}
               </div>
             ) : null}
           </div>

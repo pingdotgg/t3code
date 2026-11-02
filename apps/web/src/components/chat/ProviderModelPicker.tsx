@@ -5,6 +5,7 @@ import {
   type ProviderDriverKind,
   type ResolvedKeybindingsConfig,
 } from "@t3tools/contracts";
+import { formatModelSlugName } from "@t3tools/shared/model";
 import { createContext, memo, type ReactNode, useRef, useState } from "react";
 import { ChevronDownIcon } from "lucide-react";
 import { Badge } from "../ui/badge";
@@ -142,7 +143,9 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
     ? getTriggerDisplayModelName(selectedModel, activeEntry?.driverKind)
     : props.model === ANTIGRAVITY_DEFAULT_MODEL
       ? "Choose model"
-      : props.model || "Choose model";
+      : props.model
+        ? formatModelSlugName(props.model)
+        : "Choose model";
   const triggerLabel = selectedModel
     ? `${getDisplayModelName(selectedModel)}${selectedModel.isUnavailable ? " (Unavailable)" : ""}`
     : triggerTitle;

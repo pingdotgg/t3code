@@ -156,7 +156,7 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
   --workspace-titlebar-control-size: 1.75rem;
   --workspace-titlebar-control-gap: 0.75rem;
   --workspace-titlebar-scroll-fade-height: 1.5rem;
-  --chat-content-max-width: 46rem;
+  --chat-content-max-width: 45rem;
   /* How far a timeline control's hover fill may reach past the text column:
      a 24px icon button whose 12px glyph sits on the column edge. */
   --chat-lane-reach: 0.375rem;
@@ -605,6 +605,8 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
   --radius-card: 12px;
   --radius-row-card: 10px;
   --radius-pane: 14px;
+  /* The composer's top corners, 1px inside the rounded-2xl tray so they stay concentric. */
+  --radius-composer: calc(var(--radius-2xl) - 1px);
   --radius-thread-details: 20px;
   --radius-project-icon: 9px;
   @keyframes skeleton {
@@ -1184,15 +1186,12 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
    (AppSidebarLayout's data-chrome-art) so other chrome surfaces can repaint
    the same art. Background images load only for the element that renders them,
    so each channel fetches one image per theme. Light, black chrome takes the
-   dark art like the rest of the chrome. The composer's send pill
-   (data-composer-send-art) reads the same image, grid and blend tokens, and is
-   black in every theme and appearance, so it always takes the default dark art. */
+   dark art like the rest of the chrome. */
 [data-chrome-art="nightly"] {
   --chrome-art-image: url("./assets/chrome/art-nightly-sunrise-light.jpg") center / cover no-repeat;
 }
 
-:root:is(.dark, .black-chrome) [data-chrome-art="nightly"],
-[data-composer-send-art="nightly"] {
+:root:is(.dark, .black-chrome) [data-chrome-art="nightly"] {
   --chrome-art-image: url("./assets/chrome/art-nightly-sunrise.jpg") center / cover no-repeat;
 }
 
@@ -1203,7 +1202,7 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
 /* The drafting sheet: a faint 16px paper grid from the pane inset, in neutral
    grays over the chrome color. The construction lines over it are
    DevDraftingSheetMarks, drawn along the real UI edges and centers. */
-:is([data-chrome-art="dev"], [data-composer-send-art="dev"]) {
+[data-chrome-art="dev"] {
   --chrome-art-grid-major: #00000013;
   --chrome-art-grid-minor: #00000005;
   --chrome-art-mark: #00000026;
@@ -1218,8 +1217,7 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
       12px 12px var(--chrome-art-tint);
 }
 
-:root:is(.dark, .black-chrome) [data-chrome-art="dev"],
-[data-composer-send-art="dev"] {
+:root:is(.dark, .black-chrome) [data-chrome-art="dev"] {
   --chrome-art-grid-major: #ffffff13;
   --chrome-art-grid-minor: #ffffff05;
   --chrome-art-mark: #ffffff1f;
@@ -1242,43 +1240,6 @@ html[data-theme-id]:not([data-theme-id=""]):not(.black-chrome) {
     --chrome-art-grid-minor: color-mix(in srgb, var(--sidebar-foreground) 2%, transparent);
     --chrome-art-mark: color-mix(in srgb, var(--sidebar-foreground) 13%, transparent);
   }
-}
-
-/* The composer's send pill (mic, send, stop): the dark channel art over an
-   opaque black tint layer, inside a light rim, with light icons in every
-   appearance. */
-[data-composer-send-art] {
-  --chrome-art-tint: #000000;
-  --chrome-art-blend: normal;
-  background-blend-mode: var(--chrome-art-blend), normal;
-  --contrast-foreground: #f0f0f0;
-  --composer-icon: #9e9e9e;
-  --surface-rim: linear-gradient(180deg, #ffffff38, #ffffff05);
-  --surface-base-shadow: 0 1px 3px #00000054;
-  background:
-    var(--composer-send-art-paint) padding-box,
-    linear-gradient(var(--chrome-art-tint, transparent), var(--chrome-art-tint, transparent))
-      padding-box,
-    var(--surface-rim) border-box,
-    #000000 border-box;
-}
-
-[data-composer-send-art="nightly"] {
-  --composer-send-art-paint: var(--chrome-art-image);
-}
-
-/* The grid is mostly transparent; the opaque tint layer under it keeps the rim
-   gradient from showing through as a wash over the fill. */
-[data-composer-send-art="dev"] {
-  --composer-send-art-paint:
-    repeating-linear-gradient(to right, var(--chrome-art-grid-major) 0 1px, transparent 1px 64px)
-      12px 12px padding-box,
-    repeating-linear-gradient(to bottom, var(--chrome-art-grid-major) 0 1px, transparent 1px 64px)
-      12px 12px padding-box,
-    repeating-linear-gradient(to right, var(--chrome-art-grid-minor) 0 1px, transparent 1px 16px)
-      12px 12px padding-box,
-    repeating-linear-gradient(to bottom, var(--chrome-art-grid-minor) 0 1px, transparent 1px 16px)
-      12px 12px padding-box;
 }
 
 [data-chrome-art-layer] {
@@ -2329,10 +2290,10 @@ html[data-theme-id]:not([data-theme-id=""]):not(.black-chrome) {
   --card-bottom: #171717;
   --card-fill: linear-gradient(180deg, #191919, var(--card-bottom));
   --card-settings-fill: linear-gradient(#191919, #191919);
-  --tray-fill: linear-gradient(180deg, #202020, #1c1c1c);
+  --tray-fill: linear-gradient(#191919, #191919);
   --tray-stroke: #ffffff0d;
   --tray-shadow: 0 1px 2px #00000029, 0 3px 10px #00000014;
-  --composer-fill: linear-gradient(180deg, #272727, #212121);
+  --composer-fill: linear-gradient(180deg, #202020, #1c1c1c);
   --composer-shadow: 0 1px 2px #0000004d, 0 3px 10px #00000038;
   --bubble-fill: linear-gradient(180deg, #272727, #222222);
   --kbd-lit-fill: #1111111a;
@@ -3137,9 +3098,8 @@ html[data-theme-id="t3-chat"] [data-app-sidebar] {
     inset 0 0 0 1px var(--chat-composer-outline), inset 0 1px rgb(255 255 255 / 3%) !important;
 }
 
-/* The composer's mic + send pill is one black control in every theme, style
-   and appearance: the default dark pill with its glyphs and red, whatever the
-   theme or style paints elsewhere. */
+/* The composer's mic + send pill stays neutral in every theme and style:
+   black in dark mode, light gray in both light appearances, with no channel art. */
 [data-composer-send-pill] {
   --pill-fill: linear-gradient(#0e0e0e, #0e0e0e);
   --pill-foreground: #d4d4d4;
@@ -3147,6 +3107,14 @@ html[data-theme-id="t3-chat"] [data-app-sidebar] {
   --pill-rim: linear-gradient(180deg, #ffffff38, #ffffff05);
   --pill-shadow: 0 1px 3px #00000054;
   --error-foreground: #f85149;
+}
+
+:root:not(.dark) [data-composer-send-pill] {
+  --pill-fill: linear-gradient(#efefef, #efefef);
+  --pill-foreground: #252525;
+  --pill-icon: #525252;
+  --pill-rim: linear-gradient(180deg, #00000022, #00000003);
+  --pill-shadow: 0 1px 3px #00000011;
 }
 
 /* Flat sliders: main's primary bar on a muted rail, and a background knob
@@ -4830,7 +4798,7 @@ body {
   max-width: 100%;
   overflow-x: auto;
   border-radius: var(--radius-card);
-  padding: 0.8rem 0.9rem;
+  padding: 0.75rem 0.875rem;
   scrollbar-width: thin;
   scrollbar-color: color-mix(in srgb, var(--contrast-border) 78%, transparent) transparent;
 }
@@ -5279,4 +5247,27 @@ body {
   --badge-quiet: #ffffff0a;
   --sidebar-settled-pr: #ffffff40;
   --sidebar-pr-open: #3fb950;
+}
+
+/* redesign: timeline */
+@media (min-width: 640px) {
+  .timeline-work-row {
+    --type-body: 0.8125rem;
+    --type-label: 0.8125rem;
+  }
+}
+
+/* The board draws the working bar rule white, which vanishes on a light pane. */
+:root:not(.dark) {
+  --timeline-working-rule: var(--border);
+}
+
+/* Rich answers (board FC7yK): a 15px h3, and 12.5px inline code and table text. */
+.chat-markdown h3 {
+  font-size: 0.9375rem;
+}
+
+.chat-markdown :not(pre) > code,
+.chat-markdown table {
+  font-size: 0.78125rem;
 }
