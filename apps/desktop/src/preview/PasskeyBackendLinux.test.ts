@@ -129,12 +129,12 @@ describe("Linux phone passkeys", () => {
     },
   );
 
-  it.each(["abort", "close", "malformed", "error", "exit", "stdin-error"])(
+  it.each(["abort", "close", "malformed", "error", "exit", "stdin-error", "startup-error"])(
     "stops native discovery on %s",
     async (ending) => {
       const { backend, context, send, child, prompt, controller } = setup();
       const pending = backend.get({ challenge: new Uint8Array([1]) }, context);
-      const cannotStart = ["error", "exit", "stdin-error"].includes(ending);
+      const cannotStart = ["error", "exit", "stdin-error", "startup-error"].includes(ending);
       if (!cannotStart) send({ type: "qr", url: "FIDO:/12345678901234567890" });
       if (ending === "abort") controller.abort();
       if (ending === "close") prompt.emit("closed");
@@ -142,6 +142,7 @@ describe("Linux phone passkeys", () => {
       if (ending === "error") child.emit("error", new Error("missing helper"));
       if (ending === "exit") child.emit("close", 127, null);
       if (ending === "stdin-error") child.stdin.emit("error", new Error("EPIPE"));
+      if (ending === "startup-error") send({ type: "error", message: "No Bluetooth adapter" });
       assert.deepStrictEqual(
         await pending,
         cannotStart

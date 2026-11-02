@@ -1,14 +1,20 @@
 import * as NodeChildProcess from "node:child_process";
+import * as NodeFS from "node:fs";
 import * as NodeURL from "node:url";
 
 // oxlint-disable-next-line t3code/no-global-process-runtime -- This build helper targets the actual host, outside an Effect runtime.
 if (process.platform === "linux") {
-  const manifest = NodeURL.fileURLToPath(
-    new URL("../../../native/phone-passkeys/Cargo.toml", import.meta.url),
-  );
+  const root = new URL("../../../native/phone-passkeys/", import.meta.url);
+  const targetDir = NodeURL.fileURLToPath(new URL("target", root));
+  // The desktop app uses this helper whenever it exists, so a stale build must not outlive a failed one.
+  const removeHelper = () =>
+    NodeFS.rmSync(NodeURL.fileURLToPath(new URL("target/debug/t3-phone-passkeys", root)), {
+      force: true,
+    });
   const available = (command, args) =>
     NodeChildProcess.spawnSync(command, args, { stdio: "ignore" }).status === 0;
   if (!available("cargo", ["--version"]) || !available("pkg-config", ["--exists", "libudev"])) {
+    removeHelper();
     console.warn(
       "[phone-passkeys] Skipping native helper: install Cargo and libudev development headers to enable phone passkeys in desktop development.",
     );
@@ -19,15 +25,17 @@ if (process.platform === "linux") {
         "build",
         "--locked",
         "--manifest-path",
-        manifest,
+        NodeURL.fileURLToPath(new URL("Cargo.toml", root)),
         "--target-dir",
-        NodeURL.fileURLToPath(new URL("../../../native/phone-passkeys/target", import.meta.url)),
+        targetDir,
       ],
       { stdio: "inherit" },
     );
-    if (result.status !== 0)
+    if (result.status !== 0) {
+      removeHelper();
       console.warn(
-        "[phone-passkeys] Native helper build failed (Rust 1.88 or newer is required); desktop development will continue.",
+        "[phone-passkeys] Native helper build failed (it needs Rust 1.88 or newer and libudev headers); desktop development will continue without phone passkeys.",
       );
+    }
   }
 }

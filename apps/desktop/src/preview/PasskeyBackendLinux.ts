@@ -48,6 +48,11 @@ const HelperEvent = Schema.Union([
 ]);
 const decodeEvent = Schema.decodeUnknownSync(Schema.fromJsonString(HelperEvent));
 const notAllowed: PasskeyCeremonyResult = { success: false, error: "NotAllowedError" };
+const fallbackToNative: PasskeyCeremonyResult = {
+  success: false,
+  error: "NotSupportedError",
+  fallbackToNative: true,
+};
 
 const escapeHtml = (text: string) =>
   text.replace(
@@ -144,7 +149,6 @@ export const linuxPasskeyBackend = (executable: string): PasskeyBackend => {
       const lines = NodeReadline.createInterface({ input: child.stdout });
       let prompt: BrowserWindow | undefined;
       let settled = false;
-      let sawEvent = false;
       const finish = (result: PasskeyCeremonyResult) => {
         if (settled) return;
         settled = true;
@@ -155,28 +159,25 @@ export const linuxPasskeyBackend = (executable: string): PasskeyBackend => {
         resolve(result);
       };
       const cancel = () => finish(notAllowed);
+      // Before the QR prompt exists, the user has no other way to pick a security key.
+      const fallbackBeforePrompt = () => finish(prompt ? notAllowed : fallbackToNative);
       context.signal.addEventListener("abort", cancel, { once: true });
-      child.once("error", () =>
-        finish({ success: false, error: "NotSupportedError", fallbackToNative: true }),
-      );
-      const onExit = () =>
-        finish(
-          sawEvent
-            ? notAllowed
-            : { success: false, error: "NotSupportedError", fallbackToNative: true },
-        );
-      child.once("close", onExit);
-      child.stdin.on("error", onExit);
+      child.once("error", () => finish(fallbackToNative));
+      child.once("close", fallbackBeforePrompt);
+      child.stdin.on("error", fallbackBeforePrompt);
       lines.on("line", (line) => {
         if (settled) return;
         try {
           const event = decodeEvent(line);
-          sawEvent = true;
           if (event.type === "result") {
             finish(credentialResult(event.credential));
             return;
           }
           if (event.type === "error") {
+            if (!prompt) {
+              finish(fallbackToNative);
+              return;
+            }
             finish(notAllowed);
             void dialog
               .showMessageBox(context.window, {
@@ -216,12 +217,7 @@ export const linuxPasskeyBackend = (executable: string): PasskeyBackend => {
           prompt.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
           prompt.webContents.on("will-navigate", (event, url) => {
             event.preventDefault();
-            if (url === "t3-passkey-native://continue")
-              finish({
-                success: false,
-                error: "NotSupportedError",
-                fallbackToNative: true,
-              });
+            if (url === "t3-passkey-native://continue") finish(fallbackToNative);
           });
           void prompt
             .loadURL(
