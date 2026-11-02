@@ -49,6 +49,16 @@ afterEach(() => {
 });
 
 describe("playNotificationSound", () => {
+  it("preloads both sounds on unlock and reuses them for playback", async () => {
+    const { unlockNotificationAudio, playNotificationSound } = await loadUnlocked();
+    expect(fetch).toHaveBeenCalledTimes(2);
+    unlockNotificationAudio();
+    await playNotificationSound("completion", () => true);
+    await playNotificationSound("input", () => true);
+    expect(fetch).toHaveBeenCalledTimes(2);
+    expect(audio.started).toBe(2);
+  });
+
   it("plays one sound for threads that complete together", async () => {
     const { playNotificationSound } = await loadUnlocked();
 
