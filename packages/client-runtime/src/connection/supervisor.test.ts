@@ -544,6 +544,42 @@ describe("EnvironmentSupervisor", () => {
     }).pipe(Effect.provide(TestClock.layer())),
   );
 
+  it.effect("times out an SSH route that stops answering after a slow preparation", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness({
+        prepare: () => Effect.sleep("4 minutes").pipe(Effect.as(PREPARED_CONNECTION)),
+        ready: () => Effect.never,
+      });
+      const supervisor = yield* EnvironmentSupervisor.make(SSH_ENTRY, {
+        initiallyDesired: true,
+      }).pipe(Effect.provide(harness.dependencies));
+
+      yield* awaitState(
+        supervisor.state,
+        (state) => state.phase === "connecting" && state.stage === "preparing",
+      );
+      yield* TestClock.adjust("4 minutes");
+      yield* awaitState(
+        supervisor.state,
+        (state) => state.phase === "connecting" && state.stage === "synchronizing",
+      );
+      const firstFailure = yield* awaitState(
+        supervisor.state,
+        (state) => state.phase === "backoff",
+      ).pipe(Effect.forkChild({ startImmediately: true }));
+      yield* TestClock.adjust("90 seconds");
+
+      expect(yield* Fiber.join(firstFailure)).toMatchObject({
+        attempt: 1,
+        lastFailure: {
+          _tag: "ConnectionTransientError",
+          reason: "timeout",
+          message: "Test environment did not respond during connection setup.",
+        },
+      });
+    }).pipe(Effect.provide(TestClock.layer())),
+  );
+
   it.effect("treats an involuntary session close as transient and reconnects", () =>
     Effect.gen(function* () {
       const harness = yield* makeHarness();

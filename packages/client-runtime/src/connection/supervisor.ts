@@ -860,9 +860,16 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
       // each route that reaches synchronizing adds its own snapshot budget, so
       // a route that fails late does not eat the next route's time.
       Effect.gen(function* () {
-        const routeCount = connectionRoutes(yield* Ref.get(currentEntry)).length;
+        const routes = connectionRoutes(yield* Ref.get(currentEntry));
+        // The desktop bounds SSH preparation, which may download a server release.
+        if (routes.every((route) => connectionRouteKind(route) === "ssh")) {
+          yield* SubscriptionRef.changes(prepared).pipe(
+            Stream.filter(Option.isSome),
+            Stream.runHead,
+          );
+        }
         const startedAt = yield* Clock.monotonicTimeNanos;
-        const setup = Duration.toNanosUnsafe(Duration.times(establishmentTimeout, routeCount));
+        const setup = Duration.toNanosUnsafe(Duration.times(establishmentTimeout, routes.length));
         while (true) {
           const synchronized = BigInt(yield* Ref.get(synchronizedRoutes));
           const deadline =
