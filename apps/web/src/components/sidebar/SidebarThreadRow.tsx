@@ -1,3 +1,5 @@
+import { useClientSettings } from "../../hooks/useSettings";
+import { useThreadDiscoveredPorts } from "../../portDiscoveryState";
 import { ThreadHoverCard, ThreadHoverCardPopup } from "../ThreadHoverCard";
 import { ThreadTerminalStatusButton } from "../ThreadStatusIndicators";
 import { discardComposerDraft } from "../../lib/discardComposerDraft";
@@ -40,6 +42,7 @@ import {
   ClockIcon,
   GitBranchIcon,
   MessageCircleQuestionIcon,
+  NetworkIcon,
   PinIcon,
   PinOffIcon,
   ShieldQuestionIcon,
@@ -129,6 +132,25 @@ export type SidebarProviderEntry = Pick<
   | "acpRegistryIconUrl"
   | "models"
 >;
+function ThreadPorts({ thread }: { thread: SidebarThreadSummary }) {
+  const enabled = useClientSettings((settings) => settings.sidebarShowPorts);
+  const servers = useThreadDiscoveredPorts({
+    environmentId: enabled ? thread.environmentId : null,
+    threadId: thread.id,
+  });
+  const ports = [...new Set(servers.map((server) => server.port))].sort((a, b) => a - b);
+  if (ports.length === 0) return null;
+  return (
+    <span
+      className="inline-flex shrink-0 items-center gap-1 text-xs text-muted-foreground tabular-nums"
+      aria-label={`Running ports: ${ports.join(", ")}`}
+    >
+      <NetworkIcon aria-hidden="true" className="size-3" />
+      {ports.join(", ")}
+    </span>
+  );
+}
+
 function compactSidebarTimeLabel(label: string): string {
   if (label === "just now") return "now";
   return label.endsWith(" ago") ? label.slice(0, -4) : label;
@@ -1249,6 +1271,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
               )}
               {draftIndicator}
               {title}
+              <ThreadPorts thread={thread} />
               {multiline ? titleLineIcons : null}
               {pinIndicator}
               {multiline ? null : terminalStatusIcon}
@@ -1574,6 +1597,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
             </div>
             <div className="mt-1 flex min-w-0 items-center gap-1.5">
               {title}
+              <ThreadPorts thread={thread} />
               {isRegeneratingTitle ? (
                 <span role="status" className="sr-only">
                   Regenerating title
@@ -1738,6 +1762,7 @@ export const SidebarSearchResultRow = memo(function SidebarSearchResultRow(props
               >
                 {thread.title}
               </span>
+              <ThreadPorts thread={thread} />
               <span id={`${props.resultId}-pr`} className="contents">
                 <ThreadSearchPullRequestNumber
                   thread={thread}

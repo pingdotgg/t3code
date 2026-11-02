@@ -448,6 +448,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["usage quota rate limit reset recover continue"],
   },
   {
+    id: "thread-ports",
+    title: "Show thread ports",
+    to: "/settings/general",
+    searchTerms: ["running server port numbers sidebar"],
+  },
+  {
     id: "working-shelf",
     title: "Working section",
     to: "/settings/general",
