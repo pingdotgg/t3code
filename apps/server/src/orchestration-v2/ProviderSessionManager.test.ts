@@ -144,7 +144,9 @@ const layerPausingAttachEventSink = (pause: {
     }),
   ).pipe(Layer.provide(layerTestEventSink));
 
-const layerBeforeUnchangedWriteEventSink = (before: Ref.Ref<Effect.Effect<void>>) =>
+const layerBeforeUnchangedWriteEventSink = (
+  before: Ref.Ref<Effect.Effect<void, EventSink.EventSinkWriteError>>,
+) =>
   Layer.effect(
     EventSink.EventSinkV2,
     Effect.gen(function* () {
@@ -476,7 +478,7 @@ function layerTest(input: {
   readonly failReleaseEventWrites?: boolean;
   readonly flakyReleaseWrites?: FlakyReleaseWrites;
   readonly pauseAttachWrite?: Parameters<typeof layerPausingAttachEventSink>[0];
-  readonly beforeUnchangedWrite?: Ref.Ref<Effect.Effect<void>>;
+  readonly beforeUnchangedWrite?: Ref.Ref<Effect.Effect<void, EventSink.EventSinkWriteError>>;
   readonly pauseResolve?: {
     readonly armed: Ref.Ref<boolean>;
     readonly paused: Deferred.Deferred<void>;
@@ -2516,7 +2518,9 @@ it.effect("ProviderSessionManagerV2 keeps the roster of a runtime whose tasks ca
 it.effect("ProviderSessionManagerV2 keeps a provider update that lands while release clears", () =>
   Effect.gen(function* () {
     const state = yield* Ref.make(emptyState);
-    const beforeUnchangedWrite = yield* Ref.make<Effect.Effect<void>>(Effect.void);
+    const beforeUnchangedWrite = yield* Ref.make<
+      Effect.Effect<void, EventSink.EventSinkWriteError>
+    >(Effect.void);
     const effect = Effect.gen(function* () {
       const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
       const { providerSessionId, providerThreads, writeProviderThread, rosters } =
@@ -3084,6 +3088,8 @@ it.effect.each([
   "released-completion",
   "repeated-close",
   "contended-close",
+  "detached-close",
+  "failed-close",
   "newer-run",
   "newer-session",
 ] as const)(
@@ -3091,7 +3097,9 @@ it.effect.each([
   (owner) =>
     Effect.gen(function* () {
       const state = yield* Ref.make(emptyState);
-      const beforeUnchangedWrite = yield* Ref.make<Effect.Effect<void>>(Effect.void);
+      const beforeUnchangedWrite = yield* Ref.make<
+        Effect.Effect<void, EventSink.EventSinkWriteError>
+      >(Effect.void);
       yield* Effect.gen(function* () {
         const eventSink = yield* EventSink.EventSinkV2;
         const idAllocator = yield* IdAllocator.IdAllocatorV2;
@@ -3207,6 +3215,17 @@ it.effect.each([
                 yield* manager.release({ providerSessionId, reason: "manual_shutdown" });
               if (owner === "queued-completion" || owner === "released-completion")
                 yield* restoreCompletion;
+              if (owner === "detached-close") {
+                yield* restoreCompletion;
+                yield* manager.detach({ providerSessionId, threadId });
+              }
+              if (owner === "failed-close") {
+                yield* restoreCompletion;
+                yield* Ref.set(
+                  beforeUnchangedWrite,
+                  Effect.fail(new EventSink.EventSinkWriteError({ eventCount: 1 })),
+                );
+              }
               if (owner === "contended-close") {
                 yield* restoreCompletion;
                 yield* Ref.set(beforeUnchangedWrite, raceWithCleanup);
@@ -3217,6 +3236,7 @@ it.effect.each([
         );
         if (release !== undefined) yield* Fiber.join(release);
         if (owner === "contended-close") assert.equal(conflicts, 4);
+        if (owner === "failed-close") yield* subscription.close;
         if (owner === "repeated-close") {
           yield* restoreCompletion;
           yield* subscription.close;
@@ -3231,7 +3251,8 @@ it.effect.each([
             owner === "queued-completion" ||
             owner === "released-completion" ||
             owner === "repeated-close" ||
-            owner === "contended-close"
+            owner === "contended-close" ||
+            owner === "failed-close"
             ? {
                 ...before,
                 nativeMetadata: {

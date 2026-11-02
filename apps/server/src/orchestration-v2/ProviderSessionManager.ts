@@ -1686,7 +1686,15 @@ export const layerWithOptions = (
             if (entry !== undefined) {
               yield* Effect.forEach(
                 [...entry.instructionInvalidations.values()],
-                (offered) => persistInstructionInvalidation(entry, offered),
+                (offered) =>
+                  persistInstructionInvalidation(entry, offered).pipe(
+                    Effect.catch((cause) =>
+                      Effect.logWarning(
+                        "orchestration-v2.provider-session.instruction-invalidation-failed",
+                        { providerSessionId, providerThreadId: offered.id, cause },
+                      ),
+                    ),
+                  ),
                 { discard: true },
               );
             }
@@ -1961,7 +1969,11 @@ export const layerWithOptions = (
         // Idle updates outlive run subscribers; invalidate only the receipt, not newer thread state.
         yield* Effect.gen(function* () {
           if (entry.instructionInvalidations.get(offered.id) !== offered) return true;
-          if (!entry.attachedThreadIds.has(threadId)) return true;
+          const current = (yield* Ref.get(sessions)).get(
+            sessionKey(entry.runtime.providerSessionId),
+          );
+          if (current !== undefined && current.runtime !== entry.runtime) return true;
+          if (!(current?.attachedThreadIds ?? entry.attachedThreadIds).has(threadId)) return true;
           const projection = yield* projectionStore.getThreadRecords(threadId, ["providerThreads"]);
           const stored = projection.providerThreads.find(
             (candidate) => candidate.id === offered.id,
