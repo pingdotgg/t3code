@@ -400,6 +400,16 @@ function markdownSourcePlugin(type: MarkType): Plugin<MarkdownSourceState> {
     },
     props: {
       decorations: (state) => markdownSourceKey.getState(state)?.decorations,
+      handleDOMEvents: {
+        compositionstart(editorView) {
+          const revealed = markdownSourceKey.getState(editorView.state)?.revealed ?? [];
+          // Restore history's document shape before the IME starts its preedit.
+          if (revealed.length > 0) {
+            editorView.dispatch(collapseRevealed(editorView.state, revealed));
+          }
+          return false;
+        },
+      },
     },
     appendTransaction(transactions, _, state) {
       // Rewriting text mid-composition would break the IME's preedit.

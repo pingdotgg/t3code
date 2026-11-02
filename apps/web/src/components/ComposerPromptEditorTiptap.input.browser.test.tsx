@@ -203,6 +203,45 @@ it("lets composition replace selected text without surrounding it", async () => 
   expect(serializeEditorDoc(editor.state.doc).value).toBe('"');
 });
 
+it("undoes composition in revealed Markdown through the earlier paste", async () => {
+  await using screen = await mountEditor("");
+  const { editor } = screen;
+  const value = () => serializeEditorDoc(editor.state.doc).value;
+  await act(async () => {
+    editor.view.focus();
+    const clipboardData = new DataTransfer();
+    clipboardData.setData("text/plain", "**bold** after");
+    editor.view.dom.dispatchEvent(new ClipboardEvent("paste", { clipboardData, cancelable: true }));
+    editor.commands.insertContent("!");
+    editor.commands.undo();
+    editor.commands.setTextSelection(3);
+  });
+  expect(value()).toBe("**bold** after");
+  expect(textWithMark(editor, "markdownSource")).toEqual(["**bold**"]);
+  await act(async () => {
+    editor.view.dom.dispatchEvent(new CompositionEvent("compositionstart"));
+    editor.view.dispatch(editor.state.tr.insertText("漢").setMeta("composition", 1));
+    editor.view.dom.dispatchEvent(new CompositionEvent("compositionend", { data: "漢" }));
+    editor.commands.setTextSelection(editor.state.doc.content.size - 1);
+  });
+  expect(value()).toBe("**bo漢ld** after");
+  await act(async () => {
+    editor.commands.undo();
+  });
+  expect(value()).toBe("**bold** after");
+  await act(async () => {
+    editor.commands.undo();
+  });
+  expect(value()).toBe("");
+  await act(async () => {
+    editor.commands.redo();
+    editor.commands.redo();
+    editor.commands.setTextSelection(editor.state.doc.content.size - 1);
+  });
+  expect(value()).toBe("**bo漢ld** after");
+  expect(textWithMark(editor, "bold")).toEqual(["bo漢ld"]);
+});
+
 it("keeps unknown dollar names editable when restoring and pasting a draft", async () => {
   const value = "echo $HOME $PATH $anything $notaskill $20 $20k $babysit ";
   await using screen = await mountEditor(value, true, [babysit]);
