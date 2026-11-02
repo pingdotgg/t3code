@@ -225,7 +225,6 @@ describe("searchSettings", () => {
       expect(SETTINGS_SEARCH_ITEMS.find((item) => item.id === id)?.to).toBe("/settings/voice");
     }
   });
-
 });
 
 describe("settings search targets", () => {

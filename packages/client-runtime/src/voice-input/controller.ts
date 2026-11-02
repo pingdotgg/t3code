@@ -42,12 +42,6 @@ export function voiceInputBlocksSubmission<State extends Pick<VoiceInputState<tr
   );
 }
 
-export function voiceInputFreezesEditor<State extends Pick<VoiceInputState<true>, "phase">>(
-  state: State,
-): boolean {
-  return voiceInputBlocksSubmission(state);
-}
-
 export type VoiceDraftSnapshot = {
   readonly ownerKey: string;
   readonly text: string;
@@ -143,7 +137,7 @@ export function resolveTranscriptCommit(
     const rightCharacter = right.match(/^./u)?.[0];
     const autoLocale = normalizedLocale === "auto";
     const leftNeedsBoundary =
-      /[\p{L}\p{M}\p{N}.!?,:;)\]}'"]$/u.test(left) &&
+      /[\p{L}\p{M}\p{N}.!?,:;)\]}'"]/u.test(leftCharacter ?? "") &&
       (right.length === 0 || /^\s/u.test(right)) &&
       !(
         autoLocale &&
@@ -151,8 +145,8 @@ export function resolveTranscriptCommit(
           UNSPACED_SCRIPT.test(replacement.match(/^./u)?.[0] ?? ""))
       );
     const rightNeedsBoundary =
-      /^[\p{L}\p{M}\p{N}([{'"]/u.test(right) &&
-      (left.length === 0 || /\s$/u.test(left)) &&
+      /^[\p{L}\p{M}\p{N}([{'"]/u.test(rightCharacter ?? "") &&
+      (left.length === 0 || /\s/u.test(leftCharacter ?? "")) &&
       !(
         autoLocale &&
         (UNSPACED_SCRIPT.test(rightCharacter ?? "") ||

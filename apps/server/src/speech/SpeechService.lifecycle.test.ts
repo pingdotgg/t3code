@@ -750,37 +750,33 @@ it.effect("reports an unavailable selected GPU without loading CPU", () =>
 
 it.effect("reloads a cached model after acceleration changes", () =>
   Effect.gen(function* () {
-    yield* Effect.gen(function* () {
-      const speech = yield* SpeechService.SpeechService;
-      yield* speech.transcribe(pcm(), DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS);
-      yield* speech.updateAcceleration("cpu");
-      yield* speech.transcribe(pcm(), DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS);
-      expect(loadNative).toHaveBeenCalledTimes(2);
-      expect(loadNative.mock.calls[1]?.[3]).toBe("cpu");
-      expect(native.dispose).toHaveBeenCalled();
-    }).pipe(Effect.provide(layer));
-  }),
+    const speech = yield* SpeechService.SpeechService;
+    yield* speech.transcribe(pcm(), DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS);
+    yield* speech.updateAcceleration("cpu");
+    yield* speech.transcribe(pcm(), DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS);
+    expect(loadNative).toHaveBeenCalledTimes(2);
+    expect(loadNative.mock.calls[1]?.[3]).toBe("cpu");
+    expect(native.dispose).toHaveBeenCalled();
+  }).pipe(Effect.provide(layer)),
 );
 
 it.effect("applies an acceleration change after an active stream finishes", () =>
   Effect.gen(function* () {
-    yield* Effect.gen(function* () {
-      const speech = yield* SpeechService.SpeechService;
-      yield* Effect.scoped(
-        Effect.gen(function* () {
-          const stream = yield* speech.startStream(DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS);
-          expect(yield* speech.updateAcceleration("cpu")).toMatchObject({
-            state: "transcribing",
-            acceleration: "cpu",
-          });
-          yield* stream.finish;
-        }),
-      );
-      yield* speech.transcribe(pcm(), DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS);
-      expect(loadNative).toHaveBeenCalledTimes(2);
-      expect(loadNative.mock.calls[1]?.[3]).toBe("cpu");
-    }).pipe(Effect.provide(layer));
-  }),
+    const speech = yield* SpeechService.SpeechService;
+    yield* Effect.scoped(
+      Effect.gen(function* () {
+        const stream = yield* speech.startStream(DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS);
+        expect(yield* speech.updateAcceleration("cpu")).toMatchObject({
+          state: "transcribing",
+          acceleration: "cpu",
+        });
+        yield* stream.finish;
+      }),
+    );
+    yield* speech.transcribe(pcm(), DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS);
+    expect(loadNative).toHaveBeenCalledTimes(2);
+    expect(loadNative.mock.calls[1]?.[3]).toBe("cpu");
+  }).pipe(Effect.provide(layer)),
 );
 
 it.effect("replays streaming audio on CPU after an accelerated feed crashes", () =>
@@ -985,26 +981,23 @@ it.effect("reuses the model when abandoned batch work finishes first", () =>
   }),
 );
 
-it.effect(
-  "closes its scope without waiting for hung native inference",
-  () =>
-    Effect.gen(function* () {
-      const started = Promise.withResolvers<void>();
-      native.transcribe.mockImplementationOnce(() => {
-        started.resolve();
-        return new Promise(() => {});
-      });
-      yield* Effect.gen(function* () {
-        const speech = yield* SpeechService.SpeechService;
-        const request = yield* speech
-          .transcribe(pcm(), DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS)
-          .pipe(Effect.forkChild);
-        yield* Effect.promise(() => started.promise);
-        yield* Fiber.interrupt(request);
-      }).pipe(Effect.provide(layer));
-      expect(native.dispose).toHaveBeenCalledOnce();
-    }),
-  { timeout: 1000 },
+it.effect("closes its scope without waiting for hung native inference", () =>
+  Effect.gen(function* () {
+    const started = Promise.withResolvers<void>();
+    native.transcribe.mockImplementationOnce(() => {
+      started.resolve();
+      return new Promise(() => {});
+    });
+    yield* Effect.gen(function* () {
+      const speech = yield* SpeechService.SpeechService;
+      const request = yield* speech
+        .transcribe(pcm(), DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS)
+        .pipe(Effect.forkChild);
+      yield* Effect.promise(() => started.promise);
+      yield* Fiber.interrupt(request);
+    }).pipe(Effect.provide(layer));
+    expect(native.dispose).toHaveBeenCalledOnce();
+  }),
 );
 
 it.effect("retains warmup ownership after cancellation until its load settles", () =>

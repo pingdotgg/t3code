@@ -1,6 +1,6 @@
-import { act, useRef } from "react";
-import { createRoot, type Root } from "react-dom/client";
-import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
+import { useRef } from "react";
+import { render } from "../../test/render";
+import { expect, it, vi } from "vite-plus/test";
 import { DEFAULT_RESOLVED_KEYBINDINGS } from "@t3tools/shared/keybindings";
 
 import { composerSubmissionIntentForKey } from "../composer-logic";
@@ -8,9 +8,7 @@ import { useDictationSubmissionShortcut } from "./useDictationSubmissionShortcut
 
 vi.mock("../commandPaletteBus", () => ({ isCommandPaletteOpen: () => false }));
 
-let root: Root;
-let container: HTMLDivElement;
-const submitted = vi.fn();
+const submitted = vi.hoisted(() => vi.fn());
 
 function Probe({ preparing = false }: { preparing?: boolean }) {
   const formRef = useRef<HTMLFormElement>(null);
@@ -21,7 +19,7 @@ function Probe({ preparing = false }: { preparing?: boolean }) {
       const intent = composerSubmissionIntentForKey({
         event,
         keybindings: DEFAULT_RESOLVED_KEYBINDINGS,
-        isMobileViewport: false,
+        isSoftwareKeyboardOpen: false,
         isDraftThread: true,
         sendShortcut: "enter",
         prompt: "",
@@ -42,18 +40,9 @@ function Probe({ preparing = false }: { preparing?: boolean }) {
   );
 }
 
-beforeEach(() => {
-  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+function setup() {
   submitted.mockClear();
-  container = document.createElement("div");
-  document.body.append(container);
-  root = createRoot(container);
-});
-afterEach(async () => {
-  await act(() => root.unmount());
-  container.remove();
-  vi.unstubAllGlobals();
-});
+}
 
 function enter(target: Element, shiftKey = false) {
   const event = new KeyboardEvent("keydown", {
@@ -67,7 +56,9 @@ function enter(target: Element, shiftKey = false) {
 }
 
 it("handles Enter when the frozen composer loses focus to the page", async () => {
-  await act(() => root.render(<Probe />));
+  setup();
+  await using screen = await render(<Probe />);
+  const { container } = screen;
   const editor = container.querySelector<HTMLElement>('[data-testid="composer-editor"]')!;
   editor.focus();
   editor.blur();
@@ -77,7 +68,9 @@ it("handles Enter when the frozen composer loses focus to the page", async () =>
 });
 
 it("handles a focused read-only composer once and leaves Shift+Enter alone", async () => {
-  await act(() => root.render(<Probe />));
+  setup();
+  await using screen = await render(<Probe />);
+  const { container } = screen;
   const editor = container.querySelector<HTMLElement>('[data-testid="composer-editor"]')!;
   expect(enter(editor, true).defaultPrevented).toBe(false);
   expect(enter(editor).defaultPrevented).toBe(true);
@@ -85,7 +78,9 @@ it("handles a focused read-only composer once and leaves Shift+Enter alone", asy
 });
 
 it("does not intercept citation fields, buttons, or other editors", async () => {
-  await act(() => root.render(<Probe />));
+  setup();
+  await using screen = await render(<Probe />);
+  const { container } = screen;
   const other = document.createElement("textarea");
   document.body.append(other);
   try {
@@ -99,10 +94,11 @@ it("does not intercept citation fields, buttons, or other editors", async () => 
 });
 
 it("blocks the shortcut during preparation and enables it afterward", async () => {
-  await act(() => root.render(<Probe preparing />));
+  setup();
+  await using screen = await render(<Probe preparing />);
   expect(enter(document.body).defaultPrevented).toBe(false);
   expect(submitted).not.toHaveBeenCalled();
-  await act(() => root.render(<Probe />));
+  await screen.rerender(<Probe />);
   expect(enter(document.body).defaultPrevented).toBe(true);
   expect(submitted).toHaveBeenCalledTimes(1);
 });

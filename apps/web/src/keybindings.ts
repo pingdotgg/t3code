@@ -1,4 +1,3 @@
-import { evaluateWhenNode } from "@t3tools/shared/keybindingMatching";
 import {
   type KeybindingCommand,
   type KeybindingShortcut,
@@ -11,20 +10,21 @@ import {
   type ThreadJumpKeybindingCommand,
 } from "@t3tools/contracts";
 import {
-  isMacPlatform,
+  evaluateWhenNode,
   matchesKeybindingShortcut,
   matchesKeybindingShortcutModifiers,
   normalizeEventKey,
   resolveEventKeys,
   type ShortcutEventLike as SharedShortcutEventLike,
   type ShortcutModifierStateLike,
-} from "@t3tools/shared/keybindings";
+} from "@t3tools/shared/keybindingMatching";
+import { isMacPlatform } from "@t3tools/shared/keybindings";
 import { isElectron } from "./env";
 import { isEditableFocused } from "./lib/editableFocus";
 import { projectScriptIdFromCommand } from "./projectScripts";
 
-export type { ShortcutModifierStateLike } from "@t3tools/shared/keybindings";
-export { shortcutKeyFromEvent } from "@t3tools/shared/keybindings";
+export type { ShortcutModifierStateLike } from "@t3tools/shared/keybindingMatching";
+export { shortcutKeyFromEvent } from "@t3tools/shared/keybindingMatching";
 
 export interface ShortcutEventLike extends SharedShortcutEventLike {
   target?: EventTarget | null;

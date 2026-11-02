@@ -47,6 +47,7 @@ export function TranscriptionTest({
   const [transcript, setTranscript] = useState<string | null>(null);
   const [preview, setPreview] = useState<SpeechStreamText | null>(null);
   const optionsRef = useRef(options);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- publishes committed options to the native recording controller
   useEffect(() => {
     optionsRef.current = options;
   }, [options]);
@@ -59,6 +60,7 @@ export function TranscriptionTest({
     setPreview(null);
   }
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- owns the microphone controller and its callbacks for this connection
   useEffect(() => {
     if (!prepared) return;
     let disposed = false;

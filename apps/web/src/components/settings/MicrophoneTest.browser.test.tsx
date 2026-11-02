@@ -1,6 +1,5 @@
-import { act } from "react";
-import { createRoot, type Root } from "react-dom/client";
-import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
+import { act, render, fakeTimers, stubGlobal } from "../../../test/render";
+import { expect, it, vi } from "vite-plus/test";
 
 import { MicrophoneTest } from "./MicrophoneTest";
 
@@ -13,18 +12,6 @@ vi.mock(import("./settingsLayout"), async (original) => ({
     </div>
   ),
 }));
-
-let root: Root;
-let container: HTMLDivElement;
-let recorder: TestRecorder;
-const stopTrack = vi.fn();
-const closeContext = vi.fn(async () => {});
-const getUserMedia = vi.fn();
-const revokeObjectURL = vi.fn();
-const stream = {
-  getTracks: () => [{ stop: stopTrack }],
-  getAudioTracks: () => [{ addEventListener: vi.fn() }],
-};
 
 class TestRecorder extends EventTarget {
   state = "inactive";
@@ -41,50 +28,63 @@ class TestRecorder extends EventTarget {
   }
 }
 
-beforeEach(() => {
-  vi.useFakeTimers();
-  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
-  vi.spyOn(navigator.mediaDevices, "getUserMedia").mockImplementation(getUserMedia);
-  vi.stubGlobal("MediaRecorder", function () {
-    recorder = new TestRecorder();
-    return recorder;
-  });
-  vi.stubGlobal(
-    "AudioContext",
-    class {
-      createAnalyser() {
-        return {
-          fftSize: 256,
-          getFloatTimeDomainData: (samples: Float32Array) => samples.fill(0.1),
-        };
-      }
-      createMediaStreamSource() {
-        return { connect: vi.fn() };
-      }
-      resume() {
-        return Promise.resolve();
-      }
-      close = closeContext;
-    },
+function setup() {
+  const scope = new DisposableStack();
+  let recorder: TestRecorder;
+  const stopTrack = vi.fn();
+  const closeContext = vi.fn(async () => {});
+  const getUserMedia = vi.fn();
+  const revokeObjectURL = vi.fn();
+  const stream = {
+    getTracks: () => [{ stop: stopTrack }],
+    getAudioTracks: () => [{ addEventListener: vi.fn() }],
+  };
+  scope.use(vi.spyOn(navigator.mediaDevices, "getUserMedia").mockImplementation(getUserMedia));
+  scope.use(
+    stubGlobal("MediaRecorder", function () {
+      recorder = new TestRecorder();
+      return recorder;
+    }),
   );
-  vi.spyOn(URL, "createObjectURL").mockReturnValue("blob:test");
-  vi.spyOn(URL, "revokeObjectURL").mockImplementation(revokeObjectURL);
+  scope.use(
+    stubGlobal(
+      "AudioContext",
+      class {
+        createAnalyser() {
+          return {
+            fftSize: 256,
+            getFloatTimeDomainData: (samples: Float32Array) => samples.fill(0.1),
+          };
+        }
+        createMediaStreamSource() {
+          return { connect: vi.fn() };
+        }
+        resume() {
+          return Promise.resolve();
+        }
+        close = closeContext;
+      },
+    ),
+  );
+  scope.use(vi.spyOn(URL, "createObjectURL").mockReturnValue("blob:test"));
+  scope.use(vi.spyOn(URL, "revokeObjectURL").mockImplementation(revokeObjectURL));
   getUserMedia.mockResolvedValue(stream);
-  container = document.createElement("div");
-  document.body.append(container);
-  root = createRoot(container);
-});
+  return {
+    [Symbol.dispose]() {
+      scope.dispose();
+    },
+    get recorder() {
+      return recorder;
+    },
+    stopTrack,
+    closeContext,
+    getUserMedia,
+    revokeObjectURL,
+    stream,
+  };
+}
 
-afterEach(async () => {
-  if (root) await act(async () => root.unmount());
-  container.remove();
-  vi.useRealTimers();
-  vi.restoreAllMocks();
-  vi.unstubAllGlobals();
-  vi.clearAllMocks();
-});
-
-async function click(label: string) {
+async function click(container: HTMLElement, label: string) {
   await act(async () => {
     const button = container.querySelector<HTMLButtonElement>(`button[aria-label="${label}"]`);
     expect(button).not.toBeNull();
@@ -93,10 +93,12 @@ async function click(label: string) {
 }
 
 it("records the selected mic, stops after ten seconds, and discards playback on retry", async () => {
-  await act(async () => {
-    root.render(<MicrophoneTest microphoneId="selected" />);
-  });
-  await click("Test mic");
+  using native = setup();
+  const { stopTrack, closeContext, getUserMedia, revokeObjectURL } = native;
+  await using screen = await render(<MicrophoneTest microphoneId="selected" />);
+  const { container } = screen;
+  using _timers = fakeTimers();
+  await click(container, "Test mic");
   expect(getUserMedia).toHaveBeenCalledWith({ audio: { deviceId: { exact: "selected" } } });
   await act(async () => {
     vi.advanceTimersByTime(4_000);
@@ -109,63 +111,66 @@ it("records the selected mic, stops after ten seconds, and discards playback on 
   expect(container.querySelector("audio")!.getAttribute("src")).toBe("blob:test");
   expect(stopTrack).toHaveBeenCalledTimes(1);
   expect(closeContext).toHaveBeenCalledTimes(1);
-  await click("Try again");
+  await click(container, "Try again");
   expect(revokeObjectURL).toHaveBeenCalledWith("blob:test");
   expect(container.querySelector("audio")).toBeNull();
-  expect(recorder.state).toBe("recording");
-  await act(async () => root.unmount());
-  expect(recorder.state).toBe("inactive");
+  expect(native.recorder.state).toBe("recording");
+  await screen.unmount();
+  expect(native.recorder.state).toBe("inactive");
   expect(stopTrack).toHaveBeenCalledTimes(2);
 });
 
 it("releases a microphone granted after leaving the page", async () => {
+  using native = setup();
+  const { stopTrack, closeContext, getUserMedia, stream } = native;
   let grant!: (value: typeof stream) => void;
   getUserMedia.mockReturnValue(
     new Promise<typeof stream>((resolve) => {
       grant = resolve;
     }),
   );
-  await act(async () => {
-    root.render(<MicrophoneTest microphoneId="" />);
-  });
-  await click("Test mic");
-  await act(async () => root.unmount());
+  await using screen = await render(<MicrophoneTest microphoneId="" />);
+  const { container } = screen;
+  using _timers = fakeTimers();
+  await click(container, "Test mic");
+  await screen.unmount();
   await act(async () => grant(stream));
   expect(stopTrack).toHaveBeenCalledTimes(1);
   expect(closeContext).not.toHaveBeenCalled();
 });
 
 it("shows permission failures and lets the user try again", async () => {
+  using native = setup();
+  const { getUserMedia, revokeObjectURL } = native;
   getUserMedia.mockRejectedValueOnce(new DOMException("Permission denied", "NotAllowedError"));
-  await act(async () => {
-    root.render(<MicrophoneTest microphoneId="" />);
-  });
-  await click("Test mic");
+  await using screen = await render(<MicrophoneTest microphoneId="" />);
+  const { container } = screen;
+  using _timers = fakeTimers();
+  await click(container, "Test mic");
   expect(container.querySelector('[role="status"]')!.getAttribute("aria-label")).toBe(
     "Microphone access is required for voice input. Allow access in your browser or system settings and try again.",
   );
-  await click("Record again");
-  expect(recorder.state).toBe("recording");
-  await click("Stop recording");
-  await click("Done");
+  await click(container, "Record again");
+  expect(native.recorder.state).toBe("recording");
+  await click(container, "Stop recording");
+  await click(container, "Done");
   expect(revokeObjectURL).toHaveBeenCalledWith("blob:test");
   expect(container.querySelector("audio")).toBeNull();
 });
 
 it("reports unavailable capture and can retry after microphone support becomes available", async () => {
-  vi.stubGlobal("MediaRecorder", undefined);
-  await act(async () => {
-    root.render(<MicrophoneTest microphoneId="" />);
-  });
-  await click("Test mic");
+  using native = setup();
+  const { getUserMedia } = native;
+  using unavailable = stubGlobal("MediaRecorder", undefined);
+  await using screen = await render(<MicrophoneTest microphoneId="" />);
+  const { container } = screen;
+  using _timers = fakeTimers();
+  await click(container, "Test mic");
   expect(container.querySelector('[role="status"]')!.getAttribute("aria-label")).toBe(
     "Microphone testing is unavailable in this browser. Use HTTPS or the desktop app.",
   );
   expect(getUserMedia).not.toHaveBeenCalled();
-  vi.stubGlobal("MediaRecorder", function () {
-    recorder = new TestRecorder();
-    return recorder;
-  });
-  await click("Record again");
-  expect(recorder.state).toBe("recording");
+  unavailable[Symbol.dispose]();
+  await click(container, "Record again");
+  expect(native.recorder.state).toBe("recording");
 });

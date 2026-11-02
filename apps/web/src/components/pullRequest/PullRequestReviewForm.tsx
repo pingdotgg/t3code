@@ -88,6 +88,7 @@ export function PullRequestReviewForm({
   });
   const { cancel } = speech;
   const closeSetup = speech.setup.setOpen;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- cancels native recording when the review editor becomes inactive
   useEffect(() => {
     if (!active) {
       cancel();

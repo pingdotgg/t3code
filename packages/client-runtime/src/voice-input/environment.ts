@@ -1,5 +1,6 @@
 import { encodeSpeechPcmRequest } from "@t3tools/shared/speech";
 import * as Effect from "effect/Effect";
+import * as Redacted from "effect/Redacted";
 import { SPEECH_STREAM_PATH } from "@t3tools/contracts";
 import type {
   SpeechAcceleration,
@@ -67,15 +68,15 @@ export const getEnvironmentSpeechStreamUrl = (prepared: PreparedConnection) => {
     prepared,
     method: "POST",
     path: (urls) => {
-      endpoint = urls.webSocketTicket();
+      endpoint = urls.webSocketTicketFor({ params: { use: "media" } });
       return endpoint;
     },
-    run: ({ client, headers }) => client.webSocketTicket({ headers }),
+    run: ({ client, headers }) => client.webSocketTicketFor({ headers, params: { use: "media" } }),
   }).pipe(
     Effect.map(({ ticket }) => {
       const url = new URL(SPEECH_STREAM_PATH, endpoint);
       url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
-      url.searchParams.set("wsTicket", ticket);
+      url.searchParams.set("wsTicket", Redacted.value(ticket));
       return url.toString();
     }),
   );

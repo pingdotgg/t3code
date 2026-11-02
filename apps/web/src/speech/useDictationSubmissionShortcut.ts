@@ -9,9 +9,11 @@ export function useDictationSubmissionShortcut(input: {
   onKeyDown(event: KeyboardEvent): void;
 }) {
   const latest = useRef(input);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- publishes committed inputs to the window keydown listener
   useEffect(() => {
     latest.current = input;
   });
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- subscribes to window keydown while dictation owns submission
   useEffect(() => {
     if (!input.enabled) return;
     const onKeyDown = (event: KeyboardEvent) => {

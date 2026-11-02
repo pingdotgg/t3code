@@ -56,6 +56,7 @@ export function MicrophoneTest({
     setPhase("idle");
   }
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- releases the native microphone capture and recording URL on unmount
   useEffect(() => {
     return () => {
       releaseCapture();

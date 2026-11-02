@@ -4,11 +4,7 @@ import { resolveSpeechPostProcessingModelSelection } from "@t3tools/shared/serve
 import { useRef, useState } from "react";
 
 import { getCustomModelOptionsByInstance } from "../../modelSelection";
-import {
-  applyProviderInstanceSettings,
-  deriveProviderInstanceEntries,
-  sortProviderInstanceEntries,
-} from "../../providerInstances";
+import { providerInstanceEntriesFor } from "../../providerInstances";
 import { useEnvironmentProviders } from "../../state/environments";
 import { EMPTY_SERVER_PROVIDERS } from "../../state/server";
 import { ProviderModelPicker } from "../chat/ProviderModelPicker";
@@ -22,7 +18,7 @@ import { searchableSetting } from "./settingsSearch";
 import { SETTINGS_PICKER_TRIGGER_CLASSNAME, SettingsRow, SettingsSection } from "./settingsLayout";
 import { useSettingsScope } from "./SettingsScopeContext";
 import { useScopedModelDisabledReason } from "./useScopedModelAvailability";
-import { useClientSettingsHydrated, useUpdateClientSettings } from "../../hooks/useSettings";
+import { useClientSettingsHydrated, updateClientSettings } from "../../hooks/useSettings";
 import { useScopedSettings, useUpdateScopedSettings } from "./useScopedSettings";
 
 const DEFAULT_DRIVER_KIND = ProviderDriverKind.make("codex");
@@ -32,7 +28,6 @@ export function VoicePostProcessingSettings() {
   const [editingCustomInstructions, setEditingCustomInstructions] = useState(false);
   const settings = useScopedSettings();
   const updateSettings = useUpdateScopedSettings();
-  const updateClientSettings = useUpdateClientSettings();
   const clientSettingsHydrated = useClientSettingsHydrated();
   const { environment, connectedEnvironments } = useSettingsScope();
   const providersByEnvironment = useEnvironmentProviders();
@@ -43,13 +38,7 @@ export function VoicePostProcessingSettings() {
   const textGenerationProviders = providers.filter(
     (provider) => provider.supportsTextGeneration !== false,
   );
-  const instanceEntries = sortProviderInstanceEntries(
-    applyProviderInstanceSettings(
-      deriveProviderInstanceEntries(textGenerationProviders),
-      settings,
-      null,
-    ),
-  );
+  const instanceEntries = providerInstanceEntriesFor(textGenerationProviders, settings, null);
   const hasTextGenerationProvider = instanceEntries.some(
     (entry) => entry.enabled && entry.isAvailable,
   );
@@ -133,8 +122,6 @@ export function VoicePostProcessingSettings() {
                   provider={provider}
                   models={instanceEntry.models}
                   model={modelSelection.model}
-                  prompt=""
-                  onPromptChange={() => {}}
                   modelOptions={modelSelection.options}
                   allowPromptInjectedEffort={false}
                   planModeEnabled={settings.planModeEnabled}

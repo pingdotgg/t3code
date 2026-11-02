@@ -22,6 +22,7 @@ export function useTextFieldSpeech(input: {
   disabled?: boolean;
 }) {
   const latest = useRef(input);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- publishes committed field callbacks to the native recording controller
   useEffect(() => {
     latest.current = input;
   });

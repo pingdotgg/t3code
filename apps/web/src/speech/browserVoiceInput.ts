@@ -124,6 +124,7 @@ export function createBrowserVoiceInputPlatform(input: {
       }
     },
     record: ({ forDuration }) => {
+      // oxlint-disable-next-line unicorn/require-post-message-target-origin -- AudioWorklet MessagePorts do not accept a target origin
       worklet?.port.postMessage("start");
       durationTimer = setTimeout(input.onDurationLimit, forDuration * 1_000);
     },
@@ -140,6 +141,7 @@ export function createBrowserVoiceInputPlatform(input: {
         () => stopped?.reject(new Error("Microphone capture did not stop.")),
         5_000,
       );
+      // oxlint-disable-next-line unicorn/require-post-message-target-origin -- AudioWorklet MessagePorts do not accept a target origin
       worklet.port.postMessage("stop");
       try {
         await pending;

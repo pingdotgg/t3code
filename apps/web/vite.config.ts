@@ -104,6 +104,12 @@ const browserTestProject = {
     include: [
       "vite-plus/test/browser",
       "@base-ui/react/autocomplete",
+      "@base-ui/react/field",
+      "@base-ui/react/toolbar",
+      "remark-gfm",
+      "remark-math",
+      "remark-parse",
+      "unified",
       "saxes",
       "@betteroffice/docx/editor",
       "@betteroffice/docx/layout",

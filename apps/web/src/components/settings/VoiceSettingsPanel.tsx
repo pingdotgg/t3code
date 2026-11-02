@@ -42,7 +42,7 @@ import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import {
   useClientSettings,
   useClientSettingsHydrated,
-  useUpdateClientSettings,
+  updateClientSettings,
 } from "../../hooks/useSettings";
 import { ensureLocalApi } from "../../localApi";
 import { runtime } from "../../lib/runtime";
@@ -336,7 +336,6 @@ export function VoiceSettingsPanel() {
   const prepared = supportsVoice ? connection : null;
   const selectedMicrophone = useClientSettings((settings) => settings.voiceMicrophone);
   const voiceShortcutMode = useClientSettings((settings) => settings.voiceShortcutMode);
-  const updateClientSettings = useUpdateClientSettings();
   const clientSettings = useClientSettings();
   const scopedSettings = useScopedSettings();
   const updateScopedSettings = useUpdateScopedSettings();
@@ -380,6 +379,7 @@ export function VoiceSettingsPanel() {
   });
 
   const connectionEpoch = useRef<{ prepared: typeof prepared } | null>(null);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- invalidates in-flight model requests when the server connection changes
   useLayoutEffect(() => {
     connectionEpoch.current = { prepared };
     return () => {
@@ -405,6 +405,7 @@ export function VoiceSettingsPanel() {
     }
   });
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- subscribes to native microphone device changes while settings are open
   useEffect(() => {
     queueMicrotask(() => void refreshMicrophones());
     const mediaDevices = navigator.mediaDevices;
@@ -414,6 +415,7 @@ export function VoiceSettingsPanel() {
     return () => mediaDevices.removeEventListener("devicechange", handleDeviceChange);
   }, [refreshMicrophones]);
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- refreshes the environment model catalog when its connection becomes available
   useEffect(() => {
     if (!prepared) return;
     queueMicrotask(() => {
@@ -423,6 +425,7 @@ export function VoiceSettingsPanel() {
       });
     });
   }, [prepared, refreshModels]);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- polls native model operation progress only while an operation is running
   useEffect(() => {
     if (!operation) return;
     let refreshInFlight = false;

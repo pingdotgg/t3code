@@ -329,7 +329,6 @@ describe("resolveTranscriptCommit", () => {
       text: "Hello world",
     });
   });
-
 });
 
 describe("VoiceInputController", () => {

@@ -38,6 +38,7 @@ export function PreviewAnnotationSpeech({
   const [text, setText] = useState("");
   const keys = useRef<DictationKeyHandlers | null>(null);
   const focused = useRef(false);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- tracks focus returning from the native preview guest to the host window
   useEffect(() => {
     const onFocus = () => {
       focused.current = false;
@@ -66,6 +67,7 @@ export function PreviewAnnotationSpeech({
     },
   });
   const current = useRef(speech);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- publishes committed speech actions to the desktop IPC listener
   useEffect(() => {
     current.current = speech;
   });
@@ -112,9 +114,11 @@ export function PreviewAnnotationSpeech({
       });
     }
   };
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- publishes current voice state to the native annotation guest
   useEffect(() => {
     void publish();
   }, [publish]);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- subscribes to voice actions from the native annotation guest
   useEffect(
     () =>
       previewBridge?.annotationVoice.onEvent(

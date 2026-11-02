@@ -418,7 +418,7 @@ const saveRecording = DesktopIpc.makeIpcMethod({
   }),
 });
 
-export const updateAnnotationVoice = DesktopIpc.makeIpcMethod({
+const updateAnnotationVoice = DesktopIpc.makeIpcMethod({
   channel: IpcChannels.PREVIEW_ANNOTATION_VOICE_STATE_CHANNEL,
   payload: DesktopPreviewAnnotationVoiceStateSchema,
   result: Schema.Void,

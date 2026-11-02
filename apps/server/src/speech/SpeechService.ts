@@ -180,7 +180,7 @@ export class SpeechService extends Context.Service<
   }
 >()("t3/speech/SpeechService") {}
 
-/** @public Service construction is part of the canonical Effect module API. */
+/** @public */
 export const make = Effect.gen(function* () {
   const platform = yield* HostProcess.Platform;
   const architecture = yield* HostProcess.Architecture;
@@ -207,6 +207,7 @@ export const make = Effect.gen(function* () {
   // process, no longer awaited by anyone. New work preempts it on arrival.
   let orphaned: { done: Promise<void>; target: LoadedModel } | undefined;
   let closing = false;
+  // @effect-diagnostics-next-line abortControllerInEffect:off - Native model work outlives cancelled requests and aborts on service shutdown.
   const lifetime = new AbortController();
   let unloadTimeout: SpeechModelUnloadTimeout = "min_15";
   const unloadRequests = yield* Queue.sliding<{ deadline: number; generation: number } | null>(1);
@@ -631,165 +632,165 @@ export const make = Effect.gen(function* () {
         ),
       ),
     ),
-    startStream: (preferences) =>
-      Effect.gen(function* () {
-        const operation = "streaming transcription";
-        if (closing || activeOperation) return yield* new SpeechBusyError({ operation });
-        if (unsupportedReason)
-          return yield* new SpeechUnsupportedPlatformError({ platform, architecture });
-        const released = Promise.withResolvers<void>();
-        activeOperation = released.promise;
-        activeTranscriptions += 1;
-        const controller = new AbortController();
-        const signal = AbortSignal.any([controller.signal, lifetime.signal]);
-        let finished = false;
-        let started = false;
-        let loaded: LoadedModel | undefined;
-        yield* Effect.addFinalizer(() =>
-          Effect.gen(function* () {
-            if (!finished) {
-              const disposeStream = Effect.promise(async () => {
-                controller.abort();
-                if (loaded ?? loading) {
-                  await loading?.catch(() => undefined);
-                  await (loaded ?? model)?.dispose();
-                  model = undefined;
-                  loadedModelId = undefined;
-                  loadedAcceleration = undefined;
-                }
+    startStream: Effect.fn("SpeechService.startStream")(function* (preferences) {
+      const operation = "streaming transcription";
+      if (closing || activeOperation) return yield* new SpeechBusyError({ operation });
+      if (unsupportedReason)
+        return yield* new SpeechUnsupportedPlatformError({ platform, architecture });
+      const released = Promise.withResolvers<void>();
+      activeOperation = released.promise;
+      activeTranscriptions += 1;
+      // @effect-diagnostics-next-line abortControllerInEffect:off - Stream cancellation must abort native work independently of the caller fiber.
+      const controller = new AbortController();
+      const signal = AbortSignal.any([controller.signal, lifetime.signal]);
+      let finished = false;
+      let started = false;
+      let loaded: LoadedModel | undefined;
+      yield* Effect.addFinalizer(() =>
+        Effect.gen(function* () {
+          if (!finished) {
+            const disposeStream = Effect.promise(async () => {
+              controller.abort();
+              if (loaded ?? loading) {
+                await loading?.catch(() => undefined);
+                await (loaded ?? model)?.dispose();
+                model = undefined;
+                loadedModelId = undefined;
+                loadedAcceleration = undefined;
+              }
+            });
+            if (loaded && started) {
+              yield* resetStreamOrThrow(loaded).pipe(Effect.catch(() => disposeStream));
+            } else {
+              yield* disposeStream;
+            }
+          }
+          activeTranscriptions -= 1;
+          if (activeOperation === released.promise) activeOperation = undefined;
+          lastUse = now();
+          scheduleUnload();
+          released.resolve();
+        }),
+      );
+      const rawSettings = yield* readSettings("custom words loading");
+      const settings = { ...rawSettings, ...preferences };
+      const customWords = transcriptionCustomWords(settings, preferences.projectName);
+      const dictionary = normalizeSpeechCustomWords(settings.speechCustomWords);
+      const removeFillerWords = settings.speechRemoveFillerWords;
+      const definition =
+        getSpeechModel(settings.speechModelId) ?? getSpeechModel(DEFAULT_SPEECH_MODEL_ID)!;
+      const language = effectiveSpeechLanguage(definition, settings.speechLanguage);
+      const fillerWordLanguage = language === "auto" ? undefined : language;
+      yield* preemptOrphaned;
+      const preparation = yield* attemptSpeech(operation, async () => {
+        const startedAt = performance.now();
+        const prepared = await loadModel(definition, signal, settings.speechAcceleration);
+        loaded = prepared;
+        if (!prepared.supportsStreaming)
+          throw new Error("The selected model does not support streaming.");
+        await prepared.begin(language === "auto" ? undefined : language, customWords, dictionary);
+        started = true;
+        return { prepared, durationMs: performance.now() - startedAt };
+      });
+      let streamModel = preparation.prepared;
+      loaded = streamModel;
+      yield* Effect.logInfo("Speech stream prepared", {
+        backend: streamModel.backend,
+        durationMs: Math.round(preparation.durationMs),
+      });
+      let byteLength = 0;
+      const received: Float32Array[] = [];
+      let usedCpuFallback = false;
+      // Keep client revisions independent of native streams, which restart on CPU fallback.
+      let revision = 0;
+      let busy = false;
+      const run = <A>(work: () => Promise<A>) =>
+        attemptSpeech(operation, async () => {
+          if (busy || finished || signal.aborted) throw new Error("Speech stream is not ready.");
+          busy = true;
+          try {
+            return await work();
+          } finally {
+            busy = false;
+          }
+        });
+      return {
+        feed: (bytes: Uint8Array) =>
+          run(async () => {
+            if (
+              bytes.byteLength > SPEECH_STREAM_MAX_CHUNK_BYTES ||
+              byteLength + bytes.byteLength > MAX_SPEECH_BYTES
+            )
+              throw new SpeechInvalidAudioError({
+                byteLength: bytes.byteLength,
+                message: "Speech stream audio limit exceeded.",
               });
-              if (loaded && started) {
-                yield* resetStreamOrThrow(loaded).pipe(Effect.catch(() => disposeStream));
-              } else {
-                yield* disposeStream;
-              }
-            }
-            activeTranscriptions -= 1;
-            if (activeOperation === released.promise) activeOperation = undefined;
-            lastUse = now();
-            scheduleUnload();
-            released.resolve();
-          }),
-        );
-        const rawSettings = yield* readSettings("custom words loading");
-        const settings = { ...rawSettings, ...preferences };
-        const customWords = transcriptionCustomWords(settings, preferences.projectName);
-        const dictionary = normalizeSpeechCustomWords(settings.speechCustomWords);
-        const removeFillerWords = settings.speechRemoveFillerWords;
-        const definition =
-          getSpeechModel(settings.speechModelId) ?? getSpeechModel(DEFAULT_SPEECH_MODEL_ID)!;
-        const language = effectiveSpeechLanguage(definition, settings.speechLanguage);
-        const fillerWordLanguage = language === "auto" ? undefined : language;
-        yield* preemptOrphaned;
-        const preparation = yield* attemptSpeech(operation, async () => {
-          const startedAt = performance.now();
-          const prepared = await loadModel(definition, signal, settings.speechAcceleration);
-          loaded = prepared;
-          if (!prepared.supportsStreaming)
-            throw new Error("The selected model does not support streaming.");
-          await prepared.begin(language === "auto" ? undefined : language, customWords, dictionary);
-          started = true;
-          return { prepared, durationMs: performance.now() - startedAt };
-        });
-        let streamModel = preparation.prepared;
-        loaded = streamModel;
-        yield* Effect.logInfo("Speech stream prepared", {
-          backend: streamModel.backend,
-          durationMs: Math.round(preparation.durationMs),
-        });
-        let byteLength = 0;
-        const received: Float32Array[] = [];
-        let usedCpuFallback = false;
-        // Keep client revisions independent of native streams, which restart on CPU fallback.
-        let revision = 0;
-        let busy = false;
-        const run = <A>(work: () => Promise<A>) =>
-          attemptSpeech(operation, async () => {
-            if (busy || finished || signal.aborted) throw new Error("Speech stream is not ready.");
-            busy = true;
+            const pcm = decodeSpeechPcm(bytes, true);
+            byteLength += bytes.byteLength;
+            received.push(pcm);
             try {
-              return await work();
-            } finally {
-              busy = false;
-            }
-          });
-        return {
-          feed: (bytes: Uint8Array) =>
-            run(async () => {
+              const update = await streamModel.feed(pcm);
+              return {
+                ...update,
+                revision: ++revision,
+              };
+            } catch (cause) {
               if (
-                bytes.byteLength > SPEECH_STREAM_MAX_CHUNK_BYTES ||
-                byteLength + bytes.byteLength > MAX_SPEECH_BYTES
+                usedCpuFallback ||
+                settings.speechAcceleration !== "auto" ||
+                streamModel.backend.toLowerCase() === "cpu"
               )
-                throw new SpeechInvalidAudioError({
-                  byteLength: bytes.byteLength,
-                  message: "Speech stream audio limit exceeded.",
-                });
-              const pcm = decodeSpeechPcm(bytes, true);
-              byteLength += bytes.byteLength;
-              received.push(pcm);
-              try {
-                const update = await streamModel.feed(pcm);
-                return {
-                  ...update,
-                  revision: ++revision,
-                };
-              } catch (cause) {
-                if (
-                  usedCpuFallback ||
-                  settings.speechAcceleration !== "auto" ||
-                  streamModel.backend.toLowerCase() === "cpu"
-                )
-                  throw cause;
-                usedCpuFallback = true;
-                await streamModel.dispose();
-                if (model === streamModel) {
-                  model = undefined;
-                  loadedModelId = undefined;
-                  loadedAcceleration = undefined;
-                  loading = undefined;
-                }
-                streamModel = await loadModel(definition, signal, "cpu");
-                loaded = streamModel;
-                await streamModel.begin(
-                  language === "auto" ? undefined : language,
-                  customWords,
-                  dictionary,
-                );
-                let update: Awaited<ReturnType<LoadedModel["feed"]>> | undefined;
-                for (const chunk of received) update = await streamModel.feed(chunk);
-                if (!update) throw cause;
-                return {
-                  ...update,
-                  revision: ++revision,
-                };
+                throw cause;
+              usedCpuFallback = true;
+              await streamModel.dispose();
+              if (model === streamModel) {
+                model = undefined;
+                loadedModelId = undefined;
+                loadedAcceleration = undefined;
+                loading = undefined;
               }
+              streamModel = await loadModel(definition, signal, "cpu");
+              loaded = streamModel;
+              await streamModel.begin(
+                language === "auto" ? undefined : language,
+                customWords,
+                dictionary,
+              );
+              let update: Awaited<ReturnType<LoadedModel["feed"]>> | undefined;
+              for (const chunk of received) update = await streamModel.feed(chunk);
+              if (!update) throw cause;
+              return {
+                ...update,
+                revision: ++revision,
+              };
+            }
+          }),
+        finish: run(async () => {
+          const startedAt = performance.now();
+          const corrected = await streamModel.finish();
+          const text = removeFillerWords
+            ? removeSpeechFillerWords(
+                corrected,
+                fillerWordLanguage,
+                settings.speechPostProcessingEnabled ? settings.speechCorrectionWord : undefined,
+              )
+            : corrected;
+          finished = true;
+          return { text: text.trim(), durationMs: performance.now() - startedAt };
+        }).pipe(
+          Effect.tap(({ durationMs }) =>
+            Effect.logInfo("Speech stream finalized", {
+              backend: streamModel.backend,
+              durationMs: Math.round(durationMs),
             }),
-          finish: run(async () => {
-            const startedAt = performance.now();
-            const corrected = await streamModel.finish();
-            const text = removeFillerWords
-              ? removeSpeechFillerWords(
-                  corrected,
-                  fillerWordLanguage,
-                  settings.speechPostProcessingEnabled ? settings.speechCorrectionWord : undefined,
-                )
-              : corrected;
-            finished = true;
-            return { text: text.trim(), durationMs: performance.now() - startedAt };
-          }).pipe(
-            Effect.tap(({ durationMs }) =>
-              Effect.logInfo("Speech stream finalized", {
-                backend: streamModel.backend,
-                durationMs: Math.round(durationMs),
-              }),
-            ),
-            Effect.map(({ text }) => text),
           ),
-        };
-      }),
+          Effect.map(({ text }) => text),
+        ),
+      };
+    }),
     status: statusEffect,
     models: modelsEffect,
-    downloadModel: (modelId) =>
+    downloadModel: Effect.fn("SpeechService.downloadModel")((modelId) =>
       exclusive("model download", async () => {
         if (unsupportedReason) throw new SpeechUnsupportedPlatformError({ platform, architecture });
         await download(modelId);
@@ -797,7 +798,8 @@ export const make = Effect.gen(function* () {
         Effect.catchTags({ SpeechDownloadCancelledError: () => Effect.void }),
         Effect.andThen(modelsEffect),
       ),
-    selectModel: (modelId) =>
+    ),
+    selectModel: Effect.fn("SpeechService.selectModel")((modelId) =>
       exclusive("model selection", async () => {
         if (!getSpeechModel(modelId)) throw new SpeechModelNotFoundError({ modelId });
         await model?.dispose();
@@ -809,19 +811,23 @@ export const make = Effect.gen(function* () {
         Effect.andThen(writeSettings("model selection", { speechModelId: modelId })),
         Effect.andThen(modelsEffect),
       ),
-    cancelDownload: (modelId) =>
+    ),
+    cancelDownload: Effect.fn("SpeechService.cancelDownload")((modelId) =>
       Effect.sync(() => {
         if (downloading?.modelId === modelId) downloading.controller.abort();
       }).pipe(Effect.andThen(modelsEffect)),
-    updateAcceleration: (acceleration) =>
+    ),
+    updateAcceleration: Effect.fn("SpeechService.updateAcceleration")((acceleration) =>
       writeSettings("acceleration update", { speechAcceleration: acceleration }).pipe(
         Effect.andThen(freshStatus("acceleration update")),
       ),
-    updateModelUnloadTimeout: (timeout) =>
+    ),
+    updateModelUnloadTimeout: Effect.fn("SpeechService.updateModelUnloadTimeout")((timeout) =>
       writeSettings("model unload timeout update", { speechModelUnloadTimeout: timeout }).pipe(
         Effect.andThen(freshStatus("model unload timeout update")),
       ),
-    transcribe: (pcmBytes, preferences) =>
+    ),
+    transcribe: Effect.fn("SpeechService.transcribe")((pcmBytes, preferences) =>
       readSettings("transcription").pipe(
         Effect.map((settings) => ({ ...settings, ...preferences })),
         Effect.flatMap((settings) =>
@@ -969,7 +975,8 @@ export const make = Effect.gen(function* () {
         ),
         Effect.map(({ text }) => text),
       ),
-    removeModel: (modelId) =>
+    ),
+    removeModel: Effect.fn("SpeechService.removeModel")((modelId) =>
       readSettings("model removal").pipe(
         Effect.flatMap((settings) =>
           exclusive("model removal", async () => {
@@ -1006,6 +1013,7 @@ export const make = Effect.gen(function* () {
           ),
         ),
       ),
+    ),
   });
 });
 

@@ -483,14 +483,15 @@ function resolveTextGenerationProvider(
   isDriverAllowed: DriverAllowed = anyDriver,
 ): ServerSettings {
   const selection = settings.textGenerationModelSelection;
-  const resolved = isModelSelectionProviderEnabled(settings, selection) &&
+  const resolved =
+    isModelSelectionProviderEnabled(settings, selection) &&
     selectionSupportsTextGeneration(settings, selection) &&
     isDriverAllowed(
       settings.providerInstances[selection.instanceId]?.driver ??
         ProviderDriverKind.make(selection.instanceId),
     )
-    ? settings
-    : fallbackTextGenerationProvider(settings, isDriverAllowed);
+      ? settings
+      : fallbackTextGenerationProvider(settings, isDriverAllowed);
   const speechPostProcessingModelSelection = resolveSpeechPostProcessingModelSelection(resolved);
   return speechPostProcessingModelSelection === resolved.speechPostProcessingModelSelection
     ? resolved

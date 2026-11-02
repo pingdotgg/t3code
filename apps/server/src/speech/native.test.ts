@@ -153,7 +153,7 @@ it("terminates hung native inference when the service shuts down", async () => {
   controller.abort();
   await model.dispose();
   await rejected;
-}, 5000);
+});
 
 it("returns transcription from an isolated process and disposes it", async () => {
   const model = await loadNativeSpeechModel(
@@ -284,7 +284,7 @@ it("kills a hung streaming feed without waiting for native cleanup", async () =>
   controller.abort();
   await model.dispose();
   await rejected;
-}, 5000);
+});
 
 it("terminates a GPU probe after returning its devices", async () => {
   const { spawn } = await vi.importActual<typeof NodeChildProcess>("node:child_process");
@@ -415,7 +415,7 @@ it("serves HTTP requests while the child corrects a large streaming transcript",
       server.close((error) => (error ? reject(error) : resolve())),
     );
   }
-}, 10000);
+});
 
 it("discovers devices through the executable worker subcommand", async () => {
   const { spawn } = await vi.importActual<typeof NodeChildProcess>("node:child_process");

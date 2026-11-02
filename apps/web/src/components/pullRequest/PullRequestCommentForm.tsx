@@ -53,6 +53,7 @@ export function PullRequestCommentForm({
   const inlineConfirm = useInlineActionConfirm(pullRequestReviewKey(reference));
   const { cancel } = speech;
   const closeSetup = speech.setup.setOpen;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- cancels native recording when the comment editor becomes inactive
   useEffect(() => {
     if (!active) {
       cancel();
@@ -146,8 +147,12 @@ export function PullRequestCommentForm({
               actionPending
             }
             {...(followUpAction === "close"
-              ? inlineConfirm.props("close", () => speech.submitAfterDictation((text) => void submit("close", text)))
-              : { onClick: () => speech.submitAfterDictation((text) => void submit("reopen", text)) })}
+              ? inlineConfirm.props("close", () =>
+                  speech.submitAfterDictation((text) => void submit("close", text)),
+                )
+              : {
+                  onClick: () => speech.submitAfterDictation((text) => void submit("reopen", text)),
+                })}
           >
             {followUpAction === "close" ? (
               <PullRequestGlyph.closed className="size-3.5" />

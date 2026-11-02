@@ -787,25 +787,24 @@ describe("composer rich text document model", () => {
   });
 });
 
-  it.each(["@README.md", "[Checkout](t3-context://v1/preview-annotation/pa-1)"])(
-    "replaces a dictated selection across %s using stored text offsets",
-    (reference) => {
-      const map = roundTrip(`before ${reference} after`);
-      const token = map.runs.find((run) => run.kind === "token");
-      expect(token).toBeDefined();
-      if (!token) throw new Error("Expected an inline mention");
-      const selection = {
-        start: flatToMarkdown(map, pmToFlat(map, token.pmPos)),
-        end: flatToMarkdown(map, pmToFlat(map, token.pmPos + 1)),
-      };
-      expect(
-        replaceTextRange(map.value, selection.start, selection.end, "replacement"),
-      ).toMatchObject({
-        text: "before replacement after",
-      });
-    },
-  );
-
+it.each(["@README.md", "[Checkout](t3-context://v1/preview-annotation/pa-1)"])(
+  "replaces a dictated selection across %s using stored text offsets",
+  (reference) => {
+    const map = roundTrip(`before ${reference} after`);
+    const token = map.runs.find((run) => run.kind === "token");
+    expect(token).toBeDefined();
+    if (!token) throw new Error("Expected an inline mention");
+    const selection = {
+      start: flatToMarkdown(map, pmToFlat(map, token.pmPos)),
+      end: flatToMarkdown(map, pmToFlat(map, token.pmPos + 1)),
+    };
+    expect(
+      replaceTextRange(map.value, selection.start, selection.end, "replacement"),
+    ).toMatchObject({
+      text: "before replacement after",
+    });
+  },
+);
 
 describe("serializeSelection", () => {
   function copy(value: string, first: string, last: string) {

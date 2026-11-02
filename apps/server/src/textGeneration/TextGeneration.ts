@@ -172,9 +172,14 @@ export const make = Effect.gen(function* () {
           }),
       );
     }),
-    generateTranscriptionPostProcessing: Effect.fn("TextGeneration.generateTranscriptionPostProcessing")(function (input) {
-      return generate("generateTranscriptionPostProcessing", input.modelSelection, (service, modelSelection) =>
-        service.generateTranscriptionPostProcessing({ ...input, modelSelection }),
+    generateTranscriptionPostProcessing: Effect.fn(
+      "TextGeneration.generateTranscriptionPostProcessing",
+    )(function (input) {
+      return generate(
+        "generateTranscriptionPostProcessing",
+        input.modelSelection,
+        (service, modelSelection) =>
+          service.generateTranscriptionPostProcessing({ ...input, modelSelection }),
       );
     }),
   });

@@ -63,6 +63,7 @@ export function useDictationShortcut(input: ShortcutInput) {
   const subscribeKeys = input.subscribeKeys;
   const mode = useClientSettings((settings) => settings.voiceShortcutMode);
   const current = useRef(input);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- publishes committed actions to the native keyboard listener and shortcut registry
   useEffect(() => {
     current.current = input;
   });
@@ -75,6 +76,7 @@ export function useDictationShortcut(input: ShortcutInput) {
     starting: Promise<void>;
   } | null>(null);
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- owns the window keyboard listeners and dictation target registry entry
   useEffect(() => {
     if (typeof window === "undefined") return;
     let disposed = false;

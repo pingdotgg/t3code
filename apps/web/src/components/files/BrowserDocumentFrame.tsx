@@ -18,11 +18,7 @@ import {
   readHtmlRenderKeyDown,
   readHtmlRenderLinkRequest,
 } from "@t3tools/shared/htmlRender";
-import {
-  isMacPlatform,
-  matchesKeybindingShortcut,
-  normalizeEventKey,
-} from "@t3tools/shared/keybindings";
+import { isMacPlatform, matchesKeybindingShortcut } from "@t3tools/shared/keybindings";
 import {
   lazy,
   Suspense,

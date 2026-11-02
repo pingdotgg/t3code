@@ -1,10 +1,11 @@
-import { createElement, act, type ReactNode } from "react";
-import { createRoot, type Root } from "react-dom/client";
+import { createElement, type ReactNode } from "react";
+import { act, render } from "../../../test/render";
 import { userEvent } from "vite-plus/test/browser";
-import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
+import { expect, it, vi } from "vite-plus/test";
 import "~/index.css";
 
 const mocks = vi.hoisted(() => ({
+  rerender: async () => {},
   voiceCapability: true as boolean | undefined,
   statusRequests: vi.fn(),
   toast: vi.fn(),
@@ -68,14 +69,12 @@ vi.mock("@t3tools/client-runtime/voice-input", async (original) => ({
     }),
   cancelEnvironmentSpeechModelDownload: mocks.cancel,
 }));
-vi.mock("./SettingsScopeContext", async (original) => ({
-  ...(await original<typeof import("./SettingsScopeContext")>()),
+vi.mock("./SettingsScopeContext", async () => ({
   useOptionalSettingsScope: () => mocks.scope,
 }));
-vi.mock("../../hooks/useSettings", async (original) => {
+vi.mock("../../hooks/useSettings", async () => {
   const { DEFAULT_CLIENT_SETTINGS } = await import("@t3tools/contracts");
   return {
-    ...(await original<typeof import("../../hooks/useSettings")>()),
     useClientSettings: (select?: (settings: unknown) => unknown) => {
       const settings = {
         ...DEFAULT_CLIENT_SETTINGS,
@@ -85,31 +84,28 @@ vi.mock("../../hooks/useSettings", async (original) => {
       return select ? select(settings) : settings;
     },
     useClientSettingsHydrated: () => true,
-    useUpdateClientSettings: () => async (patch: Record<string, unknown>) => {
+    updateClientSettings: async (patch: Record<string, unknown>) => {
       mocks.saveClient(patch);
       if (patch.speechCustomWords)
         mocks.customWords = patch.speechCustomWords as typeof mocks.customWords;
       Object.assign(mocks.settings, patch);
-      root.render(createElement(VoiceSettingsPanel));
+      await mocks.rerender();
     },
   };
 });
-vi.mock("./useScopedSettings", async (original) => ({
-  ...(await original<typeof import("./useScopedSettings")>()),
+vi.mock("./useScopedSettings", async () => ({
   useScopedSettings: () => ({ speechProjectCustomWords: mocks.projectWords }),
   useUpdateScopedSettings:
-    () => (patch: { speechProjectCustomWords: typeof mocks.projectWords }) => {
+    () => async (patch: { speechProjectCustomWords: typeof mocks.projectWords }) => {
       mocks.saveWords(patch);
       mocks.projectWords = patch.speechProjectCustomWords;
-      root.render(createElement(VoiceSettingsPanel));
+      await mocks.rerender();
     },
 }));
-vi.mock("../../lib/runtime", async (original) => ({
-  ...(await original<typeof import("../../lib/runtime")>()),
+vi.mock("../../lib/runtime", async () => ({
   runtime: { runPromise: (value: unknown) => value },
 }));
-vi.mock("../../state/environments", async (original) => ({
-  ...(await original<typeof import("../../state/environments")>()),
+vi.mock("../../state/environments", async () => ({
   usePrimaryEnvironmentId: () => "environment",
   useEnvironments: () => ({
     environments: [
@@ -123,40 +119,32 @@ vi.mock("../../state/environments", async (original) => ({
     ],
   }),
 }));
-vi.mock("../../state/session", async (original) => {
+vi.mock("../../state/session", async () => {
   const Option = await import("effect/Option");
   return {
-    ...(await original<typeof import("../../state/session")>()),
     usePreparedConnection: () => Option.some(mocks.connection),
   };
 });
-vi.mock("../../localApi", async (original) => ({
-  ...(await original<typeof import("../../localApi")>()),
+vi.mock("../../localApi", async () => ({
   ensureLocalApi: vi.fn(),
 }));
-vi.mock("../ui/toast", async (original) => ({
-  ...(await original<typeof import("../ui/toast")>()),
+vi.mock("../ui/toast", async () => ({
   toastManager: { add: mocks.toast },
 }));
-vi.mock("./settingsSearch", async (original) => ({
-  ...(await original<typeof import("./settingsSearch")>()),
+vi.mock("./settingsSearch", async () => ({
   searchableSetting: () => ({}),
 }));
-vi.mock("./VoicePostProcessingSettings", async (original) => ({
-  ...(await original<typeof import("./VoicePostProcessingSettings")>()),
+vi.mock("./VoicePostProcessingSettings", async () => ({
   VoicePostProcessingSettings: () => null,
 }));
-vi.mock("./TranscriptionTest", async (original) => ({
-  ...(await original<typeof import("./TranscriptionTest")>()),
+vi.mock("./TranscriptionTest", async () => ({
   TranscriptionTest: ({ modelName }: { modelName: string }) =>
     createElement("span", null, modelName),
 }));
-vi.mock("./MicrophoneTest", async (original) => ({
-  ...(await original<typeof import("./MicrophoneTest")>()),
+vi.mock("./MicrophoneTest", async () => ({
   MicrophoneTest: ({ microphoneControl }: { microphoneControl: ReactNode }) => microphoneControl,
 }));
-vi.mock("./settingsLayout", async (original) => ({
-  ...(await original<typeof import("./settingsLayout")>()),
+vi.mock("./settingsLayout", async () => ({
   SettingsPageContainer: "div",
   SettingsSection: "section",
   SettingsRow: ({
@@ -171,14 +159,6 @@ vi.mock("./settingsLayout", async (original) => ({
 }));
 import { VoiceSettingsPanel } from "./VoiceSettingsPanel";
 
-let root: Root;
-let container: HTMLDivElement;
-beforeEach(() => {
-  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
-  container = document.createElement("div");
-  document.body.append(container);
-  root = createRoot(container);
-});
 const byLabel = <T extends HTMLElement = HTMLElement>(label: string) => {
   const selector = `[aria-label="${label}"]`;
   const element =
@@ -188,7 +168,8 @@ const byLabel = <T extends HTMLElement = HTMLElement>(label: string) => {
 };
 const button = (label: string) =>
   [...document.querySelectorAll("button")].find((entry) => entry.textContent?.trim() === label)!;
-const paragraphs = () => [...container.querySelectorAll("p")].map((entry) => entry.textContent);
+const paragraphs = (container: HTMLElement) =>
+  [...container.querySelectorAll("p")].map((entry) => entry.textContent);
 async function click(label: string) {
   const target = button(label);
   expect(target, label).not.toBeNull();
@@ -198,10 +179,9 @@ async function fill(label: string, value: string) {
   await userEvent.fill(byLabel<HTMLInputElement>(label), value);
 }
 
-afterEach(async () => {
-  if (root) await act(async () => root.unmount());
-  container.remove();
-  vi.unstubAllGlobals();
+function setup() {
+  mocks.rerender = async () => {};
+  mocks.connection = {};
   mocks.voiceCapability = true;
   mocks.statusRequests.mockClear();
   mocks.listModels.mockReset();
@@ -219,9 +199,10 @@ afterEach(async () => {
   mocks.settings.voiceTranscriptionEnvironmentId = null;
   mocks.settings.voiceMicrophone = "";
   mocks.settings.speechLanguage = "auto";
-});
+}
 
 it("shows translation for capable models and updates the client preference", async () => {
+  setup();
   mocks.speechStatus = {
     supportsTranslation: true,
     translateToEnglish: false,
@@ -256,9 +237,9 @@ it("shows translation for capable models and updates the client preference", asy
       },
     ],
   });
-  await act(async () => {
-    root.render(createElement(VoiceSettingsPanel));
-  });
+  await using screen = await render(createElement(VoiceSettingsPanel));
+  const { container } = screen;
+  mocks.rerender = () => screen.rerender(createElement(VoiceSettingsPanel));
   expect(container.textContent).toContain("Translate");
   const toggle = byLabel("Translate to English");
   await userEvent.click(toggle);
@@ -266,6 +247,7 @@ it("shows translation for capable models and updates the client preference", asy
 });
 
 it("ignores a previous environment model response", async () => {
+  setup();
   let resolve!: (value: { models: unknown[] }) => void;
   const pending = {
     promise: new Promise<{ models: unknown[] }>((done) => {
@@ -274,13 +256,10 @@ it("ignores a previous environment model response", async () => {
     resolve: (value: { models: unknown[] }) => resolve(value),
   };
   mocks.listModels.mockReturnValueOnce(pending.promise);
-  await act(async () => {
-    root.render(createElement(VoiceSettingsPanel));
-  });
+  await using screen = await render(createElement(VoiceSettingsPanel));
+  mocks.rerender = () => screen.rerender(createElement(VoiceSettingsPanel));
   mocks.connection = {};
-  await act(async () => {
-    root.render(createElement(VoiceSettingsPanel));
-  });
+  await screen.rerender(createElement(VoiceSettingsPanel));
   expect(byLabel("Cancel Model download")).not.toBeNull();
   await act(async () => {
     pending.resolve({ models: [] });
@@ -288,9 +267,10 @@ it("ignores a previous environment model response", async () => {
   expect(byLabel("Cancel Model download")).not.toBeNull();
 });
 it("shows friendly labels for default voice options", async () => {
-  await act(async () => {
-    root.render(createElement(VoiceSettingsPanel));
-  });
+  setup();
+  await using screen = await render(createElement(VoiceSettingsPanel));
+  const { container } = screen;
+  mocks.rerender = () => screen.rerender(createElement(VoiceSettingsPanel));
 
   const labels = [...container.querySelectorAll("span")].map((span) => span.textContent);
   expect(labels).toContain("My Computer (Primary)");
@@ -304,13 +284,13 @@ it("shows friendly labels for default voice options", async () => {
   expect(byLabel("Translate to English").getAttribute("aria-disabled")).toBe("true");
 });
 it("shows saved words as tags with misspelling controls in popovers", async () => {
+  setup();
   mocks.customWords = [
     { term: "T3 Code", aliases: ["tea three code"] },
     { term: "Codex", aliases: [] },
   ];
-  await act(async () => {
-    root.render(createElement(VoiceSettingsPanel));
-  });
+  await using screen = await render(createElement(VoiceSettingsPanel));
+  mocks.rerender = () => screen.rerender(createElement(VoiceSettingsPanel));
 
   expect(byLabel("Dictionary entries")).not.toBeNull();
   const wordTag = byLabel("Edit misspellings for T3 Code");
@@ -323,6 +303,7 @@ it("shows saved words as tags with misspelling controls in popovers", async () =
   expect(byLabel("Remove alias tea three code from T3 Code")).not.toBeNull();
 });
 it("bulk adds normalized words and reports skipped entries", async () => {
+  setup();
   mocks.customWords = [{ term: "T3 Code", aliases: ["tee three"] }];
   const words = [
     ...mocks.customWords,
@@ -337,9 +318,9 @@ it("bulk adds normalized words and reports skipped entries", async () => {
     gpuDevices: [{ id: '["vulkan","gpu-1"]', name: "Test GPU" }],
     customWords: words,
   });
-  await act(async () => {
-    root.render(createElement(VoiceSettingsPanel));
-  });
+  await using screen = await render(createElement(VoiceSettingsPanel));
+  const { container } = screen;
+  mocks.rerender = () => screen.rerender(createElement(VoiceSettingsPanel));
 
   await userEvent.click(button("Add multiple words"));
   await fill(
@@ -356,13 +337,14 @@ it("bulk adds normalized words and reports skipped entries", async () => {
   expect(byLabel("Edit misspellings for New Name")).not.toBeNull();
 });
 it("limits bulk additions to the remaining dictionary capacity", async () => {
+  setup();
   mocks.customWords = Array.from({ length: 99 }, (_, index) => ({
     term: `Word ${index}`,
     aliases: [],
   }));
-  await act(async () => {
-    root.render(createElement(VoiceSettingsPanel));
-  });
+  await using screen = await render(createElement(VoiceSettingsPanel));
+  const { container } = screen;
+  mocks.rerender = () => screen.rerender(createElement(VoiceSettingsPanel));
   await userEvent.click(button("Add multiple words"));
   await fill("Words to add", "First\nSecond\nThird");
   const preview = container.querySelector('[role="status"]')!.textContent;
@@ -370,6 +352,7 @@ it("limits bulk additions to the remaining dictionary capacity", async () => {
   expect(preview).toContain("2 over the 100-word limit");
 });
 it("shows models for the selected language while keeping the active model summary", async () => {
+  setup();
   mocks.listModels.mockResolvedValue({
     models: [
       {
@@ -401,19 +384,19 @@ it("shows models for the selected language while keeping the active model summar
       },
     ],
   });
-  await act(async () => {
-    root.render(createElement(VoiceSettingsPanel));
-  });
+  await using screen = await render(createElement(VoiceSettingsPanel));
+  const { container } = screen;
+  mocks.rerender = () => screen.rerender(createElement(VoiceSettingsPanel));
 
   const modelNames = () => [...container.querySelectorAll("span")].map((span) => span.textContent);
   expect(modelNames()).toContain("English Model");
   expect(modelNames()).not.toContain("French Model");
   expect(byLabel<HTMLButtonElement>("Transcription language").disabled).toBe(true);
-  expect(paragraphs()).toContain("This model only supports English.");
+  expect(paragraphs(container)).toContain("This model only supports English.");
   await userEvent.click(button("All"));
   expect(modelNames()).toContain("English Model");
   expect(modelNames()).toContain("French Model");
-  expect(paragraphs()).toContain("All models");
+  expect(paragraphs(container)).toContain("All models");
   await fill("Search transcription models", "French");
   expect(modelNames()).toContain("French Model");
   await userEvent.click(byLabel("Clear model search"));
@@ -423,6 +406,7 @@ it("shows models for the selected language while keeping the active model summar
   expect(modelNames()).toContain("English Model");
 });
 it("orders supported languages by speaker ranking, then alphabetically", async () => {
+  setup();
   mocks.listModels.mockResolvedValue({
     models: [
       {
@@ -441,9 +425,8 @@ it("orders supported languages by speaker ranking, then alphabetically", async (
       },
     ],
   });
-  await act(async () => {
-    root.render(createElement(VoiceSettingsPanel));
-  });
+  await using screen = await render(createElement(VoiceSettingsPanel));
+  mocks.rerender = () => screen.rerender(createElement(VoiceSettingsPanel));
 
   expect(byLabel<HTMLButtonElement>("Transcription language").disabled).toBe(false);
   await userEvent.click(byLabel("Transcription language"));
@@ -476,6 +459,7 @@ it.each([
 ])(
   "shows the effective language without Auto for $preference on $languages",
   async ({ preference, languages, expected }) => {
+    setup();
     mocks.settings.speechLanguage = preference;
     mocks.listModels.mockResolvedValue({
       models: [
@@ -495,9 +479,8 @@ it.each([
         },
       ],
     });
-    await act(async () => {
-      root.render(createElement(VoiceSettingsPanel));
-    });
+    await using screen = await render(createElement(VoiceSettingsPanel));
+    mocks.rerender = () => screen.rerender(createElement(VoiceSettingsPanel));
     const picker = byLabel("Transcription language");
     expect(picker.textContent).toBe(expected);
     await userEvent.click(picker);
@@ -516,6 +499,7 @@ it.each([
 );
 
 it("puts the active model first, then installed and downloading models", async () => {
+  setup();
   const model = (name: string, state: string, active = false) => ({
     id: name,
     name,
@@ -537,11 +521,11 @@ it("puts the active model first, then installed and downloading models", async (
       model("Active", "installed", true),
     ],
   });
-  await act(async () => {
-    root.render(createElement(VoiceSettingsPanel));
-  });
+  await using screen = await render(createElement(VoiceSettingsPanel));
+  const { container } = screen;
+  mocks.rerender = () => screen.rerender(createElement(VoiceSettingsPanel));
 
-  expect(paragraphs().filter((text) => text.endsWith(" description"))).toEqual([
+  expect(paragraphs(container).filter((text) => text.endsWith(" description"))).toEqual([
     "Active description",
     "Installed description",
     "Downloading description",
@@ -549,15 +533,16 @@ it("puts the active model first, then installed and downloading models", async (
   ]);
   const search = byLabel<HTMLInputElement>("Search transcription models");
   await userEvent.fill(search, "installed");
-  expect(paragraphs().filter((text) => text.endsWith(" description"))).toEqual([
+  expect(paragraphs(container).filter((text) => text.endsWith(" description"))).toEqual([
     "Installed description",
   ]);
   await userEvent.fill(search, "missing");
-  expect(paragraphs()).toContain("No models match your search.");
+  expect(paragraphs(container)).toContain("No models match your search.");
   await userEvent.click(byLabel("Clear model search"));
   expect(search.value).toBe("");
 });
 it("uses Handy's editorial ranks within each model state", async () => {
+  setup();
   const model = (slug: string, name: string, state: string) => ({
     id: `handy-computer/${slug}-gguf`,
     name,
@@ -579,11 +564,11 @@ it("uses Handy's editorial ranks within each model state", async () => {
       model("Voxtral-Mini-4B-Realtime-2602", "Rank 6", "downloadable"),
     ],
   });
-  await act(async () => {
-    root.render(createElement(VoiceSettingsPanel));
-  });
+  await using screen = await render(createElement(VoiceSettingsPanel));
+  const { container } = screen;
+  mocks.rerender = () => screen.rerender(createElement(VoiceSettingsPanel));
 
-  expect(paragraphs().filter((text) => text.endsWith(" description"))).toEqual([
+  expect(paragraphs(container).filter((text) => text.endsWith(" description"))).toEqual([
     "Rank 1 description",
     "Rank 3 description",
     "Rank 6 description",
@@ -591,6 +576,7 @@ it("uses Handy's editorial ranks within each model state", async () => {
   ]);
 });
 it("sorts unranked models by recommendation, accuracy, speed, then name", async () => {
+  setup();
   const model = (name: string, accuracy: number, speed: number, recommended = false) => ({
     id: name,
     name,
@@ -613,11 +599,11 @@ it("sorts unranked models by recommendation, accuracy, speed, then name", async 
       model("Recommended", 70, 50, true),
     ],
   });
-  await act(async () => {
-    root.render(createElement(VoiceSettingsPanel));
-  });
+  await using screen = await render(createElement(VoiceSettingsPanel));
+  const { container } = screen;
+  mocks.rerender = () => screen.rerender(createElement(VoiceSettingsPanel));
 
-  expect(paragraphs().filter((text) => text.endsWith(" description"))).toEqual([
+  expect(paragraphs(container).filter((text) => text.endsWith(" description"))).toEqual([
     "Recommended description",
     "Accurate description",
     "Faster description",
@@ -626,10 +612,10 @@ it("sorts unranked models by recommendation, accuracy, speed, then name", async 
   ]);
 });
 it("shows cancellation errors without clearing the download state", async () => {
+  setup();
   mocks.cancel.mockImplementation(() => Promise.reject(new Error("connection lost")));
-  await act(async () => {
-    root.render(createElement(VoiceSettingsPanel));
-  });
+  await using screen = await render(createElement(VoiceSettingsPanel));
+  mocks.rerender = () => screen.rerender(createElement(VoiceSettingsPanel));
   await act(async () => {
     byLabel<HTMLButtonElement>("Cancel Model download").click();
   });
@@ -643,6 +629,7 @@ it("shows cancellation errors without clearing the download state", async () => 
 });
 
 it("saves project words through the originating project scope without copying personal words", async () => {
+  setup();
   mocks.scope = {
     target: { projectId: "project-one" },
     scope: { label: "T3 Code", kind: "project", members: [{ id: "project-one" }] },
@@ -660,9 +647,8 @@ it("saves project words through the originating project scope without copying pe
     customWords: mocks.customWords,
     projectCustomWords: [...mocks.projectWords, { term: "Parakeet", aliases: [] }],
   });
-  await act(async () => {
-    root.render(createElement(VoiceSettingsPanel));
-  });
+  await using screen = await render(createElement(VoiceSettingsPanel));
+  mocks.rerender = () => screen.rerender(createElement(VoiceSettingsPanel));
   expect(document.querySelectorAll('[aria-label="Transcribed as for GitHub"]')).toHaveLength(0);
   expect(document.querySelectorAll('[aria-label="Remove GitHub"]')).toHaveLength(0);
   await userEvent.click(byLabel("View misspellings for GitHub"));
@@ -687,10 +673,11 @@ it("saves project words through the originating project scope without copying pe
 it.each([false, undefined])(
   "does not request voice status or models from an older environment (%s)",
   async (capability) => {
+    setup();
     mocks.voiceCapability = capability;
-    await act(async () => {
-      root.render(createElement(VoiceSettingsPanel));
-    });
+    await using screen = await render(createElement(VoiceSettingsPanel));
+    const { container } = screen;
+    mocks.rerender = () => screen.rerender(createElement(VoiceSettingsPanel));
     expect(mocks.statusRequests).not.toHaveBeenCalled();
     expect(mocks.listModels).not.toHaveBeenCalled();
     expect(container.textContent).toContain("Update its T3 Code server");

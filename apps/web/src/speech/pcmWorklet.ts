@@ -26,6 +26,7 @@ class PcmCaptureProcessor extends AudioWorkletProcessor {
         if (!this.flushed) this.append(this.resampler.flush());
         this.flushed = true;
         if (this.length) this.publish();
+        // oxlint-disable-next-line unicorn/require-post-message-target-origin -- AudioWorklet MessagePorts do not accept a target origin
         this.port.postMessage("stopped");
       }
     };
@@ -41,6 +42,7 @@ class PcmCaptureProcessor extends AudioWorkletProcessor {
     for (const sample of pcm) {
       if (this.samples === 16_000 * 300) {
         this.recording = false;
+        // oxlint-disable-next-line unicorn/require-post-message-target-origin -- AudioWorklet MessagePorts do not accept a target origin
         this.port.postMessage("limit");
         break;
       }

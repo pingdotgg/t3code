@@ -1,10 +1,9 @@
 import { DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS } from "@t3tools/contracts";
-import { act } from "react";
-import { createRoot, type Root } from "react-dom/client";
+import { act, render } from "../../../test/render";
 import { userEvent } from "vite-plus/test/browser";
 import type { PreparedConnection } from "@t3tools/client-runtime/connection";
 import type { createBrowserVoiceInputPlatform } from "../../speech/browserVoiceInput";
-import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
+import { expect, it, vi } from "vite-plus/test";
 
 const mocks = vi.hoisted(() => ({
   prepare: vi.fn(),
@@ -44,36 +43,23 @@ vi.mock(import("./settingsLayout"), async (original) => ({
 }));
 import { TranscriptionTest } from "./TranscriptionTest";
 
-let root: Root;
-let container: HTMLDivElement;
 const prepared = {} as PreparedConnection;
-beforeEach(() => {
-  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
-  container = document.createElement("div");
-  document.body.append(container);
-  root = createRoot(container);
-});
-afterEach(async () => {
-  if (root) await act(async () => root.unmount());
-  container.remove();
+function setup() {
   vi.resetAllMocks();
-  vi.unstubAllGlobals();
-});
-async function mount() {
-  mocks.prepare.mockResolvedValue({ locale: "en", transcribe: mocks.transcribe });
-  await act(async () => {
-    root.render(
-      <TranscriptionTest
-        prepared={prepared}
-        options={DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS}
-        microphoneId="mic"
-        modelName="Test model"
-        disabled={false}
-      />,
-    );
-  });
 }
-async function click(label: string) {
+function mount() {
+  mocks.prepare.mockResolvedValue({ locale: "en", transcribe: mocks.transcribe });
+  return render(
+    <TranscriptionTest
+      prepared={prepared}
+      options={DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS}
+      microphoneId="mic"
+      modelName="Test model"
+      disabled={false}
+    />,
+  );
+}
+async function click(container: HTMLElement, label: string) {
   const name =
     (
       {
@@ -88,59 +74,68 @@ async function click(label: string) {
   expect(button, name).toBeDefined();
   await userEvent.click(button!);
 }
-const result = () => container.querySelector('[aria-label="Test transcription"]');
+const result = (container: HTMLElement) =>
+  container.querySelector('[aria-label="Test transcription"]');
 
 it("transcribes a ten-second test through the voice controller and clears the result on Done", async () => {
+  setup();
   mocks.transcribe.mockResolvedValue("A model test.");
-  await mount();
-  await click("Test model");
+  await using screen = await mount();
+  const { container } = screen;
+  await click(container, "Test model");
   expect(mocks.record).toHaveBeenCalledWith({ forDuration: 10 });
-  await click("Stop");
+  await click(container, "Stop");
   expect(mocks.transcribe).toHaveBeenCalledWith("blob:pcm", { signal: expect.any(AbortSignal) });
-  expect(result()!.textContent).toBe("A model test.");
+  expect(result(container)!.textContent).toBe("A model test.");
   expect(mocks.remove).toHaveBeenCalledWith("blob:pcm");
-  await click("Done");
+  await click(container, "Done");
   expect(container.querySelectorAll('[aria-label="Test transcription"]')).toHaveLength(0);
 });
 
 it("cancels recording without transcribing", async () => {
-  await mount();
-  await click("Test model");
-  await click("Cancel");
+  setup();
+  await using screen = await mount();
+  const { container } = screen;
+  await click(container, "Test model");
+  await click(container, "Cancel");
   expect(mocks.transcribe).not.toHaveBeenCalled();
   expect(mocks.release).toHaveBeenCalled();
   expect(container.querySelectorAll('[aria-label="Test transcription"]')).toHaveLength(0);
 });
 
 it("shows transcription errors and allows another test", async () => {
+  setup();
   mocks.transcribe.mockRejectedValueOnce(new Error("Model failed"));
-  await mount();
-  await click("Test model");
-  await click("Stop");
+  await using screen = await mount();
+  const { container } = screen;
+  await click(container, "Test model");
+  await click(container, "Stop");
   expect(container.querySelector('[role="status"]')!.getAttribute("aria-label")).toBe(
     "Could not transcribe this recording.",
   );
   mocks.transcribe.mockResolvedValue("Try again.");
-  await click("Retry");
-  expect(result()!.textContent).toBe("Try again.");
+  await click(container, "Retry");
+  expect(result(container)!.textContent).toBe("Try again.");
 });
 
 it("shows live streaming text and finishes through the streaming session", async () => {
-  await mount();
+  setup();
+  await using screen = await mount();
+  const { container } = screen;
   const finish = vi.fn(async () => "Finished streaming text.");
   mocks.prepare.mockResolvedValue({
     locale: "en",
     transcribe: mocks.transcribe,
     streaming: { finish },
   });
-  await click("Test model");
+  await click(container, "Test model");
   const input = mocks.platform.mock.calls[0]?.[0] as Parameters<
     typeof createBrowserVoiceInputPlatform
   >[0];
   await act(async () => input.onText({ committed: "Live ", tentative: "text" }));
-  expect(result()!.textContent).toBe("Live text");
-  await click("Stop");
+  expect(result(container)!.textContent).toBe("Live text");
+  await click(container, "Stop");
   expect(finish).toHaveBeenCalled();
   expect(mocks.transcribe).not.toHaveBeenCalled();
-  expect(result()!.textContent).toBe("Finished streaming text.");
+  expect(result(container)!.textContent).toBe("Finished streaming text.");
 });

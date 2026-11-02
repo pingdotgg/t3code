@@ -47,6 +47,7 @@ export function AssistantCitationCommentEditor({
     onTextChange: updateComment,
   });
   const commentTooLong = comment.length > ASSISTANT_CITATION_MAX_COMMENT_LENGTH;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- keeps the citation popover open while its microphone setup dialog owns focus
   useEffect(() => {
     onVoiceSetupOpenChange(speech.setup.open);
     return () => onVoiceSetupOpenChange(false);

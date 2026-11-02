@@ -8,7 +8,6 @@ import {
   postProcessEnvironmentTranscript,
   VoiceInputController,
   voiceInputBlocksSubmission,
-  voiceInputFreezesEditor,
   type VoiceDraftSnapshot,
   type VoiceInputControllerDependencies,
   type VoiceInputState,
@@ -97,6 +96,7 @@ export function useEnvironmentSpeechInput(input: HookInput) {
       : null;
   const clientSettings = useClientSettings();
   const preferencesRef = useRef({ clientSettings, originatingEnvironment });
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- publishes committed preferences for the native recording start callback
   useEffect(() => {
     preferencesRef.current = { clientSettings, originatingEnvironment };
   }, [clientSettings, originatingEnvironment]);
@@ -157,6 +157,7 @@ export function useEnvironmentSpeechInput(input: HookInput) {
   const microphoneIdRef = useRef(microphoneId);
   const draftRevisionRef = useRef({ ownerKey: input.ownerKey, text: input.draftText, revision: 0 });
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- tracks committed draft revisions for the asynchronous recording controller
   useEffect(() => {
     latestInputRef.current = input;
     const revision = draftRevisionRef.current;
@@ -169,10 +170,12 @@ export function useEnvironmentSpeechInput(input: HookInput) {
     }
   }, [input]);
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- publishes the selected microphone to the native capture callback
   useEffect(() => {
     microphoneIdRef.current = microphoneId;
   }, [microphoneId]);
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- owns the native recording controller and its environment connections
   useEffect(() => {
     if (!prepared || typeof navigator === "undefined") return;
 
@@ -309,6 +312,7 @@ export function useEnvironmentSpeechInput(input: HookInput) {
     };
   }, [postProcessingPrepared, prepared]);
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- probes the native transcription service when its connection becomes available
   useEffect(() => {
     if (!prepared) return;
     let disposed = false;
@@ -327,6 +331,7 @@ export function useEnvironmentSpeechInput(input: HookInput) {
 
   const currentStatus = status?.prepared === prepared ? status.value : null;
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- polls download progress while microphone setup owns an active model download
   useEffect(() => {
     if (!setupOpen || !setupDownloading || !prepared || !currentStatus?.supported) return;
     let disposed = false;
@@ -354,6 +359,7 @@ export function useEnvironmentSpeechInput(input: HookInput) {
   }, [currentStatus, prepared, setupDownloading, setupOpen]);
 
   const previousOwnerRef = useRef(input.ownerKey);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- invalidates native recording and queued submissions when editor ownership changes
   useEffect(() => {
     if (previousOwnerRef.current === input.ownerKey && !input.disabled) return;
     previousOwnerRef.current = input.ownerKey;
@@ -362,6 +368,7 @@ export function useEnvironmentSpeechInput(input: HookInput) {
     controllerRef.current?.ownerChanged();
   }, [input.ownerKey, input.disabled]);
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- delivers a queued native recording result only after its draft has committed
   useEffect(() => {
     const pending = pendingSubmissionRef.current;
     if (state.phase !== "idle" || !pending) return;
@@ -509,7 +516,7 @@ export function useEnvironmentSpeechInput(input: HookInput) {
     level,
     preparing: state.phase === "preparing",
     blocksSubmission: voiceInputBlocksSubmission(state),
-    freezesEditor: voiceInputFreezesEditor(state),
+    freezesEditor: voiceInputBlocksSubmission(state),
     start,
     submitAfterDictation,
     stop: useStableCallback(() => controllerRef.current?.stop() ?? Promise.resolve()),

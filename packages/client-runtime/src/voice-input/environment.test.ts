@@ -137,7 +137,7 @@ it.effect.each([
       expect(init?.redirect).toBe("error");
       const path = new URL(String(input)).pathname;
       if (path === "/api/voice/status") return Response.json({ supported: false, reason: "test" });
-      if (path === "/api/auth/websocket-ticket")
+      if (path === "/api/auth/websocket-ticket/media")
         return Response.json({ ticket: "voice-ticket", expiresAt: "2026-10-05T00:00:00.000Z" });
       if (path === "/api/voice/post-process") return Response.json({ text: "Clean transcript" });
       return Response.json({ models: [] });

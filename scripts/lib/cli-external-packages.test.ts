@@ -68,7 +68,6 @@ describe("selectCliRuntimeExternalDependencies", () => {
       },
     );
   });
-
 });
 
 it.layer(NodeServices.layer)("external package dependency closure", (it) => {

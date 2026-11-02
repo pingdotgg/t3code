@@ -1,6 +1,6 @@
-import { act, useRef } from "react";
-import { createRoot, type Root } from "react-dom/client";
-import { beforeEach, afterEach, it, expect, vi } from "vite-plus/test";
+import { useRef } from "react";
+import { act, render } from "../../../test/render";
+import { it, expect, vi } from "vite-plus/test";
 import { DEFAULT_RESOLVED_KEYBINDINGS } from "@t3tools/shared/keybindings";
 import {
   EnvironmentId,
@@ -51,13 +51,13 @@ vi.mock("./previewBridge", () => ({
     },
   },
 }));
-const main = {
+const main = vi.hoisted(() => ({
   available: true,
   state: { phase: "idle", error: null, errorAction: null } as VoiceInputState<true>,
   start: vi.fn(async () => {}),
   stop: vi.fn(async () => {}),
   cancel: vi.fn(),
-};
+}));
 const threadRef = { environmentId: EnvironmentId.make("env"), threadId: ThreadId.make("thread") };
 function Editors() {
   const targetRef = useRef<HTMLTextAreaElement | null>(null);
@@ -116,23 +116,15 @@ function host(key = "d") {
     new KeyboardEvent("keyup", { key, code: key === "d" ? "KeyD" : "Escape", cancelable: true }),
   );
 }
-let root: Root;
-let container: HTMLDivElement;
-beforeEach(async () => {
-  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+function setup() {
   vi.clearAllMocks();
   main.state = mocks.speech.state = { phase: "idle", error: null, errorAction: null };
-  container = document.createElement("div");
-  document.body.append(container);
-  root = createRoot(container);
-  await act(() => root.render(<Editors />));
-});
-afterEach(async () => {
-  await act(() => root.unmount());
-  container.remove();
-  vi.unstubAllGlobals();
-});
+}
+
 it("returns shortcut ownership to the composer and back to the open guest annotation", async () => {
+  setup();
+  await using screen = await render(<Editors />);
+  const { container } = screen;
   await act(() => guest("focus"));
   container.querySelector<HTMLTextAreaElement>("textarea")!.focus();
   await act(() => host());
@@ -146,16 +138,21 @@ it("returns shortcut ownership to the composer and back to the open guest annota
   expect(main.start).toHaveBeenCalledOnce();
 });
 it("cancels annotation recording from the main window after focus moves", async () => {
+  setup();
+  await using screen = await render(<Editors />);
+  const { container } = screen;
   mocks.speech.state = { phase: "recording", error: null, errorAction: null };
-  await act(() => root.render(<Editors />));
+  await screen.rerender(<Editors />);
   container.querySelector<HTMLTextAreaElement>("textarea")!.focus();
   await act(() => host("Escape"));
   expect(mocks.speech.cancel).toHaveBeenCalledOnce();
   expect(main.cancel).not.toHaveBeenCalled();
 });
 it("cancels main-window recording with a forwarded guest Escape", async () => {
+  setup();
+  await using screen = await render(<Editors />);
   main.state = { phase: "recording", error: null, errorAction: null };
-  await act(() => root.render(<Editors />));
+  await screen.rerender(<Editors />);
   await act(() => {
     guest("focus");
     guest("key", "Escape");

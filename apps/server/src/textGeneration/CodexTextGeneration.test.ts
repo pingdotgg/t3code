@@ -444,7 +444,12 @@ it.layer(layerCodexTextGenerationTest)("CodexTextGeneration", (it) => {
   );
 });
 
-it.effect.each([false, true])("text generation preflight: exhausted=%s", (exhausted) =>
+it.effect.each([
+  { exhausted: false, operation: "title" },
+  { exhausted: true, operation: "title" },
+  { exhausted: false, operation: "transcription" },
+  { exhausted: true, operation: "transcription" },
+])("text generation preflight: $operation exhausted=$exhausted", ({ exhausted, operation }) =>
   Effect.gen(function* () {
     const primary = ProviderInstanceId.make("codex");
     const fallback = ProviderInstanceId.make("claude_work");
@@ -490,6 +495,11 @@ it.effect.each([false, true])("text generation preflight: exhausted=%s", (exhaus
           generatePrContent: () => Effect.die("unused"),
           generateBranchName: () => Effect.die("unused"),
           generateReviewGuide: () => Effect.die("unused"),
+          generateTranscriptionPostProcessing: (input) =>
+            Effect.sync(() => {
+              calls.push(input.modelSelection);
+              return { transcription: "Cleaned transcript" };
+            }),
           generateThreadTitle: (input) =>
             Effect.sync(() => {
               calls.push(input.modelSelection);
@@ -517,14 +527,24 @@ it.effect.each([false, true])("text generation preflight: exhausted=%s", (exhaus
         ),
       ),
     );
-    expect(
-      yield* service.generateThreadTitle({
-        cwd: "/tmp",
-        message: "hello",
-        linkedContext: "",
-        modelSelection: selection,
-      }),
-    ).toEqual({ title: "Generated title" });
+    if (operation === "transcription") {
+      expect(
+        yield* service.generateTranscriptionPostProcessing({
+          cwd: "/tmp",
+          prompt: "Clean this transcript.",
+          modelSelection: selection,
+        }),
+      ).toEqual({ transcription: "Cleaned transcript" });
+    } else {
+      expect(
+        yield* service.generateThreadTitle({
+          cwd: "/tmp",
+          message: "hello",
+          linkedContext: "",
+          modelSelection: selection,
+        }),
+      ).toEqual({ title: "Generated title" });
+    }
     expect(calls).toEqual([
       exhausted
         ? {

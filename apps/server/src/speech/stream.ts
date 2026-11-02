@@ -28,13 +28,12 @@ export const runSpeechSocket = Effect.fn("speech.runSocket")(function* (
   const send = (event: SpeechStreamEvent) => writer.write(JSON.stringify(event));
   let stream: SpeechService.SpeechStream | undefined;
   let ended = false;
-  const fail = (message: string) =>
-    Effect.gen(function* () {
-      if (ended) return;
-      ended = true;
-      yield* send({ type: "error", message });
-      yield* writer.write(new Socket.CloseEvent(1008, "Speech stream ended"));
-    });
+  const fail = Effect.fn("speech.failSocket")(function* (message: string) {
+    if (ended) return;
+    ended = true;
+    yield* send({ type: "error", message });
+    yield* writer.write(new Socket.CloseEvent(1008, "Speech stream ended"));
+  });
   const receive = (data: string | Uint8Array) => {
     if (ended) return Effect.void;
     return Effect.gen(function* () {
@@ -86,7 +85,7 @@ export const runSpeechSocket = Effect.fn("speech.runSocket")(function* (
       // The socket read loop is already interrupted here; its writer can no longer send.
       orElse: () => Effect.void,
     }),
-    Effect.catch(() => Effect.void),
+    Effect.ignore,
   );
 });
 
@@ -99,7 +98,9 @@ export const speechStreamRouteLayer = Layer.unwrap(
       SPEECH_STREAM_PATH,
       Effect.gen(function* () {
         const request = yield* HttpServerRequest.HttpServerRequest;
-        const session = yield* auth.authenticateWebSocketUpgrade(request).pipe(Effect.result);
+        const session = yield* auth
+          .authenticateWebSocketUpgrade(request, "media")
+          .pipe(Effect.result);
         if (session._tag === "Failure") return HttpServerResponse.empty({ status: 401 });
         if (!session.success.scopes.includes(AuthOrchestrationOperateScope))
           return HttpServerResponse.empty({ status: 403 });

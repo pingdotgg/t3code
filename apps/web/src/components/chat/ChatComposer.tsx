@@ -72,6 +72,7 @@ import {
   type ComposerSubmissionIntent,
   collapseExpandedComposerCursor,
   composerRequiresModifier,
+  composerSubmissionIntentForKey,
   composerStateAtPromptEnd,
   detectComposerTrigger,
   expandCollapsedComposerCursor,
@@ -136,8 +137,6 @@ import {
   useAttachmentUploadStore,
 } from "../../lib/attachmentUploadQueue";
 import { attachmentUploadBlockReason } from "../../lib/attachmentUploadState";
-import { isCommandPaletteOpen } from "../../commandPaletteBus";
-import { getTerminalFocusOwner } from "../../lib/terminalFocus";
 import { useDictationShortcut } from "../../speech/useDictationShortcut";
 import type { AssistantCitationSourceAnchor } from "~/lib/assistantTextSelection";
 import { shortcutLabelForCommand } from "../../keybindings";
@@ -159,9 +158,7 @@ import {
   ComposerPromptEditorTiptap as ComposerPromptEditor,
 } from "../ComposerPromptEditorTiptap";
 import { ComposerContextActionsContext } from "../composerContextActions";
-import {
-  composerContextRecordsFromDraft,
-} from "../composerContextPresentation";
+import { composerContextRecordsFromDraft } from "../composerContextPresentation";
 import { useOpenPrLink } from "~/lib/openPullRequestLink";
 import {
   collectInlineContextIds,
@@ -234,9 +231,13 @@ import { pendingDraftWork } from "./pendingDraftWork";
 import { importComposerThreadAttachment } from "./composerThreadImport";
 import { useDictationSubmissionShortcut } from "~/speech/useDictationSubmissionShortcut";
 import { observeResize } from "~/lib/observeResize";
-import { ComposerSpeechButton, ComposerSpeechRecordingPill, shouldShowComposerFooter, resolveSpeechPresentation } from "./ComposerSpeechButton";
+import {
+  ComposerSpeechButton,
+  ComposerSpeechRecordingPill,
+  shouldShowComposerFooter,
+  resolveSpeechPresentation,
+} from "./ComposerSpeechButton";
 import { useEnvironmentSpeechInput } from "../../speech/useEnvironmentSpeechInput";
-
 
 const isEnvironmentRequestInvalidError = Schema.is(EnvironmentRequestInvalidError);
 import { toastManager } from "../ui/toast";
@@ -1847,7 +1848,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
 
   const dictationDisabled =
     !canOperateThread ||
-    isConnecting ||
+    environmentUnavailable !== null ||
     projectSelectionRequired ||
     isComposerApprovalState ||
     activePendingIsResponding ||
@@ -1891,6 +1892,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     disabled: dictationDisabled,
     terminalOpen,
     modelPickerOpen: isComposerModelPickerOpen,
+    ...(backgroundThread ? { targetRef: composerFormRef } : {}),
   });
 
   const resolveActiveComposerTrigger = (): {
@@ -2196,6 +2198,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     }
   };
   const submitComposerStable = useStableCallback(submitComposer);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- publishes the committed submission handler to asynchronous native dictation completion
   useLayoutEffect(() => {
     submitComposerRef.current = (mode, intent) => submitComposerStable(undefined, mode, intent);
   }, [submitComposerStable]);
@@ -2206,7 +2209,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       const intent = composerSubmissionIntentForKey({
         event,
         keybindings,
-        isMobileViewport,
+        isSoftwareKeyboardOpen,
         isDraftThread: routeKind === "draft",
         isRunning: phase === "running",
         sendShortcut: settings.sendShortcut,
@@ -2221,7 +2224,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
           running: phase === "running",
           alternateModifier: intent === "alternate",
           canSteer: !isCompacting,
-          activeTurnDefault: settings.followUpBehavior,
+          activeTurnDefault: followUpBehavior,
         }),
         intent,
       );
@@ -3594,7 +3597,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                 className={cn(
                   "flex min-w-0 flex-nowrap items-center overflow-visible px-2 pb-2",
                   pendingUserInputs.length > 0 && "pt-2",
-                  showMobilePendingAnswerActions && speechInput.state.phase === "idle" && "hidden sm:flex",
+                  showMobilePendingAnswerActions &&
+                    speechInput.state.phase === "idle" &&
+                    "hidden sm:flex",
                 )}
               >
                 {composerAttachButton ? <div className="me-2">{composerAttachButton}</div> : null}
@@ -3621,7 +3626,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                       keepFullHistory={props.keepFullHistory}
                       onToggleKeepFullHistory={props.onToggleKeepFullHistory}
                       showActions={speechPresentation.showsSend || phase === "running"}
-                      compact={isComposerResting || isComposerPrimaryActionsCompact}
+                      compact={isComposerPrimaryActionsCompact}
                       activeContextWindow={
                         settings.contextWindowMeterEnabled ? activeContextWindow : null
                       }
@@ -3630,7 +3635,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                       pendingAction={pendingPrimaryAction}
                       isRunning={phase === "running"}
                       canInterrupt={canInterrupt}
-                      followUpBehavior={settings.followUpBehavior}
+                      followUpBehavior={followUpBehavior}
                       canSteer={!isCompacting}
                       alternateShortcutLabel={shortcutLabelForCommand(
                         keybindings,
@@ -3640,6 +3645,10 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                             composerFocus: true,
                             draftThreadRoute: routeKind === "draft",
                             turnRunning: true,
+                            composerRequiresModifier: composerRequiresModifier(
+                              settings.sendShortcut,
+                              prompt,
+                            ),
                           },
                         },
                       )}
@@ -3650,7 +3659,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                       voiceInputActive={voiceInputActive}
                       isSendBusy={isSendBusy}
                       sendDisabledReason={voiceSendDisabledReason}
-                      isConnecting={isConnecting}
                       isEnvironmentUnavailable={
                         environmentUnavailable !== null ||
                         noProviderAvailable ||
@@ -3661,16 +3669,14 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                         composerSendState.hasSendableContent || speechInput.blocksSubmission
                       }
                       canResume={showResumeAction}
-                      preserveComposerFocusOnPointerDown={isMobileViewport || isComposerResting}
+                      preserveComposerFocusOnPointerDown={isMobileViewport}
                       isEditingQueuedMessage={isEditingQueuedMessage}
                       onSubmitMessage={handleSubmitMessageStable}
                       onResume={onResume}
                       onPreviousPendingQuestion={onPreviousActivePendingUserInputQuestion}
                       onInterrupt={handleInterruptPrimaryActionStable}
                       onImplementPlanInNewThread={handleImplementPlanInNewThreadPrimaryActionStable}
-                      compactDisabled={
-                        compactDisabled || noProviderAvailable || isSendBusy || isConnecting
-                      }
+                      compactDisabled={compactDisabled || noProviderAvailable || isSendBusy}
                       compactDisabledReason={resolvedCompactDisabledReason}
                       {...(compactCommandAvailable
                         ? { onCompactContext: compactThreadContextStable }
