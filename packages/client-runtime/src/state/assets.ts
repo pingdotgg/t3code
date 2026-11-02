@@ -28,7 +28,6 @@ import type { ProjectFaviconCache, ProjectFaviconTarget } from "../projectFavico
 import { createEnvironmentQueryAtomFamily } from "./runtime.ts";
 
 const ASSET_URL_REFRESH_INTERVAL_MS = 30 * 60_000;
-const ASSET_URL_STALE_TIME_MS = 5 * 60_000;
 const ASSET_URL_IDLE_TTL_MS = 60 * 60_000;
 export const ASSET_URL_MAX_IN_FLIGHT = 6;
 
@@ -182,7 +181,8 @@ export function createAssetEnvironmentAtoms<R, E>(
   const createUrl = createEnvironmentQueryAtomFamily(runtime, {
     label: "environment-data:assets:create-url",
     execute,
-    staleTimeMs: ASSET_URL_STALE_TIME_MS,
+    // Each mint is a new signed URL and image download, so a remount reuses one until it is due.
+    staleTimeMs: ASSET_URL_REFRESH_INTERVAL_MS,
     idleTtlMs: ASSET_URL_IDLE_TTL_MS,
     refreshIntervalMs: ASSET_URL_REFRESH_INTERVAL_MS,
     refreshTrigger: ({ input }) =>
