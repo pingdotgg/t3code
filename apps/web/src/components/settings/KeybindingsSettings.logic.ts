@@ -171,6 +171,30 @@ function defaultBindingForBinding(
   );
 }
 
+function platformAllowsWhen(node: KeybindingWhenNode | undefined, isMac: boolean): boolean | null {
+  if (!node) return null;
+  switch (node.type) {
+    case "identifier":
+      return node.name === "isMac" ? isMac : null;
+    case "not": {
+      const value = platformAllowsWhen(node.node, isMac);
+      return value === null ? null : !value;
+    }
+    case "and": {
+      const left = platformAllowsWhen(node.left, isMac);
+      const right = platformAllowsWhen(node.right, isMac);
+      if (left === false || right === false) return false;
+      return left === true && right === true ? true : null;
+    }
+    case "or": {
+      const left = platformAllowsWhen(node.left, isMac);
+      const right = platformAllowsWhen(node.right, isMac);
+      if (left === true || right === true) return true;
+      return left === false && right === false ? false : null;
+    }
+  }
+}
+
 function keybindingRowId(command: KeybindingCommand, key: string, when: string): string {
   return `${command}\u0000${key}\u0000${when}`;
 }
@@ -207,7 +231,9 @@ export function buildKeybindingRows(
   platform = navigator.platform,
 ): ReadonlyArray<KeybindingRow> {
   const rowsById = new Map<string, KeybindingRow>();
+  const isMac = isMacPlatform(platform);
   for (const binding of keybindings) {
+    if (platformAllowsWhen(binding.whenAst, isMac) === false) continue;
     const defaultBinding = defaultBindingForBinding(binding);
     const key = shortcutToKeybindingInput(binding.shortcut);
     const when = whenAstToExpression(binding.whenAst);
