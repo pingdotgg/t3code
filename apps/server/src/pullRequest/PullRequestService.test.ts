@@ -257,6 +257,7 @@ function makeService(input: {
   readonly providers: ReadonlyArray<PullRequestProviderApi>;
   readonly resolveHandle?: SourceControlProviderRegistry.SourceControlProviderRegistry["Service"]["resolveHandle"];
   readonly resolveRepositoryIdentity?: RepositoryIdentityResolver.RepositoryIdentityResolver["Service"]["resolve"];
+  readonly onProjectRead?: () => void;
 }) {
   // Build in the test scope; per-call Effect.provide would close the marks database on service acquisition.
   return Effect.flatMap(
@@ -280,11 +281,17 @@ function makeService(input: {
         }),
         Layer.mock(ProjectService.ProjectService)({
           listShells: (options) =>
-            Effect.succeed(
-              input.projects.filter((project) => options?.projectIds?.includes(project.id) ?? true),
-            ),
+            Effect.sync(() => {
+              input.onProjectRead?.();
+              return input.projects.filter(
+                (project) => options?.projectIds?.includes(project.id) ?? true,
+              );
+            }),
           getShell: (projectId) =>
-            Effect.succeed(Option.fromNullishOr(input.projects.find((p) => p.id === projectId))),
+            Effect.sync(() => {
+              input.onProjectRead?.();
+              return Option.fromNullishOr(input.projects.find((p) => p.id === projectId));
+            }),
         }),
         Layer.mock(RepositoryIdentityResolver.RepositoryIdentityResolver)({
           resolve: input.resolveRepositoryIdentity ?? (() => Effect.succeed(null)),
@@ -470,6 +477,52 @@ it.effect("reads nothing from a host with no implementation, but reports it", ()
       [
         { kind: SourceControlProviderKind.make("github"), configured: true, projectCount: 1 },
         { kind: SourceControlProviderKind.make("gitlab"), configured: false, projectCount: 1 },
+      ],
+    );
+  }),
+);
+
+it.effect("reads nothing from a host its provider does not serve, but reports it", () =>
+  Effect.gen(function* () {
+    const reached = new Set<string>();
+    const bitbucket = (id: string, host: string) =>
+      project({
+        id,
+        title: host,
+        workspaceRoot: `/${id}`,
+        repository: "proj/repo",
+        provider: SourceControlProviderKind.make("bitbucket"),
+        host,
+      });
+    const service = yield* makeService({
+      projects: [bitbucket("p1", "bitbucket.org"), bitbucket("p2", "bitbucket.example.com")],
+      providers: [
+        fakePullRequestProvider(SourceControlProviderKind.make("bitbucket"), {
+          servesHost: (host) => host === "bitbucket.org",
+          getViewer: ({ host }) => {
+            reached.add(host ?? "");
+            return Effect.succeed("bilal");
+          },
+          listChangeRequests: ({ host }) => {
+            reached.add(host);
+            return Effect.succeed({ items: [], truncated: false, continues: false });
+          },
+        }),
+      ],
+    });
+
+    const result = yield* service.list({ state: "open" });
+
+    assert.deepStrictEqual([...reached], ["bitbucket.org"]);
+    assert.deepStrictEqual(
+      result.providers.map(({ host, configured, detail }) => ({ host, configured, detail })),
+      [
+        { host: "bitbucket.org", configured: true, detail: null },
+        {
+          host: "bitbucket.example.com",
+          configured: false,
+          detail: "This host cannot be browsed here yet.",
+        },
       ],
     );
   }),
@@ -1708,7 +1761,11 @@ it.effect("resolves a project's repository identity when its shell has none cach
 it.effect("routes a hosted reference to another repository through a project on that host", () =>
   Effect.gen(function* () {
     const seen: Array<{ cwd: string; repository: string; host: string }> = [];
+    let projectReads = 0;
     const service = yield* makeService({
+      onProjectRead: () => {
+        projectReads += 1;
+      },
       projects: [
         project({ id: "frontend", title: "web", workspaceRoot: "/web", repository: "acme/web" }),
       ],
@@ -1730,6 +1787,20 @@ it.effect("routes a hosted reference to another repository through a project on 
 
     assert.strictEqual(summary.number, 7);
     assert.deepStrictEqual(seen, [{ cwd: "/web", repository: "acme/api", host: "github.com" }]);
+
+    // A sync sweep resolves the project once for all of its references, then reads fresh again.
+    const readsPerReference = projectReads;
+    const read = (number: number) =>
+      service.summary(
+        { projectId: "frontend" as ProjectId, host: "github.com", repository: "acme/api", number },
+        { recoverTransientFailure: false },
+      );
+    assert.isAbove(readsPerReference, 2);
+    yield* service.withSharedProjectReads(Effect.all([read(8), read(9), read(10)]));
+    // One read of the project and one of the host's projects, for all three references.
+    assert.strictEqual(projectReads, readsPerReference + 2);
+    yield* read(11);
+    assert.strictEqual(projectReads, readsPerReference * 2 + 2);
   }),
 );
 

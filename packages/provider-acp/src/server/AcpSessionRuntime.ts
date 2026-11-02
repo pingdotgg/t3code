@@ -123,7 +123,12 @@ export interface AcpSessionRuntimeOptions {
   /** Authenticate before opening: Antigravity selects its credential source from the method. */
   readonly authenticateEagerly?: boolean;
   readonly mcpServers?: ReadonlyArray<EffectAcpSchema.McpServer>;
+  /** Sent on every session/new, load, resume and fork; omitting them clears an agent's stored roots. */
   readonly additionalDirectories?: ReadonlyArray<string>;
+  /** Session `_meta`, chosen from the negotiated agent before each session setup or activation. */
+  readonly sessionMeta?: (
+    initializeResult: EffectAcpSchema.InitializeResponse,
+  ) => EffectAcpSchema.NewSessionRequest["_meta"] | undefined;
   readonly transformStdout?: EffectAcpClient.AcpClientOptions["transformStdout"];
   readonly transformSessionUpdate?: (
     notification: EffectAcpSchema.SessionNotification,
@@ -136,6 +141,7 @@ export interface AcpSessionRuntimeOptions {
     result: EffectAcpSchema.InitializeResponse,
   ) => Effect.Effect<void, never>;
   readonly acpMcpServers?: ReadonlyArray<EffectAcpSchema.McpServer>;
+  readonly httpMcpServers?: ReadonlyArray<EffectAcpSchema.McpServer>;
   readonly requestLogger?: (event: AcpSessionRequestLogEvent) => Effect.Effect<void, never>;
   readonly protocolLogging?: {
     readonly logIncoming?: boolean;
@@ -1084,6 +1090,7 @@ export interface AcpSessionRuntimeStartResult {
 export interface AcpSessionActivationOptions {
   readonly mcpServers?: ReadonlyArray<EffectAcpSchema.McpServer>;
   readonly acpMcpServers?: ReadonlyArray<EffectAcpSchema.McpServer>;
+  readonly httpMcpServers?: ReadonlyArray<EffectAcpSchema.McpServer>;
 }
 
 export class AcpSessionRuntime extends Context.Service<
@@ -1504,14 +1511,17 @@ export const make = Effect.fn("AcpSessionRuntime.make")(function* (
       catch: (cause) =>
         new EffectAcpErrors.AcpSpawnError({ command: options.spawn.command, cause }),
     });
-    yield* observePosixOwnershipLedgerContinuously({
-      childQueues: posixOwnershipChildQueues,
-      controller: posixController,
-      frontier: posixOwnershipFrontier,
-      ledger: posixOwnershipLedger,
-      root: posixOwnershipRoot,
-      rootPid: Number(child.pid),
-    }).pipe(Effect.forkIn(runtimeScope));
+    // Cgroup teardown needs only the root identity captured above.
+    if (linuxCgroupLease === undefined) {
+      yield* observePosixOwnershipLedgerContinuously({
+        childQueues: posixOwnershipChildQueues,
+        controller: posixController,
+        frontier: posixOwnershipFrontier,
+        ledger: posixOwnershipLedger,
+        root: posixOwnershipRoot,
+        rootPid: Number(child.pid),
+      }).pipe(Effect.forkIn(runtimeScope));
+    }
   }
 
   const signalOwnedProcessGroup = (signal: NodeJS.Signals) =>
@@ -2091,14 +2101,26 @@ export const make = Effect.fn("AcpSessionRuntime.make")(function* (
     initializeResult: EffectAcpSchema.InitializeResponse,
     activationOptions?: AcpSessionActivationOptions,
   ): ReadonlyArray<EffectAcpSchema.McpServer> => {
+    const mcpCapabilities = initializeResult.agentCapabilities?.mcpCapabilities;
     const acpServers = activationOptions?.acpMcpServers ?? options.acpMcpServers ?? [];
-    if (
-      initializeResult.agentCapabilities?.mcpCapabilities?.acp === true &&
-      acpServers.length > 0
-    ) {
+    if (mcpCapabilities?.acp === true && acpServers.length > 0) {
       return acpServers;
     }
+    const httpServers = activationOptions?.httpMcpServers ?? options.httpMcpServers ?? [];
+    if (mcpCapabilities?.http === true && httpServers.length > 0) {
+      return httpServers;
+    }
     return activationOptions?.mcpServers ?? options.mcpServers ?? [];
+  };
+
+  const sessionSetupFields = (initializeResult: EffectAcpSchema.InitializeResponse) => {
+    const meta = options.sessionMeta?.(initializeResult);
+    return {
+      ...(options.additionalDirectories?.length
+        ? { additionalDirectories: options.additionalDirectories }
+        : {}),
+      ...(meta == null ? {} : { _meta: meta }),
+    };
   };
 
   const startOnce = Effect.gen(function* () {
@@ -2156,9 +2178,7 @@ export const make = Effect.fn("AcpSessionRuntime.make")(function* (
         | EffectAcpSchema.LoadSessionResponse
         | EffectAcpSchema.NewSessionResponse
         | EffectAcpSchema.ResumeSessionResponse;
-      const additionalDirectories = options.additionalDirectories?.length
-        ? { additionalDirectories: options.additionalDirectories }
-        : {};
+      const additionalDirectories = sessionSetupFields(initializeResult);
       if (options.resumeSessionId) {
         sessionId = options.resumeSessionId;
         if (
@@ -2393,6 +2413,7 @@ export const make = Effect.fn("AcpSessionRuntime.make")(function* (
           const requestPayload = {
             sessionId,
             cwd: options.cwd,
+            ...sessionSetupFields(started.initializeResult),
             mcpServers: sessionMcpServers(started.initializeResult, activationOptions),
           } satisfies EffectAcpSchema.LoadSessionRequest;
           return runLoadSessionWithReplayIdle(requestPayload, started.initializeResult);
@@ -2405,6 +2426,7 @@ export const make = Effect.fn("AcpSessionRuntime.make")(function* (
           const requestPayload = {
             sessionId,
             cwd: options.cwd,
+            ...sessionSetupFields(started.initializeResult),
             mcpServers: sessionMcpServers(started.initializeResult, activationOptions),
           } satisfies EffectAcpSchema.ResumeSessionRequest;
           return runLoggedRequest(
@@ -2421,6 +2443,7 @@ export const make = Effect.fn("AcpSessionRuntime.make")(function* (
           const requestPayload = {
             sessionId,
             cwd: options.cwd,
+            ...sessionSetupFields(started.initializeResult),
             mcpServers: sessionMcpServers(started.initializeResult, activationOptions),
           } satisfies EffectAcpSchema.ForkSessionRequest;
           return runLoggedRequest(

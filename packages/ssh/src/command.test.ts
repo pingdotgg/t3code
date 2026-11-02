@@ -143,6 +143,18 @@ describe("ssh command", () => {
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 
+  it.live("enables server-alive checks for long remote commands", () =>
+    Effect.gen(function* () {
+      // Ask OpenSSH for its effective configuration without opening a connection.
+      const { stdout } = yield* runSshCommand(
+        { alias: "synthetic-fixture", hostname: "synthetic-fixture", username: null, port: null },
+        { preHostArgs: ["-F", "none", "-G"], timeoutMs: 900_000 },
+      );
+      assert.match(stdout, /^serveraliveinterval 15\r?$/mu);
+      assert.match(stdout, /^serveralivecountmax 3\r?$/mu);
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
   it.effect("redacts credentials from stdout in non-zero command failures", () => {
     const spawner = ChildProcessSpawner.make(() =>
       Effect.succeed(makeFailedProcess({ stdout: '{"credential":"pairing-secret"}\n' })),

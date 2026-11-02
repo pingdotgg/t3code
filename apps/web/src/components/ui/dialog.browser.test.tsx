@@ -1,10 +1,13 @@
 import { DEFAULT_CLIENT_SETTINGS } from "@t3tools/contracts/settings";
+import * as Schema from "effect/Schema";
 import { expect, it, vi } from "vite-plus/test";
 import { page } from "vite-plus/test/browser";
 
 import "~/index.css";
 import { act, render } from "../../../test/render";
+import { TYPOGRAPHY_ADVANCED_STORAGE_KEY } from "../../appearanceFonts";
 import { startClientAppearance } from "../../clientAppearance";
+import { writeLocalStorageValue } from "../../hooks/useLocalStorage";
 import {
   __resetClientSettingsPersistenceForTests,
   __setClientSettingsForTests,
@@ -23,7 +26,14 @@ vi.mock("~/localApi", () => ({
 
 function setup(glassOpacity: number) {
   __resetClientSettingsPersistenceForTests();
-  __setClientSettingsForTests({ ...DEFAULT_CLIENT_SETTINGS, glassOpacity });
+  __setClientSettingsForTests({
+    ...DEFAULT_CLIENT_SETTINGS,
+    glassOpacity,
+    fontFamilyComposer: "Test Composer",
+    fontSizePrompt: 19,
+  });
+  const originalSeparateFonts = localStorage.getItem(TYPOGRAPHY_ADVANCED_STORAGE_KEY);
+  localStorage.removeItem(TYPOGRAPHY_ADVANCED_STORAGE_KEY);
   const root = document.documentElement;
   const attributes = ["style", "class", "data-diff-color-scheme", "data-chat-width"].map(
     (name) => ({ name, value: root.getAttribute(name) }),
@@ -37,6 +47,11 @@ function setup(glassOpacity: number) {
       unsubscribe();
       __resetClientSettingsPersistenceForTests();
       motion.remove();
+      if (originalSeparateFonts === null) {
+        localStorage.removeItem(TYPOGRAPHY_ADVANCED_STORAGE_KEY);
+      } else {
+        localStorage.setItem(TYPOGRAPHY_ADVANCED_STORAGE_KEY, originalSeparateFonts);
+      }
       for (const { name, value } of attributes) {
         if (value === null) root.removeAttribute(name);
         else root.setAttribute(name, value);
@@ -74,6 +89,23 @@ it.each([80, 100])(
         expect(root.style.getPropertyValue("--dialog-backdrop-filter")).toBe(opaque ? "none" : "");
         expect(getComputedStyle(backdrop).backgroundColor).toBe(tint);
       }
+    }
+    for (const separateFonts of [true, false]) {
+      await act(() =>
+        writeLocalStorageValue(
+          TYPOGRAPHY_ADVANCED_STORAGE_KEY,
+          separateFonts,
+          false,
+          Schema.Boolean,
+        ),
+      );
+      expect(root.style.getPropertyValue("--font-size-prompt")).toBe(
+        separateFonts ? "19px" : "var(--text-sm)",
+      );
+      const composerFont = root.style.getPropertyValue("--font-composer");
+      if (separateFonts) expect(composerFont).toContain("Test Composer");
+      else expect(composerFont).toBe("");
+      expect(getComputedStyle(backdrop).backdropFilter).toBe("blur(4px)");
     }
   },
 );

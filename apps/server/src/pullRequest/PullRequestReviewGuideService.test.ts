@@ -466,6 +466,51 @@ it.layer(layerBase, { excludeTestServices: true })("PullRequestReviewGuideServic
     ),
   );
 
+  it.effect("keeps excerpts of source lines a configured diff driver would convert away", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const repositories = yield* makeRepositories;
+        const fs = yield* FileSystem.FileSystem;
+        yield* fs.writeFileString(
+          `${repositories.workspace}/.git/info/attributes`,
+          "feature.txt diff=blank\n",
+        );
+        yield* git(repositories.workspace, ["config", "diff.blank.textconv", "true"]);
+        const stored = yield* Deferred.make<void>();
+        const context = yield* Layer.build(
+          makeLayer({
+            ...repositories,
+            stored,
+            generate: () =>
+              Effect.succeed({
+                stops: [
+                  {
+                    title: "The feature",
+                    summary: "The change.",
+                    attention: null,
+                    excerpts: [{ path: "feature.txt", side: "new", start: 1, end: 3, caption: "" }],
+                    files: [],
+                    notes: [],
+                    questions: [],
+                  },
+                ],
+              }),
+          }),
+        );
+        const service = Context.get(
+          context,
+          PullRequestReviewGuideService.PullRequestReviewGuideService,
+        );
+        yield* service.generate(reference);
+        yield* Deferred.await(stored);
+        const result = yield* service.get(reference);
+        assert.deepStrictEqual(result.guide?.stops[0]?.excerpts, [
+          { path: "feature.txt", side: "new", start: 1, end: 3, caption: "" },
+        ]);
+      }),
+    ),
+  );
+
   it.effect("refuses generation when the verified remote disappeared despite a usable origin", () =>
     Effect.scoped(
       Effect.gen(function* () {
