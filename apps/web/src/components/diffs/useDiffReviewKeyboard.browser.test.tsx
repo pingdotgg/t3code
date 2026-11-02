@@ -35,7 +35,7 @@ function Panel(props: {
   hidden?: boolean;
 }) {
   props.renders?.push("panel");
-  const { rootRef, cursorStore } = useDiffReviewKeyboard({
+  const { rootRef, cursorStore, singleFile, toggleFileCollapsed } = useDiffReviewKeyboard({
     scopeKey: "scope",
     files: [file],
     diffStyle: "unified",
@@ -60,6 +60,10 @@ function Panel(props: {
       <button type="button" onClick={() => props.clicks.push("Changes")}>
         Changes
       </button>
+      <button type="button" onClick={() => toggleFileCollapsed("a")}>
+        Collapse a.ts
+      </button>
+      {singleFile ? <p>One file at a time</p> : null}
       <DiffReviewCursorContext value={cursorStore}>
         <CursorFile />
       </DiffReviewCursorContext>
@@ -135,4 +139,17 @@ it("moves the cursor without redrawing the panel", async () => {
 
   await expect.element(screen.getByText("Cursor on a.ts")).toBeInTheDocument();
   expect(renders).toHaveLength(rendersBefore);
+});
+
+it("returns to the full list when the single shown file is closed", async () => {
+  const folds: string[] = [];
+  await using screen = await render(<Panel folds={folds} clicks={[]} />, options);
+  screen.getByTestId("panel").element().focus();
+  await userEvent.keyboard("f");
+  await expect.element(screen.getByText("One file at a time")).toBeInTheDocument();
+
+  await userEvent.click(screen.getByRole("button", { name: "Collapse a.ts" }));
+
+  await expect.element(screen.getByText("One file at a time")).not.toBeInTheDocument();
+  expect(folds).toEqual(["a"]);
 });

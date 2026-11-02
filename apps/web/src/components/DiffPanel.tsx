@@ -828,17 +828,6 @@ export default function DiffPanel({
       },
     });
   };
-  const toggleDiffFileCollapsed = useStableCallback((fileKey: string) => {
-    updateCollapsedDiffFiles((current) => {
-      const next = new Set(current);
-      if (next.has(fileKey)) {
-        next.delete(fileKey);
-      } else {
-        next.add(fileKey);
-      }
-      return next;
-    });
-  });
   // Find can ask again before the unfolded file reaches the viewer, so this must never fold.
   const unfoldDiffFile = useStableCallback((fileKey: string) => {
     updateCollapsedDiffFiles((current) => {
@@ -850,6 +839,7 @@ export default function DiffPanel({
   });
 
   const toggleDiffFileCollapse = () => {
+    review.showAllFiles();
     setCodeViewRevision((current) => current + 1);
     updateCollapsedDiffFiles((current) => toggleAllDiffFiles(shownFileKeys, current));
   };
@@ -1487,7 +1477,7 @@ export default function DiffPanel({
                       const file = codeViewFiles.find(
                         (candidate) => candidate.filePath === headerFilePath,
                       );
-                      if (file) toggleDiffFileCollapsed(file.fileKey);
+                      if (file) review.toggleFileCollapsed(file.fileKey);
                     }}
                     onContextMenuCapture={(event) => {
                       const composedPath = event.nativeEvent.composedPath?.() ?? [];
@@ -1578,7 +1568,7 @@ export default function DiffPanel({
                           fileKey={fileKey}
                           collapsed={collapsed}
                           unavailable={isFilePending(fileDiff)}
-                          onToggle={toggleDiffFileCollapsed}
+                          onToggle={review.toggleFileCollapsed}
                         />
                       )}
                       options={{

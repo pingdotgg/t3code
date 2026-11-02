@@ -275,6 +275,12 @@ export function useDiffReviewKeyboard<Annotation>(input: DiffReviewKeyboardInput
     );
   };
 
+  const toggleFileCollapsed = useStableCallback((fileKey: string) => {
+    // Single-file mode keeps its file open, so closing that file returns to the full list.
+    if (fileKey === singleFileKey) setSingleFile(false);
+    input.setCollapsed(fileKey, !isCollapsed(fileKey));
+  });
+
   const runCommand = (command: DiffReviewCommand): boolean => {
     const { cursor, cursorFile } = readCursor();
     const range = cursor ? cursorSelectedRange(cursor) : null;
@@ -306,7 +312,7 @@ export function useDiffReviewKeyboard<Annotation>(input: DiffReviewKeyboardInput
       }
       case "diff.toggleFileCollapsed": {
         if (!cursorFile) return false;
-        input.setCollapsed(cursorFile.fileKey, !isCollapsed(cursorFile.fileKey));
+        toggleFileCollapsed(cursorFile.fileKey);
         return true;
       }
       case "diff.toggleFileViewed": {
@@ -476,6 +482,9 @@ export function useDiffReviewKeyboard<Annotation>(input: DiffReviewKeyboardInput
       singleFile: labelFor("diff.toggleSingleFile"),
     },
     toggleSingleFile: () => runCommand("diff.toggleSingleFile"),
+    toggleFileCollapsed,
+    /** Leaves single-file mode, for actions that only make sense in the full list. */
+    showAllFiles: () => setSingleFile(false),
     /** Puts the file cursor on a file the user picked another way, such as the file tree. */
     selectFile: (filePath: string) => {
       const file = files.find((candidate) => candidate.filePath === filePath);

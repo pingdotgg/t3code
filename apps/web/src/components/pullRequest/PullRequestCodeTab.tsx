@@ -671,7 +671,6 @@ function PullRequestCodeTab({
     setToggledFiles((current) =>
       toggleFileDiffFoldForViewed(fileKey, collapsed, effectiveFoldOverride, current),
     );
-  const toggleFile = (fileKey: string) => setCollapsed(fileKey, !isCollapsed(fileKey));
   const setFileViewed = (fileKey: string, viewed: boolean, extendRange: boolean) => {
     const range = getFileViewedRange(
       annotatedFiles,
@@ -782,6 +781,7 @@ function PullRequestCodeTab({
   };
 
   const toggleAllFiles = () => {
+    diffReview.showAllFiles();
     setFoldOverride(areAllDiffFilesCollapsed(fileKeys, collapsedFileKeys) ? "expanded" : "folded");
     setToggledFiles(new Set());
   };
@@ -881,7 +881,7 @@ function PullRequestCodeTab({
           className="mr-1"
           onClick={(event) => {
             event.stopPropagation();
-            toggleFile(item.id);
+            diffReview.toggleFileCollapsed(item.id);
           }}
         >
           <MorphIcon className="size-4" icon={collapsed ? ChevronRight : ChevronDown} />
@@ -1536,7 +1536,7 @@ function PullRequestCodeTab({
                 const item = items.find(
                   (candidate) => resolveFileDiffPath(candidate.fileDiff) === filePath,
                 );
-                if (item !== undefined) toggleFile(item.id);
+                if (item !== undefined) diffReview.toggleFileCollapsed(item.id);
                 return;
               }
             }
