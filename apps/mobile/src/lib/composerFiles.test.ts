@@ -943,12 +943,12 @@ describe("composer file attachments", () => {
   it("replaces characters Android rejects in file URIs when naming the copy", async () => {
     await persistComposerAttachmentFile(
       "file:///downloads/report.pdf",
-      'Oxford [Oxfordshire] a|b^c{d}e`f"g<h>.pdf',
+      'Oxford [Oxfordshire] a|b^c{d}e`f"g<h>i\u007fj.pdf',
     );
 
     expect(mocks.copy).toHaveBeenCalledWith(
       "file:///downloads/report.pdf",
-      "file:///documents/t3-composer-attachments/attachment-id-Oxford -Oxfordshire- a-b-c-d-e-f-g-h-.pdf",
+      "file:///documents/t3-composer-attachments/attachment-id-Oxford -Oxfordshire- a-b-c-d-e-f-g-h-i-j.pdf",
     );
   });
 
