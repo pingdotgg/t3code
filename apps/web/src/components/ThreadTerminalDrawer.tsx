@@ -1040,7 +1040,8 @@ function TerminalSessionViewport({
       }
 
       function handleData(data: string): void {
-        if (!hasTerminalWriteAccess()) return;
+        // The server rejects input until the shell runs, and each rejection would print an error.
+        if (!hasTerminalWriteAccess() || readTerminalSession().status !== "running") return;
         void (async () => {
           const result = await writeTerminal(data);
           if (result._tag === "Success" || isAtomCommandInterrupted(result)) return;

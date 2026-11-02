@@ -5,8 +5,10 @@ import { act, fakeTimers, render } from "../../test/render";
 import ThreadTerminalDrawer from "./ThreadTerminalDrawer";
 
 const fixture = vi.hoisted(() => ({
-  statusByThreadId: new Map<string, "running" | "exited">(),
+  statusByThreadId: new Map<string, "starting" | "running" | "exited">(),
   pendingSurfaces: [] as Array<() => void>,
+  typeIntoSurface: null as ((data: string) => void) | null,
+  writes: [] as Array<{ threadId: string; data: string }>,
 }));
 
 // Every surface method is a no-op; `then` stays undefined so awaiting the surface resolves to it.
@@ -19,9 +21,12 @@ const fakeSurface: object = new Proxy(
 );
 vi.mock("~/terminal/ghostty/surface", () => ({
   GhosttyTerminalSurface: {
-    create: () =>
+    create: (_mount: HTMLElement, options: { onData: (data: string) => void }) =>
       new Promise((resolve) => {
-        fixture.pendingSurfaces.push(() => resolve(fakeSurface));
+        fixture.pendingSurfaces.push(() => {
+          fixture.typeIntoSurface = options.onData;
+          resolve(fakeSurface);
+        });
       }),
   },
 }));
@@ -46,7 +51,12 @@ vi.mock("../state/session", () => ({
   readEnvironmentScope: () => true,
 }));
 vi.mock("../state/use-atom-command", () => ({
-  useAtomCommand: () => async () => ({ _tag: "Success" }),
+  useAtomCommand: () => async (args: { input: { threadId: string; data?: string } }) => {
+    if (args.input.data !== undefined) {
+      fixture.writes.push({ threadId: args.input.threadId, data: args.input.data });
+    }
+    return { _tag: "Success" };
+  },
 }));
 // The commands are replaced above; importing their runtime would connect a client.
 vi.mock("../state/server", async () => {
@@ -93,7 +103,7 @@ function Drawer(props: {
   );
 }
 
-function setup() {
+function setup(originalStatus: "starting" | "exited" = "exited") {
   const original: ScopedThreadRef = {
     environmentId: EnvironmentId.make("environment-a"),
     threadId: ThreadId.make("thread-a"),
@@ -103,12 +113,29 @@ function setup() {
     threadId: ThreadId.make("thread-b"),
   };
   fixture.statusByThreadId = new Map([
-    [original.threadId, "exited"],
+    [original.threadId, originalStatus],
     [other.threadId, "running"],
   ]);
   fixture.pendingSurfaces = [];
+  fixture.typeIntoSurface = null;
+  fixture.writes = [];
   return { original, other };
 }
+
+it("drops input until the shell runs instead of failing a write for every key", async () => {
+  const { original, other } = setup("starting");
+  await using screen = await render(<Drawer threadRef={original} onCloseTerminal={() => {}} />);
+  await act(async () => {
+    fixture.pendingSurfaces.shift()?.();
+  });
+  fixture.typeIntoSurface?.("early");
+  await screen.rerender(<Drawer threadRef={other} onCloseTerminal={() => {}} />);
+  await act(async () => {
+    fixture.pendingSurfaces.shift()?.();
+  });
+  fixture.typeIntoSurface?.("ready");
+  expect(fixture.writes).toEqual([{ threadId: other.threadId, data: "ready" }]);
+});
 
 it("closes an exited terminal on its own thread after navigating to one reusing its ID", async () => {
   const { original, other } = setup();
