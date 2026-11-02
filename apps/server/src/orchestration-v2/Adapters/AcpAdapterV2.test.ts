@@ -2890,6 +2890,9 @@ describe("AcpAdapterV2", () => {
     let waitForExit: Parameters<Runtime["handleTerminalWaitForExit"]>[0] | undefined;
     const runtimeInputs: Array<AcpAdapterV2RuntimeInput> = [];
     const terminalIds: Array<string> = [];
+    let heldPrompt:
+      | { readonly started: Deferred.Deferred<void>; readonly release: Deferred.Deferred<void> }
+      | undefined;
     const baseMakeRuntime = makeMockRuntime({
       childProcessSpawner,
       mockAgentPath,
@@ -2949,6 +2952,10 @@ describe("AcpAdapterV2", () => {
               },
             ] satisfies Array<EffectAcpSchema.SessionUpdate>;
             for (const update of updates) yield* handler!({ sessionId: "mock-session-1", update });
+            if (heldPrompt !== undefined) {
+              yield* Deferred.succeed(heldPrompt.started, undefined);
+              yield* Deferred.await(heldPrompt.release);
+            }
             return { stopReason: "end_turn" as const };
           }),
       }),
@@ -3007,7 +3014,7 @@ describe("AcpAdapterV2", () => {
           ? [event.turnItem]
           : [],
       );
-    const runTurn = Effect.fnUntraced(function* () {
+    const startTurn = Effect.fnUntraced(function* () {
       yield* runtime.startTurn(
         makeTurnInput({
           threadId,
@@ -3017,6 +3024,19 @@ describe("AcpAdapterV2", () => {
           now: yield* DateTime.now,
         }),
       );
+    });
+    // Leaves the next prompt open after its updates; returns the effect that ends it.
+    const startHeldTurn = Effect.fnUntraced(function* () {
+      const held = { started: yield* Deferred.make<void>(), release: yield* Deferred.make<void>() };
+      heldPrompt = held;
+      yield* startTurn();
+      yield* Deferred.await(held.started);
+      return Deferred.succeed(held.release, undefined).pipe(
+        Effect.andThen(until((event) => event.type === "turn.terminal")),
+      );
+    });
+    const runTurn = Effect.fnUntraced(function* () {
+      yield* startTurn();
       const seen = yield* until((event) => event.type === "turn.terminal");
       const terminal = seen.at(-1);
       assert.equal(terminal?.type === "turn.terminal" ? terminal.status : undefined, "completed");
@@ -3026,13 +3046,19 @@ describe("AcpAdapterV2", () => {
       };
     });
     // A usage update is projected immediately, so it marks everything emitted before it.
+    let flushes = 0;
     const sendAndFlush = Effect.fnUntraced(function* (update?: EffectAcpSchema.SessionUpdate) {
       if (update !== undefined) yield* handler!({ sessionId: "mock-session-1", update });
+      const used = ++flushes;
       yield* handler!({
         sessionId: "mock-session-1",
-        update: { sessionUpdate: "usage_update", used: 1, size: 100 },
+        update: { sessionUpdate: "usage_update", used, size: 100 },
       });
-      return yield* until((event) => event.type === "provider_thread.updated");
+      return yield* until(
+        (event) =>
+          event.type === "provider_thread.updated" &&
+          event.providerThread.contextUsage?.usedTokens === used,
+      );
     });
     return {
       runtime,
@@ -3043,6 +3069,9 @@ describe("AcpAdapterV2", () => {
       until,
       execItems,
       runTurn,
+      startHeldTurn,
+      send: (update: EffectAcpSchema.SessionUpdate) =>
+        handler!({ sessionId: "mock-session-1", update }),
       sendAndFlush,
       waitForExit: (terminalId: string) =>
         waitForExit!(
@@ -3089,6 +3118,17 @@ describe("AcpAdapterV2", () => {
     Effect.gen(function* () {
       const shell = yield* openDevinBackgroundShell("devin-background-shell-stop");
       const { providerTurnId } = yield* shell.runTurn();
+      // Later commands push the shell out of the bounded embedded-terminal lookup.
+      for (let index = 0; index < 256; index++) {
+        yield* shell.send({
+          sessionUpdate: "tool_call",
+          toolCallId: `later-${index}`,
+          title: "exec",
+          kind: "execute",
+          status: "completed",
+          content: [{ type: "terminal", terminalId: `later-terminal-${index}` }],
+        });
+      }
       yield* shell.runtime.interruptTurn({
         providerThread: shell.providerThread,
         providerTurnId: providerTurnId!,
@@ -3101,6 +3141,8 @@ describe("AcpAdapterV2", () => {
       );
       const exit = yield* shell.waitForExit(shell.terminalIds[0]!);
       assert.notEqual(exit.exitCode, 0);
+      // The stopped shell's late report must not land on the next run.
+      const finishHeldTurn = yield* shell.startHeldTurn();
       const late = yield* shell.sendAndFlush({
         sessionUpdate: "tool_call_update",
         toolCallId: "exec-1",
@@ -3108,6 +3150,7 @@ describe("AcpAdapterV2", () => {
         _meta: { "cognition.ai/inferenceToolName": "exec" },
       });
       assert.deepEqual(shell.execItems(late, "exec-1"), []);
+      yield* finishHeldTurn;
     }).pipe(Effect.provide(layerTest), Effect.scoped),
   );
 
@@ -3119,8 +3162,13 @@ describe("AcpAdapterV2", () => {
       yield* shell.runtimeInputs[0]!.onTermination!(
         new EffectAcpErrors.AcpTransportError({ detail: "Injected termination", cause: "test" }),
       );
+      const terminated = yield* shell.until(
+        (event) =>
+          event.type === "turn_item.updated" && event.turnItem.nativeItemRef?.nativeId === "exec-1",
+      );
+      assert.equal(shell.execItems(terminated, "exec-1").at(-1)?.status, "interrupted");
+      assert.isFalse(yield* shell.runtime.hasPendingBackgroundWork!);
       const { seen } = yield* shell.runTurn();
-      assert.equal(shell.execItems(seen, "exec-1").at(-1)?.status, "interrupted");
       assert.equal(shell.execItems(seen, "exec-2").at(-1)?.status, "running");
       yield* Scope.close(shell.sessionScope, Exit.void);
       const closed = yield* shell.until(

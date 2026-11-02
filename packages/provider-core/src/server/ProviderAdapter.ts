@@ -585,6 +585,8 @@ export interface ProviderAdapterV2SessionRuntime {
     providerThread: OrchestrationV2ProviderThread,
     options?: { readonly includeSubagents?: boolean },
   ) => Effect.Effect<boolean>;
+  /** Ends background work before release; returns its settling events for still-open subscribers. */
+  readonly retireBackgroundWork?: Effect.Effect<ReadonlyArray<ProviderAdapterV2Event>>;
   /** Set only if all session background tasks end with its process; otherwise threads must keep Waiting. */
   readonly backgroundTasksEndWithProcess?: true;
   readonly getModelContextWindow?: (

@@ -2036,8 +2036,15 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           flavor.extractBackgroundTaskId !== undefined;
         const carryoverBackgroundTools = new Map<
           string,
-          { readonly context: ActiveAcpTurn; readonly sessionId: string; readonly taskId: string }
+          {
+            readonly context: ActiveAcpTurn;
+            readonly sessionId: string;
+            readonly taskId: string;
+            readonly terminalIds: ReadonlyArray<string>;
+          }
         >();
+        // Ended carried tools must not reach a later turn through their stale late updates.
+        const endedCarriedToolCallIds = new Set<string>();
         const handledBackgroundTaskIdsInActiveTurn = yield* Ref.make<ReadonlySet<string>>(
           new Set(),
         );
@@ -2088,14 +2095,16 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             for (const [, { taskId }] of carried) next.delete(taskId);
             return next;
           });
-          for (const [toolCallId, { context, sessionId, taskId }] of carried) {
-            const embedded = embeddedTerminalsByToolCallId.get(
-              sessionScopedId(sessionId, toolCallId),
-            );
-            for (const terminalId of embedded?.terminalIds ?? []) {
+          for (const [toolCallId, { context, sessionId, taskId, terminalIds }] of carried) {
+            for (const terminalId of terminalIds) {
               yield* (clientTerminals?.kill({ sessionId, terminalId }) ?? Effect.void).pipe(
                 Effect.ignore,
               );
+            }
+            endedCarriedToolCallIds.add(sessionScopedId(sessionId, toolCallId));
+            for (const oldest of endedCarriedToolCallIds) {
+              if (endedCarriedToolCallIds.size <= endedBackgroundTaskIdLimit) break;
+              endedCarriedToolCallIds.delete(oldest);
             }
             yield* markBackgroundTaskEnded(taskId);
             const tool = context.tools.get(toolCallId);
@@ -2127,8 +2136,14 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             }
           });
 
+        // Release retires background work after its subscribers stop reading the queue.
+        let retiredEvents: Array<ProviderAdapter.ProviderAdapterV2Event> | undefined;
         const emitProviderEvent = (event: ProviderAdapter.ProviderAdapterV2Event) =>
-          Queue.offer(events, event).pipe(Effect.asVoid);
+          retiredEvents === undefined
+            ? Queue.offer(events, event).pipe(Effect.asVoid)
+            : Effect.sync(() => {
+                retiredEvents?.push(event);
+              });
         let scheduleDeferredFinalize: (context: ActiveAcpTurn) => Effect.Effect<void> = () =>
           Effect.void;
 
@@ -2138,6 +2153,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             runtimeGeneration,
             Effect.gen(function* () {
               yield* Ref.set(runtimeRestartRequired, true);
+              yield* endCarriedBackgroundTools();
               if (!followsAgentWorkState) return;
               agentWork = { sessionUpdate: "state_update", state: "idle", stopReason: "error" };
               for (const child of nativeChildren.values()) {
@@ -4795,6 +4811,11 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             }
             return;
           }
+          if (
+            update.sessionUpdate === "tool_call_update" &&
+            endedCarriedToolCallIds.has(sessionScopedId(notification.sessionId, update.toolCallId))
+          )
+            return;
           const carriedBackgroundTool =
             update.sessionUpdate === "tool_call_update"
               ? carryoverBackgroundTools.get(update.toolCallId)
@@ -7434,7 +7455,12 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               });
             }
           }
-          if (carriesBackgroundTools && settledStatus !== "interrupted" && !directStopQuarantine) {
+          // Only completed runs and continuing failures keep their consumer open for late updates.
+          if (
+            carriesBackgroundTools &&
+            (settledStatus === "completed" || childTurnsContinue) &&
+            !directStopQuarantine
+          ) {
             const sessionId = yield* Ref.get(activeSessionId);
             for (const tool of context.tools.values()) {
               const taskId = tool.backgroundCommandTaskId ?? flavor.extractBackgroundTaskId?.(tool);
@@ -7445,7 +7471,16 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                 (toolState !== "pending" && toolState !== "running")
               )
                 continue;
-              carryoverBackgroundTools.set(tool.toolCallId, { context, sessionId, taskId });
+              // Devin's shell id is the T3 client terminal id; the embedded lookup is capped.
+              const terminalIds = embeddedTerminalsByToolCallId.get(
+                sessionScopedId(sessionId, tool.toolCallId),
+              )?.terminalIds ?? [taskId];
+              carryoverBackgroundTools.set(tool.toolCallId, {
+                context,
+                sessionId,
+                taskId,
+                terminalIds,
+              });
             }
           }
           yield* Ref.set(activeTurn, null);
@@ -8207,7 +8242,23 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                 }),
               }
             : carriesBackgroundTools
-              ? { hasPendingBackgroundWork: Effect.sync(() => carryoverBackgroundTools.size > 0) }
+              ? {
+                  hasPendingBackgroundWork: Effect.sync(() => carryoverBackgroundTools.size > 0),
+                  retireBackgroundWork: runtimeCallbackPermit.withPermit(
+                    Effect.suspend(() => {
+                      const retired: Array<ProviderAdapter.ProviderAdapterV2Event> = [];
+                      retiredEvents = retired;
+                      return endCarriedBackgroundTools().pipe(
+                        Effect.ensuring(
+                          Effect.sync(() => {
+                            retiredEvents = undefined;
+                          }),
+                        ),
+                        Effect.as(retired),
+                      );
+                    }),
+                  ),
+                }
               : {}),
           ensureThread: Effect.fn("AcpAdapterV2.ensureThread")(
             function* (threadInput: ProviderAdapter.ProviderAdapterV2EnsureThreadInput) {

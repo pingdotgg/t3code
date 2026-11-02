@@ -15,7 +15,9 @@ import {
   ProviderDriverKind,
   ProviderInstanceId,
   type ProviderSessionId,
+  RunId,
   ThreadId,
+  TurnItemId,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as DateTime from "effect/DateTime";
@@ -335,6 +337,9 @@ const makeProviderAdapter = Effect.fnUntraced(function* (
     }) => Effect.Effect<void>;
     readonly hasPendingBackgroundWork?: Effect.Effect<boolean>;
     readonly hasPendingBackgroundWorkForThread?: Effect.Effect<boolean>;
+    readonly retireBackgroundWork?: Effect.Effect<
+      ReadonlyArray<ProviderAdapter.ProviderAdapterV2Event>
+    >;
     readonly backgroundTasksEndWithProcess?: boolean;
     readonly hangSessionScopeClose?: boolean;
     readonly startTurn?: Effect.Effect<void>;
@@ -426,6 +431,9 @@ const makeProviderAdapter = Effect.fnUntraced(function* (
             : {
                 hasPendingBackgroundWorkForThread: () => options.hasPendingBackgroundWorkForThread!,
               }),
+          ...(options.retireBackgroundWork === undefined
+            ? {}
+            : { retireBackgroundWork: options.retireBackgroundWork }),
           ensureThread: () => unimplemented("ensureThread unused in test"),
           resumeThread: (threadInput) =>
             Ref.update(state, (current) => ({
@@ -483,6 +491,9 @@ function layerTest(input: {
   };
   readonly hasPendingBackgroundWork?: Effect.Effect<boolean>;
   readonly hasPendingBackgroundWorkForThread?: Effect.Effect<boolean>;
+  readonly retireBackgroundWork?: Effect.Effect<
+    ReadonlyArray<ProviderAdapter.ProviderAdapterV2Event>
+  >;
   readonly backgroundTasksEndWithProcess?: boolean;
   readonly hangSessionScopeClose?: boolean;
   readonly startTurn?: Effect.Effect<void>;
@@ -515,6 +526,9 @@ function layerTest(input: {
       ...(input.hasPendingBackgroundWorkForThread === undefined
         ? {}
         : { hasPendingBackgroundWorkForThread: input.hasPendingBackgroundWorkForThread }),
+      ...(input.retireBackgroundWork === undefined
+        ? {}
+        : { retireBackgroundWork: input.retireBackgroundWork }),
       ...(input.backgroundTasksEndWithProcess === undefined
         ? {}
         : { backgroundTasksEndWithProcess: input.backgroundTasksEndWithProcess }),
@@ -1602,6 +1616,88 @@ it.effect("ProviderSessionManagerV2 interrupts event subscriptions on server shu
 
     yield* effect.pipe(Effect.provide(layerTest({ state, idleTimeoutMs: 60_000 })));
   }),
+);
+
+it.effect(
+  "ProviderSessionManagerV2 delivers retired background work before releasing subscribers",
+  () =>
+    Effect.gen(function* () {
+      const state = yield* Ref.make(emptyState);
+      const retired = yield* Ref.make<ReadonlyArray<ProviderAdapter.ProviderAdapterV2Event>>([]);
+      const effect = Effect.gen(function* () {
+        const eventSink = yield* EventSink.EventSinkV2;
+        const idAllocator = yield* IdAllocator.IdAllocatorV2;
+        const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+        const now = yield* DateTime.now;
+        const threadId = ThreadId.make("thread-provider-session-manager-retire-background");
+        const providerSessionId = yield* idAllocator.allocate.providerSession({
+          providerInstanceId: modelSelection.instanceId,
+          threadId,
+        });
+        yield* eventSink.write({
+          events: [yield* makeThreadCreatedEvent({ idAllocator, threadId, now })],
+        });
+        const runtime = yield* manager.open({
+          threadId,
+          providerSessionId,
+          modelSelection,
+          runtimePolicy,
+        });
+        const providerThread = makeProviderThread({
+          idAllocator,
+          threadId,
+          providerSessionId,
+          now,
+        });
+        yield* Ref.set(retired, [
+          {
+            type: "turn_item.updated",
+            driver: CODEX_DRIVER,
+            turnItem: {
+              id: TurnItemId.make("retired-background-shell"),
+              threadId,
+              runId: RunId.make("retired-background-run"),
+              nodeId: null,
+              providerThreadId: providerThread.id,
+              providerTurnId: null,
+              nativeItemRef: null,
+              parentItemId: null,
+              ordinal: 1,
+              status: "interrupted",
+              title: "background shell",
+              startedAt: now,
+              completedAt: now,
+              updatedAt: now,
+              type: "command_execution",
+              input: "sleep 30",
+            },
+          },
+        ]);
+        const subscription = yield* runtime.subscribeEvents!;
+        const received: Array<ProviderAdapter.ProviderAdapterV2Event> = [];
+        const collected = yield* subscription.events.pipe(
+          Stream.runForEach((event) => Effect.sync(() => received.push(event))),
+          Effect.exit,
+          Effect.forkScoped,
+        );
+
+        yield* manager.release({ providerSessionId, reason: "idle_timeout" });
+
+        assert.isTrue(Exit.isFailure(yield* Fiber.join(collected)));
+        assert.deepEqual(
+          received.map((event) =>
+            event.type === "turn_item.updated" ? event.turnItem.status : event.type,
+          ),
+          ["interrupted"],
+        );
+      });
+
+      yield* effect.pipe(
+        Effect.provide(
+          layerTest({ state, idleTimeoutMs: 60_000, retireBackgroundWork: Ref.get(retired) }),
+        ),
+      );
+    }),
 );
 
 it.effect("ProviderSessionManagerV2 drains subscribers when the provider stops", () =>
