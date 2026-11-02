@@ -10,7 +10,8 @@ width to preview hiding it, then release to keep it hidden. Dragging back right 
 shows it again and continues resizing.
 
 With hover reveal off, move the mouse to the left window edge to find a handle. Drag it right or
-click it to show the sidebar again. With hover reveal on, resizing the revealed sidebar changes
+click it to show the sidebar again. Dragging back to the edge before releasing hides the preview
+and leaves it hidden. With hover reveal on, resizing the revealed sidebar changes
 its width while keeping it hidden between peeks. The sidebar toggle and shortcut still keep it open.
 
 ## Start a thread

@@ -127,6 +127,25 @@ describe("Sidebar", () => {
     expect(
       sidebar.querySelector('[data-slot="sidebar-container"]')!.getBoundingClientRect().left,
     ).toBe(0);
+    dispatch(handle, "pointermove", 2);
+    await vi.waitFor(() =>
+      expect(
+        sidebar.querySelector('[data-slot="sidebar-container"]')!.getBoundingClientRect().right,
+      ).toBe(0),
+    );
+    expect(sidebar.querySelector('[data-slot="sidebar-gap"]')!.getBoundingClientRect().width).toBe(
+      0,
+    );
+    dispatch(handle, "pointerup", 2);
+    expect(sidebar.dataset.state).toBe("collapsed");
+    expect(onResize).toHaveBeenCalledTimes(2);
+    dispatch(handle, "pointerdown", 2);
+    dispatch(handle, "pointermove", 260);
+    await vi.waitFor(() =>
+      expect(
+        sidebar.querySelector('[data-slot="sidebar-container"]')!.getBoundingClientRect().left,
+      ).toBe(0),
+    );
     dispatch(handle, "pointerup", 260);
     await vi.waitFor(() => expect(sidebar.dataset.state).toBe("expanded"));
     expect(onResize).toHaveBeenLastCalledWith(258);

@@ -454,26 +454,26 @@ function SidebarRestoreHandle({ options }: { options: SidebarResolvedResizableOp
     const container = sidebar?.querySelector<HTMLElement>('[data-slot="sidebar-container"]');
     const gap = sidebar?.querySelector<HTMLElement>('[data-slot="sidebar-gap"]');
     if (!wrapper || !container || !gap) return null;
-    let rawWidth = 0;
+    let restorePending = false;
     return {
       width: 0,
       edge: "right",
       bounds: { min: 0, max: options.maxWidth },
       cancelOnInterrupt: true,
       resize(nextWidth) {
-        rawWidth = nextWidth;
+        restorePending = nextWidth >= 48;
         const width = clampSidebarWidth(nextWidth, options);
         container.style.left = "0px";
-        container.style.translate = "0px";
+        container.style.translate = restorePending ? "0px" : "-100%";
         for (const element of [container, gap]) {
-          element.style.width = `${width}px`;
+          element.style.width = `${restorePending || element === container ? width : 0}px`;
           element.style.transitionDuration = "0ms";
         }
         return width;
       },
       finish(width, moved) {
         suppressClick.current = moved;
-        if (moved && rawWidth >= 48) {
+        if (moved && restorePending) {
           commitSidebarWidth(wrapper, options, width);
           setOpen(true);
         }
