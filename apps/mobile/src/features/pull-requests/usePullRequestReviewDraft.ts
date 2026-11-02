@@ -162,6 +162,7 @@ export function usePullRequestReviewDraft(params: PullRequestParams) {
   const activity = useEnvironmentQuery(composerPullRequests.activity(target));
   const retiredIds = useAtomValue(removedHostComments)[key];
   const draft = snapshot.drafts[key] ?? EMPTY_REVIEW_DRAFT;
+  const headSha = detail.data?.headSha;
   const comments = useMemo(() => {
     const retired = new Set(retiredIds);
     for (const thread of activity.data?.reviewThreads ?? []) {
@@ -173,9 +174,9 @@ export function usePullRequestReviewDraft(params: PullRequestParams) {
     const localIds = new Set(local.map((comment) => comment.hostedComment?.commentId));
     const remote = pendingReviewCommentsFromThreads(activity.data?.reviewThreads ?? [])
       .filter((comment) => !localIds.has(comment.id) && !retired.has(comment.id))
-      .map((comment) => ({ ...comment, headSha: detail.data?.headSha ?? "", code: "" }));
+      .map((comment) => ({ ...comment, headSha: headSha ?? "", code: "" }));
     return remote.length ? [...local, ...remote] : local;
-  }, [draft.comments, activity.data?.reviewThreads, detail, retiredIds]);
+  }, [draft.comments, activity.data?.reviewThreads, headSha, retiredIds]);
   const grouped = useMemo(
     () => groupPendingReviewComments(activity.data?.reviewThreads ?? [], comments),
     [activity.data?.reviewThreads, comments],

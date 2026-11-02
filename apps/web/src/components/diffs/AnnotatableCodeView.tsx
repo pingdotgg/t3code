@@ -415,8 +415,11 @@ export function AnnotatableCodeView({
         enableGutterUtility: draft === null,
         enableLineSelection: draft === null,
         onGutterUtilityClick: beginComment,
-        onPostRender: (node, _instance, _phase, context) => {
+        onPostRender: (node, _instance, phase, context) => {
           node.dataset.t3DiffFileKey = context.item.id;
+          if (context.type === "diff")
+            options.onPostRender?.(node, context.instance, phase, context);
+          else options.onPostRender?.(node, context.instance, phase, context);
         },
       }}
       renderHeaderFilenameSuffix={(item) =>

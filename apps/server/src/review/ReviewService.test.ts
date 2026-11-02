@@ -171,9 +171,10 @@ describe("ReviewService", () => {
           yield* fs.writeFileString(`${workspaceRoot}/file.txt`, "staged\n");
           yield* run(["add", "file.txt"]);
           yield* fs.writeFileString(`${workspaceRoot}/file.txt`, "unstaged\n");
+          const originalMessage = "index only\n\nKeep the original commit context.";
           const committed = yield* service.commit({
             cwd: workspaceRoot,
-            message: "index only",
+            message: originalMessage,
             action: "commit",
           });
           assert.strictEqual(committed.pushStatus, "not-requested");
@@ -181,12 +182,13 @@ describe("ReviewService", () => {
           assert.strictEqual(yield* fs.readFileString(`${workspaceRoot}/file.txt`), "unstaged\n");
           const amended = yield* service.commit({
             cwd: workspaceRoot,
-            message: "index only",
+            message: "   ",
             action: "amend",
           });
           assert.notStrictEqual(amended.commitSha, "");
           assert.strictEqual(yield* run(["rev-list", "--count", "HEAD"]), "2");
           assert.strictEqual(yield* run(["log", "-1", "--format=%s"]), "index only");
+          assert.strictEqual(yield* run(["log", "-1", "--format=%B"]), originalMessage);
           yield* run(["add", "file.txt"]);
           const pushed = yield* service.commit({
             cwd: workspaceRoot,

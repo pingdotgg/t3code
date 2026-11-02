@@ -370,6 +370,7 @@ export default function FileBrowserPanel({
             void load(path.replace(/\/$/, ""));
           }
         } else {
+          if (item?.isDirectory() && expandedPathsRef.current.has(path)) setExpandAll(false);
           expandedPathsRef.current.delete(path);
         }
       }

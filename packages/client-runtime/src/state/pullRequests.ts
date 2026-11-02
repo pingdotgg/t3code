@@ -450,8 +450,8 @@ export function createPullRequestEnvironmentAtoms<R, E>(
       tag: WS_METHODS.pullRequestsFilesViewed,
       execute: (input) => routedRequest(WS_METHODS.pullRequestsFilesViewed, input),
       staleTimeMs: 15_000,
-      // GitHub can change these marks outside T3; refresh while a review is being read.
-      refreshIntervalMs: 15_000,
+      idleTtlMs: 0,
+      refreshIntervalMs: 60_000,
     }),
     changeBreakdown: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:pull-requests:change-breakdown",

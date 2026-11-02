@@ -240,7 +240,14 @@ export const make = Effect.gen(function* () {
   const commit = Effect.fn("ReviewService.commit")(function* (input: ReviewCommitInput) {
     yield* assertWorkspaceBoundCwd("ReviewService.commit", input.cwd);
     const message =
-      input.message.trim() || (yield* workflow.generateStagedCommitMessage({ cwd: input.cwd }));
+      input.message.trim() ||
+      (input.action === "amend"
+        ? (yield* git.execute({
+            operation: "ReviewService.commit.message",
+            cwd: input.cwd,
+            args: ["log", "-1", "--format=%B"],
+          })).stdout.trimEnd()
+        : yield* workflow.generateStagedCommitMessage({ cwd: input.cwd }));
     const [subject = "", ...body] = message.split("\n");
     // No stage option: commit exactly the current index, preserving partial staging.
     const { commitSha } = yield* git.commit(input.cwd, subject, body.join("\n"), {

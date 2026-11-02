@@ -977,7 +977,7 @@ const PendingReviewsSchema = Schema.Struct({
           nodes: Schema.Array(
             Schema.Struct({
               id: Schema.String,
-              fullDatabaseId: Schema.String,
+              fullDatabaseId: Schema.NullOr(Schema.String),
               body: Schema.String,
               viewerDidAuthor: Schema.Boolean,
             }),
@@ -1007,7 +1007,7 @@ const AddedDraftThreadSchema = Schema.Struct({
     }),
   }),
 });
-const decodePendingReviews = Schema.decodeEffect(Schema.fromJsonString(PendingReviewsSchema));
+const decodePendingReviews = Schema.decodeUnknownEffect(PendingReviewsSchema);
 const decodePendingReviewComments = Schema.decodeEffect(
   Schema.fromJsonString(Schema.Array(PendingReviewCommentSchema)),
 );
@@ -1361,18 +1361,24 @@ export const make = Effect.gen(function* () {
     includePositions = true,
   ) {
     const { owner, name } = parseRepositorySelector(input.repository);
-    const response = yield* client.PendingReview({ owner, name, number: input.number }).pipe(
-      graphql({ ...input, operation: "pendingReview" }),
-      Effect.map((data) => JSON.stringify({ data })),
-      retryPendingReviewRead,
-    );
-    const decoded = yield* decodePendingReviews(response).pipe(
+    const response = yield* client
+      .PendingReview({ owner, name, number: input.number })
+      .pipe(graphql({ ...input, operation: "pendingReview" }), retryPendingReviewRead);
+    const decoded = yield* decodePendingReviews({ data: response }).pipe(
       Effect.mapError((cause) => readError(input.cwd, "pendingReview", cause)),
     );
     const pullRequest = decoded.data.repository.pullRequest;
     const review = pullRequest.reviews.nodes.find((entry) => entry.viewerDidAuthor);
     const comments: Array<typeof PendingReviewCommentSchema.Type> = [];
     if (review) {
+      if (review.fullDatabaseId === null)
+        return yield* readError(
+          input.cwd,
+          "pendingReview",
+          new Error(
+            "GitHub did not return the pending review's REST ID. Refresh before editing it.",
+          ),
+        );
       for (let page = 1; page <= 10; page++) {
         const read = yield* api
           .rest({

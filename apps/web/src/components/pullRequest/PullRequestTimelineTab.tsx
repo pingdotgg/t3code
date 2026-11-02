@@ -236,7 +236,6 @@ function ConversationCard({
             body={event.body ?? ""}
             url={event.url}
             onOpen={onOpen}
-            onEdit={editable !== null && !editing ? () => setEditing(true) : undefined}
             onAddToComposer={
               event.comment && reactions.onAddCommentToComposer
                 ? () => {

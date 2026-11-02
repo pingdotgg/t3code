@@ -10,6 +10,7 @@ import {
   buildMenuItems,
   requiresDefaultBranchConfirmation,
   resolveQuickAction,
+  secondaryGitMenuItems,
   type GitActionMenuItem,
   type GitActionRequestInput,
 } from "@t3tools/client-runtime/state/vcs";
@@ -152,9 +153,9 @@ export function useThreadGitControlModel(props: ThreadGitMenuProps) {
 
   // The same secondary actions as desktop's split button; the quick action already covers its own.
   const menuActions = isRepo
-    ? buildMenuItems(gitStatus, busy, hasPrimaryRemote)
-        .filter((item) => item.dialogAction !== quickAction.action)
-        .map((item) => (canWriteSourceControl ? item : { ...item, disabled: true }))
+    ? secondaryGitMenuItems(buildMenuItems(gitStatus, busy, hasPrimaryRemote), quickAction).map(
+        (item) => (canWriteSourceControl ? item : { ...item, disabled: true }),
+      )
     : [];
 
   const openExistingPr = async () => {

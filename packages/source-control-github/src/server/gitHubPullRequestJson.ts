@@ -619,7 +619,7 @@ function toChecks(
   return dedupeChecks(toCheckEntries(raw));
 }
 
-function isReviewVerdict(reviewState: string | null): boolean {
+export function isReviewVerdict(reviewState: string | null): boolean {
   switch (reviewState?.toUpperCase()) {
     case "APPROVED":
     case "CHANGES_REQUESTED":

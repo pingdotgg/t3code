@@ -1,6 +1,6 @@
 import {
   markdownWithHtml,
-  parseMarkdownDocument,
+  parseMarkdownSource,
   type MarkdownNode,
 } from "../../lib/markdownDocument";
 import { isBotBadgeImage } from "./botBadgeImages";
@@ -9,7 +9,7 @@ import { isBotBadgeImage } from "./botBadgeImages";
 export function inlinePullRequestBadges(source: string): string {
   if (!source.includes("![") && !/<img\b/i.test(source)) return source;
   const markdown = markdownWithHtml(source);
-  const document = parseMarkdownDocument(markdown);
+  const document = parseMarkdownSource(markdown);
   const definitions = new Map(
     document.children.flatMap((node) =>
       node.type === "definition" ? [[node.identifier, node.url] as const] : [],

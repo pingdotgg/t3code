@@ -81,6 +81,7 @@ async function mountFilesViewed() {
       <Surface />
     </StrictMode>
   );
+  // Environment reads are mocked and this hook does not navigate.
   const screen = await render(ui(), { router: false });
   const reread = () => screen.rerender(ui());
   return Object.assign(screen, {
@@ -95,8 +96,8 @@ async function mountFilesViewed() {
 
 describe("a mark the host has not answered for yet", () => {
   it("keeps a saved mark through a truncated read until that file is answered", async () => {
-    using _timers = fakeTimers();
     await using screen = await mountFilesViewed();
+    using _timers = fakeTimers();
     screen.view().setViewed("a.ts", true);
     await act(() => vi.advanceTimersByTimeAsync(500));
 
@@ -111,8 +112,8 @@ describe("a mark the host has not answered for yet", () => {
   });
 
   it("accepts a complete response that no longer includes a saved mark", async () => {
-    using _timers = fakeTimers();
     await using screen = await mountFilesViewed();
+    using _timers = fakeTimers();
     screen.view().setViewed("a.ts", true);
     await act(() => vi.advanceTimersByTimeAsync(500));
 
@@ -124,8 +125,8 @@ describe("a mark the host has not answered for yet", () => {
 });
 
 it("follows GitHub marks and unmarks without writing them back", async () => {
-  using _timers = fakeTimers();
   await using screen = await mountFilesViewed();
+  using _timers = fakeTimers();
   await screen.reads("viewed");
   expect(screen.view().isViewed("a.ts")).toBe(true);
   expect(screen.view().viewedCount).toBe(1);

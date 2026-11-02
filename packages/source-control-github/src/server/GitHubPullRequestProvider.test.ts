@@ -113,16 +113,23 @@ it.effect("advertises standalone branch deletion for source repository writers",
 );
 
 describe("gitHubViewerPermissions", () => {
-  it("offers everything to a viewer who can write to the repository", () => {
+  it.each([
+    ["github.com", true],
+    ["ACME.GHE.COM", true],
+    ["github.internal.example", false],
+  ])("grants a writer uploads only on a supported host: %s", (host, attachments) => {
     expect(
-      gitHubViewerPermissions({
-        canWrite: true,
-        canDeleteBranch: true,
-        canTriage: true,
-        canUpdate: true,
-        didAuthor: false,
-        autoMergeAllowed: true,
-      }),
+      gitHubViewerPermissions(
+        {
+          canWrite: true,
+          canDeleteBranch: true,
+          canTriage: true,
+          canUpdate: true,
+          didAuthor: false,
+          autoMergeAllowed: true,
+        },
+        host,
+      ),
     ).toEqual({
       actions: [
         "delete-branch",
@@ -136,7 +143,7 @@ describe("gitHubViewerPermissions", () => {
         "close",
         "reopen",
       ],
-      attachments: true,
+      attachments,
       comment: true,
       resolve: true,
       stackRebase: true,
@@ -754,7 +761,19 @@ describe("getChangeRequestActivity dismissed reviews", () => {
     Layer.mock(GitHubPullRequestApi.GitHubPullRequestApi)({
       revalidateChecks: (_input, read) => read,
       getPullRequestActivity: () =>
-        Effect.succeed({ author: null, comments: [dismissedReview(body)], commits: [] }),
+        Effect.succeed({
+          author: null,
+          comments: [
+            dismissedReview(body),
+            {
+              ...dismissedReview(""),
+              id: "PRR_metadata",
+              reviewState: "COMMENTED",
+              reviewCommitSha: "reviewed-head",
+            },
+          ],
+          commits: [],
+        }),
       listReviewThreadComments: () => Effect.succeed(threadComments),
     });
   const readActivity = Effect.gen(function* () {
@@ -773,6 +792,11 @@ describe("getChangeRequestActivity dismissed reviews", () => {
         expect(activity.comments[0]?.body).toBe("Dismissing prior approval to re-evaluate 9b66581");
         expect(activity.comments[0]?.author?.isBot).toBe(true);
         expect(activity.comments[0]?.editedAt).toBe("2026-07-04T00:00:00Z");
+        expect(activity.comments[1]).toMatchObject({
+          id: "PRR_metadata",
+          reviewCommitSha: "reviewed-head",
+        });
+        expect(activity.commentCount).toBe(1);
       }),
       Effect.provide(layerFor("<!-- Macroscope (Approvability) review body marker -->")),
     ),

@@ -30,6 +30,7 @@ import type {
   GitHubViewerAccess,
   GitHubWorkflowRunApproval,
 } from "./gitHubPullRequestJson.ts";
+import { isReviewVerdict } from "./gitHubPullRequestJson.ts";
 import { definition } from "../shared/definition.ts";
 
 const CAPABILITIES: PullRequestCapabilities = {
@@ -75,6 +76,7 @@ const UNAVAILABLE_REQUIREMENT = {
  */
 export function gitHubViewerPermissions(
   access: GitHubViewerAccess & Pick<GitHubRepositoryAccess, "autoMergeAllowed">,
+  host = "github.com",
 ): PullRequestViewerPermissions {
   return {
     ...(access.canWrite ? { stackRebase: true } : {}),
@@ -96,7 +98,9 @@ export function gitHubViewerPermissions(
       ...(access.canUpdate ? (["ready", "draft", "close", "reopen"] as const) : []),
       ...(access.canUpdateBranch === true ? (["update-branch"] as const) : []),
     ],
-    attachments: access.canWrite,
+    attachments:
+      access.canWrite &&
+      (host.toLowerCase() === "github.com" || host.toLowerCase().endsWith(".ghe.com")),
     comment: true,
     resolve: access.canWrite || access.didAuthor,
     // Authors may comment on their own PRs, but GitHub rejects their approvals and change requests.
@@ -468,10 +472,13 @@ export const make = Effect.gen(function* () {
           ],
           mergeCapabilities: pullRequest.viewerAccess.mergeCapabilities,
           viewerPermissions: {
-            ...gitHubViewerPermissions({
-              ...pullRequest.viewerAccess,
-              canUpdateBranch: pullRequest.comparison?.viewerCanUpdate === true,
-            }),
+            ...gitHubViewerPermissions(
+              {
+                ...pullRequest.viewerAccess,
+                canUpdateBranch: pullRequest.comparison?.viewerCanUpdate === true,
+              },
+              input.host,
+            ),
             maintainerEdits: pullRequest.canEditMaintainerEdits,
           },
           baseComparison:
@@ -565,7 +572,13 @@ export const make = Effect.gen(function* () {
                 editedAt: reviewThreads.editedAtById.get(comment.id) ?? comment.editedAt ?? null,
               }))
               .toSorted((left, right) => left.createdAt.localeCompare(right.createdAt)),
-            commentCount: pullRequest.comments.length + reviewThreads.commentCount,
+            commentCount:
+              pullRequest.comments.filter(
+                (comment) =>
+                  comment.kind !== "review" ||
+                  comment.body.trim().length > 0 ||
+                  isReviewVerdict(comment.reviewState),
+              ).length + reviewThreads.commentCount,
             commentsTruncated: reviewThreads.truncated,
             reviewThreadsTruncated: reviewThreads.reviewThreadsTruncated,
             reviewThreads: reviewThreads.reviewThreads.map((thread) => ({
@@ -590,18 +603,21 @@ export const make = Effect.gen(function* () {
     getViewerPermissions: (input) => {
       const lightAccess = cli
         .getViewerAccess({ ...input, allowReserve: true })
-        .pipe(Effect.map((access) => gitHubViewerPermissions(access)));
+        .pipe(Effect.map((access) => gitHubViewerPermissions(access, input.host)));
       if (input.includeUpdateBranch === false) {
         return lightAccess.pipe(Effect.mapError(fail("getViewerPermissions")));
       }
       return cli.getPullRequestDetail(input).pipe(
         Effect.provideService(SourceControlRateLimit.Interactive, true),
         Effect.map((pullRequest) =>
-          gitHubViewerPermissions({
-            ...pullRequest.viewerAccess,
-            canUpdateBranch:
-              pullRequest.state === "open" && pullRequest.comparison?.viewerCanUpdate === true,
-          }),
+          gitHubViewerPermissions(
+            {
+              ...pullRequest.viewerAccess,
+              canUpdateBranch:
+                pullRequest.state === "open" && pullRequest.comparison?.viewerCanUpdate === true,
+            },
+            input.host,
+          ),
         ),
         Effect.catchIf(
           (error) =>

@@ -17,10 +17,12 @@ describe("pull request badge rendering", () => {
   });
 
   it("keeps real screenshots while replacing HTML and reference-style status badges", () => {
+    const windowsLink = String.raw`[Source](C:\work\src\file.ts)` + "\n\n";
     const result = inlinePullRequestBadges(
-      '<img src="https://www.gstatic.com/codereviewagent/high-priority.svg" alt="High priority">\n\n![Build][status]\n\n![Before](https://cursor.com/artifacts/before.png)\n\n[status]: https://img.shields.io/badge/build-passing-green',
+      windowsLink +
+        '<img src="https://www.gstatic.com/codereviewagent/high-priority.svg" alt="High priority">\n\n![Build][status]\n\n![Before](https://cursor.com/artifacts/before.png)\n\n[status]: https://img.shields.io/badge/build-passing-green',
     );
-    expect(result).toContain("High priority\n\nBuild");
+    expect(result).toContain(windowsLink + "High priority\n\nBuild");
     expect(result).toContain("![Before](https://cursor.com/artifacts/before.png)");
     expect(result).not.toContain("![Build][status]");
   });

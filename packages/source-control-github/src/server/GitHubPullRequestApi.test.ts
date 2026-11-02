@@ -3327,6 +3327,44 @@ layer("GitHubPullRequestApi.layer", (it) => {
     }),
   );
 
+  it.effect(
+    "refuses a pending review without a REST ID before reading or mutating its comments",
+    () =>
+      Effect.gen(function* () {
+        mockedExecute.mockReturnValueOnce(
+          Effect.succeed(
+            output(
+              encodeJson({
+                data: {
+                  repository: {
+                    pullRequest: {
+                      id: "PR_7",
+                      reviews: {
+                        nodes: [
+                          { id: "PRR_1", fullDatabaseId: null, body: "", viewerDidAuthor: true },
+                        ],
+                      },
+                    },
+                  },
+                },
+              }),
+            ),
+          ),
+        );
+        const cli = yield* GitHubPullRequestApi.GitHubPullRequestApi;
+        const failure = yield* cli
+          .saveDraftComment({
+            ...pullRequestInput,
+            comment: { path: "src/a.ts", body: "nit", position: { kind: "added", newLine: 4 } },
+          })
+          .pipe(Effect.flip);
+        expect(failure._tag).toBe("GitHubPullRequestReadError");
+        expect(mockedExecute).toHaveBeenCalledTimes(1);
+        expect(variablesOf("addPullRequestReview(")).toEqual([]);
+        expect(variablesOf("addPullRequestReviewThread(")).toEqual([]);
+      }),
+  );
+
   it.effect("saves a private range review and rejects changed hosted drafts", () =>
     Effect.gen(function* () {
       mockedExecute.mockReturnValueOnce(
