@@ -619,9 +619,6 @@ const ConversationTimeline = memo(function ConversationTimeline({
       return next;
     });
   };
-  // Opening keeps a followed timeline at its end, so the history lands above
-  // the composer instead of under it. Closing behaves like any collapsing
-  // disclosure.
   const onToggleWorkingHistory = (key: string) => {
     // Either way the bar holds still: the history grows and shrinks below it.
     const list = listRef.current;
@@ -749,6 +746,9 @@ const ConversationTimeline = memo(function ConversationTimeline({
     windowlessCitation,
     activeFindEntryId,
   });
+  const workingHistoryOpen = rows.some(
+    (row) => row.kind === "working" && row.window?.historyOpen === true,
+  );
   // Opens whatever hides a cited response. False when nothing does, so the citation stops waiting.
   const revealCitedEntry = (entryId: string, runId: RunId | null) => {
     const fold = timelineTurnFoldRunIdsByEntryId({
@@ -1556,7 +1556,8 @@ const ConversationTimeline = memo(function ConversationTimeline({
                 (restoringThreadPosition && rememberedPosition?.atEnd === false) ||
                 anchoredEndSpace ||
                 !liveFollowEnabled ||
-                fullscreenAppRowId !== null
+                fullscreenAppRowId !== null ||
+                workingHistoryOpen
                   ? false
                   : isWorking && !prefersReducedMotion && settlingListIdentity === null
                     ? TIMELINE_MAINTAIN_SCROLL_AT_END_SMOOTH
