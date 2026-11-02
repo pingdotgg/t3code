@@ -72,7 +72,8 @@ summary of a run in progress. A run that continues after a restart reports its
 own usage with `restartContinuation` and `lifecycleObserved: false`; it cannot
 recover the original request's count or kind. A run whose provider session never
 opens has no summary, and a start the provider rejects reports
-`providerTurns: 0`. Collection is best effort, with no scan or backfill of
+`providerTurns: 0`. A Stop that lands while a steering restart is starting ends
+the run without a summary. Collection is best effort, with no scan or backfill of
 provider history.
 
 Counts cover the main agent. `otherInputTokens` and `otherOutputTokens` are what
