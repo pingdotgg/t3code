@@ -21,7 +21,7 @@ const normalizeAvailability = (
 ): T3CodeToolAvailability =>
   typeof availability === "boolean" ? { browser: availability, device: false } : availability;
 
-/** Instructions for unavailable tools would steer the model away from its remaining automation. */
+/** Guidance for unavailable tools would steer the model away; history may still hold the device block, so retract it. */
 const toolInstructions = (availability: boolean | T3CodeToolAvailability): string => {
   const tools = normalizeAvailability(availability);
   return [
