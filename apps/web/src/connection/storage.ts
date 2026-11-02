@@ -55,6 +55,8 @@ const QUERY_MAX_ROWS = 256;
 const QUERY_MAX_BYTES = 32 * 1024 * 1024;
 const QUERY_MAX_PAYLOAD_BYTES = 4 * 1024 * 1024;
 const QUERY_MAX_AGE_MS = 30 * 24 * 60 * 60_000;
+// A stats answer saves one row per listed PR; walking the bounds index on each would queue reads.
+const QUERY_PRUNE_INTERVAL_MS = 10_000;
 const CATALOG_KEY = "document";
 const StoredShellSnapshot = StoredOrchestrationShellSnapshot;
 const StoredShellSnapshotJson = Schema.fromJsonString(StoredShellSnapshot);
@@ -349,6 +351,7 @@ function saveQueryOnConnection(
   key: string,
   payload: string,
   updatedAt: number,
+  prune: boolean,
 ) {
   return Effect.callback<void, ConnectionTransientError>((resume) => {
     try {
@@ -369,6 +372,7 @@ function saveQueryOnConnection(
         return;
       }
       store.put({ environmentId, payload, updatedAt, bytes }, queryCacheKey(environmentId, key));
+      if (!prune) return;
       const request = store
         .index(QUERY_UPDATED_INDEX_NAME)
         .openKeyCursor(IDBKeyRange.bound([environmentId], [environmentId, []]), "prev");
@@ -1039,6 +1043,7 @@ export const layer = Layer.effectContext(
       }),
     });
 
+    const lastQueryPruneAt = new Map<EnvironmentId, number>();
     const queryStore: NonNullable<typeof EnvironmentQueryStore.Service> = {
       load: Effect.fn("EnvironmentQueryStore.load")(
         function* (environmentId, key) {
@@ -1058,11 +1063,14 @@ export const layer = Layer.effectContext(
       ),
       save: (environmentId, key, payload) =>
         Clock.currentTimeMillis.pipe(
-          Effect.flatMap((now) =>
-            withDatabase(database, (opened) =>
-              saveQueryOnConnection(opened, environmentId, key, payload, now),
-            ),
-          ),
+          Effect.flatMap((now) => {
+            const prune =
+              now - (lastQueryPruneAt.get(environmentId) ?? -Infinity) >= QUERY_PRUNE_INTERVAL_MS;
+            if (prune) lastQueryPruneAt.set(environmentId, now);
+            return withDatabase(database, (opened) =>
+              saveQueryOnConnection(opened, environmentId, key, payload, now, prune),
+            );
+          }),
           Effect.catch(() => Effect.logWarning("Offline query database save failed")),
         ),
     };
