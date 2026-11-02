@@ -34,7 +34,7 @@ export function useSidebarPeek({
     return () => window.clearTimeout(timer);
   }, [peek]);
 
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- document pointer listeners that hide the card once the pointer leaves it or the window
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- document listeners that hide the card once the pointer leaves it or the window
   useEffect(() => {
     const container = containerRef.current;
     if (peek !== "shown" || !container) return;
@@ -44,25 +44,35 @@ export function useSidebarPeek({
     const menuIsOpen = () =>
       container.querySelector('[aria-haspopup][aria-expanded="true"]') !== null ||
       document.querySelector("[data-context-menu]") !== null;
-    const leave = () => {
+    let pointerX = 0;
+    let pointerInWindow = true;
+    const hideUnlessHeld = () => {
+      const overCard =
+        pointerInWindow && pointerX < container.offsetWidth + CARD_INSET_PX + PEEK_EDGE_PX;
+      if (overCard || menuIsOpen()) return;
       onLeave();
       setPeek("leaving");
     };
     const onPointerMove = (event: globalThis.PointerEvent) => {
-      const overCard = event.clientX < container.offsetWidth + CARD_INSET_PX + PEEK_EDGE_PX;
-      const overPopup =
-        event.target instanceof Element && event.target.closest('[data-slot$="popup"]') !== null;
-      if (!overCard && !overPopup && !menuIsOpen()) leave();
+      pointerX = event.clientX;
+      pointerInWindow = true;
+      hideUnlessHeld();
     };
     const onPointerLeaveWindow = () => {
-      if (!menuIsOpen()) leave();
+      pointerInWindow = false;
+      hideUnlessHeld();
     };
     const root = document.documentElement;
     document.addEventListener("pointermove", onPointerMove, { passive: true });
     root.addEventListener("pointerleave", onPointerLeaveWindow);
+    // A menu can close from a key or a click without the pointer moving.
+    document.addEventListener("keyup", hideUnlessHeld);
+    document.addEventListener("click", hideUnlessHeld);
     return () => {
       document.removeEventListener("pointermove", onPointerMove);
       root.removeEventListener("pointerleave", onPointerLeaveWindow);
+      document.removeEventListener("keyup", hideUnlessHeld);
+      document.removeEventListener("click", hideUnlessHeld);
     };
   }, [containerRef, onLeave, peek]);
 
