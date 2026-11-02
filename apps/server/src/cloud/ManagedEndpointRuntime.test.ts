@@ -30,8 +30,8 @@ import * as ServerConfig from "../config.ts";
 import * as ManagedEndpointRuntime from "./ManagedEndpointRuntime.ts";
 import * as ManagedPolicy from "../policy/ManagedPolicy.ts";
 
-// The local address the host would use to reach Cloudflare's tunnel edge.
-const routeSource = vi.hoisted(() => ({ address: "" }));
+// The local address the host would use to reach Cloudflare's tunnel edge; `null` when offline.
+const routeSource = vi.hoisted(() => ({ address: "" as string | null }));
 vi.mock("node:dgram", async (importOriginal) => {
   const actual = await importOriginal<typeof NodeDgram>();
   const { EventEmitter } = await import("node:events");
@@ -40,7 +40,14 @@ vi.mock("node:dgram", async (importOriginal) => {
     connect(_port: number, ...rest: ReadonlyArray<unknown>) {
       const callback = rest.find((arg) => typeof arg === "function");
       if (callback) this.once("connect", callback as () => void);
-      process.nextTick(() => this.emit("connect"));
+      process.nextTick(() =>
+        routeSource.address === null
+          ? this.emit(
+              "error",
+              Object.assign(new Error("connect ENETUNREACH"), { code: "ENETUNREACH" }),
+            )
+          : this.emit("connect"),
+      );
     }
     address() {
       return { address: routeSource.address, family: "IPv4", port: 53_000 };
@@ -517,6 +524,65 @@ describe("CloudManagedEndpointRuntime", () => {
         killed: [800],
         spawned: 2,
       });
+    }),
+  );
+
+  it.effect("keeps the connector across an unchanged route and an offline gap", () =>
+    Effect.gen(function* () {
+      // Wi-Fi, offline, the same Wi-Fi again, then a VPN.
+      const routeByCheck = ["192.168.1.20", null, "192.168.1.20", "192.168.1.20", "10.8.0.2"];
+      routeSource.address = routeByCheck[0]!;
+      const readinessChecks = yield* Queue.unbounded<number>();
+      let readinessCheckCount = 0;
+      const httpClient = HttpClient.make((request) =>
+        Effect.gen(function* () {
+          if (!request.url.endsWith("/ready")) {
+            return HttpClientResponse.fromWeb(request, new Response(null, { status: 404 }));
+          }
+          routeSource.address = routeByCheck[readinessCheckCount]!;
+          readinessCheckCount += 1;
+          yield* Queue.offer(readinessChecks, readinessCheckCount);
+          return HttpClientResponse.fromWeb(
+            request,
+            Response.json({ status: 200, readyConnections: 1 }),
+          );
+        }),
+      );
+      const fixture = yield* makeTransportSpawner();
+      const runtime = yield* buildCloudManagedEndpointRuntime(
+        fixture.spawner,
+        layerRelayClientAvailable,
+        httpClient,
+      );
+      yield* runtime.applyConfig(tunnelConfig);
+      expect(yield* Queue.take(fixture.started)).toBe(0);
+      yield* fixture.emit(
+        0,
+        "2026-10-30T10:00:00Z INF Starting metrics server on 127.0.0.1:20241/metrics\n" +
+          "2026-10-30T10:00:01Z INF Registered tunnel connection connIndex=0 connection=8f2c event=0 ip=198.41.192.7 location=ams01 protocol=quic\n",
+      );
+      yield* Stream.runHead(runtime.tunnelConnected);
+
+      // Reaching check 4 means the route lookups after checks 1-3 have all run.
+      const outcome = yield* Effect.raceFirst(
+        Queue.take(fixture.started).pipe(Effect.as("connector replaced" as const)),
+        Effect.gen(function* () {
+          for (const check of [1, 2, 3, 4]) {
+            yield* TestClock.adjust(Duration.seconds(30));
+            expect(yield* Queue.take(readinessChecks)).toBe(check);
+          }
+          return "connector kept" as const;
+        }),
+      );
+      expect({ outcome, killed: fixture.killed }).toEqual({
+        outcome: "connector kept",
+        killed: [],
+      });
+
+      yield* TestClock.adjust(Duration.seconds(30));
+      expect(yield* Queue.take(readinessChecks)).toBe(5);
+      expect(yield* Queue.take(fixture.started)).toBe(1);
+      expect([...new Set(fixture.killed)]).toEqual([800]);
     }),
   );
 

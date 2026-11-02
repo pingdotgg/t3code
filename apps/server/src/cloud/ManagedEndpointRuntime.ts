@@ -1,3 +1,5 @@
+import * as NodeDgram from "node:dgram";
+
 import type { RelayManagedEndpointRuntimeConfig } from "@t3tools/contracts/relay";
 import { RotatingFileSink } from "@t3tools/shared/logging";
 import * as RelayClient from "@t3tools/shared/relayClient";
@@ -101,6 +103,12 @@ const CONNECTOR_READINESS_INTERVAL = Duration.seconds(30);
 const CONNECTOR_READINESS_REQUEST_TIMEOUT = Duration.seconds(5);
 const CONNECTOR_NOT_READY_CHECKS_BEFORE_RESTART = 6;
 const CONNECTOR_NOT_READY_CHECKS_MAX = 60;
+// cloudflared probes its QUIC MTU only at startup, so a new route (a VPN) silently drops full-size
+// packets. Probe the IPv4 route to an edge address: cloudflared dials edges over IPv4 by default,
+// and rotating IPv6 temporary addresses would restart it for nothing. UDP connect sends nothing.
+const TUNNEL_EDGE_ROUTE_PROBE_ADDRESS = "198.41.192.7";
+const TUNNEL_EDGE_ROUTE_PROBE_PORT = 7844;
+const TUNNEL_EDGE_ROUTE_LOOKUP_TIMEOUT = Duration.seconds(1);
 const RELAY_CLIENT_METRICS_LINE = /\bStarting metrics server on (127\.0\.0\.1:\d+)\/metrics\b/u;
 const RELAY_CLIENT_PROTOCOL = /\bprotocol=(\w+)/u;
 // cloudflared's metrics server: `/ready` answers 200 or 503 with this body, and
@@ -180,6 +188,32 @@ function runtimeConfigKey(config: RelayManagedEndpointRuntimeConfig): string {
     tunnelName: config.tunnelName ?? null,
   });
 }
+
+/** The local address of the host's route to the tunnel edge, or `null` without a route. */
+const readTunnelEdgeRouteSource = Effect.callback<string | null>((resume) => {
+  const socket = NodeDgram.createSocket("udp4");
+  let closed = false;
+  const close = () => {
+    if (closed) return;
+    closed = true;
+    socket.close();
+  };
+  const finish = (address: string | null) => {
+    close();
+    resume(Effect.succeed(address));
+  };
+  socket.unref();
+  socket.once("error", () => finish(null));
+  socket.once("connect", () => {
+    if (!closed) finish(socket.address().address);
+  });
+  socket.connect(TUNNEL_EDGE_ROUTE_PROBE_PORT, TUNNEL_EDGE_ROUTE_PROBE_ADDRESS);
+  return Effect.sync(close);
+}).pipe(
+  Effect.timeoutOption(TUNNEL_EDGE_ROUTE_LOOKUP_TIMEOUT),
+  Effect.map(Option.getOrNull),
+  Effect.catchDefect(() => Effect.succeed(null)),
+);
 
 const stopConnector = (connector: ActiveConnector | null) =>
   connector
@@ -491,6 +525,8 @@ export const make = Effect.gen(function* () {
     const readyUrl = `http://${yield* Deferred.await(connector.metricsAddress)}/ready`;
     let notReadyChecks = 0;
     let lastReady: boolean | null = null;
+    // A failed lookup (offline) keeps the last route, so returning to the same network is no change.
+    let routeSource: string | null = null;
     while (true) {
       yield* Effect.sleep(CONNECTOR_READINESS_INTERVAL);
       const status = yield* httpClient.get(readyUrl).pipe(
@@ -500,6 +536,25 @@ export const make = Effect.gen(function* () {
         Effect.timeoutOption(CONNECTOR_READINESS_REQUEST_TIMEOUT),
         Effect.orElseSucceed(() => Option.none<number>()),
       );
+      const currentRouteSource = yield* readTunnelEdgeRouteSource;
+      if (currentRouteSource !== null) {
+        const previousRouteSource = routeSource;
+        routeSource = currentRouteSource;
+        if (previousRouteSource !== null && previousRouteSource !== currentRouteSource) {
+          yield* Effect.logWarning(
+            "Host route to the tunnel edge changed; restarting the relay client",
+            {
+              pid: Number(connector.child.pid),
+              previousRouteSource,
+              currentRouteSource,
+              tunnelId: connector.config.tunnelId,
+              tunnelName: connector.config.tunnelName,
+            },
+          );
+          yield* connector.child.kill().pipe(Effect.ignore);
+          continue;
+        }
+      }
       if (Option.isNone(status)) continue;
       if (status.value === 200 || status.value === 503) {
         const ready = status.value === 200;
