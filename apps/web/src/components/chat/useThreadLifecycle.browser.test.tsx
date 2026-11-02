@@ -1,3 +1,4 @@
+import * as Cause from "effect/Cause";
 import { scopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { expect, it, vi } from "vite-plus/test";
@@ -20,7 +21,7 @@ vi.mock(import("../../state/use-atom-command"), async (importOriginal) => ({
 
 vi.mock(import("../../state/use-orchestration-command"), async (importOriginal) => ({
   ...(await importOriginal()),
-  useOrchestrationCommand: (() => async () => ({ _tag: "Success", value: undefined })) as never,
+  useOrchestrationCommand: (() => (input: unknown) => state.switchRef(input)) as never,
 }));
 
 vi.mock(import("../../hooks/useThreadActions"), async (importOriginal) => ({
@@ -77,7 +78,7 @@ function RestoreBranchHarness(props: {
     serverConfig: null,
     runtimeMode: "full-access" as never,
     isWorking: false,
-    pendingBackgroundTasks: [],
+    pendingBackgroundTasks: [{ taskId: "background-command", kind: "command" }] as never,
     turnItems: [],
     activePendingApproval: null as never,
     activePendingUserInput: null as never,
@@ -95,13 +96,16 @@ function RestoreBranchHarness(props: {
     persistThreadSettingsForNextTurn: async () => ({ _tag: "Success", value: undefined }) as never,
   });
   return (
-    <button
-      type="button"
-      disabled={lifecycle.isRestoringThreadBranch}
-      onClick={lifecycle.handleSwitchCheckoutToThreadStable}
-    >
-      {lifecycle.isRestoringThreadBranch ? "Restoring..." : "Restore branch"}
-    </button>
+    <>
+      {lifecycle.workNow?.actions}
+      <button
+        type="button"
+        disabled={lifecycle.isRestoringThreadBranch}
+        onClick={lifecycle.handleSwitchCheckoutToThreadStable}
+      >
+        {lifecycle.isRestoringThreadBranch ? "Restoring..." : "Restore branch"}
+      </button>
+    </>
   );
 }
 
@@ -179,5 +183,46 @@ it.each(["a", "b", "navigation"] as const)(
     }
     focusFrames[0]!(0);
     expect(focusComposer).toHaveBeenCalledTimes(scenario === "navigation" ? 0 : 1);
+  },
+);
+
+it.each(["Success", "Failure"] as const)(
+  "keeps background stop requests per thread after %s",
+  async (outcome) => {
+    setup();
+    const completions: Array<(result: unknown) => void> = [];
+    state.switchRef = vi.fn(() => new Promise((resolve) => completions.push(resolve)));
+    const threadA = threadInput("thread:a", "feature-a");
+    const threadB = threadInput("thread:b", "feature-b");
+    const currentRouteThreadKeyRef = { current: threadA.routeThreadKey };
+    const harness = (thread: ThreadInput) => (
+      <RestoreBranchHarness
+        thread={thread}
+        currentRouteThreadKeyRef={currentRouteThreadKeyRef}
+        refreshGitStatus={() => undefined}
+        focusComposer={() => undefined}
+      />
+    );
+    await using screen = await render(harness(threadA));
+    await page.getByRole("button", { name: "Stop", exact: true }).click();
+    await expect.element(page.getByRole("button", { name: "Stopping..." })).toBeDisabled();
+    await screen.rerender(harness(threadB));
+    await page.getByRole("button", { name: "Stop", exact: true }).click();
+    await screen.rerender(harness(threadA));
+    await expect.element(page.getByRole("button", { name: "Stopping..." })).toBeDisabled();
+    completions[0]!(
+      outcome === "Success"
+        ? { _tag: "Success", value: undefined }
+        : { _tag: "Failure", cause: Cause.fail(new Error("stop failed")) },
+    );
+    if (outcome === "Success") {
+      await expect.element(page.getByRole("button", { name: "Stopping..." })).toBeDisabled();
+    } else {
+      await expect.element(page.getByRole("button", { name: "Stop", exact: true })).toBeEnabled();
+    }
+    await screen.rerender(harness(threadB));
+    await expect.element(page.getByRole("button", { name: "Stopping..." })).toBeDisabled();
+    expect(state.switchRef).toHaveBeenCalledTimes(2);
+    completions[1]!({ _tag: "Success", value: undefined });
   },
 );

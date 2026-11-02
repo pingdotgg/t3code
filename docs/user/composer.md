@@ -47,7 +47,8 @@ Attach up to 100 files per message. Each image can be up to 10 MiB, with at most
 50 MiB each, subject to the environment's upload support and limit. The agent
 receives them on the environment's machine. Provider and model limits still
 apply, including images already in the conversation. A video attachment gives
-the agent a file path; it does not enable native video input.
+the agent a file path; only [Antigravity](./providers-antigravity.md#skills-and-attachments)
+sends supported videos to Gemini models as video.
 
 Uploads begin when you add an attachment. All uploads must finish before the
 message can send. Retry or remove a failed upload. On web and desktop, reloading
@@ -193,8 +194,10 @@ later, use the composer's microphone to record,
 then confirm to transcribe. Text is inserted where your selection was when
 recording started, ready for you to review and edit before sending.
 
-Android requires compatible Google on-device speech services. The microphone is
-hidden when transcription is unavailable for the device or its language.
+Voice input uses on-device speech transcription: Apple's on iOS, and compatible
+Google on-device speech services on Android. When it is unavailable for the device
+or its language, the composer has no microphone button and **Settings → Microphone**
+says voice input isn't available.
 
 The first use may download a speech model and needs a network connection.
 Later transcription works offline for that language. Recordings can be up to five
