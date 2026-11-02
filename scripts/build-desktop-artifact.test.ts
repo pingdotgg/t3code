@@ -132,7 +132,10 @@ it.live.each([false, true])(
       const movedManifest = path.join(moved, "compile-cache/runtime.json");
       yield* fs.chmod(movedManifest, 0o644);
       yield* fs.writeFileString(movedManifest, JSON.stringify({ ...manifest, uid: -1 }));
-      const loader = NodePath.resolve("apps/desktop/src/packagedCompileCache.ts");
+      const loader = NodePath.join(
+        import.meta.dirname,
+        "../apps/desktop/src/packagedCompileCache.ts",
+      );
       const consume = path.join(root, "consume.mjs");
       yield* fs.writeFileString(
         consume,
