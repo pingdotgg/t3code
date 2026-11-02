@@ -965,23 +965,37 @@ describe("environment query lifecycle", () => {
         let now = 0;
         using _now = vi.spyOn(Date, "now").mockImplementation(() => now);
         let contents = "before edit";
-        const harness = yield* makeEnvironmentQueryHarness(Effect.sync(() => contents));
+        let fetches = 0;
+        const harness = yield* makeEnvironmentQueryHarness(
+          Effect.sync(() => {
+            fetches += 1;
+            return contents;
+          }),
+        );
         const registry = AtomRegistry.make();
         yield* Effect.addFinalizer(() => Effect.sync(() => registry.dispose()));
         const read = readEnvironmentQuery(registry, harness.atom);
+        const remount = Effect.gen(function* () {
+          const unmount = registry.mount(harness.atom);
+          yield* Effect.yieldNow;
+          const value = yield* read;
+          unmount();
+          yield* Effect.yieldNow;
+          return value;
+        });
 
-        const unmount = registry.mount(harness.atom);
-        expect(yield* read).toBe("before edit");
-        unmount();
-        yield* Effect.yieldNow;
-
+        expect(yield* remount).toBe("before edit");
         contents = "after edit";
-        // Past the harness's 60s stale time, well inside the default 5 minute idle TTL.
-        now = 61_000;
-        registry.mount(harness.atom);
-        yield* Effect.yieldNow;
 
-        expect(yield* read).toBe("after edit");
+        // Inside the harness's 60s stale time: the cached value stands.
+        now = 30_000;
+        expect(yield* remount).toBe("before edit");
+        expect(fetches).toBe(1);
+
+        // Past the stale time, well inside the default 5 minute idle TTL.
+        now = 61_000;
+        expect(yield* remount).toBe("after edit");
+        expect(fetches).toBe(2);
       }),
     ),
   );

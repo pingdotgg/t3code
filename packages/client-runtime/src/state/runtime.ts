@@ -552,6 +552,45 @@ const refreshEveryUntilFinal =
       { initialValueTarget: self },
     );
 
+const isStale = (result: AsyncResult.AsyncResult<unknown, unknown>, staleTimeMs: number) => {
+  if (result.waiting) return false;
+  const success =
+    result._tag === "Failure" ? Option.getOrUndefined(result.previousSuccess) : result;
+  if (success?._tag !== "Success") return result._tag === "Failure";
+  // @effect-diagnostics-next-line globalDate:off - `AsyncResult` timestamps come from `Date.now`.
+  return Date.now() - success.timestamp >= staleTimeMs;
+};
+
+/**
+ * Stale-while-revalidate on every mount. `Atom.swr` checks only when its node builds, which an idle
+ * TTL skips on a remount; this layer has no TTL (a transform drops it) while `self` keeps the cache.
+ * It reads `self` as a dependency, not a subscription, so `self` goes idle with its last reader.
+ */
+const revalidateOnMount =
+  (staleTimeMs: number) =>
+  <A, E>(
+    self: Atom.Atom<AsyncResult.AsyncResult<A, E>>,
+  ): Atom.Atom<AsyncResult.AsyncResult<A, E>> =>
+    Atom.transform(
+      self,
+      (get) => {
+        const current = get(self);
+        if (Option.isNone(get.self()) && isStale(current, staleTimeMs)) {
+          let active = true;
+          get.addFinalizer(() => {
+            active = false;
+          });
+          // Deferred out of the build, which runs while React renders. A plain read drops this
+          // node before the task runs, so only a mount refetches.
+          get.registry.schedulerAsync.makeDispatcher().scheduleTask(() => {
+            if (active && isStale(get.once(self), staleTimeMs)) get.refresh(self);
+          }, 0);
+        }
+        return current;
+      },
+      { initialValueTarget: self },
+    );
+
 /**
  * A query result's data alone. A refetch always publishes a new result (a new
  * timestamp, `waiting` on and off), while equal data keeps its identity, so a
@@ -778,13 +817,7 @@ export function createEnvironmentQueryAtomFamily<R, ER, Input, A, E>(
           );
         });
       })
-      .pipe(
-        Atom.swr({
-          staleTime: options.staleTimeMs ?? 30_000,
-          revalidateOnMount: true,
-        }),
-        Atom.setIdleTTL(idleTtlMs),
-      );
+      .pipe(Atom.setIdleTTL(idleTtlMs));
     const isFinal = (result: AsyncResult.AsyncResult<A, unknown>) =>
       options.isFinal !== undefined && Option.exists(AsyncResult.value(result), options.isFinal);
     const intervalQuery =
@@ -796,7 +829,11 @@ export function createEnvironmentQueryAtomFamily<R, ER, Input, A, E>(
       refreshTrigger === undefined
         ? intervalQuery
         : intervalQuery.pipe(refreshOnSignalWhileRead(refreshTrigger, isFinal))
-    ).pipe(Atom.setIdleTTL(idleTtlMs), Atom.withLabel(`${options.label}:${key}`));
+    ).pipe(
+      Atom.setIdleTTL(idleTtlMs),
+      revalidateOnMount(options.staleTimeMs ?? 30_000),
+      Atom.withLabel(`${options.label}:${key}`),
+    );
   });
   return (target) => family(environmentRpcKey(target));
 }
