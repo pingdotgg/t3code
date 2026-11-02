@@ -1641,14 +1641,29 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
           ),
   });
 
-  const readRefSnapshot: GitVcsDriver.GitVcsDriver["Service"]["readRefSnapshot"] = (cwd) =>
-    executeGit("GitVcsDriver.readRefSnapshot", cwd, ["show-ref", "--head"], {
-      allowNonZeroExit: true,
-      maxOutputBytes: REF_SNAPSHOT_MAX_OUTPUT_BYTES,
-    }).pipe(
-      Effect.map((result) => (result.exitCode === 0 ? result.stdout : null)),
-      Effect.orElseSucceed(() => null),
-    );
+  const readRefSnapshot: GitVcsDriver.GitVcsDriver["Service"]["readRefSnapshot"] = Effect.fn(
+    "GitVcsDriver.readRefSnapshot",
+  )(
+    function* (cwd) {
+      const result = yield* executeGit(
+        "GitVcsDriver.readRefSnapshot",
+        cwd,
+        ["show-ref", "--head"],
+        {
+          allowNonZeroExit: true,
+          maxOutputBytes: REF_SNAPSHOT_MAX_OUTPUT_BYTES,
+        },
+      );
+      if (result.exitCode !== 0) return null;
+      // Deepening a shallow clone changes ancestry without moving refs.
+      const shallowPath = path.join(yield* resolveGitCommonDir(cwd), "shallow");
+      const shallow = (yield* fileSystem.exists(shallowPath))
+        ? yield* fileSystem.readFileString(shallowPath)
+        : "";
+      return `${result.stdout}\0${shallow}`;
+    },
+    Effect.orElseSucceed(() => null),
+  );
 
   const refreshStatusUpstreamIfStale = Effect.fn("refreshStatusUpstreamIfStale")(function* (
     cwd: string,
