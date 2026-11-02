@@ -297,6 +297,8 @@ interface MessagesTimelineProps {
   onAnchorSizeChanged: (messageId: MessageId, size: number) => void;
   contentInsetEndAdjustment: number;
   onIsAtEndChange: (isAtEnd: boolean) => void;
+  /** Whether the last user message's top is scrolled above the viewport; reported on every refresh. */
+  onLastUserMessageAboveChange?: (above: boolean) => void;
   /** Disable while reading history to prevent LegendList re-pinning near the bottom. */
   liveFollowEnabled: boolean;
   /** Receives the list's viewport when it mounts; the returned cleanup runs when it goes away. */
@@ -396,6 +398,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
   onAnchorSizeChanged,
   contentInsetEndAdjustment,
   onIsAtEndChange,
+  onLastUserMessageAboveChange,
   liveFollowEnabled,
   onViewportAttach,
   onFooterGrow,
@@ -851,6 +854,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
     const state = listRef.current?.getState?.();
     if (restoringThreadPosition || state?.data !== rows) return;
     if (!state || minimapItems.length === 0) {
+      onLastUserMessageAboveChange?.(false);
       return;
     }
 
@@ -889,6 +893,10 @@ const ConversationTimeline = memo(function ConversationTimeline({
     setMinimapCurrentIndex((current) =>
       current === nextCurrentIndex ? current : nextCurrentIndex,
     );
+    const lastUserRowIndex = minimapRowIndices.at(-1);
+    const lastUserRowTop =
+      lastUserRowIndex === undefined ? undefined : state.positionAtIndex(lastUserRowIndex);
+    onLastUserMessageAboveChange?.(lastUserRowTop !== undefined && lastUserRowTop < scroll);
   });
 
   const minimapRefreshFrameRef = useRef<number | null>(null);
@@ -900,6 +908,12 @@ const ConversationTimeline = memo(function ConversationTimeline({
       refreshMinimap();
     });
   };
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- refreshes skip the restore's own scrolls, so read the position it landed on
+  useEffect(() => {
+    if (restoringThreadPosition) return;
+    const frame = requestAnimationFrame(refreshMinimap);
+    return () => cancelAnimationFrame(frame);
+  }, [restoringThreadPosition, refreshMinimap]);
 
   // The measurement the last remember wrote, so a follow release can rewrite
   // it without reading render state from a listener.

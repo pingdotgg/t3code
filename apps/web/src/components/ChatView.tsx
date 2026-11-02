@@ -3,7 +3,7 @@ import { workspaceAreaProps } from "../lib/workspaceFocus";
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
 import { resolveNewThreadModelSelection } from "@t3tools/shared/usageLimits";
 import { queuedRunEditBlockedReason } from "@t3tools/client-runtime/queued-run-edit";
-import { ScrollToEndButton, WorkspaceFileDropOverlay } from "./chat/TimelineOverlays";
+import { TimelineJumpButtons, WorkspaceFileDropOverlay } from "./chat/TimelineOverlays";
 import { usePasteToFocusComposer } from "./chat/usePasteToFocusComposer";
 import { announcedRun, isDetailBehindShell } from "./chat/threadActivityAnnouncement";
 import {
@@ -2093,11 +2093,14 @@ export default function ChatView(props: ChatViewProps) {
 
   const {
     showScrollToBottom,
+    showScrollToLastUserMessage,
+    onLastUserMessageAboveChangeStable,
     timelineLiveFollowEnabled,
     onComposerPageScrollKeyDownStable,
     onComposerPageScrollKeyUpStable,
     onComposerPageScrollReleaseStable,
     scrollToEnd,
+    scrollToLastUserMessage,
     onTimelineAnchorReadyStable,
     onTimelineAnchorSizeChangedStable,
     onTimelineFooterGrowStable,
@@ -3474,6 +3477,7 @@ export default function ChatView(props: ChatViewProps) {
                 contentInsetEndAdjustment={composerTimelineInset}
                 liveFollowEnabled={timelineLiveFollowEnabled}
                 onIsAtEndChange={onIsAtEndChangeStable}
+                onLastUserMessageAboveChange={onLastUserMessageAboveChangeStable}
                 onViewportAttach={attachTimelineViewport}
                 onFooterGrow={onTimelineFooterGrowStable}
                 hideEmptyPlaceholder={isDraftHeroState || threadDetailLoading}
@@ -3484,11 +3488,14 @@ export default function ChatView(props: ChatViewProps) {
                   : { historyControls: threadHistoryControls })}
               />
 
-              {showScrollToBottom && !isThreadFindActive && (
-                <ScrollToEndButton
+              {(showScrollToBottom || showScrollToLastUserMessage) && !isThreadFindActive && (
+                <TimelineJumpButtons
                   bottom={scrollToEndClearance + 4}
                   summary={scrollToEndSummary}
-                  onScrollToEnd={() => scrollToEnd(true)}
+                  onScrollToLastUserMessage={
+                    showScrollToLastUserMessage ? scrollToLastUserMessage : null
+                  }
+                  onScrollToEnd={showScrollToBottom ? () => scrollToEnd(true) : null}
                 />
               )}
             </div>

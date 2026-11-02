@@ -430,6 +430,40 @@ describe("MessagesTimeline messages", () => {
     expectItemOrder();
   });
 
+  it("reports the last user message above the viewport once a restored position lands", async () => {
+    setup();
+    const base = baseProps();
+    const other = "environment-local:thread-restored-past-last-user-message";
+    const entries = [
+      message("Ship it"),
+      message(`Done\n\n${"line\n\n".repeat(200)}`, { role: "assistant" }, "reply"),
+    ];
+    rememberTimelinePosition(
+      other,
+      { rowId: "entry-reply", offsetWithinRow: 1500, scrollOffset: 0, atEnd: false },
+      false,
+    );
+    const reports: boolean[] = [];
+    const onLastUserMessageAboveChange = (above: boolean) => reports.push(above);
+    await using screen = await renderElement(
+      <MessagesTimeline
+        {...base}
+        timelineEntries={[message("Short thread")]}
+        onLastUserMessageAboveChange={onLastUserMessageAboveChange}
+      />,
+    );
+    await screen.rerender(
+      <MessagesTimeline
+        {...base}
+        routeThreadKey={other}
+        timelineEntries={entries}
+        liveFollowEnabled={false}
+        onLastUserMessageAboveChange={onLastUserMessageAboveChange}
+      />,
+    );
+    await vi.waitFor(() => expect(reports.at(-1)).toBe(true));
+  });
+
   it("puts rows back in item order soon after a continuous scroll stops", async () => {
     setup();
     const props = baseProps();

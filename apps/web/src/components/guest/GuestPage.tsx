@@ -51,7 +51,7 @@ import { GuestMessageName, guestBubbleClassName } from "../chat/guestMessageStyl
 import { MessagesTimeline, type MessagesTimelineHistoryControls } from "../chat/MessagesTimeline";
 import { ProviderInstanceIcon } from "../chat/ProviderInstanceIcon";
 import { getDisplayModelName, getTriggerDisplayModelName } from "../chat/providerIconUtils";
-import { ScrollToEndButton } from "../chat/TimelineOverlays";
+import { TimelineJumpButtons } from "../chat/TimelineOverlays";
 import type { TimelineRow } from "../chat/timelineRowContext";
 import { useTimelineFollow } from "../chat/useTimelineFollow";
 import { GuestHtmlRender } from "./GuestHtmlRender";
@@ -552,9 +552,10 @@ function GuestThread({
           />
         </HostImageUrlContext>
         {follow.showScrollToBottom ? (
-          <ScrollToEndButton
+          <TimelineJumpButtons
             summary={null}
             bottom={4}
+            onScrollToLastUserMessage={null}
             onScrollToEnd={() => follow.scrollToEnd(true)}
           />
         ) : null}
