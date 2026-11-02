@@ -139,7 +139,7 @@ it.layer(NodeServices.layer)("CLI deferred imports", (it) => {
         Effect.exit,
       );
 
-      assert.isFalse(Exit.hasDies(exit));
+      assert.isTrue(Exit.isSuccess(exit));
       assert.equal(mutations, 1);
       assert.deepEqual(hooks.importsAttempted, []);
     }),
