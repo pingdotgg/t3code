@@ -115,17 +115,16 @@ const refusedBeforePrompt = (error: unknown): boolean =>
   PROMPT_REFUSAL_TAGS.some((tag) => Predicate.isTagged(error, tag)) ||
   (Predicate.hasProperty(error, "cause") && refusedBeforePrompt(error.cause));
 
-// A user request quoted by another thread's agent must not read as a new one.
+// A user request relayed by another thread's agent must not read as a new one.
 // Slash commands stay verbatim: providers parse them from the start of the prompt.
+const SLASH_COMMAND = /^\s*\/[\w:-]+(?:\s|$)/u;
 const withAgentSender = (
   message: Pick<OrchestrationV2ConversationMessage, "createdBy" | "senderThreadId">,
   text: string,
 ): string =>
-  message.createdBy !== "agent" ||
-  message.senderThreadId === undefined ||
-  text.trimStart().startsWith("/")
+  message.createdBy !== "agent" || message.senderThreadId === undefined || SLASH_COMMAND.test(text)
     ? text
-    : `Message from the agent in thread ${message.senderThreadId}, not from the user. A user request it mentions is one that agent already acted on:\n\n${text}`;
+    : `The agent in thread ${message.senderThreadId} wrote this message, not the user. Do the work it asks for. Where it relays a user request, that agent already handled the routing (such as opening this thread), so do not route it again:\n\n${text}`;
 
 export interface ProviderTurnStartServiceV2Shape {
   readonly start: (input: {

@@ -1330,6 +1330,24 @@ effectIt.effect("keeps a slash command from another thread's agent verbatim", ()
   }),
 );
 
+effectIt.effect("marks another thread's brief that starts with an absolute path", () =>
+  Effect.gen(function* () {
+    const brief = "/src/math.ts fails to build. Fix it.";
+    const harness = makeLocalCommandHarness({
+      text: brief,
+      senderThreadId: ThreadId.make("launching-thread"),
+      previousTurn: { runStatus: "completed", turnStatus: "completed" },
+    });
+    harness.tryHandlePromptCommand.mockReturnValue(Effect.succeed(false));
+
+    yield* harness.start;
+
+    const delivered = harness.startRootRun.mock.calls[0]?.[0].message.text;
+    expect(delivered).toContain("launching-thread");
+    expect(delivered).toContain(brief);
+  }),
+);
+
 effectIt.effect("does not start another turn when abandoned-turn cleanup fails", () =>
   Effect.gen(function* () {
     const harness = makeLocalCommandHarness({
