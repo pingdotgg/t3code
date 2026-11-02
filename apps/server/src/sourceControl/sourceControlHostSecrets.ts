@@ -53,7 +53,16 @@ export function writeSecretFieldValues(
 ): unknown {
   if (typeof original === "string") return values[0]?.[1] ?? "";
   if (isSecretReference(original)) return original;
-  return Object.fromEntries(values.map(([serverHost, value]) => [serverHost ?? "", value]));
+  const sources =
+    original !== null && typeof original === "object" && !Array.isArray(original)
+      ? Object.entries(original).flatMap(([serverHost, entry]) =>
+          isSecretReference(entry) ? [[serverHost.trim().toLowerCase(), entry] as const] : [],
+        )
+      : [];
+  return Object.fromEntries([
+    ...sources,
+    ...values.map(([serverHost, value]) => [serverHost ?? "", value] as const),
+  ]);
 }
 
 type SourceControlHostsSettings = Readonly<Record<string, Readonly<Record<string, unknown>>>>;
