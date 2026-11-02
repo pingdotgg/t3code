@@ -67,6 +67,13 @@ export function ThreadRouteView({
     draftId === null ? null : store.getPromotedDraftRedirect(draftId),
   );
   const serverThreadRef = target.kind === "server" ? target.threadRef : null;
+  const familyEnvironmentId = serverThreadRef?.environmentId;
+  const familyThreadId = serverThreadRef?.threadId;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- keeps the viewed thread's omitted family rows mounted until navigation
+  useEffect(() => {
+    if (familyEnvironmentId === undefined || familyThreadId === undefined) return;
+    return threadFamilies.mount(appAtomRegistry, familyEnvironmentId, familyThreadId);
+  }, [familyEnvironmentId, familyThreadId]);
   const serverThreadShell = useQuietThreadShell(serverThreadRef);
   const shellStatus = useEnvironmentShellStatus(serverThreadRef?.environmentId ?? null);
   const environmentThreadRefs = useEnvironmentThreadRefs(serverThreadRef?.environmentId ?? null);
