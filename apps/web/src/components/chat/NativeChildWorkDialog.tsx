@@ -10,6 +10,7 @@ import { useState } from "react";
 
 import { orchestrationEnvironment } from "../../state/orchestration";
 import { useEnvironmentQuery } from "../../state/query";
+import { useT } from "../../hooks/useI18n";
 import { Button } from "../ui/button";
 import {
   Dialog,
@@ -31,17 +32,18 @@ export function NativeChildWorkDialog(props: {
   readonly environmentId: EnvironmentId;
   readonly threadId: ThreadId;
 }) {
+  const t = useT();
   const [open, setOpen] = useState(false);
   return (
     <Dialog open={open} onOpenChange={setOpen}>
       <Button size="sm" variant="ghost" onClick={() => setOpen(true)}>
         <ListTreeIcon />
-        <span className="@max-[420px]/composer-surface:sr-only">Subagent work</span>
+        <span className="@max-[420px]/composer-surface:sr-only">{t("chat.work.subagentWork")}</span>
       </Button>
       <DialogPopup className="max-w-2xl">
         <DialogHeader>
-          <DialogTitle>Subagent work</DialogTitle>
-          <DialogDescription>Read only. These subagents cannot take messages.</DialogDescription>
+          <DialogTitle>{t("chat.work.subagentWork")}</DialogTitle>
+          <DialogDescription>{t("chat.work.subagentWorkReadOnly")}</DialogDescription>
         </DialogHeader>
         {open ? <NativeChildWorkContent {...props} /> : null}
       </DialogPopup>
@@ -85,6 +87,7 @@ function NativeChildWorkContent(props: {
 }
 
 function NativeChild(props: { readonly child: OrchestrationV2NativeChildWork }) {
+  const t = useT();
   const { child } = props;
   return (
     <section aria-label={child.role || "Subagent"} className="flex min-w-0 flex-col gap-2">
@@ -93,10 +96,10 @@ function NativeChild(props: { readonly child: OrchestrationV2NativeChildWork }) 
         {child.prompt}
       </p>
       {child.truncated ? (
-        <p className="text-xs text-muted-foreground">Earlier steps are not shown.</p>
+        <p className="text-xs text-muted-foreground">{t("chat.work.earlierStepsHidden")}</p>
       ) : null}
       {child.steps === null ? (
-        <p className="text-xs text-muted-foreground">No transcript yet.</p>
+        <p className="text-xs text-muted-foreground">{t("chat.work.noTranscript")}</p>
       ) : (
         <ol className="m-0 flex list-none flex-col gap-2 border-s ps-3">
           {child.steps.map((step) => (

@@ -1030,6 +1030,16 @@ export const enMessages = {
   "settings.providers.codexSetup.shadowA11y": "Codex shadow home path",
   "settings.providers.codexSetup.notUsed": "Not used",
   "settings.providers.codexSetup.completeInBrowser": "Complete sign-in in your browser.",
+  "settings.providers.codexSetup.homeTitle": "CODEX_HOME path",
+  "settings.providers.card.variableNamePlaceholder": "VARIABLE_NAME",
+  "settings.providers.compactIdle.title": "Compact idle threads",
+  "settings.providers.compactIdle.description":
+    "When to compact an idle Claude thread over 200,000 tokens: after you return, just before its prompt cache expires, or never. Each Claude provider can override this.",
+  "settings.providers.compactIdle.resetLabel": "compact idle threads",
+  "settings.providers.compactIdle.a11y": "Compact idle threads",
+  "settings.providers.compactIdle.modeOnReturn": "When you return",
+  "settings.providers.compactIdle.modeBeforeCacheExpires": "Before the cache expires (beta)",
+  "settings.providers.compactIdle.modeOff": "Never",
 } as const;
 
 export const zhHansMessages: Partial<Record<keyof typeof enMessages, string>> = {
@@ -1989,4 +1999,14 @@ export const zhHansMessages: Partial<Record<keyof typeof enMessages, string>> = 
   "settings.providers.codexSetup.shadowA11y": "Codex 影子主目录路径",
   "settings.providers.codexSetup.notUsed": "未使用",
   "settings.providers.codexSetup.completeInBrowser": "请在浏览器中完成登录。",
+  "settings.providers.codexSetup.homeTitle": "CODEX_HOME 路径",
+  "settings.providers.card.variableNamePlaceholder": "变量名",
+  "settings.providers.compactIdle.title": "压缩空闲会话",
+  "settings.providers.compactIdle.description":
+    "空闲的 Claude 会话超过 200,000 个 token 时何时压缩：你返回后、提示缓存即将过期前，或从不。每个 Claude 提供商都可以覆盖此设置。",
+  "settings.providers.compactIdle.resetLabel": "压缩空闲会话",
+  "settings.providers.compactIdle.a11y": "压缩空闲会话",
+  "settings.providers.compactIdle.modeOnReturn": "你返回时",
+  "settings.providers.compactIdle.modeBeforeCacheExpires": "缓存过期前（beta）",
+  "settings.providers.compactIdle.modeOff": "从不",
 };

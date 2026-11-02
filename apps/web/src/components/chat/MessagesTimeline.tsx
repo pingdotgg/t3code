@@ -1630,8 +1630,13 @@ function useDeferredWorkLoading(
 }
 
 function WorkHistorySkeleton() {
+  const t = useT();
   return (
-    <div role="status" aria-label="Loading work history" className="space-y-2 px-1 pb-1 pt-3">
+    <div
+      role="status"
+      aria-label={t("chat.timeline.loadingWorkHistory")}
+      className="space-y-2 px-1 pb-1 pt-3"
+    >
       {[0, 1, 2].map((index) => (
         <div key={index} className="flex items-center gap-2" aria-hidden="true">
           <Skeleton className="size-3 shrink-0" />
@@ -1681,6 +1686,7 @@ function TurnFoldTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "turn-
 
 function AttemptFoldTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "attempt-fold" }> }) {
   const ctx = use(TimelineRowCtx);
+  const t = useT();
   const { loading, error, toggle } = useDeferredWorkLoading(row, () =>
     ctx.onToggleAttemptFold(row.attemptId),
   );
@@ -1704,7 +1710,7 @@ function AttemptFoldTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "at
           {row.label}
           {error ? ` · ${error}` : ""}
         </span>
-        <span className="text-2xs text-muted-foreground">Cut off by a steer</span>
+        <span className="text-2xs text-muted-foreground">{t("chat.timeline.cutOffBySteer")}</span>
       </button>
       {loading ? <WorkHistorySkeleton /> : null}
     </div>

@@ -181,7 +181,7 @@ function BackgroundActivityAdvancedDialog({
               </div>
               <div className="flex shrink-0 items-center gap-2">
                 <IntervalSecondsField
-                  label="Git fetch interval"
+                  label={t("settings.code.activity.gitFetch")}
                   value={automaticGitFetchIntervalSeconds}
                   min={0}
                   step={5}
@@ -213,7 +213,7 @@ function BackgroundActivityAdvancedDialog({
               </div>
               <div className="flex shrink-0 items-center gap-2">
                 <IntervalSecondsField
-                  label="provider health interval"
+                  label={t("settings.code.activity.providerHealth")}
                   value={providerHealthRefreshIntervalSeconds}
                   min={0}
                   step={PROVIDER_HEALTH_INTERVAL_STEP_SECONDS}
@@ -243,7 +243,7 @@ function BackgroundActivityAdvancedDialog({
               </div>
               <div className="flex shrink-0 items-center gap-2">
                 <IntervalSecondsField
-                  label="active host power interval"
+                  label={t("settings.code.activity.hostActiveLabel")}
                   value={hostPowerMonitorActiveIntervalSeconds}
                   min={5}
                   step={5}
@@ -273,7 +273,7 @@ function BackgroundActivityAdvancedDialog({
               </div>
               <div className="flex shrink-0 items-center gap-2">
                 <IntervalSecondsField
-                  label="idle host power interval"
+                  label={t("settings.code.activity.hostIdleLabel")}
                   value={hostPowerMonitorIdleIntervalSeconds}
                   min={5}
                   step={30}

@@ -1088,7 +1088,7 @@ export function CodexManagedRuntimeFields({
         }
       />
       <SettingsRow
-        title="CODEX_HOME path"
+        title={t("settings.providers.codexSetup.homeTitle")}
         description={t("settings.providers.codexSetup.homeDescription")}
         control={
           <div className="w-full sm:w-80">

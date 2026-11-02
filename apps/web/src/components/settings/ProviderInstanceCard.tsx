@@ -458,7 +458,7 @@ export function ProviderEnvironmentSection(props: {
                 value={variable.name}
                 onCommit={(name) => updateVariable(variable.id, { name: name.trim() })}
                 disabled={variable.valueRedacted === true}
-                placeholder="VARIABLE_NAME"
+                placeholder={t("settings.providers.card.variableNamePlaceholder")}
                 spellCheck={false}
                 aria-label={t("settings.providers.card.variableName", {
                   number: String(index + 1),
@@ -1000,7 +1000,11 @@ export function ProviderInstanceCard({
                   variant="ghost-muted"
                   className={mode === "list" ? "pointer-events-auto relative shrink-0" : undefined}
                   aria-label={t("settings.providers.card.updatingDetails", {
-                    label: String(updateProgress ? "Updating" : versionAdvisory.title),
+                    label: String(
+                      updateProgress
+                        ? t("settings.providers.card.updating")
+                        : versionAdvisory.title,
+                    ),
                   })}
                 >
                   {updateProgress ? (
@@ -1272,12 +1276,9 @@ export function ProviderInstanceCard({
   ) : (
     <SettingsRow
       title={t("settings.providers.card.driver")}
-      description={
-        <span>
-          This instance uses <code className="text-foreground">{String(instance.driver)}</code>,
-          which is not available in this build. Its configuration is preserved.
-        </span>
-      }
+      description={t("settings.providers.card.unknownDriver", {
+        driver: String(instance.driver),
+      })}
     />
   );
 

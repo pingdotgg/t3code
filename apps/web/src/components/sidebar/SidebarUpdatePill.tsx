@@ -7,9 +7,10 @@ import { TriangleAlertIcon } from "lucide-react";
 import { type ComponentProps, useId, useRef, useState } from "react";
 import { flushSync } from "react-dom";
 import { settlePromise, squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
+import { createTranslator, type TranslateFn } from "@t3tools/client-runtime/i18n";
 import { isElectron } from "../../env";
 import { useMediaQuery } from "../../hooks/useMediaQuery";
-import { useT } from "../../hooks/useI18n";
+import { getUiLocale, useT } from "../../hooks/useI18n";
 import { cn } from "../../lib/utils";
 import { ensureLocalApi } from "../../localApi";
 import { useDesktopUpdateState } from "../../state/desktopUpdate";
@@ -121,16 +122,17 @@ export function SidebarUpdateArchitectureWarning() {
 }
 
 function SidebarUpdateArchitectureWarningContent() {
+  const t = useT();
   const state = useDesktopUpdateState();
   const visible = shouldShowArm64IntelBuildWarning(state);
-  const description = state && visible ? getArm64IntelBuildWarningDescription(state) : null;
+  const description = state && visible ? getArm64IntelBuildWarningDescription(state, t) : null;
 
   if (!visible || !description) return null;
 
   return (
     <Alert variant="warning">
       <TriangleAlertIcon />
-      <AlertTitle>Intel build on Apple Silicon</AlertTitle>
+      <AlertTitle>{t("appB.update.intelBuildTitle")}</AlertTitle>
       <AlertDescription>{description}</AlertDescription>
     </Alert>
   );
@@ -145,7 +147,12 @@ export async function downloadLocalUpdate(
   {
     notifyDownloaded,
     reportError = toastUpdateError,
-  }: { readonly notifyDownloaded: boolean; readonly reportError?: ReportLocalUpdateError },
+    t = createTranslator(getUiLocale()),
+  }: {
+    readonly notifyDownloaded: boolean;
+    readonly reportError?: ReportLocalUpdateError;
+    readonly t?: TranslateFn;
+  },
 ): Promise<boolean> {
   try {
     const result = await bridge.downloadUpdate();
@@ -155,12 +162,12 @@ export async function downloadLocalUpdate(
     const actionError = shouldToastDesktopUpdateActionResult(result)
       ? getDesktopUpdateActionError(result)
       : null;
-    if (actionError) reportError("Could not download update", actionError);
+    if (actionError) reportError(t("appB.update.couldNotDownload"), actionError);
     return result.completed;
   } catch (error) {
     reportError(
-      "Could not start update download",
-      error instanceof Error ? error.message : "An unexpected error occurred.",
+      t("appB.update.couldNotStartDownload"),
+      error instanceof Error ? error.message : t("app.palette.unexpectedError"),
     );
     return false;
   }
@@ -170,6 +177,7 @@ export async function installLocalUpdate(
   bridge: DesktopBridge,
   reportError: ReportLocalUpdateError = toastUpdateError,
   expectedVersion?: string,
+  t: TranslateFn = createTranslator(getUiLocale()),
 ): Promise<boolean> {
   try {
     const result = await bridge.installUpdate(expectedVersion);
@@ -181,12 +189,12 @@ export async function installLocalUpdate(
       ? getDesktopUpdateActionError(result)
       : null;
     if (!actionError) return true;
-    reportError("Could not install update", actionError);
+    reportError(t("appB.update.couldNotInstall"), actionError);
     return false;
   } catch (error) {
     reportError(
-      "Could not install update",
-      error instanceof Error ? error.message : "An unexpected error occurred.",
+      t("appB.update.couldNotInstall"),
+      error instanceof Error ? error.message : t("app.palette.unexpectedError"),
     );
     return false;
   }
@@ -311,8 +319,8 @@ function SidebarUpdateControl() {
         toastManager.add(
           stackedThreadToast({
             type: "error",
-            title: "Could not confirm update",
-            description: error instanceof Error ? error.message : "Update confirmation failed.",
+            title: t("appB.update.couldNotConfirm"),
+            description: error instanceof Error ? error.message : t("appB.update.confirmFailed"),
           }),
         );
         return;
@@ -336,11 +344,8 @@ function SidebarUpdateControl() {
         toastManager.add(
           stackedThreadToast({
             type: "error",
-            title: "Could not check for updates",
-            description:
-              updatesDenial ??
-              result.state.message ??
-              "Automatic updates are not available in this build.",
+            title: t("appB.update.checkFailedTitle"),
+            description: updatesDenial ?? result.state.message ?? t("appB.update.disabledDefault"),
           }),
         );
       })
@@ -348,8 +353,9 @@ function SidebarUpdateControl() {
         toastManager.add(
           stackedThreadToast({
             type: "error",
-            title: "Could not check for updates",
-            description: error instanceof Error ? error.message : "Update check failed.",
+            title: t("appB.update.checkFailedTitle"),
+            description:
+              error instanceof Error ? error.message : t("appB.update.checkFailedFallback"),
           }),
         );
       })
@@ -378,8 +384,8 @@ function SidebarUpdateControl() {
       toastManager.add(
         stackedThreadToast({
           type: "error",
-          title: "Could not update everything",
-          description: error instanceof Error ? error.message : "An unexpected error occurred.",
+          title: t("appB.update.couldNotUpdateEverything"),
+          description: error instanceof Error ? error.message : t("app.palette.unexpectedError"),
         }),
       );
     }
@@ -555,7 +561,7 @@ function SidebarUpdateControl() {
         {showReleaseNotesPopover && state ? (
           <PopoverPopup
             align="center"
-            aria-label="Update release notes"
+            aria-label={t("appB.update.releaseNotesAria")}
             initialFocus={false}
             onKeyDownCapture={(event) => {
               if (

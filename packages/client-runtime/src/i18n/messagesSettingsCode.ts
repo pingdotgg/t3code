@@ -903,6 +903,8 @@ export const enMessages = {
   "settings.code.activity.oneEnvironment": "{label} (one environment)",
   "settings.code.activity.configureAria": "Configure advanced background activity",
   "settings.code.activity.configure": "Configure background activity",
+  "settings.code.activity.hostActiveLabel": "Active host power interval",
+  "settings.code.activity.hostIdleLabel": "Idle host power interval",
 } as const;
 
 export const zhHansMessages: Partial<Record<keyof typeof enMessages, string>> = {
@@ -1756,4 +1758,6 @@ export const zhHansMessages: Partial<Record<keyof typeof enMessages, string>> = 
   "settings.code.activity.oneEnvironment": "{label}（需选择单个环境）",
   "settings.code.activity.configureAria": "配置高级后台活动",
   "settings.code.activity.configure": "配置后台活动",
+  "settings.code.activity.hostActiveLabel": "活跃时主机电源监测间隔",
+  "settings.code.activity.hostIdleLabel": "空闲时主机电源监测间隔",
 };
