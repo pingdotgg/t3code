@@ -301,6 +301,7 @@ function makeLocalCommandHarness(input: {
     readonly contextRun: "current" | "failed" | "cancelled" | "delivered";
     readonly nativeForkFrom?: "idle" | "busy";
     readonly canForkWhileRunning?: boolean;
+    readonly sourceBoundary?: "native" | "synthetic" | "missing";
     readonly switchedProvider?: boolean;
   };
 }) {
@@ -502,11 +503,14 @@ function makeLocalCommandHarness(input: {
       providerThreadId: parentProviderThread.id,
       nodeId: rootNodeId,
       runAttemptId: RunAttemptId.make(`side-chat-parent-attempt-${ordinal}`),
-      nativeTurnRef: {
-        driver: providerThread.driver,
-        nativeId: `side-chat-parent-native-turn-${ordinal}`,
-        strength: "strong" as const,
-      },
+      nativeTurnRef:
+        ordinal === 1 && input.sideChat?.sourceBoundary === "synthetic"
+          ? null
+          : {
+              driver: providerThread.driver,
+              nativeId: `side-chat-parent-native-turn-${ordinal}`,
+              strength: "strong" as const,
+            },
       ordinal,
       status: "completed" as const,
       startedAt: now,
@@ -557,7 +561,9 @@ function makeLocalCommandHarness(input: {
     ],
     providerThreads: [parentProviderThread],
     attempts: parentTurns.map(({ attempt }) => attempt),
-    providerTurns: parentTurns.map(({ turn }) => turn),
+    providerTurns: parentTurns
+      .map(({ turn }) => turn)
+      .filter((turn) => turn.ordinal !== 1 || input.sideChat?.sourceBoundary !== "missing"),
     turnItems: [],
   };
   if (input.sideChat !== undefined) {
@@ -1307,6 +1313,15 @@ effectIt.effect.each([
   {
     nativeForkFrom: "idle",
     canForkWhileRunning: false,
+    sourceBoundary: "native",
+    forks: true,
+    transferStatus: "consumed",
+    handoffIds: [],
+  },
+  {
+    nativeForkFrom: "idle",
+    canForkWhileRunning: false,
+    sourceBoundary: "missing",
     forks: true,
     transferStatus: "consumed",
     handoffIds: [],
@@ -1314,6 +1329,7 @@ effectIt.effect.each([
   {
     nativeForkFrom: "busy",
     canForkWhileRunning: true,
+    sourceBoundary: "native",
     forks: true,
     transferStatus: "consumed",
     handoffIds: [],
@@ -1321,17 +1337,34 @@ effectIt.effect.each([
   {
     nativeForkFrom: "busy",
     canForkWhileRunning: false,
+    sourceBoundary: "native",
+    forks: false,
+    transferStatus: "resolved_portable",
+    handoffIds: ["side-chat-fork-context"],
+  },
+  {
+    nativeForkFrom: "busy",
+    canForkWhileRunning: true,
+    sourceBoundary: "synthetic",
+    forks: false,
+    transferStatus: "resolved_portable",
+    handoffIds: ["side-chat-fork-context"],
+  },
+  {
+    nativeForkFrom: "busy",
+    canForkWhileRunning: true,
+    sourceBoundary: "missing",
     forks: false,
     transferStatus: "resolved_portable",
     handoffIds: ["side-chat-fork-context"],
   },
 ] as const)(
-  "runs a planned native side chat fork when the parent is $nativeForkFrom with canForkWhileRunning=$canForkWhileRunning",
-  ({ nativeForkFrom, canForkWhileRunning, forks, transferStatus, handoffIds }) =>
+  "runs a planned native side chat fork when the parent is $nativeForkFrom with canForkWhileRunning=$canForkWhileRunning and sourceBoundary=$sourceBoundary",
+  ({ nativeForkFrom, canForkWhileRunning, sourceBoundary, forks, transferStatus, handoffIds }) =>
     Effect.gen(function* () {
       const harness = makeLocalCommandHarness({
         text: "What is the main thread doing?",
-        sideChat: { contextRun: "current", nativeForkFrom, canForkWhileRunning },
+        sideChat: { contextRun: "current", nativeForkFrom, canForkWhileRunning, sourceBoundary },
       });
 
       yield* harness.start;
@@ -1340,7 +1373,14 @@ effectIt.effect.each([
       // The parent's rolled-back turn is gone from its native conversation.
       expect(
         harness.forkThread.mock.calls[0]?.[0].sourceProviderTurns?.map((turn) => turn.id),
-      ).toEqual(forks ? ["side-chat-parent-turn-1"] : undefined);
+      ).toEqual(
+        forks ? (sourceBoundary === "missing" ? [] : ["side-chat-parent-turn-1"]) : undefined,
+      );
+      if (forks && sourceBoundary === "native") {
+        expect(harness.forkThread).toHaveBeenCalledWith(
+          expect.objectContaining({ providerTurnId: "side-chat-parent-turn-1" }),
+        );
+      }
       expect(harness.projection().contextTransfers).toMatchObject([
         { id: "side-chat-fork", status: transferStatus },
       ]);

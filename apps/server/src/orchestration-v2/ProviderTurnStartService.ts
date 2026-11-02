@@ -1150,7 +1150,8 @@ export const layer: Layer.Layer<
           );
           if (
             !sourceBusy ||
-            session.providerSession.capabilities.threads.canForkWhileRunning === true
+            (session.providerSession.capabilities.threads.canForkWhileRunning === true &&
+              sourceProviderTurn?.nativeTurnRef != null)
           ) {
             // Rolled-back turns are no longer in the source conversation, so they cannot bound a fork.
             const rolledBackAttemptIds = new Set(
