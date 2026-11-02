@@ -289,17 +289,23 @@ describe("ApnsDeliveries", () => {
       ],
     },
     {
+      label: "only the completed count changes",
+      previousRows: aggregate.activities,
+      previousDoneCount: 1,
+    },
+    {
       label: "the same thread id moves to another environment",
       previousRows: [
         { ...aggregate.activities[0]!, environmentId: EnvironmentId.make("other-env") },
       ],
     },
-  ] as const)("queues an update inside the throttle window when $label", ({ previousRows }) => {
+  ] as const)("queues an update inside the throttle window when $label", (scenario) => {
     const attempts: Array<DeliveryAttempts.DeliveryAttemptInput> = [];
     const queuedJobs: Array<SignedApnsDeliveryJob> = [];
     const previousAggregate: RelayAgentActivityAggregateState = {
       ...aggregate,
-      activities: previousRows,
+      activities: scenario.previousRows,
+      ...("previousDoneCount" in scenario ? { doneCount: scenario.previousDoneCount } : {}),
     };
 
     return Effect.gen(function* () {

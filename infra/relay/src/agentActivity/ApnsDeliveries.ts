@@ -163,6 +163,9 @@ function shouldUpdateLiveActivity(input: {
   if (input.previousAggregate.activeCount !== input.nextAggregate.activeCount) {
     return true;
   }
+  if ((input.previousAggregate.doneCount ?? 0) !== (input.nextAggregate.doneCount ?? 0)) {
+    return true;
+  }
   if (aggregateNeedsAttention(input.nextAggregate)) {
     return true;
   }
