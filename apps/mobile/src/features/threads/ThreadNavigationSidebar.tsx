@@ -18,7 +18,7 @@ import { AnimatedLegendList } from "@legendapp/list/reanimated";
 import { THREAD_SIDEBAR_ROW_LAYOUT } from "./threadListAnimations";
 import type { MenuAction } from "@react-native-menu/menu";
 import { useAtomValue } from "@effect/atom-react";
-import { useMemo, useRef, useState } from "react";
+import { useRef, useState } from "react";
 import type { LayoutChangeEvent, TextInputInstance } from "react-native";
 import { Platform, StyleSheet, TextInput, View } from "react-native";
 import { GestureDetector, useNativeGesture } from "react-native-gesture-handler";
@@ -144,6 +144,58 @@ function NativeSidebarContainer(props: ThreadNavigationSidebarProps) {
   );
 }
 
+function useSidebarListFilters() {
+  const projects = useProjects();
+  const { savedConnectionsById } = useSavedRemoteConnections();
+  const environments = Object.values(savedConnectionsById)
+    .map((connection) => ({
+      environmentId: connection.environmentId,
+      label: connection.environmentLabel,
+    }))
+    .sort((left, right) => left.label.localeCompare(right.label));
+  const { options, setSelectedEnvironmentId, setSelectedProjectKey } = useHomeListOptions(
+    new Set(environments.map((environment) => environment.environmentId)),
+  );
+  // A legacy per-environment scratch key resolves here on every render; the stored
+  // value is only rewritten when the user picks a filter.
+  const resolvedProjectKey = resolveScratchProjectScopeKey(options.selectedProjectKey, projects, {
+    sidebarProjectGroupingMode: options.projectGroupingMode,
+    sidebarProjectGroupingOverrides: {},
+  });
+  const projectScopes = buildHomeProjectScopes({
+    projects,
+    environmentId: options.selectedEnvironmentId,
+    projectGroupingMode: options.projectGroupingMode,
+  });
+  const pickableScopes = pickableProjectGroups(projectScopes);
+  const projectByKey = new Map<string, EnvironmentProject>();
+  for (const project of projects) {
+    projectByKey.set(scopedProjectKey(project.environmentId, project.id), project);
+  }
+  return {
+    savedConnectionsById,
+    environments,
+    options,
+    setSelectedEnvironmentId,
+    setSelectedProjectKey,
+    projectFilterOptions: pickableScopes.map((scope) => ({ key: scope.key, label: scope.title })),
+    projectTitleByProjectKey: new Map(
+      projectScopes.flatMap((scope) =>
+        scope.projectRefs.map(
+          (projectRef) =>
+            [
+              scopedProjectKey(projectRef.environmentId, projectRef.projectId),
+              scope.title,
+            ] as const,
+        ),
+      ),
+    ),
+    projectByKey,
+    // An archived project's filter reads as all projects, matching the filter menu.
+    selectedProjectScope: pickableScopes.find((scope) => scope.key === resolvedProjectKey) ?? null,
+  };
+}
+
 function ThreadNavigationSidebarPane(
   props: ThreadNavigationSidebarProps & { readonly nativeChrome: boolean },
 ) {
@@ -155,10 +207,8 @@ function ThreadNavigationSidebarPane(
   const { fabClearance, scale, fabSize } = useAndroidControlSizing();
   const enabledTabs = useEnabledNavigationTabs();
   const floatingTabs = floatingTabsMetrics(enabledTabs.length + 1, scale, fabSize, props.width);
-  const projects = useProjects();
   const threads = useNavigationThreadShells();
   const { environments: workspaceEnvironments, state: catalogState } = useWorkspaceState();
-  const { savedConnectionsById } = useSavedRemoteConnections();
   const searchInputRef = useRef<TextInputInstance>(null);
   const searchBarRef = useRef<SearchBarCommands>(null);
   const openSwipeableRef = useRef<SwipeableMethods | null>(null);
@@ -184,17 +234,17 @@ function ThreadNavigationSidebarPane(
   const { confirmDeletePendingTask } = usePendingTaskListActions((params) =>
     selectDetail({ name: "Thread", params }),
   );
-  const environments = Object.values(savedConnectionsById)
-    .map((connection) => ({
-      environmentId: connection.environmentId,
-      label: connection.environmentLabel,
-    }))
-    .sort((left, right) => left.label.localeCompare(right.label));
-  const availableEnvironmentIds = new Set(
-    environments.map((environment) => environment.environmentId),
-  );
-  const { options, setSelectedEnvironmentId, setSelectedProjectKey } =
-    useHomeListOptions(availableEnvironmentIds);
+  const {
+    savedConnectionsById,
+    environments,
+    options,
+    setSelectedEnvironmentId,
+    setSelectedProjectKey,
+    projectFilterOptions,
+    projectTitleByProjectKey,
+    projectByKey,
+    selectedProjectScope,
+  } = useSidebarListFilters();
   const searchEnvironmentIds =
     options.selectedEnvironmentId === null
       ? workspaceEnvironments
@@ -207,43 +257,6 @@ function ThreadNavigationSidebarPane(
           )
         ? [options.selectedEnvironmentId]
         : [];
-  // A legacy per-environment scratch key resolves here on every render; the stored
-  // value is only rewritten when the user picks a filter.
-  const resolvedProjectKey = resolveScratchProjectScopeKey(options.selectedProjectKey, projects, {
-    sidebarProjectGroupingMode: options.projectGroupingMode,
-    sidebarProjectGroupingOverrides: {},
-  });
-  const projectScopes = useMemo(
-    () =>
-      buildHomeProjectScopes({
-        projects,
-        environmentId: options.selectedEnvironmentId,
-        projectGroupingMode: options.projectGroupingMode,
-      }),
-    [projects, options.selectedEnvironmentId, options.projectGroupingMode],
-  );
-  const projectFilterOptions = pickableProjectGroups(projectScopes).map((scope) => ({
-    key: scope.key,
-    label: scope.title,
-  }));
-  const projectTitleByProjectKey = useMemo(
-    () =>
-      new Map(
-        projectScopes.flatMap((scope) =>
-          scope.projectRefs.map(
-            (projectRef) =>
-              [
-                scopedProjectKey(projectRef.environmentId, projectRef.projectId),
-                scope.title,
-              ] as const,
-          ),
-        ),
-      ),
-    [projectScopes],
-  );
-  // An archived project's filter reads as all projects, matching the filter menu.
-  const selectedProjectScope =
-    pickableProjectGroups(projectScopes).find((scope) => scope.key === resolvedProjectKey) ?? null;
   const threadSearch = useThreadSearch(
     searchEnvironmentIds,
     props.searchQuery,
@@ -255,13 +268,6 @@ function ThreadNavigationSidebarPane(
   // identity; the hook keeps it stable.
   const threadSearchMatchByKey = useThreadListSearchMatches(threads, threadSearch);
   const selectedProjectKey = selectedProjectScope?.key ?? null;
-  const projectByKey = useMemo(() => {
-    const map = new Map<string, EnvironmentProject>();
-    for (const project of projects) {
-      map.set(scopedProjectKey(project.environmentId, project.id), project);
-    }
-    return map;
-  }, [projects]);
 
   const [settledVisibleCount, setSettledVisibleCount] = useState(
     THREAD_LIST_V2_SETTLED_INITIAL_COUNT,

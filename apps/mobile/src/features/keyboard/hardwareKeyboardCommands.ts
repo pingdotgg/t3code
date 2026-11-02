@@ -23,30 +23,35 @@ const handlers = new Map<HardwareKeyboardCommand, Set<CommandHandler>>();
 const registrationListeners = new Set<() => void>();
 let registrationVersion = 0;
 
+export function registerHardwareKeyboardCommand(
+  command: HardwareKeyboardCommand | ReadonlyArray<HardwareKeyboardCommand>,
+  handler: CommandHandler,
+): () => void {
+  const commands = typeof command === "string" ? [command] : command;
+  for (const command of commands) {
+    const commandHandlers = handlers.get(command) ?? new Set<CommandHandler>();
+    commandHandlers.add(handler);
+    handlers.set(command, commandHandlers);
+  }
+  registrationVersion += 1;
+  registrationListeners.forEach((listener) => listener());
+  return () => {
+    for (const command of commands) {
+      const commandHandlers = handlers.get(command);
+      commandHandlers?.delete(handler);
+      if (commandHandlers?.size === 0) handlers.delete(command);
+    }
+    registrationVersion += 1;
+    registrationListeners.forEach((listener) => listener());
+  };
+}
+
 export function useHardwareKeyboardCommand(
   command: HardwareKeyboardCommand | ReadonlyArray<HardwareKeyboardCommand>,
   handler: CommandHandler,
 ): void {
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- registers the handler in the module-level hardware keyboard command registry
-  useEffect(() => {
-    const commands = typeof command === "string" ? [command] : command;
-    for (const command of commands) {
-      const commandHandlers = handlers.get(command) ?? new Set<CommandHandler>();
-      commandHandlers.add(handler);
-      handlers.set(command, commandHandlers);
-    }
-    registrationVersion += 1;
-    registrationListeners.forEach((listener) => listener());
-    return () => {
-      for (const command of commands) {
-        const commandHandlers = handlers.get(command);
-        commandHandlers?.delete(handler);
-        if (commandHandlers?.size === 0) handlers.delete(command);
-      }
-      registrationVersion += 1;
-      registrationListeners.forEach((listener) => listener());
-    };
-  }, [command, handler]);
+  useEffect(() => registerHardwareKeyboardCommand(command, handler), [command, handler]);
 }
 
 export function getRegisteredHardwareKeyboardCommands(): ReadonlySet<HardwareKeyboardCommand> {
