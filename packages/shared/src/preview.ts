@@ -48,7 +48,7 @@ export const LSOF_LOCAL_HOST_TOKENS: ReadonlySet<string> = new Set([
 ]);
 
 const LOOPBACK_PREFIX_PATTERN =
-  /^(?:localhost|127(?:\.\d{1,3}){3}|0\.0\.0\.0|\[::1?\])(?::\d*)?(?:[/?#]|$)/i;
+  /^(?:localhost|127(?:\.\d{1,3}){3}|0\.0\.0\.0|\[::1?\])(?::\d*)?(?:[/\\?#]|$)/i;
 
 export function isLoopbackHost(host: string): boolean {
   if (LOOPBACK_HOSTS.has(host)) return true;

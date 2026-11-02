@@ -84,6 +84,9 @@ describe("resolveAddressBarInput", () => {
       "https://127.0.0.2:secret@example.com/",
     );
     expect(resolveAddressBarInput("127.0.0.2:3000")).toBe("http://127.0.0.2:3000/");
+    expect(resolveAddressBarInput("127.0.0.1:3000\\index.html")).toBe(
+      "http://127.0.0.1:3000/index.html",
+    );
   });
 
   it("searches for text that is not an address", () => {
