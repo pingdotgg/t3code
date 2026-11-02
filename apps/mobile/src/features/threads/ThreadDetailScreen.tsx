@@ -59,7 +59,11 @@ import {
   type ApprovalResponder,
   type ThreadUserInputQuestion,
 } from "@t3tools/client-runtime/state/thread-requests";
+import { useDeadlinePassed } from "../../lib/clock";
 import {
+  BACKGROUND_WORK_STOP_RETRY_AFTER_MS,
+  type BackgroundWorkStopRequest,
+  isBackgroundWorkStopPending,
   presentPendingBackgroundWork,
   presentProviderGoal,
 } from "@t3tools/client-runtime/state/thread-execution";
@@ -170,6 +174,7 @@ import type {
 } from "../../lib/threadActivity";
 import { PendingApprovalCard } from "./PendingApprovalCard";
 import { ComposerErrorNotice } from "./ComposerErrorNotice";
+import { ManagedRuntimeModeNotice } from "./ManagedRuntimeModeNotice";
 import { ComposerFeedback } from "./ComposerFeedback";
 import { ComposerUsageLimits } from "./ComposerUsageLimits";
 import { PendingUserInputCard } from "./PendingUserInputCard";
@@ -356,15 +361,27 @@ const RECONNECT_ERROR_DELAY_MS = 5_000;
 // Anchors, the submitted message, follow state and pending scrolls belong to
 // one thread, so the body remounts when the thread changes.
 export function ThreadDetailScreen(props: ThreadDetailScreenProps) {
+  const [statusRequests, setStatusRequests] = useState<
+    Record<string, BackgroundWorkStopRequest | undefined>
+  >({});
   return (
     <ThreadDetailBody
       key={scopedThreadKey(props.environmentId, props.selectedThread.id)}
       {...props}
+      statusRequests={statusRequests}
+      setStatusRequests={setStatusRequests}
     />
   );
 }
 
-function ThreadDetailBody(props: ThreadDetailScreenProps) {
+function ThreadDetailBody(
+  props: ThreadDetailScreenProps & {
+    statusRequests: Record<string, BackgroundWorkStopRequest | undefined>;
+    setStatusRequests: React.Dispatch<
+      React.SetStateAction<Record<string, BackgroundWorkStopRequest | undefined>>
+    >;
+  },
+) {
   const usesNativeWorkspaceColumns = useNativeWorkspaceColumnsSupported();
   const { layout } = useAdaptiveWorkspaceLayout();
   const deviceType = useDeviceType();
@@ -593,8 +610,13 @@ function ThreadDetailBody(props: ThreadDetailScreenProps) {
       );
     }
   };
-  const [statusRequest, setStatusRequest] = useState<{ threadKey: string } | null>(null);
-  const statusPending = statusRequest?.threadKey === selectedThreadKey;
+  const statusRequest = props.statusRequests[selectedThreadKey] ?? null;
+  const statusPending = isBackgroundWorkStopPending(
+    statusRequest,
+    selectedThreadKey,
+    props.selectedThread.pendingBackgroundTasks,
+    useDeadlinePassed(statusRequest?.retryAt ?? null),
+  );
   const [lifecycleNow, setLifecycleNow] = useState(() => new Date().toISOString());
   useFocusEffect(
     useCallback(() => {
@@ -626,8 +648,15 @@ function ThreadDetailBody(props: ThreadDetailScreenProps) {
   });
   const runStatusAction = async (action: "stop" | "wake" | "unsettle" | "dismiss") => {
     if (statusPending || !props.canOperateThread) return;
-    const request = { threadKey: selectedThreadKey };
-    setStatusRequest(request);
+    const request: BackgroundWorkStopRequest = {
+      threadKey: selectedThreadKey,
+      taskIds:
+        action === "stop"
+          ? props.selectedThread.pendingBackgroundTasks.map((task) => task.taskId)
+          : [],
+      retryAt: null,
+    };
+    props.setStatusRequests((current) => ({ ...current, [request.threadKey]: request }));
     const target = {
       environmentId: props.environmentId,
       input: { threadId: props.selectedThread.id },
@@ -661,8 +690,17 @@ function ThreadDetailBody(props: ThreadDetailScreenProps) {
                 ...target,
                 input: { ...target.input, visitedAt: wokeAt ?? lifecycleNow },
               });
-    // An accepted interrupt can leave tasks running. Release the action for retry.
-    setStatusRequest((current) => (current === request ? null : current));
+    props.setStatusRequests((current) =>
+      current[request.threadKey] !== request
+        ? current
+        : {
+            ...current,
+            [request.threadKey]:
+              action === "stop" && result._tag !== "Failure"
+                ? { ...request, retryAt: Date.now() + BACKGROUND_WORK_STOP_RETRY_AFTER_MS }
+                : undefined,
+          },
+    );
     if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
       const error = squashAtomCommandFailure(result);
       Dialog.alert(
@@ -734,7 +772,7 @@ function ThreadDetailBody(props: ThreadDetailScreenProps) {
         accessibilityLabel: `Open ${childInput.hasPendingApprovals ? "approval" : "question"} from ${childInput.title}`,
         onPress: () => {
           Keyboard.dismiss();
-          openLinkedThread({ environmentId: props.environmentId, threadId: childInput.id });
+          openLinkedThread({ environmentId: childInput.environmentId, threadId: childInput.id });
         },
       };
     }
@@ -1562,6 +1600,20 @@ function ThreadDetailBody(props: ThreadDetailScreenProps) {
                         onDismiss={() => props.onDismissFeedback(submission.id)}
                       />
                     ))}
+                    {props.canOperateThread ? (
+                      <ManagedRuntimeModeNotice
+                        threadKey={selectedThreadKey}
+                        threadRuntimeMode={props.selectedThread.runtimeMode}
+                        supportedRuntimeModes={
+                          props.serverConfig?.providers.find(
+                            (provider) =>
+                              provider.instanceId ===
+                              props.selectedThread.modelSelection.instanceId,
+                          )?.supportedRuntimeModes
+                        }
+                        policy={props.serverConfig?.managedPolicy}
+                      />
+                    ) : null}
                     {composerError !== null ? (
                       <Animated.View
                         className="shrink-0"
