@@ -1477,7 +1477,17 @@ describe("deriveMessagesTimelineRows", () => {
         latestRun: { runId, status, startedAt: time(0), completedAt: time(30) },
         isWorking: false,
         expandedRunIds,
-        turnDiffSummaries: [],
+        turnDiffSummaries: [
+          {
+            runId,
+            completedAt: time(30),
+            assistantMessageId: MessageId.make("final"),
+            checkpointTurnCount: 1,
+            checkpointRef: "checkpoint-1" as never,
+            status: "ready",
+            files: [{ path: "a.ts", kind: "modified", additions: 30, deletions: 2 }],
+          },
+        ],
         supportsConversationRollback: false,
       });
 
@@ -1494,7 +1504,7 @@ describe("deriveMessagesTimelineRows", () => {
     expect(collapsed[5]).toMatchObject({
       createdAt: time(0),
       ending: "worked",
-      diff: { additions: 60, deletions: 3 },
+      diff: { additions: 30, deletions: 2 },
     });
     expect(rows("interrupted").filter((row) => row.kind === "turn-fold")).toEqual([
       expect.objectContaining({ ending: "stopped" }),

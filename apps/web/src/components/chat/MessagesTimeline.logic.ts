@@ -1148,6 +1148,12 @@ function sumFileChangeLineStat(entries: Iterable<WorkLogEntry>): DiffLineStat | 
   return reported ? { additions, deletions } : null;
 }
 
+function sumTimelineFileChangeLineStat(entries: ReadonlyArray<TimelineEntry>): DiffLineStat | null {
+  return sumFileChangeLineStat(
+    entries.flatMap((entry) => (entry.kind === "work" ? [entry.entry] : [])),
+  );
+}
+
 function sumCheckpointLineStat(summary: TurnDiffSummary): DiffLineStat | null {
   const { count, additions, deletions } = checkpointFileTotals(summary);
   return count === 0 ? null : { additions, deletions };
@@ -1365,7 +1371,6 @@ function deriveTurnFolds(input: {
             maxIsoTimestamp(group.terminalEntry?.message.updatedAt ?? null, lastEntryEnd) ??
               lastEntryEnd,
           );
-    const duration = elapsedMs !== null ? formatDuration(elapsedMs) : null;
     const ending: TurnFoldEnding = failed
       ? usageLimitedRunIds.has(runId)
         ? "limited"
@@ -1373,30 +1378,13 @@ function deriveTurnFolds(input: {
       : isLatestInterruptedTurn || interruptedRunIds.has(runId)
         ? "stopped"
         : "worked";
-    const label =
-      ending === "stopped"
-        ? duration
-          ? `Stopped at ${duration}`
-          : "Stopped"
-        : ending === "failed"
-          ? duration
-            ? `Failed after ${duration}`
-            : "Failed"
-          : ending === "limited"
-            ? duration
-              ? `Limited at ${duration}`
-              : "Limited"
-            : duration
-              ? `Worked for ${duration}`
-              : "Worked";
+    const label = turnFoldLabel(ending, elapsedMs);
     // The checkpoint diff is what the changed-files card shows; provider
     // counts are the fallback for turns without a checkpoint.
     const checkpoint = readyCheckpointByRunId.get(runId);
     const diff =
       (checkpoint ? sumCheckpointLineStat(checkpoint) : null) ??
-      sumFileChangeLineStat(
-        group.entries.flatMap((entry) => (entry.kind === "work" ? [entry.entry] : [])),
-      );
+      sumTimelineFileChangeLineStat(group.entries);
 
     foldsByAnchorEntryId.set(group.anchorEntryId, {
       runId,
@@ -1415,6 +1403,20 @@ function deriveTurnFolds(input: {
     });
   }
   return foldsByAnchorEntryId;
+}
+
+function turnFoldLabel(ending: TurnFoldEnding, elapsedMs: number | null): string {
+  const duration = elapsedMs !== null ? formatDuration(elapsedMs) : null;
+  switch (ending) {
+    case "stopped":
+      return duration ? `Stopped at ${duration}` : "Stopped";
+    case "failed":
+      return duration ? `Failed after ${duration}` : "Failed";
+    case "limited":
+      return duration ? `Limited at ${duration}` : "Limited";
+    case "worked":
+      return duration ? `Worked for ${duration}` : "Worked";
+  }
 }
 
 function gatherOpenFoldWork(
