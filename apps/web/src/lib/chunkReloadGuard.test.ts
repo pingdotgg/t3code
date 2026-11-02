@@ -44,12 +44,11 @@ describe("reloadOnceForChunkLoadError", () => {
     expect(reload).toHaveBeenCalledTimes(1);
   });
 
-  it("doesn't reload again when a lazy chunk fails after every boot", () => {
+  it("keeps refusing repeated failures for the whole window", () => {
     const storage = createStorageStub();
     const clock = createClock();
     const reload = vi.fn();
 
-    // Each visit boots fine, then fails to load the same lazy chunk about two seconds later.
     const reloads = Array.from({ length: 10 }, () => {
       clock.advance(2_000);
       return reloadOnceForChunkLoadError(() => storage, reload, clock.now);
