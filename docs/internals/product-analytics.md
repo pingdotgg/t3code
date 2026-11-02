@@ -84,7 +84,9 @@ is unknown or the ledger goes backwards, and background work that ends between
 turns lands in the next one. Claude subagents have no turns of their own, so
 this never overlaps child turns.
 
-`model` and `effort` are what the run selected. `observedModel` and
+`model`, `effort`, and `serviceTier` are what the run selected. `serviceTier`
+is `standard`, `flex`, `fast`, or `ultrafast`, from Codex's tier option or
+Claude's fast mode, and is absent when the selection does not set one. `observedModel` and
 `mixedModels` appear only when the provider reported the models for the counted
 work (Codex thread settings and reroutes, Claude root messages, OpenCode steps).
 `mixedModels: false` without `reportVersion` was never checked. Model labels
