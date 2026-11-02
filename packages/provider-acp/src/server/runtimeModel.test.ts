@@ -1366,6 +1366,33 @@ describe("extractMcpToolCallIdentity", () => {
     }
   });
 
+  it("recovers T3 identity from Hermes editor-renamed MCP tool titles", () => {
+    const identityFor = (title: string) =>
+      extractMcpToolCallIdentity(
+        toolCallFromUpdate({
+          sessionUpdate: "tool_call",
+          toolCallId: "hermes-1",
+          kind: "other",
+          title,
+          status: "pending",
+          rawInput: { title: "Chart", html: "<p>hi</p>", height: 320 },
+        }),
+      );
+
+    expect(identityFor("mcp__editor_t3_code_f6129534__html_render")).toEqual({
+      server: "t3-code",
+      tool: "html_render",
+    });
+    expect(identityFor("mcp__editor_github_1234abcd__html_render")).toEqual({
+      server: "editor_github_1234abcd",
+      tool: "html_render",
+    });
+    expect(identityFor("mcp__not_t3_code__html_render")).toEqual({
+      server: "not_t3_code",
+      tool: "html_render",
+    });
+  });
+
   it("does not claim an agent's own tool that shares a T3 tool name", () => {
     const toolCall = toolCallFromUpdate({
       sessionUpdate: "tool_call",
