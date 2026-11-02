@@ -157,15 +157,18 @@ export function knownPullRequestSummary(
   summaries: Iterable<PullRequestSummary>,
 ): PullRequestSummary | undefined {
   const key = threadPullRequestKeyOf(pullRequest);
-  let newest: { readonly summary: PullRequestSummary; readonly readAt: number } | undefined;
+  let newest:
+    | { readonly summary: PullRequestSummary; readonly updatedAt: number; readonly readAt: number }
+    | undefined;
   // Checks and reviews change without moving `updatedAt`, so equal versions prefer the later read.
   const consider = (summary: PullRequestSummary, readAt = Number.NEGATIVE_INFINITY) => {
+    const updatedAt = Date.parse(summary.updatedAt);
     if (
       newest === undefined ||
-      summary.updatedAt > newest.summary.updatedAt ||
-      (summary.updatedAt === newest.summary.updatedAt && readAt > newest.readAt)
+      updatedAt > newest.updatedAt ||
+      (updatedAt === newest.updatedAt && readAt > newest.readAt)
     ) {
-      newest = { summary, readAt };
+      newest = { summary, updatedAt, readAt };
     }
   };
   for (const summary of summaries) {
