@@ -160,7 +160,12 @@ const layerService = (input: {
     Layer.provideMerge(ProviderHostLive.layer),
     Layer.provideMerge(CodexUsageHistory.layer.pipe(Layer.provideMerge(Sqlite.layerMemory))),
     Layer.provideMerge(Layer.mock(BackgroundPolicy.BackgroundPolicy)({})),
-    Layer.provideMerge(Layer.mock(ServerSecretStore.ServerSecretStore)(input.secretStore ?? {})),
+    Layer.provideMerge(
+      Layer.mock(ServerSecretStore.ServerSecretStore)({
+        get: () => Effect.succeedNone,
+        ...input.secretStore,
+      }),
+    ),
     Layer.provideMerge(
       ServerConfig.layerTest(process.cwd(), NodePath.join(input.home, input.prefix)),
     ),

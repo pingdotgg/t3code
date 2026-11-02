@@ -1,8 +1,12 @@
 // Occurrence indices are fetch-local; replace entire refetched ranges to prevent key collisions.
 import { cursorRateModel } from "./accountUsage.ts";
+import type { ProviderInstanceId } from "@t3tools/contracts";
 import type { UsageRecord } from "@t3tools/provider-core/server/usage";
 
-export type CursorCredentialSource = string | { readonly kind: "keychain" };
+export type CursorCredentialSource =
+  | string
+  | { readonly kind: "keychain" }
+  | { readonly kind: "apiKey"; readonly apiKey: string; readonly instanceId: ProviderInstanceId };
 
 export const CURSOR_ACCOUNT_TTL_MS = 60 * 1000;
 
