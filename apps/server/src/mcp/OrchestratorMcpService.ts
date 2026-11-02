@@ -2605,6 +2605,12 @@ const make = Effect.gen(function* () {
           .getThreadRecords(scope.thread.threadId, ["runs"])
           .pipe(Effect.mapError(threadManagementFailure));
         const parentRun = activeParentRun(parent, scope);
+        if (parentRun === undefined) {
+          return yield* failure(
+            "parent_not_active",
+            "Delegated tasks require an active run owned by this MCP provider session.",
+          );
+        }
         const key = yield* requestKey(input.clientRequestId);
         const proposed = RemoteDelegation.remoteModelSelection(
           parent.thread.modelSelection,
@@ -2622,7 +2628,7 @@ const make = Effect.gen(function* () {
             Effect.provideService(Crypto.Crypto, crypto),
           ),
         );
-        if (parentRun !== undefined && !(yield* threadManagement.hasReceipt(recorded))) {
+        if (!(yield* threadManagement.hasReceipt(recorded))) {
           yield* awaitDelegationApproval({
             scope,
             parentRun,
@@ -2639,6 +2645,7 @@ const make = Effect.gen(function* () {
         const { taskId } = yield* remoteDelegation.delegate(scope, {
           ...input,
           clientRequestId: key,
+          parentRunId: parentRun.id,
           modelSelection: proposed,
           target: { ...input.target, environmentId },
         });

@@ -79,6 +79,7 @@ export class RemoteDelegation extends Context.Service<
         };
         /** The exact selection the task launches with there, as the user approved it. */
         readonly modelSelection: ModelSelection;
+        readonly parentRunId: RunId;
       },
     ) => Effect.Effect<{ readonly taskId: NodeId }, OrchestratorMcpFailure>;
     /**
@@ -260,6 +261,7 @@ const make = Effect.gen(function* () {
         .toSorted((left, right) => right.ordinal - left.ordinal)[0];
       if (
         parentRun === undefined ||
+        parentRun.id !== input.parentRunId ||
         parentRun.rootNodeId === null ||
         parentRun.providerInstanceId !== scope.thread.providerInstanceId
       ) {
