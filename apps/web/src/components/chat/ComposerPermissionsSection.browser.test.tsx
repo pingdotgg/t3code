@@ -1,3 +1,5 @@
+import "~/index.css";
+
 import type { RuntimeMode } from "@t3tools/contracts";
 import { type ReactNode, useRef, useState } from "react";
 import { expect, it, vi } from "vite-plus/test";
@@ -17,7 +19,7 @@ import { runtimeModeConfig, runtimeModeOptions } from "./runtimeModeConfig";
 const options = runtimeModeOptions.map((mode) => ({ mode, ...runtimeModeConfig[mode] }));
 
 // Mirrors the overflow menu: mode radio items first, then the Permissions section.
-function OverflowMenu() {
+function OverflowMenu({ disabledReason }: { disabledReason?: string | undefined } = {}) {
   const [interaction, setInteraction] = useState("plan");
   const [mode, setMode] = useState<RuntimeMode>("full-access");
   const composerMenuProps = useComposerMenuProps();
@@ -33,7 +35,11 @@ function OverflowMenu() {
           </MenuRadioGroup>
           <ComposerPermissionsSection
             runtimeMode={mode}
-            runtimeModeOptions={options}
+            runtimeModeOptions={options.map((option) =>
+              option.mode === "approval-required" && disabledReason
+                ? { ...option, disabledReason }
+                : option,
+            )}
             onRuntimeModeChange={setMode}
           />
         </MenuPopup>
@@ -87,22 +93,29 @@ it("marks the current mode as checked and closes on Escape", async () => {
   await expect.element(screen.getByRole("button", { name: "More" })).toHaveFocus();
 });
 
-it("explains hovered permissions while keeping the selected mode in the header", async () => {
-  await using screen = await render(<OverflowMenu />, { router: false }); // no routes involved
-  await userEvent.click(screen.getByRole("button", { name: "More" }));
-  await userEvent.hover(page.getByRole("menuitemradio", { name: "Supervised" }));
-  await expect
-    .element(
-      page.getByRole("tooltip").getByText("Ask before commands and file changes.", { exact: true }),
-    )
-    .toBeVisible();
-  await expect
-    .element(page.getByRole("menu").getByText("Full access", { exact: true }))
-    .toBeVisible();
-  await expect
-    .element(page.getByRole("menuitemradio", { name: "Full access" }))
-    .toHaveAttribute("aria-checked", "true");
-});
+it.each([undefined, "Supervised is disabled by managed policy"])(
+  "explains hovered permissions while keeping the selected mode in the header (%s)",
+  async (disabledReason) => {
+    await using screen = await render(<OverflowMenu disabledReason={disabledReason} />, {
+      router: false,
+    }); // no routes involved
+    await userEvent.click(screen.getByRole("button", { name: "More" }));
+    await userEvent.hover(page.getByRole("menuitemradio", { name: "Supervised" }));
+    await expect
+      .element(
+        page
+          .getByRole("tooltip")
+          .getByText(disabledReason ?? "Ask before commands and file changes.", { exact: true }),
+      )
+      .toBeVisible();
+    await expect
+      .element(page.getByRole("menu").getByText("Full access", { exact: true }))
+      .toBeVisible();
+    await expect
+      .element(page.getByRole("menuitemradio", { name: "Full access" }))
+      .toHaveAttribute("aria-checked", "true");
+  },
+);
 
 // The real composer menu focus rule (useComposerMenuProps), with a stub composer handle.
 function withComposer(children: ReactNode) {

@@ -43,7 +43,7 @@ export function ComposerMenuSegment({
             label={label}
             aria-label={label}
             aria-description={description}
-            className="flex h-6 min-w-0 flex-1 cursor-pointer items-center justify-center gap-1 rounded-md px-1 text-muted-foreground text-xs outline-none data-checked:bg-input/72 data-checked:text-foreground data-highlighted:text-foreground not-data-checked:data-highlighted:bg-accent focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset data-disabled:pointer-events-none data-disabled:opacity-64"
+            className="flex h-6 min-w-0 flex-1 cursor-pointer items-center justify-center gap-1 rounded-md px-1 text-muted-foreground text-xs outline-none data-checked:bg-input/72 data-checked:text-foreground data-highlighted:text-foreground not-data-checked:data-highlighted:bg-accent focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset data-disabled:cursor-not-allowed data-disabled:opacity-64"
           />
         }
       >
