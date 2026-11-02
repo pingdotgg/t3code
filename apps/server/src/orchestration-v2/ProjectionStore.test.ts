@@ -4951,7 +4951,6 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
       const [originalRow] = yield* sql<{
         payload_json: string;
       }>`SELECT payload_json FROM orchestration_v2_projection_threads WHERE thread_id = ${threadId}`;
-      // Archived through the projector, which writes the archived_at column the sweep reads.
       const limitThread = (yield* store.getThreadProjection(threadId)).thread;
       for (const archivedAt of [now, null]) {
         yield* store.apply({
