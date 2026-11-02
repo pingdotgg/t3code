@@ -1,4 +1,8 @@
-import { forkSession, getSessionMessages } from "@anthropic-ai/claude-agent-sdk";
+import {
+  forkSession,
+  getSessionMessages,
+  getSubagentMessages,
+} from "@anthropic-ai/claude-agent-sdk";
 import * as Schema from "effect/Schema";
 
 // Bundled import.meta.main is always true; imports must have no side effects.
@@ -6,6 +10,7 @@ const decodeHistoryOptions = Schema.decodeSync(
   Schema.fromJsonString(
     Schema.Struct({
       dir: Schema.optionalKey(Schema.String),
+      agentId: Schema.optionalKey(Schema.String),
       includeSystemMessages: Schema.optionalKey(Schema.Boolean),
       upToMessageId: Schema.optionalKey(Schema.String),
     }),
@@ -22,15 +27,36 @@ export async function runClaudeHistoryWorker(
   const result =
     method === "getSessionMessages"
       ? await getSessionMessages(sessionId, options)
-      : method === "forkSession"
-        ? await forkSession(sessionId, options).then(async (forked) => {
-            const headMessageId = await getSessionMessages(forked.sessionId, options)
-              .then((messages) => messages.at(-1)?.uuid)
-              .catch(() => undefined);
-            return headMessageId === undefined ? forked : { ...forked, headMessageId };
-          })
-        : (() => {
-            throw new Error("Unknown Claude history operation.");
-          })();
+      : method === "getSubagentModel" && options.agentId
+        ? await getSubagentMessages(sessionId, options.agentId, {
+            ...(options.dir === undefined ? {} : { dir: options.dir }),
+            limit: 100,
+          }).then(
+            (messages) =>
+              messages
+                .flatMap((entry) => {
+                  if (
+                    entry.type !== "assistant" ||
+                    typeof entry.message !== "object" ||
+                    entry.message === null
+                  )
+                    return [];
+                  const model = Reflect.get(entry.message, "model");
+                  return typeof model === "string" && model.trim() && model !== "<synthetic>"
+                    ? [model.trim()]
+                    : [];
+                })
+                .at(-1) ?? null,
+          )
+        : method === "forkSession"
+          ? await forkSession(sessionId, options).then(async (forked) => {
+              const headMessageId = await getSessionMessages(forked.sessionId, options)
+                .then((messages) => messages.at(-1)?.uuid)
+                .catch(() => undefined);
+              return headMessageId === undefined ? forked : { ...forked, headMessageId };
+            })
+          : (() => {
+              throw new Error("Unknown Claude history operation.");
+            })();
   process.stdout.write(JSON.stringify(result));
 }

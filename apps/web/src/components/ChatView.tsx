@@ -1737,11 +1737,17 @@ export default function ChatView(props: ChatViewProps) {
   const providerSubagentCatalogModel = providerSubagentModels.find(
     (model) => model.slug === providerSubagentModelSlug,
   );
-  const providerSubagentModelLabel = providerSubagentCatalogModel
-    ? getTriggerDisplayModelName(providerSubagentCatalogModel, selectedProviderEntry?.driverKind)
-    : formatModelSlugName(activeThread?.modelSelection.model ?? "");
+  const providerSubagentModelLabel =
+    activeThread?.modelUnreported === true
+      ? "Not reported"
+      : providerSubagentCatalogModel
+        ? getTriggerDisplayModelName(
+            providerSubagentCatalogModel,
+            selectedProviderEntry?.driverKind,
+          )
+        : formatModelSlugName(activeThread?.modelSelection.model ?? "");
   const providerSubagentEffortLabel =
-    activeThread === undefined
+    activeThread === undefined || activeThread.modelUnreported === true
       ? null
       : formatModelSelectionEffort(
           activeThread.modelSelection,
