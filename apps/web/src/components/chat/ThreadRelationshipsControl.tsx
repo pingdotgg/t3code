@@ -412,8 +412,9 @@ export function ThreadRelationshipsPanel(props: {
   );
   const removedAt = useAtomValue(threadFamilies.removedAtAtom(props.environmentId));
   const settledFamily = family.isSuccess && !family.isPending ? family.data : null;
+  const familyThreadIds = new Set(settledFamily?.threads.map((thread) => thread.id));
   // A thread archived since the archive read left the shell but is not in that read yet.
-  const staleArchiveSequence =
+  const staleArchiveKey =
     archivedSnapshot !== undefined &&
     settledFamily !== null &&
     !archived.isLoading &&
@@ -421,22 +422,22 @@ export function ThreadRelationshipsPanel(props: {
       [transfer.sourceThreadId, transfer.targetThreadId].some(
         (id) =>
           !shownThreadIds.has(id) &&
-          !settledFamily.threads.some((thread) => thread.id === id) &&
+          !familyThreadIds.has(id) &&
           threadFamilyEvidenceSequence({ ...settledFamily, removedAt }, id) >
             archivedSnapshot.snapshotSequence,
       ),
     )
-      ? archivedSnapshot.snapshotSequence
+      ? `${props.environmentId}\u001f${archivedSnapshot.snapshotSequence}`
       : null;
-  const refreshedArchiveSequence = useRef<number | null>(null);
+  const refreshedArchiveKey = useRef<string | null>(null);
   const environmentId = props.environmentId;
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- refetches the server's archive once per stale read
   useEffect(() => {
-    if (staleArchiveSequence === null) return;
-    if (refreshedArchiveSequence.current === staleArchiveSequence) return;
-    refreshedArchiveSequence.current = staleArchiveSequence;
+    if (staleArchiveKey === null) return;
+    if (refreshedArchiveKey.current === staleArchiveKey) return;
+    refreshedArchiveKey.current = staleArchiveKey;
     refreshArchivedThreadsForEnvironment(environmentId);
-  }, [staleArchiveSequence, environmentId, refreshedArchiveSequence]);
+  }, [staleArchiveKey, environmentId, refreshedArchiveKey]);
   const currentThread =
     projection?.thread ??
     relationshipShells.find((thread) => thread.id === props.threadId) ??
