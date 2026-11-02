@@ -19,7 +19,7 @@ import {
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
 import * as Haptics from "expo-haptics";
-import { useNavigation } from "@react-navigation/native";
+import { useNavigation, useRoute } from "@react-navigation/native";
 import { useRef, useState, type ReactNode } from "react";
 import { sanitizeNewRefName } from "@t3tools/shared/git";
 import { Platform, Pressable, ScrollView, View } from "react-native";
@@ -185,7 +185,11 @@ function PickerSurface(props: { readonly children: ReactNode }) {
 export function NewTaskEnvironmentPickerRouteScreen() {
   const flow = useNewTaskFlow();
   const navigation = useNavigation();
+  const route = useRoute();
   const insets = useSafeAreaInsets();
+  const incomingShareId = (route.params as { readonly incomingShareId?: unknown } | undefined)
+    ?.incomingShareId;
+  const shareId = typeof incomingShareId === "string" ? incomingShareId : undefined;
   return (
     <View className="flex-1 bg-sheet" collapsable={false}>
       <NativeStackScreenOptions
@@ -220,6 +224,16 @@ export function NewTaskEnvironmentPickerRouteScreen() {
                 disabled={flow.switchingToEnvironmentId !== null}
                 onPress={() => {
                   void Haptics.selectionAsync();
+                  // No silent retarget: a machine without this project goes
+                  // to the project picker for an explicit choice.
+                  if (!flow.canSwitchEnvironmentDirectly(environment.environmentId)) {
+                    if (shareId === undefined) {
+                      navigation.navigate("NewTaskProject");
+                    } else {
+                      navigation.navigate("NewTaskProject", { incomingShareId: shareId });
+                    }
+                    return;
+                  }
                   void flow.switchEnvironment(environment.environmentId).then((switched) => {
                     if (switched) navigation.goBack();
                   });

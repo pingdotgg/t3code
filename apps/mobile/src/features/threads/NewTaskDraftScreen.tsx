@@ -353,7 +353,14 @@ export function NewTaskDraftScreen(props: {
   const { environments, selectedEnvironmentId, switchEnvironment, switchingToEnvironmentId } = flow;
   const cycleEnvironment = () => {
     if (isComposerInteractionLocked) return true;
-    const next = nextEnvironmentId(environments, switchingToEnvironmentId ?? selectedEnvironmentId);
+    // The hardware shortcut only visits machines holding this project;
+    // others need an explicit project choice in the picker.
+    const next = nextEnvironmentId(
+      environments.filter((environment) =>
+        flow.canSwitchEnvironmentDirectly(environment.environmentId),
+      ),
+      switchingToEnvironmentId ?? selectedEnvironmentId,
+    );
     if (next !== null) void switchEnvironment(next);
     return true;
   };
@@ -712,7 +719,11 @@ export function NewTaskDraftScreen(props: {
     }
     promptInputRef.current?.blur();
     void KeyboardController.dismiss({ animated: true });
-    navigation.navigate(routeName);
+    if (routeName === "NewTaskEnvironment" && props.incomingShareId !== undefined) {
+      navigation.navigate(routeName, { incomingShareId: props.incomingShareId });
+    } else {
+      navigation.navigate(routeName);
+    }
   };
 
   const environmentControl = (

@@ -75,7 +75,13 @@ export function resolveNewTaskScratchOption(input: {
   return environment ? { environmentId: environment.environmentId, ready: ready.length > 0 } : null;
 }
 
-export function resolveEnvironmentProjectMatch(
+/**
+ * A same-project match on the target machine: same repository, or the same
+ * checkout basename/title when identity is unknown. Unlike
+ * resolveEnvironmentProjectMatch it never falls back to an unrelated first
+ * project, so callers can tell an explicit project choice is needed.
+ */
+export function resolveGenuineEnvironmentProjectMatch(
   projectsOnTarget: ReadonlyArray<EnvironmentProject>,
   selectedProject: EnvironmentProject | null,
 ): EnvironmentProject | null {
@@ -112,6 +118,16 @@ export function resolveEnvironmentProjectMatch(
           (project) => !isKnownMismatch(project) && project.title === selectedProject.title,
         )
       : undefined) ??
+    null
+  );
+}
+
+export function resolveEnvironmentProjectMatch(
+  projectsOnTarget: ReadonlyArray<EnvironmentProject>,
+  selectedProject: EnvironmentProject | null,
+): EnvironmentProject | null {
+  return (
+    resolveGenuineEnvironmentProjectMatch(projectsOnTarget, selectedProject) ??
     projectsOnTarget[0] ??
     null
   );

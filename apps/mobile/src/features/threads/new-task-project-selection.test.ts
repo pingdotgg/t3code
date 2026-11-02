@@ -8,6 +8,7 @@ import {
   newTaskDestination,
   resolveDraftProjectSelection,
   resolveEnvironmentProjectMatch,
+  resolveGenuineEnvironmentProjectMatch,
   resolveNewTaskScratchOption,
 } from "./new-task-project-selection";
 
@@ -115,6 +116,36 @@ describe("resolveEnvironmentProjectMatch", () => {
     const unindexed = makeProject("unindexed", "server", { workspaceRoot: "/srv/t3code" });
     expect(resolveEnvironmentProjectMatch([fork, unindexed], selected)).toBe(unindexed);
     expect(resolveEnvironmentProjectMatch([fork], selected)).toBe(fork);
+  });
+});
+
+describe("resolveGenuineEnvironmentProjectMatch", () => {
+  it("matches the same repository and falls back like the full matcher", () => {
+    const selected = makeProject("t3code", "mac", { repositoryKey: "github.com/t3tools/t3code" });
+    const target = [
+      makeProject("other", "server", { repositoryKey: "github.com/t3tools/other" }),
+      makeProject("t3code-clone", "server", { repositoryKey: "github.com/t3tools/t3code" }),
+    ];
+    expect(resolveGenuineEnvironmentProjectMatch(target, selected)).toBe(target[1]);
+  });
+
+  it("returns null instead of an unrelated first project", () => {
+    const selected = makeProject("t3code", "mac", {
+      repositoryKey: "github.com/t3tools/t3code",
+      workspaceRoot: "/Users/me/t3code",
+    });
+    const fork = makeProject("fork", "server", {
+      repositoryKey: "github.com/someone/t3code",
+      title: "t3code",
+      workspaceRoot: "/home/me/t3code",
+    });
+    expect(resolveGenuineEnvironmentProjectMatch([fork], selected)).toBeNull();
+    expect(resolveGenuineEnvironmentProjectMatch([], selected)).toBeNull();
+  });
+
+  it("returns null when nothing is selected yet", () => {
+    const target = [makeProject("t3code", "server")];
+    expect(resolveGenuineEnvironmentProjectMatch(target, null)).toBeNull();
   });
 });
 
