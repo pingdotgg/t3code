@@ -37,6 +37,23 @@ describe("backslash math delimiters", () => {
     expect(markdownWithDollarMath(reply)).toBe(reply);
   });
 
+  it("leaves formulas whose dollar delimiters md4c would not open, close or keep apart", () => {
+    for (const reply of [
+      String.raw`the \(n\)th term`,
+      String.raw`函数\(f(x)\)的值`,
+      String.raw`\(a\)\(b\)`,
+      String.raw`Before \(x\)$y$ after.`,
+    ]) {
+      expect(markdownWithDollarMath(reply)).toBe(reply);
+    }
+  });
+
+  it("converts back-to-back display formulas on consecutive lines", () => {
+    expect(markdownWithDollarMath(String.raw`\[a\]` + "\n" + String.raw`\[b\]`)).toBe(
+      "$$a$$\n$$b$$",
+    );
+  });
+
   it("keeps container prefixes inside a multi-line formula", () => {
     expect(markdownWithDollarMath(String.raw`> \[` + "\n> a+b\n> " + String.raw`\]`)).toBe(
       "> $$\n> a+b\n> $$",

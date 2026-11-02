@@ -432,13 +432,35 @@ function markdownWithWindowsPathDestinations(markdown: string): string {
   return applyMarkdownEdits(markdown, edits);
 }
 
+// md4c's `$` flanking: line edge, Unicode whitespace (Zs, \t\v\f) or punctuation (P, S), except `$`.
+const DOLLAR_MAY_OPEN_AFTER = /(?:^|(?!\$)[\n\r\t\v\f\p{Zs}\p{P}\p{S}])$/u;
+const DOLLAR_MAY_CLOSE_BEFORE = /^(?:$|(?!\$)[\n\r\t\v\f\p{Zs}\p{P}\p{S}])/u;
+// An unclosed math delimiter makes the parser scan to the end of its paragraph or the message.
+const MAX_MATH_SCAN = 2_000_000;
+
 /** md4c only typesets `$` and `$$`, so swap the delimiters of formulas web reads as `\(` or `\[`. */
 export function markdownWithDollarMath(markdown: string): string {
   if (!markdown.includes("\\(") && !markdown.includes("\\[")) return markdown;
+  let scan = markdown.length;
+  for (const delimiter of markdown.matchAll(/\\[([]|\$/g)) {
+    scan += markdown.length - delimiter.index;
+    if (scan > MAX_MATH_SCAN) return markdown;
+  }
+  const ranges = markdownMathRanges(markdown);
   const edits: MarkdownEdit[] = [];
-  for (const { start, end, source } of markdownMathRanges(markdown)) {
+  for (const [index, { start, end, source }] of ranges.entries()) {
     const dollars = source.startsWith("\\(") ? "$" : source.startsWith("\\[") ? "$$" : null;
-    if (!dollars) continue;
+    if (
+      !dollars ||
+      ranges[index - 1]?.end === start ||
+      ranges[index + 1]?.start === end ||
+      markdown[start + 2] === "$" ||
+      markdown[end - 3] === "$" ||
+      !DOLLAR_MAY_OPEN_AFTER.test(markdown.slice(Math.max(0, start - 2), start)) ||
+      !DOLLAR_MAY_CLOSE_BEFORE.test(markdown.slice(end, end + 2))
+    ) {
+      continue;
+    }
     edits.push(
       { start, end: start + 2, content: dollars },
       { start: end - 2, end, content: dollars },
