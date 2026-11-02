@@ -10,6 +10,8 @@ import { getModelSelectionStringOptionValue } from "@t3tools/shared/model";
 import type * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
+import * as Schema from "effect/Schema";
 import type * as Scope from "effect/Scope";
 import type * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import * as EffectAcpErrors from "effect-acp/errors";
@@ -56,6 +58,47 @@ export const FX_SUPPORTED_RUNTIME_MODES = [
 ] as const satisfies ReadonlyArray<RuntimeMode>;
 /** fx 0.0.13 answers a cancelled prompt with `stopReason: cancelled`. */
 export const FX_ACP_CANCEL_BEHAVIOR = "wait-for-prompt" as const;
+
+const isCancelledFxCommand = Schema.is(
+  Schema.Struct({
+    update: Schema.Struct({
+      command_result: Schema.Struct({
+        exit_code: Schema.Null,
+        signal: Schema.Null,
+        timed_out: Schema.Literal(false),
+        termination_indeterminate: Schema.Literal(true),
+      }),
+    }),
+  }),
+);
+const decodeFxToolText = Schema.decodeUnknownOption(
+  Schema.Struct({
+    update: Schema.Struct({
+      content: Schema.Array(Schema.Struct({ content: Schema.Struct({ text: Schema.String }) })),
+    }),
+  }),
+);
+const decodeFxCancelledError = Schema.decodeUnknownOption(
+  Schema.fromJsonString(
+    Schema.Struct({
+      error: Schema.Struct({ details: Schema.Struct({ error: Schema.Literal("Cancelled") }) }),
+    }),
+  ),
+);
+
+export function fxToolCallWasCancelled(payload: unknown): boolean {
+  const update = decodeFxToolText(payload);
+  const texts = Option.isSome(update)
+    ? update.value.update.content.map(({ content }) => content.text)
+    : [];
+  if (
+    texts.some((text) => /^Cancelled\.?$/.test(text) || Option.isSome(decodeFxCancelledError(text)))
+  ) {
+    return true;
+  }
+  // fx also uses indeterminate status for real failures, whose error JSON can be clipped.
+  return isCancelledFxCommand(payload) && texts.every((text) => !/^\s*\{\s*"error"\s*:/.test(text));
+}
 
 /**
  * Supervised runs fx's `ask` mode and Auto its automatic review. An explicit

@@ -1,4 +1,4 @@
-// @effect-diagnostics nodeBuiltinImport:off
+// @effect-diagnostics nodeBuiltinImport:off -- fx's macOS upgrade gate needs the host kernel release.
 import * as NodeOS from "node:os";
 import * as Effect from "effect/Effect";
 import * as HttpClient from "effect/http/HttpClient";

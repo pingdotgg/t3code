@@ -402,6 +402,7 @@ export interface AcpAdapterV2Flavor {
   ) => AcpAdapterV2SubagentUpdate | undefined;
   readonly isProvisionalSubagentTool?: (toolCall: AcpToolCallState) => boolean;
   readonly normalizeToolCall?: (toolCall: AcpToolCallState) => AcpToolCallState;
+  readonly isCancelledToolCall?: (payload: unknown) => boolean;
   readonly extractProposedPlanMarkdown?: (toolCall: AcpToolCallState) => string | undefined;
   readonly extractBackgroundTaskId?: (toolCall: AcpToolCallState) => string | undefined;
   /** Distinguishes commands from monitors when lifecycle notifications omit their kind. */
@@ -3511,6 +3512,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           context: ActiveAcpTurn,
           incoming: AcpToolCallState,
           projectedStatus?: ProjectedToolStatus,
+          rawPayload?: unknown,
         ) => Effect.Effect<void> = () => Effect.void;
 
         const markAwaitingBackgroundHydration =
@@ -3563,6 +3565,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           context: ActiveAcpTurn,
           incoming: AcpToolCallState,
           projectedStatus?: ProjectedToolStatus,
+          rawPayload?: unknown,
         ) {
           if (context.assistant.current?.sourceMessageId == null)
             yield* closeTextStream(context, "assistant");
@@ -3603,11 +3606,12 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               ? toolCall
               : { ...toolCall, backgroundCommandTaskId },
           );
-          // fx 0.0.15 fails the tools a Stop cut off; they read as interrupted, like ones left open.
+          // A failure racing Stop needs the provider's cancellation signal before relabeling it.
           const previousStatus = previous === undefined ? undefined : toolStatus(previous.status);
           if (
             context.interrupted &&
             toolCall.status === "failed" &&
+            flavor.isCancelledToolCall?.(rawPayload) === true &&
             (previousStatus === "pending" ||
               previousStatus === "running" ||
               previousStatus === "waiting")
@@ -5275,7 +5279,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               const parsed = parseSessionUpdateEvent(notification);
               for (const event of parsed.events) {
                 if (event._tag === "ToolCallUpdated") {
-                  yield* emitTool(context, event.toolCall);
+                  yield* emitTool(context, event.toolCall, undefined, event.rawPayload);
                 } else if (event._tag === "PlanUpdated") {
                   yield* emitPlan(context, event.payload);
                 } else if (event._tag === "NoticeReceived") {

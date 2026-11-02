@@ -1290,8 +1290,27 @@ const program = Effect.gen(function* () {
             status: "in_progress",
           },
         });
+        yield* agent.client.sessionUpdate({
+          sessionId: requestedSessionId,
+          update: {
+            sessionUpdate: "tool_call_update",
+            toolCallId: "native-failed-tool",
+            title: "Failing command",
+            kind: "execute",
+            status: "in_progress",
+          },
+        });
         yield* Deferred.await(nativeCancelRequested);
         yield* Deferred.await(nativeCancelRelease);
+        yield* agent.client.sessionUpdate({
+          sessionId: requestedSessionId,
+          update: {
+            sessionUpdate: "tool_call_update",
+            toolCallId: "native-failed-tool",
+            status: "failed",
+            content: [{ type: "content", content: { type: "text", text: "Permission denied" } }],
+          },
+        });
         yield* agent.client.sessionUpdate({
           sessionId: requestedSessionId,
           update: {
