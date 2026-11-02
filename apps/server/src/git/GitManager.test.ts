@@ -3091,6 +3091,56 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
     }),
   );
 
+  it.effect("create_pr reports a created PR when the lookup after creation fails", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
+      yield* initRepo(repoDir);
+      yield* runGit(repoDir, ["checkout", "-b", "feature/lookup-after-create"]);
+      const remoteDir = yield* createBareRemote();
+      yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
+      NodeFS.writeFileSync(NodePath.join(repoDir, "lookup.txt"), "lookup\n");
+      yield* runGit(repoDir, ["add", "lookup.txt"]);
+      yield* runGit(repoDir, ["commit", "-m", "Lookup after create"]);
+      yield* runGit(repoDir, ["push", "-u", "origin", "feature/lookup-after-create"]);
+
+      const { service: github } = createFakeSourceControlProvider();
+      let created = false;
+      const { manager } = yield* makeManager({
+        sourceControlProvider: {
+          ...github,
+          createChangeRequest: (input) =>
+            github.createChangeRequest(input).pipe(
+              Effect.tap(() =>
+                Effect.sync(() => {
+                  created = true;
+                }),
+              ),
+            ),
+          listChangeRequests: (input) =>
+            created
+              ? Effect.fail(
+                  new SourceControlProviderFailure({
+                    provider: github.kind,
+                    operation: "listChangeRequests",
+                    cwd: input.cwd,
+                    detail: "GitHub API rate limit exceeded.",
+                  }),
+                )
+              : github.listChangeRequests(input),
+        },
+      });
+
+      const result = yield* runStackedAction(manager, { cwd: repoDir, action: "create_pr" });
+
+      expect(created).toBe(true);
+      expect(result.pr).toMatchObject({
+        status: "created",
+        headBranch: "feature/lookup-after-create",
+      });
+      expect(result.pr.url).toBeUndefined();
+    }),
+  );
+
   it.effect("returns existing PR metadata for commit/push/pr action", () =>
     Effect.gen(function* () {
       const repoDir = yield* makeTempDir("t3code-git-manager-");
