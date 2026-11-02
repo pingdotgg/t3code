@@ -186,6 +186,22 @@ export const make = Effect.gen(function* () {
     return template;
   };
 
+  // macOS sends the page a mouse move at a wrongly converted point while a frame-aware menu
+  // opens, which hovers whatever sits there. The menu owns the pointer until it closes.
+  const holdMouseMovesWhileMenuOpen = (input: ElectronMenuTemplateInput): (() => void) => {
+    if (platform !== "darwin") return () => undefined;
+    const contents = new Set([input.window.webContents]);
+    const frameContents = input.frame ? Electron.webContents.fromFrame(input.frame) : undefined;
+    if (frameContents) contents.add(frameContents);
+    const dropMouseMove = (event: Electron.Event, mouse: Electron.MouseInputEvent) => {
+      if (mouse.type === "mouseMove") event.preventDefault();
+    };
+    for (const target of contents) target.on("before-mouse-event", dropMouseMove);
+    return () => {
+      for (const target of contents) target.off("before-mouse-event", dropMouseMove);
+    };
+  };
+
   return ElectronMenu.of({
     setApplicationMenu: Effect.fn("ElectronMenu.setApplicationMenu")(function (template) {
       return Effect.try({
@@ -206,11 +222,19 @@ export const make = Effect.gen(function* () {
       return input.template.length === 0
         ? Effect.void
         : Effect.try({
-            try: () =>
-              Electron.Menu.buildFromTemplate([...input.template]).popup({
-                window: input.window,
-                ...(input.frame ? { frame: input.frame } : {}),
-              }),
+            try: () => {
+              const releaseMouseMoves = holdMouseMovesWhileMenuOpen(input);
+              try {
+                Electron.Menu.buildFromTemplate([...input.template]).popup({
+                  window: input.window,
+                  ...(input.frame ? { frame: input.frame } : {}),
+                  callback: releaseMouseMoves,
+                });
+              } catch (cause) {
+                releaseMouseMoves();
+                throw cause;
+              }
+            },
             catch: (cause) =>
               new ElectronMenuOperationError({
                 operation: "popup-template",
