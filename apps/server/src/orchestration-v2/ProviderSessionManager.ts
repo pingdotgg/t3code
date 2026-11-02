@@ -1209,23 +1209,8 @@ export const layerWithOptions = (
         }
         const baseline = entry.credentialFingerprint;
         const key = sessionKey(entry.runtime.providerSessionId);
-        // A legacy (undefined) baseline adopts the first readable fingerprint, whatever it shows.
-        if (baseline === undefined) {
-          const live = (yield* Ref.get(sessions)).get(key);
-          if (live?.runtime !== entry.runtime) {
-            return false;
-          }
-          yield* Ref.update(sessions, (current) => {
-            const currentEntry = current.get(key);
-            if (currentEntry?.runtime !== entry.runtime) {
-              return current;
-            }
-            const updated = new Map(current);
-            updated.set(key, { ...currentEntry, credentialFingerprint: currentFingerprint });
-            return updated;
-          });
-          return false;
-        }
+        // A failed open-time probe leaves the baseline unknown. A runtime that may predate the
+        // current credentials cannot be proven current, so the first readable probe releases it.
         if (baseline === currentFingerprint) {
           return false;
         }

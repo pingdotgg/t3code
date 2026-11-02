@@ -361,8 +361,8 @@ const makeProviderAdapter = Effect.fnUntraced(function* (
     ).pipe(Effect.andThen(Effect.never)),
   );
   // exactOptionalPropertyTypes cannot express key-present-undefined; a disabled capability
-  // resolves to undefined, which the seam records as an unreadable (null) baseline. The first
-  // readable fingerprint is then adopted.
+  // resolves to undefined, which the seam records as an unknown baseline. The first
+  // readable fingerprint then releases the runtime; the next open spawns a fresh one.
   // @effect-diagnostics-next-line effectSucceedWithVoid:off - optional capability result requires undefined, not void.
   const fingerprintUnavailable = Effect.succeed(undefined);
   return ProviderAdapter.ProviderAdapterV2.of({
@@ -4188,7 +4188,7 @@ it.effect(
 );
 
 it.effect(
-  "ProviderSessionManagerV2 adopts the first readable fingerprint after an unobservable baseline and recycles on a later change",
+  "ProviderSessionManagerV2 releases after an unobservable baseline on the first readable fingerprint, and recycles on a later change",
   () =>
     Effect.gen(function* () {
       const state = yield* Ref.make(emptyState);
@@ -4199,7 +4199,7 @@ it.effect(
         const idAllocator = yield* IdAllocator.IdAllocatorV2;
         const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
         const now = yield* DateTime.now;
-        const threadId = ThreadId.make("thread-fp-adopt-null");
+        const threadId = ThreadId.make("thread-fp-unknown-baseline");
         const providerSessionId = yield* idAllocator.allocate.providerSession({
           providerInstanceId: modelSelection.instanceId,
           threadId,
@@ -4220,15 +4220,17 @@ it.effect(
 
         capability.current = true;
 
+        // The open-time probe failed, so the first runtime's credentials are unknown. The
+        // sweep cannot prove that runtime is current, so the first readable probe releases it.
         const secondRuntime = yield* manager.open({
           threadId,
           providerSessionId,
           modelSelection,
           runtimePolicy,
         });
-        assert.strictEqual(secondRuntime, firstRuntime);
-        assert.equal((yield* Ref.get(state)).openCount, 1);
-        assert.equal((yield* Ref.get(state)).closeCount, 0);
+        assert.notStrictEqual(secondRuntime, firstRuntime);
+        assert.equal((yield* Ref.get(state)).openCount, 2);
+        assert.equal((yield* Ref.get(state)).closeCount, 1);
 
         yield* Ref.set(credentialFingerprint, "fp-bob");
         const thirdRuntime = yield* manager.open({
@@ -4237,7 +4239,60 @@ it.effect(
           modelSelection,
           runtimePolicy,
         });
-        assert.notStrictEqual(thirdRuntime, firstRuntime);
+        assert.notStrictEqual(thirdRuntime, secondRuntime);
+        assert.equal((yield* Ref.get(state)).openCount, 3);
+        assert.equal((yield* Ref.get(state)).closeCount, 2);
+      });
+
+      yield* effect.pipe(
+        Effect.provide(
+          layerTest({
+            state,
+            idleTimeoutMs: 60_000,
+            credentialFingerprint,
+            credentialFingerprintCapability: capability,
+          }),
+        ),
+      );
+    }),
+);
+
+it.effect(
+  "ProviderSessionManagerV2 releases a session whose credentials swapped while it was opening",
+  () =>
+    Effect.gen(function* () {
+      const state = yield* Ref.make(emptyState);
+      const credentialFingerprint = yield* Ref.make<string | null | undefined>("fp-alice");
+      const effect = Effect.gen(function* () {
+        const eventSink = yield* EventSink.EventSinkV2;
+        const idAllocator = yield* IdAllocator.IdAllocatorV2;
+        const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+        const now = yield* DateTime.now;
+        const threadId = ThreadId.make("thread-fp-swap-during-open");
+        const providerSessionId = yield* idAllocator.allocate.providerSession({
+          providerInstanceId: modelSelection.instanceId,
+          threadId,
+        });
+
+        yield* eventSink.write({
+          events: [yield* makeThreadCreatedEvent({ idAllocator, threadId, now })],
+        });
+        const firstRuntime = yield* manager.open({
+          threadId,
+          providerSessionId,
+          modelSelection,
+          runtimePolicy,
+        });
+        assert.equal((yield* Ref.get(state)).openCount, 1);
+        assert.equal((yield* Ref.get(state)).closeCount, 0);
+
+        const secondRuntime = yield* manager.open({
+          threadId,
+          providerSessionId,
+          modelSelection,
+          runtimePolicy,
+        });
+        assert.notStrictEqual(secondRuntime, firstRuntime);
         assert.equal((yield* Ref.get(state)).openCount, 2);
         assert.equal((yield* Ref.get(state)).closeCount, 1);
       });
@@ -4248,7 +4303,10 @@ it.effect(
             state,
             idleTimeoutMs: 60_000,
             credentialFingerprint,
-            credentialFingerprintCapability: capability,
+            // The swap lands after the baseline probe and inside openSession, modeling an
+            // external account change that races the startup window. The pre-spawn baseline
+            // must not absorb it.
+            beforeOpen: () => Ref.set(credentialFingerprint, "fp-bob"),
           }),
         ),
       );
