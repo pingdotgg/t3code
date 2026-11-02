@@ -2730,6 +2730,7 @@ export const make = Effect.gen(function* () {
               return (
                 projects?.map(({ project }) => ({
                   projectId: project.project.id,
+                  host: project.host,
                   repository: project.repository,
                   number: stat.number,
                   additions: stat.additions,
@@ -3157,7 +3158,8 @@ export const make = Effect.gen(function* () {
   const detailCache = yield* Cache.makeWith(
     (key: string) => {
       const statsKey = statsCacheKey(key);
-      return detailUncached(refOfCacheKey(key)).pipe(
+      const input = refOfCacheKey(key);
+      return detailUncached(input).pipe(
         Effect.tap(
           Effect.fn("PullRequestService.recordDetailStats")(function* (value: PullRequestDetail) {
             // GitHub detail includes the same checks; the checks TTL counts from their observation.
@@ -3176,6 +3178,7 @@ export const make = Effect.gen(function* () {
               statsKey,
               {
                 projectId: value.projectId,
+                ...(input.host === undefined ? {} : { host: input.host }),
                 repository: value.repository,
                 number: value.number,
                 additions: value.additions,
@@ -3472,10 +3475,18 @@ export const make = Effect.gen(function* () {
 
   const listStatsCache = yield* Cache.makeWith(
     (key: string) => {
-      const [, refs] = JSON.parse(key) as [number, ReadonlyArray<[string, string, number, number]>];
+      const [, refs] = JSON.parse(key) as [
+        number,
+        ReadonlyArray<[ProjectId, string, string, number, number]>,
+      ];
       return listStatsUncached({
-        refs: refs.map(([projectId, repository, number]) => ({ projectId, repository, number })),
-      } as unknown as PullRequestListStatsInput).pipe(
+        refs: refs.map(([projectId, host, repository, number]) => ({
+          projectId,
+          host,
+          repository,
+          number,
+        })),
+      }).pipe(
         Effect.flatMap((result) =>
           Clock.currentTimeMillis.pipe(Effect.map((at) => ({ result, at }))),
         ),
@@ -3490,10 +3501,11 @@ export const make = Effect.gen(function* () {
     JSON.stringify([
       listingsEpoch,
       [...refs]
-        .map((ref) => [ref.projectId, ref.repository, ref.number, refEpoch(ref)] as const)
-        .toSorted((left, right) =>
-          `${left[0]} ${left[1]} ${left[2]}`.localeCompare(`${right[0]} ${right[1]} ${right[2]}`),
-        ),
+        .map(
+          (ref) =>
+            [ref.projectId, ref.host ?? "", ref.repository, ref.number, refEpoch(ref)] as const,
+        )
+        .toSorted((left, right) => JSON.stringify(left).localeCompare(JSON.stringify(right))),
     ]);
   const listStats: PullRequestService["Service"]["listStats"] = Effect.fn(
     "PullRequestService.listStats",
@@ -3523,6 +3535,7 @@ export const make = Effect.gen(function* () {
       const stat = result.stats.find(
         (stat) =>
           stat.projectId === ref.projectId &&
+          stat.host === ref.host &&
           stat.repository.toLowerCase() === ref.repository.toLowerCase() &&
           stat.number === ref.number,
       );

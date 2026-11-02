@@ -518,6 +518,10 @@
     "./provider-clients": {
       "types": "./src/providerClients.ts",
       "default": "./src/providerClients.ts"
+    },
+    "./pull-request-stats": {
+      "types": "./src/pull-request-stats.ts",
+      "default": "./src/pull-request-stats.ts"
     }
   },
   "scripts": {

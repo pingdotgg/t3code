@@ -60,5 +60,34 @@ it.effect("restores line counts when visible PR batches change", () =>
     const key = JSON.stringify(["stats", { refs: [first] }]);
     expect(yield* cache.load(env, key)).toEqual(Option.some({ stats: [stat] }));
     expect(yield* cache.load(other, key)).toEqual(Option.none());
+    const hosted = { ...stat, host: "github.com" };
+    yield* cache.save(env, key, { stats: [hosted] });
+    expect(yield* cache.load(env, key)).toEqual(Option.some({ stats: [hosted] }));
+    const github = { ...first, host: "github.com" };
+    const bitbucket = { ...first, host: "bitbucket.org" };
+    const refs = [github, bitbucket];
+    const stats = refs.map((ref) => ({
+      ...ref,
+      additions: ref.host === "github.com" ? 12 : 42,
+      deletions: 3,
+    }));
+    yield* cache.save(env, JSON.stringify(["stats", { refs }]), { stats });
+    for (const [index, ref] of refs.entries()) {
+      expect(yield* cache.load(env, JSON.stringify(["stats", { refs: [ref] }]))).toEqual(
+        Option.some({ stats: [stats[index]] }),
+      );
+    }
+    const legacy = { ...stat, number: 3 };
+    const legacyRefs = refs.map((ref) => ({ ...ref, number: 3 }));
+    yield* cache.save(env, JSON.stringify(["stats", { refs: legacyRefs }]), { stats: [legacy] });
+    expect(yield* cache.load(env, JSON.stringify(["stats", { refs: legacyRefs }]))).toEqual(
+      Option.none(),
+    );
+    yield* cache.save(env, JSON.stringify(["stats", { refs: [legacyRefs[0]] }]), {
+      stats: [legacy],
+    });
+    expect(yield* cache.load(env, JSON.stringify(["stats", { refs: [legacyRefs[0]] }]))).toEqual(
+      Option.some({ stats: [{ ...legacy, host: "github.com" }] }),
+    );
   }).pipe(Effect.provideService(EnvironmentQueryStore, store())),
 );

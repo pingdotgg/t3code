@@ -2116,6 +2116,7 @@ it.effect.each(["acme/api", "acme/other"])(
 it.effect("requires a host for same-named linked repositories on multiple hosts", () =>
   Effect.gen(function* () {
     const seen: string[] = [];
+    const statsReads: string[] = [];
     const service = yield* makeService({
       projects: [project({ id: "inbox", title: "Inbox", workspaceRoot: "/inbox" })],
       linkedRepositories: ["github.com", "bitbucket.org"].map((host) => ({
@@ -2126,6 +2127,21 @@ it.effect("requires a host for same-named linked repositories on multiple hosts"
       providers: ["github", "bitbucket"].map((kind) =>
         fakePullRequestProvider(kind, {
           readsPublicHostWithoutCheckout: true,
+          listChangeRequestStats: ({ host, changeRequests }) =>
+            Effect.sync(() => {
+              statsReads.push(host);
+              return changeRequests.map((ref) => ({
+                ...ref,
+                additions: host === "github.com" ? 12 : 42,
+                deletions: 3,
+              }));
+            }),
+          getChangeRequest: ({ host, number }) =>
+            Effect.succeed({
+              ...hostedChangeRequest("Body"),
+              number,
+              additions: host === "github.com" ? 12 : 42,
+            }),
           getChangeRequestSummary: ({ host }) =>
             Effect.sync(() => {
               seen.push(host);
@@ -2141,6 +2157,34 @@ it.effect("requires a host for same-named linked repositories on multiple hosts"
       yield* service.summary({ ...ref, host });
     }
     assert.deepStrictEqual(seen, ["github.com", "bitbucket.org"]);
+    assert.deepStrictEqual((yield* service.listStats({ refs: [ref] })).stats, []);
+    const refs = ["github.com", "bitbucket.org"].map((host) => ({ ...ref, host }));
+    for (const batch of [
+      refs,
+      [...refs].reverse(),
+      [refs[0]!],
+      [refs[1]!],
+      [{ ...refs[0]!, number: 8 }],
+      [{ ...refs[1]!, number: 8 }],
+    ]) {
+      assert.deepStrictEqual(
+        (yield* service.listStats({ refs: batch })).stats
+          .map((stat) => [stat.host, stat.additions])
+          .sort(),
+        batch.map((ref) => [ref.host, ref.host === "github.com" ? 12 : 42]).sort(),
+      );
+    }
+    assert.deepStrictEqual(statsReads.sort(), [
+      "bitbucket.org",
+      "bitbucket.org",
+      "github.com",
+      "github.com",
+    ]);
+    const detailed = { ...refs[0]!, number: 9 };
+    yield* service.detail(detailed);
+    assert.deepStrictEqual((yield* service.listStats({ refs: [detailed] })).stats, [
+      { ...detailed, additions: 12, deletions: 0 },
+    ]);
   }),
 );
 
@@ -2851,6 +2895,7 @@ it.effect("fills in the line counts for the rows it is given", () =>
     assert.deepStrictEqual(result.stats, [
       {
         projectId: "p1" as ProjectId,
+        host: "github.com",
         repository: "acme/web",
         number: 1,
         additions: 12,

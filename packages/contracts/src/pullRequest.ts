@@ -498,6 +498,7 @@ export type PullRequestStack = typeof PullRequestStack.Type;
 
 export const PullRequestDiffStat = Schema.Struct({
   projectId: ProjectId,
+  host: Schema.optional(TrimmedNonEmptyString),
   repository: TrimmedNonEmptyString,
   number: PositiveInt,
   additions: NonNegativeInt,

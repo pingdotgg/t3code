@@ -1,3 +1,4 @@
+import { resolvePullRequestStats } from "@t3tools/client-runtime/pull-request-stats";
 import { useAtomValue } from "@effect/atom-react";
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
 import {
@@ -635,7 +636,12 @@ export function usePullRequestListStats(
     query.values.length === 0
       ? null
       : query.values.flatMap(([environmentId, result]) =>
-          result.stats.map((stat) => ({ ...stat, environmentId })),
+          resolvePullRequestStats(
+            targets
+              .filter((target) => target.environmentId === environmentId)
+              .flatMap((target) => target.input.refs),
+            result.stats,
+          ).map((stat) => ({ ...stat, environmentId })),
         );
   return { stats, isPending: query.isPending, refresh: query.refresh };
 }

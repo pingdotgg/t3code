@@ -21,6 +21,7 @@ import {
   pullRequestStatsKeysToRequest,
   pullRequestStatsRefreshBatches,
   mergePullRequestDiffStats,
+  pullRequestDiffStatKey,
   partitionPullRequestsWithPriority,
   pullRequestAuthorChoices,
   selectedPullRequestAuthor,
@@ -76,14 +77,17 @@ describe("visible pull request line-count targets", () => {
     const entries = [
       entry({ additions: 0, deletions: 0, number: 1 }),
       entry({ additions: 0, deletions: 0, number: 2 }),
+      entry({ additions: 0, deletions: 0, number: 1, host: "bitbucket.org" }),
+      entry({ additions: 0, deletions: 0, number: 1, repository: "acme/api" }),
     ];
     const entriesByKey = new Map(entries.map((item) => [pullRequestEntryKey(item), item]));
-    const firstKey = pullRequestEntryKey(entries[0]!);
     const secondKey = pullRequestEntryKey(entries[1]!);
     const completedStats = mergePullRequestDiffStats(new Map(), [
       {
         environmentId: ENV_1,
         projectId: "project-1",
+        host: "github.com",
+        repository: "pingdotgg/t3code",
         number: 1,
         additions: 1,
         deletions: 1,
@@ -92,14 +96,20 @@ describe("visible pull request line-count targets", () => {
 
     const keys = pullRequestStatsKeysToRequest(
       entriesByKey,
-      new Set([firstKey, secondKey]),
+      new Set(entries.map(pullRequestEntryKey)),
       [],
       completedStats,
     );
-    expect([...keys]).toEqual([secondKey]);
-    expect(pullRequestStatsBatches(entriesByKey, keys)[0]?.input.refs).toEqual([
-      { projectId: "project-1", repository: "pingdotgg/t3code", number: 2 },
-    ]);
+    expect([...keys]).toEqual([secondKey, ...entries.slice(2).map(pullRequestEntryKey)]);
+    expect(new Set(entries.map(pullRequestDiffStatKey)).size).toBe(4);
+    expect(pullRequestStatsBatches(entriesByKey, keys)[0]?.input.refs).toEqual(
+      entries.slice(1).map(({ projectId, host, repository, number }) => ({
+        projectId,
+        host,
+        repository,
+        number,
+      })),
+    );
   });
 
   it("keeps every per-environment batch within the stats contract limit", () => {
