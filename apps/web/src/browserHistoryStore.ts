@@ -3,11 +3,12 @@ import {
   scopedThreadKey,
   scopeProjectRef,
 } from "@t3tools/client-runtime/environment";
-import type {
-  EnvironmentId,
-  PreviewSessionSnapshot,
-  ScopedProjectRef,
-  ScopedThreadRef,
+import {
+  INCOGNITO_BROWSER_PROFILE_ID,
+  type EnvironmentId,
+  type PreviewSessionSnapshot,
+  type ScopedProjectRef,
+  type ScopedThreadRef,
 } from "@t3tools/contracts";
 import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
@@ -398,7 +399,13 @@ function resolveThreadProjectKey(ref: ScopedThreadRef): string | undefined {
   return projectKey;
 }
 
-export function recordVisitForThread(ref: ScopedThreadRef, url: string, at?: number): void {
+export function recordVisitForThread(
+  ref: ScopedThreadRef,
+  url: string,
+  profileId?: string,
+  at?: number,
+): void {
+  if (profileId === INCOGNITO_BROWSER_PROFILE_ID) return;
   const threadKey = scopedThreadKey(ref);
   const projectKey = resolveThreadProjectKey(ref);
   const state = useBrowserHistoryStore.getState();
@@ -468,7 +475,13 @@ function recordPreviewTitles(
   );
   for (const session of sessions) {
     const status = session.navStatus;
-    if (status._tag !== "Success" || !status.title || !include(session, status.url)) continue;
+    if (
+      session.profileId === INCOGNITO_BROWSER_PROFILE_ID ||
+      status._tag !== "Success" ||
+      !status.title ||
+      !include(session, status.url)
+    )
+      continue;
     state.setTitleForUrl(projectKey, status.url, status.title, environmentHostname);
   }
 }

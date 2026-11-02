@@ -239,15 +239,15 @@ export function PreviewView({
 
   const navigateToResolvedUrl = async (resolvedUrl: string) => {
     if (isServerTab && serverSurfaceRef.current) {
-      if (serverInputDisabled) return false;
+      if (serverInputDisabled) return null;
       serverSurfaceRef.current.navigate(resolvedUrl);
       rememberPreviewUrl(threadRef, resolvedUrl);
-      return true;
+      return snapshot;
     }
     if (runtimeTabId && previewBridge) {
       await previewBridge.navigate(runtimeTabId, resolvedUrl);
       rememberPreviewUrl(threadRef, resolvedUrl);
-      return true;
+      return snapshot;
     }
     const result = await openPreviewSession({ openPreview: open, threadRef, url: resolvedUrl });
     if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
@@ -260,14 +260,15 @@ export function PreviewView({
         });
       }
     }
-    return result._tag === "Success";
+    return result._tag === "Success" ? result.value : null;
   };
 
   const handleSubmitUrl = async (next: string) => {
     try {
       const resolved = resolveAddressBarInput(next, resolveSearchUrlTemplate(getClientSettings()));
-      if (await navigateToResolvedUrl(resolved)) {
-        recordVisitForThread(threadRef, resolved);
+      const navigated = await navigateToResolvedUrl(resolved);
+      if (navigated) {
+        recordVisitForThread(threadRef, resolved, navigated.profileId);
       }
     } catch (error) {
       toastManager.add({
@@ -288,8 +289,9 @@ export function PreviewView({
         isServerTab || !previewBridge
           ? normalizePreviewUrl(next)
           : resolveDiscoveredServerUrl(threadRef.environmentId, next);
-      if (await navigateToResolvedUrl(resolved)) {
-        recordVisitForThread(threadRef, next);
+      const navigated = await navigateToResolvedUrl(resolved);
+      if (navigated) {
+        recordVisitForThread(threadRef, next, navigated.profileId);
       }
     } catch (error) {
       toastManager.add({

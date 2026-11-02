@@ -80,7 +80,7 @@ export async function openTerminalLinkInPreview<E>(
     input.fallbackToBrowser();
     return;
   }
-  recordVisitForThread(input.threadRef, input.url);
+  recordVisitForThread(input.threadRef, input.url, result.value.profileId);
   applyPreviewServerSnapshot(input.threadRef, result.value);
   useRightPanelStore.getState().openBrowser(input.threadRef, result.value.tabId);
 }
