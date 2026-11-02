@@ -1361,7 +1361,7 @@ const simulate = Effect.fn("evaluateMcpToolUse.simulate")(function* (
 });
 
 /** The result for one tool call. */
-const answerToolCall = Effect.fn("evaluateMcpToolUse.answerToolCall")(function* (
+export const answerToolCall = Effect.fn("evaluateMcpToolUse.answerToolCall")(function* (
   sample: Sample,
   config: Config,
   call: typeof ToolUse.Type,
@@ -1372,12 +1372,15 @@ const answerToolCall = Effect.fn("evaluateMcpToolUse.answerToolCall")(function* 
   if (call.name === "web__run") {
     const open = Array.isArray(input.open) ? input.open[0] : undefined;
     const search = Array.isArray(input.search_query) ? input.search_query[0] : undefined;
-    name = open ? "WebFetch" : "WebSearch";
+    const normalizedOpen = typeof input.url === "string";
+    name = open || normalizedOpen ? "WebFetch" : "WebSearch";
     input = isRecord(open)
       ? { url: open.ref_id, prompt: "Return the page content." }
-      : isRecord(search)
-        ? { query: search.q }
-        : input;
+      : normalizedOpen
+        ? input
+        : isRecord(search)
+          ? { query: search.q }
+          : input;
   }
   const failed = (error: string): Block => ({ ...toolResult(call.id, error), is_error: true });
   if (!base.codex && !hasTool(tools, call.name)) {

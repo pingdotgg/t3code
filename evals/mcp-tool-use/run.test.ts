@@ -8,6 +8,7 @@ import { ComposerContextId, EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { projectComposerContextForProvider } from "@t3tools/shared/composerContextReferences";
 
 import {
+  answerToolCall,
   buildBase,
   buildMessages,
   failedEarly,
@@ -57,17 +58,66 @@ it("grades Codex shell and subagent calls with the shared rules", () => {
   );
 });
 
-it("normalizes recorded Codex web opens before grading", () => {
-  assert.deepEqual(
-    normalizeToolInput("web__run", {
+it.effect("normalizes Codex web opens for grading and serves the matching web mock", () =>
+  Effect.gen(function* () {
+    const rawOpen = {
       open: [{ ref_id: "https://docs.acme.test/releases/2.4" }],
-    }),
-    {
+    };
+    const normalizedOpen = normalizeToolInput("web__run", rawOpen);
+    assert.deepEqual(normalizedOpen, {
       url: "https://docs.acme.test/releases/2.4",
       prompt: "Return the page content.",
-    },
-  );
-});
+    });
+    assert.deepEqual(normalizeToolInput("exec_command", { cmd: "git status" }), {
+      cmd: "git status",
+      command: "git status",
+    });
+    assert.deepEqual(normalizeToolInput("apply_patch", "*** Begin Patch\n*** End Patch"), {
+      patch: "*** Begin Patch\n*** End Patch",
+    });
+
+    const testCase: McpToolUseCase = {
+      ...childCase,
+      setup: {
+        ...childCase.setup,
+        mocks: { WebFetch: "release page", WebSearch: "search results" },
+      },
+      expect: { calls: [{ tool: "WebFetch", args: { url: "~docs.acme.test/releases/2.4" } }] },
+    };
+    const base = buildBase(template, {
+      model: "gpt-6.1-sol",
+      keepUserInstructions: false,
+    });
+    const sample = makeSample(
+      testCase,
+      // The response handler only branches on the presence of Codex request state.
+      { ...base, codex: {} as never },
+    );
+    const config = {
+      apiKey: "",
+      model: "gpt-6.1-sol",
+      effort: "low",
+      maxSteps: 1,
+      shellModel: "claude-haiku-5-5",
+    } as const;
+    const answer = (id: string, input: unknown) =>
+      answerToolCall(sample, config, { type: "tool_use", id, name: "web__run", input });
+    assert.equal((yield* answer("raw-open", rawOpen)).content, "release page");
+    assert.equal((yield* answer("normalized-open", normalizedOpen)).content, "release page");
+    assert.equal(
+      (yield* answer("search", { search_query: [{ q: "Acme 2.4 changes" }] })).content,
+      "search results",
+    );
+    assert.deepEqual(
+      gradeSample(testCase.expect, {
+        calls: [{ step: 0, tool: "WebFetch", input: normalizedOpen }],
+        text: "",
+        stopReason: "end_turn",
+      }).filter(({ pass }) => !pass),
+      [],
+    );
+  }),
+);
 
 it("accepts any tool listed as an alternative", () => {
   const expect = { calls: [{ tool: "link_pull_request|watch_pull_request" }] };

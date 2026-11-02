@@ -664,6 +664,9 @@ describe("CursorAdapterV2", () => {
       const fileSystem = yield* FileSystem.FileSystem;
       const workspace = yield* fileSystem.makeTempDirectoryScoped({ prefix: "cursor-v2-device-" });
       const sentMessages: Array<string> = [];
+      const openedWithMcp: Array<boolean> = [];
+      let closeCalls = 0;
+      let nextRunStatus: "finished" | "cancelled" | "error" = "finished";
       const instanceId = ProviderInstanceId.make("cursor");
       const threadId = ThreadId.make("cursor-device-thread");
       const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
@@ -690,30 +693,41 @@ describe("CursorAdapterV2", () => {
       }).pipe(
         Effect.provideService(CursorAgentSdk.CursorAgentSdkRunner, {
           assertComplete: Effect.void,
-          open: () =>
-            Effect.succeed({
-              agentId: "native-cursor-device",
-              listMessages: Effect.succeed([]),
-              close: Effect.void,
-              send: (input) =>
-                Effect.sync(() => {
-                  sentMessages.push(
-                    typeof input.message === "string" ? input.message : input.message.text,
-                  );
-                  const runId = `native-cursor-run-${sentMessages.length}`;
-                  return {
-                    agentId: "native-cursor-device",
-                    runId,
-                    wait: Effect.succeed({
+          open: (input) =>
+            Effect.sync(() => {
+              openedWithMcp.push(input.options.mcpServers !== undefined);
+              return {
+                agentId: "native-cursor-device",
+                listMessages: Effect.succeed([]),
+                close: Effect.sync(() => {
+                  closeCalls += 1;
+                }),
+                send: (input) =>
+                  Effect.sync(() => {
+                    sentMessages.push(
+                      typeof input.message === "string" ? input.message : input.message.text,
+                    );
+                    const runId = `native-cursor-run-${sentMessages.length}`;
+                    const status = nextRunStatus;
+                    nextRunStatus = "finished";
+                    const result = {
                       id: runId,
                       requestId: `native-request-${sentMessages.length}`,
-                      status: "finished" as const,
+                      status,
                       model: { id: "composer-2.5" },
                       durationMs: 1,
-                    }),
-                    cancel: Effect.void,
-                  };
-                }),
+                      ...(status === "error"
+                        ? { error: { message: "synthetic compaction failure" } }
+                        : {}),
+                    };
+                    return {
+                      agentId: "native-cursor-device",
+                      runId,
+                      wait: Effect.succeed(result),
+                      cancel: Effect.void,
+                    };
+                  }),
+              };
             }),
         }),
         Effect.provide(TestProviderHost.layer({ cwd: workspace })),
@@ -802,9 +816,38 @@ describe("CursorAdapterV2", () => {
         told(false, false, true, true),
         "a resumed conversation with unknown delivery state withdraws browser guidance",
       );
+      assert.deepEqual(
+        openedWithMcp,
+        [false, true],
+        "adding the MCP session reopens the native agent with its server configuration",
+      );
+      assert.equal(closeCalls, 1);
       assert.deepEqual(yield* send(), told(false, false, false, false));
       yield* setToolAccess(true, true);
       assert.deepEqual(yield* send(), told(false, true, false, false));
+
+      nextRunStatus = "cancelled";
+      yield* send(true);
+      yield* setToolAccess(false, false);
+      assert.deepEqual(
+        yield* send(),
+        told(false, false, true, false),
+        "cancelled compaction preserves the browser guidance delivery state",
+      );
+      yield* setToolAccess(true, true);
+      assert.deepEqual(yield* send(), told(false, true, false, true));
+
+      nextRunStatus = "error";
+      yield* send(true);
+      yield* setToolAccess(false, false);
+      assert.deepEqual(
+        yield* send(),
+        told(false, false, true, false),
+        "failed compaction preserves the browser guidance delivery state",
+      );
+      yield* setToolAccess(true, true);
+      assert.deepEqual(yield* send(), told(false, true, false, true));
+
       yield* send(true);
       assert.deepEqual(
         yield* send(),
@@ -820,6 +863,12 @@ describe("CursorAdapterV2", () => {
         "tool access turned on later",
       );
       assert.deepEqual(yield* send(), told(false, false, false, false));
+      assert.deepEqual(
+        openedWithMcp,
+        [false, true],
+        "capability changes reuse the configured agent",
+      );
+      assert.equal(closeCalls, 1);
     }).pipe(
       Effect.scoped,
       Effect.provide(

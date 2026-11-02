@@ -943,8 +943,14 @@ interface ActiveCursorTurn {
 
 interface CursorLiveAgent {
   readonly nativeThreadId: string;
+  readonly mcpServersKey: string | undefined;
   readonly session: CursorAgentSdk.CursorAgentSdkSession;
 }
+
+const cursorMcpServersKey = (
+  session: McpProviderSession.McpProviderSessionConfig | undefined,
+): string | undefined =>
+  session === undefined ? undefined : `${session.endpoint}\u0000${session.authorizationHeader}`;
 
 export interface CursorAdapterV2Options {
   readonly instanceId: ProviderInstanceId;
@@ -2218,13 +2224,16 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
           readonly threadId: ThreadId;
           readonly modelSelection: ModelSelection;
           readonly runtimePolicy: ProviderAdapter.ProviderAdapterV2RuntimePolicy;
+          readonly mcpSession: McpProviderSession.McpProviderSessionConfig | undefined;
           readonly agentId?: string;
         }) {
           const existing = yield* Ref.get(liveAgent);
+          const mcpServersKey = cursorMcpServersKey(openInput.mcpSession);
           if (
             existing !== null &&
             openInput.operation === "resume" &&
-            existing.nativeThreadId === openInput.agentId
+            existing.nativeThreadId === openInput.agentId &&
+            existing.mcpServersKey === mcpServersKey
           ) {
             return existing;
           }
@@ -2238,7 +2247,7 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
             runtimePolicy: openInput.runtimePolicy,
             platform,
             threadId: openInput.threadId,
-            mcpSession: yield* mcpSessions.read(openInput.threadId),
+            mcpSession: openInput.mcpSession,
           });
           if (
             platform === "win32" &&
@@ -2262,6 +2271,7 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
             .pipe(Effect.mapError(classifyCursorModelRejection(openInput.modelSelection)));
           const next = {
             nativeThreadId: sdkSession.agentId,
+            mcpServersKey,
             session: sdkSession,
           } satisfies CursorLiveAgent;
           yield* Ref.set(liveAgent, next);
@@ -2370,14 +2380,15 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
               });
             }
             const agentId = nativeThreadId(turnInput.providerThread);
+            const mcpSession = yield* mcpSessions.read(turnInput.threadId);
             const agent = yield* openAgent({
               operation: "resume",
               agentId,
               threadId: turnInput.threadId,
               modelSelection: turnInput.modelSelection,
               runtimePolicy: turnInput.runtimePolicy,
+              mcpSession,
             });
-            const mcpSession = yield* mcpSessions.read(turnInput.threadId);
             const mcpServers = cursorMcpServers(mcpSession);
             const hasBrowserTools =
               mcpServers !== undefined && mcpSession?.browserToolsAvailable === true;
@@ -2421,12 +2432,14 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
               })
               .pipe(Effect.mapError(classifyCursorModelRejection(turnInput.modelSelection)));
             const compacted = message === "/compress";
-            yield* Ref.set(told, {
-              agent: agent.nativeThreadId,
-              orchestration: !compacted && (delivered.orchestration || mcpServers !== undefined),
-              browser: !compacted && hasBrowserTools,
-              device: !compacted && hasDeviceTools,
-            });
+            if (!compacted) {
+              yield* Ref.set(told, {
+                agent: agent.nativeThreadId,
+                orchestration: delivered.orchestration || mcpServers !== undefined,
+                browser: hasBrowserTools,
+                device: hasDeviceTools,
+              });
+            }
             const startedAt = yield* DateTime.now;
             const completed = yield* Deferred.make<void, never>();
             const providerTurnId = idAllocator.derive.providerTurn({
@@ -2512,6 +2525,14 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
                     const transportFailure = context.assistantReply.failure;
                     const status =
                       transportFailure === undefined ? terminalStatus(context, result) : "failed";
+                    if (compacted && status === "completed") {
+                      yield* Ref.set(told, {
+                        agent: agent.nativeThreadId,
+                        orchestration: false,
+                        browser: false,
+                        device: false,
+                      });
+                    }
                     yield* finalizeTurn({
                       context,
                       status,
@@ -2618,6 +2639,7 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
                 threadId: threadInput.threadId,
                 modelSelection: threadInput.modelSelection,
                 runtimePolicy: threadInput.runtimePolicy,
+                mcpSession: yield* mcpSessions.read(threadInput.threadId),
               });
               const now = yield* DateTime.now;
               return makeProviderThread({
@@ -2650,6 +2672,9 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
                 threadId: threadInput.providerThread.appThreadId ?? input.threadId,
                 modelSelection: input.modelSelection,
                 runtimePolicy: input.runtimePolicy,
+                mcpSession: yield* mcpSessions.read(
+                  threadInput.providerThread.appThreadId ?? input.threadId,
+                ),
               });
               const now = yield* DateTime.now;
               return {
@@ -2743,6 +2768,9 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
                 threadId: snapshotInput.providerThread.appThreadId ?? input.threadId,
                 modelSelection: input.modelSelection,
                 runtimePolicy: input.runtimePolicy,
+                mcpSession: yield* mcpSessions.read(
+                  snapshotInput.providerThread.appThreadId ?? input.threadId,
+                ),
               });
               const messages = yield* agent.session.listMessages;
               const now = yield* DateTime.now;
