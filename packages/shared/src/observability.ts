@@ -185,6 +185,7 @@ type OtlpSpan = OtlpTracer.ScopeSpan["spans"][number];
 type OtlpSpanEvent = OtlpSpan["events"][number];
 type OtlpSpanLink = OtlpSpan["links"][number];
 type OtlpSpanStatus = OtlpSpan["status"];
+type OtlpScope = OtlpTracer.ScopeSpan["scope"];
 
 interface SerializableSpan {
   readonly name: string;
@@ -403,6 +404,12 @@ function spanToTraceRecord(span: SerializableSpan): EffectTraceRecord {
   };
 }
 
+// WebSocket tickets and their DPoP proofs ride in URL queries and stay valid after the request.
+const URL_CREDENTIAL_PARAMS = /(^|[?&"\s])(wsTicket|dpop)=[^&#"\\\s]*/g;
+
+const redactUrlCredentials = (text: string) =>
+  text.replace(URL_CREDENTIAL_PARAMS, "$1$2=<redacted>");
+
 export const makeTraceSink = Effect.fn("makeTraceSink")(function* (options: TraceSinkOptions) {
   const sink = yield* makeAsyncRotatingFileSink({
     filePath: options.filePath,
@@ -520,7 +527,7 @@ export const makeTraceSink = Effect.fn("makeTraceSink")(function* (options: Trac
     filePath: options.filePath,
     push(record) {
       try {
-        const text = `${JSON.stringify(record)}\n`;
+        const text = `${redactUrlCredentials(JSON.stringify(record))}\n`;
         const bytes = Buffer.byteLength(text);
         if (bytes > options.maxBytes) return;
         if (bufferBytes + bytes > maxBufferBytes) {
@@ -540,6 +547,24 @@ export const makeTraceSink = Effect.fn("makeTraceSink")(function* (options: Trac
     close: () => flush,
   } satisfies TraceSink;
 });
+
+// Effect's HTTP errors, including failed upgrades, put the request URL in their message.
+export function redactCauseCredentials(cause: Cause.Cause<unknown>): Cause.Cause<unknown> {
+  if (cause.reasons.length === 0 || Cause.hasInterruptsOnly(cause)) {
+    return cause;
+  }
+  const pretty = Cause.pretty(cause);
+  const redacted = redactUrlCredentials(pretty);
+  return redacted === pretty ? cause : Cause.die(new Error(redacted));
+}
+
+function redactExitCredentials(exit: Exit.Exit<unknown, unknown>): Exit.Exit<unknown, unknown> {
+  if (ExitRuntime.isSuccess(exit)) {
+    return exit;
+  }
+  const cause = redactCauseCredentials(exit.cause);
+  return cause === exit.cause ? exit : ExitRuntime.failCause(cause);
+}
 
 class LocalFileSpan implements Tracer.Span {
   readonly _tag = "Span";
@@ -590,7 +615,7 @@ class LocalFileSpan implements Tracer.Span {
       endTime,
       exit: traceExit,
     };
-    this.delegate.end(endTime, traceExit);
+    this.delegate.end(endTime, redactExitCredentials(traceExit));
 
     if (this.sampled) {
       this.push(spanToTraceRecord(this));
@@ -598,12 +623,20 @@ class LocalFileSpan implements Tracer.Span {
   }
 
   attribute(key: string, value: unknown): void {
-    this.attributes.set(key, value);
-    this.delegate.attribute(key, value);
+    const recorded =
+      (key === "url.full" || key === "url.query") && typeof value === "string"
+        ? redactUrlCredentials(value)
+        : value;
+    this.attributes.set(key, recorded);
+    this.delegate.attribute(key, recorded);
   }
 
   event(name: string, startTime: bigint, attributes?: Record<string, unknown>): void {
-    const nextAttributes = attributes ?? {};
+    const cause = attributes?.["effect.cause"];
+    const nextAttributes =
+      typeof cause === "string"
+        ? { ...attributes, "effect.cause": redactUrlCredentials(cause) }
+        : (attributes ?? {});
     this.events.push([name, startTime, nextAttributes]);
     this.delegate.event(name, startTime, nextAttributes);
   }
@@ -654,24 +687,22 @@ export function decodeOtlpTraceRecords(
 ): ReadonlyArray<OtlpTraceRecord> {
   const records: Array<OtlpTraceRecord> = [];
 
-  for (const resourceSpan of payload.resourceSpans) {
-    const resourceAttributes = decodeAttributes(resourceSpan.resource?.attributes ?? []);
+  // OTLP/JSON follows protobuf JSON, which omits unset and empty fields, so a
+  // valid batch can leave out any field read here.
+  for (const resourceSpan of payload.resourceSpans ?? []) {
+    const resourceAttributes = decodeAttributes(resourceSpan.resource?.attributes);
 
-    for (const scopeSpan of resourceSpan.scopeSpans) {
-      for (const span of scopeSpan.spans) {
+    for (const scopeSpan of resourceSpan.scopeSpans ?? []) {
+      const scope: Partial<OtlpScope> = scopeSpan.scope ?? {};
+      for (const span of scopeSpan.spans ?? []) {
         records.push(
           otlpSpanToTraceRecord({
             resourceAttributes,
             scopeAttributes: decodeAttributes(
-              "attributes" in scopeSpan.scope && Array.isArray(scopeSpan.scope.attributes)
-                ? scopeSpan.scope.attributes
-                : [],
+              "attributes" in scope && Array.isArray(scope.attributes) ? scope.attributes : [],
             ),
-            scopeName: scopeSpan.scope.name,
-            scopeVersion:
-              "version" in scopeSpan.scope && typeof scopeSpan.scope.version === "string"
-                ? scopeSpan.scope.version
-                : undefined,
+            scopeName: scope.name,
+            scopeVersion: typeof scope.version === "string" ? scope.version : undefined,
             span,
           }),
         );
@@ -715,9 +746,9 @@ function otlpSpanToTraceRecord(input: {
   };
 }
 
-function decodeStatus(input: OtlpSpanStatus): OtlpTraceRecord["status"] {
-  const code = String(input.code);
-  const message = input.message;
+function decodeStatus(input: OtlpSpanStatus | undefined): OtlpTraceRecord["status"] {
+  const code = String(input?.code ?? 0);
+  const message = input?.message;
 
   return {
     code,
@@ -725,16 +756,20 @@ function decodeStatus(input: OtlpSpanStatus): OtlpTraceRecord["status"] {
   };
 }
 
-function decodeEvents(input: ReadonlyArray<OtlpSpanEvent>): ReadonlyArray<TraceRecordEvent> {
-  return input.map((current) => ({
+function decodeEvents(
+  input: ReadonlyArray<OtlpSpanEvent> | undefined,
+): ReadonlyArray<TraceRecordEvent> {
+  return (input ?? []).map((current) => ({
     name: current.name,
     timeUnixNano: current.timeUnixNano,
     attributes: decodeAttributes(current.attributes),
   }));
 }
 
-function decodeLinks(input: ReadonlyArray<OtlpSpanLink>): ReadonlyArray<TraceRecordLink> {
-  return input.flatMap((current) => {
+function decodeLinks(
+  input: ReadonlyArray<OtlpSpanLink> | undefined,
+): ReadonlyArray<TraceRecordLink> {
+  return (input ?? []).flatMap((current) => {
     const traceId = current.traceId;
     const spanId = current.spanId;
     return {
@@ -746,11 +781,11 @@ function decodeLinks(input: ReadonlyArray<OtlpSpanLink>): ReadonlyArray<TraceRec
 }
 
 function decodeAttributes(
-  input: ReadonlyArray<OtlpResource.KeyValue>,
+  input: ReadonlyArray<OtlpResource.KeyValue> | undefined,
 ): Readonly<Record<string, unknown>> {
   const entries: Record<string, unknown> = {};
 
-  for (const attribute of input) {
+  for (const attribute of input ?? []) {
     entries[attribute.key] = decodeValue(attribute.value);
   }
 
@@ -777,7 +812,7 @@ function decodeValue(input: OtlpResource.AnyValue | null | undefined): unknown {
     return input.bytesValue;
   }
   if (input.arrayValue) {
-    return input.arrayValue.values.map((entry) => decodeValue(entry));
+    return (input.arrayValue.values ?? []).map((entry) => decodeValue(entry));
   }
   if (input.kvlistValue) {
     return decodeAttributes(input.kvlistValue.values);
