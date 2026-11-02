@@ -359,6 +359,76 @@ describe("parseCodexLine", () => {
     expect(state.malformedRecords).toBe(1);
   });
 
+  it("bills each interrupted turn's request with the model and tier it was read under", () => {
+    const state = initialCodexScanState();
+    const line = (type: string, second: number, payload: Record<string, unknown>) =>
+      JSON.stringify({ type, timestamp: `2026-08-01T05:17:0${second}.000Z`, payload });
+    const context = (second: number, turn_id: string, model: string) =>
+      line("turn_context", second, { turn_id, model });
+    const tier = (second: number, service_tier: string) =>
+      line("event_msg", second, {
+        type: "thread_settings_applied",
+        thread_settings: { service_tier },
+      });
+    const request = (second: number, usage: unknown) =>
+      line("token_usage_record", second, { usage });
+    const parsed = [
+      line("session_meta", 0, { id: "session-a", model_provider: "openai" }),
+      context(0, "turn-1", "gpt-6-sol"),
+      request(1, counters(100, 20)),
+      counted(counters(100, 20), counters(100, 20)),
+      request(2, counters(150, 10)),
+      tier(3, "priority"),
+      context(3, "turn-2", "gpt-6-astra"),
+      request(4, counters(50, 5)),
+      request(5, counters(30, 5)),
+      tier(6, "default"),
+      context(6, "turn-3", "gpt-6-sol"),
+      request(7, counters(200, 30)),
+      counted(counters(200, 30), counters(530, 70)),
+    ].flatMap((value) => parseCodexRecords(value, state));
+
+    expect(
+      parsed.map((record) => ({
+        tokens: totalTokens(record.totals),
+        model: record.model,
+        speed: record.speed,
+        second: Math.floor(record.timestampMs / 1000) % 60,
+        unresolvedServiceTierTurnId: record.unresolvedServiceTierTurnId,
+      })),
+    ).toEqual([
+      {
+        tokens: 120,
+        model: "gpt-6-sol",
+        speed: "standard",
+        second: 49,
+        unresolvedServiceTierTurnId: "turn-1",
+      },
+      {
+        tokens: 160,
+        model: "gpt-6-sol",
+        speed: "standard",
+        second: 2,
+        unresolvedServiceTierTurnId: "turn-1",
+      },
+      {
+        tokens: 90,
+        model: "gpt-6-astra",
+        speed: "fast",
+        second: 4,
+        unresolvedServiceTierTurnId: undefined,
+      },
+      {
+        tokens: 230,
+        model: "gpt-6-sol",
+        speed: "standard",
+        second: 49,
+        unresolvedServiceTierTurnId: undefined,
+      },
+    ]);
+    expect(state.malformedRecords).toBe(0);
+  });
+
   it("does not bill a context-window estimate or lose the following real request", () => {
     const state = initialCodexScanState();
     parseCodexLine(turnContext, state);

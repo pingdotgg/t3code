@@ -57,7 +57,7 @@ function readCodexTokenUsage(value: unknown): CodexTokenUsage | null {
 // A zeroed baseline rebases the counters, so the sequence start measured against it is forgotten.
 function rebaseCodexUsage(state: CodexScanState, cumulative: CodexTokenUsage) {
   state.lastCumulativeUsage = cumulative;
-  delete state.unreportedUsage;
+  delete state.unreportedRequests;
   if (cumulative.input_tokens + cumulative.output_tokens === 0) delete state.sequenceStartSignature;
 }
 
@@ -67,26 +67,54 @@ function advanceCodexUsage(previous: CodexTokenUsage | null, last: CodexTokenUsa
   );
 }
 
-// An interrupted turn can end before a snapshot reports its last request. Bill it only when the
-// `token_usage_record`s since the previous snapshot explain the whole gap.
-function unreportedRequestUsage(
+const CodexSpeed = Schema.Literals(["standard", "fast", "ultrafast"]);
+
+// What a request is billed as is fixed when it is read, not when a later snapshot reconciles it.
+const CodexUnreportedRequest = Schema.Struct({
+  timestampMs: Schema.Finite,
+  model: Schema.String,
+  turnId: Schema.String,
+  speed: CodexSpeed,
+  sawThreadSettings: Schema.Boolean,
+  usage: CodexTokenUsage,
+});
+type CodexUnreportedRequest = typeof CodexUnreportedRequest.Type;
+type CodexRequestAttribution = Omit<CodexUnreportedRequest, "usage">;
+
+const sameAttribution = (a: CodexRequestAttribution, b: CodexRequestAttribution) =>
+  a.model === b.model &&
+  a.turnId === b.turnId &&
+  a.speed === b.speed &&
+  a.sawThreadSettings === b.sawThreadSettings;
+
+// An interrupted turn can end before a snapshot reports its last request. Bill those requests only
+// when the `token_usage_record`s since the previous snapshot explain the whole gap; `last` is the
+// final one.
+function unreportedRequests(
   previous: CodexTokenUsage | null,
   cumulative: CodexTokenUsage,
   last: CodexTokenUsage,
-  unreported: CodexTokenUsage,
+  pending: readonly CodexUnreportedRequest[] | undefined,
 ) {
   if (
     previous === null ||
-    CODEX_USAGE_FIELDS.some((key) => cumulative[key] - previous[key] !== unreported[key])
+    pending === undefined ||
+    CODEX_USAGE_FIELDS.some(
+      (key) =>
+        cumulative[key] - previous[key] !==
+        pending.reduce((sum, request) => sum + request.usage[key], 0),
+    )
   ) {
     return null;
   }
+  const final = pending.at(-1)!;
   const remainder = readCodexTokenUsage(
-    Object.fromEntries(CODEX_USAGE_FIELDS.map((key) => [key, unreported[key] - last[key]])),
+    Object.fromEntries(CODEX_USAGE_FIELDS.map((key) => [key, final.usage[key] - last[key]])),
   );
-  return remainder === null || remainder.input_tokens + remainder.output_tokens === 0
-    ? null
-    : remainder;
+  if (remainder === null) return null;
+  return [...pending.slice(0, -1), { ...final, usage: remainder }].filter(
+    (request) => request.usage.input_tokens + request.usage.output_tokens > 0,
+  );
 }
 
 /**
@@ -95,22 +123,16 @@ function unreportedRequestUsage(
  */
 export const CodexScanState = Schema.Struct({
   model: Schema.mutableKey(Schema.String),
-  speed: Schema.mutableKey(Schema.Literals(["standard", "fast", "ultrafast"])),
+  speed: Schema.mutableKey(CodexSpeed),
   sessionId: Schema.mutableKey(Schema.String),
   lastUsageSignature: Schema.mutableKey(Schema.NullOr(Schema.String)),
   lastCumulativeUsage: Schema.mutableKey(Schema.NullOr(CodexTokenUsage)),
   // Optional so scan states cached before this field existed stay valid.
   sequenceStartSignature: Schema.mutableKey(Schema.optionalKey(Schema.String)),
-  // `token_usage_record` usage since the last cumulative snapshot, attributed to its first request.
-  unreportedUsage: Schema.mutableKey(
-    Schema.optionalKey(
-      Schema.Struct({
-        usage: CodexTokenUsage,
-        timestampMs: Schema.Finite,
-        model: Schema.String,
-        turnId: Schema.String,
-      }),
-    ),
+  // `token_usage_record` usage since the last cumulative snapshot, one entry per run of records
+  // with the same attribution, timestamped by its first record.
+  unreportedRequests: Schema.mutableKey(
+    Schema.optionalKey(Schema.mutable(Schema.Array(CodexUnreportedRequest))),
   ),
   malformedRecords: Schema.mutableKey(TokenCount),
   sawSessionMeta: Schema.mutableKey(Schema.Boolean),
@@ -212,18 +234,16 @@ function parseCodexRecord(parsed: unknown, state: CodexScanState): readonly Usag
     if (timestampMs === null || usage === null || state.model.length === 0) return [];
     // Copied history is already billed in the parent.
     if (state.suppressingForkCopies) return [];
-    const unreported = state.unreportedUsage;
-    const sum = advanceCodexUsage(unreported?.usage ?? null, usage);
-    if (sum === null) delete state.unreportedUsage;
-    else {
-      state.unreportedUsage = {
-        timestampMs,
-        model: state.model,
-        turnId: state.turnId,
-        ...unreported,
-        usage: sum,
-      };
+    const attribution = codexAttribution(state, timestampMs);
+    const pending = (state.unreportedRequests ??= []);
+    const run = pending.at(-1);
+    if (run === undefined || !sameAttribution(run, attribution)) {
+      pending.push({ ...attribution, usage });
+      return [];
     }
+    const sum = advanceCodexUsage(run.usage, usage);
+    if (sum === null) delete state.unreportedRequests;
+    else pending[pending.length - 1] = { ...run, usage: sum };
     return [];
   }
 
@@ -268,7 +288,7 @@ function parseCodexRecord(parsed: unknown, state: CodexScanState): readonly Usag
   }
 
   const previous = state.lastCumulativeUsage;
-  const unreported = state.unreportedUsage;
+  const pending = state.unreportedRequests;
   // A valid snapshot remains the next baseline even when its paired request is malformed.
   if (cumulative !== null) rebaseCodexUsage(state, cumulative);
   if (last === null || (hasCumulative && cumulative === null)) {
@@ -297,7 +317,7 @@ function parseCodexRecord(parsed: unknown, state: CodexScanState): readonly Usag
   }
 
   const signature = JSON.stringify(last);
-  let unreportedRecord: UsageRecord | undefined;
+  let unreported: readonly CodexUnreportedRequest[] = [];
   if (cumulative !== null) {
     // A session resumed in a new Codex process restarts its cumulative counters at this request.
     const restarted = CODEX_USAGE_FIELDS.every((key) => cumulative[key] === last[key]);
@@ -316,21 +336,12 @@ function parseCodexRecord(parsed: unknown, state: CodexScanState): readonly Usag
           ) !== null
         : CODEX_USAGE_FIELDS.every((key) => cumulative[key] - previous[key] === last[key]);
     if (!restarted && !reconciled) {
-      const bridged =
-        unreported === undefined
-          ? null
-          : unreportedRequestUsage(previous, cumulative, last, unreported.usage);
-      if (unreported === undefined || bridged === null) {
+      const bridged = unreportedRequests(previous, cumulative, last, pending);
+      if (bridged === null) {
         state.malformedRecords += 1;
         return [];
       }
-      unreportedRecord = codexRequestRecord(
-        state,
-        bridged,
-        unreported.timestampMs,
-        unreported.model,
-        unreported.turnId,
-      );
+      unreported = bridged;
     }
     if (restarted) state.sequenceStartSignature = sequenceStart;
   } else {
@@ -345,16 +356,26 @@ function parseCodexRecord(parsed: unknown, state: CodexScanState): readonly Usag
   }
   state.lastUsageSignature = signature;
 
-  const request = codexRequestRecord(state, last, timestampMs, state.model, state.turnId);
-  return unreportedRecord === undefined ? [request] : [unreportedRecord, request];
+  return [
+    ...unreported.map((request) => codexRequestRecord(state, request.usage, request)),
+    codexRequestRecord(state, last, codexAttribution(state, timestampMs)),
+  ];
+}
+
+function codexAttribution(state: CodexScanState, timestampMs: number): CodexRequestAttribution {
+  return {
+    timestampMs,
+    model: state.model,
+    turnId: state.turnId,
+    speed: state.speed,
+    sawThreadSettings: state.sawThreadSettings,
+  };
 }
 
 function codexRequestRecord(
   state: CodexScanState,
   usage: CodexTokenUsage,
-  timestampMs: number,
-  model: string,
-  turnId: string,
+  { timestampMs, model, turnId, speed, sawThreadSettings }: CodexRequestAttribution,
 ): UsageRecord {
   const inputTokens = usage.input_tokens;
   const cachedInputTokens = usage.cached_input_tokens;
@@ -378,8 +399,8 @@ function codexRequestRecord(
     sessionId: state.sessionId,
     totals,
     reportedCostUsd: null,
-    speed: state.speed,
-    ...(!state.sawThreadSettings &&
+    speed,
+    ...(!sawThreadSettings &&
     state.modelProvider === "openai" &&
     state.sessionId.length > 0 &&
     turnId.length > 0

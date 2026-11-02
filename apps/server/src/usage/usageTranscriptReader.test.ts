@@ -434,7 +434,12 @@ describe("readTranscriptRecords resume", () => {
         request(2, 3, "2026-11-02T10:00:05.000Z", usage(200, 30)),
         tokenCount("2026-11-02T10:00:05.001Z", usage(200, 30), usage(450, 60)),
       ];
-      await NodeFSP.writeFile(path, lines.map((line) => `${JSON.stringify(line)}\n`).join(""));
+      // Lines longer than a read chunk take the projected path when streaming.
+      const padding = "x".repeat(256 * 1024);
+      await NodeFSP.writeFile(
+        path,
+        lines.map((line) => `${JSON.stringify({ padding, ...line })}\n`).join(""),
+      );
 
       const result = await readTranscriptRecords(path, TEST_FORMATS.codex, undefined, options);
       assert.isNotNull(result);
