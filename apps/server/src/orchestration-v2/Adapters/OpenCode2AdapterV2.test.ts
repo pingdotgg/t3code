@@ -583,6 +583,35 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
     }).pipe(Effect.scoped),
   );
 
+  // regression: #29289 Claude weekly limits through claude-agent lost their usage-limit reset
+  it.effect(
+    "classifies a Claude weekly limit as a usage limit that resets at its reported time",
+    () =>
+      Effect.gen(function* () {
+        const message =
+          "You've hit your weekly limit · resets 9pm (Europe/Paris) Resets at 2026-11-02T20:00:00.000Z.";
+        const { runtime, thread } = yield* resumed([
+          out("session.prompt", { sessionID: SESSION, text: "<any>" }),
+          promptAccepted,
+          event("session.execution.failed", {
+            sessionID: SESSION,
+            error: { type: "provider.unknown", message },
+          }),
+        ]);
+        const terminal = yield* terminalOf(runtime).pipe(Effect.forkScoped);
+        yield* runtime.startTurn(turnInput(thread));
+        const ended = yield* Fiber.join(terminal);
+        assert.equal(ended?.status, "failed");
+        assert.deepEqual(ended?.failure, {
+          class: "usage_limit",
+          code: "provider.unknown",
+          message,
+          retryable: null,
+          resetAt: "2026-11-02T20:00:00.000Z",
+        });
+      }).pipe(Effect.scoped),
+  );
+
   it.effect("ends the turn when its terminal event is one this build cannot decode", () =>
     Effect.gen(function* () {
       const { runtime, thread } = yield* resumed([
