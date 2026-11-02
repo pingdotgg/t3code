@@ -91,8 +91,15 @@ const make = Effect.gen(function* () {
     const providerThread = projection.providerThreads.find(
       (candidate) => candidate.id === providerThreadId,
     );
-    // Archiving revoked the thread's MCP credential; loading it for an app would issue a new one.
-    if (projection.thread.archivedAt !== null || providerThread?.providerSessionId == null) {
+    const { thread } = projection;
+    // Loading the thread for an app attaches it and issues its MCP credential, which would undo
+    // an archive or delete revocation or replace the credential of the provider it switched to.
+    if (
+      thread.archivedAt !== null ||
+      thread.deletedAt !== null ||
+      thread.activeProviderThreadId !== providerThreadId ||
+      providerThread?.providerSessionId == null
+    ) {
       return yield* fail(input.threadId, "session-stopped");
     }
     const runtime = Option.getOrUndefined(
