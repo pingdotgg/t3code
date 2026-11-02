@@ -1737,6 +1737,14 @@ body {
   overscroll-behavior: none;
 }
 
+/* Chromium gates every scroller's rubber-band on the document's overscroll-behavior. */
+@media (pointer: fine) {
+  html,
+  body {
+    overscroll-behavior-y: auto;
+  }
+}
+
 body {
   height: 100%;
   overflow: hidden;
