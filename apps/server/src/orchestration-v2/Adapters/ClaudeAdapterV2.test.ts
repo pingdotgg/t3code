@@ -8373,6 +8373,65 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           }),
         );
         yield* harness.awaitTerminal(1);
+        yield* TestClock.adjust("10 minutes");
+        assert.lengthOf(harness.terminalEvents(), 1);
+        assert.equal(harness.terminalEvents()[0]?.status, "completed");
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+        ),
+      ),
+    ),
+  );
+
+  it.effect("fails a turn whose API retries outlast the retry budget", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const harness = yield* makeWakeHarnessWithOptions({
+          close: (sdkMessages) => Queue.shutdown(sdkMessages),
+        });
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make("attempt-claude-retry-budget"),
+            text: "Summarize the repo.",
+            attachments: [],
+          }),
+        );
+        yield* Queue.offer(
+          harness.sdkMessages,
+          claudeSdkFrame({
+            type: "system",
+            subtype: "api_retry",
+            attempt: 1,
+            max_retries: 10,
+            retry_delay_ms: 600,
+            error_status: 503,
+            error: "server_error",
+            uuid: "00000000-0000-4000-8000-000000000211",
+            session_id: WAKE_NATIVE_SESSION,
+          }),
+        );
+        yield* harness.until(() =>
+          harness.events.some(
+            (event) =>
+              event.type === "turn_item.updated" &&
+              event.turnItem.type === "error" &&
+              event.turnItem.status === "running",
+          ),
+        );
+        // The next attempt hangs: no frame arrives until the budget stops the turn.
+        yield* TestClock.adjust("9 minutes");
+        assert.lengthOf(harness.terminalEvents(), 0);
+        yield* TestClock.adjust("1 minute");
+        const terminal = yield* Queue.take(harness.terminalReceipts);
+        assert.equal(terminal.status, "failed");
+        if (terminal.status !== "failed") return;
+        assert.equal(terminal.failure.code, "api_error_503");
+        assert.equal(terminal.retry?.attempt, 1);
+        assert.lengthOf(harness.terminalEvents(), 1);
       }).pipe(
         Effect.provide(
           Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),

@@ -140,6 +140,7 @@ import {
   makeProviderFailure,
   makeProviderFailureTurnItem,
   makeProviderRetryTurnItem,
+  PROVIDER_RETRY_BUDGET_MS,
 } from "@t3tools/provider-core/server/failure";
 import { turnScopedSelectionTransition } from "@t3tools/provider-core/server/selectionTransition";
 import {
@@ -156,9 +157,6 @@ import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter"
 
 const CODEX_PROVIDER = ProviderDriverKind.make("codex");
 const CODEX_CAPACITY_MAX_RETRIES = 5;
-// Codex waits for the network without limit, which suits its own terminal but
-// leaves unattended T3 turns running forever. Fail them after this long.
-const CODEX_CONNECTION_RETRY_BUDGET_MS = 10 * 60 * 1000;
 export const CODEX_DRIVER_KIND = CODEX_PROVIDER;
 export const CODEX_DEFAULT_INSTANCE_ID = defaultInstanceIdForDriver(CODEX_DRIVER_KIND);
 
@@ -1126,7 +1124,7 @@ function withCodexManagedFailure(
 interface ActiveCodexTurnContext {
   hookStopReason?: string;
   capacityRetryAttempt?: number;
-  connectionRetryExhausted?: boolean;
+  retryBudgetExhausted?: boolean;
   capacityRetryPending?: Deferred.Deferred<ActiveCodexTurnContext | undefined>;
   closedCommandItemIds?: ReadonlySet<string>;
   latestProviderFailure?: {
@@ -4710,27 +4708,32 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               driver: CODEX_PROVIDER,
               turnItem: codexRetryTurnItem(context, state, "running", updatedAt),
             });
-            // Bounded retries report "n/max"; only the open-ended network wait lacks it.
-            if (
-              progress === null &&
-              context.connectionRetryExhausted !== true &&
-              DateTime.toEpochMillis(updatedAt) - DateTime.toEpochMillis(state.startedAt) >=
-                CODEX_CONNECTION_RETRY_BUDGET_MS
-            ) {
-              context.connectionRetryExhausted = true;
-              context.latestProviderFailure = {
-                nativeMessage: payload.error.message,
-                nativeCode: code,
-                failure,
-              };
-              yield* client
-                .request("turn/interrupt", { threadId: payload.threadId, turnId: payload.turnId })
-                .pipe(
-                  Effect.catch((cause) =>
-                    Effect.logWarning("orchestration-v2.codex-retry-budget-stop-failed", { cause }),
-                  ),
-                  Effect.forkIn(scope),
-                );
+            if (previous === undefined) {
+              // Codex waits for the network without limit; stop the turn once this
+              // retry window outlasts the budget, even if no further notice arrives.
+              yield* Effect.sleep(PROVIDER_RETRY_BUDGET_MS).pipe(
+                Effect.andThen(
+                  Effect.gen(function* () {
+                    const current = (yield* Ref.get(providerRetries)).get(context.providerTurnId);
+                    if (current?.startedAt !== state.startedAt || context.retryBudgetExhausted)
+                      return;
+                    context.retryBudgetExhausted = true;
+                    context.latestProviderFailure = {
+                      nativeMessage: current.nativeMessage,
+                      nativeCode: current.nativeCode,
+                      failure: current.failure,
+                    };
+                    yield* client.request("turn/interrupt", {
+                      threadId: payload.threadId,
+                      turnId: payload.turnId,
+                    });
+                  }),
+                ),
+                Effect.catch((cause) =>
+                  Effect.logWarning("orchestration-v2.codex-retry-budget-stop-failed", { cause }),
+                ),
+                Effect.forkIn(scope),
+              );
             }
           }).pipe(Effect.orDie),
         );
@@ -6533,7 +6536,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               return;
             }
             const nativeStatus = mapCodexTurnStatus(payload.turn.status);
-            const status = context.connectionRetryExhausted
+            const status = context.retryBudgetExhausted
               ? "failed"
               : nativeStatus === "completed" &&
                   (yield* Ref.get(interruptingNativeTurns)).has(payload.turn.id)

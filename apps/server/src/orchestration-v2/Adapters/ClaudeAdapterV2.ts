@@ -198,6 +198,7 @@ import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import {
   makeProviderFailure,
   makeProviderRetryTurnItem,
+  PROVIDER_RETRY_BUDGET_MS,
 } from "@t3tools/provider-core/server/failure";
 import { turnScopedSelectionTransition } from "@t3tools/provider-core/server/selectionTransition";
 import { providerMessageTextWithAttachmentPaths } from "@t3tools/provider-core/server/attachmentPrompt";
@@ -4020,6 +4021,7 @@ function formatClaudeUsageLimitWait(waitMs: number): string {
 }
 
 interface ActiveClaudeTurnContext {
+  retryBudgetFailure?: OrchestrationV2ProviderFailure;
   readonly queryPolicy: ClaudeRuntimeQueryPolicy;
   readonly input: ProviderAdapter.ProviderAdapterV2TurnInput;
   readonly nativeThreadId: string;
@@ -7428,7 +7430,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           subagentToolCalls.clear();
         });
 
-        const finalizeActiveTurn = Effect.fnUntraced(function* (input: {
+        const finalizeActiveTurn = Effect.fnUntraced(function* (requested: {
           readonly context: ActiveClaudeTurnContext;
           readonly status: Extract<
             OrchestrationV2ProviderTurn["status"],
@@ -7439,6 +7441,12 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           readonly threadDisposition?: "reusable" | "broken";
           readonly result?: SDKResultMessage;
         }) {
+          // A turn stopped by the retry budget settles as failed with the retry's error.
+          const retryBudgetFailure = requested.context.retryBudgetFailure;
+          const input =
+            requested.status === "interrupted" && retryBudgetFailure !== undefined
+              ? { ...requested, status: "failed" as const, failure: retryBudgetFailure }
+              : requested;
           yield* reasoningDeltas.flushTurn(input.context.nativeTurnId);
           if (input.context.compaction?.status === "running") {
             const reason = input.result?.subtype === "success" ? input.result.result.trim() : "";
@@ -8830,6 +8838,32 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 updatedAt,
               }),
             });
+            if (previous === undefined) {
+              // A hung request can take many minutes per attempt; stop the turn once
+              // this retry window outlasts the budget, whatever the attempt count.
+              yield* Effect.sleep(PROVIDER_RETRY_BUDGET_MS).pipe(
+                Effect.andThen(
+                  Effect.gen(function* () {
+                    const current = (yield* Ref.get(providerRetries)).get(context.providerTurnId);
+                    if (
+                      current?.startedAt !== state.startedAt ||
+                      (yield* Ref.get(activeTurn)) !== context ||
+                      context.retryBudgetFailure !== undefined
+                    )
+                      return;
+                    context.retryBudgetFailure = current.failure;
+                    yield* interruptTurn({
+                      providerThread: context.input.providerThread,
+                      providerTurnId: context.providerTurnId,
+                    });
+                  }),
+                ),
+                Effect.catch((cause) =>
+                  Effect.logWarning("orchestration-v2.claude-retry-budget-stop-failed", { cause }),
+                ),
+                Effect.forkIn(sessionScope),
+              );
+            }
             return;
           }
 

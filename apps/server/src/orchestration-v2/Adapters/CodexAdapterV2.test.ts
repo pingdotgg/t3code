@@ -3164,7 +3164,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
     ),
   );
 
-  it.effect("fails a turn whose network retries outlast the retry budget", () =>
+  it.effect("fails a turn that waits for the network past the retry budget", () =>
     Effect.scoped(
       Effect.gen(function* () {
         const scenario = "codex-connection-retry-budget";
@@ -3194,7 +3194,6 @@ describe("CodexAdapterV2 post-settle continuation", () => {
             ...codexReplayPreamble({ nativeThreadId, nativeTurnId, prompt: "Summarize the repo." }),
             networkWait("error/network-wait-1"),
             networkWait("error/network-wait-2", 5 * 60 * 1000),
-            networkWait("error/network-wait-3", 5 * 60 * 1000),
             {
               type: "expect_outbound",
               label: "turn/interrupt",
@@ -3248,7 +3247,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         if (terminal?.status !== "failed") return;
         assert.equal(terminal.failure.message, "Connection failed: error sending request");
         assert.equal(terminal.failure.class, "transport_error");
-        assert.equal(terminal.retry?.attempt, 3);
+        assert.equal(terminal.retry?.attempt, 2);
       }).pipe(
         Effect.provide(
           Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
