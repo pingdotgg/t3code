@@ -6,7 +6,7 @@ import {
   VcsProcessSpawnError,
 } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
-import { newProjectFolderName } from "@t3tools/shared/path";
+import { newProjectFolderName, normalizeProjectPathForComparison } from "@t3tools/shared/path";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
@@ -352,13 +352,20 @@ const make = Effect.gen(function* () {
   const defaultNamedProjectsRoot = path.resolve(config.baseDir, "projects");
   const resolveNamedProjectsRoot: ManagedProjectFolders["Service"]["resolveNamedProjectsRoot"] = (
     settings,
-  ) =>
-    resolveDirectorySetting(
+  ) => {
+    const configured = resolveDirectorySetting(
       settings.newProjectsDirectory,
       defaultNamedProjectsRoot,
       path,
       homeDirectory,
-    ) ?? defaultNamedProjectsRoot;
+    );
+    // Another spelling of the default folder (case on Windows) is still the default.
+    return configured === null ||
+      normalizeProjectPathForComparison(configured) ===
+        normalizeProjectPathForComparison(defaultNamedProjectsRoot)
+      ? defaultNamedProjectsRoot
+      : configured;
+  };
 
   const claimNamedFolder = Effect.fn("ManagedProjectFolders.claimNamedFolder")(function* (
     name: string,
