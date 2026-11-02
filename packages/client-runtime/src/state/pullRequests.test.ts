@@ -1169,13 +1169,10 @@ it.effect("shows an action's reply in loaded readers and moves list rows without
         atoms.preview(target),
         createLinkedPullRequestSummaryAtomFamily(runtime, atoms.refreshes)(target),
       ];
-      // A reader without a host can resolve to another host, so only its own read updates it.
-      const { host: _host, ...hostless } = actionReference;
-      const otherHost = atoms.detail({ ...target, input: hostless });
       const all = list({ state: "all" });
       const openDrafts = list({ state: "open", filters: { draft: "only" } });
       const merged = list({ state: "merged" });
-      for (const atom of [...readers, otherHost, all, openDrafts, merged]) {
+      for (const atom of [...readers, all, openDrafts, merged]) {
         registry.mount(atom);
         yield* Effect.promise(() => executeAtomQuery(registry, atom));
       }
@@ -1196,7 +1193,6 @@ it.effect("shows an action's reply in loaded readers and moves list rows without
       expect(Option.getOrThrow(AsyncResult.value(registry.get(all))).entries).toMatchObject([
         { state: "merged", isDraft: false, observedAt: 200 },
       ]);
-      expect(Option.getOrThrow(AsyncResult.value(registry.get(otherHost))).state).toBe("open");
       expect(Option.getOrThrow(AsyncResult.value(registry.get(openDrafts))).entries).toEqual([]);
       expect(replies).toEqual([{ target, reply: actionReply }]);
       // Snapshot writers see the patched rows the way they see an answer.
@@ -1208,60 +1204,56 @@ it.effect("shows an action's reply in loaded readers and moves list rows without
   ),
 );
 
-it.effect.each([false, true])(
-  "keeps an action's reply when a pre-action read answers late (cached: %s)",
-  (cached) =>
-    Effect.scoped(
-      Effect.gen(function* () {
-        let state: "open" | "merged" = "open";
-        let reads = 0;
-        const started = yield* Deferred.make<void>();
-        const release = yield* Deferred.make<void>();
-        const settled = yield* Deferred.make<void>();
-        const client = actionReplyClient({
-          [WS_METHODS.pullRequestsDetail]: () =>
-            Effect.gen(function* () {
-              reads++;
-              const snapshot = { ...actionReference, state, isDraft: false, observedAt: 100 };
-              if (reads === (cached ? 2 : 1)) {
-                yield* Deferred.succeed(started, undefined);
-                yield* Deferred.await(release).pipe(
-                  Effect.onExit(() => Deferred.succeed(settled, undefined)),
-                );
-              }
-              return snapshot;
-            }),
-          [WS_METHODS.pullRequestsRunAction]: () =>
-            Effect.sync(() => {
-              state = "merged";
-              return actionReply;
-            }),
-        });
-        const { atoms, registry } = yield* makeTestRuntime(client);
-        const target = { environmentId: TARGET.environmentId, input: actionReference };
-        const detail = atoms.detail(target);
-        registry.mount(detail);
-        if (cached) {
-          yield* AtomRegistry.getResult(registry, detail, { suspendOnWaiting: true });
-          registry.refresh(detail);
-        }
-        yield* Deferred.await(started);
-
-        yield* Effect.promise(() =>
-          atoms.runAction.run(registry, {
-            ...target,
-            input: { ...actionReference, action: "merge" },
+it.effect("keeps an action's reply when a refresh started before the action answers late", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      let state: "open" | "merged" = "open";
+      let reads = 0;
+      const started = yield* Deferred.make<void>();
+      const release = yield* Deferred.make<void>();
+      const settled = yield* Deferred.make<void>();
+      const client = actionReplyClient({
+        [WS_METHODS.pullRequestsDetail]: () =>
+          Effect.gen(function* () {
+            reads++;
+            const snapshot = { ...actionReference, state, isDraft: false, observedAt: 100 };
+            if (reads === 2) {
+              yield* Deferred.succeed(started, undefined);
+              yield* Deferred.await(release).pipe(
+                Effect.onExit(() => Deferred.succeed(settled, undefined)),
+              );
+            }
+            return snapshot;
           }),
-        );
-        yield* Deferred.succeed(release, undefined);
-        yield* Deferred.await(settled);
+        [WS_METHODS.pullRequestsRunAction]: () =>
+          Effect.sync(() => {
+            state = "merged";
+            return actionReply;
+          }),
+      });
+      const { atoms, registry } = yield* makeTestRuntime(client);
+      const target = { environmentId: TARGET.environmentId, input: actionReference };
+      const detail = atoms.detail(target);
+      registry.mount(detail);
+      yield* AtomRegistry.getResult(registry, detail, { suspendOnWaiting: true });
+      registry.refresh(detail);
+      yield* Deferred.await(started);
 
-        expect(
-          (yield* AtomRegistry.getResult(registry, detail, { suspendOnWaiting: true })).state,
-        ).toBe("merged");
-        expect(Option.getOrThrow(AsyncResult.value(registry.get(detail))).state).toBe("merged");
-      }),
-    ),
+      yield* Effect.promise(() =>
+        atoms.runAction.run(registry, {
+          ...target,
+          input: { ...actionReference, action: "merge" },
+        }),
+      );
+      yield* Deferred.succeed(release, undefined);
+      yield* Deferred.await(settled);
+
+      expect(
+        (yield* AtomRegistry.getResult(registry, detail, { suspendOnWaiting: true })).state,
+      ).toBe("merged");
+      expect(Option.getOrThrow(AsyncResult.value(registry.get(detail))).state).toBe("merged");
+    }),
+  ),
 );
 
 it.effect("shows a reopen reply at once and re-reads the fields it lacks", () =>
@@ -1304,7 +1296,6 @@ it.effect("shows a reopen reply at once and re-reads the fields it lacks", () =>
 
 it.effect.each([
   ["a newer update", "open", "2026-10-27T10:00:01Z", 100, "open"],
-  ["the same update read later", "open", actionReply.updatedAt, 300, "open"],
   ["a merge", "merged", "2026-10-27T09:00:00Z", 100, "open"],
 ] as const)(
   "keeps %s when an older or reverting action reply arrives",

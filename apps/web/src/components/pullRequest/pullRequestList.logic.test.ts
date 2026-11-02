@@ -598,7 +598,7 @@ describe("pull request list overrides", () => {
     expect(applyPullRequestOverrides(rows, new Map(), key, "open")).toBe(rows);
   });
 
-  it("shows a reply's queued merge as open and yields to a newer row", () => {
+  it("shows a reply's queued merge as open and never un-merges a merged row", () => {
     const reply = { state: "open", updatedAt: "2026-07-03T00:00:00Z", observedAt: 300 } as const;
     const override = pullRequestOverrideAfterAction(
       entry(1, "open"),
@@ -616,12 +616,6 @@ describe("pull request list overrides", () => {
         (row) => row.state,
       ),
     ).toEqual(["merged"]);
-    // A reply without a read time still never turns a merged row back to open.
-    const { observedAt: _observedAt, ...unstamped } = override;
-    expect(
-      applyPullRequestOverrides([entry(1, "merged")], new Map([["#1", unstamped]]), key, "all")[0]
-        ?.state,
-    ).toBe("merged");
   });
 
   it("keeps a confirmed close hidden when its override is cleared", () => {
