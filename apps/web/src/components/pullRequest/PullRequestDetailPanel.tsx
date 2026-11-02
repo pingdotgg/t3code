@@ -1513,7 +1513,11 @@ export function PullRequestDetailPanel({
                 inlineConfirm={inlineConfirm}
                 showCheckout={context === "page"}
                 checkoutMenuItems={checkoutMenuItems}
-                onEditTitle={() => setTitleScope({ pullRequestKey, text: detail.title })}
+                onEditTitle={() => {
+                  scrollerByTab.current[tab]?.scrollTo({ top: 0 });
+                  setCondensedByTab((previous) => ({ ...previous, [tab]: false }));
+                  setTitleScope({ pullRequestKey, text: detail.title });
+                }}
                 repositoryUrl={repositoryUrl}
                 checkoutCommand={checkoutCommand}
               />
