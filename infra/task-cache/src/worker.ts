@@ -1,6 +1,6 @@
-import * as Axiom from "alchemy/Axiom";
+import * as Axiom from "@alchemy.run/axiom";
 import { Observability } from "./observability.ts";
-import * as Cloudflare from "alchemy/Cloudflare";
+import * as Cloudflare from "@alchemy.run/cloudflare";
 import * as Config from "effect/Config";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -8,6 +8,7 @@ import * as Redacted from "effect/Redacted";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import * as Admission from "./Admission.ts";
 import * as Cache from "./Cache.ts";
+import * as Cleanup from "./Cleanup.ts";
 import * as NativeClients from "./NativeClients.ts";
 import * as Savings from "./Savings.ts";
 import type { ProtocolBindings } from "./protocolTypes.ts";
@@ -42,7 +43,7 @@ export const layer = Worker.make(
       return Cache.Bindings.of({
         INDEX: yield* database.raw,
         ARTIFACTS: (yield* artifacts.raw) as unknown as ProtocolBindings["ARTIFACTS"],
-        GC_BATCH_SIZE: "16",
+        GC_BATCH_SIZE: String(Cleanup.batchSize),
         developerKeys: Redacted.value(developerKeys),
         readerKeys: Redacted.value(readerKeys),
         readLimit: yield* reads.raw,
@@ -76,12 +77,8 @@ export const layer = Worker.make(
         savingsLayer,
       ]),
     );
-    yield* Cloudflare.Workers.cron("*/5 * * * *", () =>
-      Cache.Cache.pipe(
-        Effect.flatMap((cache) => cache.cleanup),
-        Effect.provide(runtime),
-        Effect.orDie,
-      ),
+    yield* Cloudflare.Workers.cron("* * * * *", () =>
+      Cleanup.run().pipe(Effect.provide(runtime), Effect.orDie),
     );
     yield* Cloudflare.Workers.cron("0 * * * *", () =>
       Savings.Savings.pipe(

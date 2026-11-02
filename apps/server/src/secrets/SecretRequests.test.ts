@@ -172,10 +172,9 @@ it.effect("two concurrent uses of one ref hand the value out once", () =>
         answer: { type: "save", secret: "ghp_secret" },
       });
       const ref = Option.getOrThrow(yield* service.savedRef({ threadId, turnItemId }));
-      const results = yield* Effect.all(
-        [service.consume({ ref, projectId }), service.consume({ ref, projectId })].map(
-          Effect.result,
-        ),
+      const results = yield* Effect.forEach(
+        [service.consume({ ref, projectId }), service.consume({ ref, projectId })],
+        Effect.result,
         { concurrency: "unbounded" },
       );
       assert.deepEqual(results.map((result) => result._tag).toSorted(), ["Failure", "Success"]);

@@ -17,11 +17,21 @@ const MAX_READ_BYTES = 256 * 1024;
 export function claudeTaskOutputRoot(
   environment: Readonly<Record<string, string | undefined>> | undefined,
   path: Path.Path,
+  cwd: string | null,
+  platform: NodeJS.Platform,
 ): string | undefined {
   const uid = process.getuid?.();
   if (uid === undefined) return undefined;
-  const base = environment?.CLAUDE_CODE_TMPDIR?.trim() || "/tmp";
-  return path.join(base, `claude-${uid}`);
+  // Claude Code's macOS build falls back to /tmp and ignores the TMPDIR that
+  // launchd always sets. Its other builds use `os.tmpdir()`, which reads these
+  // from the environment it was launched with. A relative value is relative
+  // to Claude's working directory, not this server's.
+  const fallback =
+    platform === "darwin"
+      ? "/tmp"
+      : environment?.TMPDIR || environment?.TMP || environment?.TEMP || "/tmp";
+  const base = environment?.CLAUDE_CODE_TMPDIR?.trim() || fallback;
+  return path.resolve(cwd ?? ".", base, `claude-${uid}`);
 }
 
 const locate = Effect.fn("ClaudeTaskOutputTail.locate")(function* (input: {
@@ -56,9 +66,12 @@ export const tailClaudeTaskOutput = Effect.fn("ClaudeTaskOutputTail.tail")(funct
   readonly onChunk: (chunk: string) => Effect.Effect<void>;
 }) {
   const fileSystem = yield* FileSystem.FileSystem;
-  const pause = Effect.raceFirst(
-    Effect.sleep(CLAUDE_TASK_OUTPUT_POLL_MS).pipe(Effect.as(false)),
-    Deferred.await(input.stop).pipe(Effect.as(true)),
+  const pause = Deferred.await(input.stop).pipe(
+    Effect.as(true),
+    Effect.timeoutOrElse({
+      duration: CLAUDE_TASK_OUTPUT_POLL_MS,
+      orElse: () => Effect.succeed(false),
+    }),
   );
   let file = Option.none<string>();
   for (let attempt = 0; Option.isNone(file); attempt += 1) {

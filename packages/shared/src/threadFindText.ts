@@ -21,7 +21,10 @@ import {
   resolveMarkdownFileLinkTarget,
 } from "./markdownLinks.ts";
 import { upgradeLegacyContextMessage } from "./composerContextLegacy.ts";
-import { parseComposerContextHref } from "./composerContextReferences.ts";
+import {
+  isAttachmentOnlyBootstrapPrompt,
+  parseComposerContextHref,
+} from "./composerContextReferences.ts";
 import { assistantCitationLabel, parseAssistantCitationHref } from "./assistantCitations.ts";
 import type { OrchestrationV2ConversationMessage } from "@t3tools/contracts";
 import { proposedPlanTitle, stripDisplayedPlanMarkdown } from "./proposedPlanText.ts";
@@ -216,6 +219,8 @@ export function searchableMessageSegments(
   skills: readonly InlineSkill[] = [],
 ): readonly string[] | null {
   if (message.role === "user") {
+    // Clients hide this prompt, so find must not match text nobody can see.
+    if (isAttachmentOnlyBootstrapPrompt(message.text)) return [];
     const text = message.context ? message.text : upgradeLegacyContextMessage(message.text).text;
     return markdownThreadFindText(text, true, cwd, skills);
   }

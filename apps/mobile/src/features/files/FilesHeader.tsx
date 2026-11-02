@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
-import { BackHandler, Keyboard, type TextInputInstance, View } from "react-native";
+import { useRef, useState, type ReactNode } from "react";
+import { Keyboard, type TextInputInstance, View } from "react-native";
 
 import {
   AndroidHeaderIconButton,
@@ -8,6 +8,7 @@ import {
 import { AndroidAnchoredMenu } from "../../components/ui/AndroidAnchoredMenu";
 import { SearchField } from "../../components/ui/SearchField";
 import { useToolbarLayout } from "../../components/ui/useToolbarLayout";
+import { useHardwareBack } from "../../lib/backHandler";
 
 export function FilesHeader(props: {
   readonly projectName: string;
@@ -22,20 +23,16 @@ export function FilesHeader(props: {
   const [searchOpen, setSearchOpen] = useState(false);
   const searching = searchOpen || props.searchQuery.length > 0;
   const { onSearchQueryChange } = props;
-  const closeSearch = useCallback(() => {
+  const closeSearch = () => {
     onSearchQueryChange("");
     setSearchOpen(false);
     Keyboard.dismiss();
-  }, [onSearchQueryChange]);
+  };
 
-  useEffect(() => {
-    if (!searching) return;
-    const subscription = BackHandler.addEventListener("hardwareBackPress", () => {
-      closeSearch();
-      return true;
-    });
-    return () => subscription.remove();
-  }, [closeSearch, searching]);
+  useHardwareBack(searching, () => {
+    closeSearch();
+    return true;
+  });
 
   return (
     <View>

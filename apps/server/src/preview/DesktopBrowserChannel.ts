@@ -49,6 +49,8 @@ export class DesktopBrowserChannel extends Context.Service<
       key: DesktopTabKey,
       pointer: { readonly phase: "move" | "click"; readonly x: number; readonly y: number },
     ) => Effect.Effect<void>;
+    /** Never fails. A failed write means a broken channel; the next backend starts with no turns. */
+    readonly turn: (threadId: string, active: boolean) => Effect.Effect<void>;
   }
 >()("t3/preview/DesktopBrowserChannel") {}
 
@@ -64,12 +66,23 @@ const make = Effect.gen(function* () {
   if (inputFd === undefined || controlFd === undefined) {
     return DesktopBrowserChannel.of({
       available: false,
-      awaitAttached: () => Effect.succeed(false),
+      awaitAttached: Effect.fn("DesktopBrowserChannel.awaitAttached")(function () {
+        return Effect.succeed(false);
+      }),
       detached: Stream.empty,
       attached: Stream.empty,
-      isAttached: () => Effect.succeed(false),
-      endpoint: () => Effect.die("No desktop app is attached to this server."),
-      pointer: () => Effect.void,
+      isAttached: Effect.fn("DesktopBrowserChannel.isAttached")(function () {
+        return Effect.succeed(false);
+      }),
+      endpoint: Effect.fn("DesktopBrowserChannel.endpoint")(function () {
+        return Effect.die("No desktop app is attached to this server.");
+      }),
+      turn: Effect.fn("DesktopBrowserChannel.turn")(function () {
+        return Effect.void;
+      }),
+      pointer: Effect.fn("DesktopBrowserChannel.pointer")(function () {
+        return Effect.void;
+      }),
     });
   }
 
@@ -182,8 +195,8 @@ const make = Effect.gen(function* () {
 
   return DesktopBrowserChannel.of({
     available: true,
-    awaitAttached: (key, timeout) =>
-      Effect.scoped(
+    awaitAttached: Effect.fn("DesktopBrowserChannel.awaitAttached")(function (key, timeout) {
+      return Effect.scoped(
         Effect.gen(function* () {
           const subscription = yield* PubSub.subscribe(changes);
           if (attachedTabs.has(keyOf(key))) return true;
@@ -195,7 +208,8 @@ const make = Effect.gen(function* () {
             Effect.map((result) => Option.getOrElse(result, () => false)),
           );
         }),
-      ),
+      );
+    }),
     detached: Stream.fromPubSub(changes).pipe(
       Stream.filter((change) => !change.attached),
       Stream.map((change) => change.key),
@@ -204,9 +218,16 @@ const make = Effect.gen(function* () {
       Stream.filter((change) => change.attached),
       Stream.map((change) => change.key),
     ),
-    isAttached: (key) => Effect.sync(() => attachedTabs.has(keyOf(key))),
+    isAttached: Effect.fn("DesktopBrowserChannel.isAttached")(function (key) {
+      return Effect.sync(() => attachedTabs.has(keyOf(key)));
+    }),
     endpoint,
-    pointer: (key, pointer) => command({ type: "pointer", ...key, ...pointer }),
+    turn: Effect.fn("DesktopBrowserChannel.turn")(function (threadId, active) {
+      return command({ type: "turn", threadId, active });
+    }),
+    pointer: Effect.fn("DesktopBrowserChannel.pointer")(function (key, pointer) {
+      return command({ type: "pointer", ...key, ...pointer });
+    }),
   });
 });
 

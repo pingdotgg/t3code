@@ -13,6 +13,9 @@ import {
   type EnvironmentId,
   type PullRequestActor,
   type PullRequestActionInput,
+  type PullRequestListInput,
+  type PullRequestListStatsInput,
+  type PullRequestListStatsResult,
   type PullRequestDetail,
   type PullRequestDiffInput,
   type PullRequestRef,
@@ -36,6 +39,7 @@ import {
   createEnvironmentRpcQueryAtomFamily,
   createEnvironmentRpcSubscriptionAtomFamily,
   createEnvironmentQueryAtomFamily,
+  type QueryAnswerHandler,
 } from "./runtime.ts";
 import { createPullRequestRouter } from "./pullRequestRouting.ts";
 import * as PullRequestDiffLoader from "./pullRequestDiffHttp.ts";
@@ -111,7 +115,7 @@ function updateCached<A, E>(
   registry.update(atom, AsyncResult.map(update));
 }
 
-function createPullRequestRefreshAtomFamily<R, E>(
+function makePullRequestRefreshAtomFamily<R, E>(
   runtime: Atom.AtomRuntime<EnvironmentRegistry | R, E>,
 ) {
   return createEnvironmentRpcSubscriptionAtomFamily(runtime, {
@@ -120,9 +124,25 @@ function createPullRequestRefreshAtomFamily<R, E>(
   });
 }
 
+const refreshFamiliesByRuntime = new WeakMap<
+  object,
+  ReturnType<typeof makePullRequestRefreshAtomFamily>
+>();
+
+function createPullRequestRefreshAtomFamily<R, E>(
+  runtime: Atom.AtomRuntime<EnvironmentRegistry | R, E>,
+): ReturnType<typeof makePullRequestRefreshAtomFamily<R, E>> {
+  const existing = refreshFamiliesByRuntime.get(runtime);
+  if (existing) return existing as ReturnType<typeof makePullRequestRefreshAtomFamily<R, E>>;
+  const refreshes = makePullRequestRefreshAtomFamily(runtime);
+  refreshFamiliesByRuntime.set(runtime, refreshes);
+  return refreshes;
+}
+
 export function createLinkedPullRequestSummaryAtomFamily<R, E>(
   runtime: Atom.AtomRuntime<EnvironmentRegistry | R, E>,
   refreshes = createPullRequestRefreshAtomFamily(runtime),
+  onAnswer?: QueryAnswerHandler<PullRequestRef, PullRequestSummary>,
 ) {
   const routedRequest = createPullRequestRouter();
   return createEnvironmentRpcQueryAtomFamily(runtime, {
@@ -134,7 +154,17 @@ export function createLinkedPullRequestSummaryAtomFamily<R, E>(
     idleTtlMs: LINKED_PULL_REQUEST_IDLE_TTL_MS,
     refreshTrigger: ({ environmentId }) => refreshes({ environmentId, input: {} }),
     isFinal: (summary) => summary.state === "merged",
+    ...(onAnswer === undefined ? {} : { onAnswer }),
   });
+}
+
+/** Lets a client record what each answer says where it lands, rather than watching the data. */
+export interface PullRequestAnswerHandlers {
+  readonly list?: QueryAnswerHandler<PullRequestListInput, PullRequestListResult>;
+  readonly listStats?: QueryAnswerHandler<PullRequestListStatsInput, PullRequestListStatsResult>;
+  readonly detail?: QueryAnswerHandler<PullRequestRef, PullRequestDetail>;
+  readonly checks?: QueryAnswerHandler<PullRequestRef, PullRequestChecks | null>;
+  readonly reviewGuide?: QueryAnswerHandler<PullRequestRef, PullRequestReviewGuideResult>;
 }
 
 export function createPullRequestStackAtomFamily<R, E>(
@@ -172,6 +202,7 @@ export function createPullRequestEnvironmentAtoms<R, E>(
     EnvironmentRegistry | PullRequestDiffLoader.PullRequestDiffLoader | R,
     E
   >,
+  onAnswer: PullRequestAnswerHandlers = {},
 ) {
   const refreshes = createPullRequestRefreshAtomFamily(runtime);
   const commandScheduler = createAtomCommandScheduler();
@@ -198,6 +229,7 @@ export function createPullRequestEnvironmentAtoms<R, E>(
       execute: (input) => routedRequest(WS_METHODS.pullRequestsDetail, input),
       staleTimeMs: 60_000,
       refreshTrigger: ({ environmentId }) => refreshes({ environmentId, input: {} }),
+      ...(onAnswer.detail === undefined ? {} : { onAnswer: onAnswer.detail }),
     }),
   );
   const preview = writableQueryFamily(
@@ -238,6 +270,7 @@ export function createPullRequestEnvironmentAtoms<R, E>(
       execute: (input) => routedRequest(WS_METHODS.pullRequestsReviewGuide, input),
       staleTimeMs: 60_000,
       refreshTrigger: ({ environmentId }) => refreshes({ environmentId, input: {} }),
+      ...(onAnswer.reviewGuide === undefined ? {} : { onAnswer: onAnswer.reviewGuide }),
     }),
   );
   const reviewerCandidates = writableQueryFamily(
@@ -329,6 +362,7 @@ export function createPullRequestEnvironmentAtoms<R, E>(
       staleTimeMs: 30_000,
       refreshTrigger: ({ environmentId, input }) =>
         input.cursors === undefined ? refreshes({ environmentId, input: {} }) : undefined,
+      ...(onAnswer.list === undefined ? {} : { onAnswer: onAnswer.list }),
     }),
     /**
      * Its own query because the listing is quicker without them — measured over twelve
@@ -341,6 +375,7 @@ export function createPullRequestEnvironmentAtoms<R, E>(
       tag: WS_METHODS.pullRequestsListStats,
       staleTimeMs: 60_000,
       refreshTrigger: ({ environmentId }) => refreshes({ environmentId, input: {} }),
+      ...(onAnswer.listStats === undefined ? {} : { onAnswer: onAnswer.listStats }),
     }),
     filterOptions: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:pull-requests:filter-options",
@@ -358,6 +393,7 @@ export function createPullRequestEnvironmentAtoms<R, E>(
         execute: (input) => routedRequest(WS_METHODS.pullRequestsChecks, input),
         staleTimeMs: 45_000,
         refreshTrigger: ({ environmentId }) => refreshes({ environmentId, input: {} }),
+        ...(onAnswer.checks === undefined ? {} : { onAnswer: onAnswer.checks }),
       }),
     ),
     activity,
@@ -499,7 +535,7 @@ export function createPullRequestEnvironmentAtoms<R, E>(
         Effect.sync(() => {
           const { reviewers, requested } = target.input;
           const candidatesAtom = reviewerCandidates(target);
-          const candidates = Option.getOrNull(AsyncResult.value(registry.get(candidatesAtom)));
+          const candidates = AsyncResult.getOrElse(registry.get(candidatesAtom), () => null);
           const selected =
             candidates?.candidates.filter((candidate) =>
               reviewers.some(
@@ -585,7 +621,7 @@ export function createPullRequestEnvironmentAtoms<R, E>(
         Effect.sync(() => {
           const { labels, applied } = target.input;
           const candidatesAtom = labelCandidates(target);
-          const candidates = Option.getOrNull(AsyncResult.value(registry.get(candidatesAtom)));
+          const candidates = AsyncResult.getOrElse(registry.get(candidatesAtom), () => null);
           const names = new Set(labels);
           updateCached(registry, candidatesAtom, (value) => ({
             ...value,

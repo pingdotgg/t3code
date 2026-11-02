@@ -75,7 +75,9 @@ the RPC authorization middleware after the request succeeds; dispatched commands
 are recorded by the dispatch handler, which can tell a retry apart.
 [Feature mapping](../../apps/server/src/telemetry/FeatureUsage.ts) allowlists
 the methods and commands, and takes variants only from closed contract enums,
-so paths, ids, and text never reach analytics.
+so paths, ids, and text never reach analytics. Guests of a shared thread have no
+WebSocket connection, so the guest share service records their joins and messages
+itself, with no `surface`.
 
 Agent tool events report driver kinds, never instance ids: users name
 instances, so an instance id can identify an account or employer.

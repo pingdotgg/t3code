@@ -61,25 +61,11 @@ export function useBrowserDefaults(): BrowserDefaults {
   return useClientSettings(toBrowserDefaults);
 }
 
-export function browserDefaultTabState(
-  defaults: BrowserDefaults = getBrowserDefaults(),
-): DesktopPreviewTabDefaults {
+export function browserDefaultTabState(defaults: BrowserDefaults): DesktopPreviewTabDefaults {
   return { zoomFactor: defaults.zoomFactor, colorScheme: defaults.appearance };
 }
 
-export function browserDefaultOpenViewport(
-  defaults: BrowserDefaults = getBrowserDefaults(),
-): PreviewViewportSetting {
-  return defaults.viewport;
-}
-
-export function browserDefaultOpenProfileId(
-  defaults: BrowserDefaults = getBrowserDefaults(),
-): string {
-  return defaults.profileId;
-}
-
-export const FALLBACK_RESPONSIVE_VIEWPORT_SIZE = { width: 1024, height: 768 } as const;
+const FALLBACK_RESPONSIVE_VIEWPORT_SIZE = { width: 1024, height: 768 } as const;
 
 export function browserResponsiveViewportForToggle(input: {
   readonly defaults?: BrowserDefaults;

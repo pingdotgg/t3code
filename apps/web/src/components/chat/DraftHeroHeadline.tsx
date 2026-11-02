@@ -5,28 +5,37 @@ import { scopedProjectKey, scopeProjectRef } from "@t3tools/client-runtime/envir
 import { isScratchProject } from "@t3tools/client-runtime/state/projects";
 import { FolderPlusIcon } from "lucide-react";
 import { useAtomValue } from "@effect/atom-react";
-import { useEffect, useRef, useState } from "react";
+import { useRef, useState } from "react";
 
 import { openCommandPalette } from "~/commandPaletteBus";
 import { shortcutLabelForCommand } from "~/keybindings";
 import { primaryServerKeybindingsAtom } from "~/state/server";
 import { useNewThreadHandler } from "~/hooks/useHandleNewThread";
+import { useOrderWhileOpen } from "~/hooks/useOrderWhileOpen";
+import { useProjectPin } from "~/hooks/useProjectGroupUpdate";
 import { useScratchProject } from "~/hooks/useScratchProject";
+import { isTriagePrompt } from "~/hooks/useStartTriage";
 import { useClientSettings } from "~/hooks/useSettings";
 import { hasExplicitComposerModelSelection } from "~/lib/chatThreadActions";
 import {
   deriveLogicalProjectKeyFromSettings,
+  pickableProjectGroups,
   selectProjectGroupingSettings,
-} from "~/logicalProject";
+} from "@t3tools/client-runtime/state/project-grouping";
 import {
   buildSidebarProjectPickerEntries,
   buildSidebarProjectSnapshots,
   projectGroupsSpanEnvironments,
 } from "~/sidebarProjectGrouping";
 import { useProjects, useThreadShells } from "~/state/entities";
-import { useEnvironments, usePrimaryEnvironmentId } from "~/state/environments";
+import {
+  useEnvironments,
+  usePrimaryEnvironmentId,
+  useEnvironmentProviders,
+} from "~/state/environments";
 import { ProjectEnvironmentBadge } from "../ProjectEnvironmentBadge";
 import { ProjectFavicon } from "../ProjectFavicon";
+import { isProjectPinShortcut, ProjectPinButton } from "../ProjectPinButton";
 import { sortLogicalProjectsForSidebar } from "../Sidebar.logic";
 import {
   Combobox,
@@ -42,7 +51,10 @@ import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { InlineButton } from "../ui/button";
 import { DraftProjectName } from "./DraftProjectName";
 import { DraftHeroProjectHeading } from "./DraftHeroProjectHeading";
+import { TriageDraftHero } from "./TriageDraftHero";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
+import { resolveProjectDefaultProviderModelSelection } from "../../providerInstances";
+import { resolveNewThreadModelSelection } from "@t3tools/shared/usageLimits";
 
 const ADD_PROJECT_VALUE = "add-project";
 
@@ -65,6 +77,7 @@ export function DraftHeroHeadline({
   const projects = useProjects();
   const threads = useThreadShells();
   const { environments } = useEnvironments();
+  const providersByEnvironment = useEnvironmentProviders();
   const primaryEnvironmentId = usePrimaryEnvironmentId();
   const projectGroupingSettings = useClientSettings(selectProjectGroupingSettings);
   const projectSortOrder = useClientSettings((settings) => settings.sidebarProjectSortOrder);
@@ -72,6 +85,10 @@ export function DraftHeroHeadline({
     (store) => store.setLogicalProjectDraftThreadId,
   );
   const getComposerDraft = useComposerDraftStore((store) => store.getComposerDraft);
+  // A boolean, so typing in a draft does not re-render the hero.
+  const isTriageDraftPrompt = useComposerDraftStore((store) =>
+    draftId ? isTriagePrompt(store.getComposerDraft(draftId)?.prompt ?? "") : false,
+  );
   const applyStickyState = useComposerDraftStore((store) => store.applyStickyState);
   const setModelSelection = useComposerDraftStore((store) => store.setModelSelection);
   const openAddProject = () => openCommandPalette({ open: "add-project" });
@@ -81,6 +98,8 @@ export function DraftHeroHeadline({
   const [pickerOpen, setPickerOpen] = useState(false);
   const [pickerQuery, setPickerQuery] = useState("");
   const pickerFilter = useComboboxFilter();
+  const highlightedPickerValueRef = useRef<string | null>(null);
+  const { canPinProjectGroup, toggleProjectGroupPin } = useProjectPin();
 
   const environmentLabelById = new Map(
     environments.map((environment) => [environment.environmentId, environment.label] as const),
@@ -106,7 +125,7 @@ export function DraftHeroHeadline({
     ),
   );
   const projectPickerEntries = buildSidebarProjectPickerEntries({
-    groups: projectGroups,
+    groups: pickableProjectGroups(projectGroups),
     preferredProjectRef: activeProjectRef,
   });
   const projectEntryByKey = new Map(
@@ -137,17 +156,21 @@ export function DraftHeroHeadline({
             project.environmentId === activeProjectRef.environmentId &&
             project.id === activeProjectRef.projectId,
         ) ?? null);
-  const scratchTargetEnvironmentId = scratchEnvironmentId(
-    activeProjectRef?.environmentId ?? primaryEnvironmentId,
-  );
+  const scratchTargetEnvironmentId = scratchEnvironmentId(activeProjectRef?.environmentId ?? null);
   const scratchWorkspaceRoot = scratchWorkspaceRootFor(scratchTargetEnvironmentId);
   const isScratchDraft =
-    activeProject !== null && isScratchProject(activeProject, scratchWorkspaceRoot);
+    activeProject !== null &&
+    isScratchProject(activeProject, scratchWorkspaceRootFor(activeProject.environmentId));
 
-  const pickerItems: readonly PickerItem[] = [
-    ...menuEntries.map(({ group }) => ({ value: group.projectKey, label: group.displayName })),
-    { value: ADD_PROJECT_VALUE, label: "Add project" },
-  ];
+  // Pinning from a row keeps rows in place while the picker is open.
+  const pickerItems: readonly PickerItem[] = useOrderWhileOpen(
+    [
+      ...menuEntries.map(({ group }) => ({ value: group.projectKey, label: group.displayName })),
+      { value: ADD_PROJECT_VALUE, label: "Add project" },
+    ],
+    (item) => item.value,
+    pickerOpen,
+  );
   const pickerSearch = pickerQuery.trim();
   const filteredPickerItems =
     pickerSearch.length === 0
@@ -159,21 +182,23 @@ export function DraftHeroHeadline({
         );
   const selectedPickerItem = pickerItems.find((item) => item.value === activeProjectKey) ?? null;
 
-  // Picker changes invalidate pending no-project home continuations.
-  const latestTargetRef = useRef({ draftId, activeProjectKey, scratchTargetEnvironmentId });
-  useEffect(() => {
-    latestTargetRef.current = { draftId, activeProjectKey, scratchTargetEnvironmentId };
-  }, [activeProjectKey, scratchTargetEnvironmentId, draftId]);
+  // The picker can change the draft's target while the no-project home is
+  // still being opened; a stale continuation must not retarget it again. Picking
+  // a project clears the pending request, and the draft session is compared
+  // against the store when the scratch project arrives.
+  const pendingScratchRef = useRef<symbol | null>(null);
+  const draftTargetKey = () => {
+    const session = draftId ? useComposerDraftStore.getState().getDraftSession(draftId) : null;
+    return session
+      ? `${session.environmentId}:${session.projectId}:${session.logicalProjectKey}`
+      : null;
+  };
   // Retargeting an empty draft would overwrite the project's draft and strand browser tabs.
   const selectProject = (project: (typeof projects)[number], logicalProjectKey: string) => {
     if (!draftId) {
       return;
     }
-    latestTargetRef.current = {
-      draftId,
-      activeProjectKey: logicalProjectKey,
-      scratchTargetEnvironmentId: project.environmentId,
-    };
+    pendingScratchRef.current = null;
     const currentDraft = getComposerDraft(draftId);
     if (!composerDraftHasUserContent(currentDraft)) {
       void openProjectDraft(scopeProjectRef(project.environmentId, project.id));
@@ -186,13 +211,33 @@ export function DraftHeroHeadline({
     );
     if (!hasExplicitComposerModelSelection(currentDraft)) {
       applyStickyState(draftId);
-      const environmentSettings = environments.find(
+      const environmentConfig = environments.find(
         (environment) => environment.environmentId === project.environmentId,
-      )?.serverConfig?.settings;
-      const defaultModelSelection = environmentSettings
+      )?.serverConfig;
+      const environmentSettings = environmentConfig?.settings;
+      const defaultSelection = environmentSettings
         ? resolveProjectSettings(environmentSettings, project.id, project).settings
             .defaultModelSelection
         : project.defaultModelSelection;
+      const fallbackResolution = resolveNewThreadModelSelection({
+        defaultSelection:
+          defaultSelection ??
+          (useComposerDraftStore.getState().stickyActiveProvider !== null || !environmentSettings
+            ? null
+            : resolveProjectDefaultProviderModelSelection(
+                providersByEnvironment.get(project.environmentId) ?? [],
+                environmentSettings,
+                project.id,
+              )),
+        fallbackSelection: environmentSettings?.fallbackModelSelection ?? null,
+        providers: providersByEnvironment.get(project.environmentId) ?? [],
+        ...(environmentSettings ? { settings: environmentSettings } : {}),
+        projectId: project.id,
+        now: Date.now(),
+      });
+      const defaultModelSelection = fallbackResolution.fallback
+        ? fallbackResolution.selection
+        : defaultSelection;
       if (defaultModelSelection) {
         setModelSelection(draftId, defaultModelSelection, {
           replaceOptions: true,
@@ -204,17 +249,14 @@ export function DraftHeroHeadline({
     if (scratchTargetEnvironmentId === null || isScratchDraft) {
       return false;
     }
-    const requested = { draftId, activeProjectKey, scratchTargetEnvironmentId };
+    const request = Symbol("scratch");
+    pendingScratchRef.current = request;
+    const requestedTarget = draftTargetKey();
     const project = await openScratchProject(scratchTargetEnvironmentId);
-    const latest = latestTargetRef.current;
-    if (
-      !project ||
-      latest.draftId !== requested.draftId ||
-      latest.activeProjectKey !== requested.activeProjectKey ||
-      latest.scratchTargetEnvironmentId !== requested.scratchTargetEnvironmentId
-    ) {
+    if (!project || pendingScratchRef.current !== request || draftTargetKey() !== requestedTarget) {
       return false;
     }
+    pendingScratchRef.current = null;
     selectProject(project, deriveLogicalProjectKeyFromSettings(project, projectGroupingSettings));
     return true;
   };
@@ -227,6 +269,9 @@ export function DraftHeroHeadline({
       itemToStringLabel={(item) => item.label}
       isItemEqualToValue={(a, b) => a.value === b.value}
       open={pickerOpen}
+      onItemHighlighted={(item) => {
+        highlightedPickerValueRef.current = item?.value ?? null;
+      }}
       onOpenChange={(open) => {
         setPickerOpen(open);
         setPickerQuery("");
@@ -271,6 +316,16 @@ export function DraftHeroHeadline({
           placeholder="Search projects..."
           value={pickerQuery}
           onChange={(event) => setPickerQuery(event.target.value)}
+          onKeyDown={(event) => {
+            const highlighted = highlightedPickerValueRef.current;
+            const group = highlighted ? projectEntryByKey.get(highlighted)?.group : undefined;
+            if (!group || !canPinProjectGroup(group) || !isProjectPinShortcut(event, keybindings)) {
+              return;
+            }
+            event.preventDefault();
+            event.stopPropagation();
+            toggleProjectGroupPin(group);
+          }}
         />
         <ComboboxEmpty>No matching projects.</ComboboxEmpty>
         <ComboboxList>
@@ -294,6 +349,14 @@ export function DraftHeroHeadline({
                     group={entry.group}
                     primaryEnvironmentId={primaryEnvironmentId}
                     machineByEnvironmentId={environmentMachineById}
+                  />
+                ) : null}
+                {entry && canPinProjectGroup(entry.group) ? (
+                  <ProjectPinButton
+                    name={entry.group.displayName}
+                    pinned={entry.group.pinned}
+                    shortcutLabel={shortcutLabelForCommand(keybindings, "thread.pin")}
+                    onToggle={() => toggleProjectGroupPin(entry.group)}
                   />
                 ) : null}
               </ComboboxItem>
@@ -336,6 +399,18 @@ export function DraftHeroHeadline({
         {noProjectShortcut ? <TooltipPopup side="bottom">{noProjectShortcut}</TooltipPopup> : null}
       </Tooltip>
     ) : null;
+
+  if (isScratchDraft && isTriageDraftPrompt) {
+    const environment = environments.find(
+      (entry) => entry.environmentId === activeProject.environmentId,
+    );
+    return (
+      <TriageDraftHero
+        machineLabel={environment?.label ?? null}
+        serverVersion={environment?.serverConfig?.environment.serverVersion ?? null}
+      />
+    );
+  }
 
   return (
     <div className="mx-auto flex w-full max-w-5xl flex-col items-center">

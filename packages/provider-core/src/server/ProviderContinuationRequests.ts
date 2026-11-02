@@ -45,8 +45,11 @@ export const layer = Layer.effect(
   Effect.gen(function* () {
     const queue = yield* Queue.unbounded<ProviderContinuationRequest>();
     return {
-      offer: (request: ProviderContinuationRequest) =>
-        Queue.offer(queue, request).pipe(Effect.asVoid),
+      offer: Effect.fn("ProviderContinuationRequests.offer")(function (
+        request: ProviderContinuationRequest,
+      ) {
+        return Queue.offer(queue, request).pipe(Effect.asVoid);
+      }),
       take: Queue.take(queue),
     };
   }),

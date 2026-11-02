@@ -142,14 +142,12 @@ export const makeAcpRegistryAuth = Effect.fn("makeAcpRegistryAuth")(function* (o
         .runBackgroundProbe(agentKey, discoverMethods)
         .pipe(
           Effect.flatMap((result) =>
-            Option.isSome(result)
-              ? Effect.succeed(result.value)
-              : Effect.fail(
-                  failure(
-                    "methods",
-                    "Sign-in discovery was interrupted by an active provider session. Try again.",
-                  ),
-                ),
+            Effect.fromOption(result, () =>
+              failure(
+                "methods",
+                "Sign-in discovery was interrupted by an active provider session. Try again.",
+              ),
+            ),
           ),
         )
     : discoverMethods;

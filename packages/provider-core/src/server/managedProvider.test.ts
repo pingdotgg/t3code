@@ -3,9 +3,11 @@ import {
   DEFAULT_SERVER_SETTINGS,
   ProviderDriverKind,
   ProviderInstanceId,
+  ServerSettingsError,
   type ServerProvider,
 } from "@t3tools/contracts";
 import { createModelCapabilities } from "@t3tools/shared/model";
+import * as Cache from "effect/Cache";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
@@ -138,6 +140,116 @@ const enrichedSnapshotSecond: ServerProvider = {
 };
 
 describe("makeManagedServerProvider", () => {
+  it.effect("invalidates cached usage and queues one refresh behind an in-flight refresh", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const calls = yield* Ref.make(0);
+        const probeStarted = yield* Deferred.make<void>();
+        const releaseProbe = yield* Deferred.make<void>();
+        const cache = yield* Cache.makeWith(
+          () =>
+            Effect.gen(function* () {
+              const count = yield* Ref.updateAndGet(calls, (count) => count + 1);
+              if (count === 2) {
+                yield* Deferred.succeed(probeStarted, undefined);
+                yield* Deferred.await(releaseProbe);
+              }
+              return {
+                ...refreshedSnapshot,
+                usageLimits: {
+                  checkedAt: refreshedSnapshot.checkedAt,
+                  windows: [
+                    {
+                      id: "five_hour",
+                      kind: "session",
+                      label: "Session",
+                      usedPercent: count === 1 ? 20 : 100,
+                    },
+                  ],
+                },
+              } satisfies ServerProvider;
+            }),
+          { capacity: 1, timeToLive: () => "5 minutes" },
+        );
+        const warmed = yield* Cache.get(cache, "claude");
+        const provider = yield* makeManagedServerProvider<TestSettings>({
+          resolveMaintenance: () => Effect.die("usage refresh must not resolve maintenance"),
+          getSettings: Effect.succeed({ enabled: true }),
+          streamSettings: Stream.empty,
+          haveSettingsChanged: () => false,
+          initialSnapshot: () => Effect.succeed(warmed),
+          checkProvider: Cache.get(cache, "claude"),
+          invalidateUsageCache: Cache.invalidateAll(cache),
+          refreshOnInterval: false,
+        });
+        yield* provider.streamChanges.pipe(Stream.take(1), Stream.runDrain);
+        assert.strictEqual(yield* Ref.get(calls), 1);
+        const refresh = yield* provider.refreshUsage!.pipe(Effect.forkChild);
+        yield* Deferred.await(probeStarted);
+        const queued = yield* provider.refreshUsage!.pipe(
+          Effect.forkChild({ startImmediately: true }),
+        );
+        yield* provider.refreshUsage!;
+        assert.strictEqual(yield* Ref.get(calls), 2);
+        assert.strictEqual((yield* provider.getSnapshot).usageLimits?.windows[0]?.usedPercent, 20);
+        yield* Deferred.succeed(releaseProbe, undefined);
+        yield* Fiber.join(refresh);
+        yield* Fiber.join(queued);
+        assert.strictEqual(yield* Ref.get(calls), 3);
+        assert.strictEqual((yield* provider.getSnapshot).usageLimits?.windows[0]?.usedPercent, 100);
+      }),
+    ).pipe(Effect.provide(layerAlwaysRunTest)),
+  );
+  it.effect("keeps the waiting usage refresh's claim when the running one is interrupted", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const calls = yield* Ref.make(0);
+        const usageProbeStarted = yield* Deferred.make<void>();
+        const statusProbeStarted = yield* Deferred.make<void>();
+        const releaseStatusProbe = yield* Deferred.make<void>();
+        const provider = yield* makeManagedServerProvider<TestSettings>({
+          resolveMaintenance: () => Effect.succeed(maintenanceCapabilities),
+          getSettings: Effect.succeed({ enabled: true }),
+          streamSettings: Stream.empty,
+          haveSettingsChanged: () => false,
+          initialSnapshot: () => Effect.succeed(initialSnapshot),
+          checkProvider: Effect.gen(function* () {
+            const count = yield* Ref.updateAndGet(calls, (count) => count + 1);
+            if (count === 2) {
+              yield* Deferred.succeed(usageProbeStarted, undefined);
+              return yield* Effect.never;
+            }
+            if (count === 3) {
+              yield* Deferred.succeed(statusProbeStarted, undefined);
+              yield* Deferred.await(releaseStatusProbe);
+            }
+            return {
+              ...refreshedSnapshot,
+              usageLimits: { checkedAt: refreshedSnapshot.checkedAt, windows: [] },
+            } satisfies ServerProvider;
+          }),
+          refreshOnInterval: false,
+        });
+        yield* provider.streamChanges.pipe(Stream.take(1), Stream.runDrain);
+        const running = yield* provider.refreshUsage!.pipe(Effect.forkChild);
+        yield* Deferred.await(usageProbeStarted);
+        const status = yield* provider.refresh.pipe(Effect.forkChild({ startImmediately: true }));
+        const waiting = yield* provider.refreshUsage!.pipe(
+          Effect.forkChild({ startImmediately: true }),
+        );
+        yield* Fiber.interrupt(running);
+        yield* Deferred.await(statusProbeStarted);
+        const extra = yield* provider.refreshUsage!.pipe(
+          Effect.forkChild({ startImmediately: true }),
+        );
+        yield* Deferred.succeed(releaseStatusProbe, undefined);
+        yield* Fiber.join(status);
+        yield* Fiber.join(waiting);
+        yield* Fiber.join(extra);
+        assert.strictEqual(yield* Ref.get(calls), 4);
+      }),
+    ).pipe(Effect.provide(layerAlwaysRunTest)),
+  );
   it.effect(
     "runs the initial provider check in the background and streams the refreshed snapshot",
     () =>
@@ -295,6 +407,67 @@ describe("makeManagedServerProvider", () => {
         assert.deepStrictEqual(updates, [refreshedSnapshot, refreshedSnapshotSecond]);
         assert.deepStrictEqual(latest, refreshedSnapshotSecond);
         assert.strictEqual(yield* Ref.get(checkCalls), 2);
+      }),
+    ).pipe(Effect.provide(layerAlwaysRunTest)),
+  );
+
+  it.effect("keeps consuming settings changes after a provider check fails", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const settingsChanges = yield* PubSub.unbounded<TestSettings>();
+        const checkCalls = yield* Ref.make(0);
+        const releaseInitialCheck = yield* Deferred.make<void>();
+        const thirdCheckStarted = yield* Deferred.make<void>();
+        const releaseRecoveredCheck = yield* Deferred.make<void>();
+        const provider = yield* makeManagedServerProvider<TestSettings>({
+          resolveMaintenance: () => Effect.succeed(maintenanceCapabilities),
+          getSettings: Effect.succeed({ enabled: true }),
+          streamSettings: Stream.fromPubSub(settingsChanges),
+          haveSettingsChanged: (previous, next) => previous.enabled !== next.enabled,
+          initialSnapshot: () => Effect.succeed(initialSnapshot),
+          checkProvider: Ref.updateAndGet(checkCalls, (count) => count + 1).pipe(
+            Effect.flatMap((count) =>
+              count === 1
+                ? Deferred.await(releaseInitialCheck).pipe(Effect.as(refreshedSnapshot))
+                : count === 2
+                  ? Effect.fail(
+                      new ServerSettingsError({
+                        settingsPath: "/t3/userdata/settings.json",
+                        operation: "read-file",
+                      }),
+                    )
+                  : Deferred.succeed(thirdCheckStarted, undefined).pipe(
+                      Effect.andThen(Deferred.await(releaseRecoveredCheck)),
+                      Effect.as(refreshedSnapshotSecond),
+                    ),
+            ),
+          ),
+          refreshInterval: "1 hour",
+        });
+
+        const updatesFiber = yield* Stream.take(provider.streamChanges, 2).pipe(
+          Stream.runCollect,
+          Effect.forkChild,
+        );
+        yield* Effect.yieldNow;
+        yield* Deferred.succeed(releaseInitialCheck, undefined);
+
+        // The first change fails its provider check; the failed application never
+        // advances the stored settings, so the same change still differs next time.
+        yield* PubSub.publish(settingsChanges, { enabled: false });
+        yield* Effect.yieldNow;
+        assert.strictEqual(yield* Ref.get(checkCalls), 2);
+
+        // The subscription must survive that failure and retry on the next change;
+        // on main the dead consumer never starts the third check and this times out.
+        yield* PubSub.publish(settingsChanges, { enabled: false });
+        yield* Deferred.await(thirdCheckStarted);
+        assert.strictEqual(yield* Ref.get(checkCalls), 3);
+        yield* Deferred.succeed(releaseRecoveredCheck, undefined);
+
+        const updates = Array.from(yield* Fiber.join(updatesFiber));
+        assert.deepStrictEqual(updates, [refreshedSnapshot, refreshedSnapshotSecond]);
+        assert.deepStrictEqual(yield* provider.getSnapshot, refreshedSnapshotSecond);
       }),
     ).pipe(Effect.provide(layerAlwaysRunTest)),
   );

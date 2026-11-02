@@ -330,9 +330,9 @@ const make = Effect.gen(function* () {
     return yield* claimFreeFolder(
       (attempt) =>
         attempt === 1
-          ? Effect.succeed(Option.some(folderFor(id.slice(-8))))
+          ? Effect.succeedSome(folderFor(id.slice(-8)))
           : attempt === 2
-            ? Effect.succeed(Option.some(fullFolder))
+            ? Effect.succeedSome(fullFolder)
             : crypto.randomUUIDv4().pipe(
                 Effect.map((uuid) => Option.some(`${fullFolder}-${uuid.slice(0, 8)}`)),
                 Effect.mapError((cause) => new ScratchFolderError({ folder: fullFolder, cause })),

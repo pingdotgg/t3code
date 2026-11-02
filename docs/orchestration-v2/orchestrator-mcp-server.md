@@ -270,9 +270,8 @@ provider session. The request becomes the V2 command
 the timeout expires. A wait timeout does not cancel the child; the result sets
 `waitTimedOut: true`, and the caller can continue with `task_status`. A pending blocking
 question also ends the wait with `hasPendingQuestion: true` and `waitTimedOut: false`.
-If `hasPendingQuestion`, pass `threadId=childThreadId` to `t3_pending_request_list`,
-`t3_pending_request_read` (with `requestId`) and `t3_pending_request_respond`, or ask
-the user; the task's completion still wakes this thread. A pending live approval for the
+If `hasPendingQuestion`, pass `threadId=childThreadId` to `t3_pending_request` with
+action `list`, `read` (with `requestId`), or `respond`, or ask the user; the task's completion still wakes this thread. A pending live approval for the
 task's own unfinished work also ends the wait. Its identity appears in `pendingApproval`;
 it grants no approval authority. Read the fresh full request in the child thread before
 responding, since the durable record can outlive its provider callback. Async questions
@@ -365,7 +364,9 @@ Pass the task in `message`. Project, model, and modes inherit when omitted;
 workspace does not. `scratch: true` launches without a project, in a folder of
 its own under the environment's Scratch project. For stacked PRs, use the parent branch as `baseRef` with
 `startFromOrigin: false`. The new thread may not run with broader runtime or
-interaction modes than the caller. Launch has no retry key, so inspect existing threads after a failed or lost response before
+interaction modes than the caller. As for `delegate_task`, a runtime mode the
+provider does not offer is refused, and an inherited or default one steps down
+to the broadest mode it offers. Launch has no retry key, so inspect existing threads after a failed or lost response before
 launching again. `create_threads` remains the batch option for a shared checkout.
 
 ### `t3_thread_list`
@@ -391,12 +392,18 @@ and `creationSource: "mcp"`; provider output uses `creationSource: "provider"`.
 Actor and ingress are separate so agent-authored user-role messages remain
 distinguishable from human-authored messages.
 
-Agents mention another thread as `[title](t3-thread://v1/<threadId>)`. Thread
-results carry this ready-made as `link`, so agents never format the id. The
-link carries only the id. Clients first resolve it in the message's environment,
-then use a unique match in another enabled environment. Ambiguous matches stay
-unresolved. Web and desktop show the resolved thread’s current title. Mobile
-relabels local matches; cross-environment links can retain the written label.
+Agents mention another thread by the `link` its result carries,
+`<t3-thread://v2/<environmentId>/<threadId>>`, so they never format an id or
+write a title, which goes stale when the user renames the thread. The
+environment that owns the thread builds the link, so forwarded results and tasks
+delegated to a linked environment name that environment. Clients open only that
+environment's thread and show its current title; a link to a thread they do not
+know renders as a label that opens nothing. Older `t3-thread://v1/<threadId>`
+links name no environment: clients resolve them in the message's environment,
+then by a unique match in another enabled environment. An outside OAuth client,
+one that is not a linked environment, cannot render `t3-thread://` links, so it
+gets a web URL on the origin it reached, `<origin>/<environmentId>/<threadId>`,
+for threads in this environment.
 
 List and read results report `snoozed` and `snoozedUntil`, and
 `t3_thread_list` filters on `snoozed`. The server's `isSnoozed` follows the

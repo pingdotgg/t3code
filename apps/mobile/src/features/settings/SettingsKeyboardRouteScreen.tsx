@@ -13,7 +13,7 @@ import {
   type ComposerEnterBehavior,
 } from "../../lib/composerEnterBehavior";
 import { mobilePreferencesAtom, updateMobilePreferencesAtom } from "../../state/preferences";
-import { SettingsChoiceRow } from "./components/SettingsChoiceRow";
+import { ListChoiceRow as SettingsChoiceRow } from "../../components/ui/ListChoiceRow";
 import { SettingsSection } from "./components/SettingsSection";
 
 const ENTER_BEHAVIOR_OPTIONS: ReadonlyArray<{

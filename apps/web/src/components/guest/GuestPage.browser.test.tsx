@@ -246,7 +246,7 @@ describe("GuestPage", () => {
     expect(screen.container.querySelector('[aria-label="Fork from this response"]')).toBeNull();
     expect(socket).not.toHaveBeenCalled();
     // The composer names the thread's model, as the owner's does, with nothing to pick.
-    await expect.element(screen.getByLabelText("Model: 5.4")).toBeVisible();
+    await expect.element(screen.getByLabelText("Model: GPT-5.4")).toBeVisible();
   });
 
   it("sends attached files with the message, as form data", async () => {

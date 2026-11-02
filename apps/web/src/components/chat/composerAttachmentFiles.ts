@@ -12,6 +12,7 @@ import type { ComposerFileAttachment, ComposerImageAttachment } from "../../comp
 import { isHeicImageFile } from "../../lib/imageCompression";
 import { isVideoAttachment, videoMimeType } from "../../types";
 import { isSvgAttachment } from "@t3tools/shared/image";
+import { isWorkspaceImagePreviewPath } from "@t3tools/shared/mediaPreview";
 
 type ComposerAttachmentFileKind = "image" | "file" | "unsupported-image";
 
@@ -94,7 +95,9 @@ export function classifyComposerAttachmentFile(
   if (!file.type.toLowerCase().startsWith("image/")) {
     return "file";
   }
-  return isProviderSendTurnSupportedImageMimeType(file.type) ? "image" : "unsupported-image";
+  if (isProviderSendTurnSupportedImageMimeType(file.type)) return "image";
+  // These can be previewed as files, but providers must not receive them as images.
+  return isWorkspaceImagePreviewPath(file.name) ? "file" : "unsupported-image";
 }
 
 export function isPreviewableComposerVideo(

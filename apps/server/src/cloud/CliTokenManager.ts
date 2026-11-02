@@ -323,44 +323,44 @@ const exchangeToken = Effect.fn("cloud.cli_token.exchange")(function* (
     Effect.flatMap((response) => readTokenResponse(response, params)),
     Effect.timeout(OAUTH_REQUEST_TIMEOUT),
     Effect.catchTags({
-      HttpClientError: (cause) =>
-        Effect.gen(function* () {
-          const reason = cause.reason;
-          if (
-            params.grant_type !== "refresh_token" ||
-            reason._tag !== "StatusCodeError" ||
-            !isPermanentRefreshStatus(reason.response.status)
-          ) {
-            return yield* cause;
-          }
-          // Reading a rejection body shares the exchange budget without losing
-          // the known status when the body stalls or cannot be decoded.
-          const elapsed = Duration.toMillis(
-            Duration.nanos((yield* Clock.monotonicTimeNanos) - startedAt),
-          );
-          const body = yield* reason.response.json.pipe(
-            Effect.timeout(Math.max(0, Duration.toMillis(OAUTH_REQUEST_TIMEOUT) - elapsed)),
-            Effect.mapError(
-              (cause) =>
-                new CloudCliCredentialRefreshError({
-                  status: reason.response.status,
-                  cause: new HttpClientError.HttpClientError({
-                    reason: new HttpClientError.StatusCodeError({
-                      request: reason.request,
-                      response: reason.response,
-                      cause,
-                    }),
+      // The enclosing operation owns the span for this inline handler.
+      HttpClientError: Effect.fnUntraced(function* (cause) {
+        const reason = cause.reason;
+        if (
+          params.grant_type !== "refresh_token" ||
+          reason._tag !== "StatusCodeError" ||
+          !isPermanentRefreshStatus(reason.response.status)
+        ) {
+          return yield* cause;
+        }
+        // Reading a rejection body shares the exchange budget without losing
+        // the known status when the body stalls or cannot be decoded.
+        const elapsed = Duration.toMillis(
+          Duration.nanos((yield* Clock.monotonicTimeNanos) - startedAt),
+        );
+        const body = yield* reason.response.json.pipe(
+          Effect.timeout(Math.max(0, Duration.toMillis(OAUTH_REQUEST_TIMEOUT) - elapsed)),
+          Effect.mapError(
+            (cause) =>
+              new CloudCliCredentialRefreshError({
+                status: reason.response.status,
+                cause: new HttpClientError.HttpClientError({
+                  reason: new HttpClientError.StatusCodeError({
+                    request: reason.request,
+                    response: reason.response,
+                    cause,
                   }),
                 }),
-            ),
-          );
-          const diagnostic = decodeOAuthRefreshErrorResponse(body);
-          return yield* new CloudCliCredentialRefreshError({
-            cause,
-            status: reason.response.status,
-            ...(Option.isSome(diagnostic) ? { oauthErrorCode: diagnostic.value.error } : {}),
-          });
-        }),
+              }),
+          ),
+        );
+        const diagnostic = decodeOAuthRefreshErrorResponse(body);
+        return yield* new CloudCliCredentialRefreshError({
+          cause,
+          status: reason.response.status,
+          ...(Option.isSome(diagnostic) ? { oauthErrorCode: diagnostic.value.error } : {}),
+        });
+      }),
     }),
   );
 });

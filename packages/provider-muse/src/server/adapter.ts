@@ -30,7 +30,6 @@ import * as Cause from "effect/Cause";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
-import * as Option from "effect/Option";
 import * as FileSystem from "effect/FileSystem";
 import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
@@ -66,6 +65,7 @@ import { isMuseUsageLimitFailure, museUsageLimitResetAt } from "./usageLimits.ts
 import {
   createMuseSdkHostEffect,
   museApprovalMode,
+  museCanonicalPath,
   musePermissionProfile,
   museWorkspaceRoot,
   type createMuseSdkHost,
@@ -248,6 +248,9 @@ const nativeRef = (nativeId: string) => ({
   nativeId,
   strength: "strong" as const,
 });
+/** The roster lists a child under its turn item's native id, so readers can pair the two. */
+const backgroundTaskId = (item: MuseItem) =>
+  item.kind === "subagent" ? item.childSessionId || item.subagentId || item.itemId : item.itemId;
 const recordSchema = Schema.Record(Schema.String, Schema.Unknown);
 const INFORMATIONAL_NOTIFICATIONS = new Set([
   "session/contextUsage",
@@ -277,8 +280,12 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
   return ProviderAdapter.ProviderAdapterV2.of({
     instanceId: options.instanceId,
     driver: MUSE_PROVIDER,
-    getCapabilities: () => Effect.succeed(MuseProviderCapabilitiesV2),
-    planSelectionTransition: () => Effect.succeed(turnScopedSelectionTransition()),
+    getCapabilities: Effect.fn("MuseAdapter.getCapabilities")(function () {
+      return Effect.succeed(MuseProviderCapabilitiesV2);
+    }),
+    planSelectionTransition: Effect.fn("MuseAdapter.planSelectionTransition")(function () {
+      return Effect.succeed(turnScopedSelectionTransition());
+    }),
     openSession: Effect.fn("MuseAdapterV2.openSession")(function* (
       input: ProviderAdapter.ProviderAdapterV2OpenSessionInput,
     ) {
@@ -286,11 +293,9 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
       if (input.runtimePolicy.interactionMode === "plan")
         return yield* protocolError("Muse Code does not support dedicated Plan mode");
       const scope = yield* Effect.scope;
-      // Muse requires canonical workspace roots and approval paths; resolve symlinks once.
+      // Native realpath also corrects filesystem case, which Muse validates.
       const requestedCwd = input.runtimePolicy.cwd ?? providerHost.paths.cwd;
-      const cwd = yield* fileSystem
-        .realPath(requestedCwd)
-        .pipe(Effect.orElseSucceed(() => requestedCwd));
+      const cwd = yield* museCanonicalPath(requestedCwd);
       const workspaceRoot = yield* museWorkspaceRoot(cwd);
       const now = yield* DateTime.now;
       let session: OrchestrationV2ProviderSession = {
@@ -379,11 +384,11 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
         }).pipe(
           Effect.timeout(options.requestTimeoutMs ?? 30_000),
           Effect.catchTags({
-            TimeoutError: (cause) =>
-              Effect.gen(function* () {
-                yield* eventPermit.withPermits(1)(failHost(cause));
-                return yield* protocolError(`Muse ${method} timed out; its host was closed`, cause);
-              }),
+            // The enclosing operation owns the span for this inline handler.
+            TimeoutError: Effect.fnUntraced(function* (cause) {
+              yield* eventPermit.withPermits(1)(failHost(cause));
+              return yield* protocolError(`Muse ${method} timed out; its host was closed`, cause);
+            }),
           }),
         );
       const updateSession = Effect.fnUntraced(function* (
@@ -595,9 +600,7 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
           item.result?.summary ??
           (status === "failed" ? item.failureReason : undefined);
         const result = resultText ?? null;
-        const nativeTaskRef = item.childSessionId
-          ? nativeRef(item.childSessionId)
-          : nativeRef(item.subagentId ?? item.itemId);
+        const nativeTaskRef = nativeRef(backgroundTaskId(item));
         const subagent: OrchestrationV2Subagent = {
           id: base.nodeId,
           threadId: base.threadId,
@@ -675,7 +678,7 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
             const description = item?.objective ?? item?.entryId ?? item?.fallbackText;
             return [
               {
-                taskId: itemId,
+                taskId: item ? backgroundTaskId(item) : itemId,
                 kind:
                   item?.kind === "subagent" ? ("subagent" as const) : ("background_task" as const),
                 ...(description ? { description } : {}),
@@ -714,7 +717,13 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
                     ? "cancelled"
                     : "failed",
             });
-          if (wasRunning !== observedChildren.has(item.itemId)) yield* syncBackground();
+          const running = observedChildren.has(item.itemId);
+          // Muse reveals a subagent's ids over several revisions, so a running child is
+          // relisted whenever the id its turn item carries moves.
+          const listed = thread?.pendingBackgroundTasks?.some(
+            (task) => task.taskId === backgroundTaskId(item),
+          );
+          if (wasRunning !== running || (running && !listed)) yield* syncBackground();
         }
         const streaming = status === "running";
         const base = {
@@ -1356,7 +1365,7 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
                 detail: null,
                 ...(notification ? { notification } : {}),
                 dispatchIfCurrent: (dispatch) =>
-                  wake === held ? Effect.map(dispatch, Option.some) : Effect.succeed(Option.none()),
+                  wake === held ? Effect.asSome(dispatch) : Effect.succeedNone,
                 clearIfCurrent: () =>
                   Effect.sync(() => {
                     if (wake === held) wake = undefined;
@@ -1910,10 +1919,11 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
         message: ProviderAdapter.ProviderAdapterV2TurnMessage,
       ) {
         const parts: SendUserTurnOptions<unknown>["input"] = [];
-        const text = providerMessageTextWithAttachmentPaths({
+        const text = yield* providerMessageTextWithAttachmentPaths({
           text: message.text,
           attachments: message.attachments,
           resolveAttachmentPath: providerHost.resolveAttachmentPath,
+          resolveExtractedTextPath: providerHost.resolveExtractedTextPath,
         });
         if (text) parts.push({ type: "text", text });
         for (const attachment of message.attachments)

@@ -258,10 +258,28 @@ export function applyAcpRegistryLiveConfiguration(
   customModels: ReadonlyArray<string>,
 ): ServerProvider {
   const { message: _staleProbeMessage, ...snapshot } = provider;
+  // session/load may omit models (Kimi returns `{}`); keep the probed list
+  // and apply any live option descriptors to it.
+  const probedModels = provider.models.filter((model) => !model.isCustom);
+  const discovery =
+    configuration.models.length > 0
+      ? configuration
+      : {
+          ...configuration,
+          models: probedModels.map((model) => ({
+            id: model.slug,
+            name: model.name,
+            description: null,
+          })),
+          currentModelId: probedModels.find((model) => model.isDefault)?.slug ?? null,
+        };
   return {
     ...snapshot,
     status: provider.enabled ? "ready" : provider.status,
-    models: modelsFromDiscovery(configuration, customModels),
+    models:
+      configuration.models.length === 0 && configuration.configOptions.length === 0
+        ? provider.models
+        : modelsFromDiscovery(discovery, customModels),
   };
 }
 
@@ -629,7 +647,11 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
       haveSettingsChanged: haveProviderSnapshotSettingsChanged,
       initialSnapshot: () => checkProvider,
       checkProvider,
-      enrichSnapshot: ({ snapshot, getSnapshot, publishSnapshot }) => {
+      enrichSnapshot: Effect.fn("enrichSnapshot")(function ({
+        snapshot,
+        getSnapshot,
+        publishSnapshot,
+      }) {
         if (!snapshot.installed) return Effect.void;
         const publishEnrichment = (
           Option.isSome(runtimeCoordinator)
@@ -639,7 +661,7 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
                   : effectiveConfig.agentId,
                 enrichProviderCached(snapshot),
               )
-            : enrichProviderCached(snapshot).pipe(Effect.map(Option.some))
+            : enrichProviderCached(snapshot).pipe(Effect.asSome)
         ).pipe(
           Effect.flatMap(
             Option.match({
@@ -711,7 +733,7 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
             discard: true,
           },
         );
-      },
+      }),
     }).pipe(
       Effect.mapError(
         (cause) =>

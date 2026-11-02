@@ -200,6 +200,7 @@ function useNativeReviewDiffPayload(
   onFailure?: () => void,
   onDelivered?: (payload: string) => void,
 ) {
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- sends the payload to the native diff view's imperative method, retrying per frame until it mounts
   useEffect(() => {
     if (payload === undefined) {
       return;
@@ -263,6 +264,7 @@ function useNativeReviewDiffPayload(
         cancelAnimationFrame(frame);
       }
     };
+    // oxlint-disable-next-line react/exhaustive-effect-dependencies -- A new resetKey redelivers an unchanged payload after the diff surface resets.
   }, [method, nativeRef, payload, resetKey, onFailure, onDelivered]);
 }
 
@@ -329,10 +331,12 @@ function NativeReviewDiffContent(
   );
   useNativeReviewDiffPayload(nativeRef, "setTokensJson", tokensJson);
   const onDebugRef = useRef(onDebug);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- keeps the latest onDebug for callbacks the native diff view fires outside render
   useEffect(() => {
     onDebugRef.current = onDebug;
   }, [onDebug]);
   const reportedMountRef = useRef(false);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- reports the native surface mount to the debug callback once per mount
   useEffect(() => {
     // Effect replay keeps the same native content; only a new mount loses tokens.
     if (reportedMountRef.current) return;
@@ -387,6 +391,7 @@ function NativeReviewDiffContent(
     return null;
   }
 
+  /* oxlint-disable react/refs -- The native view receives this ref; only event callbacks access its current value. */
   return createElement(RawNativeView, {
     ...nativeProps,
     refreshEnabled: props.onPullToRefresh !== undefined,
@@ -399,6 +404,7 @@ function NativeReviewDiffContent(
     },
     ref: nativeRef,
   });
+  /* oxlint-enable react/refs */
 }
 
 export function resolveNativeReviewDiffView(): ComponentType<NativeReviewDiffViewProps> | null {

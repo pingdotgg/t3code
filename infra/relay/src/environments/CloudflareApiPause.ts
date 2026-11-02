@@ -35,7 +35,7 @@ export class CloudflareApiPause extends Context.Service<
   }
 >()("t3code-relay/environments/CloudflareApiPause") {}
 
-export const make = Effect.gen(function* () {
+const make = Effect.gen(function* () {
   const db = yield* RelayDb.RelayDb;
   const outsideTransaction = <A, E>(effect: Effect.Effect<A, E>) =>
     Effect.updateContext(effect, withoutSqlTransaction);
@@ -56,8 +56,8 @@ export const make = Effect.gen(function* () {
         outsideTransaction,
         Effect.withSpan("relay.cloudflare_api_pause.read"),
       ),
-    pauseUntil: (untilMillis) =>
-      db
+    pauseUntil: Effect.fn("relay.cloudflare_api_pause.record")(function (untilMillis) {
+      return db
         .insert(relayUpstreamApiPauses)
         .values({ api: CLOUDFLARE_API, pausedUntilMs: untilMillis })
         .onConflictDoUpdate({
@@ -72,8 +72,8 @@ export const make = Effect.gen(function* () {
             Effect.logWarning("Could not record the shared Cloudflare API pause", { cause }),
           ),
           outsideTransaction,
-          Effect.withSpan("relay.cloudflare_api_pause.record"),
-        ),
+        );
+    }),
   });
 });
 

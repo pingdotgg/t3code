@@ -5,23 +5,28 @@ import {
   CommandId,
   EventId,
   GuestShareId,
+  type GuestStreamEvent,
   MessageId,
+  type OrchestrationV2ThreadHistoryPage,
   type OrchestrationV2TurnItem,
   ProjectId,
   ProviderDriverKind,
   ProviderInstanceId,
+  RunId,
   ThreadId,
   TurnItemId,
 } from "@t3tools/contracts";
+import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
+import * as Deferred from "effect/Deferred";
 import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
+import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
-import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 
@@ -47,6 +52,7 @@ import * as ResourceCleanupService from "../orchestration-v2/ResourceCleanupServ
 import * as ProviderReplayHarness from "../orchestration-v2/testkit/ProviderReplayHarness.ts";
 import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import * as ServerSettings from "../serverSettings.ts";
+import * as AnalyticsService from "../telemetry/AnalyticsService.ts";
 import * as GuestShareService from "./GuestShareService.ts";
 
 const instanceId = ProviderInstanceId.make("codex");
@@ -104,6 +110,26 @@ const layerCleanup = Layer.effect(
     };
   }),
 ).pipe(Layer.provide(layerConfig), Layer.provide(NodeServices.layer));
+class RecordedAnalytics extends Context.Service<
+  RecordedAnalytics,
+  Ref.Ref<ReadonlyArray<Readonly<Record<string, unknown>>>>
+>()("t3/guest/GuestShareService.test/RecordedAnalytics") {}
+const layerAnalytics = Layer.effectContext(
+  Effect.gen(function* () {
+    const recorded = yield* Ref.make<ReadonlyArray<Readonly<Record<string, unknown>>>>([]);
+    return Context.make(RecordedAnalytics, recorded).pipe(
+      Context.add(
+        AnalyticsService.AnalyticsService,
+        AnalyticsService.AnalyticsService.of({
+          record: (event, properties) =>
+            Ref.update(recorded, (events) => [...events, { event, ...properties }]),
+          flush: Effect.void,
+          recordOwners: () => Effect.void,
+        }),
+      ),
+    );
+  }),
+);
 const layerTest = GuestShareService.layer.pipe(
   Layer.provideMerge(
     CommandOutputHub.layer.pipe(
@@ -113,6 +139,7 @@ const layerTest = GuestShareService.layer.pipe(
   Layer.provide(layerProviders),
   Layer.provideMerge(ServerSettings.layerTest({ guestSharingEnabled: true })),
   Layer.provide(layerConnect),
+  Layer.provideMerge(layerAnalytics),
   Layer.provide(ServerSecretStore.layer),
   Layer.provideMerge(layerConfig),
   Layer.provideMerge(NodeServices.layer),
@@ -169,6 +196,18 @@ it.effect("spends an invite once and ends the guest stream when the owner stops 
     );
     assert.isTrue(Exit.isFailure(yield* Effect.exit(guestShares.stream(session))));
     assert.isTrue(Exit.isFailure(yield* Effect.exit(guestShares.check(session))));
+  }).pipe(Effect.provide(layerTest)),
+);
+
+it.effect("counts a guest joining and sending, without their name or text", () =>
+  Effect.gen(function* () {
+    const { guestShares, credential } = yield* shareThread;
+    const { token: session, shareId } = yield* guestShares.redeem({ credential, name: "Sam" });
+    yield* guestShares.submit(session, { shareId, text: "Hello" }, []);
+    assert.deepEqual(yield* Ref.get(yield* RecordedAnalytics), [
+      { event: "feature.used", feature: "guest_share.join" },
+      { event: "feature.used", feature: "guest_message.submit", variant: "text_only" },
+    ]);
   }).pipe(Effect.provide(layerTest)),
 );
 
@@ -373,7 +412,6 @@ it.effect("serves no render for an item outside the shared thread", () =>
   }).pipe(Effect.provide(layerTest)),
 );
 
-/** A message from the owner, which opens a run for the command below. */
 const ownerRun = Effect.gen(function* () {
   const orchestrator = yield* Orchestrator.OrchestratorV2;
   yield* orchestrator.dispatch({
@@ -392,12 +430,17 @@ const ownerRun = Effect.gen(function* () {
   return runs[0]!.id;
 });
 
-const writeCommand = (
+const writeItem = (
   id: string,
-  fields: Pick<
-    Extract<OrchestrationV2TurnItem, { type: "command_execution" }>,
-    "status" | "output"
-  >,
+  fields:
+    | Pick<
+        Extract<OrchestrationV2TurnItem, { type: "command_execution" }>,
+        "type" | "status" | "input" | "output"
+      >
+    | Pick<
+        Extract<OrchestrationV2TurnItem, { type: "file_change" }>,
+        "type" | "status" | "fileName" | "diffStr" | "oldStr" | "newStr"
+      >,
 ) =>
   Effect.gen(function* () {
     const runId = yield* ownerRun;
@@ -426,8 +469,6 @@ const writeCommand = (
             startedAt: now,
             completedAt: fields.status === "running" ? null : now,
             updatedAt: now,
-            type: "command_execution",
-            input: "ls /work/src",
             ...fields,
           },
         },
@@ -436,17 +477,40 @@ const writeCommand = (
     return TurnItemId.make(id);
   });
 
-it.effect("gives the guest a command's detail and output, as the owner's row loads them", () =>
+it.effect("gives the guest a command's detail and output, but no file diffs", () =>
   Effect.gen(function* () {
     const { guestShares, credential } = yield* shareThread;
     const { token: session } = yield* guestShares.redeem({ credential, name: "Sam" });
-    const command = yield* writeCommand("item:command", {
+    const command = yield* writeItem("item:command", {
+      type: "command_execution",
       status: "completed",
+      input: "ls /work/src",
       output: "/work/src/auth.ts\n",
     });
 
     const detail = (yield* guestShares.item(session, command)).item;
     assert.deepInclude(detail, { input: "ls /work/src", output: "/work/src/auth.ts\n" });
+    const edit = yield* writeItem("item:edit", {
+      type: "file_change",
+      status: "completed",
+      fileName: "src/auth.ts",
+      diffStr: "-const token = 1;\n+const token = 2;\n",
+    });
+    const write = yield* writeItem("item:write", {
+      type: "file_change",
+      status: "completed",
+      fileName: "src/config.ts",
+      oldStr: "",
+      newStr: "export const key = 1;\n",
+    });
+    for (const [id, fileName] of [
+      [edit, "src/auth.ts"],
+      [write, "src/config.ts"],
+    ] as const) {
+      const change = (yield* guestShares.item(session, id)).item;
+      assert.deepInclude(change, { type: "file_change", fileName });
+      assert.doesNotHaveAnyKeys(change, ["diffStr", "oldStr", "newStr"]);
+    }
     const frames = Array.from(
       yield* Stream.runCollect(yield* guestShares.commandOutput(session, command)),
     );
@@ -466,11 +530,99 @@ it.effect("gives the guest a command's detail and output, as the owner's row loa
   }).pipe(Effect.provide(layerTest)),
 );
 
+it.effect("pages the guest back through turns older than the stream's snapshot", () =>
+  Effect.gen(function* () {
+    const { guestShares, credential } = yield* shareThread;
+    const { token: session } = yield* guestShares.redeem({ credential, name: "Sam" });
+    const runId = yield* ownerRun;
+    const fileSystem = yield* FileSystem.FileSystem;
+    const directory = yield* fileSystem.makeTempDirectoryScoped();
+    const shot = `${directory}/old.png`;
+    yield* fileSystem.writeFile(shot, PNG);
+    const eventSink = yield* EventSink.EventSinkV2;
+    const now = yield* DateTime.now;
+    const base = { threadId, runId, nodeId: null, providerThreadId: null, providerTurnId: null };
+    const turnItem = (id: string, ordinal: number, payload: object) => ({
+      id: EventId.make(`event:${id}`),
+      type: "turn-item.updated" as const,
+      threadId,
+      driver: ProviderDriverKind.make("codex"),
+      providerInstanceId: instanceId,
+      occurredAt: now,
+      payload: {
+        ...base,
+        id: TurnItemId.make(id),
+        nativeItemRef: null,
+        parentItemId: null,
+        ordinal,
+        title: null,
+        status: "completed" as const,
+        startedAt: now,
+        completedAt: now,
+        updatedAt: now,
+        messageId: MessageId.make(id),
+        ...payload,
+      } as OrchestrationV2TurnItem,
+    });
+    yield* eventSink.write({
+      events: [
+        turnItem("item:old-image", 1, {
+          type: "assistant_message",
+          text: `![Old](${shot})`,
+          streaming: false,
+        }),
+        ...Array.from({ length: 30 }, (_, index) =>
+          turnItem(`item:ask-${index}`, index + 2, {
+            type: "user_message",
+            text: `Ask ${index}`,
+            createdBy: "user",
+            creationSource: "web",
+            inputIntent: "turn_start",
+            attachments: [],
+          }),
+        ),
+      ],
+    });
+
+    const [, opening] = Array.from(
+      yield* Stream.runCollect(Stream.take(yield* guestShares.stream(session), 2)),
+    );
+    if (opening?.type !== "thread" || opening.item.kind !== "snapshot") {
+      return assert.fail("Expected the thread snapshot second.");
+    }
+    const ids = (rows: ReadonlyArray<{ readonly sourceItemId: string }>) =>
+      rows.map((row) => row.sourceItemId);
+    assert.notInclude(ids(opening.item.projection.visibleTurnItems), "item:old-image");
+    let cursor = opening.item.historyCursor ?? null;
+    assert.isNotNull(cursor);
+    // The page has not shown the old reply yet, so its image does not load.
+    assert.equal((yield* Effect.flip(guestShares.media(session, shot))).reason, "unavailable");
+    // Only a session pages.
+    assert.isTrue(Exit.isFailure(yield* Effect.exit(guestShares.history(credential, cursor!))));
+
+    const older: Array<string> = [];
+    while (cursor !== null) {
+      const page: OrchestrationV2ThreadHistoryPage = yield* guestShares.history(session, cursor);
+      older.push(...ids(page.items));
+      cursor = page.hasMoreHistory ? page.nextCursor : null;
+    }
+    assert.include(older, "item:old-image");
+    assert.deepStrictEqual(yield* guestShares.media(session, shot), {
+      path: shot,
+      mimeType: "image/png",
+    });
+  }).pipe(Effect.scoped, Effect.provide(layerTest)),
+);
+
 it.effect("ends a running command's output once the owner stops sharing", () =>
   Effect.gen(function* () {
     const { orchestrator, guestShares, credential } = yield* shareThread;
     const { token: session } = yield* guestShares.redeem({ credential, name: "Sam" });
-    const command = yield* writeCommand("item:running", { status: "running" });
+    const command = yield* writeItem("item:running", {
+      type: "command_execution",
+      status: "running",
+      input: "ls /work/src",
+    });
     const collecting = yield* Stream.runCollect(
       yield* guestShares.commandOutput(session, command),
     ).pipe(Effect.forkChild);
@@ -806,5 +958,272 @@ it.effect("serves the shared thread's files to its guest, never another thread's
       "stale_page",
     );
     assert.isDefined(shareId);
+  }).pipe(Effect.scoped, Effect.provide(layerTest)),
+);
+
+it.effect("serves an image on the host only when an agent reply the guest sees shows it", () =>
+  Effect.gen(function* () {
+    const { orchestrator, guestShares } = yield* shareThread;
+    const runId = yield* ownerRun;
+    const fileSystem = yield* FileSystem.FileSystem;
+    const directory = yield* fileSystem.makeTempDirectoryScoped();
+    const shot = `${directory}/my shot.png`;
+    const fileUrl = `${directory}/file-url.png`;
+    const page = `${directory}/page.png`;
+    const fromUser = `${directory}/from-user.png`;
+    const unnamed = `${directory}/unnamed.png`;
+    const later = `${directory}/later.png`;
+    for (const path of [shot, fileUrl, fromUser, unnamed, later]) {
+      yield* fileSystem.writeFile(path, PNG);
+    }
+    yield* fileSystem.writeFileString(page, "<script>alert(1)</script>");
+    const eventSink = yield* EventSink.EventSinkV2;
+    const now = yield* DateTime.now;
+    const run = (yield* orchestrator.getThreadRecords(threadId, ["runs"])).runs[0];
+    const item = (
+      id: string,
+      ordinal: number,
+      fields:
+        | { readonly type: "assistant_message"; readonly text: string }
+        | { readonly type: "user_message"; readonly text: string },
+      target: { readonly threadId: ThreadId; readonly runId: RunId } = { threadId, runId },
+    ) => ({
+      id: EventId.make(`event:${id}`),
+      type: "turn-item.updated" as const,
+      threadId: target.threadId,
+      driver: ProviderDriverKind.make("codex"),
+      providerInstanceId: instanceId,
+      occurredAt: now,
+      payload: {
+        id: TurnItemId.make(id),
+        threadId: target.threadId,
+        runId: target.runId,
+        nodeId: null,
+        providerThreadId: null,
+        providerTurnId: null,
+        nativeItemRef: null,
+        parentItemId: null,
+        ordinal,
+        title: null,
+        status: "completed" as const,
+        startedAt: now,
+        completedAt: now,
+        updatedAt: now,
+        messageId: MessageId.make(id),
+        ...(fields.type === "assistant_message"
+          ? { ...fields, streaming: false }
+          : {
+              ...fields,
+              createdBy: "user" as const,
+              creationSource: "web" as const,
+              inputIntent: "turn_start" as const,
+              attachments: [],
+            }),
+      },
+    });
+    yield* eventSink.write({
+      events: [
+        item("item:agent-images", 1, {
+          type: "assistant_message",
+          text: `Done: ![Shot](<${shot}>) ![Other](file://${encodeURI(fileUrl)}) ![Page](${page})`,
+        }),
+        // A guest's sent message is a user message; it must not open files on the host.
+        item("item:guest-image", 2, { type: "user_message", text: `![Mine](${fromUser})` }),
+        {
+          id: EventId.make("event:run-done"),
+          type: "run.updated" as const,
+          threadId,
+          runId,
+          providerInstanceId: instanceId,
+          occurredAt: now,
+          payload: { ...run!, status: "completed" as const, completedAt: now },
+        },
+      ],
+    });
+    // The guest watches a fork, which shows these replies as inherited history.
+    const forkId = ThreadId.make("thread:guest-share-fork");
+    yield* orchestrator.dispatch({
+      type: "thread.fork",
+      commandId: CommandId.make("fork"),
+      sourceThreadId: threadId,
+      targetThreadId: forkId,
+      sourcePoint: { type: "run", runId },
+      createdBy: "user",
+      creationSource: "web",
+    });
+    const { url } = yield* guestShares.create({ threadId: forkId });
+    const { token: session } = yield* guestShares.redeem({
+      credential: url.slice(url.indexOf("#") + 1),
+      name: "Sam",
+    });
+
+    // The guest's page opens, and its stream sends the replies the fork inherits.
+    const sent = yield* Queue.unbounded<GuestStreamEvent>();
+    yield* Stream.runForEach(yield* guestShares.stream(session), (event) =>
+      Queue.offer(sent, event),
+    ).pipe(Effect.forkScoped);
+    const sentItem = Effect.fn(function* (id: string) {
+      for (;;) {
+        const event = yield* Queue.take(sent);
+        if (
+          event.type === "thread" &&
+          event.item.kind === "event" &&
+          event.item.event.type === "turn-item.updated" &&
+          event.item.event.payload.id === id
+        ) {
+          return;
+        }
+      }
+    });
+
+    // The agent shows another screenshot live, then enough rows to push the first reply out of
+    // the window, before the page asks for any image.
+    yield* orchestrator.dispatch({
+      type: "message.dispatch",
+      commandId: CommandId.make("fork-message"),
+      threadId: forkId,
+      messageId: MessageId.make("message:fork"),
+      text: "One more",
+      attachments: [],
+      dispatchMode: { type: "defer_start" },
+      createdBy: "user",
+      creationSource: "web",
+    });
+    const forkRun = (yield* orchestrator.getThreadRecords(forkId, ["runs"])).runs.at(-1)!;
+    const inFork = { threadId: forkId, runId: forkRun.id };
+    yield* eventSink.write({
+      events: [
+        item(
+          "item:later-image",
+          1,
+          { type: "assistant_message", text: `![Later](${later})` },
+          inFork,
+        ),
+        ...Array.from({ length: 600 }, (_, index) =>
+          item(
+            `item:filler-${index}`,
+            index + 2,
+            { type: "assistant_message", text: "Working." },
+            inFork,
+          ),
+        ),
+      ],
+    });
+    yield* sentItem("item:later-image");
+
+    // The page still shows every reply it was sent, so each image loads.
+    for (const path of [shot, fileUrl, later]) {
+      assert.deepStrictEqual(yield* guestShares.media(session, path), {
+        path,
+        mimeType: "image/png",
+      });
+    }
+    for (const path of [page, fromUser, unnamed, `${directory}/missing.png`]) {
+      assert.equal((yield* Effect.flip(guestShares.media(session, path))).reason, "unavailable");
+    }
+
+    // A reply edited to drop its image stops allowing it.
+    yield* eventSink.write({
+      events: [
+        {
+          ...item("item:later-image", 1, { type: "assistant_message", text: "Gone." }, inFork),
+          id: EventId.make("event:later-image-edited"),
+        },
+      ],
+    });
+    yield* sentItem("item:later-image");
+    assert.equal((yield* Effect.flip(guestShares.media(session, later))).reason, "unavailable");
+  }).pipe(Effect.scoped, Effect.provide(layerTest)),
+);
+
+it.effect("keeps a connected guest's images while other shares come and go", () =>
+  Effect.gen(function* () {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const directory = yield* fileSystem.makeTempDirectoryScoped();
+    const shot = `${directory}/shot.png`;
+    yield* fileSystem.writeFile(shot, PNG);
+    const eventSink = yield* EventSink.EventSinkV2;
+    const now = yield* DateTime.now;
+    /** A shared thread whose agent reply shows the screenshot, and its guest's session. */
+    const sharedWithImage = Effect.fn(function* (id: ThreadId) {
+      const { orchestrator, guestShares, credential } = yield* shareThreadFor(id);
+      yield* orchestrator.dispatch({
+        type: "message.dispatch",
+        commandId: CommandId.make(`message:${id}`),
+        threadId: id,
+        messageId: MessageId.make(`message:${id}`),
+        text: "Show me",
+        attachments: [],
+        dispatchMode: { type: "defer_start" },
+        createdBy: "user",
+        creationSource: "web",
+      });
+      const runId = (yield* orchestrator.getThreadRecords(id, ["runs"])).runs[0]!.id;
+      yield* eventSink.write({
+        events: [
+          {
+            id: EventId.make(`event:reply:${id}`),
+            type: "turn-item.updated",
+            threadId: id,
+            driver: ProviderDriverKind.make("codex"),
+            providerInstanceId: instanceId,
+            occurredAt: now,
+            payload: {
+              id: TurnItemId.make(`item:reply:${id}`),
+              threadId: id,
+              runId,
+              nodeId: null,
+              providerThreadId: null,
+              providerTurnId: null,
+              nativeItemRef: null,
+              parentItemId: null,
+              ordinal: 1,
+              title: null,
+              status: "completed",
+              startedAt: now,
+              completedAt: now,
+              updatedAt: now,
+              type: "assistant_message",
+              messageId: MessageId.make(`item:reply:${id}`),
+              text: `![Shot](${shot})`,
+              streaming: false,
+            },
+          },
+        ],
+      });
+      const { token } = yield* guestShares.redeem({ credential, name: "Sam" });
+      return { guestShares, token };
+    });
+
+    // This guest's page stays open while more guests than the record keeps open and close theirs.
+    const { guestShares, token } = yield* sharedWithImage(threadId);
+    const opened = yield* Deferred.make<void>();
+    yield* Stream.runForEach(yield* guestShares.stream(token), () =>
+      Deferred.succeed(opened, undefined),
+    ).pipe(Effect.forkScoped);
+    yield* Deferred.await(opened);
+    const closedTokens: Array<string> = [];
+    for (let index = 0; index < 65; index++) {
+      const other = yield* sharedWithImage(ThreadId.make(`thread:other-${index}`));
+      const events = yield* guestShares.stream(other.token);
+      // The first is built but never read, as for a HEAD request; the rest open and close.
+      if (index > 0) yield* Stream.runDrain(Stream.take(events, 2));
+      closedTokens.push(other.token);
+    }
+    assert.equal((yield* guestShares.media(token, shot)).mimeType, "image/png");
+    // Records of guests with no open page were dropped to make room.
+    for (const closed of closedTokens.slice(0, 2)) {
+      assert.equal((yield* Effect.flip(guestShares.media(closed, shot))).reason, "unavailable");
+    }
+
+    // A new link on the thread starts empty: its guest gets nothing the last guest was sent.
+    const { url } = yield* guestShares.create({ threadId });
+    const next = yield* guestShares.redeem({
+      credential: url.slice(url.indexOf("#") + 1),
+      name: "Kim",
+    });
+    assert.equal((yield* Effect.flip(guestShares.media(next.token, shot))).reason, "unavailable");
+    yield* Stream.runDrain(Stream.take(yield* guestShares.stream(next.token), 2));
+    assert.equal((yield* guestShares.media(next.token, shot)).mimeType, "image/png");
   }).pipe(Effect.scoped, Effect.provide(layerTest)),
 );
