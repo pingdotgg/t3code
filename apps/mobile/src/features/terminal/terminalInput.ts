@@ -45,6 +45,14 @@ export function resolveModifiedTerminalInput(input: {
     return { kind: "paste" };
   }
 
+  if (
+    input.data.length === 3 &&
+    input.data.startsWith("\u001b[") &&
+    /[ABCD]/.test(input.data.charAt(2))
+  ) {
+    return { kind: "write", data: `\u001b[1;${input.modifier === "ctrl" ? 5 : 3}${input.data[2]}` };
+  }
+
   return {
     kind: "write",
     data: input.modifier === "ctrl" ? applyCtrlModifier(input.data) : `\u001b${input.data}`,
