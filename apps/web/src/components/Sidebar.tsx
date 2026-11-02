@@ -252,6 +252,7 @@ import {
 } from "./ui/combobox";
 import { SidebarContent, SidebarGroup, useSidebar } from "./ui/sidebar";
 import { SidebarChromeFooter, SidebarChromeHeader } from "./sidebar/SidebarChrome";
+import { SidebarEnvironmentScopeMenu } from "./sidebar/SidebarEnvironmentScopeMenu";
 import { SidebarHeaderIconButton, SidebarThreadHeader } from "./sidebar/SidebarThreadHeader";
 import { TooltipProvider } from "./ui/tooltip";
 import { composerDraftHasUserContent, DraftId, useComposerDraftStore } from "../composerDraftStore";
@@ -852,6 +853,7 @@ function useSidebarLookups() {
     projects,
     serverConfigs,
     projectGroups,
+    environments,
     environmentLabelById,
     providerEntriesByEnvironment,
     projectByKey,
@@ -916,6 +918,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     projects,
     serverConfigs,
     projectGroups,
+    environments,
     environmentLabelById,
     providerEntriesByEnvironment,
     projectByKey,
@@ -1024,6 +1027,10 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
   const projectGroupsRef = useRef(projectGroups);
   const persistedProjectScopeKeys = useUiStateStore((store) => store.sidebarProjectScopeKeys);
   const setPersistedProjectScopeKeys = useUiStateStore((store) => store.setSidebarProjectScopeKeys);
+  const persistedEnvironmentScopeId = useUiStateStore((store) => store.sidebarEnvironmentScopeId);
+  const setPersistedEnvironmentScopeId = useUiStateStore(
+    (store) => store.setSidebarEnvironmentScopeId,
+  );
   const [projectScopeMenuState, dispatchProjectScopeMenu] = useReducer(
     reduceSidebarProjectScopeMenuState,
     { open: false, query: "" },
@@ -1090,6 +1097,15 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     setPersistedProjectScopeKeys(keys);
     scrollSidebarToTop(sidebarContentRef.current);
   };
+  const setEnvironmentScopeId = (environmentId: EnvironmentId | null) => {
+    clearSelection();
+    setPersistedEnvironmentScopeId(environmentId);
+    scrollSidebarToTop(sidebarContentRef.current);
+  };
+  // Like a missing project, an environment that is gone reads as all environments.
+  const chosenEnvironmentScopeId =
+    environments.find((environment) => environment.environmentId === persistedEnvironmentScopeId)
+      ?.environmentId ?? null;
   // A scope whose project is gone reads as all projects once every snapshot has
   // loaded. The stored keys are left alone, so the scope returns with its project.
   // An archived project's scope reads as all projects, matching the menu.
@@ -1107,13 +1123,17 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     chosenProjectScopeKeys.includes(project.projectKey),
   );
   const chosenScopeProjectKeys =
-    chosenProjectGroups.length === 0
+    chosenProjectGroups.length === 0 && chosenEnvironmentScopeId === null
       ? null
       : new Set(
-          chosenProjectGroups.flatMap((project) =>
-            project.memberProjectRefs.map(
-              (projectRef) => `${projectRef.environmentId}:${projectRef.projectId}`,
-            ),
+          (chosenProjectGroups.length === 0 ? projectGroups : chosenProjectGroups).flatMap(
+            (project) =>
+              project.memberProjectRefs.flatMap((projectRef) =>
+                chosenEnvironmentScopeId === null ||
+                projectRef.environmentId === chosenEnvironmentScopeId
+                  ? [`${projectRef.environmentId}:${projectRef.projectId}`]
+                  : [],
+              ),
           ),
         );
   const threads = useQuietThreadShells();
@@ -1145,7 +1165,11 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     findThread: (key) => threads.find((candidate) => threadShellKey(candidate) === key),
   });
   const projectScopeKeys = revealWidensScope ? [] : chosenProjectScopeKeys;
-  const projectScopeKey = projectScopeKeys.length === 0 ? null : projectScopeKeys.join("\n");
+  const environmentScopeId = revealWidensScope ? null : chosenEnvironmentScopeId;
+  const projectScopeKey =
+    projectScopeKeys.length === 0 && environmentScopeId === null
+      ? null
+      : [environmentScopeId ?? "", ...projectScopeKeys].join("\n");
   const toggleProjectScopeKey = (key: string) =>
     setProjectScopeKeys(
       projectScopeKeys.includes(key)
@@ -1161,7 +1185,13 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     if (!revealWidensScope) return;
     clearSelection();
     setPersistedProjectScopeKeys([]);
-  }, [clearSelection, revealWidensScope, setPersistedProjectScopeKeys]);
+    setPersistedEnvironmentScopeId(null);
+  }, [
+    clearSelection,
+    revealWidensScope,
+    setPersistedProjectScopeKeys,
+    setPersistedEnvironmentScopeId,
+  ]);
   const revealActiveRow = useActiveRowReveal(routeReveal, routeRowThreadKey);
   const showProjectEnvironments = projectGroupsSpanEnvironments(projectGroups);
   const scratchMachineLabelFor = (
@@ -1198,7 +1228,9 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
   const scopedProjectRefs = scopedProjectGroups.flatMap((project) => project.memberProjectRefs);
   const scopedProjectKeys = revealWidensScope ? null : chosenScopeProjectKeys;
   const threadSearch = useThreadSearch(
-    connectedEnvironmentIds,
+    environmentScopeId === null
+      ? connectedEnvironmentIds
+      : connectedEnvironmentIds.filter((environmentId) => environmentId === environmentScopeId),
     threadSearchQuery,
     scopedProjectGroups.length === 0
       ? {}
@@ -1352,10 +1384,17 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     delegatedUnderParent,
     routeRowThreadKey,
     folderGroups: boringSidebarEnabled
-      ? scopedProjectGroups.length === 0
-        ? // An archived project keeps a folder for its active threads, below the rest.
-          [...scopeGroups, ...projectGroups.filter((project) => project.archived)]
-        : scopedProjectGroups
+      ? (scopedProjectGroups.length === 0
+          ? // An archived project keeps a folder for its active threads, below the rest.
+            [...scopeGroups, ...projectGroups.filter((project) => project.archived)]
+          : scopedProjectGroups
+        ).filter(
+          (group) =>
+            environmentScopeId === null ||
+            group.memberProjectRefs.some(
+              (projectRef) => projectRef.environmentId === environmentScopeId,
+            ),
+        )
       : null,
     keepEmptyFolders: (group) =>
       scopedProjectGroups.length > 0 || (group.pinned && !group.archived),
@@ -2991,6 +3030,16 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
             <SidebarThreadHeader
               searchFieldRef={headerSearchRef}
               hasProjects={projectGroups.length > 0}
+              environmentScope={
+                environments.length > 1 ? (
+                  <SidebarEnvironmentScopeMenu
+                    environments={environments}
+                    selectedEnvironmentId={environmentScopeId}
+                    machineByEnvironmentId={environmentMachineById}
+                    onChange={setEnvironmentScopeId}
+                  />
+                ) : null
+              }
               projectScope={
                 <Combobox
                   items={projectScopeItems}

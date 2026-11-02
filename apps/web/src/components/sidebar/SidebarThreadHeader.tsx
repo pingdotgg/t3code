@@ -15,6 +15,7 @@ import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 export interface SidebarThreadHeaderProps {
   searchFieldRef?: RefObject<HTMLDivElement | null>;
   hasProjects: boolean;
+  environmentScope: ReactNode;
   projectScope: ReactNode;
   onNewProject: () => void;
   onNewThread: (event: ReactMouseEvent) => void;
@@ -35,6 +36,7 @@ export interface SidebarThreadHeaderProps {
 export function SidebarThreadHeader({
   searchFieldRef,
   hasProjects,
+  environmentScope,
   projectScope,
   onNewProject,
   onNewThread,
@@ -104,6 +106,7 @@ export function SidebarThreadHeader({
       <div className="flex shrink-0 items-center">
         {hasProjects ? (
           <>
+            {environmentScope}
             {projectScope}
             <SidebarHeaderIconButton label="Add project" onClick={onNewProject}>
               <FolderPlusIcon />
