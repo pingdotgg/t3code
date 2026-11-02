@@ -405,9 +405,9 @@ export function recordVisitForThread(
   profileId?: string,
   at?: number,
 ): void {
-  if (profileId === INCOGNITO_BROWSER_PROFILE_ID) return;
   const threadKey = scopedThreadKey(ref);
   const projectKey = resolveThreadProjectKey(ref);
+  if (profileId === INCOGNITO_BROWSER_PROFILE_ID) return;
   const state = useBrowserHistoryStore.getState();
   const visitAt = at ?? Date.now();
   const connection = readPreparedConnection(ref.environmentId);

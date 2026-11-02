@@ -445,16 +445,24 @@ describe("thread project resolution", () => {
     expect(useBrowserHistoryStore.getState().pendingVisitsByThreadKey).toEqual({});
   });
 
-  it("lands visits queued before the thread's project loaded with the next visit", () => {
-    recordVisitForThread(threadRef, "http://a.test/", undefined, 1);
-    entities.projects = [repoProject];
-    entities.shellProjectId = "project-1";
-    recordVisitForThread(threadRef, "http://b.test/", undefined, 2);
+  it.each([undefined, INCOGNITO_BROWSER_PROFILE_ID])(
+    "lands queued regular visits when the next visit uses profile %s",
+    (profileId) => {
+      recordVisitForThread(threadRef, "http://a.test/", undefined, 1);
+      entities.projects = [repoProject];
+      entities.shellProjectId = "project-1";
+      recordVisitForThread(threadRef, "http://b.test/", profileId, 2);
 
-    expect(
-      useBrowserHistoryStore.getState().byProjectKey["env-1:/repo"]?.map((entry) => entry.url),
-    ).toEqual(["http://b.test/", "http://a.test/"]);
-  });
+      expect(
+        useBrowserHistoryStore.getState().byProjectKey["env-1:/repo"]?.map((entry) => entry.url),
+      ).toEqual(
+        profileId === INCOGNITO_BROWSER_PROFILE_ID
+          ? ["http://a.test/"]
+          : ["http://b.test/", "http://a.test/"],
+      );
+      expect(useBrowserHistoryStore.getState().pendingVisitsByThreadKey).toEqual({});
+    },
+  );
 });
 
 describe("pendingVisitsByThreadKey", () => {
