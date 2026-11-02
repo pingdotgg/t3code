@@ -171,8 +171,14 @@ it.layer(NodeServices.layer)("ClaudeHome", (it) => {
       const windowsBase = yield* mergeClaudeBaseEnvironment(undefined, {
         Anthropic_Api_Key: "key",
         Claude_Code_Entrypoint: "claude-desktop",
+        Claude_Config_Dir: "config",
+        ProgramData: "data",
       }).pipe(Effect.provideService(HostProcess.Platform, "win32"));
-      expect(windowsBase).toEqual({ ANTHROPIC_API_KEY: "key" });
+      expect(windowsBase).toEqual({
+        ANTHROPIC_API_KEY: "key",
+        CLAUDE_CONFIG_DIR: "config",
+        PROGRAMDATA: "data",
+      });
 
       // Every settings layer can bring the key, including a file edited after the server started.
       yield* write(user, apiKey);
