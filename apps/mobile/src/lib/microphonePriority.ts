@@ -24,7 +24,6 @@ const KIND_BY_PORT_TYPE: Readonly<Record<string, MicrophoneKind>> = {
   BluetoothHFP: "bluetooth",
   BluetoothSCO: "bluetooth",
   BluetoothLE: "bluetooth",
-  HearingAid: "bluetooth",
   MicrophoneBuiltIn: "builtIn",
   CarAudio: "carPlay",
 };

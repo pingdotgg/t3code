@@ -43,6 +43,7 @@ export function createLazyVoiceRecorder<TStatus, TRecorderState>(input: {
   let retired: NativeVoiceRecorder<TStatus, TRecorderState> | null = null;
   let retiredUri: string | null = null;
   let pending: Promise<unknown> = Promise.resolve();
+  let abandonInputSelection: (() => void) | null = null;
 
   const track = <T>(promise: Promise<T>): Promise<T> => {
     pending = Promise.allSettled([pending, promise]).then(() => undefined);
@@ -71,15 +72,24 @@ export function createLazyVoiceRecorder<TStatus, TRecorderState>(input: {
             return;
           }
           if (!selected) return;
-          const abort = () => prepared.cancelInputSelection?.();
-          signal?.addEventListener("abort", abort, { once: true });
+          const uid = selected.uid;
+          // Expo never settles a canceled coroutine function's promise, so stop waiting on abort.
+          const abandoned = Promise.withResolvers<void>();
+          const abandon = () => {
+            prepared.cancelInputSelection?.();
+            abandoned.resolve();
+          };
+          signal?.addEventListener("abort", abandon, { once: true });
+          abandonInputSelection = abandon;
           try {
-            try {
-              await prepared.setInput(selected.uid);
-            } catch {}
+            await Promise.race([
+              new Promise<void>((resolve) => resolve(prepared.setInput(uid))).catch(() => {}),
+              abandoned.promise,
+            ]);
             if (signal) throwIfVoiceTranscriptionAborted(signal);
           } finally {
-            signal?.removeEventListener("abort", abort);
+            signal?.removeEventListener("abort", abandon);
+            if (abandonInputSelection === abandon) abandonInputSelection = null;
           }
         }),
       );
@@ -97,7 +107,7 @@ export function createLazyVoiceRecorder<TStatus, TRecorderState>(input: {
     release() {
       const released = recorder;
       if (!released) return;
-      released.cancelInputSelection?.();
+      abandonInputSelection?.();
       recorder = null;
       subscription?.remove();
       subscription = null;

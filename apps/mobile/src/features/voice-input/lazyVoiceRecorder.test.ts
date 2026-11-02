@@ -139,13 +139,10 @@ describe("createLazyVoiceRecorder", () => {
         true,
         (inputs) => inputs[1] ?? null,
         (native) => {
+          // Expo drops the promise of a canceled coroutine function, so it never settles.
           native.setInput.mockImplementationOnce(() => {
             routing.resolve();
-            return new Promise((_, reject) => {
-              native.cancelInputSelection.mockImplementationOnce(() =>
-                reject(new Error("Canceled")),
-              );
-            });
+            return new Promise(() => undefined);
           });
         },
       );

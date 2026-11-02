@@ -62,6 +62,12 @@ export const localVoiceTranscriberAtom = makePermissionStatusAtom<
   read: () => getLocalVoiceTranscriber().catch(() => null),
 }).pipe(Atom.keepAlive);
 
+// Each foreground re-probe yields a new transcriber; composers re-render only when availability flips.
+const localVoiceInputAvailableAtom = Atom.make((get) => {
+  const transcriber = get(localVoiceTranscriberAtom);
+  return transcriber !== null && transcriber !== "checking";
+});
+
 /**
  * The app has one microphone and one dictation at a time, so the session
  * lives for the registry's lifetime rather than any screen's.
@@ -147,12 +153,11 @@ const voiceInputAtom = Atom.make((get) => {
 
 export function useGlobalVoiceInput() {
   const { session, audioLevels } = useAtomValue(voiceInputAtom);
-  const transcriber = useAtomValue(localVoiceTranscriberAtom);
+  const isTranscriberAvailable = useAtomValue(localVoiceInputAvailableAtom);
   const snapshot = useSyncExternalStore(session.subscribe, session.getSnapshot);
   return {
     ...snapshot,
-    isAvailable:
-      (transcriber !== null && transcriber !== "checking") || getNativeShowcaseScene() !== null,
+    isAvailable: isTranscriberAvailable || getNativeShowcaseScene() !== null,
     audioLevels,
     isBusy: voiceInputBlocksSubmission(snapshot.state),
     session,

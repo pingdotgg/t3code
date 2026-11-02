@@ -77,16 +77,20 @@ private suspend fun prepareModel(client: MlKitSpeechClient): Boolean = try {
   false
 }
 
+// Any probe failure for one mode means "try the next mode"; prepare surfaces the real error.
 private suspend fun checkModelSupport(client: MlKitSpeechClient): Int = try {
   client.checkStatus()
-} catch (error: GenAiException) {
-  if (!isModelUnavailable(error)) throw error
+} catch (_: GenAiException) {
   FeatureStatus.UNAVAILABLE
 }
 
-private fun isModelUnavailable(error: GenAiException): Boolean =
-  error.errorCode == GenAiException.ErrorCode.NOT_AVAILABLE ||
-    error.errorCode == GenAiException.ErrorCode.NOT_SUPPORTED
+private fun isModelUnavailable(error: GenAiException): Boolean = when (error.errorCode) {
+  GenAiException.ErrorCode.NOT_AVAILABLE,
+  GenAiException.ErrorCode.NOT_SUPPORTED,
+  GenAiException.ErrorCode.AICORE_INCOMPATIBLE,
+  GenAiException.ErrorCode.NEEDS_SYSTEM_UPDATE -> true
+  else -> false
+}
 
 private suspend fun collectGoogleVoiceTranscript(
   responses: Flow<SpeechRecognizerResponse>
