@@ -10996,7 +10996,13 @@ describe("ClaudeAdapterV2 background wake turns", () => {
   it.effect("leaves buffered wake messages for the continuation queued behind a user turn", () =>
     Effect.scoped(
       Effect.gen(function* () {
-        const harness = yield* makeWakeHarness;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const directory = yield* fileSystem.makeTempDirectoryScoped();
+        const settingsPath = NodePath.join(directory, "settings.json");
+        yield* fileSystem.writeFileString(settingsPath, "{}");
+        const harness = yield* makeWakeHarnessWithOptions({
+          settings: { ...DEFAULT_CLAUDE_SETTINGS, launchArgs: `--settings "${settingsPath}"` },
+        });
         const now = yield* DateTime.now;
 
         yield* harness.runtime.startTurn(
@@ -11047,6 +11053,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           ),
         );
 
+        yield* fileSystem.remove(settingsPath);
         yield* harness.runtime.startTurn(
           makeClaudeTestTurnInput({
             threadId: harness.threadId,
