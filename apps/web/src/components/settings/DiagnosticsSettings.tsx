@@ -36,6 +36,7 @@ import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { toastManager } from "../ui/toast";
 import { ExpandableText } from "./ExpandableText";
 import { ResourceTelemetryDiagnostics } from "./ResourceTelemetryDiagnostics";
+import { formatCpuTime } from "./ResourceTelemetryDiagnostics.logic";
 import { SettingsPageContainer, SettingsSection } from "./settingsLayout";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { useSettingsScope } from "./SettingsScopeContext";
@@ -425,13 +426,6 @@ const RESOURCE_HISTORY_WINDOWS = [
   { label: "30m", windowMs: 30 * 60_000, bucketMs: 2 * 60_000 },
   { label: "1h", windowMs: 60 * 60_000, bucketMs: 5 * 60_000 },
 ] as const;
-
-function formatCpuTime(seconds: number): string {
-  if (seconds < 60) return `${seconds.toFixed(seconds >= 10 ? 1 : 2).replace(/\.0+$/, "")}s`;
-  const minutes = seconds / 60;
-  if (minutes < 60) return `${minutes.toFixed(minutes >= 10 ? 1 : 2).replace(/\.0+$/, "")}m`;
-  return `${(minutes / 60).toFixed(2).replace(/\.0+$/, "")}h`;
-}
 
 function formatShortProcessName(command: string): string {
   const name = formatProcessName(command);
