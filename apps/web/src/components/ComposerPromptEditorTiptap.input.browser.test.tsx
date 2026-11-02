@@ -149,7 +149,7 @@ it.each([
   expect(textWithMark(editor, "code")).toEqual(code);
 });
 
-it("bolds with Mod+B only when text is selected", async () => {
+it("bolds with Mod+B at a collapsed cursor and over a selection", async () => {
   await using screen = await mountEditor("ship it");
   const { editor } = screen;
   const modB = isMacPlatform(navigator.platform) ? "{Meta>}b{/Meta}" : "{Control>}b{/Control}";
@@ -158,14 +158,14 @@ it("bolds with Mod+B only when text is selected", async () => {
   });
   await vi.waitFor(() => expect(document.activeElement).toBe(editor.view.dom));
   await userEvent.keyboard(modB);
-  // Without the guard, Tiptap stores bold for the next typed text.
-  expect(editor.state.storedMarks).toBeNull();
+  await userEvent.keyboard(" now");
+  await vi.waitFor(() => expect(textWithMark(editor, "bold")).toEqual([" now"]));
 
   await act(async () => {
     editor.commands.setTextSelection({ from: 1, to: 5 });
   });
   await userEvent.keyboard(modB);
-  await vi.waitFor(() => expect(textWithMark(editor, "bold")).toEqual(["ship"]));
+  await vi.waitFor(() => expect(textWithMark(editor, "bold")).toEqual(["ship", " now"]));
 });
 
 it.each([false, true])(
