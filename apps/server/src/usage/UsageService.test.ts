@@ -1631,6 +1631,48 @@ describe("UsageService", () => {
     }).pipe(Effect.scoped, Effect.provide(TestClock.layer())),
   );
 
+  it.live("reports one Cursor source when two API keys belong to the same account", () =>
+    Effect.gen(function* () {
+      const { settings, home } = yield* setup;
+      yield* TestClock.setTime(CURSOR_NOW);
+      const cursor = makeFakeCursor();
+      cursor.state.events = [{ timestampMs: CURSOR_NOW - 3 * HOUR_MS, outputTokens: 7 }];
+      const summary = yield* Effect.gen(function* () {
+        const service = yield* makeWithCursor(cursor.read);
+        return yield* service.readSummary({ ...WINDOW, awaitRefresh: true });
+      }).pipe(
+        Effect.provide(
+          layerService({
+            prefix: "usage-service-cursor-shared-account",
+            home,
+            settings: {
+              ...settings,
+              providerInstances: {
+                ...settings.providerInstances,
+                [ProviderInstanceId.make("cursor")]: {
+                  driver: ProviderDriverKind.make("cursor"),
+                  environment: [{ name: "CURSOR_API_KEY", value: "first-key", sensitive: true }],
+                },
+                [ProviderInstanceId.make("cursor-work")]: {
+                  driver: ProviderDriverKind.make("cursor"),
+                  environment: [{ name: "CURSOR_API_KEY", value: "second-key", sensitive: true }],
+                },
+              },
+            },
+            platform: "darwin",
+            environment: {},
+          }),
+        ),
+      );
+      assert.strictEqual(cursor.state.credentials.length, 2);
+      const sources = summary.sources.filter((source) => source.fingerprint.provider === "cursor");
+      assert.deepStrictEqual(
+        sources.map((source) => source.distinctSessions),
+        [1],
+      );
+    }).pipe(Effect.scoped, Effect.provide(TestClock.layer())),
+  );
+
   it.live(
     "includes OpenCode history but does not substitute desktop usage for an unavailable Cursor account",
     () =>
