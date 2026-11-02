@@ -1066,6 +1066,7 @@ it.layer(
             });
             yield* writeProviderStatusCache({ filePath, provider: cachedProvider });
             const nextProvider = yield* Ref.make<ServerProvider>(refreshedProvider);
+            const currentProvider = yield* Ref.make<ServerProvider>(pendingProvider);
             const instance = {
               instanceId: cachedProvider.instanceId,
               driverKind: cachedProvider.driver,
@@ -1083,8 +1084,10 @@ it.layer(
                       packageName: null,
                     }),
                   ),
-                getSnapshot: Effect.succeed(pendingProvider),
-                refresh: Ref.get(nextProvider),
+                getSnapshot: Ref.get(currentProvider),
+                refresh: Ref.get(nextProvider).pipe(
+                  Effect.tap((provider) => Ref.set(currentProvider, provider)),
+                ),
                 streamChanges: Stream.empty,
                 applyUsageLimits: () => Effect.void,
               },
@@ -1105,6 +1108,7 @@ it.layer(
             const retainedModels = [defaultModel, customModel, currentModel];
 
             for (const restarted of [false, true]) {
+              yield* Ref.set(currentProvider, pendingProvider);
               yield* Effect.gen(function* () {
                 const registry = yield* ProviderRegistry.ProviderRegistry;
                 assert.deepStrictEqual(
@@ -1201,6 +1205,7 @@ it.layer(
           });
           yield* writeProviderStatusCache({ filePath, provider: cachedProvider });
           const nextProvider = yield* Ref.make<ServerProvider>(refreshedProvider);
+          const currentProvider = yield* Ref.make<ServerProvider>(pendingProvider);
           const instance = {
             instanceId: cachedProvider.instanceId,
             driverKind: cachedProvider.driver,
@@ -1218,8 +1223,10 @@ it.layer(
                     packageName: null,
                   }),
                 ),
-              getSnapshot: Effect.succeed(pendingProvider),
-              refresh: Ref.get(nextProvider),
+              getSnapshot: Ref.get(currentProvider),
+              refresh: Ref.get(nextProvider).pipe(
+                Effect.tap((provider) => Ref.set(currentProvider, provider)),
+              ),
               streamChanges: Stream.empty,
               applyUsageLimits: () => Effect.void,
             },
@@ -1243,6 +1250,7 @@ it.layer(
           ];
 
           for (const restarted of [false, true]) {
+            yield* Ref.set(currentProvider, pendingProvider);
             yield* Effect.gen(function* () {
               const registry = yield* ProviderRegistry.ProviderRegistry;
               const expectedModels = restarted
