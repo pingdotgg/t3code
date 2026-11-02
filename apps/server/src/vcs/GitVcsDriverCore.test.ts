@@ -3930,6 +3930,34 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
   });
 
   describe("worktree operations", () => {
+    it.effect("removes only the branch it created when the checkout fails", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        yield* initRepoWithCommit(cwd);
+        const path = yield* Path.Path;
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+        const takenPath = yield* makeTmpDir("git-worktrees-");
+        yield* writeTextFile(takenPath, "occupied.txt", "not a worktree\n");
+        yield* git(cwd, ["branch", "existing"]);
+
+        for (const newRefName of ["fix/retry", "existing"]) {
+          yield* driver
+            .createWorktree({ cwd, path: takenPath, refName: "HEAD", newRefName })
+            .pipe(Effect.flip);
+        }
+
+        assert.equal(yield* git(cwd, ["branch", "--list", "fix/retry"]), "");
+        assert.include(yield* git(cwd, ["branch", "--list", "existing"]), "existing");
+        const retried = yield* driver.createWorktree({
+          cwd,
+          path: path.join(yield* makeTmpDir("git-worktrees-"), "retry"),
+          refName: "HEAD",
+          newRefName: "fix/retry",
+        });
+        assert.equal(retried.worktree.refName, "fix/retry");
+      }),
+    );
+
     it.effect("uses parallel checkout without skipping filters or hooks", () =>
       Effect.gen(function* () {
         const cwd = yield* makeTmpDir();

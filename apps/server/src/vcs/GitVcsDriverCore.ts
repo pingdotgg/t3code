@@ -4151,14 +4151,6 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       }
       worktreePath = path.join(parentDir, repoName, directoryName);
     }
-    if (input.newRefName) {
-      // Kept apart from the checkout so the shared-config lock only covers the tracking write.
-      yield* createBranchAt(
-        "GitVcsDriver.createWorktree.createBranch",
-        { cwd: input.cwd, branch: input.newRefName, startPoint: input.refName },
-        "git worktree add failed",
-      );
-    }
     const args = ["worktree", "add", "--", worktreePath, input.newRefName ?? input.refName];
     const progress = options?.progress;
     const onCheckoutProgress = progress?.onCheckoutProgress;
@@ -4174,6 +4166,28 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       { concurrency: "unbounded" },
     );
     const checkoutWorkers = configuredCheckoutWorkers ?? "0";
+    const newRefName = input.newRefName;
+    if (newRefName) {
+      // Kept apart from the checkout so the shared-config lock only covers the tracking write.
+      yield* createBranchAt(
+        "GitVcsDriver.createWorktree.createBranch",
+        { cwd: input.cwd, branch: newRefName, startPoint: input.refName },
+        "git worktree add failed",
+      );
+    }
+    // A branch left behind by a failed checkout makes every retry fail with branch_already_exists.
+    const deleteCreatedBranch = newRefName
+      ? runGit(
+          "GitVcsDriver.createWorktree.deleteCreatedBranch",
+          input.cwd,
+          ["branch", "-D", "--", newRefName],
+          { writesSharedConfig: true },
+        ).pipe(
+          Effect.catchCause((cause) =>
+            Effect.logWarning("left a branch behind after a failed worktree checkout", { cause }),
+          ),
+        )
+      : Effect.void;
     yield* executeGitWithStableDiagnostics(
       "GitVcsDriver.createWorktree",
       input.cwd,
@@ -4197,7 +4211,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
             }
           : {}),
       },
-    );
+    ).pipe(Effect.onError(() => deleteCreatedBranch));
 
     if (progress?.onWorktreeClaimed) {
       yield* progress.onWorktreeClaimed(worktreePath);
@@ -4282,7 +4296,6 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       );
     }
 
-    const newRefName = input.newRefName;
     if (newRefName && base) {
       yield* Effect.gen(function* () {
         yield* writeConfigValue({
