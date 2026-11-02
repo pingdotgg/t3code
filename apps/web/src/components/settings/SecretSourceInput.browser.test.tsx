@@ -82,7 +82,22 @@ describe("SecretSourceInput", () => {
     await commitReference(screen, "Private/OpenAI/credential");
     expect(onSecretChange).not.toHaveBeenCalled();
     expect(onReferenceReject).toHaveBeenCalledOnce();
+    await screen.rerender(
+      <SecretSourceInput
+        aria-label="API key"
+        value=""
+        sources={sources}
+        onCommit={() => {}}
+        onSecretChange={onSecretChange}
+        onReferenceReject={onReferenceReject}
+      />,
+    );
     await expect.element(reference(screen)).toHaveAttribute("aria-invalid", "true");
     await expect.element(reference(screen)).toHaveValue("Private/OpenAI/credential");
+    await commitReference(screen, "op://Private/OpenAI/corrected");
+    expect(onSecretChange).toHaveBeenCalledExactlyOnceWith({
+      provider: personal,
+      reference: "op://Private/OpenAI/corrected",
+    });
   });
 });
