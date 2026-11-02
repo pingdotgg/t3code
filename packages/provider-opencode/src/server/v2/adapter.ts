@@ -624,14 +624,8 @@ const commandOf = (text: string) => {
   return match === null ? undefined : { name: match[1]!, text: match[2] ?? "" };
 };
 
-const SKILL_MENTION = new RegExp(SKILL_MENTION_PATTERN.source, "u");
-
-const skillsNamed = (text: string, known: ReadonlySet<string>) => [
-  ...new Set(
-    [...text.matchAll(SKILL_MENTION_PATTERN)].flatMap((match) =>
-      known.has(match[2] ?? "") ? [match[2]!] : [],
-    ),
-  ),
+const skillMentions = (text: string) => [
+  ...new Set([...text.matchAll(SKILL_MENTION_PATTERN)].flatMap((match) => match[2] ?? [])),
 ];
 
 const turnTokenUsage = (turn: ActiveTurn, status: OrchestrationV2ProviderTurn["status"]) => {
@@ -727,6 +721,9 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
     const busy = new Set<string>();
     const pending = new Map<RuntimeRequestId, PendingRequest>();
     const lock = yield* Semaphore.make(1);
+    // OpenCode lists a directory's skills partially until its scan ends with `skill.updated`.
+    const scannedSkills = new Set<string>();
+    const skillScans = new Map<string, Deferred.Deferred<void>>();
     const clearing = new Map<string, Deferred.Deferred<void>>();
     const stagedReverts = new Set<string>();
     const sessionGates = yield* KeyedLock.make<string>();
@@ -2277,6 +2274,13 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
         : Effect.void;
 
     const handleEvent = Effect.fnUntraced(function* (event: OpenCode2Client.OpenCode2StreamEvent) {
+      if (event.type === "skill.updated" && event.location !== undefined) {
+        const directory = event.location.directory;
+        scannedSkills.add(directory);
+        const scan = skillScans.get(directory);
+        skillScans.delete(directory);
+        if (scan !== undefined) yield* Deferred.succeed(scan, undefined);
+      }
       const sessionId = sessionOfEvent(event);
       const cleared = sessionId === undefined ? undefined : clearing.get(sessionId);
       if (cleared !== undefined) {
@@ -2664,6 +2668,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       yield* Scope.close(previous, Exit.void);
       // A restarted server forgot T3's MCP servers; the next turn adds them again.
       for (const state of threads.values()) state.mcp = undefined;
+      scannedSkills.clear();
       yield* lock.withPermit(reconcile).pipe(Effect.timeout(RECONCILE_TIMEOUT));
       return stream;
     }).pipe(
@@ -3305,6 +3310,38 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       yield* stopStrays(state);
     });
 
+    const listSkills = (location: { readonly directory: string }) =>
+      client.skill.list({ location }).pipe(
+        Effect.timeout(INVENTORY_TIMEOUT),
+        Effect.map((list) => new Set<string>(list.data.map((skill) => skill.id))),
+        Effect.orElseSucceed(() => new Set<string>()),
+      );
+
+    // Runs outside `lock`, so handleEvent can end the scan wait.
+    const skillsMentioned = Effect.fnUntraced(function* (
+      location: { readonly directory: string },
+      mentions: ReadonlyArray<string>,
+    ) {
+      const { directory } = location;
+      // Registered before the read, which may start the scan, so its end is not missed.
+      let scan = skillScans.get(directory);
+      if (scan === undefined) {
+        scan = Deferred.makeUnsafe<void>();
+        skillScans.set(directory, scan);
+      }
+      let known = yield* listSkills(location);
+      // Scanned locations always list OpenCode's built-in skills, so an empty read is mid-scan.
+      if (
+        mentions.some((name) => !known.has(name)) &&
+        (known.size === 0 || !scannedSkills.has(directory))
+      ) {
+        const ended = yield* Deferred.await(scan).pipe(Effect.timeoutOption(INVENTORY_TIMEOUT));
+        if (ended._tag === "None") scannedSkills.add(directory);
+        known = yield* listSkills(location);
+      }
+      return mentions.filter((name) => known.has(name));
+    });
+
     const submit = Effect.fnUntraced(function* (
       sessionId: string,
       turnInput: ProviderAdapter.ProviderAdapterV2TurnInput,
@@ -3340,16 +3377,8 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
           return yield* client.session.command({ sessionID, ...command });
         }
       }
-      const skills = SKILL_MENTION.test(text)
-        ? skillsNamed(
-            text,
-            yield* client.skill.list({ location }).pipe(
-              Effect.timeout(INVENTORY_TIMEOUT),
-              Effect.map((list) => new Set(list.data.map((skill) => skill.id))),
-              Effect.orElseSucceed(() => new Set<string>()),
-            ),
-          )
-        : [];
+      const mentions = skillMentions(text);
+      const skills = mentions.length === 0 ? [] : yield* skillsMentioned(location, mentions);
       const files = yield* promptFiles(turnInput.message.attachments);
       const messageText = yield* promptText(turnInput);
       if (!sending()) return;

@@ -2300,6 +2300,61 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
     }).pipe(Effect.scoped),
   );
 
+  it.effect("sends a $word that is no skill after one read once the directory was scanned", () =>
+    Effect.gen(function* () {
+      const prompts: Array<unknown> = [];
+      const greet = {
+        id: "greet",
+        name: "greet",
+        path: `${WORK}/.opencode/skills/greet/SKILL.md`,
+        content: "Say hello.",
+      };
+      const { runtime, thread } = yield* resumed(
+        [
+          out("skill.list", { "location[directory]": WORK }),
+          reply("skill.list", { location: { directory: WORK }, data: [] }),
+          {
+            type: "emit_inbound",
+            frame: {
+              type: "sdk.event",
+              event: {
+                id: "evt_skillupdated0000",
+                created: 1,
+                type: "skill.updated",
+                location: { directory: WORK },
+                data: {},
+              },
+            },
+          },
+          out("skill.list", { "location[directory]": WORK }),
+          reply("skill.list", { location: { directory: WORK }, data: [greet] }),
+          out("session.prompt", { sessionID: SESSION, text: "<any>" }),
+          promptAccepted,
+          event("session.execution.succeeded", { sessionID: SESSION }),
+          out("skill.list", { "location[directory]": WORK }),
+          reply("skill.list", { location: { directory: WORK }, data: [greet] }),
+          out("session.prompt", { sessionID: SESSION, text: "<any>" }),
+          promptAccepted,
+          event("session.execution.succeeded", { sessionID: SESSION }),
+        ],
+        { onPrompt: (input) => prompts.push(input) },
+      );
+      const greeting = { ...turnInput(thread).message, text: "$greet again please" };
+      const first = yield* terminalOf(runtime).pipe(Effect.forkScoped);
+      yield* runtime.startTurn({ ...turnInput(thread), message: greeting });
+      assert.equal((yield* Fiber.join(first))?.status, "completed");
+      const second = yield* terminalOf(runtime).pipe(Effect.forkScoped);
+      yield* runtime.startTurn({
+        ...turnInput(thread),
+        runId: RunId.make("run:opencode2-adapter:2"),
+        attemptId: RunAttemptId.make("attempt:opencode2-adapter:2"),
+        message: { ...greeting, text: "echo $HOME" },
+      });
+      assert.equal((yield* Fiber.join(second))?.status, "completed");
+      assert.notProperty(prompts[1], "skills");
+    }).pipe(Effect.scoped),
+  );
+
   it.effect("keeps a turn still running after a reconnect open for its next events", () =>
     Effect.gen(function* () {
       const { runtime, thread } = yield* resumed([
