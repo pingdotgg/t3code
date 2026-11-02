@@ -227,7 +227,7 @@ const makeMcpAuthMiddleware = Effect.gen(function* () {
     const asked = withModeLimit(invocation, request);
     if (asked === undefined) return invalidModeLimit;
     const limited = McpInvocationContext.withRuntimeModeCeiling(asked, runtimeModeCeiling);
-    const settings = yield* serverSettings.getSettings.pipe(Effect.orDie);
+    const settings = yield* serverSettings.getMcpToolSettings.pipe(Effect.orDie);
     const linkedEnvironments = settings.linkedEnvironmentsEnabled;
     if (limited.client?.linked === true && !linkedEnvironments) return linkedEnvironmentsOff;
     return yield* httpEffect.pipe(
