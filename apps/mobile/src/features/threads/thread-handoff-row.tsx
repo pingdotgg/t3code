@@ -7,10 +7,9 @@ import {
   type HandoffEndpointValue,
   type HandoffEndpoints,
   type ModelSwitch,
-  statedModelSelectionEffort,
+  formatHandoffEndpointEffort,
 } from "@t3tools/client-runtime/handoff";
 import { resolveModelShortName } from "@t3tools/client-runtime/provider-clients";
-import { formatModelSelectionEffort } from "@t3tools/client-runtime/state/thread-execution";
 import {
   normalizeProviderAccentColor,
   resolveProviderInstanceDisplayName,
@@ -182,20 +181,7 @@ function HandoffEndpoint(
 ) {
   const provider = props.providers.find((candidate) => candidate.instanceId === props.instanceId);
   const model = provider?.models.find((candidate) => candidate.slug === props.model);
-  const selection =
-    props.showEffort && props.model
-      ? {
-          instanceId: props.instanceId,
-          model: props.model,
-          ...(props.options === undefined ? {} : { options: props.options }),
-        }
-      : null;
-  // A catalog without the model (removed model) still shows the stored value.
-  const effort = selection
-    ? (formatModelSelectionEffort(selection, provider?.models) ??
-      statedModelSelectionEffort(selection) ??
-      null)
-    : null;
+  const effort = props.showEffort ? formatHandoffEndpointEffort(props, provider?.models) : null;
   const modelLabel =
     (model ? resolveModelShortName(model, provider?.driver) : undefined) ??
     model?.name ??

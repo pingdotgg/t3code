@@ -5,6 +5,7 @@ import type {
   OrchestrationV2TurnItem,
   ProviderInstanceId,
   ServerProvider,
+  ServerProviderModel,
 } from "@t3tools/contracts";
 
 import {
@@ -13,7 +14,10 @@ import {
 } from "@t3tools/shared/model";
 
 import type { ThreadStructure } from "./state/models.ts";
-import { REASONING_EFFORT_OPTION_IDS } from "./state/threadExecution.ts";
+import {
+  formatModelSelectionEffort,
+  REASONING_EFFORT_OPTION_IDS,
+} from "./state/threadExecution.ts";
 
 export type HandoffTimelineRun = Pick<
   OrchestrationV2Run,
@@ -124,7 +128,7 @@ export function resolveModelSwitches(
     if (
       run.status === "rolled_back" ||
       run.status === "queued" ||
-      (run.status === "cancelled" && run.startedAt === null)
+      (run.startedAt === null && (run.status === "cancelled" || run.status === "failed"))
     ) {
       continue;
     }
@@ -149,13 +153,20 @@ export function resolveModelSwitches(
   return switches;
 }
 
-/** The effort a selection states, without catalog labels. */
-export function statedModelSelectionEffort(selection: ModelSelection): string | undefined {
-  for (const id of REASONING_EFFORT_OPTION_IDS) {
-    const value = getModelSelectionStringOptionValue(selection, id);
-    if (value !== undefined) return value;
-  }
-  return undefined;
+/** Effort label for an endpoint; the stored value stands in when the catalog lacks the model. */
+export function formatHandoffEndpointEffort(
+  { instanceId, model, options }: HandoffEndpointValue,
+  models: ReadonlyArray<ServerProviderModel> | undefined,
+): string | null {
+  if (!model) return null;
+  const selection = { instanceId, model, ...(options === undefined ? {} : { options }) };
+  return (
+    formatModelSelectionEffort(selection, models) ??
+    REASONING_EFFORT_OPTION_IDS.map((id) => getModelSelectionStringOptionValue(selection, id)).find(
+      (value) => value !== undefined,
+    ) ??
+    null
+  );
 }
 
 function resolveEffort(
@@ -168,7 +179,7 @@ function resolveEffort(
   for (const id of REASONING_EFFORT_OPTION_IDS) {
     const stated = getModelSelectionStringOptionValue(selection, id);
     const descriptor = descriptors?.find((candidate) => candidate.id === id);
-    const value = stated ?? getProviderOptionCurrentValue(descriptor);
+    const value = stated ?? getProviderOptionCurrentValue(descriptor, selection);
     if (typeof value === "string") return { id, value };
   }
   return undefined;

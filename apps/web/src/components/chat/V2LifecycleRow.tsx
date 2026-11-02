@@ -20,9 +20,8 @@ import {
   type HandoffEndpoints,
   type HandoffTimelineRun,
   type ModelSwitch,
-  statedModelSelectionEffort,
+  formatHandoffEndpointEffort,
 } from "@t3tools/client-runtime/handoff";
-import { formatModelSelectionEffort } from "@t3tools/client-runtime/state/thread-execution";
 import { formatSubagentDisplayTitle } from "@t3tools/client-runtime/state/subagent-display";
 import {
   ProviderDriverKind,
@@ -671,19 +670,12 @@ function HandoffEndpoint(props: {
   readonly endpoint: HandoffEndpointValue;
   readonly showEffort?: boolean | undefined;
 }) {
-  const { instanceId, options } = props.endpoint;
+  const { instanceId } = props.endpoint;
   const entry = props.entries.find((candidate) => candidate.instanceId === instanceId);
   const showBadge = entry !== undefined && shouldShowInstanceBadge(entry, props.entries);
   const model = props.endpoint.model?.trim();
-  const selection =
-    props.showEffort && model
-      ? { instanceId, model, ...(options === undefined ? {} : { options }) }
-      : null;
-  // A catalog without the model (guest page, removed model) still shows the stored value.
-  const effort = selection
-    ? (formatModelSelectionEffort(selection, entry?.models) ??
-      statedModelSelectionEffort(selection) ??
-      null)
+  const effort = props.showEffort
+    ? formatHandoffEndpointEffort({ ...props.endpoint, model }, entry?.models)
     : null;
   const providerModel =
     model === undefined || model.length === 0

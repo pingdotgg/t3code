@@ -264,11 +264,12 @@ describe("model switches", () => {
       switchRun("b", 2, "mini", undefined, { status: "rolled_back" }),
       switchRun("c", 3, "mini", undefined, { status: "cancelled", startedAt: null }),
       switchRun("d", 4, "mini", undefined, { status: "queued", startedAt: null }),
-      switchRun("e", 5, "gpt"),
-      switchRun("f", 6, "other", undefined, {
+      switchRun("e", 5, "mini", undefined, { status: "failed", startedAt: null }),
+      switchRun("f", 6, "gpt"),
+      switchRun("g", 7, "other", undefined, {
         contextHandoffId: ContextHandoffId.make("handoff"),
       }),
-      switchRun("g", 7, "other", undefined, {
+      switchRun("h", 8, "other", undefined, {
         modelSelection: { instanceId: to, model: "other" },
       }),
     ]);
