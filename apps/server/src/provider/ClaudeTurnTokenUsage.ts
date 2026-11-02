@@ -60,8 +60,10 @@ export interface ClaudeLedgerUsage {
   readonly outputTokens: number;
 }
 
+/** Unknown when absent or empty: a process that did model work never reports an empty ledger. */
 export function claudeModelLedger(modelUsage: unknown): ClaudeModelLedger | undefined {
   if (typeof modelUsage !== "object" || modelUsage === null) return undefined;
+  if (Object.keys(modelUsage).length === 0) return undefined;
   const ledger = new Map<string, { readonly input: number; readonly output: number }>();
   for (const [model, entry] of Object.entries(modelUsage as Record<string, unknown>)) {
     const fields = (entry ?? {}) as Record<string, unknown>;

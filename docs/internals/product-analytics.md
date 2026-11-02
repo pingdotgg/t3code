@@ -68,11 +68,12 @@ counts what people asked for. Native subagent turns are summed apart from the
 root (`childUsageStatus`, `childInputTokens`); T3-managed child threads report
 their own requests as `t3_child`. A child still running at settlement is never
 added later, and the summary sets `childrenRunning`. A server restart loses the
-summary of a run in progress; the run that continues it sets
-`restartContinuation` and `lifecycleObserved: false`, so count it as that
-request with partial usage. A run that fails before any provider turn starts has
-no summary. Collection is best effort, with no scan or backfill of provider
-history.
+summary of a run in progress. A run that continues after a restart reports its
+own usage with `restartContinuation` and `lifecycleObserved: false`; it cannot
+recover the original request's count or kind. A run whose provider session never
+opens has no summary, and a start the provider rejects reports
+`providerTurns: 0`. Collection is best effort, with no scan or backfill of
+provider history.
 
 Counts cover the main agent. `otherInputTokens` and `otherOutputTokens` are what
 a provider's own ledger recorded beyond it during the turn: Claude's per-process
