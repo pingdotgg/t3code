@@ -352,9 +352,9 @@ index 81819c1d771bdeec093bb35a65a5e1e1af0cf9d7..ec3e0274d0a84fd8c7960cc0ea1b3005
 +}
 +
 +internal fun recordingInputUid(device: AudioDeviceInfo): String {
-+  val address = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) device.address else ""
-+  // Android's numeric port ID changes on reconnect; addressless ports share a preference by name.
-+  return "android:${device.type}:${address.ifBlank { device.productName.toString() }}"
++  // Port IDs and USB addresses (ALSA card numbers) change on reconnect; Bluetooth addresses don't.
++  val stable = Build.VERSION.SDK_INT >= Build.VERSION_CODES.P && isBluetoothInput(device.type)
++  return "android:${device.type}:${if (stable) device.address.ifBlank { device.productName } else device.productName}"
 +}
 +
  @OptIn(UnstableApi::class)
