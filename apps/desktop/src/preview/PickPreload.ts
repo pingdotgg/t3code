@@ -1123,7 +1123,6 @@ function startAnnotation(sendEnabled: boolean): void {
     event.preventDefault();
     event.stopPropagation();
   };
-  dragHandle.addEventListener("pointerdown", onEditorPointerDown);
   dragHandle.addEventListener("pointermove", onEditorPointerMove);
   dragHandle.addEventListener("pointerup", onEditorPointerUp);
   dragHandle.addEventListener("pointercancel", onEditorPointerUp);
@@ -1243,8 +1242,17 @@ function startAnnotation(sendEnabled: boolean): void {
     }
   };
 
+  let pressTarget: Element | null = null;
+
+  // Page document listeners see overlay presses on the host; only window capture runs before them.
   const onPointerDown = (event: PointerEvent): void => {
-    if (event.button !== 0 || isAnnotationNode(event.target as Element)) return;
+    if (isAnnotationNode(event.target as Element)) {
+      event.stopPropagation();
+      pressTarget = shadowRoot.elementFromPoint(event.clientX, event.clientY);
+      if (pressTarget && dragHandle.contains(pressTarget)) onEditorPointerDown(event);
+      return;
+    }
+    if (event.button !== 0) return;
     event.preventDefault();
     event.stopPropagation();
     if (tool === "select") {
@@ -1308,8 +1316,26 @@ function startAnnotation(sendEnabled: boolean): void {
     updateStatus();
   };
 
+  const onMouseDown = (event: MouseEvent): void => {
+    if (isAnnotationNode(event.target as Element)) event.stopPropagation();
+  };
+
+  // A click targets the common ancestor of press and release; keyboard clicks target focus.
+  const overlayClickTarget = (event: MouseEvent): Element | null => {
+    if (event.detail === 0) return shadowRoot.activeElement;
+    const release = shadowRoot.elementFromPoint(event.clientX, event.clientY);
+    let target = pressTarget;
+    while (target && !target.contains(release)) target = target.parentElement;
+    return target;
+  };
+
   const onClick = (event: MouseEvent): void => {
-    if (isAnnotationNode(event.target as Element)) return;
+    if (isAnnotationNode(event.target as Element)) {
+      event.stopPropagation();
+      // A plain Event has no activation behaviour, so the trusted click's runs once.
+      overlayClickTarget(event)?.dispatchEvent(new Event("click", { bubbles: true }));
+      return;
+    }
     event.preventDefault();
     event.stopPropagation();
   };
@@ -1340,6 +1366,7 @@ function startAnnotation(sendEnabled: boolean): void {
     restoreStyles();
     window.removeEventListener("pointermove", onPointerMove, true);
     window.removeEventListener("pointerdown", onPointerDown, true);
+    window.removeEventListener("mousedown", onMouseDown, true);
     window.removeEventListener("pointerup", onPointerUp, true);
     window.removeEventListener("pointerout", onPointerOut, true);
     window.removeEventListener("click", onClick, true);
@@ -1347,7 +1374,6 @@ function startAnnotation(sendEnabled: boolean): void {
     window.removeEventListener("keydown", onKeyDown, true);
     window.removeEventListener("scroll", repaint, true);
     window.removeEventListener("resize", repaint);
-    dragHandle.removeEventListener("pointerdown", onEditorPointerDown);
     dragHandle.removeEventListener("pointermove", onEditorPointerMove);
     dragHandle.removeEventListener("pointerup", onEditorPointerUp);
     dragHandle.removeEventListener("pointercancel", onEditorPointerUp);
@@ -1456,6 +1482,7 @@ function startAnnotation(sendEnabled: boolean): void {
 
   window.addEventListener("pointermove", onPointerMove, { capture: true, passive: false });
   window.addEventListener("pointerdown", onPointerDown, { capture: true, passive: false });
+  window.addEventListener("mousedown", onMouseDown, { capture: true, passive: true });
   window.addEventListener("pointerup", onPointerUp, { capture: true, passive: false });
   window.addEventListener("pointerout", onPointerOut, { capture: true, passive: true });
   window.addEventListener("click", onClick, { capture: true, passive: false });
