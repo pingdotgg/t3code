@@ -2255,6 +2255,14 @@ export const layerWithOptions = (
               });
               const sessionScope = yield* Scope.fork(sessionScopes);
               yield* agentScope.clear(input.threadId);
+              // Probe before the spawn: a baseline newer than the identity the
+              // app-server reads at spawn would match a stale process forever.
+              const credentialFingerprint = adapter.resolveCredentialFingerprint
+                ? yield* adapter.resolveCredentialFingerprint().pipe(
+                    // @effect-diagnostics-next-line effectSucceedWithVoid:off - a failed open-time probe must read undefined, not the wider void Effect.void carries.
+                    Effect.catchCause(() => Effect.succeed<string | null | undefined>(undefined)),
+                  )
+                : undefined;
               const runtime = yield* adapter
                 .openSession({
                   threadId: input.threadId,
@@ -2309,12 +2317,6 @@ export const layerWithOptions = (
                 ReadonlyMap<number, Queue.Queue<ProviderSessionEventSignal, Cause.Done>>
               >(new Map());
               const exposedRuntime = decorateRuntime(runtime, eventSubscribers);
-              const credentialFingerprint = adapter.resolveCredentialFingerprint
-                ? yield* adapter.resolveCredentialFingerprint().pipe(
-                    // @effect-diagnostics-next-line effectSucceedWithVoid:off - a failed open-time probe must read undefined, not the wider void Effect.void carries.
-                    Effect.catchCause(() => Effect.succeed<string | null | undefined>(undefined)),
-                  )
-                : undefined;
               const entry: LiveSessionEntry = {
                 attachedThreadIds: new Set([input.threadId]),
                 loadedProviderThreadKeyByThread: new Map(),
