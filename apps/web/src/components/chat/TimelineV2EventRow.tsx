@@ -99,7 +99,7 @@ const V2SubagentGroup = memo(function V2SubagentGroup({
         <CollapsibleTrigger
           aria-label={label}
           aria-description={statusSummary}
-          className="flex w-full min-w-0 items-center gap-2.5 py-2 pr-3.25"
+          className="flex w-full min-w-0 items-center gap-2.5 px-3.25 py-2"
         >
           <span className="flex shrink-0 items-center -space-x-1.5" aria-hidden>
             {agents.slice(0, 3).map(({ item, status }, index) => (
