@@ -614,7 +614,11 @@ export function useThreadLifecycle(input: ThreadLifecycleInput) {
     };
   const shortcuts = {
     "thread.markUnread": ({ event }) => {
-      if (!activeThreadShell || !activeThreadRef || document.querySelector('[role="dialog"]'))
+      if (
+        !activeThreadShell ||
+        !activeThreadRef ||
+        document.querySelector('[role="dialog"]:not([data-closed])')
+      )
         return false;
       if (!event.repeat) markThreadUnread(activeThreadRef);
     },

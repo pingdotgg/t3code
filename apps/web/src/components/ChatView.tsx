@@ -2710,7 +2710,7 @@ export default function ChatView(props: ChatViewProps) {
           !isServerThread ||
           !activeThreadId ||
           !canOperateThread ||
-          document.querySelector('[role="dialog"]')
+          document.querySelector('[role="dialog"]:not([data-closed])')
         )
           return false;
         if (event.repeat) return;
@@ -2726,7 +2726,7 @@ export default function ChatView(props: ChatViewProps) {
           !isServerThread ||
           !activeThreadId ||
           !canOperateThread ||
-          document.querySelector('[role="dialog"]')
+          document.querySelector('[role="dialog"]:not([data-closed])')
         )
           return false;
         if (event.repeat || activeThreadShell?.titleRegeneration != null) return;
