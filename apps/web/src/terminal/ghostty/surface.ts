@@ -1731,7 +1731,7 @@ export class GhosttyTerminalSurface {
   };
 
   private readonly onWheel = (event: WheelEvent) => {
-    if (event.deltaY === 0) return;
+    if (event.deltaY === 0 || Math.abs(event.deltaY) < Math.abs(event.deltaX)) return;
     event.preventDefault();
     const delta = terminalWheelDeltaRows(
       event,
