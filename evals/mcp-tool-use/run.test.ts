@@ -31,6 +31,8 @@ import {
 } from "./run.ts";
 import { briefRoute, gradeDevice, shellInvocations } from "./device-grading.ts";
 import { taskPrompt } from "../../apps/server/src/mcp/delegatedTaskModes.ts";
+import { PreviewToolkit } from "../../apps/server/src/mcp/toolkits/preview/tools.ts";
+import { PreviewControlsToolkit } from "../../apps/server/src/mcp/toolkits/previewControls/tools.ts";
 
 it("grades Codex shell and subagent calls with the shared rules", () => {
   const calls = [
@@ -507,12 +509,12 @@ it("stops a sample only once a must-not check has failed", () => {
   assert.isTrue(failedEarly({ textMustNot: ["paste"] }, run("Bash", "paste it here")));
 });
 
-const decodeDeviceCase = Schema.decodeSync(Schema.fromJsonString(McpToolUseCase));
+const decodeCase = Schema.decodeSync(Schema.fromJsonString(McpToolUseCase));
 const deviceCases = () =>
   NodeFS.readFileSync(new URL("./cases/device-manager.ndjson", import.meta.url), "utf8")
     .trim()
     .split("\n")
-    .map((line) => decodeDeviceCase(line));
+    .map((line) => decodeCase(line));
 
 it.effect("builds device cases from product-backed worlds and synthetic prior turns", () =>
   Effect.gen(function* () {
@@ -3381,4 +3383,36 @@ it.each([
     }),
     [],
   );
+});
+
+it("rejects every registered preview tool in the disabled-browser case", () => {
+  const testCase = NodeFS.readFileSync(
+    new URL("./cases/visual-preview.ndjson", import.meta.url),
+    "utf8",
+  )
+    .trim()
+    .split("\n")
+    .map(decodeCase)
+    .find((entry) => entry.id === "preview-disabled-public-page-uses-web-fetch");
+  assert.isDefined(testCase);
+  const fetch = {
+    step: 1,
+    tool: "WebFetch",
+    input: { url: "https://docs.acme.test/releases/2.4" },
+  };
+  const run = { calls: [fetch], text: "", stopReason: "end_turn" };
+  assert.deepEqual(
+    gradeSample(testCase!.expect, run).filter((check) => !check.pass),
+    [],
+  );
+  for (const tool of Object.keys({ ...PreviewToolkit.tools, ...PreviewControlsToolkit.tools })) {
+    const checks = gradeSample(testCase!.expect, {
+      ...run,
+      calls: [{ step: 0, tool, input: {} }, fetch],
+    });
+    assert.isTrue(
+      checks.some((check) => !check.pass),
+      `${tool} must fail even when WebFetch follows`,
+    );
+  }
 });
