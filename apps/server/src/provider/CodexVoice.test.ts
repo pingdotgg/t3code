@@ -35,6 +35,7 @@ const makeFakeClient = Effect.gen(function* () {
   let closeOnStop = false;
   let onStart: Effect.Effect<void, CodexErrors.CodexAppServerError> = Effect.void;
   let onStop: Effect.Effect<void, CodexErrors.CodexAppServerError> = Effect.void;
+  let onSpeech: Effect.Effect<void, CodexErrors.CodexAppServerError> = Effect.void;
   const startRequested = yield* Deferred.make<void>();
   const secondStartRequested = yield* Deferred.make<void>();
   const thirdStartRequested = yield* Deferred.make<void>();
@@ -52,6 +53,7 @@ const makeFakeClient = Effect.gen(function* () {
       request: (method: string, params: unknown) => {
         if (method === "thread/realtime/appendSpeech") scheduledSpeechCount += 1;
         return Effect.gen(function* () {
+          if (method === "thread/realtime/appendSpeech") yield* onSpeech;
           requests.push({ method, params });
           if (method === "thread/realtime/start") {
             yield* Deferred.succeed(startRequested, undefined);
@@ -99,6 +101,9 @@ const makeFakeClient = Effect.gen(function* () {
     setStop: (effect: typeof onStop) => {
       onStop = effect;
     },
+    setSpeech: (effect: typeof onSpeech) => {
+      onSpeech = effect;
+    },
     stopRequested,
     closePreviousOnStop: () => {
       closeOnStop = true;
@@ -136,9 +141,21 @@ describe("readSpeakableAnswer", () => {
       readSpeakableAnswer({ type: "agentMessage", text: "[FINAL] All green.", phase: null }),
       "All green.",
     );
+    NodeAssert.equal(
+      readSpeakableAnswer({ type: "agentMessage", text: "All green.", phase: "future_phase" }),
+      "All green.",
+    );
   });
 
-  it("keeps commentary private", () => {
+  it("keeps commentary and partial answers private", () => {
+    NodeAssert.equal(
+      readSpeakableAnswer({
+        type: "agentMessage",
+        text: "Still working.",
+        phase: "partial_answer",
+      }),
+      undefined,
+    );
     NodeAssert.equal(
       readSpeakableAnswer({ type: "agentMessage", text: "Looking…", phase: "commentary" }),
       undefined,
@@ -465,6 +482,56 @@ describe("makeCodexVoice", () => {
     }),
   );
 
+  it.effect("keeps in-flight speech with its owner before replacing a realtime session", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fake = yield* makeFakeClient;
+        const voice = yield* makeCodexVoice(fake.client, yield* Effect.scope);
+        const start = () =>
+          voice
+            .start({ providerThreadId: PROVIDER_THREAD, offerSdp: "offer" })
+            .pipe(Stream.runCollect, Effect.forkChild({ startImmediately: true }));
+        const first = yield* start();
+        yield* Deferred.await(fake.startRequested);
+        const speechEntered = yield* Deferred.make<void>();
+        const releaseSpeech = yield* Deferred.make<void>();
+        fake.setSpeech(
+          Deferred.succeed(speechEntered, undefined).pipe(
+            Effect.andThen(Deferred.await(releaseSpeech)),
+          ),
+        );
+        yield* voice.expectSpokenTurn("voice-message");
+        yield* voice.registerTurn("voice-message", "delegated");
+        yield* fake.emit("item/completed", {
+          threadId: PROVIDER_THREAD,
+          turnId: "delegated",
+          item: { type: "agentMessage", text: "Old answer.", phase: "final_answer" },
+        });
+        yield* fake.emit("turn/completed", {
+          threadId: PROVIDER_THREAD,
+          turn: { id: "delegated", status: "completed" },
+        });
+        yield* Deferred.await(speechEntered);
+        const replacement = yield* start();
+        const whileSpeaking = fake.requests.map(({ method }) => method);
+        yield* Deferred.succeed(releaseSpeech, undefined);
+        NodeAssert.deepEqual(whileSpeaking, ["thread/realtime/start"]);
+        yield* Deferred.await(fake.secondStartRequested);
+        NodeAssert.deepEqual(
+          fake.requests.map(({ method }) => method),
+          [
+            "thread/realtime/start",
+            "thread/realtime/appendSpeech",
+            "thread/realtime/stop",
+            "thread/realtime/start",
+          ],
+        );
+        yield* Fiber.join(first);
+        yield* Fiber.interrupt(replacement);
+      }),
+    ),
+  );
+
   it.effect("speaks the answer of a handoff the host resubmitted as its own turn", () =>
     Effect.gen(function* () {
       const fake = yield* makeFakeClient;
@@ -525,8 +592,8 @@ describe("makeCodexVoice", () => {
         turn: { id: "resubmitted", status: "completed" },
       });
 
-      NodeAssert.equal(fake.scheduledSpeechCount, 1);
       yield* Deferred.await(fake.speechRequested);
+      NodeAssert.equal(fake.scheduledSpeechCount, 1);
       yield* voice.registerTurn("voice-message", "after-success");
       yield* fake.emit("item/completed", {
         threadId: PROVIDER_THREAD,
