@@ -8,7 +8,7 @@ On mobile, choose **Usage** in the workspace navigation.
 
 ## Understand your usage
 
-**Usage** combines Codex, Claude Code, Grok Build, OpenCode, Antigravity, Pi, Muse Code, and Cursor history
+**Usage** combines Codex, Claude Code, Grok Build, OpenCode, Antigravity, Pi, Muse Code, Devin, and Cursor history
 from your connected environments. It shows token use, cache savings, model breakdowns, and estimated API-equivalent
 cost, split by token type and by speed. These estimates are not your subscription bill.
 **Premium** is what Fast and Ultrafast requests cost above standard rates. Cost that cannot be
@@ -23,6 +23,8 @@ the totals for Codex or Claude Code 2.0.63 and newer, because those runs save no
 OpenCode reads its SQLite database and older JSON history. Antigravity reads local conversation
 databases, including T3-managed profiles. Set `OPENCODE_DATA_DIR` or `ANTIGRAVITY_DATA_DIR` on the
 server to read a different data directory; comma-separated paths read multiple directories.
+Devin reads the Devin CLI's `sessions.db`, honoring `DEVIN_SESSIONS_DIR` like the CLI does. Devin
+bills in ACUs, so its cost is an estimate from the underlying model's API rates.
 
 Cursor reads account usage from Cursor's API for the account you signed in with in T3 or set as
 `CURSOR_API_KEY`, or otherwise the CLI login saved on the server.
@@ -103,7 +105,7 @@ To count only some models, or to leave some out, add `usageModelFilter` to the s
 ```
 
 `include` keeps only the listed models and `exclude` leaves the listed models out. `provider` is
-one of `claude`, `codex`, `cursor`, `grok`, `opencode`, `antigravity`, `pi`, or `muse`; omit it
+one of `claude`, `codex`, `cursor`, `grok`, `opencode`, `antigravity`, `pi`, `muse`, or `devin`; omit it
 to match a model ID from any provider. Use the model ID that Usage shows without **Map to**, such
 as a provider-prefixed ID for Pi. Filters apply before **Map to**, so a model you leave out is not
 counted under its mapped name. Usage applies each environment's own filter. Remove the setting to
