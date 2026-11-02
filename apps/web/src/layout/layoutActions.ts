@@ -9,10 +9,13 @@ import { getLayoutBehavior } from "./layoutBehavior";
 import {
   createLayoutLauncherContent,
   findLayoutTab,
+  findLayoutTabByContent,
   selectFocusedChatTab,
   selectFocusedTab,
   type LayoutOpenPlacement,
+  type LayoutTabContent,
 } from "./layoutModel";
+import { readThreadLineage } from "../state/entities";
 import type { ThreadRouteTarget } from "../threadRoutes";
 import { useLayoutStore, type LayoutNewTabRequest } from "./layoutStore";
 import type { LauncherSurfaceKind } from "../components/SurfaceLauncher";
@@ -174,6 +177,24 @@ export function closeLayoutTabByUser(tabId: string, options: { bulk?: boolean } 
         index: location.tabIndex,
         ...(target.kind === "draft" ? { draftId: target.draftId } : {}),
       });
+    const lineage = threadRef && !options.bulk ? readThreadLineage(threadRef) : null;
+    if (threadRef && lineage?.relationshipToParent === "subagent" && lineage.parentThreadId) {
+      const parent: LayoutTabContent = {
+        kind: "chat",
+        target: {
+          kind: "server",
+          threadRef: scopeThreadRef(threadRef.environmentId, lineage.parentThreadId),
+        },
+      };
+      const parentTab = findLayoutTabByContent(store.layout, parent);
+      if (parentTab) {
+        store.focusTab(parentTab.tab.id);
+        store.closeTab(tabId);
+      } else {
+        store.replaceTabContent(tabId, parent);
+      }
+      return;
+    }
   }
   store.closeTabByUser(tabId);
 }
