@@ -14928,112 +14928,150 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     ),
   );
 
-  it.effect("stops only a live workflow task and waits for its stopped notification", () =>
-    Effect.scoped(
-      Effect.gen(function* () {
-        const stoppedTasks: Array<string> = [];
-        let interrupted = false;
-        let closed = false;
-        const harness = yield* makeWorkflowHarnessWithOptions({
-          stopTask: (taskId) =>
-            Effect.sync(() => {
-              stoppedTasks.push(taskId);
+  it.effect.each([false, true])(
+    "stops only a live workflow task and waits for its stopped notification (nested %s)",
+    (nested) =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const stoppedTasks: Array<string> = [];
+          let interrupted = false;
+          let closed = false;
+          const harness = yield* makeWorkflowHarnessWithOptions({
+            stopTask: (taskId) =>
+              Effect.sync(() => {
+                stoppedTasks.push(taskId);
+              }),
+            interrupt: Effect.sync(() => {
+              interrupted = true;
             }),
-          interrupt: Effect.sync(() => {
-            interrupted = true;
-          }),
-          close: () =>
-            Effect.sync(() => {
-              closed = true;
+            close: () =>
+              Effect.sync(() => {
+                closed = true;
+              }),
+          });
+          yield* harness.runtime.startTurn(
+            makeClaudeTestTurnInput({
+              threadId: harness.threadId,
+              providerThread: harness.providerThread,
+              now: yield* DateTime.now,
+              attemptId: RunAttemptId.make("attempt-workflow-stop"),
+              text: "Run the workflow.",
+              attachments: [],
             }),
-        });
-        yield* harness.runtime.startTurn(
-          makeClaudeTestTurnInput({
-            threadId: harness.threadId,
-            providerThread: harness.providerThread,
-            now: yield* DateTime.now,
-            attemptId: RunAttemptId.make("attempt-workflow-stop"),
-            text: "Run the workflow.",
-            attachments: [],
-          }),
-        );
-        yield* harness.offerAndWait(workflowToolUse);
-        yield* harness.offerAndWait(workflowTaskStarted);
-        yield* harness.offerAndWait(workflowLaunchAck(harness.transcriptDir));
-        yield* harness.offerAndWait(
-          workflowSnapshot({
-            uuid: "00000000-0000-4000-8000-000000001100",
-            state: "start",
-          }),
-        );
-        let member = yield* Queue.take(harness.subagentReceipts);
-        while (!member.subagent.nativeTaskRef?.nativeId?.endsWith(":agent:2")) {
-          member = yield* Queue.take(harness.subagentReceipts);
-        }
-        const stopTask = harness.runtime.stopTask!;
-        for (const taskId of ["missing-task", `${WORKFLOW_TASK_ID}:agent:1`]) {
-          const exit = yield* stopTask({ providerThread: harness.providerThread, taskId }).pipe(
-            Effect.exit,
           );
-          assert.isTrue(Exit.isFailure(exit));
-        }
-        const wrongThread = {
-          ...harness.providerThread,
-          nativeThreadRef: {
-            driver: harness.providerThread.driver,
-            nativeId: "wrong-session",
-            strength: "strong" as const,
-          },
-        };
-        assert.isTrue(
-          Exit.isFailure(
-            yield* stopTask({
-              providerThread: wrongThread,
-              taskId: WORKFLOW_TASK_ID,
-            }).pipe(Effect.exit),
-          ),
-        );
-        assert.deepEqual(stoppedTasks, []);
-        yield* stopTask({ providerThread: harness.providerThread, taskId: WORKFLOW_TASK_ID });
-        assert.deepEqual(stoppedTasks, [WORKFLOW_TASK_ID]);
-        assert.isFalse(interrupted);
-        assert.isFalse(closed);
-        assert.equal(workflowCoordinatorEvents(harness.events).at(-1)?.subagent.status, "running");
-        yield* harness.offerAndWait(
-          workflowNotification({
-            uuid: "00000000-0000-4000-8000-000000001101",
-            status: "stopped",
-          }),
-        );
-        member = yield* Queue.take(harness.subagentReceipts);
-        while (!member.subagent.nativeTaskRef?.nativeId?.endsWith(":agent:2")) {
-          member = yield* Queue.take(harness.subagentReceipts);
-        }
-        assert.equal(
-          workflowCoordinatorEvents(harness.events).at(-1)?.subagent.status,
-          "cancelled",
-        );
-        for (const index of [1, 2]) {
+          if (nested) {
+            yield* harness.offerAndWait(
+              makeSubagentTaskStartedFrame({
+                taskId: "workflow-owner",
+                toolUseId: "toolu-workflow-owner",
+                uuid: "00000000-0000-4000-8000-000000001098",
+              }),
+            );
+          }
+          yield* harness.offerAndWait(
+            nested
+              ? claudeSdkFrame({
+                  ...workflowToolUse,
+                  parent_tool_use_id: "toolu-workflow-owner",
+                  message: {
+                    model: "claude-sonnet-4-6",
+                    content: [
+                      { type: "tool_use", id: WORKFLOW_TOOL_USE_ID, name: "Agent", input: {} },
+                    ],
+                  },
+                })
+              : workflowToolUse,
+          );
+          yield* harness.offerAndWait(workflowTaskStarted);
+          yield* harness.offerAndWait(workflowLaunchAck(harness.transcriptDir));
+          yield* harness.offerAndWait(
+            workflowSnapshot({
+              uuid: "00000000-0000-4000-8000-000000001100",
+              state: "start",
+            }),
+          );
+          let member = yield* Queue.take(harness.subagentReceipts);
+          while (!member.subagent.nativeTaskRef?.nativeId?.endsWith(":agent:2")) {
+            member = yield* Queue.take(harness.subagentReceipts);
+          }
+          const stopTask = harness.runtime.stopTask!;
+          const coordinator = workflowCoordinatorEvents(harness.events).at(-1)?.subagent;
+          if (nested) {
+            assert.notEqual(coordinator?.threadId, harness.threadId);
+            assert.equal(coordinator?.executionThreadId, harness.threadId);
+          } else {
+            assert.equal(coordinator?.threadId, harness.threadId);
+          }
+          for (const taskId of ["missing-task", `${WORKFLOW_TASK_ID}:agent:1`]) {
+            const exit = yield* stopTask({ providerThread: harness.providerThread, taskId }).pipe(
+              Effect.exit,
+            );
+            assert.isTrue(Exit.isFailure(exit));
+          }
+          for (const wrongThread of [
+            {
+              ...harness.providerThread,
+              nativeThreadRef: {
+                driver: harness.providerThread.driver,
+                nativeId: "wrong-session",
+                strength: "strong" as const,
+              },
+            },
+            { ...harness.providerThread, appThreadId: ThreadId.make("thread:foreign-workflow") },
+          ]) {
+            assert.isTrue(
+              Exit.isFailure(
+                yield* stopTask({
+                  providerThread: wrongThread,
+                  taskId: WORKFLOW_TASK_ID,
+                }).pipe(Effect.exit),
+              ),
+            );
+          }
+          assert.deepEqual(stoppedTasks, []);
+          yield* stopTask({ providerThread: harness.providerThread, taskId: WORKFLOW_TASK_ID });
+          assert.deepEqual(stoppedTasks, [WORKFLOW_TASK_ID]);
+          assert.isFalse(interrupted);
+          assert.isFalse(closed);
           assert.equal(
-            workflowMemberEvents(harness.events, index).at(-1)?.subagent.status,
+            workflowCoordinatorEvents(harness.events).at(-1)?.subagent.status,
+            "running",
+          );
+          yield* harness.offerAndWait(
+            workflowNotification({
+              uuid: "00000000-0000-4000-8000-000000001101",
+              status: "stopped",
+            }),
+          );
+          member = yield* Queue.take(harness.subagentReceipts);
+          while (!member.subagent.nativeTaskRef?.nativeId?.endsWith(":agent:2")) {
+            member = yield* Queue.take(harness.subagentReceipts);
+          }
+          assert.equal(
+            workflowCoordinatorEvents(harness.events).at(-1)?.subagent.status,
             "cancelled",
           );
-        }
-        assert.isTrue(
-          Exit.isFailure(
-            yield* stopTask({
-              providerThread: harness.providerThread,
-              taskId: WORKFLOW_TASK_ID,
-            }).pipe(Effect.exit),
+          for (const index of [1, 2]) {
+            assert.equal(
+              workflowMemberEvents(harness.events, index).at(-1)?.subagent.status,
+              "cancelled",
+            );
+          }
+          assert.isTrue(
+            Exit.isFailure(
+              yield* stopTask({
+                providerThread: harness.providerThread,
+                taskId: WORKFLOW_TASK_ID,
+              }).pipe(Effect.exit),
+            ),
+          );
+          assert.deepEqual(stoppedTasks, [WORKFLOW_TASK_ID]);
+        }).pipe(
+          Effect.provide(
+            Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
           ),
-        );
-        assert.deepEqual(stoppedTasks, [WORKFLOW_TASK_ID]);
-      }).pipe(
-        Effect.provide(
-          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
         ),
       ),
-    ),
   );
 
   it.effect("projects each workflow member as its own subagent thread", () =>

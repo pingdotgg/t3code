@@ -11434,7 +11434,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               liveQuery.stopping ||
               liveQuery.nativeThreadId !== providerThread.nativeThreadRef?.nativeId ||
               task === undefined ||
-              task.task.threadId !== providerThread.appThreadId ||
+              subagentExecutionThreadId(task.task) !== providerThread.appThreadId ||
               task.task.workflow === undefined ||
               task.task.status !== "running" ||
               liveQuery.subagentsFromEarlierProcesses.has(task)
