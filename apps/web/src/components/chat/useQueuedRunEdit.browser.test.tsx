@@ -6,6 +6,7 @@ import {
   RunId,
   ThreadId,
   type ScopedThreadRef,
+  type ChatAttachment,
 } from "@t3tools/contracts";
 import { useImperativeHandle, type RefObject } from "react";
 import { describe, expect, it, vi } from "vite-plus/test";
@@ -29,6 +30,7 @@ const mocks = await vi.hoisted(async () => {
   return {
     acquireEdit: vi.fn(async () => ({ _tag: "Success", value: { editId: null, sequence: 0 } })),
     releaseEdit: vi.fn(async () => ({ _tag: "Success" })),
+    setThreadError: vi.fn(),
     editQueuedRun: vi.fn<(value: unknown) => Promise<{ readonly _tag: "Success" | "Failure" }>>(),
     // The projection's runs per thread, written by each test to stand in for the server.
     threadRuns: Atom.family((_key: string) =>
@@ -48,6 +50,25 @@ vi.mock("../../state/use-atom-command", () => ({
 
 vi.mock("../../hooks/useSettings", () => ({
   useEnvironmentIdentificationMode: () => "none",
+}));
+
+vi.mock("./composerAttachmentFiles", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./composerAttachmentFiles")>()),
+  fileAttachmentCapabilityBlockReason: () => null,
+}));
+
+vi.mock("../../lib/attachmentUploadQueue", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../lib/attachmentUploadQueue")>()),
+  startAttachmentUpload: () => {},
+  awaitAttachmentUploads: async () => {},
+  getUploadedAttachments: ({ images }: { images: ReadonlyArray<ChatAttachment> }) =>
+    images.map(({ type, id, name, mimeType, sizeBytes }) => ({
+      type,
+      id,
+      name,
+      mimeType,
+      sizeBytes,
+    })),
 }));
 
 const runsKey = (ref: ScopedThreadRef) => `${ref.environmentId}:${ref.threadId}`;
@@ -120,7 +141,6 @@ function Harness(props: {
   const sendState = deriveComposerSendState({
     prompt: draft.prompt,
     imageCount: draft.images.length + draft.files.length,
-    existingAttachmentCount: result.editingAttachments?.length ?? 0,
     terminalContexts: draft.terminalContexts,
   });
   return result.isEditing ? (
@@ -138,7 +158,12 @@ function Harness(props: {
       isPreparingWorktree={false}
       hasSendableContent={sendState.hasSendableContent}
       isEditingQueuedMessage
-      onSubmitMessage={() => void result.saveEdit(savedContent(draft.prompt), () => {})}
+      onSubmitMessage={() =>
+        void result.saveEdit(
+          { ...savedContent(draft.prompt), images: draft.images, files: draft.files },
+          mocks.setThreadError,
+        )
+      }
       onPreviousPendingQuestion={() => {}}
       onInterrupt={() => {}}
       onImplementPlanInNewThread={() => {}}
@@ -156,6 +181,7 @@ function view(threadRef: ScopedThreadRef, runStatus: string, hook: { current: Ho
 
 function setup() {
   mocks.editQueuedRun.mockReset();
+  mocks.setThreadError.mockReset();
   useComposerDraftStore.setState({ draftsByThreadKey: {}, draftThreadsByThreadKey: {} });
   setRuns(THREAD_A, "queued");
   setRuns(THREAD_B, "queued");
@@ -205,10 +231,10 @@ describe("useQueuedRunEdit", () => {
       using toast = vi.spyOn(toastManager, "add");
       const attachments = [
         {
-          type: "image" as const,
+          type: "file" as const,
           id: ChatAttachmentId.make("kept"),
-          name: "kept.png",
-          mimeType: "image/png",
+          name: "kept.pdf",
+          mimeType: "application/pdf",
           sizeBytes: 10,
         },
       ];
@@ -223,9 +249,9 @@ describe("useQueuedRunEdit", () => {
         useComposerDraftStore.getState().getComposerDraft(requireHook(hook).draftTarget)?.prompt ??
           "",
       ).toBe(prefix.trimEnd());
-      expect(requireHook(hook).editingAttachments?.map(({ attachment }) => attachment)).toEqual(
-        attachments,
-      );
+      expect(
+        useComposerDraftStore.getState().getComposerDraft(requireHook(hook).draftTarget)?.files,
+      ).toEqual([expect.objectContaining(attachments[0])]);
       await act(() =>
         useComposerDraftStore
           .getState()
@@ -239,6 +265,9 @@ describe("useQueuedRunEdit", () => {
       const update = screen.getByRole("button", { name: "Update queued message" });
       await expect.element(update).toBeEnabled();
       await update.click();
+      await vi.waitFor(() =>
+        expect(mocks.setThreadError).toHaveBeenCalledWith(THREAD_A.threadId, null),
+      );
       await vi.waitFor(() => expect(mocks.editQueuedRun).toHaveBeenCalledOnce());
       expect(mocks.editQueuedRun).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -262,16 +291,18 @@ describe("useQueuedRunEdit", () => {
         text: `Ultrathink:\n${ATTACHMENT_ONLY_BOOTSTRAP_PROMPT}`,
         attachments: [
           {
-            type: "image",
+            type: "file",
             id: ChatAttachmentId.make("removed"),
-            name: "removed.png",
-            mimeType: "image/png",
+            name: "removed.pdf",
+            mimeType: "application/pdf",
             sizeBytes: 10,
           },
         ],
       }),
     );
-    await act(() => requireHook(hook).removeEditingAttachment("removed"));
+    await act(() =>
+      useComposerDraftStore.getState().removeFile(requireHook(hook).draftTarget, "removed"),
+    );
     await screen.getByRole("button", { name: "Update queued message" }).click();
     await vi.waitFor(() => expect(mocks.editQueuedRun).toHaveBeenCalledOnce());
     expect(mocks.editQueuedRun).toHaveBeenCalledWith(

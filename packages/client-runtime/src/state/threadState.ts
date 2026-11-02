@@ -6,7 +6,6 @@ import { EMPTY_THREAD_HISTORY_META, type ThreadHistoryMeta } from "./threadHisto
 export type EnvironmentThreadStatus = "empty" | "cached" | "synchronizing" | "live" | "deleted";
 
 export interface EnvironmentThreadState {
-  readonly sequence?: number;
   readonly data: Option.Option<OrchestrationV2ThreadProjection>;
   readonly status: EnvironmentThreadStatus;
   readonly error: Option.Option<string>;

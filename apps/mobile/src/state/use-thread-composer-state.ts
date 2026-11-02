@@ -484,11 +484,7 @@ export function useThreadComposerState() {
       return;
     }
     const text = draft.text.trim();
-    if (
-      text.length === 0 &&
-      edit.existingAttachments.length === 0 &&
-      draft.attachments.length === 0
-    ) {
+    if (text.length === 0 && draft.attachments.length === 0) {
       Dialog.alert("Add a message", "A queued message cannot be left empty.");
       return;
     }

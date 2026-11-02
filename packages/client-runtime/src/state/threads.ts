@@ -247,10 +247,6 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
   const initialState: EnvironmentThreadState = retained
     ? cachedThreadState(retained.state)
     : {
-        sequence: Option.match(cached, {
-          onNone: () => 0,
-          onSome: (snapshot) => snapshot.snapshotSequence,
-        }),
         data: cachedThread,
         status: statusWithoutLiveData(cachedThread),
         error: Option.none(),
@@ -424,7 +420,6 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
     // Atomic with concurrent history meta updates: never get-then-set the whole
     // state when only the projection changes. Bounded installs pass history so
     // projection + cursor persist together in one enqueue.
-    const sequence = yield* SubscriptionRef.get(lastSequence);
     const next = yield* SubscriptionRef.updateAndGet(state, (previous) => {
       const history =
         options?.history !== undefined
@@ -434,7 +429,6 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
             : previous.history;
       return {
         ...previous,
-        sequence,
         data: Option.some(thread),
         status: Option.isSome(previous.error)
           ? ("cached" as const)
@@ -471,7 +465,6 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
   const setDeleted = Effect.fn("EnvironmentThreadState.setDeleted")(function* () {
     yield* Ref.set(awaitingCompletion, false);
     yield* SubscriptionRef.set(state, {
-      sequence: yield* SubscriptionRef.get(lastSequence),
       data: Option.none(),
       status: "deleted",
       error: Option.none(),
