@@ -3163,6 +3163,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     readonly subagentLaunchToolUseId?: string;
     readonly subagentModel?: string | null;
     readonly subagentModelFailure?: boolean;
+    readonly lookupSubagentModel?: ClaudeAdapterV2.ClaudeAgentSdkQueryRunnerShape["subagentModel"];
     readonly nativeSessionId?: string;
     readonly settings?: ClaudeSettings;
     readonly modelCatalog?: Effect.Effect<ClaudeModelCatalog>;
@@ -3330,15 +3331,17 @@ describe("ClaudeAdapterV2 background wake turns", () => {
             }),
           forkSession: options?.forkSession ?? (() => Effect.die("unused forkSession")),
           subagentLaunchToolUseId: () => Effect.succeed(options?.subagentLaunchToolUseId ?? null),
-          subagentModel: () =>
-            options?.subagentModelFailure === true
-              ? Effect.fail(
-                  new ClaudeAdapterV2.ClaudeAgentSdkQueryRunnerError({
-                    method: "getSubagentModel",
-                    cause: "unavailable",
-                  }),
-                )
-              : Effect.succeed(options?.subagentModel ?? null),
+          subagentModel:
+            options?.lookupSubagentModel ??
+            (() =>
+              options?.subagentModelFailure === true
+                ? Effect.fail(
+                    new ClaudeAdapterV2.ClaudeAgentSdkQueryRunnerError({
+                      method: "getSubagentModel",
+                      cause: "unavailable",
+                    }),
+                  )
+                : Effect.succeed(options?.subagentModel ?? null)),
           assertComplete: Effect.void,
         },
       });
@@ -13046,6 +13049,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
             }),
           forkSession: () => Effect.die("unused forkSession"),
           subagentLaunchToolUseId: () => Effect.succeed(null),
+          subagentModel: () => Effect.succeed(null),
           assertComplete: Effect.void,
         },
       });
@@ -15183,6 +15187,8 @@ describe("ClaudeAdapterV2 background wake turns", () => {
   it.effect.each([
     ["reported", false],
     ["reported", true],
+    ["delayed", false],
+    ["delayed", true],
     ["missing", false],
     ["unavailable", false],
   ] as const)(
@@ -15190,9 +15196,23 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     ([source, idle]) =>
       Effect.scoped(
         Effect.gen(function* () {
+          const firstRead = yield* Deferred.make<void>();
+          let reads = 0;
           const harness = yield* makeWakeHarnessWithOptions({
             subagentModel: source === "reported" ? "claude-haiku-4-5-20251001" : null,
             subagentModelFailure: source === "unavailable",
+            ...(source === "delayed"
+              ? {
+                  lookupSubagentModel: () =>
+                    Effect.gen(function* () {
+                      if (reads++ === 0) {
+                        yield* Deferred.succeed(firstRead, undefined);
+                        return null;
+                      }
+                      return "claude-haiku-4-5-20251001";
+                    }),
+                }
+              : {}),
           });
           yield* harness.runtime.startTurn(
             makeClaudeTestTurnInput({
@@ -15233,10 +15253,22 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           yield* harness.awaitTerminal(1);
           if (idle) {
             yield* harness.offerAndWait(notification);
+          }
+          yield* harness.until(() =>
+            harness.events.some(
+              (event) => event.type === "subagent.updated" && event.subagent.status === "completed",
+            ),
+          );
+          if (source === "delayed") {
+            yield* Deferred.await(firstRead);
+            yield* TestClock.adjust(500);
+            assert.equal(reads, 2);
+          }
+          if (source === "reported" || source === "delayed") {
             yield* harness.until(() =>
               harness.events.some(
                 (event) =>
-                  event.type === "subagent.updated" && event.subagent.status === "completed",
+                  event.type === "subagent.updated" && event.subagent.model === "claude-haiku-4-5",
               ),
             );
           }
@@ -15245,10 +15277,116 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           const task = harness.events
             .filter((event) => event.type === "subagent.updated")
             .at(-1)?.subagent;
-          assert.equal(task?.model, source === "reported" ? "claude-haiku-4-5" : null);
+          assert.equal(
+            task?.model,
+            source === "reported" || source === "delayed" ? "claude-haiku-4-5" : null,
+          );
         }).pipe(
           Effect.provide(
-            Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+            Layer.mergeAll(
+              IdAllocator.layer,
+              McpProviderSessions.layer,
+              NodeServices.layer,
+              NodeCrypto.layer,
+            ),
+          ),
+        ),
+      ),
+  );
+
+  it.effect.each([
+    [false, false],
+    [true, false],
+    [false, true],
+  ] as const)(
+    "settles a fork while its transcript lookup is pending (idle: %s, timeout: %s)",
+    ([idle, timeout]) =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const lookupStarted = yield* Deferred.make<void>();
+          const lookupInterrupted = yield* Deferred.make<void>();
+          const model = yield* Deferred.make<string | null>();
+          const harness = yield* makeWakeHarnessWithOptions({
+            lookupSubagentModel: () =>
+              Deferred.succeed(lookupStarted, undefined).pipe(
+                Effect.andThen(Deferred.await(model)),
+                Effect.onInterrupt(() => Deferred.succeed(lookupInterrupted, undefined)),
+              ),
+          });
+          yield* harness.runtime.startTurn(
+            makeClaudeTestTurnInput({
+              threadId: harness.threadId,
+              providerThread: harness.providerThread,
+              now: yield* DateTime.now,
+              attemptId: RunAttemptId.make("attempt-fork-pending-model"),
+              text: "Run a forked skill.",
+              attachments: [],
+            }),
+          );
+          yield* harness.offerAndWait(
+            claudeSdkFrame({
+              type: "system",
+              subtype: "task_started",
+              task_id: "fork-pending-model",
+              description: "/probe",
+              task_type: "local_agent",
+              skip_transcript: true,
+              uuid: "00000000-0000-4000-8000-000000000244",
+              session_id: WAKE_NATIVE_SESSION,
+            }),
+          );
+          const result = makeResultFrame({
+            uuid: "00000000-0000-4000-8000-000000000245",
+            result: "Done.",
+          });
+          if (idle) {
+            yield* harness.offerAndWait(result);
+            yield* harness.awaitTerminal(1);
+          }
+          yield* Queue.offer(
+            harness.sdkMessages,
+            claudeSdkFrame({
+              type: "system",
+              subtype: "task_notification",
+              task_id: "fork-pending-model",
+              status: "completed",
+              summary: "/probe",
+              uuid: "00000000-0000-4000-8000-000000000246",
+              session_id: WAKE_NATIVE_SESSION,
+            }),
+          );
+          yield* Deferred.await(lookupStarted);
+          yield* harness.until(() =>
+            harness.events.some(
+              (event) => event.type === "subagent.updated" && event.subagent.status === "completed",
+            ),
+          );
+          if (!idle) {
+            yield* harness.offerAndWait(result);
+            yield* harness.awaitTerminal(1);
+          }
+          if (timeout) {
+            yield* TestClock.adjust("30 seconds");
+            yield* Deferred.await(lookupInterrupted);
+            const task = harness.events.filter((event) => event.type === "subagent.updated").at(-1);
+            assert.isNull(task?.subagent.model);
+          } else {
+            yield* Deferred.succeed(model, "claude-haiku-4-5-20251001");
+            yield* harness.until(() =>
+              harness.events.some(
+                (event) =>
+                  event.type === "subagent.updated" && event.subagent.model === "claude-haiku-4-5",
+              ),
+            );
+          }
+        }).pipe(
+          Effect.provide(
+            Layer.mergeAll(
+              IdAllocator.layer,
+              McpProviderSessions.layer,
+              NodeServices.layer,
+              NodeCrypto.layer,
+            ),
           ),
         ),
       ),
