@@ -131,7 +131,7 @@ function ThemeColorPickerPanel({
     const nextHsv = hexToHsv(nextValue);
     setHsv(nextHsv);
     setRgbDraft(themeRgbValue(nextValue));
-    onChange(nextValue.toLowerCase());
+    onChange(nextValue.toLowerCase() + alphaSuffix);
   };
 
   const t = useT();

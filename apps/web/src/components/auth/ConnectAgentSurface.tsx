@@ -4,6 +4,8 @@ import {
   AuthMcpApprovalError,
   AuthMcpClientAccess,
   AuthMcpAuthorizationRequest,
+  isRuntimeModeAbove,
+  managedRuntimeModeCeilingMessage,
 } from "@t3tools/contracts";
 import { Radio as RadioPrimitive } from "@base-ui/react/radio";
 import { isLoopbackHost } from "@t3tools/shared/preview";
@@ -226,7 +228,12 @@ export function ConnectAgentSurface() {
             onValueChange={(value) => setAccess(value as AuthMcpClientAccess)}
           >
             {AuthMcpClientAccess.literals.map((option) => (
-              <AccessOption key={option} access={option} selected={option === access} />
+              <AccessOption
+                key={option}
+                access={option}
+                selected={option === access}
+                managedReason={ceilingReason(details, option)}
+              />
             ))}
           </RadioGroup>
           <p className="text-xs text-muted-foreground">{t("misc.auth.agent.accessNote")}</p>
@@ -298,12 +305,24 @@ function ConnectAgentHeading({
   );
 }
 
+/** Why a managed policy keeps `access` from being granted, or undefined when it may be. */
+function ceilingReason(details: AuthMcpApprovalDetails, access: AuthMcpClientAccess) {
+  const ceiling = details.runtimeModeCeiling;
+  return ceiling === undefined ||
+    access === "read-only" ||
+    !isRuntimeModeAbove(access, ceiling.maxRuntimeMode)
+    ? undefined
+    : managedRuntimeModeCeilingMessage(ceiling.organization, ceiling.maxRuntimeMode);
+}
+
 function AccessOption({
   access,
   selected,
+  managedReason,
 }: {
   readonly access: AuthMcpClientAccess;
   readonly selected: boolean;
+  readonly managedReason: string | undefined;
 }) {
   const t = useT();
   const { labelKey, descriptionKey, icon: Icon } = accessConfig[access];
@@ -312,6 +331,7 @@ function AccessOption({
   return (
     <RadioPrimitive.Root
       value={access}
+      disabled={managedReason !== undefined}
       className={cn(
         "flex cursor-pointer items-start gap-3 rounded-lg border px-3 py-2.5 text-left outline-none transition-[background-color,border-color,box-shadow]",
         "focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background",
@@ -329,7 +349,7 @@ function AccessOption({
       />
       <span className="min-w-0">
         <span className="block text-sm font-medium text-foreground">{label}</span>
-        <span className="block text-xs text-muted-foreground">{description}</span>
+        <span className="block text-xs text-muted-foreground">{managedReason ?? description}</span>
       </span>
     </RadioPrimitive.Root>
   );

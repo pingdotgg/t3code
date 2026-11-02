@@ -611,7 +611,9 @@ export const enMessages = {
     "Could not load the sign-in terminal. Cancel and retry sign-in.",
   "settings.providers.auth.terminalA11y": "Provider sign-in terminal",
   "settings.providers.auth.starting": "Starting sign-in…",
+  "settings.providers.auth.connecting": "Connecting…",
   "settings.providers.auth.checking": "Checking your account…",
+  "settings.providers.auth.checkingCredentials": "Checking credentials and loading models…",
   "settings.providers.auth.completeTerminal": "Complete sign-in in the terminal below.",
   "settings.providers.auth.enterCredentials": "Enter your credentials below.",
   "settings.providers.auth.finishBrowser": "Finish signing in in your browser.",
@@ -620,6 +622,7 @@ export const enMessages = {
   "settings.providers.auth.noInApp":
     "No in-app sign-in advertised. Follow the provider's docs to finish setup.",
   "settings.providers.auth.signInOn": "Sign in on {environment}.",
+  "settings.providers.auth.connectOn": "Connect on {environment} to load models.",
   "settings.providers.auth.failed": "Provider sign-in failed. Try again.",
   "settings.providers.auth.openPageFailed":
     "Could not open the sign-in page. Copy the link and open it in your browser.",
@@ -639,6 +642,7 @@ export const enMessages = {
   "settings.providers.auth.cancelAction": "Cancel",
   "settings.providers.auth.changeAccount": "Change account",
   "settings.providers.auth.retry": "Retry sign-in",
+  "settings.providers.auth.retryConnection": "Retry connection",
   "settings.providers.auth.signIn": "Sign in",
   "settings.providers.auth.signOutConfirm":
     "Sign out of {provider} on {environment}? This stops running threads that share this sign-in. Thread history is kept.",
@@ -755,6 +759,8 @@ export const enMessages = {
   "settings.providers.card.variableValue": "Environment variable value {number}",
   "settings.providers.card.sensitiveStored":
     "Sensitive values are stored separately and never returned to the app.",
+  "settings.providers.card.sensitiveStoredRenameHint":
+    "Enter a new value to rename a saved one or make it plain text.",
   "settings.providers.card.project": "Project",
   "settings.providers.card.device": "Device",
   "settings.providers.card.overrideA11y":
@@ -1589,7 +1595,9 @@ export const zhHansMessages: Partial<Record<keyof typeof enMessages, string>> = 
   "settings.providers.auth.loadTerminalFailed": "无法加载登录终端。请取消并重新登录。",
   "settings.providers.auth.terminalA11y": "提供商登录终端",
   "settings.providers.auth.starting": "正在开始登录…",
+  "settings.providers.auth.connecting": "正在连接…",
   "settings.providers.auth.checking": "正在检查你的账号…",
+  "settings.providers.auth.checkingCredentials": "正在检查凭据并加载模型…",
   "settings.providers.auth.completeTerminal": "请在下方终端中完成登录。",
   "settings.providers.auth.enterCredentials": "请在下方输入你的凭据。",
   "settings.providers.auth.finishBrowser": "请在浏览器中完成登录。",
@@ -1597,6 +1605,7 @@ export const zhHansMessages: Partial<Record<keyof typeof enMessages, string>> = 
   "settings.providers.auth.discovering": "正在查找登录方式…",
   "settings.providers.auth.noInApp": "未提供应用内登录。请按照提供商的文档完成设置。",
   "settings.providers.auth.signInOn": "在 {environment} 上登录。",
+  "settings.providers.auth.connectOn": "在 {environment} 上连接以加载模型。",
   "settings.providers.auth.failed": "提供商登录失败。请重试。",
   "settings.providers.auth.openPageFailed": "无法打开登录页面。请复制链接并在浏览器中打开。",
   "settings.providers.auth.account": "账号",
@@ -1615,6 +1624,7 @@ export const zhHansMessages: Partial<Record<keyof typeof enMessages, string>> = 
   "settings.providers.auth.cancelAction": "取消",
   "settings.providers.auth.changeAccount": "更换账号",
   "settings.providers.auth.retry": "重试登录",
+  "settings.providers.auth.retryConnection": "重试连接",
   "settings.providers.auth.signIn": "登录",
   "settings.providers.auth.signOutConfirm":
     "要在 {environment} 上退出 {provider} 吗？这会停止共用此登录的运行中会话。会话历史会保留。",
@@ -1726,6 +1736,8 @@ export const zhHansMessages: Partial<Record<keyof typeof enMessages, string>> = 
   "settings.providers.card.plain": "纯文本",
   "settings.providers.card.variableValue": "环境变量值 {number}",
   "settings.providers.card.sensitiveStored": "敏感值会单独存储，并且不会返回给应用。",
+  "settings.providers.card.sensitiveStoredRenameHint":
+    "输入新值可重命名已保存的值，或将其改为明文。",
   "settings.providers.card.project": "项目",
   "settings.providers.card.device": "设备",
   "settings.providers.card.overrideA11y": "已为此项目覆盖。显示此值的来源",

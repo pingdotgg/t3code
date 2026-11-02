@@ -42,17 +42,30 @@ function readDataUrlBlob(src: string): Blob {
   }
 }
 
+async function fetchMediaBlob(src: string): Promise<Blob> {
+  const response = await fetch(src).catch(() => null);
+  if (response?.ok) return response.blob();
+  // An <img> can show media that fetch() may not read (CORS, CSP, cookies); desktop reads it natively.
+  const desktop = typeof window === "undefined" ? undefined : window.desktopBridge;
+  const native =
+    desktop && /^https?:/i.test(src) ? await desktop.readMedia(src).catch(() => null) : null;
+  if (native && native.status >= 200 && native.status < 300) {
+    return new Blob([new Uint8Array(native.data)], { type: native.mimeType });
+  }
+  const status = native?.status ?? response?.status;
+  if (status !== undefined) {
+    throw new Error(translateNow("review.media.content.fetchHttp", { status }));
+  }
+  throw new Error(
+    translateNow(
+      desktop ? "review.media.content.fetchFailed" : "review.media.content.fetchBlocked",
+    ),
+  );
+}
+
 async function readMediaBlob(src: string): Promise<Blob> {
   if (/^data:/i.test(src)) return readDataUrlBlob(src);
-  let response: Response;
-  try {
-    response = await fetch(src);
-  } catch (cause) {
-    throw new Error(translateNow("review.media.content.fetchBlocked"), { cause });
-  }
-  if (!response.ok)
-    throw new Error(translateNow("review.media.content.fetchHttp", { status: response.status }));
-  const blob = await response.blob();
+  const blob = await fetchMediaBlob(src);
   if (blob.type.split(";", 1)[0] === "text/html") {
     throw new Error(translateNow("review.media.content.webPage"));
   }

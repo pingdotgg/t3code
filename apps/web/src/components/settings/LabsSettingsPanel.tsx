@@ -1,5 +1,6 @@
 import { useAuth } from "@clerk/react";
 import { Link } from "@tanstack/react-router";
+import { managedCapabilityDenial } from "@t3tools/contracts";
 
 import { hasCloudPublicConfig } from "~/cloud/publicConfig";
 import { useT } from "~/hooks/useI18n";
@@ -11,6 +12,8 @@ import { RichMessage, SettingsPageContainer, SettingsRow, SettingsSection } from
 import { searchableSetting } from "./settingsSearch";
 import { LegacyFeaturesSection } from "./SettingsPanels";
 import { useScopedSettings, useUpdateScopedSettings } from "./useScopedSettings";
+import { useOptionalSettingsScope } from "./SettingsScopeContext";
+import { firstManagedDenial, usePrimaryManagedPolicy } from "~/state/managedPolicy";
 
 const sharingAccessLink = (children: string) => (
   <Link to="/settings/access" className="underline underline-offset-2">
@@ -129,12 +132,23 @@ function GuestLinksRow() {
   const t = useT();
   const settings = useScopedSettings();
   const updateSettings = useUpdateScopedSettings();
+  const scope = useOptionalSettingsScope();
+  const primaryPolicy = usePrimaryManagedPolicy();
+  // Guests arrive through T3 Connect, so a policy that turns Connect off turns this off too.
+  const connectDenial = firstManagedDenial(
+    scope
+      ? scope.connectedEnvironments.map((environment) => environment.serverConfig?.managedPolicy)
+      : [primaryPolicy],
+    (policy) => managedCapabilityDenial(policy, "connect"),
+  );
   return (
     <SettingsRow
       serverScoped
       {...searchableSetting("guest-links")}
       title={t("settings.system.labs.guestLinks.title")}
       settingKeys={["guestSharingEnabled"]}
+      // Turning guest links off still works without T3 Connect.
+      managed={settings.guestSharingEnabled ? undefined : connectDenial}
       description={
         <RichMessage
           message={t("settings.system.labs.guestLinks.description")}

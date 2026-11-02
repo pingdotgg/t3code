@@ -22,8 +22,11 @@ import { ProviderModelPicker } from "./ProviderModelPicker";
 import { runtimeModeConfig } from "./runtimeModeConfig";
 import { useComposerMenuState } from "./useComposerMenuState";
 
-export type RuntimeModeOption = { mode: RuntimeMode } & (typeof runtimeModeConfig)[RuntimeMode];
-const supervisedRuntimeModeOption = {
+export type RuntimeModeOption = {
+  mode: RuntimeMode;
+  disabledReason?: string;
+} & (typeof runtimeModeConfig)[RuntimeMode];
+const supervisedRuntimeModeOption: RuntimeModeOption = {
   mode: "approval-required" as const,
   ...runtimeModeConfig["approval-required"],
 };
@@ -170,9 +173,7 @@ export const ComposerFooterModeControls = memo(function ComposerFooterModeContro
  */
 export function ComposerPermissionsSection(props: {
   runtimeMode: RuntimeMode;
-  runtimeModeOptions: ReadonlyArray<
-    { mode: RuntimeMode } & (typeof runtimeModeConfig)[RuntimeMode]
-  >;
+  runtimeModeOptions: ReadonlyArray<RuntimeModeOption>;
   onRuntimeModeChange: (mode: RuntimeMode) => void;
 }) {
   // Hover or keyboard focus previews a mode's name and description before a pick.
@@ -215,6 +216,7 @@ export function ComposerPermissionsSection(props: {
             <MenuPrimitive.RadioItem
               key={option.mode}
               value={option.mode}
+              disabled={option.disabledReason !== undefined}
               label={t(option.labelKey)}
               aria-label={t(option.labelKey)}
               aria-describedby={`${descriptionId}-${option.mode}`}
@@ -223,7 +225,7 @@ export function ComposerPermissionsSection(props: {
               onPointerLeave={() => setPreviewMode(null)}
               onFocus={() => setPreviewMode(option.mode)}
               onBlur={() => setPreviewMode(null)}
-              className="flex h-6 flex-1 cursor-pointer items-center justify-center text-muted-foreground outline-none first:rounded-l-md last:rounded-r-md data-checked:bg-input/72 data-checked:text-foreground data-highlighted:text-foreground not-data-checked:data-highlighted:bg-accent focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset"
+              className="flex h-6 flex-1 cursor-pointer items-center justify-center text-muted-foreground outline-none first:rounded-l-md last:rounded-r-md data-disabled:cursor-not-allowed data-disabled:opacity-40 data-checked:bg-input/72 data-checked:text-foreground data-highlighted:text-foreground not-data-checked:data-highlighted:bg-accent focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset"
             >
               <OptionIcon aria-hidden="true" className="size-3.5" />
             </MenuPrimitive.RadioItem>
@@ -233,7 +235,7 @@ export function ComposerPermissionsSection(props: {
       {/* Static per-mode descriptions for screen readers; the preview below is visual only. */}
       {props.runtimeModeOptions.map((option) => (
         <span key={option.mode} id={`${descriptionId}-${option.mode}`} className="sr-only">
-          {t(option.descriptionKey)}
+          {option.disabledReason ?? t(option.descriptionKey)}
         </span>
       ))}
       <div className="grid gap-0.5" aria-hidden="true">
@@ -248,7 +250,7 @@ export function ComposerPermissionsSection(props: {
         </span>
         {/* Two lines reserved so the menu does not shift while you preview modes. */}
         <span className="min-h-8 text-muted-foreground text-xs leading-4">
-          {t(shown.descriptionKey)}
+          {shown.disabledReason ?? t(shown.descriptionKey)}
         </span>
       </div>
     </div>

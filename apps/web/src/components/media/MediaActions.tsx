@@ -124,9 +124,11 @@ export function useMediaActions(source: MediaActionSource) {
 export function MediaActions({
   source,
   children,
+  showTooltip = true,
 }: {
   source: MediaActionSource;
   children: ReactElement;
+  showTooltip?: boolean;
 }) {
   const t = useT();
   const { save, copyImage, canReadMedia, assertCanReadMedia } = useMediaActions(source);
@@ -243,7 +245,7 @@ export function MediaActions({
   };
 
   return (
-    <Tooltip open={tooltipOpen} onOpenChange={setTooltipOpen}>
+    <Tooltip disabled={!showTooltip} open={tooltipOpen} onOpenChange={setTooltipOpen}>
       <TooltipTrigger
         render={children}
         tabIndex={0}

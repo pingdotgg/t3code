@@ -63,6 +63,8 @@ export const enMessages = {
     "The browser could not decode this image for copying. Try saving it instead.",
   "review.media.content.fetchBlocked":
     "The file could not be fetched. The host may block browser access (CORS), or the connection may be unavailable.",
+  "review.media.content.fetchFailed":
+    "The file could not be fetched. Check the connection and try again.",
   "review.media.content.fetchHttp": "The file could not be fetched (HTTP {status}).",
   "review.media.content.inlineDecode": "This inline media could not be decoded.",
   "review.media.content.missingPayload": "Missing data URL payload.",
@@ -735,6 +737,9 @@ export const enMessages = {
   "review.extra.unlink.from.this.thread": "Unlink from this thread",
   "review.extra.link.to.this.thread": "Link to this thread",
   "review.extra.link.to.thread": "Link to thread",
+  "review.extra.searchInCommandPalette": "{label}. Search in the command palette.",
+  "review.extra.linkTermToThread": "{term} to a thread",
+  "review.extra.pageOf": "{page} / {total} pages",
   "review.extra.choose.a.thread": "Choose a thread",
   "review.extra.search.threads.or.projects": "Search threads or projects...",
   "review.extra.no.active.threads.found": "No active threads found.",
@@ -1162,6 +1167,7 @@ export const zhHansMessages: Partial<Record<keyof typeof enMessages, string>> = 
   "review.media.content.decodeCopy": "浏览器无法解码这张图片以进行复制。请尝试保存图片。",
   "review.media.content.fetchBlocked":
     "无法获取文件。主机可能禁止浏览器访问（CORS），或者连接不可用。",
+  "review.media.content.fetchFailed": "无法获取文件。请检查连接后重试。",
   "review.media.content.fetchHttp": "无法获取文件（HTTP {status}）。",
   "review.media.content.inlineDecode": "无法解码这个内联媒体。",
   "review.media.content.missingPayload": "缺少 data URL 内容。",
@@ -1858,6 +1864,9 @@ export const zhHansMessages: Partial<Record<keyof typeof enMessages, string>> = 
   "review.extra.unlink.from.this.thread": "\u53d6\u6d88\u4e0e\u6b64\u4f1a\u8bdd\u7684\u5173\u8054",
   "review.extra.link.to.this.thread": "\u5173\u8054\u5230\u6b64\u4f1a\u8bdd",
   "review.extra.link.to.thread": "\u5173\u8054\u5230\u4f1a\u8bdd",
+  "review.extra.searchInCommandPalette": "{label}。可在命令面板中搜索。",
+  "review.extra.linkTermToThread": "将{term}关联到会话",
+  "review.extra.pageOf": "第 {page} / {total} 页",
   "review.extra.choose.a.thread": "\u9009\u62e9\u4f1a\u8bdd",
   "review.extra.search.threads.or.projects": "\u641c\u7d22\u4f1a\u8bdd\u6216\u9879\u76ee...",
   "review.extra.no.active.threads.found": "\u672a\u627e\u5230\u6d3b\u8dc3\u4f1a\u8bdd\u3002",

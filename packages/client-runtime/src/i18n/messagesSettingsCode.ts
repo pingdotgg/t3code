@@ -695,6 +695,8 @@ export const enMessages = {
   "settings.code.tasks.filterTest": "Filter {n} test",
   "settings.code.tasks.filterValue": "Filter {n} value",
   "settings.code.tasks.onWebhook": "On webhook",
+  "settings.code.tasks.webhookDeniedSaveHint":
+    "Switch this task to a time or an interval, or turn it off, to save it.",
   "settings.code.tasks.onceAt": "Once, {date}",
   "settings.code.tasks.everyMinutes": "Every {n} min",
   "settings.code.tasks.everySeconds": "Every {n} sec",
@@ -1557,6 +1559,8 @@ export const zhHansMessages: Partial<Record<keyof typeof enMessages, string>> = 
   "settings.code.tasks.filterTest": "筛选条件 {n} 的判断方式",
   "settings.code.tasks.filterValue": "筛选条件 {n} 的值",
   "settings.code.tasks.onWebhook": "收到 Webhook 时",
+  "settings.code.tasks.webhookDeniedSaveHint":
+    "要保存，请把此计划任务改为按时间或按间隔运行，或将其关闭。",
   "settings.code.tasks.onceAt": "单次，{date}",
   "settings.code.tasks.everyMinutes": "每 {n} 分钟",
   "settings.code.tasks.everySeconds": "每 {n} 秒",

@@ -1,13 +1,19 @@
-import type { DesktopBridge, DesktopUpdateState } from "@t3tools/contracts";
+import {
+  type DesktopBridge,
+  type DesktopUpdateState,
+  managedUpdatesDenial,
+} from "@t3tools/contracts";
 import { TriangleAlertIcon } from "lucide-react";
 import { type ComponentProps, useId, useRef, useState } from "react";
 import { flushSync } from "react-dom";
 import { settlePromise, squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import { isElectron } from "../../env";
 import { useMediaQuery } from "../../hooks/useMediaQuery";
+import { useT } from "../../hooks/useI18n";
 import { cn } from "../../lib/utils";
 import { ensureLocalApi } from "../../localApi";
 import { useDesktopUpdateState } from "../../state/desktopUpdate";
+import { usePrimaryManagedPolicy } from "../../state/managedPolicy";
 import { stackedThreadToast, toastManager } from "../ui/toast";
 import {
   canCheckForUpdate,
@@ -191,7 +197,10 @@ export function SidebarUpdatePill() {
 }
 
 function SidebarUpdateControl() {
+  const t = useT();
   const state = useDesktopUpdateState();
+  // The desktop updates this machine, whose policy the primary environment reports.
+  const updatesDenial = managedUpdatesDenial(usePrimaryManagedPolicy());
   const [isActionPending, setIsActionPending] = useState(false);
   const [isConfirmingEverything, setIsConfirmingEverything] = useState(false);
   const [checkAnimationKey, setCheckAnimationKey] = useState(0);
@@ -239,16 +248,18 @@ function SidebarUpdateControl() {
     showCheckIcon,
   });
   const idleTooltip =
-    !showUpdateDetails && !showCheckIcon ? getDesktopUpdateIdleTooltip(state) : null;
+    !showUpdateDetails && !showCheckIcon
+      ? getDesktopUpdateIdleTooltip(state, updatesDenial, t)
+      : null;
   const tooltip = runsEverything
     ? everything.summary
     : showUpdateDetails
       ? state
-        ? getDesktopUpdateButtonTooltip(state)
-        : "Update available"
+        ? getDesktopUpdateButtonTooltip(state, t)
+        : t("appB.update.available")
       : showCheckIcon
-        ? "Checking for updates…"
-        : (idleTooltip?.title ?? "Check for updates");
+        ? t("appB.update.checking")
+        : (idleTooltip?.title ?? t("appB.update.check"));
   const disabled = showCheckIcon
     ? true
     : runsEverything
@@ -293,7 +304,7 @@ function SidebarUpdateControl() {
       let confirmed = false;
       try {
         confirmed = await ensureLocalApi().dialogs.confirm(
-          getDesktopUpdateInstallConfirmationMessage(state),
+          getDesktopUpdateInstallConfirmationMessage(state, t),
         );
       } catch (error) {
         setIsActionPending(false);
@@ -327,7 +338,9 @@ function SidebarUpdateControl() {
             type: "error",
             title: "Could not check for updates",
             description:
-              result.state.message ?? "Automatic updates are not available in this build.",
+              updatesDenial ??
+              result.state.message ??
+              "Automatic updates are not available in this build.",
           }),
         );
       })
@@ -413,7 +426,7 @@ function SidebarUpdateControl() {
           ? { status: "downloading", percent: state.downloadPercent }
           : { status: "waiting" };
     return (
-      <SidebarMenuItem className="ml-auto flex min-w-0 flex-1">
+      <SidebarMenuItem className="ml-auto flex flex-1">
         <SidebarUpdateCapsule
           run={run}
           local={local}

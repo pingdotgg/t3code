@@ -12,6 +12,7 @@ import {
   type EnvironmentId,
   connectReachabilityHelpUrl,
   formatConnectReachable,
+  managedCapabilityDenial,
   resolveEnvironmentMachineKind,
 } from "@t3tools/contracts";
 import {
@@ -59,6 +60,7 @@ import {
   usePrimaryEnvironmentId,
 } from "~/state/environments";
 import { APP_VERSION } from "~/branding";
+import { usePrimaryManagedPolicy } from "~/state/managedPolicy";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { serverEnvironment } from "~/state/server";
 import {
@@ -573,6 +575,8 @@ function ConfiguredCloudLinkRow({ canManageRelay }: { readonly canManageRelay: b
     reconcileCloudState,
   } = useCloudLinkController();
   const { openAuthPrompt } = useT3ConnectAuthPrompt();
+  // The server unlinks and refuses relay changes under such a policy; unlinking stays possible.
+  const connectDenial = managedCapabilityDenial(usePrimaryManagedPolicy(), "connect");
   const [isUpdating, setIsUpdating] = useState(false);
   const [isUpdatingPreference, setIsUpdatingPreference] = useState(false);
 
@@ -700,21 +704,24 @@ function ConfiguredCloudLinkRow({ canManageRelay }: { readonly canManageRelay: b
         <SettingsRow
           title={t("settings.system.saved.connectTitle")}
           description={
-            signedOut
-              ? t("settings.system.saved.connectSignedOut")
-              : linkRevoked
-                ? t("settings.system.saved.connectRevoked")
-                : managedTunnelActive
-                  ? reachability?.status === "unreachable"
-                    ? t("settings.system.saved.connectOnUnreachable")
-                    : reachability?.status === "reachable"
-                      ? t("settings.system.saved.connectOnReachable")
-                      : t("settings.system.saved.connectOnUnchecked")
-                  : managedTunnelOutOfSync
-                    ? t("settings.system.saved.connectOutOfSync")
-                    : t("settings.system.saved.connectOff")
+            connectDenial !== undefined && !managedTunnelActive
+              ? connectDenial
+              : signedOut
+                ? t("settings.system.saved.connectSignedOut")
+                : linkRevoked
+                  ? t("settings.system.saved.connectRevoked")
+                  : managedTunnelActive
+                    ? reachability?.status === "unreachable"
+                      ? t("settings.system.saved.connectOnUnreachable")
+                      : reachability?.status === "reachable"
+                        ? t("settings.system.saved.connectOnReachable")
+                        : t("settings.system.saved.connectOnUnchecked")
+                    : managedTunnelOutOfSync
+                      ? t("settings.system.saved.connectOutOfSync")
+                      : t("settings.system.saved.connectOff")
           }
           status={operationError ?? primaryCloudLinkState.error ?? reachabilityStatus}
+          managed={managedTunnelActive ? undefined : connectDenial}
           control={
             signedOut ? (
               signInButton
@@ -728,7 +735,9 @@ function ConfiguredCloudLinkRow({ canManageRelay }: { readonly canManageRelay: b
             )
           }
         >
-          {signedOut ? null : <T3ConnectTunnelUsage tunnelLimit={tunnelLimit} />}
+          {signedOut || connectDenial !== undefined ? null : (
+            <T3ConnectTunnelUsage tunnelLimit={tunnelLimit} />
+          )}
         </SettingsRow>
       ) : linkRevoked ? (
         <SettingsRow
@@ -744,6 +753,7 @@ function ConfiguredCloudLinkRow({ canManageRelay }: { readonly canManageRelay: b
               ? t("settings.system.saved.publishSignedOut")
               : t("settings.system.saved.publishDescription")
           }
+          managed={connectDenial}
           control={
             signedOut ? (
               signInButton
@@ -763,6 +773,7 @@ function ConfiguredCloudLinkRow({ canManageRelay }: { readonly canManageRelay: b
         <SettingsRow
           title={t("settings.system.saved.holdTitle")}
           description={t("settings.system.saved.holdDescription")}
+          managed={connectDenial}
           control={
             <CloudLinkSwitch
               ariaLabel={t("settings.system.saved.holdAria")}

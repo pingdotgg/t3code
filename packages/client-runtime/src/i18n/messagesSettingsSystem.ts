@@ -179,6 +179,7 @@ export const enMessages = {
   "settings.system.scope.allEnvironments": "All environments",
   "settings.system.layout.policyDetailsAria": "Background policy details",
   "settings.system.layout.overrideLabel": "override",
+  "settings.system.layout.managedBy": "Managed by {name}.",
   "settings.system.layout.resetToInherited": "Reset to inherited value",
   "settings.system.layout.noPermission":
     "This connection lacks permission to change settings on {label}.",
@@ -879,6 +880,7 @@ export const zhHansMessages: Partial<Record<keyof typeof enMessages, string>> = 
   "settings.system.scope.allEnvironments": "全部环境",
   "settings.system.layout.policyDetailsAria": "后台策略详情",
   "settings.system.layout.overrideLabel": "覆盖项",
+  "settings.system.layout.managedBy": "由 {name} 管理。",
   "settings.system.layout.resetToInherited": "重置为继承的值",
   "settings.system.layout.noPermission": "此连接无权更改 {label} 上的设置。",
   "settings.system.layout.selectedEnvironment": "所选环境",

@@ -36,7 +36,9 @@ import {
   type BrowserImportSource,
   type PreviewAppearancePreference,
   type PreviewViewportSetting,
+  managedCapabilityDenial,
 } from "@t3tools/contracts";
+import { usePrimaryManagedPolicy } from "~/state/managedPolicy";
 import { isValidSearchUrlTemplate } from "@t3tools/shared/preview";
 import { PREVIEW_VIEWPORT_PRESETS } from "@t3tools/shared/previewViewport";
 import { MoreVertical, Plus as PlusIcon } from "lucide-react";
@@ -192,6 +194,18 @@ export const importFailureReason = (cause: unknown): BrowserImportFailureReason 
   );
 };
 
+/**
+ * The desktop's refusal when the machine's managed policy forbids cookie import. IPC wraps the
+ * message in its own prefixes, so the sentence is matched on the contract's wording.
+ */
+export const importPolicyRefusal = (cause: unknown): string | undefined => {
+  const message = String((cause as { message?: unknown } | undefined)?.message ?? "");
+  return (
+    /The managed policy at .* importing browser cookies is not allowed\./u.exec(message)?.[0] ??
+    /(?:^|: )([^:]*'s policy does not allow importing browser cookies\.)/u.exec(message)?.[1]
+  );
+};
+
 async function importBrowserCookiesIntoTarget(
   bridge: NonNullable<typeof previewBridge>,
   source: BrowserImportSource,
@@ -266,7 +280,10 @@ async function importBrowserCookiesIntoTarget(
       targetName,
     };
   } catch (cause) {
-    return { kind: "blocked", reason: importFailureReason(cause) };
+    const policyRefusal = importPolicyRefusal(cause);
+    return policyRefusal !== undefined
+      ? { kind: "blocked", reason: "readFailed", message: policyRefusal }
+      : { kind: "blocked", reason: importFailureReason(cause) };
   }
 }
 
@@ -1165,6 +1182,11 @@ function BrowserProfilesSetting({ disabled }: { readonly disabled: boolean }) {
   const updateSettings = useUpdatePrimarySettings();
   const { environments, isReady: environmentsReady } = useEnvironments();
   const primaryEnvironment = usePrimaryEnvironment();
+  // Cookie import runs on this desktop, whose policy the primary environment reports.
+  const cookieImportDenial = managedCapabilityDenial(
+    usePrimaryManagedPolicy(),
+    "browserCookieImport",
+  );
   const [sources, setSources] = useState<ReadonlyArray<BrowserImportSource> | null>(null);
   const [importSession, setImportSession] = useState<{
     readonly source: BrowserImportSource;
@@ -1379,7 +1401,9 @@ function BrowserProfilesSetting({ disabled }: { readonly disabled: boolean }) {
             <MenuSeparator />
             <MenuGroup>
               <MenuGroupLabel>{t("settings.code.browser.profiles.importFrom")}</MenuGroupLabel>
-              {sources === null ? (
+              {cookieImportDenial !== undefined ? (
+                <MenuItem disabled>{cookieImportDenial}</MenuItem>
+              ) : sources === null ? (
                 <MenuItem disabled>
                   {t("settings.code.browser.profiles.lookingForBrowsers")}
                 </MenuItem>

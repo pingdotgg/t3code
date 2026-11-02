@@ -18,6 +18,7 @@ import {
   TurnItemId,
   type ModelSelection,
   type OrchestrationV2Run,
+  type OrchestrationV2ShellSnapshot,
   type OrchestrationV2RuntimeRequest,
   ProjectId,
   type PullRequestDetail,
@@ -79,6 +80,7 @@ import * as ThreadManagementService from "./ThreadManagementService.ts";
 import * as ManagedProjectFolders from "../project/ManagedProjectFolders.ts";
 import * as ScratchThreadPromotion from "../project/ScratchThreadPromotion.ts";
 import * as ScheduledTaskService from "../scheduledTasks/ScheduledTaskService.ts";
+import * as ManagedPolicy from "../policy/ManagedPolicy.ts";
 import * as Scheduler from "../scheduling/Scheduler.ts";
 import * as SecretRequests from "../secrets/SecretRequests.ts";
 import * as PreviewManager from "../preview/Manager.ts";
@@ -309,6 +311,7 @@ const layerLegacyImportTest = RuntimeLayer.layer.pipe(
 const layerScheduledTasksTest = ScheduledTaskService.layer.pipe(
   Layer.provide(
     Layer.mergeAll(
+      ManagedPolicy.layerTest(),
       Layer.mock(ThreadLaunchService.ThreadLaunchService)({}),
       Layer.mock(ThreadManagementService.ThreadManagementService)({}),
       Layer.mock(SecretRequests.SecretRequests)({}),
@@ -2543,6 +2546,37 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
         orderKey: "a0",
       });
       assert.equal((yield* orchestrator.getThreadProjection(threadId)).thread.activeOrderKey, "a0");
+
+      const shellOf = (shell: Pick<OrchestrationV2ShellSnapshot, "threads">) =>
+        shell.threads.find((thread) => thread.id === threadId)!;
+      const untaggedShell = shellOf(yield* orchestrator.getShellSnapshot());
+      yield* TestClock.adjust("1 minute");
+      for (const [step, tag, tagged, expected] of [
+        ["add", "demo", true, ["demo"]],
+        ["retry", "demo", true, ["demo"]],
+        ["add-other", "private", true, ["demo", "private"]],
+        ["remove", "demo", false, ["private"]],
+        ["remove-last", "private", false, []],
+      ] as const) {
+        yield* orchestrator.dispatch({
+          type: "thread.tag.set",
+          commandId: CommandId.make(`runtime-layer-lifecycle-tag-${step}`),
+          threadId,
+          tag,
+          tagged,
+        });
+        assert.deepEqual(
+          shellOf(yield* orchestrator.getShellSnapshot()).tags ?? [],
+          expected,
+          step,
+        );
+      }
+      const taggedShell = shellOf(yield* orchestrator.getShellSnapshot());
+      // Tags are not activity, so the thread keeps its place in thread lists.
+      assert.equal(
+        DateTime.toEpochMillis(taggedShell.updatedAt),
+        DateTime.toEpochMillis(untaggedShell.updatedAt),
+      );
 
       const preAutoProjection = yield* orchestrator.getThreadProjection(threadId);
       const staleAutoSettle = yield* orchestrator
@@ -6938,7 +6972,7 @@ it.layer(layerScratchPromotionTest)("turning a No project thread into a project"
 });
 
 it.layer(layerSharedApplicationDataPlaneTest)("snooze projection", (it) => {
-  it.effect("carries snooze state through the V2 shell projection", () =>
+  it.effect("carries snooze, settle and title state through the V2 shell projection", () =>
     Effect.gen(function* () {
       const projects = yield* ProjectService.ProjectService;
       const orchestrator = yield* Orchestrator.OrchestratorV2;
@@ -7008,6 +7042,11 @@ it.layer(layerSharedApplicationDataPlaneTest)("snooze projection", (it) => {
       const [candidate] = yield* projections.getSettlementCandidates(threadId);
       assert.deepEqual(candidate?.lastSnoozeWakeAt, yield* DateTime.now);
       yield* orchestrator.dispatch({
+        type: "thread.settle",
+        commandId: CommandId.make("runtime-layer-snoozed-thread-settle"),
+        threadId,
+      });
+      yield* orchestrator.dispatch({
         type: "thread.snooze",
         commandId: CommandId.make("runtime-layer-snoozed-thread-snooze-after-wake"),
         threadId,
@@ -7022,6 +7061,7 @@ it.layer(layerSharedApplicationDataPlaneTest)("snooze projection", (it) => {
         threadId,
         messageId: MessageId.make("runtime-layer-snoozed-message"),
         text: "Wake this thread.",
+        titleSeed: "Woken thread",
         attachments: [],
         modelSelection,
         dispatchMode: { type: "start_immediately" },
@@ -7030,6 +7070,13 @@ it.layer(layerSharedApplicationDataPlaneTest)("snooze projection", (it) => {
       const awakened = yield* orchestrator.getThreadProjection(threadId);
       assert.isNull(awakened.thread.snoozedUntil);
       assert.isNull(awakened.thread.snoozedAt);
+      assert.isNull(awakened.thread.settledOverride);
+      assert.isNull(awakened.thread.settledAt);
+      assert.equal(awakened.thread.title, "Woken thread");
+      assert.equal(
+        awakened.thread.titleRegeneration?.requestId,
+        CommandId.make("runtime-layer-snoozed-message"),
+      );
     }),
   );
 

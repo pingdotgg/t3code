@@ -15,7 +15,8 @@ import {
 
 function describeUnavailableInstance(entry: ProviderInstanceEntry, t: TranslateFn): string {
   const label = entry.displayName;
-  if (!entry.enabled || entry.status === "disabled") {
+  // An unavailable instance (a driver this build lacks or the policy leaves out) says why instead.
+  if ((!entry.enabled && entry.isAvailable) || entry.status === "disabled") {
     return t("chat.model.disabledInSettings", { label });
   }
   if (entry.status === "ready" && entry.isAvailable) {

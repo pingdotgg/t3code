@@ -8,15 +8,20 @@ import { useSyncExternalStore } from "react";
 
 import { getClientSettings, subscribeClientSettings } from "./clientSettingsStore";
 
-// The packaged desktop app ships only the en-US Chromium locale, so
-// navigator.language is always "en-US" there; ask the host instead, the same
-// way timestampFormat.ts does.
-function readSystemLocale(): string {
-  return window.desktopBridge?.getSystemLocale() ?? navigator.language;
-}
+/**
+ * Resolved once at startup: the bridge read is a synchronous IPC call and this
+ * feeds a `useSyncExternalStore` snapshot on every render. The packaged desktop
+ * app pins `navigator.language` to `en-US`, so the bridge carries the real OS
+ * display language there.
+ */
+const systemLanguage =
+  (typeof window === "undefined"
+    ? undefined
+    : window.desktopBridge?.getPreferredSystemLanguages()[0]) ??
+  (typeof navigator === "undefined" ? "en" : navigator.language);
 
 export function getUiLocale(): UiLocale {
-  return resolveUiLocale(getClientSettings().uiLanguage, readSystemLocale());
+  return resolveUiLocale(getClientSettings().uiLanguage, systemLanguage);
 }
 
 function useUiLocale(): UiLocale {

@@ -399,6 +399,7 @@ export const enMessages = {
   "misc.onboarding.privacy.before":
     "T3 Code collects anonymous usage data to help us improve it. To read more about how your data is used and how to opt out, see our ",
   "misc.onboarding.privacy.link": "privacy policy",
+  "misc.onboarding.privacy.managedTelemetry": "To read more about how your data is used, see our ",
   "misc.onboarding.recovery.connectionBody": "T3 Code could not confirm this workspace.",
   "misc.onboarding.recovery.connectionTitle": "Still connecting",
   "misc.onboarding.recovery.reload": "Reload",
@@ -923,6 +924,7 @@ export const zhHansMessages: Partial<Record<keyof typeof enMessages, string>> = 
   "misc.onboarding.privacy.before":
     "T3 Code 会收集匿名使用数据，帮助我们改进产品。想了解数据的使用方式以及如何退出，请查看我们的",
   "misc.onboarding.privacy.link": "隐私政策",
+  "misc.onboarding.privacy.managedTelemetry": "想了解你的数据如何被使用，请查看我们的",
   "misc.onboarding.recovery.connectionBody": "T3 Code 无法确认此工作位置。",
   "misc.onboarding.recovery.connectionTitle": "仍在连接",
   "misc.onboarding.recovery.reload": "重新加载",

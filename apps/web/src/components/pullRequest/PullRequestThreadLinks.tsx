@@ -1,5 +1,7 @@
 import { Tooltip, TooltipTrigger, TooltipPopup } from "../ui/tooltip";
+import { useAtomValue } from "@effect/atom-react";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
+import { visibleLinkedThreads } from "@t3tools/client-runtime/state/threads";
 import { settlePromise, squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import type { EnvironmentId, PullRequestRef, ScopedThreadRef, ThreadId } from "@t3tools/contracts";
 import { CheckIcon, MessageSquareIcon } from "lucide-react";
@@ -9,8 +11,16 @@ import { usePullRequestLinking } from "~/hooks/usePullRequestLinking";
 
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
 import { normalizeThreadPullRequestKey } from "@t3tools/client-runtime/thread-pull-requests";
-import { useProjects, useServerConfigs, useThreadShell, useThreadShells } from "~/state/entities";
+import {
+  useAnyEnvironmentHiding,
+  useEnvironmentThreadRefs,
+  useProjects,
+  useServerConfigs,
+  useThreadShell,
+  useVisibleThreadShells,
+} from "~/state/entities";
 import { pullRequestEnvironment } from "~/state/pullRequests";
+import { environmentThreadShells } from "~/state/threads";
 import { useEnvironmentQuery } from "~/state/query";
 import { useThreadSearch } from "~/state/queries";
 import { appAtomRegistry } from "~/rpc/atomRegistry";
@@ -61,6 +71,9 @@ function EnabledPullRequestThreadLinks({
   const currentThreadRef = thread === null ? null : threadRef;
   const linking = usePullRequestLinking(environmentId);
   const linkedHere = linking.isLinked(thread, url);
+  const hiddenKeys = useAtomValue(environmentThreadShells.hiddenThreadKeysAtom);
+  const hidingAnywhere = useAnyEnvironmentHiding();
+  const loadedThreadRefs = useEnvironmentThreadRefs(environmentId);
   const relations = useEnvironmentQuery(
     linking.mode === "multiple" && display !== "menu-item"
       ? pullRequestEnvironment.linkedThreads({
@@ -109,8 +122,13 @@ function EnabledPullRequestThreadLinks({
   };
 
   if (parsed === null || (!linkedHere && !linking.canLink(url))) return null;
-  const linkedThreads =
-    linking.mode === "multiple" ? ((relations.data ?? lastRelations)?.threads ?? []) : [];
+  const linkedThreads = visibleLinkedThreads(
+    linking.mode === "multiple" ? ((relations.data ?? lastRelations)?.threads ?? []) : [],
+    environmentId,
+    loadedThreadRefs,
+    hiddenKeys,
+    hidingAnywhere,
+  );
   const linkedThreadsLabel =
     linkedThreads.length > 0
       ? translateNow("review.pr.linkedFrom", {
@@ -142,7 +160,9 @@ function EnabledPullRequestThreadLinks({
               </Button>
             }
           />
-          <TooltipPopup>{linkedThreadsLabel}. Search in the command palette.</TooltipPopup>
+          <TooltipPopup>
+            {t("review.extra.searchInCommandPalette", { label: linkedThreadsLabel })}
+          </TooltipPopup>
         </Tooltip>
       ) : null}
       {display === "menu-item" ? (
@@ -172,8 +192,7 @@ function EnabledPullRequestThreadLinks({
         <Dialog open onOpenChange={onPickerOpenChange}>
           <DialogPopup className="max-w-md" showCloseButton={false}>
             <DialogTitle className="sr-only">
-              {t("review.extra.link")}
-              {term} to a thread
+              {t("review.extra.linkTermToThread", { term })}
             </DialogTitle>
             <ThreadPicker
               environmentId={environmentId}
@@ -200,7 +219,7 @@ function ThreadPicker({
   onSelect: (threadId: ThreadId) => void;
 }) {
   const t = useT();
-  const threads = useThreadShells();
+  const threads = useVisibleThreadShells();
   const linking = usePullRequestLinking(environmentId);
   const projects = useProjects();
   const [query, setQuery] = useState("");
