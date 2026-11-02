@@ -15,7 +15,11 @@ import {
   enrichedSkillReference,
 } from "../../lib/enrichedLinkPresentation";
 import { ThreadContextDivider } from "./thread-context-divider";
-import { ThreadHandoffDivider, ThreadHandoffRow } from "./thread-handoff-row";
+import {
+  ThreadHandoffDivider,
+  ThreadHandoffRow,
+  ThreadModelSwitchDivider,
+} from "./thread-handoff-row";
 import { GuestBubbleTint, GuestMessageName } from "./guestMessageStyle";
 import { ThreadGuestPendingMessage, useThreadGuestShare } from "./ThreadGuestShareBar";
 import { LinkRequestCard } from "./LinkRequestCard";
@@ -3590,6 +3594,16 @@ export const ThreadFeed = memo(function ThreadFeed({
         workspaceRoot={props.workspaceRoot}
       >
         <ThreadMediaVisibility>
+          {info.item.type === "message" &&
+          !isCompactionCommandFeedEntry(info.item) &&
+          info.item.message.projectedItem?.item.type === "user_message" &&
+          info.item.message.projectedItem.item.modelSwitch ? (
+            <ThreadModelSwitchDivider
+              environmentId={props.environmentId}
+              modelSwitch={info.item.message.projectedItem.item.modelSwitch}
+              iconColor={iconSubtleColor}
+            />
+          ) : null}
           {renderFeedEntry(info, {
             userMessageGrouping: info.item.userMessageGrouping,
             environmentId: props.environmentId,
