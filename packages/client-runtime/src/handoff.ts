@@ -7,7 +7,10 @@ import type {
   ServerProvider,
 } from "@t3tools/contracts";
 
-import { getModelSelectionStringOptionValue } from "@t3tools/shared/model";
+import {
+  getModelSelectionStringOptionValue,
+  getProviderOptionCurrentValue,
+} from "@t3tools/shared/model";
 
 import type { ThreadStructure } from "./state/models.ts";
 import { REASONING_EFFORT_OPTION_IDS } from "./state/threadExecution.ts";
@@ -18,15 +21,15 @@ export type HandoffTimelineRun = Pick<
 >;
 
 /** Options are set only for model switches, which can show effort. */
-export interface HandoffEndpoint {
+export interface HandoffEndpointValue {
   readonly instanceId: ProviderInstanceId;
   readonly model?: string | undefined;
   readonly options?: ModelSelection["options"];
 }
 
 export interface HandoffEndpoints {
-  readonly from: ReadonlyArray<HandoffEndpoint>;
-  readonly to: HandoffEndpoint;
+  readonly from: ReadonlyArray<HandoffEndpointValue>;
+  readonly to: HandoffEndpointValue;
 }
 
 export function resolvePendingHandoff(
@@ -68,7 +71,7 @@ export function resolveHandoffEndpoints(
     (handoffRun !== undefined && handoffRun.providerInstanceId === item.toProviderInstanceId
       ? handoffRun.modelSelection.model
       : undefined);
-  const fromEndpoints: ReadonlyArray<HandoffEndpoint> =
+  const fromEndpoints: ReadonlyArray<HandoffEndpointValue> =
     item.fromModelSelections !== undefined && item.fromModelSelections.length > 0
       ? item.fromModelSelections
       : item.fromProviderInstanceIds.map((instanceId) => ({
@@ -94,36 +97,51 @@ function latestRunModelBefore(
 
 export type ModelSwitchRun = Pick<
   OrchestrationV2Run,
-  "id" | "ordinal" | "status" | "modelSelection" | "userMessageId" | "contextHandoffId"
+  "ordinal" | "status" | "startedAt" | "modelSelection" | "userMessageId" | "contextHandoffId"
 >;
 
 export interface ModelSwitch {
+  readonly label: "Model changed" | "Effort changed";
   readonly from: ModelSelection;
   readonly to: ModelSelection;
-  /** Both runs stated an effort and they differ. */
+  /** Set when the effort differs; each side then states its effort, defaults included. */
   readonly effortChanged: boolean;
 }
 
 /**
  * Model or effort changes between consecutive runs, keyed by the message that started the later
  * run. Runs that carried a context handoff are skipped; their handoff row already shows the swap.
+ * `providers` resolves an unset effort to the model's default.
  */
 export function resolveModelSwitches(
   runs: ReadonlyArray<ModelSwitchRun>,
+  providers: ReadonlyArray<ServerProvider> = [],
 ): ReadonlyMap<MessageId, ModelSwitch> {
   const switches = new Map<MessageId, ModelSwitch>();
   let previous: ModelSwitchRun | undefined;
   for (const run of [...runs].sort((left, right) => left.ordinal - right.ordinal)) {
-    if (run.status === "rolled_back") continue;
+    // Runs that never ran do not change what the agent used.
+    if (
+      run.status === "rolled_back" ||
+      run.status === "queued" ||
+      (run.status === "cancelled" && run.startedAt === null)
+    ) {
+      continue;
+    }
     if (previous !== undefined && run.contextHandoffId === null) {
       const from = previous.modelSelection;
       const to = run.modelSelection;
-      const fromEffort = statedEffort(from);
-      const toEffort = statedEffort(to);
+      const fromEffort = resolveEffort(from, providers);
+      const toEffort = resolveEffort(to, providers);
       const effortChanged =
-        fromEffort !== undefined && toEffort !== undefined && fromEffort !== toEffort;
-      if (from.instanceId !== to.instanceId || from.model !== to.model || effortChanged) {
-        switches.set(run.userMessageId, { from, to, effortChanged });
+        fromEffort !== undefined && toEffort !== undefined && fromEffort.value !== toEffort.value;
+      if (from.model !== to.model || effortChanged) {
+        switches.set(run.userMessageId, {
+          label: from.model === to.model ? "Effort changed" : "Model changed",
+          from: effortChanged ? withEffort(from, fromEffort) : from,
+          to: effortChanged ? withEffort(to, toEffort) : to,
+          effortChanged,
+        });
       }
     }
     previous = run;
@@ -131,10 +149,41 @@ export function resolveModelSwitches(
   return switches;
 }
 
-function statedEffort(selection: ModelSelection): string | undefined {
+/** The effort a selection states, without catalog labels. */
+export function statedModelSelectionEffort(selection: ModelSelection): string | undefined {
   for (const id of REASONING_EFFORT_OPTION_IDS) {
     const value = getModelSelectionStringOptionValue(selection, id);
     if (value !== undefined) return value;
   }
   return undefined;
+}
+
+function resolveEffort(
+  selection: ModelSelection,
+  providers: ReadonlyArray<ServerProvider>,
+): { readonly id: string; readonly value: string } | undefined {
+  const descriptors = providers
+    .find((provider) => provider.instanceId === selection.instanceId)
+    ?.models.find((model) => model.slug === selection.model)?.capabilities?.optionDescriptors;
+  for (const id of REASONING_EFFORT_OPTION_IDS) {
+    const stated = getModelSelectionStringOptionValue(selection, id);
+    const descriptor = descriptors?.find((candidate) => candidate.id === id);
+    const value = stated ?? getProviderOptionCurrentValue(descriptor);
+    if (typeof value === "string") return { id, value };
+  }
+  return undefined;
+}
+
+function withEffort(
+  selection: ModelSelection,
+  effort: { readonly id: string; readonly value: string },
+): ModelSelection {
+  if (getModelSelectionStringOptionValue(selection, effort.id) === effort.value) return selection;
+  return {
+    ...selection,
+    options: [
+      ...(selection.options ?? []).filter((option) => option.id !== effort.id),
+      { id: effort.id, value: effort.value },
+    ],
+  };
 }

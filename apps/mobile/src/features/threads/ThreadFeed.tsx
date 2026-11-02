@@ -3145,6 +3145,12 @@ export const ThreadFeed = memo(function ThreadFeed({
   // LegendList does not invalidate visible rows when only the renderItem closure changes.
   // Include turn completion so unchanged message rows reveal their footer and spacing
   // even when the final message update arrives before the turn settles.
+  const modelSwitches = useAtomValue(
+    useMemo(
+      () => modelSwitchesAtom(props.environmentId, props.threadId),
+      [props.environmentId, props.threadId],
+    ),
+  );
   const listAppearanceData = {
     worktreeSetup: props.worktreeSetup,
     setupWorkingStartedAt: props.setupWorkingStartedAt,
@@ -3163,6 +3169,7 @@ export const ThreadFeed = memo(function ThreadFeed({
     contentWidth,
     skills: props.skills,
     workflowOpening,
+    modelSwitches,
   };
   const reportHeaderMaterialVisibility = (visible: boolean) => {
     if (headerMaterialVisibleRef.current === visible) {
@@ -3362,12 +3369,6 @@ export const ThreadFeed = memo(function ThreadFeed({
     { anchorOffset: anchorTopInset + CHAT_LIST_ANCHOR_OFFSET },
   );
   const failedRunIds = failedFeedRunIds(props.feed, props.latestRun);
-  const modelSwitches = useAtomValue(
-    useMemo(
-      () => modelSwitchesAtom(props.environmentId, props.threadId),
-      [props.environmentId, props.threadId],
-    ),
-  );
   const terminalAssistantMessageIds = (() => {
     const terminalIdsByTurn = new Map<RunId, string>();
     for (const entry of props.feed) {

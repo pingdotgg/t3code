@@ -4,9 +4,10 @@ import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import {
   resolveHandoffEndpoints,
   resolveModelSwitches,
-  type HandoffEndpoint as HandoffEndpointValue,
+  type HandoffEndpointValue,
   type HandoffEndpoints,
   type ModelSwitch,
+  statedModelSelectionEffort,
 } from "@t3tools/client-runtime/handoff";
 import { resolveModelShortName } from "@t3tools/client-runtime/provider-clients";
 import { formatModelSelectionEffort } from "@t3tools/client-runtime/state/thread-execution";
@@ -59,7 +60,8 @@ export function modelSwitchesAtom(environmentId: EnvironmentId, threadId: Thread
   const ref = scopeThreadRef(environmentId, threadId);
   return Atom.make((get) => {
     const runs = get(environmentThreadDetails.threadAtom(ref))?.projection?.runs ?? [];
-    const value = resolveModelSwitches(runs);
+    const providers = get(serverEnvironment.configValueAtom(environmentId))?.providers;
+    const value = resolveModelSwitches(runs, providers);
     // Run activity changes frequently; keep the map identity until a switch changes.
     const signature = JSON.stringify([...value]);
     if (previous?.signature !== signature) previous = { signature, value };
@@ -73,18 +75,14 @@ export function ThreadModelSwitchRow(props: {
   iconColor: ColorValue;
   surfaceColor: string;
 }) {
-  const { from, to, effortChanged } = props.modelSwitch;
+  const { from, to, label, effortChanged } = props.modelSwitch;
   return (
     <ThreadHandoffDivider
       environmentId={props.environmentId}
       endpoints={{ from: [from], to }}
       iconColor={props.iconColor}
       surfaceColor={props.surfaceColor}
-      label={
-        from.instanceId === to.instanceId && from.model === to.model
-          ? "Effort changed"
-          : "Model changed"
-      }
+      label={label}
       showEffort={effortChanged}
     />
   );
@@ -184,17 +182,20 @@ function HandoffEndpoint(
 ) {
   const provider = props.providers.find((candidate) => candidate.instanceId === props.instanceId);
   const model = provider?.models.find((candidate) => candidate.slug === props.model);
-  const effort =
+  const selection =
     props.showEffort && props.model
-      ? formatModelSelectionEffort(
-          {
-            instanceId: props.instanceId,
-            model: props.model,
-            ...(props.options === undefined ? {} : { options: props.options }),
-          },
-          provider?.models,
-        )
+      ? {
+          instanceId: props.instanceId,
+          model: props.model,
+          ...(props.options === undefined ? {} : { options: props.options }),
+        }
       : null;
+  // A catalog without the model (removed model) still shows the stored value.
+  const effort = selection
+    ? (formatModelSelectionEffort(selection, provider?.models) ??
+      statedModelSelectionEffort(selection) ??
+      null)
+    : null;
   const modelLabel =
     (model ? resolveModelShortName(model, provider?.driver) : undefined) ??
     model?.name ??

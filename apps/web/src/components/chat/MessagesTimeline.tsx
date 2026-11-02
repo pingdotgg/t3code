@@ -97,6 +97,8 @@ import { cn } from "~/lib/utils";
 import { type TimestampFormat } from "@t3tools/contracts/settings";
 import { type HandoffTimelineRun } from "./V2LifecycleRow";
 import type { ModelSwitchRun } from "@t3tools/client-runtime/handoff";
+import { useAtomValue } from "@effect/atom-react";
+import { EMPTY_SERVER_PROVIDERS, serverEnvironment } from "../../state/server";
 import { TimelineSystemDivider } from "./TimelineSystemDivider";
 
 import { forwardWheelToTimeline } from "./timelineMinimapWheel";
@@ -714,7 +716,10 @@ const ConversationTimeline = memo(function ConversationTimeline({
   );
   // Run status/timestamps change per stream event; keep them out of shared row context.
   const runs = useStableHandoffRuns(runsProp);
-  const modelSwitches = useStableModelSwitches(runsProp);
+  const providers =
+    useAtomValue(serverEnvironment.providersValueAtom(activeThreadEnvironmentId)) ??
+    EMPTY_SERVER_PROVIDERS;
+  const modelSwitches = useStableModelSwitches(runsProp, providers);
   const minimapItems = deriveTimelineMinimapItems(rows);
   const minimapRowIndices = minimapItems.map((item) => item.rowIndex);
   const restoreRowIndex =

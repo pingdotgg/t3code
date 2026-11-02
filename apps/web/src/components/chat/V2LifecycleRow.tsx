@@ -16,10 +16,11 @@ import * as DateTime from "effect/DateTime";
 import { WorkLogRow } from "./WorkLog";
 import {
   resolveHandoffEndpoints,
-  type HandoffEndpoint,
+  type HandoffEndpointValue,
   type HandoffEndpoints,
   type HandoffTimelineRun,
   type ModelSwitch,
+  statedModelSelectionEffort,
 } from "@t3tools/client-runtime/handoff";
 import { formatModelSelectionEffort } from "@t3tools/client-runtime/state/thread-execution";
 import { formatSubagentDisplayTitle } from "@t3tools/client-runtime/state/subagent-display";
@@ -605,17 +606,13 @@ export function ModelSwitchRow(props: {
   const providers =
     useAtomValue(serverEnvironment.providersValueAtom(props.environmentId)) ??
     EMPTY_SERVER_PROVIDERS;
-  const { from, to, effortChanged } = props.modelSwitch;
+  const { from, to, label, effortChanged } = props.modelSwitch;
   return (
     <HandoffRow
       environmentId={props.environmentId}
       endpoints={{ from: [from], to }}
       providers={providers}
-      label={
-        from.instanceId === to.instanceId && from.model === to.model
-          ? "Effort changed"
-          : "Model changed"
-      }
+      label={label}
       showEffort={effortChanged}
     />
   );
@@ -671,20 +668,23 @@ export function HandoffRow(props: {
 
 function HandoffEndpoint(props: {
   readonly entries: ReadonlyArray<ProviderInstanceEntry>;
-  readonly endpoint: HandoffEndpoint;
+  readonly endpoint: HandoffEndpointValue;
   readonly showEffort?: boolean | undefined;
 }) {
   const { instanceId, options } = props.endpoint;
   const entry = props.entries.find((candidate) => candidate.instanceId === instanceId);
   const showBadge = entry !== undefined && shouldShowInstanceBadge(entry, props.entries);
   const model = props.endpoint.model?.trim();
-  const effort =
+  const selection =
     props.showEffort && model
-      ? formatModelSelectionEffort(
-          { instanceId, model, ...(options === undefined ? {} : { options }) },
-          entry?.models,
-        )
+      ? { instanceId, model, ...(options === undefined ? {} : { options }) }
       : null;
+  // A catalog without the model (guest page, removed model) still shows the stored value.
+  const effort = selection
+    ? (formatModelSelectionEffort(selection, entry?.models) ??
+      statedModelSelectionEffort(selection) ??
+      null)
+    : null;
   const providerModel =
     model === undefined || model.length === 0
       ? undefined
