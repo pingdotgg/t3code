@@ -1,3 +1,4 @@
+import { PullRequestProviderError } from "@t3tools/source-control-core/server/PullRequestProvider";
 import { SourceControlProviderKind } from "@t3tools/contracts";
 import { limitRecoveryCommand } from "./UsageLimitRecoveryWorker.ts";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
@@ -3172,63 +3173,155 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
     }),
   );
 
-  it.effect("ends a watch it cannot read, and tells the agent", () =>
-    Effect.gen(function* () {
-      const orchestrator = yield* Orchestrator.OrchestratorV2;
-      const threadId = ThreadId.make("runtime-pull-request-watch-unreadable");
-      const projectId = ProjectId.make("pr-watch-unreadable-project");
-      yield* seedProject({
-        projectId,
-        title: "Watch unreadable",
-        workspaceRoot: "/workspace/watch-unreadable",
-        defaultModelSelection: null,
-        createdAt: "2026-10-01T00:00:00.000Z",
-      });
-      yield* orchestrator.dispatch({
-        type: "thread.create",
-        createdBy: "user",
-        creationSource: "web",
-        commandId: CommandId.make("pr-watch-unreadable-create"),
-        threadId,
-        projectId,
-        title: "Watch unreadable",
-        modelSelection,
-        runtimeMode: "full-access",
-        interactionMode: "default",
-        branch: null,
-        worktreePath: null,
-      });
-      yield* orchestrator.dispatch({
-        type: "thread.pull-request.watch",
-        commandId: CommandId.make("pr-watch-unreadable-start"),
-        threadId,
-        host: "github.com",
-        repository: "pingdotgg/t3code",
-        number: 8,
-        watching: true,
-        link: { url: "https://github.com/pingdotgg/t3code/pull/8", source: "agent" },
-      });
-      const reactor = yield* PullRequestWatchReactor.make.pipe(
-        Effect.provide(
-          Layer.mergeAll(
-            NodeServices.layer,
-            Layer.mock(PullRequestService.PullRequestService)({
-              detail: () => Effect.die("host unreachable"),
-              activity: () => Effect.die("host unreachable"),
+  it.effect.each([
+    { reason: "failed", activityFails: false },
+    { reason: "not-found", activityFails: false },
+    { reason: "failed", activityFails: true },
+    { reason: "not-found", activityFails: true },
+    { reason: "forbidden", activityFails: true },
+  ] as const)(
+    "handles repeated host read failures: $reason (activity fails: $activityFails)",
+    ({ reason, activityFails }) =>
+      Effect.gen(function* () {
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const threadId = ThreadId.make(
+          `runtime-pull-request-watch-unreadable-${reason}-${activityFails}`,
+        );
+        const projectId = ProjectId.make(`pr-watch-unreadable-project-${reason}-${activityFails}`);
+        yield* seedProject({
+          projectId,
+          title: "Watch unreadable",
+          workspaceRoot: "/workspace/watch-unreadable",
+          defaultModelSelection: null,
+          createdAt: "2026-10-01T00:00:00.000Z",
+        });
+        yield* orchestrator.dispatch({
+          type: "thread.create",
+          createdBy: "user",
+          creationSource: "web",
+          commandId: CommandId.make(`pr-watch-unreadable-create-${reason}-${activityFails}`),
+          threadId,
+          projectId,
+          title: "Watch unreadable",
+          modelSelection,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: null,
+        });
+        yield* orchestrator.dispatch({
+          type: "thread.pull-request.watch",
+          commandId: CommandId.make(`pr-watch-unreadable-start-${reason}-${activityFails}`),
+          threadId,
+          host: "github.com",
+          repository: "pingdotgg/t3code",
+          number: 8,
+          watching: true,
+          link: { url: "https://github.com/pingdotgg/t3code/pull/8", source: "agent" },
+        });
+        let disconnected = false;
+        let passed = false;
+        let genericFailure = false;
+        const activityFailures = yield* Queue.unbounded<void>();
+        const readFailure = (operation: string, failure: "failed" | "not-found" | "forbidden") =>
+          new PullRequestOperationError({
+            operation,
+            detail: "host read failed",
+            cause: new PullRequestProviderError({
+              provider: SourceControlProviderKind.make("github"),
+              operation,
+              reason: failure,
+              detail: "host read failed",
             }),
+          });
+        const reactor = yield* PullRequestWatchReactor.make.pipe(
+          Effect.provide(
+            Layer.mergeAll(
+              NodeServices.layer,
+              Layer.mock(PullRequestService.PullRequestService)({
+                watchFingerprint: () => Effect.succeed(null),
+                detail: () =>
+                  genericFailure
+                    ? Effect.die("host read failed")
+                    : disconnected
+                      ? (activityFails ? Queue.take(activityFailures) : Effect.void).pipe(
+                          Effect.andThen(Effect.fail(readFailure("detail", reason))),
+                        )
+                      : Effect.succeed({
+                          ...watchedPullRequestDetail({
+                            projectId,
+                            number: 8,
+                            at: "2026-10-02T12:00:00.000Z",
+                          }),
+                          headSha: "abc1234def",
+                          checks: [
+                            {
+                              name: "test",
+                              status: passed ? ("success" as const) : ("pending" as const),
+                              description: null,
+                              url: null,
+                              required: true,
+                            },
+                          ],
+                        }),
+                activity: () =>
+                  disconnected && activityFails
+                    ? Queue.offer(activityFailures, undefined).pipe(
+                        Effect.andThen(Effect.fail(readFailure("activity", "failed"))),
+                      )
+                    : Effect.succeed({
+                        comments: [],
+                        commentCount: 0,
+                        commentsTruncated: false,
+                        reviewThreads: [],
+                        commits: [],
+                      }),
+              }),
+            ),
           ),
-        ),
-      );
-      for (let pass = 0; pass < 15; pass += 1) yield* reactor.sweep;
+        );
+        const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+        const sweep = reactor.sweep.pipe(Effect.andThen(worker.drain()));
+        const summaries = Effect.map(
+          orchestrator.getThreadRecords(threadId, ["messages"]),
+          ({ messages }) => messages.flatMap((message) => message.notification?.summary ?? []),
+        );
+        yield* sweep;
+        assert.deepEqual(yield* summaries, []);
+        disconnected = true;
+        for (let pass = 0; pass < 15; pass += 1) {
+          genericFailure = reason === "failed" && (pass === 0 || (pass >= 2 && pass <= 8));
+          yield* TestClock.adjust("2 minutes");
+          yield* sweep;
+        }
 
-      const thread = yield* orchestrator.getThreadShell(threadId);
-      assert.isUndefined(thread?.pullRequests?.[0]?.watch);
-      const { messages } = yield* orchestrator.getThreadRecords(threadId, ["messages"]);
-      assert.deepEqual(
-        messages.flatMap((message) => message.notification?.summary ?? []),
-        ["#8: stopped watching, could not read it"],
-      );
-    }),
+        const thread = yield* orchestrator.getThreadShell(threadId);
+        if (reason !== "failed") {
+          assert.isUndefined(thread?.pullRequests?.[0]?.watch);
+          assert.deepEqual(yield* summaries, ["#8: stopped watching, could not read it"]);
+          return;
+        }
+        assert.isDefined(thread?.pullRequests?.[0]?.watch);
+        assert.deepEqual(yield* summaries, []);
+        disconnected = false;
+        genericFailure = false;
+        passed = true;
+        yield* sweep;
+        assert.deepEqual(yield* summaries, ["#8: checks passed"]);
+        yield* TestClock.adjust("10 minutes");
+        yield* sweep;
+        assert.deepEqual(yield* summaries, ["#8: checks passed"]);
+        yield* orchestrator.dispatch({
+          type: "thread.pull-request.watch",
+          commandId: CommandId.make(`pr-watch-unreadable-stop-${reason}-${activityFails}`),
+          threadId,
+          host: "github.com",
+          repository: "pingdotgg/t3code",
+          number: 8,
+          watching: false,
+        });
+        yield* worker.drain();
+      }),
   );
 
   it.effect("wakes once for a state it reported, across a restart and a new watch", () =>
