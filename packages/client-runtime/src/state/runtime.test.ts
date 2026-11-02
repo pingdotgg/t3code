@@ -975,10 +975,8 @@ describe("environment query lifecycle", () => {
         expect(yield* readEnvironmentQuery(registry, harness.atom)).toBe("cached");
         unmount();
         yield* Effect.yieldNow;
-        registry.dispatcher.flush();
         registry.set(trigger, 1);
         yield* Effect.yieldNow;
-        registry.dispatcher.flush();
 
         registry.mount(harness.atom);
         expect(registry.get(harness.atom)).toMatchObject({
