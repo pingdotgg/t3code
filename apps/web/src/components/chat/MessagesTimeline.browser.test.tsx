@@ -35,6 +35,7 @@ import { environmentThreadDetails } from "../../state/threads";
 import { act, fakeTimers, render, stubGlobal } from "../../../test/render";
 import { ChangedFilesCard } from "./ChangedFilesTree";
 import { MessagesTimeline } from "./MessagesTimeline";
+import { resolveTimelineIsAtEnd } from "./MessagesTimeline.logic";
 import { makeStreamingTimelineFixture } from "../../test-fixtures";
 import {
   type PendingApproval,
@@ -245,9 +246,7 @@ describe("MessagesTimeline work rows", () => {
     expect(viewport.scrollTop).toBeGreaterThan(0);
     const top = heading.element().getBoundingClientRect().top;
     const height = viewport.scrollHeight;
-    using _timers = fakeTimers();
     await heading.click();
-    await act(() => vi.advanceTimersByTime(1000));
     await vi.waitFor(() => {
       expect(viewport.scrollHeight).toBeGreaterThan(height + 500);
       expect(heading.element().getBoundingClientRect().top).toBeCloseTo(top, 0);
@@ -724,6 +723,7 @@ describe("MessagesTimeline messages", () => {
         viewport.scrollTop += header().getBoundingClientRect().bottom - (visibleBottom() - 8);
         viewport.dispatchEvent(new Event("scroll"));
       });
+      expect(resolveTimelineIsAtEnd(props.listRef.current!.getState())).toBe(false);
       expect(header().getBoundingClientRect().bottom).toBeLessThanOrEqual(visibleBottom());
       expect(header().getBoundingClientRect().top).toBeGreaterThan(
         viewport.getBoundingClientRect().top,
