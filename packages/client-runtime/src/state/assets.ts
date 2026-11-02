@@ -181,7 +181,7 @@ export function createAssetEnvironmentAtoms<R, E>(
   const createUrl = createEnvironmentQueryAtomFamily(runtime, {
     label: "environment-data:assets:create-url",
     execute,
-    // Each mint is a new signed URL and image download, so a remount reuses one until it is due.
+    // Each mint signs a new URL, so a remounted reader reuses its URL until renewal is due.
     staleTimeMs: ASSET_URL_REFRESH_INTERVAL_MS,
     idleTtlMs: ASSET_URL_IDLE_TTL_MS,
     refreshIntervalMs: ASSET_URL_REFRESH_INTERVAL_MS,
