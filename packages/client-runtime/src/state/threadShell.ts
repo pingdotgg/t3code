@@ -598,11 +598,22 @@ export function createEnvironmentThreadShellAtoms(input: {
   // exists (outboxes, drafts, removals) never mistakes a hidden thread for a missing one.
   let previousHiddenThreadKeys: ReadonlySet<string> = NO_HIDDEN_THREADS;
   const hiddenThreadKeysAtom = Atom.make((get) => {
-    const next = hiddenThreadKeys(
-      Array.from(enabledEnvironmentIds(get(input.catalogValueAtom)), (environmentId) => ({
+    const environments = Array.from(
+      enabledEnvironmentIds(get(input.catalogValueAtom)),
+      (environmentId) => ({
         environmentId,
-        threads: get(environmentThreadsAtom(environmentId)),
         hiddenTags: get(input.hiddenThreadTagsAtom(environmentId)),
+      }),
+    );
+    // Read shells only while some environment hides tags, so streaming ticks cost nothing otherwise.
+    if (!environments.some((environment) => environment.hiddenTags !== null)) {
+      previousHiddenThreadKeys = NO_HIDDEN_THREADS;
+      return NO_HIDDEN_THREADS;
+    }
+    const next = hiddenThreadKeys(
+      environments.map((environment) => ({
+        ...environment,
+        threads: get(environmentThreadsAtom(environment.environmentId)),
       })),
     );
     if (

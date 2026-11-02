@@ -1081,10 +1081,18 @@ export function createServerEnvironmentAtoms<R, E>(
   const hiddenThreadTagsAtom = Atom.family((environmentId: EnvironmentId) =>
     Atom.make((get) => {
       const settings = get(settingsValueAtom(environmentId));
-      return settings?.hideTaggedThreads === true && settings.hiddenThreadTags.length > 0
-        ? settings.hiddenThreadTags
-        : null;
-    }).pipe(Atom.withLabel(`environment-data:server:hidden-thread-tags:${environmentId}`)),
+      if (settings?.hideTaggedThreads !== true) return null;
+      // Tags are trimmed on write; trim hand-edited entries so " private" still matches.
+      const tags = settings.hiddenThreadTags.map((tag) => tag.trim()).filter((tag) => tag !== "");
+      return tags.length > 0 ? tags : null;
+    }).pipe(
+      // Trimming makes a new array on every settings push; keep equal lists stable.
+      Atom.withEquality(
+        (a: ReadonlyArray<string> | null, b: ReadonlyArray<string> | null) =>
+          a?.join("\n") === b?.join("\n"),
+      ),
+      Atom.withLabel(`environment-data:server:hidden-thread-tags:${environmentId}`),
+    ),
   );
   const usagePricesAtom = Atom.family((environmentId: EnvironmentId) =>
     Atom.make((get) => {
