@@ -299,7 +299,10 @@ export const PIPELINE_STAGES_GRAPHQL_QUERY = `query($fullPath: ID!, $iid: String
             name
             status
             detailedStatus { label detailsPath }
-            jobs(first: 100) { nodes { name status allowFailure webPath } }
+            jobs(first: 100) {
+              nodes { name status allowFailure webPath }
+              pageInfo { hasNextPage }
+            }
           }
           pageInfo { hasNextPage }
         }
@@ -324,7 +327,16 @@ const RawStageSchema = Schema.Struct({
     Schema.NullOr(Schema.Struct({ label: OptionalString, detailsPath: OptionalString })),
   ),
   jobs: Schema.optional(
-    Schema.NullOr(Schema.Struct({ nodes: Schema.Array(Schema.NullOr(RawStageJobSchema)) })),
+    Schema.NullOr(
+      Schema.Struct({
+        nodes: Schema.Array(Schema.NullOr(RawStageJobSchema)),
+        pageInfo: Schema.optional(
+          Schema.NullOr(
+            Schema.Struct({ hasNextPage: Schema.optional(Schema.NullOr(Schema.Boolean)) }),
+          ),
+        ),
+      }),
+    ),
   ),
 });
 
@@ -395,9 +407,10 @@ export function decodePipelineStageChecksJson(
     const name = trimmed(stage?.name);
     if (stage === null || name === null) continue;
     const status = toPipelineStatus(stage.status);
-    // A job allowed to fail leaves its stage passed with warnings, so it never fails one.
+    // A job allowed to fail leaves its stage passed with warnings, so it never fails one. A
+    // stage with more jobs than one page stays whole, since its other failures went unread.
     const failedJobs =
-      status === "failure"
+      status === "failure" && stage.jobs?.pageInfo?.hasNextPage !== true
         ? (stage.jobs?.nodes ?? []).flatMap((job) => {
             const jobName = trimmed(job?.name);
             return job === null ||

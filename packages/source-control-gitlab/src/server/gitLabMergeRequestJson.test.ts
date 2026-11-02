@@ -349,22 +349,39 @@ describe("decodePipelineStageChecksJson", () => {
     ]);
   });
 
-  it("keeps a failed stage whose failed jobs were not listed", () => {
-    const checks = expectSuccess(
-      decodePipelineStageChecksJson(
-        stagesJson([{ name: "test", status: "failed", jobs: { nodes: [] } }]),
-        "https://gitlab.com",
+  it("keeps a failed stage whose failed jobs were not all listed", () => {
+    const stage = {
+      name: "test",
+      status: "failure",
+      description: null,
+      url: "https://gitlab.com/fork/web/-/pipelines/9",
+    };
+    expect(
+      expectSuccess(
+        decodePipelineStageChecksJson(
+          stagesJson([{ name: "test", status: "failed", jobs: { nodes: [] } }]),
+          "https://gitlab.com",
+        ),
       ),
-    );
-
-    expect(checks).toEqual([
-      {
-        name: "test",
-        status: "failure",
-        description: null,
-        url: "https://gitlab.com/fork/web/-/pipelines/9",
-      },
-    ]);
+    ).toEqual([stage]);
+    // More failed jobs could sit past the first page.
+    expect(
+      expectSuccess(
+        decodePipelineStageChecksJson(
+          stagesJson([
+            {
+              name: "test",
+              status: "failed",
+              jobs: {
+                nodes: [{ name: "unit", status: "FAILED", allowFailure: false }],
+                pageInfo: { hasNextPage: true },
+              },
+            },
+          ]),
+          "https://gitlab.com",
+        ),
+      ),
+    ).toEqual([stage]);
   });
 
   it("answers nothing where there are no stages to show", () => {
