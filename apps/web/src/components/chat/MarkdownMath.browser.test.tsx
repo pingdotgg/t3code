@@ -51,8 +51,8 @@ it("typesets formulas with an unescaped percent sign inside \\text", async () =>
   const displays = screen.getByRole("group", { name: "Display equation" });
   // Typeset formulas start with their first symbol; the source fallback starts with its delimiter.
   await expect.element(displays.nth(0)).toMatchTextContent(/^a\+b=c/);
-  await expect.element(displays.nth(1)).toMatchTextContent(/^R/);
+  await expect.element(displays.nth(1)).toMatchTextContent(/^R[\s\S]*3\.18%\sdividend yield/);
   await expect
     .element(screen.getByRole("group", { name: "Inline equation" }))
-    .toMatchTextContent(/^p=/);
+    .toMatchTextContent(/^p=[\s\S]*5%\soff/);
 });
