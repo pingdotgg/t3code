@@ -608,7 +608,12 @@ it.effect(
           ["claude-tool:c", c.thread.id],
           ["claude-tool:foreign", ThreadId.make("thread:somewhere-else")],
         ] as const) {
-          yield* h.mcpSessions.bindNativeCaller({ threadId: rootThreadId, callId, callerThreadId });
+          yield* h.mcpSessions.bindNativeCaller({
+            threadId: rootThreadId,
+            providerSessionId: credential,
+            callId,
+            callerThreadId,
+          });
         }
         const scope = (nativeCallId?: string) => scopeFor(rootThreadId, credential, nativeCallId);
 
@@ -677,6 +682,7 @@ it.effect(
         });
         yield* h.mcpSessions.bindNativeCaller({
           threadId: rootThreadId,
+          providerSessionId: credential,
           callId: "claude-tool:d",
           callerThreadId: d.thread.id,
         });
@@ -881,6 +887,7 @@ it.effect("an app task waits for its child's nested native work and tasks, then 
       yield* h.project(outerTurn, [native, nested]);
       yield* h.mcpSessions.bindNativeCaller({
         threadId: outerThreadId,
+        providerSessionId: "provider-session:mixed-child",
         callId: "claude-tool:mixed",
         callerThreadId: native.thread.id,
       });
@@ -968,6 +975,7 @@ it.effect("Stop on a settled root leaves its native subagents' tasks nothing to 
       yield* h.project(root.turn, [native]);
       yield* h.mcpSessions.bindNativeCaller({
         threadId: rootThreadId,
+        providerSessionId: "provider-session:settled-root",
         callId: "claude-tool:settled",
         callerThreadId: native.thread.id,
       });
@@ -1020,6 +1028,7 @@ it.effect("a stopped app child's task ends once what its native subagent delegat
       yield* h.project(h.childTurn(outerThreadId), [native]);
       yield* h.mcpSessions.bindNativeCaller({
         threadId: outerThreadId,
+        providerSessionId: "provider-session:stopped-mixed-child",
         callId: "claude-tool:stopped-mixed",
         callerThreadId: native.thread.id,
       });
@@ -1067,6 +1076,7 @@ it.effect.each(["active", "archived", "deleted"] as const)(
         yield* h.project(root.turn, [native]);
         yield* h.mcpSessions.bindNativeCaller({
           threadId: rootThreadId,
+          providerSessionId: "provider-session:question-root",
           callId: "claude-tool:asker",
           callerThreadId: native.thread.id,
         });

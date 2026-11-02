@@ -10062,10 +10062,15 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
         // The SDK streams only depth-1 subagent frames, so a deeper launch names its owner only here.
         // Claude Code awaits the hook before the tool runs; agent_id is the caller's task id.
         const onPreToolUse =
-          (turnInput: ProviderAdapter.ProviderAdapterV2TurnInput): HookCallback =>
+          (
+            turnInput: ProviderAdapter.ProviderAdapterV2TurnInput,
+            // The credential this query's MCP client sends, not whichever is current when it calls.
+            mcpCredentialId: string | undefined,
+          ): HookCallback =>
           (hookInput) => {
             if (hookInput.hook_event_name !== "PreToolUse") return Promise.resolve({});
             if (hookInput.tool_name.startsWith(CLAUDE_T3_MCP_TOOL_PREFIX)) {
+              if (mcpCredentialId === undefined) return Promise.resolve({});
               // MCP calls carry tool_use_id as `claudecode/toolUseId`; bind root calls too.
               return runPromise(
                 Effect.gen(function* () {
@@ -10075,6 +10080,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                       : yield* claudeCallerThreadId(turnInput, hookInput.agent_id);
                   yield* mcpSessions.bindNativeCaller({
                     threadId: turnInput.threadId,
+                    providerSessionId: mcpCredentialId,
                     callId: `claude-tool:${hookInput.tool_use_id}`,
                     callerThreadId,
                   });
@@ -10514,7 +10520,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                   allowDangerouslySkipPermissions: queryPolicy.allowDangerouslySkipPermissions,
                 }),
             canUseTool,
-            onPreToolUse: onPreToolUse(turnInput),
+            onPreToolUse: onPreToolUse(turnInput, mcpSession?.providerSessionId),
             onUserDialog,
             onElicitation,
             supportedDialogKinds: ["resume_return"],

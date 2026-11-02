@@ -996,6 +996,7 @@ const seedNativeSubagents = (
         // Codex names the calling thread in each MCP call's `_meta.threadId`.
         yield* laptopEnv.mcpSessions.bindNativeCaller({
           threadId: parentThreadId,
+          providerSessionId: parentScope.thread!.providerSessionId,
           callId: `codex-thread:native-${name}`,
           callerThreadId: threadId,
         });

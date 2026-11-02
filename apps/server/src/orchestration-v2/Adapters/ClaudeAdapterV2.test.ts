@@ -13075,6 +13075,17 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         const LEVEL_TOOL_USE_IDS = ["toolu-chain-1", "toolu-chain-2", "toolu-chain-3"] as const;
         const harness = yield* makeWakeHarness;
         const now = yield* DateTime.now;
+        const credential = (providerSessionId: string) => ({
+          environmentId: EnvironmentId.make("environment-subagent-chain"),
+          threadId: harness.threadId,
+          providerSessionId,
+          providerInstanceId: ProviderInstanceId.make("claudeAgent"),
+          endpoint: "http://127.0.0.1/mcp",
+          authorizationHeader: "Bearer token",
+          browserToolsAvailable: false,
+        });
+        const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
+        yield* mcpSessions.set(credential("credential-subagent-chain"));
         yield* harness.runtime.startTurn(
           makeClaudeTestTurnInput({
             threadId: harness.threadId,
@@ -13228,16 +13239,6 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         }
 
         // Each T3 tool call is bound to the agent that made it, root calls included.
-        const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
-        yield* mcpSessions.set({
-          environmentId: EnvironmentId.make("environment-subagent-chain"),
-          threadId: harness.threadId,
-          providerSessionId: "credential-subagent-chain",
-          providerInstanceId: ProviderInstanceId.make("claudeAgent"),
-          endpoint: "http://127.0.0.1/mcp",
-          authorizationHeader: "Bearer token",
-          browserToolsAvailable: false,
-        });
         const calls = [
           { agentId: `task-${third}`, toolUseId: "toolu-t3-deepest" },
           { agentId: `task-${second}`, toolUseId: "toolu-t3-middle" },
@@ -13246,10 +13247,10 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         for (const call of calls) {
           yield* runPreToolUse({ ...call, toolName: "mcp__t3-code__delegate_task" });
         }
-        const callerOf = (toolUseId: string) =>
+        const callerOf = (toolUseId: string, providerSessionId = "credential-subagent-chain") =>
           mcpSessions.resolveNativeCaller({
             threadId: harness.threadId,
-            providerSessionId: "credential-subagent-chain",
+            providerSessionId,
             callId: `claude-tool:${toolUseId}`,
           });
         assert.equal(yield* callerOf("toolu-t3-deepest"), level(third).childThreadId);
@@ -13264,6 +13265,31 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           }),
           undefined,
         );
+        // This query's hook keeps its credential, so its late calls bind nothing for the next one.
+        for (const late of ["after-clear", "after-replacement"] as const) {
+          const toolUseId = `toolu-t3-${late}`;
+          if (late === "after-clear") {
+            yield* mcpSessions.clear(harness.threadId);
+            yield* runPreToolUse({
+              agentId: undefined,
+              toolName: "mcp__t3-code__delegate_task",
+              toolUseId,
+            });
+            yield* mcpSessions.set(credential(`credential-${late}`));
+          } else {
+            yield* mcpSessions.set(credential(`credential-${late}`));
+            yield* runPreToolUse({
+              agentId: undefined,
+              toolName: "mcp__t3-code__delegate_task",
+              toolUseId,
+            });
+          }
+          const unbound = yield* Effect.forkChild(callerOf(toolUseId, `credential-${late}`), {
+            startImmediately: true,
+          });
+          yield* TestClock.adjust("5 seconds");
+          assert.isUndefined(yield* Fiber.join(unbound), late);
+        }
       }).pipe(
         Effect.provide(
           Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
@@ -15087,6 +15113,16 @@ describe("ClaudeAdapterV2 background wake turns", () => {
               event.turnItem.nativeItemRef?.nativeId === WORKFLOW_TASK_ID,
           );
 
+        const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
+        yield* mcpSessions.set({
+          environmentId: EnvironmentId.make("environment-workflow-members"),
+          threadId: harness.threadId,
+          providerSessionId: "credential-workflow-members",
+          providerInstanceId: ProviderInstanceId.make("claudeAgent"),
+          endpoint: "http://127.0.0.1/mcp",
+          authorizationHeader: "Bearer token",
+          browserToolsAvailable: false,
+        });
         yield* harness.runtime.startTurn(
           makeClaudeTestTurnInput({
             threadId: harness.threadId,
@@ -15129,16 +15165,6 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         assert.notEqual(first?.childThreadId, second?.childThreadId);
 
         // A member's T3 tool calls are its own, so it lists what it delegates in its thread.
-        const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
-        yield* mcpSessions.set({
-          environmentId: EnvironmentId.make("environment-workflow-members"),
-          threadId: harness.threadId,
-          providerSessionId: "credential-workflow-members",
-          providerInstanceId: ProviderInstanceId.make("claudeAgent"),
-          endpoint: "http://127.0.0.1/mcp",
-          authorizationHeader: "Bearer token",
-          browserToolsAvailable: false,
-        });
         for (const matcher of harness.getOpenedOptions()?.hooks?.PreToolUse ?? []) {
           for (const hook of matcher.hooks) {
             yield* Effect.promise(() =>

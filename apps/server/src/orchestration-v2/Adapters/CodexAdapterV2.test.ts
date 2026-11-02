@@ -6718,147 +6718,200 @@ describe("CodexAdapterV2 post-settle continuation", () => {
     ),
   );
 
-  it.effect("wakes the root only when its direct child finishes, not a grandchild", () =>
-    Effect.scoped(
-      Effect.gen(function* () {
-        const grandchildThread = "native-codex-resume-grandchild-thread";
-        const grandchildTurn = "native-codex-resume-grandchild-turn";
-        const { spawned, rootFinished } = lateChildPrefix();
-        const harness = yield* makeCodexReplayHarness(
-          makeCodexReplayTranscript({
-            scenario: RESUME_SCENARIO,
-            entries: [
-              ...spawned,
-              {
-                type: "emit_inbound",
-                label: "item/completed/grandchild-spawn",
-                frame: {
-                  method: "item/completed",
-                  params: {
-                    item: {
-                      type: "subAgentActivity",
-                      id: "call-codex-grandchild-spawn",
-                      kind: "started",
-                      agentThreadId: grandchildThread,
-                      agentPath: "/root/resume_agent/grandchild",
-                    },
-                    threadId: RESUME_CHILD_THREAD,
-                    turnId: RESUME_CHILD_TURN_1,
-                    completedAtMs: 1782622441500,
-                  },
-                },
-              },
-              {
-                type: "emit_inbound",
-                label: "turn/started/grandchild",
-                frame: {
-                  method: "turn/started",
-                  params: {
-                    threadId: grandchildThread,
-                    turn: makeCodexReplayTurn({ id: grandchildTurn, status: "inProgress" }),
-                  },
-                },
-              },
-              ...rootFinished,
-              {
-                type: "emit_inbound",
-                label: "item/completed/grandchild-answer",
-                afterMs: 30_000,
-                frame: {
-                  method: "item/completed",
-                  params: {
-                    item: {
-                      type: "agentMessage",
-                      id: "grandchild-answer",
-                      text: "GRANDCHILD_DONE",
-                      phase: "final_answer",
-                      memoryCitation: null,
-                    },
-                    threadId: grandchildThread,
-                    turnId: grandchildTurn,
-                    completedAtMs: 1782622470000,
-                  },
-                },
-              },
-              {
-                type: "emit_inbound",
-                label: "turn/completed/grandchild",
-                frame: {
-                  method: "turn/completed",
-                  params: {
-                    threadId: grandchildThread,
-                    turn: makeCodexReplayTurn({ id: grandchildTurn, status: "completed" }),
-                  },
-                },
-              },
-              childAgentMessage({
-                id: "child-late-answer",
-                text: "CHILD_AFTER_GRANDCHILD",
-                turnId: RESUME_CHILD_TURN_1,
-                completedAtMs: 1782622500000,
-                afterMs: 30_000,
-              }),
-              childTurnCompleted(RESUME_CHILD_TURN_1),
-            ],
-          }),
-        );
-
-        yield* harness.runtime.startTurn(
-          makeCodexTestTurnInput({
-            threadId: harness.threadId,
-            providerThread: harness.providerThread,
-            now: yield* DateTime.now,
-            attemptId: RunAttemptId.make("attempt-codex-late-grandchild"),
-            text: RESUME_PROMPT,
-          }),
-        );
-        yield* harness.awaitTerminal(1);
-        const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
-        yield* mcpSessions.set({
-          environmentId: EnvironmentId.make("environment-codex-grandchild"),
-          threadId: harness.threadId,
-          providerSessionId: "credential-codex-grandchild",
-          providerInstanceId: harness.providerThread.providerInstanceId,
-          endpoint: "http://127.0.0.1/mcp",
-          authorizationHeader: "Bearer token",
-          browserToolsAvailable: false,
-        });
-        // Codex names each MCP call's thread in `_meta.threadId`; each is bound to its app thread.
-        const callerOf = (nativeThreadId: string | null | undefined) =>
-          mcpSessions.resolveNativeCaller({
-            threadId: harness.threadId,
-            providerSessionId: "credential-codex-grandchild",
-            callId: `codex-thread:${nativeThreadId}`,
+  it.effect.each(["current", "replaced"] as const)(
+    "wakes the root only when its direct child finishes, not a grandchild, with a %s credential",
+    (credentialState) =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const grandchildThread = "native-codex-resume-grandchild-thread";
+          const grandchildTurn = "native-codex-resume-grandchild-turn";
+          const { spawned, rootFinished } = lateChildPrefix();
+          const { additionalContext } = yield* CodexAdapterV2.buildCodexTurnStartParams({
+            nativeThreadId: RESUME_NATIVE_THREAD,
+            codexInput: [{ type: "text", text: RESUME_PROMPT }],
+            runtimePolicy: CODEX_TEST_RUNTIME_POLICY,
+            modelSelection: CODEX_TEST_MODEL_SELECTION,
+            hasT3Mcp: true,
+            browserToolsAvailable: false,
           });
-        const childThreadOf = (nativeThreadId: string) =>
-          harness
-            .subagentUpdates()
-            .find((event) => event.subagent.providerThreadId?.includes(nativeThreadId))?.subagent
-            .childThreadId;
-        assert.equal(
-          yield* callerOf(harness.providerThread.nativeThreadRef?.nativeId),
-          harness.threadId,
-        );
-        assert.equal(yield* callerOf(RESUME_CHILD_THREAD), childThreadOf(RESUME_CHILD_THREAD));
-        assert.equal(yield* callerOf(grandchildThread), childThreadOf(grandchildThread));
-        assert.isDefined(childThreadOf(grandchildThread));
+          const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
+          const credential = (threadId: ThreadId, providerSessionId: string) => ({
+            environmentId: EnvironmentId.make("environment-codex-grandchild"),
+            threadId,
+            providerSessionId,
+            providerInstanceId: ProviderInstanceId.make("codex"),
+            endpoint: "http://127.0.0.1/mcp",
+            authorizationHeader: "Bearer token",
+            browserToolsAvailable: false,
+          });
+          let replaceCredential: Effect.Effect<void> = Effect.void;
+          const harness = yield* makeCodexReplayHarness(
+            makeCodexReplayTranscript({
+              scenario: RESUME_SCENARIO,
+              entries: [
+                ...spawned.map((entry) =>
+                  entry.type === "expect_outbound" && entry.label === "turn/start"
+                    ? {
+                        ...entry,
+                        frame: {
+                          ...(entry.frame as { readonly params: object }),
+                          params: {
+                            ...(entry.frame as { readonly params: object }).params,
+                            additionalContext,
+                          },
+                        },
+                      }
+                    : entry,
+                ),
+                {
+                  type: "emit_inbound",
+                  label: "item/completed/grandchild-spawn",
+                  frame: {
+                    method: "item/completed",
+                    params: {
+                      item: {
+                        type: "subAgentActivity",
+                        id: "call-codex-grandchild-spawn",
+                        kind: "started",
+                        agentThreadId: grandchildThread,
+                        agentPath: "/root/resume_agent/grandchild",
+                      },
+                      threadId: RESUME_CHILD_THREAD,
+                      turnId: RESUME_CHILD_TURN_1,
+                      completedAtMs: 1782622441500,
+                    },
+                  },
+                },
+                {
+                  type: "emit_inbound",
+                  label: "turn/started/grandchild",
+                  frame: {
+                    method: "turn/started",
+                    params: {
+                      threadId: grandchildThread,
+                      turn: makeCodexReplayTurn({ id: grandchildTurn, status: "inProgress" }),
+                    },
+                  },
+                },
+                ...rootFinished,
+                {
+                  type: "emit_inbound",
+                  label: "item/completed/grandchild-answer",
+                  afterMs: 30_000,
+                  frame: {
+                    method: "item/completed",
+                    params: {
+                      item: {
+                        type: "agentMessage",
+                        id: "grandchild-answer",
+                        text: "GRANDCHILD_DONE",
+                        phase: "final_answer",
+                        memoryCitation: null,
+                      },
+                      threadId: grandchildThread,
+                      turnId: grandchildTurn,
+                      completedAtMs: 1782622470000,
+                    },
+                  },
+                },
+                {
+                  type: "emit_inbound",
+                  label: "turn/completed/grandchild",
+                  frame: {
+                    method: "turn/completed",
+                    params: {
+                      threadId: grandchildThread,
+                      turn: makeCodexReplayTurn({ id: grandchildTurn, status: "completed" }),
+                    },
+                  },
+                },
+                childAgentMessage({
+                  id: "child-late-answer",
+                  text: "CHILD_AFTER_GRANDCHILD",
+                  turnId: RESUME_CHILD_TURN_1,
+                  completedAtMs: 1782622500000,
+                  afterMs: 30_000,
+                }),
+                childTurnCompleted(RESUME_CHILD_TURN_1),
+              ],
+            }),
+            undefined,
+            undefined,
+            undefined,
+            (entry) =>
+              entry.label === "item/completed/grandchild-spawn" ? replaceCredential : Effect.void,
+          );
+          yield* mcpSessions.set(credential(harness.threadId, "credential-codex-grandchild"));
+          if (credentialState === "replaced") {
+            // The session ends and the next begins before Codex reports the turn's grandchild.
+            replaceCredential = mcpSessions
+              .clear(harness.threadId)
+              .pipe(
+                Effect.andThen(
+                  mcpSessions.set(credential(harness.threadId, "credential-codex-next")),
+                ),
+              );
+          }
 
-        yield* TestClock.adjust("30 seconds");
-        yield* harness.until(() =>
-          harness.subagentUpdates().some((event) => event.subagent.result === "GRANDCHILD_DONE"),
-        );
-        assert.lengthOf(harness.continuationRequests, 0);
+          yield* harness.runtime.startTurn(
+            makeCodexTestTurnInput({
+              threadId: harness.threadId,
+              providerThread: harness.providerThread,
+              now: yield* DateTime.now,
+              attemptId: RunAttemptId.make("attempt-codex-late-grandchild"),
+              text: RESUME_PROMPT,
+            }),
+          );
+          yield* harness.awaitTerminal(1);
+          // Codex names each MCP call's thread in `_meta.threadId`; each is bound to its app thread.
+          const callerOf = (
+            nativeThreadId: string | null | undefined,
+            providerSessionId = "credential-codex-grandchild",
+          ) =>
+            mcpSessions.resolveNativeCaller({
+              threadId: harness.threadId,
+              providerSessionId,
+              callId: `codex-thread:${nativeThreadId}`,
+            });
+          const childThreadOf = (nativeThreadId: string) =>
+            harness
+              .subagentUpdates()
+              .find((event) => event.subagent.providerThreadId?.includes(nativeThreadId))?.subagent
+              .childThreadId;
+          assert.isDefined(childThreadOf(grandchildThread));
+          if (credentialState === "current") {
+            assert.equal(
+              yield* callerOf(harness.providerThread.nativeThreadRef?.nativeId),
+              harness.threadId,
+            );
+            assert.equal(yield* callerOf(RESUME_CHILD_THREAD), childThreadOf(RESUME_CHILD_THREAD));
+            assert.equal(yield* callerOf(grandchildThread), childThreadOf(grandchildThread));
+          } else {
+            // The turn's later spawn keeps its credential, so it binds nothing for the next one.
+            const unbound = yield* Effect.forkChild(
+              callerOf(grandchildThread, "credential-codex-next"),
+              { startImmediately: true },
+            );
+            yield* TestClock.adjust("5 seconds");
+            assert.isUndefined(yield* Fiber.join(unbound));
+          }
 
-        yield* TestClock.adjust("30 seconds");
-        yield* harness.until(() => harness.continuationRequests.length > 0);
-        assert.lengthOf(harness.continuationRequests, 1);
-        assert.include(harness.continuationRequests[0]?.detail, "CHILD_AFTER_GRANDCHILD");
-      }).pipe(
-        Effect.provide(
-          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+          yield* TestClock.adjust("30 seconds");
+          yield* harness.until(() =>
+            harness.subagentUpdates().some((event) => event.subagent.result === "GRANDCHILD_DONE"),
+          );
+          assert.lengthOf(harness.continuationRequests, 0);
+
+          yield* TestClock.adjust("30 seconds");
+          yield* harness.until(() => harness.continuationRequests.length > 0);
+          assert.lengthOf(harness.continuationRequests, 1);
+          assert.include(harness.continuationRequests[0]?.detail, "CHILD_AFTER_GRANDCHILD");
+        }).pipe(
+          Effect.provide(
+            Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+          ),
         ),
       ),
-    ),
   );
 
   it.effect("leaves a late child's result to the root's next turn when one is running", () =>

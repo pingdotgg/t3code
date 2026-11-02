@@ -34,9 +34,11 @@ it.effect.each(["codex-thread:native", "claude-tool:native"])(
       yield* sessions.set(session("credential:new"));
       yield* sessions.bindNativeCaller({
         threadId,
+        providerSessionId: "credential:new",
         callId,
         callerThreadId: ThreadId.make("thread:native-child"),
       });
+      yield* TestClock.adjust("5 seconds");
       assert.isUndefined(yield* Fiber.join(pending));
       assert.equal(
         yield* sessions.resolveNativeCaller({
@@ -61,9 +63,37 @@ it.effect.each(["codex-thread:native", "claude-tool:native"])(
         assert.isUndefined(yield* Fiber.join(missing));
         yield* sessions.bindNativeCaller({
           threadId,
+          providerSessionId: `credential:${reset}`,
           callId,
           callerThreadId: ThreadId.make("thread:native-child"),
         });
+      }
+      const unboundFor = Effect.fnUntraced(function* (providerSessionId: string) {
+        const resolved = yield* Effect.forkChild(
+          sessions.resolveNativeCaller({ threadId, providerSessionId, callId }),
+          { startImmediately: true },
+        );
+        yield* TestClock.adjust("5 seconds");
+        assert.isUndefined(yield* Fiber.join(resolved), providerSessionId);
+      });
+      // A callback outliving its credential binds nothing for the next one.
+      for (const late of ["after clear", "after replacement"] as const) {
+        const stale = (yield* sessions.read(threadId))!.providerSessionId;
+        const lateBind = sessions.bindNativeCaller({
+          threadId,
+          providerSessionId: stale,
+          callId,
+          callerThreadId: ThreadId.make("thread:stale-child"),
+        });
+        if (late === "after clear") {
+          yield* sessions.clear(threadId);
+          yield* lateBind;
+          yield* sessions.set(session(`credential:${late}`));
+        } else {
+          yield* sessions.set(session(`credential:${late}`));
+          yield* lateBind;
+        }
+        yield* unboundFor(`credential:${late}`);
       }
     }).pipe(Effect.provide(McpProviderSessions.layer)),
 );
@@ -75,14 +105,17 @@ it.effect.each(["codex-thread:", "claude-tool:"])(
       const sessions = yield* McpProviderSessions.McpProviderSessions;
       yield* sessions.set(session("credential:current"));
       const callerThreadId = ThreadId.make("thread:native-child");
-      yield* sessions.bindNativeCaller({
-        threadId,
-        callId: "codex-thread:root",
-        callerThreadId: threadId,
-      });
-      yield* sessions.bindNativeCaller({ threadId, callId: "codex-thread:active", callerThreadId });
+      const bind = (callId: string, caller: ThreadId) =>
+        sessions.bindNativeCaller({
+          threadId,
+          providerSessionId: "credential:current",
+          callId,
+          callerThreadId: caller,
+        });
+      yield* bind("codex-thread:root", threadId);
+      yield* bind("codex-thread:active", callerThreadId);
       for (let index = 0; index < 1_025; index += 1) {
-        yield* sessions.bindNativeCaller({ threadId, callId: `${prefix}${index}`, callerThreadId });
+        yield* bind(`${prefix}${index}`, callerThreadId);
       }
       for (const [callId, expected] of [
         ["codex-thread:root", threadId],

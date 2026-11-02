@@ -1132,6 +1132,8 @@ interface ActiveCodexTurnContext {
   };
   readonly nativeStartReady?: Deferred.Deferred<void>;
   readonly input: ProviderAdapter.ProviderAdapterV2TurnInput;
+  /** The T3 MCP credential the turn started under; its agents' calls bind only for it. */
+  readonly mcpCredentialId?: string;
   readonly projectionAppThread: OrchestrationV2AppThread;
   readonly projectionThreadId: ThreadId;
   readonly projectionRunId: ProviderAdapter.ProviderAdapterV2TurnInput["runId"] | null;
@@ -1838,7 +1840,13 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
           ).hasSubagents = true;
         };
         const pendingRootTurns = yield* Ref.make(
-          new Map<string, ProviderAdapter.ProviderAdapterV2TurnInput>(),
+          new Map<
+            string,
+            {
+              readonly turnInput: ProviderAdapter.ProviderAdapterV2TurnInput;
+              readonly mcpCredentialId: string | undefined;
+            }
+          >(),
         );
         const turnWaiters = yield* Ref.make(new Map<string, Deferred.Deferred<void, never>>());
         const subagentThreads = yield* Ref.make(new Map<string, CodexSubagentThreadContext>());
@@ -2036,6 +2044,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
 
         const registerRootTurn = Effect.fn("CodexAdapterV2.registerRootTurn")(function* (input: {
           readonly turnInput: ProviderAdapter.ProviderAdapterV2TurnInput;
+          readonly mcpCredentialId: string | undefined;
           readonly nativeTurnId: string;
           readonly startedAt: DateTime.Utc;
           readonly waitForNativeStart?: boolean;
@@ -2051,6 +2060,9 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
           const context: ActiveCodexTurnContext = {
             ...(input.waitForNativeStart ? { nativeStartReady: yield* Deferred.make<void>() } : {}),
             input: input.turnInput,
+            ...(input.mcpCredentialId === undefined
+              ? {}
+              : { mcpCredentialId: input.mcpCredentialId }),
             projectionAppThread: input.turnInput.appThread,
             projectionThreadId: input.turnInput.threadId,
             projectionRunId: input.turnInput.runId,
@@ -2069,9 +2081,10 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
             runningCompactionItemIds: new Set(),
           };
           const nativeThreadId = input.turnInput.providerThread.nativeThreadRef?.nativeId;
-          if (nativeThreadId != null) {
+          if (nativeThreadId != null && input.mcpCredentialId !== undefined) {
             yield* mcpSessions.bindNativeCaller({
               threadId: input.turnInput.threadId,
+              providerSessionId: input.mcpCredentialId,
               callId: `codex-thread:${nativeThreadId}`,
               callerThreadId: input.turnInput.threadId,
             });
@@ -2664,6 +2677,9 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                   });
             const activeContext: ActiveCodexTurnContext = {
               input: subagent.parentContext.input,
+              ...(subagent.parentContext.mcpCredentialId === undefined
+                ? {}
+                : { mcpCredentialId: subagent.parentContext.mcpCredentialId }),
               projectionAppThread: subagent.childThread,
               projectionThreadId: subagent.childThreadId,
               projectionRunId: null,
@@ -2963,11 +2979,14 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               return updated;
             });
             // Codex names the calling thread in each MCP call's `_meta.threadId`.
-            yield* mcpSessions.bindNativeCaller({
-              threadId: input.context.input.threadId,
-              callId: `codex-thread:${input.nativeThreadId}`,
-              callerThreadId: childThreadId,
-            });
+            if (input.context.mcpCredentialId !== undefined) {
+              yield* mcpSessions.bindNativeCaller({
+                threadId: input.context.input.threadId,
+                providerSessionId: input.context.mcpCredentialId,
+                callId: `codex-thread:${input.nativeThreadId}`,
+                callerThreadId: childThreadId,
+              });
+            }
             yield* emitProviderEvent({
               type: "app_thread.created",
               driver: CODEX_PROVIDER,
@@ -4558,7 +4577,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
             const pendingRootTurn = (yield* Ref.get(pendingRootTurns)).get(payload.threadId);
             if (pendingRootTurn !== undefined) {
               yield* registerRootTurn({
-                turnInput: pendingRootTurn,
+                ...pendingRootTurn,
                 nativeTurnId: payload.turn.id,
                 startedAt: codexTimestamp(payload.turn.startedAt),
               });
@@ -4583,6 +4602,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                   ...goalHold.context.input,
                   providerTurnOrdinal: goalHold.context.providerTurnOrdinal + 1,
                 },
+                mcpCredentialId: goalHold.context.mcpCredentialId,
                 nativeTurnId: payload.turn.id,
                 startedAt: codexTimestamp(payload.turn.startedAt),
               });
@@ -6729,7 +6749,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
             });
             yield* Ref.update(pendingRootTurns, (current) => {
               const updated = new Map(current);
-              updated.set(threadId, turnInput);
+              updated.set(threadId, { turnInput, mcpCredentialId: mcpSession?.providerSessionId });
               return updated;
             });
             yield* Ref.update(additionalContextByThread, (current) => {
@@ -6759,9 +6779,10 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               });
             }
             // A turn/started notification may have registered and completed this turn already.
-            if ((yield* Ref.get(pendingRootTurns)).get(threadId) !== turnInput) return;
+            if ((yield* Ref.get(pendingRootTurns)).get(threadId)?.turnInput !== turnInput) return;
             yield* registerRootTurn({
               turnInput,
+              mcpCredentialId: mcpSession?.providerSessionId,
               nativeTurnId: started.turn.id,
               startedAt: codexTimestamp(started.turn.startedAt),
               waitForNativeStart: started.turn.startedAt === null,
@@ -6772,7 +6793,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               Effect.ensuring(
                 Effect.flatMap(getNativeThreadId(turnInput.providerThread), (threadId) =>
                   Ref.update(pendingRootTurns, (current) => {
-                    if (current.get(threadId) !== turnInput) return current;
+                    if (current.get(threadId)?.turnInput !== turnInput) return current;
                     const updated = new Map(current);
                     updated.delete(threadId);
                     return updated;
@@ -7126,8 +7147,10 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
           compactThread: Effect.fn("CodexAdapterV2.compactThread")(
             function* (turnInput) {
               const threadId = yield* getNativeThreadId(turnInput.providerThread);
+              const mcpCredentialId = (yield* mcpSessions.read(turnInput.threadId))
+                ?.providerSessionId;
               yield* Ref.update(pendingRootTurns, (current) =>
-                new Map(current).set(threadId, turnInput),
+                new Map(current).set(threadId, { turnInput, mcpCredentialId }),
               );
               // Clear on interruption; a late turn/started must not be adopted after an interrupted start.
               yield* client.request("thread/compact/start", { threadId }).pipe(

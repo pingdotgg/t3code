@@ -46,6 +46,8 @@ export class McpProviderSessions extends Context.Service<
      */
     readonly bindNativeCaller: (input: {
       readonly threadId: ThreadId;
+      /** The credential of the provider session that reported the call; ignored once not current. */
+      readonly providerSessionId: string;
       readonly callId: string;
       readonly callerThreadId: ThreadId;
     }) => Effect.Effect<void>;
@@ -110,23 +112,26 @@ const make = Effect.gen(function* () {
     string,
     { readonly deferred: Deferred.Deferred<ThreadId>; pending: number }
   >();
-  const waiterKey = (threadId: ThreadId, callId: string) => `${threadId}\u0000${callId}`;
+  const waiterKey = (threadId: ThreadId, providerSessionId: string, callId: string) =>
+    `${threadId}\u0000${providerSessionId}\u0000${callId}`;
   return McpProviderSessions.of({
     set: Effect.fn("McpProviderSessions.set")(function* (config) {
       const current = yield* Ref.get(sessions);
-      const replaced = current.get(config.threadId)?.providerSessionId;
-      if (replaced !== undefined && replaced !== config.providerSessionId) {
-        nativeCallers.delete(config.threadId);
-        nativeThreadCallers.delete(config.threadId);
-      }
-      if (replaced !== config.providerSessionId) {
+      if (current.get(config.threadId)?.providerSessionId !== config.providerSessionId) {
         yield* Ref.update(htmlRenders, (kept) => {
           const next = new Map(kept);
           next.delete(config.threadId);
           return next;
         });
       }
-      yield* Ref.update(sessions, (current) => new Map(current).set(config.threadId, config));
+      // Drop bindings in the same update that changes the credential so no bind lands between.
+      yield* Ref.update(sessions, (current) => {
+        if (current.get(config.threadId)?.providerSessionId !== config.providerSessionId) {
+          nativeCallers.delete(config.threadId);
+          nativeThreadCallers.delete(config.threadId);
+        }
+        return new Map(current).set(config.threadId, config);
+      });
     }),
     read: Effect.fn("McpProviderSessions.read")(function (threadId) {
       return Ref.get(sessions).pipe(Effect.map((current) => current.get(threadId)));
@@ -149,20 +154,29 @@ const make = Effect.gen(function* () {
       );
     }),
     bindNativeCaller: Effect.fn("McpProviderSessions.bindNativeCaller")(function* (input) {
-      const callers = input.callId.startsWith("codex-thread:")
-        ? nativeThreadCallers
-        : nativeCallers;
-      const bound = callers.get(input.threadId) ?? new Map<string, ThreadId>();
-      bound.delete(input.callId);
-      bound.set(input.callId, input.callerThreadId);
-      if (callers === nativeCallers) {
-        for (const oldest of bound.keys()) {
-          if (bound.size <= MAX_KEPT_NATIVE_CALLERS) break;
-          bound.delete(oldest);
+      // Check and bind in one update: a callback outliving its credential must not bind for the next.
+      const waiter = yield* Ref.modify(sessions, (current) => {
+        if (current.get(input.threadId)?.providerSessionId !== input.providerSessionId) {
+          return [undefined, current] as const;
         }
-      }
-      callers.set(input.threadId, bound);
-      const waiter = nativeCallerWaiters.get(waiterKey(input.threadId, input.callId));
+        const callers = input.callId.startsWith("codex-thread:")
+          ? nativeThreadCallers
+          : nativeCallers;
+        const bound = callers.get(input.threadId) ?? new Map<string, ThreadId>();
+        bound.delete(input.callId);
+        bound.set(input.callId, input.callerThreadId);
+        if (callers === nativeCallers) {
+          for (const oldest of bound.keys()) {
+            if (bound.size <= MAX_KEPT_NATIVE_CALLERS) break;
+            bound.delete(oldest);
+          }
+        }
+        callers.set(input.threadId, bound);
+        return [
+          nativeCallerWaiters.get(waiterKey(input.threadId, input.providerSessionId, input.callId)),
+          current,
+        ] as const;
+      });
       if (waiter !== undefined) yield* Deferred.succeed(waiter.deferred, input.callerThreadId);
     }),
     resolveNativeCaller: Effect.fn("McpProviderSessions.resolveNativeCaller")(function* (input) {
@@ -175,7 +189,7 @@ const make = Effect.gen(function* () {
         nativeThreadCallers.get(input.threadId)?.get(input.callId) ??
         nativeCallers.get(input.threadId)?.get(input.callId);
       if (bound !== undefined) return bound;
-      const key = waiterKey(input.threadId, input.callId);
+      const key = waiterKey(input.threadId, input.providerSessionId, input.callId);
       const waiter = nativeCallerWaiters.get(key) ?? {
         deferred: yield* Deferred.make<ThreadId>(),
         pending: 0,
