@@ -3,6 +3,16 @@
 Use a new thread for a separate task. Choose **New worktree** when its code changes
 need a separate branch and working directory.
 
+## Resize or hide the sidebar
+
+On web and desktop, drag the sidebar's right edge to resize it. Continue left past its minimum
+width until **Release to hide** appears, then release to hide it. Dragging back right before
+releasing cancels hiding.
+
+With hover reveal off, move the mouse to the left window edge to find a handle. Drag it right or
+click it to show the sidebar again. With hover reveal on, resizing the revealed sidebar changes
+its width while keeping it hidden between peeks. The sidebar toggle and shortcut still keep it open.
+
 ## Start a thread
 
 On web and desktop, a new thread keeps the current project and carries your model

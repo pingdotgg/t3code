@@ -46,6 +46,7 @@ type SidebarContextProps = {
 };
 
 type SidebarResizableOptions = {
+  collapseOnResize?: boolean;
   maxWidth?: number;
   minWidth?: number;
   onResize?: (width: number) => void;
@@ -61,6 +62,7 @@ type SidebarResizableOptions = {
 };
 
 type SidebarResolvedResizableOptions = {
+  collapseOnResize: boolean;
   maxWidth: number;
   minWidth: number;
   onResize?: (width: number) => void;
@@ -252,6 +254,7 @@ function resolveSidebarResizable({
 
   const options = typeof resizable === "boolean" ? {} : resizable;
   return {
+    collapseOnResize: options.collapseOnResize ?? false,
     maxWidth: options.maxWidth ?? Number.POSITIVE_INFINITY,
     minWidth: options.minWidth ?? SIDEBAR_RESIZE_DEFAULT_MIN_WIDTH,
     storageKey: options.storageKey ?? null,
@@ -386,6 +389,9 @@ function Sidebar({
           </div>
         </div>
       </div>
+      {offcanvasCollapsed && side === "left" && resolvedResizable?.collapseOnResize && (
+        <SidebarRestoreHandle options={resolvedResizable} />
+      )}
     </SidebarInstanceContext>
   );
 }
@@ -421,6 +427,109 @@ function clampSidebarWidth(width: number, options: SidebarResolvedResizableOptio
   return Math.max(options.minWidth, Math.min(width, options.maxWidth));
 }
 
+function commitSidebarWidth(
+  wrapper: HTMLElement,
+  options: SidebarResolvedResizableOptions,
+  width: number,
+) {
+  wrapper.style.setProperty("--sidebar-width", `${width}px`);
+  if (options.storageKey) {
+    try {
+      setLocalStorageItem(options.storageKey, width, Schema.Finite);
+    } catch (error) {
+      console.error("Could not persist sidebar width.", error);
+    }
+  }
+  options.onResize?.(width);
+}
+
+function SidebarRestoreHandle({ options }: { options: SidebarResolvedResizableOptions }) {
+  const { setOpen } = useSidebar();
+  const [near, setNear] = React.useState(false);
+  const suppressClick = React.useRef(false);
+  const resize = useResizeDrag<HTMLButtonElement>((event) => {
+    if (event.pointerType !== "mouse") return null;
+    const wrapper = event.currentTarget.closest<HTMLElement>('[data-slot="sidebar-wrapper"]');
+    const sidebar = wrapper?.querySelector<HTMLElement>('[data-slot="sidebar"][data-side="left"]');
+    const container = sidebar?.querySelector<HTMLElement>('[data-slot="sidebar-container"]');
+    const gap = sidebar?.querySelector<HTMLElement>('[data-slot="sidebar-gap"]');
+    if (!wrapper || !container || !gap) return null;
+    let rawWidth = 0;
+    return {
+      width: 0,
+      edge: "right",
+      bounds: { min: 0, max: options.maxWidth },
+      cancelOnInterrupt: true,
+      resize(nextWidth) {
+        rawWidth = nextWidth;
+        const width = clampSidebarWidth(nextWidth, options);
+        container.style.left = "0px";
+        for (const element of [container, gap]) {
+          element.style.width = `${width}px`;
+          element.style.transitionDuration = "0ms";
+        }
+        return width;
+      },
+      finish(width, moved) {
+        suppressClick.current = moved;
+        if (moved && rawWidth >= 48) {
+          commitSidebarWidth(wrapper, options, width);
+          setOpen(true);
+        }
+      },
+      cleanup() {
+        container.style.removeProperty("left");
+        for (const element of [container, gap]) {
+          element.style.removeProperty("width");
+          element.style.removeProperty("transition-duration");
+        }
+      },
+    };
+  });
+  const { ref: handleRef, ...drag } = resize;
+  return (
+    <div
+      className="fixed bottom-0 left-0 top-[var(--workspace-topbar-height)] z-40 w-3 [-webkit-app-region:no-drag] [[data-slot=sidebar-wrapper]:has([data-slot=sidebar-hover-edge])_&]:hidden"
+      data-slot="sidebar-restore-edge"
+      onPointerEnter={(event) => {
+        if (event.pointerType === "mouse") setNear(true);
+      }}
+      onPointerLeave={() => setNear(false)}
+    >
+      <Tooltip>
+        <TooltipTrigger
+          render={
+            <button
+              aria-label="Show sidebar"
+              className={cn(
+                "absolute left-0 top-1/2 h-12 w-2 -translate-y-1/2 cursor-e-resize rounded-r-md bg-sidebar-border",
+                !near && "pointer-events-none opacity-0",
+              )}
+              data-slot="sidebar-restore-handle"
+              tabIndex={-1}
+              type="button"
+              ref={handleRef}
+              onPointerDown={drag.onPointerDown}
+              onPointerMove={drag.onPointerMove}
+              onPointerUp={drag.onPointerUp}
+              onPointerCancel={drag.onPointerCancel}
+              onLostPointerCapture={drag.onLostPointerCapture}
+              onClick={() => {
+                if (suppressClick.current) {
+                  suppressClick.current = false;
+                  return;
+                }
+                setOpen(true);
+              }}
+            />
+          }
+        />
+        <TooltipPopup side="right">Drag right to show sidebar</TooltipPopup>
+      </Tooltip>
+    </div>
+  );
+}
+
 function SidebarRail({
   className,
   onClick,
@@ -431,7 +540,7 @@ function SidebarRail({
   onPointerUp,
   ...props
 }: React.ComponentProps<"button">) {
-  const { open, toggleSidebar, onCollapse } = useSidebar();
+  const { open, setOpen, toggleSidebar, onCollapse } = useSidebar();
   const sidebarInstance = React.use(SidebarInstanceContext);
   const suppressClickRef = React.useRef(false);
   const resolvedResizable = sidebarInstance?.resizable ?? null;
@@ -450,6 +559,8 @@ function SidebarRail({
     if (!wrapper || !sidebarRoot || !sidebarContainer) return null;
 
     const side = sidebarInstance?.side ?? "left";
+    const canCollapse = open && side === "left" && options.collapseOnResize;
+    let collapsePending = false;
     let width = clampSidebarWidth(sidebarContainer.getBoundingClientRect().width, options);
     // Write width only to gap/container during drag; inherited --sidebar-width restyles the whole app, so
     // update it at commit.
@@ -471,7 +582,10 @@ function SidebarRail({
       width,
       edge: side === "left" ? "right" : "left",
       bounds: { min: options.minWidth, max: options.maxWidth },
-      resize(nextWidth) {
+      cancelOnInterrupt: true,
+      resize(nextWidth, rawWidth) {
+        collapsePending = canCollapse && rawWidth < options.minWidth - 48;
+        sidebarRoot.toggleAttribute("data-collapse-pending", collapsePending);
         const accepted =
           options.shouldAcceptWidth?.({
             currentWidth: width,
@@ -488,18 +602,12 @@ function SidebarRail({
         return width;
       },
       finish(finalWidth, moved) {
-        wrapper.style.setProperty("--sidebar-width", `${finalWidth}px`);
         suppressClickRef.current = moved;
-        if (options.storageKey) {
-          try {
-            setLocalStorageItem(options.storageKey, finalWidth, Schema.Finite);
-          } catch (error) {
-            console.error("Could not persist sidebar width.", error);
-          }
-        }
-        options.onResize?.(finalWidth);
+        commitSidebarWidth(wrapper, options, finalWidth);
+        if (moved && collapsePending) setOpen(false);
       },
       cleanup() {
+        sidebarRoot.removeAttribute("data-collapse-pending");
         widthTargets.forEach((element) => {
           element.style.removeProperty("width");
           element.style.removeProperty("transition-duration");
@@ -544,6 +652,7 @@ function SidebarRail({
           <button
             aria-label={railLabel}
             className={cn(
+              "group-data-[collapse-pending]:after:bg-primary",
               /* A collapsed offcanvas rail overlaps the native scrollbar on Windows and Linux. */
               "-translate-x-1/2 group-data-[side=left]:-right-4 absolute inset-y-0 z-20 hidden w-4 after:absolute after:inset-y-0 after:left-1/2 after:w-[2px] hover:after:bg-sidebar-border group-data-[side=right]:left-0 sm:flex [[data-collapsible=offcanvas][data-state=collapsed]_&]:pointer-events-none",
               "[[data-panel-animations=true]_&]:transition-all [[data-panel-animations=true]_&]:[transition-duration:var(--panel-animation-duration)] [[data-panel-animations=true]_&]:ease-out",
@@ -581,7 +690,11 @@ function SidebarRail({
             tabIndex={-1}
             type="button"
             {...props}
-          />
+          >
+            <span className="pointer-events-none absolute left-full top-1/2 ml-2 hidden -translate-y-1/2 whitespace-nowrap rounded-md bg-popover px-2 py-1 text-xs text-popover-foreground shadow-sm group-data-[collapse-pending]:block">
+              Release to hide
+            </span>
+          </button>
         }
       />
       <TooltipPopup side="right">{railTitle}</TooltipPopup>
