@@ -79,6 +79,19 @@ describe("getProjectScopeSelectionTarget", () => {
 });
 
 describe("newTaskFilteredProject", () => {
+  it("never starts in an archived copy of the filtered project", () => {
+    const mac = { ...makeProject("t3code", "mac"), archivedAt: "2026-01-01T00:00:00.000Z" };
+    const server = makeProject("t3code", "server");
+    expect(
+      newTaskFilteredProject(
+        makeScope([mac, server]),
+        null,
+        new Set([mac.environmentId, server.environmentId]),
+        { environmentId: "mac", projectId: "t3code" },
+      ),
+    ).toEqual({ environmentId: "server", projectId: "t3code" });
+  });
+
   it("prefers the remembered copy of the filtered project", () => {
     const mac = makeProject("t3code", "mac");
     const server = makeProject("t3code", "server");
@@ -211,13 +224,14 @@ describe("newTaskDestination", () => {
     });
   }
 
-  it("starts in the current thread's project ahead of the remembered one", () => {
+  it("starts in the current thread's project ahead of the filtered and remembered ones", () => {
     const projects = [makeProject("remembered"), makeProject("current", "other-environment")];
     expect(
       destination({
         useLastProject: true,
         projects,
         current: projects[1],
+        filtered: projects[0],
         last: { environmentId: "environment", projectId: "remembered" },
       }),
     ).toEqual({
@@ -300,6 +314,7 @@ describe("newTaskDestination", () => {
         useLastProject: false,
         projects: [only],
         current: only,
+        filtered: only,
         last: { environmentId: "environment", projectId: "only" },
       }),
     ).toEqual(picker);
