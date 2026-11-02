@@ -251,6 +251,31 @@ describe("AcpSessionRuntime", () => {
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
+  it.effect("does not detach an owned ACP process tree on Windows hosts", () =>
+    Effect.gen(function* () {
+      const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const detached: Array<boolean | undefined> = [];
+      yield* AcpSessionRuntime.make({
+        ...mockRuntimeOptions,
+        spawn: { command: process.execPath, args: mockAgentArgs, shell: false },
+        ownDetachedProcessGroup: true,
+        processGroupPlatform: "win32",
+        windowsProcessTreeTerminator: () => Effect.void,
+      }).pipe(
+        Effect.provideService(HostProcess.Platform, "win32"),
+        Effect.provideService(
+          ChildProcessSpawner.ChildProcessSpawner,
+          ChildProcessSpawner.make((command) => {
+            if (command._tag === "StandardCommand") detached.push(command.options.detached);
+            return spawner.spawn(command);
+          }),
+        ),
+      );
+      // A detached cmd.exe shim gets its own console, so the agent never sees T3's stdio pipes.
+      expect(detached.map(Boolean)).toEqual([false]);
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
   it.effect("retires a native runtime when its prompt caller is interrupted", () =>
     Effect.gen(function* () {
       const dispatched = yield* Deferred.make<void>();
