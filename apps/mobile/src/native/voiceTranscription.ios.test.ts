@@ -8,7 +8,10 @@ const mocks = vi.hoisted(() => ({
   prepare: vi.fn<(locale: string) => Promise<string>>(),
   transcribe: vi.fn<(audio: ArrayBufferLike, locale: string) => Promise<TranscriptionResult>>(),
   readAudio: vi.fn<() => Promise<ArrayBuffer>>(),
+  deviceLanguages: vi.fn<() => ReadonlyArray<string>>(),
 }));
+
+vi.mock("./deviceLanguages", () => ({ deviceLanguages: mocks.deviceLanguages }));
 
 vi.mock("@react-native-ai/apple/src/NativeAppleTranscription", () => ({
   default: {
@@ -49,6 +52,7 @@ beforeEach(() => {
   mocks.prepare.mockResolvedValue("sv-SE");
   mocks.readAudio.mockResolvedValue(audio);
   mocks.transcribe.mockResolvedValue(nativeTranscript);
+  mocks.deviceLanguages.mockReturnValue(["sv-SE", "en-GB"]);
 });
 
 afterEach(() => {
@@ -78,5 +82,15 @@ describe("getLocalVoiceTranscriber", () => {
     expect(error).toBeInstanceOf(VoiceTranscriptionError);
     expect(error).toMatchObject({ code: "cancelled" });
     expect(mocks.transcribe).not.toHaveBeenCalled();
+  });
+
+  it("transcribes in the device's first language", async () => {
+    const options = { signal: new AbortController().signal };
+    const prepared = await getLocalVoiceTranscriber()!.prepare(options);
+    await prepared.transcribe("file:///voice.m4a", options);
+
+    expect(mocks.isAvailable).toHaveBeenCalledWith("sv-SE");
+    expect(mocks.prepare).toHaveBeenCalledWith("sv-SE");
+    expect(mocks.transcribe).toHaveBeenCalledWith(audio, "sv-SE");
   });
 });

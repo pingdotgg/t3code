@@ -200,6 +200,10 @@ for example, put **Other Bluetooth** above your AirPods so a new headset is pref
 while the AirPods microphone stays low. By default, CarPlay comes after the built-in
 microphone. Swipe a device left to forget it.
 
+Voice input transcribes in the first language of your iPhone's language list
+(**Settings → General → Language & Region**). Apple transcribes one language per
+recording and does not detect it.
+
 Transcription runs on your device. T3 Code deletes the temporary audio after
 transcription or cancellation; only the message text is sent when you submit.
 

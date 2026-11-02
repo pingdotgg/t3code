@@ -9,8 +9,14 @@ import {
   type VoiceTranscriptionOptions,
 } from "@t3tools/client-runtime/voice-input";
 
+import { resolveVoiceInputLanguage } from "../lib/voiceInputLanguage";
+import { deviceLanguages } from "./deviceLanguages";
+
 function getDeviceLocale(): string {
-  return Intl.DateTimeFormat().resolvedOptions().locale;
+  return resolveVoiceInputLanguage(
+    deviceLanguages(),
+    Intl.DateTimeFormat().resolvedOptions().locale,
+  );
 }
 
 function wrapError(
