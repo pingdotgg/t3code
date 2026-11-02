@@ -130,5 +130,7 @@ since they would create a listed fork and delete it when its tab closes.
 
 Upstream has its own side chats: hidden forks with `lineage.sideChat` (`/side`, `/btw`, the panel's
 **+** menu). Both kinds coexist. Every list, search, older-settled and agent-listing rule hides or
-exempts both (`!isListedThreadLineage(lineage) || isSideChatThread(thread)`), and T3 Learn's panel tab
+exempts both (`!isListedThreadLineage(lineage) || isSideChatThread(thread)`). A T3 Learn side chat's
+lineage reads as a listed fork, so the tag filter's `visibilityParentKey` hides it with its lesson
+([threadTagFilter](../../packages/client-runtime/src/state/threadTagFilter.ts)). T3 Learn's panel tab
 kind is `lesson-side-chat`, so upstream's `side-chat` tab code never sees a T3 Learn side chat.
