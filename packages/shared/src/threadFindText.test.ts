@@ -71,6 +71,17 @@ it("excludes repeated legacy attachments containing literal context tags", () =>
 const assistantSegments = (text: string, cwd?: string) =>
   searchableMessageSegments({ role: "assistant", text, streaming: false }, cwd);
 
+it("indexes single tildes in assistant ranges while retaining double-tilde formatting", () => {
+  const text = "1~3月的数据不完整，建议使用4~9月的数据进行对比。 ~~删除~~";
+  expect(assistantSegments(text)).toEqual([
+    "1~3月的数据不完整，建议使用4~9月的数据进行对比。 删除",
+  ]);
+  expect(assistantSegments(`★ Insight\n${text}`)).toEqual([
+    "★ Insight",
+    " 1~3月的数据不完整，建议使用4~9月的数据进行对比。 删除",
+  ]);
+});
+
 it("searches displayed prose and file-chip labels without hidden paths", () => {
   expect(
     assistantSegments("[important description](/tmp/actual.ts). `/tmp/inline-example.ts:42`"),
