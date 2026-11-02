@@ -35,7 +35,7 @@ import { canSnooze } from "@t3tools/client-runtime/state/thread-settled";
 import { threadChipCopyTarget } from "@t3tools/client-runtime/thread-reference";
 import { useAtomValue } from "@effect/atom-react";
 import type { MenuAction } from "@react-native-menu/menu";
-import { Atom } from "effect/reactivity";
+import { AsyncResult, Atom } from "effect/reactivity";
 import { memo, useCallback, useMemo, useState, type ComponentProps } from "react";
 import { Platform, Pressable, useWindowDimensions, View } from "react-native";
 import type { SwipeableMethods } from "react-native-gesture-handler/ReanimatedSwipeable";
@@ -52,6 +52,7 @@ import { cn } from "../../lib/cn";
 import { copyTextWithHaptic } from "../../lib/copyTextWithHaptic";
 import { copyThreadReference } from "../../lib/copyThreadReference";
 import { useUniwindTheme } from "../../lib/useUniwindTheme";
+import { environmentCatalog } from "../../connection/catalog";
 import { environmentPresentations } from "../../state/presentation";
 import { useEnvironmentScopeAccess } from "../../state/session";
 import type { PendingNewTask } from "../../state/use-pending-new-tasks";
@@ -97,6 +98,8 @@ const environmentConnectionIssueAtom = Atom.family((environmentId: EnvironmentId
   Atom.make((get) =>
     resolveThreadListV2ConnectionIssue(
       get(environmentPresentations.presentationAtom(environmentId))?.connection ?? null,
+      AsyncResult.getOrElse(get(environmentCatalog.stateAtom(environmentId)), () => null)
+        ?.lastFailure ?? null,
     ),
   ),
 );
@@ -1530,8 +1533,19 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
       <View style={rowAppearance.swipeContainerStyle}>
         <Menu
           title={lockedMenuTitle}
-          actions={[{ id: "copy-thread-id", title: "Copy thread ID", image: "doc.on.doc" }]}
-          onPressAction={handleMenuAction}
+          actions={[
+            ...(Platform.OS === "android"
+              ? [{ id: "locked-reason", title: "Why are actions unavailable?" }]
+              : []),
+            { id: "copy-thread-id", title: "Copy thread ID", image: "doc.on.doc" },
+          ]}
+          onPressAction={(event) => {
+            if (event.nativeEvent.event === "locked-reason") {
+              Dialog.alert("Thread actions unavailable", lockedMenuTitle);
+            } else {
+              handleMenuAction(event);
+            }
+          }}
           shouldOpenOnLongPress
         >
           {rowContent(() => {})}

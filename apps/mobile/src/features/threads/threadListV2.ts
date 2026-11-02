@@ -9,7 +9,10 @@ import {
   threadWokeAt,
 } from "@t3tools/client-runtime/state/thread-settled";
 import type { SnoozePreset } from "@t3tools/client-runtime/state/thread-settled";
-import type { EnvironmentConnectionPresentation } from "@t3tools/client-runtime/connection";
+import type {
+  ConnectionAttemptError,
+  EnvironmentConnectionPresentation,
+} from "@t3tools/client-runtime/connection";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
 import { resolveThreadProviderStack } from "@t3tools/client-runtime/state/models";
 import {
@@ -140,7 +143,8 @@ export type ThreadListV2ConnectionIssue =
   | "reconnecting"
   | "unreachable"
   | "unsupported"
-  | "disconnected";
+  | "disconnected"
+  | "signed-out";
 
 export const THREAD_LIST_V2_CONNECTION_ISSUE_LABEL: Record<ThreadListV2ConnectionIssue, string> = {
   offline: "Offline",
@@ -148,13 +152,22 @@ export const THREAD_LIST_V2_CONNECTION_ISSUE_LABEL: Record<ThreadListV2Connectio
   unreachable: "Can't connect",
   unsupported: "Unsupported",
   disconnected: "Not connected",
+  "signed-out": "Sign in again",
 };
 
 // Cached shells keep listing a host's threads after it drops; the row says so
 // instead of silently refusing swipes and menus.
 export function resolveThreadListV2ConnectionIssue(
   connection: Pick<EnvironmentConnectionPresentation, "phase" | "error"> | null,
+  failure: Pick<ConnectionAttemptError, "reason" | "hop" | "via"> | null = null,
 ): ThreadListV2ConnectionIssue | null {
+  if (
+    connection?.phase === "error" &&
+    failure?.reason === "authentication" &&
+    failure.hop === "server" &&
+    failure.via === "direct"
+  )
+    return "signed-out";
   switch (connection?.phase) {
     case undefined:
     case "connected":
@@ -181,11 +194,11 @@ export function resolveThreadListV2LockedReason(input: {
   readonly environmentLabel: string | null;
 }): string {
   const environment = input.environmentLabel ?? "this environment";
+  if (input.access === "signed-out" || input.connectionIssue === "signed-out") {
+    return `This device is no longer signed in to ${environment}. Pair again to change threads.`;
+  }
   if (input.access === "denied") {
     return `This device can view threads on ${environment} but not change them.`;
-  }
-  if (input.access === "signed-out") {
-    return `This device is no longer signed in to ${environment}. Pair again to change threads.`;
   }
   if (input.connectionIssue === "unsupported") {
     return `${environment} and this app need compatible versions before threads can be changed.`;

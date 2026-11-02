@@ -114,6 +114,24 @@ describe("thread rows on hosts they cannot change", () => {
       "unreachable",
     );
     expect(resolveThreadListV2ConnectionIssue({ phase: "error", error: null })).toBe("unreachable");
+    expect(
+      resolveThreadListV2ConnectionIssue(
+        { phase: "error", error: "The environment credential is invalid." },
+        { reason: "authentication", hop: "server", via: "direct" },
+      ),
+    ).toBe("signed-out");
+    expect(
+      resolveThreadListV2ConnectionIssue(
+        { phase: "error", error: "network" },
+        { reason: "network", hop: "server", via: "direct" },
+      ),
+    ).toBe("unreachable");
+    expect(
+      resolveThreadListV2ConnectionIssue(
+        { phase: "error", error: "cloud sign-in" },
+        { reason: "authentication", hop: "relay", via: "relay" },
+      ),
+    ).toBe("unreachable");
   });
 
   it("explains a missing grant, expired credentials, and connection issues differently", () => {
@@ -128,6 +146,8 @@ describe("thread rows on hosts they cannot change", () => {
     expect(reason("signed-out", null)).toBe(
       "This device is no longer signed in to lxso2. Pair again to change threads.",
     );
+    expect(reason("unknown", "signed-out")).toBe(reason("signed-out", null));
+    expect(reason("denied", "signed-out")).toBe(reason("signed-out", null));
     expect(reason("unknown", "unsupported")).toBe(
       "lxso2 and this app need compatible versions before threads can be changed.",
     );
