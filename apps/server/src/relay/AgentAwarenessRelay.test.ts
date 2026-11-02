@@ -720,3 +720,35 @@ describe("AgentAwarenessRelay", () => {
     ),
   );
 });
+
+it.effect("catches up after startup without polling after success", () =>
+  Effect.gen(function* () {
+    const { relay, secrets, secretReads, catchUp } = yield* makeTestRelay();
+    yield* relay.start();
+    yield* TestClock.adjust("1 second");
+    assert.equal(catchUp.shellSnapshotReads, 1);
+
+    yield* secrets.set(PUBLISH_AGENT_ACTIVITY_SECRET, new TextEncoder().encode("false"));
+    yield* relay.requestCatchUp();
+    yield* TestClock.adjust("1 second");
+    assert.equal(catchUp.shellSnapshotReads, 1);
+
+    yield* secrets.set(PUBLISH_AGENT_ACTIVITY_SECRET, new TextEncoder().encode("true"));
+    yield* relay.requestCatchUp();
+    yield* TestClock.adjust("1 second");
+    assert.equal(catchUp.shellSnapshotReads, 2);
+
+    const readsBeforeIdle = secretReads.length;
+    yield* TestClock.adjust("10 minutes");
+    assert.equal(catchUp.shellSnapshotReads, 2);
+    assert.equal(secretReads.length, readsBeforeIdle);
+
+    yield* secrets.set(
+      RELAY_ENVIRONMENT_CREDENTIAL_SECRET,
+      new TextEncoder().encode("credential-2"),
+    );
+    yield* relay.requestCatchUp();
+    yield* TestClock.adjust("1 second");
+    assert.equal(catchUp.shellSnapshotReads, 3);
+  }).pipe(Effect.scoped),
+);
