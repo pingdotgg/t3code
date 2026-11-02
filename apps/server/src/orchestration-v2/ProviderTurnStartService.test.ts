@@ -18,6 +18,7 @@ import {
   RunAttemptId,
   RunId,
   ThreadId,
+  TurnItemId,
   ProjectId,
   type OrchestrationV2ThreadProjection,
   OrchestrationV2DomainEvent,
@@ -33,6 +34,7 @@ import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as PlatformError from "effect/PlatformError";
 import * as Schema from "effect/Schema";
+import * as Stream from "effect/Stream";
 
 import * as ServerConfig from "../config.ts";
 import { withWorkspaceLease } from "../workspace/workspaceLease.ts";
@@ -41,6 +43,7 @@ import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import { layerRealGit } from "./ProviderTurnStartService.testkit.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as ProviderAuthService from "../provider/ProviderAuthService.ts";
+import * as ProviderInstallLock from "../provider/ProviderInstallLock.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as ContextHandoffService from "./ContextHandoffService.ts";
 import { withInlineContext } from "./ContextHandoffDelivery.ts";
@@ -193,6 +196,10 @@ function startWithMissingWorktree(
         }),
         Layer.mock(RunExecutionService.RunExecutionServiceV2)({ startRootRun }),
         Layer.mock(RuntimePolicy.RuntimePolicyV2)({}),
+        Layer.mock(ProviderInstallLock.ProviderInstallLock)({
+          untilIdle: Effect.void,
+          observe: Effect.succeed(() => Effect.succeed(false)),
+        }),
       ),
     ),
   );
@@ -269,6 +276,7 @@ it.each([
 
 function makeLocalCommandHarness(input: {
   readonly text: string;
+  readonly driver?: ProviderDriverKind;
   readonly worktreePath?: string;
   readonly worktreesDir?: string;
   readonly workspaceRoot?: string;
@@ -278,6 +286,10 @@ function makeLocalCommandHarness(input: {
   readonly previousMessages?: ReadonlyArray<string>;
   readonly logoutFailure?: string;
   readonly openFailure?: unknown;
+  readonly installOverlap?: boolean;
+  readonly installIdle?: Effect.Effect<void>;
+  readonly installObservation?: ProviderInstallLock.ProviderInstallLock["Service"]["observe"];
+  readonly sessionEvents?: ProviderAdapter.ProviderAdapterV2SessionRuntime["events"];
   readonly ensureThreadFailure?: unknown;
   readonly historyReadFailureAfterFallback?: unknown;
   readonly resumeFailure?: ProviderAdapter.ProviderAdapterV2Error;
@@ -337,7 +349,7 @@ function makeLocalCommandHarness(input: {
   };
   const providerThread: OrchestrationV2ThreadProjection["providerThreads"][number] = {
     id: providerThreadId,
-    driver: ProviderDriverKind.make("codex"),
+    driver: input.driver ?? ProviderDriverKind.make("codex"),
     providerInstanceId: newInstanceId,
     providerSessionId,
     appThreadId: threadId,
@@ -802,6 +814,7 @@ function makeLocalCommandHarness(input: {
     resumeThread: () => Effect.succeed(sideChatThread),
     forkThread,
     startTurn,
+    events: input.sessionEvents ?? Stream.empty,
   };
   const open = vi.fn(() =>
     input.sideChat !== undefined
@@ -835,6 +848,8 @@ function makeLocalCommandHarness(input: {
                   } as never)
                 : Effect.die("A local command must not open a native session."),
   );
+  const release = vi.fn(() => Effect.void);
+  const releaseUnlessBusy = vi.fn(() => Effect.succeed(true));
   const startRootRun = vi.fn<
     (input: RunExecutionService.RunExecutionServiceV2StartRootRunInput) => Effect.Effect<void>
   >((runInput) =>
@@ -982,6 +997,8 @@ function makeLocalCommandHarness(input: {
         }),
         Layer.mock(ProviderSessionManager.ProviderSessionManagerV2)({
           open,
+          release,
+          releaseUnlessBusy,
           get: () =>
             Effect.succeed(
               input.previousTurn?.liveSession === false
@@ -1003,6 +1020,12 @@ function makeLocalCommandHarness(input: {
         Layer.mock(RuntimePolicy.RuntimePolicyV2)({
           resolve: resolveRuntimePolicy,
         }),
+        Layer.mock(ProviderInstallLock.ProviderInstallLock)({
+          untilIdle: input.installIdle ?? Effect.void,
+          observe:
+            input.installObservation ??
+            Effect.succeed(() => Effect.succeed(input.installOverlap === true)),
+        }),
       ),
     ),
   );
@@ -1017,6 +1040,8 @@ function makeLocalCommandHarness(input: {
     createWorktree,
     open,
     fallbackEnsureThread,
+    release,
+    releaseUnlessBusy,
     writeIfRunCurrent,
     startRootRun,
     startTurn,
@@ -1658,6 +1683,233 @@ effectIt.effect("terminalizes a starting run when its provider session cannot op
   }),
 );
 
+effectIt.effect("retries a session launch once after an overlapping provider install", () =>
+  Effect.gen(function* () {
+    const installFinished = yield* Deferred.make<void>();
+    const launchFailed = yield* Deferred.make<void>();
+    let waits = 0;
+    const harness = makeLocalCommandHarness({
+      text: "Continue",
+      installOverlap: true,
+      installIdle: Effect.suspend(() =>
+        ++waits === 1 ? Effect.void : Deferred.await(installFinished),
+      ),
+      sideChat: { contextRun: "delivered" },
+    });
+    harness.open.mockImplementationOnce(() =>
+      Deferred.succeed(launchFailed, undefined).pipe(
+        Effect.andThen(
+          Effect.fail(
+            new ProviderSessionManager.ProviderSessionOpenError({
+              instanceId: harness.newInstanceId,
+              providerSessionId: ProviderSessionId.make("new-provider-session"),
+              cause: new Error("spawn codex ENOENT"),
+            }),
+          ),
+        ),
+      ),
+    );
+
+    const pending = yield* harness.start.pipe(Effect.forkChild({ startImmediately: true }));
+    yield* Deferred.await(launchFailed);
+    expect(harness.open).toHaveBeenCalledOnce();
+    expect(harness.projection().runs.at(-1)?.status).toBe("starting");
+    yield* Deferred.succeed(installFinished, undefined);
+    yield* Fiber.join(pending);
+
+    expect(harness.open).toHaveBeenCalledTimes(2);
+    expect(harness.startTurn).toHaveBeenCalledOnce();
+    expect(harness.projection().runs.at(-1)?.status).toBe("running");
+    expect(harness.projection().turnItems.some((item) => item.type === "error")).toBe(false);
+  }),
+);
+
+effectIt.effect.each([
+  "waited install",
+  "retried install",
+  "usage limit",
+  "initialized",
+  "other thread",
+  "api retry",
+] as const)("preserves a session failure after %s", (scenario) =>
+  Effect.gen(function* () {
+    let idle = false;
+    let generation = 0;
+    let events = Stream.empty as ProviderAdapter.ProviderAdapterV2SessionRuntime["events"];
+    const harness = makeLocalCommandHarness({
+      text: "Continue",
+      sideChat: { contextRun: "delivered" },
+      sessionEvents: Stream.suspend(() => events),
+      installIdle: Effect.sync(() => void (idle = true)),
+      installObservation: Effect.sync(() => {
+        const observed = generation;
+        const overlapped = scenario !== "waited install" || !idle;
+        return () =>
+          Effect.succeed(scenario === "retried install" ? observed !== generation : overlapped);
+      }),
+    });
+    const failure = {
+      class: scenario === "usage limit" ? ("usage_limit" as const) : ("provider_error" as const),
+      message: "provider refused this turn",
+      code: null,
+      retryable: scenario === "api retry",
+      resetAt: "2026-09-04T13:00:00Z",
+    };
+    // Claude's api_retry: the provider answered, so the launch is not an installer failure.
+    const event: ProviderAdapter.ProviderAdapterV2Event =
+      scenario === "api retry"
+        ? ({
+            type: "turn_item.updated",
+            driver: ProviderDriverKind.make("claudeAgent"),
+            turnItem: {
+              id: TurnItemId.make("turn-item-api-retry"),
+              threadId: ThreadId.make("thread-native-account-command"),
+              runId: RunId.make("run-native-account-command"),
+              providerTurnId: ProviderTurnId.make("failed-turn"),
+              ordinal: 1,
+              type: "error",
+              status: "running",
+              failure,
+              retry: { attempt: 1, maxAttempts: 10, retryDelayMs: 500 },
+            },
+          } as ProviderAdapter.ProviderAdapterV2Event)
+        : {
+            type: "turn.terminal",
+            driver: ProviderDriverKind.make("codex"),
+            providerThreadId: ProviderThreadId.make(
+              scenario === "other thread" ? "another-provider-thread" : "new-provider-thread",
+            ),
+            providerTurnId: ProviderTurnId.make("failed-turn"),
+            runOrdinal: 2,
+            failureItemOrdinal: 1,
+            status: "failed",
+            failure,
+            threadDisposition: "reusable",
+          };
+    events = Stream.make(event);
+    if (scenario === "retried install") {
+      harness.open.mockImplementationOnce(() =>
+        Effect.sync(() => void generation++).pipe(
+          Effect.andThen(
+            Effect.fail(
+              new ProviderSessionManager.ProviderSessionOpenError({
+                instanceId: harness.newInstanceId,
+                providerSessionId: ProviderSessionId.make("new-provider-session"),
+                cause: new Error("spawn codex ENOENT"),
+              }),
+            ),
+          ),
+        ),
+      );
+    }
+    harness.startRootRun.mockImplementation((input) =>
+      Effect.gen(function* () {
+        if (scenario === "initialized") yield* input.session.startTurn(input as never);
+        const result = yield* Stream.runCollect(input.session.events).pipe(Effect.result);
+        expect(result._tag).toBe("Success");
+        if (result._tag === "Success") expect(result.success).toEqual([event]);
+      }).pipe(Effect.orDie),
+    );
+
+    yield* harness.start;
+
+    expect(harness.release).not.toHaveBeenCalled();
+    expect(harness.releaseUnlessBusy).not.toHaveBeenCalled();
+  }),
+);
+
+effectIt.effect("settles a launch that still fails after the install retry", () =>
+  Effect.gen(function* () {
+    const harness = makeLocalCommandHarness({
+      text: "Continue",
+      installOverlap: true,
+      openFailure: new Error("spawn codex ENOENT"),
+    });
+
+    yield* harness.start;
+
+    expect(harness.open).toHaveBeenCalledTimes(2);
+    expect(harness.projection().runs.at(-1)?.status).toBe("failed");
+    expect(harness.projection().attempts[0]?.status).toBe("failed");
+    expect(harness.projection().nodes[0]?.status).toBe("failed");
+    expect(harness.projection().turnItems).toMatchObject([
+      { type: "error", failure: { message: "spawn codex ENOENT" } },
+    ]);
+  }),
+);
+
+effectIt.effect.each(["ensure", "queued", "queued terminal"] as const)(
+  "releases an overlapping install's failed session without resending the prompt after %s",
+  (stage) =>
+    Effect.gen(function* () {
+      // Claude's query-exit path reports the dead CLI as a transport-error terminal.
+      const transportTerminal: ProviderAdapter.ProviderAdapterV2Event = {
+        type: "turn.terminal",
+        driver: ProviderDriverKind.make("claudeAgent"),
+        providerThreadId: ProviderThreadId.make("new-provider-thread"),
+        providerTurnId: ProviderTurnId.make("failed-turn"),
+        runOrdinal: 2,
+        failureItemOrdinal: 1,
+        status: "failed",
+        failure: {
+          class: "transport_error",
+          message: "Claude Code process exited",
+          code: null,
+          retryable: false,
+        },
+        threadDisposition: "reusable",
+      };
+      const sessionEvents: ProviderAdapter.ProviderAdapterV2SessionRuntime["events"] =
+        stage === "queued terminal"
+          ? Stream.make(transportTerminal)
+          : Stream.fail(
+              new ProviderAdapter.ProviderAdapterEventStreamError({
+                driver: ProviderDriverKind.make("claudeAgent"),
+                providerSessionId: ProviderSessionId.make("new-provider-session"),
+                cause: new Error("provider exited before initialization"),
+              }),
+            );
+      const harness = makeLocalCommandHarness({
+        text: "Continue",
+        installOverlap: true,
+        ...(stage === "ensure"
+          ? { ensureThreadFailure: new Error("provider exited before initialization") }
+          : {
+              driver: ProviderDriverKind.make("claudeAgent"),
+              sideChat: { contextRun: "delivered" as const },
+              sessionEvents,
+            }),
+      });
+      if (stage !== "ensure") {
+        harness.startRootRun.mockImplementation((input) =>
+          input.session
+            .startTurn(input as never)
+            .pipe(
+              Effect.andThen(Stream.runDrain(input.session.events)),
+              Effect.result,
+              Effect.asVoid,
+            ),
+        );
+      }
+
+      yield* harness.start;
+
+      expect(harness.open).toHaveBeenCalledOnce();
+      expect(harness.startTurn).toHaveBeenCalledTimes(stage === "ensure" ? 0 : 1);
+      expect(harness.releaseUnlessBusy).toHaveBeenCalledWith(
+        expect.objectContaining({
+          reason: "runtime_error",
+          ownProviderThreadIds: [ProviderThreadId.make("new-provider-thread")],
+        }),
+      );
+      if (stage !== "ensure") return;
+      expect(harness.projection().runs.at(-1)?.status).toBe("failed");
+      expect(harness.projection().turnItems).toMatchObject([
+        { type: "error", failure: { message: "Codex was updating on this machine. Try again." } },
+      ]);
+    }),
+);
+
 effectIt.effect("leaves the run starting when a session-open failure will be retried", () =>
   Effect.gen(function* () {
     const harness = makeLocalCommandHarness({
@@ -1849,3 +2101,52 @@ for (const previousMessages of [[], ["/compact", " /COMPACT "]]) {
       }),
   );
 }
+
+effectIt.effect("holds a starting run back while a provider install is in flight", () =>
+  Effect.gen(function* () {
+    const installDone = yield* Deferred.make<void>();
+    const reads: Array<string> = [];
+    const layer = ProviderTurnStart.layer.pipe(
+      Layer.provide(
+        Layer.mergeAll(
+          Layer.mock(ContextHandoffService.ContextHandoffServiceV2)({}),
+          Layer.mock(EventSink.EventSinkV2)({}),
+          IdAllocator.layer,
+          layerWorktreeLocation(),
+          FileSystem.layerNoop({}),
+          Layer.mock(GitWorkflow.GitWorkflowService)({}),
+          Layer.mock(ProjectService.ProjectService)({}),
+          Layer.mock(ProjectionStore.ProjectionStoreV2)({
+            getThreadRecords: () => Effect.succeed({ thread: { worktreePath: null } } as never),
+            getTurnStartContext: () =>
+              Effect.sync(() => {
+                reads.push("context");
+                return { runs: [] } as never;
+              }),
+          }),
+          Layer.mock(ProviderSessionManager.ProviderSessionManagerV2)({}),
+          Layer.mock(ProviderAuthService.ProviderAuthService)({}),
+          Layer.mock(RunExecutionService.RunExecutionServiceV2)({}),
+          Layer.mock(RuntimePolicy.RuntimePolicyV2)({}),
+          Layer.mock(ProviderInstallLock.ProviderInstallLock)({
+            untilIdle: Deferred.await(installDone),
+            observe: Effect.succeed(() => Effect.succeed(false)),
+          }),
+        ),
+      ),
+    );
+    const start = Effect.gen(function* () {
+      yield* (yield* ProviderTurnStart.ProviderTurnStartServiceV2).start({
+        threadId: ThreadId.make("thread_start_waits_for_install"),
+        runId: RunId.make("run_start_waits_for_install"),
+      });
+    }).pipe(Effect.provide(layer));
+    const fiber = yield* start.pipe(Effect.ignore, Effect.forkChild);
+    yield* Effect.yieldNow;
+    expect(reads).toEqual([]);
+
+    yield* Deferred.succeed(installDone, undefined);
+    yield* Fiber.join(fiber);
+    expect(reads).toEqual(["context"]);
+  }),
+);

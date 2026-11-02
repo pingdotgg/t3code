@@ -6,6 +6,7 @@ import {
   type OrchestrationV2DomainEvent,
   type OrchestrationV2ContextHandoff,
   type OrchestrationV2ExecutionNode,
+  type OrchestrationV2ProviderFailure,
   type OrchestrationV2ProviderThread,
   type OrchestrationV2Run,
   type OrchestrationV2RunAttempt,
@@ -24,12 +25,14 @@ import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Predicate from "effect/Predicate";
 import * as Schema from "effect/Schema";
+import * as Stream from "effect/Stream";
 
 import * as ServerConfig from "../config.ts";
 import { withWorkspaceLease } from "../workspace/workspaceLease.ts";
 import * as GitWorkflowService from "../git/GitWorkflowService.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as ProviderAuthService from "../provider/ProviderAuthService.ts";
+import * as ProviderInstallLock from "../provider/ProviderInstallLock.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import { makeIsManagedWorktreePath } from "../worktreesDirectory.ts";
 import * as EventSink from "./EventSink.ts";
@@ -54,6 +57,7 @@ import {
   ContextHandoffBackgroundWorkError,
   knownProviderFailureMessage,
   makeProviderFailure,
+  ProviderUpdatingError,
 } from "@t3tools/provider-core/server/failure";
 import * as RunExecutionService from "./RunExecutionService.ts";
 import * as RuntimePolicy from "./RuntimePolicy.ts";
@@ -115,6 +119,10 @@ const refusedBeforePrompt = (error: unknown): boolean =>
   PROMPT_REFUSAL_TAGS.some((tag) => Predicate.isTagged(error, tag)) ||
   (Predicate.hasProperty(error, "cause") && refusedBeforePrompt(error.cause));
 
+// Claude reports a CLI that exits mid-launch as a transport error.
+const isLaunchFailureClass = (failureClass: OrchestrationV2ProviderFailure["class"]) =>
+  failureClass === "provider_error" || failureClass === "transport_error";
+
 export interface ProviderTurnStartServiceV2Shape {
   readonly start: (input: {
     readonly threadId: ThreadId;
@@ -141,6 +149,7 @@ export const layer: Layer.Layer<
   | GitWorkflowService.GitWorkflowService
   | ProjectService.ProjectService
   | ProviderAuthService.ProviderAuthService
+  | ProviderInstallLock.ProviderInstallLock
   | ProjectionStore.ProjectionStoreV2
   | ProviderSessionManager.ProviderSessionManagerV2
   | RunExecutionService.RunExecutionServiceV2
@@ -157,6 +166,7 @@ export const layer: Layer.Layer<
     const gitWorkflow = yield* GitWorkflowService.GitWorkflowService;
     const projects = yield* ProjectService.ProjectService;
     const providerAuth = yield* ProviderAuthService.ProviderAuthService;
+    const installLock = yield* ProviderInstallLock.ProviderInstallLock;
     const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
     const providerSessions = yield* ProviderSessionManager.ProviderSessionManagerV2;
     const runExecution = yield* RunExecutionService.RunExecutionServiceV2;
@@ -341,6 +351,9 @@ export const layer: Layer.Layer<
       readonly willRetry?: boolean;
     }) {
       const { runId } = input;
+      // Another server can acquire an install lock after this wait completes.
+      yield* installLock.untilIdle;
+      let installedSinceAdmission = yield* installLock.observe;
       const projection = yield* projectionStore.getTurnStartContext(input.threadId, runId);
       const run = projection.runs.find((candidate) => candidate.id === runId);
       if (run === undefined) {
@@ -786,7 +799,7 @@ export const layer: Layer.Layer<
         });
         if (!repaired.committed) return;
       }
-      const sessionResult = yield* Effect.result(
+      const openSession = Effect.suspend(() =>
         providerSessions.open({
           threadId: projection.thread.id,
           providerSessionId,
@@ -806,6 +819,16 @@ export const layer: Layer.Layer<
               }),
         }),
       );
+      let sessionResult = yield* Effect.result(openSession);
+      if (
+        sessionResult._tag === "Failure" &&
+        (yield* installedSinceAdmission(providerThread.driver))
+      ) {
+        yield* installLock.untilIdle;
+        if (!(yield* isCurrentAttemptInStatus("starting"))) return;
+        sessionResult = yield* Effect.result(openSession);
+        installedSinceAdmission = yield* installLock.observe;
+      }
       if (sessionResult._tag === "Failure") {
         const failure = sessionResult.failure;
         const requiresSignIn =
@@ -820,7 +843,116 @@ export const layer: Layer.Layer<
         });
         return;
       }
-      const session = sessionResult.success;
+      const openedSession = sessionResult.success;
+      let launching = true;
+      const installFailure = Effect.fn("ProviderTurnStartService.installFailure")(function* (
+        error: ProviderAdapter.ProviderAdapterV2Error,
+      ) {
+        if (!launching || !(yield* installedSinceAdmission(providerThread.driver))) return error;
+        launching = false;
+        const updating = new ProviderUpdatingError({
+          driver: providerThread.driver,
+          newNativeThread: providerThread.nativeThreadRef === null,
+          cause: error,
+        });
+        // A prompt may already have reached the provider; release rather than replay it, but
+        // leave a shared session alone while another thread on it is still working.
+        yield* providerSessions
+          .releaseUnlessBusy({
+            providerSessionId,
+            ownProviderThreadIds: [providerThread.id],
+            reason: "runtime_error",
+            detail: updating.message,
+          })
+          .pipe(Effect.ignore);
+        return new ProviderAdapter.ProviderAdapterEventStreamError({
+          driver: providerThread.driver,
+          providerSessionId,
+          cause: updating,
+        });
+      });
+      const guardLaunch = <A>(
+        effect: Effect.Effect<A, ProviderAdapter.ProviderAdapterV2Error>,
+        initializes = false,
+      ) =>
+        effect.pipe(
+          Effect.catch((error) => installFailure(error).pipe(Effect.flatMap(Effect.fail))),
+          Effect.tap(() =>
+            Effect.sync(() => {
+              // Claude queues the prompt before its SDK reader initializes.
+              if (initializes && providerThread.driver !== "claudeAgent") launching = false;
+            }),
+          ),
+        );
+      const guardEvents = (events: typeof openedSession.events) =>
+        Stream.suspend(() =>
+          events.pipe(
+            Stream.mapEffect((event) =>
+              Effect.gen(function* () {
+                if (
+                  launching &&
+                  ((event.type === "turn.terminal" &&
+                    event.providerThreadId === providerThread.id &&
+                    event.runOrdinal === run.ordinal &&
+                    event.status === "failed" &&
+                    isLaunchFailureClass(event.failure.class)) ||
+                    (event.type === "turn_item.updated" &&
+                      event.turnItem.runId === run.id &&
+                      event.turnItem.type === "error" &&
+                      event.turnItem.retry === undefined &&
+                      isLaunchFailureClass(event.turnItem.failure.class))) &&
+                  (yield* installedSinceAdmission(providerThread.driver))
+                ) {
+                  const error = new ProviderAdapter.ProviderAdapterEventStreamError({
+                    driver: providerThread.driver,
+                    providerSessionId,
+                    cause: event,
+                  });
+                  return yield* installFailure(error).pipe(Effect.flatMap(Effect.fail));
+                }
+                if (
+                  (event.type === "turn.terminal" &&
+                    event.providerThreadId === providerThread.id &&
+                    event.runOrdinal === run.ordinal) ||
+                  (event.type === "turn_item.updated" &&
+                    event.turnItem.runId === run.id &&
+                    // A retrying API error means the provider is up and answering.
+                    (event.turnItem.type === "error"
+                      ? event.turnItem.retry !== undefined
+                      : event.turnItem.type !== "system_notice"))
+                ) {
+                  launching = false;
+                }
+                return event;
+              }),
+            ),
+            Stream.catch((error) =>
+              Stream.unwrap(installFailure(error).pipe(Effect.map(Stream.fail))),
+            ),
+          ),
+        );
+      const session: ProviderAdapter.ProviderAdapterV2SessionRuntime = {
+        ...openedSession,
+        ensureThread: (input) => guardLaunch(openedSession.ensureThread(input)),
+        resumeThread: (input) => guardLaunch(openedSession.resumeThread(input)),
+        startTurn: (input) => guardLaunch(openedSession.startTurn(input), true),
+        ...(openedSession.compactThread === undefined
+          ? {}
+          : {
+              compactThread: (input) => guardLaunch(openedSession.compactThread!(input), true),
+            }),
+        events: guardEvents(openedSession.events),
+        ...(openedSession.subscribeEvents === undefined
+          ? {}
+          : {
+              subscribeEvents: openedSession.subscribeEvents.pipe(
+                Effect.map((subscription) => ({
+                  ...subscription,
+                  events: guardEvents(subscription.events),
+                })),
+              ),
+            }),
+      };
       if (!(yield* isCurrentAttemptInStatus("starting"))) return;
       const loadFromProvider = Effect.fn("ProviderTurnStartService.loadFromProvider")(function* (
         load: Effect.Effect<OrchestrationV2ProviderThread, ProviderAdapter.ProviderAdapterV2Error>,

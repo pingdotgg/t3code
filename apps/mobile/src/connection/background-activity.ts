@@ -18,6 +18,7 @@ import { AppState } from "react-native";
 
 import * as MobileStorage from "../persistence/mobile-storage";
 import {
+  mobileInteraction,
   observeMobileBackgroundActivitySubscription,
   onRetainedMobileBackgroundScopesChange,
   retainedMobileBackgroundScopes,
@@ -54,10 +55,12 @@ export const layerReporter = Layer.effectDiscard(
     const reportRequests = yield* Queue.sliding<void>(1);
     const requestReport = () => Queue.offerUnsafe(reportRequests, undefined);
     let appState = AppState.currentState;
+    yield* mobileInteraction.record;
 
     const report = Effect.gen(function* () {
       const observedAtMs = yield* Clock.currentTimeMillis;
       const active = appState === "active";
+      const recentlyInteracted = active && (yield* mobileInteraction.isRecent);
       const entries = yield* SubscriptionRef.get(registry.entries);
       yield* Effect.forEach(
         entries.keys(),
@@ -71,7 +74,7 @@ export const layerReporter = Layer.effectDiscard(
                 clientKind: "mobile",
                 visible: active,
                 focused: active,
-                recentlyInteracted: active,
+                recentlyInteracted,
                 appState: normalizeAppState(appState),
                 scopes: [
                   ...BASELINE_SCOPES,
@@ -93,6 +96,8 @@ export const layerReporter = Layer.effectDiscard(
       Effect.sync(() => {
         const removeScopeListener = onRetainedMobileBackgroundScopesChange(requestReport);
         const subscription = AppState.addEventListener("change", (nextState) => {
+          if (nextState === "active" && appState !== "active")
+            Effect.runSync(mobileInteraction.record);
           appState = nextState;
           requestReport();
         });
