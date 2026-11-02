@@ -66,10 +66,10 @@ function markdownTaskListItems(
 const letters = (text: string) => text.replace(/[^\p{L}\p{N}]/gu, "");
 
 /**
- * Offset of the task marker whose item a renderer reports by its text, or null when none or
- * several match. Native renderers restart their checkbox count after a code block or table and
- * cut the text at a line break, so the text is matched line by line, against `renderedMarkdown`
- * (what the renderer was given) when that differs, then mapped back to `markdown` by position.
+ * Offset of the task marker whose item a renderer reports by its text, or null when that is
+ * unclear. Native renderers restart their checkbox count after a code block or table and cut the
+ * text at a line break, so the text is matched line by line against `renderedMarkdown` (what the
+ * renderer was given), then mapped back to `markdown` by position.
  */
 export function markdownTaskMarkerOffset(
   markdown: string,
@@ -87,9 +87,12 @@ export function markdownTaskMarkerOffset(
       ? [index]
       : [];
   });
-  const item = matches.length === 1 ? items[matches[0]!] : undefined;
-  // Rewrites only shorten or drop text (links, `<br>`); an item they can't explain is another one.
-  return item && within(rendered, letters(item.text)) ? item.markerOffset : null;
+  // Rewrites only shorten or drop text (links, `<br>`). One that drops an item and adds another
+  // shifts every later position, so each item must still fit inside its source item.
+  const aligned = shown.every((item, index) =>
+    within(letters(item.text), letters(items[index]?.text ?? "")),
+  );
+  return matches.length === 1 && aligned ? (items[matches[0]!]?.markerOffset ?? null) : null;
 }
 
 /** Whether `part`'s characters all appear in `whole`, in order. */

@@ -81,5 +81,8 @@ describe("markdownTaskMarkerOffset", () => {
       "- [ ] <details><summary>Run</summary></details>\n- [ ] second\n\n<img src=a.png>\n- [ ] hidden";
     const shiftedRendered = "- [ ] second\n\n![](a.png)\n\n- [ ] hidden";
     expect(markdownTaskMarkerOffset(shifted, "hidden", shiftedRendered)).toBeNull();
+    const nested = shifted.replace("second", "Run lint and tests").replace("hidden", "Run tests");
+    const nestedRendered = "- [ ] Run lint and tests\n\n![](a.png)\n\n- [ ] Run tests";
+    expect(markdownTaskMarkerOffset(nested, "Run tests", nestedRendered)).toBeNull();
   });
 });
