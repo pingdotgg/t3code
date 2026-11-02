@@ -3,7 +3,7 @@ import { environmentSession } from "../../state/session";
 import type { EnvironmentId } from "@t3tools/contracts";
 import { SymbolView } from "../../components/ui/AppSymbol";
 import { ScreenContent } from "../../components/ui/ScreenContent";
-import { useCallback, useMemo, useState, type ComponentProps } from "react";
+import { useState, type ComponentProps } from "react";
 import { Platform, Pressable, View, type NativeSyntheticEvent } from "react-native";
 import {
   Screen,
@@ -21,6 +21,7 @@ import { useEnvironmentQuery } from "../../state/query";
 import { useEnvironmentPresentation } from "../../state/presentation";
 import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
 import { FileTreeBrowser } from "./FileTreeBrowser";
+import { NativeInspectorContent } from "../../native/NativeInspectorContent";
 import { useFileTreeEntries } from "./useFileTreeEntries";
 import { preloadWorkspaceFileContents } from "./preload-workspace-file";
 import { useAdaptiveWorkspaceLayout } from "../layout/AdaptiveWorkspaceLayout";
@@ -56,36 +57,32 @@ export function ThreadFileNavigatorPane(props: {
     cwd: canReadFiles ? props.cwd : null,
     searchQuery,
   });
-  const handlePreviewFile = useCallback(
-    (relativePath: string) => {
-      preloadWorkspaceFileContents({
-        cwd: props.cwd,
-        environmentId: props.environmentId,
-        relativePath,
-        theme: highlightTheme,
-      });
+  const handlePreviewFile = (relativePath: string) => {
+    preloadWorkspaceFileContents({
+      cwd: props.cwd,
+      environmentId: props.environmentId,
+      relativePath,
+      theme: highlightTheme,
+    });
+  };
+  const nativeHeaderRightBarButtonItems = [
+    {
+      accessibilityLabel: "Close files",
+      icon: { name: "xmark", type: "sfSymbol" as const },
+      identifier: "thread-file-navigator-close",
+      onPress: toggleAuxiliaryPane,
+      sharesBackground: false,
+      tintColor: foregroundColor,
+      type: "button" as const,
     },
-    [highlightTheme, props.cwd, props.environmentId],
-  );
-  const nativeHeaderRightBarButtonItems = useMemo(
-    () =>
-      [
-        {
-          accessibilityLabel: "Close files",
-          icon: { name: "xmark", type: "sfSymbol" as const },
-          identifier: "thread-file-navigator-close",
-          onPress: toggleAuxiliaryPane,
-          sharesBackground: false,
-          tintColor: foregroundColor,
-          type: "button" as const,
-        },
-      ] as ComponentProps<typeof ScreenStackHeaderConfig>["headerRightBarButtonItems"],
-    [foregroundColor, toggleAuxiliaryPane],
-  );
+  ] as ComponentProps<typeof ScreenStackHeaderConfig>["headerRightBarButtonItems"];
 
   const fileTree = (
     <FileTreeBrowser
       key={JSON.stringify([props.environmentId, props.cwd])}
+      revealSelection={entriesQuery.revealSelection}
+      expandedPaths={entriesQuery.expandedPaths}
+      setExpandedPaths={entriesQuery.setExpandedPaths}
       entries={entriesQuery.entries}
       loadingDirectories={entriesQuery.loadingDirectories}
       onLoadDirectory={entriesQuery.loadDirectory}
@@ -101,10 +98,13 @@ export function ThreadFileNavigatorPane(props: {
       searchQuery={searchQuery}
       searchResultPaths={entriesQuery.searchResultPaths}
       searchTruncated={entriesQuery.searchTruncated}
-      selectedPath={props.selectedPath}
+      selectedPath={props.selectedPath ?? entriesQuery.selectedPath}
       onPreviewFile={handlePreviewFile}
       onRefresh={entriesQuery.refresh}
-      onSelectFile={props.onSelectFile}
+      onSelectFile={(path) => {
+        entriesQuery.selectPath(path);
+        props.onSelectFile(path);
+      }}
     />
   );
 
@@ -120,7 +120,7 @@ export function ThreadFileNavigatorPane(props: {
             scrollEdgeEffects={headerScrollEdgeEffects}
             style={{ backgroundColor: sheetColor, flex: 1 }}
           >
-            {fileTree}
+            <NativeInspectorContent>{fileTree}</NativeInspectorContent>
             <ScreenStackHeaderConfig
               backgroundColor="rgba(0,0,0,0)"
               color={foregroundColor}

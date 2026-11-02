@@ -1,0 +1,77 @@
+plugins { id 'java' }
+
+repositories {
+  mavenCentral()
+  google()
+}
+
+configurations {
+  compiler
+  androidTestAars
+}
+
+dependencies {
+  compiler 'org.jetbrains.kotlin:kotlin-compiler-embeddable:2.2.21'
+  testImplementation 'org.jetbrains.kotlin:kotlin-stdlib:2.2.21'
+  testImplementation 'junit:junit:4.13.2'
+  testImplementation('org.robolectric:robolectric:4.16.1') {
+    exclude group: 'androidx.test', module: 'monitor'
+    exclude group: 'androidx.test.espresso', module: 'espresso-idling-resource'
+  }
+  // Compile against the same API used by @Config(sdk = [35]), without a local Android SDK.
+  testImplementation 'org.robolectric:android-all:15-robolectric-12650502'
+  androidTestAars 'androidx.test:monitor:1.8.0@aar'
+  androidTestAars 'androidx.test.espresso:espresso-idling-resource:3.7.0@aar'
+  testImplementation files(layout.buildDirectory.dir('android-test-jars').map {
+    fileTree(it) { include '**/*.jar' }
+  })
+}
+
+// The JVM plugin cannot load classes.jar inside AndroidX AAR dependencies.
+tasks.register('extractAndroidTestJars') {
+  inputs.files configurations.androidTestAars
+  outputs.dir layout.buildDirectory.dir('android-test-jars')
+  doLast {
+    configurations.androidTestAars.each { aar ->
+      copy {
+        from zipTree(aar)
+        include 'classes.jar'
+        filePermissions { unix('644') }
+        into layout.buildDirectory.dir("android-test-jars/${aar.name}")
+      }
+    }
+  }
+}
+
+def moduleRoot = file('../..')
+def sources = files(
+  fileTree('stubs') { include '**/*.kt' },
+  fileTree('src/test/kotlin') { include '**/*.kt' },
+  fileTree("${moduleRoot}/android/src/test/java") { include '**/*.kt' },
+  fileTree("${moduleRoot}/android/src/main/java/expo/modules/t3reviewdiff") {
+    include '**/*.kt'
+    exclude '**/T3ReviewDiffModule.kt'
+  },
+)
+
+tasks.register('compileRegression', JavaExec) {
+  dependsOn 'extractAndroidTestJars'
+  classpath = configurations.compiler
+  mainClass = 'org.jetbrains.kotlin.cli.jvm.K2JVMCompiler'
+  inputs.files sources, configurations.testCompileClasspath
+  outputs.dir layout.buildDirectory.dir('regression')
+  doFirst {
+    args = [
+      '-no-stdlib', '-no-reflect', '-jvm-target', '17',
+      '-classpath', configurations.testCompileClasspath.asPath,
+      '-d', layout.buildDirectory.dir('regression').get().asFile.absolutePath,
+    ] + sources.files.collect { it.absolutePath }
+  }
+}
+
+test {
+  dependsOn 'compileRegression'
+  testClassesDirs = files(layout.buildDirectory.dir('regression'))
+  classpath = files(testClassesDirs, configurations.testRuntimeClasspath)
+  testLogging { events 'passed', 'failed'; exceptionFormat 'full' }
+}

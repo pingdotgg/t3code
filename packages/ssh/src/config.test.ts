@@ -1,15 +1,10 @@
-import * as NodePath from "@effect/platform-node/NodePath";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 
-import {
-  discoverSshHosts,
-  parseKnownHostsHostnames,
-  resolveSshConfigIncludePattern,
-} from "./config.ts";
+import { discoverSshHosts, parseKnownHostsHostnames } from "./config.ts";
 
 function makeTempHomeDir() {
   return Effect.gen(function* () {
@@ -56,6 +51,39 @@ describe("ssh config", () => {
         [
           ["escaped", "escaped.example.com", "ssh-config"],
           ["quoted", "quoted.example.com", "ssh-config"],
+        ],
+      );
+    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+  );
+
+  it.effect("skips directory Include matches without losing file aliases or known hosts", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const homeDir = yield* makeTempHomeDir();
+      const sshDir = path.join(homeDir, ".ssh");
+      yield* fs.makeDirectory(path.join(sshDir, "config.d", "ignored"), { recursive: true });
+      yield* fs.makeDirectory(path.join(sshDir, "explicit-directory"));
+      yield* fs.writeFileString(
+        path.join(sshDir, "config"),
+        "Include config.d/*\nInclude explicit-directory\nHost real\n  HostName real.example.com\n",
+      );
+      yield* fs.writeFileString(
+        path.join(sshDir, "config.d", "team.conf"),
+        "Host team\n  HostName team.example.com\n",
+      );
+      yield* fs.writeFileString(
+        path.join(sshDir, "known_hosts"),
+        "known.example.com ssh-ed25519 AAAA\n",
+      );
+
+      const hosts = yield* discoverSshHosts({ homeDir });
+      assert.deepEqual(
+        hosts.map((host) => [host.alias, host.hostname, host.source]),
+        [
+          ["known.example.com", "known.example.com", "known-hosts"],
+          ["real", "real.example.com", "ssh-config"],
+          ["team", "team.example.com", "ssh-config"],
         ],
       );
     }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
@@ -247,16 +275,5 @@ describe("ssh config", () => {
         ],
       );
     }),
-  );
-
-  it.effect("expands tilde-prefixed ssh config include patterns", () =>
-    Effect.gen(function* () {
-      const pattern = yield* resolveSshConfigIncludePattern(
-        "~/.ssh/config.d/*.conf",
-        "/tmp/project",
-        "/tmp/home",
-      );
-      assert.equal(pattern, "/tmp/home/.ssh/config.d/*.conf");
-    }).pipe(Effect.provide(NodePath.layerPosix)),
   );
 });

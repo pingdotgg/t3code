@@ -4,9 +4,11 @@ Open **Usage** from the sidebar or the command palette, or press `mod+u` on web 
 desktop when the terminal is not focused. Customize `usage.open` in
 **Settings → Keybindings**.
 
+On mobile, choose **Usage** in the workspace navigation.
+
 ## Understand your usage
 
-**Usage** combines Codex, Claude Code, Grok Build, OpenCode, Antigravity, Pi, and Cursor history
+**Usage** combines Codex, Claude Code, Grok Build, OpenCode, Antigravity, Pi, Muse Code, and Cursor history
 from your connected environments. It shows token use, cache savings, model breakdowns, and estimated API-equivalent
 cost, split by token type and by speed. These estimates are not your subscription bill.
 **Premium** is what Fast and Ultrafast requests cost above standard rates. Cost that cannot be
@@ -15,6 +17,8 @@ Select a model under **Breakdown** to see its trend, cache hit rate, and cost pe
 
 Totals depend on the history available on each server. Grok turns without a saved completed-turn
 record are missing from the totals.
+Text generation (thread titles, commit messages, PR text, branch names and review guides) is not in
+the totals for Codex or Claude Code 2.0.63 and newer, because those runs save no session history.
 
 OpenCode reads its SQLite database and older JSON history. Antigravity reads local conversation
 databases, including T3-managed profiles. Set `OPENCODE_DATA_DIR` or `ANTIGRAVITY_DATA_DIR` on the
@@ -34,9 +38,16 @@ variable. Pi reads `~/.pi/agent/sessions`, or the `sessions` directory under
 `PI_CODING_AGENT_DIR`. Set `PI_CODING_AGENT_SESSION_DIR` to read a different session directory.
 To include sessions saved through `--session-dir` or Pi's `sessionDir` setting, set this environment
 variable to the same directory. Pi includes recorded tool and summary costs under `Tools/summaries`.
+Muse Code reads native session history, including child sessions, from the home reported by the
+configured Muse CLI. Its environment settings, including `XDG_DATA_HOME`, apply. Models without
+known prices still contribute tokens and appear as unpriced; set custom prices to estimate their cost.
 Use absolute paths or `~/` paths in the account's environment settings; relative environment paths
 depend on each project's working directory and cannot be reliably discovered by Usage. Accounts
 sharing a history directory count once.
+
+The server saves its first hostname in `<T3 home>/usage-host-id`, so a recreated container keeps
+its usage identity when T3 home is persisted. Set `T3CODE_HOST_ID` to choose the identity
+explicitly.
 
 When your app and server support different providers, usage totals may cover only the providers
 your app understands. Update the app to include newly supported providers.
@@ -76,10 +87,34 @@ marked **Not saved**. Reconnect them and choose **Retry failed saves** to finish
 without writing again to environments that already saved. Changes are not queued after you close
 the dialog.
 
+## Show only some models
+
+To count only some models, or to leave some out, add `usageModelFilter` to the server's
+`settings.json` in its `userdata` directory, such as `~/.t3/userdata/settings.json`:
+
+```json
+{
+  "usageModelFilter": {
+    "include": [{ "provider": "claude", "model": "orbit-1" }, { "model": "orbit-2" }],
+    "exclude": [{ "model": "drift-9" }]
+  }
+}
+```
+
+`include` keeps only the listed models and `exclude` leaves the listed models out. `provider` is
+one of `claude`, `codex`, `cursor`, `grok`, `opencode`, `antigravity`, `pi`, or `muse`; omit it
+to match a model ID from any provider. Use the model ID that Usage shows without **Map to**, such
+as a provider-prefixed ID for Pi. Filters apply before **Map to**, so a model you leave out is not
+counted under its mapped name. Usage applies each environment's own filter. Remove the setting to
+show every model again.
+
+If the setting is invalid, Usage ignores it and shows every model, and the next save of any other
+setting removes it from `settings.json`.
+
 ## Track subscription limits
 
 **Usage → Limits** pools every subscription account it can see per provider, so with several Codex
-or Claude accounts across your environments and hubs you read one number per window rather than a
+or Claude accounts across your enabled environments and hubs you read one number per window rather than a
 list. Each window card shows how much of the pool is left and a bar with one segment per account,
 kept in the same column across windows. Accounts are ordered by their next 5-hour refill, soonest
 first. For an account with no weekly quota left, this is when its session becomes usable again.
@@ -110,6 +145,13 @@ Pick `/usage-limits` from the composer's command menu, or send it as a message, 
 current model's limits without leaving the conversation. The result opens above the composer and
 closes when you dismiss it or send your next message. It uses the same snapshot as **Usage → Limits**, so it does not run the agent or refresh
 anything. The command is offered only for providers that appear under **Usage → Limits**.
+
+To keep them in view on web and desktop, turn on **Usage limits** in **Settings → Appearance → Thread details**, or right-click the thread details card.
+The bottom of the thread details card then shows how much is left in each limit window of the
+current provider account. Some windows, such as a weekly Opus limit, count only one model. Hover a
+row to see when it resets and your pace. Turn on **Context window** to also show the thread's
+context use against the model's limit. A tick on the bar marks where the provider compacts
+automatically, when it reports that point.
 
 OpenCode Go reports its session, weekly, and monthly allowance when OpenCode runs locally in
 the environment. T3 cannot report limits for external OpenCode servers because their credentials

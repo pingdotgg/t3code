@@ -7,8 +7,7 @@ import * as Semaphore from "effect/Semaphore";
 
 import { isRelayUnavailable, relayRetryAfterMillis } from "./relayResponse.ts";
 
-// "revoked" leads to no action: relinking a deregistered environment is the
-// user's call, so startup neither retries nor relinks it.
+// Relinking revoked environments is the user's choice; startup takes no action.
 export type ManagedTunnelRegistrationResult =
   | { readonly status: "not_linked" | "ready" | "unavailable" | "superseded" | "revoked" }
   | {
@@ -42,15 +41,12 @@ export function managedTunnelStartupAction(input: {
 
 const MANAGED_TUNNEL_REGISTRATION_RETRY_WINDOW = Duration.minutes(10);
 
-// Every host retries against the same relay, so while it is failing the
-// retries themselves are load. Backing off to minutes, and never sooner than
-// the relay's Retry-After, lets it recover instead of absorbing the storm.
-// Not HttpClient.retryTransient: it resends the identical request, and these
-// carry proofs that expire after 60 s or single-use link challenges, so each
-// retry has to re-run the whole operation.
+// Back off to minutes and honor Retry-After to avoid adding load to a failing relay.
+// Retries must rerun the operation: HttpClient.retryTransient would reuse proofs that
+// expire after 60 s or single-use link challenges.
 const RELAY_RETRY_MAX_DELAY = Duration.minutes(5);
 
-export const relayRetrySchedule = Schedule.exponential("1 second").pipe(
+const relayRetrySchedule = Schedule.exponential("1 second").pipe(
   Schedule.jittered,
   Schedule.modifyDelay(({ duration }) =>
     Effect.succeed(Duration.min(duration, RELAY_RETRY_MAX_DELAY)),
@@ -132,7 +128,7 @@ export const retryDesiredLinkReconcile = <A, E, R>(
 
 // Every managed host shares one relay, so a host stuck in a bad loop must not
 // turn into a fleet-wide request storm.
-export const MANAGED_TUNNEL_RECOVERY_COOLDOWN = Duration.minutes(2);
+const MANAGED_TUNNEL_RECOVERY_COOLDOWN = Duration.minutes(2);
 
 // Retries inside one recovery, while the relay keeps failing, stay at least a
 // cooldown apart. They do not grow the cooldown: only a new request does.
@@ -152,7 +148,7 @@ const MANAGED_TUNNEL_RECOVERY_SETTLED_AFTER = Duration.minutes(10);
  * and recovery cannot help, so each request that follows right after a
  * recovery doubles the wait, up to 30 minutes.
  */
-export function nextManagedTunnelRecoveryCooldown(input: {
+function nextManagedTunnelRecoveryCooldown(input: {
   readonly current: Duration.Duration;
   readonly sinceLastRecovery: Duration.Duration;
 }): Duration.Duration {

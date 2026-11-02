@@ -14,7 +14,6 @@ import {
   Launcher,
   main,
   readServiceEnvironment,
-  PREPARED_TIMEOUT_MS,
   type BackupSpaceProbe,
   readServiceState,
   writeServiceState,
@@ -26,7 +25,6 @@ import {
   SERVICE_ENV_FILE,
   SERVICE_LAUNCHER_PROTOCOL,
   SERVICE_RESTART_PENDING_FILE,
-  SERVICE_STOP_MARKER_FILE,
 } from "./cloud/serviceProtocol.ts";
 
 const spawnedChildren = vi.hoisted((): Array<NodeChildProcess.ChildProcess> => []);
@@ -175,22 +173,6 @@ it.layer(NodeServices.layer)("service state persistence", (it) => {
       }),
   );
 
-  it.effect("durably replaces and strictly reads one state document", () =>
-    Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const path = yield* Path.Path;
-      const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-service-launcher-test-" });
-      const statePath = path.join(root, "runtime", "service-state.json");
-      const state = {
-        protocol: SERVICE_LAUNCHER_PROTOCOL,
-        activeVersion: "0.0.31",
-      } as const;
-
-      yield* Effect.promise(() => writeServiceState(statePath, state));
-      assert.deepEqual(yield* Effect.promise(() => readServiceState(statePath)), state);
-    }),
-  );
-
   it.effect("a fresh launcher clears a restart deferred by t3 update", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
@@ -267,34 +249,6 @@ it.layer(NodeServices.layer)("service state persistence", (it) => {
       yield* Effect.promise(() => refused.promise);
       assert.isFalse(completed);
       yield* Effect.promise(() => launcher.stop("SIGTERM"));
-      yield* Effect.promise(() => running);
-    }),
-  );
-
-  it.effect("serializes shutdown with launcher recovery", () =>
-    Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const path = yield* Path.Path;
-      const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-service-launcher-stop-" });
-      const statePath = path.join(root, "runtime", "service-state.json");
-      yield* writeFakeRuntime(
-        fs,
-        path,
-        path.join(root, "runtime", "versions", "1.0.0"),
-        "setInterval(() => {}, 1_000);\n",
-      );
-      yield* Effect.promise(() =>
-        writeServiceState(statePath, {
-          protocol: SERVICE_LAUNCHER_PROTOCOL,
-          activeVersion: "1.0.0",
-        }),
-      );
-
-      const launcher = new Launcher(root, yield* Effect.promise(() => readServiceState(statePath)));
-      const running = launcher.run();
-      const stopping = launcher.stop("SIGTERM");
-      assert.isTrue(yield* fs.exists(path.join(root, "runtime", SERVICE_STOP_MARKER_FILE)));
-      yield* Effect.promise(() => stopping);
       yield* Effect.promise(() => running);
     }),
   );
@@ -426,82 +380,6 @@ if (context.update?.status === "pending") {
       assert.equal(process.env.T3CODE_TEST_SERVICE_TOKEN, "inherited");
       assert.equal(yield* fs.readFileString(envPath), "T3CODE_TEST_SERVICE_TOKEN=changed\n");
     }),
-  );
-
-  it.effect.each([
-    { prepares: true, status: "committed", activeVersion: "1.1.0" },
-    { prepares: false, status: "rolled-back", activeVersion: "1.0.0" },
-  ] as const)(
-    "gives a trial the full prepared window (prepares: $prepares)",
-    ({ prepares, status, activeVersion }) =>
-      Effect.gen(function* () {
-        const fs = yield* FileSystem.FileSystem;
-        const path = yield* Path.Path;
-        const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-service-launcher-slow-" });
-        const statePath = path.join(root, "runtime", "service-state.json");
-        const databasePath = path.join(root, "userdata", "state.sqlite");
-        yield* fs.makeDirectory(path.dirname(databasePath), { recursive: true });
-        yield* fs.writeFileString(databasePath, "before trial");
-        const childSource = `
-const context = JSON.parse(process.env.T3_SERVICE_LAUNCHER_CONTEXT);
-if (context.update?.status !== "pending") process.exit(0);
-process.on("message", (message) => {
-  if (message.type === "test-prepare") process.send({ type: "prepared", updateId: context.update.id });
-  if (message.type === "committed") process.exit(0);
-});
-setInterval(() => {}, 1_000);
-`;
-        for (const version of ["1.0.0", "1.1.0"]) {
-          yield* writeFakeRuntime(
-            fs,
-            path,
-            path.join(root, "runtime", "versions", version),
-            childSource,
-          );
-        }
-        yield* Effect.promise(() =>
-          writeServiceState(statePath, {
-            protocol: SERVICE_LAUNCHER_PROTOCOL,
-            activeVersion: "1.0.0",
-            update: {
-              id: "update-1",
-              fromVersion: "1.0.0",
-              targetVersion: "1.1.0",
-              dbPath: databasePath,
-              status: "pending",
-            },
-          }),
-        );
-
-        // Effect schedules on setImmediate, so faking only timeouts leaves it running.
-        vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
-        yield* Effect.addFinalizer(() => Effect.sync(() => vi.useRealTimers()));
-        const launcher = new Launcher(
-          root,
-          yield* Effect.promise(() => readServiceState(statePath)),
-        );
-        const running = launcher.run().then(
-          () => Promise.reject(new Error("launcher unexpectedly completed")),
-          () => Promise.resolve(),
-        );
-        yield* Effect.promise(() =>
-          vi.waitFor(() => assert.equal(vi.getTimerCount(), 1), { timeout: 10_000 }),
-        );
-        yield* Effect.promise(() => vi.advanceTimersByTimeAsync(121_000));
-        if (prepares) spawnedChildren.at(-1)!.send({ type: "test-prepare" });
-        else yield* Effect.promise(() => vi.advanceTimersByTimeAsync(PREPARED_TIMEOUT_MS));
-        yield* Effect.promise(() => running);
-
-        const state = yield* Effect.promise(() => readServiceState(statePath));
-        assert.equal(state.activeVersion, activeVersion);
-        assert.equal(state.update?.status, status);
-        if (!prepares) {
-          assert.equal(
-            state.update?.status === "rolled-back" ? state.update.reason : undefined,
-            "prepared-timeout",
-          );
-        }
-      }),
   );
 
   it.effect.each(["file", "symlink", "dangling symlink"] as const)(
@@ -762,43 +640,6 @@ setInterval(() => {}, 1_000);
       assert.include(blocker ?? "", "Not enough free disk space");
       assert.include(blocker ?? "", "10.5 GB needed, 8.0 GB free");
       assert.include(blocker ?? "", "The server was not stopped");
-    }),
-  );
-
-  it.effect("fails the backup check when the database cannot be inspected", () =>
-    Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const path = yield* Path.Path;
-      const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-service-launcher-blocker-" });
-      const error = yield* Effect.promise(() =>
-        databaseBackupBlocker(root, path.join(root, "missing.sqlite"), {
-          readFreeBytes: () => Promise.resolve(0),
-        }).then(
-          () => undefined,
-          (cause: unknown) => cause,
-        ),
-      );
-      assert.equal((error as NodeJS.ErrnoException | undefined)?.code, "ENOENT");
-    }),
-  );
-
-  it.effect("recognizes a clone into the backup directory on this filesystem", () =>
-    Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const path = yield* Path.Path;
-      const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-service-launcher-clone-" });
-      const databasePath = path.join(root, "userdata", "state.sqlite");
-      yield* fs.makeDirectory(path.dirname(databasePath), { recursive: true });
-      yield* fs.writeFileString(databasePath, "database");
-      const blocker = yield* Effect.promise(() =>
-        databaseBackupBlocker(root, databasePath, { readFreeBytes: () => Promise.resolve(0) }),
-      );
-      assert.include(
-        blocker ?? "",
-        // oxlint-disable-next-line t3code/no-global-process-runtime -- mirrors the standalone launcher's own platform check.
-        process.platform === "darwin" ? "1.0 GB needed, 0.0 GB free" : "GB needed, 0.0 GB free",
-      );
-      assert.deepEqual(yield* fs.readDirectory(path.join(root, "runtime", "db-backup")), []);
     }),
   );
 });

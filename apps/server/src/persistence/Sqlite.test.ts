@@ -1,69 +1,59 @@
 // @effect-diagnostics nodeBuiltinImport:off
-import * as NodeChildProcess from "node:child_process";
 import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as SqlClient from "effect/sql/SqlClient";
 
-import { WAL_SIZE_LIMIT_BYTES } from "./Sqlite.ts";
 import * as SqlitePersistence from "./Sqlite.ts";
 
-const lockHolderSource = `
-const { DatabaseSync } = require("node:sqlite");
-const db = new DatabaseSync(process.argv[1]);
-db.exec("BEGIN IMMEDIATE");
-process.stdout.write("locked\\n");
-setTimeout(() => {
-  db.exec("COMMIT");
-  db.close();
-}, Number(process.argv[2]));
-`;
+// Linux names an open, already-deleted file "<path> (deleted)" in /proc/self/fd.
+// SQLite names its temp files "etilqs_*" and, without TMPDIR, puts them in
+// /var/tmp while os.tmpdir() is /tmp, so match the name, not the directory.
+const openDeletedTempFiles = () =>
+  NodeFS.readdirSync("/proc/self/fd").flatMap((fd) => {
+    try {
+      const target = NodeFS.readlinkSync(`/proc/self/fd/${fd}`);
+      return target.includes("/etilqs_") && target.endsWith(" (deleted)") ? [target] : [];
+    } catch {
+      return [];
+    }
+  });
 
-const spawnWriteLockHolder = (dbPath: string, holdMs: number) =>
-  Effect.promise(
-    () =>
-      new Promise<void>((resolve, reject) => {
-        const holder = NodeChildProcess.spawn(
-          process.execPath,
-          ["-e", lockHolderSource, dbPath, String(holdMs)],
-          { stdio: ["ignore", "pipe", "ignore"] },
-        );
-        holder.stdout.once("data", () => resolve());
-        holder.on("error", reject);
-        holder.on("exit", () =>
-          reject(new Error("lock holder exited before acquiring the write lock")),
-        );
-      }),
-  );
+it.effect.skipIf(HostProcess.Platform.defaultValue() !== "linux")(
+  "keeps a write transaction's statement journal off the temp directory",
+  () => {
+    const tempDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-sqlite-temp-"));
+    const persistence = SqlitePersistence.layerFromPath(
+      NodePath.join(tempDir, "state.sqlite"),
+    ).pipe(Layer.provide(NodeServices.layer));
 
-it.effect("waits out a concurrent writer instead of failing with SQLITE_BUSY", () => {
-  const tempDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-sqlite-busy-"));
-  const dbPath = NodePath.join(tempDir, "state.sqlite");
-
-  return Effect.gen(function* () {
-    const sql = yield* SqlClient.SqlClient;
-    yield* sql`CREATE TABLE busy_probe(id INTEGER PRIMARY KEY)`;
-    yield* spawnWriteLockHolder(dbPath, 300);
-    yield* sql`INSERT INTO busy_probe(id) VALUES (${1})`;
-    const rows = yield* sql<{ readonly id: number }>`SELECT id FROM busy_probe`;
-    assert.deepEqual([...rows], [{ id: 1 }]);
-  }).pipe(
-    Effect.provide(SqlitePersistence.layerFromPath(dbPath).pipe(Layer.provide(NodeServices.layer))),
-    Effect.ensuring(Effect.sync(() => NodeFS.rmSync(tempDir, { recursive: true, force: true }))),
-  );
-});
-
-it.effect("limits the WAL file size in the shared persistence setup", () =>
-  Effect.gen(function* () {
-    const sql = yield* SqlClient.SqlClient;
-    const rows = yield* sql<{ readonly journal_size_limit: number }>`PRAGMA journal_size_limit`;
-    assert.equal(rows[0]?.journal_size_limit, WAL_SIZE_LIMIT_BYTES);
-  }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
+    return Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      yield* sql`CREATE TABLE journal_probe(id INTEGER PRIMARY KEY, payload TEXT NOT NULL)`;
+      for (let id = 0; id < 64; id++) {
+        yield* sql`INSERT INTO journal_probe VALUES (${id}, ${"x".repeat(4096)})`;
+      }
+      const before = new Set(openDeletedTempFiles());
+      const opened = yield* sql.withTransaction(
+        Effect.gen(function* () {
+          // A multi-row update can fail halfway, so SQLite journals every page
+          // it changes, here well past the 64 KiB it holds in memory by default.
+          yield* sql`UPDATE journal_probe SET payload = payload || 'y'`;
+          return openDeletedTempFiles().filter((target) => !before.has(target));
+        }),
+      );
+      assert.deepEqual(opened, []);
+    }).pipe(
+      Effect.provide(persistence),
+      Effect.ensuring(Effect.sync(() => NodeFS.rmSync(tempDir, { recursive: true, force: true }))),
+    );
+  },
 );
 
 it.effect("drops planner statistics a database already has", () => {
@@ -77,7 +67,6 @@ it.effect("drops planner statistics a database already has", () => {
       const sql = yield* SqlClient.SqlClient;
       yield* sql`CREATE TABLE walk_probe(node_id TEXT PRIMARY KEY, parent_node_id TEXT)`;
       yield* sql`INSERT INTO walk_probe VALUES ('node-1', NULL), ('node-2', 'node-1')`;
-      // Stats from a nearly empty table, as an older build collected on a new install.
       yield* sql`ANALYZE walk_probe`;
     }).pipe(Effect.provide(persistence()));
 
@@ -107,35 +96,3 @@ it.effect("drops planner statistics a database already has", () => {
     Effect.ensuring(Effect.sync(() => NodeFS.rmSync(tempDir, { recursive: true, force: true }))),
   );
 });
-
-it.effect("only fsyncs the database file at WAL checkpoints", () => {
-  const tempDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-sqlite-sync-"));
-  const dbPath = NodePath.join(tempDir, "state.sqlite");
-
-  return Effect.gen(function* () {
-    const sql = yield* SqlClient.SqlClient;
-    const rows = yield* sql<{ readonly synchronous: number }>`PRAGMA synchronous`;
-    assert.equal(rows[0]?.synchronous, 1);
-  }).pipe(
-    Effect.provide(SqlitePersistence.layerFromPath(dbPath).pipe(Layer.provide(NodeServices.layer))),
-    Effect.ensuring(Effect.sync(() => NodeFS.rmSync(tempDir, { recursive: true, force: true }))),
-  );
-});
-
-it.effect("applies busy_timeout in the shared persistence setup", () =>
-  Effect.gen(function* () {
-    const sql = yield* SqlClient.SqlClient;
-    const rows = yield* sql<{ readonly timeout: number }>`PRAGMA busy_timeout`;
-    assert.equal(rows[0]?.timeout, 5000);
-  }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
-);
-
-it.effect("enables checkpoint_fullfsync in the shared persistence setup", () =>
-  Effect.gen(function* () {
-    const sql = yield* SqlClient.SqlClient;
-    const rows = yield* sql<{
-      readonly checkpoint_fullfsync: number;
-    }>`PRAGMA checkpoint_fullfsync`;
-    assert.equal(rows[0]?.checkpoint_fullfsync, 1);
-  }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
-);

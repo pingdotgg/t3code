@@ -56,16 +56,11 @@ function labelForKind(kind: ServerProviderUsageWindow["kind"]): string {
   return kind === "session" ? "Session" : kind === "weekly" ? "Weekly" : "Monthly";
 }
 
-/**
- * `primary` / `secondary` are positions, not durations. Codex usually sends
- * `windowDurationMins`; when it does not, paid plans expose the 5-hour and
- * weekly pair and Free/Go expose one monthly allowance.
- */
+/** primary/secondary are positions; without windowDurationMins, paid plans use 5-hour/weekly windows and Free/Go use monthly. */
 function codexRateLimitsToWindows(
   snapshot: CodexRateLimitSnapshot,
 ): ReadonlyArray<ServerProviderUsageWindow> {
-  // Show the main allowance only. Model-specific notifications (such as Spark)
-  // must not replace its primary/secondary rows. Older CLIs omit the limit id.
+  // Keep model-specific limits out of main allowance rows; older CLIs omit limit IDs.
   if (snapshot.limitId && snapshot.limitId !== "codex") return [];
   const isMonthlyPlan = snapshot.planType === "free" || snapshot.planType === "go";
   const positions = [
@@ -102,7 +97,7 @@ function codexRateLimitsToWindows(
   return windows;
 }
 
-export function codexResetCreditsToContract(
+function codexResetCreditsToContract(
   summary: CodexResetCreditsSummary | null | undefined,
 ): ServerProviderResetCredits | undefined {
   if (!summary) return undefined;
@@ -140,8 +135,20 @@ export function codexRateLimitsToLimits(input: {
 
 export function codexRateLimitsToUpdate(
   snapshot: CodexRateLimitSnapshot,
+  previous?: CodexRateLimitSnapshot,
 ): ProviderUsageLimitsUpdate | undefined {
-  const windows = codexRateLimitsToWindows(snapshot);
+  const previousWindows = previous ? codexRateLimitsToWindows(previous) : [];
+  // Token ticks repeat session-cached limits that may predate an account probe or reset.
+  const windows = codexRateLimitsToWindows(snapshot).filter((window) => {
+    const existing = previousWindows.find((candidate) => candidate.id === window.id);
+    return (
+      !existing ||
+      existing.kind !== window.kind ||
+      existing.usedPercent !== window.usedPercent ||
+      existing.resetsAt !== window.resetsAt ||
+      existing.windowDurationMins !== window.windowDurationMins
+    );
+  });
   return windows.length > 0 ? { windows } : undefined;
 }
 
@@ -158,18 +165,12 @@ export function codexRateLimitsFailureMessage(error: CodexErrors.CodexAppServerE
   }
 }
 
-/**
- * Codex sends `account/rateLimits/updated` as a partial view of the snapshot: a
- * field the update omits keeps the value observed earlier in the session, so a
- * later notification that only names the limit it reached must not drop the
- * windows an earlier one carried.
- */
+/** Rate-limit notifications are partial: omitted fields preserve earlier session values. */
 export function mergeCodexRateLimits(
   previous: CodexRateLimitSnapshot | undefined,
   update: CodexRateLimitSnapshot,
 ): CodexRateLimitSnapshot | undefined {
-  // Model-specific snapshots (such as Spark) describe a different allowance
-  // and must not overwrite the main one, the same rule the usage rows apply.
+  // Model-specific snapshots must not overwrite the main allowance.
   if (update.limitId && update.limitId !== "codex") return previous;
   if (!previous) return update;
   return {
@@ -183,47 +184,6 @@ export function mergeCodexRateLimits(
     ...(update.secondary !== undefined ? { secondary: update.secondary } : {}),
     ...(update.individualLimit !== undefined ? { individualLimit: update.individualLimit } : {}),
   };
-}
-
-function formatCodexUsageLimitWait(waitMs: number): string {
-  const totalMinutes = Math.ceil(waitMs / 60_000);
-  const days = Math.floor(totalMinutes / (24 * 60));
-  const hours = Math.floor((totalMinutes % (24 * 60)) / 60);
-  const minutes = totalMinutes % 60;
-  if (days > 0) return hours === 0 ? `${days}d` : `${days}d ${hours}h`;
-  if (hours === 0) return `${totalMinutes}m`;
-  return minutes === 0 ? `${hours}h` : `${hours}h ${minutes}m`;
-}
-
-function codexUsageLimitNextStep(rateLimitReachedType: string | null | undefined): string {
-  switch (rateLimitReachedType) {
-    case "workspace_owner_credits_depleted":
-    case "workspace_member_credits_depleted":
-      return " The workspace has no credits to continue sooner: ask your workspace owner to add credits, or send the message again once the limit resets.";
-    case "workspace_owner_usage_limit_reached":
-    case "workspace_member_usage_limit_reached":
-      return " The workspace spend limit is reached: ask your workspace owner to raise it, or send the message again once the limit resets.";
-    default:
-      return " Send the message again once the limit resets.";
-  }
-}
-
-export function codexUsageLimitMessage(
-  snapshot: CodexRateLimitSnapshot | undefined,
-  atIso: string,
-): string {
-  const atMs = Date.parse(atIso);
-  const windows = snapshot && Number.isFinite(atMs) ? codexRateLimitsToWindows(snapshot) : [];
-  let reset = "";
-  let latestResetMs = Number.NEGATIVE_INFINITY;
-  for (const window of windows) {
-    if (window.usedPercent < 100 || !window.resetsAt) continue;
-    const resetMs = Date.parse(window.resetsAt);
-    if (!Number.isFinite(resetMs) || resetMs <= atMs || resetMs <= latestResetMs) continue;
-    latestResetMs = resetMs;
-    reset = ` The ${window.kind} limit resets in ${formatCodexUsageLimitWait(resetMs - atMs)}.`;
-  }
-  return `Codex usage limit reached.${reset}${codexUsageLimitNextStep(snapshot?.rateLimitReachedType)}`;
 }
 
 /** All exhausted windows must reset before a continuation can run. */

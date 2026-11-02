@@ -51,9 +51,7 @@ function getDesktopSshDiscoveryBridge(): DesktopSshDiscoveryBridge | undefined {
   return typeof window === "undefined" ? undefined : window.desktopBridge;
 }
 
-export function createDesktopSshHostsStateAtom(
-  getBridge: () => DesktopSshDiscoveryBridge | undefined,
-) {
+function createDesktopSshHostsStateAtom(getBridge: () => DesktopSshDiscoveryBridge | undefined) {
   const discoverDesktopSshHosts = Effect.fn("discoverDesktopSshHosts")(function* () {
     const bridge = getBridge();
     if (!bridge) {

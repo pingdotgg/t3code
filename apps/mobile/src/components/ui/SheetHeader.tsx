@@ -75,6 +75,7 @@ function NativeSheetHeader(props: SheetHeaderProps) {
             <Toolbar.Button
               icon="checkmark"
               variant="prominent"
+              visibilityPriority="high"
               tintColor={colors["--color-prominent-action"]}
               accessibilityLabel={confirmation.label}
               disabled={confirmation.disabled}

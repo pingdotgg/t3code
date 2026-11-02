@@ -1,9 +1,9 @@
+import { toIsoUtc } from "@t3tools/source-control-core/server/pullRequestUtils";
 import * as Schema from "effect/Schema";
-import * as DateTime from "effect/DateTime";
-import * as Option from "effect/Option";
 import type {
   PullRequestActor,
   PullRequestCheck,
+  PullRequestCheckStatus,
   PullRequestComment,
   PullRequestCommit,
   PullRequestReaction,
@@ -32,6 +32,7 @@ export const ForgejoRepository = Schema.Struct({
   allow_squash_merge: Schema.optional(Schema.Boolean),
   allow_rebase: Schema.optional(Schema.Boolean),
   allow_rebase_update: Schema.optional(Schema.Boolean),
+  default_delete_branch_after_merge: Schema.optional(Schema.Boolean),
 });
 const Branch = Schema.Struct({
   ref: Schema.String,
@@ -102,6 +103,7 @@ export const ForgejoCommit = Schema.Struct({
   ),
 });
 export const ForgejoStatus = Schema.Struct({
+  id: Schema.optional(Schema.Int),
   context: Schema.String,
   status: Schema.String,
   description: Schema.NullOr(Schema.String),
@@ -119,10 +121,6 @@ export function forgejoActor(
   return user?.login
     ? { login: user.login, name: user.full_name || null, avatarUrl: user.avatar_url || null }
     : null;
-}
-
-function toIsoUtc(value: string): string {
-  return Option.match(DateTime.make(value), { onNone: () => value, onSome: DateTime.formatIso });
 }
 
 export function forgejoChangeRequest(pr: typeof ForgejoPullRequest.Type) {
@@ -212,6 +210,25 @@ export function forgejoCommit(commit: typeof ForgejoCommit.Type): PullRequestCom
   };
 }
 
+// Forgejo Actions reports a job that did not run as `skipped` and a cancelled one as `failure`,
+// and `warning` is finished without being a pass. Only `pending` and states we do not know may
+// hold a watch open.
+function forgejoCheckStatus(state: string): PullRequestCheckStatus {
+  switch (state) {
+    case "success":
+      return "success";
+    case "failure":
+    case "error":
+      return "failure";
+    case "skipped":
+      return "skipped";
+    case "warning":
+      return "neutral";
+    default:
+      return "pending";
+  }
+}
+
 export function forgejoChecks(
   statuses: ReadonlyArray<typeof ForgejoStatus.Type>,
   pullRequestUrl: string,
@@ -220,18 +237,14 @@ export function forgejoChecks(
     statuses.map((status) => ({
       workflowName: null,
       at: status.updated_at,
+      ...(status.id === undefined ? {} : { sequence: status.id }),
       check: {
         name: status.context || "check",
         description: status.description || null,
         url: status.target_url
           ? (URL.parse(status.target_url, pullRequestUrl)?.href ?? null)
           : null,
-        status:
-          status.status === "success"
-            ? "success"
-            : status.status === "failure" || status.status === "error"
-              ? "failure"
-              : "pending",
+        status: forgejoCheckStatus(status.status),
       },
     })),
   );

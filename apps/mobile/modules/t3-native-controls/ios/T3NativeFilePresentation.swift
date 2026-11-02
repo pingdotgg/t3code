@@ -17,7 +17,6 @@ private final class FilePreviewController: QLPreviewController {
   }
 }
 
-/// Quick Look owns image and document controls, zooming, and source-view transitions.
 final class T3NativeFilePresentation: NSObject, QLPreviewControllerDataSource,
   QLPreviewControllerDelegate, UIAdaptivePresentationControllerDelegate {
   let identifier: String
@@ -167,9 +166,7 @@ final class T3NativeFilePresentation: NSObject, QLPreviewControllerDataSource,
         try FileManager.default.moveItem(at: temporaryFile, to: download)
       }
       try Task.checkCancellation()
-      // Pictures and PDFs are identified by content so a misnamed file still opens correctly.
-      // Anything else keeps its own extension: Quick Look decides from that whether it can
-      // render the document (Office, iWork, RTF and more) and refuses before we present.
+      // Detect images and PDFs by content; preserve other extensions so Quick Look can decide support.
       let filename = URL(fileURLWithPath: title).lastPathComponent as NSString
       let originalExtension = filename.pathExtension
       var type: UTType?

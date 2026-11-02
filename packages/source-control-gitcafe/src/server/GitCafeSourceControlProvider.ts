@@ -1,5 +1,6 @@
 import { SourceControlProviderKind } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
@@ -16,8 +17,10 @@ import {
   type SourceControlCliDiscoverySpec,
   type SourceControlManagedCliDiscoverySpec,
 } from "@t3tools/source-control-core/server/discovery";
+import { randomUuidV4 } from "@t3tools/provider-core/server/randomUuid";
 import * as SourceControlHost from "@t3tools/source-control-core/server/SourceControlHost";
 import * as SourceControlProvider from "@t3tools/source-control-core/server/SourceControlProvider";
+import { parsePullRequestUrl } from "../shared/definition.ts";
 
 import * as GitCafeApi from "./GitCafeApi.ts";
 import * as GitCafeCredentials from "./GitCafeCredentials.ts";
@@ -76,7 +79,7 @@ const cliDiscovery = {
     const failure = cliFailure(input.stderr) ?? cliFailure(input.stdout);
     if (failure)
       return providerAuth({
-        // Only a refusal says the login is gone; a forbidden or offline answer says nothing.
+        // Forbidden/offline responses do not establish that a login is gone.
         status:
           failure.code === "AUTHENTICATION_REQUIRED" || failure.status === 401
             ? "unauthenticated"
@@ -146,10 +149,8 @@ const RepositoryAdmission = Schema.Struct({
   owner: TrimmedNonEmptyString,
   name: TrimmedNonEmptyString,
 });
-const CreatedRepository = Schema.Struct({
-  data: Schema.Struct({ resource: RepositoryAdmission }),
-});
-const decodeCreatedRepository = Schema.decodeEffect(Schema.fromJsonString(CreatedRepository));
+const RepositoryId = Schema.Struct({ id: TrimmedNonEmptyString });
+const CreatedPull = Schema.Struct({ number: PositiveInt });
 const encodeBranches = Schema.encodeSync(Schema.fromJsonString(Schema.Array(Schema.String)));
 
 interface Target {
@@ -166,12 +167,10 @@ const cloneUrls = (target: Target) => ({
 const isSshRemote = (remoteUrl: string | undefined) =>
   remoteUrl !== undefined && (/^ssh:\/\//iu.test(remoteUrl) || /^[^/:]+@[^/:]+:/u.test(remoteUrl));
 
-const pullUrlPattern = /^https:\/\/([^/]+)\/([^/]+\/[^/]+)\/pulls\/(\d+)\/?(?:[?#].*)?$/u;
-
 export const make = Effect.gen(function* () {
   const api = yield* GitCafeApi.GitCafeApi;
   const host = yield* SourceControlHost.SourceControlHost;
-  const credentials = yield* GitCafeCredentials.GitCafeCredentials;
+  const fileSystem = yield* FileSystem.FileSystem;
 
   const error = (operation: string, cwd: string, detail: string, cause?: unknown) =>
     new SourceControlProviderError({
@@ -197,33 +196,6 @@ export const make = Effect.gen(function* () {
         ),
       ),
     );
-  const cafe = (operation: string, cwd: string, target: Target, args: ReadonlyArray<string>) =>
-    credentials
-      .cliEnv(target.host)
-      .pipe(
-        Effect.flatMap((env) =>
-          host.process.run({
-            operation: `GitCafeSourceControlProvider.${operation}`,
-            command: "cafe",
-            cwd,
-            args: [...cliArgs(target.host), ...args],
-            env: { CAFE_OUTPUT: "json", ...env },
-            timeoutMs: 30_000,
-          }),
-        ),
-      )
-      .pipe(
-        Effect.mapError((cause) =>
-          error(
-            operation,
-            cwd,
-            (cause._tag === "VcsProcessExitError" && cliFailure(cause.detail)?.message) ||
-              "GitCafe CLI command failed.",
-            cause,
-          ),
-        ),
-      );
-
   const resolveTarget = Effect.fn("GitCafeSourceControlProvider.resolveTarget")(function* (
     operation: string,
     input: {
@@ -269,15 +241,15 @@ export const make = Effect.gen(function* () {
     readonly context?: SourceControlProvider.SourceControlProviderContext;
     readonly reference: string;
   }) {
-    const match = pullUrlPattern.exec(input.reference.trim());
-    const urlHost = match?.[1] ? GitCafeHosts.gitCafeHost(match[1]) : null;
+    const match = parsePullRequestUrl(input.reference.trim());
+    const urlHost = match === null ? null : GitCafeHosts.gitCafeHost(match.host);
     const target: Target =
-      urlHost && match?.[2]
-        ? { host: urlHost, repository: match[2] }
+      urlHost && match
+        ? { host: urlHost, repository: match.repository }
         : yield* resolveTarget("getChangeRequest", input);
     const number = match
       ? urlHost
-        ? match[3]
+        ? String(match.number)
         : undefined
       : /^#?([1-9]\d*)$/u.exec(input.reference.trim())?.[1];
     if (number === undefined)
@@ -342,7 +314,7 @@ export const make = Effect.gen(function* () {
           );
           for (const pull of page.items) {
             if (pull.sourceBranch !== branch || items.length >= limit) continue;
-            // List rows omit fork identity, so only the branch's own rows are read in full.
+            // List rows omit fork identity; read matching branches in full.
             const detail = yield* getPull({
               cwd: input.cwd,
               reference: `https://${target.host}/${target.repository}/pulls/${pull.number}`,
@@ -371,21 +343,42 @@ export const make = Effect.gen(function* () {
             ? `${source.owner}/${target.repository.split("/")[1]}`
             : target.repository);
         const branch = SourceControlProvider.sourceBranch(input);
-        yield* cafe("createChangeRequest", input.cwd, target, [
-          "pr",
-          "create",
-          "--json",
-          "--repo",
-          target.repository,
-          "--head",
-          sourceRepository === target.repository ? branch : `${sourceRepository}:${branch}`,
-          "--base",
-          input.target?.refName ?? input.baseRefName,
-          "--title",
-          input.title,
-          "--body-file",
-          input.bodyFile,
-        ]);
+        // GitCafe names the head by its repository's id, so the head repository is looked up first.
+        const head = yield* read(
+          "createChangeRequest",
+          input.cwd,
+          { host: target.host, path: `/repos/${sourceRepository}` },
+          RepositoryId,
+        );
+        const description = yield* fileSystem
+          .readFileString(input.bodyFile)
+          .pipe(
+            Effect.mapError((cause) =>
+              error(
+                "createChangeRequest",
+                input.cwd,
+                "Could not read the pull request description.",
+                cause,
+              ),
+            ),
+          );
+        yield* read(
+          "createChangeRequest",
+          input.cwd,
+          {
+            host: target.host,
+            method: "POST",
+            path: `/repos/${target.repository}/pulls`,
+            body: {
+              repo: head.id,
+              source: branch,
+              target: input.target?.refName ?? input.baseRefName,
+              title: input.title,
+              ...(description.trim().length === 0 ? {} : { description }),
+            },
+          },
+          CreatedPull,
+        );
       },
     ),
     getRepositoryCloneUrls: Effect.fn("GitCafeSourceControlProvider.getRepositoryCloneUrls")(
@@ -403,25 +396,25 @@ export const make = Effect.gen(function* () {
     createRepository: Effect.fn("GitCafeSourceControlProvider.createRepository")(function* (input) {
       const target = yield* resolveTarget("createRepository", input);
       const [owner = "", name = ""] = target.repository.split("/");
-      const output = yield* cafe("createRepository", input.cwd, target, [
-        "repo",
-        "create",
-        name,
-        "--org",
-        owner,
-        "--visibility",
-        input.visibility,
-        "--json",
-      ]);
-      const created = yield* decodeCreatedRepository(output.stdout).pipe(
-        Effect.mapError((cause) =>
-          error("createRepository", input.cwd, "GitCafe returned an unreadable response.", cause),
-        ),
+      const pending = yield* read(
+        "createRepository",
+        input.cwd,
+        {
+          host: target.host,
+          method: "POST",
+          path: `/orgs/${owner}/repos`,
+          body: {
+            name,
+            requestKey: yield* randomUuidV4,
+            visibility: input.visibility,
+            defaultBranch: "main",
+          },
+        },
+        RepositoryAdmission,
       );
-      // GitCafe admits a repository asynchronously: `cafe repo create` answers while admission is
-      // still running, so wait for it to settle the way `cafe repo create --clone` does.
+      // GitCafe admits a repository asynchronously and answers while admission is still running,
+      // so wait for it to settle the way `cafe repo create --clone` does.
       const settled = (state: string) => state === "complete" || state === "blocked";
-      const pending = created.data.resource;
       const resource = settled(pending.state)
         ? pending
         : yield* read(
@@ -458,7 +451,7 @@ export const make = Effect.gen(function* () {
       );
       return repository.defaultBranch;
     }),
-    // `cafe` has no forced checkout, so the branch is fetched and switched to with git.
+    // `cafe` has no forced checkout.
     checkoutChangeRequest: Effect.fn("GitCafeSourceControlProvider.checkoutChangeRequest")(
       function* (input) {
         const pull = yield* getPull(input);
@@ -499,8 +492,10 @@ export const make = Effect.gen(function* () {
             yield* git.execute({
               operation: "GitCafeSourceControlProvider.checkoutChangeRequest",
               cwd: input.cwd,
+              // The upstream is recorded next, through the host's serialized config write.
               args: [
                 "checkout",
+                "--no-track",
                 "-B",
                 localBranch,
                 `refs/remotes/${remoteName}/${pull.headRefName}`,

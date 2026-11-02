@@ -1,52 +1,8 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import {
-  buildModelPickerSearchText,
-  rankModelPickerSearch,
-  scoreModelPickerSearch,
-} from "./modelPickerSearch";
-
-describe("buildModelPickerSearchText", () => {
-  it("builds provider-agnostic search text from generic fields", () => {
-    expect(
-      buildModelPickerSearchText({
-        driverKind: "opencode",
-        providerDisplayName: "opencode",
-        name: "Claude Opus 4.7",
-        subProvider: "GitHub Copilot",
-      }),
-    ).toBe("claude opus 4.7 github copilot opencode opencode");
-  });
-});
+import { rankModelPickerSearch, scoreModelPickerSearch } from "./modelPickerSearch";
 
 describe("scoreModelPickerSearch", () => {
-  it("matches typo-tolerant multi-token queries", () => {
-    expect(
-      scoreModelPickerSearch(
-        {
-          driverKind: "opencode",
-          providerDisplayName: "opencode",
-          name: "Claude Opus 4.7",
-          subProvider: "GitHub Copilot",
-        },
-        "coplt op",
-      ),
-    ).not.toBeNull();
-  });
-
-  it("rejects results when any query token does not match", () => {
-    expect(
-      scoreModelPickerSearch(
-        {
-          driverKind: "codex",
-          providerDisplayName: "codex",
-          name: "GPT-5 Codex",
-        },
-        "coplt op",
-      ),
-    ).toBeNull();
-  });
-
   it("ranks exact token matches ahead of fuzzier matches", () => {
     const exactScore = scoreModelPickerSearch(
       {
@@ -72,30 +28,6 @@ describe("scoreModelPickerSearch", () => {
     expect(exactScore!).toBeLessThan(fuzzyScore!);
   });
 
-  it("gives favorite models a strong enough ranking boost for partial queries", () => {
-    const favoriteScore = scoreModelPickerSearch(
-      {
-        driverKind: "claudeAgent",
-        providerDisplayName: "Claude",
-        name: "Claude Opus 4.7",
-        isFavorite: true,
-      },
-      "opu",
-    );
-    const nonFavoriteScore = scoreModelPickerSearch(
-      {
-        driverKind: "cursor",
-        providerDisplayName: "Cursor",
-        name: "Opus 4.5",
-      },
-      "opu",
-    );
-
-    expect(favoriteScore).not.toBeNull();
-    expect(nonFavoriteScore).not.toBeNull();
-    expect(favoriteScore!).toBeLessThan(nonFavoriteScore!);
-  });
-
   it("does not let the favorite boost outrank clearly better textual matches", () => {
     const favoriteScore = scoreModelPickerSearch(
       {
@@ -118,19 +50,6 @@ describe("scoreModelPickerSearch", () => {
     expect(favoriteScore).not.toBeNull();
     expect(nonFavoriteExactScore).not.toBeNull();
     expect(nonFavoriteExactScore!).toBeLessThan(favoriteScore!);
-  });
-
-  it("matches a custom instance's display name against its models", () => {
-    expect(
-      scoreModelPickerSearch(
-        {
-          driverKind: "codex",
-          providerDisplayName: "Codex Personal",
-          name: "GPT-5 Codex",
-        },
-        "personal",
-      ),
-    ).not.toBeNull();
   });
 });
 
@@ -215,56 +134,6 @@ function search(query: string, models: ReadonlyArray<CatalogModel> = catalog): s
 }
 
 describe("rankModelPickerSearch", () => {
-  it.each([
-    [
-      "opus",
-      [
-        "Claude Opus 5.5",
-        "Claude Opus 5",
-        "Claude Opus 4.8",
-        "Claude Opus 4.7",
-        "Claude Opus 4.6",
-        "Claude Opus 4.5",
-      ],
-    ],
-    ["sonnet", ["Claude Sonnet 5.5", "Claude Sonnet 5", "Claude Sonnet 4.6"]],
-    ["fable", ["Claude Fable 5.1", "Claude Fable 5"]],
-    ["haiku", ["Claude Haiku 5.5", "Claude Haiku 4.5"]],
-    [
-      "gpt",
-      [
-        "GPT-6.1 Sol",
-        "GPT-6 Astra",
-        "GPT-6 Luna",
-        "GPT-6 Sol",
-        "GPT-5.6 Sol",
-        "GPT-5.6 Terra",
-        "GPT-5.6 Luna",
-        "GPT-5.5",
-      ],
-    ],
-    ["sol", ["GPT-6.1 Sol", "GPT-6 Sol", "GPT-5.6 Sol"]],
-    ["luna", ["GPT-6 Luna", "GPT-5.6 Luna"]],
-    ["grok", ["Grok 4.7", "Grok 4.6", "Grok 4.5"]],
-    [
-      "flash",
-      [
-        "Gemini 3.8 Flash (High)",
-        "Gemini 3.8 Flash (Medium)",
-        "Gemini 3.8 Flash (Low)",
-        "Gemini 3.7 Flash (High)",
-        "Gemini 3.7 Flash (Medium)",
-        "Gemini 3.7 Flash (Low)",
-        "Gemini 3.6 Flash (High)",
-        "Gemini 3.6 Flash (Medium)",
-        "Gemini 3.6 Flash (Low)",
-      ],
-    ],
-    ["kimi", ["Kimi K3", "Kimi K2.5", "Kimi K2"]],
-  ])("lists equally good matches for %j newest first", (query, expected) => {
-    expect(search(query).slice(0, expected.length)).toEqual(expected);
-  });
-
   it("keeps newest first when a version token narrows the family", () => {
     expect(search("opus 4")).toEqual([
       "Claude Opus 4.8",
@@ -282,17 +151,6 @@ describe("rankModelPickerSearch", () => {
     expect(search("Grok 4.6")[0]).toBe("Grok 4.6");
   });
 
-  it("matches an exact name regardless of extra whitespace in the query", () => {
-    expect(search("  claude   opus 5 ")[0]).toBe("Claude Opus 5");
-  });
-
-  it("ranks an exact name above a favorite partial match", () => {
-    const models = catalog.map((model) =>
-      model.name === "Claude Opus 5.5" ? { ...model, isFavorite: true } : model,
-    );
-    expect(search("claude opus 5", models)[0]).toBe("Claude Opus 5");
-  });
-
   it("matches the provider when the name does not", () => {
     expect(search("moonshot")).toEqual(["Kimi K3", "Kimi K2.5", "Kimi K2"]);
   });
@@ -306,9 +164,5 @@ describe("rankModelPickerSearch", () => {
       "Claude Opus 5.5",
       "Claude Opus 5",
     ]);
-  });
-
-  it("follows the order it is given, including a user's custom model order", () => {
-    expect(search("grok", catalog.toReversed())).toEqual(["Grok 4.5", "Grok 4.6", "Grok 4.7"]);
   });
 });

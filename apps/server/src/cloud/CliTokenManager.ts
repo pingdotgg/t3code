@@ -44,9 +44,7 @@ const DEVICE_CODE_GRANT_TYPE = "urn:ietf:params:oauth:grant-type:device_code";
 const DEVICE_AUTHORIZATION_DEFAULT_INTERVAL = Duration.seconds(5);
 // RFC 8628 §3.5: a slow_down response means "add 5 seconds to the interval".
 const DEVICE_AUTHORIZATION_SLOW_DOWN_INCREMENT = Duration.seconds(5);
-// Bounds one token or device-authorization request, including reading the
-// body. A stalled refresh holds the manager's semaphore and blocks every
-// other credential call.
+// A stalled OAuth request holds the semaphore and blocks all credential calls.
 const OAUTH_REQUEST_TIMEOUT = Duration.seconds(10);
 const boldTerminalText = (value: string): string => `\u001b[1m${value}\u001b[22m`;
 
@@ -79,48 +77,48 @@ const readLoopbackAuthorizationAction = Effect.fn(
   }
 });
 
-export const waitForLoopbackAuthorization = Effect.fn(
-  "cloud.cli_token.wait_for_loopback_authorization",
-)(function* <E, R>(input: {
-  readonly authorizationUrl: string;
-  readonly callback: Effect.Effect<string, E, R>;
-  readonly terminal: Terminal.Terminal;
-  readonly launchBrowser: (
-    url: string,
-  ) => Effect.Effect<void, ExternalLauncher.ExternalLauncherError>;
-}) {
-  return yield* Effect.scoped(
-    Effect.gen(function* () {
-      const terminalInput = yield* input.terminal.readInput;
-      while (true) {
-        const result = yield* Effect.raceFirst(
-          input.callback.pipe(
-            Effect.map((code): LoopbackAuthorizationResult => ({
-              _tag: "AuthorizationCode",
-              code,
-            })),
-          ),
-          readLoopbackAuthorizationAction(terminalInput),
-        );
-        if (typeof result !== "string") {
-          return result;
-        }
-        if (result === "headless") {
-          return { _tag: "HeadlessRequested" } as const;
-        }
-        yield* input
-          .launchBrowser(input.authorizationUrl)
-          .pipe(
-            Effect.catch(() =>
-              Console.warn(
-                `Could not open a browser on this device. Open the URL above manually, or press ${boldTerminalText("H")} to switch to headless mode.`,
-              ),
+const waitForLoopbackAuthorization = Effect.fn("cloud.cli_token.wait_for_loopback_authorization")(
+  function* <E, R>(input: {
+    readonly authorizationUrl: string;
+    readonly callback: Effect.Effect<string, E, R>;
+    readonly terminal: Terminal.Terminal;
+    readonly launchBrowser: (
+      url: string,
+    ) => Effect.Effect<void, ExternalLauncher.ExternalLauncherError>;
+  }) {
+    return yield* Effect.scoped(
+      Effect.gen(function* () {
+        const terminalInput = yield* input.terminal.readInput;
+        while (true) {
+          const result = yield* Effect.raceFirst(
+            input.callback.pipe(
+              Effect.map((code): LoopbackAuthorizationResult => ({
+                _tag: "AuthorizationCode",
+                code,
+              })),
             ),
+            readLoopbackAuthorizationAction(terminalInput),
           );
-      }
-    }),
-  );
-});
+          if (typeof result !== "string") {
+            return result;
+          }
+          if (result === "headless") {
+            return { _tag: "HeadlessRequested" } as const;
+          }
+          yield* input
+            .launchBrowser(input.authorizationUrl)
+            .pipe(
+              Effect.catch(() =>
+                Console.warn(
+                  `Could not open a browser on this device. Open the URL above manually, or press ${boldTerminalText("H")} to switch to headless mode.`,
+                ),
+              ),
+            );
+        }
+      }),
+    );
+  },
+);
 
 const PersistedToken = Schema.Struct({
   accessToken: Schema.String,
@@ -325,44 +323,44 @@ const exchangeToken = Effect.fn("cloud.cli_token.exchange")(function* (
     Effect.flatMap((response) => readTokenResponse(response, params)),
     Effect.timeout(OAUTH_REQUEST_TIMEOUT),
     Effect.catchTags({
-      HttpClientError: (cause) =>
-        Effect.gen(function* () {
-          const reason = cause.reason;
-          if (
-            params.grant_type !== "refresh_token" ||
-            reason._tag !== "StatusCodeError" ||
-            !isPermanentRefreshStatus(reason.response.status)
-          ) {
-            return yield* cause;
-          }
-          // Reading a rejection body shares the exchange budget without losing
-          // the known status when the body stalls or cannot be decoded.
-          const elapsed = Duration.toMillis(
-            Duration.nanos((yield* Clock.monotonicTimeNanos) - startedAt),
-          );
-          const body = yield* reason.response.json.pipe(
-            Effect.timeout(Math.max(0, Duration.toMillis(OAUTH_REQUEST_TIMEOUT) - elapsed)),
-            Effect.mapError(
-              (cause) =>
-                new CloudCliCredentialRefreshError({
-                  status: reason.response.status,
-                  cause: new HttpClientError.HttpClientError({
-                    reason: new HttpClientError.StatusCodeError({
-                      request: reason.request,
-                      response: reason.response,
-                      cause,
-                    }),
+      // The enclosing operation owns the span for this inline handler.
+      HttpClientError: Effect.fnUntraced(function* (cause) {
+        const reason = cause.reason;
+        if (
+          params.grant_type !== "refresh_token" ||
+          reason._tag !== "StatusCodeError" ||
+          !isPermanentRefreshStatus(reason.response.status)
+        ) {
+          return yield* cause;
+        }
+        // Reading a rejection body shares the exchange budget without losing
+        // the known status when the body stalls or cannot be decoded.
+        const elapsed = Duration.toMillis(
+          Duration.nanos((yield* Clock.monotonicTimeNanos) - startedAt),
+        );
+        const body = yield* reason.response.json.pipe(
+          Effect.timeout(Math.max(0, Duration.toMillis(OAUTH_REQUEST_TIMEOUT) - elapsed)),
+          Effect.mapError(
+            (cause) =>
+              new CloudCliCredentialRefreshError({
+                status: reason.response.status,
+                cause: new HttpClientError.HttpClientError({
+                  reason: new HttpClientError.StatusCodeError({
+                    request: reason.request,
+                    response: reason.response,
+                    cause,
                   }),
                 }),
-            ),
-          );
-          const diagnostic = decodeOAuthRefreshErrorResponse(body);
-          return yield* new CloudCliCredentialRefreshError({
-            cause,
-            status: reason.response.status,
-            ...(Option.isSome(diagnostic) ? { oauthErrorCode: diagnostic.value.error } : {}),
-          });
-        }),
+              }),
+          ),
+        );
+        const diagnostic = decodeOAuthRefreshErrorResponse(body);
+        return yield* new CloudCliCredentialRefreshError({
+          cause,
+          status: reason.response.status,
+          ...(Option.isSome(diagnostic) ? { oauthErrorCode: diagnostic.value.error } : {}),
+        });
+      }),
     }),
   );
 });
@@ -407,10 +405,7 @@ const pollDeviceToken = Effect.fn("cloud.cli_token.poll_device_token")(function*
       Effect.asSome,
       Effect.catchIf(isTransportError, () => Effect.succeedNone),
     );
-    // Transport failures and upstream 5xx are transient while the device code
-    // is still valid. RFC 8628 §3.5 asks clients to back off before retrying,
-    // so widen the interval like slow_down; drain the body so the connection
-    // returns to the pool for the next poll.
+    // Retry transport errors and 5xx while the device code is valid, backing off per RFC 8628 §3.5. Drain bodies to reuse connections.
     if (Option.isNone(response) || response.value.status >= 500) {
       if (Option.isSome(response)) yield* Effect.ignore(response.value.text);
       interval = Duration.sum(interval, DEVICE_AUTHORIZATION_SLOW_DOWN_INCREMENT);
@@ -471,7 +466,7 @@ export const deviceAuthorizationLogin = Effect.fn("cloud.cli_token.device_author
   },
 );
 
-/** @public Service construction is part of the canonical Effect module API. */
+/** @public */
 export const make = Effect.gen(function* () {
   const crypto = yield* Crypto.Crypto;
   const httpClient = yield* HttpClient.HttpClient;
@@ -544,10 +539,7 @@ export const make = Effect.gen(function* () {
       ),
       Layer.build,
     );
-    // The hosted /connect page establishes a Clerk session before forwarding
-    // the request to /oauth/authorize with the loopback redirect URI. Sending
-    // a signed-out browser to /oauth/authorize directly loses the authorize
-    // parameters across Clerk's sign-in redirect (#5051).
+    // /connect establishes a Clerk session first; /oauth/authorize loses parameters across sign-in.
     const authorizationUrl = buildConnectAuthorizeRequestUrl({
       hostedAppUrl,
       state,

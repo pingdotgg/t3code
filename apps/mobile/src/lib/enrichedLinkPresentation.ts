@@ -1,32 +1,86 @@
-import type { ComposerContextRecord } from "@t3tools/contracts";
-import { contextChipPresentation } from "./composerChipPresentation";
-import type { MarkdownFileIcon } from "./markdownLinks";
+import type { ComposerContextRecord, EnvironmentId, ThreadId } from "@t3tools/contracts";
+import {
+  composerChipSizeSuffix,
+  contextChipIcon,
+  contextChipPresentation,
+  contextRecordFileName,
+  type ContextChipIconRef,
+  UNAVAILABLE_CONTEXT_CHIP_PRESENTATION,
+} from "./composerChipPresentation";
 import type { SelectableMarkdownSkill } from "../native/SelectableMarkdownText.types";
-import { parseComposerContextHref } from "@t3tools/shared/composerContextReferences";
-
-const CONTEXT_ICONS: Readonly<Record<string, MarkdownFileIcon>> = {
-  photo: "image",
-  "play.rectangle": "video",
-  terminal: "bash",
-  "cursorarrow.click": "react",
-  "text.bubble": "markdown",
-  "git-pull-request": "git",
-  cube: "mcp",
-  doc: "default",
-};
+import {
+  formatComposerContextHref,
+  parseComposerContextHref,
+} from "@t3tools/shared/composerContextReferences";
+import { hasThreadLinks, parseThreadLinkHref } from "@t3tools/shared/threadLinks";
 
 export function enrichedContextLinkPresentation(
   href: string,
   records?: ReadonlyArray<ComposerContextRecord>,
-) {
+): { accent?: string; icon: ContextChipIconRef; label?: string } | undefined {
   const reference = parseComposerContextHref(href);
   if (!reference) return undefined;
   const record = records?.find((candidate) => candidate.contextId === reference.contextId);
-  const presentation = contextChipPresentation(reference.kind, record);
+  const presentation =
+    records && !record
+      ? UNAVAILABLE_CONTEXT_CHIP_PRESENTATION
+      : contextChipPresentation(reference.kind, record);
+  const size = composerChipSizeSuffix(record);
   return {
-    color: presentation.accent,
-    icon: CONTEXT_ICONS[presentation.symbol] ?? "default",
+    ...(presentation.accent ? { accent: presentation.accent } : {}),
+    icon: contextChipIcon(presentation, contextRecordFileName(record)),
+    ...(record && size ? { label: `${record.label} · ${size}` } : {}),
   };
+}
+
+export function enrichedThreadLinkPresentation(
+  href: string,
+): { accent?: string; icon: ContextChipIconRef } | undefined {
+  if (!parseThreadLinkHref(href)) return undefined;
+  const presentation = contextChipPresentation("thread");
+  return {
+    ...(presentation.accent ? { accent: presentation.accent } : {}),
+    icon: contextChipIcon(presentation, ""),
+  };
+}
+
+export interface ThreadChipTarget {
+  readonly href: string;
+  readonly environmentId: EnvironmentId;
+  readonly threadId: ThreadId;
+  readonly link: boolean;
+}
+
+export function threadChipTargets(
+  environmentId: EnvironmentId,
+  markdown: string,
+  records?: ReadonlyArray<ComposerContextRecord>,
+): ReadonlyArray<ThreadChipTarget> {
+  const targets = new Map<string, ThreadChipTarget>();
+  if (hasThreadLinks(markdown)) {
+    for (const [, href = ""] of markdown.matchAll(/\]\((t3-thread:\/\/v[12]\/[^\s)]+)\)/g)) {
+      const link = parseThreadLinkHref(href);
+      if (link) {
+        targets.set(href, {
+          href,
+          environmentId: link.environmentId ?? environmentId,
+          threadId: link.threadId,
+          link: true,
+        });
+      }
+    }
+  }
+  for (const record of records ?? []) {
+    if (record.kind !== "thread" || !("threadId" in record)) continue;
+    const href = formatComposerContextHref("thread", record.contextId);
+    targets.set(href, {
+      href,
+      environmentId: record.environmentId,
+      threadId: record.threadId,
+      link: false,
+    });
+  }
+  return [...targets.values()];
 }
 
 export function enrichedLinkVariantPattern(url: string) {

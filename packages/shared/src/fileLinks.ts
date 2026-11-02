@@ -9,11 +9,7 @@ const POSITION_SUFFIX_CAPTURE_PATTERN = /:(\d+)(?::(\d+))?$/;
 
 const POSITION_HASH_PATTERN = /^#L(\d+)(?:C(\d+))?$/i;
 
-/**
- * Turns a `file:` URL into a host path, still percent-encoded so callers that
- * decode every destination in one place do not decode file URLs twice. A
- * non-localhost authority becomes a UNC share.
- */
+/** Keeps paths percent-encoded to avoid double decoding; non-localhost authorities become UNC shares. */
 export function parseFileUrlHref(
   href: string,
 ): { readonly path: string; readonly hash: string } | null {
@@ -61,7 +57,7 @@ function isWindowsPathStyle(value: string): boolean {
   return isWindowsAbsolutePath(value) || /[A-Za-z]:\\/.test(value);
 }
 
-function joinPath(base: string, next: string, separator: "/" | "\\"): string {
+export function joinPath(base: string, next: string, separator: "/" | "\\"): string {
   const cleanBase = base.replace(/[\\/]+$/, "");
   if (separator === "\\") {
     return `${cleanBase}\\${next.replaceAll("/", "\\")}`;

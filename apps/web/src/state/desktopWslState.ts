@@ -31,7 +31,7 @@ function getDesktopWslStateBridge(): DesktopWslStateBridge | undefined {
   return typeof window === "undefined" ? undefined : window.desktopBridge;
 }
 
-export function createDesktopWslStateAtom(getBridge: () => DesktopWslStateBridge | undefined) {
+function createDesktopWslStateAtom(getBridge: () => DesktopWslStateBridge | undefined) {
   const loadDesktopWslState = Effect.fn("loadDesktopWslState")(function* () {
     const bridge = getBridge();
     if (!bridge) {

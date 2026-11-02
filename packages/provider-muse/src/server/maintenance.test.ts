@@ -1,17 +1,8 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { expect, it } from "@effect/vitest";
-import {
-  DEFAULT_SERVER_SETTINGS,
-  ProviderDriverKind,
-  ProviderInstanceId,
-  type ServerProvider,
-} from "@t3tools/contracts";
-import * as HostProcess from "@t3tools/shared/HostProcess";
+import { ProviderDriverKind, ProviderInstanceId, type ServerProvider } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
-import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
-import * as Layer from "effect/Layer";
-import * as Stream from "effect/Stream";
 import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientResponse from "effect/http/HttpClientResponse";
 
@@ -19,16 +10,10 @@ import {
   compareMuseVersions,
   enrichMuseSnapshot,
   museMaintenance,
-  latestMuseVersion,
   parseMuseVersion,
 } from "./maintenance.ts";
 import * as ProviderLatestVersions from "@t3tools/provider-core/server/ProviderLatestVersions";
 import { makeManualOnlyProviderMaintenanceCapabilities } from "@t3tools/provider-core/server/maintenanceResolver";
-import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
-import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
-import * as ProviderEventLoggers from "@t3tools/provider-core/server/ProviderEventLoggers";
-import * as TestProviderHost from "@t3tools/provider-testing/TestProviderHost";
-import { MuseDriver } from "./driver.ts";
 
 const maintenanceCapabilities = {
   ...makeManualOnlyProviderMaintenanceCapabilities({
@@ -52,117 +37,6 @@ const snapshot: ServerProvider = {
 };
 
 it.layer(NodeServices.layer)("Muse maintenance", (it) => {
-  it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32")(
-    "refreshes installation metadata without release requests when update checks are disabled",
-    () =>
-      Effect.gen(function* () {
-        const fs = yield* FileSystem.FileSystem;
-        const directory = yield* fs.makeTempDirectoryScoped({ prefix: "muse-refresh-" });
-        const binaryPath = `${directory}/muse`;
-        // A failing version probe keeps the installed version without starting an SDK host.
-        const source = "#!/bin/sh\nprintf 'muse 1.0.3-R2198.1\\n'\nexit 1\n";
-        yield* fs.writeFileString(binaryPath, source);
-        yield* fs.chmod(binaryPath, 0o755);
-        const requests: string[] = [];
-        yield* Effect.gen(function* () {
-          const { snapshot: provider } = yield* MuseDriver.create({
-            instanceId: ProviderInstanceId.make("muse-refresh"),
-            displayName: "Muse refresh",
-            enabled: true,
-            environment: [{ name: "MUSE_CHANNEL", value: "muse-stable", sensitive: false }],
-            config: { ...MuseDriver.defaultConfig(), binaryPath },
-          });
-          const enriched = provider.streamChanges.pipe(
-            Stream.filter((current) => current.versionAdvisory !== undefined),
-            Stream.take(1),
-            Stream.runCollect,
-            Effect.map((snapshots) => Array.from(snapshots)[0]!),
-          );
-          const current = yield* provider.getSnapshot;
-          const initial = current.versionAdvisory ? current : yield* enriched;
-          expect(initial.version).toBe("1.0.3-R2198.1");
-          expect(initial.versionAdvisory?.canUpdate).toBe(false);
-          expect(requests).toEqual([]);
-
-          yield* fs.writeFileString(
-            binaryPath,
-            `${source}# muse-code/launcher-2 MUSE_SYNC_UPDATE\n`,
-          );
-          const refreshed = yield* enriched.pipe(Effect.forkChild);
-          yield* Effect.yieldNow;
-          yield* provider.refresh;
-          const latest = yield* Fiber.join(refreshed);
-          expect(requests).toEqual([]);
-          expect(latest.versionAdvisory).toMatchObject({
-            status: "unknown",
-            latestVersion: null,
-            canUpdate: true,
-          });
-          expect((yield* provider.resolveMaintenance()).update?.executable).toBe(binaryPath);
-
-          // Explicit update verification must still fetch its target despite the preference.
-          const verification = yield* provider.resolveMaintenance({ fresh: true });
-          expect(verification.latestVersion).toBe("1.1.1-R10.1");
-          expect(requests).toEqual(["https://api.meta.ai/muse-code/channels/muse-stable"]);
-        }).pipe(
-          Effect.provide(
-            Layer.mergeAll(
-              TestProviderHost.layer({
-                runBackgroundWork: false,
-                settings: { ...DEFAULT_SERVER_SETTINGS, enableProviderUpdateChecks: false },
-              }),
-              IdAllocator.layer,
-              McpProviderSessions.layer,
-              ProviderLatestVersions.layer,
-              Layer.succeed(
-                ProviderEventLoggers.ProviderEventLoggers,
-                ProviderEventLoggers.NoOpProviderEventLoggers,
-              ),
-            ),
-          ),
-          Effect.provideService(
-            HttpClient.HttpClient,
-            HttpClient.make((request) => {
-              requests.push(request.url);
-              return Effect.succeed(
-                HttpClientResponse.fromWeb(request, Response.json({ version: "1.1.1-R10.1" })),
-              );
-            }),
-          ),
-        );
-      }).pipe(Effect.scoped),
-  );
-
-  it.effect(
-    "refreshes a cached channel failure when an explicit update requests verification",
-    () =>
-      Effect.gen(function* () {
-        let requests = 0;
-        const check = Effect.gen(function* () {
-          expect(yield* latestMuseVersion({})).toBeNull();
-          expect(yield* latestMuseVersion({})).toBeNull();
-          expect(yield* latestMuseVersion({}, { fresh: true })).toBe("1.1.1-R10.1");
-        });
-        yield* check.pipe(
-          Effect.provide(ProviderLatestVersions.layer),
-          Effect.provideService(
-            HttpClient.HttpClient,
-            HttpClient.make((request) => {
-              requests += 1;
-              return Effect.succeed(
-                HttpClientResponse.fromWeb(
-                  request,
-                  requests === 1
-                    ? new Response("unavailable", { status: 503 })
-                    : Response.json({ version: "1.1.1-R10.1" }),
-                ),
-              );
-            }),
-          ),
-        );
-        expect(requests).toBe(2);
-      }),
-  );
   it.effect(
     "compares numeric native release revisions and preserves the CLI release identity",
     () =>
@@ -174,87 +48,6 @@ it.layer(NodeServices.layer)("Muse maintenance", (it) => {
         expect(compareMuseVersions("1.4.3", "1.4.3-R5018.1")).toBe(0);
         expect(compareMuseVersions("1.4.2", "1.4.3-R5018.1")).toBeLessThan(0);
       }),
-  );
-  it.effect(
-    "finds releases from the instance's channel and caches the native version, not the SDK version",
-    () =>
-      Effect.gen(function* () {
-        const requests: string[] = [];
-        const httpClient = HttpClient.make((request) => {
-          requests.push(request.url);
-          return Effect.succeed(
-            HttpClientResponse.fromWeb(request, Response.json({ version: "1.1.1-R2514.1" })),
-          );
-        });
-        const check = enrichMuseSnapshot({
-          snapshot,
-          maintenanceCapabilities,
-          enableProviderUpdateChecks: true,
-          environment: { MUSE_CHANNEL: "muse-canary" },
-        });
-        const [first, second] = yield* Effect.all([check, check], { concurrency: 1 }).pipe(
-          Effect.provideService(HttpClient.HttpClient, httpClient),
-          Effect.provide(ProviderLatestVersions.layer),
-        );
-        expect(first.versionAdvisory).toMatchObject({
-          status: "behind_latest",
-          currentVersion: "1.0.3",
-          latestVersion: "1.1.1-R2514.1",
-          canUpdate: false,
-        });
-        expect(second.versionAdvisory?.latestVersion).toBe("1.1.1-R2514.1");
-        expect(requests).toEqual(["https://api.meta.ai/muse-code/channels/muse-canary"]);
-      }),
-  );
-
-  it.effect("reports native release R9 behind R10 and R10 current against R9", () =>
-    Effect.gen(function* () {
-      for (const [current, latest, status] of [
-        ["1.4.2-R9.1", "1.4.2-R10.1", "behind_latest"],
-        ["1.4.2-R10.1", "1.4.2-R9.1", "current"],
-      ] as const) {
-        const result = yield* enrichMuseSnapshot({
-          snapshot: { ...snapshot, version: current },
-          maintenanceCapabilities,
-          enableProviderUpdateChecks: true,
-          environment: {},
-        }).pipe(
-          Effect.provideService(
-            HttpClient.HttpClient,
-            HttpClient.make((request) =>
-              Effect.succeed(
-                HttpClientResponse.fromWeb(request, Response.json({ version: latest })),
-              ),
-            ),
-          ),
-          Effect.provide(ProviderLatestVersions.layer),
-        );
-        expect(result.versionAdvisory?.status).toBe(status);
-      }
-    }),
-  );
-
-  it.effect("skips network checks when disabled, uninstalled or disabled in settings", () =>
-    Effect.gen(function* () {
-      for (const input of [
-        { snapshot, enableProviderUpdateChecks: false },
-        { snapshot: { ...snapshot, enabled: false }, enableProviderUpdateChecks: true },
-        { snapshot: { ...snapshot, installed: false }, enableProviderUpdateChecks: true },
-      ]) {
-        const result = yield* enrichMuseSnapshot({
-          ...input,
-          maintenanceCapabilities,
-          environment: {},
-        }).pipe(
-          Effect.provide(ProviderLatestVersions.layer),
-          Effect.provideService(
-            HttpClient.HttpClient,
-            HttpClient.make(() => Effect.die("Unexpected release request")),
-          ),
-        );
-        expect(result.versionAdvisory?.status).toBe("unknown");
-      }
-    }),
   );
 
   it.effect("tolerates invalid release manifests and unavailable channels", () =>

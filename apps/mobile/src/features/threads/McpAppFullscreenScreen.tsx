@@ -3,7 +3,7 @@ import { EnvironmentId, ThreadId, TurnItemId } from "@t3tools/contracts";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
 import { turnItemDetailRevision } from "@t3tools/client-runtime/work-log/item-detail";
 import { mcpAppFromToolItem } from "@t3tools/shared/toolOutput";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Pressable, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
@@ -29,13 +29,9 @@ function useConversationThreadId(
   requested: string | undefined,
 ): ThreadId {
   const shells = useThreadShells();
-  return useMemo(
-    () =>
-      requested !== undefined && descendsFrom(shells, environmentId, requested, threadId)
-        ? ThreadId.make(requested)
-        : threadId,
-    [shells, environmentId, threadId, requested],
-  );
+  return requested !== undefined && descendsFrom(shells, environmentId, requested, threadId)
+    ? ThreadId.make(requested)
+    : threadId;
 }
 
 function descendsFrom(
@@ -58,23 +54,25 @@ function descendsFrom(
   return false;
 }
 
-/**
- * The app is read from its stored tool call, never from the route, so a link
- * can only open an app that call really produced.
- */
+/** Resolve apps from stored tool calls so links cannot supply apps the call never produced. */
 export function McpAppFullscreenScreen({ route }: McpAppFullscreenScreenProps) {
   const navigation = useNavigation();
   const insets = useSafeAreaInsets();
-  // A plain goBack pops whatever is on top, so it only runs while this modal
-  // is: an exit that lands while another screen covers it (after a teardown
-  // wait) waits for the modal to be on top again, rather than popping that
-  // screen or being lost.
+  // Wait for focus before goBack; an exit under another screen must not pop that screen.
   const focused = useIsFocused();
-  const [exitRequested, setExitRequested] = useState(false);
-  const onClose = useCallback(() => {
-    if (navigation.isFocused()) navigation.goBack();
-    else setExitRequested(true);
-  }, [navigation]);
+  const exitPending = useRef(false);
+  const onClose = () => {
+    if (navigation.isFocused()) {
+      navigation.goBack();
+      return;
+    }
+    if (exitPending.current) return;
+    exitPending.current = true;
+    const unsubscribe = navigation.addListener("focus", () => {
+      unsubscribe();
+      navigation.goBack();
+    });
+  };
   const [size, setSize] = useState({ width: 0, height: 0 });
   const params = route.params;
   const environmentId = EnvironmentId.make(params.environmentId);
@@ -96,17 +94,18 @@ export function McpAppFullscreenScreen({ route }: McpAppFullscreenScreenProps) {
     }),
   );
   const item = detail.data?.item;
-  // One reference per app: the item is a new object on every refetch (a
-  // reconnect, for one), and a new reference would rebuild the app's host.
+  // Keep one reference per app; refetches must not rebuild the host.
   const derived = item?.type === "dynamic_tool" ? mcpAppFromToolItem(item) : undefined;
   const [app, setApp] = useState(derived);
   if (derived?.attachmentId !== app?.attachmentId) setApp(derived);
   const conversation = useThreadShell(scopeThreadRef(environmentId, conversationThreadId));
   const awaitingUser =
     conversation?.hasPendingApprovals === true || conversation?.hasPendingUserInput === true;
+  // A request for the user is server state with no local handler to react in.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- closes the focused screen through the navigator when the server asks the user for input or approval
   useEffect(() => {
-    if ((awaitingUser || exitRequested) && focused) navigation.goBack();
-  }, [awaitingUser, exitRequested, focused, navigation]);
+    if (awaitingUser && focused && !exitPending.current) navigation.goBack();
+  }, [awaitingUser, focused, navigation]);
 
   return (
     <View className="flex-1 bg-screen" style={{ paddingTop: insets.top }}>

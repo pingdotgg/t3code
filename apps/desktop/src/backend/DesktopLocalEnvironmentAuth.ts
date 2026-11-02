@@ -63,7 +63,7 @@ export class DesktopLocalEnvironmentAuth extends Context.Service<
   }
 >()("@t3tools/desktop/backend/DesktopLocalEnvironmentAuth") {}
 
-/** @public Service construction is part of the canonical Effect module API. */
+/** @public */
 export const make = Effect.gen(function* () {
   const pool = yield* DesktopBackendPool.DesktopBackendPool;
   const httpClient = yield* HttpClient.HttpClient;
@@ -80,14 +80,15 @@ export const make = Effect.gen(function* () {
 
         const instances = yield* pool.list;
         const primary = instances.find((instance) => instance.id === PRIMARY_LOCAL_ENVIRONMENT_ID);
-        const configOption = primary === undefined ? Option.none() : yield* primary.currentConfig;
+        if (primary === undefined || !(yield* primary.waitForReady(Duration.infinity))) {
+          return yield* new DesktopLocalEnvironmentAuthBackendNotConfiguredError();
+        }
+        const configOption = yield* primary.currentConfig;
         if (Option.isNone(configOption)) {
           return yield* new DesktopLocalEnvironmentAuthBackendNotConfiguredError();
         }
         const config = configOption.value;
-        // A backend launched with the desktop secret accepts the current
-        // window's token, not the one frozen into its launch config; this
-        // exchange can run long after launch (e.g. after a suspend).
+        // Secret-authenticated backends accept the current window token; the launch token may be stale.
         const secret = config.bootstrap.desktopBootstrapSecret;
         const credential =
           secret === undefined

@@ -41,7 +41,9 @@ function taskScheduleLine(task: ScheduledTask) {
   return (
     <>
       {scheduleLabel(task.schedule)}
-      {task.enabled && task.nextRunAt !== null ? (
+      {task.blockedByPolicy !== undefined ? (
+        ` · ${task.blockedByPolicy}`
+      ) : task.enabled && task.nextRunAt !== null ? (
         <>
           {" · next "}
           <ScheduledRelativeLabel value={task.nextRunAt} />
@@ -97,8 +99,6 @@ export function ThreadAutomationsPanel(props: {
     )
       return;
     setBusyTaskId(task.id);
-    // Partial update: only the enabled flag changes, so a toggle can never
-    // revert concurrent edits made to the task elsewhere.
     const result = await setTaskEnabled({
       environmentId: props.environmentId,
       input: { id: task.id, enabled },
@@ -155,13 +155,7 @@ export function ThreadAutomationsPanel(props: {
         </Tooltip>
       }
     >
-      {tasksQuery.error !== null ? (
-        <p className="px-2.5 py-1.5 text-2xs text-destructive">
-          Could not load automations: {tasksQuery.error}
-        </p>
-      ) : null}
-
-      <ul className="m-0 list-none p-0">
+      <ul className="m-0 max-h-[13.5rem] list-none overflow-y-auto p-0">
         {boundTasks.map((task) => (
           <li
             key={task.id}
@@ -213,7 +207,7 @@ export function ThreadAutomationsPanel(props: {
               />
               <TooltipPopup>Edit automation</TooltipPopup>
             </Tooltip>
-            {/* A webhook task runs from its URL; there is no request to run it with. */}
+            {/* Webhook tasks need a request from their URL. */}
             {task.schedule.type === "webhook" ? null : (
               <Tooltip>
                 <TooltipTrigger
@@ -244,6 +238,12 @@ export function ThreadAutomationsPanel(props: {
           </li>
         ))}
       </ul>
+      {/* Kept last: the details card treats a section whose last child is empty as empty. */}
+      {tasksQuery.error !== null ? (
+        <p className="px-2.5 py-1.5 text-2xs text-destructive">
+          Could not load automations: {tasksQuery.error}
+        </p>
+      ) : null}
     </ThreadDetailsSection>
   );
 }

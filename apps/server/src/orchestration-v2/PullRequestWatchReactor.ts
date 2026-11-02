@@ -13,7 +13,7 @@ import {
   normalizeThreadPullRequestKey,
   threadPullRequestKeyOf,
   visibleThreadPullRequests,
-} from "@t3tools/shared/threadPullRequests";
+} from "../sourceControl/threadPullRequests.ts";
 import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
@@ -34,24 +34,18 @@ import * as PullRequestService from "../pullRequest/PullRequestService.ts";
 import { forkParked } from "../serverActivation.ts";
 import * as Orchestrator from "./Orchestrator.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
-import { evaluatePullRequestWatch, pullRequestWatchMessage } from "./pullRequestWatch.ts";
+import {
+  evaluatePullRequestWatch,
+  PULL_REQUEST_WATCH_NO_CHECKS_MS,
+  pullRequestWatchMessage,
+} from "./pullRequestWatch.ts";
 
-/**
- * Checks take minutes, so a faster pass mostly spends the host's rate limit,
- * which every machine on the same account shares.
- */
+/** Checks take minutes; faster sweeps waste the account's shared host quota. */
 const SWEEP_MINUTES = 2;
 const READ_FAILURE_LIMIT = 8;
-/**
- * Without a host fingerprint, a pull request with nothing in flight is read again only when its
- * sync snapshot moves, or after this long, for news the snapshot cannot show, such as a bot
- * editing its review.
- */
+/** Without fingerprints, reread quiet PRs on snapshot changes or this interval to catch edits. */
 const QUIET_REREAD_MS = 10 * 60_000;
-/**
- * With a host fingerprint, how long until the activity is read again anyway: the fingerprint
- * does not see edits to comments inside review threads.
- */
+/** Reread despite unchanged fingerprints; they miss review-thread comment edits. */
 const FINGERPRINT_REREAD_MS = 30 * 60_000;
 
 const isProviderError = Schema.is(PullRequestProviderError);
@@ -149,19 +143,28 @@ function planRead(
   if (last === undefined || group.targets.some((target) => !last.watches.has(watchKey(target)))) {
     return { detail: true, activity: true };
   }
+  // Nothing on the host changes when the no-checks deadline passes, so it alone prompts a read.
+  const checksDue = group.targets.some(
+    ({ watch }) =>
+      watch.checksAwaitedSince != null &&
+      now - Date.parse(watch.checksAwaitedSince) >= PULL_REQUEST_WATCH_NO_CHECKS_MS,
+  );
   if (fingerprint === null) {
     const read =
       last.inFlight ||
       !last.remarksComplete ||
       last.fingerprint !== group.fingerprint ||
       now - last.at >= QUIET_REREAD_MS;
-    return { detail: read, activity: read };
+    return { detail: read || checksDue, activity: read };
   }
   const activity =
     last.remarks !== fingerprint.remarks ||
     !last.remarksComplete ||
     now - last.at >= FINGERPRINT_REREAD_MS;
-  return { detail: activity || last.status !== fingerprint.status || last.inFlight, activity };
+  return {
+    detail: activity || checksDue || last.status !== fingerprint.status || last.inFlight,
+    activity,
+  };
 }
 
 function watchesEqual(left: ThreadPullRequestWatch, right: ThreadPullRequestWatch): boolean {
@@ -171,10 +174,12 @@ function watchesEqual(left: ThreadPullRequestWatch, right: ThreadPullRequestWatc
     left.failedChecks.join("\n") === right.failedChecks.join("\n") &&
     left.passed === right.passed &&
     left.passedChecks.join("\n") === right.passedChecks.join("\n") &&
+    (left.owedChecks ?? []).join("\n") === (right.owedChecks ?? []).join("\n") &&
     left.remarksThrough === right.remarksThrough &&
     left.remarkIds.join("\n") === right.remarkIds.join("\n") &&
     left.conflicting === right.conflicting &&
-    left.wakes === right.wakes
+    left.wakes === right.wakes &&
+    left.checksAwaitedSince === right.checksAwaitedSince
   );
 }
 
@@ -186,7 +191,7 @@ export class PullRequestWatchReactor extends Context.Service<
   }
 >()("t3/orchestration-v2/PullRequestWatchReactor") {}
 
-/** @public Service construction is part of the canonical Effect module API. */
+/** @public */
 export const make = Effect.gen(function* () {
   const engine = yield* Orchestrator.OrchestratorV2;
   const projections = yield* ProjectionStore.ProjectionStoreV2;
@@ -465,15 +470,14 @@ export const make = Effect.gen(function* () {
       threadTails.delete(group.key);
     }
     const reference = referenceOf(group);
-    // The reads are recorded against this fingerprint, so a cached answer older than it must not
-    // stand in for them. Clients are not told: this only drops this pull request's cached reads.
+    // Invalidate cached reads before using the newer fingerprint; clients receive no notification.
     if (fingerprint !== null) yield* pullRequests.invalidate({ reference });
     const read = yield* Effect.exit(
       Effect.all(
         [
           pullRequests.detail({ ...reference, allowStale: false }),
           plan.activity
-            ? pullRequests.activity(reference).pipe(Effect.map(Option.some))
+            ? pullRequests.activity(reference).pipe(Effect.asSome)
             : Effect.succeed(Option.none<PullRequestActivity>()),
         ],
         { concurrency: 2 },
@@ -539,7 +543,7 @@ export const make = Effect.gen(function* () {
       remarks: fingerprint?.remarks ?? null,
     });
     yield* eachTarget(group, (target) => {
-      const report = evaluatePullRequestWatch(target.watch, detail, remarks);
+      const report = evaluatePullRequestWatch(target.watch, detail, remarks, now);
       if (report.changes.length > 0) {
         const wake = pullRequestWatchMessage({
           number: target.link.number,
@@ -584,8 +588,7 @@ export const make = Effect.gen(function* () {
         ending.push([target, reason]);
         continue;
       }
-      // Grouped per project too: each project reads through its own checkout, so one that cannot
-      // read the pull request must not end another project's watches.
+      // Group by project because checkout access differs; one failure must not end another project's watches.
       const key = `${target.thread.projectId} ${threadPullRequestKeyOf(target.link)}`;
       byPullRequest.set(key, [...(byPullRequest.get(key) ?? []), target]);
     }

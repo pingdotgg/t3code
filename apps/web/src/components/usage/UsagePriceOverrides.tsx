@@ -1,7 +1,6 @@
 import { useAtomValue } from "@effect/atom-react";
 import { AuthSettingsWriteScope, type EnvironmentId, sessionGrantsScope } from "@t3tools/contracts";
 import { ChevronDownIcon, PlusIcon, RotateCcwIcon, XIcon } from "lucide-react";
-import * as Option from "effect/Option";
 import { AsyncResult, Atom } from "effect/reactivity";
 import { useRef, useState } from "react";
 
@@ -46,7 +45,7 @@ const priceTargetsAtom = Atom.make((get): readonly UsagePriceTarget[] =>
   [...get(environmentPresentations.presentationsAtom)].map(([environmentId, environment]) => {
     const settings = get(serverEnvironment.settingsValueAtom(environmentId));
     const session = get(environmentSession.sessionStateAtom(environmentId));
-    const sessionData = Option.getOrNull(AsyncResult.value(session));
+    const sessionData = AsyncResult.getOrElse(session, () => null);
     const access =
       session._tag === "Failure"
         ? "denied"
@@ -70,13 +69,11 @@ const priceTargetsAtom = Atom.make((get): readonly UsagePriceTarget[] =>
           ? "Offline"
           : settings === null
             ? "Prices not loaded"
-            : environment.serverConfig?.environment.capabilities.usagePriceOverrides !== true
-              ? "Update server to edit prices"
-              : access === "pending"
-                ? "Checking permissions…"
-                : access === "denied"
-                  ? "Read-only access"
-                  : null,
+            : access === "pending"
+              ? "Checking permissions…"
+              : access === "denied"
+                ? "Read-only access"
+                : null,
     };
   }),
 );

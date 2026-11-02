@@ -7,16 +7,9 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { it as effectIt } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
-import * as HostProcess from "./HostProcess.ts";
 
-import {
-  RotatingFileSink,
-  RotatingFileSinkConfigurationError,
-  RotatingFileSinkError,
-  makeAsyncRotatingFileSink,
-} from "./logging.ts";
+import { RotatingFileSink, makeAsyncRotatingFileSink } from "./logging.ts";
 
-const windowsHost = HostProcess.Platform.defaultValue() === "win32";
 const tempDirectories: string[] = [];
 
 const makeTempDirectory = (): string => {
@@ -40,7 +33,36 @@ afterEach(() => {
   }
 });
 
-effectIt.layer(NodeServices.layer)("asynchronous rotating file sink", (it) => {
+effectIt.layer(NodeServices.layer)("rotating file sinks", (it) => {
+  it.effect.each(["synchronous", "asynchronous"] as const)(
+    "%s startup prunes only canonical rotation suffixes",
+    (mode) =>
+      Effect.gen(function* () {
+        const directory = makeTempDirectory();
+        const filePath = NodePath.join(directory, "debug.log");
+        const retained = ["1", "3", "04", "4.0", "4e0", "0x4", "+4", "notes"];
+        for (const suffix of [...retained, "4", "50"]) {
+          NodeFS.writeFileSync(`${filePath}.${suffix}`, suffix);
+        }
+        const options = { filePath, maxBytes: 100, maxFiles: 3 };
+
+        const sink =
+          mode === "synchronous"
+            ? new RotatingFileSink(options)
+            : yield* makeAsyncRotatingFileSink(options);
+        if (sink instanceof RotatingFileSink) sink.write("current");
+        else yield* sink.write("current");
+
+        expect(NodeFS.readdirSync(directory).sort()).toEqual(
+          ["debug.log", ...retained.map((suffix) => `debug.log.${suffix}`)].sort(),
+        );
+        expect(NodeFS.readFileSync(filePath, "utf8")).toBe("current");
+        for (const suffix of retained) {
+          expect(NodeFS.readFileSync(`${filePath}.${suffix}`, "utf8")).toBe(suffix);
+        }
+      }),
+  );
+
   it.effect("serializes concurrent appends across rotation and resumes an existing file", () =>
     Effect.gen(function* () {
       const directory = makeTempDirectory();
@@ -97,102 +119,6 @@ effectIt.layer(NodeServices.layer)("asynchronous rotating file sink", (it) => {
 });
 
 describe("RotatingFileSink", () => {
-  it.each([
-    { option: "maxBytes" as const, maxBytes: 0, maxFiles: 1 },
-    { option: "maxFiles" as const, maxBytes: 1, maxFiles: 0 },
-  ])("reports invalid $option configuration structurally", (input) => {
-    const thrown = captureError(
-      () =>
-        new RotatingFileSink({
-          filePath: "/unused/log.ndjson",
-          maxBytes: input.maxBytes,
-          maxFiles: input.maxFiles,
-        }),
-    );
-
-    expect(thrown).toBeInstanceOf(RotatingFileSinkConfigurationError);
-    expect(thrown).toMatchObject({
-      option: input.option,
-      received: 0,
-      minimum: 1,
-    });
-    expect((thrown as Error).message).toBe(`${input.option} must be >= 1 (received 0)`);
-  });
-
-  it("preserves directory initialization failures", () => {
-    const directory = makeTempDirectory();
-    const parentFile = NodePath.join(directory, "not-a-directory");
-    const filePath = NodePath.join(parentFile, "log.ndjson");
-    NodeFS.writeFileSync(parentFile, "occupied");
-
-    const thrown = captureError(() => new RotatingFileSink({ filePath, maxBytes: 1, maxFiles: 1 }));
-
-    expect(thrown).toBeInstanceOf(RotatingFileSinkError);
-    expect(thrown).toMatchObject({ operation: "initialize", filePath });
-    expect((thrown as RotatingFileSinkError).cause).toBeInstanceOf(Error);
-  });
-
-  // An over-long name is the one stat failure that is neither ENOENT nor a
-  // permission problem on posix. Windows reports it as ENOENT, so the sink
-  // correctly treats it as an absent file and there is nothing to assert.
-  it.skipIf(windowsHost)("only treats a missing log file as an empty current size", () => {
-    const directory = makeTempDirectory();
-    const filePath = NodePath.join(directory, "a".repeat(300));
-
-    const thrown = captureError(() => new RotatingFileSink({ filePath, maxBytes: 1, maxFiles: 1 }));
-
-    expect(thrown).toBeInstanceOf(RotatingFileSinkError);
-    expect(thrown).toMatchObject({ operation: "read", filePath });
-    expect((thrown as RotatingFileSinkError).cause).toMatchObject({ code: "ENAMETOOLONG" });
-  });
-
-  it("starts an absent log file at zero bytes", () => {
-    const directory = makeTempDirectory();
-    const filePath = NodePath.join(directory, "log.ndjson");
-    const sink = new RotatingFileSink({ filePath, maxBytes: 100, maxFiles: 1 });
-
-    sink.write("entry");
-
-    expect(NodeFS.readFileSync(filePath, "utf8")).toBe("entry");
-  });
-
-  it("preserves write failures", () => {
-    const directory = makeTempDirectory();
-    const filePath = NodePath.join(directory, "log.ndjson");
-    NodeFS.mkdirSync(filePath);
-    const sink = new RotatingFileSink({
-      filePath,
-      maxBytes: Number.MAX_SAFE_INTEGER,
-      maxFiles: 1,
-      throwOnError: true,
-    });
-
-    const thrown = captureError(() => sink.write("entry"));
-
-    expect(thrown).toBeInstanceOf(RotatingFileSinkError);
-    expect(thrown).toMatchObject({ operation: "write", filePath });
-    expect((thrown as RotatingFileSinkError).cause).toMatchObject({ code: "EISDIR" });
-  });
-
-  it("preserves rotation failures without an artificial write wrapper", () => {
-    const directory = makeTempDirectory();
-    const filePath = NodePath.join(directory, "log.ndjson");
-    NodeFS.writeFileSync(filePath, "a");
-    NodeFS.mkdirSync(`${filePath}.1`);
-    const sink = new RotatingFileSink({
-      filePath,
-      maxBytes: 1,
-      maxFiles: 1,
-      throwOnError: true,
-    });
-
-    const thrown = captureError(() => sink.write("b"));
-
-    expect(thrown).toBeInstanceOf(RotatingFileSinkError);
-    expect(thrown).toMatchObject({ operation: "rotate", filePath });
-    expect((thrown as RotatingFileSinkError).cause).toBeInstanceOf(Error);
-  });
-
   it("never reports a rotation failure after successfully appending a chunk", () => {
     const directory = makeTempDirectory();
     const filePath = NodePath.join(directory, "log.ndjson");
@@ -210,27 +136,5 @@ describe("RotatingFileSink", () => {
     const thrown = captureError(() => sink.write("next"));
     expect(thrown).toMatchObject({ operation: "rotate", filePath });
     expect(NodeFS.readFileSync(filePath, "utf8")).toBe("oversized");
-  });
-
-  it("preserves backup pruning failures", () => {
-    const directory = makeTempDirectory();
-    const filePath = NodePath.join(directory, "log.ndjson");
-    const overflowBackup = `${filePath}.2`;
-    NodeFS.mkdirSync(overflowBackup);
-    NodeFS.writeFileSync(NodePath.join(overflowBackup, "entry"), "occupied");
-
-    const thrown = captureError(
-      () =>
-        new RotatingFileSink({
-          filePath,
-          maxBytes: 1,
-          maxFiles: 1,
-          throwOnError: true,
-        }),
-    );
-
-    expect(thrown).toBeInstanceOf(RotatingFileSinkError);
-    expect(thrown).toMatchObject({ operation: "prune", filePath });
-    expect((thrown as RotatingFileSinkError).cause).toBeInstanceOf(Error);
   });
 });

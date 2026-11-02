@@ -1,19 +1,15 @@
-import { useAtomValue } from "@effect/atom-react";
 import { WS_METHODS } from "@t3tools/contracts";
 import { Atom } from "effect/reactivity";
 
 import { appAtomRegistry } from "./atomRegistry";
 
-export const SLOW_RPC_ACK_THRESHOLD_MS = 15_000;
+const SLOW_RPC_ACK_THRESHOLD_MS = 15_000;
 /**
- * Some requests are slow by design. Provider and server updates shell out to a
- * package manager and only respond once the install finishes. A VCS status
- * refresh fetches, may auto-pull, looks up the pull request, and first waits for
- * any background refresh of the same repository, which often totals over 15s.
- * Warning about those after 15s is noise, so they get a much longer leash.
+ * Updates wait for package installs; VCS refreshes may wait for background work and network calls.
+ * Give these requests longer than the normal 15s warning threshold.
  */
-export const LONG_RUNNING_RPC_ACK_THRESHOLD_MS = 120_000;
-export const MAX_TRACKED_RPC_ACK_REQUESTS = 256;
+const LONG_RUNNING_RPC_ACK_THRESHOLD_MS = 120_000;
+const MAX_TRACKED_RPC_ACK_REQUESTS = 256;
 let slowRpcAckThresholdMs = SLOW_RPC_ACK_THRESHOLD_MS;
 
 export interface SlowRpcAckRequest {
@@ -31,10 +27,12 @@ interface PendingRpcAckRequest {
 
 const pendingRpcAckRequests = new Map<string, PendingRpcAckRequest>();
 // Background reports nobody waits on. A busy host delays them first, and warning
-// about a request the user never made does not say what is wrong.
+// about a request the user never made does not say what is wrong. A sign-in wait
+// lasts as long as the user takes on the forge.
 const untrackedRpcAckMethods = new Set<string>([
   WS_METHODS.serverGetUsageSummary,
   WS_METHODS.serverReportClientActivity,
+  WS_METHODS.sourceControlSignInWait,
 ]);
 const longRunningRpcAckMethods = new Set<string>([
   WS_METHODS.serverUpdateProvider,
@@ -68,10 +66,6 @@ function rpcAckThresholdMs(method: string): number {
   return longRunningRpcAckMethods.has(method)
     ? Math.max(slowRpcAckThresholdMs, LONG_RUNNING_RPC_ACK_THRESHOLD_MS)
     : slowRpcAckThresholdMs;
-}
-
-export function getSlowRpcAckRequests(): ReadonlyArray<SlowRpcAckRequest> {
-  return getSlowRpcAckRequestsValue();
 }
 
 export function trackRpcRequestSent(requestId: string, method: string, tag = method): void {
@@ -112,14 +106,6 @@ export function acknowledgeRpcRequest(requestId: string): void {
   setSlowRpcAckRequests(slowRequests.filter((request) => request.requestId !== requestId));
 }
 
-function clearAllTrackedRpcRequests(): void {
-  for (const pending of pendingRpcAckRequests.values()) {
-    clearTimeout(pending.timeoutId);
-  }
-  pendingRpcAckRequests.clear();
-  setSlowRpcAckRequests([]);
-}
-
 function clearTrackedRpcRequest(requestId: string): void {
   const pending = pendingRpcAckRequests.get(requestId);
   if (!pending) {
@@ -151,11 +137,8 @@ function evictOldestPendingRpcRequestIfNeeded(): void {
   }
 }
 
-export function resetRequestLatencyStateForTests(): void {
-  slowRpcAckThresholdMs = SLOW_RPC_ACK_THRESHOLD_MS;
-  clearAllTrackedRpcRequests();
-}
-
-export function useSlowRpcAckRequests(): ReadonlyArray<SlowRpcAckRequest> {
-  return useAtomValue(slowRpcAckRequestsAtom);
+export function subscribeSlowRpcAckRequests(
+  listener: (requests: ReadonlyArray<SlowRpcAckRequest>) => void,
+): () => void {
+  return appAtomRegistry.subscribe(slowRpcAckRequestsAtom, listener);
 }

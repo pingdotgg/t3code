@@ -1,8 +1,4 @@
-/**
- * Each entry is a host plus a path that only serves those assets, so screenshots uploaded to
- * the same service (such as cursor.com/artifacts or app.devin.ai/attachments) stay visible.
- * Only the description's Attachments strip skips them; markdown still renders them inline.
- */
+/** Only asset paths are bot badges; keep same-host screenshots and all inline markdown images. */
 const BOT_BADGE_PREFIXES = [
   "static.devin.ai/assets/",
   "cursor.com/assets/images/",

@@ -27,10 +27,7 @@ import type {
 } from "@t3tools/contracts";
 import { isProjectFaviconPath } from "@t3tools/shared/projectFavicon";
 
-// fff-node stays external to the CLI bundle because it dlopens a native
-// library. A static `import` of an external package is a hard error inside a
-// Node single-executable (only built-ins resolve there), so load it through
-// `require`, which reads from the real filesystem in every runtime.
+// fff-node's native library stays external; single-executables require disk packages instead of importing them.
 const requireForFff = NodeModule.createRequire(import.meta.url);
 const { FileFinder } = requireForFff("@ff-labs/fff-node") as typeof import("@ff-labs/fff-node");
 
@@ -120,10 +117,7 @@ export class WorkspaceSearchIndex extends Context.Service<
     readonly searchContents: (
       input: Omit<ProjectSearchContentsInput, "cwd">,
     ) => Effect.Effect<ProjectSearchContentsResult, WorkspaceSearchIndexSearchFailed>;
-    readonly refresh: () => Effect.Effect<
-      void,
-      WorkspaceSearchIndexRefreshFailed | WorkspaceSearchIndexScanTimedOut
-    >;
+    readonly refresh: () => Effect.Effect<void, WorkspaceSearchIndexRefreshFailed>;
   }
 >()("t3/workspace/WorkspaceSearchIndex") {}
 
@@ -257,11 +251,7 @@ function mapContentMatchRanges(
   }));
 }
 
-/**
- * Whole-word filtering happens after the grep rather than by wrapping the pattern in boundary
- * regex: consuming boundaries such as `(?:^|\W)` swallow the separator between adjacent matches
- * and widen the reported ranges, and `\b` cannot match punctuation-edged queries at all.
- */
+// Post-filter whole words: consuming boundary regexes swallow adjacent separators and widen ranges; \b misses punctuation edges.
 function isWholeWordRange(
   line: string,
   range: { readonly start: number; readonly end: number },
@@ -303,9 +293,7 @@ const createFinder = Effect.fn("WorkspaceSearchIndex.createFinder")(function* (
       FileFinder.create({
         basePath: cwd,
         disableMmapCache: true,
-        // Content indexing costs scan CPU and memory, so only the on-demand
-        // content-search index pays for it; path-only consumers (file tree,
-        // composer path search, file picker) keep the lightweight index.
+        // Content indexing costs CPU/memory; path-only consumers use the lightweight index.
         disableContentIndexing: variant !== "content",
         aiMode: false,
         enableFsRootScanning: true,
@@ -428,6 +416,8 @@ export const make = Effect.fn("WorkspaceSearchIndex.make")(function* (
         reason: result.error,
       });
     }
+    // A rescan that outlasts the wait keeps running, and the finder answers
+    // from its previous index until it finishes, so the index stays usable.
     yield* waitForIndexReady(
       cwd,
       finder,
@@ -437,7 +427,7 @@ export const make = Effect.fn("WorkspaceSearchIndex.make")(function* (
           reason,
           cause,
         }),
-    );
+    ).pipe(Effect.catchTags({ WorkspaceSearchIndexScanTimedOut: () => Effect.void }));
   });
 
   const list: WorkspaceSearchIndex["Service"]["list"] = Effect.fn("WorkspaceSearchIndex.list")(
@@ -490,8 +480,7 @@ export const make = Effect.fn("WorkspaceSearchIndex.make")(function* (
   )(function* (input) {
     const { searchQuery, regexMode } = buildContentSearchQuery(input);
     const deadline = performance.now() + CONTENT_SEARCH_TIME_BUDGET_MS;
-    // Grep cursors advance by file, so whole-word post-filtering needs enough
-    // raw candidates from the current file before moving to the next one.
+    // Grep cursors advance per file; whole-word filtering needs enough raw candidates before advancing.
     const rawPageSize = input.wholeWord
       ? Math.max(input.limit, CONTENT_SEARCH_MAX_MATCHES_PER_FILE)
       : input.limit;
@@ -555,9 +544,7 @@ function parseWorkspaceSearchIndexKey(key: string): {
   };
 }
 
-/**
- * @public Service construction is part of the canonical Effect module API.
- */
+/** @public */
 export const layer = (key: string) => {
   const { cwd, variant } = parseWorkspaceSearchIndexKey(key);
   return Layer.effect(WorkspaceSearchIndex, make(cwd, variant));

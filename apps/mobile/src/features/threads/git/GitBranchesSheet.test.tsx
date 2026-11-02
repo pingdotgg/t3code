@@ -1,46 +1,54 @@
-import { isValidElement, type ReactNode } from "react";
-import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
+import { act, type ReactNode } from "react";
+import { createRoot } from "react-dom/client";
+import { expect, it, vi } from "vite-plus/test";
 
+type InputProps = {
+  accessibilityLabel: string;
+  value: string;
+  onChangeText: (value: string) => void;
+};
+type ActionProps = { label: string; disabled: boolean; onPress: () => void };
 const state = vi.hoisted(() => ({
-  fields: [] as string[],
-  fieldIndex: 0,
-  canChangeThreadBranch: true,
-  navigations: 0,
-  result: Promise.resolve(null) as Promise<unknown>,
+  refName: null as string | null,
+  branch: null as string | null,
+  inputs: new Map<string, InputProps>(),
+  actions: new Map<string, ActionProps>(),
+  worktrees: [] as Array<{ baseBranch: string; newBranch: string }>,
 }));
 
-vi.mock("react", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("react")>()),
-  useState: (initial: string) => {
-    const index = state.fieldIndex++;
-    state.fields[index] ??= initial;
-    return [state.fields[index], (value: string) => (state.fields[index] = value)];
-  },
-}));
+vi.mock("@react-navigation/native", () => ({ useNavigation: () => ({ goBack() {} }) }));
 vi.mock("react-native", () => ({
-  Platform: { OS: "ios" },
-  useWindowDimensions: () => ({ height: 800, width: 400 }),
-  Pressable: "Pressable",
-  ScrollView: "ScrollView",
-  View: "View",
-}));
-vi.mock("@react-navigation/native", () => ({
-  useNavigation: () => ({ goBack: () => state.navigations++ }),
+  Platform: { OS: "android" },
+  useWindowDimensions: () => ({ height: 800 }),
+  View: ({ children }: { children: ReactNode }) => children,
+  ScrollView: ({ children }: { children: ReactNode }) => children,
+  Pressable: () => null,
 }));
 vi.mock("react-native-safe-area-context", () => ({
   useSafeAreaInsets: () => ({ bottom: 0 }),
 }));
-vi.mock("../../../components/ui/AndroidScreenHeader", () => ({
-  AndroidSheetHeader: "AndroidSheetHeader",
+vi.mock("../../../components/ui/AndroidScreenHeader", () => ({ AndroidSheetHeader: () => null }));
+vi.mock("../../../components/ui/SheetHeader", () => ({ SheetHeader: () => null }));
+vi.mock("../../../components/ui/ScreenContent", () => ({
+  ScreenContent: ({ children }: { children: ReactNode }) => children,
 }));
-vi.mock("../../../components/ui/AppText", () => ({ AppText: "Text", AppTextInput: "TextInput" }));
-vi.mock("./gitSheetComponents", () => ({ SheetActionButton: "SheetActionButton" }));
+vi.mock("../../../native/StackHeader", () => ({ NativeStackScreenOptions: () => null }));
+vi.mock("../../../components/ui/AppText", () => ({
+  AppText: ({ children }: { children: ReactNode }) => children,
+  AppTextInput: (props: InputProps) => {
+    state.inputs.set(props.accessibilityLabel, props);
+    return null;
+  },
+}));
 vi.mock("../../../state/query", () => ({
-  useEnvironmentQuery: () => ({ data: { refName: "main" } }),
+  useEnvironmentQuery: () => ({
+    data: state.refName === null ? undefined : { refName: state.refName },
+  }),
 }));
-vi.mock("../../../state/vcs", () => ({ vcsEnvironment: { status: () => null } }));
 vi.mock("../../../state/use-thread-selection", () => ({
-  useThreadSelection: () => ({ selectedThread: { environmentId: "environment", branch: "main" } }),
+  useThreadSelection: () => ({
+    selectedThread: { environmentId: "environment", branch: state.branch },
+  }),
 }));
 vi.mock("../../../state/use-selected-thread-worktree", () => ({
   useSelectedThreadWorktree: () => ({
@@ -50,123 +58,85 @@ vi.mock("../../../state/use-selected-thread-worktree", () => ({
 }));
 vi.mock("../../../state/use-selected-thread-git-state", () => ({
   useSelectedThreadGitState: () => ({
-    selectedThreadBranches: [{ name: "main", current: true, isDefault: true, worktreePath: null }],
+    selectedThreadBranches: [],
     selectedThreadBranchesLoading: false,
     gitOperationLabel: null,
   }),
 }));
 vi.mock("../../../state/use-selected-thread-git-actions", () => ({
   useSelectedThreadGitActions: () => ({
-    canChangeThreadBranch: state.canChangeThreadBranch,
-    onCreateSelectedThreadBranch: () => state.result,
-    onCreateSelectedThreadWorktree: () => state.result,
-    onCheckoutSelectedThreadBranch: () => state.result,
+    canChangeThreadBranch: true,
+    onCreateSelectedThreadWorktree: async (input: { baseBranch: string; newBranch: string }) => {
+      state.worktrees.push(input);
+      return null;
+    },
   }),
+}));
+vi.mock("../../../state/vcs", () => ({ vcsEnvironment: { status: () => null } }));
+vi.mock("./gitSheetComponents", () => ({
+  SheetActionButton: (props: ActionProps) => {
+    state.actions.set(props.label, props);
+    return null;
+  },
 }));
 
 import { GitBranchesSheet } from "./GitBranchesSheet";
 
-type ControlProps = {
-  label?: string;
-  placeholder?: string;
-  onPress?: () => unknown;
-  onChangeText?: (value: string) => void;
-  value?: string;
-  children?: ReactNode;
-};
-
-function findControl(node: ReactNode, label: string): ControlProps | null {
-  if (Array.isArray(node)) {
-    for (const child of node) {
-      const control = findControl(child, label);
-      if (control) return control;
-    }
-    return null;
-  }
-  if (!isValidElement<ControlProps>(node)) return null;
-  if (
-    node.props.label === label ||
-    node.props.placeholder === label ||
-    (label === "checkout" && node.type === "Pressable")
-  ) {
-    return node.props;
-  }
-  return findControl(node.props.children, label);
-}
-
-function control(label: string) {
-  state.fieldIndex = 0;
-  const found = findControl(
-    GitBranchesSheet({ route: { params: { environmentId: "environment", threadId: "thread" } } }),
-    label,
-  );
-  if (!found) throw new Error(`Missing sheet control: ${label}`);
-  return found;
-}
-
-function deferred<T>() {
-  let resolve!: (value: T) => void;
-  const promise = new Promise<T>((complete) => {
-    resolve = complete;
-  });
-  return { promise, resolve };
-}
-
-describe("branch sheet operation completion", () => {
-  beforeEach(() => {
-    state.fields = [];
-    state.fieldIndex = 0;
-    state.canChangeThreadBranch = true;
-    state.navigations = 0;
-    control("feature/mobile-polish").onChangeText?.("feature/branch");
-    control("main").onChangeText?.("release");
-    control("feature/mobile-thread").onChangeText?.("feature/worktree");
-  });
-
-  it.each(["Create & checkout", "Create worktree", "checkout"])(
-    "keeps the sheet and its input when %s cannot complete",
-    async (operation) => {
-      const result = deferred<null>();
-      state.result = result.promise;
-      const press = control(operation).onPress;
-      if (!press) throw new Error("Missing operation handler");
-      state.canChangeThreadBranch = false;
-      const completion = press();
-      result.resolve(null);
-      await result.promise;
-      await completion;
-
-      expect(state.navigations).toBe(0);
-      expect(control("feature/mobile-polish").value).toBe("feature/branch");
-      expect(control("main").value).toBe("release");
-      expect(control("feature/mobile-thread").value).toBe("feature/worktree");
+function setup(branch: string | null = null) {
+  (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+  state.refName = null;
+  state.branch = branch;
+  state.inputs.clear();
+  state.actions.clear();
+  state.worktrees = [];
+  const root = createRoot(document.createElement("div"));
+  const render = () =>
+    act(() => {
+      root.render(
+        <GitBranchesSheet
+          route={{ params: { environmentId: "environment", threadId: "thread" } }}
+        />,
+      );
+    });
+  render();
+  return {
+    render,
+    edit(label: string, value: string) {
+      act(() => state.inputs.get(label)!.onChangeText(value));
     },
-  );
-
-  it.each(["Create & checkout", "Create worktree", "checkout"])(
-    "dismisses after accepted %s completion even if the source grant changes",
-    async (operation) => {
-      const result = deferred<unknown>();
-      state.result = result.promise;
-      const press = control(operation).onPress;
-      if (!press) throw new Error("Missing operation handler");
-      const completion = press();
-      state.canChangeThreadBranch = false;
-      result.resolve(
-        operation === "Create worktree"
-          ? { worktree: { path: "/repo-worktree", refName: "feature/worktree" } }
-          : { refName: operation === "checkout" ? "main" : "feature/branch" },
-      );
-      await result.promise;
-      await completion;
-
-      expect(state.navigations).toBe(1);
-      expect(control("feature/mobile-polish").value).toBe(
-        operation === "Create & checkout" ? "" : "feature/branch",
-      );
-      expect(control("feature/mobile-thread").value).toBe(
-        operation === "Create worktree" ? "" : "feature/worktree",
-      );
+    create() {
+      act(() => state.actions.get("Create worktree")!.onPress());
     },
+    [Symbol.dispose]() {
+      act(() => root.unmount());
+    },
+  };
+}
+
+it.each([null, "stale-branch"])(
+  "uses the loaded checkout branch when thread metadata is %s",
+  (branch) => {
+    using screen = setup(branch);
+    screen.edit("Worktree branch name", "feature/new-worktree");
+    state.refName = "release/stable";
+    screen.render();
+    screen.create();
+    expect(state.worktrees).toEqual([
+      { baseBranch: "release/stable", newBranch: "feature/new-worktree" },
+    ]);
+  },
+);
+
+it.each(["custom-base", ""])("preserves an edited base %j when status arrives", (base) => {
+  using screen = setup();
+  screen.edit("Worktree base branch", base);
+  screen.edit("Worktree branch name", "feature/new-worktree");
+  state.refName = "release/stable";
+  screen.render();
+  expect(state.inputs.get("Worktree base branch")!.value).toBe(base);
+  expect(state.actions.get("Create worktree")!.disabled).toBe(base === "");
+  screen.create();
+  expect(state.worktrees).toEqual(
+    base === "" ? [] : [{ baseBranch: base, newBranch: "feature/new-worktree" }],
   );
 });

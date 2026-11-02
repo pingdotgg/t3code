@@ -47,6 +47,7 @@ export async function loadMcpBridge(
     readonly toolSearchDisabled?: boolean;
     readonly allowsTool?: (name: string) => boolean;
     readonly runtimeMode?: string;
+    readonly inputSchema?: Record<string, unknown>;
   } = {},
 ) {
   const handlers = new Map<string, AgentStartHook>();
@@ -75,7 +76,7 @@ export async function loadMcpBridge(
     { name: "preview_snapshot", description: "Inspect the collaborative browser." },
   ].map((tool) => ({
     ...tool,
-    inputSchema: { type: "object", properties: {} },
+    inputSchema: options.inputSchema ?? { type: "object", properties: {} },
     outputSchema: { type: "object", properties: { count: { type: "number" } } },
   }));
   const source = NodeModule.stripTypeScriptTypes(

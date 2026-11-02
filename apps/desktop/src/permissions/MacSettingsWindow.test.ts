@@ -1,6 +1,7 @@
 import * as NodeEvents from "node:events";
+import * as NodeVM from "node:vm";
 import { beforeEach, expect, it, vi } from "vite-plus/test";
-import { settingsHelperBounds, watchMacSettingsWindow } from "./MacSettingsWindow.ts";
+import { watchMacSettingsWindow } from "./MacSettingsWindow.ts";
 
 const mocks = vi.hoisted(() => ({ spawn: vi.fn() }));
 vi.mock("node:child_process", () => ({ spawn: mocks.spawn }));
@@ -14,17 +15,6 @@ beforeEach(() => {
     kill: vi.fn(),
   });
   mocks.spawn.mockReturnValue(child);
-});
-it("places the helper inside small and large Settings windows across displays", () => {
-  for (const x of [-900, 20]) {
-    for (const width of [668, 1000]) {
-      const state = { x, y: 30, width, height: 700, frontmost: true };
-      const helper = settingsHelperBounds(state);
-      expect(helper.x).toBeGreaterThanOrEqual(x + 216);
-      expect(helper.x + helper.width).toBeLessThanOrEqual(x + width - 16);
-      expect(helper.y + helper.height).toBe(714);
-    }
-  }
 });
 it("decodes partial updates and stops the one watcher process on disposal", () => {
   const changed = vi.fn();
@@ -52,4 +42,30 @@ it("distinguishes unavailable tracking from a valid absent window", () => {
   expect(changed).not.toHaveBeenCalled();
   expect(unavailable).toHaveBeenCalledTimes(2);
   stop();
+});
+it("polls while its parent lives and stops after reparenting to launchd", () => {
+  watchMacSettingsWindow(vi.fn(), vi.fn())();
+  const script = mocks.spawn.mock.lastCall?.[1][3];
+  const imports = new Set<string>();
+  const writeData = vi.fn();
+  const poll = vi.fn(() => ({ count: 0 }));
+  const sleep = vi.fn(() => {
+    if (sleep.mock.calls.length > 2) throw new Error("tracker kept polling after parent exit");
+  });
+  const bridge = Object.assign((line: string) => ({ dataUsingEncoding: () => line }), {
+    getppid: () => {
+      if (!imports.has("unistd")) throw new Error("unistd bridge unavailable");
+      return sleep.mock.calls.length < 2 ? 42 : 1;
+    },
+    NSRunningApplication: { runningApplicationsWithBundleIdentifier: poll },
+    NSFileHandle: { fileHandleWithStandardOutput: { writeData } },
+    NSThread: { sleepForTimeInterval: sleep },
+    NSUTF8StringEncoding: 4,
+  });
+  NodeVM.runInNewContext(script + "\nrun();", {
+    ObjC: { import: (name: string) => imports.add(name) },
+    $: bridge,
+  });
+  expect(poll).toHaveBeenCalledTimes(2);
+  expect(writeData.mock.calls).toEqual([["null\n"]]);
 });

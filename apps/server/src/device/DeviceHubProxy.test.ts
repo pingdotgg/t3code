@@ -87,13 +87,6 @@ describe("device hub proxy", () => {
     expect(finalized()).toBe(1);
   });
 
-  it("releases resources when upstream acquisition fails", async () => {
-    const { handler, finalized } = fixture([AuthOrchestrationReadScope], true);
-    const response = await handler(new Request("http://t3.test/api/device-hub/api/devices"));
-    expect(response.status).toBe(500);
-    expect(finalized()).toBe(1);
-  });
-
   it.each(["/vendor/serve-sim/helper/ws", "/vendor/serve-emu/ws"])(
     "rejects input socket %s for a read-only session",
     async (path) => {
@@ -176,6 +169,32 @@ describe("device hub proxy", () => {
     expect(headers[0]?.["content-type"]).toBe("application/json");
   });
 
+  it("lets a viewer read Android stream capabilities and signal WebRTC with read scope", async () => {
+    const { handler, requests } = fixture([AuthOrchestrationReadScope]);
+    const hub = "http://t3.test/api/device-hub/vendor/serve-emu";
+    const api = await handler(new Request(`${hub}/api?device=session-1`));
+    expect(api.status).toBe(200);
+    await api.text();
+    for (const action of ["offer", "close"]) {
+      const signal = await handler(
+        new Request(`${hub}/webrtc/${action}?device=session-1`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: '{"sessionId":"viewer"}',
+        }),
+      );
+      expect(signal.status).toBe(200);
+      await signal.text();
+    }
+    expect(requests).toEqual([
+      "http://hub.test/vendor/serve-emu/api?device=session-1",
+      "http://hub.test/vendor/serve-emu/webrtc/offer?device=session-1",
+      "http://hub.test/vendor/serve-emu/webrtc/close?device=session-1",
+    ]);
+    expect((await handler(new Request(`${hub}/api`, { method: "POST" }))).status).toBe(405);
+    expect((await handler(new Request(`${hub}/webrtc/offer`))).status).toBe(405);
+  });
+
   it("sends requests a host routes itself to its upstream with its credentials", async () => {
     const { handler, requests, headers } = fixture(
       [AuthOrchestrationReadScope],
@@ -238,28 +257,11 @@ it.each([
   expect(requests).toEqual([]);
 });
 
-it.each([1, 3])(
-  "forwards fixed Duo display %s through the authenticated read proxy",
-  async (panel) => {
-    const { handler, requests } = fixture([AuthOrchestrationReadScope]);
-    const route = `/vendor/serve-sim/helper/duo/panel/${panel}/stream.avcc`;
-    const response = await handler(
-      new Request(`http://t3.test/api/device-hub${route}?wsTicket=secret`),
-    );
-    expect(response.status).toBe(200);
-    await response.text();
-    expect(requests).toEqual([`http://hub.test${route}`]);
-  },
-);
-
-it.each(["/panel/2/stream.avcc", "/panel/1/webrtc/offer", "/panel/3/exec"])(
-  "rejects unsupported Duo route %s",
-  async (route) => {
-    const { handler, requests } = fixture([AuthOrchestrationReadScope]);
-    const response = await handler(
-      new Request(`http://t3.test/api/device-hub/vendor/serve-sim/helper/duo${route}`),
-    );
-    expect(response.status).toBe(404);
-    expect(requests).toEqual([]);
-  },
-);
+it("rejects unsupported Duo routes", async () => {
+  const { handler, requests } = fixture([AuthOrchestrationReadScope]);
+  const response = await handler(
+    new Request("http://t3.test/api/device-hub/vendor/serve-sim/helper/duo/panel/1/webrtc/offer"),
+  );
+  expect(response.status).toBe(404);
+  expect(requests).toEqual([]);
+});

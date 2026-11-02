@@ -7,12 +7,11 @@ import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Queue from "effect/Queue";
 
-import { tailClaudeTaskOutput } from "./ClaudeTaskOutputTail.ts";
+import { claudeTaskOutputRoot, tailClaudeTaskOutput } from "./ClaudeTaskOutputTail.ts";
 
 const SESSION_ID = "0c91bb28-9e89-4889-bd22-3de9880233d3";
 const TASK_ID = "bk6xreeye";
 
-// Claude Code's layout: <root>/<project>/<session_id>/tasks/<task_id>.output.
 const makeTaskFile = Effect.gen(function* () {
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -21,8 +20,7 @@ const makeTaskFile = Effect.gen(function* () {
   return { root, tasks, file: path.join(tasks, `${TASK_ID}.output`) };
 });
 
-// Live clock and a real file: this proves the tail follows the writer, which
-// TestClock cannot interleave with filesystem IO.
+// TestClock cannot interleave with real filesystem I/O; use the live clock.
 describe("tailClaudeTaskOutput", () => {
   it.live("follows a file that appears after the task starts, across split characters", () =>
     Effect.scoped(
@@ -39,7 +37,7 @@ describe("tailClaudeTaskOutput", () => {
         }).pipe(Effect.forkScoped);
 
         yield* fileSystem.makeDirectory(tasks, { recursive: true });
-        // "é" is two bytes; the first write ends between them.
+        // Split the two-byte é across writes.
         const encoded = new TextEncoder().encode("café 1\n");
         yield* fileSystem.writeFile(file, encoded.subarray(0, 4));
         assert.equal(yield* Queue.take(chunks), "caf");
@@ -97,7 +95,6 @@ describe("tailClaudeTaskOutput", () => {
             ),
         }).pipe(Effect.forkScoped);
         yield* Deferred.await(first);
-        // Written right before the command exits, then the result arrives.
         yield* fileSystem.writeFileString(file, "one\ntwo\n");
         yield* Deferred.succeed(stop, undefined);
         yield* Fiber.join(fiber);
@@ -105,22 +102,40 @@ describe("tailClaudeTaskOutput", () => {
       }).pipe(Effect.provide(NodeServices.layer)),
     ),
   );
+});
 
-  it.live("ends when stopped even if Claude Code never wrote the file", () =>
-    Effect.scoped(
+describe("claudeTaskOutputRoot", () => {
+  it.effect.skipIf(process.getuid === undefined)(
+    "uses the temp dir Claude Code resolves from its environment on each platform",
+    () =>
       Effect.gen(function* () {
-        const { root } = yield* makeTaskFile;
-        const stop = yield* Deferred.make<void>();
-        const fiber = yield* tailClaudeTaskOutput({
-          root,
-          sessionId: SESSION_ID,
-          taskId: TASK_ID,
-          stop,
-          onChunk: () => Effect.die("no file, no output"),
-        }).pipe(Effect.forkScoped);
-        yield* Deferred.succeed(stop, undefined);
-        yield* Fiber.join(fiber);
+        const path = yield* Path.Path;
+        const user = `claude-${process.getuid?.()}`;
+        const root = (
+          environment: Record<string, string>,
+          platform: NodeJS.Platform,
+          cwd: string | null = null,
+        ) => claudeTaskOutputRoot(environment, path, cwd, platform);
+        assert.equal(root({ TMPDIR: "/var/folders/x/T/" }, "linux"), `/var/folders/x/T/${user}`);
+        assert.equal(root({ TMP: "/tmp/user/1000" }, "linux"), `/tmp/user/1000/${user}`);
+        assert.equal(root({}, "linux"), `/tmp/${user}`);
+        assert.equal(root({ TMPDIR: "/var/folders/x/T/" }, "darwin"), `/tmp/${user}`);
+        assert.equal(
+          root({ CLAUDE_CODE_TMPDIR: "/srv/claude", TMPDIR: "/var/folders/x/T/" }, "linux"),
+          `/srv/claude/${user}`,
+        );
+        assert.equal(
+          root({ CLAUDE_CODE_TMPDIR: "/srv/claude", TMPDIR: "/var/folders/x/T/" }, "darwin"),
+          `/srv/claude/${user}`,
+        );
+        assert.equal(
+          root({ TMPDIR: "tmp" }, "linux", "/work/project"),
+          `/work/project/tmp/${user}`,
+        );
+        assert.equal(
+          root({ CLAUDE_CODE_TMPDIR: "../claude" }, "darwin", "/work/project"),
+          `/work/claude/${user}`,
+        );
       }).pipe(Effect.provide(NodeServices.layer)),
-    ),
   );
 });

@@ -261,7 +261,7 @@ function isThermallyConstrained(snapshot: HostPowerSnapshot): boolean {
 
 // Without a live subscriber the sidecar does not sample on a timer, so an idle server
 // never walks the process table. History then covers only time with a subscriber.
-export function resolveNativeSampleIntervalMs(
+function resolveNativeSampleIntervalMs(
   snapshot: HostPowerSnapshot,
   liveSubscriberCount: number,
 ): number {
@@ -326,7 +326,7 @@ const isProtocolMismatch = Schema.is(NativeTelemetryProtocolMismatch);
 const isDecodeFailed = Schema.is(NativeTelemetryDecodeFailed);
 const isCommandFailed = Schema.is(NativeTelemetryCommandFailed);
 
-function eventVersion(value: unknown): number | undefined {
+export function eventVersion(value: unknown): number | undefined {
   if (typeof value !== "object" || value === null) return undefined;
   const version = Reflect.get(value, "version");
   return typeof version === "number" ? version : undefined;
@@ -336,7 +336,7 @@ function restartDelay(attempt: number): Duration.Duration {
   return Duration.min(Duration.times(INITIAL_RESTART_DELAY, 2 ** attempt), MAX_RESTART_DELAY);
 }
 
-export function retainRecentNativeTelemetryFailures(
+function retainRecentNativeTelemetryFailures(
   failures: ReadonlyArray<number>,
   now: number,
 ): ReadonlyArray<number> {
@@ -347,21 +347,21 @@ function errorMessage(error: NativeTelemetryClientError): string {
   return error.message;
 }
 
-export function canRequestNativeTelemetryRetry(
+function canRequestNativeTelemetryRetry(
   status: ResourceTelemetrySourceStatus,
   hasHandle: boolean,
 ): boolean {
   return status !== "healthy" && status !== "starting" && !hasHandle;
 }
 
-export function canCommandNativeTelemetrySidecar(
+function canCommandNativeTelemetrySidecar(
   status: ResourceTelemetrySourceStatus,
   hasHandle: boolean,
 ): boolean {
   return hasHandle && (status === "healthy" || status === "degraded");
 }
 
-/** @public Service construction is part of the canonical Effect module API. */
+/** @public */
 export const make = Effect.fn("resourceTelemetry.nativeTelemetryClient.make")(function* () {
   const binary = yield* ResourceMonitorBinary.ResourceMonitorBinary;
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
@@ -1088,14 +1088,19 @@ export const layerTest = (
         processTree: true,
       }),
       snapshots: Stream.empty,
-      readHistory: () =>
-        Effect.fail(
+      readHistory: Effect.fn("NativeTelemetryClient.readHistory")(function () {
+        return Effect.fail(
           new NativeTelemetryUnavailable({
             reason: "No resource monitor history was configured for this test.",
           }),
-        ),
-      setExternalProcesses: () => Effect.void,
-      setHostPowerState: () => Effect.void,
+        );
+      }),
+      setExternalProcesses: Effect.fn("NativeTelemetryClient.setExternalProcesses")(function () {
+        return Effect.void;
+      }),
+      setHostPowerState: Effect.fn("NativeTelemetryClient.setHostPowerState")(function () {
+        return Effect.void;
+      }),
       sampleNow: Effect.fail(
         new NativeTelemetryUnavailable({
           reason: "No resource monitor sample was configured for this test.",

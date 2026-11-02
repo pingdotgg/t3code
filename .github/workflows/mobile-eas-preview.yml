@@ -7,7 +7,9 @@ on:
 jobs:
   preview:
     name: EAS Preview
+    # Fork PRs deploy one reviewed commit per label through mobile-eas-preview-fork.yml.
     if: |
+      github.event.pull_request.head.repo.full_name == github.repository &&
       contains(github.event.pull_request.labels.*.name, '🚀 Mobile Continuous Deployment') &&
       (github.event.action != 'labeled' || github.event.label.name == '🚀 Mobile Continuous Deployment')
     runs-on: blacksmith-8vcpu-ubuntu-2404
@@ -23,15 +25,15 @@ jobs:
       MOBILE_VERSION_POLICY: fingerprint
     steps:
       - id: expo-token
-        name: Check for EXPO_TOKEN
+        name: Check for EXPO_PREVIEW_TOKEN
         env:
-          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+          EXPO_TOKEN: ${{ secrets.EXPO_PREVIEW_TOKEN }}
         run: |
           if [ -n "$EXPO_TOKEN" ]; then
             echo "present=true" >> "$GITHUB_OUTPUT"
           else
             echo "present=false" >> "$GITHUB_OUTPUT"
-            echo "EXPO_TOKEN is not available; skipping EAS preview."
+            echo "EXPO_PREVIEW_TOKEN is not available; skipping EAS preview."
           fi
 
       - name: Checkout
@@ -70,7 +72,7 @@ jobs:
           # continuous-deploy-fingerprint still reads `build.project.ownerAccount`.
           # Unpin once https://github.com/expo/expo-github-action/issues/358 is fixed.
           eas-version: 21.8.0
-          token: ${{ secrets.EXPO_TOKEN }}
+          token: ${{ secrets.EXPO_PREVIEW_TOKEN }}
           # npm, not pnpm: this only installs eas-cli into the action's own
           # tool dir, and pnpm 11 hard-fails that install on dtrace-provider's
           # ignored build script (no allowBuilds config outside the repo).
@@ -80,7 +82,7 @@ jobs:
         if: steps.expo-token.outputs.present == 'true'
         working-directory: apps/mobile
         env:
-          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+          EXPO_TOKEN: ${{ secrets.EXPO_PREVIEW_TOKEN }}
         run: |
           eas env:pull preview --non-interactive
           # EAS Update disables dotenv loading. Keep the downloaded native config
@@ -99,7 +101,7 @@ jobs:
         if: steps.expo-token.outputs.present == 'true'
         uses: expo/expo-github-action/continuous-deploy-fingerprint@main
         env:
-          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+          EXPO_TOKEN: ${{ secrets.EXPO_PREVIEW_TOKEN }}
           # The Expo action otherwise suppresses the EAS command's failure output.
           RUNNER_DEBUG: "1"
         with:

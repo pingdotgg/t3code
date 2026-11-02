@@ -226,6 +226,8 @@ export class PairingGrantStore extends Context.Service<
       input?: {
         readonly proofKeyThumbprint?: string;
         readonly requestedScopes?: ReadonlyArray<AuthEnvironmentScope>;
+        /** All scopes must be granted; requestedScopes only requires an overlap for OAuth. */
+        readonly requiredScopes?: ReadonlyArray<AuthEnvironmentScope>;
       },
     ) => Effect.Effect<BootstrapGrant, BootstrapCredentialError>;
   }
@@ -254,7 +256,12 @@ const PAIRING_TOKEN_LENGTH = 12;
 const PAIRING_TOKEN_REJECTION_LIMIT =
   Math.floor(256 / PAIRING_TOKEN_ALPHABET.length) * PAIRING_TOKEN_ALPHABET.length;
 
-export const make = Effect.gen(function* () {
+const PAIRING_TOKEN_PATTERN = new RegExp(
+  `^[${PAIRING_TOKEN_ALPHABET}]{${PAIRING_TOKEN_LENGTH}}$`,
+  "i",
+);
+
+const make = Effect.gen(function* () {
   const crypto = yield* Crypto.Crypto;
   const config = yield* ServerConfig.ServerConfig;
   const pairingLinks = yield* AuthPairingLinks.AuthPairingLinkRepository;
@@ -303,9 +310,7 @@ export const make = Effect.gen(function* () {
       id,
     }).pipe(Effect.asVoid);
 
-  // A desktop that sends its secret rotates the renderer's token, so accept
-  // whichever token the secret derives for the current window instead of
-  // seeding one fixed token. Older desktops only send the token.
+  // Accept tokens derived from the rotating desktop secret; older desktops send only a token.
   const desktopBootstrapSecret = config.desktopBootstrapSecret;
   const consumeRotatingDesktopToken = (credential: string, nowMs: number) =>
     desktopBootstrapSecret !== undefined &&
@@ -320,11 +325,7 @@ export const make = Effect.gen(function* () {
       expiresAt: DateTime.add(now, {
         milliseconds: Duration.toMillis(DESKTOP_BOOTSTRAP_TTL_HOURS),
       }),
-      // Unbounded uses so the renderer can re-exchange the seed for a
-      // fresh bearer session after a page reload (or after the prior
-      // bearer expires). The seed itself stays inside the desktop
-      // process and the rendered page, both of which the user already
-      // implicitly trusts.
+      // Reloads and expired bearer sessions must be able to re-exchange the desktop seed.
       remainingUses: "unbounded",
     });
   }
@@ -487,8 +488,10 @@ export const make = Effect.gen(function* () {
           }
 
           if (
-            input?.requestedScopes !== undefined &&
-            !input.requestedScopes.some((scope) => grant.scopes.includes(scope))
+            (input?.requestedScopes !== undefined &&
+              !input.requestedScopes.some((scope) => grant.scopes.includes(scope))) ||
+            (input?.requiredScopes !== undefined &&
+              !input.requiredScopes.every((scope) => grant.scopes.includes(scope)))
           ) {
             return [
               {
@@ -538,16 +541,20 @@ export const make = Effect.gen(function* () {
         return yield* seededResult.error;
       }
 
-      // The scope check is part of the UPDATE's WHERE clause so a rejected
-      // request cannot consume a one-time link. The re-check below only
-      // explains why nothing matched.
+      // Only credentials in the issued pairing-code format are case-insensitive.
+      const pairingCredential = PAIRING_TOKEN_PATTERN.test(credential)
+        ? credential.toUpperCase()
+        : credential;
+
+      // Check scopes in the UPDATE so rejected requests cannot spend one-time links.
       const consumed = yield* pairingLinks
         .consumeAvailable({
-          credential,
+          credential: pairingCredential,
           proofKeyThumbprint: input?.proofKeyThumbprint ?? null,
           ...(input?.requestedScopes !== undefined
             ? { requestedScopes: input.requestedScopes }
             : {}),
+          ...(input?.requiredScopes !== undefined ? { requiredScopes: input.requiredScopes } : {}),
           consumedAt: now,
           now,
         })
@@ -568,7 +575,7 @@ export const make = Effect.gen(function* () {
       }
 
       const matching = yield* pairingLinks
-        .getByCredential({ credential })
+        .getByCredential({ credential: pairingCredential })
         .pipe(Effect.mapError((cause) => new BootstrapCredentialLookupError({ cause })));
       if (Option.isNone(matching)) {
         return yield* new UnknownBootstrapCredentialError({});
@@ -594,8 +601,10 @@ export const make = Effect.gen(function* () {
       }
 
       if (
-        input?.requestedScopes !== undefined &&
-        !input.requestedScopes.some((scope) => matching.value.scopes.includes(scope))
+        (input?.requestedScopes !== undefined &&
+          !input.requestedScopes.some((scope) => matching.value.scopes.includes(scope))) ||
+        (input?.requiredScopes !== undefined &&
+          !input.requiredScopes.every((scope) => matching.value.scopes.includes(scope)))
       ) {
         return yield* new BootstrapCredentialScopeNotGrantedError({});
       }

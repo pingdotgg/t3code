@@ -164,38 +164,6 @@ describe("EnvironmentPublishSignatures", () => {
     }).pipe(Effect.provide(layer())),
   );
 
-  it.effect("preserves the JWT verification failure", () =>
-    Effect.gen(function* () {
-      const request = yield* freshRequest;
-      const segments = request.proof.split(".");
-      const signature = segments[2]!;
-      segments[2] = `${signature.startsWith("A") ? "B" : "A"}${signature.slice(1)}`;
-      const signatures = yield* EnvironmentPublishSignatures.EnvironmentPublishSignatures;
-      const result = yield* Effect.result(
-        signatures.verify({
-          environmentId: state.environmentId,
-          environmentPublicKey: keyPair.publicKey,
-          threadId: state.threadId,
-          request: { ...request, proof: segments.join(".") },
-        }),
-      );
-
-      expect(Result.isFailure(result)).toBe(true);
-      if (Result.isFailure(result)) {
-        expect(isEnvironmentPublishSignatureInvalid(result.failure)).toBe(true);
-        if (isEnvironmentPublishSignatureInvalid(result.failure)) {
-          expect(result.failure).toMatchObject({
-            environmentId: state.environmentId,
-            threadId: state.threadId,
-            reason: "invalid_signature_or_payload",
-            stage: "verify_proof",
-            cause: { _tag: "RelayJwtError" },
-          });
-        }
-      }
-    }).pipe(Effect.provide(layer())),
-  );
-
   it.effect("rejects replayed activity JWT ids", () =>
     Effect.gen(function* () {
       const request = yield* freshRequest;

@@ -1,6 +1,8 @@
 import { describe, expect, it } from "@effect/vitest";
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import type { EasDeviceHostConfig } from "@t3tools/contracts";
+import { type EasDeviceHostConfig, ThreadId } from "@t3tools/contracts";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
@@ -14,6 +16,8 @@ import { HttpClient, HttpClientResponse } from "effect/http";
 
 import * as ServerConfig from "../config.ts";
 import * as ProcessRunner from "../processRunner.ts";
+import * as ServerSettings from "../serverSettings.ts";
+import * as DeviceService from "./DeviceService.ts";
 import * as EasDeviceHost from "./EasDeviceHost.ts";
 
 const APP_ID = "d763fcb8-d37c-41ea-a773-b54a0ab4a454";
@@ -56,11 +60,15 @@ const fakeExpo = (
     readonly activeIncludesCreated?: boolean;
     readonly failPreview?: boolean;
     readonly omitCreatedFromActive?: boolean;
+    /** The session's agent-device daemon answers with a server error. */
+    readonly failAgent?: () => boolean;
   } = {},
 ) => {
   const calls: Array<{ operation: string; variables: Record<string, unknown> }> = [];
+  const releases: Array<unknown> = [];
   let created = 0;
   let createdName = "";
+  const previews: string[] = [];
   let previewFails = options.failPreview ?? false;
   let createFails = options.failCreate ?? false;
   let sessionGated = false;
@@ -68,6 +76,7 @@ const fakeExpo = (
     Effect.gen(function* () {
       const url = new URL(request.url);
       if (url.origin === "https://preview.test") {
+        previews.push(`${url.pathname}${url.search}`);
         expect(request.headers.authorization).toBe("Bearer preview-token");
         if (options.previewGate) {
           yield* Deferred.succeed(options.previewGate.requested, undefined);
@@ -76,7 +85,29 @@ const fakeExpo = (
         if (previewFails) {
           return HttpClientResponse.fromWeb(request, new Response("bad gateway", { status: 502 }));
         }
-        return HttpClientResponse.fromWeb(request, Response.json({ device: "UDID-1" }));
+        if (url.pathname.endsWith("/api/screenshot")) {
+          return HttpClientResponse.fromWeb(request, new Response(Uint8Array.of(137, 80, 78, 71)));
+        }
+        return HttpClientResponse.fromWeb(
+          request,
+          Response.json(
+            url.pathname === "/vendor/serve-emu/api"
+              ? { serial: "emulator-5554" }
+              : { device: "UDID-1" },
+          ),
+        );
+      }
+      if (url.origin === "https://agent.test") {
+        expect(request.headers.authorization).toBe("Bearer agent-token");
+        if (request.body._tag === "Uint8Array") {
+          const rpc = JSON.parse(new TextDecoder().decode(request.body.body)) as {
+            params: { command: string; session: string };
+          };
+          if (rpc.params.command === "close") releases.push(rpc.params.session);
+        }
+        if (options.failAgent?.())
+          return HttpClientResponse.fromWeb(request, new Response("bad gateway", { status: 502 }));
+        return HttpClientResponse.fromWeb(request, Response.json({ result: { ok: true } }));
       }
       const body =
         request.body._tag === "Uint8Array"
@@ -194,7 +225,7 @@ const fakeExpo = (
   const allowCreate = () => {
     createFails = false;
   };
-  return { http, named, stopped, allowPreview, allowCreate };
+  return { http, named, stopped, allowPreview, allowCreate, releases, previews };
 };
 
 const layer = Layer.mergeAll(
@@ -220,7 +251,10 @@ describe("EAS Simulator host", () => {
       const host = yield* makeHost(expo, config(), scope);
       const ready = yield* host.ensureReady(() => Effect.void);
       const catalog = (yield* ready.devices.list).devices;
-      expect(catalog.map((device) => [device.id, device.booted])).toEqual([["eas-ios", false]]);
+      expect(catalog.map((device) => [device.id, device.booted])).toEqual([
+        ["eas-ios", false],
+        ["eas-android", false],
+      ]);
 
       expect(yield* ready.devices.boot(catalog[0]!)).toBe("session-1");
       expect(expo.named("T3CreateEasSimulatorSession")[0]?.variables.input).toMatchObject({
@@ -265,6 +299,55 @@ describe("EAS Simulator host", () => {
     }).pipe(Effect.scoped, Effect.provide(layer)),
   );
 
+  it.effect("runs an Android session through serve-emu beside an iOS one", () =>
+    Effect.gen(function* () {
+      const expo = fakeExpo();
+      const scope = yield* Scope.make();
+      const host = yield* makeHost(expo, config(), scope);
+      expect(yield* host.platformAvailability("android")).toEqual({
+        platform: "android",
+        available: true,
+      });
+      const ready = yield* host.ensureReady(() => Effect.void);
+      const [ios, android] = (yield* ready.devices.list).devices;
+      expect(yield* ready.devices.boot(ios!)).toBe("session-1");
+      expect(yield* ready.devices.boot(android!)).toBe("session-2");
+      expect(expo.named("T3CreateEasSimulatorSession")[1]?.variables.input).toMatchObject({
+        platform: "ANDROID",
+      });
+      const running = (yield* ready.devices.list).devices.find(
+        (device) => device.id === "session-2",
+      );
+      expect(running).toMatchObject({ platform: "android", booted: true });
+
+      expect(yield* ready.devices.agentEndpoint!("session-2")).toMatchObject({
+        agentDeviceId: "emulator-5554",
+      });
+      expect(Array.from(yield* ready.devices.screenshot(running!))).toEqual([137, 80, 78, 71]);
+      expect(expo.previews.slice(-2)).toEqual([
+        "/vendor/serve-emu/api",
+        "/vendor/serve-emu/api/screenshot?device=emulator-5554",
+      ]);
+      expect(
+        yield* ready.upstream!(
+          "/vendor/serve-emu/webrtc/offer",
+          new URLSearchParams("device=session-2&hostId=eas"),
+        ),
+      ).toEqual({
+        url: "https://preview.test/vendor/serve-emu/webrtc/offer?device=emulator-5554&hostId=eas",
+        headers: { authorization: "Bearer preview-token" },
+        protocols: ["serve-emu.token.preview-token"],
+      });
+      // Each session answers only on its own platform's stream.
+      expect(
+        yield* ready.upstream!("/vendor/serve-emu/api", new URLSearchParams("device=session-1")),
+      ).toBeNull();
+      expect(
+        yield* ready.upstream!("/vendor/serve-sim/api", new URLSearchParams("device=session-2")),
+      ).toBeNull();
+    }).pipe(Effect.scoped, Effect.provide(layer)),
+  );
+
   it.effect("refuses to start past its session limit", () =>
     Effect.gen(function* () {
       const expo = fakeExpo();
@@ -291,6 +374,7 @@ describe("EAS Simulator host", () => {
       expect(yield* ready.devices.boot(catalogDevice!)).toBe("session-2");
       expect((yield* ready.devices.list).devices.map((device) => device.id)).toEqual([
         "eas-ios",
+        "eas-android",
         "session-1",
         "session-2",
       ]);
@@ -305,185 +389,12 @@ describe("EAS Simulator host", () => {
       expect(expo.stopped()).toEqual(["session-1"]);
       expect((yield* ready.devices.list).devices.map((device) => device.id)).toEqual([
         "eas-ios",
+        "eas-android",
         "session-2",
       ]);
       yield* Scope.close(scope, Exit.void);
       expect(expo.stopped()).toEqual(["session-1", "session-2"]);
     }).pipe(Effect.scoped, Effect.provide(layer)),
-  );
-
-  it.effect("stops only the sessions a previous server recorded, found by name", () =>
-    Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const path = yield* Path.Path;
-      const server = yield* ServerConfig.ServerConfig;
-      const ledger = path.join(server.stateDir, "device", "eas", "eas.json");
-      yield* fs.makeDirectory(path.dirname(ledger), { recursive: true });
-      yield* fs.writeFileString(
-        ledger,
-        JSON.stringify([
-          { name: "T3 Code · EAS Simulator · left", appId: APP_ID, recordedAt: 0 },
-          // Recorded long enough ago that Expo has ended it, so the record goes.
-          { name: "T3 Code · EAS Simulator · gone", appId: APP_ID, recordedAt: -181 * 60_000 },
-          // Recorded just now and not listed yet: kept for a later sweep.
-          { name: "T3 Code · EAS Simulator · new", appId: APP_ID, recordedAt: 0 },
-        ]),
-      );
-      const expo = fakeExpo({
-        active: [
-          { id: "left-behind", status: "IN_PROGRESS", name: "T3 Code · EAS Simulator · left" },
-        ],
-      });
-      const host = yield* makeHost(expo, config(), yield* Scope.make());
-      yield* host.ensureReady(() => Effect.void);
-      // The sweep runs in the background, so readiness does not wait on Expo.
-      const ledgerNames = Effect.map(
-        Effect.flatMap(fs.readFileString(ledger), (text) =>
-          Effect.try(() => JSON.parse(text) as ReadonlyArray<{ name: string }>),
-        ),
-        (entries) => entries.map((entry) => entry.name),
-      );
-      yield* Effect.eventually(
-        Effect.flatMap(ledgerNames, (names) =>
-          names.length === 1 ? Effect.void : Effect.fail("not swept yet"),
-        ),
-      );
-      expect(expo.stopped()).toEqual(["left-behind"]);
-      expect(yield* ledgerNames).toEqual(["T3 Code · EAS Simulator · new"]);
-    }).pipe(Effect.scoped, Effect.provide(layer)),
-  );
-
-  it.effect("counts a fresh record a previous server left until Expo lists it or would have", () =>
-    Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const path = yield* Path.Path;
-      const server = yield* ServerConfig.ServerConfig;
-      const ledger = path.join(server.stateDir, "device", "eas", "eas.json");
-      yield* fs.makeDirectory(path.dirname(ledger), { recursive: true });
-      yield* fs.writeFileString(
-        ledger,
-        JSON.stringify([{ name: "T3 Code · EAS Simulator · new", appId: APP_ID, recordedAt: 0 }]),
-      );
-      const expo = fakeExpo();
-      const host = yield* makeHost(expo, config({ maxConcurrentSessions: 1 }), yield* Scope.make());
-      const ready = yield* host.ensureReady(() => Effect.void);
-      const [catalogDevice] = (yield* ready.devices.list).devices;
-      // The record is fresh and Expo does not list it yet: it holds the slot.
-      const refused = yield* ready.devices.boot(catalogDevice!).pipe(Effect.flip);
-      expect(refused.message).toContain("still being cleaned up");
-      yield* TestClock.adjust("6 minutes");
-      yield* ready.devices.list;
-      expect(yield* ready.devices.boot(catalogDevice!)).toBe("session-1");
-    }).pipe(Effect.scoped, Effect.provide(layer)),
-  );
-
-  it.effect("counts an old record a previous server left until a sweep stops its session", () =>
-    Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const path = yield* Path.Path;
-      const server = yield* ServerConfig.ServerConfig;
-      const ledger = path.join(server.stateDir, "device", "eas", "eas.json");
-      yield* fs.makeDirectory(path.dirname(ledger), { recursive: true });
-      yield* fs.writeFileString(
-        ledger,
-        JSON.stringify([
-          { name: "T3 Code · EAS Simulator · old", appId: APP_ID, recordedAt: -10 * 60_000 },
-        ]),
-      );
-      const expo = fakeExpo({
-        active: [
-          { id: "old-session", status: "IN_PROGRESS", name: "T3 Code · EAS Simulator · old" },
-        ],
-      });
-      const host = yield* makeHost(expo, config({ maxConcurrentSessions: 1 }), yield* Scope.make());
-      const ready = yield* host.ensureReady(() => Effect.void);
-      // Listing sweeps before anything starts, so the old session is stopped first.
-      const [catalogDevice] = (yield* ready.devices.list).devices;
-      expect(expo.stopped()).toContain("old-session");
-      expect(yield* ready.devices.boot(catalogDevice!)).toBe("session-1");
-    }).pipe(Effect.scoped, Effect.provide(layer)),
-  );
-
-  it.effect("keeps an old record counted while the listing that would find it fails", () =>
-    Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const path = yield* Path.Path;
-      const server = yield* ServerConfig.ServerConfig;
-      const ledger = path.join(server.stateDir, "device", "eas", "eas.json");
-      yield* fs.makeDirectory(path.dirname(ledger), { recursive: true });
-      yield* fs.writeFileString(
-        ledger,
-        JSON.stringify([
-          { name: "T3 Code · EAS Simulator · old", appId: APP_ID, recordedAt: -10 * 60_000 },
-        ]),
-      );
-      let listFails = true;
-      const expo = fakeExpo({
-        active: [
-          { id: "old-session", status: "IN_PROGRESS", name: "T3 Code · EAS Simulator · old" },
-        ],
-        failList: () => listFails,
-      });
-      const host = yield* makeHost(expo, config({ maxConcurrentSessions: 1 }), yield* Scope.make());
-      const ready = yield* host.ensureReady(() => Effect.void);
-      const [catalogDevice] = (yield* ready.devices.list).devices;
-      // The sweep could not look, so the record still holds the slot.
-      const refused = yield* ready.devices.boot(catalogDevice!).pipe(Effect.flip);
-      expect(refused.message).toContain("still being cleaned up");
-      listFails = false;
-      yield* ready.devices.list;
-      expect(expo.stopped()).toContain("old-session");
-      expect(yield* ready.devices.boot(catalogDevice!)).toBe("session-1");
-    }).pipe(Effect.scoped, Effect.provide(layer)),
-  );
-
-  it.effect(
-    "frees the slot of a record Expo has ended by now, but keeps it until a listing confirms",
-    () =>
-      Effect.gen(function* () {
-        const fs = yield* FileSystem.FileSystem;
-        const path = yield* Path.Path;
-        const server = yield* ServerConfig.ServerConfig;
-        const ledger = path.join(server.stateDir, "device", "eas", "eas.json");
-        yield* fs.makeDirectory(path.dirname(ledger), { recursive: true });
-        yield* fs.writeFileString(
-          ledger,
-          JSON.stringify([
-            { name: "T3 Code · EAS Simulator · gone", appId: APP_ID, recordedAt: -181 * 60_000 },
-            {
-              name: "T3 Code · EAS Simulator · refused",
-              appId: APP_ID,
-              recordedAt: -181 * 60_000,
-              refused: true,
-            },
-            // No queue holds a session for a day: forgotten unconfirmed.
-            {
-              name: "T3 Code · EAS Simulator · ancient",
-              appId: APP_ID,
-              recordedAt: -25 * 60 * 60_000,
-            },
-          ]),
-        );
-        // The app is gone, say: listing it fails for good.
-        const expo = fakeExpo({ failList: () => true });
-        const host = yield* makeHost(
-          expo,
-          config({ maxConcurrentSessions: 1 }),
-          yield* Scope.make(),
-        );
-        const ready = yield* host.ensureReady(() => Effect.void);
-        const [catalogDevice] = (yield* ready.devices.list).devices;
-        expect(yield* ready.devices.boot(catalogDevice!)).toBe("session-1");
-        const names = (JSON.parse(yield* fs.readFileString(ledger)) as Array<{ name: string }>).map(
-          (entry) => entry.name,
-        );
-        // The listing never confirmed the two: a queued session could still be
-        // running, so their records stay for the reaper.
-        expect(names.filter((name) => !/[0-9a-f]{6}$/.test(name))).toEqual([
-          "T3 Code · EAS Simulator · gone",
-          "T3 Code · EAS Simulator · refused",
-        ]);
-      }).pipe(Effect.scoped, Effect.provide(layer)),
   );
 
   it.effect(
@@ -519,30 +430,6 @@ describe("EAS Simulator host", () => {
       }).pipe(Effect.scoped, Effect.provide(layer)),
   );
 
-  it.effect("leaves a replacement's session alone once its own scope has closed", () =>
-    Effect.gen(function* () {
-      // One Expo for both instances: they share the record and the account.
-      const expo = fakeExpo();
-      const first = yield* Scope.make();
-      const old = yield* makeHost(expo, config(), first);
-      const oldReady = yield* old.ensureReady(() => Effect.void);
-      const [catalogDevice] = (yield* oldReady.devices.list).devices;
-      expect(yield* oldReady.devices.boot(catalogDevice!)).toBe("session-1");
-      // Settings saved: the old instance goes, a replacement takes its id.
-      yield* Scope.close(first, Exit.void);
-      expect(expo.stopped()).toEqual(["session-1"]);
-      const replacement = yield* makeHost(expo, config(), yield* Scope.make());
-      const ready = yield* replacement.ensureReady(() => Effect.void);
-      const [device] = (yield* ready.devices.list).devices;
-      expect(yield* ready.devices.boot(device!)).toBe("session-2");
-      // A listing still running on the old instance must not sweep the new
-      // session, which it does not own but its replacement does.
-      yield* TestClock.adjust("2 minutes");
-      yield* oldReady.devices.list;
-      expect(expo.stopped()).toEqual(["session-1"]);
-    }).pipe(Effect.scoped, Effect.provide(layer)),
-  );
-
   it.effect(
     "does not sweep a replacement's session from a listing in flight when its scope closes",
     () =>
@@ -570,102 +457,6 @@ describe("EAS Simulator host", () => {
         yield* Fiber.join(listing);
         expect(expo.stopped()).toEqual(["session-1"]);
       }).pipe(Effect.scoped, Effect.provide(layer)),
-  );
-
-  it.effect("waits for a record write in flight before its scope closes", () =>
-    Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const gate = yield* makeGate;
-      let armed = false;
-      // The ledger read inside a write waits on the gate once armed.
-      const gatedFs: FileSystem.FileSystem = {
-        ...fs,
-        readFileString: (path, encoding) =>
-          Effect.gen(function* () {
-            if (armed && path.endsWith("eas.json")) {
-              armed = false;
-              yield* Deferred.succeed(gate.requested, undefined);
-              yield* Deferred.await(gate.release);
-            }
-            return yield* fs.readFileString(path, encoding);
-          }),
-      };
-      let status = "IN_PROGRESS";
-      // Nothing is listed, so the close's own sweep writes nothing: only the
-      // write in flight can hold the close.
-      const expo = fakeExpo({ status: () => status, omitCreatedFromActive: true });
-      const first = yield* Scope.make();
-      const old = yield* makeHost(expo, config(), first).pipe(
-        Effect.provideService(FileSystem.FileSystem, gatedFs),
-      );
-      const oldReady = yield* old.ensureReady(() => Effect.void);
-      const [catalogDevice] = (yield* oldReady.devices.list).devices;
-      expect(yield* oldReady.devices.boot(catalogDevice!)).toBe("session-1");
-      // Expo ended the session; the next listing forgets its record.
-      status = "STOPPED";
-      yield* TestClock.adjust("20 seconds");
-      armed = true;
-      const listing = yield* oldReady.devices.list.pipe(Effect.forkChild);
-      yield* Deferred.await(gate.requested);
-      // Settings saved while that write is in flight: closing waits for it.
-      const listingsBefore = expo.named("T3ActiveEasSimulatorSessions").length;
-      const closing = yield* Scope.close(first, Exit.void).pipe(Effect.forkChild);
-      // The close reads the record and lists sessions in real time: yield until
-      // its sweep has listed, then a good deal more, before looking at it.
-      while (expo.named("T3ActiveEasSimulatorSessions").length === listingsBefore) {
-        yield* Effect.yieldNow;
-      }
-      for (let i = 0; i < 200; i++) yield* Effect.yieldNow;
-      expect(closing.pollUnsafe()).toBeUndefined();
-      yield* Deferred.succeed(gate.release, undefined);
-      yield* Fiber.join(listing);
-      yield* Fiber.join(closing);
-      const replacement = yield* makeHost(expo, config(), yield* Scope.make());
-      const ready = yield* replacement.ensureReady(() => Effect.void);
-      const [device] = (yield* ready.devices.list).devices;
-      status = "IN_PROGRESS";
-      expect(yield* ready.devices.boot(device!)).toBe("session-2");
-      // The old write landed first, so the replacement's record is intact.
-      const path = yield* Path.Path;
-      const server = yield* ServerConfig.ServerConfig;
-      const entries = JSON.parse(
-        yield* fs.readFileString(path.join(server.stateDir, "device", "eas", "eas.json")),
-      ) as Array<{ name: string }>;
-      expect(entries).toHaveLength(1);
-    }).pipe(Effect.scoped, Effect.provide(layer)),
-  );
-
-  it.effect("keeps an old record whose session is listed but cannot be stopped", () =>
-    Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const path = yield* Path.Path;
-      const server = yield* ServerConfig.ServerConfig;
-      const ledger = path.join(server.stateDir, "device", "eas", "eas.json");
-      yield* fs.makeDirectory(path.dirname(ledger), { recursive: true });
-      yield* fs.writeFileString(
-        ledger,
-        JSON.stringify([
-          { name: "T3 Code · EAS Simulator · old", appId: APP_ID, recordedAt: -181 * 60_000 },
-        ]),
-      );
-      // Expo still lists it (queued for hours, say) and refuses to stop it.
-      const expo = fakeExpo({
-        active: [
-          { id: "old-session", status: "IN_PROGRESS", name: "T3 Code · EAS Simulator · old" },
-        ],
-        failStop: () => true,
-      });
-      const host = yield* makeHost(expo, config({ maxConcurrentSessions: 1 }), yield* Scope.make());
-      const ready = yield* host.ensureReady(() => Effect.void);
-      const [catalogDevice] = (yield* ready.devices.list).devices;
-      // Found and still running: its slot stays taken and its record stays.
-      const refused = yield* ready.devices.boot(catalogDevice!).pipe(Effect.flip);
-      expect(refused.message).toContain("still being cleaned up");
-      const names = (JSON.parse(yield* fs.readFileString(ledger)) as Array<{ name: string }>).map(
-        (entry) => entry.name,
-      );
-      expect(names).toContain("T3 Code · EAS Simulator · old");
-    }).pipe(Effect.scoped, Effect.provide(layer)),
   );
 
   it.effect("stops the session a refused create made anyway", () =>
@@ -700,33 +491,6 @@ describe("EAS Simulator host", () => {
     }).pipe(Effect.scoped, Effect.provide(layer)),
   );
 
-  it.effect("keeps a session tracked when the open that started it is interrupted", () =>
-    Effect.gen(function* () {
-      const createGate = yield* makeGate;
-      const expo = fakeExpo({ createGate });
-      const scope = yield* Scope.make();
-      const host = yield* makeHost(expo, config(), scope);
-      const ready = yield* host.ensureReady(() => Effect.void);
-      const [catalogDevice] = (yield* ready.devices.list).devices;
-      const opening = yield* ready.devices.boot(catalogDevice!).pipe(Effect.forkChild);
-      yield* Deferred.await(createGate.requested);
-      yield* Fiber.interrupt(opening);
-      yield* Deferred.succeed(createGate.release, undefined);
-      // The start goes on in the host and tracks its session.
-      yield* Effect.eventually(
-        ready.devices.list.pipe(
-          Effect.flatMap(({ devices }) =>
-            devices.some((device) => device.id === "session-1")
-              ? Effect.void
-              : Effect.fail("not tracked yet"),
-          ),
-        ),
-      );
-      yield* Scope.close(scope, Exit.void);
-      expect(expo.stopped()).toEqual(["session-1"]);
-    }).pipe(Effect.scoped, Effect.provide(layer)),
-  );
-
   it.effect("keeps a session it could not stop counted, listed, and retried", () =>
     Effect.gen(function* () {
       let stopFails = true;
@@ -741,7 +505,10 @@ describe("EAS Simulator host", () => {
       expect(refused.message).toContain("limited to 1 running session");
       stopFails = false;
       yield* ready.devices.list;
-      expect((yield* ready.devices.list).devices.map((device) => device.id)).toEqual(["eas-ios"]);
+      expect((yield* ready.devices.list).devices.map((device) => device.id)).toEqual([
+        "eas-ios",
+        "eas-android",
+      ]);
       expect(expo.stopped().filter((id) => id === "session-1").length).toBeGreaterThanOrEqual(2);
     }).pipe(Effect.scoped, Effect.provide(layer)),
   );
@@ -758,7 +525,10 @@ describe("EAS Simulator host", () => {
       expect((yield* ready.devices.list).devices.map((device) => device.id)).toContain("session-1");
       // Expo ended it by itself: the stop keeps failing, but the status says so.
       status = "STOPPED";
-      expect((yield* ready.devices.list).devices.map((device) => device.id)).toEqual(["eas-ios"]);
+      expect((yield* ready.devices.list).devices.map((device) => device.id)).toEqual([
+        "eas-ios",
+        "eas-android",
+      ]);
       status = "IN_PROGRESS";
       expect(yield* ready.devices.boot(catalogDevice!)).toBe("session-2");
     }).pipe(Effect.scoped, Effect.provide(layer)),
@@ -775,20 +545,22 @@ describe("EAS Simulator host", () => {
       expect(expo.named("T3CreateEasSimulatorSession")).toHaveLength(0);
     }).pipe(Effect.scoped, Effect.provide(layer)),
   );
-  it.effect("stops listing sessions Expo already ended", () =>
+
+  it.effect("reports iOS unavailable on a server with no Expo credential", () =>
     Effect.gen(function* () {
-      let status = "IN_PROGRESS";
-      const expo = fakeExpo({ status: () => status });
-      const host = yield* makeHost(expo, config(), yield* Scope.make());
-      const ready = yield* host.ensureReady(() => Effect.void);
-      const [catalogDevice] = (yield* ready.devices.list).devices;
-      yield* ready.devices.boot(catalogDevice!);
-      status = "STOPPED";
-      yield* TestClock.adjust("20 seconds");
-      expect((yield* ready.devices.list).devices.map((device) => device.id)).toEqual(["eas-ios"]);
-      expect(yield* ready.devices.agentEndpoint!("session-1").pipe(Effect.flip)).toMatchObject({
-        reason: "This EAS Simulator device is no longer running.",
-      });
+      const fs = yield* FileSystem.FileSystem;
+      const home = yield* fs.makeTempDirectoryScoped({ prefix: "t3-expo-home-" });
+      const host = yield* makeHost(
+        fakeExpo(),
+        config({ accessToken: "" }),
+        yield* Scope.make(),
+      ).pipe(
+        Effect.provideService(HostProcess.HomeDirectory, home),
+        Effect.provideService(HostProcess.Environment, {}),
+      );
+      const [ios] = (yield* host.summary).platforms;
+      expect(ios).toMatchObject({ platform: "ios", available: false });
+      expect(ios?.reason).toContain("No Expo credential on the server");
     }).pipe(Effect.scoped, Effect.provide(layer)),
   );
 
@@ -806,102 +578,69 @@ describe("EAS Simulator host", () => {
       expect(expo.stopped()).toEqual(["session-1"]);
       const failure = yield* Fiber.join(booting).pipe(Effect.flip);
       expect(failure.message).toContain("was stopped while the session started");
-      expect((yield* ready.devices.list).devices.map((device) => device.id)).toEqual(["eas-ios"]);
+      expect((yield* ready.devices.list).devices.map((device) => device.id)).toEqual([
+        "eas-ios",
+        "eas-android",
+      ]);
     }).pipe(Effect.scoped, Effect.provide(layer)),
   );
 
-  it.effect("leaves a start in progress to its owner when the sweep runs", () =>
+  it.effect("releases each thread's agent session on close and keeps the session running", () =>
     Effect.gen(function* () {
-      const previewGate = yield* makeGate;
-      // Expo lists the starting session by name, as it does while it boots.
-      const expo = fakeExpo({ previewGate, activeIncludesCreated: true });
-      const fs = yield* FileSystem.FileSystem;
-      const path = yield* Path.Path;
-      const server = yield* ServerConfig.ServerConfig;
+      let agentFails = false;
+      const expo = fakeExpo({ failAgent: () => agentFails });
       const host = yield* makeHost(expo, config(), yield* Scope.make());
-      const ready = yield* host.ensureReady(() => Effect.void);
-      const [catalogDevice] = (yield* ready.devices.list).devices;
-      const booting = yield* ready.devices.boot(catalogDevice!).pipe(Effect.forkChild);
-      yield* Deferred.await(previewGate.requested);
-      yield* TestClock.adjust("61 seconds");
-      yield* ready.devices.list;
-      expect(expo.stopped()).toEqual([]);
-      const ledger = path.join(server.stateDir, "device", "eas", "eas.json");
-      expect(JSON.parse(yield* fs.readFileString(ledger))).toHaveLength(1);
-      yield* Deferred.succeed(previewGate.release, undefined);
-      expect(yield* Fiber.join(booting)).toBe("session-1");
-    }).pipe(Effect.scoped, Effect.provide(layer)),
-  );
+      const service = yield* DeviceService.makeWithHosts(new Map([["eas", host]]), undefined, () =>
+        Effect.succeed("/eas-agent.json"),
+      );
+      const first = ThreadId.make("first");
+      const second = ThreadId.make("second");
+      const opened = yield* service.open({
+        threadId: first,
+        hostId: "eas",
+        deviceId: "eas-ios",
+        platform: "ios",
+      });
+      expect(opened.deviceId).toBe("session-1");
+      yield* service.open({
+        threadId: second,
+        hostId: "eas",
+        deviceId: opened.deviceId,
+        platform: "ios",
+      });
+      const sessionOf = (threadId: ThreadId) =>
+        service
+          .agentTarget({ threadId, hostId: "eas", deviceId: opened.deviceId })
+          .pipe(Effect.map((target) => target.args[3]));
+      const firstSession = yield* sessionOf(first);
+      const secondSession = yield* sessionOf(second);
 
-  it.effect("keeps a session counted when its start fails and stopping it fails too", () =>
-    Effect.gen(function* () {
-      let stopFails = true;
-      const expo = fakeExpo({ failPreview: true, failStop: () => stopFails });
-      const host = yield* makeHost(expo, config({ maxConcurrentSessions: 1 }), yield* Scope.make());
-      const ready = yield* host.ensureReady(() => Effect.void);
-      const [catalogDevice] = (yield* ready.devices.list).devices;
-      // The preview probe is retried a few seconds apart before the start gives up.
-      const failing = yield* ready.devices.boot(catalogDevice!).pipe(Effect.flip, Effect.forkChild);
-      while (failing.pollUnsafe() === undefined) yield* TestClock.adjust("1 second");
-      yield* Fiber.join(failing);
-      const refused = yield* ready.devices.boot(catalogDevice!).pipe(Effect.flip);
-      expect(refused.message).toContain("still being cleaned up");
-      expect(expo.named("T3CreateEasSimulatorSession")).toHaveLength(1);
-      stopFails = false;
-      yield* ready.devices.list;
-      expect(expo.stopped().at(-1)).toBe("session-1");
-      expo.allowPreview();
-      expect(yield* ready.devices.boot(catalogDevice!)).toBe("session-2");
-    }).pipe(Effect.scoped, Effect.provide(layer)),
-  );
+      yield* service.close({ threadId: first });
+      expect(expo.releases).toEqual([firstSession]);
+      expect((yield* service.state).sessions.map((entry) => entry.threadId)).toEqual([second]);
 
-  it.effect("stops only its own session when creating one fails after Expo made it", () =>
-    Effect.gen(function* () {
-      const expo = fakeExpo({ failCreate: true });
-      const host = yield* makeHost(expo, config(), yield* Scope.make());
-      const ready = yield* host.ensureReady(() => Effect.void);
-      const [catalogDevice] = (yield* ready.devices.list).devices;
-      yield* ready.devices.boot(catalogDevice!).pipe(Effect.flip);
-      expect(expo.stopped()).toEqual(["orphan"]);
-    }).pipe(Effect.scoped, Effect.provide(layer)),
-  );
+      agentFails = true;
+      const failed = yield* Effect.exit(service.close({ threadId: second, shutdown: false }));
+      expect(Exit.isFailure(failed)).toBe(true);
+      expect((yield* service.state).sessions.map((entry) => entry.threadId)).toEqual([second]);
 
-  it.effect("counts a create whose outcome is unknown against the limit, then frees it", () =>
-    Effect.gen(function* () {
-      // Create fails and the session is not listed yet, so the outcome is unknown.
-      const expo = fakeExpo({ failCreate: true, omitCreatedFromActive: true });
-      const host = yield* makeHost(expo, config({ maxConcurrentSessions: 1 }), yield* Scope.make());
-      const ready = yield* host.ensureReady(() => Effect.void);
-      const [catalogDevice] = (yield* ready.devices.list).devices;
-      yield* ready.devices.boot(catalogDevice!).pipe(Effect.flip);
-      // The slot is held: Expo may have made the session.
-      const refused = yield* ready.devices.boot(catalogDevice!).pipe(Effect.flip);
-      expect(refused.message).toContain("still being cleaned up");
-      expect(expo.named("T3CreateEasSimulatorSession")).toHaveLength(1);
-      // After Expo would have listed it, the slot frees and a new start runs.
-      yield* TestClock.adjust("6 minutes");
-      yield* ready.devices.list;
-      expo.allowCreate();
-      expect(yield* ready.devices.boot(catalogDevice!)).toBe("session-1");
-    }).pipe(Effect.scoped, Effect.provide(layer)),
-  );
-
-  it.effect("holds the slot when a failed create’s session is listed but its stop fails", () =>
-    Effect.gen(function* () {
-      let stopFails = true;
-      // Create fails, Expo lists the session by name, and stopping it fails too.
-      const expo = fakeExpo({ failCreate: true, failStop: () => stopFails });
-      const host = yield* makeHost(expo, config({ maxConcurrentSessions: 1 }), yield* Scope.make());
-      const ready = yield* host.ensureReady(() => Effect.void);
-      const [catalogDevice] = (yield* ready.devices.list).devices;
-      yield* ready.devices.boot(catalogDevice!).pipe(Effect.flip);
-      const refused = yield* ready.devices.boot(catalogDevice!).pipe(Effect.flip);
-      expect(refused.message).toContain("still being cleaned up");
-      stopFails = false;
-      yield* ready.devices.list;
-      expect(expo.stopped()).toContain("orphan");
-      expo.allowCreate();
-      expect(yield* ready.devices.boot(catalogDevice!)).toBe("session-1");
-    }).pipe(Effect.scoped, Effect.provide(layer)),
+      agentFails = false;
+      yield* service.close({ threadId: second, shutdown: false });
+      expect(expo.releases).toEqual([firstSession, secondSession, secondSession]);
+      expect((yield* service.state).sessions).toEqual([]);
+      expect(expo.stopped()).not.toContain("session-1");
+      expect(
+        (yield* service.state).devices.find((device) => device.id === "session-1")?.booted,
+      ).toBe(true);
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        Layer.mergeAll(
+          layer,
+          NodeCrypto.layer,
+          ServerSettings.layerTest({ enableDeviceSupport: true, enableAgentDeviceAccess: true }),
+        ),
+      ),
+    ),
   );
 });

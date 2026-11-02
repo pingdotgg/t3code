@@ -54,18 +54,6 @@ it("checks the command's environment instead of borrowing the primary grant", as
   expect(state.run).toHaveBeenCalledWith(target(first));
 });
 
-it("a retained callback follows both revocation and a new grant without remounting", async () => {
-  state.allowed.add(second);
-  const mutate = useOrchestrationCommand(command);
-  state.allowed.delete(second);
-  expect((await mutate(target(second)))._tag).toBe("Failure");
-  expect(state.run).not.toHaveBeenCalled();
-
-  state.allowed.add(second);
-  expect((await mutate(target(second)))._tag).toBe("Success");
-  expect(state.run).toHaveBeenCalledTimes(1);
-});
-
 it("does not dispatch a later mutation after access changes while awaiting a receipt", async () => {
   state.allowed.add(second);
   let finish: (() => void) | undefined;

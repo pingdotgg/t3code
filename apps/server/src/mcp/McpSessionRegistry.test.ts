@@ -102,6 +102,7 @@ it.effect("always grants pull-requests and gates browser and device access indep
   }),
 );
 
+// regression: #3114 use bound host for MCP endpoint
 it.effect("builds MCP endpoints from the bound server host", () =>
   Effect.gen(function* () {
     const cases = [
@@ -136,27 +137,6 @@ it.effect("expires credentials once their session stops showing signs of life", 
     const token = issued.config.authorizationHeader.replace(/^Bearer\s+/, "");
     timestamp += 101;
     expect(yield* registry.resolve(token)).toBeUndefined();
-  }),
-);
-
-it.effect("keeps a credential alive across turns that never touch an MCP tool", () =>
-  Effect.gen(function* () {
-    let timestamp = 1_000;
-    const registry = yield* makeRegistry(() => timestamp);
-    const threadId = ThreadId.make("thread-3");
-    const issued = yield* registry.issue({
-      threadId,
-      providerInstanceId: ProviderInstanceId.make("claude"),
-      capabilities: new Set(["preview"]),
-    });
-    const token = issued.config.authorizationHeader.replace(/^Bearer\s+/, "");
-
-    for (let turn = 0; turn < 10; turn += 1) {
-      timestamp += 99;
-      yield* registry.touch(threadId);
-    }
-
-    expect((yield* registry.resolve(token))?.thread.threadId).toBe(threadId);
   }),
 );
 

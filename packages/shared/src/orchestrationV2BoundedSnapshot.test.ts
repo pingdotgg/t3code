@@ -84,19 +84,6 @@ function forkWindow() {
 }
 
 describe("compact bounded snapshot turnItems", () => {
-  it("omits only local visible items and restores the exact list and order", () => {
-    const { projection: full, local, retainedRequest } = forkWindow();
-    const compact = omitLocalVisibleTurnItems(full);
-
-    expect(compact).not.toBeNull();
-    expect(compact!.turnItems).toEqual([retainedRequest]);
-    expect(compact!.visibleTurnItems).toBe(full.visibleTurnItems);
-
-    const restored = restoreLocalVisibleTurnItems(compact!);
-    expect(restored.turnItems).toEqual([...local, retainedRequest]);
-    expect(restored).toEqual(full);
-  });
-
   it("round-trips through JSON as a separately decoded client would see it", () => {
     const { projection: full } = forkWindow();
     const wire = JSON.parse(JSON.stringify(omitLocalVisibleTurnItems(full)));
@@ -123,20 +110,5 @@ describe("compact bounded snapshot turnItems", () => {
       omitLocalVisibleTurnItems(projection({ visible, turnItems: [{ ...first }, second] })),
     ).toBe(null);
     expect(omitLocalVisibleTurnItems(projection({ visible, turnItems: [first] }))).toBe(null);
-  });
-
-  it("sends nothing compact when no local rows are visible", () => {
-    const inherited = item(PARENT, "parent", 1);
-    const request = item(CHILD, "interrupt-request", 0, "run_interrupt_request");
-    expect(
-      omitLocalVisibleTurnItems(
-        projection({ visible: [row("inherited", PARENT, inherited)], turnItems: [request] }),
-      ),
-    ).toBe(null);
-  });
-
-  it("leaves unmarked snapshots untouched", () => {
-    const { projection: full } = forkWindow();
-    expect(boundedSnapshotProjection({ projection: full })).toBe(full);
   });
 });

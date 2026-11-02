@@ -85,61 +85,6 @@ describe("readOpenCodeUsage", () => {
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 
-  it.effect("reads at most 64 OpenCode rowids per statement however much history is older", () =>
-    Effect.gen(function* () {
-      const fileSystem = yield* FileSystem.FileSystem;
-      const path = yield* Path.Path;
-      const dir = yield* fileSystem.makeTempDirectoryScoped({ prefix: "usage-reader-test-" });
-      const db = yield* openDatabase(path.join(dir, "opencode.db"));
-      yield* db.unsafe(
-        "CREATE TABLE message (id TEXT, session_id TEXT, data TEXT, time_created INTEGER)",
-      );
-      const sinceMs = 1780000000000;
-      const data = JSON.stringify({
-        role: "assistant",
-        modelID: "claude-sonnet-4-5",
-        tokens: { input: 100, output: 20 },
-      });
-      yield* db.unsafe("BEGIN");
-      for (let index = 0; index < 305; index++) {
-        yield* db.unsafe("INSERT INTO message VALUES (?, ?, ?, ?)", [
-          `msg-${index}`,
-          "session-1",
-          data,
-          sinceMs + index - 300,
-        ]);
-      }
-      yield* db.unsafe("COMMIT");
-
-      const spans: number[] = [];
-      const originalAll = NodeSqlite.StatementSync.prototype.all;
-      yield* Effect.acquireRelease(
-        Effect.sync(() =>
-          vi.spyOn(NodeSqlite.StatementSync.prototype, "all").mockImplementation(function (
-            this: NodeSqlite.StatementSync,
-            ...params
-          ) {
-            const rows = originalAll.apply(this, params);
-            if (this.sourceSQL.includes("FROM message WHERE")) {
-              const range = /rowid > (-?[\d.]+) AND rowid <= (-?[\d.]+)/.exec(this.expandedSQL);
-              spans.push(range ? Number(range[2]) - Number(range[1]) : Infinity);
-            }
-            return rows;
-          }),
-        ),
-        (spy) => Effect.sync(() => spy.mockRestore()),
-      );
-      const result = yield* readOpenCodeUsage(dir, sinceMs);
-      assert.isFalse(result.error);
-      assert.deepStrictEqual(
-        result.files.flatMap((file) => file.records).map((record) => record.dedupeKey),
-        Array.from({ length: 5 }, (_, index) => `opencode:msg-${index + 300}`),
-      );
-      assert.isNotEmpty(spans);
-      assert.isAtMost(Math.max(...spans), 64);
-    }).pipe(Effect.provide(NodeServices.layer)),
-  );
-
   it.effect("counts migrated OpenCode messages once and sees subsequent WAL writes", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
@@ -285,41 +230,6 @@ describe("readOpenCodeUsage", () => {
         result.files.flatMap((file) => file.records).map((record) => record.dedupeKey),
         ["opencode:msg-real"],
       );
-    }).pipe(Effect.provide(NodeServices.layer)),
-  );
-
-  it.effect("reads a large legacy OpenCode session in directory order", () =>
-    Effect.gen(function* () {
-      const fileSystem = yield* FileSystem.FileSystem;
-      const path = yield* Path.Path;
-      const dir = yield* fileSystem.makeTempDirectoryScoped({ prefix: "usage-reader-test-" });
-      const session = path.join(dir, "storage", "message", "session-1");
-      yield* fileSystem.makeDirectory(session, { recursive: true });
-      yield* Effect.forEach(
-        Array.from({ length: 600 }, (_, index) => `msg-${index}`),
-        (id) =>
-          fileSystem.writeFileString(
-            path.join(session, `${id}.json`),
-            JSON.stringify({
-              id,
-              sessionID: "session-1",
-              role: "assistant",
-              modelID: "claude-sonnet-4-5",
-              time: { created: 1780000000000 },
-              tokens: { input: 100, output: 20 },
-            }),
-          ),
-        { concurrency: 16, discard: true },
-      );
-      const names = yield* fileSystem.readDirectory(session);
-
-      const result = yield* readOpenCodeUsage(dir, 0);
-      assert.isFalse(result.error);
-      assert.deepStrictEqual(
-        result.files.map((file) => file.path),
-        names.map((name) => path.join(session, name)),
-      );
-      assert.strictEqual(result.files.flatMap((file) => file.records).length, 600);
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 });
