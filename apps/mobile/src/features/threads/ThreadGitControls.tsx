@@ -251,6 +251,13 @@ function useThreadGitControlModel(props: ThreadGitMenuProps) {
     });
   };
 
+  const openActivity = () => {
+    navigation.navigate("ThreadActivity", {
+      environmentId: String(environmentId),
+      threadId: String(threadId),
+    });
+  };
+
   const openGitInspector = () => {
     if (props.onOpenGitInspector) {
       props.onOpenGitInspector();
@@ -265,6 +272,7 @@ function useThreadGitControlModel(props: ThreadGitMenuProps) {
   return {
     currentBranchLabel,
     isRepo,
+    openActivity,
     openFiles,
     openGitInspector,
     openReview,
@@ -383,6 +391,17 @@ function useThreadGitHeaderActionItems(props: ThreadGitControlsProps): ThreadGit
             icon: { name: "text.bubble", type: "sfSymbol" },
             label: "Review changes",
             onPress: model.openReview,
+            type: "action",
+          },
+          {
+            description:
+              props.hasThread === false
+                ? "Available after the first message"
+                : "What the agent is doing, finished, and changed",
+            disabled: props.hasThread === false,
+            icon: { name: "list.number", type: "sfSymbol" },
+            label: "Activity",
+            onPress: model.openActivity,
             type: "action",
           },
           ...(props.onMergeBack
@@ -563,6 +582,17 @@ function threadGitMenuDefinition(
             ? "Available after the first message"
             : "Turn diffs and worktree changes",
         onPress: model.openReview,
+      },
+      {
+        id: "git-activity",
+        title: "Activity",
+        icon: "list.number",
+        disabled: props.hasThread === false,
+        subtitle:
+          props.hasThread === false
+            ? "Available after the first message"
+            : "What the agent is doing, finished, and changed",
+        onPress: model.openActivity,
       },
       {
         id: "git-more",

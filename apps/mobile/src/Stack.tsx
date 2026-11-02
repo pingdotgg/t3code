@@ -58,6 +58,7 @@ import {
 import { ReviewCommentComposerSheet } from "./features/review/ReviewCommentComposerSheet";
 import { ReviewSheet } from "./features/review/ReviewSheet";
 import { ThreadTerminalRouteScreen } from "./features/terminal/ThreadTerminalRouteScreen";
+import { ThreadActivityRouteScreen } from "./features/threads/ThreadActivityRouteScreen";
 import { DevicePreviewRouteScreen } from "./features/devices/DevicePreviewRouteScreen";
 import { BrowserPreviewRouteScreen } from "./features/browser/BrowserPreviewRouteScreen";
 import { GitBranchesSheet } from "./features/threads/git/GitBranchesSheet";
@@ -799,6 +800,11 @@ const RootStackConfig = createWorkspaceStackNavigator({
     ThreadTerminal: createNativeStackScreen({
       screen: ThreadTerminalRouteScreen,
       linking: `${THREAD_LINKING_PREFIX}/terminal`,
+      options: SOLID_HEADER_OPTIONS,
+    }),
+    ThreadActivity: createNativeStackScreen({
+      screen: ThreadActivityRouteScreen,
+      linking: `${THREAD_LINKING_PREFIX}/activity`,
       options: SOLID_HEADER_OPTIONS,
     }),
     ThreadInspectorFullscreen: createNativeStackScreen({
