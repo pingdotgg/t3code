@@ -1028,6 +1028,28 @@ it.effect("on-demand clients get provider config without workspace snapshots", (
     assert.isUndefined(update.payload.providers[0]?.workspaceSnapshots);
     assert.deepEqual(update.payload.providers[0]?.slashCommands, [USAGE_LIMITS_COMMAND]);
     yield* server.write(0, { _tag: "Ack", requestId: configRequest });
+    const antigravity = {
+      ...provider,
+      driver: ProviderDriverKind.make("antigravity"),
+      status: "warning" as const,
+    };
+    yield* Queue.offer(providerChanges, [antigravity]);
+    yield* Queue.take(pulled);
+    yield* TestClock.adjust("1 second");
+    const liveCatalog = (yield* Queue.take(responses)) as ServerConfigStreamEvent;
+    if (liveCatalog.type !== "providerStatuses")
+      return yield* Effect.die("Expected provider update");
+    assert.deepEqual(liveCatalog.payload.providers[0]?.slashCommands, provider.slashCommands);
+    yield* server.write(0, { _tag: "Ack", requestId: configRequest });
+    yield* Queue.offer(providerChanges, [
+      { ...antigravity, slashCommands: [{ name: "live-command" }] },
+    ]);
+    yield* Queue.take(pulled);
+    yield* TestClock.adjust("1 second");
+    const discovered = (yield* Queue.take(responses)) as ServerConfigStreamEvent;
+    if (discovered.type !== "providerStatuses") return yield* Effect.die("Expected live commands");
+    assert.deepEqual(discovered.payload.providers[0]?.slashCommands, [{ name: "live-command" }]);
+    yield* server.write(0, { _tag: "Ack", requestId: configRequest });
     // A replacement that cannot scan a cwd sends its machine catalog again.
     scansCwd = false;
     yield* Queue.offer(providerChanges, [{ ...provider, status: "warning" }]);

@@ -448,7 +448,8 @@ function withoutWorkspaceSnapshots(
   catalogsPerCwd: ReadonlySet<string> = new Set(),
 ): ServerProvider[] {
   return providers.map(({ workspaceSnapshots: _workspaceSnapshots, ...provider }) =>
-    catalogsPerCwd.has(provider.instanceId)
+    // Antigravity discovers commands from live sessions; clients need those updates to refetch.
+    catalogsPerCwd.has(provider.instanceId) && provider.driver !== "antigravity"
       ? {
           ...provider,
           // Late /usage-limits discovery must still change the config, so clients refetch the cwd.
