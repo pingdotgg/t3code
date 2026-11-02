@@ -64,13 +64,14 @@ describe("archived delegated tasks follow their parent on another machine", () =
     { name: "archived tagged parent", parentPage: archivedTaggedParent, live: false, tasks: 0 },
     { name: "live visible parent", parentPage: page([]), live: true, tasks: 1 },
     { name: "parent page not loaded yet", parentPage: null, live: false, tasks: 0 },
+    { name: "archive scoped to the task's machine", parentPage: undefined, live: false, tasks: 0 },
   ])("$name", ({ parentPage, live, tasks }) => {
     const snapshotsAtom = createArchivedThreadSnapshotsAtomFamily<Error>({
       getSnapshotAtom: (environmentId) =>
         Atom.make(
           environmentId === taskEnvironmentId
             ? AsyncResult.success(taskPage)
-            : parentPage === null
+            : parentPage === null || parentPage === undefined
               ? AsyncResult.initial<OrchestrationV2ArchivedShellSnapshot, Error>(true)
               : AsyncResult.success(parentPage),
         ),
@@ -84,7 +85,11 @@ describe("archived delegated tasks follow their parent on another machine", () =
     });
     const registry = AtomRegistry.make();
     const { snapshots } = registry.get(
-      snapshotsAtom(makeArchivedThreadsEnvironmentKey([parentEnvironmentId, taskEnvironmentId])),
+      snapshotsAtom(
+        makeArchivedThreadsEnvironmentKey(
+          parentPage === undefined ? [taskEnvironmentId] : [parentEnvironmentId, taskEnvironmentId],
+        ),
+      ),
     );
     const taskSnapshot = snapshots.find((entry) => entry.environmentId === taskEnvironmentId);
     expect(taskSnapshot?.snapshot.threads.length).toBe(tasks);

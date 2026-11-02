@@ -19,7 +19,6 @@ import {
   useVisibleThreadShells,
 } from "~/state/entities";
 import { pullRequestEnvironment } from "~/state/pullRequests";
-import { serverEnvironment } from "~/state/server";
 import { environmentThreadShells } from "~/state/threads";
 import { useEnvironmentQuery } from "~/state/query";
 import { useThreadSearch } from "~/state/queries";
@@ -69,7 +68,7 @@ function EnabledPullRequestThreadLinks({
   const linking = usePullRequestLinking(environmentId);
   const linkedHere = linking.isLinked(thread, url);
   const hiddenKeys = useAtomValue(environmentThreadShells.hiddenThreadKeysAtom);
-  const hiddenTags = useAtomValue(serverEnvironment.hiddenThreadTagsAtom(environmentId));
+  const hidingAnywhere = useAtomValue(environmentThreadShells.anyEnvironmentHidingAtom);
   const loadedThreadRefs = useEnvironmentThreadRefs(environmentId);
   const relations = useEnvironmentQuery(
     linking.mode === "multiple" && display !== "menu-item"
@@ -122,7 +121,7 @@ function EnabledPullRequestThreadLinks({
     environmentId,
     loadedThreadRefs,
     hiddenKeys,
-    hiddenTags !== null,
+    hidingAnywhere,
   );
   const linkedThreadsLabel =
     linkedThreads.length > 0

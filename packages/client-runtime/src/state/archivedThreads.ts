@@ -83,6 +83,24 @@ export function createArchivedThreadSnapshotsAtomFamily<E>(options: {
         }
       }
 
+      // A task can point at a machine outside this archive's scope; its tags still apply.
+      for (const { snapshot } of snapshots) {
+        for (const thread of snapshot.threads) {
+          const parentEnvironmentId = thread.delegatedFrom?.environmentId;
+          if (
+            parentEnvironmentId === undefined ||
+            environments.some((environment) => environment.environmentId === parentEnvironmentId)
+          ) {
+            continue;
+          }
+          environments.push({
+            environmentId: parentEnvironmentId,
+            threads: [],
+            hiddenTags: get(options.hiddenThreadTagsAtom(parentEnvironmentId)),
+          });
+        }
+      }
+
       // One pass over every environment's page, so archived tasks follow parents archived elsewhere.
       const hidden = hiddenThreadKeys(
         environments,

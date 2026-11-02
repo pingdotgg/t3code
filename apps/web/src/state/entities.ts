@@ -120,6 +120,11 @@ export function useHiddenThreadTags(
   );
 }
 
+/** Whether any connected environment is hiding tagged threads right now. */
+export function useAnyEnvironmentHiding(): boolean {
+  return useAtomValue(environmentThreadShells.anyEnvironmentHidingAtom);
+}
+
 /** Keys of threads the tag filter hides from display, by `threadKey`. */
 export function useHiddenThreadKeys(): ReadonlySet<string> {
   return useAtomValue(environmentThreadShells.hiddenThreadKeysAtom);

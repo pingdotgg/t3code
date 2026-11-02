@@ -1089,7 +1089,11 @@ export function createServerEnvironmentAtoms<R, E>(
       // Trimming makes a new array on every settings push; keep equal lists stable.
       Atom.withEquality(
         (a: ReadonlyArray<string> | null, b: ReadonlyArray<string> | null) =>
-          a?.join("\n") === b?.join("\n"),
+          a === b ||
+          (a !== null &&
+            b !== null &&
+            a.length === b.length &&
+            a.every((tag, index) => tag === b[index])),
       ),
       Atom.withLabel(`environment-data:server:hidden-thread-tags:${environmentId}`),
     ),

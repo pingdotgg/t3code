@@ -36,22 +36,22 @@ export function visibilityParentKey(
 
 /**
  * Pull request linked-thread rows the tag filter leaves visible. Loaded threads use the
- * parent-aware hidden set. Rows the shell leaves out (older, archived) carry no lineage,
- * so while their environment hides tags they stay out.
+ * parent-aware hidden set. Rows the shell leaves out carry no lineage, so while any
+ * environment hides tags they stay out.
  */
 export function visibleLinkedThreads<Row extends { readonly id: ThreadId }>(
   rows: ReadonlyArray<Row>,
   environmentId: EnvironmentId,
   loadedThreadRefs: ReadonlyArray<ScopedThreadRef>,
   hiddenKeys: ReadonlySet<string>,
-  hidingHere: boolean,
+  hidingAnywhere: boolean,
 ): ReadonlyArray<Row> {
-  if (!hidingHere && hiddenKeys.size === 0) return rows;
+  if (!hidingAnywhere && hiddenKeys.size === 0) return rows;
   const loaded = new Set(loadedThreadRefs.map((ref) => ref.threadId));
   return rows.filter((row) =>
     loaded.has(row.id)
       ? !hiddenKeys.has(threadKey({ environmentId, threadId: row.id }))
-      : !hidingHere,
+      : !hidingAnywhere,
   );
 }
 

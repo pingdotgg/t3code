@@ -131,8 +131,8 @@ import {
   usePrimaryEnvironmentId,
 } from "../state/environments";
 import {
+  useAnyEnvironmentHiding,
   useHiddenThreadKeys,
-  useHiddenThreadTags,
   useEnvironmentThreadRefs,
   useProjects,
   useServerConfigs,
@@ -412,7 +412,7 @@ function OpenCommandPaletteDialog(props: {
   // Rows were captured when the palette opened; drop any hidden since then.
   const hiddenKeys = useHiddenThreadKeys();
   const linkedEnvironmentId = linkedThreadSearch?.linkedThreads?.environmentId ?? null;
-  const linkedHiddenTags = useHiddenThreadTags(linkedEnvironmentId);
+  const hidingAnywhere = useAnyEnvironmentHiding();
   const linkedThreadRefs = useEnvironmentThreadRefs(linkedEnvironmentId);
   const [searchState, dispatchSearch] = useReducer(reduceCommandPaletteSearchState, null, () => {
     const view = props.initialContext ? null : openIntentView(props.openIntent);
@@ -1760,7 +1760,7 @@ function OpenCommandPaletteDialog(props: {
               linkedThreadSearch.linkedThreads.environmentId,
               linkedThreadRefs,
               hiddenKeys,
-              linkedHiddenTags !== null,
+              hidingAnywhere,
             ),
             query: linkedThreadSearch.query,
             icon: <MessageSquareIcon className={ITEM_ICON_CLASS} />,

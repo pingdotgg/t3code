@@ -626,6 +626,12 @@ export function createEnvironmentThreadShellAtoms(input: {
     return next;
   }).pipe(Atom.withLabel("environment-hidden-thread-keys"));
 
+  const anyEnvironmentHidingAtom = Atom.make((get) =>
+    Array.from(enabledEnvironmentIds(get(input.catalogValueAtom))).some(
+      (environmentId) => get(input.hiddenThreadTagsAtom(environmentId)) !== null,
+    ),
+  ).pipe(Atom.withLabel("environment-any-hiding-thread-tags"));
+
   /** threadShellsAtom without the threads the tag filter hides, for pickers and palettes. */
   let previousVisibleThreadShells: ReadonlyArray<EnvironmentThreadShell> = [];
   const visibleThreadShellsAtom = Atom.make((get) => {
@@ -717,6 +723,7 @@ export function createEnvironmentThreadShellAtoms(input: {
     threadShellsAtom,
     visibleThreadShellsAtom,
     hiddenThreadKeysAtom,
+    anyEnvironmentHidingAtom,
     quietThreadShellsAtom,
     navigationThreadShellsAtom,
     delegatedUnderParentAtom,

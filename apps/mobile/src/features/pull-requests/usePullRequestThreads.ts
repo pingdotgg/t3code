@@ -29,7 +29,6 @@ import { uuidv4 } from "../../lib/uuid";
 import { useEnvironmentServerConfig } from "../../state/entities";
 import { composerPullRequests } from "../../state/pull-requests";
 import { useEnvironmentQuery } from "../../state/query";
-import { serverEnvironment } from "../../state/server";
 import { environmentThreadShells } from "../../state/threads";
 import { useEnvironmentScope } from "../../state/session";
 import {
@@ -74,7 +73,7 @@ export function usePullRequestThreads(
   if (relations.data && (lastRelations.key !== key || relations.data !== lastRelations.data))
     setLastRelations({ key, data: relations.data });
   const hiddenKeys = useAtomValue(environmentThreadShells.hiddenThreadKeysAtom);
-  const hiddenTags = useAtomValue(serverEnvironment.hiddenThreadTagsAtom(target.environmentId));
+  const hidingAnywhere = useAtomValue(environmentThreadShells.anyEnvironmentHidingAtom);
   const loadedThreadRefs = useAtomValue(
     environmentThreadShells.environmentThreadRefsAtom(target.environmentId),
   );
@@ -83,7 +82,7 @@ export function usePullRequestThreads(
     target.environmentId,
     loadedThreadRefs,
     hiddenKeys,
-    hiddenTags !== null,
+    hidingAnywhere,
   );
   const connected = usePullRequestConnected(params.environmentId);
   const canOperate = useEnvironmentScope(target.environmentId, AuthOrchestrationOperateScope);

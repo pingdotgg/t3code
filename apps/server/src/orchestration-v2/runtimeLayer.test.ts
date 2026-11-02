@@ -2556,6 +2556,7 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
         ["retry", "demo", true, ["demo"]],
         ["add-other", "private", true, ["demo", "private"]],
         ["remove", "demo", false, ["private"]],
+        ["remove-last", "private", false, []],
       ] as const) {
         yield* orchestrator.dispatch({
           type: "thread.tag.set",
@@ -2564,7 +2565,11 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
           tag,
           tagged,
         });
-        assert.deepEqual(shellOf(yield* orchestrator.getShellSnapshot()).tags, expected, step);
+        assert.deepEqual(
+          shellOf(yield* orchestrator.getShellSnapshot()).tags ?? [],
+          expected,
+          step,
+        );
       }
       const taggedShell = shellOf(yield* orchestrator.getShellSnapshot());
       // Tags are not activity, so the thread keeps its place in thread lists.
