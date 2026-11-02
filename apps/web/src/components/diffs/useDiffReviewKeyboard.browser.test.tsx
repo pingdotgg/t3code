@@ -37,6 +37,7 @@ function Panel(props: {
   renders?: string[];
   hidden?: boolean;
   twoFiles?: boolean;
+  viewedUnsupported?: boolean;
 }) {
   props.renders?.push("panel");
   const { rootRef, cursorStore, singleFile, toggleFileCollapsed } = useDiffReviewKeyboard({
@@ -49,7 +50,7 @@ function Panel(props: {
     isCollapsed: () => false,
     setCollapsed: (fileKey) => void props.folds.push(fileKey),
     isViewed: () => false,
-    setViewed: () => {},
+    setViewed: props.viewedUnsupported ? null : () => {},
     revealFile: (revealed) => void props.reveals?.push(revealed.fileKey),
     beginComment: () => {},
   });
@@ -91,6 +92,16 @@ it("takes the keys from a clicked control and drops its focus ring", async () =>
 
   expect(folds).toEqual(["a"]);
   expect(clicks).toEqual(["Changes", "Changes"]);
+});
+
+it("leaves v alone where files cannot be marked viewed", async () => {
+  const folds: string[] = [];
+  await using screen = await render(<Panel folds={folds} clicks={[]} viewedUnsupported />, options);
+  screen.getByTestId("panel").element().focus();
+
+  await userEvent.keyboard("jv");
+
+  expect(folds).toEqual([]);
 });
 
 it("leaves Enter to a control reached with Tab", async () => {

@@ -96,7 +96,7 @@ changes after you view it shows as not viewed again. In a pull request, `v` sets
 the same marks as the Viewed checkbox; see
 [Mark files as viewed](./source-control.md#mark-files-as-viewed). To jump to the next unviewed file after each
 mark, turn on **Settings → Diffs → Auto-advance after marking viewed**. Once every
-file is viewed, the count above the diff reads **All viewed**.
+file is viewed, the count above the diff reads, for example, **All 5 viewed**.
 
 Change any of these keys in **Settings → Keybindings** under the **Diff**
 commands. Showing more unchanged lines needs the full files, so it is not

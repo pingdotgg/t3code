@@ -708,9 +708,9 @@ function PullRequestCodeTab({
     isCollapsed,
     setCollapsed,
     isViewed: (file) => filesViewedEnabled && isFileViewed(file.filePath),
-    setViewed: (file, viewed) => {
-      if (filesViewedEnabled) setFileViewed(file.fileKey, viewed, false);
-    },
+    setViewed: filesViewedEnabled
+      ? (file, viewed) => setFileViewed(file.fileKey, viewed, false)
+      : null,
     revealFile: (file, align) => codeViewReveal.request(file.fileKey, align),
     beginComment: (fileKey, range) => {
       const item = items.find((candidate) => candidate.id === fileKey);

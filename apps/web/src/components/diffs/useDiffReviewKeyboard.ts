@@ -155,7 +155,8 @@ interface DiffReviewKeyboardInput<Annotation> {
   readonly isCollapsed: (fileKey: string) => boolean;
   readonly setCollapsed: (fileKey: string, collapsed: boolean) => void;
   readonly isViewed: (file: DiffReviewFile) => boolean;
-  readonly setViewed: (file: DiffReviewFile, viewed: boolean) => void;
+  /** Null where files can't be marked viewed, which leaves the key to others. */
+  readonly setViewed: ((file: DiffReviewFile, viewed: boolean) => void) | null;
   /** Loads the file if needed and scrolls it into view. */
   readonly revealFile: (file: DiffReviewFile, align?: "start" | "nearest") => void;
   readonly beginComment: (fileKey: string, range: SelectedLineRange) => void;
@@ -335,7 +336,7 @@ export function useDiffReviewKeyboard<Annotation>(input: DiffReviewKeyboardInput
         return true;
       }
       case "diff.toggleFileViewed": {
-        if (!cursorFile) return false;
+        if (!cursorFile || !input.setViewed) return false;
         if (!cursorFile.rendered) return true;
         const viewed = !input.isViewed(cursorFile);
         input.setViewed(cursorFile, viewed);
