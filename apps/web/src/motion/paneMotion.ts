@@ -38,6 +38,8 @@ const translate = (dx: number, dy: number): Keyframe => ({
 /** How far a new pane slides out from under its donor, in px. */
 const OPEN_TRAVEL_PX = 48;
 
+const ADJACENT_GAP_PX = 16;
+
 /** The Panel animations setting's default, which plays niri's springs as they are. */
 const DEFAULT_PANEL_MS = 150;
 
@@ -145,7 +147,7 @@ function findDonor(
       );
     }
     for (const [side, gap] of gaps) {
-      if (gap < -1) continue;
+      if (gap < -1 || gap > ADJACENT_GAP_PX) continue;
       const rank = (candidate: { neighbour: Neighbour; side: Side }) =>
         (candidate.neighbour.other &&
         resized(candidate.side, candidate.neighbour.box, candidate.neighbour.other)
