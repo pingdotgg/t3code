@@ -80,6 +80,10 @@ describe("Sidebar", () => {
       sidebar.querySelector('[data-slot="sidebar-container"]')!.getBoundingClientRect().left,
     ).toBe(0);
     const rail = sidebar.querySelector<HTMLElement>('[data-sidebar="rail"]')!;
+    const railBounds = rail.getBoundingClientRect();
+    expect(
+      rail.contains(document.elementFromPoint(railBounds.left + railBounds.width / 2, 300)),
+    ).toBe(true);
     const pointer = {
       bubbles: true,
       cancelable: true,
