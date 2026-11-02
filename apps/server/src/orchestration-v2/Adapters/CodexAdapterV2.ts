@@ -113,6 +113,7 @@ import {
 import {
   materializeCodexShadowHome,
   resolveCodexHomeLayout,
+  withCodexEnvironmentHome,
 } from "../../provider/Drivers/CodexHomeLayout.ts";
 import {
   boundProviderEventForLogging,
@@ -1592,7 +1593,9 @@ export const createCodexAdapterV2 = Effect.fn("CodexAdapterV2.createCodexAdapter
   const hostEnvironment = yield* HostProcess.Environment;
   const idAllocator = yield* IdAllocator.IdAllocatorV2;
   const serverConfig = yield* ServerConfig;
-  const homeLayout = yield* resolveCodexHomeLayout(config);
+  const processEnv = yield* mergeProviderInstanceEnvironment(environment, hostEnvironment);
+  const effectiveConfig = withCodexEnvironmentHome(config, processEnv.CODEX_HOME);
+  const homeLayout = yield* resolveCodexHomeLayout(effectiveConfig);
 
   yield* materializeCodexShadowHome(homeLayout).pipe(
     Effect.mapError(
@@ -1607,16 +1610,16 @@ export const createCodexAdapterV2 = Effect.fn("CodexAdapterV2.createCodexAdapter
   );
 
   const settings = {
-    ...config,
+    ...effectiveConfig,
     enabled,
-    binaryPath: expandHomePath(config.binaryPath, yield* HostProcess.HomeDirectory),
+    binaryPath: expandHomePath(effectiveConfig.binaryPath, yield* HostProcess.HomeDirectory),
     homePath: homeLayout.effectiveHomePath ?? "",
   } satisfies CodexSettings;
 
   return yield* makeCodexAdapterV2({
     instanceId,
     settings,
-    environment: yield* mergeProviderInstanceEnvironment(environment, hostEnvironment),
+    environment: processEnv,
     clientFactory,
     crypto,
     fileSystem,
