@@ -1,13 +1,15 @@
 import type {
   ProviderInstanceId,
   ServerProvider,
+  ServerProviderUsageLimits,
   ServerProviderUsageWindow,
   UsageLimitSourceSnapshots,
 } from "@t3tools/contracts";
 import {
-  collectProviderUsageLimits,
   formatDuration,
+  formatResetsIn,
   type LimitPace,
+  type LimitPoolWindow,
   limitsNotice,
   paceOf,
   remainingPercent,
@@ -23,6 +25,7 @@ import { formatUpcomingTimestamp } from "../../timestampFormat";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { formatContextWindowCompactionMessage } from "./compaction.logic";
 import { ThreadDetailsSection } from "./ThreadDetailsSection";
+import { resolveThreadDetailsLimits } from "./ThreadDetailsUsage.logic";
 
 const PACE_LABEL: Record<LimitPace, string> = {
   ahead: "Ahead of pace",
@@ -39,7 +42,10 @@ export interface ThreadDetailsUsageInput {
 
 type UsageTone = "error" | "warning" | null;
 
-/** The selected provider's limit windows. Each row reads as room left. */
+/**
+ * The selected provider's limit windows, or its hub accounts' pooled windows when it reads none.
+ * Each row reads as room left.
+ */
 export function ThreadDetailsUsage({
   providerInstanceId,
   providers,
@@ -47,17 +53,8 @@ export function ThreadDetailsUsage({
 }: Omit<ThreadDetailsUsageInput, "contextWindow">) {
   const nowMinute = useNowMinute();
   const now = Date.parse(`${nowMinute}:00Z`);
-  const report =
-    providerInstanceId !== null
-      ? collectProviderUsageLimits(providerInstanceId, providers, sources, now)
-      : null;
-  // Only this instance's data: the report keeps one instance per login, and any other entry may be
-  // a different login or workspace, so fall back to the instance's own snapshot.
-  const limits =
-    report?.accounts.find((entry) => entry.instanceId === providerInstanceId)?.limits ??
-    providers.find((provider) => provider.instanceId === providerInstanceId)?.usageLimits;
-  if (!limits) return null;
-  const notice = limitsNotice(limits);
+  const resolved = resolveThreadDetailsLimits(providerInstanceId, providers, sources, now);
+  if (!resolved) return null;
 
   return (
     <ThreadDetailsSection
@@ -66,20 +63,38 @@ export function ThreadDetailsUsage({
       showHeading={false}
     >
       <div className="grid grid-cols-[auto_minmax(3rem,1fr)_auto] gap-x-3 text-xs">
-        {notice ? (
-          <UsageRow
-            label="Limits"
-            fill={null}
-            tone={null}
-            value="Unavailable"
-            tooltip={<span className="text-foreground">{notice}</span>}
-          />
+        {resolved.kind === "hub" ? (
+          resolved.windows.map((window) => (
+            <PoolRow key={window.id} window={window} hubLabels={resolved.hubLabels} now={now} />
+          ))
         ) : (
-          limits.windows.map((window) => <LimitRow key={window.id} window={window} now={now} />)
+          <InstanceRows limits={resolved.limits} now={now} />
         )}
       </div>
     </ThreadDetailsSection>
   );
+}
+
+function InstanceRows({
+  limits,
+  now,
+}: {
+  readonly limits: ServerProviderUsageLimits;
+  readonly now: number;
+}) {
+  const notice = limitsNotice(limits);
+  if (notice) {
+    return (
+      <UsageRow
+        label="Limits"
+        fill={null}
+        tone={null}
+        value="Unavailable"
+        tooltip={<span className="text-foreground">{notice}</span>}
+      />
+    );
+  }
+  return limits.windows.map((window) => <LimitRow key={window.id} window={window} now={now} />);
 }
 
 /** The thread's context window. The bar fills as context is used; the tick marks auto-compaction. */
@@ -172,6 +187,57 @@ function LimitRow({
       }
     />
   );
+}
+
+function PoolRow({
+  window,
+  hubLabels,
+  now,
+}: {
+  readonly window: LimitPoolWindow;
+  readonly hubLabels: readonly string[];
+  readonly now: number;
+}) {
+  const timestampFormat = usePrimarySettings((settings) => settings.timestampFormat);
+  const left = window.remainingPercent;
+  const accounts = window.members.length;
+  const next = window.resets.find((reset) => reset.at > now);
+  const nextResetsAt = next?.member.window.resetsAt;
+  const resetsIn = next ? formatResetsIn(next.member.window, now) : null;
+  return (
+    <UsageRow
+      label={window.label}
+      fill={left}
+      tone={left <= 10 ? "error" : left <= 20 ? "warning" : null}
+      value={`${left}%`}
+      ariaValue={`${left}% left`}
+      tooltip={
+        <>
+          <span className="text-foreground">
+            {window.label}: {left}% left
+            {accounts > 1 ? ` across ${accounts} accounts` : ""}
+          </span>
+          {next && nextResetsAt && resetsIn ? (
+            <span className="text-muted-foreground">
+              {poolResetLabel(resetsIn, accounts > 1 ? next.restoresPercent : null)} ·{" "}
+              {formatUpcomingTimestamp(nextResetsAt, timestampFormat, now)}
+            </span>
+          ) : null}
+          {window.pace ? (
+            <span className="text-muted-foreground">{PACE_LABEL[window.pace]}</span>
+          ) : null}
+          <span className="text-muted-foreground">From {hubLabels.join(", ")}</span>
+        </>
+      }
+    />
+  );
+}
+
+/** "Resets in 5m" for one account; "+12% in 5m" when several share the pool. */
+function poolResetLabel(resetsIn: string, restoresPercent: number | null): string {
+  if (restoresPercent === null) return resetsIn.replace("resets in", "Resets in");
+  const when = resetsIn.replace("resets in", "in").replace("Resets momentarily", "momentarily");
+  return `+${restoresPercent}% ${when}`;
 }
 
 /** One label, hairline, and value row; the whole row opens the details tooltip. */
