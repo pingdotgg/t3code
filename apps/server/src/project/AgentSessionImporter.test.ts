@@ -1,6 +1,7 @@
 import { expect, it } from "@effect/vitest";
 import {
   type AgentSessionSource,
+  type ServerSettingsError,
   EventId,
   ProjectId,
   ProviderDriverKind,
@@ -40,6 +41,7 @@ import {
 } from "../orchestration-v2/testkit/fixtures/shared.ts";
 import * as ProviderSessionRuntime from "../persistence/ProviderSessionRuntime.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
+import * as ServerSettings from "../serverSettings.ts";
 import * as AgentSessionImporter from "./AgentSessionImporter.ts";
 import * as AgentSessionScanner from "./AgentSessionScanner.ts";
 import * as ProjectService from "./ProjectService.ts";
@@ -84,6 +86,7 @@ function candidate(
       model: modelSelection.model,
       createdAt: timestamp,
       updatedAt: timestamp,
+      omittedMessageCount: 0,
       messages: [
         { role: "user" as const, text: "Fix it", createdAt: timestamp },
         { role: "assistant" as const, text: "Fixed", createdAt: timestamp },
@@ -180,6 +183,10 @@ const makeImporter = Effect.fn(function* (
   beforeTransaction: Effect.Effect<void> = Effect.void,
   getAdapter?: ProviderAdapterRegistry.ProviderAdapterRegistryV2Shape["get"],
   threadCommands?: KeyedLock.KeyedLock<ThreadId>,
+  settings: Layer.Layer<
+    ServerSettings.ServerSettingsService,
+    ServerSettingsError
+  > = ServerSettings.layerTest(),
 ) {
   const sql = yield* SqlClient.SqlClient;
   const events = yield* EventStore.EventStoreV2;
@@ -215,6 +222,7 @@ const makeImporter = Effect.fn(function* (
       Layer.provide(
         Layer.mergeAll(
           sinkLayer,
+          settings,
           Layer.succeed(IdAllocator.IdAllocatorV2, yield* IdAllocator.IdAllocatorV2),
           Layer.succeed(
             ProviderSessionRuntime.ProviderSessionRuntimeRepository,
@@ -295,6 +303,7 @@ it.effect(
         "claudeAgent",
       );
       const unowned = candidate(CODEX_MODEL_SELECTION, "unowned");
+      unowned.thread.omittedMessageCount = 1;
       const unownedPi = candidate(PI_MODEL_SELECTION, "unowned-pi", "pi");
       const importer = yield* makeImporter([
         active,
@@ -329,9 +338,23 @@ it.effect(
         const threadId = importId(source);
         const records = yield* projections.getThreadRecords(threadId, [
           "messages",
+          "turnItems",
           "providerThreads",
         ]);
         expect(records.messages.map((message) => message.text)).toEqual(["Fix it", "Fixed"]);
+        const notices = records.turnItems.filter((item) => item.type === "system_notice");
+        if (source === unowned) {
+          expect(records.turnItems[0]).toBe(notices[0]);
+          expect(notices).toMatchObject([
+            {
+              ordinal: 1,
+              runId: null,
+              message: expect.stringContaining("1 earlier message was not imported"),
+            },
+          ]);
+        } else {
+          expect(notices).toEqual([]);
+        }
         expect(records.thread.historyOrigin).toBe("v1_import");
         expect(records.thread.activeProviderThreadId).toBe(records.providerThreads[0]?.id);
         expect(records.providerThreads[0]?.nativeThreadRef?.nativeId).toBe(nativeId(source));
@@ -732,5 +755,33 @@ it.effect("skips the native history when a run starts while it loads", () =>
     expect(result.runs).toHaveLength(1);
     expect(result.thread.historyOrigin).toBeUndefined();
     expect(result.items).toEqual([]);
+  }).pipe(Effect.scoped, Effect.provide(persistence)),
+);
+
+it.effect("imports under a policy ceiling in the project's default, kept under the ceiling", () =>
+  Effect.gen(function* () {
+    const projections = yield* ProjectionStore.ProjectionStoreV2;
+    const runtimes = yield* ProviderSessionRuntime.ProviderSessionRuntimeRepository;
+    const source = candidate(CODEX_MODEL_SELECTION, "ceiling");
+    const threadId = importId(source);
+    const importer = yield* makeImporter(
+      [source],
+      Effect.void,
+      undefined,
+      undefined,
+      ServerSettings.layerTest(
+        { defaultRuntimeMode: "full-access" },
+        {
+          organization: "Example Corp",
+          lockedSettings: [],
+          limits: { maxRuntimeMode: "auto-accept-edits" },
+        },
+      ),
+    );
+    expect(yield* importer.run).toEqual({ importedCount: 1, skippedCount: 0 });
+    expect((yield* projections.getThread(threadId)).runtimeMode).toBe("auto-accept-edits");
+    expect(Option.getOrThrow(yield* runtimes.getByThreadId({ threadId })).runtimeMode).toBe(
+      "auto-accept-edits",
+    );
   }).pipe(Effect.scoped, Effect.provide(persistence)),
 );
