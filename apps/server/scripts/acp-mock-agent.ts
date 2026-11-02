@@ -59,6 +59,10 @@ const failPromptOrdinal = Number(process.env.T3_ACP_FAIL_PROMPT_ORDINAL);
 const compactionPromptOrdinals = new Set(
   (process.env.T3_ACP_COMPACTION_PROMPT_ORDINALS ?? "").split(",").map(Number),
 );
+// These prompts end while their compaction is still in progress.
+const openCompactionPromptOrdinals = new Set(
+  (process.env.T3_ACP_OPEN_COMPACTION_PROMPT_ORDINALS ?? "").split(",").map(Number),
+);
 const failSetModeConfigOption = process.env.T3_ACP_FAIL_SET_MODE_CONFIG_OPTION === "1";
 const emitEmptyDefaultAgentOption = process.env.T3_ACP_EMIT_EMPTY_DEFAULT_AGENT_OPTION === "1";
 const promptResponseText = process.env.T3_ACP_PROMPT_RESPONSE_TEXT;
@@ -1315,6 +1319,16 @@ const program = Effect.gen(function* () {
         yield* Effect.sleep(`${promptDelayMs} millis`);
       }
 
+      if (openCompactionPromptOrdinals.has(promptCount)) {
+        yield* agent.client.sessionUpdate({
+          sessionId: requestedSessionId,
+          update: {
+            sessionUpdate: "compaction_update",
+            compactionId: `compact-${promptCount}`,
+            status: "in_progress",
+          },
+        });
+      }
       if (compactionPromptOrdinals.has(promptCount)) {
         for (const status of ["in_progress", "completed"] as const) {
           yield* agent.client.sessionUpdate({
