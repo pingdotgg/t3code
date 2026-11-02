@@ -107,6 +107,11 @@ export function useThreadShells(enabled = true): ReadonlyArray<EnvironmentThread
   );
 }
 
+/** Keys of threads the tag filter hides from display, by `threadKey`. */
+export function useHiddenThreadKeys(): ReadonlySet<string> {
+  return useAtomValue(environmentThreadShells.hiddenThreadKeysAtom);
+}
+
 /** Thread shells minus those the tag filter hides, for lists that show threads to the user. */
 export function useVisibleThreadShells(enabled = true): ReadonlyArray<EnvironmentThreadShell> {
   return useAtomValue(
@@ -408,15 +413,10 @@ const relationshipShellsAtomFamily = Atom.family((key: string) => {
   const ref = parseThreadKey(key);
   let previous: ReadonlyArray<OrchestrationV2ThreadShell> = [];
   return Atom.make((get) => {
-    const hidden = get(environmentThreadShells.hiddenThreadKeysAtom);
     const next = selectThreadRelationshipShells(
       ref.threadId,
       get(environmentThreadDetails.threadAtom(ref))?.projection ?? null,
       get(environmentThreadShells.environmentThreadsAtom(ref.environmentId)),
-    ).filter(
-      (shell) =>
-        hidden.size === 0 ||
-        !hidden.has(threadKey({ environmentId: ref.environmentId, threadId: shell.id })),
     );
     if (arrayElementsEqual(previous, next)) return previous;
     previous = next;

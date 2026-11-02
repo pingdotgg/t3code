@@ -33,20 +33,24 @@ export function visibilityParentKey(
   return thread.delegatedFrom === undefined ? null : threadKey(thread.delegatedFrom);
 }
 
-/** Pull request linked-thread rows the tag filter leaves visible. */
+/**
+ * Pull request linked-thread rows the tag filter leaves visible. Loaded threads use the
+ * parent-aware hidden set; rows the shell leaves out fall back to their own tags.
+ */
 export function visibleLinkedThreads<
   Row extends { readonly id: ThreadId; readonly tags?: ReadonlyArray<string> | undefined },
 >(
   rows: ReadonlyArray<Row>,
   environmentId: EnvironmentId,
+  loadedThreadIds: ReadonlyMap<ThreadId, unknown>,
   hiddenKeys: ReadonlySet<string>,
   hiddenTags: ReadonlyArray<string> | null,
 ): ReadonlyArray<Row> {
   if (hiddenKeys.size === 0 && hiddenTags === null) return rows;
-  return rows.filter(
-    (row) =>
-      !hiddenKeys.has(threadKey({ environmentId, threadId: row.id })) &&
-      !hasHiddenTag(row.tags, hiddenTags),
+  return rows.filter((row) =>
+    loadedThreadIds.has(row.id)
+      ? !hiddenKeys.has(threadKey({ environmentId, threadId: row.id }))
+      : !hasHiddenTag(row.tags, hiddenTags),
   );
 }
 

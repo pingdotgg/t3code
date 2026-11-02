@@ -14,7 +14,7 @@ import { useComposerDraftStore } from "../composerDraftStore";
 import { useSidebarPendingFileDropStore } from "../sidebarPendingFileDropStore";
 import { useEnvironmentThreadRefs, useQuietThreadShell } from "../state/entities";
 import { useEnvironmentShellStatus } from "../state/shell";
-import { serverEnvironment, threadTagToggleAtom } from "../state/server";
+import { serverEnvironment } from "../state/server";
 import { environmentThreadShells, useEnvironmentThread } from "../state/threads";
 import {
   buildThreadRouteParams,
@@ -103,14 +103,18 @@ export function ThreadRouteView({
   const unlistedParentShell = useQuietThreadShell(
     unlistedParentKey === null ? null : parseThreadKey(unlistedParentKey),
   );
-  const hidingTaggedThreads = useAtomValue(threadTagToggleAtom)?.hiding === true;
+  const unlistedParentHiddenTags = useAtomValue(
+    unlistedParentKey === null
+      ? NO_HIDDEN_TAGS_ATOM
+      : serverEnvironment.hiddenThreadTagsAtom(parseThreadKey(unlistedParentKey).environmentId),
+  );
   // Off-shell threads: a child follows its parent; while hiding, an unloaded parent hides it too.
   const unlistedHidden =
     unlistedThread !== null &&
     (unlistedParentKey === null
       ? hasHiddenTag(unlistedThread.tags, unlistedHiddenTags)
       : unlistedParentShell === null
-        ? hidingTaggedThreads
+        ? unlistedParentHiddenTags !== null
         : hiddenKeys.has(unlistedParentKey));
   const hiddenByTagFilter =
     serverThreadRef !== null && (hiddenKeys.has(threadKey(serverThreadRef)) || unlistedHidden);

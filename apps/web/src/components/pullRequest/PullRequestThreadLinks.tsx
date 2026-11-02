@@ -68,6 +68,9 @@ function EnabledPullRequestThreadLinks({
   const linking = usePullRequestLinking(environmentId);
   const linkedHere = linking.isLinked(thread, url);
   const hiddenKeys = useAtomValue(environmentThreadShells.hiddenThreadKeysAtom);
+  const loadedThreadIds = useAtomValue(
+    environmentThreadShells.environmentThreadIndexAtom(environmentId),
+  );
   const hiddenTags = useAtomValue(serverEnvironment.hiddenThreadTagsAtom(environmentId));
   const relations = useEnvironmentQuery(
     linking.mode === "multiple" && display !== "menu-item"
@@ -118,6 +121,7 @@ function EnabledPullRequestThreadLinks({
   const linkedThreads = visibleLinkedThreads(
     linking.mode === "multiple" ? ((relations.data ?? lastRelations)?.threads ?? []) : [],
     environmentId,
+    loadedThreadIds,
     hiddenKeys,
     hiddenTags,
   );

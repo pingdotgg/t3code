@@ -74,10 +74,14 @@ export function usePullRequestThreads(
   if (relations.data && (lastRelations.key !== key || relations.data !== lastRelations.data))
     setLastRelations({ key, data: relations.data });
   const hiddenKeys = useAtomValue(environmentThreadShells.hiddenThreadKeysAtom);
+  const loadedThreadIds = useAtomValue(
+    environmentThreadShells.environmentThreadIndexAtom(target.environmentId),
+  );
   const hiddenTags = useAtomValue(serverEnvironment.hiddenThreadTagsAtom(target.environmentId));
   const threads = visibleLinkedThreads(
     (relations.data ?? (lastRelations.key === key ? lastRelations.data : null))?.threads ?? [],
     target.environmentId,
+    loadedThreadIds,
     hiddenKeys,
     hiddenTags,
   );

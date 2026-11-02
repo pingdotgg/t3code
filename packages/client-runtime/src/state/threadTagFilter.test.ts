@@ -2,7 +2,7 @@ import { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import { threadKey } from "./entities.ts";
-import { hiddenThreadKeys, NO_HIDDEN_THREADS } from "./threadTagFilter.ts";
+import { hiddenThreadKeys, NO_HIDDEN_THREADS, visibleLinkedThreads } from "./threadTagFilter.ts";
 
 const local = EnvironmentId.make("local");
 const linked = EnvironmentId.make("linked");
@@ -80,5 +80,21 @@ describe("hiddenThreadKeys", () => {
 
   it("applies each environment's own tags", () => {
     expect(hiddenIds(null, ["client", "private"])).toEqual([key(linked, "linked-client")]);
+  });
+
+  it("judges loaded PR rows by visibility and unloaded rows by their own tags", () => {
+    const hidden = hiddenThreadKeys([
+      { environmentId: local, threads: localThreads, hiddenTags: ["private"] },
+    ]);
+    const rows = [
+      { id: ThreadId.make("private-subagent") },
+      { id: ThreadId.make("plain-private-side-chat"), tags: ["private"] },
+      { id: ThreadId.make("off-shell"), tags: ["private"] },
+      { id: ThreadId.make("off-shell-plain") },
+    ];
+    const loaded = new Map(localThreads.map((entry) => [entry.id, entry] as const));
+    expect(
+      visibleLinkedThreads(rows, local, loaded, hidden, ["private"]).map((row) => row.id),
+    ).toEqual(["plain-private-side-chat", "off-shell-plain"]);
   });
 });
