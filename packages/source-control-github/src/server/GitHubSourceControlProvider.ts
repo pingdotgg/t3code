@@ -297,6 +297,8 @@ export const makeDiscovery = Effect.gen(function* () {
       if (!url?.host) return Effect.succeed(null);
       // A timeout or keyring failure propagates: the registry does not keep that answer.
       return api.credential(url.host).pipe(
+        // Most unknown hosts are not GitHub, so a missing credential is not a failure to trace.
+        Effect.withTracerEnabled(false),
         Effect.as(true),
         Effect.catchTags({
           GitHubCliMissingError: () => Effect.succeed(false),
