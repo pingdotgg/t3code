@@ -50,7 +50,11 @@ export function readSpeakableAnswer(item: unknown): string | undefined {
   if (!item || typeof item !== "object") return undefined;
   const record = item as { type?: unknown; text?: unknown; phase?: unknown; questions?: unknown };
   if (record.type !== "agentMessage" || typeof record.text !== "string") return undefined;
-  if (record.phase === "commentary" || (Array.isArray(record.questions) && record.questions.length))
+  if (
+    record.phase === "commentary" ||
+    record.phase === "partial_answer" ||
+    (Array.isArray(record.questions) && record.questions.length)
+  )
     return undefined;
   const text = record.text.trim();
   if (
@@ -199,11 +203,19 @@ export const makeCodexVoice = Effect.fn("makeCodexVoice")(function* (
         }
         const answer = delegatedTurn?.answer;
         if (answer === undefined) return Effect.void;
-        return client.raw
-          .request("thread/realtime/appendSpeech", {
-            threadId: active.providerThreadId,
-            text: answer,
-          })
+        return transition
+          .withPermit(
+            Ref.get(activeRef).pipe(
+              Effect.flatMap((current) =>
+                current === active && !active.closed
+                  ? client.raw.request("thread/realtime/appendSpeech", {
+                      threadId: active.providerThreadId,
+                      text: answer,
+                    })
+                  : Effect.void,
+              ),
+            ),
+          )
           .pipe(
             Effect.catch((cause) =>
               Effect.logWarning("Codex voice could not speak the delegated answer", { cause }),
