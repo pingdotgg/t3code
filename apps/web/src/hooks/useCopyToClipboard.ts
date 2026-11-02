@@ -130,6 +130,11 @@ export async function writeTextToClipboard(
     });
   }
 
+  // Without ClipboardItem (Firefox before 127), only the copy event can carry extra flavors.
+  if (extraFlavors && (typeof ClipboardItem === "undefined" || !navigator.clipboard.write)) {
+    if (writeTextWithExecCommand(value, extraFlavors)) return true;
+  }
+
   try {
     if (extraFlavors && typeof ClipboardItem !== "undefined" && navigator.clipboard.write) {
       try {

@@ -7,9 +7,9 @@ import { MarkdownCodeBlock } from "./MarkdownCodeBlock";
 import { MarkdownTable } from "./MarkdownTable";
 
 // Insecure origins (a LAN or tailnet address over plain http) have no async clipboard.
-function withoutAsyncClipboard() {
+function withoutAsyncClipboard(clipboard?: Partial<Clipboard>) {
   const original = Object.getOwnPropertyDescriptor(Navigator.prototype, "clipboard");
-  Object.defineProperty(navigator, "clipboard", { configurable: true, value: undefined });
+  Object.defineProperty(navigator, "clipboard", { configurable: true, value: clipboard });
   const copied = new DataTransfer();
   const execCommand = vi.spyOn(document, "execCommand").mockImplementation(() => {
     document.activeElement?.dispatchEvent(
@@ -52,7 +52,11 @@ describe("markdown copy without the async clipboard", () => {
     expect(clipboard.execCommand).toHaveBeenCalledWith("copy");
   });
 
-  it("copies a table through the execCommand fallback", async () => {
+  it.each([
+    ["no async clipboard", undefined],
+    // Firefox before 127 has writeText but no ClipboardItem.
+    ["writeText only", { writeText: () => Promise.resolve() }],
+  ])("copies a table through the execCommand fallback with %s", async (_, asyncClipboard) => {
     await using screen = await render(
       <MarkdownTable>
         <thead>
@@ -69,7 +73,7 @@ describe("markdown copy without the async clipboard", () => {
       // The table renders no links and reads no route.
       { router: false },
     );
-    using clipboard = withoutAsyncClipboard();
+    using clipboard = withoutAsyncClipboard(asyncClipboard);
 
     await userEvent.click(screen.getByRole("button", { name: "Copy table" }));
     await userEvent.click(page.getByRole("menuitem", { name: "Copy as rich text" }));
