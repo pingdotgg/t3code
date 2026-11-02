@@ -2,6 +2,7 @@ import { makeProviderFailure } from "@t3tools/provider-core/server/failure";
 import {
   XAiPromptFailureText,
   isXAiTaskCompletedWakeNotification,
+  xAiContextTokensFromMeta,
   xAiRateLimitedErrorCode,
 } from "./xaiAcpExtension.ts";
 import { discoverGrokSkills, leadingGrokSkillMention } from "./skills.ts";
@@ -334,6 +335,7 @@ export function makeGrokAcpAdapterFlavor(
     ],
     isPersistentBackgroundTool: isXAiPersistentMonitor,
     isProviderWakeNotification: isXAiTaskCompletedWakeNotification,
+    contextTokensFromMeta: xAiContextTokensFromMeta,
     deferFinalizeForBackgroundWork: true,
     enablePostSettleContinuation: true,
     ...(options.assertComplete === undefined ? {} : { assertComplete: options.assertComplete }),
