@@ -124,7 +124,7 @@ describe("preview guest input", () => {
     },
   );
 
-  it("preserves host focus when presses in two tabs of one window overlap", async () => {
+  it("preserves host focus when a sibling tab's press overlaps a stuck one", async () => {
     const document = { activeElement: {} as object };
     const composer = {
       isConnected: true,
@@ -138,15 +138,17 @@ describe("preview guest input", () => {
       isDestroyed: () => false,
       executeJavaScript: async (script: string) => NodeVM.runInContext(script, context),
     };
-    const firstPressFocused = Promise.withResolvers<void>();
-    const pressesFinish = Promise.withResolvers<void>();
-    const press = (id: number) => {
+    const stuckPressFocused = Promise.withResolvers<void>();
+    const stuckPressEnds = Promise.withResolvers<void>();
+    const press = (id: number, stuck: boolean) => {
       const preview = { tagName: "WEBVIEW", getWebContentsId: () => id };
       const debuggee = {
         sendCommand: async () => {
           document.activeElement = preview;
-          firstPressFocused.resolve();
-          await pressesFinish.promise;
+          if (stuck) {
+            stuckPressFocused.resolve();
+            await stuckPressEnds.promise;
+          }
           return {};
         },
       };
@@ -157,12 +159,15 @@ describe("preview guest input", () => {
         { type: "mousePressed", x: 10, y: 10, button: "left" },
       );
     };
-    const first = press(7);
-    await firstPressFocused.promise;
-    const presses = [first, press(8)];
-    pressesFinish.resolve();
-    await Promise.all(presses);
+    // A press held open, as by a page's confirm() on mousedown, must not block or win focus.
+    const stuck = press(7, true);
+    await stuckPressFocused.promise;
+    await press(8, false);
     expect(document.activeElement).toBe(composer);
+    stuckPressEnds.resolve();
+    await stuck;
+    expect(document.activeElement).toBe(composer);
+    expect(Object.keys(context)).toEqual(["document"]);
   });
 
   it.each([

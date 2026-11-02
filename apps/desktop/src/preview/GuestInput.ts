@@ -92,7 +92,8 @@ const evaluate = async (debuggee: Electron.Debugger, expression: string) => {
   return reply.result?.value;
 };
 
-let focusSequence = 0;
+/** Host focus shared by every guest press in flight in one window, so overlapping presses agree on it. */
+const HOST_FOCUS = "globalThis.__t3PreviewFocus";
 
 /** A CDP pointer press focuses the guest's native view even with focus emulation enabled. */
 const sendPointerPress = async (
@@ -106,32 +107,32 @@ const sendPointerPress = async (
   if (!host || host.isDestroyed() || webContents.focusedFrame) {
     return debuggee.sendCommand(method, params, sessionId);
   }
-  const key = JSON.stringify(`__t3PreviewFocus${++focusSequence}`);
   await host.executeJavaScript(`(() => {
+    const state = (${HOST_FOCUS} ??= { saved: null, presses: [] });
     const active = document.activeElement;
-    if (!active || active === document.body || active.tagName === "WEBVIEW") return;
-    globalThis[${key}] = () => {
-      delete globalThis[${key}];
-      const current = document.activeElement;
-      if (active.isConnected && current?.tagName === "WEBVIEW" &&
-          current.getWebContentsId() === ${webContents.id}) active.focus({ preventScroll: true });
-    };
+    if (active && active !== document.body && active.tagName !== "WEBVIEW") state.saved = active;
+    state.presses.push(${webContents.id});
   })()`);
   try {
     return await debuggee.sendCommand(method, params, sessionId);
   } finally {
     if (!host.isDestroyed()) {
-      await host.executeJavaScript(`globalThis[${key}]?.()`);
+      await host.executeJavaScript(`(() => {
+        const state = ${HOST_FOCUS};
+        if (!state) return;
+        const current = document.activeElement;
+        if (state.saved?.isConnected && current?.tagName === "WEBVIEW" &&
+            state.presses.includes(current.getWebContentsId())) state.saved.focus({ preventScroll: true });
+        state.presses.splice(state.presses.indexOf(${webContents.id}), 1);
+        if (state.presses.length === 0) delete ${HOST_FOCUS};
+      })()`);
     }
   }
 };
 
 const pointerCommands = new WeakMap<Electron.WebContents, Promise<unknown>>();
 
-/**
- * Focus capture crosses processes; later pointer events must not overtake the press.
- * Queued per window: a press in a sibling tab would capture that tab's webview as host focus.
- */
+/** Focus capture crosses processes; later pointer events must not overtake the press. */
 const sendPointerCommand = async (
   webContents: Electron.WebContents,
   debuggee: Electron.Debugger,
@@ -139,8 +140,7 @@ const sendPointerCommand = async (
   params: Record<string, unknown>,
   sessionId: string | undefined,
 ) => {
-  const queue = webContents.hostWebContents ?? webContents;
-  const previous = pointerCommands.get(queue) ?? Promise.resolve();
+  const previous = pointerCommands.get(webContents) ?? Promise.resolve();
   const current = previous
     .catch(() => {})
     .then(() =>
@@ -148,11 +148,11 @@ const sendPointerCommand = async (
         ? sendPointerPress(webContents, debuggee, method, params, sessionId)
         : debuggee.sendCommand(method, params, sessionId),
     );
-  pointerCommands.set(queue, current);
+  pointerCommands.set(webContents, current);
   try {
     return await current;
   } finally {
-    if (pointerCommands.get(queue) === current) pointerCommands.delete(queue);
+    if (pointerCommands.get(webContents) === current) pointerCommands.delete(webContents);
   }
 };
 
