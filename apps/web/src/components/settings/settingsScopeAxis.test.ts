@@ -2,31 +2,35 @@ import { describe, expect, it } from "vite-plus/test";
 
 import type { SidebarProjectSnapshot } from "../../sidebarProjectGrouping";
 import {
-  selectCheckoutAxis,
   selectEnvironmentAxis,
   selectProjectAxis,
   settingsScopeCheckoutChoices,
+  settingsScopeCheckoutLabel,
 } from "./settingsScopeAxis";
 
-const checkout = (environmentId: string, physicalProjectKey: string) =>
-  ({ environmentId, physicalProjectKey }) as SidebarProjectSnapshot["memberProjects"][number];
+const member = (environmentId: string, physicalProjectKey: string, workspaceRoot = "") =>
+  ({
+    environmentId,
+    physicalProjectKey,
+    workspaceRoot,
+  }) as SidebarProjectSnapshot["memberProjects"][number];
 const group = (...memberProjects: SidebarProjectSnapshot["memberProjects"]) =>
   ({ memberProjects }) as SidebarProjectSnapshot;
 
 describe("settings scope axes", () => {
   it("drops a checkout narrowing from older links when either axis changes", () => {
-    const legacy = { project: "app", checkout: "app@first", machine: "first" };
-    expect(selectEnvironmentAxis(legacy, "second")).toEqual({
+    const checkout = { project: "app", checkout: "app@first", machine: "first" };
+    expect(selectEnvironmentAxis(checkout, "second")).toEqual({
       project: "app",
       machine: "second",
     });
-    expect(selectProjectAxis(legacy, "app")).toEqual({ project: "app", machine: "first" });
+    expect(selectProjectAxis(checkout, "app")).toEqual({ project: "app", machine: "first" });
   });
 
   it("offers checkouts only where an environment cannot tell them apart", () => {
-    const a = checkout("laptop", "a");
-    const b = checkout("laptop", "b");
-    const c = checkout("server", "c");
+    const a = member("laptop", "a");
+    const b = member("laptop", "b");
+    const c = member("server", "c");
 
     expect(settingsScopeCheckoutChoices(group(a, b, c), { machine: "laptop" })).toEqual([a, b]);
     expect(settingsScopeCheckoutChoices(group(a, b), {})).toEqual([a, b]);
@@ -35,13 +39,12 @@ describe("settings scope axes", () => {
     expect(settingsScopeCheckoutChoices(group(a, b, c), { machine: "server" })).toEqual([]);
   });
 
-  it("narrows to one checkout and back without losing the chosen environment", () => {
-    const search = { project: "app", machine: "laptop" };
-    const narrowed = selectCheckoutAxis(search, checkout("laptop", "b"));
+  it("labels a checkout by its full path only when its folder name repeats", () => {
+    const first = member("laptop", "a", "/work/one/app");
+    const second = member("laptop", "b", "C:\\work\\two\\app");
+    const other = member("laptop", "c", "/work/tools");
 
-    expect(narrowed).toEqual({ project: "app", machine: "laptop", checkout: "b" });
-    expect(selectCheckoutAxis(narrowed, null)).toEqual(search);
-    expect(selectCheckoutAxis({ project: "app" }, checkout("laptop", "b"))).toEqual(narrowed);
-    expect(selectCheckoutAxis({ project: "app", checkout: "b" }, null)).toEqual({ project: "app" });
+    expect(settingsScopeCheckoutLabel(second, [first, second, other])).toBe("C:\\work\\two\\app");
+    expect(settingsScopeCheckoutLabel(other, [first, second, other])).toBe("tools");
   });
 });

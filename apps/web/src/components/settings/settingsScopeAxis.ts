@@ -1,10 +1,9 @@
-import type {
-  SidebarProjectGroupMember,
-  SidebarProjectSnapshot,
-} from "../../sidebarProjectGrouping";
+import { fileBasename } from "@t3tools/shared/path";
+import type { SidebarProjectSnapshot } from "../../sidebarProjectGrouping";
 import type { EnvironmentPresentation } from "../../state/environments";
 import type { ResolvedSettingsScope, SettingsScopeSearch } from "./settingsScope";
 
+type ScopeCheckout = SidebarProjectSnapshot["memberProjects"][number];
 type ScopeEnvironment = Pick<EnvironmentPresentation, "environmentId" | "label" | "displayUrl">;
 
 export function settingsScopeEnvironmentAddress(environment: ScopeEnvironment) {
@@ -105,7 +104,7 @@ export function selectProjectAxis(search: SettingsScopeSearch, value: string): S
 export function settingsScopeCheckoutChoices(
   group: SidebarProjectSnapshot,
   search: Pick<SettingsScopeSearch, "machine" | "checkout">,
-): readonly SidebarProjectGroupMember[] {
+): readonly ScopeCheckout[] {
   const selected = group.memberProjects.find(
     (member) => member.physicalProjectKey === search.checkout,
   );
@@ -122,17 +121,23 @@ export function settingsScopeCheckoutChoices(
 
 export function selectCheckoutAxis(
   search: SettingsScopeSearch,
-  checkout: SidebarProjectGroupMember | null,
+  checkout: ScopeCheckout | null,
 ): SettingsScopeSearch {
-  const next: SettingsScopeSearch = {};
-  if (search.project) next.project = search.project;
-  if (checkout) {
-    next.machine = checkout.environmentId;
-    next.checkout = checkout.physicalProjectKey;
-  } else if (search.machine) {
-    next.machine = search.machine;
-  }
-  return next;
+  const { checkout: _previous, ...rest } = search;
+  return checkout
+    ? { ...rest, machine: checkout.environmentId, checkout: checkout.physicalProjectKey }
+    : rest;
+}
+
+/** Repeated folder names fall back to the full path so the closed menu still identifies the checkout. */
+export function settingsScopeCheckoutLabel(
+  checkout: ScopeCheckout,
+  checkouts: readonly ScopeCheckout[],
+) {
+  const name = fileBasename(checkout.workspaceRoot);
+  return checkouts.filter((other) => fileBasename(other.workspaceRoot) === name).length > 1
+    ? checkout.workspaceRoot
+    : name;
 }
 
 export function selectSingleEnvironmentScope(

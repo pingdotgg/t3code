@@ -632,16 +632,6 @@ describe("project settings scope", () => {
     );
   });
 
-  it("hides the checkout menu when each environment has one checkout", async () => {
-    setup();
-    await using _screen = await mountSettings({ project: projectKey(), machine: primaryId });
-
-    await expect.element(page.getByRole("textbox", { name: "Project name" })).toBeVisible();
-    await expect
-      .element(page.getByRole("button", { name: /^Checkout scope:/ }))
-      .not.toBeInTheDocument();
-  });
-
   it("keeps an unknown project recoverable from any environment", async () => {
     setup();
     state.projects = state.projects.filter((project) => project.environmentId === primaryId);

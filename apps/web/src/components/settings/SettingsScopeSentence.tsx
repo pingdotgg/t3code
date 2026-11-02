@@ -40,6 +40,7 @@ import {
   selectEnvironmentAxis,
   selectProjectAxis,
   settingsScopeCheckoutChoices,
+  settingsScopeCheckoutLabel,
   settingsScopeEnvironmentAddress,
   settingsScopeEnvironmentLabel,
   settingsScopeEnvironmentLabels,
@@ -321,7 +322,7 @@ function CheckoutScopeMenu({ value, groups, onChange }: SettingsScopeMenuProps) 
         icon={<FolderIcon aria-hidden className="size-3.5 shrink-0" />}
         label={
           selected
-            ? fileBasename(selected.workspaceRoot)
+            ? settingsScopeCheckoutLabel(selected, checkouts)
             : value.checkout
               ? "Unavailable checkout"
               : "All checkouts"
