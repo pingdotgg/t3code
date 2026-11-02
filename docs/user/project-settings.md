@@ -242,6 +242,13 @@ When no image is found, web and desktop show a two-character monogram with a col
 from the icon palette, derived from the saved project name. For example, `Nebula` becomes `NA`,
 `Silver Orchard` becomes `SO`, and `M7 Forge` becomes `M7`.
 
+## Create draft pull requests
+
+Enable **Settings → Source control → Create draft PRs** to have **Commit, push & PR**
+and **Create PR** open GitHub pull requests as drafts. It is off by default. Select a project
+to override its environment default. The setting is also available on mobile.
+Existing pull requests keep their current review status.
+
 ## Keep the default branch current
 
 In Source control, enable **Automatically pull** to keep the default-branch checkout up to date

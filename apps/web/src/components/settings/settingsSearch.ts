@@ -950,6 +950,13 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["auto pull default branch current checkout fast forward upstream"],
   },
   {
+    id: "create-draft-pull-requests",
+    title: "Create draft PRs",
+    to: "/settings/source-control",
+    scope: "project-defaults",
+    searchTerms: ["github pull request commit push draft ready review gh pr create"],
+  },
+  {
     id: "remove-agent-credits-on-merge",
     title: "Remove agent credits when merging",
     to: "/settings/source-control",

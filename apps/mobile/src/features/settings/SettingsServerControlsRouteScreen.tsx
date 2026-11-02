@@ -65,7 +65,7 @@ const PAGE_PROJECT_KEYS: Record<SettingsPage, readonly ProjectScopedServerSettin
     "sidebarAutoSettleOnMerge",
     "sidebarAutoSettleAfterDays",
   ],
-  "source-control": ["defaultAutoPull", "removeAgentCreditsOnMerge"],
+  "source-control": ["defaultAutoPull", "createDraftPullRequests", "removeAgentCreditsOnMerge"],
   worktrees: [
     "newWorktreesStartFromOrigin",
     "worktreeSubmodules",
@@ -414,6 +414,17 @@ function ServerSettingsDetail(props: { readonly page: SettingsPage }) {
                     />
                   )}
                   <SettingsSection title="Pull requests">
+                    <SettingsSwitchRow
+                      icon={PullRequestGlyph.draft}
+                      label="Create draft PRs"
+                      subtitle={managedSubtitle(
+                        "createDraftPullRequests",
+                        "Create GitHub pull requests as drafts when using Commit, push & PR or Create PR.",
+                      )}
+                      value={uniform("createDraftPullRequests")}
+                      disabled={disabledFor("createDraftPullRequests")}
+                      onValueChange={(value) => write({ createDraftPullRequests: value })}
+                    />
                     <SettingsSwitchRow
                       icon={PullRequestGlyph.merged}
                       label="Remove agent credits when merging"

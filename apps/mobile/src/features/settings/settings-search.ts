@@ -73,6 +73,7 @@ const SETTINGS_SEARCH_TERMS = {
     "pull requests",
     "co-authors",
     "agent credits",
+    "draft PRs",
     "default branch",
     "automatically pull",
   ],
