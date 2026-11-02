@@ -162,9 +162,17 @@ it.layer(NodeServices.layer)("readAntigravityChildWork", (it) => {
         { nativeTaskId: "0ld", title: ANTIGRAVITY_SUBAGENT_BATCH_TITLE, prompt: "Running" },
         // Its stored launch was cut, so it may be this same launch.
         { nativeTaskId: "cut", title: LAUNCH.role, prompt: "[Earlier output truncated]\n\nmarker" },
+        { nativeTaskId: "cut", title: "[Earlier output truncated]\n\nReader", prompt: "x" },
       ]) {
         expect(yield* read(profile, opaque, launch, [sibling])).toEqual([]);
       }
+      // A cut prompt under different roles is another launch.
+      const other = {
+        nativeTaskId: "cut",
+        title: "Test Runner",
+        prompt: "[Earlier output truncated]\n\nx",
+      };
+      expect(yield* read(profile, opaque, launch, [other])).toHaveLength(1);
     }),
   );
 

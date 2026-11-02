@@ -76,6 +76,17 @@ describe("antigravityEditPatch", () => {
     expect(antigravityEditPatch({ path, rawInput: replace, readPreEditFile: () => crlf })).toBe(
       expected,
     );
+    // A target written with CRLF previews the same lines, without carriage returns.
+    expect(
+      antigravityEditPatch({
+        path,
+        rawInput: {
+          TargetContent: "const target = 10;\r\n",
+          ReplacementContent: "const target = 100;\r\n",
+        },
+        readPreEditFile: () => crlf,
+      }),
+    ).toBe(expected);
     // A multi-line target written with LF still finds its lines in a CRLF file.
     expect(
       antigravityEditPatch({

@@ -57,6 +57,7 @@ const records = (olderRun: string) => ({
   ],
   runs: [
     { id: "run-root", providerThreadId: "provider-root" },
+    { id: "run-root-earlier", providerThreadId: "provider-root" },
     { id: "run-other", providerThreadId: "provider-other" },
   ],
   providerThreads: [
@@ -109,8 +110,8 @@ it.layer(
       });
       const fromOtherSession = yield* readChildren("run-other");
       expect(fromOtherSession.map((child) => child.conversationId)).toEqual([CHILD]);
-      // In the same session, the older batch may own the only record.
-      expect(yield* readChildren("run-root")).toEqual([]);
+      // An earlier run in the same session may own the only record.
+      expect(yield* readChildren("run-root-earlier")).toEqual([]);
     }),
   );
 });

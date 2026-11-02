@@ -108,9 +108,11 @@ function snippetHunks(
   newText: string,
   maxEditLength: number,
 ): StructuredPatchHunk[] | undefined {
+  const before = oldText.replaceAll("\r\n", "\n");
+  const after = newText.replaceAll("\r\n", "\n");
   // A target without its newline keeps the line's own newline, on both sides.
-  const eol = oldText.endsWith("\n") ? "" : "\n";
-  return structuredPatch("", "", oldText + eol, newText + eol, undefined, undefined, {
+  const eol = before.endsWith("\n") ? "" : "\n";
+  return structuredPatch("", "", before + eol, after + eol, undefined, undefined, {
     maxEditLength,
   })?.hunks;
 }

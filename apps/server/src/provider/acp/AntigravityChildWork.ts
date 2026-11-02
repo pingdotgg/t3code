@@ -251,12 +251,13 @@ function findInvokeRecord(
   const claimed = new Set<string>();
   for (const sibling of input.siblings) {
     const idx = plannerIdxOf(sibling.nativeTaskId);
-    // A sibling whose launch text is missing or cut, or whose planner step is unreadable,
-    // cannot be ruled out.
+    // A sibling whose launch text is missing, or cut under the same roles, or whose planner step
+    // is unreadable, cannot be ruled out.
     if (idx === undefined) {
       if (
         sibling.title === ANTIGRAVITY_SUBAGENT_BATCH_TITLE ||
-        isCutAntigravityToolText(sibling.prompt)
+        isCutAntigravityToolText(sibling.title ?? "") ||
+        (isCutAntigravityToolText(sibling.prompt) && sibling.title === input.launch.title)
       )
         return undefined;
       continue;
