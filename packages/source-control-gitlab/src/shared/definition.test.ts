@@ -63,6 +63,22 @@ describe("GitLab change request URLs", () => {
     ).toBe("https://gitlab.com/group/sub/project/-/merge_requests/4");
     expect(
       definition.changeRequestUrl({
+        host: "gitlab.internal",
+        repository: "team/app",
+        number: 5,
+        remoteUrl: "http://gitlab.internal:8080/team/app.git",
+      }),
+    ).toBe("http://gitlab.internal:8080/team/app/-/merge_requests/5");
+    expect(
+      definition.changeRequestUrl({
+        host: "gitlab.internal",
+        repository: "team/app",
+        number: 5,
+        remoteUrl: "git@gitlab.internal:team/app.git",
+      }),
+    ).toBe("https://gitlab.internal/team/app/-/merge_requests/5");
+    expect(
+      definition.changeRequestUrl({
         host: "gitlab.com",
         repository: "group/sub/project",
         number: 4,
