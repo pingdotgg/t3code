@@ -347,6 +347,7 @@ export const LINUX_DESKTOP_BUILD_PREREQUISITES = [
     description: "libsecret development headers and pkg-config",
     packages: ["libsecret-1-dev", "pkg-config"],
   },
+  { id: "libudev", description: "libudev development headers", packages: ["libudev-dev"] },
   { id: "imagemagick", description: "ImageMagick", packages: ["imagemagick"] },
 ] as const;
 
@@ -996,6 +997,10 @@ export const DESKTOP_FILE_EXCLUSIONS = [
   "!apps/desktop/resources/browser-secret/**/*",
   "!apps/desktop/prod-resources/browser-secret",
   "!apps/desktop/prod-resources/browser-secret/**/*",
+  "!apps/desktop/resources/phone-passkeys",
+  "!apps/desktop/resources/phone-passkeys/**/*",
+  "!apps/desktop/prod-resources/phone-passkeys",
+  "!apps/desktop/prod-resources/phone-passkeys/**/*",
   "!apps/desktop/prod-resources/windows-server",
   "!apps/desktop/prod-resources/windows-server/**/*",
   "!apps/desktop/prod-resources/wsl-runtime.tar.gz",
@@ -1924,26 +1929,21 @@ const rustTargetIsInstalled = Effect.fn("rustTargetIsInstalled")(function* (targ
 export const preflightLinuxDesktopBuild = Effect.fn("preflightLinuxDesktopBuild")(function* (
   arch: typeof BuildArch.Type = "x64",
 ) {
-  const reuseResourceMonitor = yield* Config.Boolean("T3CODE_DESKTOP_REUSE_RESOURCE_MONITOR").pipe(
-    Config.withDefault(false),
-  );
-  const reuseCaptureHelpers = yield* Config.Boolean(
-    "T3CODE_DESKTOP_REUSE_LINUX_CAPTURE_HELPERS",
-  ).pipe(Config.withDefault(false));
-  const needsRust = !reuseResourceMonitor || !reuseCaptureHelpers;
   const rustTarget = resolveResourceMonitorRustTargets("linux", arch)[0]!;
 
   const checks = yield* Effect.all(
     {
-      cargo: needsRust
-        ? desktopBuildProbeSucceeds(ChildProcess.make("cargo", ["--version"]), "cargo")
-        : Effect.succeed(true),
-      "rust-target": needsRust ? rustTargetIsInstalled(rustTarget) : Effect.succeed(true),
+      cargo: desktopBuildProbeSucceeds(ChildProcess.make("cargo", ["--version"]), "cargo"),
+      "rust-target": rustTargetIsInstalled(rustTarget),
       cc: desktopBuildProbeSucceeds(ChildProcess.make("cc", ["--version"]), "cc"),
       make: desktopBuildProbeSucceeds(ChildProcess.make("make", ["--version"]), "make"),
       libsecret: desktopBuildProbeSucceeds(
         ChildProcess.make("pkg-config", ["--exists", "libsecret-1"]),
         "libsecret",
+      ),
+      libudev: desktopBuildProbeSucceeds(
+        ChildProcess.make("pkg-config", ["--exists", "libudev"]),
+        "libudev",
       ),
       imagemagick: Effect.all([
         desktopBuildProbeSucceeds(ChildProcess.make("magick", ["-version"]), "magick"),

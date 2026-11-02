@@ -10,7 +10,7 @@ import type { PasskeyBackend, PasskeyCeremonyContext } from "./PasskeyBackend.ts
 import type { PasskeyCeremonyResult } from "./PasskeyBridge.ts";
 
 const Extensions = Schema.Struct({
-  credProps: Schema.optionalKey(Schema.Struct({ rk: Schema.Boolean })),
+  credProps: Schema.optionalKey(Schema.Struct({ rk: Schema.optionalKey(Schema.Boolean) })),
   prf: Schema.optionalKey(
     Schema.Struct({
       enabled: Schema.optionalKey(Schema.Boolean),
@@ -155,7 +155,9 @@ export const linuxPasskeyBackend = (executable: string): PasskeyBackend => {
       };
       const cancel = () => finish(notAllowed);
       context.signal.addEventListener("abort", cancel, { once: true });
-      child.once("error", cancel);
+      child.once("error", () =>
+        finish({ success: false, error: "NotSupportedError", fallbackToNative: true }),
+      );
       child.once("close", cancel);
       child.stdin.on("error", cancel);
       lines.on("line", (line) => {

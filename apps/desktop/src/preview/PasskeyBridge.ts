@@ -6,8 +6,15 @@ import {
   PASSKEY_CANCEL_CHANNEL,
 } from "./GuestProtocol.ts";
 
+type NativeRegistrationData = Extract<CreateCredentialResult, { success: true }>["data"];
+type RegistrationData = Omit<NativeRegistrationData, "extensions"> & {
+  readonly extensions: Omit<NativeRegistrationData["extensions"], "credProps"> & {
+    readonly credProps?: CredentialPropertiesOutput;
+  };
+};
+
 export type PasskeyCeremonyResult =
-  | Extract<CreateCredentialResult, { success: true }>
+  | { readonly success: true; readonly data: RegistrationData }
   | Extract<GetCredentialResult, { success: true }>
   | { readonly success: false; readonly error: string; readonly fallbackToNative?: boolean };
 
@@ -128,9 +135,7 @@ const makeCredential = (input: {
     }),
   });
 
-const credentialFromCreateResult = (
-  data: Extract<CreateCredentialResult, { success: true }>["data"],
-) => {
+const credentialFromCreateResult = (data: RegistrationData) => {
   const transports = [...data.transports];
   const publicKey = data.publicKey.length > 0 ? data.publicKey : null;
   const extensionResults: AuthenticationExtensionsClientOutputs = {

@@ -133,20 +133,18 @@ const make = Effect.gen(function* () {
           )
       : undefined;
   const keychainAccessGroup = metadata?.touchIdKeychainAccessGroup;
-  const backend =
+  const linuxHelper =
     environment.platform === "linux"
-      ? linuxPasskeyBackend(
-          environment.isPackaged
-            ? environment.path.join(
-                environment.resourcesPath,
-                "phone-passkeys",
-                "t3-phone-passkeys",
-              )
-            : environment.path.join(
-                environment.rootDir,
-                "native/phone-passkeys/target/release/t3-phone-passkeys",
-              ),
-        )
+      ? environment.isPackaged
+        ? environment.path.join(environment.resourcesPath, "phone-passkeys", "t3-phone-passkeys")
+        : environment.path.join(
+            environment.rootDir,
+            "native/phone-passkeys/target/debug/t3-phone-passkeys",
+          )
+      : undefined;
+  const backend =
+    linuxHelper !== undefined && (yield* fileSystem.exists(linuxHelper))
+      ? linuxPasskeyBackend(linuxHelper)
       : metadata?.browserPasskeys === true
         ? backendFor(environment.platform)
         : undefined;

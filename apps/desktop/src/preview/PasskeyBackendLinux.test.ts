@@ -86,59 +86,67 @@ describe("Linux phone passkeys", () => {
     assert.strictEqual(child.kill.mock.calls.length, 1);
   });
 
-  it("preserves registration attestation and the negotiated public key", async () => {
-    const { backend, context, send } = setup();
-    const pending = backend.create(
-      {
-        challenge: new Uint8Array([1]),
-        rp: { name: "Example" },
-        user: { id: new Uint8Array([2]), name: "alice", displayName: "Alice" },
-        pubKeyCredParams: [{ type: "public-key", alg: -7 }],
-      },
-      context,
-    );
-    send({
-      type: "result",
-      credential: {
-        id: "AQ",
-        response: {
+  it.each([true, undefined])(
+    "preserves registration attestation when credProps.rk is %s",
+    async (rk) => {
+      const { backend, context, send } = setup();
+      const pending = backend.create(
+        {
+          challenge: new Uint8Array([1]),
+          rp: { name: "Example" },
+          user: { id: new Uint8Array([2]), name: "alice", displayName: "Alice" },
+          pubKeyCredParams: [{ type: "public-key", alg: -7 }],
+        },
+        context,
+      );
+      send({
+        type: "result",
+        credential: {
+          id: "AQ",
+          response: {
+            clientDataJSON: "Ag",
+            attestationObject: "Aw",
+            authenticatorData: "BA",
+            publicKey: "BQ",
+            publicKeyAlgorithm: -7,
+          },
+          clientExtensionResults: { credProps: rk === undefined ? {} : { rk } },
+        },
+      });
+      assert.deepStrictEqual(await pending, {
+        success: true,
+        data: {
+          credentialId: "AQ",
           clientDataJSON: "Ag",
           attestationObject: "Aw",
-          authenticatorData: "BA",
+          authData: "BA",
           publicKey: "BQ",
           publicKeyAlgorithm: -7,
+          transports: ["hybrid"],
+          extensions: { credProps: rk === undefined ? {} : { rk } },
         },
-        clientExtensionResults: { credProps: { rk: true } },
-      },
-    });
-    assert.deepStrictEqual(await pending, {
-      success: true,
-      data: {
-        credentialId: "AQ",
-        clientDataJSON: "Ag",
-        attestationObject: "Aw",
-        authData: "BA",
-        publicKey: "BQ",
-        publicKeyAlgorithm: -7,
-        transports: ["hybrid"],
-        extensions: { credProps: { rk: true } },
-      },
-    });
-  });
+      });
+    },
+  );
 
   it.each(["abort", "close", "malformed", "error"])(
     "stops native discovery on %s",
     async (ending) => {
       const { backend, context, send, child, prompt, controller } = setup();
       const pending = backend.get({ challenge: new Uint8Array([1]) }, context);
-      send({ type: "qr", url: "FIDO:/12345678901234567890" });
+      if (ending !== "error") send({ type: "qr", url: "FIDO:/12345678901234567890" });
       if (ending === "abort") controller.abort();
       if (ending === "close") prompt.emit("closed");
       if (ending === "malformed") send({ type: "result", credential: {} });
       if (ending === "error") child.emit("error", new Error("missing helper"));
-      assert.deepStrictEqual(await pending, { success: false, error: "NotAllowedError" });
+      assert.deepStrictEqual(
+        await pending,
+        ending === "error"
+          ? { success: false, error: "NotSupportedError", fallbackToNative: true }
+          : { success: false, error: "NotAllowedError" },
+      );
       assert.strictEqual(child.kill.mock.calls.length, 1);
-      assert.strictEqual(prompt.destroy.mock.calls.length, 1);
+      assert.strictEqual(prompt.destroy.mock.calls.length, ending === "error" ? 0 : 1);
       assert.strictEqual(child.stdout.listenerCount("data"), 0);
     },
   );

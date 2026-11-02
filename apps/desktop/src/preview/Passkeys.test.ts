@@ -24,7 +24,12 @@ import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
 import { PASSKEY_CREATE_CHANNEL, PASSKEY_GET_CHANNEL } from "./GuestProtocol.ts";
 import * as PreviewPasskeys from "./Passkeys.ts";
 
-const layerFor = (packageJson: object, isPackaged = true, platform: NodeJS.Platform = "darwin") =>
+const layerFor = (
+  packageJson: object,
+  isPackaged = true,
+  platform: NodeJS.Platform = "darwin",
+  helperAvailable = true,
+) =>
   PreviewPasskeys.layer.pipe(
     Layer.provide(
       Layer.succeed(
@@ -41,6 +46,7 @@ const layerFor = (packageJson: object, isPackaged = true, platform: NodeJS.Platf
     ),
     Layer.provide(
       FileSystem.layerNoop({
+        exists: () => Effect.succeed(helperAvailable),
         readFileString: () => Effect.succeed(JSON.stringify(packageJson)),
       }),
     ),
@@ -310,6 +316,10 @@ describe("PreviewPasskeys", () => {
         Effect.provide(layerFor({}, false, "linux")),
       );
       assert.isTrue(linux.bridgeEnabled);
+      const noLinuxHelper = yield* PreviewPasskeys.PreviewPasskeys.pipe(
+        Effect.provide(layerFor({}, false, "linux", false)),
+      );
+      assert.isFalse(noLinuxHelper.bridgeEnabled);
     }),
   );
 

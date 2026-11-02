@@ -316,7 +316,9 @@ Arch Linux:
 sudo pacman -S rust base-devel libsecret pkgconf imagemagick
 ```
 
-The C toolchain, pkg-config, and libsecret/libudev headers are also needed for Linux desktop development.
+Linux desktop development needs the C toolchain, pkg-config, and libsecret headers. Phone passkeys
+additionally need Cargo and libudev development headers; without them, development uses Chromium's
+native WebAuthn support.
 
 ### macOS DMG prerequisites
 

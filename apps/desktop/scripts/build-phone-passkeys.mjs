@@ -6,9 +6,14 @@ if (process.platform === "linux") {
   const manifest = NodeURL.fileURLToPath(
     new URL("../../../native/phone-passkeys/Cargo.toml", import.meta.url),
   );
-  NodeChildProcess.execFileSync(
-    "cargo",
-    ["build", "--locked", "--release", "--manifest-path", manifest],
-    { stdio: "inherit" },
-  );
+  const available = (command, args) =>
+    NodeChildProcess.spawnSync(command, args, { stdio: "ignore" }).status === 0;
+  if (!available("cargo", ["--version"]) || !available("pkg-config", ["--exists", "libudev"])) {
+    console.warn(
+      "[phone-passkeys] Skipping native helper: install Cargo and libudev development headers to enable phone passkeys in desktop development.",
+    );
+  } else
+    NodeChildProcess.execFileSync("cargo", ["build", "--locked", "--manifest-path", manifest], {
+      stdio: "inherit",
+    });
 }
