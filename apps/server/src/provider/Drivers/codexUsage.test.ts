@@ -1,7 +1,18 @@
 import { describe, expect, it } from "@effect/vitest";
 import { totalTokens } from "@t3tools/provider-core/server/usage";
 
-import { codexUsageFormat, initialCodexScanState, parseCodexLine } from "./codexUsage.ts";
+import {
+  type CodexScanState,
+  codexUsageFormat,
+  initialCodexScanState,
+  parseCodexLine as parseCodexRecords,
+} from "./codexUsage.ts";
+
+function parseCodexLine(line: string, state: CodexScanState) {
+  const records = parseCodexRecords(line, state);
+  expect(records.length).toBeLessThanOrEqual(1);
+  return records[0] ?? null;
+}
 
 describe("parseCodexLine", () => {
   const sessionMeta = JSON.stringify({
@@ -324,6 +335,28 @@ describe("parseCodexLine", () => {
       )?.totals.outputTokens,
     ).toBe(20);
     expect(codexUsageFormat.readMalformedRecords?.(state)).toBe(1);
+  });
+
+  it("bills only the reported request when usage records sit between reconciling snapshots", () => {
+    const state = initialCodexScanState();
+    const usageRecord = (usage: unknown) =>
+      JSON.stringify({
+        type: "token_usage_record",
+        timestamp: "2026-08-01T05:17:45.000Z",
+        payload: { usage },
+      });
+    parseCodexLine(turnContext, state);
+    parseCodexLine(counted(counters(100, 20), counters(100, 20)), state);
+    for (const usage of [counters(40, 5), counters(60, 15), counters(30, 3)]) {
+      expect(parseCodexLine(usageRecord(usage), state)).toBeNull();
+    }
+    expect(
+      parseCodexLine(counted(counters(100, 20), counters(200, 40)), state)?.totals.outputTokens,
+    ).toBe(20);
+    // Records explained by an earlier snapshot cannot bridge a later gap.
+    parseCodexLine(usageRecord(counters(10, 2)), state);
+    expect(parseCodexLine(counted(counters(10, 2), counters(340, 65)), state)).toBeNull();
+    expect(state.malformedRecords).toBe(1);
   });
 
   it("does not bill a context-window estimate or lose the following real request", () => {

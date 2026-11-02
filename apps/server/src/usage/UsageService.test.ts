@@ -2409,7 +2409,7 @@ describe("UsageService", () => {
       }).pipe(Effect.scoped),
   );
 
-  it.live.each([4, 5, 6, 7, 8])(
+  it.live.each([4, 5, 6, 7, 8, 10])(
     "upgrades a v%s cache: reparses live Codex usage, keeps deleted rollouts and the old file",
     (version) =>
       Effect.gen(function* () {
@@ -2476,7 +2476,7 @@ describe("UsageService", () => {
                 delete file.cs.lastCumulativeUsage;
                 delete file.cs.malformedRecords;
               }
-              if (version === 8 && path === livePath) {
+              if (version >= 8 && path === livePath) {
                 file.r = [];
                 file.mr = 1;
                 file.cs.malformedRecords = 1;
@@ -2508,7 +2508,7 @@ describe("UsageService", () => {
             60 + 20 * (version === 4 ? 1 : 2),
           );
           yield* upgraded.awaitPersisted;
-          assert.strictEqual(SCAN_CACHE_FILE_NAME, "usage-scan-cache-v10.json");
+          assert.strictEqual(SCAN_CACHE_FILE_NAME, "usage-scan-cache-v11.json");
           assert.strictEqual(
             yield* Effect.promise(() => NodeFSP.readFile(legacyPath, "utf8")),
             legacy,
