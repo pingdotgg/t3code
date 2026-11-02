@@ -149,6 +149,7 @@ const makeHarness = Effect.fn("ServerUsageTest.makeHarness")(function* (
     connect: Effect.void,
     disconnect: Effect.void,
     retryNow: Effect.void,
+    setDiscoveredRoutes: () => Effect.void,
   });
   const environments = EnvironmentRegistry.EnvironmentRegistry.of({
     run: (_environmentId, effect) =>

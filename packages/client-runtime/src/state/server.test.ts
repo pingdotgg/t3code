@@ -301,6 +301,7 @@ describe("accepted server update recovery", () => {
         connect: Effect.void,
         disconnect: Effect.void,
         retryNow: Effect.void,
+        setDiscoveredRoutes: () => Effect.void,
       });
       const run: EnvironmentRegistry.EnvironmentRegistry["Service"]["run"] = (_id, effect) =>
         Effect.provideService(effect, EnvironmentSupervisor.EnvironmentSupervisor, supervisor);
@@ -399,6 +400,7 @@ const makeConfigPersistenceHarness = Effect.fn("test.makeConfigPersistenceHarnes
     connect: Effect.void,
     disconnect: Effect.void,
     retryNow: Effect.void,
+    setDiscoveredRoutes: () => Effect.void,
   });
   const cache = Persistence.EnvironmentCacheStore.of({
     loadShell: () => Effect.succeedNone,
@@ -894,6 +896,7 @@ describe("server state projection", () => {
         connect: Effect.void,
         disconnect: Effect.void,
         retryNow: Effect.void,
+        setDiscoveredRoutes: () => Effect.void,
       } satisfies EnvironmentSupervisor.EnvironmentSupervisor["Service"]);
       const staleWelcome = {
         environment: {} as ServerLifecycleWelcomePayload["environment"],
@@ -949,6 +952,7 @@ describe("server state projection", () => {
         connect: Effect.void,
         disconnect: Effect.void,
         retryNow: Effect.void,
+        setDiscoveredRoutes: () => Effect.void,
       } satisfies EnvironmentSupervisor.EnvironmentSupervisor["Service"]);
 
       yield* Effect.scoped(
@@ -1007,6 +1011,7 @@ describe("server state projection", () => {
         connect: Effect.void,
         disconnect: Effect.void,
         retryNow: Effect.void,
+        setDiscoveredRoutes: () => Effect.void,
       } satisfies EnvironmentSupervisor.EnvironmentSupervisor["Service"]);
       const firstWelcome = {
         environment: {} as ServerLifecycleWelcomePayload["environment"],
@@ -1194,6 +1199,7 @@ describe("server state projection", () => {
         connect: Effect.void,
         disconnect: Effect.void,
         retryNow: Effect.void,
+        setDiscoveredRoutes: () => Effect.void,
       } satisfies EnvironmentSupervisor.EnvironmentSupervisor["Service"]);
       const savedConfigs = yield* Queue.unbounded<ServerConfig>();
       const cache = Persistence.EnvironmentCacheStore.of({
@@ -1258,6 +1264,7 @@ describe("server state projection", () => {
         connect: Effect.void,
         disconnect: Effect.void,
         retryNow: Effect.void,
+        setDiscoveredRoutes: () => Effect.void,
       } satisfies EnvironmentSupervisor.EnvironmentSupervisor["Service"]);
       const savedConfigs = yield* Queue.unbounded<ServerConfig>();
       const cache = Persistence.EnvironmentCacheStore.of({
@@ -1355,6 +1362,7 @@ describe("provider setup commands", () => {
         connect: Effect.void,
         disconnect: Effect.void,
         retryNow: Effect.void,
+        setDiscoveredRoutes: () => Effect.void,
       } satisfies EnvironmentSupervisor.EnvironmentSupervisor["Service"]);
       const runtime = Atom.runtime(
         Layer.mergeAll(

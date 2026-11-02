@@ -1,4 +1,10 @@
 import type { RelayEnvironmentStatusResponse } from "@t3tools/contracts/relay";
+import { EnvironmentId } from "@t3tools/contracts";
+import * as Schema from "effect/Schema";
+import * as Queue from "effect/Queue";
+import * as ClientCapabilities from "../platform/capabilities.ts";
+import * as Connectivity from "./connectivity.ts";
+import * as Wakeups from "./wakeups.ts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Stream from "effect/Stream";
@@ -15,6 +21,8 @@ import * as PlatformConnectionSource from "../platform/source.ts";
 import * as RelayEnvironmentDiscovery from "../relay/discovery.ts";
 import * as RemoteEnvironmentAuthorization from "../authorization/service.ts";
 import * as RpcSession from "../rpc/session.ts";
+
+const isEnvironmentId = Schema.is(EnvironmentId);
 
 export const watchDiscoveredCompatibility = Effect.fn("connection.watchDiscoveredCompatibility")(
   function* () {
@@ -89,6 +97,46 @@ export function layerWithOptions(options: RpcSession.RpcSessionOptions) {
       const platformSource = yield* PlatformConnectionSource.PlatformConnectionSource;
       yield* watchDiscoveredCompatibility().pipe(Effect.forkScoped);
       yield* registry.start;
+      const lan = yield* ClientCapabilities.LanDiscoverySource;
+      const connectivity = yield* Connectivity.Connectivity;
+      const wakeups = yield* Wakeups.ConnectionWakeups;
+      const refresh = yield* Queue.dropping<void>(1);
+      yield* lan.services.pipe(
+        Stream.runForEach((services) => {
+          const candidates = new Map<EnvironmentId, string[]>();
+          for (const service of services.slice(0, 128)) {
+            if (
+              !isEnvironmentId(service.environmentId) ||
+              !Number.isInteger(service.port) ||
+              service.port < 1 ||
+              service.port > 65535
+            )
+              continue;
+            const urls = candidates.get(service.environmentId) ?? [];
+            for (const address of service.addresses.slice(0, 32))
+              urls.push(`http://${address}:${service.port}/`);
+            candidates.set(service.environmentId, urls);
+          }
+          return registry.setDiscoveredCandidates(candidates);
+        }),
+        Effect.forkScoped,
+      );
+      yield* Stream.mergeAll(
+        [
+          Stream.make(undefined),
+          Stream.tick("30 seconds").pipe(Stream.as(undefined)),
+          connectivity.changes.pipe(Stream.as(undefined)),
+          wakeups.changes,
+        ],
+        { concurrency: "unbounded" },
+      ).pipe(
+        Stream.runForEach(() => Queue.offer(refresh, undefined)),
+        Effect.forkScoped,
+      );
+      yield* Effect.forever(Queue.take(refresh).pipe(Effect.andThen(lan.refresh))).pipe(
+        Effect.forkScoped,
+      );
+
       yield* platformSource.registrations.pipe(
         Stream.runForEach(registry.reconcilePlatform),
         Effect.forkScoped,

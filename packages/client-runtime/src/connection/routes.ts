@@ -13,6 +13,7 @@ import {
   type ConnectionRoute,
 } from "./catalog.ts";
 import { BearerConnectionTarget, type ConnectionTarget } from "./model.ts";
+import { parseLanDiscoveryCandidate } from "./lanDiscoveryProof.ts";
 
 export type ConnectionRouteKind =
   | "relay"
@@ -38,7 +39,14 @@ export function connectionRouteId(target: ConnectionTarget): string {
 }
 
 export function connectionRoutes(entry: ConnectionCatalogEntry): ReadonlyArray<ConnectionRoute> {
-  return [{ target: entry.target, profile: entry.profile }, ...(entry.alternateRoutes ?? [])];
+  return [
+    {
+      target: entry.target,
+      profile: entry.profile,
+      ...(entry.discovery ? { discovery: true as const } : {}),
+    },
+    ...(entry.alternateRoutes ?? []),
+  ];
 }
 
 export function entryWithRoutes(
@@ -49,11 +57,12 @@ export function entryWithRoutes(
   if (first === undefined) {
     throw new Error("A saved environment needs at least one route.");
   }
-  const { alternateRoutes: _previous, ...base } = entry;
+  const { alternateRoutes: _previous, discovery: _discovery, ...base } = entry;
   return {
     ...base,
     target: first.target,
     profile: first.profile,
+    ...(first.discovery ? { discovery: true as const } : {}),
     ...(rest.length === 0 ? {} : { alternateRoutes: rest }),
   };
 }
@@ -354,6 +363,68 @@ export function sendsTokenInClear(
 export function usableRoutes(entry: ConnectionCatalogEntry): ReadonlyArray<ConnectionRoute> {
   const routes = connectionRoutes(entry);
   return routes.filter((route) => !sendsTokenInClear(routes, route));
+}
+
+export function discoveredRoutes(
+  entry: ConnectionCatalogEntry,
+  candidates: ReadonlyArray<string>,
+): ReadonlyArray<ConnectionRoute> {
+  const saved = connectionRoutes(entry);
+  const source = saved.find((route) => {
+    const profile = Option.getOrNull(route.profile);
+    return (
+      route.target._tag === "BearerConnectionTarget" &&
+      profile?._tag === "BearerConnectionProfile" &&
+      !profile.learned &&
+      profile.authorization !== "t3-connect" &&
+      profile.httpBaseUrl.startsWith("http:") &&
+      ["lan", "public"].includes(connectionRouteKind(route))
+    );
+  });
+  if (!entry.enabled || !source || source.target._tag !== "BearerConnectionTarget") return [];
+  const known = new Set(
+    saved
+      .map(routeHttpBaseUrl)
+      .filter((url): url is string => url !== null)
+      .flatMap((url) => {
+        try {
+          return [new URL(url).origin];
+        } catch {
+          return [];
+        }
+      }),
+  );
+  const result: ConnectionRoute[] = [];
+  for (const candidate of candidates.slice(0, 32)) {
+    const url = parseLanDiscoveryCandidate(candidate);
+    if (!url || known.has(url.origin)) continue;
+    known.add(url.origin);
+    const connectionId = learnedConnectionId(
+      entry.target.environmentId,
+      url.origin,
+      source.target.connectionId,
+    );
+    const route: ConnectionRoute = {
+      discovery: true,
+      target: new BearerConnectionTarget({
+        environmentId: entry.target.environmentId,
+        label: entry.target.label,
+        connectionId,
+      }),
+      profile: Option.some(
+        new BearerConnectionProfile({
+          connectionId,
+          environmentId: entry.target.environmentId,
+          label: entry.target.label,
+          httpBaseUrl: `${url.origin}/`,
+          wsBaseUrl: `ws://${url.host}/`,
+          learned: true,
+        }),
+      ),
+    };
+    if (!sendsTokenInClear(saved, route)) result.push(route);
+  }
+  return result;
 }
 
 export interface ReportedEndpoint {

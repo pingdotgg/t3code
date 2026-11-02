@@ -13,6 +13,7 @@ import {
   ConnectionTransientError,
   Connectivity,
   mapRemoteEnvironmentError,
+  makeLanDiscoveryVerifier,
   type PlatformConnectionRegistration,
   PrimaryConnectionRegistration,
   PrimaryConnectionTarget,
@@ -30,6 +31,7 @@ import {
   type DesktopSshEnvironmentBootstrap,
   type DesktopSshEnvironmentTarget,
   type EnvironmentId,
+  LanDiscoveryService,
   PRIMARY_LOCAL_ENVIRONMENT_ID,
 } from "@t3tools/contracts";
 import * as Clock from "effect/Clock";
@@ -38,6 +40,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
+import * as Schema from "effect/Schema";
 import * as Ref from "effect/Ref";
 import * as Stream from "effect/Stream";
 import { FetchHttpClient } from "effect/http";
@@ -816,11 +819,50 @@ const layerRpcRequestObserver = Layer.succeed(
   }),
 );
 
+const isLanDiscoveryServices = Schema.is(Schema.Array(LanDiscoveryService));
+
+const layerLanDiscoverySource = Layer.effect(
+  ClientCapabilities.LanDiscoverySource,
+  Effect.gen(function* () {
+    const queue = yield* Queue.sliding<ReadonlyArray<LanDiscoveryService>>(1);
+    yield* Effect.addFinalizer(() => Queue.shutdown(queue));
+    let pending: Promise<readonly LanDiscoveryService[]> | undefined;
+    return {
+      services: Stream.fromQueue(queue),
+      refresh: Effect.gen(function* () {
+        const bridge = window.desktopBridge;
+        if (!bridge?.discoverLanServices) return;
+        const services = yield* Effect.tryPromise({
+          try: () => {
+            if (!pending)
+              pending = bridge.discoverLanServices!().finally(() => {
+                pending = undefined;
+              });
+            return pending;
+          },
+          catch: () => undefined,
+        }).pipe(Effect.orElseSucceed(() => []));
+        yield* Queue.offer(queue, isLanDiscoveryServices(services) ? services : []);
+      }),
+    };
+  }),
+);
+
+const layerLanDiscoveryVerifier = Layer.succeed(
+  ClientCapabilities.LanDiscoveryVerifier,
+  makeLanDiscoveryVerifier({
+    randomBytes: (size) => globalThis.crypto.getRandomValues(new Uint8Array(size)),
+    fetchProof: (url, init) => globalThis.fetch(url, init),
+  }),
+);
+
 type ConnectionPlatformLayerSource =
   | typeof ConnectionStorage.layer
   | typeof layerConnectivity
   | typeof layerWakeups
   | typeof layerCapabilities
+  | typeof layerLanDiscoveryVerifier
+  | typeof layerLanDiscoverySource
   | typeof layerPlatformConnectionSource
   | typeof layerEnvironmentOwnedDataCleanup
   | typeof layerRpcRequestObserver;
@@ -834,6 +876,8 @@ export const layer: Layer.Layer<
   layerConnectivity,
   layerWakeups,
   layerCapabilities,
+  layerLanDiscoveryVerifier,
+  layerLanDiscoverySource,
   layerPlatformConnectionSource,
   layerEnvironmentOwnedDataCleanup,
   layerRpcRequestObserver,

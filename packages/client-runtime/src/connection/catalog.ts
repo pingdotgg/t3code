@@ -44,11 +44,13 @@ export const ConnectionProfile = Schema.Union([BearerConnectionProfile, SshConne
 export type ConnectionProfile = typeof ConnectionProfile.Type;
 
 export interface ConnectionRoute {
+  readonly discovery?: true;
   readonly target: ConnectionTarget;
   readonly profile: Option.Option<ConnectionProfile>;
 }
 
 export interface ConnectionCatalogEntry {
+  readonly discovery?: true;
   readonly target: ConnectionTarget;
   readonly profile: Option.Option<ConnectionProfile>;
   readonly alternateRoutes?: ReadonlyArray<ConnectionRoute>;

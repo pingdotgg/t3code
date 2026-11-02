@@ -1,5 +1,6 @@
 import {
   type AuthClientPresentationMetadata,
+  type LanDiscoveryService,
   type DesktopSshEnvironmentBootstrap,
   type DesktopSshEnvironmentTarget,
   EnvironmentId,
@@ -7,6 +8,7 @@ import {
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import type * as Option from "effect/Option";
+import * as Stream from "effect/Stream";
 
 import type { ConnectionAttemptError } from "../connection/model.ts";
 
@@ -93,3 +95,20 @@ export class SshEnvironmentGateway extends Context.Service<
     ) => Effect.Effect<void, ConnectionAttemptError>;
   }
 >()("@t3tools/client-runtime/platform/capabilities/SshEnvironmentGateway") {}
+
+export class LanDiscoveryVerifier extends Context.Reference<{
+  readonly verify: (input: {
+    readonly token: string;
+    readonly environmentId: string;
+    readonly candidate: string;
+  }) => Effect.Effect<boolean>;
+}>("@t3tools/client-runtime/platform/capabilities/LanDiscoveryVerifier", {
+  defaultValue: () => ({ verify: () => Effect.succeed(false) }),
+}) {}
+
+export class LanDiscoverySource extends Context.Reference<{
+  readonly services: Stream.Stream<ReadonlyArray<LanDiscoveryService>>;
+  readonly refresh: Effect.Effect<void>;
+}>("@t3tools/client-runtime/platform/capabilities/LanDiscoverySource", {
+  defaultValue: () => ({ services: Stream.empty, refresh: Effect.void }),
+}) {}

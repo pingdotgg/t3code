@@ -124,16 +124,18 @@ that machine does not have yet; add that address with **Add route** instead.
 Pairing again over an address the machine already has still works. A new route
 is placed by speed, in that order, and you can reorder routes at any time.
 
-While connected through T3 Connect or a paired address, T3 Code also learns the
-machine's current LAN and Tailscale addresses and adds them as routes, so
-pairing once through T3 Connect is enough to use the LAN at home. When the
-machine's LAN address changes, for example after it joins another Wi-Fi network,
-the learned route follows it. The machine must allow network access for its LAN
-address to be learned: **Network access** in the desktop app, or the
+While connected through T3 Connect or a paired address, T3 Code learns the
+machine's current LAN and Tailscale addresses and adds them as routes. The
+machine must allow network access: **Network access** in the desktop app, or the
 [local network](./background-service.md#local-network-access) choice in `t3 up`.
-You can reorder a learned route, but not remove it; it
-goes away with the route it was learned through, or when the machine stops
-reporting that address.
+You can reorder a learned route, but not remove it. It goes away with the route
+it was learned through, or when the machine stops reporting that address.
+
+On desktop and mobile, a machine paired over an HTTP IPv4 LAN address can be
+found again on the same network if its address changes. Allow local network
+access when prompted. HTTPS and Tailscale pairings keep their existing secure
+routes. Browsers and devices on another network still need a reachable route,
+as do networks that block Bonjour or isolate guests.
 
 T3 Code connects over the first route that answers. Away from home, a LAN
 address that does not answer is checked briefly and skipped. It is only tried

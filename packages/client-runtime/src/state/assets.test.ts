@@ -123,6 +123,7 @@ const makeAssetUrlHarness = Effect.fn("TestAssetUrl.makeHarness")(function* (
         connect: Effect.void,
         disconnect: Effect.void,
         retryNow: Effect.void,
+        setDiscoveredRoutes: () => Effect.void,
       } satisfies EnvironmentSupervisor.EnvironmentSupervisor["Service"]),
     );
   }

@@ -14,6 +14,7 @@ import * as ClientCapabilities from "../platform/capabilities.ts";
 import * as RemoteEnvironmentAuthorization from "../authorization/service.ts";
 import {
   BearerConnectionCredential,
+  BearerConnectionProfile,
   type ConnectionCatalogEntry,
   SshConnectionProfile,
   type ConnectionCredential,
@@ -22,6 +23,7 @@ import {
 import * as ConnectionCredentialStore from "./credentialStore.ts";
 import {
   ConnectionTransientError,
+  BearerConnectionTarget,
   PrimaryConnectionTarget,
   SshConnectionTarget,
   type ConnectionTarget,
@@ -54,6 +56,11 @@ function catalogEntry(
 }
 
 const makeDependencies = Effect.fn("TestConnectionResolver.makeDependencies")((options?: {
+  readonly verifyLan?: (input: {
+    readonly token: string;
+    readonly environmentId: string;
+    readonly candidate: string;
+  }) => Effect.Effect<boolean>;
   readonly profiles?: ReadonlyArray<ConnectionProfile>;
   readonly profileStore?: ConnectionProfileStore.ConnectionProfileStore["Service"];
   readonly credentials?: ReadonlyArray<readonly [string, ConnectionCredential]>;
@@ -128,6 +135,9 @@ const makeDependencies = Effect.fn("TestConnectionResolver.makeDependencies")((o
   });
 
   const layerDependencies = Layer.mergeAll(
+    Layer.succeed(ClientCapabilities.LanDiscoveryVerifier, {
+      verify: options?.verifyLan ?? (() => Effect.succeed(false)),
+    }),
     RpcHttp.layerRemoteHttpClient((() =>
       Promise.resolve(
         Response.json({
@@ -168,6 +178,68 @@ const makeDependencies = Effect.fn("TestConnectionResolver.makeDependencies")((o
 });
 
 describe("ConnectionResolver", () => {
+  it.effect("rechecks the discovered endpoint before every bearer authorization", () =>
+    Effect.gen(function* () {
+      const checks = yield* Ref.make(0);
+      const target = new BearerConnectionTarget({
+        environmentId: ENVIRONMENT_ID,
+        label: "LAN",
+        connectionId: "learned:environment-1:http://192.168.1.23:3000@paired",
+      });
+      const profile = new BearerConnectionProfile({
+        connectionId: target.connectionId,
+        environmentId: ENVIRONMENT_ID,
+        label: "LAN",
+        httpBaseUrl: "http://192.168.1.23:3000/",
+        wsBaseUrl: "ws://192.168.1.23:3000/",
+        learned: true,
+      });
+      const layerBroker = yield* makeDependencies({
+        credentials: [["paired", new BearerConnectionCredential({ token: "paired-token" })]],
+        verifyLan: () => Ref.update(checks, (value) => value + 1).pipe(Effect.as(true)),
+      });
+      const broker = yield* ConnectionResolver.ConnectionResolver.pipe(Effect.provide(layerBroker));
+      const entry = { ...catalogEntry(target, Option.some(profile)), discovery: true as const };
+      const first = yield* broker.prepare(entry);
+      const second = yield* broker.prepare(entry);
+      expect(first.httpAuthorization).toEqual({ _tag: "Bearer", token: "paired-token" });
+      expect(second.httpAuthorization).toEqual({ _tag: "Bearer", token: "paired-token" });
+      expect(yield* Ref.get(checks)).toBe(2);
+    }),
+  );
+
+  it.effect("does not authorize a discovered endpoint when its proof fails", () =>
+    Effect.gen(function* () {
+      const offered = yield* Ref.make<ReadonlyArray<string>>([]);
+      const target = new BearerConnectionTarget({
+        environmentId: ENVIRONMENT_ID,
+        label: "LAN",
+        connectionId: "learned:environment-1:http://192.168.1.23:3000@paired",
+      });
+      const profile = new BearerConnectionProfile({
+        connectionId: target.connectionId,
+        environmentId: ENVIRONMENT_ID,
+        label: "LAN",
+        httpBaseUrl: "http://192.168.1.23:3000/",
+        wsBaseUrl: "ws://192.168.1.23:3000/",
+        learned: true,
+      });
+      const layerBroker = yield* makeDependencies({
+        credentials: [["paired", new BearerConnectionCredential({ token: "paired-token" })]],
+        authorizeBearer: (input) =>
+          Ref.update(offered, (values) => [...values, input.bearerToken]).pipe(
+            Effect.andThen(Effect.die("unexpected authorization")),
+          ),
+      });
+      const broker = yield* ConnectionResolver.ConnectionResolver.pipe(Effect.provide(layerBroker));
+      const result = yield* broker
+        .prepare({ ...catalogEntry(target, Option.some(profile)), discovery: true })
+        .pipe(Effect.flip);
+      expect(result.reason).toBe("endpoint-unavailable");
+      expect(yield* Ref.get(offered)).toEqual([]);
+    }),
+  );
+
   it.effect("blocks an old host during discovery before opening orchestration RPC", () =>
     Effect.gen(function* () {
       const layerBroker = yield* makeDependencies({ descriptorProtocolVersion: null });

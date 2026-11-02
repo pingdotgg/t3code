@@ -2278,6 +2278,72 @@ describe("EnvironmentRegistry routes", () => {
     }),
   );
 
+  it.effect("keeps discovered routes transient when the connected host reports them", () =>
+    Effect.gen(function* () {
+      const discovered = "http://192.168.1.22:3773/";
+      const tailnet = "http://100.101.102.103:3773/";
+      const harness = yield* makeHarness(
+        [LAN_TARGET, RELAY_TARGET],
+        [LAN_PROFILE],
+        [[LAN_TARGET.connectionId, BEARER_CREDENTIAL]],
+        {
+          checkRoute: (route) =>
+            route.discovery
+              ? "answered"
+              : route.target._tag === "RelayConnectionTarget"
+                ? "unchecked"
+                : "silent",
+          directEndpoints: [
+            { kind: "lan", httpBaseUrl: discovered },
+            { kind: "tailnet", httpBaseUrl: tailnet },
+          ],
+        },
+      );
+      yield* Effect.gen(function* () {
+        const registry = yield* EnvironmentRegistry.EnvironmentRegistry;
+        yield* registry.setDiscoveredCandidates(
+          new Map([[LAN_TARGET.environmentId, [discovered]]]),
+        );
+        yield* registry.start;
+        yield* SubscriptionRef.changes(registry.entries).pipe(
+          Stream.filter((entries) =>
+            (entries.get(LAN_TARGET.environmentId)?.alternateRoutes ?? []).some(
+              (route) => connectionRouteKind(route) === "tailnet",
+            ),
+          ),
+          Stream.runHead,
+        );
+        const saved = routesOf(yield* Ref.get(harness.storedTargets), LAN_TARGET.environmentId);
+        expect(saved.map(connectionRouteId)).toEqual([
+          LAN_TARGET.connectionId,
+          `learned:${LAN_TARGET.environmentId}:http://100.101.102.103:3773@${LAN_TARGET.connectionId}`,
+          "relay",
+        ]);
+        expect(yield* Ref.get(harness.connectedRoutes)).toContain(
+          `learned:${LAN_TARGET.environmentId}:http://192.168.1.22:3773@${LAN_TARGET.connectionId}`,
+        );
+        yield* registry.setEnabled(LAN_TARGET.environmentId, false);
+        yield* awaitConnectionState(registry, LAN_TARGET.environmentId, (state) => !state.desired);
+        const connectedBefore = yield* Ref.get(harness.connectedRoutes);
+        yield* registry.setDiscoveredCandidates(
+          new Map([[LAN_TARGET.environmentId, [discovered]]]),
+        );
+        expect(yield* Ref.get(harness.connectedRoutes)).toEqual(connectedBefore);
+        yield* registry.remove(LAN_TARGET.environmentId);
+        yield* registry.setDiscoveredCandidates(
+          new Map([[LAN_TARGET.environmentId, [discovered]]]),
+        );
+        expect((yield* SubscriptionRef.get(registry.entries)).has(LAN_TARGET.environmentId)).toBe(
+          false,
+        );
+        expect(routesOf(yield* Ref.get(harness.storedTargets), LAN_TARGET.environmentId)).toEqual(
+          [],
+        );
+        expect(yield* Ref.get(harness.connectedRoutes)).toEqual(connectedBefore);
+      }).pipe(Effect.provide(harness.layer), Effect.scoped);
+    }),
+  );
+
   it.effect("saves the Tailscale mark when the server reports a learned address as tailnet", () =>
     Effect.gen(function* () {
       const httpBaseUrl = "http://100.101.102.103:3773/";

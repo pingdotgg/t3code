@@ -116,6 +116,7 @@ it.effect("waits for a newly configured provider and preserves its active auth s
       connect: Effect.void,
       disconnect: Effect.void,
       retryNow: Effect.void,
+      setDiscoveredRoutes: () => Effect.void,
     });
     const environments = EnvironmentRegistry.EnvironmentRegistry.of({
       run: (_environmentId, effect) =>

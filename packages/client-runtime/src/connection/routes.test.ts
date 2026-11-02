@@ -10,6 +10,7 @@ import {
 import { pullRequestRoutingConnectionKey } from "./pullRequestRoutingPermissions.ts";
 import { BearerConnectionTarget, RelayConnectionTarget } from "./model.ts";
 import {
+  discoveredRoutes,
   connectionRouteId,
   connectionRouteKind,
   connectionRouteLabel,
@@ -106,6 +107,24 @@ describe("connection routes", () => {
     expect(pendingRouteOrder(dragged, ["tailnet", "lan"])).toBeNull();
     expect(pendingRouteOrder(dragged, ["lan", "public"])).toBeNull();
     expect(pendingRouteOrder(dragged, ["lan", "tailnet", "public"])).toBeNull();
+  });
+});
+
+describe("discovered routes", () => {
+  it("borrows only a LAN-paired credential and preserves the proof marker", () => {
+    const entry = entryWithRoutes({ target: LAN.target, profile: LAN.profile, enabled: true }, [
+      LAN,
+      RELAY,
+    ]);
+    const result = discoveredRoutes(entry, ["http://192.168.1.22:3773/"]);
+    expect(result.map((route) => [connectionRouteId(route.target), route.discovery])).toEqual([
+      [`learned:${ENVIRONMENT_ID}:http://192.168.1.22:3773@lan`, true],
+    ]);
+    const restricted = entryWithRoutes(
+      { target: TAILNET.target, profile: TAILNET.profile, enabled: true },
+      [TAILNET, RELAY],
+    );
+    expect(discoveredRoutes(restricted, ["http://192.168.1.22:3773/"])).toEqual([]);
   });
 });
 

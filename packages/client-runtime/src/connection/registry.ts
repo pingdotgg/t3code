@@ -44,6 +44,7 @@ import {
 } from "./pullRequestRoutingPermissions.ts";
 import {
   RELAY_ROUTE_ID,
+  discoveredRoutes,
   connectionRouteId,
   connectionRoutes,
   credentialConnectionId,
@@ -158,6 +159,9 @@ export class EnvironmentRegistry extends Context.Service<
       | PlatformEnvironmentRemovalError
     >;
     readonly retryNow: (environmentId: EnvironmentId) => Effect.Effect<void>;
+    readonly setDiscoveredCandidates: (
+      candidates: ReadonlyMap<EnvironmentId, ReadonlyArray<string>>,
+    ) => Effect.Effect<void>;
     readonly setEnabled: (
       environmentId: EnvironmentId,
       enabled: boolean,
@@ -220,6 +224,7 @@ export const make = Effect.gen(function* () {
   const driver = yield* ConnectionDriver.ConnectionDriver;
   const wakeups = yield* ConnectionWakeups.ConnectionWakeups;
   const ssh = yield* ClientCapabilities.SshEnvironmentGateway;
+  const lanDiscovery = yield* ClientCapabilities.LanDiscoverySource;
   const persistedTargets = yield* storage.list;
   const disabledEnvironmentIds = new Set(yield* storage.listDisabled);
   const loadRoute = Effect.fn("EnvironmentRegistry.loadRoute")(function* (
@@ -284,6 +289,10 @@ export const make = Effect.gen(function* () {
   const leaseLocks = yield* Ref.make<ReadonlyMap<EnvironmentId, LeaseLock>>(new Map());
   const leaseLocksGuard = yield* Semaphore.make(1);
   const started = yield* Ref.make(false);
+  const discoveryCandidates = yield* Ref.make<ReadonlyMap<EnvironmentId, ReadonlyArray<string>>>(
+    new Map(),
+  );
+  const discoveryLock = yield* Semaphore.make(1);
 
   const withLeaseLock = <A, E, R>(
     environmentId: EnvironmentId,
@@ -374,6 +383,14 @@ export const make = Effect.gen(function* () {
             Effect.provideService(ConnectionWakeups.ConnectionWakeups, wakeups),
             Scope.provide(scope),
             Effect.onError(() => Scope.close(scope, Exit.void)),
+          );
+          yield* supervisor.setDiscoveredRoutes(
+            discoveredRoutes(
+              entry,
+              allowInsecureRoutes
+                ? ((yield* Ref.get(discoveryCandidates)).get(environmentId) ?? [])
+                : [],
+            ),
           );
           yield* SubscriptionRef.update(serviceScopes, (current) => {
             const next = new Map(current);
@@ -868,6 +885,11 @@ export const make = Effect.gen(function* () {
       return next;
     });
     yield* closeServiceScope(environmentId);
+    yield* Ref.update(discoveryCandidates, (current) => {
+      const next = new Map(current);
+      next.delete(environmentId);
+      return next;
+    });
     yield* SubscriptionRef.update(entries, (current) => {
       const next = new Map(current);
       next.delete(environmentId);
@@ -896,6 +918,37 @@ export const make = Effect.gen(function* () {
     }
   });
 
+  const setDiscoveredCandidates = Effect.fn("EnvironmentRegistry.setDiscoveredCandidates")(
+    (candidates: ReadonlyMap<EnvironmentId, ReadonlyArray<string>>) =>
+      discoveryLock.withPermits(1)(
+        Effect.gen(function* () {
+          const previous = yield* Ref.get(discoveryCandidates);
+          const ids = new Set([...previous.keys(), ...candidates.keys()]);
+          for (const environmentId of ids) {
+            yield* withLeaseLock(
+              environmentId,
+              Effect.gen(function* () {
+                const entry = (yield* SubscriptionRef.get(entries)).get(environmentId);
+                const lease = (yield* SubscriptionRef.get(serviceScopes)).get(environmentId);
+                const urls =
+                  entry === undefined || !entry.enabled || !allowInsecureRoutes
+                    ? []
+                    : (candidates.get(environmentId) ?? []);
+                yield* Ref.update(discoveryCandidates, (current) => {
+                  const next = new Map(current);
+                  if (urls.length) next.set(environmentId, urls);
+                  else next.delete(environmentId);
+                  return next;
+                });
+                if (entry === undefined || lease === undefined) return;
+                yield* lease.supervisor.setDiscoveredRoutes(discoveredRoutes(entry, urls));
+              }),
+            );
+          }
+        }),
+      ),
+  );
+
   const remove = Effect.fn("EnvironmentRegistry.remove")(function* (environmentId: EnvironmentId) {
     return yield* withLeaseLock(environmentId, removeLocked(environmentId));
   });
@@ -923,6 +976,7 @@ export const make = Effect.gen(function* () {
     readonly environmentId: EnvironmentId;
     readonly activeRoute: ConnectionRoute;
     readonly reported: ReadonlyArray<ReportedEndpoint>;
+    readonly discoveryOrigins: ReadonlyArray<string>;
   }) {
     return yield* withLeaseLock(
       input.environmentId,
@@ -932,10 +986,25 @@ export const make = Effect.gen(function* () {
         }
         const entry = (yield* SubscriptionRef.get(entries)).get(input.environmentId);
         if (entry === undefined) return Option.none<ConnectionCatalogEntry>();
+        const discoveryOrigins = new Set(input.discoveryOrigins);
+        for (const route of discoveredRoutes(
+          entry,
+          (yield* Ref.get(discoveryCandidates)).get(input.environmentId) ?? [],
+        )) {
+          const profile = Option.getOrNull(route.profile);
+          if (profile?._tag === "BearerConnectionProfile")
+            discoveryOrigins.add(new URL(profile.httpBaseUrl).origin);
+        }
         const routes = mergeLearnedRoutes({
           entry,
           activeRoute: input.activeRoute,
-          reported: input.reported,
+          reported: input.reported.filter((endpoint) => {
+            try {
+              return !discoveryOrigins.has(new URL(endpoint.httpBaseUrl).origin);
+            } catch {
+              return false;
+            }
+          }),
           allowInsecure: allowInsecureRoutes,
         });
         if (routes === null) return Option.none<ConnectionCatalogEntry>();
@@ -1048,7 +1117,8 @@ export const make = Effect.gen(function* () {
   );
 
   const retryNow = (environmentId: EnvironmentId) =>
-    acquireSupervisor(environmentId).pipe(
+    Effect.forkIn(lanDiscovery.refresh.pipe(Effect.ignoreCause), registryScope).pipe(
+      Effect.andThen(acquireSupervisor(environmentId)),
       Effect.flatMap((supervisor) => supervisor.retryNow),
       Effect.catchTags({ EnvironmentNotRegisteredError: () => Effect.void }),
       Effect.withSpan("EnvironmentRegistry.retryNow"),
@@ -1092,6 +1162,14 @@ export const make = Effect.gen(function* () {
           nextEntries.set(environmentId, next);
           return nextEntries;
         });
+        if (!enabled) {
+          yield* Ref.update(discoveryCandidates, (current) => {
+            const nextCandidates = new Map(current);
+            nextCandidates.delete(environmentId);
+            return nextCandidates;
+          });
+          if (lease !== undefined) yield* lease.supervisor.setDiscoveredRoutes([]);
+        }
         if (lease !== undefined) {
           yield* enabled ? lease.supervisor.connect : lease.supervisor.disconnect;
         } else if (enabled) {
@@ -1195,6 +1273,7 @@ export const make = Effect.gen(function* () {
     reorderRoutes,
     removeRelayEnvironments,
     retryNow,
+    setDiscoveredCandidates,
     setEnabled,
     setCompatibility,
     state,

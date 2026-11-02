@@ -1,4 +1,9 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
+import * as Context from "effect/Context";
+import { HttpRouter, HttpServer } from "effect/http";
+// @effect-diagnostics-next-line nodeBuiltinImport:off -- The test independently checks the Node HMAC output.
+import * as NodeCrypto from "node:crypto";
 import { EnvironmentId } from "@t3tools/contracts";
 import { expect, it } from "@effect/vitest";
 import * as Duration from "effect/Duration";
@@ -17,6 +22,8 @@ import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as SessionStore from "./SessionStore.ts";
+import * as LanDiscoveryProof from "./LanDiscoveryProof.ts";
+import * as LanDiscoveryHttp from "./LanDiscoveryHttp.ts";
 import * as ServerSecretStore from "./ServerSecretStore.ts";
 import { base64UrlDecodeUtf8, base64UrlEncode, signPayload } from "./utils.ts";
 
@@ -82,7 +89,96 @@ const makeDiskSessionStoreLayer = Effect.fn("makeDiskSessionStoreLayer")(functio
   );
 });
 
+it.live("uses the accepted socket rather than the Host header for LAN proof", () =>
+  Effect.gen(function* () {
+    const app = HttpRouter.serve(LanDiscoveryHttp.layer, {
+      disableListenLog: true,
+      disableLogger: true,
+    }).pipe(
+      Layer.provideMerge(LanDiscoveryProof.layer),
+      Layer.provideMerge(SessionStore.layer.pipe(Layer.provide(SqlitePersistence.layerMemory))),
+      Layer.provide(ServerSecretStore.layer),
+      Layer.provide(layerServerEnvironment(EnvironmentId.make("test-environment"))),
+      Layer.provide(layerServerConfig()),
+      Layer.provideMerge(NodeHttpServer.layerTest),
+    );
+    const services = yield* Layer.build(app);
+    const sessions = Context.get(services, SessionStore.SessionStore);
+    const server = Context.get(services, HttpServer.HttpServer);
+    if (typeof server.address === "string" || !("port" in server.address))
+      throw new Error("Expected TCP server");
+    const port = server.address.port;
+    const token = (yield* sessions.issue({ method: "bearer-access-token" })).token;
+    const [payload, signature] = token.split(".");
+    const nonce = "ab".repeat(32);
+    const response = yield* Effect.promise(() =>
+      // @effect-diagnostics-next-line globalFetchInEffect:off -- Exercise the real Node HTTP socket.
+      fetch(`http://127.0.0.1:${port}/api/lan-discovery/proof`, {
+        method: "POST",
+        headers: { "content-type": "application/json", host: "192.168.1.99:9999" },
+        body: JSON.stringify({ payload, nonce }),
+      }),
+    );
+    const result: unknown = yield* Effect.promise(() => response.json());
+    const proof = NodeCrypto.createHmac("sha256", Buffer.from(signature!, "base64url"))
+      .update(JSON.stringify(["t3code-lan-proof-v1", nonce, "test-environment", "127.0.0.1", port]))
+      .digest("base64url");
+    expect(response.status).toBe(200);
+    expect(result).toEqual({ proof });
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
 it.layer(NodeServices.layer)("SessionStore.layer", (it) => {
+  it.effect("proves a live bearer session for the accepted endpoint and rejects revocation", () =>
+    Effect.gen(function* () {
+      const sessions = yield* SessionStore.SessionStore;
+      const discovery = yield* LanDiscoveryProof.LanDiscoveryProof;
+      const issued = yield* sessions.issue({ method: "bearer-access-token" });
+      const [payload, signature] = issued.token.split(".");
+      const nonce = "ab".repeat(32);
+      const endpoint = { address: "192.168.1.23", port: 3000 };
+      const proof = yield* discovery.prove({ payload: payload!, nonce, ...endpoint });
+      const expected = NodeCrypto.createHmac("sha256", Buffer.from(signature!, "base64url"))
+        .update(
+          JSON.stringify([
+            "t3code-lan-proof-v1",
+            nonce,
+            "test-environment",
+            endpoint.address,
+            endpoint.port,
+          ]),
+        )
+        .digest("base64url");
+      expect(proof).toEqual(expected);
+      expect((yield* Effect.flip(discovery.prove({ payload: "a", nonce, ...endpoint })))._tag).toBe(
+        "MalformedSessionTokenError",
+      );
+      const expires = yield* sessions.issue({
+        method: "bearer-access-token",
+        ttl: Duration.seconds(1),
+      });
+      yield* TestClock.adjust(Duration.seconds(1));
+      expect(
+        (yield* Effect.flip(
+          discovery.prove({ payload: expires.token.split(".")[0]!, nonce, ...endpoint }),
+        ))._tag,
+      ).toBe("SessionTokenExpiredError");
+      yield* sessions.revoke(issued.sessionId);
+      expect(
+        (yield* Effect.flip(discovery.prove({ payload: payload!, nonce, ...endpoint })))._tag,
+      ).toBe("SessionTokenRevokedError");
+    }).pipe(
+      Effect.provide(
+        LanDiscoveryProof.layer.pipe(
+          Layer.provideMerge(SessionStore.layer.pipe(Layer.provide(SqlitePersistence.layerMemory))),
+          Layer.provide(ServerSecretStore.layer),
+          Layer.provide(layerServerEnvironment(EnvironmentId.make("test-environment"))),
+          Layer.provide(layerServerConfig()),
+        ),
+      ),
+    ),
+  );
+
   it.effect.each(["revoke", "revokeAllExcept", "replace"] as const)(
     "invalidates every connection for a session on %s and leaves other sessions active",
     (operation) =>

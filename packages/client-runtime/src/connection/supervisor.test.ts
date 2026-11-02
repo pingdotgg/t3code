@@ -37,7 +37,13 @@ import * as RpcSession from "../rpc/session.ts";
 import { presentConnectionState } from "./presentation.ts";
 import * as EnvironmentSupervisor from "./supervisor.ts";
 import * as ConnectionWakeups from "./wakeups.ts";
-import { connectionRouteId, entryWithRoutes, isLearned, mergeLearnedRoutes } from "./routes.ts";
+import {
+  connectionRouteId,
+  discoveredRoutes,
+  entryWithRoutes,
+  isLearned,
+  mergeLearnedRoutes,
+} from "./routes.ts";
 
 const TARGET = new PrimaryConnectionTarget({
   environmentId: EnvironmentId.make("environment-1"),
@@ -1613,6 +1619,91 @@ describe("EnvironmentSupervisor routes", () => {
 
       const state = yield* awaitState(supervisor.state, (value) => value.phase === "backoff");
       expect(state.lastFailure?._tag).toBe("ConnectionTransientError");
+    }),
+  );
+
+  it.effect("ignores a discovered route removed while its preflight is pending", () =>
+    Effect.gen(function* () {
+      const started = yield* Deferred.make<void>();
+      const finish = yield* Deferred.make<void>();
+      const checked = yield* Deferred.make<void>();
+      const probed = yield* Deferred.make<void>();
+      const harness = yield* makeHarness({
+        checkRoute: (route) =>
+          Effect.succeed(
+            route.discovery
+              ? "answered"
+              : route.target._tag === "RelayConnectionTarget"
+                ? "unchecked"
+                : "silent",
+          ),
+        preflight: (route) =>
+          route.discovery
+            ? Deferred.succeed(started, undefined).pipe(
+                Effect.andThen(Deferred.await(finish)),
+                Effect.andThen(Deferred.succeed(checked, undefined)),
+                Effect.as("ready"),
+              )
+            : Effect.succeed("silent"),
+        prepare: (_attempt, target) => Effect.succeed(preparedFor(target)),
+        probe: () => Deferred.succeed(probed, undefined).pipe(Effect.asVoid),
+      });
+      const supervisor = yield* EnvironmentSupervisor.make(LAN_THEN_RELAY_ENTRY, {
+        initiallyDesired: true,
+      }).pipe(Effect.provide(harness.dependencies));
+      yield* awaitState(supervisor.state, (state) => state.phase === "connected");
+      yield* supervisor.setDiscoveredRoutes(
+        discoveredRoutes(LAN_THEN_RELAY_ENTRY, ["http://192.168.1.22:3773/"]),
+      );
+      yield* Deferred.await(started);
+      yield* supervisor.setDiscoveredRoutes([]);
+      yield* Deferred.succeed(finish, undefined);
+      yield* Deferred.await(checked);
+      yield* supervisor.retryNow;
+      yield* Deferred.await(probed);
+      expect(yield* Ref.get(harness.releaseCount)).toBe(0);
+      expect(Option.getOrThrow(yield* SubscriptionRef.get(supervisor.prepared)).target._tag).toBe(
+        "RelayConnectionTarget",
+      );
+    }),
+  );
+
+  it.effect("upgrades a healthy relay when a discovered LAN route answers", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness({
+        checkRoute: (route) =>
+          Effect.succeed(
+            route.discovery
+              ? "answered"
+              : route.target._tag === "RelayConnectionTarget"
+                ? "unchecked"
+                : "silent",
+          ),
+        prepare: (_attempt, target) => Effect.succeed(preparedFor(target)),
+      });
+      const supervisor = yield* EnvironmentSupervisor.make(LAN_THEN_RELAY_ENTRY, {
+        initiallyDesired: true,
+      }).pipe(Effect.provide(harness.dependencies));
+      yield* awaitState(
+        supervisor.state,
+        (state) => state.phase === "connected" && state.generation === 1,
+      );
+      expect(Option.getOrThrow(yield* SubscriptionRef.get(supervisor.prepared)).target._tag).toBe(
+        "RelayConnectionTarget",
+      );
+      const candidates = discoveredRoutes(LAN_THEN_RELAY_ENTRY, ["http://192.168.1.22:3773/"]);
+      yield* supervisor.setDiscoveredRoutes(candidates);
+      yield* awaitState(
+        supervisor.state,
+        (state) => state.phase === "connected" && state.generation === 2,
+      );
+      expect(
+        connectionRouteId(
+          Option.getOrThrow(yield* SubscriptionRef.get(supervisor.prepared)).target,
+        ),
+      ).toBe(`learned:${TARGET.environmentId}:http://192.168.1.22:3773@bearer:lan`);
+      yield* supervisor.setDiscoveredRoutes([]);
+      expect((yield* SubscriptionRef.get(supervisor.state)).phase).toBe("connected");
     }),
   );
 

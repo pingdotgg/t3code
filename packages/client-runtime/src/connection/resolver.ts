@@ -42,7 +42,11 @@ import type {
   RelayConnectionTarget,
   SshConnectionTarget,
 } from "./model.ts";
-import { ConnectionBlockedError, type ConnectionAttemptError } from "./model.ts";
+import {
+  ConnectionBlockedError,
+  ConnectionTransientError,
+  type ConnectionAttemptError,
+} from "./model.ts";
 import * as ConnectionProfileStore from "./profileStore.ts";
 import {
   appendOrchestrationProtocol,
@@ -125,6 +129,7 @@ const makePrimaryBroker = Effect.fn("clientRuntime.connection.broker.makePrimary
 const makeBearerBroker = Effect.fn("clientRuntime.connection.broker.makeBearer")(function* () {
   const credentials = yield* ConnectionCredentialStore.ConnectionCredentialStore;
   const remote = yield* RemoteEnvironmentAuthorization.RemoteEnvironmentAuthorization;
+  const discovery = yield* ClientCapabilities.LanDiscoveryVerifier;
 
   return Effect.fn("clientRuntime.connection.broker.bearer")(function* (
     entry: ConnectionCatalogEntry & { readonly target: BearerConnectionTarget },
@@ -145,6 +150,12 @@ const makeBearerBroker = Effect.fn("clientRuntime.connection.broker.makeBearer")
         actual: profile.environmentId,
       });
     }
+    if (entry.discovery && profile.authorization === "t3-connect") {
+      return yield* new ConnectionTransientError({
+        reason: "endpoint-unavailable",
+        detail: "Discovered route requires a paired token.",
+      });
+    }
     if (profile.authorization === "t3-connect") {
       const authorized = yield* remote.authorizeDpop({
         expectedEnvironmentId: target.environmentId,
@@ -162,6 +173,19 @@ const makeBearerBroker = Effect.fn("clientRuntime.connection.broker.makeBearer")
     );
     if (!isBearerCredential(credential)) {
       return yield* credentialMissingError(target.connectionId);
+    }
+    if (
+      entry.discovery &&
+      !(yield* discovery.verify({
+        token: credential.token,
+        environmentId: target.environmentId,
+        candidate: profile.httpBaseUrl,
+      }))
+    ) {
+      return yield* new ConnectionTransientError({
+        reason: "endpoint-unavailable",
+        detail: "Discovered endpoint could not prove its identity.",
+      });
     }
     const authorized = yield* remote.authorizeBearer({
       expectedEnvironmentId: target.environmentId,

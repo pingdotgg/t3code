@@ -283,13 +283,19 @@ describe("bounded binary previews", () => {
         await expect
           .element(page.getByRole("option", { name: "zzInventory (1 rows)" }))
           .toBeVisible();
-        await userEvent.keyboard("{ArrowDown}{Enter}");
-        await vi.waitFor(() =>
-          expect([...screen.container.querySelectorAll("td")].map((x) => x.textContent)).toEqual([
-            "42",
-          ]),
-        );
-        await vi.waitFor(() => expect(document.activeElement).toBe(trigger));
+        await expect
+          .element(page.getByRole("option", { name: "sqliteData (1 rows)" }))
+          .toHaveFocus();
+        await userEvent.keyboard("{ArrowDown}");
+        await expect
+          .element(page.getByRole("option", { name: "zzInventory (1 rows)" }))
+          .toHaveFocus();
+        await userEvent.keyboard("{Enter}");
+        await expect.element(page.getByRole("cell", { name: "42", exact: true })).toBeVisible();
+        expect([...screen.container.querySelectorAll("td")].map((x) => x.textContent)).toEqual([
+          "42",
+        ]);
+        await expect.element(trigger).toHaveFocus();
         await userEvent.keyboard("{Enter}");
         await expect
           .element(page.getByRole("option", { name: "zzInventory (1 rows)" }))

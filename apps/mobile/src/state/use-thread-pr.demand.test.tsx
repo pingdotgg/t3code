@@ -140,6 +140,7 @@ const setup = Effect.fn("TestThreadPr.setup")(function* () {
       connect: Effect.void,
       disconnect: Effect.void,
       retryNow: Effect.void,
+      setDiscoveredRoutes: () => Effect.void,
     });
   });
   let currentEnvironment = environmentId;

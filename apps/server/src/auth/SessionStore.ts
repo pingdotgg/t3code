@@ -425,7 +425,7 @@ export class SessionStore extends Context.Service<
   }
 >()("t3/auth/SessionStore") {}
 
-const SIGNING_SECRET_NAME = "server-signing-key";
+export const SIGNING_SECRET_NAME = "server-signing-key";
 const DEFAULT_SESSION_TTL = Duration.days(30);
 const DEFAULT_WEBSOCKET_TOKEN_TTL = Duration.minutes(5);
 

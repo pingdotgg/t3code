@@ -55,6 +55,10 @@
       "types": "./src/model.ts",
       "import": "./src/model.ts"
     },
+    "./nodeLanDiscovery": {
+      "types": "./src/nodeLanDiscovery.ts",
+      "import": "./src/nodeLanDiscovery.ts"
+    },
     "./advertisedEndpoint": {
       "types": "./src/advertisedEndpoint.ts",
       "import": "./src/advertisedEndpoint.ts"
@@ -548,6 +552,7 @@
     "@noble/curves": "catalog:",
     "@noble/hashes": "catalog:",
     "@t3tools/contracts": "workspace:*",
+    "bonjour-service": "^1.4.4",
     "effect": "catalog:",
     "ffi-rs": "1.3.2",
     "jose": "catalog:",
