@@ -1004,14 +1004,26 @@ function pushBreakRun(acc: RichAccumulator, position?: number): void {
   acc.md += 1;
 }
 
-// Separate prose from quotes to avoid lazy continuation; an empty paragraph already separates them.
-function needsBlankLineAfterQuote(previous: ProseMirrorNode, block: ProseMirrorNode): boolean {
+function horizontalRuleSource(block: ProseMirrorNode): string {
+  const source = (block.attrs as Record<string, unknown>).source;
+  return typeof source === "string" && source ? source : "---";
+}
+
+// A blank line keeps prose out of a quote (lazy continuation) and a dash rule from
+// underlining the line above into a setext heading; an empty paragraph already separates them.
+function needsBlankLineBetween(previous: ProseMirrorNode, block: ProseMirrorNode): boolean {
+  if (previous.type.name === "blockquote") {
+    return block.type.name === "paragraph" && block.content.size > 0;
+  }
   return (
-    previous.type.name === "blockquote" && block.type.name === "paragraph" && block.content.size > 0
+    block.type.name === "horizontalRule" &&
+    previous.type.name === "paragraph" &&
+    previous.content.size > 0 &&
+    /^-+[ \t]*\r?$/.test(horizontalRuleSource(block))
   );
 }
 
-// Blank-line runs own no document characters; offsets clamp to the paragraph start.
+// Blank-line runs own no document characters; offsets clamp to the start of the next block.
 function pushBlankLineRun(acc: RichAccumulator, pmPos: number): void {
   acc.runs.push({
     kind: "prefix",
@@ -1454,7 +1466,7 @@ function serializeDoc(doc: ProseMirrorNode): RichDocMap {
   let pmBlockStart = 0;
   blocks.forEach((block, blockIndex) => {
     if (blockIndex > 0 && !isTrailingLineAfterRule(doc, blockIndex)) pushBreakRun(acc);
-    if (blockIndex > 0 && needsBlankLineAfterQuote(blocks[blockIndex - 1]!, block)) {
+    if (blockIndex > 0 && needsBlankLineBetween(blocks[blockIndex - 1]!, block)) {
       pushBlankLineRun(acc, pmBlockStart + 1);
     }
     if (LIST_NODE_NAMES.has(block.type.name)) {
@@ -1482,8 +1494,7 @@ function serializeDoc(doc: ProseMirrorNode): RichDocMap {
       acc.md += prefix.length;
       appendInlineRuns(block, pmBlockStart + 1, acc);
     } else if (block.type.name === "horizontalRule") {
-      const attrs = block.attrs as Record<string, unknown>;
-      const source = typeof attrs.source === "string" && attrs.source ? attrs.source : "---";
+      const source = horizontalRuleSource(block);
       acc.runs.push({
         kind: "prefix",
         flatStart: acc.flat,
