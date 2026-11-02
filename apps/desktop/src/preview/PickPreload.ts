@@ -1243,6 +1243,7 @@ function startAnnotation(sendEnabled: boolean): void {
   };
 
   let pressTarget: Element | null = null;
+  let releaseTarget: Element | null = null;
 
   // Page document listeners see overlay presses on the host; only window capture runs before them.
   const onPointerDown = (event: PointerEvent): void => {
@@ -1289,6 +1290,12 @@ function startAnnotation(sendEnabled: boolean): void {
   };
 
   const onPointerUp = (event: PointerEvent): void => {
+    // Click coordinates are whole pixels; pointer coordinates keep the fraction a hit test needs.
+    if (event.isTrusted) {
+      releaseTarget = isAnnotationNode(event.target as Element)
+        ? shadowRoot.elementFromPoint(event.clientX, event.clientY)
+        : null;
+    }
     if (!dragStart) return;
     event.preventDefault();
     event.stopPropagation();
@@ -1325,9 +1332,8 @@ function startAnnotation(sendEnabled: boolean): void {
   // A click targets the common ancestor of press and release; keyboard clicks target focus.
   const overlayClickTarget = (event: MouseEvent): Element | null => {
     if (event.detail === 0) return shadowRoot.activeElement;
-    const release = shadowRoot.elementFromPoint(event.clientX, event.clientY);
     let target = pressTarget;
-    while (target && !target.contains(release)) target = target.parentElement;
+    while (target && !target.contains(releaseTarget)) target = target.parentElement;
     return target;
   };
 
