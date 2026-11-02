@@ -129,7 +129,7 @@ import {
 } from "./MessagesTimeline.logic";
 import { type ThreadFindMatch } from "./threadFind";
 import { useThreadFindNavigation } from "./useThreadFindNavigation";
-import { TooltipScrollDismissArea, Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+import { TooltipScrollDismissArea } from "../ui/tooltip";
 import { WorktreeSetupCard } from "./WorktreeSetupCard";
 import { useOpenPrLink } from "~/lib/openPullRequestLink";
 import { useMediaQuery } from "~/hooks/useMediaQuery";
@@ -257,9 +257,6 @@ interface MessagesTimelineProps {
   /** Which request is waiting, so a second one of the same kind is announced too. */
   awaitingRequestId?: string | null;
   pendingRequest?: TimelinePendingRequest | null;
-  backgroundTaskLabel?: string | null;
-  backgroundTaskIsCommand?: boolean;
-  backgroundTaskMore?: number;
   usageLimit?: TimelineUsageLimit | null;
   /** The composer banner's error; a failed fold does not repeat it. */
   threadErrorMessage?: string | null;
@@ -382,9 +379,6 @@ const ConversationTimeline = memo(function ConversationTimeline({
   awaitingUser = null,
   awaitingRequestId = null,
   pendingRequest: pendingRequestProp = null,
-  backgroundTaskLabel = null,
-  backgroundTaskIsCommand = false,
-  backgroundTaskMore = 0,
   usageLimit = null,
   threadErrorMessage = null,
   onFocusComposer,
@@ -1155,9 +1149,6 @@ const ConversationTimeline = memo(function ConversationTimeline({
     isPreparingWorktree,
     latestRunId: latestRun?.runId ?? null,
     pendingRequest: isWorking ? pendingRequest : null,
-    backgroundTaskLabel,
-    backgroundTaskIsCommand,
-    backgroundTaskMore,
     usageLimit,
     threadErrorMessage,
     liveAnswerPreview:
@@ -1746,14 +1737,7 @@ function TurnFoldTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "turn-
   const { loading, error, toggle } = useDeferredWorkLoading(row, () =>
     ctx.onToggleTurnFold(row.runId),
   );
-  const {
-    backgroundTaskLabel,
-    backgroundTaskIsCommand,
-    backgroundTaskMore,
-    usageLimit,
-    latestRunId,
-    threadErrorMessage,
-  } = use(TimelineRowActivityCtx);
+  const { usageLimit, latestRunId, threadErrorMessage } = use(TimelineRowActivityCtx);
   const isLatestRun = latestRunId === row.runId;
   // One line says why the run failed: its error, unless the composer banner
   // already does, then the provider notice that carries the limit's reset.
@@ -1803,28 +1787,6 @@ function TurnFoldTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "turn-
           <span className={labelClassName}>{labelContent}</span>
         )}
         <span className="min-w-0 flex-1" />
-        {isLatestRun && backgroundTaskLabel ? (
-          <Tooltip>
-            <TooltipTrigger
-              render={
-                <span className="flex min-w-0 shrink items-center gap-1.5 text-meta text-muted-foreground" />
-              }
-            >
-              <span aria-hidden className="size-1.5 shrink-0 rounded-full bg-success" />
-              <span className="sr-only">Still running:</span>
-              <span className={cn("min-w-0 truncate", backgroundTaskIsCommand && "font-mono")}>
-                {backgroundTaskLabel}
-              </span>
-              {backgroundTaskMore > 0 ? (
-                <span className="shrink-0 tabular-nums">+{backgroundTaskMore}</span>
-              ) : null}
-            </TooltipTrigger>
-            <TooltipPopup>
-              Still running: {backgroundTaskLabel}
-              {backgroundTaskMore > 0 ? ` and ${backgroundTaskMore} more` : ""}
-            </TooltipPopup>
-          </Tooltip>
-        ) : null}
         {limit?.resetAt ? (
           <TurnFoldUsageLimit limit={limit} timestampFormat={ctx.timestampFormat} />
         ) : null}
