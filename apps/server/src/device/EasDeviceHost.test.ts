@@ -130,7 +130,15 @@ const fakeExpo = (
         if (options.rejectCreate)
           return HttpClientResponse.fromWeb(
             request,
-            Response.json({ errors: [{ message: "Not allowed" }] }),
+            Response.json({
+              errors: [
+                {
+                  message: "Device run sessions are not enabled for this account.",
+                  extensions: { errorType: "USER" },
+                },
+              ],
+              data: null,
+            }),
           );
       }
       if (operation === "T3StopEasSimulatorSession" && options.failStop?.()) {
@@ -147,73 +155,62 @@ const fakeExpo = (
         yield* Deferred.await(sessionGate.release);
       }
       const data =
-        operation === "T3EasSimulatorAvailability"
-          ? {
-              app: {
-                byId: {
-                  ownerAccount: {
-                    name: "pingdotgg",
-                    accountFeatureGates: { "device-run-sessions": true },
+        operation === "T3CreateEasSimulatorSession"
+          ? { deviceRunSession: { createDeviceRunSession: { id: `session-${++created}` } } }
+          : operation === "T3ActiveEasSimulatorSessions"
+            ? {
+                app: {
+                  byId: {
+                    deviceRunSessionsPaginated: {
+                      edges: [
+                        ...(options.omitCreatedFromActive
+                          ? []
+                          : [{ node: { id: "orphan", status: "NEW", name: createdName } }]),
+                        {
+                          node: {
+                            id: "someone-else",
+                            status: "IN_PROGRESS",
+                            name: "T3 Code · EAS Simulator · 000000",
+                          },
+                        },
+                        ...(options.active ?? []).map((node) => ({ node })),
+                        ...(options.activeIncludesCreated && created > 0
+                          ? [
+                              {
+                                node: {
+                                  id: `session-${created}`,
+                                  status: "STARTING",
+                                  name: createdName,
+                                },
+                              },
+                            ]
+                          : []),
+                      ],
+                    },
                   },
                 },
-              },
-            }
-          : operation === "T3CreateEasSimulatorSession"
-            ? { deviceRunSession: { createDeviceRunSession: { id: `session-${++created}` } } }
-            : operation === "T3ActiveEasSimulatorSessions"
+              }
+            : operation === "T3EasSimulatorSession"
               ? {
-                  app: {
+                  deviceRunSessions: {
                     byId: {
-                      deviceRunSessionsPaginated: {
-                        edges: [
-                          ...(options.omitCreatedFromActive
-                            ? []
-                            : [{ node: { id: "orphan", status: "NEW", name: createdName } }]),
-                          {
-                            node: {
-                              id: "someone-else",
-                              status: "IN_PROGRESS",
-                              name: "T3 Code · EAS Simulator · 000000",
-                            },
-                          },
-                          ...(options.active ?? []).map((node) => ({ node })),
-                          ...(options.activeIncludesCreated && created > 0
-                            ? [
-                                {
-                                  node: {
-                                    id: `session-${created}`,
-                                    status: "STARTING",
-                                    name: createdName,
-                                  },
-                                },
-                              ]
-                            : []),
-                        ],
+                      id: body.variables.id,
+                      status: options.status?.() ?? "IN_PROGRESS",
+                      remoteConfig: {
+                        __typename: "AgentDeviceRunSessionRemoteConfig",
+                        agentDeviceRemoteSessionUrl: "https://agent.test",
+                        agentDeviceRemoteSessionToken: "agent-token",
+                        webPreviewToken: "preview-token",
+                        previewApiUrl: "https://preview.test?token=preview-token",
                       },
                     },
                   },
                 }
-              : operation === "T3EasSimulatorSession"
-                ? {
-                    deviceRunSessions: {
-                      byId: {
-                        id: body.variables.id,
-                        status: options.status?.() ?? "IN_PROGRESS",
-                        remoteConfig: {
-                          __typename: "AgentDeviceRunSessionRemoteConfig",
-                          agentDeviceRemoteSessionUrl: "https://agent.test",
-                          agentDeviceRemoteSessionToken: "agent-token",
-                          webPreviewToken: "preview-token",
-                          previewApiUrl: "https://preview.test?token=preview-token",
-                        },
-                      },
-                    },
-                  }
-                : {
-                    deviceRunSession: {
-                      ensureDeviceRunSessionStopped: { id: body.variables.id, status: "STOPPED" },
-                    },
-                  };
+              : {
+                  deviceRunSession: {
+                    ensureDeviceRunSessionStopped: { id: body.variables.id, status: "STOPPED" },
+                  },
+                };
       return HttpClientResponse.fromWeb(request, Response.json({ data }));
     }),
   );
@@ -467,7 +464,9 @@ describe("EAS Simulator host", () => {
       const ready = yield* host.ensureReady(() => Effect.void);
       const [catalogDevice] = (yield* ready.devices.list).devices;
       const failure = yield* ready.devices.boot(catalogDevice!).pipe(Effect.flip);
-      expect(failure.message).toContain("Not allowed");
+      expect(failure.message).toBe(
+        "EAS Simulator is unavailable: Expo could not start a simulator session: Device run sessions are not enabled for this account.",
+      );
       expect(expo.stopped()).toEqual(["orphan"]);
     }).pipe(Effect.scoped, Effect.provide(layer)),
   );

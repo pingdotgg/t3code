@@ -152,9 +152,6 @@ export interface CreateEasSessionInput {
   readonly maxIdleTimeMinutes: number;
 }
 
-const DEVICE_RUN_SESSIONS_GATE = "device-run-sessions";
-const isFeatureGates = Schema.is(Schema.Record(Schema.String, Schema.Unknown));
-
 /** Sends every operation with the resolved credential. */
 class ExpoAuth extends GraphQLMiddleware.Service<ExpoAuth>()("t3/server/device/ExpoApi/ExpoAuth") {}
 
@@ -312,18 +309,6 @@ export const makeExpoApi = (http: HttpClient.HttpClient, credential: ExpoCredent
             }),
       ),
     ),
-    availability: (appId: string) =>
-      call("check EAS Simulator access", (expo) =>
-        expo.T3EasSimulatorAvailability({ appId, filter: [DEVICE_RUN_SESSIONS_GATE] }),
-      ).pipe(
-        Effect.map(({ app }) => {
-          const gates = app.byId.ownerAccount.accountFeatureGates;
-          return {
-            account: app.byId.ownerAccount.name,
-            available: isFeatureGates(gates) && gates[DEVICE_RUN_SESSIONS_GATE] === true,
-          };
-        }),
-      ),
     create: (input: CreateEasSessionInput) =>
       call("start a simulator session", (expo) =>
         expo.T3CreateEasSimulatorSession({
