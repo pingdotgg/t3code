@@ -81,6 +81,9 @@ import { usePullRequestLiveChecks } from "./usePullRequestLiveChecks";
 import { pullRequestLabelColor } from "./pullRequestList";
 import { PullRequestReactions } from "./PullRequestReactions";
 import { composerPullRequests } from "../../state/pull-requests";
+import { useAtomCommand } from "../../state/use-atom-command";
+import { setMarkdownTaskChecked } from "@t3tools/shared/markdownTaskList";
+import { AsyncResult } from "effect/reactivity";
 import { useEnvironmentQuery } from "../../state/query";
 import { SourceControlAppAccessNotice } from "./SourceControlAppAccessNotice";
 import { usePullToRefresh } from "../../state/use-pull-to-refresh";
@@ -301,6 +304,55 @@ function PullRequestOverview(props: {
   readonly onDescriptionExpandedChange: (expanded: boolean) => void;
 }) {
   const { pr } = props;
+  const permissions = usePullRequestPermissions(props.params, pr);
+  const update = useAtomCommand(composerPullRequests.update);
+  const refreshDetail = useAtomRefresh(composerPullRequests.detail(requestTarget(props.params)));
+  // A checkbox ticks itself natively on tap, and stays tappable while saving. Saves run one at
+  // a time with the latest body, so quick taps can't land out of order; a refresh carrying a
+  // body from before the latest tap is ignored. A tap that can't be written back remounts the
+  // description to undo the tick.
+  const [taskEdit, setTaskEdit] = useState<{
+    readonly stale: ReadonlyArray<string>;
+    readonly to: string;
+    readonly saving: boolean;
+  } | null>(null);
+  const nextTaskBody = useRef<string | null>(null);
+  const [taskReset, setTaskReset] = useState(0);
+  const shownBody =
+    taskEdit !== null && (taskEdit.saving || taskEdit.stale.includes(pr.body))
+      ? taskEdit.to
+      : pr.body;
+  const saveTasks = async () => {
+    const target = requestTarget(props.params);
+    for (let body = nextTaskBody.current; body !== null; body = nextTaskBody.current) {
+      nextTaskBody.current = null;
+      const result = await update({ ...target, input: { ...target.input, body } });
+      if (AsyncResult.isFailure(result)) {
+        nextTaskBody.current = null;
+        setTaskEdit(null);
+        // An earlier save in the run may have landed.
+        refreshDetail();
+        return;
+      }
+    }
+    setTaskEdit((edit) => edit && { ...edit, saving: false });
+    refreshDetail();
+  };
+  const toggleTask = (input: { markerOffset: number | null; checked: boolean }) => {
+    const body =
+      input.markerOffset === null
+        ? shownBody
+        : setMarkdownTaskChecked(shownBody, input.markerOffset, input.checked);
+    if (body === shownBody) {
+      setTaskReset((count) => count + 1);
+      return;
+    }
+    const saving = taskEdit?.saving === true;
+    const stale = taskEdit !== null && shownBody !== pr.body ? [...taskEdit.stale, shownBody] : [];
+    setTaskEdit({ stale: [...stale, pr.body], to: body, saving: true });
+    nextTaskBody.current = body;
+    if (!saving) void saveTasks();
+  };
   return (
     <View className="gap-5">
       <PullRequestStackCard params={props.params} state={props.stack} />
@@ -320,7 +372,9 @@ function PullRequestOverview(props: {
         onLayout={(event) => props.onDescriptionLayout(event.nativeEvent.layout.y)}
       >
         <PullRequestDescription
-          markdown={pr.body}
+          key={taskReset}
+          markdown={shownBody}
+          onTaskListChange={permissions.canEditChangeRequest ? toggleTask : undefined}
           onCollapse={props.onDescriptionCollapse}
           expanded={props.descriptionExpanded}
           onExpandedChange={props.onDescriptionExpandedChange}

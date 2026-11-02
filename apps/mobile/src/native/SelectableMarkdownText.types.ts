@@ -76,6 +76,12 @@ export interface SelectableMarkdownTextProps {
   readonly fileEmbedLabel?: (href: string, standalone: boolean) => string | null;
   readonly resolveImageSource?: MarkdownImageSourceResolver;
   readonly onImagePress?: (href: string) => void;
+  /** Makes task list checkboxes tappable. `index` counts checkboxes in document order. */
+  readonly onTaskListItemPress?: (event: {
+    readonly index: number;
+    readonly checked: boolean;
+    readonly text: string;
+  }) => void;
   readonly marginTop?: number;
   readonly marginBottom?: number;
   readonly writingDirection?: "ltr" | "rtl";

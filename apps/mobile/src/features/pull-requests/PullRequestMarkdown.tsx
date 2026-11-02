@@ -1,4 +1,5 @@
 import { splitPullRequestBody } from "@t3tools/client-runtime/pull-request-markdown";
+import { markdownTaskListItems } from "@t3tools/shared/markdownTaskList";
 import type { ReactNode } from "react";
 import { View } from "react-native";
 import { useProject } from "../../state/entities";
@@ -30,6 +31,7 @@ import {
 } from "../../components/FilePreviewModal";
 import { ThreadMarkdownImageView } from "../threads/ThreadMarkdownImage";
 import type { MarkdownImageRenderer } from "../../native/SelectableMarkdownText";
+import type { SelectableMarkdownTextProps } from "../../native/SelectableMarkdownText.types";
 
 const AutolinksContext = createContext<((text: string) => ReadonlyArray<ReferenceAutolink>) | null>(
   null,
@@ -93,11 +95,19 @@ function MarkdownImage(props: {
   );
 }
 
+const letters = (text: string) => text.replace(/[^\p{L}\p{N}]/gu, "");
+
 export function PullRequestMarkdown(props: {
   readonly markdown: string;
   readonly imageGroupMarkdown?: string;
   readonly lineBreaks?: boolean;
+  /** `markerOffset` is into `markdown`, or null when the tapped checkbox doesn't match it. */
+  readonly onTaskListChange?: (input: {
+    readonly markerOffset: number | null;
+    readonly checked: boolean;
+  }) => void;
 }) {
+  const { onTaskListChange } = props;
   const segments = useMemo(() => splitPullRequestBody(props.markdown), [props.markdown]);
   return (
     <View style={{ gap: 12 }}>
@@ -108,6 +118,22 @@ export function PullRequestMarkdown(props: {
             markdown={segment.text}
             imageGroupMarkdown={props.imageGroupMarkdown ?? props.markdown}
             lineBreaks={props.lineBreaks}
+            onTaskListItemPress={
+              onTaskListChange
+                ? (event) => {
+                    // The native renderer counts checkboxes itself; its item text confirms the
+                    // count agrees with the source before the source is rewritten.
+                    const item = markdownTaskListItems(segment.text)[event.index];
+                    const matches =
+                      item?.markerOffset != null &&
+                      letters(event.text).startsWith(letters(item.text));
+                    onTaskListChange({
+                      markerOffset: matches ? segment.sourceOffset + item.markerOffset! : null,
+                      checked: event.checked,
+                    });
+                  }
+                : undefined
+            }
           />
         ) : (
           <PullRequestMedia key={segment.id} url={segment.url} kind={segment.media} />
@@ -121,6 +147,7 @@ function PullRequestMarkdownContent(props: {
   readonly markdown: string;
   readonly imageGroupMarkdown?: string;
   readonly lineBreaks: boolean | undefined;
+  readonly onTaskListItemPress?: SelectableMarkdownTextProps["onTaskListItemPress"];
 }) {
   const hostLineBreaks = useContext(LineBreaksContext);
   const autolinks = useContext(AutolinksContext);
@@ -153,6 +180,7 @@ function PullRequestMarkdownContent(props: {
         onLinkPress={openLink}
         renderImage={renderImage}
         onImagePress={(href) => setPreview(pullRequestImageSource(href, mediaContext))}
+        onTaskListItemPress={props.onTaskListItemPress}
       />
       <FilePreviewModal source={preview} onRequestClose={() => setPreview(null)} />
     </FilePreviewGallery>
