@@ -345,10 +345,11 @@ export function useRefreshLimits(
     .filter(([environmentId]) => failedIds.has(environmentId))
     .map(([, presentation]) => presentation.entry.target.label);
 
-  const refresh = (afterPending: boolean) =>
+  // Waits out an automatic pass so the user's refresh still re-probes.
+  const refresh = () =>
     Promise.all(
       connectedIds.map((environmentId) =>
-        refreshEnvironmentLimits(registry, environmentId, { afterPending }),
+        refreshEnvironmentLimits(registry, environmentId, { afterPending: true }),
       ),
     );
   // Android RefreshControl needs a true-to-false cycle to stop, even with nothing to probe.
@@ -356,7 +357,7 @@ export function useRefreshLimits(
     if (refreshingRef.current) return;
     refreshingRef.current = true;
     setRefreshing(true);
-    await refresh(false).finally(() => {
+    await refresh().finally(() => {
       refreshingRef.current = false;
       setRefreshing(false);
     });
@@ -366,6 +367,6 @@ export function useRefreshLimits(
     refreshing,
     failedLabels,
     refresh: refreshManually,
-    refreshAfterEnable: () => refresh(true),
+    refreshAfterEnable: refresh,
   };
 }
