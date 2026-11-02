@@ -186,8 +186,6 @@ const makeStrictNdJsonRpcParser = () => {
     },
   };
 };
-const MAX_BUFFERED_RAW_NOTIFICATIONS = 32;
-
 const decodeFailureDiagnostics = (error: AcpError.AcpProtocolParseError) => ({
   operation: error.operation,
   ...(error.method === undefined ? {} : { method: error.method }),
@@ -248,9 +246,11 @@ export const makeAcpPatchedProtocol = Effect.fn("makeAcpPatchedProtocol")(functi
   const parser = makeStrictNdJsonRpcParser();
   const serverQueue = yield* Queue.unbounded<RpcMessage.FromClientEncoded>();
   const clientQueue = yield* Queue.unbounded<RpcMessage.FromServerEncoded>();
-  const notificationQueue = yield* Queue.sliding<AcpIncomingNotification>(
-    MAX_BUFFERED_RAW_NOTIFICATIONS,
-  );
+  // Notifications are turn-item state transitions, not replaceable snapshots:
+  // sliding away buffered ones silently loses timeline items whenever an
+  // agent bursts updates faster than the consumer drains. The consumer
+  // drains continuously in-process, so the intake is unbounded.
+  const notificationQueue = yield* Queue.unbounded<AcpIncomingNotification>();
   const disconnects = yield* Queue.unbounded<number>();
   const outgoing = yield* Queue.unbounded<AcpOutgoingWrite, AcpError.AcpError | Cause.Done<void>>();
   const outgoingWriterState = yield* Ref.make<AcpOutgoingWriterState>({

@@ -5,7 +5,9 @@ import * as Deferred from "effect/Deferred";
 import * as Fiber from "effect/Fiber";
 import * as Exit from "effect/Exit";
 import * as Logger from "effect/Logger";
+import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
+import * as Result from "effect/Result";
 import * as References from "effect/References";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
@@ -1030,5 +1032,59 @@ it.layer(NodeServices.layer)("effect-acp protocol", (it) => {
         assert.strictEqual(failure, error);
         assert.equal(yield* Queue.size(output), 0);
       }),
+  );
+
+  // A sliding intake drops the notifications an agent has already sent whenever
+  // the consumer is still busy with earlier updates: real agents burst tool
+  // calls and message chunks faster than the adapter processes them, and every
+  // dropped notification is a lost turn item on the thread timeline.
+  it.effect("delivers every notification from a burst the consumer has not drained yet", () =>
+    Effect.gen(function* () {
+      const total = 200;
+      const { stdio, input } = yield* makeInMemoryStdio();
+      const transport = yield* AcpProtocol.makeAcpPatchedProtocol({
+        stdio,
+        serverRequestMethods: new Set(),
+      });
+      // The consumer subscribes, then an agent bursts more notifications than
+      // the consumer has processed: none of them may be lost.
+      const collector = yield* TestClock.withLive(
+        transport.incoming.pipe(
+          Stream.take(total),
+          Stream.runCollect,
+          Effect.timeoutOption("10 seconds"),
+          Effect.map((chunk) =>
+            Option.match(chunk, { onSome: (collected) => collected.length, onNone: () => 0 }),
+          ),
+          Effect.result,
+        ),
+      ).pipe(Effect.forkChild);
+      const lines = yield* Effect.forEach(
+        Array.from({ length: total }, (_, index) => index),
+        (index) =>
+          encodeJsonl(SessionUpdateNotification, {
+            jsonrpc: "2.0",
+            method: "session/update",
+            params: {
+              sessionId: "burst-session",
+              update: {
+                sessionUpdate: "agent_message_chunk",
+                messageId: "burst-message",
+                content: { type: "text", text: `burst ${index}` },
+              },
+            },
+          }),
+        { concurrency: "unbounded" },
+      );
+      yield* Queue.offerAll(input, lines);
+      const delivered = yield* Fiber.join(collector).pipe(
+        Effect.map((outcome) => (Result.isSuccess(outcome) ? outcome.success : 0)),
+      );
+      assert.equal(
+        delivered,
+        total,
+        `the intake delivered ${delivered} of ${total} bursted notifications`,
+      );
+    }),
   );
 });
