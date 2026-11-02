@@ -73,7 +73,9 @@ export function deriveProviderInstanceEntries(
       installed: snapshot.installed,
       status: snapshot.status,
       isDefault,
-      isAvailable: snapshot.availability !== "unavailable",
+      isAvailable:
+        snapshot.availability !== "unavailable" &&
+        !(snapshot.models.length === 0 && (snapshot.restrictedModels?.length ?? 0) > 0),
       snapshot,
       models: snapshot.models,
     } satisfies ProviderInstanceEntry;

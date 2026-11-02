@@ -38,6 +38,7 @@ import {
 import { resolveClaudeSdkExecutablePath } from "./Drivers/ClaudeExecutable.ts";
 import { hasClaudeManagedMcpConfig, makeClaudeEnvironment } from "./Drivers/ClaudeHome.ts";
 import { discoverClaudeSkills, readClaudeSettingsBaseUrl } from "./Drivers/ClaudeSkills.ts";
+import { toCatalogSlug } from "./claudeModelAccess.ts";
 import type { ProviderWorkspaceSnapshot } from "@t3tools/provider-core/server/driver";
 import { makeUnavailableUsageLimits } from "@t3tools/provider-core/server/usageLimits";
 import {
@@ -241,6 +242,8 @@ export type ClaudeCapabilitiesProbe = {
   /** OAuth applies only to firstParty; Bedrock uses external AWS credentials and omits subscription/token fields. */
   readonly apiProvider: string | undefined;
   readonly slashCommands: ReadonlyArray<ServerProviderSlashCommand>;
+  /** Catalog slugs the account's organization has turned off, read from Claude Code's account config. */
+  readonly restrictedModels?: ReadonlySet<string>;
   /** Undefined means get_usage failed; absent windows on success mean no subscription windows, as with API keys. */
   readonly usage?: Pick<SDKControlGetUsageResponse, "rate_limits_available" | "rate_limits">;
   readonly usageCheckedAt?: string;
@@ -563,7 +566,6 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
     DEFAULT_CLAUDE_MODEL_CAPABILITIES,
   );
   const updateRequiredModels = resolveClaudeUpdateRequiredModels(modelCatalog, parsedVersion);
-  const versionUpgradeMessage = formatClaudeVersionUpgradeMessage(modelCatalog, parsedVersion);
 
   const probeResult = resolveCapabilities
     ? yield* resolveCapabilities(claudeSettings).pipe(Effect.result)
@@ -655,12 +657,37 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
     parsedVersion
       ? yield* resolveResetCredits(parsedVersion)
       : undefined;
+  // Claude Code consults its entitlement cache only on these backends. On
+  // Bedrock, Vertex, and Foundry the cloud account decides, so a cache left by
+  // an earlier claude.ai login must not hide anything there.
+  const restrictedSlugs =
+    capabilities.apiProvider === "firstParty" || capabilities.apiProvider === "gateway"
+      ? (capabilities.restrictedModels ?? new Set<string>())
+      : new Set<string>();
+  const isEntitled = (model: { readonly slug: string }) =>
+    !restrictedSlugs.has(toCatalogSlug(model.slug));
+  const restrictedModels = allModels
+    .filter((model) => !isEntitled(model))
+    .map(({ slug, name }) => ({ slug, name }));
+  const restrictedNames = new Intl.ListFormat("en").format(restrictedModels.map((m) => m.name));
+  const message = [
+    formatClaudeVersionUpgradeMessage(
+      { models: modelCatalog.models.filter((entry) => isEntitled(entry.model)) },
+      parsedVersion,
+    ),
+    restrictedModels.length > 0
+      ? `Your organization has turned off ${restrictedNames}.`
+      : undefined,
+  ]
+    .filter((part) => part !== undefined)
+    .join(" ");
   return buildServerProvider({
     presentation: CLAUDE_PRESENTATION,
     enabled: claudeSettings.enabled,
     checkedAt,
-    models,
-    updateRequiredModels,
+    models: models.filter(isEntitled),
+    updateRequiredModels: updateRequiredModels.filter(isEntitled),
+    restrictedModels,
     slashCommands: dedupedSlashCommands,
     skills,
     probe: {
@@ -673,7 +700,7 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
         ...(capabilities.workspaceId ? { workspaceId: capabilities.workspaceId } : {}),
         ...(authMetadata ? authMetadata : {}),
       },
-      ...(versionUpgradeMessage ? { message: versionUpgradeMessage } : {}),
+      ...(message ? { message } : {}),
       usageLimits: resetCredits ? { ...usageLimits, resetCredits } : usageLimits,
     },
   });

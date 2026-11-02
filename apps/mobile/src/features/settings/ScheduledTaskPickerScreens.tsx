@@ -30,7 +30,10 @@ export function ScheduledTaskModelPickerRouteScreen() {
     () => buildModelOptions(config, selectedModel, undefined, projectId),
     [config, selectedModel, projectId],
   );
-  const providerGroups = useMemo(() => groupByProvider(models), [models]);
+  const providerGroups = useMemo(
+    () => groupByProvider(models, config, projectId),
+    [models, config, projectId],
+  );
   const selectedOption = models.find(
     (option) =>
       option.selection.instanceId === selectedModel?.instanceId &&

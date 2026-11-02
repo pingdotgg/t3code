@@ -25,6 +25,7 @@ import { ProviderDriverError } from "../Errors.ts";
 import { claudeUsageReader } from "./claudeUsage.ts";
 import { makeClaudeScopedLimitNames } from "../claudeUsageLimits.ts";
 import * as ClaudeResetCredits from "../claudeResetCredits.ts";
+import { readClaudeRestrictedModels } from "../claudeModelAccess.ts";
 import * as ResetCreditCoordinator from "../resetCreditCoordinator.ts";
 import {
   checkClaudeProviderStatus,
@@ -205,11 +206,16 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv, Path.
       () =>
         probeClaudeCapabilities(effectiveConfig, processEnv, stateDir).pipe(
           Effect.flatMap((capabilities) =>
-            ClaudeResetCredits.readClaudeOrganizationId(accountConfigPath).pipe(
-              Effect.map((workspaceId) => ({
+            Effect.all([
+              ClaudeResetCredits.readClaudeOrganizationId(accountConfigPath),
+              readClaudeRestrictedModels(accountConfigPath),
+            ]).pipe(
+              Effect.map(([workspaceId, restrictedModels]) => ({
                 _tag: "fresh" as const,
-                capabilities:
-                  workspaceId === undefined ? capabilities : { ...capabilities, workspaceId },
+                capabilities: {
+                  ...(workspaceId === undefined ? capabilities : { ...capabilities, workspaceId }),
+                  restrictedModels,
+                },
               })),
             ),
           ),
