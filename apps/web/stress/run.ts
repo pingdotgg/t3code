@@ -10,7 +10,14 @@ import * as NodePath from "node:path";
 import * as NodeUtil from "node:util";
 import { chromium, type Page } from "playwright";
 
-import { longFrameScripts, summarizeFrames, summarizeProfile, type CpuProfile } from "./analyze.ts";
+import {
+  longFrameScripts,
+  summarizeFrames,
+  summarizeProfile,
+  summarizeTasks,
+  type CpuProfile,
+  type TraceEvent,
+} from "./analyze.ts";
 import { installStressProbe } from "./probe.ts";
 import {
   changeFile,
@@ -192,6 +199,7 @@ async function main() {
     const samples: Array<{ atMs: number; heapMb: number; nodes: number }> = [];
     const before = await metrics();
     await cdp.send("Profiler.start");
+    await cdp.send("Tracing.start", { categories: "toplevel", transferMode: "ReturnAsStream" });
     await page.evaluate(() =>
       (window as unknown as { __stress: { start(): void } }).__stress.start(),
     );
@@ -231,6 +239,21 @@ async function main() {
       errors: string[];
     };
     const { profile } = (await cdp.send("Profiler.stop")) as { profile: CpuProfile };
+    const traced = new Promise<{ stream?: string }>((resolve) =>
+      cdp.once("Tracing.tracingComplete", resolve),
+    );
+    await cdp.send("Tracing.end");
+    const { stream } = await traced;
+    let trace = "";
+    for (let eof = !stream; !eof;) {
+      const chunk = await cdp.send("IO.read", { handle: stream! });
+      trace += chunk.base64Encoded ? Buffer.from(chunk.data, "base64").toString() : chunk.data;
+      eof = chunk.eof;
+    }
+    NodeFS.writeFileSync(NodePath.join(outDir, "trace.json"), trace);
+    const parsedTrace = JSON.parse(trace || "[]") as
+      | ReadonlyArray<TraceEvent>
+      | { traceEvents: ReadonlyArray<TraceEvent> };
     const after = await metrics();
     NodeFS.writeFileSync(NodePath.join(outDir, "profile.cpuprofile"), JSON.stringify(profile));
     const crashed = await page.getByText("Something went wrong").count();
@@ -253,6 +276,7 @@ async function main() {
         style: seconds("RecalcStyleDuration"),
       },
       frames: summarizeFrames(probe.frames),
+      tasks: summarizeTasks("traceEvents" in parsedTrace ? parsedTrace.traceEvents : parsedTrace),
       longAnimationFrames: {
         count: probe.longFrames.length,
         totalMs: Math.round(probe.longFrames.reduce((sum, frame) => sum + frame.duration, 0)),
@@ -295,6 +319,7 @@ function report(summary: {
   config: Record<string, number>;
   mainThreadMs: Record<string, number>;
   frames: ReturnType<typeof summarizeFrames>;
+  tasks: ReturnType<typeof summarizeTasks>;
   longAnimationFrames: {
     count: number;
     totalMs: number;
@@ -309,7 +334,7 @@ function report(summary: {
 }): string {
   const rows = (entries: ReadonlyArray<readonly [string, number]>, unit: string) =>
     entries.map(([name, value]) => `| ${value} ${unit} | \`${name}\` |`).join("\n");
-  const { frames, longAnimationFrames: laf, memory, react, cpu, health } = summary;
+  const { frames, tasks, longAnimationFrames: laf, memory, react, cpu, health } = summary;
   return `# Stress run ${summary.runId}
 
 ${summary.config.threads} streaming threads${summary.pullRequest ? `, pull request ${summary.pullRequest} open` : ""}, ${summary.config.durationS}s, ${summary.config.steps} user steps.
@@ -318,7 +343,10 @@ ${summary.config.threads} streaming threads${summary.pullRequest ? `, pull reque
 | --- | ---: |
 | Main-thread task / script / layout / style | ${summary.mainThreadMs.task} / ${summary.mainThreadMs.script} / ${summary.mainThreadMs.layout} / ${summary.mainThreadMs.style} ms |
 | Frames: p50 / p95 / p99 / max | ${frames.p50Ms} / ${frames.p95Ms} / ${frames.p99Ms} / ${frames.maxMs} ms |
-| Frames over 33 ms (dropped) | ${frames.droppedFrames} of ${frames.frames} |
+| Frame rate (headless caps at 60) | ${frames.fps} fps |
+| Frames that missed a 60 Hz vsync | ${frames.missed60Hz} of ${frames.frames} |
+| Main-thread tasks over 16.7 / 8.3 ms (each blocks a 60 / 120 Hz frame) | ${tasks.over60Hz} / ${tasks.over120Hz} of ${tasks.tasks} |
+| Blocking time past 16.7 / 8.3 ms, longest task | ${tasks.blockedMs60Hz} / ${tasks.blockedMs120Hz} / ${tasks.longestMs} ms |
 | Long animation frames: count / total / blocking / worst | ${laf.count} / ${laf.totalMs} / ${laf.blockingMs} / ${laf.worstMs} ms |
 | JS heap: start / end / max | ${memory.heapMbStart} / ${memory.heapMbEnd} / ${memory.heapMbMax} MB |
 | DOM nodes at end | ${memory.domNodesEnd} |

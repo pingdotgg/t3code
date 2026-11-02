@@ -24,7 +24,8 @@ Reference pull requests: `pingdotgg/t3code#2829` (about 585k changed lines, 932 
 
 ## Reading the report
 
-- **Frames over 33 ms** and **long animation frames** are what a user feels. The long-frame scripts table says what ran during them: `dispatchDiscreteEvent` is a click or key handler, `onMessage` is server traffic.
+- **Frames** are measured against a 60 Hz budget, the most headless Chrome presents. **Main-thread tasks over 16.7 / 8.3 ms** carry the 60 and 120 fps targets: each such task blocks at least one frame at that rate on any display, and the blocking time sums how far tasks ran past the budget. The window's `trace.json` opens in the DevTools Performance panel.
+- **Long animation frames** are the frames a user feels as a hitch. The long-frame scripts table says what ran during them: `dispatchDiscreteEvent` is a click or key handler, `onMessage` is server traffic.
 - **CPU self time by module** splits the profile by package and source file. **By function** points at the hot code. Samples with no page script on the stack (the rig's own Playwright work, browser internals) are counted apart.
 - **Most rendered components** counts React renders over the window. A component that renders far more often than what it shows changes is the usual lead.
 - **JS heap** and **DOM nodes** are sampled each step; a climb across the run is a leak or unbounded list.

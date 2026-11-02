@@ -22,23 +22,90 @@ export interface FrameSummary {
   readonly p95Ms: number;
   readonly p99Ms: number;
   readonly maxMs: number;
-  /** Frames that took longer than two 60 Hz intervals, so at least one frame was dropped. */
-  readonly droppedFrames: number;
+  readonly fps: number;
+  /** Frames that missed at least one 60 Hz vsync. Headless Chrome presents at 60 Hz at most. */
+  readonly missed60Hz: number;
 }
 
 const percentile = (sorted: ReadonlyArray<number>, p: number) =>
   sorted.length === 0 ? 0 : sorted[Math.min(sorted.length - 1, Math.floor(sorted.length * p))]!;
 const round = (value: number) => Math.round(value * 10) / 10;
 
+const BUDGET_60HZ_MS = 1000 / 60;
+const BUDGET_120HZ_MS = 1000 / 120;
+
 export function summarizeFrames(frames: ReadonlyArray<number>): FrameSummary {
   const sorted = frames.toSorted((a, b) => a - b);
+  const totalMs = frames.reduce((sum, frame) => sum + frame, 0);
   return {
     frames: frames.length,
     p50Ms: round(percentile(sorted, 0.5)),
     p95Ms: round(percentile(sorted, 0.95)),
     p99Ms: round(percentile(sorted, 0.99)),
     maxMs: round(sorted.at(-1) ?? 0),
-    droppedFrames: frames.filter((frame) => frame > 1000 / 30).length,
+    fps: totalMs === 0 ? 0 : round((frames.length * 1000) / totalMs),
+    // Intervals land on whole vsyncs, so anything past one and a half is a missed one.
+    missed60Hz: frames.filter((frame) => frame > BUDGET_60HZ_MS * 1.5).length,
+  };
+}
+
+export interface TraceEvent {
+  readonly ph: string;
+  readonly name: string;
+  readonly pid: number;
+  readonly tid: number;
+  readonly ts: number;
+  readonly dur?: number;
+  readonly args?: { readonly name?: string };
+}
+
+export interface TaskSummary {
+  readonly tasks: number;
+  readonly longestMs: number;
+  /** Tasks longer than a frame budget; each one blocks at least one frame at that rate. */
+  readonly over60Hz: number;
+  readonly over120Hz: number;
+  /** Time past the budget summed over tasks, like Lighthouse's total blocking time. */
+  readonly blockedMs60Hz: number;
+  readonly blockedMs120Hz: number;
+}
+
+/**
+ * Main-thread tasks of the page from a `toplevel` trace. A task over 8.3 ms blocks a 120 Hz
+ * frame on any display, which frame intervals cannot show while headless Chrome caps at 60 Hz.
+ */
+export function summarizeTasks(events: ReadonlyArray<TraceEvent>): TaskSummary {
+  const rendererMain = new Set(
+    events
+      .filter((event) => event.ph === "M" && event.name === "thread_name")
+      .filter((event) => event.args?.name === "CrRendererMain")
+      .map((event) => `${event.pid}:${event.tid}`),
+  );
+  const byThread = new Map<string, number[]>();
+  for (const event of events) {
+    const thread = `${event.pid}:${event.tid}`;
+    if (event.ph !== "X" || event.name !== "ThreadControllerImpl::RunTask") continue;
+    if (!rendererMain.has(thread)) continue;
+    let durations = byThread.get(thread);
+    if (!durations) byThread.set(thread, (durations = []));
+    durations.push((event.dur ?? 0) / 1000);
+  }
+  // The app's renderer is the busy one; others (about:blank, spare renderers) barely run.
+  const durations = [...byThread.values()].reduce<number[]>(
+    (busiest, thread) =>
+      thread.reduce((a, b) => a + b, 0) > busiest.reduce((a, b) => a + b, 0) ? thread : busiest,
+    [],
+  );
+  const over = (budget: number) => durations.filter((ms) => ms > budget);
+  const blocked = (budget: number) =>
+    Math.round(over(budget).reduce((sum, ms) => sum + ms - budget, 0));
+  return {
+    tasks: durations.length,
+    longestMs: round(durations.reduce((longest, ms) => Math.max(longest, ms), 0)),
+    over60Hz: over(BUDGET_60HZ_MS).length,
+    over120Hz: over(BUDGET_120HZ_MS).length,
+    blockedMs60Hz: blocked(BUDGET_60HZ_MS),
+    blockedMs120Hz: blocked(BUDGET_120HZ_MS),
   };
 }
 
