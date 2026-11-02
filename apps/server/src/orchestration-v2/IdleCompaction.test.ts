@@ -461,6 +461,9 @@ describe("IdleCompactionService", () => {
                 ),
               }),
           }),
+          Layer.mock(ProviderInstanceRegistry.ProviderInstanceRegistry)({
+            getInstance: () => Effect.undefined,
+          }),
           Layer.mock(ServerSettings.ServerSettingsService)({
             getSettings: Effect.succeed({
               ...DEFAULT_SERVER_SETTINGS,

@@ -135,7 +135,7 @@ export function AutoSettleSettingsRows(props: {
             icon="arrow.down.right.and.arrow.up.left"
             label="Compact before usage limits"
             value={uniformMobileSetting(displayTargets, "compactBeforeUsageLimit")}
-            disabled={disabled}
+            disabled={disabledFor("compactBeforeUsageLimit")}
             onValueChange={(value) => writeToAll({ compactBeforeUsageLimit: value })}
           />
         </SettingsSection>
