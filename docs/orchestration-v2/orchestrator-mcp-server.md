@@ -58,17 +58,18 @@ check the `orchestration` capability before reading or mutating state.
 
 ### Codex V2
 
-Codex app-server receives the remote MCP server through command-line config
-overrides:
+Codex gets T3's MCP server in each thread's `thread/start`, `thread/resume`,
+and `thread/fork` config, with the provider-session token in an
+`Authorization` header. The same server is registered twice:
 
-```text
--c mcp_servers.t3-code.url=http://127.0.0.1:<port>/mcp
--c mcp_servers.t3-code.bearer_token_env_var="T3_MCP_BEARER_TOKEN"
-```
+- `t3-code`: every tool except `t3_thread_wait`.
+- `t3code`: only `t3_thread_wait`, with `omit_tools_from = ["code_mode", "deferred"]`.
 
-The provider-session token is placed in `T3_MCP_BEARER_TOKEN`. Both the
-production Codex launcher and the injectable test launcher use the same
-projection helper.
+Code Mode runs a nested call as part of a script, so the model keeps working
+while a blocking wait runs. The second entry makes the wait a direct tool call,
+like Codex's own wait tools. Codex reports calls as `<server>.<tool>`, so
+`packages/shared/src/t3McpToolPresentation.ts` must resolve both server names.
+Tool display and pending-work detection depend on it.
 
 ### Claude Agent SDK V2
 
