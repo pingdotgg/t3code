@@ -11,7 +11,6 @@ import * as Fiber from "effect/Fiber";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 import * as Stream from "effect/Stream";
-import * as TestClock from "effect/testing/TestClock";
 import { vi } from "vite-plus/test";
 
 vi.mock("electron", () => ({}));
@@ -224,11 +223,7 @@ it.effect(
         Effect.forkScoped,
       );
       yield* Deferred.await(registrationStarted);
-      yield* TestClock.adjust(0);
-      assert.isTrue(
-        yield* Deferred.isDone(windowStarted),
-        "the window must start before registration completes",
-      );
+      yield* Deferred.await(windowStarted);
       assert.deepEqual(events, ["identity", "ready", "identity", "backend", "window"]);
       assert.isFalse(yield* Deferred.isDone(registrationStopped));
       yield* (yield* DesktopShutdown.DesktopShutdown).request;

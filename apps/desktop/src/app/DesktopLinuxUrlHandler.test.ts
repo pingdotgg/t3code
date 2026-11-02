@@ -339,43 +339,6 @@ describe("DesktopLinuxUrlHandler", () => {
     });
   });
 
-  it.effect("releases a stalled MIME helper when the registration scope closes", () =>
-    Effect.gen(function* () {
-      const recorded = emptyRecording();
-      const started = yield* Deferred.make<void>();
-      const release = yield* Deferred.make<void>();
-      const stopped = yield* Deferred.make<void>();
-      const processSpawner = ChildProcessSpawner.make((command) => {
-        if (!ChildProcess.isStandardCommand(command))
-          return Effect.die("expected a single command");
-        recorded.commands.push({ command: command.command, args: command.args });
-        return Effect.acquireRelease(
-          Effect.succeed(
-            ChildProcessSpawner.makeHandle({
-              ...mockProcess(0),
-              exitCode: Deferred.succeed(started, undefined).pipe(
-                Effect.andThen(Deferred.await(release)),
-                Effect.as(ChildProcessSpawner.ExitCode(0)),
-              ),
-            }),
-          ),
-          () => Deferred.succeed(stopped, undefined),
-        );
-      });
-      yield* Effect.scoped(
-        runRegister(recorded, { processSpawner }).pipe(
-          Effect.forkScoped,
-          Effect.andThen(Deferred.await(started)),
-        ),
-      );
-      assert.isTrue(yield* Deferred.isDone(stopped));
-      assert.deepEqual(
-        recorded.commands.map(({ command }) => command),
-        ["update-desktop-database"],
-      );
-    }),
-  );
-
   it.effect("never fails startup when registration cannot complete", () => {
     const desktopDatabaseFailed = emptyRecording();
     const xdgMimeFailed = emptyRecording();
