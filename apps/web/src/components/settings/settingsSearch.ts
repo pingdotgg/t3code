@@ -68,6 +68,8 @@ export interface SettingsSearchItem {
   readonly wslAvailableOnly?: boolean;
   readonly managedTunnelOnly?: boolean;
   readonly peerLinksOnly?: boolean;
+  readonly worktreesDirectoryOnly?: boolean;
+  readonly newProjectsDirectoryOnly?: boolean;
   readonly secondary?: boolean;
   readonly requiresThreadAutoSettlement?: boolean;
 }
@@ -83,6 +85,9 @@ export interface SettingsSearchAvailability {
   readonly hasThreadAutoSettlement: boolean;
   readonly managedTunnelActive?: boolean;
   readonly hasPeerLinkHost?: boolean;
+  /** Every connected environment in scope serves the setting, matching its row's gate. */
+  readonly hasWorktreesDirectory?: boolean;
+  readonly hasNewProjectsDirectory?: boolean;
 }
 
 export const SETTINGS_SECTION_LABELS: Readonly<Record<SettingsPath, string>> = {
@@ -248,6 +253,7 @@ export const SETTINGS_SEARCH_ITEMS = [
     to: "/settings/worktrees",
     scope: "environment-defaults",
     searchTerms: ["worktree location folder directory path drive external disk"],
+    worktreesDirectoryOnly: true,
   },
   {
     id: "storage-artifacts",
@@ -652,6 +658,7 @@ export const SETTINGS_SEARCH_ITEMS = [
     to: "/settings/projects",
     scope: "environment-defaults",
     searchTerms: ["new project folder location path repos repositories create default"],
+    newProjectsDirectoryOnly: true,
   },
   {
     id: "add-project-starts-in",
@@ -1343,7 +1350,9 @@ export function filterAvailableSettingsSearchItems(
       (!item.wslAvailableOnly || availability.isWslSettingsRowVisible) &&
       (!item.requiresThreadAutoSettlement || availability.hasThreadAutoSettlement) &&
       (!item.managedTunnelOnly || availability.managedTunnelActive === true) &&
-      (!item.peerLinksOnly || availability.hasPeerLinkHost === true),
+      (!item.peerLinksOnly || availability.hasPeerLinkHost === true) &&
+      (!item.worktreesDirectoryOnly || availability.hasWorktreesDirectory === true) &&
+      (!item.newProjectsDirectoryOnly || availability.hasNewProjectsDirectory === true),
   );
 }
 
