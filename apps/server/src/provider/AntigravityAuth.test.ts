@@ -73,12 +73,7 @@ const makeHarness = Effect.fn("makeAuthTestHarness")(function* (
   let catalog = ["previous-account-model"];
   const auth = yield* makeAntigravityAuth({
     instanceId,
-    makeRuntime: (input: {
-      readonly onAuthorizationUrl?: (url: string) => Effect.Effect<void, AcpErrors.AcpError>;
-      readonly requestLogger?: (
-        event: AcpSessionRuntime.AcpSessionRequestLogEvent,
-      ) => Effect.Effect<void, never>;
-    }) =>
+    makeRuntime: (input) =>
       Effect.gen(function* () {
         receiveAuthorizationUrl = input.onAuthorizationUrl;
         events.push("process-open");
@@ -317,6 +312,21 @@ it.layer(NodeServices.layer)("AntigravityAuth", (it) => {
       const failed = yield* phase(harness.auth, "failed");
       assert.notInclude(failed.message ?? "", "could not reach Google");
       assert.match(failed.message ?? "", /session/i);
+    }),
+  );
+
+  it.effect("leaves the network hint behind once sign-in authenticates", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness({ interactive: false });
+      yield* harness.auth.controller.start(owner);
+      yield* Deferred.succeed(harness.authenticated, undefined);
+      yield* Deferred.await(harness.sessionRequested);
+
+      const current = yield* harness.auth.controller
+        .subscribe(owner)
+        .pipe(Stream.runHead, Effect.map(Option.getOrThrow));
+      assert.equal(current.phase, "verifying");
+      assert.equal(current.message, "Checking Antigravity access and models.");
     }),
   );
 
