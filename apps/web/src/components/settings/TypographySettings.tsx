@@ -43,12 +43,19 @@ import {
   searchableSetting,
 } from "./settingsSearch";
 
-function useFontDefaultFamilies() {
-  const settings = useScopedSettings();
-  const [defaults] = useState(() => ({
+let fontDefaultFamilies: { readonly sans: string; readonly code: string } | undefined;
+
+function resolveFontDefaultFamilies() {
+  fontDefaultFamilies ??= {
     sans: resolveDefaultFamilyLabel(DEFAULT_SANS_FONT_STACK) ?? "System default",
     code: resolveDefaultFamilyLabel(DEFAULT_CODE_FONT_STACK) ?? "System monospace",
-  }));
+  };
+  return fontDefaultFamilies;
+}
+
+function useFontDefaultFamilies() {
+  const settings = useScopedSettings();
+  const defaults = resolveFontDefaultFamilies();
   return {
     sans: defaults.sans,
     code: defaults.code,
