@@ -163,7 +163,7 @@ import { signalProcessGroup } from "@t3tools/provider-core/server/processGroup";
 import {
   claudeSignedOutMessage,
   makeClaudeEnvironment,
-  mergeClaudeProcessEnvironment,
+  mergeClaudeBaseEnvironment,
   resolveClaudeHomePath,
   resolveClaudeSessionEnvironment,
 } from "../../provider/Drivers/ClaudeHome.ts";
@@ -11642,11 +11642,7 @@ export const createClaudeAdapterV2 = Effect.fn("ClaudeAdapterV2Driver.create")(
     const queryRunner = yield* ClaudeAgentSdkQueryRunner;
     const serverConfig = yield* ServerConfig.ServerConfig;
     const continuationRequests = yield* ProviderContinuationRequests.ProviderContinuationRequests;
-    const baseEnvironment = yield* mergeClaudeProcessEnvironment(
-      config,
-      environment,
-      hostEnvironment,
-    );
+    const baseEnvironment = yield* mergeClaudeBaseEnvironment(environment, hostEnvironment);
     const claudeEnvironment = yield* makeClaudeEnvironment(config, baseEnvironment);
     const path = yield* Path.Path;
     const crypto = yield* Crypto.Crypto;

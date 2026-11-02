@@ -75,31 +75,38 @@ function withClaudeEntrypoint(
   environment: NodeJS.ProcessEnv,
   settings: ClaudeSettingsEnv,
 ): NodeJS.ProcessEnv {
-  const { CLAUDE_CODE_ENTRYPOINT: current, ...rest } = environment;
-  const configured = current === T3_CODE_ENTRYPOINT ? undefined : current;
+  const { CLAUDE_CODE_ENTRYPOINT: configured, ...rest } = environment;
   const apiKey = settings.ANTHROPIC_API_KEY ?? environment.ANTHROPIC_API_KEY;
   const entrypoint =
     settings.CLAUDE_CODE_ENTRYPOINT || configured || (apiKey ? undefined : T3_CODE_ENTRYPOINT);
   return entrypoint ? { ...rest, CLAUDE_CODE_ENTRYPOINT: entrypoint } : rest;
 }
 
-/** Base env for the Claude processes T3 Code runs, before `makeClaudeEnvironment`. */
-export const mergeClaudeProcessEnvironment = Effect.fn("mergeClaudeProcessEnvironment")(function* (
-  config: Pick<ClaudeSettings, "homePath">,
+/** Host and instance env without the launching session. Its only label is one the instance set. */
+export const mergeClaudeBaseEnvironment = Effect.fn("mergeClaudeBaseEnvironment")(function* (
   instanceEnvironment: ProviderInstanceEnvironment | undefined,
   hostEnvironment: NodeJS.ProcessEnv,
 ) {
   const baseEnvironment: NodeJS.ProcessEnv = { ...hostEnvironment };
   delete baseEnvironment.CLAUDE_CODE_ENTRYPOINT;
   for (const name of CLAUDE_HOST_SESSION_VARIABLES) delete baseEnvironment[name];
-  const environment = yield* mergeProviderInstanceEnvironment(instanceEnvironment, baseEnvironment);
+  return yield* mergeProviderInstanceEnvironment(instanceEnvironment, baseEnvironment);
+});
+
+/** Env for Claude processes with no session cwd, such as capability probes. */
+export const mergeClaudeProcessEnvironment = Effect.fn("mergeClaudeProcessEnvironment")(function* (
+  config: Pick<ClaudeSettings, "homePath">,
+  instanceEnvironment: ProviderInstanceEnvironment | undefined,
+  hostEnvironment: NodeJS.ProcessEnv,
+) {
+  const environment = yield* mergeClaudeBaseEnvironment(instanceEnvironment, hostEnvironment);
   return withClaudeEntrypoint(
     environment,
     yield* readClaudeSettingsEnv(config, undefined, environment),
   );
 });
 
-/** The env for one Claude process in `cwd`, labeled from the settings that process will load. */
+/** Labels `mergeClaudeBaseEnvironment` output for one process in `cwd`, from the settings it loads. */
 export const resolveClaudeSessionEnvironment = Effect.fn("resolveClaudeSessionEnvironment")(
   function* (
     config: Pick<ClaudeSettings, "homePath">,
