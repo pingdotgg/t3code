@@ -3,12 +3,14 @@ import * as NodeOS from "node:os";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 
 import {
   makeClaudeCapabilitiesCacheKey,
   makeClaudeContinuationGroupKey,
   makeClaudeEnvironment,
+  mergeClaudeProcessEnvironment,
   resolveClaudeHomePath,
 } from "./ClaudeHome.ts";
 
@@ -56,4 +58,30 @@ it.layer(NodeServices.layer)("ClaudeHome", (it) => {
       }),
     );
   });
+
+  it.effect("labels Claude processes t3-code unless instance env or Claude settings set one", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const homePath = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-claude-home-" });
+      const host = { CLAUDE_CODE_ENTRYPOINT: "claude-desktop", KEEP: "1" };
+      const instance = [{ name: "CLAUDE_CODE_ENTRYPOINT", value: "instance", sensitive: false }];
+
+      expect(yield* mergeClaudeProcessEnvironment({ homePath }, undefined, host)).toMatchObject({
+        CLAUDE_CODE_ENTRYPOINT: "t3-code",
+        KEEP: "1",
+      });
+      expect(
+        (yield* mergeClaudeProcessEnvironment({ homePath }, instance, host)).CLAUDE_CODE_ENTRYPOINT,
+      ).toBe("instance");
+
+      yield* fileSystem.writeFileString(
+        path.join(homePath, "settings.json"),
+        JSON.stringify({ env: { CLAUDE_CODE_ENTRYPOINT: "custom" } }),
+      );
+      expect(
+        (yield* mergeClaudeProcessEnvironment({ homePath }, instance, host)).CLAUDE_CODE_ENTRYPOINT,
+      ).toBe("custom");
+    }),
+  );
 });
