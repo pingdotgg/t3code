@@ -109,6 +109,17 @@ instance:
 }
 ```
 
+## Append instructions to new chats
+
+In Settings → Threads, open New chat prompt (under Advanced on web and desktop),
+enter your instructions, and enable the setting. It is off by default. You can
+save instructions while leaving it disabled, or disable it later without losing them.
+
+The instructions are appended after a blank line to your first message in each
+new chat and appear in the sent message. Later messages, existing conversations,
+forks, and agent-created chats do not get them. Empty instructions add nothing.
+Choose an environment or project in Settings to control where they apply.
+
 ## Model defaults
 
 T3 Code remembers your provider, model, and model options for new threads. A
