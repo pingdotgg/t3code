@@ -450,6 +450,7 @@ const make = Effect.gen(function* () {
         threadId: remote.threadId,
         view: failed ? "activity" : "messages",
         limit: 100,
+        maxCharsPerItem: 20_000,
         ...(afterPosition === undefined ? {} : { afterPosition }),
       });
       reply =

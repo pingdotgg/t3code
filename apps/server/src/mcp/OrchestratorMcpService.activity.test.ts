@@ -242,17 +242,35 @@ it("readThread pages cut-off text without splitting an emoji across pages", asyn
       updatedAt: now,
     },
   };
+  const rows = [
+    row,
+    ...Array.from({ length: 11 }, (_, index) => ({
+      ...row,
+      position: index + 1,
+      sourceItemId: TurnItemId.make(`turn-item-mcp-${index}`),
+      item: { ...row.item, text: "x".repeat(600) },
+    })),
+  ];
 
   const layer = layerOrchestratorService.pipe(
     Layer.provide(
       Layer.mergeAll(
         Layer.mock(ThreadManagementService.ThreadManagementService)({
-          getTimelinePage: () =>
-            Effect.succeed({
-              items: [row] as unknown as OrchestrationV2ThreadProjection["visibleTurnItems"],
-              totalItems: 1,
-              hasMore: false,
-            }),
+          getTimelinePage: (_threadId, options) => {
+            const remaining = rows.filter(
+              (candidate) =>
+                candidate.position > (options.afterPosition ?? -1) &&
+                (options.itemId === undefined || candidate.sourceItemId === options.itemId),
+            );
+            return Effect.succeed({
+              items: remaining.slice(
+                0,
+                options.limit,
+              ) as unknown as OrchestrationV2ThreadProjection["visibleTurnItems"],
+              totalItems: rows.length,
+              hasMore: remaining.length > options.limit,
+            });
+          },
           getThreadRecords: () => Effect.succeed(projection),
           getProjectThreadRecords: () => Effect.succeed(projection),
           getThreadShell: () =>
@@ -299,6 +317,43 @@ it("readThread pages cut-off text without splitting an emoji across pages", asyn
         });
       }
     }
+    const first = yield* service.readThread(makeScope(), {
+      threadId: parentThreadId,
+      view: "activity",
+    });
+    expect(first.items[1]).toMatchObject({
+      text: "x".repeat(500),
+      textTruncated: true,
+      nextTextOffset: 500,
+    });
+    expect(first.items).toHaveLength(10);
+    const rest = yield* service.readThread(makeScope(), {
+      threadId: parentThreadId,
+      view: "activity",
+      itemId: first.items[1]!.itemId,
+      textOffset: first.items[1]!.nextTextOffset!,
+    });
+    expect(rest.items[0]).toMatchObject({
+      text: "x".repeat(100),
+      textTruncated: false,
+      nextTextOffset: null,
+    });
+    expect(first).toMatchObject({ nextPosition: 9, hasMore: true });
+    const next = yield* service.readThread(makeScope(), {
+      threadId: parentThreadId,
+      view: "activity",
+      afterPosition: first.nextPosition!,
+    });
+    expect(next.items.map((item) => item.position)).toEqual([10, 11]);
+    expect(next.hasMore).toBe(false);
+    const expanded = yield* service.readThread(makeScope(), {
+      threadId: parentThreadId,
+      view: "activity",
+      limit: 12,
+      maxCharsPerItem: 600,
+    });
+    expect(expanded.items).toHaveLength(12);
+    expect(expanded.items[1]).toMatchObject({ text: "x".repeat(600), textTruncated: false });
   }).pipe(Effect.provide(layer), Effect.runPromise);
 });
 

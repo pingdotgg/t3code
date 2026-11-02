@@ -3514,6 +3514,7 @@ describe("OrchestratorMcpService thread list", () => {
     shell("thread:a-snoozed", "project:a", true),
     shell("thread:a-awake", "project:a", false),
     shell("thread:b-snoozed", "project:b", true),
+    ...Array.from({ length: 12 }, (_, index) => shell(`thread:c-${index}`, "project:c", false)),
   ];
   const service = layerOrchestratorService.pipe(
     Layer.provide(
@@ -3557,6 +3558,31 @@ describe("OrchestratorMcpService thread list", () => {
           ["thread:b-snoozed", "project:b"],
         ],
       );
+    }).pipe(Effect.provide(service)),
+  );
+
+  it.effect("pages thread lists by default and honors an explicit larger limit", () =>
+    Effect.gen(function* () {
+      const mcp = yield* OrchestratorMcpService.OrchestratorMcpService;
+      const first = yield* mcp.listThreads(client, { projectId: ProjectId.make("project:c") });
+      assert.equal(first.threads.length, 10);
+      assert.equal(first.nextCursor, 10);
+      assert.equal(first.total, 12);
+      const next = yield* mcp.listThreads(client, {
+        projectId: ProjectId.make("project:c"),
+        cursor: first.nextCursor!,
+      });
+      assert.deepStrictEqual(
+        next.threads.map((thread) => thread.threadId),
+        ["thread:c-10", "thread:c-11"],
+      );
+      assert.equal(next.nextCursor, null);
+      const expanded = yield* mcp.listThreads(client, {
+        projectId: ProjectId.make("project:c"),
+        limit: 12,
+      });
+      assert.equal(expanded.threads.length, 12);
+      assert.equal(expanded.nextCursor, null);
     }).pipe(Effect.provide(service)),
   );
 });
