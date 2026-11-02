@@ -49,6 +49,8 @@ export interface ChromiumKeyMaterial {
 const derive = (passphrase: string, iterations: number) =>
   NodeCrypto.pbkdf2Sync(passphrase, KEY_SALT, iterations, KEY_LENGTH, "sha1");
 
+export const deriveLinuxKey = (passphrase: string) => derive(passphrase, LINUX_KEY_ITERATIONS);
+
 // In-process Keychain access attributes grants to this app. Keep modal prompts untimed to preserve their listener.
 const readKeychainSecret = Effect.fn("ChromiumKeys.readKeychainSecret")(function* (
   service: string,
@@ -261,13 +263,13 @@ export const resolveChromiumKeys = Effect.fn("ChromiumKeys.resolveChromiumKeys")
         )
       : undefined;
     return {
-      cbcV10: derive(LINUX_FALLBACK_PASSPHRASE, LINUX_KEY_ITERATIONS),
+      cbcV10: deriveLinuxKey(LINUX_FALLBACK_PASSPHRASE),
       ...(typeof keyringSecret === "string"
-        ? { cbcV11: derive(keyringSecret, LINUX_KEY_ITERATIONS) }
+        ? { cbcV11: deriveLinuxKey(keyringSecret) }
         : keyringSecret
           ? { cbcV11Error: keyringSecret }
           : {}),
-      cbcEmpty: derive("", LINUX_KEY_ITERATIONS),
+      cbcEmpty: deriveLinuxKey(""),
     };
   }
 
