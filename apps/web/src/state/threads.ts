@@ -62,6 +62,19 @@ const familyRemovalAtom = Atom.family((key: string) => {
     (get) => get(environmentShell.stateValueAtom(environmentId)).removedAt.get(threadId) ?? -1,
   );
 });
+const familyConnectionFailedAtom = Atom.family((environmentId: EnvironmentId) =>
+  Atom.make((get) => {
+    const result = get(environmentCatalog.stateAtom(environmentId));
+    if (!AsyncResult.isSuccess(result) || result.waiting) return false;
+    const connection = result.value;
+    return (
+      connection.phase === "offline" ||
+      connection.phase === "blocked" ||
+      (connection.phase === "backoff" && connection.attempt > 2)
+    );
+  }),
+);
+const NO_CONNECTION_FAILURE_ATOM = Atom.make(false);
 const NO_REMOVAL_ATOM = Atom.make(-1);
 const EMPTY_FAMILY_ATOM = Atom.make(AsyncResult.initial<OrchestrationV2ThreadFamily, never>());
 
@@ -84,7 +97,11 @@ export function useThreadFamilyIfMissing(ref: ScopedThreadRef | null, missing: b
   const removedAt = useAtomValue(
     active ? familyRemovalAtom(JSON.stringify([ref.environmentId, ref.threadId])) : NO_REMOVAL_ATOM,
   );
+  const connectionFailed = useAtomValue(
+    active && missing ? familyConnectionFailedAtom(ref.environmentId) : NO_CONNECTION_FAILURE_ATOM,
+  );
   const read = threadFamilyRead(family);
+  if (read === "pending" && connectionFailed) return "failed";
   if (ref === null || read !== "settled" || !AsyncResult.isSuccess(family)) return read;
   return missing &&
     (removedAt > family.value.snapshotSequence ||

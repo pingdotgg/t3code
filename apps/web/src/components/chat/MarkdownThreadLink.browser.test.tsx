@@ -1,5 +1,9 @@
 import { useAtomValue } from "@effect/atom-react";
 import {
+  AVAILABLE_CONNECTION_STATE,
+  type SupervisorConnectionState,
+} from "@t3tools/client-runtime/connection";
+import {
   EnvironmentId,
   ThreadId,
   type OrchestrationV2ThreadFamily,
@@ -10,6 +14,7 @@ import { AsyncResult } from "effect/reactivity";
 import { describe, expect, it, vi } from "vite-plus/test";
 
 import { act, render } from "../../../test/render";
+import { environmentCatalog } from "../../connection/catalog";
 import { AppAtomRegistryProvider, appAtomRegistry } from "../../rpc/atomRegistry";
 import { environmentShell } from "../../state/shell";
 import { threadFamilies } from "../../state/threads";
@@ -30,6 +35,11 @@ const mocks = await vi.hoisted(async () => {
     ),
     reads: Atom.family((_key: string) =>
       Atom.make<FamilyResult>(AsyncResult.initial()).pipe(Atom.keepAlive),
+    ),
+    connections: Atom.family((_environmentId: EnvironmentId) =>
+      Atom.make<AsyncResult.AsyncResult<SupervisorConnectionState>>(AsyncResult.initial()).pipe(
+        Atom.keepAlive,
+      ),
     ),
   };
 });
@@ -72,6 +82,16 @@ const row = (id: string, title: string) =>
 function setup(shells: ReadonlyMap<string, OrchestrationV2ThreadShell> = new Map()) {
   const baseShells = new Map(shells);
   const removed = new Set<string>();
+  const connectionIds = new Set<EnvironmentId>();
+  const connectionState = (id: EnvironmentId) => {
+    const atom = mocks.connections(id);
+    if (!connectionIds.has(id)) {
+      connectionIds.add(id);
+      appAtomRegistry.set(atom, AsyncResult.initial());
+    }
+    return atom;
+  };
+  const connections = vi.spyOn(environmentCatalog, "stateAtom").mockImplementation(connectionState);
   const states = vi.spyOn(environmentShell, "stateValueAtom").mockImplementation(mocks.shellStates);
   appAtomRegistry.set(mocks.shells, baseShells);
   const mounted = new Map<string, OrchestrationV2ThreadFamily>();
@@ -123,6 +143,13 @@ function setup(shells: ReadonlyMap<string, OrchestrationV2ThreadShell> = new Map
     });
   return {
     requested,
+    connect: (target: ScopedThreadRef, phase: SupervisorConnectionState["phase"], attempt = 0) =>
+      act(() =>
+        appAtomRegistry.set(
+          connectionState(target.environmentId),
+          AsyncResult.success({ ...AVAILABLE_CONNECTION_STATE, phase, attempt }),
+        ),
+      ),
     remove: (target: ScopedThreadRef) =>
       act(() => {
         removed.add(key(target));
@@ -155,6 +182,7 @@ function setup(shells: ReadonlyMap<string, OrchestrationV2ThreadShell> = new Map
         ),
       ),
     [Symbol.dispose]() {
+      connections.mockRestore();
       states.mockRestore();
       for (const environmentId of [ENV, EnvironmentId.make("remote-environment")]) {
         const state = mocks.shellStates(environmentId);
@@ -311,19 +339,66 @@ describe("thread link family lookups", () => {
     },
   );
 
-  it("tries the decoded ID only after a successful empty literal lookup", async () => {
-    using fixture = setup();
+  it.each([false, true])("retains an activated decoded lookup, legacy link %s", async (legacy) => {
     const literal = ref("provider%3A1");
     const decoded = ref("provider:1");
-    await using screen = await render(view(literal));
+    const remote = ref(literal.threadId, EnvironmentId.make("remote-environment"));
+    using fixture = setup(new Map([[key(remote), row(remote.threadId, "Remote thread")]]));
+    await using screen = await render(view(literal, "markdown", legacy));
     expect(fixture.requested.has(key(decoded))).toBe(false);
     await fixture.resolve(literal, []);
     expect(fixture.requested.has(key(decoded))).toBe(true);
+    await fixture.fail(literal);
+    await expect
+      .element(screen.getByRole("link", { name: "Thread, Remote thread" }))
+      .not.toBeInTheDocument();
+    await fixture.fail(decoded, true);
+    await expect
+      .element(screen.getByRole("link", { name: "Thread, Remote thread" }))
+      .not.toBeInTheDocument();
+    await fixture.fail(decoded);
+    if (legacy) {
+      await expect
+        .element(screen.getByRole("link", { name: "Thread, Remote thread" }))
+        .toBeInTheDocument();
+    }
     await fixture.resolve(decoded, [row(decoded.threadId, "Decoded thread")]);
     await expect
       .element(screen.getByRole("link", { name: "Thread, Decoded thread" }))
       .toBeInTheDocument();
+    const next = ref("next%3A1");
+    await screen.rerender(view(next, "markdown", legacy));
+    expect(fixture.requested.has(key(ref("next:1")))).toBe(false);
+    expect(appAtomRegistry.get(mocks.shells).has(key(decoded))).toBe(false);
   });
+
+  it.each(["offline", "blocked", "backoff"] as const)(
+    "resolves a legacy link while its source connection is %s",
+    async (phase) => {
+      const target = ref("older-settled");
+      const remote = ref(target.threadId, EnvironmentId.make("remote-environment"));
+      using fixture = setup(new Map([[key(remote), row(remote.threadId, "Remote thread")]]));
+      await using screen = await render(view(target, "markdown", true));
+      for (const connecting of ["available", "connecting", "backoff"] as const) {
+        await fixture.connect(target, connecting, 1);
+        await expect
+          .element(screen.getByRole("link", { name: "Thread, Remote thread" }))
+          .not.toBeInTheDocument();
+      }
+      await fixture.connect(target, phase, 3);
+      await expect
+        .element(screen.getByRole("link", { name: "Thread, Remote thread" }))
+        .toBeInTheDocument();
+      await fixture.connect(target, "connecting");
+      await expect
+        .element(screen.getByRole("link", { name: "Thread, Remote thread" }))
+        .not.toBeInTheDocument();
+      await fixture.resolve(target, [row(target.threadId, "Source thread")]);
+      await expect
+        .element(screen.getByRole("link", { name: "Thread, Source thread" }))
+        .toBeInTheDocument();
+    },
+  );
 
   it("releases the previous family when the target environment changes", async () => {
     using fixture = setup();

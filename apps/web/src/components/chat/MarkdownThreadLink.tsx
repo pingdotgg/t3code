@@ -21,25 +21,30 @@ export function MarkdownThreadLink(props: {
   readonly label: string | null;
 }) {
   const environmentId = props.link.environmentId ?? props.environmentId;
+  const sourceKey = JSON.stringify([environmentId, props.link.threadId]);
   const decodedId = percentDecodedThreadLinkId(props.link.threadId);
   const writtenRef = scopeThreadRef(environmentId, props.link.threadId);
   const written = useThreadShell(writtenRef);
   const writtenFamily = useThreadFamilyIfMissing(writtenRef, written === null);
   const writtenMissing = written === null && writtenFamily === "missing";
+  const [decodedLookupKey, setDecodedLookupKey] = useState<string | null>(null);
+  const decodedActive = decodedId !== null && (writtenMissing || decodedLookupKey === sourceKey);
+  if (decodedLookupKey !== sourceKey && (decodedLookupKey !== null || decodedActive)) {
+    setDecodedLookupKey(decodedActive ? sourceKey : null);
+  }
   const decodedRef =
-    writtenMissing && decodedId !== null ? scopeThreadRef(environmentId, decodedId) : null;
+    decodedActive && decodedId !== null ? scopeThreadRef(environmentId, decodedId) : null;
   const decoded = useThreadShell(decodedRef);
   const decodedFamily = useThreadFamilyIfMissing(
     decodedRef,
     decodedRef !== null && decoded === null,
   );
-  const decodedMissing = decodedId === null || (decoded === null && decodedFamily === "missing");
   const local = written ?? decoded;
-  const lookupFailed = writtenFamily === "failed" || decodedFamily === "failed";
+  const writtenFinished = writtenMissing || writtenFamily === "failed";
+  const decodedFinished =
+    decodedRef === null || decodedFamily === "failed" || decodedFamily === "missing";
   const guess =
-    local === null &&
-    (lookupFailed || (writtenMissing && decodedMissing)) &&
-    props.link.environmentId === null;
+    local === null && writtenFinished && decodedFinished && props.link.environmentId === null;
   const refs = useThreadRefs(guess);
   const guessedRef = guess
     ? guessThreadLinkRef(
@@ -47,7 +52,6 @@ export function MarkdownThreadLink(props: {
         refs.filter((ref) => ref.environmentId !== environmentId),
       )
     : null;
-  const sourceKey = JSON.stringify([environmentId, props.link.threadId]);
   const [remoteSelection, setRemoteSelection] = useState<{
     sourceKey: string;
     ref: ScopedThreadRef;
