@@ -1780,7 +1780,9 @@ it.effect("queued-message commands read a long thread's history without walking 
           if (
             detail.includes("TEMP B-TREE FOR GROUP BY") ||
             (/^SEARCH .*(node|turn_item).* \(thread_id=\?\)$/.test(detail) &&
-              !detail.includes("USING COVERING INDEX"))
+              !detail.includes("USING COVERING INDEX")) ||
+            // Every active run in the environment, not only this thread's.
+            /^SEARCH .*runs.* \(status=\?\)$/.test(detail)
           ) {
             walks.push(`${commandType}: ${detail}\n  in: ${query.replace(/\s+/g, " ").trim()}`);
           }

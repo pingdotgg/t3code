@@ -3340,8 +3340,9 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             WHERE ${
               filter?.omitSettledLeafNodes === true
                 ? sql`node.node_id IN (
-                    -- Settled leaves stay only for active runs. Both predicates match their
-                    -- indexes' text: nodes_settled_leaf_idx and runs_recovery_idx.
+                    -- Settled leaves stay only for this thread's active runs (nodes never
+                    -- carry another thread's run). Both predicates match their indexes'
+                    -- text: nodes_settled_leaf_idx and runs_recovery_idx.
                     SELECT node_id FROM orchestration_v2_projection_nodes
                     WHERE thread_id = ${threadId}
                       AND (kind IN ('tool_call', 'assistant_message', 'reasoning')
@@ -3353,6 +3354,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                       AND run_id IN (
                         SELECT run_id FROM orchestration_v2_projection_runs
                         WHERE status IN ('queued', 'preparing', 'starting', 'running', 'waiting')
+                          AND thread_id = ${threadId}
                       )
                       AND kind IN ('tool_call', 'assistant_message', 'reasoning')
                       AND status IN ('completed', 'interrupted', 'failed', 'cancelled', 'rolled_back')
