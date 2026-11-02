@@ -150,7 +150,9 @@ const make = Effect.gen(function* () {
       if (
         task === undefined ||
         parent.thread.archivedAt !== null ||
-        parent.thread.deletedAt !== null
+        parent.thread.deletedAt !== null ||
+        execution.thread.archivedAt !== null ||
+        execution.thread.deletedAt !== null
       ) {
         return;
       }

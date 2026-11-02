@@ -578,7 +578,11 @@ it.effect(
         // Claude's adapter projects native subagents A and B at depth 1, and C under A.
         const a = h.nativeTask({
           name: "a",
-          listing: root.projection.thread,
+          listing: {
+            ...root.projection.thread,
+            branch: "before-workspace-change",
+            worktreePath: "/tmp/t3code-28873-review-followup/stale-native-workspace",
+          },
           parentNodeId: root.run.rootNodeId!,
           execution,
         });
@@ -610,6 +614,11 @@ it.effect(
 
         // Siblings with equal request keys get their own tasks, each listed by its caller.
         const fromA = yield* h.delegate(scope("claude-tool:a"), "same-key");
+        const delegatedThread = (yield* h.orchestrator.getThreadProjection(fromA.childThreadId!))
+          .thread;
+        assert.equal(delegatedThread.projectId, root.projection.thread.projectId);
+        assert.equal(delegatedThread.branch, root.projection.thread.branch);
+        assert.equal(delegatedThread.worktreePath, root.projection.thread.worktreePath);
         const fromB = yield* h.delegate(scope("claude-tool:b"), "same-key");
         const fromC = yield* h.delegate(scope("claude-tool:c"), "same-key");
         const fromRoot = yield* h.delegate(scope(), "same-key");
@@ -1041,58 +1050,81 @@ it.effect("a stopped app child's task ends once what its native subagent delegat
   ),
 );
 
-it.effect("a question from a native subagent's task wakes the thread whose run executes it", () =>
-  Effect.scoped(
-    Effect.gen(function* () {
-      const h = yield* makeHarness("native-delegation-question");
-      const rootThreadId = ThreadId.make("thread:question-root");
-      const root = yield* h.startRoot(rootThreadId, "provider-session:question-root");
-      const native = h.nativeTask({
-        name: "asker",
-        listing: root.projection.thread,
-        parentNodeId: root.run.rootNodeId!,
-        execution: { threadId: rootThreadId, runId: root.run.id },
-      });
-      yield* h.project(root.turn, [native]);
-      yield* h.mcpSessions.bindNativeCaller({
-        threadId: rootThreadId,
-        callId: "claude-tool:asker",
-        callerThreadId: native.thread.id,
-      });
-      const task = yield* h.delegate(
-        scopeFor(rootThreadId, "provider-session:question-root", "claude-tool:asker"),
-        "asker",
-      );
-      const childRun = (yield* h.orchestrator.getThreadProjection(task.childThreadId!)).runs[0]!;
-      const now = yield* DateTime.now;
-      const question = {
-        id: EventId.make("event:native-task-question"),
-        type: "runtime-request.updated",
-        threadId: task.childThreadId!,
-        runId: childRun.id,
-        occurredAt: now,
-        payload: {
-          id: RuntimeRequestId.make("request:native-task-question"),
-          nodeId: childRun.rootNodeId!,
-          providerTurnId: null,
-          nativeRequestRef: null,
-          kind: "user_input",
-          status: "pending",
-          responseCapability: { type: "message" },
-          createdAt: now,
-          resolvedAt: null,
-        },
-      } satisfies OrchestrationV2DomainEvent;
-      yield* h.eventSink.write({ events: [question] });
-      yield* h.questions.handle(question);
-      const wake = (yield* h.orchestrator.getThreadProjection(rootThreadId)).messages.find(
-        (message) => message.notification?.source.kind === "delegated_task",
-      );
-      assert.deepEqual(wake?.notification?.source, {
-        kind: "delegated_task",
-        taskIds: [task.taskId],
-        childThreadId: task.childThreadId!,
-      });
-    }),
-  ),
+it.effect.each(["active", "archived", "deleted"] as const)(
+  "a native task's question wakes only its active execution thread: %s",
+  (executionState) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const h = yield* makeHarness("native-delegation-question");
+        const rootThreadId = ThreadId.make("thread:question-root");
+        const root = yield* h.startRoot(rootThreadId, "provider-session:question-root");
+        const native = h.nativeTask({
+          name: "asker",
+          listing: root.projection.thread,
+          parentNodeId: root.run.rootNodeId!,
+          execution: { threadId: rootThreadId, runId: root.run.id },
+        });
+        yield* h.project(root.turn, [native]);
+        yield* h.mcpSessions.bindNativeCaller({
+          threadId: rootThreadId,
+          callId: "claude-tool:asker",
+          callerThreadId: native.thread.id,
+        });
+        const task = yield* h.delegate(
+          scopeFor(rootThreadId, "provider-session:question-root", "claude-tool:asker"),
+          "asker",
+        );
+        const childRun = (yield* h.orchestrator.getThreadProjection(task.childThreadId!)).runs[0]!;
+        const now = yield* DateTime.now;
+        if (executionState !== "active") {
+          const execution = (yield* h.orchestrator.getThreadProjection(rootThreadId)).thread;
+          yield* h.eventSink.write({
+            events: [
+              {
+                id: EventId.make("event:inactive-question-execution"),
+                type: "thread.metadata-updated",
+                threadId: rootThreadId,
+                occurredAt: now,
+                payload: {
+                  ...execution,
+                  ...(executionState === "archived" ? { archivedAt: now } : { deletedAt: now }),
+                },
+              },
+            ],
+          });
+        }
+        const question = {
+          id: EventId.make("event:native-task-question"),
+          type: "runtime-request.updated",
+          threadId: task.childThreadId!,
+          runId: childRun.id,
+          occurredAt: now,
+          payload: {
+            id: RuntimeRequestId.make("request:native-task-question"),
+            nodeId: childRun.rootNodeId!,
+            providerTurnId: null,
+            nativeRequestRef: null,
+            kind: "user_input",
+            status: "pending",
+            responseCapability: { type: "message" },
+            createdAt: now,
+            resolvedAt: null,
+          },
+        } satisfies OrchestrationV2DomainEvent;
+        yield* h.eventSink.write({ events: [question] });
+        yield* h.questions.handle(question);
+        const wake = (yield* h.orchestrator.getThreadProjection(rootThreadId)).messages.find(
+          (message) => message.notification?.source.kind === "delegated_task",
+        );
+        if (executionState === "active") {
+          assert.deepEqual(wake?.notification?.source, {
+            kind: "delegated_task",
+            taskIds: [task.taskId],
+            childThreadId: task.childThreadId!,
+          });
+        } else {
+          assert.isUndefined(wake);
+        }
+      }),
+    ),
 );
