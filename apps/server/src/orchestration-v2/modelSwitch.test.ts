@@ -54,7 +54,12 @@ describe("modelSwitchSince", () => {
   });
 
   it("skips messages clients hide", () => {
-    const [first, pending, compact] = shown("first", "pending", "/compact");
+    const [first, pending, compact, answer] = shown(
+      "first",
+      "pending",
+      "/compact",
+      "async-answer:question",
+    );
     expect(
       modelSwitchSince(
         {
@@ -62,11 +67,13 @@ describe("modelSwitchSince", () => {
             run("first", 1, "a"),
             run("pending", 2, "b", "cancelled"),
             run("/compact", 3, "c"),
+            run("async-answer:question", 4, "d"),
           ],
           turnItems: [
             first!,
             { ...pending!, inputIntent: "queued_turn", status: "pending" },
             compact!,
+            answer!,
           ] as OrchestrationV2ThreadProjection["turnItems"],
         },
         selection("c"),

@@ -5318,7 +5318,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       providerTurnId: null,
       providerThreadId: restartProviderThread.id,
       providerInstanceId: input.modelSelection.instanceId,
-      // Measured before the restart rewrites the run, so it compares with the selection it replaces.
+      // Measured on the pre-restart projection, so the rewritten run is not its own baseline.
       ...(restartHandoff === null ? modelSwitchSince(input.projection, input.modelSelection) : {}),
     });
     const interruptedAttemptId = targetRun.activeAttemptId;
