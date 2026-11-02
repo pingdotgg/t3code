@@ -781,7 +781,17 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
     "GitVcsDriver.initRepository",
   )(function* (input) {
     // A deleted folder reports as a non-repository; say so instead of git's bare exit 128.
-    const exists = yield* fileSystem.exists(input.cwd).pipe(Effect.orElseSucceed(() => true));
+    const exists = yield* fileSystem.exists(input.cwd).pipe(
+      Effect.mapError(
+        (cause) =>
+          new VcsRepositoryDetectionError({
+            operation: "GitVcsDriver.initRepository",
+            cwd: input.cwd,
+            detail: "Could not check that the folder exists.",
+            cause,
+          }),
+      ),
+    );
     if (!exists) {
       return yield* new VcsRepositoryDetectionError({
         operation: "GitVcsDriver.initRepository",
