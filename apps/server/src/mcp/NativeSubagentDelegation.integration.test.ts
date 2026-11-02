@@ -309,7 +309,14 @@ const makeHarness = (name: string) =>
             event.payload.id === taskId &&
             event.payload.result !== null,
         );
-      const startRoot = (threadId: ThreadId, providerSessionId: string) =>
+      const startRoot = (
+        threadId: ThreadId,
+        providerSessionId: string,
+        modes: {
+          readonly runtimeMode: OrchestrationV2AppThread["runtimeMode"];
+          readonly interactionMode: OrchestrationV2AppThread["interactionMode"];
+        } = { runtimeMode: "full-access", interactionMode: "default" },
+      ) =>
         Effect.gen(function* () {
           const rootRunning = yield* watch(
             (event) =>
@@ -324,8 +331,7 @@ const makeHarness = (name: string) =>
             projectId: ProjectId.make("project:native-delegation"),
             title: "Root",
             modelSelection,
-            runtimeMode: "full-access",
-            interactionMode: "default",
+            ...modes,
             branch: null,
             worktreePath: cwd,
             createdBy: "user",
@@ -1079,6 +1085,92 @@ it.effect("a stopped app child's task ends once what its native subagent delegat
       assert.equal(ended?.status, "interrupted");
     }),
   ),
+);
+
+it.effect.each(["runtime", "interaction", "unchanged"] as const)(
+  "cancelling a task checks what its native subagent delegated before stopping it: %s",
+  (raised) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const h = yield* makeHarness(`cancel-native-delegated-${raised}`);
+        const rootThreadId = ThreadId.make("thread:cancel-native-root");
+        const rootScope = scopeFor(rootThreadId, "provider-session:cancel-native-root");
+        yield* h.startRoot(rootThreadId, "provider-session:cancel-native-root", {
+          runtimeMode: "auto",
+          interactionMode: "plan",
+        });
+        const outer = yield* h.delegate(rootScope, "outer");
+        const outerThreadId = outer.childThreadId!;
+        const child = yield* h.orchestrator.getThreadProjection(outerThreadId);
+        const childRun = child.runs[0]!;
+        yield* h.mcpSessions.set(sessionFor(outerThreadId, "provider-session:cancel-native-child"));
+        const native = h.nativeTask({
+          name: "cancel-native",
+          listing: child.thread,
+          parentNodeId: childRun.rootNodeId!,
+          execution: { threadId: outerThreadId, runId: childRun.id },
+        });
+        yield* h.project(h.childTurn(outerThreadId), [native]);
+        yield* h.mcpSessions.bindNativeCaller({
+          threadId: outerThreadId,
+          providerSessionId: "provider-session:cancel-native-child",
+          callId: "claude-tool:cancel-native",
+          callerThreadId: native.thread.id,
+        });
+        const inner = yield* h.delegate(
+          scopeFor(
+            outerThreadId,
+            "provider-session:cancel-native-child",
+            "claude-tool:cancel-native",
+          ),
+          "inner",
+        );
+        const innerThreadId = inner.childThreadId!;
+        // The inner task's user raises its thread above the root's modes.
+        if (raised !== "unchanged") {
+          yield* h.orchestrator.dispatch(
+            raised === "runtime"
+              ? {
+                  type: "thread.runtime-mode.set",
+                  commandId: CommandId.make("raise-inner-runtime"),
+                  threadId: innerThreadId,
+                  runtimeMode: "full-access",
+                }
+              : {
+                  type: "thread.interaction-mode.set",
+                  commandId: CommandId.make("raise-inner-interaction"),
+                  threadId: innerThreadId,
+                  interactionMode: "default",
+                },
+          );
+          yield* h.worker.drain();
+        }
+
+        const cancelled = yield* h.service
+          .cancelTask(rootScope, { taskId: outer.taskId, clientRequestId: "cancel" })
+          .pipe(
+            Effect.match({
+              onFailure: (error) => error.code,
+              onSuccess: (result) => result.status,
+            }),
+          );
+        yield* h.worker.drain();
+        const latestStatus = (threadId: ThreadId) =>
+          h.orchestrator
+            .getThreadProjection(threadId)
+            .pipe(Effect.map((projection) => projection.runs.at(-1)?.status));
+        if (raised === "unchanged") {
+          assert.equal(cancelled, "cancel_requested");
+          assert.equal(yield* latestStatus(outerThreadId), "interrupted");
+          assert.equal(yield* latestStatus(innerThreadId), "interrupted");
+          return;
+        }
+        assert.equal(cancelled, `${raised}_mode_escalation_denied`);
+        assert.notInclude(h.interrupts, outerThreadId, "nothing is stopped before the refusal");
+        assert.equal(yield* latestStatus(outerThreadId), "running");
+        assert.equal(yield* latestStatus(innerThreadId), "running");
+      }),
+    ),
 );
 
 it.effect.each(["active", "archived", "deleted"] as const)(
