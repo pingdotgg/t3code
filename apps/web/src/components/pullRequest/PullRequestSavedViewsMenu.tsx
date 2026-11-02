@@ -53,6 +53,7 @@ export function PullRequestSavedViewsMenu({
   const selectedView =
     views.find((view) => view.id === selectedId) ??
     views.find((view) => pullRequestViewMatches(view, preferences));
+  if (selectedView && selectedId !== selectedView.id) setSelectedId(selectedView.id);
   const modified = selectedView !== undefined && !pullRequestViewMatches(selectedView, preferences);
   const nameError = editor ? pullRequestViewNameError(editor.name, views, editor.id) : null;
 
