@@ -69,6 +69,9 @@ export function createThreadNotificationGate<Key>(
       for (const key of handled.keys()) if (!keys.has(key)) handled.delete(key);
       for (const key of lastSettled.keys()) if (!keys.has(key)) lastSettled.delete(key);
     },
+    cancelPending(): void {
+      for (const key of pending.keys()) cancel(key);
+    },
     clear(): void {
       for (const key of pending.keys()) cancel(key);
       handled.clear();
