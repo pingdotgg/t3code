@@ -250,7 +250,8 @@ export function NewTaskRouteScreen({ route }: StaticScreenProps<NewTaskRoutePara
             routePreferredEnvironmentId === undefined
               ? connectedEnvironments
               : connectedEnvironments.filter(
-                  (environment) => String(environment.environmentId) === routePreferredEnvironmentId,
+                  (environment) =>
+                    String(environment.environmentId) === routePreferredEnvironmentId,
                 ),
           serverConfigs,
           selectedEnvironmentId: preferredEnvironmentId,
