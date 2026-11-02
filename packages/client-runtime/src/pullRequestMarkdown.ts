@@ -2,7 +2,13 @@ import { sourceControlClients, type ReferenceAutolink } from "./sourceControlCli
 
 /** `id` is positional on purpose: the same attachment can be embedded twice in one body. */
 export type PullRequestBodySegment =
-  | { readonly id: string; readonly kind: "markdown"; readonly text: string }
+  | {
+      readonly id: string;
+      readonly kind: "markdown";
+      readonly text: string;
+      /** Where `text` starts in the body, so an edit made to it can be written back. */
+      readonly sourceOffset: number;
+    }
   | {
       readonly id: string;
       readonly kind: "attachment";
@@ -53,19 +59,38 @@ function attachmentFromLine(
 export function splitPullRequestBody(body: string): ReadonlyArray<PullRequestBodySegment> {
   const segments: PullRequestBodySegment[] = [];
   const markdown: string[] = [];
+  let markdownOffset = 0;
   let openFence: string | null = null;
 
   // Blank lines around a run are dropped, but never leading spaces: four of them open an
   // indented code block, so trimming a run would silently turn code into prose.
   const flushMarkdown = () => {
-    const text = markdown.join("\n").replace(/^\n+/u, "").replace(/\s+$/u, "");
+    const joined = markdown.join("\n");
+    const leading = joined.length - joined.replace(/^\n+/u, "").length;
+    const text = joined.slice(leading).replace(/\s+$/u, "");
     markdown.length = 0;
     if (text.trim().length > 0) {
-      segments.push({ id: `markdown:${segments.length}`, kind: "markdown", text });
+      segments.push({
+        id: `markdown:${segments.length}`,
+        kind: "markdown",
+        text,
+        sourceOffset: markdownOffset + leading,
+      });
     }
   };
 
   const lines = body.split("\n");
+  const lineOffsets: number[] = [];
+  let lineOffset = 0;
+  for (const line of lines) {
+    lineOffsets.push(lineOffset);
+    lineOffset += line.length + 1;
+  }
+  const pushMarkdown = (index: number) => {
+    if (markdown.length === 0) markdownOffset = lineOffsets[index]!;
+    markdown.push(lines[index]!);
+  };
+
   for (let index = 0; index < lines.length; index += 1) {
     const line = lines[index]!;
     const fenceMatch = FENCE_PATTERN.exec(line);
@@ -84,11 +109,11 @@ export function splitPullRequestBody(body: string): ReadonlyArray<PullRequestBod
       } else if (closes) {
         openFence = null;
       }
-      markdown.push(line);
+      pushMarkdown(index);
       continue;
     }
     if (openFence !== null || INDENTED_CODE_PATTERN.test(line)) {
-      markdown.push(line);
+      pushMarkdown(index);
       continue;
     }
 
@@ -100,7 +125,7 @@ export function splitPullRequestBody(body: string): ReadonlyArray<PullRequestBod
     }
 
     if (!STANDALONE_VIDEO_TAG_PATTERN.test(line)) {
-      markdown.push(line);
+      pushMarkdown(index);
       continue;
     }
     const lastCandidate = Math.min(index + VIDEO_TAG_MAX_LINES, lines.length) - 1;
@@ -124,7 +149,7 @@ export function splitPullRequestBody(body: string): ReadonlyArray<PullRequestBod
     } else {
       // Unclosed, or nothing linkable in it: prose. Only this line is consumed, so the
       // lines that were looked at are still parsed on their own terms.
-      markdown.push(line);
+      pushMarkdown(index);
     }
   }
 
