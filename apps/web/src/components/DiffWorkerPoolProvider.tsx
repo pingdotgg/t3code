@@ -41,8 +41,9 @@ function applyDiffWorkerTheme(pool: WorkerPoolManager) {
   let operation: DiffWorkerError["operation"] = "get-render-options";
   void (async () => {
     try {
+      // Always forward the latest name: the pool skips no-op requests itself, and comparing
+      // against its committed options would let a pending older request win.
       const current = pool.getDiffRenderOptions();
-      if (current.theme === themeName) return;
       operation = "set-render-options";
       await pool.setRenderOptions({ ...current, theme: themeName });
     } catch (cause) {
