@@ -67,7 +67,12 @@ it.effect("names a renamed simulator's hardware from its device type", () =>
 
 it.effect("still lists simulators when simctl cannot describe them", () =>
   Effect.gen(function* () {
-    const { devices } = yield* operations({ code: 1, stdout: "" }).list;
-    expect(devices.map((device) => device.model)).toEqual([undefined, undefined]);
+    for (const code of [1, 124]) {
+      const { devices } = yield* operations({ code, stdout: "" }).list;
+      expect(devices.map((device) => [device.id, device.name, device.model])).toEqual([
+        ["A", "iPhone (clean)", undefined],
+        ["B", "Unknown type", undefined],
+      ]);
+    }
   }),
 );

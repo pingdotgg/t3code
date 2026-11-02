@@ -119,7 +119,7 @@ export const makeDeviceHubOperations = (options: {
   const listSimulatorModels = Effect.fn("DeviceHubOperations.listSimulatorModels")(
     function* () {
       const models = new Map<string, string>();
-      const result = yield* run("xcrun", ["simctl", "list", "-j"]);
+      const result = yield* run("xcrun", ["simctl", "list", "-j"], { timeoutMs: 5_000 });
       if (result.code !== 0) return models;
       const { devicetypes, devices } = yield* decodeSimctlList(result.stdout);
       const names = new Map(devicetypes.map((type) => [type.identifier, type.name]));
