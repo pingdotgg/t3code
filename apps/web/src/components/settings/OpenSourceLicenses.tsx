@@ -1,4 +1,4 @@
-import { ChevronRightIcon, ExternalLinkIcon, SearchIcon } from "lucide-react";
+import { ChevronRightIcon, ExternalLinkIcon } from "lucide-react";
 import { useAtomRefresh, useAtomValue } from "@effect/atom-react";
 import * as Cause from "effect/Cause";
 import * as Data from "effect/Data";
@@ -18,9 +18,15 @@ import {
 
 import { Button } from "../ui/button";
 import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from "../ui/collapsible";
-import { InputGroup, InputGroupAddon, InputGroupInput } from "../ui/input-group";
-import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
-import { SettingsPageContainer, SettingsSection } from "./settingsLayout";
+import { Badge } from "../ui/badge";
+import {
+  SettingsLoadingRows,
+  SettingsNoMatches,
+  SettingsPageContainer,
+  SettingsSearchField,
+  SettingsSection,
+  SettingsToolbar,
+} from "./settingsLayout";
 
 class LicenseManifestLoadError extends Data.TaggedError("LicenseManifestLoadError")<{
   readonly message: string;
@@ -62,6 +68,7 @@ const licenseManifestAtom = Atom.make(
   ),
 ).pipe(Atom.withLabel("settings:open-source-licenses"));
 
+/** Name over version and bundles, a license chip, and a chevron; the notice expands in place. */
 function LicenseNoticeRow({
   entry,
   open,
@@ -74,38 +81,41 @@ function LicenseNoticeRow({
   return (
     <Collapsible open={open} onOpenChange={onOpenChange}>
       <article>
-        <div className="flex min-h-10 items-center hover:surface-ghost-hover sm:min-h-9">
-          <CollapsibleTrigger className="group flex min-h-10 min-w-0 flex-1 items-center gap-2.5 px-3 text-left sm:min-h-9 sm:px-4">
+        <CollapsibleTrigger className="group flex w-full min-w-0 text-left outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset">
+          <span className="flex min-w-0 flex-1 items-center gap-3 px-4 py-3 hover:surface-ghost-hover">
+            <span className="min-w-0 flex-1">
+              <span className="block truncate text-label text-foreground">{entry.name}</span>
+              <span className="block truncate text-meta text-dim-foreground">
+                {[entry.version, formatLicenseBundles(entry.bundles)].filter(Boolean).join(" · ")}
+              </span>
+            </span>
+            <Badge
+              variant="secondary"
+              size="lg"
+              className="min-w-0 max-w-2/5"
+              title={entry.license}
+            >
+              <span className="truncate">{entry.license}</span>
+            </Badge>
             <ChevronRightIcon
               aria-hidden
               className="size-3.5 shrink-0 text-dim-foreground transition-transform duration-200 group-data-panel-open:rotate-90"
             />
-            <span className="flex min-w-0 flex-1 items-baseline gap-2">
-              <span className="truncate font-medium text-foreground">{entry.name}</span>
-              {entry.version ? (
-                <span className="shrink-0 text-xs text-dim-foreground">{entry.version}</span>
-              ) : null}
-            </span>
-            <span className="max-w-[42%] shrink-0 truncate rounded-row bg-badge-neutral text-xs font-medium text-muted-foreground">
-              {entry.license} · {formatLicenseBundles(entry.bundles)}
-            </span>
-          </CollapsibleTrigger>
-          {entry.sourceUrl ? (
-            <Button
-              aria-label={`View project source for ${entry.name}`}
-              className="me-3 shrink-0 sm:me-4"
-              render={<a href={entry.sourceUrl} rel="noreferrer noopener" target="_blank" />}
-              size="icon-micro"
-              title="Project source"
-              variant="ghost-muted"
-            >
-              <ExternalLinkIcon aria-hidden className="size-3" />
-            </Button>
-          ) : null}
-        </div>
+          </span>
+        </CollapsibleTrigger>
         <CollapsiblePanel>
           {open ? (
-            <div className="px-9 pt-1 pb-4 sm:px-10">
+            <div className="space-y-3 px-4 pt-1 pb-4">
+              {entry.sourceUrl ? (
+                <Button
+                  render={<a href={entry.sourceUrl} rel="noreferrer noopener" target="_blank" />}
+                  size="xs"
+                  variant="secondary"
+                >
+                  <ExternalLinkIcon aria-hidden />
+                  Project source
+                </Button>
+              ) : null}
               <pre className="max-w-[76ch] whitespace-pre-wrap break-words font-mono text-xs/5 text-foreground">
                 {entry.noticeText}
               </pre>
@@ -117,90 +127,25 @@ function LicenseNoticeRow({
   );
 }
 
-function LicenseCount({
-  filteredCount,
-  totalCount,
-}: {
-  filteredCount: number;
-  totalCount: number;
-}) {
+/** T3 Code's own repository and license, above the third-party notices. */
+function ProjectSourceSection() {
   return (
-    <p className="whitespace-nowrap text-xs font-normal text-muted-foreground tabular-nums">
-      {filteredCount === totalCount
-        ? `${String(totalCount)} notices`
-        : `${String(filteredCount)} of ${String(totalCount)}`}
-    </p>
-  );
-}
-
-function LicenseHeaderAction({
-  query,
-  onQueryChange,
-  searchOpen,
-  onSearchOpenChange,
-  filteredCount,
-  totalCount,
-}: {
-  query: string;
-  onQueryChange: (value: string) => void;
-  searchOpen: boolean;
-  onSearchOpenChange: (open: boolean) => void;
-  filteredCount: number;
-  totalCount: number;
-}) {
-  if (!searchOpen) {
-    return (
-      <div className="flex items-center gap-1.5">
-        <LicenseCount filteredCount={filteredCount} totalCount={totalCount} />
-        <Tooltip>
-          <TooltipTrigger
-            render={
-              <Button
-                aria-label="Search open-source licenses"
-                onClick={() => onSearchOpenChange(true)}
-                size="icon-micro"
-                type="button"
-                variant="ghost-muted"
-              >
-                <SearchIcon className="size-3" />
-              </Button>
-            }
-          />
-          <TooltipPopup side="top">Search licenses</TooltipPopup>
-        </Tooltip>
-      </div>
-    );
-  }
-
-  return (
-    <div className="flex items-center gap-2">
-      <div className="hidden sm:block">
-        <LicenseCount filteredCount={filteredCount} totalCount={totalCount} />
-      </div>
-      <InputGroup className="w-36 sm:w-44">
-        <InputGroupAddon>
-          <SearchIcon aria-hidden className="size-3" />
-        </InputGroupAddon>
-        <InputGroupInput
-          aria-label="Search open-source licenses"
-          autoFocus
-          onBlur={() => {
-            if (query.length === 0) onSearchOpenChange(false);
-          }}
-          onChange={(event) => onQueryChange(event.currentTarget.value)}
-          onKeyDown={(event) => {
-            if (event.key !== "Escape") return;
-            event.preventDefault();
-            onQueryChange("");
-            onSearchOpenChange(false);
-          }}
-          placeholder="Search licenses"
-          size="sm"
-          type="search"
-          value={query}
-        />
-      </InputGroup>
-    </div>
+    <SettingsSection title="Project source">
+      <a
+        href="https://github.com/pingdotgg/t3code"
+        rel="noreferrer noopener"
+        target="_blank"
+        className="flex min-w-0 items-center gap-3 rounded-card px-4 py-3 outline-none hover:surface-ghost-hover focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+      >
+        <span className="min-w-0 flex-1">
+          <span className="block truncate text-label text-foreground">T3 Code</span>
+          <span className="block truncate text-meta text-dim-foreground">pingdotgg/t3code</span>
+        </span>
+        <Badge variant="secondary" size="lg">
+          MIT
+        </Badge>
+      </a>
+    </SettingsSection>
   );
 }
 
@@ -208,8 +153,8 @@ function LicenseManifestError({ message, onRetry }: { message: string; onRetry: 
   return (
     <div className="flex flex-col items-start gap-3 px-3 py-5 sm:px-4">
       <div className="flex flex-col gap-1">
-        <h3 className="text-sm font-medium text-foreground">Open-source notices are unavailable</h3>
-        <p className="max-w-[70ch] text-pretty text-xs leading-normal text-muted-foreground">
+        <h3 className="text-label text-foreground">Open-source notices are unavailable</h3>
+        <p className="max-w-[70ch] text-pretty text-meta leading-normal text-muted-foreground">
           {message}
         </p>
       </div>
@@ -224,7 +169,6 @@ export function OpenSourceLicensesPanel() {
   const result = useAtomValue(licenseManifestAtom);
   const retry = useAtomRefresh(licenseManifestAtom);
   const [query, setQuery] = useState("");
-  const [searchOpen, setSearchOpen] = useState(false);
   const [openEntryKey, setOpenEntryKey] = useState<string | null>(null);
   const manifest = result._tag === "Success" ? result.value : null;
   const entries = manifest?.entries ?? [];
@@ -239,23 +183,13 @@ export function OpenSourceLicensesPanel() {
 
   return (
     <SettingsPageContainer>
-      <SettingsSection
-        title="Third-party notices"
-        headerAction={
-          manifest ? (
-            <LicenseHeaderAction
-              query={query}
-              onQueryChange={setQuery}
-              searchOpen={searchOpen}
-              onSearchOpenChange={setSearchOpen}
-              filteredCount={filteredEntries.length}
-              totalCount={entries.length}
-            />
-          ) : null
-        }
-      >
+      <SettingsToolbar>
+        <SettingsSearchField value={query} onChange={setQuery} placeholder="Search licenses" />
+      </SettingsToolbar>
+      <ProjectSourceSection />
+      <SettingsSection title="Third-party notices">
         {manifest ? (
-          <div className="divide-y divide-divider text-base sm:text-sm">
+          <div className="divide-y divide-divider">
             {filteredEntries.length > 0 ? (
               filteredEntries.map((entry) => {
                 const entryKey = thirdPartyLicenseEntryKey(entry);
@@ -269,17 +203,15 @@ export function OpenSourceLicensesPanel() {
                 );
               })
             ) : (
-              <p className="px-3 py-8 text-center text-sm/6 text-muted-foreground sm:px-4">
-                No licenses match that search.
-              </p>
+              <SettingsNoMatches onClear={() => setQuery("")}>
+                No licenses match “{query.trim()}”.
+              </SettingsNoMatches>
             )}
           </div>
         ) : errorMessage !== null ? (
           <LicenseManifestError message={errorMessage} onRetry={retry} />
         ) : (
-          <p className="px-3 py-5 text-sm/6 text-muted-foreground sm:px-4">
-            Loading open-source notices…
-          </p>
+          <SettingsLoadingRows label="Loading open-source notices" />
         )}
       </SettingsSection>
     </SettingsPageContainer>

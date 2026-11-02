@@ -339,7 +339,7 @@ function SnoozePresetFields(props: {
   // misclick on "When" can be undone without retyping it.
   const [memory, setMemory] = useState<KindMemory>({ minutes: 60, time: "09:00" });
   return (
-    <div className="flex items-center gap-2">
+    <div className="flex max-w-full min-w-0 flex-wrap items-center gap-2">
       <Select
         value={when}
         items={WHEN_LABELS}
@@ -373,7 +373,7 @@ function SnoozePresetFields(props: {
           onChange={(minutes) => onChange({ ...preset, minutes })}
         />
       ) : (
-        <>
+        <div className="flex items-center gap-2">
           <span className="text-meta text-muted-foreground">at</span>
           <Input
             nativeInput
@@ -388,7 +388,7 @@ function SnoozePresetFields(props: {
               }
             }}
           />
-        </>
+        </div>
       )}
     </div>
   );
@@ -410,10 +410,10 @@ function DurationFields(props: { minutes: number; onChange: (minutes: number) =>
     setDraft(amount);
   }
   return (
-    <>
+    <div className="flex max-w-full min-w-0 items-center gap-2">
       <NumberField
         size="sm"
-        className="w-32"
+        className="w-32 shrink-0"
         min={1}
         max={maxAmount}
         step={1}
@@ -454,7 +454,7 @@ function DurationFields(props: { minutes: number; onChange: (minutes: number) =>
           }
         }}
       >
-        <SelectTrigger size="sm" className="w-28" aria-label="Unit">
+        <SelectTrigger size="sm" className="w-28 max-sm:min-w-0" aria-label="Unit">
           <SelectValue />
         </SelectTrigger>
         <SelectPopup>
@@ -465,6 +465,6 @@ function DurationFields(props: { minutes: number; onChange: (minutes: number) =>
           ))}
         </SelectPopup>
       </Select>
-    </>
+    </div>
   );
 }

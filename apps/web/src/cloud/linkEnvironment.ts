@@ -28,6 +28,7 @@ import * as PrimaryEnvironmentHttpLayer from "../environments/primary/httpLayer"
 import { resolveCloudPublicConfig } from "./publicConfig";
 import {
   finishRelayClientInstall,
+  onRelayClientInstallCancel,
   reportRelayClientInstallProgress,
   requestRelayClientInstallConfirmation,
 } from "./relayClientInstallDialog";
@@ -47,6 +48,19 @@ const relayClientRpcError = (message: string) => (cause: unknown) =>
     message,
     cause,
   });
+
+const waitForRelayClientInstallCancel = Effect.callback<never, CloudEnvironmentLinkError>(
+  (resume) => {
+    const unsubscribe = onRelayClientInstallCancel(() => {
+      resume(
+        Effect.fail(
+          new CloudEnvironmentLinkError({ message: "Relay client installation was cancelled." }),
+        ),
+      );
+    });
+    return Effect.sync(unsubscribe);
+  },
+);
 
 const ensureRelayClientAvailable = Effect.fn("linkEnvironment.ensureRelayClientAvailable")(
   function* (
@@ -83,6 +97,8 @@ const ensureRelayClientAvailable = Effect.fn("linkEnvironment.ensureRelayClientA
       .pipe(
         Stream.runLast,
         Effect.mapError(relayClientRpcError("Could not install the relay client.")),
+        // Cancel in the dialog interrupts the stream, and with it the server install.
+        Effect.raceFirst(waitForRelayClientInstallCancel),
         Effect.ensuring(Effect.sync(finishRelayClientInstall)),
       );
     if (Option.isNone(installed) || installed.value.type !== "complete") {

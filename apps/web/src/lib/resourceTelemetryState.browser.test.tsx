@@ -33,6 +33,7 @@ const monitor = vi.hoisted(() => ({
 }));
 
 vi.mock("../components/settings/settingsLayout", () => ({
+  SettingsNote: ({ children }: { children: ReactNode }) => <p>{children}</p>,
   SettingsSection: ({
     title,
     headerAction,

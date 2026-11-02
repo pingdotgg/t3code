@@ -1,0 +1,44 @@
+[data-settings-nav] {
+  --sidebar: light-dark(#f2f2f2, #0f0f0f);
+  --sidebar-content-inset: 12px;
+  --sidebar-icon-color: var(--muted-foreground);
+  background: var(--sidebar);
+  border-color: light-dark(#0000000f, #ffffff0d);
+}
+
+/* Settings keep main's 16px section titles and the shared 14px label/field roles. */
+[data-settings-page-scroll] {
+  --type-title: 1rem;
+}
+
+[data-settings-nav] {
+  --type-caption: var(--type-meta);
+}
+
+[data-settings-nav] input {
+  --type-meta: var(--type-label);
+}
+
+:root:not([data-theme-id]) [data-settings-page-scroll] {
+  --divider: light-dark(#00000005, #ffffff08);
+}
+
+[data-settings-description] {
+  line-height: 1.45;
+}
+
+[data-settings-breadcrumb] {
+  color: light-dark(#3a3a3a, #c4c4c4);
+}
+
+:root[data-theme-id] [data-settings-breadcrumb] {
+  color: var(--foreground);
+}
+
+:root[data-theme-id] [data-settings-nav] {
+  --sidebar: var(--background);
+}
+
+:root[data-theme-id] [data-app-modal] {
+  --app-panel-fill: var(--popover);
+}

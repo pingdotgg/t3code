@@ -1,4 +1,5 @@
 import { SettingsGroup } from "./SettingsGroup";
+import { Link } from "@tanstack/react-router";
 import { RefreshIcon } from "~/components/ui/refresh-icon";
 import {
   AuthSettingsWriteScope,
@@ -35,7 +36,7 @@ import {
 import * as Arr from "effect/Array";
 import * as Duration from "effect/Duration";
 import * as Result from "effect/Result";
-import { PlusIcon } from "lucide-react";
+import { BotIcon, DownloadIcon, PlusIcon } from "lucide-react";
 import { useRef, useState, type ReactNode } from "react";
 
 import { isDesktopLocalConnectionTarget } from "../../connection/desktopLocal";
@@ -84,8 +85,7 @@ import {
   EmptyMedia,
   EmptyTitle,
 } from "../ui/empty";
-import { ScrollArea } from "../ui/scroll-area";
-import { Toggle, ToggleGroup } from "../ui/toggle-group";
+import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { stackedThreadToast, toastManager } from "../ui/toast";
 import { AddProviderInstanceDialog } from "./AddProviderInstanceDialog";
@@ -111,9 +111,11 @@ import {
 import {
   PolicyTooltip,
   SettingResetButton,
+  SettingsEmptyState,
   SettingsPageContainer,
   SettingsRow,
   SettingsSection,
+  SettingsToolbar,
   useSettingsSearchTargetId,
 } from "./settingsLayout";
 import {
@@ -194,9 +196,10 @@ function providerEnvironmentDetail(environment: EnvironmentPresentation): string
   return environment.displayUrl ?? "Remote device";
 }
 
-const providerCardHeightClassName =
-  "@min-[48rem]/providers:h-[min(44rem,calc(100dvh-11rem))] @min-[48rem]/providers:min-h-[32rem]";
-
+/**
+ * Same chrome as the providers list (device picker toolbar, section heading)
+ * for states that cannot render provider settings yet.
+ */
 function ProviderSettingsPlaceholder({
   deviceTabs,
   icon,
@@ -211,27 +214,21 @@ function ProviderSettingsPlaceholder({
   readonly children?: ReactNode;
 }) {
   return (
-    <SettingsSection {...searchableSetting("providers")} variant="plain">
-      {deviceTabs ? (
-        <div className="flex min-h-11 min-w-0 items-center px-3 sm:px-4">{deviceTabs}</div>
-      ) : null}
-      <SettingsGroup
-        divided={false}
-        className={cn(
-          providerCardHeightClassName,
-          "scrollbar-gutter-both flex overflow-x-hidden overflow-y-auto",
-        )}
-      >
-        <Empty>
-          <EmptyMedia variant="icon">{icon}</EmptyMedia>
-          <EmptyHeader>
-            <EmptyTitle>{title}</EmptyTitle>
-            <EmptyDescription>{description}</EmptyDescription>
-          </EmptyHeader>
-          {children ? <EmptyContent className="max-w-xl">{children}</EmptyContent> : null}
-        </Empty>
-      </SettingsGroup>
-    </SettingsSection>
+    <>
+      {deviceTabs ? <SettingsToolbar>{deviceTabs}</SettingsToolbar> : null}
+      <SettingsSection {...searchableSetting("providers")} title="Agents" variant="plain">
+        <SettingsGroup divided={false} className="flex min-h-80 overflow-x-hidden overflow-y-auto">
+          <Empty size="compact">
+            <EmptyMedia variant="icon">{icon}</EmptyMedia>
+            <EmptyHeader>
+              <EmptyTitle>{title}</EmptyTitle>
+              <EmptyDescription>{description}</EmptyDescription>
+            </EmptyHeader>
+            {children ? <EmptyContent className="max-w-xl">{children}</EmptyContent> : null}
+          </Empty>
+        </SettingsGroup>
+      </SettingsSection>
+    </>
   );
 }
 
@@ -278,6 +275,7 @@ function EnvironmentUnavailablePlaceholder({
 }
 
 interface ProviderSettingsTarget {
+  readonly resumeEnvironmentId?: EnvironmentId;
   readonly environmentId?: EnvironmentId;
   readonly instanceId?: ProviderInstanceId;
   readonly scoped?: boolean;
@@ -287,7 +285,24 @@ interface ProviderSettingsTarget {
 
 export function ProviderSettingsPanel(target: ProviderSettingsTarget) {
   return (
-    <SettingsPageContainer className="@container/providers gap-8">
+    <SettingsPageContainer className="@container/providers max-w-[808px]">
+      {target.resumeEnvironmentId ? (
+        <div>
+          <Button
+            variant="secondary"
+            size="sm"
+            render={
+              <Link
+                to="/welcome"
+                hash="setup"
+                search={{ resumeEnvironmentId: target.resumeEnvironmentId }}
+              />
+            }
+          >
+            Back to setup
+          </Button>
+        </div>
+      ) : null}
       <ProviderSettingsPanelContent
         key={`${target.environmentId ?? ""}:${target.instanceId ?? ""}`}
         {...target}
@@ -366,54 +381,64 @@ function ProviderSettingsPanelContent(target: ProviderSettingsTarget) {
   }
   const onlyPrimaryDevice =
     options.length === 1 && options[0]?.entry.target._tag === "PrimaryConnectionTarget";
+  const selectedOption = options.find(
+    (environment) => environment.environmentId === effectiveEnvironmentId,
+  );
   const deviceTabs =
     !target.scoped && !onlyPrimaryDevice && options.length > 0 ? (
-      <ScrollArea radius="none" hideScrollbars scrollFade className="h-11 min-w-0 flex-1">
-        <ToggleGroup
-          aria-label="Devices"
-          variant="segmented"
-          className="my-2"
-          value={effectiveEnvironmentId ? [effectiveEnvironmentId] : []}
-          onValueChange={(next) => {
-            const environment = options.find((option) => option.environmentId === next[0]);
-            if (environment) setSelectedEnvironmentId(environment.environmentId);
-          }}
+      <Select
+        value={effectiveEnvironmentId ?? null}
+        onValueChange={(next) => {
+          const environment = options.find((option) => option.environmentId === next);
+          if (environment) setSelectedEnvironmentId(environment.environmentId);
+        }}
+      >
+        <SelectTrigger
+          size="sm"
+          aria-label="Device"
+          className="w-auto min-w-0 max-w-72"
+          leadingIcon={
+            <EnvironmentMachineIcon
+              kind={resolveEnvironmentMachineKind(selectedOption?.serverConfig ?? null)}
+            />
+          }
         >
+          <SelectValue>
+            {() =>
+              selectedOption
+                ? `${selectedOption.label} · ${providerEnvironmentDetail(selectedOption)}`
+                : "Select a device"
+            }
+          </SelectValue>
+        </SelectTrigger>
+        <SelectPopup align="start" alignItemWithTrigger={false}>
           {options.map((environment) => {
             const machine = resolveEnvironmentMachineKind(environment.serverConfig);
             const detail = providerEnvironmentDetail(environment);
             const statusText = connectionStatusTitle(environment.connection);
             return (
-              <Tooltip key={environment.environmentId}>
-                <TooltipTrigger
-                  render={
-                    <Toggle value={environment.environmentId}>
-                      <EnvironmentMachineIcon
-                        kind={machine}
-                        className="size-3.5 shrink-0"
-                        aria-hidden
-                      />
-                      <span className="max-w-40 truncate">{environment.label}</span>
-                      {environment.connection.phase !== "connected" ? (
-                        <ConnectionStatusDot
-                          dotClassName={connectionPhaseDotClassName(environment.connection.phase)}
-                          pingClassName={connectionPhasePingClassName(environment.connection.phase)}
-                        />
-                      ) : null}
-                      <span className="sr-only">
-                        {detail}, {statusText}
-                      </span>
-                    </Toggle>
-                  }
-                />
-                <TooltipPopup side="top">
-                  {detail} · {statusText}
-                </TooltipPopup>
-              </Tooltip>
+              <SelectItem key={environment.environmentId} value={environment.environmentId}>
+                <span className="flex min-w-0 items-center gap-2">
+                  <EnvironmentMachineIcon
+                    kind={machine}
+                    className="size-3.5 shrink-0"
+                    aria-hidden
+                  />
+                  <span className="truncate">{environment.label}</span>
+                  <span className="truncate text-dim-foreground">{detail}</span>
+                  {environment.connection.phase !== "connected" ? (
+                    <ConnectionStatusDot
+                      dotClassName={connectionPhaseDotClassName(environment.connection.phase)}
+                      pingClassName={connectionPhasePingClassName(environment.connection.phase)}
+                    />
+                  ) : null}
+                  <span className="sr-only">{statusText}</span>
+                </span>
+              </SelectItem>
             );
           })}
-        </ToggleGroup>
-      </ScrollArea>
+        </SelectPopup>
+      </Select>
     ) : null;
 
   return (
@@ -773,6 +798,7 @@ export function EnvironmentProviderSettings({
     targetInstanceId !== undefined &&
     selectedInstanceId === targetInstanceId &&
     !rows.some((row) => row.instanceId === targetInstanceId);
+  // The detail shows the explicit pick (a row, a deep link, or a new instance), else the first row.
   const selectedRow =
     rows.find((row) => row.instanceId === selectedInstanceId) ??
     (targetInstanceMissing ? null : (rows[0] ?? null));
@@ -959,29 +985,9 @@ export function EnvironmentProviderSettings({
       <SettingsSection
         {...searchableSetting("providers")}
         variant="plain"
-        titleAction={
-          canAddProvider ? (
-            <Tooltip>
-              <TooltipTrigger
-                render={
-                  <Button
-                    size="icon-xs"
-                    variant="ghost-muted"
-                    onClick={() => setIsAddInstanceDialogOpen(true)}
-                    aria-label="Add provider"
-                  >
-                    <PlusIcon />
-                  </Button>
-                }
-              />
-              <TooltipPopup side="top">Add provider</TooltipPopup>
-            </Tooltip>
-          ) : null
-        }
+        title="Providers"
         headerAction={
-          // The ghost button's padding would inset its label, so pull the text to the card edge.
-          <div className="-me-2 flex min-w-0 items-center gap-2">
-            <ProviderUpdatesAction />
+          <div className="flex min-w-0 items-center gap-2">
             <Tooltip>
               <TooltipTrigger
                 render={
@@ -990,10 +996,10 @@ export function EnvironmentProviderSettings({
                     variant="ghost-muted"
                     disabled={isRefreshingProviders || !canRefreshProviders}
                     aria-busy={isRefreshingProviders}
+                    aria-label="Refresh provider status"
                     onClick={() => void refreshProviders()}
                   >
                     <RefreshIcon refreshing={isRefreshingProviders} />
-                    <span className="sr-only">Refresh provider status</span>
                     <span className="hidden min-w-0 truncate sm:inline">
                       {isRefreshingProviders ? (
                         "Refreshing providers"
@@ -1006,6 +1012,23 @@ export function EnvironmentProviderSettings({
               />
               <TooltipPopup side="top">Refresh provider status</TooltipPopup>
             </Tooltip>
+            {canAddProvider ? (
+              <Tooltip>
+                <TooltipTrigger
+                  render={
+                    <Button
+                      size="icon-xs"
+                      variant="ghost-muted"
+                      onClick={() => setIsAddInstanceDialogOpen(true)}
+                      aria-label="Add provider"
+                    >
+                      <PlusIcon />
+                    </Button>
+                  }
+                />
+                <TooltipPopup side="top">Add provider</TooltipPopup>
+              </Tooltip>
+            ) : null}
           </div>
         }
       >
@@ -1020,54 +1043,53 @@ export function EnvironmentProviderSettings({
             />
           </SettingsGroup>
         ) : null}
-        <SettingsGroup
-          divided={false}
-          className={cn(
-            providerCardHeightClassName,
-            "overflow-hidden @min-[48rem]/providers:grid @min-[48rem]/providers:grid-cols-[17rem_minmax(0,1fr)]",
-          )}
-        >
-          <div className="border-b border-divider bg-transparent @min-[48rem]/providers:flex @min-[48rem]/providers:min-h-0 @min-[48rem]/providers:flex-col @min-[48rem]/providers:border-r @min-[48rem]/providers:border-b-0">
-            <ScrollArea
-              scrollFade
-              chainVerticalScroll
-              className="@min-[48rem]/providers:min-h-0 @min-[48rem]/providers:flex-1"
+        {targetInstanceMissing ? (
+          <SettingsGroup divided={false}>
+            <SettingsRow
+              title="Provider unavailable"
+              description="This provider instance is no longer available on this device."
+            />
+          </SettingsGroup>
+        ) : null}
+        {rows.length === 0 ? (
+          <SettingsGroup divided={false} className="py-8">
+            <SettingsEmptyState
+              icon={<BotIcon />}
+              title="No providers yet"
+              description={`Add an agent to start threads on ${environmentLabel}.`}
             >
-              <div className="divide-y divide-divider">
-                {rows.map((row) => renderProviderInstance(row, "list"))}
-                {canAddProvider ? (
-                  <div className="p-2">
-                    <Button
-                      variant="ghost-muted"
-                      className="w-full justify-start"
-                      onClick={() => setIsAddInstanceDialogOpen(true)}
-                    >
-                      <PlusIcon />
-                      Add provider
-                    </Button>
-                  </div>
-                ) : null}
-              </div>
-            </ScrollArea>
-          </div>
-
-          <div data-provider-detail className="min-w-0 @min-[48rem]/providers:min-h-0">
+              {!canAddProvider ? null : (
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  onClick={() => setIsAddInstanceDialogOpen(true)}
+                >
+                  <PlusIcon />
+                  Add provider
+                </Button>
+              )}
+            </SettingsEmptyState>
+          </SettingsGroup>
+        ) : (
+          // The list and the selected instance side by side; narrow panes stack them.
+          <div className="grid min-w-0 overflow-hidden rounded-card surface-card-settings @min-[44rem]/providers:grid-cols-[15rem_minmax(0,1fr)]">
+            <nav
+              aria-label="Provider instances"
+              className="flex min-w-0 flex-col gap-0.5 border-divider p-1.5 @max-[44rem]/providers:border-b @min-[44rem]/providers:border-r"
+            >
+              {rows.map((row) => renderProviderInstance(row, "list"))}
+            </nav>
             {selectedRow ? (
-              <ScrollArea scrollFade chainVerticalScroll className="@min-[48rem]/providers:h-full">
-                {/* Flat sections run dividers edge to edge and inset text like the list beside them. */}
-                <div className="space-y-6 py-4">
-                  {renderProviderInstance(selectedRow, "editor")}
-                </div>
-              </ScrollArea>
-            ) : (
-              <div className="p-6 text-sm text-muted-foreground">
-                {targetInstanceMissing
-                  ? "This provider instance is no longer available on this device."
-                  : "No providers configured."}
+              // Groups inside the detail sink to the page color so they read against the split card.
+              <div
+                key={selectedRow.instanceId}
+                className="min-w-0 space-y-4 p-4 [--card-settings-fill:var(--background)]"
+              >
+                {renderProviderInstance(selectedRow, "editor")}
               </div>
-            )}
+            ) : null}
           </div>
-        </SettingsGroup>
+        )}
       </SettingsSection>
 
       <UsageProviderSettings
@@ -1079,7 +1101,29 @@ export function EnvironmentProviderSettings({
         readOnly={readOnly}
       />
 
-      <SettingsSection title="Advanced">
+      <SettingsSection
+        title="Advanced"
+        headerAction={
+          <div className="flex items-center gap-2">
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <Button
+                    size="icon-xs"
+                    variant="ghost-muted"
+                    aria-label="Import conversations"
+                    render={<Link to="/welcome" hash={`agents:${environmentId}`} />}
+                  >
+                    <DownloadIcon />
+                  </Button>
+                }
+              />
+              <TooltipPopup>Import conversations</TooltipPopup>
+            </Tooltip>
+            <ProviderUpdatesAction />
+          </div>
+        }
+      >
         <SettingsRow
           id={searchableSetting("provider-health-check-interval").id}
           title={
@@ -1092,7 +1136,7 @@ export function EnvironmentProviderSettings({
               </PolicyTooltip>
             </span>
           }
-          description="Refresh provider status, versions, and models in the background. Set to 0 to disable."
+          description="Background refresh of status, versions and models. 0 turns it off."
           resetAction={
             providerHealthRefreshIntervalSeconds !== defaultProviderHealthRefreshIntervalSeconds ? (
               <span
@@ -1146,7 +1190,7 @@ export function EnvironmentProviderSettings({
         <CompactIdleThreadsRow />
       </SettingsSection>
 
-      {isAddInstanceDialogOpen && !readOnly ? (
+      {isAddInstanceDialogOpen && canAddProvider ? (
         <AddProviderInstanceDialog
           open
           environmentId={environmentId}
@@ -1289,7 +1333,7 @@ function ProviderInstanceRow({
       liveProvider={liveProvider}
       mode={mode}
       selected={selected}
-      onSelect={mode === "list" ? () => actions.selectInstance(instanceId) : undefined}
+      onConfigure={mode === "list" ? () => actions.selectInstance(instanceId) : undefined}
       readOnly={readOnly}
       runtime={
         mode === "editor" && codexSetupMode === "managed" ? (
@@ -1360,11 +1404,7 @@ function ProviderInstanceRow({
         ) : null
       }
       onUpdate={(next) => actions.updateInstance(instanceId, instance, next)}
-      onDelete={
-        mode === "editor" && !isDefault
-          ? () => actions.deleteInstance(instanceId, instance)
-          : undefined
-      }
+      onDelete={!isDefault ? () => actions.deleteInstance(instanceId, instance) : undefined}
       headerAction={
         mode === "editor" && isDefault && isDirty ? (
           <SettingResetButton

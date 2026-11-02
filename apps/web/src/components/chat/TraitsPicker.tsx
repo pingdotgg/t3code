@@ -508,6 +508,30 @@ export function TraitsMenuContent(props: TraitsSelectionInput & { reasoningOnly?
   );
 }
 
+/** The traits trigger's text ("High", "High · Fast"), or null when the model has no traits. */
+export function resolveTraitsTriggerLabel(input: {
+  provider: ProviderDriverKind;
+  models: ReadonlyArray<ServerProviderModel>;
+  model: string | null | undefined;
+  modelOptions: ProviderOptions | null | undefined;
+  planModeEnabled: boolean;
+}): string | null {
+  const visibility = getTraitsSectionVisibility({
+    ...input,
+    promptUltrathink: "none",
+    allowPromptInjectedEffort: false,
+  });
+  if (!visibility.hasAnyControls) return null;
+  // The trigger label already pairs speed with reasoning ("High Fast").
+  const { label } = buildTraitsTriggerDisplay({
+    provider: input.provider,
+    descriptors: visibility.descriptors,
+    primarySelectDescriptorId: visibility.primarySelectDescriptor?.id ?? null,
+    ultrathinkPromptControlled: visibility.ultrathinkPromptControlled,
+  });
+  return label.length > 0 ? label : null;
+}
+
 export function TraitsPicker({
   size = "sm",
   hidden = false,

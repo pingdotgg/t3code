@@ -258,7 +258,7 @@ function ThemeLibraryCard({
               {variantNavigation ? (
                 <div
                   aria-label="Light and dark theme variants"
-                  className="relative h-20"
+                  className="relative h-24"
                   role="group"
                   onBlurCapture={(event) => {
                     const nextTarget = event.relatedTarget;
@@ -392,13 +392,13 @@ function ThemeLibraryCard({
                 />
               )}
             </div>
-            <div className="flex items-center gap-2 px-3 pb-3 pt-2">
+            <div className="flex items-center gap-1 py-2 ps-2.5 pe-1.5">
               <div className="min-w-0 flex-1">
                 <div className="flex items-center gap-1.5">
                   <button
                     aria-label={`Use ${variantNavigation ? `${variantNavigation.collectionLabel}, ${theme.label} variant` : `${theme.label} theme`}${isActive ? ", currently active" : ""}`}
                     aria-pressed={isActive}
-                    className="min-w-0 cursor-pointer truncate rounded-sm text-left text-sm font-medium text-foreground outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-card"
+                    className="min-w-0 cursor-pointer truncate rounded-sm text-left text-label text-foreground outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-card"
                     type="button"
                     onClick={(event) => {
                       event.stopPropagation();
@@ -410,6 +410,7 @@ function ThemeLibraryCard({
                 </div>
               </div>
               {onEdit || onDuplicate || onDownload || onRemove ? (
+                // The footer keeps the design's 10px name inset and 6px action inset.
                 <div className="flex shrink-0 items-center gap-1">
                   {onDuplicate && !onEdit ? (
                     <Tooltip>
@@ -758,40 +759,74 @@ export function ThemeLibrary({
   const renderModeTiles = () => (
     <div
       aria-label="Appearance mode"
-      className="grid w-full grid-cols-2 gap-3 sm:grid-cols-4"
+      className="grid w-full grid-cols-1 gap-3 min-[420px]:grid-cols-3"
       role="group"
     >
-      {APPEARANCE_CHOICES.map(({ choice: mode, label }) => {
-        const isActive = appearanceChoice === mode;
-        return (
-          <button
-            aria-label={APPEARANCE_CHOICE_ARIA_LABELS[mode]}
-            aria-pressed={isActive}
-            className={cn(
-              "flex cursor-pointer flex-col items-stretch gap-1.75 rounded-card border p-2 outline-none transition-colors focus-visible:outline-2 focus-visible:outline-solid focus-visible:-outline-offset-2 focus-visible:outline-ring",
-              isActive
-                ? "border-transparent bg-settings-effective-fill"
-                : "border-transparent surface-card-settings-rim hover:surface-ghost-hover",
-            )}
-            key={mode}
-            style={
-              isActive ? { boxShadow: "inset 0 0 0 1px var(--settings-active-rim)" } : undefined
-            }
-            onClick={() => setMode(mode)}
-            type="button"
-          >
-            <ThemeWireframe mode={mode} />
-            <span
-              className={cn(
-                "flex items-center justify-center text-xs font-medium",
-                isActive ? "text-foreground" : "text-muted-foreground",
-              )}
-            >
-              {label}
-            </span>
-          </button>
-        );
-      })}
+      {APPEARANCE_CHOICES.filter(({ choice }) => choice !== "black-chrome").map(
+        ({ choice: mode, label }) => {
+          const isActive =
+            appearanceChoice === mode || (mode === "light" && appearanceChoice === "black-chrome");
+          return (
+            <div className="relative" key={mode}>
+              <button
+                aria-label={APPEARANCE_CHOICE_ARIA_LABELS[mode]}
+                aria-pressed={isActive}
+                className={cn(
+                  "flex w-full cursor-pointer flex-col items-stretch gap-1.75 rounded-card border p-2 outline-none transition-colors focus-visible:outline-2 focus-visible:outline-solid focus-visible:-outline-offset-2 focus-visible:outline-ring",
+                  isActive
+                    ? "border-transparent bg-settings-effective-fill"
+                    : "border-transparent surface-card-settings-rim hover:surface-ghost-hover",
+                )}
+                style={
+                  isActive ? { boxShadow: "inset 0 0 0 1px var(--settings-active-rim)" } : undefined
+                }
+                onClick={() => setMode(mode)}
+                type="button"
+              >
+                <ThemeWireframe
+                  mode={
+                    mode === "light" && appearanceChoice === "black-chrome" ? "black-chrome" : mode
+                  }
+                />
+                <span
+                  className={cn(
+                    "flex items-center justify-center text-meta",
+                    isActive ? "text-foreground" : "text-muted-foreground",
+                  )}
+                >
+                  {label}
+                </span>
+              </button>
+              {mode === "light" ? (
+                <div className="absolute bottom-1.5 right-1.5">
+                  <Menu>
+                    <MenuTrigger
+                      render={
+                        <Button
+                          size="icon-micro"
+                          variant="ghost-muted"
+                          aria-label="Light mode options"
+                        />
+                      }
+                    >
+                      <EllipsisIcon />
+                    </MenuTrigger>
+                    <MenuPopup align="end">
+                      <MenuItem onClick={() => setMode("light")}>Light chrome</MenuItem>
+                      <MenuItem
+                        aria-label={APPEARANCE_CHOICE_ARIA_LABELS["black-chrome"]}
+                        onClick={() => setMode("black-chrome")}
+                      >
+                        Black chrome
+                      </MenuItem>
+                    </MenuPopup>
+                  </Menu>
+                </div>
+              ) : null}
+            </div>
+          );
+        },
+      )}
     </div>
   );
 
@@ -918,41 +953,45 @@ export function ThemeLibrary({
   );
 
   return (
-    <div className="space-y-3">
-      <div className="flex min-h-8 flex-wrap items-center justify-between gap-3 px-3 sm:px-4">
-        <h3 className="text-sm font-medium text-dim-foreground">
-          {searchableSetting("color-scheme").title}
-        </h3>
-        {restoreAction}
-      </div>
-      {renderModeTiles()}
-      <div className="flex min-h-8 flex-wrap items-center justify-between gap-3 px-3 pt-2 sm:px-4">
-        <h3 className="text-sm font-medium text-dim-foreground">
-          {searchableSetting("theme").title}
-        </h3>
-        <div className="flex flex-wrap items-center justify-end gap-2">
-          <Button size="xs" variant="secondary" onClick={() => onImportOpenChange(true)}>
-            <UploadIcon />
-            Import
-          </Button>
-          <Button
-            size="xs"
-            variant="secondary"
-            onClick={() =>
-              openThemeEditor({
-                editingThemeId: null,
-                seedThemeId: activeThemeForAppearance?.id ?? null,
-                seedName: null,
-                initialAppearance,
-              })
-            }
-          >
-            <PlusIcon />
-            Create theme
-          </Button>
+    // Appearance headings carry 24px actions, 10px above the cards (pen eWIa5).
+    <div className="space-y-7">
+      <div className="space-y-2.5">
+        <div className="flex min-h-6 flex-wrap items-center justify-between gap-3">
+          <h3 className="text-meta text-dim-foreground">
+            {searchableSetting("color-scheme").title}
+          </h3>
+          {/* The ghost button hangs by its 8px inline inset so its text ends on the card edge. */}
+          <div className="-me-2 flex">{restoreAction}</div>
         </div>
+        {renderModeTiles()}
       </div>
-      {renderPairGrid()}
+      <div className="space-y-2.5">
+        <div className="flex min-h-6.5 flex-wrap items-center justify-between gap-3">
+          <h3 className="text-meta text-dim-foreground">{searchableSetting("theme").title}</h3>
+          <div className="flex flex-wrap items-center justify-end gap-2">
+            <Button size="xs" variant="secondary" onClick={() => onImportOpenChange(true)}>
+              <UploadIcon />
+              Import
+            </Button>
+            <Button
+              size="xs"
+              variant="secondary"
+              onClick={() =>
+                openThemeEditor({
+                  editingThemeId: null,
+                  seedThemeId: activeThemeForAppearance?.id ?? null,
+                  seedName: null,
+                  initialAppearance,
+                })
+              }
+            >
+              <PlusIcon />
+              Create theme
+            </Button>
+          </div>
+        </div>
+        {renderPairGrid()}
+      </div>
       <ThemeImportDialog
         onImportedMany={(importedThemes, { updated }) => {
           if (updated) refreshTheme();

@@ -1,4 +1,5 @@
 import { type SlowRpcAckRequest, subscribeSlowRpcAckRequests } from "../rpc/requestLatencyState";
+import { useEnvironments } from "../state/environments";
 import { toastManager } from "./ui/toast";
 
 function describeSlowRequests(requests: ReadonlyArray<SlowRpcAckRequest>): string {
@@ -11,19 +12,31 @@ function describeSlowRequests(requests: ReadonlyArray<SlowRpcAckRequest>): strin
 }
 
 function SlowRequestDetails({ requests }: { requests: ReadonlyArray<SlowRpcAckRequest> }) {
+  const { environments } = useEnvironments();
+  const environmentLabels = new Map<string, string>(
+    environments.map((environment) => [environment.environmentId, environment.label]),
+  );
+
   return (
-    <ul className="space-y-2.5 text-xs text-muted-foreground">
-      {requests.map((request) => (
-        <li
-          className="min-w-0 border-border border-b pb-2 last:border-b-0 last:pb-0"
-          key={request.requestId}
-        >
-          <div className="wrap-break-word font-medium text-strong-foreground">{request.tag}</div>
-          <div className="mt-0.5 text-3xs text-dim-foreground">
-            Started {new Date(request.startedAt).toLocaleTimeString()}
-          </div>
-        </li>
-      ))}
+    <ul className="space-y-2.5 text-meta text-muted-foreground">
+      {requests.map((request) => {
+        // Name the environment by its label rather than its id.
+        const environmentLabel = request.environmentId
+          ? environmentLabels.get(request.environmentId)
+          : undefined;
+        const label = environmentLabel ? `${request.method} · ${environmentLabel}` : request.tag;
+        return (
+          <li
+            className="min-w-0 border-border border-b pb-2 last:border-b-0 last:pb-0"
+            key={request.requestId}
+          >
+            <div className="wrap-break-word text-foreground">{label}</div>
+            <div className="mt-0.5 text-caption text-dim-foreground">
+              Started {new Date(request.startedAt).toLocaleTimeString()}
+            </div>
+          </li>
+        );
+      })}
     </ul>
   );
 }

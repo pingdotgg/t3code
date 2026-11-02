@@ -78,6 +78,23 @@ export const AgentSessionImportResult = Schema.Struct({
 });
 export type AgentSessionImportResult = typeof AgentSessionImportResult.Type;
 
+/**
+ * `agentSessions.importWithProgress` stream: `progress` carries the number of
+ * conversations handled so far (sent at most a few times a second), then one
+ * `complete` with the same counts `agentSessions.import` returns.
+ */
+export const AgentSessionImportProgressEvent = Schema.Union([
+  Schema.Struct({
+    type: Schema.Literal("progress"),
+    processedCount: NonNegativeInt,
+  }),
+  Schema.Struct({
+    type: Schema.Literal("complete"),
+    result: AgentSessionImportResult,
+  }),
+]);
+export type AgentSessionImportProgressEvent = typeof AgentSessionImportProgressEvent.Type;
+
 export class AgentSessionScanError extends Schema.TaggedError<AgentSessionScanError>()(
   "AgentSessionScanError",
   {

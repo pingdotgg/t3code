@@ -5,7 +5,6 @@ import { PanelLeft, PanelLeftClose } from "lucide";
 import * as React from "react";
 import { cn } from "~/lib/utils";
 import { Button } from "~/components/ui/button";
-import { Input, type InputProps } from "~/components/ui/input";
 import { MorphIcon } from "~/components/MorphIcon";
 import { ScrollArea } from "~/components/ui/scroll-area";
 import {
@@ -603,19 +602,6 @@ function SidebarRail({
   );
 }
 
-function SidebarInput({ className, ...props }: Omit<InputProps, "unstyled" | "variant">) {
-  return (
-    <Input
-      className={cn(
-        "[&_[data-slot=input]]:h-auto [&_[data-slot=input]]:p-0 [&_[data-slot=input]]:text-label [&_[data-slot=input]]:text-sidebar-foreground [&_[data-slot=input]]:leading-normal [&_[data-slot=input]]:placeholder:text-placeholder [&_[data-slot=input]]:placeholder:font-normal",
-        className,
-      )}
-      unstyled
-      {...props}
-    />
-  );
-}
-
 function SidebarInset({ className, ...props }: React.ComponentProps<"main">) {
   return (
     <main
@@ -711,10 +697,18 @@ function SidebarGroup({ className, ...props }: React.ComponentProps<"div">) {
   );
 }
 
-function SidebarMenu({ className, ...props }: React.ComponentProps<"ul">) {
+function SidebarMenu({
+  className,
+  size = "default",
+  ...props
+}: React.ComponentProps<"ul"> & { size?: "default" | "compact" }) {
   return (
     <ul
-      className={cn("flex w-full min-w-0 flex-col gap-1", className)}
+      className={cn(
+        "flex w-full min-w-0 flex-col",
+        size === "compact" ? "gap-0.5" : "gap-1",
+        className,
+      )}
       data-sidebar="menu"
       data-slot="sidebar-menu"
       {...props}
@@ -750,6 +744,7 @@ const sidebarMenuButtonVariants = cva(
         // the footer's icon controls: its glyph stays on their center line.
         control:
           "h-(--workspace-titlebar-control-size) rounded-[var(--control-radius)] px-[var(--sidebar-row-content-inset)] text-label has-[>svg:first-child]:ps-[calc(var(--sidebar-row-content-inset)+1px)] has-[>svg:first-child]:gap-[calc(var(--sidebar-control-gap)-1px)]",
+        compact: "h-7.5 gap-2 rounded-lg px-2 text-label",
         icon: "size-8 justify-center rounded-[var(--control-radius)] p-0",
         sm: "h-7 rounded-control p-2 text-meta",
       },
@@ -873,7 +868,6 @@ function SidebarMenuSubButton({
 
 export {
   createSidebarOpenStore,
-  SidebarInput,
   Sidebar,
   SidebarContent,
   SidebarFooter,

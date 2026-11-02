@@ -289,6 +289,8 @@ import { ChatHeader } from "./chat/ChatHeader";
 import { useSideChat } from "./chat/useSideChat";
 import { useRemoteOpenState } from "~/remoteOpen";
 import { shouldShowOpenInPicker } from "./chat/OpenInPicker.logic";
+import { PaneHeaderActions } from "./chat/PaneHeaderActions";
+import GitActionsControl from "./GitActionsControl";
 import { useOpenFavoriteEditorShortcut } from "./chat/OpenInPickerShortcut";
 import {
   PanelLayoutControls,
@@ -3425,7 +3427,18 @@ export default function ChatView(props: ChatViewProps) {
   );
   const threadPanelHeaderControl = <ThreadPanelHeaderControl {...panelToggleControlProps} />;
   const panelLayoutControls = (
-    <WorkspaceTitlebarControls>{panelToggleControls}</WorkspaceTitlebarControls>
+    <WorkspaceTitlebarControls>
+      <PaneHeaderActions
+        environmentId={activeThread.environmentId}
+        threadId={activeThread.id}
+        {...(draftId ? { draftId } : {})}
+        activeProjectName={activeProject?.title}
+        gitCwd={gitCwd}
+        isGitRepo={isGitRepo}
+        projectId={activeProject?.id ?? null}
+      />
+      {panelToggleControls}
+    </WorkspaceTitlebarControls>
   );
   const workspaceFileDropHandlers = makeWorkspaceFileDropHandlers({
     setDragActive: setIsWorkspaceFileDragActive,
@@ -3436,7 +3449,7 @@ export default function ChatView(props: ChatViewProps) {
   const content = (
     <div
       ref={setWorkspaceLayoutElement}
-      className="relative flex min-h-0 min-w-0 flex-1 overflow-hidden bg-background"
+      className="@container/header-actions relative flex min-h-0 min-w-0 flex-1 overflow-hidden bg-background"
     >
       {embedded ? null : (
         <DeviceSetupDialogHost
@@ -4161,9 +4174,18 @@ export default function ChatView(props: ChatViewProps) {
       ) : null}
 
       <RevertConfirmHost threadKey={routeThreadKey} onConfirm={onConfirmRevertStable} />
-      {embedded ? null : <LinkPullRequestDialogHost />}
+      {embedded ? null : <LinkPullRequestDialogHost hostThreadRef={routeThreadRef} />}
       <ThreadVisitWatermark threadRef={routeThreadRef} />
       <ExpandedImageDialogHost threadKey={routeThreadKey} />
+      {gitCwd && isGitRepo ? (
+        <GitActionsControl
+          presentation="shortcut"
+          listenForShortcuts={!embedded && !backgroundThread}
+          gitCwd={gitCwd}
+          activeThreadRef={activeThreadRef}
+          {...(draftId ? { draftId } : {})}
+        />
+      ) : null}
     </div>
   );
   return (

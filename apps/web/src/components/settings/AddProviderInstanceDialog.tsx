@@ -479,7 +479,11 @@ export function AddProviderInstanceDialog({
           <>
             <WizardPanel
               surface="bare"
-              className={cn(isAcpRegistry && wizardStep === identityStep && "min-h-72")}
+              // The body scrolls so the footer stays pinned inside a viewport-capped dialog.
+              className={cn(
+                "min-h-0 overflow-y-auto",
+                isAcpRegistry && wizardStep === identityStep && "min-h-72",
+              )}
             >
               <div className={cn("grid gap-2", wizardStep !== 0 && "hidden")}>
                 <div
@@ -642,7 +646,7 @@ export function AddProviderInstanceDialog({
                       id="add-provider-label"
                       aria-describedby="add-provider-label-description"
                       size="sm"
-                      className="w-full @min-[32rem]/settings-row:w-56"
+                      className="w-full @min-[26rem]/settings-row:w-56"
                       placeholder="e.g. Work"
                       value={label}
                       onChange={(event) => setIdentityDraft({ label: event.target.value })}
@@ -676,7 +680,7 @@ export function AddProviderInstanceDialog({
                           : "add-provider-instance-id-description"
                       }
                       size="sm"
-                      className="w-full @min-[32rem]/settings-row:w-56"
+                      className="w-full @min-[26rem]/settings-row:w-56"
                       placeholder={`${driver}_work`}
                       value={instanceId}
                       onChange={(event) => {

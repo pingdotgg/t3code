@@ -90,6 +90,7 @@ import {
   WorkspaceBreadcrumbSeparator,
   WorkspaceBreadcrumbText,
 } from "../WorkspaceBreadcrumb";
+import { PageEmptyState } from "../PageEmptyState";
 import { WorkspacePageContainer } from "../WorkspacePageContainer";
 import { UsageLimitsSection } from "./UsageLimits";
 import { UsagePriceOverrides } from "./UsagePriceOverrides";
@@ -527,8 +528,9 @@ export function UsagePage() {
             className="@container/usage-page max-w-[1040px] gap-5 pt-5.5"
           >
             {selectedEnvironments.length === 0 ? (
-              <UsageNotice
-                icon={ServerIcon}
+              <PageEmptyState
+                fill
+                icon={<ServerIcon />}
                 title={
                   environments.length === 0
                     ? "No environments connected"
@@ -745,8 +747,9 @@ function UsageOverview({
     return showingKept ? (
       <UsageSkeleton />
     ) : (
-      <UsageNotice
-        icon={ChartNoAxesColumnIcon}
+      <PageEmptyState
+        fill
+        icon={<ChartNoAxesColumnIcon />}
         title={`No usage in the ${periodPhrase(windowDays)}`}
         description="Sessions from your providers show up here once they run. Pick a longer period to look further back."
       />

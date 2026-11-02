@@ -16,6 +16,8 @@ import { projectScriptMenuLabel } from "@t3tools/shared/projectScripts";
 import {
   ChevronDownIcon,
   DownloadIcon,
+  FileDownIcon,
+  PencilIcon,
   PlusIcon,
   SettingsIcon,
   SquareIcon,
@@ -43,6 +45,7 @@ import {
 } from "./projectScriptEditor";
 import { Button } from "./ui/button";
 import { Group, GroupSeparator } from "./ui/group";
+import { Kbd, KbdGroup } from "./ui/kbd";
 import {
   Menu,
   MenuGroup,
@@ -58,9 +61,29 @@ import {
   MenuSubPopup,
 } from "./ui/menu";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
+
 export type { NewProjectScriptInput, ProjectScriptActionResult };
 
 const NO_FILE_SCRIPTS: ReadonlyArray<T3ProjectFileScript> = [];
+
+const MAC_MODIFIER_GLYPHS = new Set(["⌃", "⌥", "⇧", "⌘"]);
+
+/**
+ * One key cap per key (pen RozJm): "Ctrl+Shift+T" splits on "+", and a macOS
+ * label like "⌘⇧T" splits its modifier glyphs off the key.
+ */
+function shortcutLabelKeys(label: string): string[] {
+  if (label.length > 1 && label.includes("+")) {
+    return label.split("+").filter((key) => key.length > 0);
+  }
+  const keys: string[] = [];
+  let rest = label;
+  while (rest.length > 1 && MAC_MODIFIER_GLYPHS.has(rest.charAt(0))) {
+    keys.push(rest.charAt(0));
+    rest = rest.slice(1);
+  }
+  return [...keys, rest];
+}
 
 interface ProjectScriptsControlProps {
   displayMode?: "toolbar" | "panel";
@@ -105,6 +128,9 @@ export default function ProjectScriptsControl({
   const supportsStop =
     useEnvironment(environmentId)?.serverConfig?.environment.capabilities.localServerStop === true;
   const [stoppingServer, setStoppingServer] = useState(false);
+  // The project actions menu (pen RozJm): key caps that yield to an edit pencil, then add and
+  // t3.json import entries. The touch menu presentation keeps its own rows.
+  const isActionsMenu = presentation !== "menu" && !isPanel;
   const keybindings =
     useAtomValue(serverEnvironment.configValueAtom(environmentId))?.keybindings ??
     DEFAULT_RESOLVED_KEYBINDINGS;
@@ -178,6 +204,28 @@ export default function ProjectScriptsControl({
     }
   };
 
+  const importItems = importableScripts.map((fileScript) => (
+    <MenuItem
+      key={`${fileScript.name} ${fileScript.command}`}
+      onClick={() => void importFileScript(fileScript)}
+    >
+      <ScriptIcon icon={fileScript.icon ?? "play"} className="size-4" />
+      <MenuItemLabel>{fileScript.name}</MenuItemLabel>
+      <MenuShortcut>
+        <DownloadIcon className="size-3.5" aria-label="Import" />
+      </MenuShortcut>
+    </MenuItem>
+  ));
+  // The actions menu folds the importable t3.json scripts into one entry.
+  const headerImportMenuItem = importableScripts.length > 0 && (
+    <MenuSub>
+      <MenuSubTrigger>
+        <FileDownIcon className="size-4" />
+        <MenuItemLabel>From t3.json</MenuItemLabel>
+      </MenuSubTrigger>
+      <MenuSubPopup>{importItems}</MenuSubPopup>
+    </MenuSub>
+  );
   const importMenuItems = importableScripts.length > 0 && (
     <>
       {scripts.length > 0 && <MenuSeparator />}
@@ -207,6 +255,52 @@ export default function ProjectScriptsControl({
           keybindings,
           commandForProjectScript(script.id),
         );
+        if (isActionsMenu) {
+          return (
+            <MenuItem
+              key={script.id}
+              className="group"
+              disabled={!onRunScript}
+              onClick={() => onRunScript?.(script)}
+            >
+              <ScriptIcon icon={script.icon} className="size-4" />
+              <MenuItemLabel>
+                {script.runOnWorktreeCreate ? `${script.name} (setup)` : script.name}
+              </MenuItemLabel>
+              <span className="relative ms-auto flex h-6 min-w-6 items-center justify-end ps-4">
+                {shortcutLabel ? (
+                  // The key caps yield their slot to the edit pencil on hover.
+                  <span className="flex transition-opacity group-hover:opacity-0 group-focus-visible:opacity-0">
+                    <KbdGroup>
+                      {shortcutLabelKeys(shortcutLabel).map((key) => (
+                        <Kbd key={key}>{key}</Kbd>
+                      ))}
+                    </KbdGroup>
+                  </span>
+                ) : null}
+                <span className="pointer-events-none absolute right-0 top-1/2 flex -translate-y-1/2 opacity-0 transition-opacity group-hover:pointer-events-auto group-hover:opacity-100 group-focus-visible:pointer-events-auto group-focus-visible:opacity-100">
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon-xs"
+                    aria-label={`Edit ${script.name}`}
+                    onPointerDown={(event) => {
+                      event.preventDefault();
+                      event.stopPropagation();
+                    }}
+                    onClick={(event) => {
+                      event.preventDefault();
+                      event.stopPropagation();
+                      openEditDialog(script);
+                    }}
+                  >
+                    <PencilIcon className="size-3.5" />
+                  </Button>
+                </span>
+              </span>
+            </MenuItem>
+          );
+        }
         return (
           <MenuItem
             density={presentation === "menu" ? "touch" : "default"}
@@ -252,11 +346,24 @@ export default function ProjectScriptsControl({
           </MenuItem>
         );
       })}
-      {importMenuItems}
-      <MenuItem density={presentation === "menu" ? "touch" : "default"} onClick={openAddDialog}>
-        <PlusIcon className="size-4" />
-        <MenuItemLabel>{isPanel ? "Add project action…" : "Add action"}</MenuItemLabel>
-      </MenuItem>
+      {isActionsMenu ? (
+        <>
+          <MenuSeparator />
+          <MenuItem onClick={openAddDialog}>
+            <PlusIcon className="size-4" />
+            <MenuItemLabel>Add project action…</MenuItemLabel>
+          </MenuItem>
+          {headerImportMenuItem}
+        </>
+      ) : (
+        <>
+          {importMenuItems}
+          <MenuItem density={presentation === "menu" ? "touch" : "default"} onClick={openAddDialog}>
+            <PlusIcon className="size-4" />
+            <MenuItemLabel>{isPanel ? "Add project action…" : "Add action"}</MenuItemLabel>
+          </MenuItem>
+        </>
+      )}
     </>
   );
 
@@ -359,10 +466,10 @@ export default function ProjectScriptsControl({
             <TooltipTrigger
               render={
                 <ThreadDetailsControl
-                  size="xs"
+                  size="sm"
                   variant="secondary"
                   panel={false}
-                  className="w-7 sm:w-6 @3xl/header-actions:w-auto!"
+                  className="w-8 sm:w-7 @4xl/header-actions:w-auto!"
                   aria-label={`Run ${primaryScript.name}`}
                   // Tooltip replaces the button data-slot, so toolbar theming needs a separate hook.
                   data-toolbar-control=""
@@ -372,7 +479,7 @@ export default function ProjectScriptsControl({
               }
             >
               <ScriptIcon icon={primaryScript.icon} />
-              <span className="sr-only @3xl/header-actions:not-sr-only @3xl/header-actions:ml-0.5">
+              <span className="sr-only @4xl/header-actions:not-sr-only @4xl/header-actions:ml-0.5">
                 {primaryScript.name}
               </span>
             </TooltipTrigger>
@@ -382,7 +489,7 @@ export default function ProjectScriptsControl({
                 : "Pair this client again with permission to run terminal commands."}
             </TooltipPopup>
           </Tooltip>
-          <GroupSeparator className="hidden @3xl/header-actions:block" />
+          <GroupSeparator className="hidden @4xl/header-actions:block" />
           <Menu
             open={actionsMenuOpen.scripts}
             onOpenChange={(open) =>
@@ -392,16 +499,21 @@ export default function ProjectScriptsControl({
             <MenuTrigger
               render={
                 <ThreadDetailsControl
-                  size="icon-xs"
+                  size="icon-sm"
                   variant="secondary"
                   panel={false}
                   aria-label="Script actions"
                 />
               }
             >
-              <ChevronDownIcon className="size-4" />
+              <ChevronDownIcon className="size-3" />
             </MenuTrigger>
-            <MenuPopup align="end">{scriptItems}</MenuPopup>
+            <MenuPopup align="end" className="min-w-64">
+              <MenuGroup>
+                <MenuGroupLabel>Project actions</MenuGroupLabel>
+                {scriptItems}
+              </MenuGroup>
+            </MenuPopup>
           </Menu>
         </Group>
       ) : scripts.length > 0 || importableScripts.length > 0 ? (
@@ -413,10 +525,10 @@ export default function ProjectScriptsControl({
           }
         >
           <MenuTrigger
-            render={<Button size="xs" variant="secondary" aria-label="Project actions" />}
+            render={<Button size="sm" variant="secondary" aria-label="Project actions" />}
           >
             <WrenchIcon className="size-3.5" />
-            <span className="sr-only @3xl/header-actions:not-sr-only @3xl/header-actions:ml-0.5">
+            <span className="sr-only @4xl/header-actions:not-sr-only @4xl/header-actions:ml-0.5">
               Actions
             </span>
             <ChevronDownIcon className="size-3.5" />
@@ -428,10 +540,10 @@ export default function ProjectScriptsControl({
           <TooltipTrigger
             render={
               <ThreadDetailsControl
-                size="xs"
+                size="sm"
                 variant="secondary"
                 panel={false}
-                className="w-7 sm:w-6 @3xl/header-actions:w-auto!"
+                className="w-8 sm:w-7 @4xl/header-actions:w-auto!"
                 aria-label="Add action"
                 data-toolbar-control=""
                 onClick={openAddDialog}
@@ -439,7 +551,7 @@ export default function ProjectScriptsControl({
             }
           >
             <PlusIcon className="size-3.5" />
-            <span className="sr-only @3xl/header-actions:not-sr-only @3xl/header-actions:ml-0.5">
+            <span className="sr-only @4xl/header-actions:not-sr-only @4xl/header-actions:ml-0.5">
               Add action
             </span>
           </TooltipTrigger>
