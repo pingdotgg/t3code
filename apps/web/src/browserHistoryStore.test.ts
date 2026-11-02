@@ -313,6 +313,7 @@ describe("useBrowserHistoryStore", () => {
 const repoProject = {
   environmentId: EnvironmentId.make("env-1"),
   id: ProjectId.make("project-1"),
+  title: "repo",
   workspaceRoot: "/repo",
   repositoryIdentity: null,
   isScratch: false,
