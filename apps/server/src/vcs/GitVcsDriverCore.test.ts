@@ -2083,13 +2083,16 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
         const path = yield* Path.Path;
         const driver = yield* GitVcsDriver.GitVcsDriver;
         const nestedCwd = path.join(cwd, "nested");
+        const clone = path.join(nestedCwd, "clone");
+        yield* (yield* FileSystem.FileSystem).makeDirectory(clone);
+        yield* initRepoWithCommit(clone);
         const preview = yield* driver.getReviewDiffPreview({
           cwd: nestedCwd,
           baseRef: initialBranch,
         });
         assert.equal(
           preview.sources.find((source) => source.kind === "working-tree")!.files!.length,
-          2,
+          3,
         );
         for (const source of preview.sources) {
           for (const file of source.files ?? []) {
