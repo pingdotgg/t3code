@@ -1,4 +1,6 @@
 import * as NodeModule from "node:module";
+// @effect-diagnostics-next-line nodeBuiltinImport:off -- Yield to Node I/O, not just the Effect scheduler.
+import * as NodeTimersPromises from "node:timers/promises";
 
 import type {
   DirItem,
@@ -36,7 +38,7 @@ const WORKSPACE_INDEX_PAGE_SIZE = WORKSPACE_INDEX_MAX_ENTRIES + 2;
 const WORKSPACE_INDEX_SCAN_TIMEOUT = "15 seconds";
 const WORKSPACE_INDEX_SCAN_TIMEOUT_MS = 15_000;
 const WORKSPACE_INDEX_IDLE_TTL = "15 minutes";
-const CONTENT_SEARCH_TIME_BUDGET_MS = 250;
+const CONTENT_SEARCH_TIME_BUDGET_MS = 25;
 const CONTENT_SEARCH_MAX_MATCHES_PER_FILE = 100;
 
 export class WorkspaceSearchIndexCreateFailed extends Schema.TaggedError<WorkspaceSearchIndexCreateFailed>()(
@@ -479,7 +481,6 @@ export const make = Effect.fn("WorkspaceSearchIndex.make")(function* (
     "WorkspaceSearchIndex.searchContents",
   )(function* (input) {
     let { searchQuery, regexMode } = buildContentSearchQuery(input);
-    const deadline = performance.now() + CONTENT_SEARCH_TIME_BUDGET_MS;
     // Grep cursors advance per file; whole-word filtering needs enough raw candidates before advancing.
     const rawPageSize = input.wholeWord
       ? Math.max(input.limit, CONTENT_SEARCH_MAX_MATCHES_PER_FILE)
@@ -490,7 +491,6 @@ export const make = Effect.fn("WorkspaceSearchIndex.make")(function* (
     let retryLiterally = false;
 
     do {
-      const remainingTimeBudgetMs = Math.max(1, Math.ceil(deadline - performance.now()));
       const result = yield* runSearch(input.query, input.limit, "grep", () =>
         finder.grep(searchQuery, {
           mode: regexMode ? "regex" : "plain",
@@ -498,7 +498,8 @@ export const make = Effect.fn("WorkspaceSearchIndex.make")(function* (
           maxMatchesPerFile: Math.min(CONTENT_SEARCH_MAX_MATCHES_PER_FILE, rawPageSize),
           pageSize: rawPageSize,
           cursor: nextCursor,
-          timeBudgetMs: remainingTimeBudgetMs,
+          timeBudgetMs: CONTENT_SEARCH_TIME_BUDGET_MS,
+          enforceTimeBudget: true,
         }),
       );
       // fff searches an invalid pattern as a literal, which would keep the `(?i)` prefix.
@@ -524,10 +525,11 @@ export const make = Effect.fn("WorkspaceSearchIndex.make")(function* (
       }
       nextCursor = result.nextCursor;
       regexFallbackError ??= result.regexFallbackError;
-    } while (
-      retryLiterally ||
-      (matches.length < input.limit && nextCursor !== null && performance.now() < deadline)
-    );
+      // The RPC has no resume cursor: finish paging internally, letting Node service I/O between pages.
+      if (matches.length < input.limit && nextCursor !== null) {
+        yield* Effect.promise((signal) => NodeTimersPromises.setImmediate(undefined, { signal }));
+      }
+    } while (retryLiterally || (matches.length < input.limit && nextCursor !== null));
 
     return {
       matches: matches.slice(0, input.limit),
