@@ -59,6 +59,12 @@ export type ServerSelfUpdateMethod = typeof ServerSelfUpdateMethod.Type;
 export const ServerInstallation = Schema.Union([
   Schema.Struct({ kind: Schema.Literals(["npx", "pnpm-dlx", "bunx"]) }),
   Schema.Struct({ kind: Schema.Literal("npm-global"), prefix: TrimmedNonEmptyString }),
+  // A launcher symlink into a downloaded runtime, as the install script and `t3 update` leave.
+  Schema.Struct({
+    kind: Schema.Literal("t3-launcher"),
+    launcher: TrimmedNonEmptyString,
+    baseDir: TrimmedNonEmptyString,
+  }),
 ]);
 export type ServerInstallation = typeof ServerInstallation.Type;
 
