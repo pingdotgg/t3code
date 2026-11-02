@@ -507,6 +507,11 @@ export function PullRequestSummaryTab({
   const [commentSaving, setCommentSaving] = useState(false);
   const editingCommentId = commentScope?.pullRequest === detail.url ? commentScope.commentId : null;
 
+  // Ticks show at once and stay clickable while they save one at a time.
+  const [taskEdit, setTaskEdit] = useState<TaskListEdit | null>(null);
+  const [saveTaskBody] = useState(createTaskListSaveQueue);
+  if (taskListEditEnded(taskEdit, detail.body)) setTaskEdit(null);
+  const shownBody = shownTaskListBody(taskEdit, detail.body);
   const saveBody = async (body: string) => {
     if (bodySaving) return;
     setBodySaving(true);
@@ -517,15 +522,11 @@ export function PullRequestSummaryTab({
       return;
     }
     setBodyScope(null);
-    setTaskEdit(null);
+    // Until the host returns it, show the saved body so a tick right after builds on it.
+    setTaskEdit({ ...tickTaskListEdit(taskEdit, detail.body, body), saving: false });
     onRefresh();
   };
 
-  // Ticks show at once and stay clickable while they save one at a time.
-  const [taskEdit, setTaskEdit] = useState<TaskListEdit | null>(null);
-  const [saveTaskBody] = useState(createTaskListSaveQueue);
-  if (taskListEditEnded(taskEdit, detail.body)) setTaskEdit(null);
-  const shownBody = shownTaskListBody(taskEdit, detail.body);
   const toggleTask = ({ markerOffset, checked }: { markerOffset: number; checked: boolean }) => {
     const body = setMarkdownTaskChecked(shownBody, markerOffset, checked);
     if (body === shownBody) return;

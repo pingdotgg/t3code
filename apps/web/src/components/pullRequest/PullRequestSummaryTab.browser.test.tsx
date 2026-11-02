@@ -8,6 +8,12 @@ vi.mock(import("~/state/use-atom-command"), async (original) => ({
   ...(await original()),
   useAtomCommand: (() => command) as never,
 }));
+// The description editor saves only with source control write access.
+vi.mock(import("~/state/session"), async (original) => ({
+  ...(await original()),
+  readEnvironmentScope: () => true,
+  useEnvironmentScope: () => true,
+}));
 
 function setup() {
   command.mockReset();
@@ -144,15 +150,22 @@ it("keeps tasks clickable while saving, saves quick ticks in order, and holds th
     body.replace("- [ ] First", "- [x] First").replace("- [ ] Second", "- [x] Second"),
   ]);
 
-  // A refresh that lands after the saves can still carry the body from before the last tick.
-  const ticked = () => [...boxes()].map((box) => box.checked);
-  await screen.rerender(tab({ ...detail, body: firstBody }));
-  expect(ticked()).toEqual([true, true]);
-  await screen.rerender(tab({ ...detail, body: "- [ ] Edited on the host" }));
-  expect(ticked()).toEqual([false]);
-  // That body ended the edit, so the host's copy shows again even if it matches an old one.
-  await screen.rerender(tab({ ...detail, body }));
-  expect(ticked()).toEqual([false, false]);
+  // The host hasn't returned the new body yet; a manual save must still build on the ticks, and
+  // a tick right after it on the saved body.
+  await act(async () => edit().click());
+  await userEvent.type(screen.container.querySelector("textarea")!, "Edited. ");
+  const save = [...screen.container.querySelectorAll("button")].find(
+    (b) => b.textContent === "Save",
+  );
+  await userEvent.click(save!);
+  await vi.waitFor(() => expect(boxes()).toHaveLength(2));
+  const manualBody = `Edited. ${latestBody}`;
+  expect(command.mock.calls[2]![0].input.body).toBe(manualBody);
+  await userEvent.click(boxes()[0]!);
+  await vi.waitFor(() => expect(command).toHaveBeenCalledTimes(4));
+  expect(command.mock.calls[3]![0].input.body).toBe(
+    manualBody.replace("- [x] First", "- [ ] First"),
+  );
 });
 
 it("leaves task checkboxes read-only for a viewer who can't edit the description", async () => {
