@@ -3,13 +3,15 @@ import {
   sourceControlClients,
 } from "@t3tools/client-runtime/source-control-clients";
 import { useAtomCommand } from "~/state/use-atom-command";
-import type {
-  EnvironmentId,
-  PullRequestComment,
-  PullRequestDetailView,
-  PullRequestRef,
-  PullRequestReviewThread,
-  ScopedThreadRef,
+import { useEnvironmentScope } from "~/state/session";
+import {
+  AuthSourceControlWriteScope,
+  type EnvironmentId,
+  type PullRequestComment,
+  type PullRequestDetailView,
+  type PullRequestRef,
+  type PullRequestReviewThread,
+  type ScopedThreadRef,
 } from "@t3tools/contracts";
 import {
   ArrowDownUpIcon,
@@ -507,6 +509,7 @@ export function PullRequestSummaryTab({
   const [commentSaving, setCommentSaving] = useState(false);
   const editingCommentId = commentScope?.pullRequest === detail.url ? commentScope.commentId : null;
 
+  const canWriteSourceControl = useEnvironmentScope(environmentId, AuthSourceControlWriteScope);
   // Ticks show at once and stay clickable while they save one at a time.
   const [taskEdit, setTaskEdit] = useState<TaskListEdit | null>(null);
   const [saveTaskBody] = useState(createTaskListSaveQueue);
@@ -814,7 +817,11 @@ export function PullRequestSummaryTab({
                 cwd={detail.workspaceRoot}
                 environmentId={environmentId}
                 threadRef={threadRef}
-                onTaskListChange={canEditPullRequestChangeRequest(detail) ? toggleTask : undefined}
+                onTaskListChange={
+                  canEditPullRequestChangeRequest(detail) && canWriteSourceControl
+                    ? toggleTask
+                    : undefined
+                }
               />
               {canEditPullRequestChangeRequest(detail) ? (
                 <PullRequestEditButton

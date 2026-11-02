@@ -3,21 +3,25 @@ import { EnvironmentId, ProjectId, type PullRequestDetailView } from "@t3tools/c
 import { expect, it, vi } from "vite-plus/test";
 import { userEvent } from "vite-plus/test/browser";
 
-const { command } = vi.hoisted(() => ({ command: vi.fn() }));
+const { command, sourceControl } = vi.hoisted(() => ({
+  command: vi.fn(),
+  sourceControl: { canWrite: true },
+}));
 vi.mock(import("~/state/use-atom-command"), async (original) => ({
   ...(await original()),
   useAtomCommand: (() => command) as never,
 }));
-// The description editor saves only with source control write access.
+// Saving the description needs source control write access.
 vi.mock(import("~/state/session"), async (original) => ({
   ...(await original()),
-  readEnvironmentScope: () => true,
-  useEnvironmentScope: () => true,
+  readEnvironmentScope: () => sourceControl.canWrite,
+  useEnvironmentScope: () => sourceControl.canWrite,
 }));
 
 function setup() {
   command.mockReset();
   command.mockResolvedValue({ _tag: "Success", value: undefined });
+  sourceControl.canWrite = true;
 }
 
 import { act, render as renderUi } from "../../../test/render";
@@ -168,13 +172,15 @@ it("keeps tasks clickable while saving, saves quick ticks in order, and holds th
   );
 });
 
-it("leaves task checkboxes read-only for a viewer who can't edit the description", async () => {
+it("leaves task checkboxes read-only for a viewer who can't save the description", async () => {
   setup();
-  await using screen = await render({
-    ...detail,
-    body: "- [ ] First",
-    viewer: "someone-else",
-  });
-  const box = screen.container.querySelector<HTMLInputElement>('input[type="checkbox"]')!;
-  expect(box.disabled).toBe(true);
+  const body = "- [ ] First";
+  await using screen = await render({ ...detail, body, viewer: "someone-else" });
+  const box = () => screen.container.querySelector<HTMLInputElement>('input[type="checkbox"]')!;
+  expect(box().disabled).toBe(true);
+
+  // The author on a device without source control write access.
+  sourceControl.canWrite = false;
+  await screen.rerender(tab({ ...detail, body }));
+  expect(box().disabled).toBe(true);
 });
