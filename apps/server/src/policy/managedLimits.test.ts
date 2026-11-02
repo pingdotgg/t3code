@@ -74,7 +74,7 @@ it.effect("binds only the loopback address it approved when remote clients are n
   }),
 );
 
-it.effect("refuses Tailscale Serve when remote clients are not allowed", () =>
+it.effect("refuses Tailscale Serve and Tailscale sign-in when remote clients are not allowed", () =>
   Effect.gen(function* () {
     const error = yield* ManagedLimits.checkServerReachability(desktopAndLocal, {
       authPolicy: "loopback-browser",
@@ -82,6 +82,16 @@ it.effect("refuses Tailscale Serve when remote clients are not allowed", () =>
       tailscaleServeEnabled: true,
     }).pipe(Effect.flip);
     assert.include(error.message, "Tailscale Serve");
+    const signIn = yield* ManagedLimits.checkServerReachability(desktopAndLocal, {
+      authPolicy: "remote-reachable",
+      host: "0.0.0.0",
+      tailscaleServeEnabled: false,
+      tailscaleSignInEnabled: true,
+    }).pipe(Effect.flip);
+    assert.equal(
+      signIn.message,
+      "Example Corp's policy does not allow remote clients, so Tailscale sign-in cannot be turned on.",
+    );
   }),
 );
 

@@ -27,6 +27,7 @@ function targetPersistenceError(
   operation:
     | "list-targets"
     | "list-disabled-targets"
+    | "list-dismissed-environments"
     | "register-connection"
     | "set-connection-routes"
     | "remove-connection"
@@ -57,6 +58,10 @@ export const layer = Layer.effectContext(
         Effect.map((document) => document.disabledEnvironmentIds),
         Effect.mapError((error) => targetPersistenceError("list-disabled-targets", error)),
       ),
+      listDismissed: catalog.read.pipe(
+        Effect.map((document) => document.dismissedEnvironmentIds),
+        Effect.mapError((error) => targetPersistenceError("list-dismissed-environments", error)),
+      ),
     });
     const registrationStore = Persistence.ConnectionRegistrationStore.of({
       register: (registration, routes) =>
@@ -67,9 +72,9 @@ export const layer = Layer.effectContext(
         catalog
           .update((document) => setRoutesInCatalog(document, environmentId, routes))
           .pipe(Effect.mapError((error) => targetPersistenceError("set-connection-routes", error))),
-      remove: (environmentId) =>
+      remove: (environmentId, options) =>
         catalog
-          .update((document) => removeConnectionFromCatalog(document, environmentId))
+          .update((document) => removeConnectionFromCatalog(document, environmentId, options))
           .pipe(Effect.mapError((error) => targetPersistenceError("remove-connection", error))),
       setEnabled: (environmentId, enabled) =>
         catalog

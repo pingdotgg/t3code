@@ -1,6 +1,11 @@
-import type { EnvironmentConnectionPhase } from "@t3tools/client-runtime/connection";
+import {
+  connectionStatusTitle,
+  type EnvironmentConnectionPhase,
+} from "@t3tools/client-runtime/connection";
+import type { EnvironmentMachineKind } from "@t3tools/contracts";
 
 import { cn } from "~/lib/utils";
+import { EnvironmentMachineIcon } from "~/components/EnvironmentMachineIcon";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
 
 export function connectionPhaseDotClassName(phase: EnvironmentConnectionPhase): string {
@@ -19,6 +24,33 @@ export function connectionPhaseDotClassName(phase: EnvironmentConnectionPhase): 
 
 export function connectionPhasePingClassName(phase: EnvironmentConnectionPhase): string | null {
   return phase === "connecting" || phase === "reconnecting" ? "bg-warning/60 duration-2000" : null;
+}
+
+/** A machine icon with a static connection dot on its corner. It never animates, so lists can hold many. */
+export function MachineStatusIcon({
+  kind,
+  phase,
+  className,
+}: {
+  readonly kind: EnvironmentMachineKind;
+  readonly phase: EnvironmentConnectionPhase | null;
+  readonly className?: string;
+}) {
+  return (
+    <span className="relative inline-flex shrink-0">
+      <EnvironmentMachineIcon aria-hidden kind={kind} className={className} />
+      {phase === null ? null : (
+        <span
+          role="img"
+          aria-label={connectionStatusTitle({ phase, error: null, traceId: null })}
+          className={cn(
+            "absolute -right-0.5 -bottom-0.5 size-1.5 rounded-full ring-1 ring-background",
+            connectionPhaseDotClassName(phase),
+          )}
+        />
+      )}
+    </span>
+  );
 }
 
 type ConnectionStatusDotProps = {

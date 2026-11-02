@@ -182,6 +182,11 @@ contextBridge.exposeInMainWorld("desktopBridge", {
   setTailscaleServeEnabled: (input) =>
     ipcRenderer.invoke(IpcChannels.SET_TAILSCALE_SERVE_ENABLED_CHANNEL, input),
   getAdvertisedEndpoints: () => ipcRenderer.invoke(IpcChannels.GET_ADVERTISED_ENDPOINTS_CHANNEL),
+  getTailscaleStatus: () => ipcRenderer.invoke(IpcChannels.GET_TAILSCALE_STATUS_CHANNEL),
+  setTailscaleSignInEnabled: (enabled) =>
+    ipcRenderer.invoke(IpcChannels.SET_TAILSCALE_SIGN_IN_ENABLED_CHANNEL, enabled),
+  discoverTailnetEnvironments: () =>
+    ipcRenderer.invoke(IpcChannels.DISCOVER_TAILNET_ENVIRONMENTS_CHANNEL),
   getWslState: () => ipcRenderer.invoke(IpcChannels.GET_WSL_STATE_CHANNEL),
   setWslBackendEnabled: (enabled) =>
     ipcRenderer.invoke(IpcChannels.SET_WSL_BACKEND_ENABLED_CHANNEL, enabled),

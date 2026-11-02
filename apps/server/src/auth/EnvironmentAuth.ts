@@ -22,6 +22,7 @@ import {
   DpopFailureReason,
   type DpopFailureReason as DpopFailureReasonType,
   mcpClientScopes,
+  TAILNET_SUBJECT_PREFIX,
 } from "@t3tools/contracts";
 import { isLocalLoopbackHost } from "@t3tools/shared/hostClassification";
 import { encodeOAuthScope } from "@t3tools/shared/oauthScope";
@@ -35,6 +36,7 @@ import * as Option from "effect/Option";
 import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
 import * as HttpServerRequest from "effect/http/HttpServerRequest";
+import * as SqlClient from "effect/sql/SqlClient";
 
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as ServerConfig from "../config.ts";
@@ -717,6 +719,7 @@ export const make = Effect.gen(function* () {
   const descriptor = yield* policy.getDescriptor();
   const config = yield* ServerConfig.ServerConfig;
   const managedPolicy = yield* ManagedPolicy.ManagedPolicy;
+  const sql = yield* SqlClient.SqlClient;
   const devAuth = resolveReusableDevAuth(config);
 
   const authenticateToken = (
@@ -831,6 +834,9 @@ export const make = Effect.gen(function* () {
             auth: descriptor,
             ...authScopeResponse(session.scopes),
             sessionMethod: session.method,
+            ...(session.subject.startsWith(TAILNET_SUBJECT_PREFIX)
+              ? { signedInWithTailscale: true }
+              : {}),
             ...(session.expiresAt ? { expiresAt: DateTime.toUtc(session.expiresAt) } : {}),
           }) satisfies AuthSessionState,
       ),
@@ -952,6 +958,9 @@ export const make = Effect.gen(function* () {
     );
   };
 
+  // Consuming the grant (which checks the Tailscale block list) and creating the
+  // session share one write transaction, so a grant spent after a block lands is
+  // refused, and a session made before it is revoked by the block's next step.
   const exchangeBootstrapCredentialForAccessToken: EnvironmentAuth["Service"]["exchangeBootstrapCredentialForAccessToken"] =
     (credential, requestedScopes, requestMetadata, input) => {
       return resolveBootstrapGrant(credential, {
@@ -964,7 +973,12 @@ export const make = Effect.gen(function* () {
               requestedScopes === undefined
                 ? grant.scopes
                 : [...new Set(requestedScopes)].filter((scope) => grant.scopes.includes(scope));
-            if (grantedScopes.length === 0) {
+            // A Tailscale session holds exactly what its grant gives, so the tailnet policy alone
+            // decides its scopes and a recheck can tell when the grant changed.
+            const narrowedTailnetGrant =
+              grant.subject.startsWith(TAILNET_SUBJECT_PREFIX) &&
+              grantedScopes.length !== grant.scopes.length;
+            if (grantedScopes.length === 0 || narrowedTailnetGrant) {
               return yield* new ServerAuthScopeNotGrantedError({});
             }
             return yield* sessions
@@ -991,6 +1005,11 @@ export const make = Effect.gen(function* () {
               );
           }),
         ),
+        sql.withTransaction,
+        Effect.catchTags({
+          SqlError: (cause) =>
+            Effect.fail(new ServerAuthAuthenticatedAccessTokenIssueError({ cause })),
+        }),
         Effect.flatMap((session) =>
           DateTime.now.pipe(
             Effect.map(
@@ -1433,6 +1452,7 @@ const revokePairedClientsThePolicyDisallows = Effect.fn(
   const sessions = (yield* stores.sessions.listActive()).filter(
     (session) =>
       disallowed.has(session.subject) ||
+      (!remoteAllowed && session.subject.startsWith(TAILNET_SUBJECT_PREFIX)) ||
       // The startup link also pairs browsers on this machine; only a device elsewhere goes.
       (!remoteAllowed &&
         session.subject === INTERNAL_ADMINISTRATIVE_BOOTSTRAP_SUBJECT &&

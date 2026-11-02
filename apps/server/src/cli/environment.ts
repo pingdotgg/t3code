@@ -14,6 +14,7 @@ import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import * as ServerConfig from "../config.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
+import * as TailscaleHost from "../tailscale/TailscaleHost.ts";
 import * as PeerLinks from "../peer/PeerLinks.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as ManagedPolicy from "../policy/ManagedPolicy.ts";
@@ -42,7 +43,12 @@ const runWithPeerLinks = Effect.fn("environment.runWithPeerLinks")(function* <A,
             FetchHttpClient.layer,
           ),
         ),
-        Layer.provide(ServerEnvironment.layer.pipe(Layer.provide(ServerSecretStore.layer))),
+        Layer.provide(
+          ServerEnvironment.layer.pipe(
+            Layer.provide(ServerSecretStore.layer),
+            Layer.provide(TailscaleHost.layer),
+          ),
+        ),
         Layer.provide(
           ServerSettings.layer.pipe(
             Layer.provide(

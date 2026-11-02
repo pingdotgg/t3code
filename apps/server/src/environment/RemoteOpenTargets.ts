@@ -33,7 +33,7 @@ export const make = Effect.gen(function* () {
     );
     const username = yield* HostProcess.Username;
 
-    const magicDnsName = yield* readTailscaleStatus.pipe(
+    const magicDnsName = yield* readTailscaleStatus("passive").pipe(
       Effect.map((status) => status.magicDnsName),
       Effect.orElseSucceed(() => null),
       Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),

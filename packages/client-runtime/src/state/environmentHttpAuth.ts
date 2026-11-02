@@ -95,7 +95,9 @@ export const executeAuthenticatedEnvironmentHttpRequest = <
 >(
   input: Parameters<typeof executeEnvironmentRequest<Group, A, E, R>>[0],
 ) =>
-  input.prepared.httpAuthorization?._tag === "Dpop"
+  // A Tailscale session never touches T3 Connect, so it keeps its caller's trace.
+  input.prepared.httpAuthorization?._tag === "Dpop" &&
+  input.prepared.httpAuthorization.tailnetCredentialId === undefined
     ? executeEnvironmentRequest(input).pipe(
         Effect.withSpan(ENVIRONMENT_REQUEST_SPAN, { root: true }),
         withRelayClientTracing,
@@ -148,20 +150,26 @@ const executeEnvironmentRequest = Effect.fnUntraced(function* <
             cause: input.prepared.target._tag,
           });
         }
-        const current = yield* remote.value
-          .authorizeDpopHttp({
-            expectedEnvironmentId: input.prepared.environmentId,
-            ...(rejectedAccessToken === undefined ? {} : { rejectedAccessToken }),
-          })
-          .pipe(
-            Effect.mapError(
-              (cause) =>
-                new RemoteEnvironmentAuthFetchError({
-                  message: "Could not authorize the environment request.",
-                  cause,
-                }),
-            ),
-          );
+        const rejected = rejectedAccessToken === undefined ? {} : { rejectedAccessToken };
+        const tailnetCredentialId = authorization.tailnetCredentialId;
+        const current = yield* (
+          tailnetCredentialId === undefined
+            ? remote.value.authorizeDpopHttp({
+                expectedEnvironmentId: input.prepared.environmentId,
+                ...rejected,
+              })
+            : remote.value
+                .authorizeTailnetHttp({ credentialId: tailnetCredentialId, ...rejected })
+                .pipe(Effect.map((httpAuthorization) => ({ httpBaseUrl, httpAuthorization })))
+        ).pipe(
+          Effect.mapError(
+            (cause) =>
+              new RemoteEnvironmentAuthFetchError({
+                message: "Could not authorize the environment request.",
+                cause,
+              }),
+          ),
+        );
         // A learned direct route keeps its own origin; only the token renews.
         if (input.prepared.target._tag === "RelayConnectionTarget") {
           httpBaseUrl = current.httpBaseUrl;

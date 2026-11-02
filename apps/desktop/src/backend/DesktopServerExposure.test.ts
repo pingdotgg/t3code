@@ -10,6 +10,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
+import { HttpClient, HttpClientResponse } from "effect/http";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
 import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
@@ -17,6 +18,7 @@ import * as DesktopConfig from "../app/DesktopConfig.ts";
 import * as DesktopManagedPolicy from "../app/DesktopManagedPolicy.ts";
 import * as DesktopNetworkInterfaces from "./DesktopNetworkInterfaces.ts";
 import * as DesktopServerExposure from "./DesktopServerExposure.ts";
+import * as DesktopTailscaleStatus from "./DesktopTailscaleStatus.ts";
 import * as DesktopAppSettings from "../settings/DesktopAppSettings.ts";
 
 const encoder = new TextEncoder();
@@ -93,6 +95,7 @@ function layer(input: {
   readonly spawnerLayer?: Layer.Layer<ChildProcessSpawner.ChildProcessSpawner>;
   readonly desktopSettingsLayer?: Layer.Layer<DesktopAppSettings.DesktopAppSettings>;
   readonly managedPolicyLayer?: Layer.Layer<DesktopManagedPolicy.DesktopManagedPolicy>;
+  readonly httpClientLayer?: Layer.Layer<HttpClient.HttpClient>;
 }) {
   const env = { T3CODE_HOME: input.baseDir, ...input.env };
   const layerEnvironment = layerEnvironmentFor(input.baseDir, env);
@@ -101,10 +104,11 @@ function layer(input: {
   });
 
   return DesktopServerExposure.layer.pipe(
+    Layer.provideMerge(DesktopTailscaleStatus.layer),
     Layer.provideMerge(input.desktopSettingsLayer ?? DesktopAppSettings.layer),
     Layer.provideMerge(input.managedPolicyLayer ?? DesktopManagedPolicy.layerTest()),
     Layer.provideMerge(NodeFileSystem.layer),
-    Layer.provideMerge(NodeHttpClient.layerUndici),
+    Layer.provideMerge(input.httpClientLayer ?? NodeHttpClient.layerUndici),
     Layer.provideMerge(input.spawnerLayer ?? layerMockSpawner()),
     Layer.provideMerge(layerNetwork),
     Layer.provideMerge(DesktopConfig.layerTest(env)),
@@ -127,6 +131,7 @@ const withHarness = <A, E, R>(
   spawnerLayer?: Layer.Layer<ChildProcessSpawner.ChildProcessSpawner>,
   desktopSettingsLayer?: Layer.Layer<DesktopAppSettings.DesktopAppSettings>,
   managedPolicyLayer?: Layer.Layer<DesktopManagedPolicy.DesktopManagedPolicy>,
+  httpClientLayer?: Layer.Layer<HttpClient.HttpClient>,
 ) =>
   Effect.gen(function* () {
     const fileSystem = yield* FileSystem.FileSystem;
@@ -142,6 +147,7 @@ const withHarness = <A, E, R>(
           ...(spawnerLayer ? { spawnerLayer } : {}),
           ...(desktopSettingsLayer ? { desktopSettingsLayer } : {}),
           ...(managedPolicyLayer ? { managedPolicyLayer } : {}),
+          ...(httpClientLayer ? { httpClientLayer } : {}),
         }),
       ),
     );
@@ -197,39 +203,46 @@ describe("DesktopServerExposure", () => {
     ),
   );
 
-  it.effect("starts local-only, Serve off, when a managed policy keeps clients local", () =>
-    withHarness(
-      lanNetworkInterfaces,
-      Effect.gen(function* () {
-        const serverExposure = yield* DesktopServerExposure.DesktopServerExposure;
-        const settings = yield* DesktopAppSettings.DesktopAppSettings;
-        yield* settings.setServerExposureMode("network-accessible");
-        yield* settings.setTailscaleServe({ enabled: true, port: Option.none() });
+  it.effect(
+    "starts local-only, Serve and sign-in off, when a managed policy keeps clients local",
+    () =>
+      withHarness(
+        lanNetworkInterfaces,
+        Effect.gen(function* () {
+          const serverExposure = yield* DesktopServerExposure.DesktopServerExposure;
+          const settings = yield* DesktopAppSettings.DesktopAppSettings;
+          yield* settings.setServerExposureMode("network-accessible");
+          yield* settings.setTailscaleServe({ enabled: true, port: Option.none() });
+          yield* settings.setTailscaleSignIn(true);
 
-        const state = yield* serverExposure.configureFromSettings({ port: 4173 });
-        assert.equal(state.mode, "local-only");
-        const backendConfig = yield* serverExposure.backendConfig;
-        assert.equal(backendConfig.bindHost, "127.0.0.1");
-        assert.isFalse(backendConfig.tailscaleServeEnabled);
-        // Choosing them again while the policy applies does not widen the backend either.
-        yield* serverExposure.setMode("network-accessible");
-        yield* serverExposure.setTailscaleServeEnabled({ enabled: true });
-        assert.equal((yield* serverExposure.backendConfig).bindHost, "127.0.0.1");
-        assert.isFalse((yield* serverExposure.backendConfig).tailscaleServeEnabled);
-        // The saved choice returns once the policy allows it.
-        const saved = yield* settings.get;
-        assert.equal(saved.serverExposureMode, "network-accessible");
-        assert.isTrue(saved.tailscaleServeEnabled);
-      }),
-      {},
-      undefined,
-      undefined,
-      DesktopManagedPolicy.layerTest({
-        schemaVersion: 1,
-        organization: "Example Corp",
-        limits: { clients: ["desktop"] },
-      }),
-    ),
+          const state = yield* serverExposure.configureFromSettings({ port: 4173 });
+          assert.equal(state.mode, "local-only");
+          const backendConfig = yield* serverExposure.backendConfig;
+          assert.equal(backendConfig.bindHost, "127.0.0.1");
+          assert.isFalse(backendConfig.tailscaleServeEnabled);
+          assert.isFalse(backendConfig.tailscaleSignInEnabled);
+          // Choosing them again while the policy applies does not widen the backend either.
+          yield* serverExposure.setMode("network-accessible");
+          yield* serverExposure.setTailscaleServeEnabled({ enabled: true });
+          yield* serverExposure.setTailscaleSignInEnabled(true);
+          assert.equal((yield* serverExposure.backendConfig).bindHost, "127.0.0.1");
+          assert.isFalse((yield* serverExposure.backendConfig).tailscaleServeEnabled);
+          assert.isFalse((yield* serverExposure.backendConfig).tailscaleSignInEnabled);
+          // The saved choice returns once the policy allows it.
+          const saved = yield* settings.get;
+          assert.equal(saved.serverExposureMode, "network-accessible");
+          assert.isTrue(saved.tailscaleServeEnabled);
+          assert.isTrue(saved.tailscaleSignInEnabled);
+        }),
+        {},
+        undefined,
+        undefined,
+        DesktopManagedPolicy.layerTest({
+          schemaVersion: 1,
+          organization: "Example Corp",
+          limits: { clients: ["desktop"] },
+        }),
+      ),
   );
 
   it.effect("persists network-accessible mode and updates backend binding state", () =>
@@ -250,6 +263,8 @@ describe("DesktopServerExposure", () => {
           advertisedHost: "192.168.1.20",
           tailscaleServeEnabled: false,
           tailscaleServePort: 443,
+          tailscaleSignInEnabled: false,
+          port: 4173,
         });
 
         const backendConfig = yield* serverExposure.backendConfig;
@@ -336,6 +351,47 @@ describe("DesktopServerExposure", () => {
         assert.equal(persisted.tailscaleServePort, 8443);
       }),
     ),
+  );
+
+  it.effect(
+    "listens on the tailnet only while Tailscale sign-in is on and Network access is off",
+    () =>
+      withHarness(
+        { ...tailnetNetworkInterfaces, ...lanNetworkInterfaces },
+        Effect.gen(function* () {
+          const serverExposure = yield* DesktopServerExposure.DesktopServerExposure;
+          yield* (yield* DesktopAppSettings.DesktopAppSettings).load;
+          yield* serverExposure.configureFromSettings({ port: 3773 });
+
+          const signIn = yield* serverExposure.setTailscaleSignInEnabled(true);
+          assert.equal(signIn.requiresRelaunch, true);
+          assert.equal(signIn.state.tailscaleSignInEnabled, true);
+          assert.equal(signIn.state.port, 3773);
+          assert.deepInclude(yield* serverExposure.backendConfig, {
+            bindHost: "0.0.0.0",
+            tailscaleSignInEnabled: true,
+            tailscaleOnly: true,
+          });
+          assert.deepEqual(
+            (yield* serverExposure.getAdvertisedEndpoints).map((endpoint) => endpoint.httpBaseUrl),
+            ["http://127.0.0.1:3773/", "http://100.90.1.2:3773/"],
+          );
+
+          yield* serverExposure.setMode("network-accessible");
+          assert.deepInclude(yield* serverExposure.backendConfig, {
+            bindHost: "0.0.0.0",
+            tailscaleOnly: false,
+          });
+
+          yield* serverExposure.setMode("local-only");
+          yield* serverExposure.setTailscaleSignInEnabled(false);
+          assert.deepInclude(yield* serverExposure.backendConfig, {
+            bindHost: "127.0.0.1",
+            tailscaleSignInEnabled: false,
+            tailscaleOnly: false,
+          });
+        }),
+      ),
   );
 
   it.effect("keeps a Tailscale Serve change made while a mode change is saving", () =>
@@ -488,6 +544,54 @@ describe("DesktopServerExposure", () => {
       );
     },
   );
+
+  it.effect("reads this backend's environment ID once it answers, then keeps it", () => {
+    let localReads = 0;
+    const httpClientLayer = Layer.succeed(
+      HttpClient.HttpClient,
+      HttpClient.make((request) =>
+        Effect.sync(() => {
+          const local = request.url.startsWith("http://127.0.0.1:4173/");
+          if (local) localReads += 1;
+          // The backend is still starting on the first read.
+          const body =
+            local && localReads === 1
+              ? new Response("starting", { status: 503 })
+              : Response.json({ environmentId: "this-desktop" });
+          return HttpClientResponse.fromWeb(request, body);
+        }),
+      ),
+    );
+    const serveStatus = () =>
+      withHarness(
+        tailnetNetworkInterfaces,
+        Effect.gen(function* () {
+          const serverExposure = yield* DesktopServerExposure.DesktopServerExposure;
+          yield* serverExposure.configureFromSettings({ port: 4173 });
+          yield* serverExposure.setTailscaleServeEnabled({ enabled: true });
+          const statuses: Array<string> = [];
+          for (let call = 0; call < 3; call += 1) {
+            const endpoints = yield* serverExposure.getAdvertisedEndpoints;
+            statuses.push(
+              endpoints.find((endpoint) => endpoint.httpBaseUrl.startsWith("https://"))?.status ??
+                "missing",
+            );
+          }
+          return statuses;
+        }),
+        {},
+        layerMockSpawner(
+          `{"Self":{"DNSName":"desktop.tail.ts.net.","TailscaleIPs":["100.90.1.2"]}}`,
+        ),
+        undefined,
+        undefined,
+        httpClientLayer,
+      );
+    return Effect.gen(function* () {
+      assert.deepEqual(yield* serveStatus(), ["unavailable", "available", "available"]);
+      assert.equal(localReads, 2);
+    });
+  });
 
   it.effect("preserves explicit Tailscale exposure overrides", () =>
     withHarness(

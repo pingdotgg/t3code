@@ -19,6 +19,9 @@ export const DesktopBackendBootstrap = Schema.Struct({
   shellEnvironmentPrepared: Schema.optionalKey(Schema.Boolean),
   tailscaleServeEnabled: Schema.Boolean,
   tailscaleServePort: PortSchema,
+  tailscaleSignInEnabled: Schema.optionalKey(Schema.Boolean),
+  // Accept only loopback and tailnet peers on a wildcard listener.
+  tailscaleOnly: Schema.optionalKey(Schema.Boolean),
   otlpTracesUrl: Schema.optional(Schema.String),
   otlpMetricsUrl: Schema.optional(Schema.String),
   otlpLogsUrl: Schema.optional(Schema.String),

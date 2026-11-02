@@ -381,6 +381,8 @@ const runStartupPhase = <A, E, R>(phase: string, effect: Effect.Effect<A, E, R>)
 interface StartupOptions {
   readonly activate?: Effect.Effect<void>;
   readonly awaitAuxiliaryParked?: Effect.Effect<void>;
+  /** Settles after the first Tailscale Serve attempt, so headless output can show its URL. */
+  readonly awaitTailscaleServe?: Effect.Effect<void>;
   readonly abort?: (error: ServerRuntimeStartupError) => Effect.Effect<void>;
 }
 
@@ -614,6 +616,7 @@ const make = Effect.fn("serverRuntimeStartup.make")(function* (options?: Startup
         );
         if (serverConfig.startupPresentation === "headless") {
           yield* Effect.logDebug("startup phase: headless access info");
+          yield* options?.awaitTailscaleServe ?? Effect.void;
           const accessInfo = yield* issueHeadlessServeAccessInfo();
           yield* runStartupPhase(
             "headless.output",
