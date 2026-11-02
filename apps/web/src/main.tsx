@@ -34,9 +34,15 @@ const managedAuthShellModule =
       : import("./components/clerk/BrowserManagedAuthShell")
     : null;
 
+// Configured clients always mount this dialog, so load it where the chunk reload guard covers it.
+const connectOnboardingDialogModule = managedAuthShellModule
+  ? import("./components/cloud/ConnectOnboardingDialog")
+  : null;
+
 export const startup = Promise.all([
   managedAuthShellModule?.then((module) => module.default) ?? null,
   router.load(),
+  connectOnboardingDialogModule,
 ])
   .then(([ManagedAuthShell]) => {
     // Route chunk failures resolve router.load() and surface later through the error boundary.
