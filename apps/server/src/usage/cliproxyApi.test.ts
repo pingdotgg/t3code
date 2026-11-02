@@ -1,3 +1,4 @@
+import * as DateTime from "effect/DateTime";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
@@ -193,7 +194,306 @@ describe("CLIProxyAPI hub failures", () => {
   );
 });
 
+function metaFixture() {
+  const state = {
+    token: "dca:first-secret",
+    authIndex: "meta-index",
+    status: 200,
+    downloadStatus: 200,
+    usage: {
+      subs_usage: { window: { used_percent: 12 }, weekly: { used_percent: 63 } },
+    } as unknown,
+    mintCalls: 0,
+  };
+  const http = HttpClient.make((request) =>
+    Effect.sync(() => {
+      const url = new URL(request.url);
+      if (url.pathname.endsWith("/auth-files"))
+        return HttpClientResponse.fromWeb(
+          request,
+          Response.json({
+            files: [{ id: "meta.json", auth_index: state.authIndex, provider: "meta" }],
+          }),
+        );
+      if (url.pathname.endsWith("/auth-files/download"))
+        return HttpClientResponse.fromWeb(
+          request,
+          Response.json({ dca_token: state.token }, { status: state.downloadStatus }),
+        );
+      const body = decodeRequest(
+        new TextDecoder().decode(
+          request.body._tag === "Uint8Array" ? request.body.body : new Uint8Array(),
+        ),
+      );
+      expect(body.header?.Authorization).toBe(`Bearer ${state.token}`);
+      expect(body.url).toBe("https://api.meta.ai/muse-code/key");
+      state.mintCalls += 1;
+      return HttpClientResponse.fromWeb(
+        request,
+        Response.json({ status_code: state.status, body: encodeJson(state.usage) }),
+      );
+    }),
+  );
+  return {
+    state,
+    api: makeCliproxyApi.pipe(
+      Effect.provideService(HttpClient.HttpClient, http),
+      Effect.provide(NodeCrypto.layer),
+    ),
+  };
+}
+
+describe("Muse quota refresh", () => {
+  it.effect("retains the original observation and marks failed refreshes until recovery", () =>
+    Effect.gen(function* () {
+      const test = metaFixture();
+      const api = yield* test.api;
+      const first = (yield* api.readAccounts(config))[0]!;
+      test.state.status = 503;
+      test.state.usage = { error: "private-key" };
+      yield* TestClock.adjust("60 seconds");
+      const failed = (yield* api.readAccounts(config))[0]!;
+      expect(failed.usageLimits.windows).toEqual(first.usageLimits.windows);
+      expect(failed.usageLimits.checkedAt).toBe(first.usageLimits.checkedAt);
+      expect(failed.usageLimits.unavailable?.reason).toBe("probeFailed");
+      expect(encodeJson(failed)).not.toContain("private-key");
+      yield* api.readAccounts(config);
+      expect(test.state.mintCalls).toBe(2);
+      yield* TestClock.adjust("60 seconds");
+      const failedAgain = (yield* api.readAccounts(config))[0]!;
+      expect(failedAgain.usageLimits.checkedAt).toBe(first.usageLimits.checkedAt);
+      expect(failedAgain.usageLimits.windows).toEqual(first.usageLimits.windows);
+      test.state.status = 200;
+      test.state.usage = { subs_usage: { window: { used_percent: 33 } } };
+      yield* TestClock.adjust("60 seconds");
+      const recovered = (yield* api.readAccounts(config))[0]!;
+      expect(recovered.usageLimits.unavailable).toBeUndefined();
+      expect(recovered.usageLimits.windows[0]?.usedPercent).toBe(33);
+      expect(recovered.usageLimits.checkedAt).not.toBe(first.usageLimits.checkedAt);
+    }),
+  );
+
+  it.effect.each([
+    { name: "missing usage", usage: {} },
+    { name: "null usage", usage: { subs_usage: null } },
+    { name: "malformed usage", usage: { subs_usage: { window: { used_percent: "secret" } } } },
+  ])("retains successful windows after $name", ({ usage }) =>
+    Effect.gen(function* () {
+      const test = metaFixture();
+      const api = yield* test.api;
+      const first = (yield* api.readAccounts(config))[0]!;
+      test.state.usage = usage;
+      yield* TestClock.adjust("60 seconds");
+      const result = (yield* api.readAccounts(config))[0]!;
+      expect(result.usageLimits.windows).toEqual(first.usageLimits.windows);
+      expect(result.usageLimits.checkedAt).toBe(first.usageLimits.checkedAt);
+      expect(result.usageLimits.unavailable?.reason).toBe("probeFailed");
+    }),
+  );
+
+  it.effect(
+    "reports malformed first observations and invalid credentials without leaking secrets",
+    () =>
+      Effect.gen(function* () {
+        const test = metaFixture();
+        test.state.usage = { subs_usage: { weekly: { used_percent: "secret-usage" } } };
+        const api = yield* test.api;
+        const result = (yield* api.readAccounts(config))[0]!;
+        expect(result.usageLimits.windows).toEqual([]);
+        expect(result.usageLimits.unavailable?.reason).toBe("probeFailed");
+        expect(encodeJson(result)).not.toContain("secret-usage");
+        test.state.token = "invalid-secret";
+        const invalid = (yield* api.readAccounts(config))[0]!;
+        expect(invalid.usageLimits.windows).toEqual([]);
+        expect(invalid.usageLimits.unavailable?.reason).toBe("probeFailed");
+        expect(encodeJson(invalid)).not.toContain("invalid-secret");
+        expect(test.state.mintCalls).toBe(1);
+      }),
+  );
+
+  it.effect("evicts old credential entries to bound retained quota memory", () =>
+    Effect.gen(function* () {
+      const test = metaFixture();
+      const api = yield* test.api;
+      yield* api.readAccounts(config);
+      for (let index = 0; index < 128; index += 1) {
+        test.state.token = `dca:credential-${index}`;
+        yield* api.readAccounts(config);
+      }
+      test.state.token = "dca:first-secret";
+      test.state.status = 503;
+      const result = (yield* api.readAccounts(config))[0]!;
+      expect(result.usageLimits.windows).toEqual([]);
+      expect(result.usageLimits.unavailable?.reason).toBe("probeFailed");
+      expect(test.state.mintCalls).toBe(130);
+    }),
+  );
+
+  it.effect("does not reuse quota after DCA, auth-index, management-key or hub rotation", () =>
+    Effect.gen(function* () {
+      const test = metaFixture();
+      const api = yield* test.api;
+      const first = (yield* api.readAccounts(config))[0]!;
+      expect(first.usageLimits.windows).toHaveLength(2);
+      test.state.status = 503;
+      const rotated = { ...config, managementKey: "rotated-management" };
+      const moved = { ...config, url: "http://other-hub.test" };
+      for (const nextConfig of [rotated, moved]) {
+        const result = (yield* api.readAccounts(nextConfig))[0]!;
+        expect(result.usageLimits.windows).toEqual([]);
+        expect(result.usageLimits.unavailable?.reason).toBe("probeFailed");
+      }
+      test.state.token = "dca:rotated-secret";
+      const result = (yield* api.readAccounts(config))[0]!;
+      expect(result.usageLimits.windows).toEqual([]);
+      expect(result.usageLimits.credentialFingerprint).not.toBe(
+        first.usageLimits.credentialFingerprint,
+      );
+      expect(encodeJson(result)).not.toContain("rotated-secret");
+      test.state.authIndex = "rotated-index";
+      yield* api.readAccounts(config);
+      expect(test.state.mintCalls).toBe(5);
+    }),
+  );
+
+  it.effect("does not retain unverifiable credentials when auth download fails", () =>
+    Effect.gen(function* () {
+      const test = metaFixture();
+      const api = yield* test.api;
+      yield* api.readAccounts(config);
+      test.state.downloadStatus = 503;
+      const result = (yield* api.readAccounts(config))[0]!;
+      expect(result.usageLimits.windows).toEqual([]);
+      expect(result.usageLimits.unavailable?.reason).toBe("probeFailed");
+      expect(test.state.mintCalls).toBe(1);
+    }),
+  );
+
+  it.effect("serializes concurrent refreshes for the same credential", () =>
+    Effect.gen(function* () {
+      const test = metaFixture();
+      const api = yield* test.api;
+      const results = yield* Effect.all([api.readAccounts(config), api.readAccounts(config)], {
+        concurrency: 2,
+      });
+      expect(results[0]).toEqual(results[1]);
+      expect(test.state.mintCalls).toBe(1);
+    }),
+  );
+});
+
 describe("CLIProxyAPI built-in management API", () => {
+  it.effect("reads Muse quota without exposing credentials", () =>
+    Effect.gen(function* () {
+      const calls: string[] = [];
+      const http = HttpClient.make((request) =>
+        Effect.sync(() => {
+          const url = new URL(request.url);
+          calls.push(url.pathname);
+          if (url.pathname.endsWith("/auth-files"))
+            return HttpClientResponse.fromWeb(
+              request,
+              Response.json({ files: [{ id: "meta.json", auth_index: "m", provider: "meta" }] }),
+            );
+          if (url.pathname.endsWith("/auth-files/download"))
+            return HttpClientResponse.fromWeb(request, Response.json({ dca_token: "dca:fixture" }));
+          const body = decodeRequest(
+            new TextDecoder().decode(
+              request.body._tag === "Uint8Array" ? request.body.body : new Uint8Array(),
+            ),
+          );
+          expect(body.header?.Authorization).toBe("Bearer dca:fixture");
+          expect(body.url).toBe("https://api.meta.ai/muse-code/key");
+          return HttpClientResponse.fromWeb(
+            request,
+            Response.json({
+              status_code: 200,
+              body: JSON.stringify({
+                api_key: "secret-key",
+                subs_tier_name: "Muse Max",
+                subs_usage: {
+                  window: { used_percent: 10, window_duration_mins: 300, resets_at: 1793200020 },
+                  weekly: { used_percent: 62, resets_at: 1793577600 },
+                },
+              }),
+            }),
+          );
+        }),
+      );
+      const api = yield* makeCliproxyApi.pipe(
+        Effect.provideService(HttpClient.HttpClient, http),
+        Effect.provide(NodeCrypto.layer),
+      );
+      const result = yield* api.readAccounts(config);
+      expect(result).toHaveLength(1);
+      expect(result[0]).toMatchObject({
+        driver: "muse",
+        plan: "Muse Max",
+        usageLimits: {
+          windows: [
+            {
+              id: "window",
+              kind: "session",
+              usedPercent: 10,
+              windowDurationMins: 300,
+              resetsAt: DateTime.formatIso(DateTime.makeUnsafe(1793200020000)),
+            },
+            {
+              id: "weekly",
+              kind: "weekly",
+              usedPercent: 62,
+              resetsAt: DateTime.formatIso(DateTime.makeUnsafe(1793577600000)),
+            },
+          ],
+        },
+      });
+      expect(JSON.stringify(result)).not.toContain("fixture");
+      expect(JSON.stringify(result)).not.toContain("secret-key");
+      expect(calls).toContain("/v0/management/auth-files/download");
+      yield* api.readAccounts(config);
+      expect(calls.filter((path) => path.endsWith("/api-call"))).toHaveLength(1);
+      yield* TestClock.adjust("61 seconds");
+      yield* api.readAccounts(config);
+      expect(calls.filter((path) => path.endsWith("/api-call"))).toHaveLength(2);
+    }),
+  );
+  it.effect("reports unavailable Muse windows without inventing a quota", () =>
+    Effect.gen(function* () {
+      const http = HttpClient.make((request) =>
+        Effect.sync(() => {
+          const path = new URL(request.url).pathname;
+          if (path.endsWith("/auth-files"))
+            return HttpClientResponse.fromWeb(
+              request,
+              Response.json({
+                files: [
+                  { id: "meta.json", auth_index: "m", provider: "meta" },
+                  { id: "disabled.json", auth_index: "d", provider: "meta", disabled: true },
+                ],
+              }),
+            );
+          if (path.endsWith("/auth-files/download"))
+            return HttpClientResponse.fromWeb(request, Response.json({ dca_token: "dca:fixture" }));
+          return HttpClientResponse.fromWeb(
+            request,
+            Response.json({
+              status_code: 200,
+              body: encodeJson({ api_key: "secret", subs_usage: null }),
+            }),
+          );
+        }),
+      );
+      const api = yield* makeCliproxyApi.pipe(
+        Effect.provideService(HttpClient.HttpClient, http),
+        Effect.provide(NodeCrypto.layer),
+      );
+      const result = yield* api.readAccounts(config);
+      expect(result).toHaveLength(1);
+      expect(result[0]?.usageLimits.windows).toEqual([]);
+      expect(result[0]?.usageLimits.unavailable?.reason).toBe("probeFailed");
+      expect(JSON.stringify(result)).not.toContain("secret");
+    }),
+  );
   it.effect(
     "reads both accounts and their earliest unexpired credits without plugin endpoints",
     () =>

@@ -181,6 +181,56 @@ describe("pools", () => {
   };
   const laptop = { entry: { target: { label: "Laptop" } } };
 
+  it("keeps last known source windows visible and reports failed refreshes", () => {
+    const unavailable = { reason: "probeFailed" as const, message: "Refresh failed." };
+    const input = new Map([
+      [
+        EnvironmentId.make("env-a"),
+        {
+          ...laptop,
+          serverConfig: {
+            providers: [],
+            usageLimitSources: [
+              {
+                ...source,
+                accounts: [
+                  {
+                    id: "meta.json",
+                    driver: ProviderDriverKind.make("muse"),
+                    usageLimits: {
+                      checkedAt,
+                      windows: [{ ...window, usedPercent: 40 }],
+                      unavailable,
+                    },
+                  },
+                  {
+                    id: "empty.json",
+                    driver: ProviderDriverKind.make("muse"),
+                    usageLimits: {
+                      checkedAt,
+                      windows: [],
+                      unavailable,
+                    },
+                  },
+                ],
+              },
+            ],
+          },
+        },
+      ],
+    ]);
+    expect(collectLimitAccounts(input)).toMatchObject([
+      {
+        driver: "muse",
+        limits: { checkedAt, windows: [{ usedPercent: 40 }], unavailable },
+      },
+    ]);
+    expect(collectLimitNotices(input)).toEqual([
+      "hub · meta: Refresh failed. Showing last known quota.",
+      "hub · empty: Refresh failed.",
+    ]);
+  });
+
   it("merges one account reported natively on two environments and by a hub into one entry", () => {
     const native = provider({
       driver: claude,

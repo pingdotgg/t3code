@@ -11,6 +11,7 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Hex from "effect/encoding/Hex";
 import * as Schema from "effect/Schema";
+import * as Semaphore from "effect/Semaphore";
 import { HttpClient, HttpClientError, HttpClientRequest, HttpClientResponse } from "effect/http";
 
 import { codexPlanLabel } from "../provider/CodexProvider.ts";
@@ -100,6 +101,27 @@ const decodeApiResponse = Schema.decodeUnknownEffect(ApiResponse);
 const decodeCreditList = Schema.decodeUnknownEffect(Schema.fromJsonString(CreditList));
 const decodeClaudeUsage = Schema.decodeUnknownEffect(Schema.fromJsonString(ClaudeUsage));
 const decodeCodexUsage = Schema.decodeUnknownEffect(Schema.fromJsonString(CodexUsage));
+const decodeMetaAuth = Schema.decodeUnknownEffect(Schema.Struct({ dca_token: Schema.String }));
+const MetaWindow = Schema.Struct({
+  used_percent: Schema.optional(Schema.NullOr(Schema.Number)),
+  resets_at: Schema.optional(Schema.NullOr(Schema.Number)),
+  window_duration_mins: Schema.optional(Schema.NullOr(Schema.Number)),
+});
+const decodeMetaUsage = Schema.decodeUnknownEffect(
+  Schema.fromJsonString(
+    Schema.Struct({
+      subs_tier_name: Schema.optional(Schema.NullOr(Schema.String)),
+      subs_usage: Schema.optional(
+        Schema.NullOr(
+          Schema.Struct({
+            window: Schema.optional(Schema.NullOr(MetaWindow)),
+            weekly: Schema.optional(Schema.NullOr(MetaWindow)),
+          }),
+        ),
+      ),
+    }),
+  ),
+);
 const isUsageLimitSourceError = Schema.is(UsageLimitSourceError);
 
 // Extra CAs can fix untrusted chains; expiry/hostname failures report codes only.
@@ -171,6 +193,8 @@ const creditRedeemRequestId = Effect.fn("CliproxyApi.creditRedeemRequestId")(fun
 export const makeCliproxyApi = Effect.gen(function* () {
   const client = yield* HttpClient.HttpClient;
   const crypto = yield* Crypto.Crypto;
+  const metaLock = yield* Semaphore.make(1);
+  const metaCache = new Map<string, { at: number; account: UsageLimitSourceAccount }>();
 
   const management = Effect.fn("CliproxyApi.management")(function* (
     config: UsageLimitSourceConfig,
@@ -262,20 +286,82 @@ export const makeCliproxyApi = Effect.gen(function* () {
       .toSorted((a, b) => Date.parse(a.expires_at) - Date.parse(b.expires_at));
   });
 
-  const readAccount = Effect.fn("CliproxyApi.readAccount")(function* (
+  const readAccountInner = Effect.fn("CliproxyApi.readAccount")(function* (
     config: UsageLimitSourceConfig,
     account: typeof AuthFile.Type,
+    metaToken?: string,
   ) {
     const checkedAt = DateTime.formatIso(yield* DateTime.now);
     const base = {
       id: account.id,
-      driver: ProviderDriverKind.make(account.provider === "codex" ? "codex" : "claudeAgent"),
+      driver: ProviderDriverKind.make(
+        account.provider === "codex"
+          ? "codex"
+          : account.provider === "meta"
+            ? "muse"
+            : "claudeAgent",
+      ),
       ...(account.email ? { email: account.email } : {}),
       ...(account.id_token?.chatgpt_account_id?.trim()
         ? { workspaceId: account.id_token.chatgpt_account_id.trim() }
         : {}),
     };
     const read = Effect.gen(function* () {
+      if (account.provider === "meta") {
+        const raw = yield* management(config, "api-call", {
+          auth_index: account.auth_index,
+          method: "POST",
+          url: "https://api.meta.ai/muse-code/key",
+          header: {
+            Authorization: `Bearer ${metaToken}`,
+            Accept: "application/json",
+            "Content-Type": "application/json",
+            "x-api-version": "1.0.0",
+          },
+          data: "{}",
+        });
+        const response = yield* decodeApiResponse(raw);
+        if (response.status_code < 200 || response.status_code >= 300)
+          return yield* new UsageLimitSourceError({ detail: "Muse quota request failed." });
+        const usage = yield* decodeMetaUsage(response.body);
+        const windows = (
+          [
+            ["window", "session", "Session", usage.subs_usage?.window],
+            ["weekly", "weekly", "Weekly", usage.subs_usage?.weekly],
+          ] as const
+        ).flatMap(([id, kind, label, window]) => {
+          const percent = window?.used_percent;
+          if (!window || typeof percent !== "number" || !Number.isFinite(percent)) return [];
+          const resetMs = (window.resets_at ?? 0) * 1000;
+          const duration = window.window_duration_mins;
+          return [
+            {
+              id,
+              kind,
+              label,
+              usedPercent: Math.max(0, Math.min(100, percent)),
+              ...(resetMs > 0 && resetMs <= 253402300799000
+                ? { resetsAt: DateTime.formatIso(DateTime.makeUnsafe(resetMs)) }
+                : {}),
+              ...(typeof duration === "number" && Number.isSafeInteger(duration) && duration > 0
+                ? { windowDurationMins: duration }
+                : {}),
+            },
+          ];
+        });
+        return {
+          ...base,
+          ...(usage.subs_tier_name?.trim() ? { plan: usage.subs_tier_name.trim() } : {}),
+          usageLimits:
+            windows.length > 0
+              ? { checkedAt, windows }
+              : makeUnavailableUsageLimits({
+                  checkedAt,
+                  reason: "probeFailed",
+                  message: "Muse did not report usage windows.",
+                }),
+        };
+      }
       if (account.provider === "claude") {
         const body = yield* apiCall(config, account, "https://api.anthropic.com/api/oauth/usage");
         const usage = yield* decodeClaudeUsage(body);
@@ -365,6 +451,75 @@ export const makeCliproxyApi = Effect.gen(function* () {
     );
   });
 
+  const readAccount = Effect.fn("CliproxyApi.readCachedAccount")(function* (
+    config: UsageLimitSourceConfig,
+    account: typeof AuthFile.Type,
+  ) {
+    if (account.provider !== "meta") return yield* readAccountInner(config, account);
+    return yield* Effect.gen(function* () {
+      const now = DateTime.toEpochMillis(yield* DateTime.now);
+      const auth = yield* decodeMetaAuth(
+        yield* management(config, `auth-files/download?name=${encodeURIComponent(account.id)}`),
+      );
+      if (!/^dca:\S+$/.test(auth.dca_token))
+        return yield* new UsageLimitSourceError({
+          detail: "The Muse credential has no valid DCA token.",
+        });
+      const fingerprint = Hex.encode(
+        yield* crypto
+          .digest(
+            "SHA-256",
+            new TextEncoder().encode(
+              yield* encodeJson([
+                config.url,
+                config.managementKey,
+                account.id,
+                account.auth_index,
+                auth.dca_token,
+              ]),
+            ),
+          )
+          .pipe(Effect.orDie),
+      );
+      const cached = metaCache.get(fingerprint);
+      if (cached && now >= cached.at && now - cached.at < 60_000) return cached.account;
+      const result = yield* readAccountInner(config, account, auth.dca_token);
+      const retained =
+        result.usageLimits.unavailable && cached?.account.usageLimits.windows.length
+          ? { ...cached.account.usageLimits, unavailable: result.usageLimits.unavailable }
+          : result.usageLimits;
+      const plan = "plan" in result ? result.plan : undefined;
+      const next = {
+        ...result,
+        ...(!plan && cached?.account.plan ? { plan: cached.account.plan } : {}),
+        usageLimits: { ...retained, credentialFingerprint: fingerprint },
+      };
+      metaCache.delete(fingerprint);
+      metaCache.set(fingerprint, { at: now, account: next });
+      if (metaCache.size > 128) {
+        const oldest = metaCache.keys().next().value;
+        if (oldest !== undefined) metaCache.delete(oldest);
+      }
+      return next;
+    }).pipe(
+      metaLock.withPermits(1),
+      Effect.catch(() =>
+        Effect.gen(function* () {
+          return {
+            id: account.id,
+            driver: ProviderDriverKind.make("muse"),
+            ...(account.email ? { email: account.email } : {}),
+            usageLimits: makeUnavailableUsageLimits({
+              checkedAt: DateTime.formatIso(yield* DateTime.now),
+              reason: "probeFailed",
+              message: "The hub could not verify this account's Muse credential.",
+            }),
+          };
+        }),
+      ),
+    );
+  });
+
   const readAccounts = Effect.fn("CliproxyApi.readAccounts")(function* (
     config: UsageLimitSourceConfig,
   ): Effect.fn.Return<ReadonlyArray<UsageLimitSourceAccount>, UsageLimitSourceError> {
@@ -378,7 +533,10 @@ export const makeCliproxyApi = Effect.gen(function* () {
     return yield* Effect.forEach(
       accounts.filter(
         (account) =>
-          !account.disabled && (account.provider === "codex" || account.provider === "claude"),
+          !account.disabled &&
+          (account.provider === "codex" ||
+            account.provider === "claude" ||
+            account.provider === "meta"),
       ),
       (account) => readAccount(config, account),
       { concurrency: 4 },
