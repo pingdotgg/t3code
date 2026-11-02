@@ -1,3 +1,5 @@
+import { useAtomValue } from "@effect/atom-react";
+import { visibleLinkedThreads } from "@t3tools/client-runtime/state/threads";
 import { AsyncResult } from "effect/reactivity";
 import { settlePromise, squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import * as Dialog from "../../components/ui/Dialog";
@@ -27,6 +29,7 @@ import { uuidv4 } from "../../lib/uuid";
 import { useEnvironmentServerConfig } from "../../state/entities";
 import { composerPullRequests } from "../../state/pull-requests";
 import { useEnvironmentQuery } from "../../state/query";
+import { environmentThreadShells } from "../../state/threads";
 import { useEnvironmentScope } from "../../state/session";
 import {
   createNewTaskDraft,
@@ -69,8 +72,18 @@ export function usePullRequestThreads(
   const [lastRelations, setLastRelations] = useState({ key, data: relations.data });
   if (relations.data && (lastRelations.key !== key || relations.data !== lastRelations.data))
     setLastRelations({ key, data: relations.data });
-  const threads =
-    (relations.data ?? (lastRelations.key === key ? lastRelations.data : null))?.threads ?? [];
+  const hiddenKeys = useAtomValue(environmentThreadShells.hiddenThreadKeysAtom);
+  const hidingAnywhere = useAtomValue(environmentThreadShells.anyEnvironmentHidingAtom);
+  const loadedThreadRefs = useAtomValue(
+    environmentThreadShells.environmentThreadRefsAtom(target.environmentId),
+  );
+  const threads = visibleLinkedThreads(
+    (relations.data ?? (lastRelations.key === key ? lastRelations.data : null))?.threads ?? [],
+    target.environmentId,
+    loadedThreadRefs,
+    hiddenKeys,
+    hidingAnywhere,
+  );
   const connected = usePullRequestConnected(params.environmentId);
   const canOperate = useEnvironmentScope(target.environmentId, AuthOrchestrationOperateScope);
   const canAsk = !connected || canOperate;
