@@ -40,5 +40,5 @@
 }
 
 :root[data-theme-id] [data-app-modal] {
-  --app-panel-fill: var(--popover);
+  --app-panel-fill: var(--card);
 }
