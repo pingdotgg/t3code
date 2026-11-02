@@ -23,6 +23,14 @@ vi.mock(import("./ReadOnlySourcePreview"), () => ({
   ),
 }));
 
+// Use the real PDF worker without Vite's multi-megabyte inline source map on each reload.
+vi.mock(import("pdfjs-dist/build/pdf.worker.min.mjs?url"), async () => {
+  const { default: source } = await import("pdfjs-dist/build/pdf.worker.min.mjs?raw");
+  return {
+    default: URL.createObjectURL(new Blob([source], { type: "text/javascript" })),
+  };
+});
+
 // The Word engine compiles about 30 MB of WebAssembly in a fresh worker per document, which took
 // 10-17 s per test on loaded CI runners. These tests cover fetching, preparation and remounts, so
 // the stand-in shows the prepared body's text instead of laying it out.

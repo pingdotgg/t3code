@@ -9,6 +9,10 @@ import { installFileEditorDismissal } from "./fileEditorDismissal";
 
 describe("installFileEditorDismissal", () => {
   it("keeps a text selection made outside the file while its search is open", async () => {
+    let resolveContent!: (content: HTMLElement) => void;
+    const contentReady = new Promise<HTMLElement>((resolve) => {
+      resolveContent = resolve;
+    });
     let editor: Editor<"file" | "file-diff", undefined, undefined> | undefined;
     const createEditor: EditorFactory<undefined, undefined> = (...args) =>
       (editor = new Editor(...args));
@@ -17,17 +21,22 @@ describe("installFileEditorDismissal", () => {
         <p>Assistant reply</p>
         <div data-testid="file-surface">
           <EditProvider createEditor={createEditor}>
-            <File file={{ name: "server.ts", contents: "const server = 1;\n" }} edit />
+            <File
+              file={{ name: "server.ts", contents: "const server = 1;\n" }}
+              options={{
+                onPostRender(node) {
+                  const content = node.shadowRoot?.querySelector<HTMLElement>("[data-content]");
+                  if (content) resolveContent(content);
+                },
+              }}
+              edit
+            />
           </EditProvider>
         </div>
       </>,
     );
     const shadowRoot = () => screen.container.querySelector("diffs-container")?.shadowRoot;
-    const content = await vi.waitFor(() => {
-      const element = shadowRoot()?.querySelector<HTMLElement>("[data-content]");
-      expect(element).toBeTruthy();
-      return element!;
-    });
+    const content = await contentReady;
 
     editor!.setSelections([
       { start: { line: 0, character: 8 }, end: { line: 0, character: 8 }, direction: "none" },
