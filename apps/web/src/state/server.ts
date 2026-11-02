@@ -186,3 +186,28 @@ export const providersIgnoringCheckedAtAtom = Atom.family((environmentId: Enviro
     ),
   ).pipe(Atom.withLabel(`web-providers-ignoring-checked-at:${environmentId}`)),
 );
+
+/**
+ * The tag-filter toggle: null when no connected environment lists tags to hide. The primary
+ * environment is the write target when it lists tags; shared settings carry the switch to the rest.
+ */
+type ThreadTagToggle = { readonly hiding: boolean; readonly environmentId: EnvironmentId } | null;
+
+export const threadTagToggleAtom = Atom.make((get): ThreadTagToggle => {
+  const primaryEnvironmentId = get(primaryEnvironmentIdAtom);
+  let toggle: ThreadTagToggle = null;
+  for (const environmentId of get(environmentCatalog.catalogValueAtom).entries.keys()) {
+    const settings = get(serverEnvironment.settingsValueAtom(environmentId));
+    if (settings === null || settings.hiddenThreadTags.length === 0) continue;
+    if (toggle === null || environmentId === primaryEnvironmentId) {
+      toggle = { hiding: settings.hideTaggedThreads, environmentId };
+    }
+  }
+  return toggle;
+}).pipe(
+  Atom.withEquality(
+    (a: ThreadTagToggle, b: ThreadTagToggle) =>
+      a?.hiding === b?.hiding && a?.environmentId === b?.environmentId,
+  ),
+  Atom.withLabel("web-thread-tag-toggle"),
+);

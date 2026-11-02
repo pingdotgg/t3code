@@ -1,3 +1,4 @@
+import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 
 import { TrimmedNonEmptyString } from "./baseSchemas.ts";
@@ -12,3 +13,8 @@ export const ThreadTag = TrimmedNonEmptyString.check(
 export type ThreadTag = typeof ThreadTag.Type;
 
 export const ThreadTags = Schema.Array(ThreadTag);
+
+/** Tags read back from storage or a peer. Lenient so a later tag rule never fails a whole thread. */
+export const StoredThreadTags = Schema.Array(Schema.String).pipe(
+  Schema.catchDecoding(() => Effect.succeedSome([])),
+);

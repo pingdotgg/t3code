@@ -1,6 +1,9 @@
 import { useAtomValue } from "@effect/atom-react";
 import { scopedThreadKey } from "@t3tools/client-runtime/environment";
 import { threadKey } from "@t3tools/client-runtime/state/entities";
+import { hiddenThreadKeys } from "@t3tools/client-runtime/state/threads";
+import * as Option from "effect/Option";
+import { Atom } from "effect/reactivity";
 import { Navigate, useNavigate } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
 
@@ -11,6 +14,7 @@ import { useComposerDraftStore } from "../composerDraftStore";
 import { useSidebarPendingFileDropStore } from "../sidebarPendingFileDropStore";
 import { useEnvironmentThreadRefs, useQuietThreadShell } from "../state/entities";
 import { useEnvironmentShellStatus } from "../state/shell";
+import { serverEnvironment } from "../state/server";
 import { environmentThreadShells, useEnvironmentThread } from "../state/threads";
 import {
   buildThreadRouteParams,
@@ -18,6 +22,8 @@ import {
   resolveThreadRouteRenderState,
   type ThreadRouteTarget,
 } from "../threadRoutes";
+
+const NO_HIDDEN_TAGS_ATOM = Atom.make<ReadonlyArray<string> | null>(null);
 
 /**
  * Unkeyed so navigating between server threads reuses one ChatView. Rendered by the `_chat`
@@ -82,9 +88,30 @@ export function ThreadRouteView({
     unlistedThreadRef?.environmentId ?? null,
     unlistedThreadRef?.threadId ?? null,
   );
-  const hiddenThreadKeys = useAtomValue(environmentThreadShells.hiddenThreadKeysAtom);
+  const hiddenKeys = useAtomValue(environmentThreadShells.hiddenThreadKeysAtom);
+  // A thread the shell leaves out (older settled, idle subagent) is judged from its loaded detail.
+  const unlistedHiddenTags = useAtomValue(
+    unlistedThreadRef === null
+      ? NO_HIDDEN_TAGS_ATOM
+      : serverEnvironment.hiddenThreadTagsAtom(unlistedThreadRef.environmentId),
+  );
   const hiddenByTagFilter =
-    serverThreadRef !== null && hiddenThreadKeys.has(threadKey(serverThreadRef));
+    serverThreadRef !== null &&
+    (hiddenKeys.has(threadKey(serverThreadRef)) ||
+      Option.exists(
+        unlistedThreadDetail.data,
+        (projection) =>
+          hiddenThreadKeys(
+            [
+              {
+                environmentId: serverThreadRef.environmentId,
+                threads: [projection.thread],
+                hiddenTags: unlistedHiddenTags,
+              },
+            ],
+            hiddenKeys,
+          ).size > 0,
+      ));
   const renderState = resolveThreadRouteRenderState({
     bootstrapComplete,
     serverThreadExists: serverThreadShell !== null,

@@ -341,7 +341,8 @@ To choose what to hide, edit the server's `settings.json` under `~/.t3/userdata`
 
 While `hideTaggedThreads` is on, threads with any of these tags leave the sidebar, the
 archive, the command palette, and thread mentions. Their subagents, side chats, and
-tasks on linked machines are hidden with them, and they show no notification pop-ups.
+tasks on linked machines follow them, whatever their own tags, and hidden threads show no
+notification pop-ups.
 On web and desktop, an open thread that becomes hidden closes. Choose **Hide tagged
 threads** or **Show tagged threads** in the command palette to switch this on every
 connected machine. Each machine keeps its own list of tags. The mobile app does not

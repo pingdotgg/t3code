@@ -1,5 +1,8 @@
 import { Tooltip, TooltipTrigger, TooltipPopup } from "../ui/tooltip";
+import { useAtomValue } from "@effect/atom-react";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
+import { threadKey } from "@t3tools/client-runtime/state/entities";
+import { hasHiddenTag } from "@t3tools/client-runtime/state/threads";
 import { settlePromise, squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import type { EnvironmentId, PullRequestRef, ScopedThreadRef, ThreadId } from "@t3tools/contracts";
 import { CheckIcon, MessageSquareIcon } from "lucide-react";
@@ -16,6 +19,8 @@ import {
   useVisibleThreadShells,
 } from "~/state/entities";
 import { pullRequestEnvironment } from "~/state/pullRequests";
+import { serverEnvironment } from "~/state/server";
+import { environmentThreadShells } from "~/state/threads";
 import { useEnvironmentQuery } from "~/state/query";
 import { useThreadSearch } from "~/state/queries";
 import { appAtomRegistry } from "~/rpc/atomRegistry";
@@ -63,6 +68,8 @@ function EnabledPullRequestThreadLinks({
   const currentThreadRef = thread === null ? null : threadRef;
   const linking = usePullRequestLinking(environmentId);
   const linkedHere = linking.isLinked(thread, url);
+  const hiddenKeys = useAtomValue(environmentThreadShells.hiddenThreadKeysAtom);
+  const hiddenTags = useAtomValue(serverEnvironment.hiddenThreadTagsAtom(environmentId));
   const relations = useEnvironmentQuery(
     linking.mode === "multiple" && display !== "menu-item"
       ? pullRequestEnvironment.linkedThreads({
@@ -109,8 +116,13 @@ function EnabledPullRequestThreadLinks({
   };
 
   if (parsed === null || (!linkedHere && !linking.canLink(url))) return null;
-  const linkedThreads =
-    linking.mode === "multiple" ? ((relations.data ?? lastRelations)?.threads ?? []) : [];
+  const linkedThreads = (
+    linking.mode === "multiple" ? ((relations.data ?? lastRelations)?.threads ?? []) : []
+  ).filter(
+    (linked) =>
+      !hiddenKeys.has(threadKey({ environmentId, threadId: linked.id })) &&
+      !hasHiddenTag(linked.tags, hiddenTags),
+  );
   const linkedThreadsLabel =
     linkedThreads.length > 0
       ? `Linked from ${linkedThreads.length} ${linkedThreads.length === 1 ? "thread" : "threads"}`

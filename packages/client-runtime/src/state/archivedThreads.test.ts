@@ -18,6 +18,7 @@ it("does not expose an archived snapshot failure message", () => {
         ),
       ),
     hiddenThreadTagsAtom: () => Atom.make(null),
+    hiddenThreadKeysAtom: Atom.make((): ReadonlySet<string> => new Set()),
     labelPrefix: "test:archived-thread-snapshots",
   });
   const registry = AtomRegistry.make();

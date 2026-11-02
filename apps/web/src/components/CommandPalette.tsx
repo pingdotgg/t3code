@@ -105,11 +105,7 @@ import {
   copyPromptLink,
   promptLinkRepositoryOf,
 } from "./promptLinks/copyPromptLink";
-import {
-  useClientSettings,
-  usePrimarySettings,
-  useUpdatePrimarySettings,
-} from "../hooks/useSettings";
+import { useClientSettings, useUpdateEnvironmentSettings } from "../hooks/useSettings";
 import { useStableCallback } from "../hooks/useStableCallback";
 import { readLocalApi } from "../localApi";
 import { desktopLocalBackendId } from "../connection/desktopLocal";
@@ -247,7 +243,7 @@ import { canShareWithGuestAtom } from "./chat/guestShareAvailability";
 import { openGuestShareDialog } from "./chat/guestShareDialogState";
 import { ProjectContentSearchDialog } from "./search/ProjectContentSearchDialog";
 import { settingsForThisPlatform, SETTINGS_SECTION_LABELS } from "./settings/settingsSearch";
-import { primaryServerKeybindingsAtom } from "../state/server";
+import { primaryServerKeybindingsAtom, threadTagToggleAtom } from "../state/server";
 import { resolveShortcutCommand, threadJumpIndexFromCommand } from "../keybindings";
 import { CommandDialog, CommandDialogPopup, CommandFooterAction } from "./ui/command";
 import { Button } from "./ui/button";
@@ -428,11 +424,10 @@ function OpenCommandPaletteDialog(props: {
     setHighlightedItemValue(null);
   }
   const clientSettings = useClientSettings(selectCommandPaletteClientSettings);
-  const hasHiddenThreadTags = usePrimarySettings(
-    (settings) => settings.hiddenThreadTags.length > 0,
+  const threadTagToggle = useAtomValue(threadTagToggleAtom);
+  const updateThreadTagToggleSettings = useUpdateEnvironmentSettings(
+    threadTagToggle?.environmentId ?? null,
   );
-  const hideTaggedThreads = usePrimarySettings((settings) => settings.hideTaggedThreads);
-  const updatePrimarySettings = useUpdatePrimarySettings();
   const createProject = useAtomCommand(projectEnvironment.create, {
     reportFailure: false,
   });
@@ -1597,7 +1592,8 @@ function OpenCommandPaletteDialog(props: {
     });
   }
 
-  if (hasHiddenThreadTags) {
+  if (threadTagToggle !== null) {
+    const hideTaggedThreads = threadTagToggle.hiding;
     actionItems.push({
       kind: "action",
       value: "action:thread-tag-filter",
@@ -1609,7 +1605,7 @@ function OpenCommandPaletteDialog(props: {
         <EyeOffIcon className={ITEM_ICON_CLASS} />
       ),
       run: async () => {
-        updatePrimarySettings({ hideTaggedThreads: !hideTaggedThreads });
+        updateThreadTagToggleSettings({ hideTaggedThreads: !hideTaggedThreads });
       },
     });
   }

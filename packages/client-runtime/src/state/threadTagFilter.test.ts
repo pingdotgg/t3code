@@ -36,6 +36,7 @@ const localThreads = [
   thread("private-subagent", [], { id: "private", relationship: "subagent" }),
   thread("private-fork", [], { id: "private", relationship: "fork" }),
   thread("plain", []),
+  thread("plain-private-side-chat", ["private"], { id: "plain", relationship: "subagent" }),
 ];
 const linkedThreads = [
   thread("delegated-from-private", [], undefined, { environmentId: local, id: "private" }),
@@ -67,6 +68,14 @@ describe("hiddenThreadKeys", () => {
         key(linked, "delegated-from-private"),
       ].toSorted(),
     );
+  });
+
+  it("judges an archive page against live hidden parents", () => {
+    const archived = hiddenThreadKeys(
+      [{ environmentId: linked, threads: [linkedThreads[0]!], hiddenTags: null }],
+      new Set([key(local, "private")]),
+    );
+    expect([...archived]).toEqual([key(linked, "delegated-from-private")]);
   });
 
   it("applies each environment's own tags", () => {

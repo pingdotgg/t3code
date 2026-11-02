@@ -3308,17 +3308,8 @@ describe("OrchestratorMcpService thread list", () => {
         [{ threadId: ThreadId.make("thread:a-snoozed"), tags: ["demo"] }],
       );
       assert.equal(tagged.total, 1);
-      const untagged = yield* mcp.listThreads(client, {
-        allProjects: true,
-        excludeTag: "demo",
-        limit: 1,
-      });
-      assert.deepStrictEqual(
-        untagged.threads.map((thread) => thread.threadId),
-        ["thread:a-awake"],
-      );
-      assert.equal(untagged.total, 2);
-      assert.equal(untagged.nextCursor, 1);
+      const paged = yield* mcp.listThreads(client, { allProjects: true, tag: "demo", limit: 1 });
+      assert.equal(paged.nextCursor, null);
     }).pipe(Effect.provide(service)),
   );
 });

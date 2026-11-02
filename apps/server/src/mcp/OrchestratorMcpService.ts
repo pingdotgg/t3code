@@ -2943,11 +2943,7 @@ const make = Effect.gen(function* () {
           (thread) =>
             titleContains === undefined || thread.title.toLocaleLowerCase().includes(titleContains),
         )
-        .filter((thread) => input.tag === undefined || (thread.tags ?? []).includes(input.tag))
-        .filter(
-          (thread) =>
-            input.excludeTag === undefined || !(thread.tags ?? []).includes(input.excludeTag),
-        );
+        .filter((thread) => input.tag === undefined || (thread.tags ?? []).includes(input.tag));
       const cursor = input.cursor ?? 0;
       const limit = input.limit ?? DEFAULT_THREAD_LIST_LIMIT;
       const page = filtered.slice(cursor, cursor + limit);

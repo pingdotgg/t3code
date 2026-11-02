@@ -46,6 +46,8 @@ export function createArchivedThreadSnapshotsAtomFamily<E>(options: {
   readonly hiddenThreadTagsAtom: (
     environmentId: EnvironmentId,
   ) => Atom.Atom<ReadonlyArray<string> | null>;
+  /** Live threads the tag filter hides, so archived children of hidden parents stay hidden. */
+  readonly hiddenThreadKeysAtom: Atom.Atom<ReadonlySet<string>>;
   readonly labelPrefix: string;
 }) {
   return Atom.family((environmentKey: string) =>
@@ -60,13 +62,16 @@ export function createArchivedThreadSnapshotsAtomFamily<E>(options: {
 
         const snapshot = AsyncResult.getOrElse(result, () => null);
         if (snapshot !== null) {
-          const hidden = hiddenThreadKeys([
-            {
-              environmentId,
-              threads: snapshot.threads,
-              hiddenTags: get(options.hiddenThreadTagsAtom(environmentId)),
-            },
-          ]);
+          const hidden = hiddenThreadKeys(
+            [
+              {
+                environmentId,
+                threads: snapshot.threads,
+                hiddenTags: get(options.hiddenThreadTagsAtom(environmentId)),
+              },
+            ],
+            get(options.hiddenThreadKeysAtom),
+          );
           snapshots.push({
             environmentId,
             snapshot:

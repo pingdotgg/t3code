@@ -20,15 +20,27 @@ export interface TagFilteredEnvironment {
 
 export const NO_HIDDEN_THREADS: ReadonlySet<string> = new Set();
 
+export function hasHiddenTag(
+  tags: ReadonlyArray<string> | undefined,
+  hiddenTags: ReadonlyArray<string> | null,
+): boolean {
+  return hiddenTags?.some((tag) => tags?.includes(tag) === true) === true;
+}
+
 /**
  * Keys of the threads the tag filter hides. Subagents, side chats and tasks
- * delegated from a linked environment follow the thread they belong to, so
- * hiding a thread hides its children.
+ * delegated from a linked environment follow the thread they belong to and
+ * ignore their own tags. `alreadyHidden` holds keys known hidden elsewhere,
+ * such as live parents when filtering an archive page.
  */
 export function hiddenThreadKeys(
   environments: ReadonlyArray<TagFilteredEnvironment>,
+  alreadyHidden: ReadonlySet<string> = NO_HIDDEN_THREADS,
 ): ReadonlySet<string> {
-  if (!environments.some((environment) => environment.hiddenTags?.length)) {
+  if (
+    alreadyHidden.size === 0 &&
+    !environments.some((environment) => environment.hiddenTags?.length)
+  ) {
     return NO_HIDDEN_THREADS;
   }
   const byKey = new Map<
@@ -45,16 +57,12 @@ export function hiddenThreadKeys(
   }
   const hiddenByKey = new Map<string, boolean>();
   const isHidden = (key: string): boolean => {
+    if (alreadyHidden.has(key)) return true;
     const known = hiddenByKey.get(key);
     if (known !== undefined) return known;
     const entry = byKey.get(key);
     if (entry === undefined) return false;
     const { thread, environment } = entry;
-    const ownTagHidden =
-      environment.hiddenTags?.some((tag) => thread.tags?.includes(tag) === true) === true;
-    // Seed before following the parent so a malformed cycle ends on the thread's own tags.
-    hiddenByKey.set(key, ownTagHidden);
-    if (ownTagHidden) return true;
     const parentId = thread.lineage.parentThreadId;
     const parentKey =
       !isListedThreadLineage(thread.lineage) && parentId !== null
@@ -62,7 +70,16 @@ export function hiddenThreadKeys(
         : thread.delegatedFrom === undefined
           ? null
           : threadKey(thread.delegatedFrom);
-    const hidden = parentKey !== null && isHidden(parentKey);
+    const followsParent =
+      parentKey !== null && (byKey.has(parentKey) || alreadyHidden.has(parentKey));
+    if (!followsParent) {
+      const hidden = hasHiddenTag(thread.tags, environment.hiddenTags);
+      hiddenByKey.set(key, hidden);
+      return hidden;
+    }
+    // Seed before following the parent so a malformed cycle ends visible.
+    hiddenByKey.set(key, false);
+    const hidden = isHidden(parentKey);
     hiddenByKey.set(key, hidden);
     return hidden;
   };

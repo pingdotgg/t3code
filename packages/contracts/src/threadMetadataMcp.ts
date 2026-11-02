@@ -9,7 +9,7 @@ import {
   TrimmedNonEmptyString,
 } from "./baseSchemas.ts";
 import { ThreadLinkedPullRequest } from "./threadPullRequest.ts";
-import { ThreadTag, ThreadTags } from "./threadTags.ts";
+import { StoredThreadTags, ThreadTag } from "./threadTags.ts";
 import { ThreadTitleRegeneration } from "./threadTitle.ts";
 
 export function hasOnlyPairedSurrogates(value: string): boolean {
@@ -83,7 +83,7 @@ export const ThreadMetadataMcpUpdateResult = Schema.Struct({
   titleRegeneration: Schema.NullOr(ThreadTitleRegeneration),
   linkedPullRequest: Schema.NullOr(ThreadLinkedPullRequest),
   // Older linked servers omit tags.
-  tags: ThreadTags.pipe(Schema.withDecodingDefault(Effect.succeed([]))),
+  tags: StoredThreadTags.pipe(Schema.withDecodingDefault(Effect.succeed([]))),
   updatedAt: IsoDateTime,
 });
 export type ThreadMetadataMcpUpdateResult = typeof ThreadMetadataMcpUpdateResult.Type;
