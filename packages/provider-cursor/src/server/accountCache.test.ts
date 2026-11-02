@@ -75,5 +75,11 @@ describe("cursorAccountCache", () => {
         0,
       ).changed,
     );
+    const corrected = {
+      ...record(10 * DAY_MS),
+      totals: { ...record(10 * DAY_MS).totals, outputTokens: 2 },
+      reportedCostUsd: 0.25,
+    };
+    assert.isTrue(mergeCursorFetch(cache, "a", range, [corrected], 11 * DAY_MS, 0).changed);
   });
 });
