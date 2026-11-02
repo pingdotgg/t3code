@@ -93,7 +93,6 @@ import {
 } from "../state/sourceControlActions";
 import { useProject, useQuietThreadProjection, useQuietThreadShell } from "~/state/entities";
 import { scopeProjectRef } from "@t3tools/client-runtime/environment";
-import { isScratchProject } from "@t3tools/client-runtime/state/projects";
 import { readEnvironmentScope, useEnvironmentScope } from "~/state/session";
 import { useEnvironmentQuery } from "~/state/query";
 import { serverEnvironment } from "~/state/server";
@@ -978,7 +977,7 @@ export default function GitActionsControl({
   const isWorktreeThread =
     activeThreadContext?.worktreePath != null &&
     activeProject !== null &&
-    !isScratchProject(activeProject, serverConfig?.scratchWorkspaceRoot);
+    activeProject.isScratch !== true;
   const canChangeThreadBranch = canWriteSourceControl && (isLocalDraftThread || canOperateThread);
   const setDraftThreadContext = useComposerDraftStore((store) => store.setDraftThreadContext);
   const [isCommitDialogOpen, setIsCommitDialogOpen] = useState(false);
