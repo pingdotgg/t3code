@@ -15,6 +15,7 @@ import {
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import { ATTACHMENT_ONLY_BOOTSTRAP_PROMPT } from "@t3tools/shared/composerContextReferences";
@@ -397,32 +398,43 @@ describe("ThreadTitleRegenerationService", () => {
       const harness = makeHarness({
         generateTitle: () => Effect.succeed({ title: "Fresh title" }),
       });
+      const fs = yield* FileSystem.FileSystem;
+      const existingWorktree = yield* fs.makeTempDirectoryScoped({ prefix: "title-worktree-" });
       yield* Effect.gen(function* () {
         const threads = yield* ThreadManagement.ThreadManagementService;
         const titleRegeneration = yield* ThreadTitleRegeneration.ThreadTitleRegenerationService;
-        const threadId = yield* createThread({
-          command: "command:title:landing:create",
-          thread: "thread:title:landing",
-          worktreePath: "/repo-worktrees/removed-by-cleanup",
-        });
-        yield* dispatchUserMessage({
-          command: "command:title:landing:message",
-          threadId,
-          text: "Investigate the flaky login test",
-        });
-        const requestId = yield* armRegeneration({ command: "command:title:landing:1", threadId });
+        const cases = [
+          { name: "removed", worktreePath: "/repo-worktrees/removed-by-cleanup", cwd: "/repo" },
+          { name: "existing", worktreePath: existingWorktree, cwd: existingWorktree },
+        ];
+        for (const [index, testCase] of cases.entries()) {
+          const threadId = yield* createThread({
+            command: `command:title:landing:${testCase.name}:create`,
+            thread: `thread:title:landing:${testCase.name}`,
+            worktreePath: testCase.worktreePath,
+          });
+          yield* dispatchUserMessage({
+            command: `command:title:landing:${testCase.name}:message`,
+            threadId,
+            text: "Investigate the flaky login test",
+          });
+          const requestId = yield* armRegeneration({
+            command: `command:title:landing:${testCase.name}:1`,
+            threadId,
+          });
 
-        yield* titleRegeneration.execute({ threadId, requestId, kind: { type: "regenerate" } });
+          yield* titleRegeneration.execute({ threadId, requestId, kind: { type: "regenerate" } });
 
-        const call = harness.generateThreadTitle.mock.calls[0]?.[0];
-        assert.equal(call?.previousTitle, "Seed title");
-        assert.equal(call?.cwd, "/repo");
-        assert.include(call?.message, "USER:\nInvestigate the flaky login test");
-        const projection = yield* threads.getThreadProjection(threadId);
-        assert.equal(projection.thread.title, "Fresh title");
-        assert.isNotOk(projection.thread.titleRegeneration);
+          const call = harness.generateThreadTitle.mock.calls[index]?.[0];
+          assert.equal(call?.previousTitle, "Seed title");
+          assert.equal(call?.cwd, testCase.cwd);
+          assert.include(call?.message, "USER:\nInvestigate the flaky login test");
+          const projection = yield* threads.getThreadProjection(threadId);
+          assert.equal(projection.thread.title, "Fresh title");
+          assert.isNotOk(projection.thread.titleRegeneration);
+        }
       }).pipe(Effect.provide(harness.layer));
-    }),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.effect("titles a fork's first message with the source history up to the fork point", () =>
