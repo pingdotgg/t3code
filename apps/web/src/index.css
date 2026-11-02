@@ -429,10 +429,13 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
   /* Its edge lies just outside the pane's own rounded clip, so resting on a
      pane's corner it adds nothing: a pane with cuts and the lone window pane
      without them look the same, and swapping one for the other is unseen. */
-  background: radial-gradient(
+  background-color: var(--app-chrome-background);
+  background-image: var(--surface-grain);
+  background-size: var(--surface-grain-size);
+  mask: radial-gradient(
     circle var(--pane-cut) at var(--pane-cut-center),
     transparent var(--pane-cut),
-    var(--app-chrome-background) calc(var(--pane-cut) + 0.5px)
+    #000 calc(var(--pane-cut) + 0.5px)
   );
 }
 
@@ -543,11 +546,6 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
   background: var(--chrome-art-paint);
   background-attachment: fixed;
   background-blend-mode: var(--chrome-art-blend, normal);
-  mask: radial-gradient(
-    circle var(--pane-cut) at var(--pane-cut-center),
-    transparent var(--pane-cut),
-    #000 calc(var(--pane-cut) + 0.5px)
-  );
 }
 
 /* PaneNotch lays out the tab with this tail as its end padding. */
