@@ -251,6 +251,8 @@ function actionPatchedQuery<Input, A, E>(
     readonly rereads?: (value: A, reply: PullRequestSummary) => boolean;
     /** Re-read when the host's reply did not carry the pull request. */
     readonly rereadWithoutReply?: boolean;
+    /** False for reads the refresh stream does not restart; defaults to true. */
+    readonly refreshedByServer?: (input: Input) => boolean;
   },
 ) {
   const writable = Atom.family((atom: Atom.Atom<AsyncResult.AsyncResult<A, E>>) =>
@@ -273,8 +275,14 @@ function actionPatchedQuery<Input, A, E>(
           if (environmentId !== target.environmentId || !options.concerns(target.input, reference))
             return;
           const pending = pendingRead(registry);
-          // A read sent after the action already sees its result; one sent before may not.
-          const freshRead = pending !== undefined && !readsBeforeSend.has(pending);
+          // A read sent before the action may miss its result, and so may one sent before the host
+          // committed. The server's post-commit refresh restarts that one, but not a read outside
+          // its stream, whose re-read need not even show as waiting, so a mounted one restarts here.
+          const unrefreshed = options.refreshedByServer?.(target.input) === false;
+          const freshRead = pending !== undefined && !unrefreshed && !readsBeforeSend.has(pending);
+          const restart = unrefreshed
+            ? pending !== undefined || (registry.getNodes().get(atom)?.listeners.size ?? 0) > 0
+            : pending !== undefined && !freshRead;
           const reread = () => (freshRead ? undefined : registry.refresh(atom));
           if (reply === undefined) {
             return options.rereadWithoutReply === true ? reread() : undefined;
@@ -288,9 +296,10 @@ function actionPatchedQuery<Input, A, E>(
           if (patched === "refresh") return reread();
           const lacking = options.rereads?.(shown.value, reply) === true;
           const next = reuseUnchanged(shown.value, patched);
-          if (next === shown.value) return lacking ? reread() : undefined;
+          if (next === shown.value)
+            return lacking || (unrefreshed && restart) ? reread() : undefined;
           yield* options.onAnswer?.(target, next, registry) ?? Effect.void;
-          if (lacking || (pending !== undefined && !freshRead)) registry.refresh(atom);
+          if (lacking || restart) registry.refresh(atom);
           registry.update(
             atom,
             AsyncResult.map(() => next),
@@ -682,6 +691,7 @@ export function createPullRequestEnvironmentAtoms<R, E>(
           (input.host === undefined ||
             reference.host === undefined ||
             input.host.toLowerCase() === reference.host.toLowerCase()),
+        refreshedByServer: (input) => input.cursors === undefined,
         patch: patchListWithReply,
       },
     ),

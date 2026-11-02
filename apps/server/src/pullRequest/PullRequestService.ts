@@ -1693,7 +1693,7 @@ export const make = Effect.gen(function* () {
       ? {}
       : { mergeability: changeRequest.mergeability }),
     ...(changeRequest.stack === undefined ? {} : { stack: changeRequest.stack }),
-    ...(changeRequest.headSha == null ? {} : { headSha: changeRequest.headSha }),
+    ...(changeRequest.headSha?.trim() ? { headSha: changeRequest.headSha.trim() } : {}),
     ...(changeRequest.autoMergeEnabled === undefined
       ? {}
       : { autoMergeEnabled: changeRequest.autoMergeEnabled }),

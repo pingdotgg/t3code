@@ -2059,6 +2059,22 @@ layer("GitHubPullRequestApi.layer", (it) => {
       }),
   );
 
+  it.effect("succeeds without a summary when GitHub's merge reply does not decode", () =>
+    Effect.gen(function* () {
+      route(
+        ["query PullRequestActionState", actionState({ isMergeQueueEnabled: false })],
+        [
+          "mergePullRequest(",
+          { data: { mergePullRequest: { pullRequest: { state: "MERGING" } } } },
+        ],
+      );
+      const cli = yield* GitHubPullRequestApi.GitHubPullRequestApi;
+      expect(
+        yield* cli.runPullRequestAction({ ...pullRequestInput, action: "merge" }),
+      ).toBeUndefined();
+    }),
+  );
+
   it.effect.each([
     {
       description: "base-only write",

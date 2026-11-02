@@ -1321,6 +1321,83 @@ it.effect("keeps a list read the server's refresh started before the action repl
   ),
 );
 
+it.effect("restarts a list page read sent while the action was in flight", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const refreshEvents = yield* PubSub.unbounded<number>();
+      let state: "open" | "closed" = "open";
+      let pageReads = 0;
+      const actionSent = yield* Deferred.make<void>();
+      const pageStarted = yield* Deferred.make<void>();
+      const release = yield* Deferred.make<void>();
+      const settled = yield* Deferred.make<void>();
+      const listResult = (entries: ReadonlyArray<object>) => ({
+        entries,
+        viewers: {},
+        providers: [],
+        errors: [],
+        truncated: false,
+        nextCursors: {},
+      });
+      const client = actionReplyClient({
+        [WS_METHODS.pullRequestsSubscribeRefreshes]: () => Stream.fromPubSub(refreshEvents),
+        [WS_METHODS.pullRequestsList]: (input: PullRequestListInput) =>
+          Effect.gen(function* () {
+            const entries =
+              state === "open"
+                ? [{ ...actionReference, state, isDraft: false, updatedAt: "2026-10-27T09:00:00Z" }]
+                : [];
+            if (input.cursors !== undefined && ++pageReads === 2) {
+              yield* Deferred.succeed(pageStarted, undefined);
+              yield* Deferred.await(release).pipe(
+                Effect.onExit(() => Deferred.succeed(settled, undefined)),
+              );
+            }
+            return listResult(input.cursors === undefined ? [] : entries);
+          }),
+        [WS_METHODS.pullRequestsRunAction]: () =>
+          Effect.gen(function* () {
+            yield* Deferred.succeed(actionSent, undefined);
+            yield* Deferred.await(pageStarted);
+            state = "closed";
+            yield* PubSub.publish(refreshEvents, 1);
+            return { ...actionReply, state: "closed" };
+          }),
+      });
+      const { atoms, registry } = yield* makeTestRuntime(client);
+      const target = { environmentId: TARGET.environmentId, input: actionReference };
+      const listInput = { state: "open" } as const;
+      const head = atoms.list({ environmentId: target.environmentId, input: listInput });
+      const page = atoms.list({
+        environmentId: target.environmentId,
+        input: { ...listInput, cursors: { "github.example.com": "page-2" } },
+      });
+      for (const atom of [head, page]) {
+        const unmount = registry.mount(atom);
+        yield* Effect.addFinalizer(() => Effect.sync(unmount));
+        yield* Effect.promise(() => executeAtomQuery(registry, atom));
+      }
+
+      const action = yield* Effect.promise(() =>
+        atoms.runAction.run(registry, {
+          ...target,
+          input: { ...actionReference, action: "close" },
+        }),
+      ).pipe(Effect.forkScoped);
+      yield* Deferred.await(actionSent);
+      // Loading more rows re-reads a page while the close is on the wire.
+      registry.refresh(page);
+      yield* Fiber.join(action);
+      yield* Deferred.succeed(release, undefined);
+      yield* Deferred.await(settled);
+
+      expect(
+        (yield* AtomRegistry.getResult(registry, page, { suspendOnWaiting: true })).entries,
+      ).toEqual([]);
+    }),
+  ),
+);
+
 it.effect("shows a reopen reply at once and re-reads the fields it lacks", () =>
   Effect.scoped(
     Effect.gen(function* () {
