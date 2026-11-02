@@ -880,6 +880,11 @@ export const OrchestrationV2Subagent = Schema.Struct({
   id: NodeId,
   threadId: ThreadId,
   runId: Schema.NullOr(RunId),
+  /**
+   * The thread `runId` belongs to when it is not `threadId`: a task listed in a provider-native
+   * subagent's thread, which has no runs, is executed by its session's root run.
+   */
+  executionThreadId: Schema.optional(ThreadId),
   parentNodeId: NodeId,
   origin: Schema.Literals(["provider_native", "app_owned"]),
   createdBy: OrchestrationV2Actor,
@@ -916,6 +921,11 @@ export const OrchestrationV2Subagent = Schema.Struct({
   resultOmitted: DedupedBodyMarker,
 });
 export type OrchestrationV2Subagent = typeof OrchestrationV2Subagent.Type;
+
+/** The thread whose run executes the task. */
+export const subagentExecutionThreadId = (
+  task: Pick<OrchestrationV2Subagent, "threadId" | "executionThreadId">,
+): ThreadId => task.executionThreadId ?? task.threadId;
 
 export function isOrchestrationV2WorkActive(
   status: OrchestrationV2ExecutionNode["status"],
@@ -3307,6 +3317,11 @@ export const OrchestrationV2Command = Schema.Union([
     parentThreadId: ThreadId,
     parentRunId: RunId,
     parentNodeId: NodeId,
+    /**
+     * The provider-native subagent of the parent's session that asked, which lists the task.
+     * The parent thread's run still executes it.
+     */
+    callerThreadId: Schema.optional(ThreadId),
     task: TrimmedNonEmptyString,
     title: Schema.optional(TrimmedNonEmptyString),
     modelSelection: ModelSelection,
@@ -3419,6 +3434,8 @@ const OrchestrationV2InternalCommand = Schema.Union([
     parentThreadId: ThreadId,
     parentRunId: RunId,
     parentNodeId: NodeId,
+    /** As for `delegated_task.request`: the native subagent that asked lists the task. */
+    callerThreadId: Schema.optional(ThreadId),
     task: TrimmedNonEmptyString,
     title: Schema.optional(TrimmedNonEmptyString),
     driver: ProviderDriverKind,
@@ -3493,6 +3510,8 @@ const OrchestrationV2InternalCommand = Schema.Union([
     subagent: Schema.optional(
       Schema.Struct({
         id: NodeId,
+        /** The thread listing the task, when not `threadId`: a nested native task. */
+        threadId: Schema.optional(ThreadId),
         stoppedAt: Schema.DateTimeUtc,
         outcome: Schema.Struct({
           status: Schema.Literals(["completed", "failed", "cancelled"]),

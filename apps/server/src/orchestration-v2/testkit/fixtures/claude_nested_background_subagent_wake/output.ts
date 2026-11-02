@@ -28,16 +28,19 @@ export function assertClaudeNestedBackgroundSubagentWakeOutput(
   assertSemanticProjectionIntegrity(projection);
   assertNoExtraAppRunsForProviderChildren({ projection, expectedAppRuns: 2 });
 
-  const byTask = (taskId: string) => {
-    const subagent = projection.subagents.find((agent) => agent.nativeTaskRef?.nativeId === taskId);
+  const byTask = (owner: typeof projection, taskId: string) => {
+    const subagent = owner.subagents.find((agent) => agent.nativeTaskRef?.nativeId === taskId);
     assert.isDefined(subagent, `missing subagent for task ${taskId}`);
     assert.equal(subagent.status, "completed");
     return subagent;
   };
-  const child = byTask(CHILD_TASK_ID);
-  const grandchild = byTask(GRANDCHILD_TASK_ID);
+  const child = byTask(projection, CHILD_TASK_ID);
+  const childProjection =
+    child.childThreadId === null ? undefined : result.projections.get(child.childThreadId);
+  assert.isDefined(childProjection);
+  const grandchild = byTask(childProjection, GRANDCHILD_TASK_ID);
   assert.equal(child.parentNodeId, projection.runs[0]?.rootNodeId);
-  assert.equal(grandchild.parentNodeId, child.id, "the grandchild hangs off the child");
+  assert.equal(grandchild.threadId, child.childThreadId, "the grandchild hangs off the child");
 
   const wakeMessage = projection.messages.find(
     (message) => message.id === projection.runs[1]?.userMessageId,

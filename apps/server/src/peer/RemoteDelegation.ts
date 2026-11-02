@@ -69,6 +69,10 @@ type ThreadScope = McpInvocationContext.McpThreadInvocationScope;
 export class RemoteDelegation extends Context.Service<
   RemoteDelegation,
   {
+    /**
+     * `scope` is the caller's: the thread whose run executes the task, or a native subagent of
+     * its session, which lists the task while `executionThreadId`'s run executes it.
+     */
     readonly delegate: (
       scope: ThreadScope,
       input: OrchestratorMcpDelegateTaskInput & {
@@ -76,6 +80,7 @@ export class RemoteDelegation extends Context.Service<
           readonly environmentId: EnvironmentId;
         };
       },
+      executionThreadId?: ThreadId,
     ) => Effect.Effect<{ readonly taskId: NodeId }, OrchestratorMcpFailure>;
     /**
      * Stops the task's thread there, then completes it here as cancelled. A
@@ -185,8 +190,8 @@ const make = Effect.gen(function* () {
   });
 
   const delegate: RemoteDelegation["Service"]["delegate"] = Effect.fn("RemoteDelegation.delegate")(
-    function* (scope, input) {
-      const parent = yield* threads.getThreadRecords(scope.thread.threadId, ["runs"]).pipe(
+    function* (scope, input, executionThreadId = scope.thread.threadId) {
+      const parent = yield* threads.getThreadRecords(executionThreadId, ["runs"]).pipe(
         Effect.mapError(
           () =>
             new OrchestratorMcpFailure({
@@ -295,9 +300,12 @@ const make = Effect.gen(function* () {
         .dispatch({
           type: "delegated_task.remote.request",
           commandId,
-          parentThreadId: scope.thread.threadId,
+          parentThreadId: executionThreadId,
           parentRunId: parentRun.id,
           parentNodeId,
+          ...(executionThreadId === scope.thread.threadId
+            ? {}
+            : { callerThreadId: scope.thread.threadId }),
           task,
           ...(input.title === undefined ? {} : { title: input.title }),
           // The driver runs there; this side only labels the task with it.

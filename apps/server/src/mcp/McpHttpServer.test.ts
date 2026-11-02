@@ -950,6 +950,43 @@ it.effect("admits provider and OAuth client credentials and points only clients 
       const deadProvider = yield* call("deadProviderToken");
       expect(deadProvider.status).toBe(401);
       expect(deadProvider.headers["www-authenticate"]).toBe('Bearer error="invalid_token"');
+
+      // Each call's own `_meta` names its agent; the session's initialize `_meta` never does.
+      seen.length = 0;
+      const headers = {
+        accept: "application/json, text/event-stream",
+        authorization: `Bearer ${providerToken}`,
+      };
+      const initialize = yield* httpClient.post("/mcp", {
+        headers,
+        body: HttpBody.text(
+          `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"probe","version":"1.0.0"},"_meta":{"claudecode/toolUseId":"toolu-initialize"}}}`,
+          "application/json",
+        ),
+      });
+      for (const [id, meta] of [
+        [2, `,"_meta":{"claudecode/toolUseId":"toolu-first"}`],
+        [3, `,"_meta":{"threadId":"codex-native-thread","callId":"call-1"}`],
+        [4, ""],
+      ] as const) {
+        const called = yield* httpClient.post("/mcp", {
+          headers: {
+            ...headers,
+            "mcp-session-id": initialize.headers["mcp-session-id"]!,
+            "mcp-protocol-version": "2025-06-18",
+          },
+          body: HttpBody.text(
+            `{"jsonrpc":"2.0","id":${id},"method":"tools/call","params":{"name":"probe","arguments":{}${meta}}}`,
+            "application/json",
+          ),
+        });
+        expect(called.status).toBe(200);
+      }
+      expect(seen.map((scope) => scope.thread?.nativeCallId)).toEqual([
+        "claude-tool:toolu-first",
+        "codex-thread:codex-native-thread",
+        undefined,
+      ]);
     }),
   ).pipe(Effect.provide(NodeHttpServer.layerTest)),
 );

@@ -63,6 +63,7 @@ import {
   OrchestrationV2SubagentJson as OrchestrationV2SubagentJsonSchema,
   OrchestrationV2TurnItemJson as OrchestrationV2TurnItemJsonSchema,
   orchestrationV2RunWorkStartedAt,
+  subagentExecutionThreadId,
   RunId,
   MessageId,
   RuntimeRequestId,
@@ -448,6 +449,14 @@ export interface ProjectionStoreV2Shape {
   ) => Effect.Effect<ProjectionTimelinePage, ProjectionStoreV2Error>;
   readonly getMessageCount: (threadId: ThreadId) => Effect.Effect<number, ProjectionStoreV2Error>;
   readonly getSubagentCount: (threadId: ThreadId) => Effect.Effect<number, ProjectionStoreV2Error>;
+  /**
+   * App-owned tasks the thread's runs execute but another thread lists: those a native
+   * subagent of its session delegated.
+   */
+  readonly getTasksExecutedElsewhere: (input: {
+    readonly threadId: ThreadId;
+    readonly runIds: ReadonlyArray<RunId>;
+  }) => Effect.Effect<ReadonlyArray<OrchestrationV2Subagent>, ProjectionStoreV2Error>;
   readonly getNextTurnItemOrdinal: (
     threadId: ThreadId,
   ) => Effect.Effect<number, ProjectionStoreV2Error>;
@@ -5338,6 +5347,21 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         Effect.map((rows) => rows[0]?.count ?? 0),
         Effect.mapError(controlReadError(threadId)),
       );
+    const getTasksExecutedElsewhere: ProjectionStoreV2Shape["getTasksExecutedElsewhere"] = ({
+      threadId,
+      runIds,
+    }) =>
+      runIds.length === 0
+        ? Effect.succeed([])
+        : sql<PayloadRow>`SELECT payload_json FROM orchestration_v2_projection_subagents
+            WHERE origin = 'app_owned' AND run_id IN ${sql.in(runIds)} AND thread_id != ${threadId}
+            ORDER BY subagent_id ASC`.pipe(
+            Effect.mapError(controlReadError(threadId)),
+            Effect.flatMap(decodeRows(decodeSubagentPayload, threadId)),
+            Effect.map((tasks) =>
+              tasks.filter((task) => subagentExecutionThreadId(task) === threadId),
+            ),
+          );
     const getNextTurnItemOrdinal: ProjectionStoreV2Shape["getNextTurnItemOrdinal"] = (threadId) =>
       sql<{ ordinal: number | null }>`SELECT MAX(ordinal) AS ordinal
         FROM orchestration_v2_projection_turn_items WHERE thread_id = ${threadId}`.pipe(
@@ -7091,6 +7115,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       isNodeStored: readOnReader(isNodeStored),
       getMessageCount: readOnReader(getMessageCount),
       getSubagentCount: readOnReader(getSubagentCount),
+      getTasksExecutedElsewhere: readOnReader(getTasksExecutedElsewhere),
       getNextTurnItemOrdinal: readOnReader(getNextTurnItemOrdinal),
       getTurnItem: readOnReader(getTurnItem),
       getThreadRecords: (threadId, fields, filter) =>

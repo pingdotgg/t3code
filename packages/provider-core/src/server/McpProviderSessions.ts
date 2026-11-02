@@ -3,14 +3,21 @@ import * as NodeCrypto from "node:crypto";
 import type { ThreadId } from "@t3tools/contracts";
 import type { HtmlRenderReference } from "@t3tools/shared/htmlRender";
 import * as Context from "effect/Context";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 
 import type { McpProviderSessionConfig } from "./mcpSession.ts";
 
 // Other providers may never consume these references.
 const MAX_KEPT_HTML_RENDERS = 64;
+
+// Claude binds every T3 tool call; older ones are long answered.
+const MAX_KEPT_NATIVE_CALLERS = 1_024;
+// Codex can call a tool before its spawn notification is read; Claude binds before calling.
+const NATIVE_CALLER_WAIT = "5 seconds";
 
 // Antigravity truncates long HTML arguments to a marked tail of at most 8,000 characters.
 const BOUNDED_TEXT_MARKER = "[Earlier output truncated]\n\n";
@@ -33,6 +40,21 @@ export class McpProviderSessions extends Context.Service<
     readonly set: (config: McpProviderSessionConfig) => Effect.Effect<void>;
     readonly read: (threadId: ThreadId) => Effect.Effect<McpProviderSessionConfig | undefined>;
     readonly clear: (threadId: ThreadId) => Effect.Effect<void>;
+    /**
+     * Records which agent of the thread's provider session a provider-reported call id
+     * (a tool call or a native thread) belongs to: the thread itself or a native subagent's.
+     */
+    readonly bindNativeCaller: (input: {
+      readonly threadId: ThreadId;
+      readonly callId: string;
+      readonly callerThreadId: ThreadId;
+    }) => Effect.Effect<void>;
+    /** Undefined when this credential's session never bound the call id. */
+    readonly resolveNativeCaller: (input: {
+      readonly threadId: ThreadId;
+      readonly providerSessionId: string;
+      readonly callId: string;
+    }) => Effect.Effect<ThreadId | undefined>;
     readonly recordHtmlRender: (
       threadId: ThreadId,
       input: { readonly html: string; readonly title: string; readonly height: number },
@@ -80,10 +102,18 @@ const matchingPageIndex = (
 const make = Effect.gen(function* () {
   const sessions = yield* Ref.make(new Map<ThreadId, McpProviderSessionConfig>());
   const htmlRenders = yield* Ref.make(new Map<ThreadId, ReadonlyArray<KeptHtmlRender>>());
+  // A replaced or cleared credential drops its thread's bindings, so none answer for the next.
+  const nativeCallers = new Map<ThreadId, Map<string, ThreadId>>();
+  const nativeCallerWaiters = new Map<string, Deferred.Deferred<ThreadId>>();
+  const waiterKey = (threadId: ThreadId, callId: string) => `${threadId}\u0000${callId}`;
   return McpProviderSessions.of({
     set: Effect.fn("McpProviderSessions.set")(function* (config) {
       const current = yield* Ref.get(sessions);
-      if (current.get(config.threadId)?.providerSessionId !== config.providerSessionId) {
+      const replaced = current.get(config.threadId)?.providerSessionId;
+      if (replaced !== undefined && replaced !== config.providerSessionId) {
+        nativeCallers.delete(config.threadId);
+      }
+      if (replaced !== config.providerSessionId) {
         yield* Ref.update(htmlRenders, (kept) => {
           const next = new Map(kept);
           next.delete(config.threadId);
@@ -97,6 +127,7 @@ const make = Effect.gen(function* () {
     }),
     clear: Effect.fn("McpProviderSessions.clear")(function (threadId) {
       return Ref.update(sessions, (current) => {
+        nativeCallers.delete(threadId);
         const next = new Map(current);
         next.delete(threadId);
         return next;
@@ -109,6 +140,39 @@ const make = Effect.gen(function* () {
           }),
         ),
       );
+    }),
+    bindNativeCaller: Effect.fn("McpProviderSessions.bindNativeCaller")(function* (input) {
+      const bound = nativeCallers.get(input.threadId) ?? new Map<string, ThreadId>();
+      bound.delete(input.callId);
+      bound.set(input.callId, input.callerThreadId);
+      for (const oldest of bound.keys()) {
+        if (bound.size <= MAX_KEPT_NATIVE_CALLERS) break;
+        bound.delete(oldest);
+      }
+      nativeCallers.set(input.threadId, bound);
+      const waiter = nativeCallerWaiters.get(waiterKey(input.threadId, input.callId));
+      if (waiter !== undefined) yield* Deferred.succeed(waiter, input.callerThreadId);
+    }),
+    resolveNativeCaller: Effect.fn("McpProviderSessions.resolveNativeCaller")(function* (input) {
+      // Only the thread's current credential reads its bindings, also after waiting for one.
+      const credentialCurrent = Ref.get(sessions).pipe(
+        Effect.map((all) => all.get(input.threadId)?.providerSessionId === input.providerSessionId),
+      );
+      if (!(yield* credentialCurrent)) return undefined;
+      const bound = nativeCallers.get(input.threadId)?.get(input.callId);
+      if (bound !== undefined) return bound;
+      const key = waiterKey(input.threadId, input.callId);
+      const waiter = nativeCallerWaiters.get(key) ?? (yield* Deferred.make<ThreadId>());
+      nativeCallerWaiters.set(key, waiter);
+      const awaited = yield* Deferred.await(waiter).pipe(
+        Effect.timeoutOption(NATIVE_CALLER_WAIT),
+        Effect.ensuring(
+          Effect.sync(() => {
+            if (nativeCallerWaiters.get(key) === waiter) nativeCallerWaiters.delete(key);
+          }),
+        ),
+      );
+      return (yield* credentialCurrent) ? Option.getOrUndefined(awaited) : undefined;
     }),
     recordHtmlRender: Effect.fn("McpProviderSessions.recordHtmlRender")(
       function (threadId, input, reference) {

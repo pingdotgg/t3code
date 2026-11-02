@@ -44,7 +44,9 @@ import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
 import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
 import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import * as ProviderAdapterRegistry from "../orchestration-v2/ProviderAdapterRegistry.ts";
+import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import * as ProviderContinuationRequests from "@t3tools/provider-core/server/ProviderContinuationRequests";
+import { makeSubagentChildThread } from "@t3tools/provider-core/server/subagentProjection";
 import * as ThreadLaunch from "../orchestration-v2/ThreadLaunchService.ts";
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
 import * as ProviderReplayHarness from "../orchestration-v2/testkit/ProviderReplayHarness.ts";
@@ -595,6 +597,7 @@ const makeLaptop = (
       Layer.provide(Layer.mock(PeerLinkRequests.PeerLinkRequests)({})),
       Layer.provide(NodeCrypto.layer),
       Layer.provideMerge(layerThreads),
+      Layer.provideMerge(McpProviderSessions.layer),
       Layer.provide(Layer.mock(ProviderRegistry.ProviderRegistry)({})),
       Layer.provide(Layer.mock(ProviderAdapterRegistry.ProviderAdapterRegistryV2)({})),
       Layer.provide(Layer.mock(ScheduledTaskService.ScheduledTaskService)({})),
@@ -615,6 +618,7 @@ const makeLaptop = (
       threads: Context.get(here, ThreadManagement.ThreadManagementService),
       projections: Context.get(here, ProjectionStore.ProjectionStoreV2),
       sink: Context.get(here, EventSink.EventSinkV2),
+      mcpSessions: Context.get(here, McpProviderSessions.McpProviderSessions),
       call: (name: string, args: Record<string, unknown>, scope = parentScope) =>
         server
           .callTool({ name, arguments: args })
@@ -745,18 +749,25 @@ const seedParent = (laptopEnv: Effect.Success<ReturnType<typeof makeLaptop>>) =>
     });
   });
 
-const delegateToBox = (laptopEnv: Effect.Success<ReturnType<typeof makeLaptop>>) =>
+const delegateToBox = (
+  laptopEnv: Effect.Success<ReturnType<typeof makeLaptop>>,
+  scope: McpInvocationContext.McpInvocationScope = parentScope,
+) =>
   laptopEnv
-    .call("delegate_task", {
-      task: "Run the full suite on the box.",
-      target: {
-        environmentId: box.environmentId,
-        providerInstanceId: instanceId,
-        model: "gpt-5.4",
+    .call(
+      "delegate_task",
+      {
+        task: "Run the full suite on the box.",
+        target: {
+          environmentId: box.environmentId,
+          providerInstanceId: instanceId,
+          model: "gpt-5.4",
+        },
+        mode: "async",
+        clientRequestId: "suite-on-box",
       },
-      mode: "async",
-      clientRequestId: "suite-on-box",
-    })
+      scope,
+    )
     .pipe(
       Effect.map((result) => {
         expect(result.isError, JSON.stringify(result.content)).toBe(false);
@@ -771,10 +782,14 @@ const delegateToBox = (laptopEnv: Effect.Success<ReturnType<typeof makeLaptop>>)
     );
 
 /** Waits until the task here has the result its thread there ended with. */
-const taskResult = (laptopEnv: Effect.Success<ReturnType<typeof makeLaptop>>, taskId: NodeId) =>
+const taskResult = (
+  laptopEnv: Effect.Success<ReturnType<typeof makeLaptop>>,
+  taskId: NodeId,
+  listingThreadId = parentThreadId,
+) =>
   laptopEnv.orchestrator
     .streamStoredEventsFrom({
-      threadId: parentThreadId,
+      threadId: listingThreadId,
       afterSequence: 0,
       eventType: "subagent.updated",
     })
@@ -881,6 +896,199 @@ it.effect("a task delegated to the box wakes the laptop's parent when it ends th
         state: "acknowledged",
         observedByRunId: parentRunId,
       });
+    }),
+  ).pipe(Effect.provide(NodeHttpServer.layerTest)),
+);
+
+/** Native subagents of the laptop parent's session, as Codex's adapter projects them. */
+const seedNativeSubagents = (
+  laptopEnv: Effect.Success<ReturnType<typeof makeLaptop>>,
+  names: ReadonlyArray<string>,
+) =>
+  Effect.gen(function* () {
+    const now = yield* DateTime.now;
+    const { thread: parentThread } = yield* laptopEnv.orchestrator.getThreadRecords(
+      parentThreadId,
+      [],
+    );
+    return yield* Effect.forEach(names, (name) =>
+      Effect.gen(function* () {
+        const taskId = NodeId.make(`node:native-${name}`);
+        const threadId = ThreadId.make(`thread:native-${name}`);
+        const rootNodeId = NodeId.make(`node:native-${name}:root`);
+        const thread = makeSubagentChildThread({
+          parentThread,
+          childThreadId: threadId,
+          parentNodeId: taskId,
+          activeProviderThreadId: null,
+          providerInstanceId: instanceId,
+          modelSelection,
+          title: name,
+          now,
+          createdBy: "agent",
+          creationSource: "provider",
+        });
+        yield* laptopEnv.sink.write({
+          commandId: CommandId.make(`command:seed:native-${name}`),
+          events: [
+            {
+              id: EventId.make(`event:seed-thread:native-${name}`),
+              type: "thread.created",
+              threadId,
+              occurredAt: now,
+              payload: thread,
+            },
+            {
+              id: EventId.make(`event:seed-root:native-${name}`),
+              type: "node.updated",
+              threadId,
+              nodeId: rootNodeId,
+              occurredAt: now,
+              payload: {
+                id: rootNodeId,
+                threadId,
+                runId: null,
+                parentNodeId: null,
+                rootNodeId,
+                kind: "root_turn",
+                status: "running",
+                countsForRun: false,
+                providerThreadId: null,
+                providerTurnId: null,
+                nativeItemRef: null,
+                runtimeRequestId: null,
+                checkpointScopeId: null,
+                startedAt: now,
+                completedAt: null,
+              },
+            },
+            {
+              id: EventId.make(`event:seed-task:native-${name}`),
+              type: "subagent.updated",
+              threadId: parentThreadId,
+              runId: parentRunId,
+              nodeId: taskId,
+              occurredAt: now,
+              payload: {
+                id: taskId,
+                threadId: parentThreadId,
+                runId: parentRunId,
+                parentNodeId: parentRootNode,
+                origin: "provider_native",
+                createdBy: "agent",
+                driver,
+                providerInstanceId: instanceId,
+                providerThreadId: null,
+                childThreadId: threadId,
+                nativeTaskRef: { driver, nativeId: `native-${name}`, strength: "strong" },
+                prompt: `Work as ${name}`,
+                title: name,
+                model: null,
+                status: "running",
+                result: null,
+                startedAt: now,
+                completedAt: null,
+                updatedAt: now,
+              },
+            },
+          ],
+        });
+        // Codex names the calling thread in each MCP call's `_meta.threadId`.
+        yield* laptopEnv.mcpSessions.bindNativeCaller({
+          threadId: parentThreadId,
+          callId: `codex-thread:native-${name}`,
+          callerThreadId: threadId,
+        });
+        return {
+          threadId,
+          scope: {
+            ...parentScope,
+            thread: { ...parentScope.thread!, nativeCallId: `codex-thread:native-${name}` },
+          } satisfies McpInvocationContext.McpInvocationScope,
+        };
+      }),
+    );
+  });
+
+it.effect("a native subagent's task there is listed, read and cancelled by that subagent", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const thread = yield* makeBoxThread;
+      const b = yield* serveBox(thread);
+      const offers = yield* SubscriptionRef.make<
+        ReadonlyArray<ProviderContinuationRequests.ProviderContinuationRequest>
+      >([]);
+      const database = yield* SqlitePersistence.layerMemory.pipe(Layer.build);
+      const a = yield* makeLaptop(database, offers);
+      yield* linkTo(a.links, b, "full-access");
+      yield* seedParent(a);
+      yield* a.mcpSessions.set({
+        environmentId: laptop.environmentId,
+        threadId: parentThreadId,
+        providerSessionId: parentScope.thread!.providerSessionId,
+        providerInstanceId: instanceId,
+        endpoint: "http://127.0.0.1/mcp",
+        authorizationHeader: "Bearer token",
+        browserToolsAvailable: false,
+      });
+      const [caller, sibling] = yield* seedNativeSubagents(a, ["caller", "sibling"]);
+
+      const delegated = yield* delegateToBox(a, caller!.scope);
+      // The caller's thread lists it; the parent's run executes it, as for a task here.
+      const { subagents } = yield* a.projections.getThreadRecords(caller!.threadId, ["subagents"], {
+        subagentIds: [delegated.taskId],
+      });
+      expect(subagents[0]).toMatchObject({
+        threadId: caller!.threadId,
+        runId: parentRunId,
+        executionThreadId: parentThreadId,
+        remoteChild: { threadId: delegated.remoteChild.threadId },
+      });
+      expect(
+        (yield* a.projections.getThreadRecords(parentThreadId, ["subagents"])).subagents.filter(
+          (task) => task.origin === "app_owned",
+        ),
+      ).toEqual([]);
+
+      // Only the caller reads and cancels it; the parent reads what its run executes.
+      expect(
+        (yield* a.call("task_status", { taskId: delegated.taskId }, caller!.scope))
+          .structuredContent,
+      ).toMatchObject({ status: "running" });
+      expect(
+        (yield* a.call("task_status", { taskId: delegated.taskId })).structuredContent,
+      ).toMatchObject({ status: "running" });
+      expect(
+        (yield* a.call("task_status", { taskId: delegated.taskId }, sibling!.scope)).isError,
+      ).toBe(true);
+      expect(
+        (yield* a.call("task_cancel", { taskId: delegated.taskId }, sibling!.scope)).isError,
+      ).toBe(true);
+      expect(yield* Ref.get(thread.stops)).toEqual([]);
+
+      // Its end there lands in the caller's thread and wakes the parent's run.
+      yield* Ref.set(thread.reply, "All 412 tests pass on the box.");
+      yield* Ref.set(thread.status, "completed");
+      yield* Deferred.succeed(thread.finished, undefined);
+      expect(yield* taskResult(a, delegated.taskId, caller!.threadId)).toMatchObject({
+        status: "completed",
+      });
+      const parentRun = (yield* a.orchestrator.getThreadProjection(parentThreadId)).runs.find(
+        (run) => run.id === parentRunId,
+      );
+      expect(parentRun?.delegatedCompletion?.delivery?.taskIds).toEqual([delegated.taskId]);
+
+      // The caller's cancel still stops what followed there.
+      const cancelled = yield* a.call(
+        "task_cancel",
+        { taskId: delegated.taskId, clientRequestId: "cancel-after" },
+        caller!.scope,
+      );
+      expect(cancelled.structuredContent).toEqual({
+        taskId: delegated.taskId,
+        status: "completed",
+      });
+      expect(yield* Ref.get(thread.stops)).toEqual(["thread.stop", "delegated-tasks"]);
     }),
   ).pipe(Effect.provide(NodeHttpServer.layerTest)),
 );

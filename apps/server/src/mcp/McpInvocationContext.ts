@@ -29,6 +29,11 @@ export interface McpThreadCaller {
   readonly providerInstanceId: ProviderInstanceId;
   /** A delegated child task; its parent owns the work it hands back. */
   readonly subagent?: boolean;
+  /**
+   * The provider's id for this call's agent (a Claude tool call, a Codex thread), from the
+   * call's `_meta`. Only an adapter binding for this credential turns it into a native caller.
+   */
+  readonly nativeCallId?: string;
 }
 
 export interface McpClientCaller {

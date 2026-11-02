@@ -4,6 +4,7 @@ import {
   type OrchestrationV2DomainEvent,
   type OrchestrationV2RuntimeRequest,
   type OrchestrationV2Subagent,
+  subagentExecutionThreadId,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
@@ -34,7 +35,9 @@ const make = Effect.gen(function* () {
     request: OrchestrationV2RuntimeRequest,
   ) {
     if (task.childThreadId === null) return;
-    const key = `${task.threadId}:${request.id}`;
+    // A native subagent's thread lists the task but has no runs; its session's root thread wakes.
+    const threadId = subagentExecutionThreadId(task);
+    const key = `${threadId}:${request.id}`;
     const label = reportLabel(task.title?.trim() || task.prompt);
     const situation =
       request.responseCapability.type === "message"
@@ -43,7 +46,7 @@ const make = Effect.gen(function* () {
     yield* engine.dispatch({
       type: "message.dispatch",
       commandId: CommandId.make(`server:delegated-task-question:${key}`),
-      threadId: task.threadId,
+      threadId,
       messageId: MessageId.make(`message:delegated-task-question:${key}`),
       text: `${situation} Read it with t3_pending_request action read, threadId ${task.childThreadId}, and requestId ${request.id}. Answer it with action respond when the answer follows from the task or the user's instructions; otherwise ask the user, then answer it. If it is no longer pending, it was answered or dismissed.`,
       notification: {
@@ -65,7 +68,11 @@ const make = Effect.gen(function* () {
         if (!["completed", "failed", "waiting"].includes(event.payload.status)) return;
         const parent = yield* projections.getThreadRecords(event.threadId, ["subagents"]);
         if (parent.thread.archivedAt !== null || parent.thread.deletedAt !== null) return;
-        for (const task of parent.subagents) {
+        const elsewhere = yield* projections.getTasksExecutedElsewhere({
+          threadId: event.threadId,
+          runIds: [event.payload.id],
+        });
+        for (const task of [...parent.subagents, ...elsewhere]) {
           if (
             task.origin !== "app_owned" ||
             task.runId !== event.payload.id ||
@@ -107,23 +114,6 @@ const make = Effect.gen(function* () {
       const parentThreadId = child.lineage.parentThreadId;
       if (parentThreadId === null) return;
       const request = yield* projections.getRuntimeRequest(event.threadId, event.payload.id);
-      const key = `${parentThreadId}:${event.payload.id}`;
-      const messageId = MessageId.make(`message:delegated-task-question:${key}`);
-      if (event.payload.status !== "pending" || request?.status !== "pending") {
-        const parent = yield* projections.getThreadRecords(parentThreadId, ["runs"]);
-        const queued = parent.runs.find(
-          (run) => run.status === "queued" && run.userMessageId === messageId,
-        );
-        if (queued !== undefined) {
-          yield* engine.dispatch({
-            type: "queued-run.cancel",
-            commandId: CommandId.make(`server:delegated-task-question-cancel:${key}`),
-            threadId: parentThreadId,
-            runId: queued.id,
-          });
-        }
-        return;
-      }
       const parent = yield* projections.getThreadRecords(parentThreadId, ["subagents", "runs"]);
       const { runs } = yield* projections.getThreadRecords(child.id, ["runs"]);
       const run =
@@ -135,6 +125,28 @@ const make = Effect.gen(function* () {
       const task = parent.subagents.find(
         (candidate) => candidate.origin === "app_owned" && candidate.id === taskId,
       );
+      const executionThreadId =
+        task === undefined ? parentThreadId : subagentExecutionThreadId(task);
+      const execution =
+        executionThreadId === parentThreadId
+          ? parent
+          : yield* projections.getThreadRecords(executionThreadId, ["runs"]);
+      if (event.payload.status !== "pending" || request?.status !== "pending") {
+        const key = `${executionThreadId}:${event.payload.id}`;
+        const messageId = MessageId.make(`message:delegated-task-question:${key}`);
+        const queued = execution.runs.find(
+          (run) => run.status === "queued" && run.userMessageId === messageId,
+        );
+        if (queued !== undefined) {
+          yield* engine.dispatch({
+            type: "queued-run.cancel",
+            commandId: CommandId.make(`server:delegated-task-question-cancel:${key}`),
+            threadId: executionThreadId,
+            runId: queued.id,
+          });
+        }
+        return;
+      }
       if (
         task === undefined ||
         parent.thread.archivedAt !== null ||
@@ -146,7 +158,7 @@ const make = Effect.gen(function* () {
       if (
         task.completionWake === "settled_only" &&
         event.payload.responseCapability.type === "live" &&
-        parent.runs.some(
+        execution.runs.some(
           (run) =>
             run.id === task.runId &&
             (run.status === "preparing" || run.status === "starting" || run.status === "running"),

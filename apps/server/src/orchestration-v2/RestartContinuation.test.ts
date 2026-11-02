@@ -1020,13 +1020,18 @@ it.effect("continues again after a continuation fails before its prompt", () =>
 );
 
 it.effect.each([
-  ["running", null, 0],
-  ["completed", "Done.", 1],
+  ["running", null, 0, false],
+  ["completed", "Done.", 1, false],
+  // A native subagent's thread lists the task; the Stop lands on the root run's thread.
+  ["running", null, 0, true],
 ] as const)(
-  "a parent's Stop on the task's run blocks the child only while the task is %s",
-  ([status, result, expected]) =>
+  "a parent's Stop on the task's run blocks the child only while the task is %s (listed by a native subagent: %s)",
+  ([status, result, expected, listedByNativeSubagent]) =>
     Effect.gen(function* () {
       const parentThreadId = ThreadId.make("thread:parent");
+      const listingThreadId = listedByNativeSubagent
+        ? ThreadId.make("thread:native-subagent")
+        : parentThreadId;
       const parentRunId = RunId.make("run:parent");
       const taskId = NodeId.make("node:task");
       const cut = cutMidTurn();
@@ -1034,22 +1039,35 @@ it.effect.each([
         ...cut,
         thread: {
           ...cut.thread,
-          lineage: { parentThreadId, relationshipToParent: "subagent" },
+          lineage: { parentThreadId: listingThreadId, relationshipToParent: "subagent" },
           forkedFrom: { type: "node", nodeId: taskId },
         },
       } as unknown as OrchestrationV2ThreadProjection;
-      const parent = {
-        thread: { id: parentThreadId },
-        subagents: [{ id: taskId, runId: parentRunId, origin: "app_owned", status, result }],
-        turnItems: [{ id: "turn-item:stop", runId: parentRunId, type: "run_interrupt_request" }],
+      const stop = { id: "turn-item:stop", runId: parentRunId, type: "run_interrupt_request" };
+      const listing = {
+        thread: { id: listingThreadId },
+        subagents: [
+          {
+            id: taskId,
+            threadId: listingThreadId,
+            runId: parentRunId,
+            ...(listedByNativeSubagent ? { executionThreadId: parentThreadId } : {}),
+            origin: "app_owned",
+            status,
+            result,
+          },
+        ],
+        turnItems: listedByNativeSubagent ? [] : [stop],
       };
+      const execution = { thread: { id: parentThreadId }, subagents: [], turnItems: [stop] };
+      const records = (id: ThreadId) =>
+        id === listingThreadId ? listing : id === parentThreadId ? execution : child;
       let dispatched = 0;
       yield* continueRestartedRun({ threadId, sourceRunId: runId }).pipe(
         Effect.provide(
           Layer.merge(
             Layer.mock(ThreadManagementService.ThreadManagementService)({
-              getThreadRecords: (id) =>
-                Effect.succeed((id === parentThreadId ? parent : child) as never),
+              getThreadRecords: (id) => Effect.succeed(records(id) as never),
               recoverDelegatedTask: () => Effect.void,
               dispatch: () =>
                 Effect.sync(() => {

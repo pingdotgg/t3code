@@ -83,6 +83,7 @@ import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 
+import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import * as ProviderAdapterRegistry from "../orchestration-v2/ProviderAdapterRegistry.ts";
 import {
   subagentResultForRun,
@@ -123,6 +124,8 @@ import * as PeerForwarding from "../peer/PeerForwarding.ts";
 import * as RemoteDelegation from "../peer/RemoteDelegation.ts";
 
 const DEFAULT_WAIT_TIMEOUT_MS = 10 * 60 * 1_000;
+// A native subagent can call a tool before its provider's events for it are stored.
+const NATIVE_CALLER_INGESTION_WAIT = Duration.seconds(5);
 const MAX_WAIT_TIMEOUT_MS = 60 * 60 * 1_000;
 const TASK_WAKE_EVENTS = [
   { thread: "parent", eventType: "subagent.updated" },
@@ -1001,6 +1004,7 @@ function timelineItem(input: {
 const make = Effect.gen(function* () {
   const crypto = yield* Crypto.Crypto;
   const threadManagement = yield* ThreadManagementService.ThreadManagementService;
+  const mcpProviderSessions = yield* Effect.serviceOption(McpProviderSessions.McpProviderSessions);
   const providerRegistry = yield* ProviderRegistry.ProviderRegistry;
   const providerAdapters = yield* ProviderAdapterRegistry.ProviderAdapterRegistryV2;
   const scheduledTasks = yield* ScheduledTaskService.ScheduledTaskService;
@@ -1136,6 +1140,115 @@ const make = Effect.gen(function* () {
         interactionMode: parent.thread.interactionMode,
       },
     } as const;
+  });
+
+  /** What delegation checks of a native caller: its thread, its root node and its own task. */
+  const nativeCallerStored = Effect.fn("OrchestratorMcpService.nativeCallerStored")(function* (
+    callerThreadId: ThreadId,
+  ) {
+    const { thread, nodes } = yield* threadManagement.getThreadRecords(callerThreadId, ["nodes"]);
+    const parentThreadId = thread.lineage.parentThreadId;
+    if (
+      thread.forkedFrom?.type !== "node" ||
+      parentThreadId === null ||
+      !nodes.some((node) => node.parentNodeId === null && node.kind === "root_turn")
+    )
+      return false;
+    const nodeId = thread.forkedFrom.nodeId;
+    const { subagents } = yield* threadManagement.getThreadRecords(parentThreadId, ["subagents"], {
+      subagentIds: [nodeId],
+    });
+    return subagents.some((task) => task.id === nodeId && task.childThreadId === callerThreadId);
+  });
+
+  /**
+   * Waits, briefly, until the native subagent's records are stored: Codex reports a child
+   * thread and Claude Code runs its hook before T3 Code stores what the provider sent about it.
+   * Delegation then validates the caller as usual and refuses one that never appeared.
+   */
+  const awaitNativeCallerStored = Effect.fn("OrchestratorMcpService.awaitNativeCallerStored")(
+    function* (scope: McpThreadInvocationScope, callerThreadId: ThreadId) {
+      const stored = nativeCallerStored(callerThreadId).pipe(Effect.orElseSucceed(() => false));
+      const afterSequence = yield* threadManagement.getThreadEventSequence(scope.thread.threadId);
+      if (yield* stored) return;
+      yield* Stream.merge(
+        threadManagement.streamStoredEventsFrom({ afterSequence, eventType: "subagent.updated" }),
+        threadManagement.streamStoredEventsFrom({ afterSequence, eventType: "node.updated" }),
+      ).pipe(
+        Stream.filter(
+          ({ event }) =>
+            (event.type === "subagent.updated" && event.payload.childThreadId === callerThreadId) ||
+            (event.type === "node.updated" && event.threadId === callerThreadId),
+        ),
+        Stream.mapEffect(() => stored),
+        Stream.filter((ready) => ready),
+        Stream.runHead,
+        Effect.timeoutOption(NATIVE_CALLER_INGESTION_WAIT),
+      );
+    },
+    (effect) => effect.pipe(Effect.ignore),
+  );
+
+  /**
+   * The agent of the credential's session that made this call. Native subagents share their
+   * root's credential; the adapter's binding of the call's provider id tells them apart.
+   * Its own scope namespaces retries, so siblings with equal request keys never collide.
+   */
+  const delegationScope = Effect.fn("OrchestratorMcpService.delegationScope")(function* (
+    scope: McpThreadInvocationScope,
+  ) {
+    const callId = scope.thread.nativeCallId;
+    if (callId === undefined) return scope;
+    const caller = Option.isNone(mcpProviderSessions)
+      ? undefined
+      : yield* mcpProviderSessions.value.resolveNativeCaller({
+          threadId: scope.thread.threadId,
+          providerSessionId: scope.thread.providerSessionId,
+          callId,
+        });
+    if (caller === undefined) {
+      return yield* failure(
+        "parent_not_active",
+        "T3 Code could not tell which agent of this session made the call, so it did not act on its delegated tasks.",
+      );
+    }
+    if (caller !== scope.thread.threadId) yield* awaitNativeCallerStored(scope, caller);
+    return caller === scope.thread.threadId
+      ? scope
+      : ({
+          ...scope,
+          requestNamespace: `${scope.requestNamespace}:${caller}`,
+          thread: { ...scope.thread, threadId: caller },
+        } satisfies McpThreadInvocationScope);
+  });
+
+  /**
+   * The thread listing a task the caller may control: its own, or for the session's root, the
+   * native subagent thread listing a task one of its runs executes. Siblings never see each other's.
+   */
+  const taskScope = Effect.fn("OrchestratorMcpService.taskScope")(function* (
+    callerScope: McpThreadInvocationScope,
+    taskId: NodeId,
+  ) {
+    const scope = yield* delegationScope(callerScope);
+    if (scope.thread.threadId !== callerScope.thread.threadId) return scope;
+    if ((yield* loadTasks(scope.thread.threadId, [taskId])).some((task) => task.id === taskId))
+      return scope;
+    const { runs } = yield* threadManagement
+      .getThreadRecords(scope.thread.threadId, ["runs"])
+      .pipe(Effect.mapError(threadManagementFailure));
+    const listed = (yield* threadManagement
+      .getTasksExecutedElsewhere({
+        threadId: scope.thread.threadId,
+        runIds: runs.map((run) => run.id),
+      })
+      .pipe(Effect.mapError(threadManagementFailure))).find((task) => task.id === taskId);
+    return listed === undefined
+      ? scope
+      : ({
+          ...scope,
+          thread: { ...scope.thread, threadId: listed.threadId },
+        } satisfies McpThreadInvocationScope);
   });
 
   const loadThreadCaller = Effect.fn("OrchestratorMcpService.loadThreadCaller")(function* (
@@ -1496,7 +1609,21 @@ const make = Effect.gen(function* () {
       .pipe(Effect.mapError(threadManagementFailure));
     const childRun = delegatedTaskRun(childControls, task);
     const terminalRun = latestTerminalResultRun(childControls, childRun);
-    const progress = delegatedTaskProgress(childControls);
+    // Tasks the child's native subagents delegated keep it working, as its own tasks do.
+    const progress = delegatedTaskProgress({
+      ...childControls,
+      subagents: [
+        ...childControls.subagents,
+        ...(childControls.subagents.some((child) => child.origin === "provider_native")
+          ? yield* threadManagement
+              .getTasksExecutedElsewhere({
+                threadId: task.childThreadId,
+                runIds: childControls.runs.map((run) => run.id),
+              })
+              .pipe(Effect.mapError(threadManagementFailure))
+          : []),
+      ],
+    });
     const taskResultRun =
       childRun?.delegatedTaskId === task.id
         ? childControls.runs
@@ -2319,17 +2446,21 @@ const make = Effect.gen(function* () {
           : PeerForwarding.remoteTarget(callerScope, input.target.environmentId);
       if (input.target !== undefined && environmentId !== undefined) {
         yield* requireCapability(callerScope);
-        const scope = yield* requireThreadScope(callerScope, "delegate_task");
-        // The task's child runs as an ordinary thread there; this thread keeps the task.
-        const { taskId } = yield* remoteDelegation.delegate(scope, {
-          ...input,
-          target: { ...input.target, environmentId },
-        });
+        const rootScope = yield* requireThreadScope(callerScope, "delegate_task");
+        const scope = yield* delegationScope(rootScope);
+        // The task's child runs as an ordinary thread there; the calling agent's thread keeps it.
+        const { taskId } = yield* remoteDelegation.delegate(
+          scope,
+          { ...input, target: { ...input.target, environmentId } },
+          rootScope.thread.threadId,
+        );
         return yield* input.mode === "wait"
           ? awaitTask(scope, taskId, input.timeoutMs)
           : readTask(scope, taskId, false, true);
       }
-      const { scope, parent } = yield* loadThreadCaller(callerScope, "delegate_task");
+      const { scope: rootScope, parent } = yield* loadThreadCaller(callerScope, "delegate_task");
+      const scope = yield* delegationScope(rootScope);
+      const callerThreadId = scope.thread.threadId;
       if (
         input.target?.projectId !== undefined &&
         input.target.projectId !== parent.thread.projectId
@@ -2345,7 +2476,7 @@ const make = Effect.gen(function* () {
       if (
         parentRun === undefined ||
         parentRun.rootNodeId === null ||
-        parentRun.providerInstanceId !== scope.thread.providerInstanceId
+        parentRun.providerInstanceId !== rootScope.thread.providerInstanceId
       ) {
         return yield* failure(
           "parent_not_active",
@@ -2414,9 +2545,10 @@ const make = Effect.gen(function* () {
           createdBy: "agent",
           creationSource: "mcp",
           commandId,
-          parentThreadId: scope.thread.threadId,
+          parentThreadId: rootScope.thread.threadId,
           parentRunId: parentRun.id,
           parentNodeId: parentRun.rootNodeId,
+          ...(callerThreadId === rootScope.thread.threadId ? {} : { callerThreadId }),
           task: taskPrompt(input),
           ...(input.title === undefined ? {} : { title: input.title }),
           modelSelection: target.modelSelection,
@@ -2512,11 +2644,14 @@ const make = Effect.gen(function* () {
       return yield* readTask(scope, taskId, Option.isNone(waited), true);
     }),
     taskStatus: Effect.fn("OrchestratorMcpService.taskStatus")(function* (callerScope, taskId) {
-      const scope = yield* requireThreadScope(callerScope, "task_status");
+      const scope = yield* taskScope(yield* requireThreadScope(callerScope, "task_status"), taskId);
       return yield* readTask(scope, taskId, false, true);
     }),
     cancelTask: Effect.fn("OrchestratorMcpService.cancelTask")(function* (callerScope, input) {
-      const scope = yield* requireThreadScope(callerScope, "task_cancel");
+      const scope = yield* taskScope(
+        yield* requireThreadScope(callerScope, "task_cancel"),
+        input.taskId,
+      );
       const current = yield* readTask(scope, input.taskId);
       const childThreadId = current.childThreadId;
       if (childThreadId === null) {

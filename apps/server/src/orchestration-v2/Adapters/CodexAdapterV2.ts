@@ -2069,6 +2069,13 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
             runningCompactionItemIds: new Set(),
           };
           const nativeThreadId = input.turnInput.providerThread.nativeThreadRef?.nativeId;
+          if (nativeThreadId != null) {
+            yield* mcpSessions.bindNativeCaller({
+              threadId: input.turnInput.threadId,
+              callId: `codex-thread:${nativeThreadId}`,
+              callerThreadId: input.turnInput.threadId,
+            });
+          }
           const continuation =
             nativeThreadId == null ? undefined : capacityContinuations.get(nativeThreadId);
           if (continuation !== undefined) {
@@ -2954,6 +2961,12 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               const updated = new Map(current);
               updated.set(input.nativeThreadId, subagent);
               return updated;
+            });
+            // Codex names the calling thread in each MCP call's `_meta.threadId`.
+            yield* mcpSessions.bindNativeCaller({
+              threadId: input.context.input.threadId,
+              callId: `codex-thread:${input.nativeThreadId}`,
+              callerThreadId: childThreadId,
             });
             yield* emitProviderEvent({
               type: "app_thread.created",

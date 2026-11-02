@@ -133,6 +133,19 @@ checkpoints but cannot roll back its conversation. The [checkpoint boundary](./o
 therefore rejects revert before touching files. Native permission and question option IDs must
 also survive normalization; a display label is not necessarily a valid reply.
 
+Provider-native subagent threads have no runs of their own. A task such a subagent owns, a nested
+native subagent or an app-owned task it delegated (here or in a linked environment), is listed in
+that thread but keeps the session's run in `runId` and names that run's thread, the nearest app
+thread above it, in `executionThreadId`. Admission, Stop, completion wakes, follow-ups and that
+thread's own progress (whether its result is ready) use that run, so anything reading a thread's
+tasks by run must also read the tasks it executes elsewhere; result transfers and task lists use
+the listing thread. Writers take the execution thread's lock before the listing thread's. Native
+subagents share their session's MCP credential, so the adapter binds each call's provider id
+(Claude's `claudecode/toolUseId` from a `PreToolUse` hook, Codex's `_meta.threadId`) to the calling
+thread, and `delegate_task`, `task_status` and `task_cancel` refuse a call whose id is not bound for
+that credential. The binding can precede the stored records of the subagent it names, so those
+tools wait briefly for them before validating the caller.
+
 ## Attachments and stored history
 
 Attachments live outside the project workspace. The

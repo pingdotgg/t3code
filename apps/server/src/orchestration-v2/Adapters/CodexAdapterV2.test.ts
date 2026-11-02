@@ -6813,6 +6813,35 @@ describe("CodexAdapterV2 post-settle continuation", () => {
           }),
         );
         yield* harness.awaitTerminal(1);
+        const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
+        yield* mcpSessions.set({
+          environmentId: EnvironmentId.make("environment-codex-grandchild"),
+          threadId: harness.threadId,
+          providerSessionId: "credential-codex-grandchild",
+          providerInstanceId: harness.providerThread.providerInstanceId,
+          endpoint: "http://127.0.0.1/mcp",
+          authorizationHeader: "Bearer token",
+          browserToolsAvailable: false,
+        });
+        // Codex names each MCP call's thread in `_meta.threadId`; each is bound to its app thread.
+        const callerOf = (nativeThreadId: string | null | undefined) =>
+          mcpSessions.resolveNativeCaller({
+            threadId: harness.threadId,
+            providerSessionId: "credential-codex-grandchild",
+            callId: `codex-thread:${nativeThreadId}`,
+          });
+        const childThreadOf = (nativeThreadId: string) =>
+          harness
+            .subagentUpdates()
+            .find((event) => event.subagent.providerThreadId?.includes(nativeThreadId))?.subagent
+            .childThreadId;
+        assert.equal(
+          yield* callerOf(harness.providerThread.nativeThreadRef?.nativeId),
+          harness.threadId,
+        );
+        assert.equal(yield* callerOf(RESUME_CHILD_THREAD), childThreadOf(RESUME_CHILD_THREAD));
+        assert.equal(yield* callerOf(grandchildThread), childThreadOf(grandchildThread));
+        assert.isDefined(childThreadOf(grandchildThread));
 
         yield* TestClock.adjust("30 seconds");
         yield* harness.until(() =>
