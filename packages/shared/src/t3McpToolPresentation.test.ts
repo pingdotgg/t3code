@@ -17,6 +17,8 @@ describe("resolveT3McpToolPresentation", () => {
         "mcp__t3code__",
         "T3-code.",
         "t3code.",
+        "t3-code-direct.",
+        "mcp__t3_code_direct__",
         "t3_code/",
         "t3code:",
         "mcp_t3-code_",
