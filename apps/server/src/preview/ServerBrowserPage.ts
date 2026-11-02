@@ -583,6 +583,7 @@ const capture = async (
     });
   return {
     ...page,
+    url: withoutDataPayload(page.url),
     // Mask text before truncating so a value crossing the cut cannot leak its prefix.
     visibleText: mask(page.visibleText).slice(0, MAX_VISIBLE_TEXT_LENGTH),
     accessibilityTree,
