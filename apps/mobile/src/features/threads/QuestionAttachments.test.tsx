@@ -135,6 +135,21 @@ describe("QuestionAttachments answer field", () => {
     expect(input().value).toBe("你");
   });
 
+  it("keeps a Japanese kana composition when a late echo arrives mid-composition", () => {
+    render("");
+    type("ま");
+    type("まつ");
+    type("まっ");
+    type("まって");
+
+    render("まつ");
+    expect(input().value).toBe("まって");
+
+    type("待って");
+    render("まっ");
+    expect(input().value).toBe("待って");
+  });
+
   it("adopts a draft changed from outside the field", () => {
     render("");
     type("my own colour");
