@@ -181,6 +181,20 @@ it.layer(NodeServices.layer)("Muse text generation", (it) => {
     }),
   );
 
+  it.effect("applies the branch naming settings to generated branch names", () =>
+    Effect.gen(function* () {
+      for (const { naming, expected } of [
+        { naming: { mode: "static", prefix: "t3", instructions: "" }, expected: "t3/fix-login" },
+        { naming: { mode: "custom", prefix: "", instructions: "" }, expected: "Fix Login" },
+      ] as const) {
+        const service = yield* fixture(finish('{"branch":"Fix Login"}')).make;
+        expect(yield* service.generateBranchName({ ...titleInput, naming })).toEqual({
+          branch: expected,
+        });
+      }
+    }),
+  );
+
   it.effect("ignores output and terminal notifications for another turn", () =>
     Effect.gen(function* () {
       const test = fixture((emit) => {
