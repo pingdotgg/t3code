@@ -14,6 +14,7 @@ import { PullRequestAvatar } from "./PullRequestPresentation";
 import { PullRequestMarkdown } from "./PullRequestMarkdown";
 import { PullRequestCommentFooter } from "./PullRequestReactions";
 import { pullRequestDescriptionContent } from "./pullRequestDescriptionContent";
+import { discussionCommentCountLabel } from "./pullRequestDiffComments";
 import { normalizedReviewState } from "./pullRequestStatus";
 import type { PullRequestParams } from "./usePullRequestDiff";
 
@@ -250,7 +251,7 @@ export function pullRequestTimelineRows(
             <Text className="text-xs text-foreground-muted">
               {thread.isResolved ? "Resolved" : "Unresolved"}
               {thread.isOutdated ? " · Outdated" : ""} ·{" "}
-              {thread.commentCount ?? thread.comments.length} comments
+              {discussionCommentCountLabel(thread.commentCount ?? thread.comments.length)}
             </Text>
           </Pressable>
         </TimelineEvent>

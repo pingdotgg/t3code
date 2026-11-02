@@ -1,10 +1,12 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { expect, it } from "@effect/vitest";
+import type { ManagedPolicyDocument } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Fiber from "effect/Fiber";
+import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
@@ -14,6 +16,7 @@ import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import packageJson from "../../package.json" with { type: "json" };
 import * as ServerConfig from "../config.ts";
 import * as DesktopAppUpdate from "../desktopUpdate/DesktopAppUpdate.ts";
+import * as ManagedPolicy from "../policy/ManagedPolicy.ts";
 import * as ProcessRunner from "../processRunner.ts";
 import * as ServiceLauncherClient from "./serviceLauncherClient.ts";
 import { SERVICE_LAUNCHER_PROTOCOL } from "./serviceProtocol.ts";
@@ -26,6 +29,7 @@ interface HarnessOptions {
   readonly beforeDownload?: Effect.Effect<void>;
   readonly requestUpdate?: ServiceLauncherClient.ServiceLauncherClient["Service"]["requestUpdate"];
   readonly desktopAppUpdate?: DesktopAppUpdate.DesktopAppUpdate["Service"];
+  readonly policy?: ManagedPolicyDocument;
 }
 
 const archiveBytes = new TextEncoder().encode("not really a tarball");
@@ -122,7 +126,12 @@ const makeHarness = Effect.fn("test.make_self_update_harness")(function* (
     Effect.provideService(HttpClient.HttpClient, releaseHttpClient(order, options.beforeDownload)),
     Effect.provideService(HostProcess.Platform, "linux"),
     Effect.provideService(HostProcess.Architecture, "x64"),
-    Effect.provide(ServerConfig.layer({ ...config, mode: options.mode ?? "web" })),
+    Effect.provide(
+      Layer.merge(
+        ServerConfig.layer({ ...config, mode: options.mode ?? "web" }),
+        ManagedPolicy.layerTest(options.policy),
+      ),
+    ),
   );
   return { selfUpdate, order };
 });
@@ -140,6 +149,50 @@ it.layer(NodeServices.layer)("server self update", (it) => {
         (yield* desktop.selfUpdate.update({ targetVersion: "1.1.0" }).pipe(Effect.flip)).reason,
       ).toContain("desktop app");
       expect([...web.order, ...desktop.order]).toEqual([]);
+    }),
+  );
+
+  it.effect("refuses every update when the managed policy turns updates off", () =>
+    Effect.gen(function* () {
+      const policy: ManagedPolicyDocument = {
+        schemaVersion: 1,
+        organization: "Example Corp",
+        limits: { updates: { mode: "off" } },
+      };
+      const service = yield* makeHarness({ policy });
+      const desktop = yield* makeHarness({
+        mode: "desktop",
+        policy,
+        desktopAppUpdate: {
+          available: true,
+          run: () => Effect.die("unexpected desktop app update run"),
+          commit: () => Effect.never,
+        },
+      });
+      for (const harness of [service, desktop]) {
+        expect(
+          (yield* harness.selfUpdate.update({ targetVersion: "1.1.0" }).pipe(Effect.flip)).reason,
+        ).toBe("Example Corp manages T3 Code updates.");
+      }
+      expect([...service.order, ...desktop.order]).toEqual([]);
+    }),
+  );
+
+  it.effect("lets a user start an update, but only to stable without nightly", () =>
+    Effect.gen(function* () {
+      const { selfUpdate, order } = yield* makeHarness({
+        policy: {
+          schemaVersion: 1,
+          organization: "Example Corp",
+          limits: { updates: { mode: "auto", allowNightly: false } },
+        },
+      });
+      expect(
+        (yield* selfUpdate.update({ targetVersion: "1.2.0-nightly.20261028.1" }).pipe(Effect.flip))
+          .reason,
+      ).toBe("Example Corp manages T3 Code updates. Only stable releases can be installed.");
+      expect(order).toEqual([]);
+      expect((yield* selfUpdate.update({ targetVersion: "1.1.0" })).updateId).toBe("launcher-id");
     }),
   );
 

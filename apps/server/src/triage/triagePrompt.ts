@@ -217,6 +217,7 @@ export interface TriageContextInput {
     readonly logsDir: string;
     readonly serviceLogPath: string;
     readonly desktopBackendLogGlob: string;
+    readonly relayClientLogPath: string;
     readonly serverTracePath: string;
     readonly providerEventLogPath: string;
     readonly terminalLogsDir: string;
@@ -302,6 +303,7 @@ ${input.entry.kind === "app" ? IN_APP_SECTION : ""}${input.sourceClone === undef
 - Logs dir: ${input.paths.logsDir}
 - Service log (systemd/launchd service installs only): ${input.paths.serviceLogPath}
 - Desktop backend logs (glob; one file per backend plus rotated copies; written only when a backend crashes or fails to start): ${input.paths.desktopBackendLogGlob}
+- T3 Connect tunnel log (ndjson; what the server logged about its cloudflared connector, with rotated copies \`.1\` and \`.2\`): ${input.paths.relayClientLogPath}
 - Server trace (ndjson): ${input.paths.serverTracePath}
 - Provider event log: ${input.paths.providerEventLogPath}
 - Terminal logs: ${input.paths.terminalLogsDir}
