@@ -115,6 +115,7 @@ import {
   resolveCodexHomeLayout,
   withCodexEnvironmentHome,
 } from "../../provider/Drivers/CodexHomeLayout.ts";
+import { resolveCodexCredentialFingerprint } from "../../provider/Drivers/CodexCredentials.ts";
 import {
   boundProviderEventForLogging,
   shouldPersistProviderEvent,
@@ -1656,6 +1657,9 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
   adapterOptions: CodexAdapterV2Options,
 ) {
   const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
+  const path = yield* Path.Path;
+  const hostEnvironment = yield* HostProcess.Environment;
+  const homeDirectory = yield* HostProcess.HomeDirectory;
   const readMcpSession = (threadId: ThreadId | null) =>
     // @effect-diagnostics-next-line effectSucceedWithVoid:off - This optional result requires undefined, not the wider void type.
     threadId === null ? Effect.succeed(undefined) : mcpSessions.read(threadId);
@@ -1665,6 +1669,23 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
   return ProviderAdapter.ProviderAdapterV2.of({
     instanceId: adapterOptions.instanceId,
     driver: CODEX_PROVIDER,
+    ...(adapterOptions.settings.setupMode !== "managed"
+      ? {
+          resolveCredentialFingerprint: Effect.fn("CodexAdapterV2.resolveCredentialFingerprint")(
+            () =>
+              resolveCodexCredentialFingerprint(
+                adapterOptions.settings,
+                adapterOptions.environment,
+              ).pipe(
+                Effect.provideService(Crypto.Crypto, crypto),
+                Effect.provideService(FileSystem.FileSystem, fileSystem),
+                Effect.provideService(Path.Path, path),
+                Effect.provideService(HostProcess.Environment, hostEnvironment),
+                Effect.provideService(HostProcess.HomeDirectory, homeDirectory),
+              ),
+          ),
+        }
+      : {}),
     getCapabilities: Effect.fn("CodexAdapterV2.getCapabilities")(function () {
       return Effect.succeed(CodexProviderCapabilitiesV2);
     }),

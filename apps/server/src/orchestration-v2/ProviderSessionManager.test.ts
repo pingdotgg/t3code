@@ -329,6 +329,8 @@ const makeProviderAdapter = Effect.fnUntraced(function* (
     readonly mcpConfigs?: Ref.Ref<
       ReadonlyArray<McpProviderSession.McpProviderSessionConfig | undefined>
     >;
+    readonly credentialFingerprint?: Ref.Ref<string | null | undefined>;
+    readonly credentialFingerprintCapability?: { current: boolean };
     readonly beforeOpen?: (input: {
       readonly providerSessionId: ProviderSessionId;
       readonly initialProviderItemIdentityVersion?: 2;
@@ -358,11 +360,28 @@ const makeProviderAdapter = Effect.fnUntraced(function* (
       : Deferred.succeed(options.scopeCloseReached, undefined)
     ).pipe(Effect.andThen(Effect.never)),
   );
+  // exactOptionalPropertyTypes cannot express key-present-undefined; a disabled capability
+  // resolves to undefined, which the seam records as an unreadable (null) baseline. The first
+  // readable fingerprint is then adopted.
+  // @effect-diagnostics-next-line effectSucceedWithVoid:off - optional capability result requires undefined, not void.
+  const fingerprintUnavailable = Effect.succeed(undefined);
   return ProviderAdapter.ProviderAdapterV2.of({
     instanceId: ProviderInstanceId.make("codex"),
     driver: CODEX_DRIVER,
     getCapabilities: () => Effect.succeed(options.capabilities ?? CodexCapabilities),
     planSelectionTransition: () => Effect.succeed({ type: "apply_on_next_turn" }),
+    ...(options.credentialFingerprint === undefined &&
+    options.credentialFingerprintCapability === undefined
+      ? {}
+      : {
+          resolveCredentialFingerprint: () =>
+            options.credentialFingerprintCapability !== undefined &&
+            !options.credentialFingerprintCapability.current
+              ? fingerprintUnavailable
+              : options.credentialFingerprint === undefined
+                ? fingerprintUnavailable
+                : Ref.get(options.credentialFingerprint!),
+        }),
     openSession: (input) =>
       Effect.gen(function* () {
         if (options.spawnBeforeOpen === true) {
@@ -469,6 +488,8 @@ function layerTest(input: {
   readonly mcpConfigs?: Ref.Ref<
     ReadonlyArray<McpProviderSession.McpProviderSessionConfig | undefined>
   >;
+  readonly credentialFingerprint?: Ref.Ref<string | null | undefined>;
+  readonly credentialFingerprintCapability?: { current: boolean };
   readonly beforeOpen?: (input: {
     readonly providerSessionId: ProviderSessionId;
     readonly initialProviderItemIdentityVersion?: 2;
@@ -508,6 +529,12 @@ function layerTest(input: {
       failEventStream: input.failEventStream ?? false,
       ...(input.capabilities === undefined ? {} : { capabilities: input.capabilities }),
       ...(input.mcpConfigs === undefined ? {} : { mcpConfigs: input.mcpConfigs }),
+      ...(input.credentialFingerprint === undefined
+        ? {}
+        : { credentialFingerprint: input.credentialFingerprint }),
+      ...(input.credentialFingerprintCapability === undefined
+        ? {}
+        : { credentialFingerprintCapability: input.credentialFingerprintCapability }),
       ...(input.beforeOpen === undefined ? {} : { beforeOpen: input.beforeOpen }),
       ...(input.hasPendingBackgroundWork === undefined
         ? {}
@@ -3818,4 +3845,640 @@ it.effect("ProviderSessionManagerV2 gives a delegated child its project's device
     });
     assert.isTrue(child?.capabilities?.has("device"));
   }),
+);
+
+it.effect(
+  "ProviderSessionManagerV2 returns cached runtime when credential fingerprint is unchanged",
+  () =>
+    Effect.gen(function* () {
+      const state = yield* Ref.make(emptyState);
+      const credentialFingerprint = yield* Ref.make<string | null | undefined>("fp-alice");
+      const effect = Effect.gen(function* () {
+        const eventSink = yield* EventSink.EventSinkV2;
+        const idAllocator = yield* IdAllocator.IdAllocatorV2;
+        const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+        const now = yield* DateTime.now;
+        const threadId = ThreadId.make("thread-fp-unchanged");
+        const providerSessionId = yield* idAllocator.allocate.providerSession({
+          providerInstanceId: modelSelection.instanceId,
+          threadId,
+        });
+
+        yield* eventSink.write({
+          events: [yield* makeThreadCreatedEvent({ idAllocator, threadId, now })],
+        });
+        const firstRuntime = yield* manager.open({
+          threadId,
+          providerSessionId,
+          modelSelection,
+          runtimePolicy,
+        });
+        const secondRuntime = yield* manager.open({
+          threadId,
+          providerSessionId,
+          modelSelection,
+          runtimePolicy,
+        });
+
+        assert.strictEqual(secondRuntime, firstRuntime);
+        assert.equal((yield* Ref.get(state)).openCount, 1);
+        assert.equal((yield* Ref.get(state)).closeCount, 0);
+      });
+
+      yield* effect.pipe(
+        Effect.provide(
+          layerTest({
+            state,
+            idleTimeoutMs: 60_000,
+            credentialFingerprint,
+          }),
+        ),
+      );
+    }),
+);
+
+it.effect(
+  "ProviderSessionManagerV2 releases idle session and opens fresh runtime on credential fingerprint change",
+  () =>
+    Effect.gen(function* () {
+      const state = yield* Ref.make(emptyState);
+      const credentialFingerprint = yield* Ref.make<string | null | undefined>("fp-alice");
+      const effect = Effect.gen(function* () {
+        const eventSink = yield* EventSink.EventSinkV2;
+        const idAllocator = yield* IdAllocator.IdAllocatorV2;
+        const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+        const now = yield* DateTime.now;
+        const threadId = ThreadId.make("thread-fp-change-idle");
+        const providerSessionId = yield* idAllocator.allocate.providerSession({
+          providerInstanceId: modelSelection.instanceId,
+          threadId,
+        });
+
+        yield* eventSink.write({
+          events: [yield* makeThreadCreatedEvent({ idAllocator, threadId, now })],
+        });
+        const firstRuntime = yield* manager.open({
+          threadId,
+          providerSessionId,
+          modelSelection,
+          runtimePolicy,
+        });
+        assert.equal((yield* Ref.get(state)).openCount, 1);
+        assert.equal((yield* Ref.get(state)).closeCount, 0);
+
+        yield* Ref.set(credentialFingerprint, "fp-bob");
+
+        const secondRuntime = yield* manager.open({
+          threadId,
+          providerSessionId,
+          modelSelection,
+          runtimePolicy,
+        });
+
+        assert.notStrictEqual(secondRuntime, firstRuntime);
+        assert.equal((yield* Ref.get(state)).openCount, 2);
+        assert.equal((yield* Ref.get(state)).closeCount, 1);
+      });
+
+      yield* effect.pipe(
+        Effect.provide(
+          layerTest({
+            state,
+            idleTimeoutMs: 60_000,
+            credentialFingerprint,
+          }),
+        ),
+      );
+    }),
+);
+
+it.effect(
+  "ProviderSessionManagerV2 keeps the cached runtime when the fingerprint re-reads to the same value",
+  () =>
+    Effect.gen(function* () {
+      const state = yield* Ref.make(emptyState);
+      const credentialFingerprint = yield* Ref.make<string | null | undefined>("fp-alice");
+      const effect = Effect.gen(function* () {
+        const eventSink = yield* EventSink.EventSinkV2;
+        const idAllocator = yield* IdAllocator.IdAllocatorV2;
+        const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+        const now = yield* DateTime.now;
+        const threadId = ThreadId.make("thread-fp-same-digest");
+        const providerSessionId = yield* idAllocator.allocate.providerSession({
+          providerInstanceId: modelSelection.instanceId,
+          threadId,
+        });
+
+        yield* eventSink.write({
+          events: [yield* makeThreadCreatedEvent({ idAllocator, threadId, now })],
+        });
+        const firstRuntime = yield* manager.open({
+          threadId,
+          providerSessionId,
+          modelSelection,
+          runtimePolicy,
+        });
+
+        yield* Ref.set(credentialFingerprint, "fp-alice");
+
+        const secondRuntime = yield* manager.open({
+          threadId,
+          providerSessionId,
+          modelSelection,
+          runtimePolicy,
+        });
+
+        assert.strictEqual(secondRuntime, firstRuntime);
+        assert.equal((yield* Ref.get(state)).openCount, 1);
+        assert.equal((yield* Ref.get(state)).closeCount, 0);
+      });
+
+      yield* effect.pipe(
+        Effect.provide(
+          layerTest({
+            state,
+            idleTimeoutMs: 60_000,
+            credentialFingerprint,
+          }),
+        ),
+      );
+    }),
+);
+
+it.effect(
+  "ProviderSessionManagerV2 retains busy session across fingerprint flip until in-flight turn finishes",
+  () =>
+    Effect.gen(function* () {
+      const state = yield* Ref.make(emptyState);
+      const credentialFingerprint = yield* Ref.make<string | null | undefined>("fp-alice");
+      const effect = Effect.gen(function* () {
+        const eventSink = yield* EventSink.EventSinkV2;
+        const idAllocator = yield* IdAllocator.IdAllocatorV2;
+        const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+        const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
+        const now = yield* DateTime.now;
+        const threadA = ThreadId.make("thread-fp-busy-peer-a");
+        const threadB = ThreadId.make("thread-fp-busy-peer-b");
+        const providerSessionId = idAllocator.derive.providerSession({
+          providerInstanceId: modelSelection.instanceId,
+        });
+
+        yield* eventSink.write({
+          events: [
+            yield* makeThreadCreatedEvent({ idAllocator, threadId: threadA, now }),
+            yield* makeThreadCreatedEvent({ idAllocator, threadId: threadB, now }),
+          ],
+        });
+        const runtimeA = yield* manager.open({
+          threadId: threadA,
+          providerSessionId,
+          modelSelection,
+          runtimePolicy,
+        });
+        const providerThreadA = makeProviderThread({
+          idAllocator,
+          threadId: threadA,
+          providerSessionId,
+          now,
+          nativeThreadId: "native-busy-a",
+        });
+        const runId = idAllocator.derive.run({ threadId: threadA, ordinal: 1 });
+        const attemptId = idAllocator.derive.runAttempt({ runId, attemptOrdinal: 1 });
+        const rootNodeId = idAllocator.derive.rootNode({ runId });
+        const providerTurnId = idAllocator.derive.providerTurn({
+          driver: CODEX_DRIVER,
+          nativeTurnId: "native-turn-busy-a",
+        });
+
+        yield* runtimeA.startTurn({
+          appThread: (yield* projectionStore.getThreadProjection(threadA)).thread,
+          threadId: threadA,
+          runId,
+          runOrdinal: 1,
+          providerTurnOrdinal: 1,
+          attemptId,
+          rootNodeId,
+          providerThread: providerThreadA,
+          message: {
+            createdBy: "user",
+            creationSource: "web",
+            messageId: yield* idAllocator.allocate.message({ threadId: threadA, ordinal: 1 }),
+            text: "turn",
+            attachments: [],
+          },
+          modelSelection,
+          runtimePolicy,
+        });
+
+        yield* Ref.set(credentialFingerprint, "fp-bob");
+
+        const runtimeB = yield* manager.open({
+          threadId: threadB,
+          providerSessionId,
+          modelSelection,
+          runtimePolicy,
+        });
+        assert.strictEqual(runtimeB, runtimeA);
+        assert.equal((yield* Ref.get(state)).openCount, 1);
+        assert.equal((yield* Ref.get(state)).closeCount, 0);
+
+        // The pump clears busyTurns (markIdle) before fan-out, so observing
+        // turn.terminal here is the real milestone — no scheduler-yield guess.
+        const subscription = yield* runtimeA.subscribeEvents!;
+        const queue = (yield* Ref.get(state)).eventQueues.get(String(providerSessionId));
+        assert.isDefined(queue);
+        yield* Queue.offer(queue!, {
+          type: "turn.terminal",
+          driver: CODEX_DRIVER,
+          providerThreadId: providerThreadA.id,
+          providerTurnId,
+          runOrdinal: 1,
+          status: "completed",
+          failure: null,
+          threadDisposition: "reusable",
+        });
+        const terminalEvent = Option.getOrNull(yield* subscription.events.pipe(Stream.runHead));
+        assert.equal(terminalEvent?.type, "turn.terminal");
+
+        const freshRuntime = yield* manager.open({
+          threadId: threadB,
+          providerSessionId,
+          modelSelection,
+          runtimePolicy,
+        });
+        assert.notStrictEqual(freshRuntime, runtimeA);
+        assert.equal((yield* Ref.get(state)).openCount, 2);
+        assert.equal((yield* Ref.get(state)).closeCount, 1);
+      });
+
+      yield* effect.pipe(
+        Effect.provide(
+          layerTest({
+            state,
+            idleTimeoutMs: 60_000,
+            credentialFingerprint,
+          }),
+        ),
+      );
+    }),
+);
+
+it.effect(
+  "ProviderSessionManagerV2 retains the session while background work is pending across a fingerprint flip",
+  () =>
+    Effect.gen(function* () {
+      const state = yield* Ref.make(emptyState);
+      const credentialFingerprint = yield* Ref.make<string | null | undefined>("fp-alice");
+      const hasPendingBackgroundWork = yield* Ref.make(true);
+      const effect = Effect.gen(function* () {
+        const eventSink = yield* EventSink.EventSinkV2;
+        const idAllocator = yield* IdAllocator.IdAllocatorV2;
+        const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+        const now = yield* DateTime.now;
+        const threadId = ThreadId.make("thread-fp-background-work");
+        const providerSessionId = yield* idAllocator.allocate.providerSession({
+          providerInstanceId: modelSelection.instanceId,
+          threadId,
+        });
+
+        yield* eventSink.write({
+          events: [yield* makeThreadCreatedEvent({ idAllocator, threadId, now })],
+        });
+        const firstRuntime = yield* manager.open({
+          threadId,
+          providerSessionId,
+          modelSelection,
+          runtimePolicy,
+        });
+
+        yield* Ref.set(credentialFingerprint, "fp-bob");
+        const secondRuntime = yield* manager.open({
+          threadId,
+          providerSessionId,
+          modelSelection,
+          runtimePolicy,
+        });
+        assert.strictEqual(secondRuntime, firstRuntime);
+        assert.equal((yield* Ref.get(state)).openCount, 1);
+        assert.equal((yield* Ref.get(state)).closeCount, 0);
+
+        yield* Ref.set(hasPendingBackgroundWork, false);
+        const thirdRuntime = yield* manager.open({
+          threadId,
+          providerSessionId,
+          modelSelection,
+          runtimePolicy,
+        });
+        assert.notStrictEqual(thirdRuntime, firstRuntime);
+        assert.equal((yield* Ref.get(state)).openCount, 2);
+        assert.equal((yield* Ref.get(state)).closeCount, 1);
+      });
+
+      yield* effect.pipe(
+        Effect.provide(
+          layerTest({
+            state,
+            idleTimeoutMs: 60_000,
+            credentialFingerprint,
+            hasPendingBackgroundWork: Ref.get(hasPendingBackgroundWork),
+          }),
+        ),
+      );
+    }),
+);
+
+it.effect(
+  "ProviderSessionManagerV2 adopts the first readable fingerprint after an unobservable baseline and recycles on a later change",
+  () =>
+    Effect.gen(function* () {
+      const state = yield* Ref.make(emptyState);
+      const capability = { current: false };
+      const credentialFingerprint = yield* Ref.make<string | null | undefined>("fp-alice");
+      const effect = Effect.gen(function* () {
+        const eventSink = yield* EventSink.EventSinkV2;
+        const idAllocator = yield* IdAllocator.IdAllocatorV2;
+        const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+        const now = yield* DateTime.now;
+        const threadId = ThreadId.make("thread-fp-adopt-null");
+        const providerSessionId = yield* idAllocator.allocate.providerSession({
+          providerInstanceId: modelSelection.instanceId,
+          threadId,
+        });
+
+        yield* eventSink.write({
+          events: [yield* makeThreadCreatedEvent({ idAllocator, threadId, now })],
+        });
+
+        const firstRuntime = yield* manager.open({
+          threadId,
+          providerSessionId,
+          modelSelection,
+          runtimePolicy,
+        });
+        assert.equal((yield* Ref.get(state)).openCount, 1);
+        assert.equal((yield* Ref.get(state)).closeCount, 0);
+
+        capability.current = true;
+
+        const secondRuntime = yield* manager.open({
+          threadId,
+          providerSessionId,
+          modelSelection,
+          runtimePolicy,
+        });
+        assert.strictEqual(secondRuntime, firstRuntime);
+        assert.equal((yield* Ref.get(state)).openCount, 1);
+        assert.equal((yield* Ref.get(state)).closeCount, 0);
+
+        yield* Ref.set(credentialFingerprint, "fp-bob");
+        const thirdRuntime = yield* manager.open({
+          threadId,
+          providerSessionId,
+          modelSelection,
+          runtimePolicy,
+        });
+        assert.notStrictEqual(thirdRuntime, firstRuntime);
+        assert.equal((yield* Ref.get(state)).openCount, 2);
+        assert.equal((yield* Ref.get(state)).closeCount, 1);
+      });
+
+      yield* effect.pipe(
+        Effect.provide(
+          layerTest({
+            state,
+            idleTimeoutMs: 60_000,
+            credentialFingerprint,
+            credentialFingerprintCapability: capability,
+          }),
+        ),
+      );
+    }),
+);
+
+it.effect(
+  "ProviderSessionManagerV2 does not release or churn state when credentials become unreadable",
+  () =>
+    Effect.gen(function* () {
+      const state = yield* Ref.make(emptyState);
+      const credentialFingerprint = yield* Ref.make<string | null | undefined>("fp-alice");
+      const effect = Effect.gen(function* () {
+        const eventSink = yield* EventSink.EventSinkV2;
+        const idAllocator = yield* IdAllocator.IdAllocatorV2;
+        const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+        const now = yield* DateTime.now;
+        const threadId = ThreadId.make("thread-fp-unreadable");
+        const providerSessionId = yield* idAllocator.allocate.providerSession({
+          providerInstanceId: modelSelection.instanceId,
+          threadId,
+        });
+
+        yield* eventSink.write({
+          events: [yield* makeThreadCreatedEvent({ idAllocator, threadId, now })],
+        });
+        const firstRuntime = yield* manager.open({
+          threadId,
+          providerSessionId,
+          modelSelection,
+          runtimePolicy,
+        });
+        assert.equal((yield* Ref.get(state)).openCount, 1);
+        assert.equal((yield* Ref.get(state)).closeCount, 0);
+
+        yield* Ref.set(credentialFingerprint, undefined);
+
+        const secondRuntime = yield* manager.open({
+          threadId,
+          providerSessionId,
+          modelSelection,
+          runtimePolicy,
+        });
+
+        assert.strictEqual(secondRuntime, firstRuntime);
+        assert.equal((yield* Ref.get(state)).openCount, 1);
+        assert.equal((yield* Ref.get(state)).closeCount, 0);
+
+        yield* Ref.set(credentialFingerprint, "fp-alice");
+        const thirdRuntime = yield* manager.open({
+          threadId,
+          providerSessionId,
+          modelSelection,
+          runtimePolicy,
+        });
+        assert.strictEqual(thirdRuntime, firstRuntime);
+        assert.equal((yield* Ref.get(state)).openCount, 1);
+        assert.equal((yield* Ref.get(state)).closeCount, 0);
+      });
+
+      yield* effect.pipe(
+        Effect.provide(
+          layerTest({
+            state,
+            idleTimeoutMs: 60_000,
+            credentialFingerprint,
+          }),
+        ),
+      );
+    }),
+);
+
+it.effect(
+  "ProviderSessionManagerV2 releases the session when the probe reads the file credential missing after a known baseline",
+  () =>
+    Effect.gen(function* () {
+      const state = yield* Ref.make(emptyState);
+      const credentialFingerprint = yield* Ref.make<string | null | undefined>("fp-alice");
+      const effect = Effect.gen(function* () {
+        const eventSink = yield* EventSink.EventSinkV2;
+        const idAllocator = yield* IdAllocator.IdAllocatorV2;
+        const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+        const now = yield* DateTime.now;
+        const threadId = ThreadId.make("thread-fp-missing-file");
+        const providerSessionId = yield* idAllocator.allocate.providerSession({
+          providerInstanceId: modelSelection.instanceId,
+          threadId,
+        });
+
+        yield* eventSink.write({
+          events: [yield* makeThreadCreatedEvent({ idAllocator, threadId, now })],
+        });
+        const firstRuntime = yield* manager.open({
+          threadId,
+          providerSessionId,
+          modelSelection,
+          runtimePolicy,
+        });
+        assert.equal((yield* Ref.get(state)).openCount, 1);
+
+        yield* Ref.set(credentialFingerprint, null);
+
+        const secondRuntime = yield* manager.open({
+          threadId,
+          providerSessionId,
+          modelSelection,
+          runtimePolicy,
+        });
+        assert.notStrictEqual(secondRuntime, firstRuntime);
+        assert.equal((yield* Ref.get(state)).openCount, 2);
+        assert.equal((yield* Ref.get(state)).closeCount, 1);
+      });
+
+      yield* effect.pipe(
+        Effect.provide(
+          layerTest({
+            state,
+            idleTimeoutMs: 60_000,
+            credentialFingerprint,
+          }),
+        ),
+      );
+    }),
+);
+
+it.effect(
+  "ProviderSessionManagerV2 treats a logged-out first reading as a real baseline and releases on sign-in",
+  () =>
+    Effect.gen(function* () {
+      const state = yield* Ref.make(emptyState);
+      const credentialFingerprint = yield* Ref.make<string | null | undefined>(null);
+      const effect = Effect.gen(function* () {
+        const eventSink = yield* EventSink.EventSinkV2;
+        const idAllocator = yield* IdAllocator.IdAllocatorV2;
+        const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+        const now = yield* DateTime.now;
+        const threadId = ThreadId.make("thread-fp-login-later");
+        const providerSessionId = yield* idAllocator.allocate.providerSession({
+          providerInstanceId: modelSelection.instanceId,
+          threadId,
+        });
+
+        yield* eventSink.write({
+          events: [yield* makeThreadCreatedEvent({ idAllocator, threadId, now })],
+        });
+        const firstRuntime = yield* manager.open({
+          threadId,
+          providerSessionId,
+          modelSelection,
+          runtimePolicy,
+        });
+
+        const secondRuntime = yield* manager.open({
+          threadId,
+          providerSessionId,
+          modelSelection,
+          runtimePolicy,
+        });
+        assert.strictEqual(secondRuntime, firstRuntime);
+        assert.equal((yield* Ref.get(state)).openCount, 1);
+
+        yield* Ref.set(credentialFingerprint, "fp-bob");
+
+        const thirdRuntime = yield* manager.open({
+          threadId,
+          providerSessionId,
+          modelSelection,
+          runtimePolicy,
+        });
+        assert.notStrictEqual(thirdRuntime, firstRuntime);
+        assert.equal((yield* Ref.get(state)).openCount, 2);
+        assert.equal((yield* Ref.get(state)).closeCount, 1);
+      });
+
+      yield* effect.pipe(
+        Effect.provide(
+          layerTest({
+            state,
+            idleTimeoutMs: 60_000,
+            credentialFingerprint,
+          }),
+        ),
+      );
+    }),
+);
+
+it.effect(
+  "ProviderSessionManagerV2 skips credential check when adapter lacks resolveCredentialFingerprint",
+  () =>
+    Effect.gen(function* () {
+      const state = yield* Ref.make(emptyState);
+      const effect = Effect.gen(function* () {
+        const eventSink = yield* EventSink.EventSinkV2;
+        const idAllocator = yield* IdAllocator.IdAllocatorV2;
+        const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+        const now = yield* DateTime.now;
+        const threadId = ThreadId.make("thread-fp-capability-absent");
+        const providerSessionId = yield* idAllocator.allocate.providerSession({
+          providerInstanceId: modelSelection.instanceId,
+          threadId,
+        });
+
+        yield* eventSink.write({
+          events: [yield* makeThreadCreatedEvent({ idAllocator, threadId, now })],
+        });
+        const firstRuntime = yield* manager.open({
+          threadId,
+          providerSessionId,
+          modelSelection,
+          runtimePolicy,
+        });
+        const secondRuntime = yield* manager.open({
+          threadId,
+          providerSessionId,
+          modelSelection,
+          runtimePolicy,
+        });
+
+        assert.strictEqual(secondRuntime, firstRuntime);
+        assert.equal((yield* Ref.get(state)).openCount, 1);
+        assert.equal((yield* Ref.get(state)).closeCount, 0);
+      });
+
+      yield* effect.pipe(
+        Effect.provide(
+          layerTest({
+            state,
+            idleTimeoutMs: 60_000,
+          }),
+        ),
+      );
+    }),
 );

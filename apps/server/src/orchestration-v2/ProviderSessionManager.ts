@@ -221,6 +221,8 @@ interface LiveSessionEntry {
   /** Scope revocation to recorded credential ids so superseded sessions cannot revoke replacements opened before detach. */
   readonly mcpCredentialIdByThread: ReadonlyMap<ThreadId, string>;
   readonly supportsMultipleProviderThreads: boolean;
+  /** Captured external credential identity (e.g. Codex CLI auth.json). undefined: no baseline yet; null: unreadable/missing. */
+  readonly credentialFingerprint?: string | null;
   readonly runtime: ProviderAdapter.ProviderAdapterV2SessionRuntime;
   readonly exposedRuntime: ProviderAdapter.ProviderAdapterV2SessionRuntime;
   readonly eventSubscribers: Ref.Ref<
@@ -1185,6 +1187,78 @@ export const layerWithOptions = (
         },
       );
 
+      const releaseIfCredentialChanged = Effect.fn(
+        "ProviderSessionManager.releaseIfCredentialChanged",
+      )(function* (entry: LiveSessionEntry): Effect.fn.Return<boolean> {
+        const adapterOpt = yield* registry.get(entry.runtime.instanceId).pipe(Effect.option);
+        if (Option.isNone(adapterOpt)) {
+          return false;
+        }
+        const resolve = adapterOpt.value.resolveCredentialFingerprint;
+        if (resolve === undefined) {
+          return false;
+        }
+        // A failed probe or an unobservable state (undefined) carries no signal: keep,
+        // unlike the idle path, which releases on failure.
+        const currentFingerprint = yield* resolve().pipe(
+          // @effect-diagnostics-next-line effectSucceedWithVoid:off - the probe result must be undefined, not the wider void Effect.void carries.
+          Effect.catchCause(() => Effect.succeed<string | null | undefined>(undefined)),
+        );
+        if (currentFingerprint === undefined) {
+          return false;
+        }
+        const baseline = entry.credentialFingerprint;
+        const key = sessionKey(entry.runtime.providerSessionId);
+        // A legacy (undefined) baseline adopts the first readable fingerprint, whatever it shows.
+        if (baseline === undefined) {
+          const live = (yield* Ref.get(sessions)).get(key);
+          if (live?.runtime !== entry.runtime) {
+            return false;
+          }
+          yield* Ref.update(sessions, (current) => {
+            const currentEntry = current.get(key);
+            if (currentEntry?.runtime !== entry.runtime) {
+              return current;
+            }
+            const updated = new Map(current);
+            updated.set(key, { ...currentEntry, credentialFingerprint: currentFingerprint });
+            return updated;
+          });
+          return false;
+        }
+        if (baseline === currentFingerprint) {
+          return false;
+        }
+        const hasPendingWork =
+          entry.runtime.hasPendingBackgroundWork === undefined
+            ? false
+            : yield* entry.runtime.hasPendingBackgroundWork.pipe(
+                Effect.catchCause(() => Effect.succeed(true)),
+              );
+        if (hasPendingWork) {
+          return false;
+        }
+        yield* releaseEntry({
+          providerSessionId: entry.runtime.providerSessionId,
+          reason: "manual_shutdown",
+          detail: "Provider credentials changed.",
+          keepIfBusyOtherThan: [],
+        }).pipe(
+          // detail is not persisted for non-error releases and idle sessions have no
+          // subscribers — the log is where a released app-server can be attributed.
+          Effect.tap(() =>
+            Effect.logInfo("orchestration-v2.provider-session-released", {
+              providerSessionId: entry.runtime.providerSessionId,
+              reason: "manual_shutdown",
+              detail: "Provider credentials changed.",
+            }),
+          ),
+          logReleaseFailure(entry.runtime.providerSessionId),
+        );
+        const live = (yield* Ref.get(sessions)).get(key);
+        return live?.runtime !== entry.runtime;
+      });
+
       const withActivityError = <A, E, R>(
         providerSessionId: ProviderSessionId,
         effect: Effect.Effect<A, E, R>,
@@ -2136,7 +2210,9 @@ export const layerWithOptions = (
               }
               const key = sessionKey(input.providerSessionId);
               const existing = (yield* Ref.get(sessions)).get(key);
-              if (existing !== undefined) {
+              // Reuse requires no credential-driven release; upstream's
+              // releaseIfAdapterRebuilt will `||` at this same seam once it merges.
+              if (existing !== undefined && !(yield* releaseIfCredentialChanged(existing))) {
                 const attached = existing.attachedThreadIds.has(input.threadId);
                 if (!attached && !existing.supportsMultipleProviderThreads) {
                   return yield* new ProviderSessionOpenError({
@@ -2233,6 +2309,12 @@ export const layerWithOptions = (
                 ReadonlyMap<number, Queue.Queue<ProviderSessionEventSignal, Cause.Done>>
               >(new Map());
               const exposedRuntime = decorateRuntime(runtime, eventSubscribers);
+              const credentialFingerprint = adapter.resolveCredentialFingerprint
+                ? yield* adapter.resolveCredentialFingerprint().pipe(
+                    // @effect-diagnostics-next-line effectSucceedWithVoid:off - a failed open-time probe must read undefined, not the wider void Effect.void carries.
+                    Effect.catchCause(() => Effect.succeed<string | null | undefined>(undefined)),
+                  )
+                : undefined;
               const entry: LiveSessionEntry = {
                 attachedThreadIds: new Set([input.threadId]),
                 loadedProviderThreadKeyByThread: new Map(),
@@ -2243,6 +2325,7 @@ export const layerWithOptions = (
                 supportsMultipleProviderThreads:
                   runtime.providerSession.capabilities.sessions
                     .supportsMultipleProviderThreadsPerSession,
+                ...(credentialFingerprint !== undefined ? { credentialFingerprint } : {}),
                 runtime,
                 exposedRuntime,
                 eventSubscribers,
