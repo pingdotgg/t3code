@@ -721,9 +721,6 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
     const busy = new Set<string>();
     const pending = new Map<RuntimeRequestId, PendingRequest>();
     const lock = yield* Semaphore.make(1);
-    // OpenCode lists a directory's skills partially until its scan ends with `skill.updated`.
-    const scannedSkills = new Set<string>();
-    const skillScans = new Map<string, Deferred.Deferred<void>>();
     const clearing = new Map<string, Deferred.Deferred<void>>();
     const stagedReverts = new Set<string>();
     const sessionGates = yield* KeyedLock.make<string>();
@@ -2274,13 +2271,6 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
         : Effect.void;
 
     const handleEvent = Effect.fnUntraced(function* (event: OpenCode2Client.OpenCode2StreamEvent) {
-      if (event.type === "skill.updated" && event.location !== undefined) {
-        const directory = event.location.directory;
-        scannedSkills.add(directory);
-        const scan = skillScans.get(directory);
-        skillScans.delete(directory);
-        if (scan !== undefined) yield* Deferred.succeed(scan, undefined);
-      }
       const sessionId = sessionOfEvent(event);
       const cleared = sessionId === undefined ? undefined : clearing.get(sessionId);
       if (cleared !== undefined) {
@@ -2668,7 +2658,6 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       yield* Scope.close(previous, Exit.void);
       // A restarted server forgot T3's MCP servers; the next turn adds them again.
       for (const state of threads.values()) state.mcp = undefined;
-      scannedSkills.clear();
       yield* lock.withPermit(reconcile).pipe(Effect.timeout(RECONCILE_TIMEOUT));
       return stream;
     }).pipe(
@@ -3317,26 +3306,16 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
         Effect.orElseSucceed(() => new Set<string>()),
       );
 
-    // Runs outside `lock`, so handleEvent can end the scan wait.
+    // A directory OpenCode is still scanning lists none or some of its skills; its model list waits for the scan.
     const skillsMentioned = Effect.fnUntraced(function* (
       location: { readonly directory: string },
       mentions: ReadonlyArray<string>,
     ) {
-      const { directory } = location;
-      // Registered before the read, which may start the scan, so its end is not missed.
-      let scan = skillScans.get(directory);
-      if (scan === undefined) {
-        scan = Deferred.makeUnsafe<void>();
-        skillScans.set(directory, scan);
-      }
       let known = yield* listSkills(location);
-      // Scanned locations always list OpenCode's built-in skills, so an empty read is mid-scan.
-      if (
-        mentions.some((name) => !known.has(name)) &&
-        (known.size === 0 || !scannedSkills.has(directory))
-      ) {
-        const ended = yield* Deferred.await(scan).pipe(Effect.timeoutOption(INVENTORY_TIMEOUT));
-        if (ended._tag === "None") scannedSkills.add(directory);
+      if (mentions.some((name) => !known.has(name))) {
+        yield* client.model
+          .list({ location })
+          .pipe(Effect.timeout(INVENTORY_TIMEOUT), Effect.ignore);
         known = yield* listSkills(location);
       }
       return mentions.filter((name) => known.has(name));
