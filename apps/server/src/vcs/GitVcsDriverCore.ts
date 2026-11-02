@@ -3144,20 +3144,20 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       readonly untrackedRoots: ReadonlyArray<string>;
     },
   ) {
-    const { baseRef, mergeBase } = yield* resolveReviewMergeBase(
-      cwd,
-      branch,
-      undefined,
-      options?.knownOriginDefaultBranch ?? null,
-    );
     const roots = options?.untrackedRoots ?? [];
     // Bound pathspec matching work and stay below Windows' command-line limit.
     const pathspecs =
       roots.length <= 128 && roots.reduce((length, root) => length + root.length + 16, 0) < 8_000
         ? roots.map((root) => `:(top,literal)${root}`)
         : [];
-    // Empty status can mean untracked files are hidden; retain the full scan.
-    const untracked = yield* prepareUntrackedReviewIndex(cwd, pathspecs);
+    const [{ baseRef, mergeBase }, untracked] = yield* Effect.all(
+      [
+        resolveReviewMergeBase(cwd, branch, undefined, options?.knownOriginDefaultBranch ?? null),
+        // Empty status can mean untracked files are hidden; retain the full scan.
+        prepareUntrackedReviewIndex(cwd, pathspecs),
+      ],
+      { concurrency: 2 },
+    );
     if (untracked === null) {
       return yield* new GitCommandError({
         operation: "GitVcsDriver.readBranchChangeTotals",
