@@ -5,6 +5,7 @@ import { Node as ProseMirrorNode } from "@tiptap/pm/model";
 import { EditorState, TextSelection } from "@tiptap/pm/state";
 import { splitBlockKeepMarks } from "@tiptap/pm/commands";
 import { describe, expect, it, onTestFinished } from "vite-plus/test";
+import { fromMarkdown } from "mdast-util-from-markdown";
 import { serializeComposerFileLink } from "@t3tools/shared/composerTrigger";
 
 import {
@@ -595,7 +596,7 @@ describe("composer rich text document model", () => {
     "* * *",
     "-----",
     "---   ",
-    "text\n---\nmore",
+    "text\n\n---\nmore",
     "- item\n---\n- item two",
     "```\n---\n```",
     "--",
@@ -604,6 +605,26 @@ describe("composer rich text document model", () => {
   ])("round-trips the rule %s through a real ProseMirror document", (value) => {
     expect(roundTrip(value).value).toBe(value);
   });
+
+  it.each(["---", "-----", "---   "])(
+    "keeps a %s rule after a paragraph when sent as Markdown",
+    (rule) => {
+      const source = `Please review the clamp helper changes\n${rule}\nThen run the tests`;
+      const map = roundTrip(source);
+      expect(fromMarkdown(map.value).children.map((block) => block.type)).toEqual([
+        "paragraph",
+        "thematicBreak",
+        "paragraph",
+      ]);
+      expect(map.value).toBe(
+        `Please review the clamp helper changes\n\n${rule}\nThen run the tests`,
+      );
+      expect(roundTrip(map.value).value).toBe(map.value);
+      for (let flat = 0; flat <= map.docLength; flat += 1) {
+        expect(markdownToFlat(map, flatToMarkdown(map, flat))).toBe(flat);
+      }
+    },
+  );
 
   it("parses rules ahead of lists and emphasis", () => {
     const json = buildDocJson("- - -\n***\n___\ntext\n---\n- item", (n) => ({
@@ -641,7 +662,7 @@ describe("composer rich text document model", () => {
 
   it.each([
     ["---", "---"],
-    ["a\n---", "a\n---"],
+    ["a\n---", "a\n\n---"],
     ["---\n", "---"],
   ])("gives the caret a line after the final rule of %j, written %j", (value, expected) => {
     const map = roundTrip(value);

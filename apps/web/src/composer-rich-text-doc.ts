@@ -1004,10 +1004,15 @@ function pushBreakRun(acc: RichAccumulator, position?: number): void {
   acc.md += 1;
 }
 
-// Separate prose from quotes to avoid lazy continuation; an empty paragraph already separates them.
-function needsBlankLineAfterQuote(previous: ProseMirrorNode, block: ProseMirrorNode): boolean {
+// Avoid lazy quote continuation and setext headings; an empty paragraph already separates blocks.
+function needsBlankLineBetween(previous: ProseMirrorNode, block: ProseMirrorNode): boolean {
   return (
-    previous.type.name === "blockquote" && block.type.name === "paragraph" && block.content.size > 0
+    (previous.type.name === "blockquote" &&
+      block.type.name === "paragraph" &&
+      block.content.size > 0) ||
+    (previous.type.name === "paragraph" &&
+      previous.content.size > 0 &&
+      block.type.name === "horizontalRule")
   );
 }
 
@@ -1454,7 +1459,7 @@ function serializeDoc(doc: ProseMirrorNode): RichDocMap {
   let pmBlockStart = 0;
   blocks.forEach((block, blockIndex) => {
     if (blockIndex > 0 && !isTrailingLineAfterRule(doc, blockIndex)) pushBreakRun(acc);
-    if (blockIndex > 0 && needsBlankLineAfterQuote(blocks[blockIndex - 1]!, block)) {
+    if (blockIndex > 0 && needsBlankLineBetween(blocks[blockIndex - 1]!, block)) {
       pushBlankLineRun(acc, pmBlockStart + 1);
     }
     if (LIST_NODE_NAMES.has(block.type.name)) {
