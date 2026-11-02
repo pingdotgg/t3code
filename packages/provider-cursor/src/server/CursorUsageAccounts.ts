@@ -311,12 +311,15 @@ const make = Effect.gen(function* () {
             ),
         );
         // Keys for one account share its source, and a repeated source would count sessions twice.
-        // A key whose refresh failed still holds older records, so a current read wins.
+        // A failed key can hold older records, so a current read wins, then a refresh the client
+        // must follow up on.
+        const rank = (source: ProviderUsageScan) =>
+          source.status === "ok" ? 2 : source.refreshing ? 1 : 0;
         const byAccount = new Map<string, ProviderUsageScan>();
         for (const source of sources) {
           if (source === null) continue;
           const kept = byAccount.get(source.dir);
-          if (kept === undefined || (kept.status !== "ok" && source.status === "ok")) {
+          if (kept === undefined || rank(source) > rank(kept)) {
             byAccount.set(source.dir, source);
           }
         }
