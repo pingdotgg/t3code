@@ -8,7 +8,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
-import * as Semaphore from "effect/Semaphore";
+import type * as PlatformError from "effect/PlatformError";
 import { ChildProcessSpawner } from "effect/process";
 
 import {
@@ -447,7 +447,6 @@ export class GitVcsDriver extends Context.Service<
 const WORKSPACE_FILES_MAX_OUTPUT_BYTES = 16 * 1024 * 1024;
 const CHECKPOINT_RECOVERY_MAX_CANDIDATES = 64;
 const CHECKPOINT_RECOVERY_TIMEOUT = "5 seconds";
-const BATCH_OBJECT_DIR = "tmp_objdir-bulk-fsync-";
 const GIT_CHECK_IGNORE_MAX_STDIN_BYTES = 256 * 1024;
 const WORKSPACE_GIT_HARDENED_CONFIG_ARGS = [
   "-c",
@@ -893,20 +892,54 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
       : []),
   ] as const;
 
-  // One staging run per repository, so failure cleanup only removes its own batch directory.
-  const stagingPermits = new Map<string, Semaphore.Semaphore>();
-  const withStagingPermit = (gitCommonDir: string) => {
-    let semaphore = stagingPermits.get(gitCommonDir);
-    if (semaphore === undefined) {
-      semaphore = Semaphore.makeUnsafe(1);
-      stagingPermits.set(gitCommonDir, semaphore);
-    }
-    return semaphore.withPermits(1);
-  };
-
   // Checkpoints must handle existing paths beyond Windows MAX_PATH, even when
   // core.longpaths is disabled in the user's Git configuration.
   const longPaths = hostPlatform === "win32" ? ["-c", "core.longpaths=true"] : [];
+
+  const checkpointObjectsError = (cwd: string) =>
+    Effect.mapError(
+      (cause: PlatformError.PlatformError) =>
+        new VcsProcessExitError({
+          operation: VcsProcess.CHECKPOINT_CAPTURE_OPERATION,
+          command: "git add",
+          cwd,
+          exitCode: 0,
+          detail: `Could not stage checkpoint objects: ${cause.message}`,
+        }),
+    );
+
+  // Git's own batch migration is also a rename; the durable update-ref flushes these renames.
+  const publishStagedObjects = Effect.fn("GitVcsDriver.publishStagedObjects")(
+    function* (cwd: string, from: string, to: string) {
+      const move = Effect.fnUntraced(function* (directory: string, names: ReadonlyArray<string>) {
+        yield* fileSystem.makeDirectory(path.join(to, directory), { recursive: true });
+        for (const name of names) {
+          const target = path.join(to, directory, name);
+          // Another writer may have published the same read-only object, which Windows won't replace.
+          yield* fileSystem
+            .rename(path.join(from, directory, name), target)
+            .pipe(
+              Effect.catch((error) =>
+                fileSystem
+                  .exists(target)
+                  .pipe(Effect.flatMap((exists) => (exists ? Effect.void : Effect.fail(error)))),
+              ),
+            );
+        }
+      });
+      for (const entry of yield* fileSystem.readDirectory(from)) {
+        if (/^[0-9a-f]{2}$/.test(entry)) {
+          yield* move(entry, yield* fileSystem.readDirectory(path.join(from, entry)));
+        } else if (entry === "pack") {
+          // Large blobs arrive as a pack, which Git reads only once its .idx exists.
+          const names = yield* fileSystem.readDirectory(path.join(from, entry));
+          const isIndex = (name: string) => name.endsWith(".idx");
+          yield* move(entry, [...names.filter((n) => !isIndex(n)), ...names.filter(isIndex)]);
+        }
+      }
+    },
+    (effect, cwd) => effect.pipe(checkpointObjectsError(cwd)),
+  );
 
   const checkpoints: VcsDriver.VcsCheckpointOps = {
     captureCheckpoint: Effect.fn("GitVcsDriver.checkpoints.captureCheckpoint")(function* (input) {
@@ -934,9 +967,22 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
         GIT_COMMITTER_EMAIL: "t3code@users.noreply.github.com",
       };
 
-      const cleanupTempIndex = Effect.forEach(
-        [tempIndexPath, `${tempIndexPath}.lock`],
-        (indexFile) => fileSystem.remove(indexFile, { force: true }).pipe(Effect.ignore),
+      // Batch fsync stages objects in a tmp_objdir-bulk-fsync-* that a killed Git leaves behind.
+      // Staging into a private object directory makes that leftover ours to delete.
+      const objectsDir = path.join(gitCommonDir, "objects");
+      const stagingObjectsDir = path.join(gitCommonDir, `t3-checkpoint-objects-${indexId}`);
+      const stageEnv: NodeJS.ProcessEnv = {
+        ...commitEnv,
+        GIT_OBJECT_DIRECTORY: stagingObjectsDir,
+        GIT_ALTERNATE_OBJECT_DIRECTORIES: [objectsDir, process.env.GIT_ALTERNATE_OBJECT_DIRECTORIES]
+          .filter(Boolean)
+          .join(hostPlatform === "win32" ? ";" : ":"),
+      };
+
+      const cleanupScratch = Effect.forEach(
+        [tempIndexPath, `${tempIndexPath}.lock`, stagingObjectsDir],
+        (scratch) =>
+          fileSystem.remove(scratch, { force: true, recursive: true }).pipe(Effect.ignore),
         { discard: true },
       );
 
@@ -1059,7 +1105,7 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
                 });
               }
             }
-            yield* cleanupTempIndex;
+            yield* cleanupScratch;
             yield* execute({
               operation,
               cwd: input.cwd,
@@ -1145,9 +1191,10 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
               ".",
               ...exclusions,
             ],
-            env: commitEnv,
+            env: stageEnv,
           });
-        const stage = stageFiles([]).pipe(
+        yield* fileSystem.makeDirectory(stagingObjectsDir).pipe(checkpointObjectsError(input.cwd));
+        yield* stageFiles([]).pipe(
           Effect.catchTags({
             VcsProcessExitError: (error) =>
               Effect.gen(function* () {
@@ -1203,33 +1250,7 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
               ),
           }),
         );
-        // Batch fsync stages objects in a tmp_objdir-bulk-fsync-* that a killed Git leaves behind.
-        const objectsDir = path.join(gitCommonDir, "objects");
-        const listBatchObjectDirs = fileSystem.readDirectory(objectsDir).pipe(
-          Effect.map((entries) => entries.filter((entry) => entry.startsWith(BATCH_OBJECT_DIR))),
-          Effect.orElseSucceed((): ReadonlyArray<string> => []),
-        );
-        yield* listBatchObjectDirs.pipe(
-          Effect.flatMap((existing) =>
-            stage.pipe(
-              Effect.onError(() =>
-                listBatchObjectDirs.pipe(
-                  Effect.flatMap((entries) =>
-                    Effect.forEach(
-                      entries.filter((entry) => !existing.includes(entry)),
-                      (entry) =>
-                        fileSystem
-                          .remove(path.join(objectsDir, entry), { recursive: true })
-                          .pipe(Effect.ignore),
-                      { discard: true },
-                    ),
-                  ),
-                ),
-              ),
-            ),
-          ),
-          withStagingPermit(gitCommonDir),
-        );
+        yield* publishStagedObjects(input.cwd, stagingObjectsDir, objectsDir);
 
         const writeTreeResult = yield* execute({
           operation,
@@ -1279,7 +1300,7 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
           cwd: input.cwd,
           args: [...durableWrite, "update-ref", input.checkpointRef, commitOid],
         });
-      }).pipe(Effect.ensuring(cleanupTempIndex));
+      }).pipe(Effect.ensuring(cleanupScratch));
     }),
 
     hasCheckpointRef: (input) =>

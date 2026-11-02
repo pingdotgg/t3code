@@ -365,16 +365,22 @@ it.effect("checkpoint capture removes the batch object directory a killed add le
     const driver = yield* GitVcsDriver.makeVcsDriverShape();
     const cwd = yield* fs.makeTempDirectoryScoped({ prefix: "t3-checkpoint-killed-add-" });
     const { checkpointRef } = yield* makeCheckpointFixture(driver, cwd);
-    const objects = path.join(cwd, ".git", "objects");
+    const gitDir = path.join(cwd, ".git");
+    const objects = path.join(gitDir, "objects");
     yield* fs.makeDirectory(path.join(objects, "tmp_objdir-bulk-fsync-other"));
     const captureDriver = yield* GitVcsDriver.makeVcsDriverShape().pipe(
       Effect.provideService(VcsProcess.VcsProcess, {
         run: (input) =>
           input.args.includes("add")
             ? fs
-                .makeDirectory(path.join(objects, "tmp_objdir-bulk-fsync-killed", "ab"), {
-                  recursive: true,
-                })
+                .makeDirectory(
+                  path.join(
+                    input.env?.GIT_OBJECT_DIRECTORY ?? objects,
+                    "tmp_objdir-bulk-fsync-killed",
+                    "ab",
+                  ),
+                  { recursive: true },
+                )
                 .pipe(
                   Effect.orDie,
                   Effect.andThen(
@@ -401,6 +407,26 @@ it.effect("checkpoint capture removes the batch object directory a killed add le
       (yield* fs.readDirectory(objects)).filter((entry) => entry.startsWith("tmp_objdir-")),
       ["tmp_objdir-bulk-fsync-other"],
     );
+    assert.deepEqual(
+      (yield* fs.readDirectory(gitDir)).filter((entry) => entry.startsWith("t3-checkpoint-")),
+      [],
+    );
+  }).pipe(Effect.scoped, Effect.provide(layerGitContract)),
+);
+
+it.effect("checkpoint capture publishes the pack Git writes for a large file", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const driver = yield* GitVcsDriver.makeVcsDriverShape();
+    const cwd = yield* fs.makeTempDirectoryScoped({ prefix: "t3-checkpoint-large-file-" });
+    const { git, checkpointRef } = yield* makeCheckpointFixture(driver, cwd);
+    yield* git(["config", "core.bigFileThreshold", "1"]);
+
+    yield* driver.checkpoints.captureCheckpoint({ cwd, checkpointRef });
+
+    assert.strictEqual((yield* git(["show", `${checkpointRef}:file.txt`])).stdout, "unstaged\n");
+    assert.isNotEmpty(yield* fs.readDirectory(path.join(cwd, ".git", "objects", "pack")));
   }).pipe(Effect.scoped, Effect.provide(layerGitContract)),
 );
 
