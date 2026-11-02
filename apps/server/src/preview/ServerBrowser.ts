@@ -1393,17 +1393,20 @@ const make = Effect.gen(function* () {
       );
   };
 
+  // The desktop draws its tabs in its own webview, so they never get a streamed viewer.
+  const isVisible = (tab: ServerTab) =>
+    tab.viewers.size > 0 || (tab.desktop !== null && desktopChannel.isShown(tab));
+
   const idleAgentTabs = () => {
     const cutoff = Date.now() - AGENT_TAB_IDLE_MS;
     return [...tabs.values()].filter(
-      (tab) => tab.control.agentId !== null && tab.viewers.size === 0 && tab.usedAt < cutoff,
+      (tab) => tab.control.agentId !== null && !isVisible(tab) && tab.usedAt < cutoff,
     );
   };
 
-  // The server can't see whether someone is looking at a desktop tab, but the
-  // desktop app renders every server tab, so idle desktop agent tabs would
-  // otherwise hold the server's budget forever. They give up their slots,
-  // longest idle first, only when an agent needs one and has room for it.
+  // The desktop app renders every server tab, so idle desktop agent tabs would otherwise
+  // hold the server's budget forever. Hidden ones give up their slots, longest idle first,
+  // only when an agent needs one and has room for it.
   const freeIdleAgentSlot = (agentSessionId: string) => {
     if (!serverAtTabLimit() || agentAtTabLimit(agentSessionId)) return;
     const longestIdle = idleAgentTabs().sort((left, right) => left.usedAt - right.usedAt)[0];
