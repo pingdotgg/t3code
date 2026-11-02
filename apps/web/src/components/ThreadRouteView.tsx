@@ -101,6 +101,7 @@ export function ThreadRouteView({
     unlistedParentKey === null ? null : parseThreadKey(unlistedParentKey),
   );
   const hidingAnywhere = useAnyEnvironmentHiding();
+  const draftRedirectShell = useQuietThreadShell(draftRedirect ?? null);
   // Off-shell threads: a child follows its parent; while hiding, an unloaded parent hides it too.
   const unlistedHidden =
     unlistedThread !== null &&
@@ -151,6 +152,15 @@ export function ThreadRouteView({
     } else if (draftRedirect && hiddenKeys.has(threadKey(draftRedirect))) {
       // Back to a promoted draft whose thread is now hidden: never mount it.
       redirect = <Navigate to="/" replace />;
+    } else if (draftRedirect && hidingAnywhere && draftRedirectShell === null) {
+      // While hiding, a thread outside the live list is judged by the server route, unmounted here.
+      redirect = (
+        <Navigate
+          to="/$environmentId/$threadId"
+          params={buildThreadRouteParams(draftRedirect)}
+          replace
+        />
+      );
     } else if (draftRedirect) {
       // Same slot and key as the server route renders, so the swap keeps this instance.
       view = (
