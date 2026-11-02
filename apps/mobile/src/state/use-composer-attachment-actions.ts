@@ -101,10 +101,7 @@ export function useComposerAttachmentActions(props: {
     const insertion = captureComposerDraftInsertion(key);
     await withDraftOperation(key, async (signal) => {
       try {
-        const images = await convertPastedImagesToAttachments({
-          uris,
-          existingCount: countComposerDraftAttachmentsAfterSelection(key, insertion),
-        });
+        const images = await convertPastedImagesToAttachments({ uris });
         report("Could not paste images", null, await append(key, signal, images, insertion));
       } catch (error) {
         Dialog.alert(

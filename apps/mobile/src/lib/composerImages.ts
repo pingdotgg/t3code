@@ -571,18 +571,13 @@ function isOwnedPastedImageUri(uri: string): boolean {
 
 export async function convertPastedImagesToAttachments(input: {
   readonly uris: ReadonlyArray<string>;
-  readonly existingCount: number;
 }): Promise<ReadonlyArray<DraftComposerImageAttachment>> {
   const { File } = await import("expo-file-system");
-  const remainingSlots = PROVIDER_SEND_TURN_MAX_ATTACHMENTS - input.existingCount;
   const results: DraftComposerImageAttachment[] = [];
 
-  for (const [index, uri] of input.uris.entries()) {
+  for (const uri of input.uris) {
     const temporaryUris = isOwnedPastedImageUri(uri) ? [uri] : [];
     try {
-      if (index >= Math.max(0, remainingSlots)) {
-        continue;
-      }
       const file = new File(uri);
       const reportedMimeType = file.type;
       const sourceMimeType = reportedMimeType?.startsWith("image/")
