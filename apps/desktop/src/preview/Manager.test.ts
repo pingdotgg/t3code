@@ -1820,7 +1820,12 @@ describe("PreviewManager", () => {
         makeTestPreviewWebContents(async () => {
           throw new Error("unused");
         }, 42),
-        { isDevToolsOpened: () => false, getUserAgent: () => "Electron" },
+        {
+          isDevToolsOpened: () => false,
+          getUserAgent: () => "Electron",
+          isFocused: () => true,
+          focusedFrame: {},
+        },
       );
       fromId.mockReturnValue(contents);
       const manager = yield* PreviewManager.PreviewManager;
@@ -1850,6 +1855,7 @@ describe("PreviewManager", () => {
         background: false,
       });
 
+      Object.assign(contents, { focusedFrame: null });
       yield* host.handleCommandLine(
         JSON.stringify({
           type: "cdp",
@@ -1866,6 +1872,13 @@ describe("PreviewManager", () => {
       expect(yield* Queue.take(openLinks)).toEqual({
         url: "https://example.com/agent",
         background: true,
+      });
+
+      Object.assign(contents, { focusedFrame: {} });
+      clickBlankLink("https://example.com/person-after-agent");
+      expect(yield* Queue.take(openLinks)).toEqual({
+        url: "https://example.com/person-after-agent",
+        background: false,
       });
     }).pipe(Effect.provide(managerLayer()), Effect.scoped),
   );

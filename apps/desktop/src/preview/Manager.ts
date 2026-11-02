@@ -1548,8 +1548,10 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
               emitOpenLink({
                 tabId,
                 url: details.url,
+                // A person's click focuses the guest; the agent's leaves focus with the composer.
                 background:
-                  details.disposition === "background-tab" || browserHost.agentActedRecently(wc),
+                  details.disposition === "background-tab" ||
+                  (browserHost.agentActedRecently(wc) && !holdsKeyboardFocus(wc)),
               }),
             );
             return { action: "deny" };
