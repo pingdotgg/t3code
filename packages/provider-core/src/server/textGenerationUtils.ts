@@ -74,7 +74,13 @@ export function sanitizeThreadTitle(raw: string): string {
     return normalized;
   }
 
-  return `${normalized.slice(0, MAX_THREAD_TITLE_CHARS - 3).trimEnd()}...`;
+  let end = MAX_THREAD_TITLE_CHARS - 3;
+  const previous = normalized.charCodeAt(end - 1);
+  const next = normalized.charCodeAt(end);
+  if (previous >= 0xd800 && previous <= 0xdbff && next >= 0xdc00 && next <= 0xdfff) {
+    end -= 1;
+  }
+  return `${normalized.slice(0, end).trimEnd()}...`;
 }
 
 function cliLabel(cliName: string): string {

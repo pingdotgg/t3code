@@ -17,6 +17,9 @@ import {
   defaultInstanceIdForDriver,
   type EnvironmentId,
   type AcpRegistryUrlAuthAction,
+  isManagedSettingPath,
+  type ManagedPolicySummary,
+  managedRuntimeModeDenial,
   PROVIDER_DISPLAY_NAMES,
   ProviderDriverKind,
   type ProjectId,
@@ -90,6 +93,7 @@ import { Toggle, ToggleGroup } from "../ui/toggle-group";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { stackedThreadToast, toastManager } from "../ui/toast";
 import { AddProviderInstanceDialog } from "./AddProviderInstanceDialog";
+import { useManagedPolicy } from "~/state/managedPolicy";
 import { ExpandableText } from "./ExpandableText";
 import { ProviderInstanceCard } from "./ProviderInstanceCard";
 import { useSecretSources } from "./SecretSourceInput";
@@ -158,6 +162,15 @@ const RUNTIME_MODE_OPTIONS: ReadonlyArray<{
 
 function runtimeModeLabel(mode: RuntimeMode): string {
   return RUNTIME_MODE_OPTIONS.find((option) => option.value === mode)?.label ?? mode;
+}
+
+function managedSettingDenial(
+  policy: ManagedPolicySummary | undefined,
+  path: string,
+): string | undefined {
+  return policy !== undefined && isManagedSettingPath(policy, path)
+    ? `Managed by ${policy.organization}.`
+    : undefined;
 }
 
 function configuredBinaryPath(config: unknown): string {
@@ -556,6 +569,10 @@ export function EnvironmentProviderSettings({
   readonly readOnly?: boolean;
 }) {
   const settings = useEnvironmentSettings(environmentId);
+  const managedPolicy = useManagedPolicy(environmentId);
+  // A policy that allows no provider leaves nothing to add.
+  const canAddProvider =
+    !readOnly && managedPolicy?.limits?.providers?.allowedDrivers?.length !== 0;
   const canWriteSettings = useEnvironmentScope(environmentId, AuthSettingsWriteScope);
   const canRefreshProviders = useEnvironmentScope(environmentId, AuthOrchestrationReadScope);
   const updateSettings = useUpdateEnvironmentSettings(environmentId);
@@ -926,7 +943,7 @@ export function EnvironmentProviderSettings({
     toggleModelFavorite: stableToggleModelFavorite,
     selectInstance: setSelectedInstanceId,
     setProviderRuntimeModeDefault,
-    openAddInstanceDialog,
+    openAddInstanceDialog: canAddProvider ? openAddInstanceDialog : undefined,
   };
   // resolveModelPreferences falls back to a fresh `[]`; keep it stable for the rows.
   const favorites = settings.favorites.length > 0 ? settings.favorites : NO_FAVORITES;
@@ -987,7 +1004,7 @@ export function EnvironmentProviderSettings({
         {...searchableSetting("providers")}
         variant="plain"
         titleAction={
-          !readOnly ? (
+          canAddProvider ? (
             <Tooltip>
               <TooltipTrigger
                 render={
@@ -1042,6 +1059,7 @@ export function EnvironmentProviderSettings({
         <SettingsRow
           title="New thread permissions"
           description="Fallback permission mode for provider instances without an override."
+          managed={managedSettingDenial(managedPolicy, "defaultRuntimeMode")}
           control={
             <Select
               value={settings.defaultRuntimeMode}
@@ -1062,7 +1080,11 @@ export function EnvironmentProviderSettings({
               </SelectTrigger>
               <SelectPopup align="end" alignItemWithTrigger={false}>
                 {RUNTIME_MODE_OPTIONS.map((option) => (
-                  <SelectItem key={option.value} value={option.value}>
+                  <SelectItem
+                    key={option.value}
+                    value={option.value}
+                    disabled={managedRuntimeModeDenial(managedPolicy, option.value) !== undefined}
+                  >
                     {option.label}
                   </SelectItem>
                 ))}
@@ -1093,7 +1115,7 @@ export function EnvironmentProviderSettings({
             >
               <div className="divide-y divide-border/50">
                 {rows.map((row) => renderProviderInstance(row, "list"))}
-                {!readOnly ? (
+                {canAddProvider ? (
                   <button
                     type="button"
                     className="flex w-full cursor-pointer items-center gap-3 px-3 py-3 text-left text-sm text-muted-foreground transition-colors outline-none hover:bg-muted/25 hover:text-foreground focus-visible:bg-muted/25 focus-visible:text-foreground sm:px-4"
@@ -1246,7 +1268,7 @@ interface ProviderInstanceRowActions {
     instanceId: ProviderInstanceId,
     runtimeMode: RuntimeMode | null,
   ) => void;
-  readonly openAddInstanceDialog: () => void;
+  readonly openAddInstanceDialog: (() => void) | undefined;
 }
 
 const NO_MODELS: ReadonlyArray<string> = [];
@@ -1300,6 +1322,7 @@ function ProviderInstanceRow({
   readonly actions: ProviderInstanceRowActions;
 }) {
   const allProjects = useProjects();
+  const managedPolicy = useManagedPolicy(environmentId);
   const secretSources = useSecretSources(environmentId);
   const acpProjects =
     mode === "editor" && liveProvider?.driver === "acpRegistry"
@@ -1426,6 +1449,7 @@ function ProviderInstanceRow({
           <SettingsRow
             title="New thread permissions"
             description="Permission mode used when this provider instance is selected."
+            managed={managedSettingDenial(managedPolicy, "providerRuntimeModeDefaults")}
             control={
               <Select
                 value={providerRuntimeModeDefault ?? "inherit"}
@@ -1454,7 +1478,11 @@ function ProviderInstanceRow({
                     Default ({runtimeModeLabel(defaultRuntimeMode)})
                   </SelectItem>
                   {RUNTIME_MODE_OPTIONS.map((option) => (
-                    <SelectItem key={option.value} value={option.value}>
+                    <SelectItem
+                      key={option.value}
+                      value={option.value}
+                      disabled={managedRuntimeModeDenial(managedPolicy, option.value) !== undefined}
+                    >
                       {option.label}
                     </SelectItem>
                   ))}

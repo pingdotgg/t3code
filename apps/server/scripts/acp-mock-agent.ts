@@ -22,6 +22,11 @@ const antigravityProfile = process.env.T3_ACP_ANTIGRAVITY === "1";
 // setup carries no `models` (Devin has no SessionModelState), and the catalog
 // rides the `category: "model"` config option.
 const devinProfile = process.env.T3_ACP_DEVIN === "1";
+// GitHub Copilot CLI advertises URL-shaped session mode ids.
+const copilotModesProfile = process.env.T3_ACP_COPILOT_MODES === "1";
+const copilotModeId = (name: string) =>
+  `https://agentclientprotocol.com/protocol/session-modes#${name}`;
+const modeOptionCategory = process.env.T3_ACP_MODE_OPTION_CATEGORY ?? "mode";
 const emitToolCalls = process.env.T3_ACP_EMIT_TOOL_CALLS === "1";
 const emitInterleavedAssistantToolCalls =
   process.env.T3_ACP_EMIT_INTERLEAVED_ASSISTANT_TOOL_CALLS === "1";
@@ -87,7 +92,13 @@ const devinConfiguredModels = (process.env.T3_ACP_DEVIN_MODELS ?? "")
   .filter((value) => value.length > 0);
 const devinInitialModel = devinConfiguredModels.find(() => true) ?? "swe-2-high";
 
-let currentModeId = antigravityProfile ? "default" : devinProfile ? "smart" : "ask";
+let currentModeId = antigravityProfile
+  ? "default"
+  : devinProfile
+    ? "smart"
+    : copilotModesProfile
+      ? copilotModeId("agent")
+      : "ask";
 let currentModelId = antigravityProfile
   ? "gemini-test-low"
   : devinProfile
@@ -283,7 +294,7 @@ function configOptions(): ReadonlyArray<AcpSchema.SessionConfigOption> {
     {
       configId: "mode",
       name: "Mode",
-      category: "mode",
+      category: modeOptionCategory,
       type: "select" as const,
       currentValue: currentModeId,
       options: availableModes.map((mode) => ({
@@ -356,23 +367,29 @@ const availableModes: ReadonlyArray<AcpCompat.SessionMode> = antigravityProfile
         { id: "plan", name: "Plan" },
         { id: "bypass", name: "Bypass" },
       ]
-    : [
-        {
-          id: "ask",
-          name: "Ask",
-          description: "Request permission before making any changes",
-        },
-        {
-          id: "architect",
-          name: "Architect",
-          description: "Design and plan software systems without implementation",
-        },
-        {
-          id: "code",
-          name: "Code",
-          description: "Write and modify code with full tool access",
-        },
-      ];
+    : copilotModesProfile
+      ? [
+          { id: copilotModeId("agent"), name: "Agent" },
+          { id: copilotModeId("plan"), name: "Plan" },
+          { id: copilotModeId("autopilot"), name: "Autopilot" },
+        ]
+      : [
+          {
+            id: "ask",
+            name: "Ask",
+            description: "Request permission before making any changes",
+          },
+          {
+            id: "architect",
+            name: "Architect",
+            description: "Design and plan software systems without implementation",
+          },
+          {
+            id: "code",
+            name: "Code",
+            description: "Write and modify code with full tool access",
+          },
+        ];
 
 function modeState(): AcpCompat.SessionModeState {
   return {
@@ -525,7 +542,7 @@ const program = Effect.gen(function* () {
       parameterizedModelPicker = request.capabilities?._meta?.parameterizedModelPicker === true;
       return {
         protocolVersion: 2,
-        info: { name: "t3-acp-mock-agent", version: "0.0.0" },
+        info: { name: "t3-acp-mock-agent", version: process.env.T3_ACP_AGENT_VERSION ?? "0.0.0" },
         ...(omitInitializeModelState ? {} : { _meta: { modelState: modelState() } }),
         capabilities: {
           session: {
@@ -1141,6 +1158,18 @@ const program = Effect.gen(function* () {
               type: "items",
               planId: "plan-b",
               entries: [{ content: "Ship B", priority: "high", status: "in_progress" }],
+            },
+          },
+          {
+            sessionUpdate: "plan_update",
+            plan: {
+              type: "items",
+              planId: "plan-c",
+              entries: [
+                { content: "Write the fix", priority: "high", status: "completed" },
+                { content: "Try another approach", priority: "low", status: "cancelled" },
+                { content: "Add a test", priority: "medium", status: "completed" },
+              ],
             },
           },
           { sessionUpdate: "plan_removed", planId: "plan-a" },

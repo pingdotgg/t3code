@@ -96,6 +96,7 @@ import {
 } from "./new-task-context-presentation";
 import { resolveEnvironmentProjectMatch } from "./new-task-project-selection";
 import { useNewTaskProjectDefaults } from "./use-new-task-project-defaults";
+import { resolveNewThreadRuntimeMode as resolveManagedNewThreadRuntimeMode } from "./thread-settings-options";
 import { resolveProjectThreadCreationBranch } from "./projectThreadCreationValidation";
 import {
   INACTIVE_FLOW_KEY,
@@ -368,7 +369,7 @@ export function NewTaskFlowProvider(
   const prompt = selectedProjectDraft.text;
   const attachments = selectedProjectDraft.attachments;
   const projectGitStatus = useEnvironmentQuery(
-    selectedProject !== null && selectedProject.workspaceRoot !== ""
+    props.active !== false && selectedProject !== null && selectedProject.workspaceRoot !== ""
       ? vcsEnvironment.status({
           environmentId: selectedProject.environmentId,
           input: { cwd: selectedProject.workspaceRoot },
@@ -417,6 +418,7 @@ export function NewTaskFlowProvider(
   const draftStartFromOrigin = selectedProjectDraft.workspaceSelection?.startFromOrigin;
   const startFromOrigin =
     isGitRepo && (draftStartFromOrigin ?? projectSettings.settings.newWorktreesStartFromOrigin);
+  const managedPolicy = selectedEnvironmentServerConfig?.managedPolicy;
   // Antigravity keeps unavailable selections so sign-out or a catalog change
   // cannot switch the user's model.
   const draftModelSelection = resolveSelectableModelSelection(
@@ -459,10 +461,11 @@ export function NewTaskFlowProvider(
     projectId: selectedProject?.id ?? null,
     now: modelSelectionNow,
   }).selection;
-  const runtimeMode = resolveNewThreadRuntimeMode(
-    projectSettings.settings,
-    selectedModel?.instanceId,
+  // The provider's default mode (fork setting) under the administrator's ceiling.
+  const runtimeMode = resolveManagedNewThreadRuntimeMode(
     selectedProjectDraft.runtimeMode,
+    resolveNewThreadRuntimeMode(projectSettings.settings, selectedModel?.instanceId),
+    managedPolicy,
   );
   const selectedModelKey = selectedModel
     ? `${selectedModel.instanceId}:${selectedModel.model}`
@@ -753,10 +756,10 @@ export function NewTaskFlowProvider(
       attachments: draft.attachments,
       context: draft.context,
       modelSelection: draftModelSelection,
-      runtimeMode: resolveNewThreadRuntimeMode(
-        projectSettings.settings,
-        draftModelSelection.instanceId,
+      runtimeMode: resolveManagedNewThreadRuntimeMode(
         draft.runtimeMode,
+        resolveNewThreadRuntimeMode(projectSettings.settings, draftModelSelection.instanceId),
+        managedPolicy,
       ),
       interactionMode: resolvePendingTaskInteractionMode({
         planModeEnabled: legacyPlanModeEnabled,

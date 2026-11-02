@@ -28,7 +28,6 @@ type EarlyLinuxElectronOptionsInput = EarlyDesktopSettingsInput;
 
 export interface EarlyLinuxElectronOptions {
   readonly isDevelopment: boolean;
-  readonly linuxWmClass: string;
   readonly linuxDesktopEntryName: string;
   readonly passwordStore: LinuxPasswordStoreSwitch | null;
 }
@@ -161,7 +160,6 @@ export function resolveEarlyLinuxElectronOptions(
   });
   return {
     isDevelopment,
-    linuxWmClass: distro.linuxWmClass,
     linuxDesktopEntryName: distro.linuxDesktopEntryName,
     passwordStore: resolveLinuxPasswordStoreSwitch({
       preference,

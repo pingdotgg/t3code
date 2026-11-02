@@ -115,6 +115,8 @@ import Migration0082 from "./Migrations/073_ActiveTurnItemIndexes.ts";
 import Migration0083 from "./Migrations/074_ExcludeAttachmentPlaceholdersFromSearch.ts";
 import Migration0084 from "./Migrations/075_SubagentDeliveryState.ts";
 import Migration0085 from "./Migrations/076_ProjectionProjectsPinArchive.ts";
+// Upstream 077 (repair boolean settledOverride); registered as the next free fork id.
+import Migration0086 from "./Migrations/077_RepairBooleanSettledOverride.ts";
 
 const migrationEntries = [
   [1, "OrchestrationEvents", Migration0001],
@@ -216,6 +218,8 @@ const migrationEntries = [
   [83, "ExcludeAttachmentPlaceholdersFromSearch", Migration0083],
   [84, "SubagentDeliveryState", Migration0084],
   [85, "ProjectionProjectsPinArchive", Migration0085],
+  // Upstream 077 (repair boolean settledOverride); next free fork id.
+  [86, "RepairBooleanSettledOverride", Migration0086],
 ] as const;
 
 export const migrationManifest = migrationEntries.map(([id, name]) => [id, name] as const);

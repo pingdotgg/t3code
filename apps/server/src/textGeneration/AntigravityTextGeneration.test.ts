@@ -5,6 +5,7 @@ import {
   ProviderInstanceId,
   ProviderSetupError,
 } from "@t3tools/contracts";
+import { symlinksSupported } from "@t3tools/shared/testing/symlinks";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
@@ -60,6 +61,7 @@ const makeFixture = Effect.fn("makeAntigravityTextGenerationFixture")(function* 
     readonly startError?: AcpError;
     readonly rejectAdmission?: boolean;
     readonly sessionId?: string;
+    readonly startupSkills?: boolean;
   } = {},
 ) {
   const fs = yield* FileSystem.FileSystem;
@@ -135,6 +137,13 @@ const makeFixture = Effect.fn("makeAntigravityTextGenerationFixture")(function* 
         start: () =>
           Effect.gen(function* () {
             if (options.startError) return yield* options.startError;
+            if (options.startupSkills) {
+              for (const directory of [".agents", ".gemini"]) {
+                yield* fs
+                  .makeDirectory(path.join(cwd, directory, "skills"), { recursive: true })
+                  .pipe(Effect.orDie);
+              }
+            }
             yield* fs.makeDirectory(brainDirectory, { recursive: true }).pipe(Effect.orDie);
             yield* fs.writeFileString(`${sessionBase}.db`, "helper session").pipe(Effect.orDie);
             yield* fs.writeFileString(`${sessionBase}.db-wal`, "helper journal").pipe(Effect.orDie);
@@ -279,11 +288,12 @@ const makeFixture = Effect.fn("makeAntigravityTextGenerationFixture")(function* 
 });
 
 it.layer(NodeServices.layer)("AntigravityTextGeneration", (it) => {
-  it.effect(
-    "generates all helper types in empty workspaces and removes only owned session files",
-    () =>
+  it.effect.each([false, true])(
+    "generates all helper types and cleans up with startupSkills=%s",
+    (startupSkills) =>
       Effect.gen(function* () {
         const fixture = yield* makeFixture({
+          startupSkills,
           outputs: [
             '{"subject":"  Repair Google login.\\nExtra line","body":"  Keep the remote callback.  ","branch":"Repair Login"}',
             '```json\n{"title":" Repair Google login\\nExtra line","body":"  ## Summary\\nSupport remote callbacks.  "}\n```',
@@ -442,29 +452,51 @@ it.layer(NodeServices.layer)("AntigravityTextGeneration", (it) => {
     }).pipe(Effect.scoped),
   );
 
-  it.effect("rejects a helper that writes files in its temporary workspace", () =>
-    Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const path = yield* Path.Path;
-      const fixture = yield* makeFixture({
-        prompt: ({ cwd, emit }) =>
-          Effect.gen(function* () {
-            yield* fs
-              .writeFileString(path.join(cwd, "unexpected.txt"), "unexpected")
-              .pipe(Effect.orDie);
-            yield* emit({
-              sessionUpdate: "agent_message_chunk",
-              content: { type: "text", text: '{"title":"Ignored output"}' },
-            });
-            return { stopReason: "end_turn" };
-          }),
-      });
-      const error = yield* fixture.textGeneration
-        .generateThreadTitle(fixture.titleInput)
-        .pipe(Effect.flip);
-      expect(error.detail).toContain("wrote files");
-      yield* fixture.assertCleaned;
-    }).pipe(Effect.scoped),
+  it.effect.each([
+    { relativePath: "unexpected.txt", kind: "file" },
+    { relativePath: ".agents/skills/unexpected.txt", kind: "file" },
+    { relativePath: ".gemini/unexpected", kind: "directory" },
+    { relativePath: ".agents/skills", kind: "file" },
+    ...(symlinksSupported ? [{ relativePath: ".gemini/skills", kind: "symlink" }] : []),
+  ])(
+    "rejects an unexpected $kind at $relativePath in its temporary workspace",
+    ({ relativePath, kind }) =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const target =
+          kind === "symlink"
+            ? yield* fs.makeTempDirectoryScoped({ prefix: "t3-antigravity-link-test-" })
+            : undefined;
+        const fixture = yield* makeFixture({
+          startupSkills: true,
+          prompt: ({ cwd, emit }) =>
+            Effect.gen(function* () {
+              const entry = path.join(cwd, relativePath);
+              if (yield* fs.exists(entry).pipe(Effect.orDie)) {
+                yield* fs.remove(entry, { recursive: true }).pipe(Effect.orDie);
+              }
+              yield* (
+                target !== undefined
+                  ? fs.symlink(target, entry)
+                  : kind === "directory"
+                    ? fs.makeDirectory(entry)
+                    : fs.writeFileString(entry, "unexpected")
+              ).pipe(Effect.orDie);
+              yield* emit({
+                sessionUpdate: "agent_message_chunk",
+                content: { type: "text", text: '{"title":"Ignored output"}' },
+              });
+              return { stopReason: "end_turn" };
+            }),
+        });
+        const error = yield* fixture.textGeneration
+          .generateThreadTitle(fixture.titleInput)
+          .pipe(Effect.flip);
+        expect(error.detail).toContain("wrote files");
+        if (target !== undefined) expect(yield* fs.exists(target)).toBe(true);
+        yield* fixture.assertCleaned;
+      }).pipe(Effect.scoped),
   );
 
   it.effect("uses the native default without sending T3's default selection as a model ID", () =>
@@ -576,3 +608,15 @@ it.layer(NodeServices.layer)("AntigravityTextGeneration", (it) => {
     }).pipe(Effect.scoped),
   );
 });
+
+it.effect("retains filesystem services supplied only during construction", () =>
+  Effect.gen(function* () {
+    const fixture = yield* makeFixture({ startupSkills: true }).pipe(
+      Effect.provide(NodeServices.layer),
+    );
+    expect(yield* fixture.textGeneration.generateThreadTitle(fixture.titleInput)).toEqual({
+      title: "Repair login",
+    });
+    yield* fixture.assertCleaned;
+  }).pipe(Effect.scoped),
+);

@@ -192,7 +192,8 @@ describe("DesktopPreReadyPlatform", () => {
       assert.equal((error as NodeJS.ErrnoException).code, "EBADF");
     }
   });
-  it.effect("appends the packaged Linux window class before Electron is ready", () =>
+  // The window class follows the desktop name, which must match StartupWMClass.
+  it.effect("names the packaged Linux desktop entry without a --class switch", () =>
     Effect.gen(function* () {
       vi.stubEnv("VITE_DEV_SERVER_URL", "");
       hasSwitchMock.mockReturnValue(false);
@@ -204,8 +205,8 @@ describe("DesktopPreReadyPlatform", () => {
         Effect.provide(preReadyLayer),
       );
 
-      assert.equal(options.linux?.linuxWmClass, "t3code");
-      assert.deepEqual(appendSwitchMock.mock.calls[0], ["class", "t3code"]);
+      assert.equal(options.linux?.linuxDesktopEntryName, "t3code.desktop");
+      assert.isFalse(appendSwitchMock.mock.calls.some(([name]) => name === "class"));
     }),
   );
 

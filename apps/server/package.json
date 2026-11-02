@@ -60,6 +60,7 @@
     "character-entities": "2.0.2",
     "diff": "8.0.3",
     "effect": "catalog:",
+    "ffi-rs": "1.3.2",
     "jose": "catalog:",
     "node-pty": "^1.2.0-beta.15",
     "playwright-core": "1.60.0",

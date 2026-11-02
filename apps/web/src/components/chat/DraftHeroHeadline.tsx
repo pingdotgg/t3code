@@ -32,7 +32,7 @@ import {
   buildSidebarProjectSnapshots,
   projectGroupsSpanEnvironments,
 } from "~/sidebarProjectGrouping";
-import { useProjects, useServerConfigs, useThreadShells } from "~/state/entities";
+import { useProjects, useServerConfigs, useVisibleThreadShells } from "~/state/entities";
 import {
   useEnvironmentProviders,
   useEnvironments,
@@ -80,7 +80,7 @@ export function DraftHeroHeadline({
   activeProjectTitle,
 }: DraftHeroHeadlineProps) {
   const projects = useProjects();
-  const threads = useThreadShells();
+  const threads = useVisibleThreadShells();
   const serverConfigs = useServerConfigs();
   const providersByEnvironment = useEnvironmentProviders();
   const { environments } = useEnvironments();

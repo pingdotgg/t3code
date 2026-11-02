@@ -3009,6 +3009,7 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
 ) {
   const productName = resolveDesktopProductName(version);
   const buildConfig: Record<string, unknown> = {
+    afterPack: (yield* Path.Path).join(yield* RepoRoot, "scripts/prepare-server-compile-cache.cjs"),
     appId: distro.appId,
     productName,
     artifactName: distro.artifactName,

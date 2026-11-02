@@ -1,3 +1,5 @@
+import { isManagedSettingPath } from "@t3tools/contracts";
+import { resolvePastedPath } from "@t3tools/shared/path";
 import { ChevronRightIcon } from "lucide-react";
 
 import { useEnvironmentOperateAccess } from "../../hooks/useEnvironmentOperateAccess";
@@ -20,6 +22,11 @@ export function EnvironmentDirectoryRows({
   const settings = useEnvironmentSettings(environment.environmentId);
   const updateSettings = useUpdateEnvironmentSettings(environment.environmentId);
   const operateAccess = useEnvironmentOperateAccess(environment.environmentId);
+  const managedPolicy = environment.serverConfig?.managedPolicy;
+  const managed =
+    managedPolicy !== undefined && isManagedSettingPath(managedPolicy, "addProjectBaseDirectory")
+      ? `Managed by ${managedPolicy.organization}.`
+      : undefined;
   const disabledReason =
     environment.connection.phase !== "connected"
       ? "Connect to edit directories."
@@ -39,6 +46,7 @@ export function EnvironmentDirectoryRows({
         description="Add Project and Clone Repository start here."
         status={disabledReason}
         aria-disabled={disabled || undefined}
+        managed={managed}
         resetAction={
           !disabled && settings.addProjectBaseDirectory !== "" ? (
             <SettingResetButton
@@ -53,6 +61,7 @@ export function EnvironmentDirectoryRows({
             className="w-full sm:w-72"
             value={settings.addProjectBaseDirectory}
             onCommit={(addProjectBaseDirectory) => updateSettings({ addProjectBaseDirectory })}
+            normalizeDraft={resolvePastedPath}
             disabled={disabled}
             placeholder={defaults?.repositories ?? "~"}
             spellCheck={false}

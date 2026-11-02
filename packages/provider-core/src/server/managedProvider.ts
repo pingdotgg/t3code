@@ -50,6 +50,7 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
     ServerProvider,
     ServerSettingsError | ProviderProbeTimeoutError
   >;
+  readonly checkUsageLimits?: Effect.Effect<ServerProvider["usageLimits"]>;
   /** Run immediately before a manual or periodic refresh check. */
   readonly beforeRefresh?: Effect.Effect<void>;
   readonly invalidateUsageCache?: Effect.Effect<void>;
@@ -311,19 +312,6 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
     );
   });
 
-  /**
-   * The periodic tick skips instead of queueing when a probe is already in
-   * flight. A probe that runs to its timeout would otherwise be followed by
-   * every tick that piled up behind the semaphore, each spawning the probe
-   * process again with nothing new to learn.
-   */
-  const refreshSnapshotUnlessProbing = Effect.fn("refreshSnapshotUnlessProbing")(function* () {
-    const nextSettings = yield* input.getSettings;
-    yield* refreshSemaphore.withPermitsIfAvailable(1)(
-      applySnapshotBase(nextSettings, { forceRefresh: true }),
-    );
-  });
-
   const refreshUsage = Effect.fn("ManagedServerProvider.refreshUsage")(function* () {
     const { snapshot } = yield* Ref.get(snapshotStateRef);
     if (
@@ -356,14 +344,45 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
     );
   });
 
+  const needsUsageRecovery = (snapshot: ServerProvider) =>
+    input.checkUsageLimits !== undefined &&
+    snapshot.installed &&
+    snapshot.status === "ready" &&
+    snapshot.auth.status === "authenticated" &&
+    snapshot.usageLimits?.unavailable?.reason === "probeFailed";
+
+  const needsProviderRefresh = (snapshot: ServerProvider) =>
+    input.refreshOnInterval !== false &&
+    (typeof input.refreshOnInterval !== "function" || input.refreshOnInterval(snapshot));
+
+  const refreshOnInterval = Effect.fn("ManagedServerProvider.refreshOnInterval")(function* () {
+    const { snapshot } = yield* Ref.get(snapshotStateRef);
+    if (!snapshot.enabled) return;
+    if (!needsUsageRecovery(snapshot) || !input.checkUsageLimits) {
+      if (needsProviderRefresh(snapshot)) {
+        yield* applySnapshotBase(yield* input.getSettings, { forceRefresh: true });
+      }
+      return;
+    }
+    const probed = yield* input.checkUsageLimits;
+    const next = yield* Ref.modify(snapshotStateRef, (state) => {
+      const usageLimits = resolveUsageLimitsAfterProbe({
+        published: state.snapshot.usageLimits,
+        probed,
+      });
+      const snapshot = withUsageLimits(state.snapshot, usageLimits);
+      return [snapshot, { ...state, snapshot }] as const;
+    });
+    yield* PubSub.publish(changesPubSub, next);
+  });
+
   const shouldRefreshOnInterval = Effect.gen(function* () {
     const state = yield* Ref.get(snapshotStateRef);
     // A disabled instance has nothing to probe; a periodic check would only
     // republish a snapshot that differs in checkedAt.
     if (
       !state.snapshot.enabled ||
-      input.refreshOnInterval === false ||
-      (typeof input.refreshOnInterval === "function" && !input.refreshOnInterval(state.snapshot))
+      (!needsUsageRecovery(state.snapshot) && !needsProviderRefresh(state.snapshot))
     ) {
       return false;
     }
@@ -423,7 +442,13 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
             intervalElapsed && Duration.toMillis(Duration.fromInputUnsafe(refreshInterval)) > 0
               ? shouldRefreshOnInterval.pipe(
                   Effect.flatMap((shouldRefresh) =>
-                    shouldRefresh ? refreshSnapshotUnlessProbing() : Effect.void,
+                    // Skip rather than queue when a probe is already in flight: ticks
+                    // piled up behind a probe running to its timeout would each respawn it.
+                    shouldRefresh
+                      ? refreshSemaphore
+                          .withPermitsIfAvailable(1)(refreshOnInterval())
+                          .pipe(Effect.asVoid)
+                      : Effect.void,
                   ),
                 )
               : Effect.void,

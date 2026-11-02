@@ -535,6 +535,7 @@ const resolvePrimaryStartConfig = Effect.fn("desktop.backendConfiguration.resolv
         // The backend writes user-facing messages ("<Provider> is disabled in
         // <App> settings"), and only the desktop knows which brand is running.
         T3CODE_APP_DISPLAY_NAME: environment.branding.baseName,
+        T3CODE_DESKTOP_SHELL_DISCOVERY_PENDING: "1",
         // The server names this launcher in commands it asks a person to run.
         T3CODE_CLI_PATH: Option.getOrUndefined(input.cliPath),
       },
