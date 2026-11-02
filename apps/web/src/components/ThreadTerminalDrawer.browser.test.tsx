@@ -9,6 +9,7 @@ const fixture = vi.hoisted(() => ({
   pendingSurfaces: [] as Array<() => void>,
   typeIntoSurface: null as ((data: string) => void) | null,
   writes: [] as Array<{ threadId: string; data: string }>,
+  resetSessions: () => {},
 }));
 
 // Every surface method is a no-op; `then` stays undefined so awaiting the surface resolves to it.
@@ -32,15 +33,21 @@ vi.mock("~/terminal/ghostty/surface", () => ({
 }));
 vi.mock("../state/terminalSessions", async () => {
   const Atom = await import("effect/reactivity/Atom");
-  const sessions = Atom.family((_environmentId: EnvironmentId) =>
-    Atom.family((threadId: ThreadId) =>
-      Atom.make({
-        ...EMPTY_TERMINAL_SESSION_STATE,
-        status: fixture.statusByThreadId.get(threadId) ?? "closed",
-        version: 1,
-      }),
-    ),
-  );
+  // Families cache their atoms, so each test needs fresh ones for its own statuses.
+  const makeSessions = () =>
+    Atom.family((_environmentId: EnvironmentId) =>
+      Atom.family((threadId: ThreadId) =>
+        Atom.make({
+          ...EMPTY_TERMINAL_SESSION_STATE,
+          status: fixture.statusByThreadId.get(threadId) ?? "closed",
+          version: 1,
+        }),
+      ),
+    );
+  let sessions = makeSessions();
+  fixture.resetSessions = () => {
+    sessions = makeSessions();
+  };
   return {
     attachedTerminalSessionAtom: (environmentId: EnvironmentId, terminal: { threadId: ThreadId }) =>
       sessions(environmentId)(terminal.threadId),
@@ -104,6 +111,7 @@ function Drawer(props: {
 }
 
 function setup(originalStatus: "starting" | "exited" = "exited") {
+  fixture.resetSessions();
   const original: ScopedThreadRef = {
     environmentId: EnvironmentId.make("environment-a"),
     threadId: ThreadId.make("thread-a"),

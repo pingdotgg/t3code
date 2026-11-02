@@ -939,7 +939,8 @@ function TerminalSessionViewport({
       };
 
       const sendTerminalInput = async (data: string, fallbackError: string) => {
-        if (!hasTerminalWriteAccess()) return;
+        // The server rejects input until the shell runs, and each rejection would print an error.
+        if (!hasTerminalWriteAccess() || readTerminalSession().status !== "running") return;
         const activeTerminal = terminalRef.current;
         if (!activeTerminal) return;
         const result = await writeTerminal(data);
@@ -1040,17 +1041,7 @@ function TerminalSessionViewport({
       }
 
       function handleData(data: string): void {
-        // The server rejects input until the shell runs, and each rejection would print an error.
-        if (!hasTerminalWriteAccess() || readTerminalSession().status !== "running") return;
-        void (async () => {
-          const result = await writeTerminal(data);
-          if (result._tag === "Success" || isAtomCommandInterrupted(result)) return;
-          const error = squashAtomCommandFailure(result);
-          writeSystemMessage(
-            terminal,
-            error instanceof Error ? error.message : "Terminal write failed",
-          );
-        })();
+        void sendTerminalInput(data, "Terminal write failed");
       }
 
       function handleSelectionChange(): void {
