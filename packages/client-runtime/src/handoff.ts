@@ -14,10 +14,8 @@ import {
 } from "@t3tools/shared/model";
 
 import type { ThreadStructure } from "./state/models.ts";
-import {
-  formatModelSelectionEffort,
-  REASONING_EFFORT_OPTION_IDS,
-} from "./state/threadExecution.ts";
+import { isReasoningSelect } from "./modelTraits.ts";
+import { REASONING_EFFORT_OPTION_IDS } from "./state/threadExecution.ts";
 
 export type HandoffTimelineRun = Pick<
   OrchestrationV2Run,
@@ -127,16 +125,15 @@ export function resolveModelSwitches(
     // Runs that never ran do not change what the agent used.
     if (
       run.status === "rolled_back" ||
-      run.status === "queued" ||
-      (run.startedAt === null && (run.status === "cancelled" || run.status === "failed"))
+      (run.startedAt === null && run.status !== "preparing" && run.status !== "starting")
     ) {
       continue;
     }
     if (previous !== undefined && run.contextHandoffId === null) {
       const from = previous.modelSelection;
       const to = run.modelSelection;
-      const fromEffort = resolveEffort(from, providers);
-      const toEffort = resolveEffort(to, providers);
+      const fromEffort = resolveEffort(from, modelsFor(providers, from));
+      const toEffort = resolveEffort(to, modelsFor(providers, to));
       const effortChanged =
         fromEffort !== undefined && toEffort !== undefined && fromEffort.value !== toEffort.value;
       if (from.model !== to.model || effortChanged) {
@@ -159,30 +156,38 @@ export function formatHandoffEndpointEffort(
   models: ReadonlyArray<ServerProviderModel> | undefined,
 ): string | null {
   if (!model) return null;
-  const selection = { instanceId, model, ...(options === undefined ? {} : { options }) };
-  return (
-    formatModelSelectionEffort(selection, models) ??
-    REASONING_EFFORT_OPTION_IDS.map((id) => getModelSelectionStringOptionValue(selection, id)).find(
-      (value) => value !== undefined,
-    ) ??
-    null
+  const effort = resolveEffort(
+    { instanceId, model, ...(options === undefined ? {} : { options }) },
+    models,
   );
+  return effort?.label ?? effort?.value ?? null;
 }
 
+function modelsFor(providers: ReadonlyArray<ServerProvider>, selection: ModelSelection) {
+  return providers.find((provider) => provider.instanceId === selection.instanceId)?.models;
+}
+
+/** The model's reasoning control, as the composer picks it, or a stated effort without a catalog. */
 function resolveEffort(
   selection: ModelSelection,
-  providers: ReadonlyArray<ServerProvider>,
-): { readonly id: string; readonly value: string } | undefined {
-  const descriptors = providers
-    .find((provider) => provider.instanceId === selection.instanceId)
-    ?.models.find((model) => model.slug === selection.model)?.capabilities?.optionDescriptors;
-  for (const id of REASONING_EFFORT_OPTION_IDS) {
-    const stated = getModelSelectionStringOptionValue(selection, id);
-    const descriptor = descriptors?.find((candidate) => candidate.id === id);
-    const value = stated ?? getProviderOptionCurrentValue(descriptor, selection);
-    if (typeof value === "string") return { id, value };
+  models: ReadonlyArray<ServerProviderModel> | undefined,
+): { readonly id: string; readonly value: string; readonly label?: string } | undefined {
+  const descriptor = models
+    ?.find((model) => model.slug === selection.model)
+    ?.capabilities?.optionDescriptors?.find(isReasoningSelect);
+  if (descriptor === undefined) {
+    for (const id of REASONING_EFFORT_OPTION_IDS) {
+      const value = getModelSelectionStringOptionValue(selection, id);
+      if (value !== undefined) return { id, value };
+    }
+    return undefined;
   }
-  return undefined;
+  const value =
+    getModelSelectionStringOptionValue(selection, descriptor.id) ??
+    getProviderOptionCurrentValue(descriptor, selection);
+  if (typeof value !== "string") return undefined;
+  const label = descriptor.options.find((option) => option.id === value)?.label;
+  return { id: descriptor.id, value, ...(label === undefined ? {} : { label }) };
 }
 
 function withEffort(

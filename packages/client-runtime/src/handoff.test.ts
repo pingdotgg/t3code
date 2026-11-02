@@ -9,6 +9,7 @@ import {
 import * as DateTime from "effect/DateTime";
 import { describe, expect, it } from "vite-plus/test";
 import {
+  formatHandoffEndpointEffort,
   resolveHandoffEndpoints,
   resolveModelSwitches,
   resolvePendingHandoff,
@@ -258,6 +259,50 @@ describe("model switches", () => {
     ]);
   });
 
+  it("follows an agent's own reasoning control", () => {
+    const providers = [
+      {
+        instanceId: from,
+        models: [
+          {
+            slug: "acp",
+            capabilities: {
+              optionDescriptors: [
+                {
+                  id: "thought_level",
+                  type: "select",
+                  role: "reasoning",
+                  options: [
+                    { id: "low", label: "Low", isDefault: true },
+                    { id: "deep", label: "Deep" },
+                  ],
+                },
+              ],
+            },
+          },
+        ],
+      },
+    ] as unknown as ServerProvider[];
+    const thought = (id: string, ordinal: number, value?: string) =>
+      switchRun(id, ordinal, "acp", undefined, {
+        modelSelection: {
+          instanceId: from,
+          model: "acp",
+          ...(value === undefined ? {} : { options: [{ id: "thought_level", value }] }),
+        },
+      });
+    const effortSwitch = resolveModelSwitches(
+      [thought("a", 1), thought("b", 2, "deep")],
+      providers,
+    ).get(MessageId.make("message-b"));
+    expect(effortSwitch?.label).toBe("Effort changed");
+    expect(
+      [effortSwitch!.from, effortSwitch!.to].map((endpoint) =>
+        formatHandoffEndpointEffort(endpoint, providers[0]!.models),
+      ),
+    ).toEqual(["Low", "Deep"]);
+  });
+
   it("skips runs that never ran, handoff runs, and account-only switches", () => {
     const switches = resolveModelSwitches([
       switchRun("a", 1, "gpt"),
@@ -265,11 +310,12 @@ describe("model switches", () => {
       switchRun("c", 3, "mini", undefined, { status: "cancelled", startedAt: null }),
       switchRun("d", 4, "mini", undefined, { status: "queued", startedAt: null }),
       switchRun("e", 5, "mini", undefined, { status: "failed", startedAt: null }),
-      switchRun("f", 6, "gpt"),
-      switchRun("g", 7, "other", undefined, {
+      switchRun("f", 6, "mini", undefined, { status: "interrupted", startedAt: null }),
+      switchRun("g", 7, "gpt"),
+      switchRun("h", 8, "other", undefined, {
         contextHandoffId: ContextHandoffId.make("handoff"),
       }),
-      switchRun("h", 8, "other", undefined, {
+      switchRun("i", 9, "other", undefined, {
         modelSelection: { instanceId: to, model: "other" },
       }),
     ]);
