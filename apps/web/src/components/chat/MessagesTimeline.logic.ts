@@ -1131,6 +1131,12 @@ function sumFileChangeLineStat(entries: Iterable<WorkLogEntry>): DiffLineStat | 
   return reported ? { additions, deletions } : null;
 }
 
+function sumTimelineFileChangeLineStat(entries: ReadonlyArray<TimelineEntry>): DiffLineStat | null {
+  return sumFileChangeLineStat(
+    entries.flatMap((entry) => (entry.kind === "work" ? [entry.entry] : [])),
+  );
+}
+
 function sumCheckpointLineStat(summary: TurnDiffSummary): DiffLineStat | null {
   const { count, additions, deletions } = checkpointFileTotals(summary);
   return count === 0 ? null : { additions, deletions };
@@ -1346,15 +1352,30 @@ function deriveTurnFolds(input: {
     // A turn cut short by a steer leaves trailing work entries behind its
     // terminal message — take whichever ended last.
     const lastEntryEnd = timelineEntryEnd(lastEntry);
+    const turnStart = group.startBoundary ?? firstEntry.createdAt;
+    const firstSteer = group.steerSegments[0];
+    const firstSegment = group.entries.slice(0, firstSteer?.startIndex);
+    const segmentEntries = (index: number) =>
+      group.entries.slice(
+        group.steerSegments[index]!.startIndex,
+        group.steerSegments[index + 1]?.startIndex,
+      );
+    // The last steer segment with its own row says how the turn ended.
+    const endingSegmentIndex = group.steerSegments.findLastIndex((_, index) =>
+      hidesNonCompactionWork(segmentEntries(index)),
+    );
     const elapsedMs =
-      input.latestRun?.runId === runId && input.latestRun.startedAt && input.latestRun.completedAt
-        ? computeElapsedMs(input.latestRun.startedAt, input.latestRun.completedAt)
-        : computeElapsedMs(
-            group.startBoundary ?? firstEntry.createdAt,
-            maxIsoTimestamp(group.terminalEntry?.message.updatedAt ?? null, lastEntryEnd) ??
-              lastEntryEnd,
-          );
-    const duration = elapsedMs !== null ? formatDuration(elapsedMs) : null;
+      firstSteer && endingSegmentIndex >= 0
+        ? computeElapsedMs(turnStart, firstSteer.steer.createdAt)
+        : input.latestRun?.runId === runId &&
+            input.latestRun.startedAt &&
+            input.latestRun.completedAt
+          ? computeElapsedMs(input.latestRun.startedAt, input.latestRun.completedAt)
+          : computeElapsedMs(
+              turnStart,
+              maxIsoTimestamp(group.terminalEntry?.message.updatedAt ?? null, lastEntryEnd) ??
+                lastEntryEnd,
+            );
     const ending: TurnFoldEnding = failed
       ? usageLimitedRunIds.has(runId)
         ? "limited"
@@ -1362,52 +1383,34 @@ function deriveTurnFolds(input: {
       : isLatestInterruptedTurn || interruptedRunIds.has(runId)
         ? "stopped"
         : "worked";
-    const label =
-      ending === "stopped"
-        ? duration
-          ? `Stopped at ${duration}`
-          : "Stopped"
-        : ending === "failed"
-          ? duration
-            ? `Failed after ${duration}`
-            : "Failed"
-          : ending === "limited"
-            ? duration
-              ? `Limited at ${duration}`
-              : "Limited"
-            : duration
-              ? `Worked for ${duration}`
-              : "Worked";
-    // The checkpoint diff is what the changed-files card shows; provider
-    // counts are the fallback for turns without a checkpoint.
-    const checkpoint = readyCheckpointByRunId.get(runId);
+    const topEnding: TurnFoldEnding = endingSegmentIndex >= 0 ? "worked" : ending;
+    const label = turnFoldLabel(topEnding, elapsedMs, "Worked");
+    // An unsteered turn shows the checkpoint diff, as the changed-files card
+    // does. A steered turn's rows each count their own provider edits.
+    const checkpoint = firstSteer ? undefined : readyCheckpointByRunId.get(runId);
     const diff =
       (checkpoint ? sumCheckpointLineStat(checkpoint) : null) ??
-      sumFileChangeLineStat(
-        group.entries.flatMap((entry) => (entry.kind === "work" ? [entry.entry] : [])),
-      );
+      sumTimelineFileChangeLineStat(firstSegment);
 
-    // The top row keeps the whole turn's time, steers included. Work after a
-    // steer folds under its own row below that steer, keyed apart from the run
-    // so each segment opens on its own.
+    // Work after a steer folds under its own row below that steer, keyed apart
+    // from the run so each segment opens on its own.
     const segmentHiddenIds = (entries: ReadonlyArray<TimelineEntry>) =>
       new Set(entries.flatMap((entry) => (hiddenEntryIds.has(entry.id) ? [entry.id] : [])));
-    const firstSegment = group.entries.slice(0, group.steerSegments[0]?.startIndex);
     foldsByAnchorEntryId.set(group.anchorEntryId, {
       runId,
       anchorEntryId: group.anchorEntryId,
-      createdAt: group.startBoundary ?? firstEntry.createdAt,
+      createdAt: turnStart,
       hiddenEntryIds: segmentHiddenIds(firstSegment),
       entryIds: new Set(firstSegment.map((entry) => entry.id)),
       label,
-      ending,
+      ending: topEnding,
       diff,
       endingEntryIds,
-      failureMessage,
-      noticeMessage,
+      failureMessage: topEnding === ending ? failureMessage : null,
+      noticeMessage: topEnding === ending ? noticeMessage : null,
     });
-    for (const [index, { startIndex, steer }] of group.steerSegments.entries()) {
-      const entries = group.entries.slice(startIndex, group.steerSegments[index + 1]?.startIndex);
+    for (const [index, { steer }] of group.steerSegments.entries()) {
+      const entries = segmentEntries(index);
       const anchorEntry = entries[0];
       if (anchorEntry === undefined || !hidesNonCompactionWork(entries)) continue;
       const segmentMs = computeElapsedMs(
@@ -1415,27 +1418,44 @@ function deriveTurnFolds(input: {
         entries.map(timelineEntryEnd).reduce<string | null>(maxIsoTimestamp, null) ??
           steer.createdAt,
       );
+      const ownsEnding = index === endingSegmentIndex;
+      const segmentEnding: TurnFoldEnding = ownsEnding ? ending : "worked";
       foldsByAnchorEntryId.set(anchorEntry.id, {
         runId: RunId.make(`${runId}:steer:${steer.id}`),
         anchorEntryId: anchorEntry.id,
         createdAt: steer.createdAt,
         hiddenEntryIds: segmentHiddenIds(entries),
         entryIds: new Set(entries.map((entry) => entry.id)),
-        label: segmentMs !== null ? `Continued for ${formatDuration(segmentMs)}` : "Continued",
-        // The turn summary owns its terminal message; each segment keeps its own disclosure.
-        ending: failed ? ending : "worked",
-        diff: sumFileChangeLineStat(
-          entries.flatMap((entry) => (entry.kind === "work" ? [entry.entry] : [])),
-        ),
+        label: turnFoldLabel(segmentEnding, segmentMs, "Continued"),
+        ending: segmentEnding,
+        diff: sumTimelineFileChangeLineStat(entries),
         endingEntryIds: new Set(
           entries.flatMap((entry) => (endingEntryIds.has(entry.id) ? [entry.id] : [])),
         ),
-        failureMessage: null,
-        noticeMessage: null,
+        failureMessage: ownsEnding ? failureMessage : null,
+        noticeMessage: ownsEnding ? noticeMessage : null,
       });
     }
   }
   return foldsByAnchorEntryId;
+}
+
+function turnFoldLabel(
+  ending: TurnFoldEnding,
+  elapsedMs: number | null,
+  workedLabel: "Worked" | "Continued",
+): string {
+  const duration = elapsedMs !== null ? formatDuration(elapsedMs) : null;
+  switch (ending) {
+    case "stopped":
+      return duration ? `Stopped at ${duration}` : "Stopped";
+    case "failed":
+      return duration ? `Failed after ${duration}` : "Failed";
+    case "limited":
+      return duration ? `Limited at ${duration}` : "Limited";
+    case "worked":
+      return duration ? `${workedLabel} for ${duration}` : workedLabel;
+  }
 }
 
 function attachTrailingToolGroupsToAssistant(
