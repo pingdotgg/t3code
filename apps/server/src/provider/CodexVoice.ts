@@ -2,6 +2,7 @@
  * Client handoffs start Codex turns, then append their final answer to live speech. */
 import type { ProviderVoiceSessionEvent } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
@@ -87,6 +88,7 @@ type VoiceQueue = Queue.Queue<ProviderVoiceSessionEvent, CodexVoiceSessionError 
 interface ActiveVoice {
   readonly providerThreadId: string;
   readonly queue: VoiceQueue;
+  readonly stopConfirmed: Deferred.Deferred<void>;
   readonly delegatedTurns: Map<string, { readonly messageId?: string; answer: string | undefined }>;
   /** Handoff message identities survive native retries until successful completion. */
   readonly expectedHandoffs: Set<string>;
@@ -161,12 +163,16 @@ export const makeCodexVoice = Effect.fn("makeCodexVoice")(function* (
     Effect.flatMap(Ref.get(activeRef), (active) => {
       if (!active || active.providerThreadId !== payload.threadId) return Effect.void;
       active.stopped = true;
-      return active.closed
-        ? Effect.void
-        : finish(active, {
-            type: "closed",
-            ...(payload.reason ? { reason: payload.reason } : {}),
-          });
+      return Deferred.succeed(active.stopConfirmed, undefined).pipe(
+        Effect.andThen(
+          active.closed
+            ? Effect.void
+            : finish(active, {
+                type: "closed",
+                ...(payload.reason ? { reason: payload.reason } : {}),
+              }),
+        ),
+      );
     }),
   );
 
@@ -208,10 +214,27 @@ export const makeCodexVoice = Effect.fn("makeCodexVoice")(function* (
             Ref.get(activeRef).pipe(
               Effect.flatMap((current) =>
                 current === active && !active.closed
-                  ? client.raw.request("thread/realtime/appendSpeech", {
-                      threadId: active.providerThreadId,
-                      text: answer,
-                    })
+                  ? client.raw
+                      .request("thread/realtime/appendSpeech", {
+                        threadId: active.providerThreadId,
+                        text: answer,
+                      })
+                      .pipe(
+                        Effect.timeoutOrElse({
+                          duration: "10 seconds",
+                          orElse: () =>
+                            Effect.suspend(() => {
+                              active.closed = true;
+                              return Queue.fail(
+                                active.queue,
+                                new CodexVoiceSessionError({
+                                  detail:
+                                    "Codex did not acknowledge speech; ending the voice session.",
+                                }),
+                              ).pipe(Effect.asVoid);
+                            }),
+                        }),
+                      )
                   : Effect.void,
               ),
             ),
@@ -231,7 +254,21 @@ export const makeCodexVoice = Effect.fn("makeCodexVoice")(function* (
     if ((yield* Ref.get(activeRef)) !== active) return;
     active.closed = true;
     if (!active.stopped) {
-      yield* client.raw.request("thread/realtime/stop", { threadId: active.providerThreadId });
+      // A timed-out append may already be queued; stop confirmation is the replacement barrier.
+      yield* Effect.raceFirst(
+        client.raw.request("thread/realtime/stop", { threadId: active.providerThreadId }),
+        Deferred.await(active.stopConfirmed),
+      ).pipe(
+        Effect.timeoutOrElse({
+          duration: "10 seconds",
+          orElse: () =>
+            Effect.fail(
+              new CodexVoiceSessionError({
+                detail: "Codex did not confirm voice cleanup; retry after the session closes.",
+              }),
+            ),
+        }),
+      );
       active.stopped = true;
     }
     yield* Ref.set(activeRef, undefined);
@@ -257,6 +294,7 @@ export const makeCodexVoice = Effect.fn("makeCodexVoice")(function* (
         const active: ActiveVoice = {
           providerThreadId: input.providerThreadId,
           queue,
+          stopConfirmed: yield* Deferred.make<void>(),
           delegatedTurns: new Map(),
           expectedHandoffs: new Set(),
           closed: false,
