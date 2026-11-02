@@ -56,6 +56,7 @@ export function PullRequestLabelChip({
       {...(color ? { style: { "--label": color } as CSSProperties } : {})}
     >
       <span className="truncate">{label.name}</span>
+      {label.description ? <span className="sr-only">: {label.description}</span> : null}
       {children}
     </Badge>
   );

@@ -472,7 +472,7 @@ function searchItem(number: number, repository: string, updatedAt: string) {
     updatedAt,
     repository: { nameWithOwner: repository },
     reviewRequests: { nodes: [{ requestedReviewer: { __typename: "User", login: "hubot" } }] },
-    labels: { nodes: [{ name: "bug", color: "ff0000", description: null }] },
+    labels: { nodes: [{ name: "bug", color: "ff0000", description: "Something is broken" }] },
   };
 }
 
@@ -1566,6 +1566,9 @@ layer("GitHubPullRequestApi.layer", (it) => {
           [0, 0],
         ],
       );
+      assert.deepStrictEqual(batch.items[0]?.labels, [
+        { name: "bug", color: "ff0000", description: "Something is broken" },
+      ]);
       assert.isFalse(batch.truncated);
     }),
   );
