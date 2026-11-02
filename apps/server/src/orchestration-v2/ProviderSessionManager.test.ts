@@ -342,9 +342,25 @@ const makeProviderAdapter = Effect.fnUntraced(function* (
     readonly beforeUnload?: Effect.Effect<void>;
     readonly spawnBeforeOpen?: boolean;
     readonly scopeCloseReached?: Deferred.Deferred<void>;
+    readonly runtimeCalls?: Ref.Ref<ReadonlyArray<string>>;
   } = {},
 ) {
   const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
+  const recordRuntimeCall = Effect.fnUntraced(function* (
+    operation: string,
+    providerThread: OrchestrationV2ProviderThread,
+    threadId?: ThreadId | null,
+  ) {
+    if (options.runtimeCalls === undefined) return;
+    const nativeThreadId = providerThread.nativeThreadRef?.nativeId ?? "";
+    const call =
+      threadId === undefined
+        ? `${operation} ${nativeThreadId}`
+        : `${operation} ${nativeThreadId} mcp=${
+            threadId !== null && (yield* mcpSessions.read(threadId)) !== undefined
+          }`;
+    yield* Ref.update(options.runtimeCalls, (calls) => [...calls, call]);
+  });
   const countClose = Effect.addFinalizer(() =>
     Ref.update(state, (current) => ({
       ...current,
@@ -431,8 +447,20 @@ const makeProviderAdapter = Effect.fnUntraced(function* (
             Ref.update(state, (current) => ({
               ...current,
               resumeCount: current.resumeCount + 1,
-            })).pipe(Effect.as(threadInput.providerThread)),
-          startTurn: () => options.startTurn ?? Effect.void,
+            })).pipe(
+              Effect.andThen(
+                recordRuntimeCall(
+                  "resume",
+                  threadInput.providerThread,
+                  threadInput.threadId ?? threadInput.providerThread.appThreadId,
+                ),
+              ),
+              Effect.as(threadInput.providerThread),
+            ),
+          startTurn: (turnInput) =>
+            recordRuntimeCall("startTurn", turnInput.providerThread).pipe(
+              Effect.andThen(options.startTurn ?? Effect.void),
+            ),
           steerTurn: () => Effect.void,
           interruptTurn: () =>
             Ref.update(state, (current) => ({
@@ -455,6 +483,20 @@ const makeProviderAdapter = Effect.fnUntraced(function* (
           readThreadSnapshot: () => unimplemented("readThreadSnapshot unused in test"),
           rollbackThread: () => unimplemented("rollbackThread unused in test"),
           forkThread: () => unimplemented("forkThread unused in test"),
+          ...(options.runtimeCalls === undefined
+            ? {}
+            : {
+                mcpApps: {
+                  listTools: ({ providerThread }) =>
+                    recordRuntimeCall("listTools", providerThread).pipe(Effect.as([])),
+                  callTool: ({ providerThread }) =>
+                    recordRuntimeCall("callTool", providerThread).pipe(Effect.as({ content: [] })),
+                  readResource: ({ providerThread }) =>
+                    recordRuntimeCall("readResource", providerThread).pipe(
+                      Effect.as({ contents: [] }),
+                    ),
+                },
+              }),
         } satisfies ProviderAdapter.ProviderAdapterV2SessionRuntime;
       }),
   });
@@ -490,6 +532,7 @@ function layerTest(input: {
   readonly beforeUnload?: Effect.Effect<void>;
   readonly spawnBeforeOpen?: boolean;
   readonly scopeCloseReached?: Deferred.Deferred<void>;
+  readonly runtimeCalls?: Ref.Ref<ReadonlyArray<string>>;
   readonly serverSettingsLayer?: ReturnType<typeof ServerSettings.layerTest>;
   readonly projectServiceLayer?: Layer.Layer<ProjectService.ProjectService>;
 }) {
@@ -528,6 +571,7 @@ function layerTest(input: {
       ...(input.scopeCloseReached === undefined
         ? {}
         : { scopeCloseReached: input.scopeCloseReached }),
+      ...(input.runtimeCalls === undefined ? {} : { runtimeCalls: input.runtimeCalls }),
     }).pipe(Effect.map(ProviderAdapterRegistry.layerSingle)),
   );
   const layerConfiguredMcpRegistry =
@@ -3624,6 +3668,117 @@ it.effect(
       yield* effect.pipe(
         Effect.provide(layerTest({ state, idleTimeoutMs: 1000, beforeUnload })),
         Effect.scoped,
+      );
+    }),
+);
+
+// regression: #29433 MCP app calls on a shared Codex session hit a thread the app-server never loaded
+it.effect(
+  "ProviderSessionManagerV2 loads an unloaded provider thread with its MCP session before an MCP app call",
+  () =>
+    Effect.gen(function* () {
+      const state = yield* Ref.make(emptyState);
+      const runtimeCalls = yield* Ref.make<ReadonlyArray<string>>([]);
+      const effect = Effect.gen(function* () {
+        const eventSink = yield* EventSink.EventSinkV2;
+        const idAllocator = yield* IdAllocator.IdAllocatorV2;
+        const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+        const now = yield* DateTime.now;
+        const appThreadId = ThreadId.make("mcp-app-thread");
+        const otherThreadId = ThreadId.make("mcp-app-other-thread");
+        const providerSessionId = idAllocator.derive.providerSession({
+          providerInstanceId: modelSelection.instanceId,
+        });
+        const appProviderThread = makeProviderThread({
+          idAllocator,
+          threadId: appThreadId,
+          providerSessionId,
+          now,
+          nativeThreadId: "native-app",
+        });
+        const otherProviderThread = makeProviderThread({
+          idAllocator,
+          threadId: otherThreadId,
+          providerSessionId,
+          now,
+          nativeThreadId: "native-other",
+        });
+        yield* eventSink.write({
+          events: [
+            yield* makeThreadCreatedEvent({ idAllocator, threadId: appThreadId, now }),
+            yield* makeThreadCreatedEvent({ idAllocator, threadId: otherThreadId, now }),
+            {
+              id: yield* idAllocator.allocate.event({ threadId: appThreadId }),
+              type: "provider-thread.updated",
+              threadId: appThreadId,
+              driver: CODEX_DRIVER,
+              occurredAt: now,
+              payload: appProviderThread,
+            },
+            {
+              id: yield* idAllocator.allocate.event({ threadId: otherThreadId }),
+              type: "provider-thread.updated",
+              threadId: otherThreadId,
+              driver: CODEX_DRIVER,
+              occurredAt: now,
+              payload: otherProviderThread,
+            },
+          ],
+        });
+        // After a server restart, another thread's turn reopens the shared session.
+        const otherRuntime = yield* manager.open({
+          threadId: otherThreadId,
+          providerSessionId,
+          modelSelection,
+          runtimePolicy,
+        });
+        yield* otherRuntime.resumeThread({
+          providerThread: otherProviderThread,
+          threadId: otherThreadId,
+          modelSelection,
+          runtimePolicy,
+        });
+
+        const runtime = Option.getOrThrow(yield* manager.get(providerSessionId));
+        const mcpApps = runtime.mcpApps;
+        assert.isDefined(mcpApps);
+        yield* mcpApps!.listTools({ providerThread: appProviderThread, server: "rating" });
+        yield* mcpApps!.callTool({
+          providerThread: appProviderThread,
+          server: "rating",
+          tool: "set_rating",
+          arguments: { rating: 5 },
+        });
+
+        assert.deepEqual(
+          yield* Ref.get(runtimeCalls),
+          [
+            "resume native-other mcp=true",
+            "resume native-app mcp=true",
+            "listTools native-app",
+            "callTool native-app",
+          ],
+          "an MCP app call must first load its provider thread, attached with its MCP session",
+        );
+        yield* TestClock.adjust("1 second");
+        yield* Effect.yieldNow;
+        assert.deepEqual(
+          (yield* Ref.get(state)).unloadedNativeThreadIds,
+          ["native-app"],
+          "a thread loaded for an MCP app call is unloaded once idle",
+        );
+      });
+
+      yield* effect.pipe(
+        Effect.provide(
+          layerTest({
+            state,
+            idleTimeoutMs: 1000,
+            runtimeCalls,
+            // Keeps the shared session open so only the thread's idle unload is observed.
+            hasPendingBackgroundWork: Effect.succeed(true),
+          }),
+        ),
       );
     }),
 );
