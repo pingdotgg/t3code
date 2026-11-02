@@ -201,23 +201,27 @@ export function backgroundWorkNowItem(input: {
     id: `background-work:${input.threadId}`,
     icon: rows.every(isCommand) ? <TerminalIcon /> : <CircleDashedIcon />,
     title:
-      only && typeof only.label !== "string" ? (
+      only && typeof only.label !== "string" && only.task.label !== only.task.kind ? (
         <>
           {presentation.waiting ? "Waiting" : "Running"} · {only.label}
         </>
       ) : (
         presentation.title
       ),
-    description: only
-      ? only.activity
-      : newest
-        ? `${newest.task.label}: ${newest.activity}`
-        : rows.map((row, index) => (
-            <Fragment key={row.task.taskId}>
-              {index > 0 ? ", " : null}
-              {row.label}
-            </Fragment>
-          )),
+    description: only ? (
+      only.activity
+    ) : newest ? (
+      <>
+        {newest.label}: {newest.activity}
+      </>
+    ) : (
+      rows.map((row, index) => (
+        <Fragment key={row.task.taskId}>
+          {index > 0 ? ", " : null}
+          {row.label}
+        </Fragment>
+      ))
+    ),
     actions: (
       <>
         {startedAtMs === null ? null : (
