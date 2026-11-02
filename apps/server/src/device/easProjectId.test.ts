@@ -219,6 +219,33 @@ it.effect.each([
     expected: Option.none(),
   },
   {
+    case: "gives no answer when a config spreads a part into an expo entry, which Expo reads as the config",
+    files: {
+      "app.config.js": `module.exports = ({ config }) => ({ ...config, expo: { ...config.preview.expo } });`,
+      "app.json": JSON.stringify({
+        expo: {
+          extra: { eas: { projectId: ID_A } },
+          preview: { expo: { extra: { eas: { projectId: ID_B } } } },
+        },
+      }),
+    },
+    expected: Option.none(),
+  },
+  {
+    case: "gives no answer when a config spreads a part into a computed key",
+    files: {
+      "app.config.js": `module.exports = ({ config }) => ({ ...config, [[...config.keys]]: config.preview });`,
+      "app.json": JSON.stringify({
+        expo: {
+          keys: ["extra"],
+          extra: { eas: { projectId: ID_A } },
+          preview: { eas: { projectId: ID_B } },
+        },
+      }),
+    },
+    expected: Option.none(),
+  },
+  {
     case: "gives no answer when a template line that only looks like a comment replaces extra",
     files: {
       "app.config.js": `module.exports = ({ config }) => {

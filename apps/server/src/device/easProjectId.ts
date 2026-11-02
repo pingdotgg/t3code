@@ -55,10 +55,10 @@ const CONFIG_PART_AT = new RegExp(
     HOLDER_END,
   "uy",
 );
-// So a part keeps the id only as the first item of an array or of the entry it
-// names (`ios: { ...config.ios`); the entry's key is captured to compare.
+// So a part keeps the id only as the first item of the object or array entry it
+// names (`ios: { ...config.ios`, `plugins: [...config.plugins`); the key is captured.
 const PART_OPENER =
-  /(?<=(?:\[|[{,]\s*["']?([\p{ID_Start}$_][\p{ID_Continue}$\u200c\u200d]*)["']?\s*:\s*\{)\s*)/uy;
+  /(?<=[{,]\s*["']?([\p{ID_Start}$_][\p{ID_Continue}$\u200c\u200d]*)["']?\s*:\s*[[{]\s*)/uy;
 
 /**
  * Only Expo's `config`, its own `extra`/`extra.eas`, and parts kept in their own entry can
@@ -87,7 +87,8 @@ const staticConfigUse = (source: string): "spreads" | "replaces" | "unclear" => 
     const part = CONFIG_PART_AT.exec(source);
     PART_OPENER.lastIndex = next;
     const opener = part && PART_OPENER.exec(source);
-    if (opener && (opener[1] === undefined || opener[1] === part[1])) continue;
+    // Expo reads a returned `expo` entry as the whole config.
+    if (opener && opener[1] === part[1] && opener[1] !== "expo") continue;
     HOLDER_AT.extra.lastIndex = at;
     HOLDER_AT.eas.lastIndex = at;
     if (!HOLDER_AT.extra.test(source) && !HOLDER_AT.eas.test(source)) return "replaces";
