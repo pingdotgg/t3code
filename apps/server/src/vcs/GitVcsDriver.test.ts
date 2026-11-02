@@ -16,7 +16,12 @@ import { ChildProcessSpawner } from "effect/process";
 import * as Metric from "effect/Metric";
 import { assert, it } from "@effect/vitest";
 
-import { CheckpointRef, GitCommandError, VcsProcessExitError } from "@t3tools/contracts";
+import {
+  CheckpointRef,
+  GitCommandError,
+  VcsProcessExitError,
+  VcsProcessTimeoutError,
+} from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { symlinksSupported } from "@t3tools/shared/testing/symlinks";
 import * as ServerConfig from "../config.ts";
@@ -349,6 +354,53 @@ it.effect("checkpoint capture refuses a truncated nested repository listing", ()
 
     assert.strictEqual(result._tag, "Failure");
     assert.isFalse(yield* driver.checkpoints.hasCheckpointRef({ cwd, checkpointRef }));
+  }).pipe(Effect.scoped, Effect.provide(layerGitContract)),
+);
+
+it.effect("checkpoint capture removes the batch object directory a killed add leaves", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const liveProcess = yield* VcsProcess.VcsProcess;
+    const driver = yield* GitVcsDriver.makeVcsDriverShape();
+    const cwd = yield* fs.makeTempDirectoryScoped({ prefix: "t3-checkpoint-killed-add-" });
+    const { checkpointRef } = yield* makeCheckpointFixture(driver, cwd);
+    const objects = path.join(cwd, ".git", "objects");
+    yield* fs.makeDirectory(path.join(objects, "tmp_objdir-bulk-fsync-other"));
+    const captureDriver = yield* GitVcsDriver.makeVcsDriverShape().pipe(
+      Effect.provideService(VcsProcess.VcsProcess, {
+        run: (input) =>
+          input.args.includes("add")
+            ? fs
+                .makeDirectory(path.join(objects, "tmp_objdir-bulk-fsync-killed", "ab"), {
+                  recursive: true,
+                })
+                .pipe(
+                  Effect.orDie,
+                  Effect.andThen(
+                    Effect.fail(
+                      new VcsProcessTimeoutError({
+                        operation: input.operation,
+                        command: input.command,
+                        cwd: input.cwd,
+                        timeoutMs: 30_000,
+                      }),
+                    ),
+                  ),
+                )
+            : liveProcess.run(input),
+      }),
+    );
+
+    const result = yield* Effect.result(
+      captureDriver.checkpoints.captureCheckpoint({ cwd, checkpointRef }),
+    );
+
+    assert.strictEqual(result._tag, "Failure");
+    assert.deepEqual(
+      (yield* fs.readDirectory(objects)).filter((entry) => entry.startsWith("tmp_objdir-")),
+      ["tmp_objdir-bulk-fsync-other"],
+    );
   }).pipe(Effect.scoped, Effect.provide(layerGitContract)),
 );
 

@@ -8,6 +8,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
+import * as Semaphore from "effect/Semaphore";
 import { ChildProcessSpawner } from "effect/process";
 
 import {
@@ -446,6 +447,7 @@ export class GitVcsDriver extends Context.Service<
 const WORKSPACE_FILES_MAX_OUTPUT_BYTES = 16 * 1024 * 1024;
 const CHECKPOINT_RECOVERY_MAX_CANDIDATES = 64;
 const CHECKPOINT_RECOVERY_TIMEOUT = "5 seconds";
+const BATCH_OBJECT_DIR = "tmp_objdir-bulk-fsync-";
 const GIT_CHECK_IGNORE_MAX_STDIN_BYTES = 256 * 1024;
 const WORKSPACE_GIT_HARDENED_CONFIG_ARGS = [
   "-c",
@@ -891,6 +893,17 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
       : []),
   ] as const;
 
+  // One staging run per repository, so failure cleanup only removes its own batch directory.
+  const stagingPermits = new Map<string, Semaphore.Semaphore>();
+  const withStagingPermit = (gitCommonDir: string) => {
+    let semaphore = stagingPermits.get(gitCommonDir);
+    if (semaphore === undefined) {
+      semaphore = Semaphore.makeUnsafe(1);
+      stagingPermits.set(gitCommonDir, semaphore);
+    }
+    return semaphore.withPermits(1);
+  };
+
   // Checkpoints must handle existing paths beyond Windows MAX_PATH, even when
   // core.longpaths is disabled in the user's Git configuration.
   const longPaths = hostPlatform === "win32" ? ["-c", "core.longpaths=true"] : [];
@@ -1134,7 +1147,7 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
             ],
             env: commitEnv,
           });
-        yield* stageFiles([]).pipe(
+        const stage = stageFiles([]).pipe(
           Effect.catchTags({
             VcsProcessExitError: (error) =>
               Effect.gen(function* () {
@@ -1189,6 +1202,33 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
                 }),
               ),
           }),
+        );
+        // Batch fsync stages objects in a tmp_objdir-bulk-fsync-* that a killed Git leaves behind.
+        const objectsDir = path.join(gitCommonDir, "objects");
+        const listBatchObjectDirs = fileSystem.readDirectory(objectsDir).pipe(
+          Effect.map((entries) => entries.filter((entry) => entry.startsWith(BATCH_OBJECT_DIR))),
+          Effect.orElseSucceed((): ReadonlyArray<string> => []),
+        );
+        yield* listBatchObjectDirs.pipe(
+          Effect.flatMap((existing) =>
+            stage.pipe(
+              Effect.onError(() =>
+                listBatchObjectDirs.pipe(
+                  Effect.flatMap((entries) =>
+                    Effect.forEach(
+                      entries.filter((entry) => !existing.includes(entry)),
+                      (entry) =>
+                        fileSystem
+                          .remove(path.join(objectsDir, entry), { recursive: true })
+                          .pipe(Effect.ignore),
+                      { discard: true },
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ),
+          withStagingPermit(gitCommonDir),
         );
 
         const writeTreeResult = yield* execute({
