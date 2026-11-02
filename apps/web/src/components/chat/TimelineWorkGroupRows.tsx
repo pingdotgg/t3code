@@ -930,21 +930,51 @@ function WorkingWindowView({ window, itemKey }: { window: WorkingWindow; itemKey
   const { isCompacting, isPreparingWorktree, turnEnded, pendingRequest } =
     use(TimelineRowActivityCtx);
   const open = window.historyOpen;
-  const [showAll, setShowAll] = useState(open);
-  if (open && !showAll) setShowAll(true);
+  const [history, setHistory] = useState<{ head: number; tailStart: number } | null>(null);
+  if (open && history === null) {
+    setHistory({
+      head: WORKING_HISTORY_BATCH,
+      tailStart: Math.max(0, window.items.length - WORKING_WINDOW_TAIL),
+    });
+  }
   const windowRef = useRef<HTMLDivElement>(null);
+  const spacerRef = useRef<HTMLDivElement>(null);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- older items stay mounted until the collapse transition finishes clipping them
   useEffect(() => {
-    if (open || !showAll) return;
+    if (open || history === null) return;
     let cancelled = false;
-    const transitions = windowRef.current?.getAnimations().map((animation) => animation.finished);
-    void Promise.allSettled(transitions ?? []).then(() => {
-      if (!cancelled) setShowAll(false);
+    void transitionsSettled(windowRef.current).then(() => {
+      if (!cancelled) setHistory(null);
     });
     return () => {
       cancelled = true;
     };
-  }, [open, showAll]);
+  }, [open, history]);
+  const head = history?.head;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- mounts older items as the timeline scroll brings them near the viewport
+  useEffect(() => {
+    const spacer = spacerRef.current;
+    if (!open || head === undefined || !spacer) return;
+    let observer: IntersectionObserver | undefined;
+    let cancelled = false;
+    void transitionsSettled(windowRef.current).then(() => {
+      if (cancelled) return;
+      observer = new IntersectionObserver(
+        (entries) => {
+          if (!entries.some((entry) => entry.isIntersecting)) return;
+          setHistory(
+            (current) => current && { ...current, head: current.head + WORKING_HISTORY_BATCH },
+          );
+        },
+        { scrollMargin: "100% 0px" },
+      );
+      observer.observe(spacer);
+    });
+    return () => {
+      cancelled = true;
+      observer?.disconnect();
+    };
+  }, [open, head]);
   const [full, setFull] = useState(false);
   const observeHeight = (element: HTMLDivElement | null) => {
     windowRef.current = element;
@@ -962,7 +992,16 @@ function WorkingWindowView({ window, itemKey }: { window: WorkingWindow; itemKey
     state: workGroupViewState,
     onToggleEntry: () => onToggleWorkEntry("working-indicator-row"),
   }))();
-  const shown = showAll ? window.items : window.items.slice(-WORKING_WINDOW_TAIL);
+  const headEnd = history ? Math.min(history.head, history.tailStart) : 0;
+  const unmounted = history ? history.tailStart - headEnd : 0;
+  const shown = history
+    ? window.items.slice(history.tailStart)
+    : window.items.slice(-WORKING_WINDOW_TAIL);
+  const renderItem = (item: WorkingWindowItem) => (
+    <div key={item.id} className="min-w-0">
+      <WorkingWindowItemView item={item} itemKey={itemKey} current={item === window.items.at(-1)} />
+    </div>
+  );
   const showThinking =
     !turnEnded &&
     !pendingRequest &&
@@ -986,15 +1025,16 @@ function WorkingWindowView({ window, itemKey }: { window: WorkingWindow; itemKey
           !open && full && "[mask-image:linear-gradient(to_bottom,transparent,black_36px)]",
         )}
       >
-        {shown.map((item) => (
-          <div key={item.id} className="min-w-0">
-            <WorkingWindowItemView
-              item={item}
-              itemKey={itemKey}
-              current={item === window.items.at(-1)}
-            />
-          </div>
-        ))}
+        {history ? window.items.slice(0, headEnd).map(renderItem) : null}
+        {unmounted > 0 ? (
+          <div
+            ref={spacerRef}
+            aria-hidden
+            className="shrink-0"
+            style={{ height: unmounted * (compactWorkEntryHeight + 4) }}
+          />
+        ) : null}
+        {shown.map(renderItem)}
         {showThinking ? (
           <LiveActivityRow label="Thinking" iconName="brain" active interruptible />
         ) : null}
@@ -1016,6 +1056,11 @@ function workingWindowItemIsLive(item: WorkingWindowItem | undefined): boolean {
 const WORKING_WINDOW_MAX_HEIGHT = 220;
 
 const WORKING_WINDOW_TAIL = 12;
+
+const WORKING_HISTORY_BATCH = 50;
+
+const transitionsSettled = (element: HTMLElement | null) =>
+  Promise.allSettled(element?.getAnimations().map((animation) => animation.finished) ?? []);
 
 /** Running subagents outrank the diff; live statuses come from the thread's subagent roster. */
 function WorkingAgentsSlot({

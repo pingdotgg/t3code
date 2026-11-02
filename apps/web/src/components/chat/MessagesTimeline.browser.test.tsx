@@ -357,6 +357,7 @@ describe("MessagesTimeline work rows", () => {
     ).toBeGreaterThanOrEqual(history.getBoundingClientRect().top);
     expect(barElement.getBoundingClientRect().top).toBe(barTop);
     expect([...barTops]).toEqual([barTop]);
+    expect(mountedSources()).toBeLessThan(120);
 
     await screen.getByRole("button", { name: "Close work history" }).click();
     await expect.element(barElement).toHaveAttribute("aria-expanded", "false");
@@ -365,6 +366,19 @@ describe("MessagesTimeline work rows", () => {
     await vi.waitFor(() => expect(mountedSources()).toBeLessThan(60));
     expect(barElement.getBoundingClientRect().top).toBe(barTop);
     expect([...barTops]).toEqual([barTop]);
+
+    await bar.click();
+    await expect
+      .element(screen.getByText("History answer 49", { exact: true }))
+      .toBeInTheDocument();
+    await Promise.all(history.getAnimations().map((animation) => animation.finished));
+    expect(screen.container.textContent).not.toContain("History answer 50");
+    await act(() => {
+      screen.getByText("History answer 49", { exact: true }).element().scrollIntoView();
+    });
+    await expect
+      .element(screen.getByText("History answer 99", { exact: true }))
+      .toBeInTheDocument();
   });
 
   it.each(["delegated", "legacy", "missing"] as const)(
