@@ -34,6 +34,7 @@ import { resolveDiscoveredServerUrl } from "../../browser/browserTargetResolver"
 import { stackedThreadToast, toastManager } from "../ui/toast";
 import { confirmTerminalClose } from "../../lib/terminalCloseConfirm";
 import { findReusableProjectScriptTerminal } from "../../lib/projectScriptTerminal";
+import { closingTerminalIds } from "../terminal/closingTerminals";
 import { type TerminalContextSelection } from "../../lib/terminalContext";
 import {
   focusActiveDrawerTerminal,
@@ -231,6 +232,7 @@ export function useChatTerminalActions(input: ChatTerminalActionsInput) {
             activeTerminalId: terminalUiState.activeTerminalId,
             panelTerminalIds,
             runningTerminalIds,
+            closingTerminalIds: activeThreadRef ? closingTerminalIds(activeThreadRef) : [],
           });
     const targetWorktreePath = options?.worktreePath ?? activeThread.worktreePath ?? null;
 

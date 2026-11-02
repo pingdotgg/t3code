@@ -8,6 +8,7 @@ const fixture = vi.hoisted(() => ({
   statusByThreadId: new Map<string, "starting" | "running" | "exited">(),
   pendingSurfaces: [] as Array<() => void>,
   typeIntoSurface: null as ((data: string) => void) | null,
+  pressKey: null as ((event: KeyboardEvent) => boolean) | null,
   writes: [] as Array<{ threadId: string; data: string }>,
   resetSessions: () => {},
 }));
@@ -22,10 +23,17 @@ const fakeSurface: object = new Proxy(
 );
 vi.mock("~/terminal/ghostty/surface", () => ({
   GhosttyTerminalSurface: {
-    create: (_mount: HTMLElement, options: { onData: (data: string) => void }) =>
+    create: (
+      _mount: HTMLElement,
+      options: {
+        onData: (data: string) => void;
+        beforeKey: (event: KeyboardEvent) => boolean;
+      },
+    ) =>
       new Promise((resolve) => {
         fixture.pendingSurfaces.push(() => {
           fixture.typeIntoSurface = options.onData;
+          fixture.pressKey = options.beforeKey;
           resolve(fakeSurface);
         });
       }),
@@ -126,6 +134,7 @@ function setup(originalStatus: "starting" | "exited" = "exited") {
   ]);
   fixture.pendingSurfaces = [];
   fixture.typeIntoSurface = null;
+  fixture.pressKey = null;
   fixture.writes = [];
   return { original, other };
 }
@@ -136,13 +145,19 @@ it("drops input until the shell runs instead of failing a write for every key", 
   await act(async () => {
     fixture.pendingSurfaces.shift()?.();
   });
+  const clearShortcut = () => new KeyboardEvent("keydown", { key: "l", ctrlKey: true });
   fixture.typeIntoSurface?.("early");
+  fixture.pressKey?.(clearShortcut());
   await screen.rerender(<Drawer threadRef={other} onCloseTerminal={() => {}} />);
   await act(async () => {
     fixture.pendingSurfaces.shift()?.();
   });
   fixture.typeIntoSurface?.("ready");
-  expect(fixture.writes).toEqual([{ threadId: other.threadId, data: "ready" }]);
+  fixture.pressKey?.(clearShortcut());
+  expect(fixture.writes).toEqual([
+    { threadId: other.threadId, data: "ready" },
+    { threadId: other.threadId, data: "\u000c" },
+  ]);
 });
 
 it("closes an exited terminal on its own thread after navigating to one reusing its ID", async () => {
