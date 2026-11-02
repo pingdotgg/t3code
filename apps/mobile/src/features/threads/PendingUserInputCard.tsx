@@ -1,13 +1,29 @@
+import { SelectableMarkdownText } from "../../native/SelectableMarkdownText";
+import type { SelectableMarkdownTextProps } from "../../native/SelectableMarkdownText.types";
+import { useMarkdownImageSource } from "../../native/useMarkdownImageSource";
+import { useMarkdownPreviewStyles } from "../files/FileMarkdownPreview";
+import { useScaledTextRole } from "../settings/appearance/useScaledTextRole";
+import { useUniwindTheme } from "../../lib/useUniwindTheme";
+import {
+  flattenThemeColor,
+  themeColorWithAlpha,
+  themeColorWithContrast,
+} from "../../lib/mobileTheme";
+import { useThreadMarkdownLinkPress } from "./useThreadMarkdownLinkPress";
+import { useThreadMarkdownImageRenderer } from "./useThreadMarkdownImageRenderer";
+import { ThreadMediaVisibleContext } from "./ThreadMarkdownVideo";
+import { FilePreviewModal, type FilePreviewSource } from "../../components/FilePreviewModal";
+import { VideoPreviewModal, type VideoPreviewSource } from "../../components/VideoPreviewModal";
 import { Button } from "../../components/ui/Button";
 import { QuestionAttachments } from "./QuestionAttachments";
-import type { EnvironmentId, RuntimeRequestId } from "@t3tools/contracts";
+import type { EnvironmentId, ThreadId, RuntimeRequestId } from "@t3tools/contracts";
 import type { ThreadUserInputQuestion } from "@t3tools/client-runtime/state/thread-requests";
 import {
   markdownProseDirection,
   textDirection,
   type TextDirection,
 } from "@t3tools/shared/textDirection";
-import { useRef } from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
 import { Platform, Pressable, ScrollView, View, type LayoutChangeEvent } from "react-native";
 import Animated, {
   Easing,
@@ -25,10 +41,9 @@ import { SymbolView } from "../../components/ui/AppSymbol";
 import { AppText as Text } from "../../components/ui/AppText";
 import { ControlPill } from "../../components/ui/ControlPill";
 import { cn } from "../../lib/cn";
-import { SelectableMarkdownText } from "../../native/SelectableMarkdownText";
-import { useOpenPullRequest } from "../../native/useOpenPullRequest";
-import { useMarkdownPreviewStyles } from "../files/FileMarkdownPreview";
 import { useLiveThreadLinkLabels } from "../../state/entities";
+import { markdownAccessibility } from "../../lib/markdownDocument";
+import { markdownFileEmbedLabel } from "../../lib/markdownMedia";
 import {
   isPendingUserInputOptionSelected,
   type PendingUserInputDraftAnswer,
@@ -37,6 +52,8 @@ import type { PendingUserInput } from "../../lib/threadActivity";
 
 export interface PendingUserInputCardProps {
   readonly environmentId: EnvironmentId;
+  readonly threadId: ThreadId;
+  readonly workspaceRoot: string | null;
   readonly canOperateThread: boolean;
   readonly pendingUserInput: PendingUserInput;
   readonly maxHeight: DerivedValue<number>;
@@ -74,29 +91,117 @@ function proseDirectionStyle(text: string, setDirection: TextDirection | undefin
   } as const;
 }
 
-function QuestionText(props: {
-  readonly markdown: string;
-  readonly environmentId: EnvironmentId;
-  readonly setDirection: TextDirection | undefined;
-}) {
-  const styles = useMarkdownPreviewStyles();
-  const markdown = useLiveThreadLinkLabels(props.markdown, props.environmentId);
-  const openLink = useOpenPullRequest();
+function QuestionText(
+  props: SelectableMarkdownTextProps & {
+    readonly environmentId: EnvironmentId;
+    readonly setDirection: TextDirection | undefined;
+  },
+) {
+  const { environmentId, setDirection, ...markdownProps } = props;
+  const markdown = useLiveThreadLinkLabels(props.markdown, environmentId);
   return (
     <SelectableMarkdownText
+      {...markdownProps}
       markdown={markdown}
-      textStyle={styles.nativeTextStyle}
       writingDirection={markdownProseDirection(markdown)}
-      // Android's renderer aligns relative to each paragraph's direction.
-      textAlign={
-        Platform.OS === "android" ? undefined : props.setDirection === "rtl" ? "right" : "left"
-      }
-      onLinkPress={(href) => void openLink(href)}
+      textAlign={Platform.OS === "android" ? undefined : setDirection === "rtl" ? "right" : "left"}
     />
   );
 }
 
 export function PendingUserInputCard(props: PendingUserInputCardProps) {
+  const fileEmbedLabel = useCallback(
+    (href: string, standalone: boolean) =>
+      markdownFileEmbedLabel(
+        href,
+        {
+          environmentId: props.environmentId,
+          threadId: props.threadId,
+          workspaceRoot: props.workspaceRoot,
+        },
+        standalone,
+      ),
+    [props.environmentId, props.threadId, props.workspaceRoot],
+  );
+  const questions = useMemo(
+    () =>
+      props.pendingUserInput.questions.map((question) => ({
+        question,
+        spokenFallback: markdownAccessibility(question.question, fileEmbedLabel).hasText
+          ? undefined
+          : question.question,
+      })),
+    [props.pendingUserInput.questions, fileEmbedLabel],
+  );
+  const styles = useMarkdownPreviewStyles();
+  const theme = useUniwindTheme();
+  const questionTextRole = useScaledTextRole("body");
+  const optionTextRole = useScaledTextRole("footnote");
+  const textStyles = useMemo(() => {
+    const base = {
+      ...styles.nativeTextStyle,
+      linkColor: themeColorWithContrast(styles.nativeTextStyle.linkColor, [
+        theme["--color-card-alt"],
+        theme["--color-input"],
+        flattenThemeColor(
+          themeColorWithAlpha(theme["--color-primary"], 0.1),
+          theme["--color-card-alt"],
+        ),
+      ]),
+    };
+    return {
+      question: { ...base, ...questionTextRole, color: theme["--color-foreground"] },
+      label: {
+        ...base,
+        color: theme["--color-foreground-secondary"],
+        fontFamily: base.boldFontFamily,
+        ...optionTextRole,
+      },
+      selectedLabel: {
+        ...base,
+        color: theme["--color-foreground"],
+        fontFamily: base.boldFontFamily,
+        ...optionTextRole,
+      },
+      description: {
+        ...base,
+        color: theme["--color-foreground-muted"],
+        ...optionTextRole,
+      },
+    };
+  }, [styles.nativeTextStyle, theme, questionTextRole, optionTextRole]);
+  const [expandedFile, setExpandedFile] = useState<FilePreviewSource | null>(null);
+  const [expandedVideo, setExpandedVideo] = useState<VideoPreviewSource | null>(null);
+  const onLinkPress = useThreadMarkdownLinkPress({
+    environmentId: props.environmentId,
+    threadId: props.threadId,
+    workspaceRoot: props.workspaceRoot,
+    setExpandedFile,
+    setExpandedVideo,
+  });
+  const resolveImageSource = useMarkdownImageSource({
+    environmentId: props.environmentId,
+    threadId: props.threadId,
+    workspaceRoot: props.workspaceRoot,
+  });
+  const onImagePress = useCallback((href: string) => onLinkPress(href, true), [onLinkPress]);
+  const renderImage = useThreadMarkdownImageRenderer({
+    onLinkPress,
+    textStyle: textStyles.question,
+    environmentId: props.environmentId,
+    threadId: props.threadId,
+    workspaceRoot: props.workspaceRoot,
+    setExpandedFile,
+  });
+  const markdownProps = {
+    fileEmbedLabel,
+    renderImage,
+    onLinkPress,
+    onImagePress,
+    resolveImageSource,
+    marginTop: 0,
+    marginBottom: 0,
+  };
   const questionCount = props.pendingUserInput.questions.length;
   const canRespond = props.pendingUserInput.responseCapability !== "not_resumable";
   const isResponding = props.respondingUserInputId === props.pendingUserInput.requestId;
@@ -244,19 +349,24 @@ export function PendingUserInputCard(props: PendingUserInputCardProps) {
             run to continue.
           </Text>
         ) : null}
-        {props.pendingUserInput.questions.map((question) => {
+        {questions.map(({ question, spokenFallback }) => {
           const draft = props.drafts[question.id];
           return (
             <View key={question.id} className="gap-2 pt-1">
               <Text
                 className="font-t3-bold text-xs uppercase tracking-[1px] text-foreground-muted"
+                accessibilityLabel={
+                  spokenFallback ? `${question.header}. ${spokenFallback}` : undefined
+                }
                 style={proseDirectionStyle(question.header, setDirection)}
               >
                 {question.header}
               </Text>
               <QuestionText
-                markdown={question.question}
                 environmentId={props.environmentId}
+                {...markdownProps}
+                markdown={question.question}
+                textStyle={textStyles.question}
                 setDirection={setDirection}
               />
               <View className="gap-2">
@@ -266,43 +376,25 @@ export function PendingUserInputCard(props: PendingUserInputCardProps) {
                   const description =
                     option.description !== option.label ? option.description : undefined;
                   return (
-                    <Pressable
-                      key={optionValue}
-                      accessibilityRole={question.multiSelect ? "checkbox" : "radio"}
-                      accessibilityState={{ checked: selected, disabled: responseDisabled }}
+                    <PendingUserInputOption
+                      key={JSON.stringify([optionValue, option.label, description])}
+                      option={option}
+                      setDirection={setDirection}
+                      multiSelect={question.multiSelect}
+                      selected={selected}
                       disabled={responseDisabled}
-                      className={cn(
-                        "min-h-12 w-full rounded-2xl border px-3.5 py-3",
-                        selected ? "border-primary bg-primary/10" : "border-border bg-input",
-                      )}
-                      onPress={() =>
+                      markdownProps={markdownProps}
+                      labelTextStyle={selected ? textStyles.selectedLabel : textStyles.label}
+                      descriptionTextStyle={textStyles.description}
+                      onOpenTarget={onLinkPress}
+                      onSelect={() =>
                         props.onSelectOption(
                           props.pendingUserInput.requestId,
                           question,
                           optionValue,
                         )
                       }
-                    >
-                      <View className="min-w-0 flex-1 gap-0.5">
-                        <Text
-                          className={cn(
-                            "font-t3-bold text-sm",
-                            selected ? "text-foreground" : "text-foreground-secondary",
-                          )}
-                          style={proseDirectionStyle(option.label, setDirection)}
-                        >
-                          {option.label}
-                        </Text>
-                        {description ? (
-                          <Text
-                            className="font-sans text-sm leading-5 text-foreground-muted"
-                            style={proseDirectionStyle(description, setDirection)}
-                          >
-                            {description}
-                          </Text>
-                        ) : null}
-                      </View>
-                    </Pressable>
+                    />
                   );
                 })}
               </View>
@@ -348,18 +440,108 @@ export function PendingUserInputCard(props: PendingUserInputCardProps) {
   ) : null;
   return (
     <View className="relative">
+      <FilePreviewModal source={expandedFile} onRequestClose={() => setExpandedFile(null)} />
+      <VideoPreviewModal source={expandedVideo} onRequestClose={() => setExpandedVideo(null)} />
       {bar}
-      {EXPANDED_CARD_IS_OVERLAY ? (
-        <Animated.View
-          pointerEvents={props.collapsed ? "none" : "box-none"}
-          className="absolute inset-x-0 bottom-0 justify-end overflow-hidden"
-          style={overlayHeightStyle}
-        >
-          {card}
-        </Animated.View>
-      ) : (
-        card
-      )}
+      <ThreadMediaVisibleContext value={!props.collapsed}>
+        {EXPANDED_CARD_IS_OVERLAY ? (
+          <Animated.View
+            pointerEvents={props.collapsed ? "none" : "box-none"}
+            className="absolute inset-x-0 bottom-0 justify-end overflow-hidden"
+            style={overlayHeightStyle}
+          >
+            {card}
+          </Animated.View>
+        ) : (
+          card
+        )}
+      </ThreadMediaVisibleContext>
     </View>
+  );
+}
+
+function PendingUserInputOption(props: {
+  readonly option: ThreadUserInputQuestion["options"][number];
+  readonly setDirection: TextDirection | undefined;
+  readonly multiSelect: boolean;
+  readonly selected: boolean;
+  readonly disabled: boolean;
+  readonly markdownProps: Pick<
+    SelectableMarkdownTextProps,
+    | "fileEmbedLabel"
+    | "onLinkPress"
+    | "onImagePress"
+    | "renderImage"
+    | "resolveImageSource"
+    | "marginTop"
+    | "marginBottom"
+  >;
+  readonly labelTextStyle: SelectableMarkdownTextProps["textStyle"];
+  readonly descriptionTextStyle: SelectableMarkdownTextProps["textStyle"];
+  readonly onOpenTarget: ReturnType<typeof useThreadMarkdownLinkPress>;
+  readonly onSelect: () => void;
+}) {
+  const description =
+    props.option.description !== props.option.label ? props.option.description : undefined;
+  const { fileEmbedLabel } = props.markdownProps;
+  const content = useMemo(
+    () =>
+      [props.option.label, ...(description ? [description] : [])].map((markdown) =>
+        markdownAccessibility(markdown, fileEmbedLabel),
+      ),
+    [props.option.label, description, fileEmbedLabel],
+  );
+  const targets = content
+    .flatMap((item) => item.targets)
+    .map((target, index) => ({ ...target, name: `open-target-${index}` }));
+  return (
+    <Pressable
+      accessibilityRole={props.multiSelect ? "checkbox" : "radio"}
+      accessibilityLabel={content.map((item) => item.label).join(". ")}
+      accessibilityState={{ checked: props.selected, disabled: props.disabled }}
+      accessibilityActions={targets.map(({ name, label }, index) => ({
+        name,
+        label: `Open ${label}${targets.length > 1 ? ` (${index + 1})` : ""}`,
+      }))}
+      onAccessibilityAction={(event) => {
+        const target = targets.find((target) => target.name === event.nativeEvent.actionName);
+        if (target) props.onOpenTarget(target.href, target.image);
+      }}
+      // Pressability suppresses the answer tap after a handled long press.
+      onLongPress={() => undefined}
+      disabled={props.disabled}
+      className={cn(
+        "min-h-12 w-full rounded-2xl border px-3.5 py-3",
+        props.selected ? "border-primary bg-primary/10" : "border-border bg-input",
+      )}
+      onPress={props.onSelect}
+    >
+      <View className="min-w-0 flex-1 gap-0.5">
+        <SelectableMarkdownText
+          {...props.markdownProps}
+          markdown={props.option.label}
+          textStyle={props.labelTextStyle}
+          writingDirection={markdownProseDirection(props.option.label)}
+          textAlign={
+            Platform.OS === "android" ? undefined : props.setDirection === "rtl" ? "right" : "left"
+          }
+        />
+        {description ? (
+          <SelectableMarkdownText
+            {...props.markdownProps}
+            markdown={description}
+            textStyle={props.descriptionTextStyle}
+            writingDirection={markdownProseDirection(description)}
+            textAlign={
+              Platform.OS === "android"
+                ? undefined
+                : props.setDirection === "rtl"
+                  ? "right"
+                  : "left"
+            }
+          />
+        ) : null}
+      </View>
+    </Pressable>
   );
 }

@@ -22,6 +22,7 @@ import {
   getMobileThemeVariables,
   resolveMobileThemeIds,
   themeColorWithAlpha,
+  themeColorWithContrast,
   themeColorToNativeColor,
 } from "./mobileTheme";
 
@@ -57,6 +58,27 @@ function compositeOver(overlay: string, background: string): string {
 }
 
 describe("mobile themes", () => {
+  it.each(MOBILE_THEME_IDS)("keeps pending-question links readable in %s", (themeId) => {
+    for (const appearance of ["light", "dark"] as const) {
+      const variables = getMobileThemeRuntimeVariables(themeId, appearance, "ios");
+      const surfaces = [
+        variables["--color-card-alt"],
+        variables["--color-input"],
+        flattenThemeColor(
+          themeColorWithAlpha(variables["--color-primary"], 0.1),
+          variables["--color-card-alt"],
+        ),
+      ];
+      const link = themeColorWithContrast(variables["--color-md-link"], surfaces);
+      for (const surface of surfaces) {
+        expect(
+          contrastRatio(link, surface),
+          `${appearance}: ${link} on ${surface}`,
+        ).toBeGreaterThanOrEqual(4.5);
+      }
+    }
+  });
+
   it("declares every runtime theme variable in the static stylesheet", () => {
     const generatedVariables = createMobileThemeVariables(T3_CHAT_THEME.colors, "light");
     expect(Object.keys(readDefaultMobileThemeVariables("light")).sort()).toEqual(

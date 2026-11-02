@@ -2,6 +2,7 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   markdownForNativeRendering,
   markdownHtmlContent,
+  markdownAccessibility,
   markdownWithHtml,
   markdownWithFileEmbeds,
   parseMarkdownDocument,
@@ -309,6 +310,44 @@ describe("file embeds in native thread and file Markdown", () => {
   });
 });
 
+it("keeps spoken option blocks and native file and image targets", () => {
+  const result = markdownAccessibility(
+    "- **First**\n- Second\n\n[guide][g] and `src/main.ts`\n\n> [g]: docs/guide.md\n\n![][image]\n\n[image]: diagram.svg",
+  );
+  expect(result.label).toBe("First Second guide and src/main.ts");
+  expect(result.targets).toEqual([
+    { href: "docs/guide.md", label: "guide", image: false },
+    { href: "src/main.ts", label: "src/main.ts", image: false },
+    { href: "diagram.svg", label: "diagram.svg", image: true },
+  ]);
+});
+it("names image-only options and separates hard breaks", () => {
+  expect(markdownAccessibility("![](choice.png)").label).toBe("![](choice.png)");
+  expect(markdownAccessibility("first  \nsecond").label).toBe("first second");
+});
+
+it("matches file-embed rewrites in spoken names and actions", () => {
+  const label = (href: string, standalone: boolean) =>
+    markdownFileEmbedLabel(
+      href,
+      {
+        environmentId: EnvironmentId.make("environment-1"),
+        threadId: ThreadId.make("thread-1"),
+        workspaceRoot: "/repo",
+      },
+      standalone,
+    );
+  expect(
+    markdownAccessibility("[![sheet](./report.csv)](https://example.com/download)", label),
+  ).toMatchObject({
+    label: "report.csv",
+    targets: [{ href: "https://example.com/download", label: "report.csv", image: false }],
+  });
+  expect(markdownAccessibility("![sheet](./report.csv)", label).targets).toEqual([
+    { href: "./report.csv", label: "report.csv", image: true },
+  ]);
+});
+
 describe("Windows paths in native Markdown", () => {
   // regression: #23722 Markdown escapes ate the separator before `.t3` and `_build`
   it("keeps backslashes in Windows image and link destinations", async () => {
@@ -338,6 +377,9 @@ describe("Windows paths in native Markdown", () => {
     const htmlAmp = String.raw`C:\R&D\.t3\b.png`;
     expect(urls).toEqual([image, paren, link, image, amp, htmlAmp, image]);
     expect(markdownImageSources(markdown)).toEqual([image, paren, amp, htmlAmp]);
+    expect(
+      markdownAccessibility(markdown, () => null).targets.map((target) => target.href),
+    ).toEqual([image, paren, link, image, amp, htmlAmp, image]);
   });
 });
 

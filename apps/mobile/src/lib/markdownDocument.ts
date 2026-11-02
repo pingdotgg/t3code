@@ -1,3 +1,6 @@
+import { toString } from "mdast-util-to-string";
+import { visit } from "unist-util-visit";
+import { ENRICHED_INLINE_FILE_LINK_REGEX } from "./enrichedLinkPresentation";
 import type { Root, RootContent } from "mdast";
 import { unified, type Processor } from "unified";
 import remarkParse from "remark-parse";
@@ -495,4 +498,54 @@ export function markdownWithFileEmbeds(
   }
   parts.push(markdown.slice(offset));
   return { markdown: parts.join(""), fileHrefs };
+}
+
+export function markdownAccessibility(
+  markdown: string,
+  fileEmbedLabel?: (href: string, standalone: boolean) => string | null,
+) {
+  const rendered = fileEmbedLabel
+    ? markdownWithFileEmbeds(
+        markdownWithInlineFileLinks(
+          markdownForNativeParsing(markdown),
+          ENRICHED_INLINE_FILE_LINK_REGEX,
+        ),
+        fileEmbedLabel,
+      )
+    : {
+        markdown: markdownForNativeRendering(markdown, ENRICHED_INLINE_FILE_LINK_REGEX),
+        fileHrefs: new Set<string>(),
+      };
+  const document = parser.parse(markdownWithTableBreaks(rendered.markdown));
+  const definitions = new Map<string, string>();
+  visit(document, "definition", (node) => {
+    if (!definitions.has(node.identifier)) definitions.set(node.identifier, node.url);
+  });
+  visit(document, "break", (_node, index, parent) => {
+    if (parent && index !== undefined) parent.children[index] = { type: "text", value: " " };
+  });
+  const blocks: string[] = [];
+  visit(document, ["paragraph", "heading", "tableCell", "code"], (node) => {
+    blocks.push(toString(node));
+  });
+  const text = blocks.join(" ").replace(/\s+/g, " ").trim();
+  const targets: Array<{ href: string; label: string; image: boolean }> = [];
+  visit(document, (node) => {
+    if (
+      node.type !== "link" &&
+      node.type !== "image" &&
+      node.type !== "linkReference" &&
+      node.type !== "imageReference"
+    )
+      return;
+    const href = "url" in node ? node.url : definitions.get(node.identifier);
+    if (!href) return;
+    targets.push({
+      href,
+      label: toString(node).trim() || href,
+      image:
+        node.type === "image" || node.type === "imageReference" || rendered.fileHrefs.has(href),
+    });
+  });
+  return { label: text || markdown.trim(), hasText: text.length > 0, targets };
 }
