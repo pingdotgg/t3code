@@ -1,3 +1,5 @@
+import { capitalizeTerm } from "@t3tools/client-runtime/source-control-clients";
+import { useChangeRequestTerms } from "../../state/change-request-terminology";
 import { Button } from "../../components/ui/Button";
 import {
   applyPullRequestDraftFilterChange,
@@ -106,6 +108,7 @@ export function PullRequestsScreen(
     readonly renderFrame?: (filters: PullRequestFilterMenu | null, list: ReactNode) => ReactNode;
   } = {},
 ) {
+  const terms = useChangeRequestTerms();
   const navigation = useNavigation();
   const primaryColumn = use(NativePrimaryColumnContext);
   const workspace = useWorkspaceTabs()!;
@@ -355,7 +358,7 @@ export function PullRequestsScreen(
             <View className="items-center py-5">
               <AppActivityIndicator
                 colorClassName="accent-icon"
-                accessibilityLabel="Loading more pull requests"
+                accessibilityLabel={`Loading more ${terms.plural}`}
               />
             </View>
           ) : result.loadMoreError ? (
@@ -363,7 +366,7 @@ export function PullRequestsScreen(
               <Text className="text-xs text-foreground-muted">{result.loadMoreError}</Text>
               <Button
                 label="Try again"
-                accessibilityLabel="Retry loading more pull requests"
+                accessibilityLabel={`Retry loading more ${terms.plural}`}
                 onPress={() => void result.loadMore(true)}
               />
             </View>
@@ -372,7 +375,7 @@ export function PullRequestsScreen(
             <View className="items-center py-4">
               <Button
                 label="Load more"
-                accessibilityLabel="Load more pull requests"
+                accessibilityLabel={`Load more ${terms.plural}`}
                 onPress={() => void result.loadMore()}
               />
             </View>
@@ -388,22 +391,22 @@ export function PullRequestsScreen(
               <EmptyState
                 title={
                   result.error
-                    ? "Couldn't load pull requests"
+                    ? `Couldn't load ${terms.plural}`
                     : targets.length && connectedTargets.length === 0
                       ? "Environment offline"
                       : targets.length
                         ? query
                           ? "No results"
-                          : "No matching pull requests"
+                          : `No matching ${terms.plural}`
                         : "Connect an environment"
                 }
                 detail={
                   result.error ??
                   (targets.length && connectedTargets.length === 0
-                    ? "Reconnect to load pull requests that aren't saved on this device."
+                    ? `Reconnect to load ${terms.plural} that aren't saved on this device.`
                     : targets.length
-                      ? "Pull requests from the selected environments' projects appear here."
-                      : "Add an environment in Settings to browse its pull requests.")
+                      ? `${capitalizeTerm(terms.plural)} from the selected environments' projects appear here.`
+                      : `Add an environment in Settings to browse its ${terms.plural}.`)
                 }
                 variant="plain"
               />

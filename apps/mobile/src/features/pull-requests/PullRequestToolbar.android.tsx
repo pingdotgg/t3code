@@ -1,3 +1,4 @@
+import { useChangeRequestTerms } from "../../state/change-request-terminology";
 import { useNavigation } from "@react-navigation/native";
 import { useEffect, useRef } from "react";
 import { BackHandler, Keyboard, View, type TextInputInstance } from "react-native";
@@ -16,6 +17,7 @@ export function PullRequestToolbar(props: {
   readonly filters: PullRequestFilterMenu | null;
   readonly onRequestVisibility?: () => void;
 }) {
+  const terms = useChangeRequestTerms();
   const navigation = useNavigation();
   const { filters } = props;
   const workspace = useWorkspaceTabs()!;
@@ -64,17 +66,17 @@ export function PullRequestToolbar(props: {
         searchField={
           <SearchField
             inputRef={input}
-            accessibilityLabel="Search pull requests"
+            accessibilityLabel={`Search ${terms.plural}`}
             clearAccessibilityLabel="Clear search"
-            placeholder="Search pull requests"
+            placeholder={`Search ${terms.plural}`}
             value={tab.query}
             onChangeText={(query) => dispatch({ type: "query", tab: "pullRequests", query })}
           />
         }
         onCloseSearch={closeSearch}
         onOpenSearch={openSearch}
-        searchAccessibilityLabel="Search pull requests"
-        titleAccessibilityLabel="T3 Code, Pull requests"
+        searchAccessibilityLabel={`Search ${terms.plural}`}
+        titleAccessibilityLabel={`T3 Code, ${terms.plural}`}
         onOpenEnvironments={() => openSettings(navigation, "SettingsEnvironments")}
         filter={
           filters ? (
@@ -84,7 +86,7 @@ export function PullRequestToolbar(props: {
             >
               {(open) => (
                 <AndroidHeaderIconButton
-                  accessibilityLabel="Filter pull requests"
+                  accessibilityLabel={`Filter ${terms.plural}`}
                   icon={
                     filters.customized
                       ? "line.3.horizontal.decrease.circle.fill"

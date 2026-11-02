@@ -32,6 +32,9 @@ import { ListChoiceRow as SettingsChoiceRow } from "../../components/ui/ListChoi
 import { SettingsSection } from "./components/SettingsSection";
 import { SettingsSwitchRow } from "./components/SettingsSwitchRow";
 import { SourceControlSignInSection } from "./components/SourceControlSignInSection";
+import { ChangeRequestTerminologySection } from "./components/ChangeRequestTerminologySection";
+import { useChangeRequestTerms } from "../../state/change-request-terminology";
+import { capitalizeTerm } from "@t3tools/client-runtime/source-control-clients";
 import { SettingsProjectOverridesSection } from "./components/SettingsProjectOverridesSection";
 import { useSettingsEnvironmentFilter } from "./settings-environment-filter";
 import { useSettingsWriter } from "./useSettingsWriter";
@@ -177,6 +180,7 @@ export function SettingsEnvironmentMaintenanceRouteScreen() {
 }
 
 function ServerSettingsDetail(props: { readonly page: SettingsPage }) {
+  const terms = useChangeRequestTerms();
   const insets = useSafeAreaInsets();
   const navigation = useNavigation();
   const { selectedTargets, projectGroups, selectedProjectKey } = useSettingsEnvironmentFilter();
@@ -296,6 +300,7 @@ function ServerSettingsDetail(props: { readonly page: SettingsPage }) {
           contentContainerClassName="gap-6 px-5 pt-4"
           contentContainerStyle={{ paddingBottom: Math.max(insets.bottom, 18) + 18 }}
         >
+          {props.page === "source-control" ? <ChangeRequestTerminologySection /> : null}
           {!hasConnectedSelection || reference === null ? (
             <Text className="px-2 text-base text-foreground-muted">
               {projectSelected
@@ -413,7 +418,7 @@ function ServerSettingsDetail(props: { readonly page: SettingsPage }) {
                       canWrite={(environmentId) => writableEnvironments.has(environmentId)}
                     />
                   )}
-                  <SettingsSection title="Pull requests">
+                  <SettingsSection title={capitalizeTerm(terms.plural)}>
                     <SettingsSwitchRow
                       icon={PullRequestGlyph.merged}
                       label="Remove agent credits when merging"

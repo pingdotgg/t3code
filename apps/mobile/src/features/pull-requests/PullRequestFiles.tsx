@@ -1,5 +1,5 @@
+import { useChangeRequestTerms } from "../../state/change-request-terminology";
 import { NativeScrollView } from "../../native/NativeScrollViewMarker";
-import { currentChangeRequestTerms } from "@t3tools/client-runtime/source-control-clients";
 import { AnimatedLegendList } from "@legendapp/list/reanimated";
 import { StackActions, useNavigation, type StaticScreenProps } from "@react-navigation/native";
 import type { PullRequestChangeBreakdown } from "@t3tools/contracts";
@@ -50,7 +50,7 @@ function useChangedFiles(params: PullRequestDiffParams) {
   const detail = useEnvironmentQuery(composerPullRequests.detail(pullRequestTarget(params)));
   // A commit's diff is part of the pull request, so the PR's file counts and viewed state don't apply.
   const pr = params.commit ? null : detail.data;
-  const terminology = currentChangeRequestTerms();
+  const terminology = useChangeRequestTerms();
   const diff = usePullRequestDiff(params, terminology);
   const viewed = usePullRequestFilesViewed(params, pr);
   const filter = usePullRequestFileFilter(diff.parsed);

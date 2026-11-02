@@ -32,8 +32,10 @@ const PR_STATE_TEXT_CLASS: Record<ThreadPr["state"], string> = {
   closed: "text-foreground-muted",
 };
 
-export function presentThreadPr(pr: ThreadPr): ThreadPrPresentation {
-  const changeRequest = currentChangeRequestTerms();
+export function presentThreadPr(
+  pr: ThreadPr,
+  changeRequest = currentChangeRequestTerms(),
+): ThreadPrPresentation {
   const isDraft = pr.state === "open" && pr.isDraft === true;
   return {
     kind: "pull-request",
@@ -52,11 +54,11 @@ export function presentThreadPr(pr: ThreadPr): ThreadPrPresentation {
 
 export function presentThreadLinkedPullRequests(
   links: ReadonlyArray<ThreadPullRequestLink>,
+  changeRequest = currentChangeRequestTerms(),
 ): ThreadPrPresentation | null {
   const link = resolveThreadCurrentPullRequestLink(links);
   const badge = resolveThreadPullRequestBadge(links);
   if (link === null || badge === null) return null;
-  const changeRequest = currentChangeRequestTerms();
   const snapshot = link.snapshot;
   const linkedCount = badge.kind === "pull-request" && badge.others > 0 ? badge.others + 1 : null;
   const isMultiple = badge.kind === "stack" || linkedCount !== null;
@@ -103,9 +105,10 @@ export function resolveThreadPrSource(
   thread: Pick<EnvironmentThreadShell, "pullRequests" | "linkedPullRequest" | "branchPullRequest">,
   /** False until the server config loads; the stored references serve until then. */
   supportsSnapshots: boolean,
+  terminology = currentChangeRequestTerms(),
 ) {
   const linkedPresentation = supportsSnapshots
-    ? presentThreadLinkedPullRequests(thread.pullRequests)
+    ? presentThreadLinkedPullRequests(thread.pullRequests, terminology)
     : null;
   const pullRequestRef =
     linkedPresentation !== null

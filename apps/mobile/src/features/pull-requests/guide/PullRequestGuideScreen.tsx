@@ -1,4 +1,4 @@
-import { currentChangeRequestTerms } from "@t3tools/client-runtime/source-control-clients";
+import { useChangeRequestTerms } from "../../../state/change-request-terminology";
 import { Toolbar } from "../../../components/ui/Toolbar";
 import { parsePatchFiles } from "@pierre/diffs/utils/parsePatchFiles";
 import type { FileDiffMetadata } from "@pierre/diffs";
@@ -108,7 +108,8 @@ export function PullRequestGuideStopScreen({ route }: StaticScreenProps<GuideSto
   const { guide, stale } = reviewGuideState(state.data);
   const position = Math.max(0, Math.min(route.params.position, (guide?.stops.length ?? 1) - 1));
   const stop = guide?.stops[Math.max(0, position)];
-  const diff = usePullRequestDiff(route.params, currentChangeRequestTerms());
+  const terms = useChangeRequestTerms();
+  const diff = usePullRequestDiff(route.params, terms);
   const excerptFiles = diffFilesByPath(diff.patch);
   const wanted = stop ? stopFilePaths(stop) : [];
   const loadedPaths = new Set(

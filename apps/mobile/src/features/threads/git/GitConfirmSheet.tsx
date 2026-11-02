@@ -1,5 +1,5 @@
+import { useChangeRequestTerms } from "../../../state/change-request-terminology";
 import { resolveDefaultBranchActionDialogCopy } from "@t3tools/client-runtime/state/vcs";
-import { currentChangeRequestTerms } from "@t3tools/client-runtime/source-control-clients";
 import { resolveAutoFeatureBranchName } from "@t3tools/shared/git";
 import * as Arr from "effect/Array";
 import * as Result from "effect/Result";
@@ -34,7 +34,7 @@ export function GitConfirmSheet(props: GitConfirmSheetProps) {
   const gitState = useSelectedThreadGitState();
   const gitActions = useSelectedThreadGitActions();
   const { canWriteSourceControl, canChangeThreadBranch } = gitActions;
-  const terminology = currentChangeRequestTerms();
+  const terminology = useChangeRequestTerms();
 
   const params = props.route.params;
 

@@ -18,6 +18,7 @@ import {
 } from "@t3tools/client-runtime/state/vcs";
 import { useNavigation } from "@react-navigation/native";
 import { currentChangeRequestTerms } from "@t3tools/client-runtime/source-control-clients";
+import { useChangeRequestTerms } from "../../state/change-request-terminology";
 
 import { useEnvironmentScope } from "../../state/session";
 import { PullRequestGlyph } from "../pull-requests/pullRequestGlyphs";
@@ -43,7 +44,10 @@ function compactMenuBranchLabel(branch: string): string {
   return truncateMiddle(branch, 24);
 }
 
-function compactMenuStatus(gitStatus: VcsStatusResult | null): string {
+function compactMenuStatus(
+  gitStatus: VcsStatusResult | null,
+  terminology = currentChangeRequestTerms(),
+): string {
   if (!gitStatus) {
     return "Checking status";
   }
@@ -64,7 +68,7 @@ function compactMenuStatus(gitStatus: VcsStatusResult | null): string {
     parts.push(`${gitStatus.behindCount} behind`);
   }
   if (gitStatus.pr?.state === "open") {
-    const { shortLabel } = currentChangeRequestTerms();
+    const { shortLabel } = terminology;
     parts.push(`${shortLabel} #${gitStatus.pr.number}`);
   }
 
@@ -116,6 +120,7 @@ type ThreadGitControlsProps = ThreadGitMenuProps & {
 };
 
 function useThreadGitControlModel(props: ThreadGitMenuProps) {
+  const terminology = useChangeRequestTerms();
   const navigation = useNavigation();
   const openPullRequest = useOpenPullRequest();
   const environmentId = props.environmentId;
@@ -141,7 +146,7 @@ function useThreadGitControlModel(props: ThreadGitMenuProps) {
         hint: "This workspace is not a git repository.",
       };
     }
-    const action = resolveQuickAction(gitStatus, busy, isDefaultRef, hasPrimaryRemote);
+    const action = resolveQuickAction(gitStatus, busy, isDefaultRef, hasPrimaryRemote, terminology);
     return !canWriteSourceControl && (action.kind === "run_pull" || action.kind === "run_action")
       ? {
           ...action,
@@ -260,6 +265,7 @@ function useThreadGitControlModel(props: ThreadGitMenuProps) {
 
   return {
     currentBranchLabel,
+    terminology,
     isRepo,
     openFiles,
     openGitInspector,
@@ -352,7 +358,7 @@ function useThreadGitHeaderActionItems(props: ThreadGitControlsProps): ThreadGit
       menu: {
         items: [
           {
-            description: compactMenuStatus(props.gitStatus),
+            description: compactMenuStatus(props.gitStatus, model.terminology),
             disabled: true,
             icon: {
               name: "point.topleft.down.curvedto.point.bottomright.up",
@@ -536,7 +542,7 @@ function threadGitMenuDefinition(
         title: compactMenuBranchLabel(model.currentBranchLabel),
         icon: "point.topleft.down.curvedto.point.bottomright.up",
         disabled: true,
-        subtitle: compactMenuStatus(props.gitStatus),
+        subtitle: compactMenuStatus(props.gitStatus, model.terminology),
         onPress: () => {},
       },
       {

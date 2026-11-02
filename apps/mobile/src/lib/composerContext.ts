@@ -126,7 +126,7 @@ export function pullRequestComposerContext(
     baseBranch: pullRequest.baseBranch.slice(0, 2048),
   };
   const path = filePath?.trim().slice(0, 2048).trim();
-  const { singular } = currentChangeRequestTerms();
+  const { singular, shortLabel } = currentChangeRequestTerms();
   return {
     version: 1,
     kind: "review-comment",
@@ -135,8 +135,8 @@ export function pullRequestComposerContext(
       ? sanitizeComposerContextLabel(path.split("/").at(-1) ?? path, "file")
       : `#${metadata.number}`,
     sectionId: `pull-request:${metadata.number}`,
-    sectionTitle: `PR #${metadata.number}`,
-    filePath: path || `PR #${metadata.number}`,
+    sectionTitle: `${shortLabel} #${metadata.number}`,
+    filePath: path || `${shortLabel} #${metadata.number}`,
     startIndex: 0,
     endIndex: 0,
     rangeLabel: path || metadata.title,

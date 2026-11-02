@@ -1,3 +1,5 @@
+import { capitalizeTerm } from "@t3tools/client-runtime/source-control-clients";
+import { useChangeRequestTerms } from "../../state/change-request-terminology";
 import { useAndroidFloatingTabs } from "../settings/appearance/AppearancePreferencesProvider";
 import { WorkspaceNoTabs } from "./WorkspaceNoTabs";
 import { useEnabledNavigationTabs } from "./navigation-tabs";
@@ -23,6 +25,7 @@ import type { WorkspaceTab } from "./workspace-tabs-state";
 const TABS: readonly WorkspaceTab[] = NAVIGATION_TAB_ORDER;
 
 export function WorkspaceRootScreen() {
+  const terms = useChangeRequestTerms();
   const floatingTabsEnabled = useAndroidFloatingTabs();
   const { layout, startNewTask } = useAdaptiveWorkspaceLayout();
   const workspace = useWorkspaceTabs()!;
@@ -76,11 +79,11 @@ export function WorkspaceRootScreen() {
                 ) : layout.usesSplitView ? (
                   <>
                     <NativeStackScreenOptions options={{ headerShown: false }} />
-                    <AndroidScreenHeader title="Pull requests" />
+                    <AndroidScreenHeader title={capitalizeTerm(terms.plural)} />
                     <View className="flex-1 items-center justify-center px-10">
                       <EmptyState
-                        title="Select a pull request"
-                        detail="Choose a pull request from the sidebar to review it."
+                        title={`Select a ${terms.singular}`}
+                        detail={`Choose a ${terms.singular} from the sidebar to review it.`}
                         variant="plain"
                       />
                     </View>

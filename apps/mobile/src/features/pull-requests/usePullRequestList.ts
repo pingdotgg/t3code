@@ -1,3 +1,4 @@
+import { currentChangeRequestTerms } from "@t3tools/client-runtime/source-control-clients";
 import { RegistryContext, useAtomMount, useAtomSubscribe, useAtomValue } from "@effect/atom-react";
 import { executeAtomQuery, squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import type { EnvironmentId, PullRequestDiffStat, PullRequestListInput } from "@t3tools/contracts";
@@ -308,7 +309,10 @@ export function usePullRequestList(targets: readonly ListTarget[]) {
           {
             environmentId: target.environmentId,
             projectTitle: "",
-            message: cause instanceof Error ? cause.message : "Couldn't load pull requests.",
+            message:
+              cause instanceof Error
+                ? cause.message
+                : `Couldn't load ${currentChangeRequestTerms().plural}.`,
           },
         ];
       }),
@@ -345,7 +349,7 @@ function requestErrors(results: readonly PromiseSettledResult<unknown>[]) {
           ? [
               result.reason instanceof Error
                 ? result.reason.message
-                : "Couldn't load pull requests.",
+                : `Couldn't load ${currentChangeRequestTerms().plural}.`,
             ]
           : [],
       )

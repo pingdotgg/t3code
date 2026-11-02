@@ -1,3 +1,4 @@
+import { useChangeRequestTerms } from "../../state/change-request-terminology";
 import { Chip } from "../../components/ui/Chip";
 import { PullRequestSectionHeading } from "./PullRequestSectionHeading";
 import type { PullRequestListEntry } from "@t3tools/contracts";
@@ -18,13 +19,14 @@ export function PullRequestOverviewLoading({
   readonly params: PullRequestParams;
   readonly stack: PullRequestStackState;
 }) {
+  const terms = useChangeRequestTerms();
   const review = pullRequestListReviewStatus(summary);
   const conflicting = summary.mergeability === "conflicting";
   const clean = summary.mergeability === "mergeable";
   return (
     <View
       className="gap-5"
-      accessibilityLabel="Loading pull request details"
+      accessibilityLabel={`Loading ${terms.singular} details`}
       accessibilityState={{ busy: true }}
     >
       <PullRequestStackCard params={params} state={stack} />

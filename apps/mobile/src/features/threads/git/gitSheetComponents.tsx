@@ -36,6 +36,7 @@ export function statusSummary(
     readonly pr?: { readonly state?: string; readonly number?: number } | null;
     readonly sourceControlProvider?: { readonly kind: string } | null;
   } | null,
+  terminology = currentChangeRequestTerms(),
 ): string {
   if (!gitStatus) {
     return "Loading branch status\u2026";
@@ -59,7 +60,7 @@ export function statusSummary(
     parts.push(`${gitStatus.behindCount} behind`);
   }
   if (gitStatus.pr?.state === "open") {
-    const { shortLabel } = currentChangeRequestTerms();
+    const { shortLabel } = terminology;
     parts.push(`${shortLabel} #${gitStatus.pr.number} open`);
   }
 

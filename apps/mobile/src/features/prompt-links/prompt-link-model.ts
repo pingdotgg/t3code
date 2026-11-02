@@ -1,3 +1,7 @@
+import {
+  currentChangeRequestTerms,
+  capitalizeTerm,
+} from "@t3tools/client-runtime/source-control-clients";
 import type { PromptLinkRepository } from "@t3tools/shared/promptLinks";
 
 const PROMPT_LINK_PARAM_KEYS = ["prompt", "repo", "pr", "provider", "model"] as const;
@@ -38,7 +42,7 @@ export function promptLinkNotice(input: {
       ? "The requested model is not available, so your default is used."
       : null,
     input.pullRequestUnavailable != null
-      ? `Pull request #${input.pullRequestUnavailable} could not be loaded, so this task starts from your default branch.`
+      ? `${capitalizeTerm(currentChangeRequestTerms().singular)} #${input.pullRequestUnavailable} could not be loaded, so this task starts from your default branch.`
       : null,
   ]
     .filter((line) => line !== null)

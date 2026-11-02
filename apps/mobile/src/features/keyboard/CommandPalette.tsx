@@ -1,3 +1,4 @@
+import { useChangeRequestTerms } from "../../state/change-request-terminology";
 import { useAtomValue } from "@effect/atom-react";
 import { uuidv4 } from "../../lib/uuid";
 import { useNavigation } from "@react-navigation/native";
@@ -220,6 +221,7 @@ export function CommandPalette(props: {
   readonly onClose: () => void;
   readonly onCommand: (command: HardwareKeyboardCommand) => void;
 }) {
+  const terms = useChangeRequestTerms();
   const navigation = useNavigation();
   const selectTab = useSelectWorkspaceTab();
   const { themeVariables } = useAppearancePreferences();
@@ -389,7 +391,11 @@ export function CommandPalette(props: {
         ["files", "Go to file", ["open", "files", "browse", "search"]],
         ["terminal", "Open terminal", ["shell", "console"]],
         ["review", "Review changes", ["diff", "git", "pull request"]],
-        ["copyThreadReference", "Copy PR link or thread", ["reference", "clipboard"]],
+        [
+          "copyThreadReference",
+          `Copy ${terms.shortLabel} link or thread`,
+          ["reference", "clipboard"],
+        ],
       ] as const;
       actions.push(
         ...threadActions.map(([command, title, searchTerms]) => ({
@@ -461,6 +467,7 @@ export function CommandPalette(props: {
     );
     return [...actions, ...projectItems, ...threadItems];
   }, [
+    terms.shortLabel,
     selectTab,
     activeThread,
     activeThreadRef,

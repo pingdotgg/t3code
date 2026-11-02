@@ -1,4 +1,5 @@
 import { useAtomValue } from "@effect/atom-react";
+import { useChangeRequestTerms } from "./change-request-terminology";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
 import {
   createLinkedPullRequestSummaryAtomFamily,
@@ -60,6 +61,7 @@ const pullRequestSummaryAtom = createLinkedPullRequestSummaryAtomFamily(
 export { type ThreadPr, type ThreadPrPresentation } from "./thread-pr-presentation";
 
 export function useThreadPr(thread: EnvironmentThreadShell): ThreadPrPresentation | null {
+  const terminology = useChangeRequestTerms();
   const demand = use(ThreadPrDemandContext);
   const supportsLinks = useAtomValue(
     serverEnvironment.configValueAtom(thread.environmentId),
@@ -74,8 +76,15 @@ export function useThreadPr(thread: EnvironmentThreadShell): ThreadPrPresentatio
           branchPullRequest: thread.branchPullRequest,
         },
         supportsLinks,
+        terminology,
       ),
-    [thread.pullRequests, thread.linkedPullRequest, thread.branchPullRequest, supportsLinks],
+    [
+      thread.pullRequests,
+      thread.linkedPullRequest,
+      thread.branchPullRequest,
+      supportsLinks,
+      terminology,
+    ],
   );
   const key = pullRequestRef === null ? null : snapshotKey(thread.environmentId, pullRequestRef);
   // Select this row's entry so answers for other pull requests do not re-render it.
@@ -97,6 +106,8 @@ export function useThreadPr(thread: EnvironmentThreadShell): ThreadPrPresentatio
   const summary = pullRequestRef === null ? undefined : (pullRequestSummary.data ?? snapshot);
   // Rows pass `pr` into callbacks; a fresh object per render would invalidate them.
   const summaryPresentation =
-    summary === undefined ? null : presentThreadPr(pullRequestDetailToVcsStatus(summary));
+    summary === undefined
+      ? null
+      : presentThreadPr(pullRequestDetailToVcsStatus(summary), terminology);
   return linkedPresentation ?? summaryPresentation;
 }

@@ -1,3 +1,4 @@
+import { useChangeRequestTerms } from "../../state/change-request-terminology";
 import { Toolbar } from "../../components/ui/Toolbar";
 import { AppActivityIndicator } from "../../components/ui/AppActivityIndicator";
 import { Chip } from "../../components/ui/Chip";
@@ -126,10 +127,7 @@ import { PullRequestStackCard } from "./PullRequestStackCard";
 import { usePullRequestStack, type PullRequestStackState } from "./usePullRequestStack";
 import { usePullRequestEnvironmentFallback } from "./usePullRequestEnvironmentFallback";
 import { pullRequestFileJumpScope, subscribePullRequestFileJump } from "./pullRequestFileJump";
-import {
-  capitalizeTerm,
-  currentChangeRequestTerms,
-} from "@t3tools/client-runtime/source-control-clients";
+import { capitalizeTerm } from "@t3tools/client-runtime/source-control-clients";
 
 const EMPTY_IDS: readonly string[] = [];
 
@@ -414,7 +412,7 @@ export function PullRequestRouteScreen({ route }: StaticScreenProps<PullRequestP
   const pr = usePullRequestLiveChecks(params, result.data);
   const summary = params.initialSummary;
   const identity = pr ?? summary;
-  const terminology = currentChangeRequestTerms();
+  const terminology = useChangeRequestTerms();
   const permissions = usePullRequestPermissions(params, pr);
   const action = usePullRequestAction(params, pr);
   const maintainerEdits = usePullRequestMaintainerEdits(
@@ -946,7 +944,7 @@ function PullRequestFileRouteContent({ route }: PullRequestFileRouteProps) {
   const [toolbarHeight, setToolbarHeight] = usePullRequestToolbarHeight(insets.bottom);
   const commit = route.params.commit;
   const detail = useEnvironmentQuery(composerPullRequests.detail(requestTarget(route.params)));
-  const terminology = currentChangeRequestTerms();
+  const terminology = useChangeRequestTerms();
   const result = usePullRequestDiff(route.params, terminology);
   const filter = usePullRequestFileFilter(
     result.parsed,

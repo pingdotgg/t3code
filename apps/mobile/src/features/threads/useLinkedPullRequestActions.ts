@@ -1,3 +1,4 @@
+import { useChangeRequestTerms } from "../../state/change-request-terminology";
 import {
   pullRequestLinkProject,
   resolveLinkPullRequestInput,
@@ -35,7 +36,7 @@ export function useLinkedPullRequestActions(input: {
   readonly runtime: EnvironmentRuntimeState | null;
 }) {
   const { thread, project, runtime } = input;
-  const terminology = currentChangeRequestTerms();
+  const terminology = useChangeRequestTerms();
   const capabilities = runtime?.serverConfig?.environment.capabilities;
   const canOperate = useEnvironmentScope(
     thread?.environmentId ?? null,
