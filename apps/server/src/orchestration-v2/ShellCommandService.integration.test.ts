@@ -8,6 +8,7 @@ import {
   ProviderDriverKind,
   ProviderInstanceId,
   ProviderThreadId,
+  ProviderTurnId,
   ScheduledTaskId,
   ThreadId,
   type OrchestrationV2ConversationMessage,
@@ -17,6 +18,7 @@ import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
+import * as Queue from "effect/Queue";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
@@ -68,6 +70,7 @@ const makeHarness = Effect.fn("ShellCommandTest.makeHarness")(function* (
       });
     }),
   );
+  const providerEvents = yield* Queue.unbounded<ProviderAdapter.ProviderAdapterV2Event>();
   const calls: Array<ProviderAdapter.ProviderAdapterV2TurnInput> = [];
   const driver = ProviderDriverKind.make("codex");
   const instanceId = ProviderInstanceId.make("codex");
@@ -96,7 +99,7 @@ const makeHarness = Effect.fn("ShellCommandTest.makeHarness")(function* (
             updatedAt: now,
             lastError: null,
           },
-          events: Stream.never,
+          events: Stream.fromQueue(providerEvents),
           ensureThread: ({ threadId }) =>
             Effect.succeed({
               id: ProviderThreadId.make(`provider-thread:${threadId}`),
@@ -185,6 +188,7 @@ const makeHarness = Effect.fn("ShellCommandTest.makeHarness")(function* (
     create,
     send,
     projection,
+    providerEvents,
     calls,
     started,
     completed,
@@ -401,9 +405,72 @@ it.effect.each([false, true])(
     }),
 );
 
-it.effect.each(["shell-command.stop", "thread.archive", "thread.delete"] as const)(
-  "stops background processes through %s",
-  (type) =>
+it.effect.each([
+  "shell-command.stop",
+  "run.interrupt",
+  "thread.stop",
+  "thread.archive",
+  "thread.delete",
+] as const)("stops background processes through %s", (type) =>
+  Effect.gen(function* () {
+    const h = yield* makeHarness({ respond: false, background: true });
+    yield* Effect.gen(function* () {
+      yield* h.create;
+      const running = yield* h.send("background", "!long-running").pipe(Effect.forkScoped);
+      yield* Deferred.await(h.started);
+      yield* TestClock.adjust(120_000);
+      yield* Fiber.join(running);
+      const item = (yield* h.projection).turnItems.find(
+        (item) => item.type === "command_execution" && item.userShell !== undefined,
+      );
+      if (item?.type !== "command_execution" || !item.userShell)
+        return yield* Effect.die("missing command");
+      const dispatched = yield* (yield* Orchestrator.OrchestratorV2).dispatch(
+        type === "shell-command.stop"
+          ? { type, commandId: CommandId.make("stop"), threadId: h.threadId, itemId: item.id }
+          : type === "run.interrupt"
+            ? {
+                type,
+                commandId: CommandId.make("interrupt"),
+                threadId: h.threadId,
+                runId: item.runId!,
+              }
+            : { type, commandId: CommandId.make("cleanup"), threadId: h.threadId },
+      );
+      if (type === "shell-command.stop") expect(dispatched.storedEvents).toEqual([]);
+      yield* (yield* EffectWorker.OrchestrationEffectWorkerV2).drain();
+      expect(h.stopped()).toBe(true);
+      if (type === "shell-command.stop" || type === "run.interrupt" || type === "thread.stop") {
+        expect(
+          (yield* h.projection).turnItems.find((candidate) => candidate.id === item.id),
+        ).toMatchObject({
+          status: "interrupted",
+          userShell: { stoppedByUser: true, delivery: "pending" },
+        });
+        expect(
+          yield* (yield* Orchestrator.OrchestratorV2)
+            .dispatch({
+              type: "shell-command.stop",
+              commandId: CommandId.make("stop-again"),
+              threadId: h.threadId,
+              itemId: item.id,
+            })
+            .pipe(Effect.flip),
+        ).toMatchObject({
+          _tag: "OrchestratorDispatchError",
+          cause: "Only running shell commands can be stopped.",
+        });
+      } else {
+        const fs = yield* FileSystem.FileSystem;
+        expect(yield* fs.exists(item.userShell.outputFile!)).toBe(false);
+      }
+    }).pipe(Effect.provide(Layer.mergeAll(h.layer, NodeServices.layer)));
+  }),
+);
+
+it.effect.each([false, true])(
+  "interrupts background shells with an active run only when holding its queue: %s",
+  (holdQueue) =>
     Effect.gen(function* () {
       const h = yield* makeHarness({ respond: false, background: true });
       yield* Effect.gen(function* () {
@@ -414,42 +481,67 @@ it.effect.each(["shell-command.stop", "thread.archive", "thread.delete"] as cons
         yield* Fiber.join(running);
         const item = (yield* h.projection).turnItems.find(
           (item) => item.type === "command_execution" && item.userShell !== undefined,
+        )!;
+        yield* h.send("provider", "Continue working");
+        const turn = h.calls[0]!;
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const accepted = yield* orchestrator.streamDomainEvents.pipe(
+          Stream.filter(
+            (event) => event.type === "provider-turn.updated" && event.payload.status === "running",
+          ),
+          Stream.take(1),
+          Stream.runDrain,
+          Effect.forkScoped,
         );
-        if (item?.type !== "command_execution" || !item.userShell)
-          return yield* Effect.die("missing command");
-        const dispatched = yield* (yield* Orchestrator.OrchestratorV2).dispatch(
-          type === "shell-command.stop"
-            ? { type, commandId: CommandId.make("stop"), threadId: h.threadId, itemId: item.id }
-            : { type, commandId: CommandId.make("cleanup"), threadId: h.threadId },
-        );
-        if (type === "shell-command.stop") expect(dispatched.storedEvents).toEqual([]);
+        yield* Queue.offer(h.providerEvents, {
+          type: "provider_turn.updated",
+          driver: turn.providerThread.driver,
+          providerTurn: {
+            id: ProviderTurnId.make("provider-turn:active"),
+            providerThreadId: turn.providerThread.id,
+            nodeId: turn.rootNodeId,
+            runAttemptId: turn.attemptId,
+            nativeTurnRef: null,
+            ordinal: turn.providerTurnOrdinal,
+            status: "running",
+            startedAt: yield* DateTime.now,
+            completedAt: null,
+          },
+        });
+        yield* Fiber.join(accepted);
+        const runId = (yield* h.projection).runs.at(-1)!.id;
+        yield* orchestrator.dispatch({
+          type: "run.interrupt",
+          commandId: CommandId.make("interrupt-active"),
+          threadId: h.threadId,
+          runId,
+          holdQueue,
+        });
         yield* (yield* EffectWorker.OrchestrationEffectWorkerV2).drain();
-        expect(h.stopped()).toBe(true);
-        if (type === "shell-command.stop") {
-          expect(
-            (yield* h.projection).turnItems.find((candidate) => candidate.id === item.id),
-          ).toMatchObject({
-            status: "interrupted",
-            userShell: { stoppedByUser: true, delivery: "pending" },
+        const interrupted = yield* h.projection;
+        expect(interrupted.runs.at(-1)?.status).toBe("interrupted");
+        expect(h.stopped()).toBe(holdQueue);
+        expect(interrupted.turnItems.find((candidate) => candidate.id === item.id)).toMatchObject({
+          status: holdQueue ? "interrupted" : "running",
+          userShell: { backgrounded: true },
+        });
+        if (!holdQueue) {
+          yield* orchestrator.dispatch({
+            type: "run.interrupt",
+            commandId: CommandId.make("interrupt-background"),
+            threadId: h.threadId,
+            runId,
           });
-          expect(
-            yield* (yield* Orchestrator.OrchestratorV2)
-              .dispatch({
-                type,
-                commandId: CommandId.make("stop-again"),
-                threadId: h.threadId,
-                itemId: item.id,
-              })
-              .pipe(Effect.flip),
-          ).toMatchObject({
-            _tag: "OrchestratorDispatchError",
-            cause: "Only running shell commands can be stopped.",
-          });
-        } else {
-          const fs = yield* FileSystem.FileSystem;
-          expect(yield* fs.exists(item.userShell.outputFile!)).toBe(false);
+          yield* (yield* EffectWorker.OrchestrationEffectWorkerV2).drain();
         }
-      }).pipe(Effect.provide(Layer.mergeAll(h.layer, NodeServices.layer)));
+        expect(h.stopped()).toBe(true);
+        expect(
+          (yield* h.projection).turnItems.find((candidate) => candidate.id === item.id),
+        ).toMatchObject({
+          status: "interrupted",
+          userShell: { stoppedByUser: true, delivery: "pending" },
+        });
+      }).pipe(Effect.provide(h.layer));
     }),
 );
 

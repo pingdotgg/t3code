@@ -10448,6 +10448,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       turnItems: input.projection.turnItems,
       runs: input.projection.runs,
     })) {
+      // ShellCommandService settles app-owned processes after stopping them, not the provider.
+      if (item.type === "command_execution" && item.userShell !== undefined) continue;
       const itemRunOrdinal = item.runId === null ? undefined : runOrdinals.get(item.runId);
       if (itemRunOrdinal !== undefined && itemRunOrdinal > input.throughRunOrdinal) continue;
       const providerThreadId = item.providerThreadId ?? null;
@@ -11433,7 +11435,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       message: command.reason ?? RunExecutionService.USER_STOP_REASON,
     };
 
-    const otherProviderInterrupts: Array<PendingOrchestrationEffectV2> = [];
+    const backgroundInterrupts: Array<PendingOrchestrationEffectV2> = [];
     if (hasBackgroundWork || command.holdQueue === true) {
       const runOrdinals = new Map(
         projection.runs.map((candidate) => [candidate.id, candidate.ordinal]),
@@ -11451,6 +11453,17 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         turnItems: projection.turnItems,
         runs: projection.runs,
       })) {
+        if (item.type === "command_execution" && item.userShell !== undefined) {
+          if (item.status === "running" && item.userShell.backgrounded) {
+            backgroundInterrupts.push({
+              id: `effect:${command.commandId}:shell-command.stop:${item.id}`,
+              commandId: command.commandId,
+              threadId: command.threadId,
+              request: { type: "shell-command.stop", itemId: item.id },
+            });
+          }
+          continue;
+        }
         const turn = projection.providerTurns.find(
           (candidate) => candidate.id === item.providerTurnId,
         );
@@ -11470,7 +11483,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           .get(owner.providerSessionId)
           .pipe(Effect.orElseSucceed(() => Option.none()));
         if (Option.isNone(ownerSession)) continue;
-        otherProviderInterrupts.push({
+        backgroundInterrupts.push({
           id: `effect:${command.commandId}:provider-turn.interrupt:${turn.id}`,
           commandId: command.commandId,
           threadId: command.threadId,
@@ -11614,8 +11627,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         )
       ) {
         const id = `effect:${command.commandId}:provider-turn.interrupt:${supersededTurn.id}`;
-        if (!otherProviderInterrupts.some((effect) => effect.id === id)) {
-          otherProviderInterrupts.push({
+        if (!backgroundInterrupts.some((effect) => effect.id === id)) {
+          backgroundInterrupts.push({
             id,
             commandId: command.commandId,
             threadId: command.threadId,
@@ -11629,7 +11642,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         }
       }
       yield* stopRemainingWork();
-      yield* Ref.update(effects, (existing) => [...existing, ...otherProviderInterrupts]);
+      yield* Ref.update(effects, (existing) => [...existing, ...backgroundInterrupts]);
       return {
         effectTypes: ["provider-turn.start", "provider-turn.restart"],
         reason: `Run ${run.id} was interrupted before its provider turn started.`,
@@ -11640,6 +11653,20 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     }
 
     if (providerTurn === undefined) {
+      if (backgroundInterrupts.some((effect) => effect.request.type === "shell-command.stop")) {
+        yield* emitEvent({
+          type: "turn-item.updated",
+          threadId: command.threadId,
+          runId: run.id,
+          nodeId: rootNode.id,
+          providerInstanceId: run.providerInstanceId,
+          occurredAt: now,
+          payload: interruptRequestItem,
+        });
+        yield* stopRemainingWork();
+        yield* Ref.update(effects, (existing) => [...existing, ...backgroundInterrupts]);
+        return undefined;
+      }
       return yield* new OrchestratorDispatchError({
         commandId: command.commandId,
         commandType: command.type,
@@ -11679,7 +11706,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         throughRunOrdinal: run.ordinal,
         now,
       });
-      yield* Ref.update(effects, (existing) => [...existing, ...otherProviderInterrupts]);
+      yield* Ref.update(effects, (existing) => [...existing, ...backgroundInterrupts]);
       return undefined;
     }
     if (providerThread.providerSessionId === null) {
@@ -11722,7 +11749,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           providerTurnId: providerTurn.id,
         },
       } satisfies PendingOrchestrationEffectV2,
-      ...otherProviderInterrupts,
+      ...backgroundInterrupts,
     ]);
     return undefined;
   });
