@@ -2314,8 +2314,9 @@ export default function ChatView(props: ChatViewProps) {
     composerOverlayElement,
     isDraftHeroState,
     publishComposerOverlayHeightStable,
-    // oxlint-disable-next-line react/exhaustive-effect-dependencies -- The scroll-to-bottom button changes the overlay's height without resizing the observed node first.
+    // oxlint-disable-next-line react/exhaustive-effect-dependencies -- The jump buttons change the overlay's height without resizing the observed node first.
     showScrollToBottom,
+    showScrollToLastUserMessage,
   ]);
   const openPanelPullRequestUrl = useOpenPanelPullRequestUrl(activeThreadRef);
   const activeThreadReferenceCopyTarget =

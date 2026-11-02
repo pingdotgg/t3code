@@ -1191,6 +1191,8 @@ const ConversationTimeline = memo(function ConversationTimeline({
       }
       listRef.current = null;
       registerTimeline?.(null);
+      // With no list, there is nothing to jump back to.
+      onLastUserMessageAboveChange?.(false);
     };
   });
 
