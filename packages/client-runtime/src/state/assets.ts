@@ -28,7 +28,7 @@ import type { ProjectFaviconCache, ProjectFaviconTarget } from "../projectFavico
 import { createEnvironmentQueryAtomFamily } from "./runtime.ts";
 
 const ASSET_URL_REFRESH_INTERVAL_MS = 30 * 60_000;
-const ASSET_URL_STALE_TIME_MS = 5 * 60_000;
+const ASSET_URL_STALE_TIME_MS = ASSET_URL_REFRESH_INTERVAL_MS;
 const ASSET_URL_IDLE_TTL_MS = 60 * 60_000;
 export const ASSET_URL_MAX_IN_FLIGHT = 6;
 

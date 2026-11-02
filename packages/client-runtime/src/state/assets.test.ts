@@ -1,4 +1,4 @@
-import { describe, expect, it } from "@effect/vitest";
+import { describe, expect, it, vi } from "@effect/vitest";
 import { type AssetCreateUrlResult, EnvironmentId, WS_METHODS } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
@@ -151,6 +151,8 @@ const makeAssetUrlHarness = Effect.fn("TestAssetUrl.makeHarness")(function* (
     Atom.runtime(Layer.succeed(EnvironmentRegistry.EnvironmentRegistry, environmentRegistry)),
   );
   return {
+    registry,
+    atoms,
     started,
     inFlight: (environmentId: EnvironmentId) => inFlight.get(environmentId) ?? 0,
     maxInFlight: (environmentId: EnvironmentId) => maxInFlight.get(environmentId) ?? 0,
@@ -225,6 +227,39 @@ describe("asset URL requests", () => {
           yield* Queue.take(harness.started);
         }
         expect(harness.maxInFlight(remote)).toBe(ASSET_URL_MAX_IN_FLIGHT);
+      }),
+    ),
+  );
+
+  it.effect("keeps an image's URL when it is shown again before the URL needs renewing", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        let now = 1_000_000;
+        using _now = vi.spyOn(Date, "now").mockImplementation(() => now);
+        const harness = yield* makeAssetUrlHarness([remote]);
+        const image = harness.atoms.createUrl({
+          environmentId: remote,
+          input: { resource: { _tag: "attachment", attachmentId: "image" } },
+        });
+        // `getResult` unsubscribes only once the reader yields.
+        const read = AtomRegistry.getResult(harness.registry, image, {
+          suspendOnWaiting: true,
+        }).pipe(Effect.tap(() => Effect.yieldNow));
+
+        const unmount = harness.registry.mount(image);
+        yield* Queue.take(harness.started);
+        yield* harness.release(remote);
+        yield* read;
+        unmount();
+        // The registry releases unmounted atoms, and revalidates stale ones, on its next tick.
+        yield* Effect.yieldNow;
+
+        now += 6 * 60_000;
+        yield* harness.release(remote);
+        harness.registry.mount(image);
+        yield* Effect.yieldNow;
+        yield* read;
+        expect(yield* Queue.size(harness.started)).toBe(0);
       }),
     ),
   );
