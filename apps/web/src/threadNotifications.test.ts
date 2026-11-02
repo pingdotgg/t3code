@@ -59,6 +59,21 @@ describe("playNotificationSound", () => {
     expect(audio.started).toBe(2);
   });
 
+  it("retries failed preloads on an alert rather than every gesture", async () => {
+    vi.mocked(fetch).mockRejectedValue(new Error("offline"));
+    const { unlockNotificationAudio, playNotificationSound } = await loadUnlocked();
+    await playNotificationSound("completion", () => true);
+    expect(fetch).toHaveBeenCalledTimes(2);
+
+    unlockNotificationAudio();
+    expect(fetch).toHaveBeenCalledTimes(2);
+
+    vi.mocked(fetch).mockResolvedValue(new Response(new ArrayBuffer(0)));
+    await playNotificationSound("completion", () => true);
+    expect(fetch).toHaveBeenCalledTimes(3);
+    expect(audio.started).toBe(1);
+  });
+
   it("plays one sound for threads that complete together", async () => {
     const { playNotificationSound } = await loadUnlocked();
 
