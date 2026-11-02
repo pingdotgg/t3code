@@ -67,7 +67,10 @@ vi.mock("~/hooks/useSettings", () => ({
     select(DEFAULT_CLIENT_SETTINGS),
   updateClientSettings: async () => {},
 }));
-vi.mock("~/hooks/useTheme", () => ({ useRenderedAppearance: () => "dark" }));
+vi.mock("~/hooks/useTheme", () => ({
+  useRenderedAppearance: () => "dark",
+  useTheme: () => ({ resolvedTheme: "dark" }),
+}));
 vi.mock("~/state/queries", () => ({
   useCheckpointDiff: () => ({ data: null, error: null, isPending: false }),
   useTurnItemDetail: () => ({ data: null, error: null, isPending: false }),

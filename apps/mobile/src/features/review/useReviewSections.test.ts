@@ -22,7 +22,8 @@ const state = vi.hoisted(() => ({
   turnAtom: {},
 }));
 
-vi.mock("@t3tools/client-runtime/state/thread-checkpoints", () => ({
+vi.mock(import("@t3tools/client-runtime/state/thread-checkpoints"), async (importOriginal) => ({
+  ...(await importOriginal()),
   deriveThreadCheckpointSummaries: () => state.checkpoints,
 }));
 vi.mock("@effect/atom-react", () => ({
