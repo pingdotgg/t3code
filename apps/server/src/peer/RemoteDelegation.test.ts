@@ -29,6 +29,7 @@ import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Schedule from "effect/Schedule";
 import * as Stream from "effect/Stream";
+import * as Tracer from "effect/Tracer";
 import * as SubscriptionRef from "effect/SubscriptionRef";
 import type * as SqlClient from "effect/sql/SqlClient";
 import { McpSchema, McpServer } from "effect/ai";
@@ -845,13 +846,153 @@ it.effect("a task delegated to the box wakes the laptop's parent when it ends th
       );
       expect(Option.isSome(offered)).toBe(true);
 
-      const status = yield* a.call("task_status", { taskId: delegated.taskId });
+      const messageReads: Array<string> = [];
+      const tracer = Tracer.make({
+        span(options) {
+          const span = new Tracer.NativeSpan(options);
+          const end = span.end.bind(span);
+          span.end = (endTime, exit) => {
+            end(endTime, exit);
+            const query = span.attributes.get("db.query.text");
+            if (
+              typeof query === "string" &&
+              /SELECT[\s\S]*FROM orchestration_v2_projection_messages/i.test(query)
+            ) {
+              messageReads.push(query);
+            }
+          };
+          return span;
+        },
+      });
+      const status = yield* a
+        .call("task_status", { taskId: delegated.taskId })
+        .pipe(Effect.withTracer(tracer));
       expect(status.structuredContent).toMatchObject({
         status: "completed",
         summary: "All 412 tests pass on the box.",
       });
+      // Delivery validation still reads messages; choosing the observer does not need another read.
+      expect(messageReads).toHaveLength(2);
+      expect(messageReads.filter((query) => !/\bmessage_id\s+IN\b/i.test(query))).toHaveLength(1);
+      const acknowledged = yield* a.projections.getThreadRecords(parentThreadId, ["subagents"], {
+        subagentIds: [delegated.taskId],
+      });
+      expect(acknowledged.subagents[0]?.completionDelivery).toEqual({
+        state: "acknowledged",
+        observedByRunId: parentRunId,
+      });
     }),
   ).pipe(Effect.provide(NodeHttpServer.layerTest)),
+);
+
+it.effect.each(["no active parent run", "a newer run owned by another provider"] as const)(
+  "preserves remote observation guards with %s",
+  (observer) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const thread = yield* makeBoxThread;
+        const b = yield* serveBox(thread);
+        const offers = yield* SubscriptionRef.make<
+          ReadonlyArray<ProviderContinuationRequests.ProviderContinuationRequest>
+        >([]);
+        const database = yield* SqlitePersistence.layerMemory.pipe(Layer.build);
+        const a = yield* makeLaptop(database, offers);
+        yield* linkTo(a.links, b, "full-access");
+        yield* seedParent(a);
+        const delegated = yield* delegateToBox(a);
+
+        yield* Ref.set(thread.reply, "Remote result remains available.");
+        yield* Ref.set(thread.status, "completed");
+        yield* Deferred.succeed(thread.finished, undefined);
+        yield* taskResult(a, delegated.taskId);
+        yield* SubscriptionRef.changes(offers).pipe(
+          Stream.filter((seen) => seen.some((offer) => offer.threadId === parentThreadId)),
+          Stream.runHead,
+        );
+
+        const parent = yield* a.projections.getThreadRecords(
+          parentThreadId,
+          ["runs", "subagents"],
+          {
+            subagentIds: [delegated.taskId],
+          },
+        );
+        expect(parent.subagents[0]?.completionDelivery?.state).not.toBe("acknowledged");
+        const parentRun = parent.runs.find((run) => run.id === parentRunId);
+        if (parentRun === undefined) return yield* Effect.die("The parent run was not seeded.");
+        const now = yield* DateTime.now;
+        const otherInstanceId = ProviderInstanceId.make("codex-other");
+        const observingRun: OrchestrationV2Run =
+          observer === "no active parent run"
+            ? { ...parentRun, status: "completed", completedAt: now }
+            : {
+                id: RunId.make("run:laptop-other-provider"),
+                threadId: parentThreadId,
+                ordinal: parentRun.ordinal + 1,
+                providerInstanceId: otherInstanceId,
+                modelSelection: { instanceId: otherInstanceId, model: "gpt-5.4" },
+                providerThreadId: null,
+                userMessageId: MessageId.make("message:laptop-other-provider"),
+                rootNodeId: null,
+                activeAttemptId: null,
+                status: "preparing",
+                requestedAt: now,
+                startedAt: null,
+                completedAt: null,
+                checkpointId: null,
+                contextHandoffId: null,
+              };
+        yield* a.sink.write({
+          commandId: CommandId.make("command:change-remote-result-observer"),
+          events: [
+            {
+              id: EventId.make("event:change-remote-result-observer"),
+              type: "run.updated",
+              threadId: parentThreadId,
+              runId: observingRun.id,
+              providerInstanceId: observingRun.providerInstanceId,
+              occurredAt: now,
+              payload: observingRun,
+            },
+          ],
+        });
+
+        const status = yield* a.call("task_status", { taskId: delegated.taskId });
+        if (observer === "no active parent run") {
+          expect(status.isError).toBe(true);
+          expect(status.content).toEqual([
+            {
+              type: "text",
+              text: JSON.stringify({
+                _tag: "OrchestratorMcpFailure",
+                code: "parent_not_active",
+                message: "The calling provider no longer owns an active thread run.",
+              }),
+            },
+          ]);
+          const unacknowledged = yield* a.projections.getThreadRecords(
+            parentThreadId,
+            ["subagents"],
+            { subagentIds: [delegated.taskId] },
+          );
+          expect(unacknowledged.subagents[0]?.result).toBe("Remote result remains available.");
+          expect(unacknowledged.subagents[0]?.completionDelivery?.state).not.toBe("acknowledged");
+          return;
+        }
+        expect(status.isError, JSON.stringify(status.content)).not.toBe(true);
+        expect(status.structuredContent).toMatchObject({
+          status: "completed",
+          summary: "Remote result remains available.",
+        });
+        const acknowledged = yield* a.projections.getThreadRecords(parentThreadId, ["subagents"], {
+          subagentIds: [delegated.taskId],
+        });
+        expect(acknowledged.subagents[0]?.completionDelivery).toEqual({
+          state: "acknowledged",
+          observedByRunId: null,
+        });
+      }),
+    ).pipe(Effect.provide(NodeHttpServer.layerTest)),
 );
 
 it.effect(
