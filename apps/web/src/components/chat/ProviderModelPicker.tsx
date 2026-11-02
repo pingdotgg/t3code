@@ -37,7 +37,9 @@ function lockBackgroundScroll(popup: HTMLElement | null) {
   const shouldAllowOverlayScroll = (target: EventTarget | null) => {
     return (
       target instanceof Element &&
-      target.closest("[data-model-picker-content], [data-model-picker-effort]")
+      target.closest(
+        "[data-model-picker-content], [data-model-picker-effort], [data-model-picker-option-menu]",
+      )
     );
   };
   const preventBackgroundWheel = (event: WheelEvent) => {
@@ -154,16 +156,22 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
 
   /**
    * Focuses the selected reasoning level, else the first level. With `rows: "any"` it falls back
-   * to the column's other options. False when nothing took focus.
+   * to the column's first enabled option. False when nothing took focus.
    */
   const focusEffort = (rows: "levels" | "any") => {
     const column = popupRef.current?.querySelector("[data-model-picker-effort]");
-    const first = (selector: string) =>
-      column?.querySelector<HTMLElement>(`${selector}[aria-checked="true"]:not(:disabled)`) ??
-      column?.querySelector<HTMLElement>(`${selector}:not(:disabled)`);
+    const level =
+      column?.querySelector<HTMLElement>(
+        '[data-effort-level][aria-checked="true"]:not(:disabled)',
+      ) ?? column?.querySelector<HTMLElement>("[data-effort-level]:not(:disabled)");
+    // No aria-checked here: an On switch is checked but is not where focus belongs.
     const row =
-      first("[data-effort-level]") ?? (rows === "any" ? first("[data-effort-row]") : null);
+      level ??
+      (rows === "any"
+        ? column?.querySelector<HTMLElement>("[data-effort-row]:not(:disabled)")
+        : null);
     row?.focus({ preventScroll: true });
+    row?.scrollIntoView({ block: "nearest" });
     return row != null;
   };
   const openTarget = (target: "effort" | "permissions") => {
@@ -230,7 +238,11 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
 
   const triggerText = props.triggerLabel ?? multipleLabel ?? triggerTitle;
   const triggerTextProps = {
-    className: "min-w-0 flex-1 overflow-hidden truncate",
+    className: cn(
+      "min-w-0 flex-1 overflow-hidden truncate",
+      // Long names such as "Fusion (Claude Opus 5.5 Medium + SWE-2 High)" would push the composer.
+      props.isComposerOwned && "max-w-56",
+    ),
     "data-chat-provider-model-picker-label": "true",
   } as const;
 
@@ -262,7 +274,16 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
           : (props.getModelDisabledReason?.(instanceId, model) ?? null)
       }
       onInstanceModelChange={handleInstanceModelChange}
-      {...(docked ? { docked, onFocusEffort: () => void focusEffort("any") } : {})}
+      {...(docked
+        ? {
+            docked,
+            onFocusEffort: () => void focusEffort("any"),
+            // Inside the fixed height, so switching to or from a ChatGPT plan never resizes it.
+            ...(props.selectedModels === undefined
+              ? { listFooter: <ChatGptSharingControl provider={activeEntry?.snapshot ?? null} /> }
+              : {}),
+          }
+        : {})}
     />
   );
 
@@ -401,12 +422,14 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
       >
         {props.effortColumn ? (
           <DockedPickerContext value={{ modelLabel: triggerTitle }}>
-            <div className="flex flex-col">
-              <div className="flex max-h-86.5 max-sm:max-h-none max-sm:flex-col">
+            <div className="flex max-h-(--available-height) flex-col">
+              {/* One fixed height, so a model with more options never resizes the popup. Short
+                  windows shrink it and keep the footer. */}
+              <div className="flex h-86.5 min-h-0 max-sm:h-auto max-sm:flex-col">
                 {picker}
                 <div
                   data-model-picker-effort
-                  className="flex min-h-0 w-48 shrink-0 flex-col border-l border-border/70 bg-muted/40 max-sm:max-h-64 max-sm:w-full max-sm:border-t max-sm:border-l-0"
+                  className="flex min-h-0 w-48 flex-col sm:shrink-0 border-l border-border/70 bg-muted/40 max-sm:h-64 max-sm:w-full max-sm:border-t max-sm:border-l-0"
                   onKeyDown={(event) => {
                     if (event.key !== "ArrowLeft" || event.altKey || event.ctrlKey || event.metaKey)
                       return;
@@ -424,7 +447,7 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
         ) : (
           picker
         )}
-        {props.selectedModels === undefined ? (
+        {props.selectedModels === undefined && !docked ? (
           <ChatGptSharingControl provider={activeEntry?.snapshot ?? null} />
         ) : null}
       </PopoverPopup>
