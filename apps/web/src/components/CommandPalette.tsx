@@ -1309,16 +1309,6 @@ function OpenCommandPaletteDialog(props: {
         });
       },
     });
-    actionItems.push({
-      kind: "action",
-      value: "action:show-pins",
-      searchTerms: ["pins", "pinned", "sidebar", "panel", "highlights"],
-      title: "Show pins",
-      icon: <PinIcon className={ITEM_ICON_CLASS} />,
-      run: async () => {
-        useRightPanelStore.getState().open(pinThreadRef, "pins");
-      },
-    });
   }
 
   const promptLinkTarget = paletteRouteTarget

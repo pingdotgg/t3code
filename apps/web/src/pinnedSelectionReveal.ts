@@ -10,7 +10,6 @@ import {
   type PinnedSelection,
   type PinnedSelectionDraft,
 } from "./pinnedSelections";
-import { selectActiveRightPanel, useRightPanelStore } from "./rightPanelStore";
 import { useUiStateStore } from "./uiStateStore";
 
 export interface PinnedSelectionReveal {
@@ -52,10 +51,6 @@ export function commitPinnedSelection(
 ): PinnedSelection {
   const threadKey = scopedThreadKey(threadRef);
   const pin = useUiStateStore.getState().addPinnedSelection(threadKey, draft);
-  const panels = useRightPanelStore.getState();
-  if (selectActiveRightPanel(panels.byThreadKey, threadRef) !== "pins") {
-    panels.open(threadRef, "pins");
-  }
   requestPinnedSelectionReveal({ threadKey, pinId: pin.id, messageId: pin.messageId });
   return pin;
 }

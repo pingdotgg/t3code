@@ -14,7 +14,6 @@ import type { ChatFileAttachment } from "./types";
 
 const RIGHT_PANEL_KINDS = [
   "diff",
-  "pins",
   "files",
   "file",
   "preview",
@@ -48,7 +47,6 @@ export type RightPanelSurface =
       splitDirection?: "horizontal" | "vertical";
     }
   | { id: "diff"; kind: "diff" }
-  | { id: "pins"; kind: "pins" }
   | {
       id: "files";
       kind: "files";
@@ -213,8 +211,6 @@ const singletonSurface = (
   switch (kind) {
     case "diff":
       return { id: "diff", kind };
-    case "pins":
-      return { id: "pins", kind };
     case "files":
       return { id: "files", kind };
     case "pull-requests":
@@ -486,7 +482,7 @@ export function migratePersistedRightPanelState(persistedState: unknown): {
               const surfaces = Array.isArray(validThreadState?.surfaces)
                 ? validThreadState.surfaces.flatMap<RightPanelSurface>((surface) => {
                     const kind = (surface as { kind?: string }).kind;
-                    if (kind === "plan" || kind === "agents") return [];
+                    if (kind === "plan" || kind === "agents" || kind === "pins") return [];
                     if (
                       (surface.kind === "file" || surface.kind === "files") &&
                       "folderTrail" in surface &&

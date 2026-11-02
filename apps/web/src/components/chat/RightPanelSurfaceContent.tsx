@@ -19,7 +19,6 @@ import {
   PersistentThreadTerminalPanel,
   type PersistentThreadTerminalPanelProps,
 } from "../PersistentThreadTerminals";
-import { PinnedSelectionsSection } from "./PinnedSelectionsSection";
 import { pullRequestPanelContext } from "../pullRequest/pullRequestDetail.logic";
 import { PullRequestDetailPanel } from "../pullRequest/PullRequestDetailPanel";
 import { PullRequestDetailGhost } from "../pullRequest/PullRequestGhosts";
@@ -105,8 +104,6 @@ export function RightPanelSurfaceContent(props: {
           surface={surface}
         />
       );
-    case "pins":
-      return <PinnedSelectionsSection threadRef={threadRef} />;
     case "diff":
       return (
         <Suspense fallback={null}>
