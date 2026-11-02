@@ -162,11 +162,8 @@ export function resolveDraftProjectSelection(
 }
 
 /**
- * Which project a pending share import may target. The route's initial
- * project wins while it is still resolving; once the user explicitly picks a
- * different project (the flow key names the selected one), the import
- * follows that choice instead of stalling. A selected project that matches
- * neither is a transient catalog fallback and must not start an import.
+ * Which project a pending share import may target. The initial project wins
+ * while resolving; an explicit pick the flow key names is followed instead.
  */
 export function resolveShareImportProject(input: {
   readonly selectedProject: EnvironmentProject | null;
