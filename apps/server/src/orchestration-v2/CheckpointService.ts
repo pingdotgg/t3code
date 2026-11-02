@@ -114,6 +114,8 @@ export interface CheckpointServiceV2Shape {
   readonly captureBaseline: (input: {
     readonly scope: OrchestrationV2CheckpointScope;
     readonly ordinalWithinScope: number;
+    /** Captures a fresh snapshot at the run's start, separate from the previous turn's checkpoint. */
+    readonly startOrdinalWithinScope?: number;
   }) => Effect.Effect<void, CheckpointServiceV2Error>;
   readonly materializeBaselineCheckpoint: (input: {
     readonly scope: OrchestrationV2CheckpointScope;
@@ -145,16 +147,30 @@ export class CheckpointServiceV2 extends Context.Service<
   CheckpointServiceV2Shape
 >()("t3/orchestration-v2/CheckpointService/CheckpointServiceV2") {}
 
+const checkpointRefForScope = Effect.fn("checkpointRefForScope")(function* (input: {
+  readonly scopeId: CheckpointScopeId;
+  readonly phase: "ordinal" | "start";
+  readonly ordinalWithinScope: number;
+}) {
+  const crypto = yield* Crypto.Crypto;
+  const digest = yield* crypto
+    .digest("SHA-256", new TextEncoder().encode(input.scopeId))
+    .pipe(Effect.orDie);
+  const scopeKey = Hex.encode(digest).slice(0, 32);
+  return CheckpointRef.make(
+    `${CHECKPOINT_REFS_PREFIX}/${Base64Url.encode(scopeKey)}/${input.phase}/${input.ordinalWithinScope}`,
+  );
+});
+
 export const checkpointRefForScopeOrdinal = Effect.fn("checkpointRefForScopeOrdinal")(
   function* (input: { readonly scopeId: CheckpointScopeId; readonly ordinalWithinScope: number }) {
-    const crypto = yield* Crypto.Crypto;
-    const digest = yield* crypto
-      .digest("SHA-256", new TextEncoder().encode(input.scopeId))
-      .pipe(Effect.orDie);
-    const scopeKey = Hex.encode(digest).slice(0, 32);
-    return CheckpointRef.make(
-      `${CHECKPOINT_REFS_PREFIX}/${Base64Url.encode(scopeKey)}/ordinal/${input.ordinalWithinScope}`,
-    );
+    return yield* checkpointRefForScope({ ...input, phase: "ordinal" });
+  },
+);
+
+export const checkpointStartRefForScopeOrdinal = Effect.fn("checkpointStartRefForScopeOrdinal")(
+  function* (input: { readonly scopeId: CheckpointScopeId; readonly ordinalWithinScope: number }) {
+    return yield* checkpointRefForScope({ ...input, phase: "start" });
   },
 );
 
@@ -237,8 +253,11 @@ export const layer: Layer.Layer<
   Effect.gen(function* () {
     const checkpointStore = yield* CheckpointStore.CheckpointStore;
     const crypto = yield* Crypto.Crypto;
-    const checkpointRefFor = (input: Parameters<typeof checkpointRefForScopeOrdinal>[0]) =>
-      checkpointRefForScopeOrdinal(input).pipe(Effect.provideService(Crypto.Crypto, crypto));
+    const checkpointRefFor = (input: {
+      readonly scopeId: CheckpointScopeId;
+      readonly phase: "ordinal" | "start";
+      readonly ordinalWithinScope: number;
+    }) => checkpointRefForScope(input).pipe(Effect.provideService(Crypto.Crypto, crypto));
     const idAllocator = yield* IdAllocator.IdAllocatorV2;
     const workspaceLocks = yield* KeyedLock.make<string>();
     const withWorkspaceLock = <A, E, R>(cwd: string, effect: Effect.Effect<A, E, R>) =>
@@ -246,6 +265,38 @@ export const layer: Layer.Layer<
 
     const isGitCheckpointable = (cwd: string) =>
       checkpointStore.isGitRepository(cwd).pipe(Effect.orElseSucceed(() => false));
+
+    const captureCheckpointRefIfMissing = Effect.fn(
+      "CheckpointService.captureCheckpointRefIfMissing",
+    )(function* (input: {
+      readonly scope: OrchestrationV2CheckpointScope;
+      readonly phase: "ordinal" | "start";
+      readonly ordinalWithinScope: number;
+    }) {
+      const checkpointRef = yield* checkpointRefFor({
+        scopeId: input.scope.id,
+        phase: input.phase,
+        ordinalWithinScope: input.ordinalWithinScope,
+      });
+      const exists = yield* checkpointStore.hasCheckpointRef({
+        cwd: input.scope.cwd,
+        checkpointRef,
+      });
+      if (exists) {
+        return;
+      }
+
+      yield* checkpointStore
+        .captureCheckpoint({
+          cwd: input.scope.cwd,
+          checkpointRef,
+        })
+        .pipe(
+          Effect.catchTags({
+            VcsUnsupportedOperationError: () => Effect.void,
+          }),
+        );
+    });
 
     const captureBaseline: CheckpointServiceV2Shape["captureBaseline"] = (input) =>
       withWorkspaceLock(
@@ -255,28 +306,19 @@ export const layer: Layer.Layer<
             return;
           }
 
-          const checkpointRef = yield* checkpointRefFor({
-            scopeId: input.scope.id,
+          yield* captureCheckpointRefIfMissing({
+            scope: input.scope,
+            phase: "ordinal",
             ordinalWithinScope: input.ordinalWithinScope,
           });
-          const exists = yield* checkpointStore.hasCheckpointRef({
-            cwd: input.scope.cwd,
-            checkpointRef,
-          });
-          if (exists) {
-            return;
+          // Turn one starts at the thread-start checkpoint, so it needs no second snapshot.
+          if (input.startOrdinalWithinScope !== undefined && input.startOrdinalWithinScope > 1) {
+            yield* captureCheckpointRefIfMissing({
+              scope: input.scope,
+              phase: "start",
+              ordinalWithinScope: input.startOrdinalWithinScope,
+            });
           }
-
-          yield* checkpointStore
-            .captureCheckpoint({
-              cwd: input.scope.cwd,
-              checkpointRef,
-            })
-            .pipe(
-              Effect.catchTags({
-                VcsUnsupportedOperationError: () => Effect.void,
-              }),
-            );
         }),
       ).pipe(
         Effect.mapError(
@@ -296,6 +338,7 @@ export const layer: Layer.Layer<
           Effect.gen(function* () {
             const checkpointRef = yield* checkpointRefFor({
               scopeId: input.scope.id,
+              phase: "ordinal",
               ordinalWithinScope: input.ordinalWithinScope,
             });
             const checkpointId = yield* checkpointIdForScopeOrdinal(idAllocator, {
@@ -361,10 +404,12 @@ export const layer: Layer.Layer<
               : null;
           const checkpointRef = yield* checkpointRefFor({
             scopeId: input.scope.id,
+            phase: "ordinal",
             ordinalWithinScope: input.ordinalWithinScope,
           });
           const previousCheckpointRef = yield* checkpointRefFor({
             scopeId: input.scope.id,
+            phase: "ordinal",
             ordinalWithinScope: Math.max(0, input.ordinalWithinScope - 1),
           });
 
@@ -419,23 +464,44 @@ export const layer: Layer.Layer<
             });
           }
 
-          const previousExists = yield* checkpointStore
+          const startCheckpointRef = yield* checkpointRefFor({
+            scopeId: input.scope.id,
+            phase: "start",
+            ordinalWithinScope: input.ordinalWithinScope,
+          });
+          const startExists = yield* checkpointStore
             .hasCheckpointRef({
               cwd: input.scope.cwd,
-              checkpointRef: previousCheckpointRef,
+              checkpointRef: startCheckpointRef,
             })
             .pipe(
               Effect.catch((cause) =>
-                Effect.logWarning("orchestration V2 previous checkpoint ref lookup failed", {
+                Effect.logWarning("orchestration V2 turn-start ref lookup failed", {
                   scopeId: input.scope.id,
-                  checkpointRef: previousCheckpointRef,
+                  checkpointRef: startCheckpointRef,
                   cause: String(cause),
                 }).pipe(Effect.as(false)),
               ),
             );
+          const previousExists =
+            startExists ||
+            (yield* checkpointStore
+              .hasCheckpointRef({
+                cwd: input.scope.cwd,
+                checkpointRef: previousCheckpointRef,
+              })
+              .pipe(
+                Effect.catch((cause) =>
+                  Effect.logWarning("orchestration V2 previous checkpoint ref lookup failed", {
+                    scopeId: input.scope.id,
+                    checkpointRef: previousCheckpointRef,
+                    cause: String(cause),
+                  }).pipe(Effect.as(false)),
+                ),
+              ));
           const refs = {
             cwd: input.scope.cwd,
-            fromCheckpointRef: previousCheckpointRef,
+            fromCheckpointRef: startExists ? startCheckpointRef : previousCheckpointRef,
             toCheckpointRef: checkpointRef,
           };
           // A pull or rebase can change thousands of files the turn did not write.
@@ -541,9 +607,24 @@ export const layer: Layer.Layer<
     const deleteStaleRefs: CheckpointServiceV2Shape["deleteStaleRefs"] = (input) =>
       withWorkspaceLock(
         input.scope.cwd,
-        checkpointStore.deleteCheckpointRefs({
-          cwd: input.scope.cwd,
-          checkpointRefs: input.checkpoints.map((checkpoint) => checkpoint.ref),
+        Effect.gen(function* () {
+          const startRefs = yield* Effect.forEach(
+            input.checkpoints,
+            (checkpoint) =>
+              checkpointRefFor({
+                scopeId: input.scope.id,
+                phase: "start",
+                ordinalWithinScope: checkpoint.ordinalWithinScope,
+              }),
+            { concurrency: "unbounded" },
+          );
+          yield* checkpointStore.deleteCheckpointRefs({
+            cwd: input.scope.cwd,
+            checkpointRefs: [
+              ...input.checkpoints.map((checkpoint) => checkpoint.ref),
+              ...startRefs,
+            ],
+          });
         }),
       ).pipe(
         Effect.mapError(
