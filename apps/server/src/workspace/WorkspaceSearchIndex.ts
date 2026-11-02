@@ -1,8 +1,6 @@
 // @effect-diagnostics nodeBuiltinImport:off - readdir with file types avoids an lstat per child
 import * as NodeFSP from "node:fs/promises";
 import * as NodeModule from "node:module";
-// @effect-diagnostics-next-line nodeBuiltinImport:off -- Yield to Node I/O, not just the Effect scheduler.
-import * as NodeTimersPromises from "node:timers/promises";
 
 import type {
   DirItem,
@@ -1344,7 +1342,10 @@ export const make = Effect.fn("WorkspaceSearchIndex.make")(function* (
       regexFallbackError ??= result.regexFallbackError;
       // The RPC has no resume cursor: finish paging internally, letting Node service I/O between pages.
       if (matches.length < input.limit && nextCursor !== null) {
-        yield* Effect.promise((signal) => NodeTimersPromises.setImmediate(undefined, { signal }));
+        yield* Effect.callback<void>((resume) => {
+          const immediate = setImmediate(() => resume(Effect.void));
+          return Effect.sync(() => clearImmediate(immediate));
+        });
       }
     } while (retryLiterally || (matches.length < input.limit && nextCursor !== null));
 
