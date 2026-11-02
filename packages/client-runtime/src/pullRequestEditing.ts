@@ -49,15 +49,54 @@ export interface MaintainerEditsChoice {
  * A saved choice ends at the first host reading delivered after the save. Readers refresh once it
  * succeeds, which drops reads still in flight, so that reading started after the write.
  */
-export function maintainerEditsChoiceInForce(
-  choice: MaintainerEditsChoice | null,
+export function maintainerEditsChoiceInForce<
+  Choice extends { readonly key: string; readonly observedAt: number | undefined },
+>(
+  choice: Choice | null,
   key: string,
   observedAt: number | undefined,
   saving: boolean,
-): MaintainerEditsChoice | null {
+): Choice | null {
   if (choice === null || choice.key !== key) return null;
   if (saving) return choice.observedAt === observedAt ? choice : { ...choice, observedAt };
   return observedAt !== undefined && choice.observedAt === observedAt ? choice : null;
+}
+
+/** A description written from this client, shown in place of the host's copy. */
+export interface DescriptionDraft {
+  readonly key: string;
+  readonly observedAt: number | undefined;
+  readonly body: string;
+  /** Saves still running. The host applies them in order, so the last one is `body`. */
+  readonly saves: number;
+}
+
+/** Same lifetime as a maintainer edits choice: until the first host reading after the saves. */
+export function descriptionDraftInForce(
+  draft: DescriptionDraft | null,
+  key: string,
+  observedAt: number | undefined,
+): DescriptionDraft | null {
+  return maintainerEditsChoiceInForce(draft, key, observedAt, (draft?.saves ?? 0) > 0);
+}
+
+export function startDescriptionSave(
+  draft: DescriptionDraft | null,
+  detail: { readonly url: string; readonly observedAt?: number | undefined },
+  body: string,
+): DescriptionDraft {
+  const saves = draft?.key === detail.url ? draft.saves : 0;
+  return { key: detail.url, observedAt: detail.observedAt, body, saves: saves + 1 };
+}
+
+/** A failed save drops the draft: the saves before it may have landed, so only a reading knows. */
+export function settleDescriptionSave(
+  draft: DescriptionDraft | null,
+  key: string,
+  saved: boolean,
+): DescriptionDraft | null {
+  if (draft === null || draft.key !== key || draft.saves === 0) return draft;
+  return saved ? { ...draft, saves: draft.saves - 1 } : null;
 }
 
 /** Hosts do not support rewriting review summaries through comment mutations. */

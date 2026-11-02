@@ -169,6 +169,7 @@ uses the project's instructions and recent commit subjects.
 
 Open **Pull requests** to review changes and comments, request reviewers, check out a branch,
 or merge. You can edit review titles and descriptions and your own comments where the host allows it.
+Where you can edit a description, you can also tick its checkboxes from the Summary tab.
 GitLab calls these merge requests.
 
 On mobile, **Pull requests** lists reviews across your connected environments. Open a review
