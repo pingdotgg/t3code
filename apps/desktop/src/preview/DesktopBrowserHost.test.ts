@@ -165,6 +165,23 @@ describe("DesktopBrowserHost", () => {
     }),
   );
 
+  it.effect("replays an explicit hidden report before announcing another tab", () =>
+    Effect.gen(function* () {
+      const host = yield* DesktopBrowserHost.make;
+      const other = { ...key, tabId: "tab-2" };
+      host.setShown(key, false);
+      host.attach(key, makeDebuggee().tab);
+      host.setShown(other, true);
+      host.attach(other, makeDebuggee().tab);
+
+      expect(yield* takeEvents(host, 3)).toEqual([
+        { type: "attached", ...key },
+        { type: "shown", ...key, shown: false },
+        { type: "attached", ...other },
+      ]);
+    }),
+  );
+
   it.effect("drops replies from a relay the server released", () =>
     Effect.gen(function* () {
       const host = yield* DesktopBrowserHost.make;

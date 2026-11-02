@@ -87,7 +87,7 @@ export class DesktopBrowserHost extends Context.Service<
     readonly handleCommandLine: (line: string) => Effect.Effect<void>;
     readonly attach: (key: DesktopBrowserTabKey, debuggee: DesktopBrowserTabDebugger) => void;
     readonly detach: (key: DesktopBrowserTabKey) => void;
-    readonly setShown: (key: DesktopBrowserTabKey, shown: boolean) => void;
+    readonly setShown: (key: DesktopBrowserTabKey, shown: boolean | undefined) => void;
     readonly humanStartedDownload: (source: Electron.WebContents) => boolean;
     readonly placeDownload: (source: Electron.WebContents, item: Electron.DownloadItem) => boolean;
     readonly pointers: Stream.Stream<{
@@ -122,7 +122,7 @@ export const make = Effect.gen(function* () {
   const agentTurns = new Set<string>();
   // Kept apart from attachment: the renderer can show a webview before its debugger attaches,
   // and the server forgets `shown` on detach, for example while DevTools holds the debugger.
-  const shownTabs = new Set<string>();
+  const shownTabs = new Map<string, boolean>();
   const emit = (event: DesktopBrowserEventType) => runFork(PubSub.publish(outbox, event));
 
   const nextScreenshot = (tab: AttachedTab) => {
@@ -460,14 +460,18 @@ export const make = Effect.gen(function* () {
     debuggee.debugger.on("message", tab.onMessage);
     debuggee.webContents.on("did-navigate", tab.onNewDocument);
     emit({ type: "attached", ...key });
-    if (shownTabs.has(id)) emit({ type: "shown", ...key, shown: true });
+    const shown = shownTabs.get(id);
+    if (shown !== undefined) emit({ type: "shown", ...key, shown });
   };
 
-  const setShown = (key: DesktopBrowserTabKey, shown: boolean) => {
+  const setShown = (key: DesktopBrowserTabKey, shown: boolean | undefined) => {
     const id = keyOf(key);
-    if (shownTabs.has(id) === shown) return;
-    if (shown) shownTabs.add(id);
-    else shownTabs.delete(id);
+    if (shown === undefined) {
+      shownTabs.delete(id);
+      return;
+    }
+    if (shownTabs.get(id) === shown) return;
+    shownTabs.set(id, shown);
     if (tabs.has(id)) emit({ type: "shown", ...key, shown });
   };
 
@@ -507,10 +511,11 @@ export const make = Effect.gen(function* () {
       [...tabs.values()],
       (tab) => {
         dropRelay(tab);
+        const shown = shownTabs.get(keyOf(tab.key));
         return PubSub.publish(outbox, { type: "attached", ...tab.key }).pipe(
           Effect.andThen(
-            shownTabs.has(keyOf(tab.key))
-              ? PubSub.publish(outbox, { type: "shown", ...tab.key, shown: true })
+            shown !== undefined
+              ? PubSub.publish(outbox, { type: "shown", ...tab.key, shown })
               : Effect.void,
           ),
         );
