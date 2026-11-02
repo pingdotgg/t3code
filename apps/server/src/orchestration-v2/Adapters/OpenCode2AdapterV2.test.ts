@@ -563,6 +563,22 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
         status: 429,
       },
     },
+    {
+      name: "a Claude limit without a reset timestamp",
+      failureClass: "usage_limit",
+      error: {
+        type: "provider.unknown",
+        message: "You've hit your session limit · resets 5:20pm (Europe/Berlin)",
+      },
+    },
+    {
+      name: "an unrelated provider.unknown failure",
+      failureClass: "provider_error",
+      error: {
+        type: "provider.unknown",
+        message: "Request failed. Resets at 2026-11-02T20:00:00Z.",
+      },
+    },
   ] as const)("classifies $name as $failureClass", ({ error, failureClass }) =>
     Effect.gen(function* () {
       const { runtime, thread } = yield* resumed([
@@ -581,6 +597,35 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
         retryable: null,
       });
     }).pipe(Effect.scoped),
+  );
+
+  // regression: #29289 Claude weekly limits through claude-agent lost their usage-limit reset
+  it.effect(
+    "classifies a Claude weekly limit as a usage limit that resets at its reported time",
+    () =>
+      Effect.gen(function* () {
+        const message =
+          "You've hit your weekly limit · resets 9pm (Europe/Paris) Resets at 2026-11-02T20:00:00.000Z.";
+        const { runtime, thread } = yield* resumed([
+          out("session.prompt", { sessionID: SESSION, text: "<any>" }),
+          promptAccepted,
+          event("session.execution.failed", {
+            sessionID: SESSION,
+            error: { type: "provider.unknown", message },
+          }),
+        ]);
+        const terminal = yield* terminalOf(runtime).pipe(Effect.forkScoped);
+        yield* runtime.startTurn(turnInput(thread));
+        const ended = yield* Fiber.join(terminal);
+        assert.equal(ended?.status, "failed");
+        assert.deepEqual(ended?.failure, {
+          class: "usage_limit",
+          code: "provider.unknown",
+          message,
+          retryable: null,
+          resetAt: "2026-11-02T20:00:00.000Z",
+        });
+      }).pipe(Effect.scoped),
   );
 
   it.effect("ends the turn when its terminal event is one this build cannot decode", () =>
@@ -2150,6 +2195,20 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
       const { runtime, thread } = yield* resumed([
         out("session.prompt", { sessionID: SESSION, id: PROMPT_ID, text: "<any>" }),
         promptAccepted,
+        event("session.step.started", {
+          sessionID: SESSION,
+          assistantMessageID: "msg_before_gap",
+          agent: "build",
+          model: { id: "big-pickle", providerID: "opencode", variant: "default" },
+          started: 1,
+        }),
+        event("session.step.ended", {
+          sessionID: SESSION,
+          assistantMessageID: "msg_before_gap",
+          finish: "tool-calls",
+          cost: 0,
+          tokens: { input: 100, output: 10, reasoning: 0, cache: { read: 0, write: 0 } },
+        }),
         ...reconnected({}, "succeeded"),
       ]);
       const events = yield* runtime.events.pipe(
@@ -2164,6 +2223,15 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
         "command_execution:completed",
       ]);
       assert.deepInclude(collected.at(-1), { type: "turn.terminal", status: "completed" });
+      // Steps that ended during the gap sent no tokens or models, so both stay incomplete.
+      const settled = collected.findLast(
+        (event) =>
+          event.type === "provider_turn.updated" && event.providerTurn.completedAt !== null,
+      );
+      const usage =
+        settled?.type === "provider_turn.updated" ? settled.providerTurn.turnTokenUsage : undefined;
+      assert.deepInclude(usage, { usageStatus: "partial", inputTokens: 100, outputTokens: 10 });
+      assert.notProperty(usage, "models");
     }).pipe(Effect.scoped),
   );
 
@@ -2876,6 +2944,40 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
       yield* runtime.startTurn(turnInput(thread));
       assert.equal((yield* Fiber.join(terminal))?.status, "completed");
       for (let i = 0; i < 20; i++) yield* Effect.yieldNow;
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("leaves models unknown when a step ends without a seen start", () =>
+    Effect.gen(function* () {
+      const tokens = { input: 10, output: 1, reasoning: 0, cache: { read: 0, write: 0 } };
+      const step = (id: string) => ({ sessionID: SESSION, assistantMessageID: id });
+      const { runtime, thread } = yield* resumed([
+        out("session.prompt", { sessionID: SESSION, text: "<any>" }),
+        promptAccepted,
+        event("session.step.started", {
+          ...step("msg_seen"),
+          agent: "build",
+          model: { id: "big-pickle", providerID: "opencode", variant: "default" },
+          started: 1,
+        }),
+        event("session.step.ended", { ...step("msg_seen"), finish: "tool-calls", cost: 0, tokens }),
+        event("session.step.ended", { ...step("msg_unseen"), finish: "stop", cost: 0, tokens }),
+        event("session.execution.succeeded", { sessionID: SESSION }),
+      ]);
+      const turn = yield* runtime.events.pipe(
+        Stream.filter(
+          (event) =>
+            event.type === "provider_turn.updated" && event.providerTurn.completedAt !== null,
+        ),
+        Stream.runHead,
+        Effect.forkScoped,
+      );
+      yield* runtime.startTurn(turnInput(thread));
+      const settled = Option.getOrUndefined(yield* Fiber.join(turn));
+      const usage =
+        settled?.type === "provider_turn.updated" ? settled.providerTurn.turnTokenUsage : undefined;
+      assert.deepInclude(usage, { usageStatus: "complete", inputTokens: 20, outputTokens: 2 });
+      assert.notProperty(usage, "models");
     }).pipe(Effect.scoped),
   );
 
