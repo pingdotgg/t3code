@@ -161,22 +161,39 @@ export const make = Effect.gen(function* () {
       Json.EntireProjectTrail,
     );
 
+  const trailKey = (input: TrailRef): TrailRef => ({
+    cwd: input.cwd,
+    host: input.host,
+    repository: input.repository,
+    number: input.number,
+  });
+
+  /** The description each change was last shown with, so a save cannot overwrite a newer one. */
+  const shownDescriptions = yield* Cache.make({
+    capacity: 64,
+    lookup: (_: TrailRef) => Effect.succeed(""),
+  });
+
   /** The change's description, which is its project trail's wherever that can be read. */
   const description = Effect.fn("EntirePullRequestProvider.description")(function* (
     input: TrailRef,
     trail: Json.EntireTrailDetail,
   ) {
     const route = Json.projectTrailRoute(trail);
-    if (route === null) return Json.changeBody(trail);
-    return yield* readProjectTrail("getChangeRequest", input, route).pipe(
-      Effect.map(({ body }) => Json.changeBody(trail, body.bodyDocument ?? null)),
-      // The change keeps a copy from when it was linked, which beats no description.
-      Effect.catch((error) =>
-        Effect.logDebug("Entire project trail unreadable; showing the change's copy", {
-          detail: error.detail,
-        }).pipe(Effect.as(Json.changeBody(trail))),
-      ),
-    );
+    const shown =
+      route === null
+        ? Json.changeBody(trail)
+        : yield* readProjectTrail("getChangeRequest", input, route).pipe(
+            Effect.map(({ body }) => Json.changeBody(trail, body.bodyDocument ?? null)),
+            // The change keeps a copy from when it was linked, which beats no description.
+            Effect.catch((error) =>
+              Effect.logDebug("Entire project trail unreadable; showing the change's copy", {
+                detail: error.detail,
+              }).pipe(Effect.as(Json.changeBody(trail))),
+            ),
+          );
+    yield* Cache.set(shownDescriptions, trailKey(input), shown);
+    return shown;
   });
 
   const readTrail = (operation: string, input: TrailRef) =>
@@ -380,13 +397,7 @@ export const make = Effect.gen(function* () {
     capacity: 32,
     timeToLive: (exit) => (Exit.isSuccess(exit) ? REVISIONS_TTL : Duration.zero),
   });
-  const revisionsKey = (input: TrailRef): TrailRef => ({
-    cwd: input.cwd,
-    host: input.host,
-    repository: input.repository,
-    number: input.number,
-  });
-  const trailRevisions = (input: TrailRef) => Cache.get(revisions, revisionsKey(input));
+  const trailRevisions = (input: TrailRef) => Cache.get(revisions, trailKey(input));
   /** Heads a detail read could not fetch, so polling offline does not refetch each time. */
   const unresolved = yield* Cache.make({
     capacity: 32,
@@ -398,7 +409,7 @@ export const make = Effect.gen(function* () {
     input: TrailRef,
     trail: Json.EntireTrailDetail,
   ) {
-    const cached = yield* Cache.getOption(revisions, revisionsKey(input)).pipe(
+    const cached = yield* Cache.getOption(revisions, trailKey(input)).pipe(
       Effect.orElseSucceed(() => Option.none<TrailRevisions>()),
     );
     if (Option.isSome(cached)) return cached.value;
@@ -642,7 +653,7 @@ export const make = Effect.gen(function* () {
         }),
       ),
     );
-    yield* Cache.invalidate(revisions, revisionsKey(input));
+    yield* Cache.invalidate(revisions, trailKey(input));
   });
 
   const refreshSentences = {
@@ -676,6 +687,11 @@ export const make = Effect.gen(function* () {
         `This description has formatting T3 Code can't preserve; edit it on ${ENTIRE_WEB_HOST} (${lost}).`,
       );
     if (route && projectTrail) {
+      // If-Match carries the version just read, which would miss an edit made since T3 Code
+      // showed the description being edited.
+      const shown = yield* Cache.getOption(shownDescriptions, trailKey(input));
+      if (Option.isSome(shown) && shown.value !== current)
+        return yield* failure("updateChangeRequest", refreshSentences[412]);
       if (projectTrail.etag === null)
         return yield* failure(
           "updateChangeRequest",
@@ -693,7 +709,10 @@ export const make = Effect.gen(function* () {
           body: { body: markdown },
         },
         Ignored,
-      ).pipe(Effect.asVoid, Effect.mapError(explained(refreshSentences)));
+      ).pipe(
+        Effect.mapError(explained(refreshSentences)),
+        Effect.andThen(Cache.invalidate(shownDescriptions, trailKey(input))),
+      );
     }
     // Entire keeps a change's description only on its project trail.
     return yield* failure(

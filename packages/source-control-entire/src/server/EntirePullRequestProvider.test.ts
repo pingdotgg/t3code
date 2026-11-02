@@ -238,6 +238,7 @@ describe("EntirePullRequestProvider", () => {
       );
       return Effect.gen(function* () {
         const provider = yield* EntirePullRequestProvider.make;
+        yield* provider.getChangeRequest(target);
         yield* provider.updateChangeRequest!({ ...target, body: `${link}\n\nNew intent` });
         assert.deepStrictEqual(server.writes(), [`PATCH ${trailPath}`]);
         const write = server.sent.at(-1);
@@ -357,6 +358,39 @@ describe("EntirePullRequestProvider", () => {
         );
         // The title is left as it was.
         assert.deepStrictEqual(server.writes(), [`PATCH ${trailPath}`]);
+      }).pipe(Effect.provide(server.layer));
+    });
+
+    it.effect("refuses to save over a description edited elsewhere since it was shown", () => {
+      const descriptions = ["Old intent", "Edited elsewhere"];
+      const server = fakeEntire(
+        {
+          "GET /trails/7": change,
+          [`GET ${trailPath}`]: () => ({ bodyDocument: { text_snapshot: descriptions[0] } }),
+          [`PATCH ${trailPath}`]: {},
+          "PATCH /trails/7": { trail: {} },
+        },
+        { etag: 'W/"p1"' },
+      );
+      return Effect.gen(function* () {
+        const provider = yield* EntirePullRequestProvider.make;
+        yield* provider.getChangeRequest(target);
+        descriptions.shift();
+        const save = provider.updateChangeRequest!({
+          ...target,
+          title: "Renamed",
+          body: `${link}\n\nNew intent`,
+        });
+        const error = yield* Effect.flip(save);
+        assert.strictEqual(
+          error.detail,
+          "The description changed elsewhere. Refresh and try again.",
+        );
+        assert.deepStrictEqual(server.writes(), []);
+
+        assert.include((yield* provider.getChangeRequest(target)).body, "Edited elsewhere");
+        yield* save;
+        assert.deepStrictEqual(server.writes(), [`PATCH ${trailPath}`, "PATCH /trails/7"]);
       }).pipe(Effect.provide(server.layer));
     });
   });
