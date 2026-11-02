@@ -869,14 +869,17 @@ export function ThreadFileScreen(props: ThreadFileRouteScreenProps) {
             onPress: () => tryOpenExternalUrl(assetPreviewUri, "file-preview"),
           } as const)
         : null,
-      resolvedActiveMode === "preview" &&
-      (isBrowserFile || isImageFile || isVideoFile || isAudioFile)
+      needsFileContents ||
+      (resolvedActiveMode === "preview" &&
+        (isBrowserFile || isImageFile || isVideoFile || isAudioFile))
         ? ({
             id: "refresh",
             title: "Refresh",
             icon: "arrow.clockwise",
             inline: false,
             onPress: async () => {
+              // Android's native source view has no pull-to-refresh, so this is its only refresh.
+              if (needsFileContents) return fileQuery.refresh();
               if (isVideoFile || isAudioFile) await assetPreview.refresh();
               setPreviewRevision((current) => current + 1);
             },

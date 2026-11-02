@@ -516,9 +516,8 @@ function runInEnvironment<A, E, R>(
 const refreshOnSignalWhileRead =
   <V>(signal: Atom.Atom<unknown>, isFinal: (value: V) => boolean) =>
   <A extends V>(self: Atom.Atom<A>): Atom.Atom<A> => {
-    // The signal value each registry's data was read under. Held outside the node because the
-    // registry can sweep this node while `self` keeps the data, and the rebuilt node must still
-    // see a change it missed.
+    // The signal value each registry's data was read under. Held outside the node because a
+    // rebuilt node must still see a change it missed.
     const readUnder = new WeakMap<AtomRegistry.AtomRegistry, unknown>();
     return Atom.transform(
       self,
@@ -647,6 +646,8 @@ export function environmentSessionGenerationAtom<R, ER>(
   return family(environmentId);
 }
 
+const queryAtomOwners = new WeakMap<object, object>();
+
 export function createEnvironmentQueryAtomFamily<R, ER, Input, A, E>(
   runtime: Atom.AtomRuntime<EnvironmentRegistry.EnvironmentRegistry | R, ER>,
   options: EnvironmentQueryAtomOptions<
@@ -665,6 +666,9 @@ export function createEnvironmentQueryAtomFamily<R, ER, Input, A, E>(
   const connectionAtom = environmentConnectionAtoms(runtime);
   const family = Atom.family((key: string) => {
     const target = parseEnvironmentRpcKey<Input>(key);
+    const isFinal = (result: AsyncResult.AsyncResult<A, unknown>) =>
+      options.isFinal !== undefined && Option.exists(AsyncResult.value(result), options.isFinal);
+    const refreshTrigger = options.refreshTrigger?.(target);
     const idleTtlMs = options.idleTtlMs ?? 5 * 60_000;
     const queryAtom = runtime
       .atom<
@@ -779,24 +783,30 @@ export function createEnvironmentQueryAtomFamily<R, ER, Input, A, E>(
         });
       })
       .pipe(
-        Atom.swr({
-          staleTime: options.staleTimeMs ?? 30_000,
-          revalidateOnMount: true,
-        }),
+        // The idle TTL keeps the data, and the signal it was read under, but nothing above it:
+        // `swr` checks staleness only when its node is built, and polling serves only readers.
+        // An idle signal change drops the wrapper's hold on the data, so both need it.
         Atom.setIdleTTL(idleTtlMs),
+        (self) =>
+          refreshTrigger === undefined
+            ? self
+            : self.pipe(
+                refreshOnSignalWhileRead(refreshTrigger, isFinal),
+                Atom.setIdleTTL(idleTtlMs),
+              ),
       );
-    const isFinal = (result: AsyncResult.AsyncResult<A, unknown>) =>
-      options.isFinal !== undefined && Option.exists(AsyncResult.value(result), options.isFinal);
-    const intervalQuery =
+    const atom = (
       options.refreshIntervalMs === undefined
         ? queryAtom
-        : queryAtom.pipe(refreshEveryUntilFinal(options.refreshIntervalMs, isFinal));
-    const refreshTrigger = options.refreshTrigger?.(target);
-    return (
-      refreshTrigger === undefined
-        ? intervalQuery
-        : intervalQuery.pipe(refreshOnSignalWhileRead(refreshTrigger, isFinal))
-    ).pipe(Atom.setIdleTTL(idleTtlMs), Atom.withLabel(`${options.label}:${key}`));
+        : queryAtom.pipe(refreshEveryUntilFinal(options.refreshIntervalMs, isFinal))
+    ).pipe(
+      Atom.swr({ staleTime: options.staleTimeMs ?? 30_000, revalidateOnMount: true }),
+      Atom.withLabel(`${options.label}:${key}`),
+    );
+    // The family holds `atom` weakly and its node goes with its last reader; tie it to the data
+    // the TTL keeps, or a collection between reads rebuilds the family entry without its cache.
+    queryAtomOwners.set(queryAtom, atom);
+    return atom;
   });
   return (target) => family(environmentRpcKey(target));
 }

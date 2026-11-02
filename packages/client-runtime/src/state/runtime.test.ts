@@ -1,4 +1,4 @@
-import { describe, expect, it } from "@effect/vitest";
+import { describe, expect, it, vi } from "@effect/vitest";
 import {
   EnvironmentId,
   type PreviewEvent,
@@ -949,11 +949,80 @@ describe("environment query lifecycle", () => {
         expect(yield* read).toBe(2);
 
         unmount();
+        yield* Effect.yieldNow;
         registry.set(trigger, 2);
         registry.set(trigger, 3);
         expect(executions).toBe(2);
 
         expect(yield* read).toBe(3);
+      }),
+    ),
+  );
+
+  it.effect("keeps its answer through an idle trigger and refreshes it once when reopened", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        let executions = 0;
+        const trigger = Atom.make(0).pipe(Atom.keepAlive);
+        const harness = yield* makeEnvironmentQueryHarness(
+          Effect.suspend(() => (++executions === 1 ? Effect.succeed("cached") : Effect.never)),
+          { refreshTrigger: trigger },
+        );
+        const registry = AtomRegistry.make();
+        yield* Effect.addFinalizer(() => Effect.sync(() => registry.dispose()));
+
+        const unmount = registry.mount(harness.atom);
+        expect(yield* readEnvironmentQuery(registry, harness.atom)).toBe("cached");
+        unmount();
+        yield* Effect.yieldNow;
+        registry.set(trigger, 1);
+        yield* Effect.yieldNow;
+
+        registry.mount(harness.atom);
+        expect(registry.get(harness.atom)).toMatchObject({
+          _tag: "Success",
+          value: "cached",
+          waiting: true,
+        });
+        expect(executions).toBe(2);
+      }),
+    ),
+  );
+
+  it.effect("a reader that reopens a query older than its stale time gets the fresh answer", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        let now = 1_000_000;
+        using _now = vi.spyOn(Date, "now").mockImplementation(() => now);
+        let executions = 0;
+        const finishRefresh = Latch.makeUnsafe();
+        const harness = yield* makeEnvironmentQueryHarness(
+          Effect.suspend(() =>
+            ++executions === 1
+              ? Effect.succeed("stale")
+              : finishRefresh.await.pipe(Effect.as("fresh")),
+          ),
+        );
+        const registry = AtomRegistry.make();
+        yield* Effect.addFinalizer(() => Effect.sync(() => registry.dispose()));
+        const read = readEnvironmentQuery(registry, harness.atom);
+
+        const unmount = registry.mount(harness.atom);
+        expect(yield* read).toBe("stale");
+        unmount();
+        // The registry releases unmounted atoms, and revalidates stale ones, on its next tick.
+        yield* Effect.yieldNow;
+
+        now += 120_000;
+        registry.mount(harness.atom);
+        yield* Effect.yieldNow;
+        expect(registry.get(harness.atom)).toMatchObject({
+          _tag: "Success",
+          value: "stale",
+          waiting: true,
+        });
+        finishRefresh.openUnsafe();
+        expect(yield* read).toBe("fresh");
       }),
     ),
   );

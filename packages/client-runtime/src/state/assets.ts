@@ -28,7 +28,8 @@ import type { ProjectFaviconCache, ProjectFaviconTarget } from "../projectFavico
 import { createEnvironmentQueryAtomFamily } from "./runtime.ts";
 
 const ASSET_URL_REFRESH_INTERVAL_MS = 30 * 60_000;
-const ASSET_URL_STALE_TIME_MS = 5 * 60_000;
+// Below the renewal interval, so a URL shown again is renewed with time left on its token.
+const ASSET_URL_STALE_TIME_MS = 25 * 60_000;
 const ASSET_URL_IDLE_TTL_MS = 60 * 60_000;
 export const ASSET_URL_MAX_IN_FLIGHT = 6;
 
