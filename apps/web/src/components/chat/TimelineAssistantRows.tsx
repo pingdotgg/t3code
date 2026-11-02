@@ -183,7 +183,7 @@ function AssistantMessageMeta({
       )}
     >
       {projectedItem && projectedItem.item.status !== "completed" ? (
-        <span className="rounded-full border border-border/70 px-1.5 py-0.5 font-mono text-3xs text-muted-foreground">
+        <span className="rounded-badge border border-transparent bg-badge-neutral px-1.5 py-0.5 font-mono text-3xs text-muted-foreground">
           {projectedItem.item.status}
         </span>
       ) : null}
@@ -197,7 +197,9 @@ function AssistantMessageMeta({
       ) : null}
       {!message.streaming && (
         <Tooltip>
-          <TooltipTrigger render={<p className="text-muted-foreground text-xs tabular-nums" />}>
+          <TooltipTrigger
+            render={<p className="text-dim-foreground font-medium text-xs tabular-nums" />}
+          >
             {formatDayAwareTimestamp(message.updatedAt, ctx.timestampFormat)}
           </TooltipTrigger>
           <TooltipPopup>

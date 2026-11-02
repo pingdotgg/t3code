@@ -109,7 +109,7 @@ function ScopeOptionLabel({ option }: { option: ScopeOption }) {
         ) : null}
       </span>
       {option.offline ? (
-        <span className="shrink-0 text-xs text-muted-foreground">Offline</span>
+        <span className="shrink-0 text-meta text-muted-foreground">Offline</span>
       ) : null}
     </>
   );
@@ -139,7 +139,7 @@ function ScopeMenu({
   const trigger = (
     <Trigger
       aria-label={`${ariaLabel}: ${label}`}
-      render={<Button variant="outline" size="sm" />}
+      render={<Button variant="secondary" size="sm" />}
       className="min-w-0 max-w-72"
     >
       {icon}
@@ -199,7 +199,7 @@ function ScopeMenu({
   return (
     <Menu>
       {trigger}
-      <MenuPopup align="start">
+      <MenuPopup align="start" variant="scope">
         <div className="w-72 max-w-full">
           <MenuRadioGroup
             value={value}

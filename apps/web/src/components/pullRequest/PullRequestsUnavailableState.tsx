@@ -32,7 +32,7 @@ export function PullRequestsUnavailableState({
           {onRetry ? (
             <Button
               size="sm"
-              variant="outline"
+              variant="secondary"
               onClick={onRetry}
               disabled={refreshing}
               aria-busy={refreshing}
@@ -44,7 +44,7 @@ export function PullRequestsUnavailableState({
           {host ? (
             <Button
               size="sm"
-              variant="outline"
+              variant="secondary"
               render={<a href={host.url} target="_blank" rel="noopener noreferrer" />}
             >
               <ExternalLinkIcon aria-hidden className="size-3.5" />

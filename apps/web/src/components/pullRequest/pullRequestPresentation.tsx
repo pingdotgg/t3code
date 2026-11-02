@@ -73,13 +73,13 @@ function reviewDecisionPresentation(decision: PullRequestReviewDecision) {
       return {
         Icon: UserRoundXIcon,
         label: "Changes requested",
-        toneClassName: "text-amber-600/90 dark:text-amber-400/80",
+        toneClassName: "text-warning-foreground",
       };
     case "review-required":
       return {
         Icon: UserRoundIcon,
         label: "Awaiting review",
-        toneClassName: "text-muted-foreground/60",
+        toneClassName: "text-dim-foreground",
       };
   }
 }
@@ -190,21 +190,21 @@ export function PullRequestConflictGlyph({
 }
 
 const CHECK_STATUS_PRESENTATION = {
-  pending: { label: "Running", Icon: Spinner, toneClassName: "text-amber-500" },
+  pending: { label: "Running", Icon: Spinner, toneClassName: "text-warning-foreground" },
   "action-required": {
     label: "Awaiting action",
     Icon: CircleDotIcon,
-    toneClassName: "text-amber-600 dark:text-amber-400/90",
+    toneClassName: "text-warning-foreground",
   },
   success: {
     label: "Passed",
     Icon: CircleCheckIcon,
-    toneClassName: "text-emerald-600 dark:text-emerald-300/90",
+    toneClassName: "text-success-foreground",
   },
   failure: { label: "Failed", Icon: CircleXIcon, toneClassName: "text-destructive" },
   cancelled: { label: "Cancelled", Icon: CircleXIcon, toneClassName: "text-destructive" },
-  skipped: { label: "Skipped", Icon: CircleSlashIcon, toneClassName: "text-muted-foreground/70" },
-  neutral: { label: "Neutral", Icon: CircleDashedIcon, toneClassName: "text-muted-foreground/70" },
+  skipped: { label: "Skipped", Icon: CircleSlashIcon, toneClassName: "text-dim-foreground" },
+  neutral: { label: "Neutral", Icon: CircleDashedIcon, toneClassName: "text-dim-foreground" },
 } as const satisfies Record<
   PullRequestCheckStatus,
   { label: string; Icon: typeof CircleCheckIcon | typeof Spinner; toneClassName: string }
@@ -250,7 +250,7 @@ const CHECKS_STATE_PRESENTATION = {
   pending: {
     label: "Some checks haven't completed yet",
     Icon: CircleDotIcon,
-    toneClassName: "text-amber-600 dark:text-amber-400/90",
+    toneClassName: "text-warning-foreground",
   },
 } as const satisfies Record<
   PullRequestChecksState,
@@ -275,11 +275,10 @@ const REVIEW_OUTCOME_PRESENTATION = {
   approved: {
     label: "Approved",
     Icon: CircleCheckIcon,
-    toneClassName: "text-emerald-600 dark:text-emerald-300/90",
-    ringClassName: "ring-2 ring-emerald-500 dark:ring-emerald-400",
-    staleRingClassName:
-      "ring-2 ring-[color-mix(in_srgb,var(--color-emerald-500)_35%,var(--background))] dark:ring-[color-mix(in_srgb,var(--color-emerald-400)_35%,var(--background))]",
-    fillClassName: "fill-emerald-500 dark:fill-emerald-400",
+    toneClassName: "text-success-foreground",
+    ringClassName: "ring-2 ring-success",
+    staleRingClassName: "ring-2 ring-[color-mix(in_srgb,var(--success)_35%,var(--background))]",
+    fillClassName: "fill-success",
     badgeVariant: "success",
   },
   "changes-requested": {
@@ -294,7 +293,7 @@ const REVIEW_OUTCOME_PRESENTATION = {
   dismissed: {
     label: "Review dismissed",
     Icon: CircleDashedIcon,
-    toneClassName: "text-muted-foreground/70",
+    toneClassName: "text-dim-foreground",
     ringClassName: "ring-2 ring-muted-foreground/60",
     staleRingClassName:
       "ring-2 ring-[color-mix(in_srgb,var(--contrast-muted-foreground)_30%,var(--background))]",
@@ -493,7 +492,7 @@ export function PullRequestDiffStat({
   return (
     <span className={cn("inline-flex items-baseline gap-1 tabular-nums", className)}>
       <span className="text-diff-addition-foreground">+{formatDiffCount(additions)}</span>
-      <span className="text-diff-deletion">-{formatDiffCount(deletions)}</span>
+      <span className="text-diff-deletion-foreground">-{formatDiffCount(deletions)}</span>
     </span>
   );
 }
@@ -518,7 +517,7 @@ export function PullRequestMetaLine({
           : [
               <span
                 aria-hidden
-                className="shrink-0 text-muted-foreground/50"
+                className="shrink-0 text-dim-foreground"
                 key={separatorKey(segment)}
               >
                 ·

@@ -100,7 +100,15 @@ function OpenProjectFilePicker(props: ProjectFilePickerProps & { target: ActiveP
         indices={match.pathMatchIndices}
       />
     ),
-    icon: <PierreEntryIcon pathValue={match.path} kind="file" theme={resolvedTheme} />,
+    // A 16px file icon in the palette's 14px icon column: centered on it, label on its line.
+    icon: (
+      <PierreEntryIcon
+        className="-mx-px"
+        pathValue={match.path}
+        kind="file"
+        theme={resolvedTheme}
+      />
+    ),
     run: async () => {
       useRightPanelStore.getState().openFile(target.threadRef, match.path);
     },

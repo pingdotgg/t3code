@@ -19,7 +19,7 @@ function SheetBackdrop({ className, ...props }: SheetPrimitive.Backdrop.Props) {
   return (
     <SheetPrimitive.Backdrop
       className={cn(
-        "fixed inset-0 z-(--z-sheet) bg-background/60 backdrop-blur-xs transition-all duration-200 data-ending-style:opacity-0 data-starting-style:opacity-0",
+        "dialog-backdrop fixed inset-0 z-(--z-sheet) transition-all duration-200 data-ending-style:opacity-0 data-starting-style:opacity-0 motion-reduce:transition-none",
         className,
       )}
       data-slot="sheet-backdrop"
@@ -31,11 +31,9 @@ function SheetBackdrop({ className, ...props }: SheetPrimitive.Backdrop.Props) {
 function SheetViewport({
   className,
   side,
-  variant = "default",
   ...props
 }: SheetPrimitive.Viewport.Props & {
   side?: "right" | "left" | "top" | "bottom";
-  variant?: "default" | "inset";
 }) {
   return (
     <SheetPrimitive.Viewport
@@ -45,7 +43,6 @@ function SheetViewport({
         side === "top" && "grid grid-rows-[auto_1fr] pb-12",
         side === "left" && "flex justify-start",
         side === "right" && "flex justify-end",
-        variant === "inset" && "sm:p-4",
         className,
       )}
       data-slot="sheet-viewport"
@@ -61,7 +58,6 @@ function SheetPopup({
   keepMounted = false,
   transitionDurationMs,
   side = "right",
-  variant = "default",
   style,
   ...props
 }: SheetPrimitive.Popup.Props & {
@@ -69,7 +65,6 @@ function SheetPopup({
   keepMounted?: boolean;
   transitionDurationMs?: number;
   side?: "right" | "left" | "top" | "bottom";
-  variant?: "default" | "inset";
 }) {
   const transitionStyle =
     transitionDurationMs === undefined
@@ -87,10 +82,10 @@ function SheetPopup({
         }
         style={transitionStyle}
       />
-      <SheetViewport side={side} variant={variant}>
+      <SheetViewport side={side}>
         <SheetPrimitive.Popup
           className={cn(
-            "relative flex max-h-full min-h-0 w-full min-w-0 flex-col bg-popover not-dark:bg-clip-padding text-popover-foreground shadow-lg/5 transition-[opacity,translate] duration-200 ease-in-out will-change-transform before:pointer-events-none before:absolute before:inset-0 before:shadow-[0_1px_--theme(--color-black/4%)] data-ending-style:opacity-0 data-starting-style:opacity-0 max-sm:before:hidden dark:before:shadow-[0_-1px_--theme(--color-white/6%)]",
+            "kbd-in-popover relative flex max-h-full min-h-0 w-full min-w-0 flex-col bg-[linear-gradient(180deg,var(--popover-top),var(--popover-bottom))] not-dark:bg-clip-padding text-popover-foreground outline-none [box-shadow:var(--popover-shadow)] transition-[opacity,translate] duration-200 ease-in-out will-change-transform data-ending-style:opacity-0 data-starting-style:opacity-0 motion-reduce:transition-none",
             side === "bottom" &&
               "row-start-2 border-t data-ending-style:translate-y-8 data-starting-style:translate-y-8",
             side === "top" &&
@@ -99,8 +94,6 @@ function SheetPopup({
               "data-ending-style:-translate-x-8 data-starting-style:-translate-x-8 w-[calc(100%-(--spacing(12)))] max-w-md border-e",
             side === "right" &&
               "col-start-2 w-[calc(100%-(--spacing(12)))] max-w-md border-s data-ending-style:translate-x-8 data-starting-style:translate-x-8",
-            variant === "inset" &&
-              "before:hidden sm:rounded-2xl sm:border sm:before:rounded-[calc(var(--radius-2xl)-1px)] sm:**:data-[slot=sheet-footer]:rounded-b-[calc(var(--radius-2xl)-1px)]",
             instant &&
               "transition-none! will-change-auto! data-ending-style:translate-x-0! data-starting-style:translate-x-0! data-ending-style:translate-y-0! data-starting-style:translate-y-0! data-ending-style:opacity-100! data-starting-style:opacity-100!",
             className,
@@ -142,7 +135,7 @@ function SheetHeader({ className, ...props }: React.ComponentProps<"div">) {
 function SheetTitle({ className, ...props }: SheetPrimitive.Title.Props) {
   return (
     <SheetPrimitive.Title
-      className={cn("font-semibold text-xl leading-none", className)}
+      className={cn("text-title text-strong-foreground leading-none", className)}
       data-slot="sheet-title"
       {...props}
     />
@@ -152,7 +145,7 @@ function SheetTitle({ className, ...props }: SheetPrimitive.Title.Props) {
 function SheetDescription({ className, ...props }: SheetPrimitive.Description.Props) {
   return (
     <SheetPrimitive.Description
-      className={cn("text-muted-foreground text-sm", className)}
+      className={cn("text-body text-muted-foreground", className)}
       data-slot="sheet-description"
       {...props}
     />

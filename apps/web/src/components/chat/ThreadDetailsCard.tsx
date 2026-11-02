@@ -12,10 +12,7 @@ import { cn } from "../../lib/utils";
 import { Popover, PopoverPopup, PopoverCreateHandle } from "../ui/popover";
 import { selectThreadPanelOpen, useRightPanelStore } from "../../rightPanelStore";
 import { useChatCanvas } from "./ChatCanvasContext";
-import {
-  THREAD_DETAILS_CARD_GAP,
-  resolveThreadDetailsCardDensity,
-} from "./threadDetailsCardLayout";
+import { THREAD_DETAILS_CARD_GAP } from "./threadDetailsCardLayout";
 import { observeResize } from "../../lib/observeResize";
 import { requestWorkspaceFocus } from "../../lib/workspaceFocus";
 
@@ -23,15 +20,12 @@ export function ThreadDetailsCard({
   threadRef,
   anchor,
   handle,
-  contentKey,
   onContextMenu,
   children,
 }: {
   threadRef: ScopedThreadRef;
   anchor: RefObject<Element | null>;
   handle: ReturnType<typeof PopoverCreateHandle>;
-  /** Changes when the set of rendered items changes, so cached heights are measured again. */
-  contentKey: string;
   onContextMenu?: MouseEventHandler<HTMLDivElement>;
   children: (density: "full" | "compact" | "essential") => ReactNode;
 }) {
@@ -47,15 +41,9 @@ export function ThreadDetailsCard({
   const popoverOpen = useRightPanelStore((state) =>
     selectThreadPanelOpen(state.threadPanelVisibilityByThreadKey, threadRef, "popover"),
   );
-  const measurementKey = `${threadRef.environmentId}:${threadRef.threadId}:${preferredPlacement?.width ?? "popup"}:${contentKey}`;
-  const [measurements, setMeasurements] = useState({
-    key: measurementKey,
-    heights: { full: 0, compact: 0 },
-  });
-  const contentHeights =
-    measurements.key === measurementKey ? measurements.heights : { full: 0, compact: 0 };
   const height = placement?.height ?? Math.max(0, (canvas?.container.height ?? 0) - 52);
-  const density = resolveThreadDetailsCardDensity(height, contentHeights);
+  // Cards scroll at full density so workspace controls and sections never disappear.
+  const density = "full";
   const measureDetailsCard = canvas?.measureDetailsCard;
   const cardWidth = preferredPlacement?.width;
   // The mode derives from canvas measurements, the preview frame and the
@@ -69,31 +57,16 @@ export function ThreadDetailsCard({
   }, [mode, popoverOpen, threadRef]);
   const [contentElement, setContentElement] = useState<HTMLDivElement | null>(null);
   const { environmentId, threadId } = threadRef;
-  // Re-measures when the density or measurement key changes, so each density's
-  // height is measured once it renders.
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- measures the card's DOM height via ResizeObserver and reports it to the canvas
   useLayoutEffect(() => {
     const element = contentElement;
-    if (!element || density === "essential") return;
+    if (!element) return;
     const measure = () => {
       const frame = element.closest<HTMLElement>("[data-thread-details-card]");
       const next = element.offsetHeight + (frame ? frame.offsetHeight - frame.clientHeight : 0);
-      // PR lists, lineage, side chats and automations scroll as they grow. Counting them toward
-      // density would hide the section and workspace controls when the user asks to see more rows.
-      const lists = element.querySelectorAll<HTMLElement>(
-        "[data-thread-relationships-panel], [data-thread-side-chats-panel], [data-thread-details-pr-list], [data-thread-automations-panel]",
-      );
-      const fittingHeight =
-        next - Array.from(lists).reduce((sum, list) => sum + list.offsetHeight, 0);
-      setMeasurements((current) => {
-        const heights = current.key === measurementKey ? current.heights : { full: 0, compact: 0 };
-        return current.key === measurementKey && heights[density] === fittingHeight
-          ? current
-          : { key: measurementKey, heights: { ...heights, [density]: fittingHeight } };
-      });
       // Only the laid-out DOM knows the full card height, and the canvas keeps preview
       // frames clear of it, so it is reported from this measure effect.
-      if (density === "full" && cardWidth !== undefined) {
+      if (cardWidth !== undefined) {
         measureDetailsCard?.({
           threadRef: { environmentId, threadId },
           width: cardWidth,
@@ -103,23 +76,15 @@ export function ThreadDetailsCard({
     };
     measure();
     return observeResize(element, measure);
-  }, [
-    contentElement,
-    density,
-    measurementKey,
-    cardWidth,
-    measureDetailsCard,
-    environmentId,
-    threadId,
-  ]);
+  }, [contentElement, cardWidth, measureDetailsCard, environmentId, threadId]);
   const card = (
     <div
       className={cn(
-        "dropdown-glass isolate contain-paint grid max-h-full grid-rows-[minmax(0,1fr)] overflow-hidden rounded-2xl",
+        "isolate grid max-h-full grid-rows-[minmax(0,1fr)]",
         mode === "popover" &&
           "max-h-[min(calc(100dvh-6.5rem),calc(var(--available-height,100dvh)-1rem))]",
       )}
-      style={placement ? { maxHeight: height } : undefined}
+      style={{ height }}
       onContextMenu={onContextMenu}
       data-thread-details-card
     >

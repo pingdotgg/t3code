@@ -55,6 +55,7 @@ function setup() {
     thread: {
       id: threadId,
       title: "Fork",
+      modelSelection: makeThreadProjectionFixture().thread.modelSelection,
       activeProviderThreadId: null,
       lineage: { parentThreadId: ThreadId.make("source"), relationshipToParent: "fork" },
       forkedFrom: null,
@@ -86,7 +87,7 @@ it.each([
   if (action === "merge") {
     await screen.getByRole("button", { name: "Merge back to source conversation" }).click();
   } else {
-    await screen.getByRole("button", { name: "More thread actions" }).click();
+    await screen.getByRole("button", { name: "Lineage actions" }).click();
     await page.getByRole("menuitem", { name: "Disconnect agent session" }).click();
   }
 
@@ -94,7 +95,7 @@ it.each([
   await expect
     .element(
       screen.getByRole("button", {
-        name: action === "merge" ? "Merge back to source conversation" : "More thread actions",
+        name: action === "merge" ? "Merge back to source conversation" : "Lineage actions",
       }),
     )
     .toBeEnabled();
@@ -121,7 +122,7 @@ it.each([
     if (action === "merge") {
       await screen.getByRole("button", { name: "Merge back to source conversation" }).click();
     } else {
-      await screen.getByRole("button", { name: "More thread actions" }).click();
+      await screen.getByRole("button", { name: "Lineage actions" }).click();
       await page.getByRole("menuitem", { name: "Disconnect agent session" }).click();
     }
   };
@@ -140,7 +141,7 @@ it.each([
     );
   });
   if (action === "disconnect") {
-    await expect.element(screen.getByRole("button", { name: "More thread actions" })).toBeEnabled();
+    await expect.element(screen.getByRole("button", { name: "Lineage actions" })).toBeEnabled();
   }
 });
 
@@ -184,7 +185,7 @@ it("opens an idle child from Lineage when its shell has not been loaded", async 
     />,
   );
   await screen.getByRole("button", { name: /Previous agents/ }).click();
-  const child = screen.getByRole("button", { name: /Idle child/ });
+  const child = page.getByRole("menuitem", { name: /Idle child/ });
   await expect.element(child).toBeEnabled();
   await child.click();
   await vi.waitFor(() =>
@@ -224,6 +225,7 @@ it("shows a side chat's full title in its tooltip", async () => {
     {
       id: "side",
       title: longTitle,
+      modelSelection: makeThreadProjectionFixture().thread.modelSelection,
       lineage: {
         parentThreadId: threadId,
         relationshipToParent: "fork",

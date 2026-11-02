@@ -1,3 +1,4 @@
+import { openLayerMatches } from "./lib/openLayers";
 import type { EnvironmentId, PullRequestLinkedThreadsResult } from "@t3tools/contracts";
 
 import { dispatchCommandPalette, isCommandPaletteMounted } from "./commandPaletteStore";
@@ -34,7 +35,5 @@ export function openCommandPalette(detail: CommandPaletteOpenDetail = {}): void 
 
 /** True while the palette popup is on screen, including its closing animation. */
 export function isCommandPaletteOpen(): boolean {
-  return (
-    typeof document !== "undefined" && document.querySelector("[data-command-palette]") !== null
-  );
+  return openLayerMatches("[data-command-palette]");
 }

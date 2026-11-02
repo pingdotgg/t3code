@@ -1,9 +1,7 @@
 import { workspaceAreaProps } from "../lib/workspaceFocus";
 import { Outlet, createFileRoute, redirect, useLocation } from "@tanstack/react-router";
 import { useState, type ReactNode } from "react";
-import { RotateCcwIcon } from "lucide-react";
-import { Button } from "../components/ui/button";
-import { useSettingsRestore } from "../components/settings/SettingsPanels";
+import { RestoreDeviceDefaultsButton } from "../components/settings/SettingsPanels";
 
 import { AppRouteModal, AppRouteModalClose } from "../components/AppRouteModal";
 import { SettingsBreadcrumb } from "../components/settings/SettingsBreadcrumb";
@@ -26,21 +24,6 @@ import {
   isSettingsSearchScopeAvailable,
   movedSettingsPath,
 } from "../components/settings/settingsSearch";
-
-function RestoreDeviceDefaultsButton({ onRestored }: { onRestored: () => void }) {
-  const { changedSettingLabels, restoreDefaults } = useSettingsRestore(onRestored);
-  return (
-    <Button
-      size="xs"
-      variant="ghost"
-      disabled={changedSettingLabels.length === 0}
-      onClick={() => void restoreDefaults()}
-    >
-      <RotateCcwIcon className="mx-1 size-3.5" />
-      <span className="max-sm:sr-only">Restore device defaults</span>
-    </Button>
-  );
-}
 
 function SettingsScopeBoundary({ pathname, children }: { pathname: string; children: ReactNode }) {
   const { scope, connectedEnvironments } = useSettingsScope();
@@ -91,13 +74,13 @@ function SettingsScopeBoundary({ pathname, children }: { pathname: string; child
   if (scope.kind === "unavailable")
     return (
       <SettingsPageContainer>
-        <p className="text-sm text-muted-foreground">{scope.message}</p>
+        <p className="text-body text-muted-foreground">{scope.message}</p>
       </SettingsPageContainer>
     );
   if (scope.kind === "environment" && connectedEnvironments.length === 0) {
     return (
       <SettingsPageContainer>
-        <p className="text-sm text-muted-foreground">
+        <p className="text-body text-muted-foreground">
           Reconnect {scope.label} to change its settings.
         </p>
       </SettingsPageContainer>
@@ -120,12 +103,17 @@ function SettingsContentLayout() {
     <AppRouteModal label="Settings">
       <div className="relative flex min-h-0 flex-1">
         <SettingsSidebarNav pathname={location.pathname} />
-        <div {...contentArea} className="flex min-h-0 min-w-0 flex-1 flex-col">
+        <div
+          {...contentArea}
+          data-app-modal-pane=""
+          className="flex min-h-0 min-w-0 flex-1 flex-col"
+        >
           <header className="flex h-12 shrink-0 items-center gap-3 border-b ps-5 pe-2">
             <SettingsBreadcrumb pathname={location.pathname} />
             <div className="ms-auto flex shrink-0 items-center gap-1">
               {location.pathname === "/settings/general" ? (
                 <RestoreDeviceDefaultsButton
+                  compact
                   onRestored={() => setRestoreSignal((value) => value + 1)}
                 />
               ) : null}

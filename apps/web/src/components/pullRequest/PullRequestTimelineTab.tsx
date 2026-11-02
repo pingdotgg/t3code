@@ -122,7 +122,7 @@ function TimelineMarker({
 function IconMarker({ icon, className }: { icon: ReactNode; className?: string | undefined }) {
   return (
     <TimelineMarker className={className}>
-      <span className="flex size-7 items-center justify-center bg-background text-muted-foreground">
+      <span className="flex size-7 items-center justify-center bg-background text-dim-foreground">
         {icon}
       </span>
     </TimelineMarker>
@@ -395,9 +395,10 @@ function ReviewThreadEvent({
         fallback={<MessageSquareIcon className="size-3.5" />}
         muted={!expanded}
       />
-      <button
-        type="button"
-        className="flex w-full min-w-0 items-center gap-2 px-2 py-2 text-left text-2xs text-muted-foreground hover:text-foreground"
+      <Button
+        variant="ghost-muted"
+        size="xs"
+        className="w-full min-w-0"
         aria-expanded={expanded}
         onClick={() => setExpanded((current) => !current)}
       >
@@ -406,13 +407,13 @@ function ReviewThreadEvent({
           {thread.line === null ? thread.path : `${thread.path}:${thread.line}`}
         </span>
         {thread.isResolved ? (
-          <span className="inline-flex shrink-0 items-center gap-1 font-medium text-success-foreground">
+          <span className="inline-flex shrink-0 items-center gap-1 text-caption text-success-foreground">
             <CircleCheckIcon aria-hidden className="size-3" />
             Resolved
           </span>
         ) : null}
-        {dismissed ? <span className="shrink-0 font-medium">Review dismissed</span> : null}
-        {thread.isOutdated ? <span className="shrink-0 font-medium">Outdated</span> : null}
+        {dismissed ? <span className="shrink-0 text-caption">Review dismissed</span> : null}
+        {thread.isOutdated ? <span className="shrink-0 text-caption">Outdated</span> : null}
         {expanded ? null : (
           <span className="shrink-0">
             · {event.actor?.login ?? "ghost"}
@@ -428,7 +429,7 @@ function ReviewThreadEvent({
           aria-hidden
           className={cn("ml-auto size-3.5 shrink-0 transition-transform", expanded && "rotate-180")}
         />
-      </button>
+      </Button>
       {expanded ? (
         <>
           <ConversationCard
@@ -740,7 +741,7 @@ export function PullRequestTimelineTab({
       renderItem={renderRow}
       estimatedItemSize={140}
       className="scrollbar-gutter-both h-full px-4"
-      contentContainerClassName="relative mx-auto w-full max-w-3xl before:absolute before:bottom-10 before:left-[15px] before:top-6 before:w-px before:bg-border/45"
+      contentContainerClassName="relative mx-auto w-full max-w-3xl before:absolute before:bottom-10 before:left-[15px] before:top-6 before:w-px before:bg-border"
       ListHeaderComponent={<div className="h-5" />}
       ListFooterComponent={<div className="h-5" />}
     />

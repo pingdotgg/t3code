@@ -127,7 +127,7 @@ export const ComposerFooterModeControls = memo(function ComposerFooterModeContro
             icon={RuntimeModeIcon}
             size={size}
             // Match the label, not full foreground: the chip's presence already marks the mode.
-            {...(props.emphasized ? { className: "text-current" } : {})}
+            className={props.emphasized ? "size-3 text-current" : "size-3"}
           />
           <span
             data-composer-control-label
@@ -176,7 +176,7 @@ export function ComposerPermissionsSection(props: {
   const descriptionId = useId();
   return (
     <div data-composer-permissions className="grid w-72 gap-1.5 px-2 py-1.5">
-      <div className="font-medium text-muted-foreground text-xs">Permissions</div>
+      <div className="text-meta text-muted-foreground">Permissions</div>
       <MenuPrimitive.RadioGroup
         aria-label="Permissions"
         value={props.runtimeMode}
@@ -230,14 +230,14 @@ export function ComposerPermissionsSection(props: {
         <span
           className={
             shownMode === props.runtimeMode
-              ? "text-foreground text-sm"
-              : "text-muted-foreground text-sm"
+              ? "text-foreground text-label"
+              : "text-muted-foreground text-label"
           }
         >
           {shown.label}
         </span>
         {/* Two lines reserved so the menu does not shift while you preview modes. */}
-        <span className="min-h-8 text-muted-foreground text-xs leading-4">
+        <span className="min-h-8 text-muted-foreground text-caption leading-4">
           {shown.disabledReason ?? shown.description}
         </span>
       </div>

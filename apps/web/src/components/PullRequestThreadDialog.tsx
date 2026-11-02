@@ -49,11 +49,11 @@ interface PullRequestThreadDialogProps {
 function pullRequestStatusTone(state: string | undefined): string {
   switch (state) {
     case "merged":
-      return "text-violet-600 dark:text-violet-300/90";
+      return "text-merged-foreground";
     case "closed":
-      return "text-zinc-500 dark:text-zinc-400/80";
+      return "text-dim-foreground";
     case "open":
-      return "text-emerald-600 dark:text-emerald-300/90";
+      return "text-success-foreground";
     default:
       return "text-muted-foreground";
   }
@@ -241,10 +241,12 @@ export function PullRequestThreadDialog({
           </label>
 
           {resolvedPullRequest ? (
-            <div className="rounded-xl border border-border/70 bg-muted/24 p-3">
+            <div className="rounded-card surface-panel p-3">
               <div className="flex items-start justify-between gap-3">
                 <div className="min-w-0">
-                  <p className="truncate font-medium text-sm">{resolvedPullRequest.title}</p>
+                  <p className="truncate font-medium text-sm text-strong-foreground">
+                    {resolvedPullRequest.title}
+                  </p>
                   <p className="truncate text-muted-foreground text-xs">
                     #{resolvedPullRequest.number} · {resolvedPullRequest.headBranch} to{" "}
                     {resolvedPullRequest.baseBranch}
@@ -269,7 +271,7 @@ export function PullRequestThreadDialog({
         <DialogFooter>
           <Button
             type="button"
-            variant="outline"
+            variant="secondary"
             size="sm"
             onClick={() => onOpenChange(false)}
             disabled={preparePullRequestThreadAction.isPending}
@@ -279,7 +281,7 @@ export function PullRequestThreadDialog({
           <Button
             type="button"
             size="sm"
-            variant="outline"
+            variant="secondary"
             onClick={() => handleConfirm("local")}
             disabled={
               !preparePullRequestThreadAction.isAllowed ||

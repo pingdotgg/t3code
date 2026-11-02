@@ -164,6 +164,17 @@ function RootRouteBranch() {
     return hostedPromptLinkLanding;
   }
 
+  // The dev design-system catalog: the user's appearance, no workspace shell.
+  if (import.meta.env.DEV && pathname === "/design-system") {
+    return (
+      <ToastProvider>
+        <AnchoredToastProvider>
+          <Outlet />
+        </AnchoredToastProvider>
+      </ToastProvider>
+    );
+  }
+
   if (pathname === "/welcome") {
     return (
       <>
@@ -239,15 +250,15 @@ function RootRouteErrorView({ error }: ErrorComponentProps) {
         <Button size="sm" onClick={() => void router.invalidate()}>
           Try again
         </Button>
-        <Button size="sm" variant="outline" onClick={() => window.location.reload()}>
+        <Button size="sm" variant="secondary" onClick={() => window.location.reload()}>
           Reload app
         </Button>
         <CopyErrorButton report={report} />
       </div>
 
-      <div className="mt-5 overflow-hidden rounded-lg border border-border/70 bg-background/55">
+      <div className="mt-5 overflow-hidden rounded-card border border-transparent surface-card">
         <p className="px-3 py-1.5 text-xs font-medium text-muted-foreground">Error report</p>
-        <pre className="max-h-64 overflow-auto border-t border-border/70 bg-background/80 px-3 py-2 text-xs whitespace-pre-wrap text-foreground/85">
+        <pre className="max-h-64 overflow-auto border-t border-border/70 bg-well px-3 py-2 text-xs whitespace-pre-wrap text-foreground">
           {report}
         </pre>
       </div>
@@ -259,7 +270,7 @@ function CopyErrorButton({ report }: { report: string }) {
   const { copyToClipboard, isCopied } = useCopyToClipboard({ target: "error-report" });
 
   return (
-    <Button size="sm" variant="outline" onClick={() => copyToClipboard(report)}>
+    <Button size="sm" variant="secondary" onClick={() => copyToClipboard(report)}>
       <MorphIcon className={cn(isCopied && "text-success")} icon={isCopied ? Check : Copy} />
       {isCopied ? "Copied" : "Copy error"}
     </Button>

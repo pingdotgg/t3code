@@ -30,7 +30,7 @@ import { THREAD_DETAILS_PANEL_ICON_CLASS } from "./threadDetailsPanelStyles";
 
 const serverKey = (server: DiscoveredLocalServer) => `${server.pid}:${server.port}`;
 
-/** Local servers the thread's terminals and agent started. Hidden while none run. */
+/** Local servers the thread's terminals and agent started. Includes a quiet state while none run. */
 export function ThreadServersPanel(props: {
   readonly environmentId: EnvironmentId;
   readonly threadId: ThreadId;
@@ -49,7 +49,6 @@ export function ThreadServersPanel(props: {
   });
   const [stoppingKey, setStoppingKey] = useState<string | null>(null);
 
-  if (servers.length === 0) return null;
   const externalClickLabel = isMacPlatform(navigator.platform) ? "⌘-click" : "Ctrl-click";
   const threadRef = scopeThreadRef(props.environmentId, props.threadId);
 
@@ -94,7 +93,16 @@ export function ThreadServersPanel(props: {
   };
 
   return (
-    <ThreadDetailsSection headingId="thread-details-servers-heading" title="Servers">
+    <ThreadDetailsSection
+      title="Servers"
+      summary={servers.length ? `${servers.length} running` : "None running"}
+    >
+      {servers.length === 0 ? (
+        <div className="flex h-9 items-center gap-2.5 px-2.5 text-caption text-dim-foreground">
+          <GlobeIcon className="size-4" />
+          No servers running
+        </div>
+      ) : null}
       <ul className="m-0 list-none p-0">
         {servers.map((server) => {
           const key = serverKey(server);
@@ -116,13 +124,16 @@ export function ThreadServersPanel(props: {
                     />
                   }
                 >
-                  <GlobeIcon aria-hidden className={THREAD_DETAILS_PANEL_ICON_CLASS} />
+                  <span className="relative shrink-0">
+                    <GlobeIcon aria-hidden className={THREAD_DETAILS_PANEL_ICON_CLASS} />
+                    <span className="absolute -right-0.5 -top-0.5 size-1.5 rounded-full bg-success" />
+                  </span>
                   {/* The end padding keeps text clear of the stop button. */}
                   <span className={cn("flex min-w-0 flex-1 flex-col gap-0.5", stoppable && "pe-6")}>
-                    <span className="truncate text-sm font-medium leading-4 text-foreground/85">
+                    <span className="truncate text-meta text-foreground">
                       localhost:{server.port}
                     </span>
-                    <span className="truncate text-2xs font-normal leading-4 text-muted-foreground">
+                    <span className="truncate text-caption text-dim-foreground">
                       {[server.terminal === null ? "Agent" : "Terminal", server.processName]
                         .filter(Boolean)
                         .join(" · ")}
@@ -134,7 +145,7 @@ export function ThreadServersPanel(props: {
                 </TooltipPopup>
               </Tooltip>
               {stoppable ? (
-                <div className="pointer-events-none absolute right-1 top-1/2 -translate-y-1/2 opacity-0 group-hover:pointer-events-auto group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:opacity-100 pointer-coarse:pointer-events-auto pointer-coarse:opacity-100 [@media(hover:none)]:pointer-events-auto [@media(hover:none)]:opacity-100">
+                <div className="absolute right-1 top-1/2 -translate-y-1/2">
                   <Tooltip>
                     <TooltipTrigger
                       render={
@@ -152,7 +163,7 @@ export function ThreadServersPanel(props: {
                       {stoppingKey === key ? (
                         <LoaderCircleIcon aria-hidden className="size-3 animate-spin" />
                       ) : (
-                        <SquareIcon aria-hidden className="size-3 fill-current" />
+                        <SquareIcon aria-hidden className="size-3.5" />
                       )}
                     </TooltipTrigger>
                     <TooltipPopup side="left">Stop server</TooltipPopup>

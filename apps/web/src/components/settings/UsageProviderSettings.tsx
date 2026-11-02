@@ -65,7 +65,7 @@ export function UsageProviderSettings({
         {...searchableSetting("usage-providers")}
         headerAction={
           !readOnly ? (
-            <Button size="xs" variant="outline" onClick={() => setAdding(true)}>
+            <Button size="xs" variant="secondary" onClick={() => setAdding(true)}>
               <PlusIcon className="size-3" aria-hidden />
               Add hub
             </Button>
@@ -152,7 +152,7 @@ function RemoveUsageProviderButton({
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogClose render={<Button variant="outline" />}>Cancel</AlertDialogClose>
+            <AlertDialogClose render={<Button variant="secondary" />}>Cancel</AlertDialogClose>
             <Button
               variant="destructive"
               onClick={() => {

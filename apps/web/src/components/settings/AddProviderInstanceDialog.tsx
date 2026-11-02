@@ -120,16 +120,14 @@ function ProviderOptionGrid({
         <RadioPrimitive.Root
           key={option.driverKind}
           value={option.driverKind}
-          className="relative flex cursor-pointer items-center gap-3 rounded-lg bg-card px-3 py-3 text-left text-muted-foreground outline-none ring-1 ring-black/5 hover:bg-muted focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring data-checked:bg-primary/8 data-checked:text-foreground data-checked:ring-2 data-checked:ring-inset data-checked:ring-primary data-checked:hover:bg-primary/8 dark:bg-white/3 dark:ring-white/5 dark:hover:bg-white/5 dark:data-checked:bg-primary/15 dark:data-checked:ring-primary dark:data-checked:hover:bg-primary/15"
+          className="relative isolate flex cursor-pointer items-center gap-3 rounded-row-card px-3 py-3 text-left text-muted-foreground outline-none before:pointer-events-none before:absolute before:inset-0 before:-z-10 before:rounded-[inherit] before:surface-raised hover:before:surface-raised-hover focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring data-checked:text-foreground data-checked:before:[--surface-rim:var(--settings-driver-selected-rim)]"
         >
           <ProviderInstanceIcon
             driverKind={option.driverKind}
             displayName={option.label}
             iconClassName="size-4"
           />
-          <span className="min-w-0 flex-1 truncate text-sm font-medium text-foreground">
-            {option.label}
-          </span>
+          <span className="min-w-0 flex-1 truncate text-label">{option.label}</span>
           <RadioPrimitive.Indicator
             className="grid size-5 shrink-0 place-items-center rounded-full bg-primary text-primary-foreground"
             aria-hidden
@@ -479,9 +477,15 @@ export function AddProviderInstanceDialog({
           />
         ) : (
           <>
-            <WizardPanel className={cn(isAcpRegistry && wizardStep === identityStep && "min-h-72")}>
+            <WizardPanel
+              surface="bare"
+              className={cn(isAcpRegistry && wizardStep === identityStep && "min-h-72")}
+            >
               <div className={cn("grid gap-2", wizardStep !== 0 && "hidden")}>
-                <div id="add-instance-driver-label" className="text-sm font-medium text-foreground">
+                <div
+                  id="add-instance-driver-label"
+                  className="text-sm font-medium text-dim-foreground"
+                >
                   Provider
                 </div>
                 <ProviderOptionGrid
@@ -516,17 +520,17 @@ export function AddProviderInstanceDialog({
                         aria-label="More providers"
                       />
                       {!acpRegistryAllowed ? null : (
-                        <div className="flex items-center gap-3 text-xs text-muted-foreground">
-                          <div aria-hidden className="flex-1 border-t border-border/70" />
+                        <div className="flex items-center gap-3 text-meta text-muted-foreground">
+                          <div aria-hidden className="flex-1 border-t border-hairline" />
                           <span>Or choose from ACP Registry</span>
-                          <div aria-hidden className="flex-1 border-t border-border/70" />
+                          <div aria-hidden className="flex-1 border-t border-hairline" />
                         </div>
                       )}
                       {!acpRegistryAllowed ? null : isAcpRegistry && isManualAcpConfiguration ? (
                         <div className="grid gap-4">
                           <div className="flex items-start justify-between gap-3">
                             <div>
-                              <h3 className="text-sm font-medium text-foreground">
+                              <h3 className="text-sm font-medium text-dim-foreground">
                                 {isLocalAcp ? "Local ACP command" : "Enter manually"}
                               </h3>
                               <p className="mt-0.5 text-xs text-muted-foreground">
@@ -588,9 +592,9 @@ export function AddProviderInstanceDialog({
               ) : null}
 
               {isAcpRegistry && wizardStep === 1 && selectedAcp ? (
-                <div className="mb-4 flex items-start justify-between gap-3 border-b border-border/70 pb-3">
+                <div className="mb-4 flex items-start justify-between gap-3 border-b border-divider pb-3">
                   <div className="min-w-0">
-                    <p className="truncate text-sm font-medium text-foreground">
+                    <p className="truncate text-sm font-medium text-strong-foreground">
                       {selectedAcp.name}
                     </p>
                     <p className="mt-0.5 text-xs text-muted-foreground">
@@ -721,7 +725,7 @@ export function AddProviderInstanceDialog({
 
             <WizardFooter>
               <Button
-                variant={wizardStep === 0 ? "ghost-muted" : "outline"}
+                variant={wizardStep === 0 ? "ghost-muted" : "secondary"}
                 size="sm"
                 disabled={isSaving || isPreparingRegistryAgent}
                 onClick={() => {
@@ -736,7 +740,7 @@ export function AddProviderInstanceDialog({
               </Button>
               {wizardStep === 0 && driver === "codex" ? (
                 <>
-                  <Button variant="outline" size="sm" onClick={() => navigateToStep(1)}>
+                  <Button variant="secondary" size="sm" onClick={() => navigateToStep(1)}>
                     Configure manually
                   </Button>
                   {driverLocks?.configKeys.has("setupMode") ? null : (

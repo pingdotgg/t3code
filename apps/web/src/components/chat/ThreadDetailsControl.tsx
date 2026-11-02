@@ -6,22 +6,18 @@ import { cn } from "~/lib/utils";
 import { Button } from "../ui/button";
 import {
   THREAD_DETAILS_PANEL_ROW_CLASS,
-  THREAD_DETAILS_PANEL_SELECT_ROW_CLASS,
-  THREAD_DETAILS_PANEL_SPLIT_PRIMARY_CLASS,
-  THREAD_DETAILS_PANEL_SPLIT_SECONDARY_CLASS,
+  THREAD_DETAILS_PANEL_CHOICE_ROW_CLASS,
   THREAD_DETAILS_PANEL_ICON_ACTION_CLASS,
   THREAD_DETAILS_PANEL_META_ACTION_CLASS,
   THREAD_DETAILS_PANEL_CHEVRON_CLASS,
-  THREAD_DETAILS_PANEL_SELECT_LABEL_CLASS,
-  THREAD_DETAILS_PANEL_SELECT_ICON_CLASS,
 } from "./threadDetailsPanelStyles";
-import { ChevronDownIcon } from "lucide-react";
+import { ChevronRightIcon } from "lucide-react";
 
 const parts = {
   row: THREAD_DETAILS_PANEL_ROW_CLASS,
-  select: THREAD_DETAILS_PANEL_SELECT_ROW_CLASS,
-  primary: THREAD_DETAILS_PANEL_SPLIT_PRIMARY_CLASS,
-  secondary: THREAD_DETAILS_PANEL_SPLIT_SECONDARY_CLASS,
+  heading:
+    "flex min-w-0 flex-1 items-center gap-2 rounded-md text-left text-caption text-muted-foreground hover:text-foreground focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
+  choice: THREAD_DETAILS_PANEL_CHOICE_ROW_CLASS,
   icon: THREAD_DETAILS_PANEL_ICON_ACTION_CLASS,
   meta: THREAD_DETAILS_PANEL_META_ACTION_CLASS,
 };
@@ -49,39 +45,24 @@ export function ThreadDetailsControl({
     props: mergeProps<"button">(
       {
         type: render ? undefined : "button",
+        ...({ "data-part": part } as Record<string, string>),
         className: cn(
-          "relative inline-flex shrink-0 cursor-pointer items-center whitespace-nowrap border outline-none transition-[box-shadow,scale] [&:not([aria-haspopup]):not(:disabled):not([aria-disabled=true])]:will-change-[scale] [&:active:not([aria-haspopup])]:scale-[0.97] focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background pointer-coarse:after:absolute pointer-coarse:after:size-full pointer-coarse:after:min-h-11 pointer-coarse:after:min-w-11 [&_svg]:pointer-events-none [&_svg:not([class*='size-'])]:size-4 disabled:pointer-events-none disabled:opacity-64 aria-disabled:cursor-not-allowed aria-disabled:opacity-64 [&_svg]:shrink-0",
           parts[part],
-          multiline && "h-auto min-h-8 py-0.75 disabled:opacity-100 sm:h-auto",
-          tone === "muted" && "text-muted-foreground hover:text-foreground/80",
-          tone === "primary" &&
-            // The row surface forces a faint hover fill with !important; the solid pill keeps its own.
-            "bg-primary text-primary-foreground hover:text-primary-foreground hover:!bg-primary/85 data-pressed:!bg-primary/85 dark:hover:!bg-primary/85 dark:data-pressed:!bg-primary/85",
+          multiline && "h-auto min-h-9 py-0 disabled:opacity-100 sm:h-auto sm:min-h-9",
+          tone === "muted" && "text-dim-foreground hover:text-foreground",
+          tone === "primary" && "text-primary hover:text-primary",
           tone === "destructive" &&
-            "text-destructive hover:text-destructive data-pressed:text-destructive",
-          // PR row actions share one 20px pill with a 1px inset focus ring that stays clear of the
-          // label. The solid pill draws it in the canvas color so it shows against the fill.
-          part === "meta" &&
-            (tone === "primary" || tone === "destructive") &&
-            "h-5 focus-visible:ring-1 focus-visible:ring-offset-0",
-          part === "meta" && tone === "primary" && "focus-visible:ring-background",
-          part === "meta" &&
-            tone === "destructive" &&
-            "bg-destructive/10 hover:!bg-destructive/16 data-pressed:!bg-destructive/16 dark:hover:!bg-destructive/16 dark:data-pressed:!bg-destructive/16",
+            "text-destructive-foreground hover:text-destructive-foreground data-pressed:text-destructive-foreground",
           className,
         ),
       },
       props,
       {
         children:
-          part === "select" ? (
+          part === "choice" ? (
             <>
-              <span data-slot="select-label" className={THREAD_DETAILS_PANEL_SELECT_LABEL_CLASS}>
-                {children}
-              </span>
-              <span data-slot="select-icon" className={THREAD_DETAILS_PANEL_SELECT_ICON_CLASS}>
-                <ChevronDownIcon className={THREAD_DETAILS_PANEL_CHEVRON_CLASS} />
-              </span>
+              {children}
+              <ChevronRightIcon className={THREAD_DETAILS_PANEL_CHEVRON_CLASS} />
             </>
           ) : (
             children

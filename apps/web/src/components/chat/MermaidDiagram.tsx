@@ -278,7 +278,7 @@ export function MermaidDiagram({
         type="button"
         aria-label="Expand diagram"
         hidden={renderError !== null}
-        className="block w-full cursor-zoom-in rounded-md focus-visible:outline-2 focus-visible:outline-ring"
+        className="block w-full cursor-zoom-in [&_svg]:h-auto [&_svg]:max-w-full"
         onClick={(event) => {
           const svg = event.currentTarget.querySelector("svg");
           if (svg) onExpand(diagramImageUrl(svg));
@@ -302,7 +302,7 @@ function DiagramError({
   return (
     <div>
       <div className="flex items-center justify-between gap-2">
-        <p className="m-0 text-xs text-destructive">Unable to render diagram: {message}</p>
+        <p className="m-0 text-caption text-destructive">Unable to render diagram: {message}</p>
         {onRetry ? (
           <Button type="button" variant="ghost" size="xs" onClick={onRetry}>
             Retry
@@ -311,7 +311,7 @@ function DiagramError({
       </div>
       <pre
         data-thread-find-ignore
-        className="mt-2 mb-0 overflow-auto font-mono text-xs whitespace-pre-wrap"
+        className="mt-2 mb-0 overflow-auto font-mono text-caption whitespace-pre-wrap"
       >
         {source}
       </pre>

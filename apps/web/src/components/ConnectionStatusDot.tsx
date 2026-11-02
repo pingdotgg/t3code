@@ -11,9 +11,9 @@ export function connectionPhaseDotClassName(phase: EnvironmentConnectionPhase): 
     case "reconnecting":
       return "bg-warning";
     case "error":
-      return "bg-destructive";
+      return "bg-error";
     default:
-      return "bg-muted-foreground/40";
+      return "bg-dim-foreground";
   }
 }
 

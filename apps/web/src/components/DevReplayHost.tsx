@@ -129,7 +129,7 @@ export function DevReplayHost() {
         </DialogHeader>
         <DialogPanel>
           {scenarios.length === 0 || project === undefined ? (
-            <p className="text-sm text-muted-foreground">
+            <p className="text-body text-muted-foreground">
               Needs a project and the Replay (dev) provider, which dev servers start.
             </p>
           ) : (

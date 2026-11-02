@@ -60,7 +60,7 @@ function WorkLogLine({ icon, label, trailing, wrapLabel }: RowContent) {
     >
       <div className="flex min-w-0 flex-1 items-baseline gap-1.5">
         {icon ? (
-          <span className="relative w-6 shrink-0 leading-0">
+          <span className="relative w-6 shrink-0 ps-0.5 leading-0">
             <span className="inline-block size-6 overflow-hidden align-[calc(0.5cap_-_0.75rem)]">
               <span className="flex size-full items-center justify-center">{icon}</span>
             </span>
@@ -68,7 +68,7 @@ function WorkLogLine({ icon, label, trailing, wrapLabel }: RowContent) {
         ) : null}
         <div
           className={cn(
-            "min-w-0 flex-1 text-secondary-label",
+            "min-w-0 flex-1 text-muted-foreground",
             !wrapLabel && "truncate [&_*]:whitespace-nowrap",
           )}
         >
@@ -81,12 +81,12 @@ function WorkLogLine({ icon, label, trailing, wrapLabel }: RowContent) {
 }
 
 const interactionClassName =
-  "cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70";
+  "cursor-pointer hover:surface-ghost-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring";
 
 function useRowClassName(interactive: boolean) {
   const grouped = use(GroupedRows);
   return cn(
-    "group/timeline-row relative w-full min-w-0 rounded-md px-0.5 text-left transition-colors",
+    "group/timeline-row relative w-full min-w-0 rounded-row px-0.5 text-left transition-colors",
     grouped ? "py-0" : "py-0.5",
     interactive && interactionClassName,
   );
@@ -146,6 +146,7 @@ export function WorkLogDetails({
       scroller.scrollTop = scroller.scrollHeight;
     }
   });
+  // Text, panel edges and media start on the row's label line.
   return (
     <div
       ref={scrollerRef}
@@ -154,9 +155,9 @@ export function WorkLogDetails({
         atLiveEdgeRef.current = scrollHeight - scrollTop - clientHeight <= LIVE_EDGE_PX;
       }}
       className={cn(
-        "cursor-auto",
+        "ms-7.5 cursor-auto",
         kind === "text"
-          ? "ms-7 flex max-h-96 flex-col gap-3 overflow-auto px-0.5 py-1 select-text"
+          ? "flex max-h-96 flex-col gap-3 overflow-auto pe-0.5 py-1 select-text"
           : kind === "panel"
             ? "mt-0.5 mb-1.5 pb-2"
             : "mt-1",

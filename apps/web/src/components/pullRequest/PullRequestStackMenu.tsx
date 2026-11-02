@@ -258,7 +258,7 @@ export function PullRequestStackMenu({
               {confirmationLayers.map((layer) => (
                 <li
                   key={layer.number}
-                  className="flex items-center gap-2 rounded-md bg-muted/50 px-3 py-2"
+                  className="flex items-center gap-2 rounded-row surface-selected-soft px-3 py-2"
                 >
                   <PullRequestStackLayerContent layer={layer} compact />
                 </li>
@@ -266,7 +266,7 @@ export function PullRequestStackMenu({
             </ul>
           </DialogPanel>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setConfirmation(null)}>
+            <Button variant="secondary" onClick={() => setConfirmation(null)}>
               Cancel
             </Button>
             <Button onClick={() => void run()}>

@@ -10,13 +10,13 @@ export const STANDARD_THEME_PREVIEW_COLORS: Readonly<Record<ThemeAppearance, The
   {
     light: {
       canvas: "#fcfcfc",
-      accent: "#f4f4f5",
-      messageAction: "#4f46e5",
+      accent: "#f4f4f4",
+      messageAction: "#666666",
     },
     dark: {
       canvas: "#0a0a0a",
-      accent: "#1c1c1f",
-      messageAction: "#8b9cff",
+      accent: "#1c1c1c",
+      messageAction: "#a5a5a5",
     },
   };
 

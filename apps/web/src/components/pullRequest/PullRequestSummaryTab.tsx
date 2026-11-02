@@ -233,7 +233,7 @@ function CollapsedComment({
   const statusTriggerRef = useRef<HTMLButtonElement>(null);
   return (
     <Collapsible open={open} onOpenChange={setOpen}>
-      <article className="group rounded-lg border border-border/60 [contain-intrinsic-block-size:44px] [content-visibility:auto]">
+      <article className="group rounded-card border border-border surface-card [contain-intrinsic-block-size:44px] [content-visibility:auto]">
         <div className="p-3">
           <div className="flex flex-wrap items-baseline gap-2">
             <CommentIdentity comment={comment} detail={detail} />
@@ -242,10 +242,7 @@ function CollapsedComment({
                 {replyCount} {replyCount === 1 ? "reply" : "replies"}
               </span>
             ) : null}
-            <CollapsibleTrigger
-              ref={statusTriggerRef}
-              className="flex shrink-0 items-center gap-1.5 rounded-md px-2 py-1 text-xs text-muted-foreground hover:bg-muted hover:text-foreground"
-            >
+            <CollapsibleTrigger ref={statusTriggerRef} variant="muted">
               {label}
               <ChevronDownIcon
                 aria-hidden
@@ -437,7 +434,7 @@ export function PullRequestSummaryTab({
     hiddenConversationCount > 0 ? (
       <Button
         size="sm"
-        variant="outline"
+        variant="secondary"
         className="w-full"
         onClick={() => setShown({ url: detail.url, count: shownConversations + COMMENT_PAGE })}
       >
@@ -570,9 +567,9 @@ export function PullRequestSummaryTab({
     return (
       <article
         key={`${detail.url}:${comment.id}`}
-        className="group rounded-lg border border-border/60 bg-background [contain-intrinsic-block-size:160px] [content-visibility:auto]"
+        className="group rounded-card border border-border surface-card [contain-intrinsic-block-size:160px] [content-visibility:auto]"
       >
-        <div className="flex flex-wrap items-baseline gap-2 rounded-t-lg bg-muted/25 px-3 py-2.5">
+        <div className="flex flex-wrap items-baseline gap-2 rounded-t-card surface-selected-soft px-3 py-2.5">
           <div className="flex min-w-0 flex-1 flex-wrap items-baseline gap-2 text-xs text-muted-foreground">
             <CommentIdentity comment={comment} detail={detail} />
             {outcome ? (
@@ -812,7 +809,7 @@ export function PullRequestSummaryTab({
                 return (
                   <div
                     key={`${index}:${check.name}:${check.url ?? ""}`}
-                    className="group flex items-center gap-2 rounded-md pr-1 hover:bg-accent/60"
+                    className="group flex items-center gap-2 rounded-md pr-1 hover:surface-ghost-hover"
                   >
                     <button
                       type="button"

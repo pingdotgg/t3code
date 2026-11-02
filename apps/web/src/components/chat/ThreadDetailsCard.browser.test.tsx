@@ -8,6 +8,7 @@ import { PopoverCreateHandle } from "../ui/popover";
 import { ChatCanvasContext } from "./ChatCanvasContext";
 import { resolveChatCanvasLayout } from "./chatCanvasLayout";
 import { ThreadDetailsCard } from "./ThreadDetailsCard";
+import "../../index.css";
 
 const threadA: ScopedThreadRef = {
   environmentId: EnvironmentId.make("environment"),
@@ -18,7 +19,7 @@ const threadB: ScopedThreadRef = {
   threadId: ThreadId.make("thread-b"),
 };
 const container = { width: 1200, height: 800 };
-const placement = { x: 908, y: 0, right: 12, width: 280, height: 400 } as const;
+const placement = { x: 916, y: 0, right: 12, width: 272, height: 400 } as const;
 
 function setup() {
   useRightPanelStore.setState({ threadPanelVisibilityByThreadKey: {} });
@@ -69,12 +70,7 @@ function Card({
           detailsCardPlacement: inline ? placement : null,
         }}
       >
-        <ThreadDetailsCard
-          threadRef={threadRef}
-          anchor={fixture.anchor}
-          handle={fixture.handle}
-          contentKey={String(rows)}
-        >
+        <ThreadDetailsCard threadRef={threadRef} anchor={fixture.anchor} handle={fixture.handle}>
           {(density) => (
             <>
               <p style={{ height: density === "full" ? rows * 100 : 50 }}>
@@ -157,11 +153,16 @@ it("reopens after a normal close", async () => {
   await expect.element(page.getByText("Details for thread-b")).toBeVisible();
 });
 
-it("returns to full density when hidden items make the content fit", async () => {
+it("keeps every section at full density when the card needs to scroll", async () => {
   using fixture = setup();
+  useRightPanelStore.getState().setThreadPanelOpen(threadB, "inline", true);
   await using screen = await render(<Card threadRef={threadB} inline fixture={fixture} rows={6} />);
   const card = page.getByRole("region", { name: "Thread details" });
-  await expect.element(card).toHaveAttribute("data-density", "compact");
+  await expect.element(card).toHaveAttribute("data-density", "full");
+  const viewport = card.element().querySelector<HTMLElement>('[data-slot="scroll-area-viewport"]')!;
+  expect(viewport.scrollHeight).toBeGreaterThan(viewport.clientHeight);
+  viewport.scrollTop = viewport.scrollHeight;
+  expect(viewport.scrollTop).toBeGreaterThan(0);
 
   await screen.rerender(<Card threadRef={threadB} inline fixture={fixture} rows={2} />);
   await expect.element(card).toHaveAttribute("data-density", "full");
@@ -169,6 +170,7 @@ it("returns to full density when hidden items make the content fit", async () =>
 
 it("keeps full density when many automations make the content tall", async () => {
   using fixture = setup();
+  useRightPanelStore.getState().setThreadPanelOpen(threadB, "inline", true);
   await using _screen = await render(
     <Card threadRef={threadB} inline fixture={fixture} rows={2} automationRows={6} />,
   );

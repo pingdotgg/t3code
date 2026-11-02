@@ -49,7 +49,7 @@ if (clientPlatform === "darwin") {
   const syncWindowControlInset = () => {
     document.documentElement.style.setProperty(
       "--desktop-window-controls-inset",
-      `${90 / webFrame.getZoomFactor()}px`,
+      `${30 + 67 / webFrame.getZoomFactor()}px`,
     );
   };
   window.addEventListener("DOMContentLoaded", syncWindowControlInset, { once: true });
@@ -192,6 +192,7 @@ contextBridge.exposeInMainWorld("desktopBridge", {
     ipcRenderer.invoke(IpcChannels.PICK_PROJECT_FAVICON_CHANNEL, initialPath),
   pickThemeFiles: () => ipcRenderer.invoke(IpcChannels.PICK_THEME_FILES_CHANNEL, undefined),
   setTheme: (theme) => ipcRenderer.invoke(IpcChannels.SET_THEME_CHANNEL, theme),
+  setBlackChrome: (enabled) => ipcRenderer.invoke(IpcChannels.SET_BLACK_CHROME_CHANNEL, enabled),
   showContextMenu: (items, position) =>
     ipcRenderer.invoke(IpcChannels.CONTEXT_MENU_CHANNEL, {
       items,
@@ -265,6 +266,8 @@ contextBridge.exposeInMainWorld("desktopBridge", {
       ipcRenderer.removeListener(IpcChannels.WINDOW_FULLSCREEN_STATE_CHANNEL, wrappedListener);
     };
   },
+  setWindowButtonsVisible: (visible) =>
+    ipcRenderer.invoke(IpcChannels.SET_WINDOW_BUTTONS_VISIBLE_CHANNEL, visible),
   getUpdateState: () => ipcRenderer.invoke(IpcChannels.UPDATE_GET_STATE_CHANNEL),
   setUpdateChannel: (channel, minimumVersion) =>
     ipcRenderer.invoke(IpcChannels.UPDATE_SET_CHANNEL_CHANNEL, { channel, minimumVersion }),

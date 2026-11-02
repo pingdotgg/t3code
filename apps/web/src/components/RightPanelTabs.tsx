@@ -501,8 +501,8 @@ function RightPanelEmptyState(props: {
                   type="button"
                   onClick={action.onClick}
                   className={cn(
-                    "flex h-8 w-full cursor-pointer items-center gap-2.5 rounded-(--control-radius) px-2.5 text-left text-sm transition-colors group-hover:bg-accent/60",
-                    isHighlighted(action) && "bg-accent/60",
+                    "flex h-8 w-full cursor-pointer items-center gap-2.5 rounded-(--control-radius) px-2.5 text-left text-sm transition-colors group-hover:surface-ghost-hover",
+                    isHighlighted(action) && "surface-selected-soft",
                   )}
                 >
                   {actionIcon(action, "size-4")}
@@ -658,9 +658,13 @@ function SurfaceIcon({
     case "preview":
       return <PreviewFavicon capturedUrl={previewCapturedUrl} url={previewUrl} />;
     case "diff":
-      return <FileDiff className="size-3 shrink-0" />;
+      return (
+        <FileDiff className="size-3.5 shrink-0 group-data-[active-tab=true]/tab:text-foreground" />
+      );
     case "files":
-      return <Files className="size-3 shrink-0" />;
+      return (
+        <Files className="size-3.5 shrink-0 group-data-[active-tab=true]/tab:text-foreground" />
+      );
     case "file":
       return (
         <PierreEntryIcon
@@ -671,7 +675,9 @@ function SurfaceIcon({
         />
       );
     case "terminal":
-      return <TerminalSquare className="size-3 shrink-0" />;
+      return (
+        <TerminalSquare className="size-3.5 shrink-0 group-data-[active-tab=true]/tab:text-foreground" />
+      );
     case "pull-request":
       return (
         <PullRequestSurfaceIcon
@@ -681,16 +687,18 @@ function SurfaceIcon({
         />
       );
     case "pull-requests":
-      return <PullRequestGlyph.link className="size-3 shrink-0" />;
+      return (
+        <PullRequestGlyph.link className="size-3.5 shrink-0 group-data-[active-tab=true]/tab:text-foreground" />
+      );
     case "side-chat":
       return <SideChatTabIcon environmentId={environmentId} threadId={surface.threadId} />;
     case "device":
       return surface.target?.platform === "ios" ? (
-        <AppleIcon className="size-3 shrink-0" />
+        <AppleIcon className="size-3.5 shrink-0 group-data-[active-tab=true]/tab:text-foreground" />
       ) : surface.target?.platform === "android" ? (
-        <AndroidIcon className="size-3 shrink-0" />
+        <AndroidIcon className="size-3.5 shrink-0 group-data-[active-tab=true]/tab:text-foreground" />
       ) : (
-        <Smartphone className="size-3 shrink-0" />
+        <Smartphone className="size-3.5 shrink-0 group-data-[active-tab=true]/tab:text-foreground" />
       );
   }
 }
@@ -931,7 +939,7 @@ function RightPanelTab(
             render={
               <button
                 type="button"
-                className="cursor-pointer flex size-4 shrink-0 items-center justify-center rounded-sm hover:bg-muted"
+                className="cursor-pointer flex size-4 shrink-0 items-center justify-center rounded-kbd hover:surface-ghost-hover"
                 aria-label={audio === "muted" ? `Unmute ${title}` : `Mute ${title}`}
                 onClick={(event) => {
                   event.stopPropagation();
@@ -950,7 +958,7 @@ function RightPanelTab(
       {props.renaming ? (
         <input
           aria-label="Device tab name"
-          className="w-24 min-w-0 rounded-sm bg-background px-1 outline-none ring-1 ring-inset ring-ring"
+          className="w-24 min-w-0 rounded-kbd surface-well px-1 outline-none focus:surface-focus"
           defaultValue={title}
           ref={(element) => {
             element?.focus();
@@ -1009,11 +1017,11 @@ function RightPanelTab(
       ref={setNodeRef}
       style={{ transform: CSS.Translate.toString(transform), transition }}
       className={cn(
-        "cursor-pointer group/tab flex h-6 max-w-36 shrink-0 items-center gap-0.5 rounded-md pr-2 pl-1.5 text-xs",
+        "cursor-pointer group/tab flex h-6 max-w-36 shrink-0 items-center gap-0.5 rounded-item pr-2 pl-1.5 text-xs",
         props.ownsDesktopTitleBar && "[-webkit-app-region:no-drag]",
         props.active
-          ? "bg-accent text-foreground"
-          : "text-muted-foreground hover:bg-accent/60 hover:text-foreground",
+          ? "font-medium text-strong-foreground"
+          : "text-muted-foreground hover:surface-ghost-hover hover:text-foreground",
         isDragging && "relative z-10",
       )}
     >

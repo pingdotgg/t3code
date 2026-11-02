@@ -25,7 +25,7 @@ export function DiffFileLoadingBoundary({ load, count }: { load: () => void; cou
   return (
     <div ref={observe} role="status" aria-label="Loading diff…">
       {Array.from({ length: Math.min(count, 4) }, (_, index) => (
-        <div key={index} aria-hidden className="border-b border-border/40">
+        <div key={index} aria-hidden className="border-b border-border">
           <DiffFileHeaderSkeleton titleWidth="medium" />
         </div>
       ))}

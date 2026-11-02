@@ -1,49 +1,104 @@
-import type { ComponentProps, ReactNode } from "react";
-
+import { type ComponentProps, type ReactNode, type Ref, useId } from "react";
+import * as Schema from "effect/Schema";
+import { useLocalStorage } from "../../hooks/useLocalStorage";
 import { cn } from "../../lib/utils";
+import { ThreadDetailsControl } from "./ThreadDetailsControl";
 
+const cardOrderSchema = Schema.Array(Schema.String);
+const DEFAULT_ORDER = ["Servers", "Automations", "Lineage", "Side chats"];
+
+/** The workspace stays first; other cards remember their collapse state and drag order. */
 export function ThreadDetailsSection({
-  headingId,
   title,
-  actions,
-  separated = true,
-  showHeading = true,
   children,
+  contentRef,
+  summary,
+  action,
+  variant = "card",
   ...props
 }: Omit<ComponentProps<"section">, "className" | "style" | "title" | "aria-labelledby"> & {
-  headingId: string;
   title: string;
-  actions?: ReactNode;
-  separated?: boolean;
-  showHeading?: boolean;
+  contentRef?: Ref<HTMLDivElement>;
+  summary?: ReactNode;
+  action?: ReactNode;
+  variant?: "card" | "workspace" | "usage";
 }) {
+  const contentId = useId();
+  const [collapsed, setCollapsed] = useLocalStorage(
+    "thread-details:collapsed:" + title,
+    false,
+    Schema.Boolean,
+  );
+  const [order, setOrder] = useLocalStorage(
+    "thread-details:card-order",
+    DEFAULT_ORDER,
+    cardOrderSchema,
+  );
+  const card = variant === "card";
   return (
     <section
       {...props}
-      aria-labelledby={showHeading ? headingId : undefined}
-      aria-label={showHeading ? undefined : title}
-      // A row can still render nothing (a fresh draft quiets Git actions), so an empty section
-      // collapses, and a divider only follows a section that has content.
-      className={cn(
-        "px-2 pt-2 pb-2.5 has-[>div:last-child:empty]:hidden",
-        separated && "border-border/65 [section:not(:has(>div:last-child:empty))~&]:border-t",
-      )}
+      aria-label={title}
+      className={cn(card && "surface-tray rounded-pane p-1")}
+      style={card ? { order: Math.max(0, order.indexOf(title)) + 1 } : undefined}
+      onDragOver={
+        card
+          ? (event) => {
+              if (event.dataTransfer.types.includes("application/x-t3-details-card"))
+                event.preventDefault();
+            }
+          : undefined
+      }
+      onDrop={
+        card
+          ? (event) => {
+              const source = event.dataTransfer.getData("application/x-t3-details-card");
+              if (!DEFAULT_ORDER.includes(source) || source === title) return;
+              event.preventDefault();
+              const next = [...new Set([...order, ...DEFAULT_ORDER])].filter(
+                (item) => item !== source,
+              );
+              next.splice(Math.max(0, next.indexOf(title)), 0, source);
+              setOrder(next);
+            }
+          : undefined
+      }
     >
+      {card ? (
+        <div
+          className={cn("flex items-center gap-1 pb-1 ps-3 pe-1", action ? "h-7.5" : "h-6.5")}
+          draggable
+          onDragStart={(event) => {
+            event.dataTransfer.setData("application/x-t3-details-card", title);
+            event.dataTransfer.effectAllowed = "move";
+          }}
+        >
+          <ThreadDetailsControl
+            part="heading"
+            aria-expanded={!collapsed}
+            aria-controls={contentId}
+            onClick={() => setCollapsed(!collapsed)}
+          >
+            <span>{title}</span>
+            {summary ? (
+              <span className="ms-auto truncate text-caption text-dim-foreground">{summary}</span>
+            ) : null}
+          </ThreadDetailsControl>
+          {action}
+        </div>
+      ) : null}
       <div
+        id={contentId}
+        ref={contentRef}
+        hidden={card && collapsed}
         className={cn(
-          "mb-1 flex min-h-8 min-w-0 items-center justify-between gap-2 px-2.5",
-          !showHeading && "hidden",
+          "flex flex-col",
+          card && "surface-composer rounded-lg p-0.5",
+          card && collapsed && "hidden",
         )}
       >
-        <h3
-          id={headingId}
-          className="min-w-0 truncate text-2xs font-medium text-muted-foreground select-none"
-        >
-          {title}
-        </h3>
-        {actions ? <div className="flex shrink-0 items-center gap-1">{actions}</div> : null}
+        {children}
       </div>
-      {children}
     </section>
   );
 }

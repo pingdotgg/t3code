@@ -28,7 +28,7 @@ function AutocompleteInput({
       {startAddon && (
         <div
           aria-hidden="true"
-          className="[&_svg]:-mx-0.5 pointer-events-none has-[button]:pointer-events-auto absolute inset-y-0 start-px z-10 flex items-center ps-[calc(--spacing(3)-1px)] opacity-80 has-[+[data-size=sm]]:ps-[calc(--spacing(2.5)-1px)] [&_svg:not([class*='size-'])]:size-4.5 sm:[&_svg:not([class*='size-'])]:size-4"
+          className="[&_svg]:-mx-0.5 pointer-events-none has-[button]:pointer-events-auto absolute inset-y-0 start-px z-10 flex items-center ps-[calc(--spacing(3)-1px)] has-[+[data-size=sm]]:ps-[calc(--spacing(2.5)-1px)] [&_svg:not([class*='size-'])]:size-4.5 sm:[&_svg:not([class*='size-'])]:size-4"
           data-slot="autocomplete-start-addon"
         >
           {startAddon}
@@ -102,7 +102,7 @@ function AutocompletePopup({
       >
         <span
           className={cn(
-            "relative flex max-h-full min-w-(--anchor-width) max-w-(--available-width) origin-(--transform-origin) rounded-lg border bg-popover not-dark:bg-clip-padding shadow-lg/5 transition-[scale,opacity] before:pointer-events-none before:absolute before:inset-0 before:rounded-[calc(var(--radius-lg)-1px)] before:shadow-[0_1px_--theme(--color-black/4%)] dark:before:shadow-[0_-1px_--theme(--color-white/6%)]",
+            "surface-popover kbd-in-popover relative flex max-h-full min-w-(--anchor-width) max-w-(--available-width) origin-(--transform-origin) rounded-card transition-[scale,opacity]",
             className,
           )}
         >
@@ -119,11 +119,18 @@ function AutocompletePopup({
   );
 }
 
-function AutocompleteItem({ className, children, ...props }: AutocompletePrimitive.Item.Props) {
+function AutocompleteItem({
+  className,
+  children,
+  automaticHighlight = true,
+  ...props
+}: AutocompletePrimitive.Item.Props & { automaticHighlight?: boolean }) {
   return (
     <AutocompletePrimitive.Item
       className={cn(
-        "flex min-h-8 cursor-default select-none items-center gap-2 rounded-sm px-2 py-1 text-base outline-none hover:bg-accent data-disabled:pointer-events-none data-selected:bg-accent/50 data-selected:text-foreground data-highlighted:bg-accent data-highlighted:text-accent-foreground [&[data-highlighted][data-selected]]:bg-accent [&[data-highlighted][data-selected]]:text-accent-foreground data-disabled:opacity-64 sm:min-h-7 sm:text-sm [&_svg:not([class*='text-'])]:text-muted-foreground",
+        "flex min-h-8 cursor-default select-none items-center gap-2 rounded-control px-2 py-1 text-label text-foreground outline-none data-disabled:pointer-events-none data-disabled:opacity-45 sm:min-h-7 [&_svg:not([class*='text-'])]:text-muted-foreground",
+        automaticHighlight &&
+          "hover:surface-selected-soft data-selected:surface-selected-soft data-selected:text-strong-foreground data-highlighted:surface-selected-soft data-highlighted:text-strong-foreground",
         className,
       )}
       data-slot="autocomplete-item"
@@ -144,7 +151,7 @@ function AutocompleteGroup({ className, ...props }: AutocompletePrimitive.Group.
   );
 }
 
-const GROUP_LABEL_CLASS_NAME = "px-2 py-1.5 font-medium text-muted-foreground text-xs";
+const GROUP_LABEL_CLASS_NAME = "px-2 py-1.5 text-meta text-dim-foreground";
 
 function AutocompleteGroupLabel({ className, ...props }: AutocompletePrimitive.GroupLabel.Props) {
   return (
@@ -180,10 +187,7 @@ function AutocompleteListVirtualized({ className, ...props }: AutocompletePrimit
 function AutocompleteEmpty({ className, ...props }: AutocompletePrimitive.Empty.Props) {
   return (
     <AutocompletePrimitive.Empty
-      className={cn(
-        "not-empty:p-2 text-center text-base text-muted-foreground sm:text-sm",
-        className,
-      )}
+      className={cn("not-empty:p-2 text-center text-body text-muted-foreground", className)}
       data-slot="autocomplete-empty"
       {...props}
     />

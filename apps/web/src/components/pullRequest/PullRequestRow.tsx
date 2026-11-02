@@ -105,15 +105,17 @@ function PullRequestRowImpl({
     <div
       ref={statsRef}
       data-pull-request-stats-key={statsKey}
+      style={{ borderRadius: 10 }}
       data-pull-request-key={statsKey}
       className={cn(
-        "flex items-center rounded-md [content-visibility:auto] [contain-intrinsic-block-size:56.5px]",
-        selected ? "bg-accent" : "hover:bg-accent/60",
+        "flex items-center [content-visibility:auto] [contain-intrinsic-block-size:56.5px]",
+        selected ? "bg-selection-subtle" : "hover:surface-ghost-hover",
       )}
     >
       <button
         type="button"
         aria-current={selected ? "true" : undefined}
+        style={{ borderRadius: 10 }}
         onClick={() => onSelect(entry)}
         className={cn(
           PULL_REQUEST_ROW_CLASS,

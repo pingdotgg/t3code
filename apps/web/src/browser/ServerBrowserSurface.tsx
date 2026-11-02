@@ -748,16 +748,16 @@ export function ServerBrowserSurface(props: {
     >
       <div
         className={cn(
-          "visible relative z-20 flex shrink-0 items-center justify-between gap-2 border-border bg-background px-2 py-1",
+          "visible relative z-20 flex shrink-0 items-center justify-between gap-2 border-border bg-background px-2 py-1 surface-grain",
           controlPosition === "bottom" ? "order-last border-t" : "border-b",
         )}
       >
-        <span role="status" className="text-xs text-muted-foreground">
+        <span role="status" className="text-meta text-muted-foreground">
           {previewStreamControlLabel(control)}
         </span>
         {control?.canOperate ? (
           <Button
-            variant="outline"
+            variant="secondary"
             size="xs"
             disabled={control.controller === "another-viewer"}
             onClick={() =>
@@ -805,6 +805,7 @@ export function ServerBrowserSurface(props: {
           disabled={pdfUrl !== null || control?.controller !== "you"}
           defaultValue={INPUT_SENTINEL}
           onFocus={(event) => resetInput(event.currentTarget)}
+          // oxlint-disable-next-line t3code/no-styled-raw-controls, t3code/no-raw-type-classes -- A hidden input; 16px keeps iOS from zooming on focus.
           className="sr-only top-0 left-0 text-base"
           onKeyDown={(event) => handleKey("down", event)}
           onKeyUp={(event) => handleKey("up", event)}
@@ -828,7 +829,7 @@ export function ServerBrowserSurface(props: {
             role="dialog"
             aria-label="Choose files for the page"
           >
-            <p className="text-sm">
+            <p className="text-body">
               The page asks for {fileChooser.multiple ? "files" : "a file"}.
             </p>
             <input
@@ -844,7 +845,7 @@ export function ServerBrowserSurface(props: {
               }}
             />
             <div className="flex justify-end gap-2">
-              <Button variant="outline" size="sm" onClick={() => answerFileChooser([])}>
+              <Button variant="secondary" size="sm" onClick={() => answerFileChooser([])}>
                 Cancel
               </Button>
               <Button size="sm" onClick={() => fileInputRef.current?.click()}>
@@ -859,7 +860,7 @@ export function ServerBrowserSurface(props: {
             role="dialog"
             aria-label="Browser dialog"
           >
-            <p className="break-words text-sm">{control.dialog.message}</p>
+            <p className="break-words text-body">{control.dialog.message}</p>
             {control.controller === "you" ? (
               <>
                 {control.dialog.type === "prompt" ? (
@@ -871,7 +872,7 @@ export function ServerBrowserSurface(props: {
                 ) : null}
                 <div className="flex justify-end gap-2">
                   <Button
-                    variant="outline"
+                    variant="secondary"
                     size="sm"
                     onClick={() => send({ type: "dialog", accept: false })}
                   >
@@ -892,18 +893,18 @@ export function ServerBrowserSurface(props: {
                 </div>
               </>
             ) : (
-              <p className="text-xs text-muted-foreground">Take control to respond.</p>
+              <p className="text-meta text-muted-foreground">Take control to respond.</p>
             )}
           </div>
         ) : null}
       </div>
       {visible && hostSetup ? (
         <div className="visible absolute inset-0 z-20 flex flex-col items-center justify-center gap-3 bg-background p-4 text-center">
-          <p role="alert" className="max-w-sm text-sm text-muted-foreground">
+          <p role="alert" className="max-w-sm text-body text-muted-foreground">
             {previewStreamHostSetupMessage(hostSetup)}
           </p>
           <CommandBlock command={hostSetup.command} className="w-full max-w-md text-left" />
-          <Button variant="outline" size="sm" onClick={() => setHostSetup(null)}>
+          <Button variant="secondary" size="sm" onClick={() => setHostSetup(null)}>
             Try again
           </Button>
         </div>
@@ -911,11 +912,11 @@ export function ServerBrowserSurface(props: {
       {visible && accessDenied ? (
         // The page can be invisible beneath an empty or unreachable state; reconnect must remain reachable.
         <div className="visible absolute inset-0 z-20 flex flex-col items-center justify-center gap-2 bg-background p-3 text-center">
-          <p role="alert" className="text-xs text-muted-foreground">
+          <p role="alert" className="text-meta text-muted-foreground">
             Browser connection was refused.
           </p>
           <Button
-            variant="outline"
+            variant="secondary"
             size="sm"
             onClick={() => {
               unauthorizedRef.current = 0;
