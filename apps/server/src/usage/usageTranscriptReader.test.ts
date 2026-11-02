@@ -77,6 +77,20 @@ function codexUsageLine(outputTokens: number, secondsOffset: number): string {
 }
 
 describe("compressed transcripts", () => {
+  it("excludes Command Code checkpoint and prompt sidecars without affecting other providers", async () => {
+    const transcript = NodePath.join(dir, "session-1.jsonl");
+    const checkpoints = NodePath.join(dir, "session-1.checkpoints.jsonl");
+    const prompts = NodePath.join(dir, "session-1.prompts.jsonl");
+    for (const file of [transcript, checkpoints, prompts]) await NodeFSP.writeFile(file, "test");
+    const commandCode = await listTranscriptFiles(dir, 0, { excludeCommandCodeSidecars: true });
+    assert.deepStrictEqual(
+      commandCode.files.map((file) => file.path),
+      [transcript],
+    );
+    const defaultScan = await listTranscriptFiles(dir, 0);
+    assert.lengthOf(defaultScan.files, 3);
+  });
+
   it("discovers nested plain and zstd JSONL files within the requested window", async () => {
     const nested = NodePath.join(dir, "nested");
     await NodeFSP.mkdir(nested);

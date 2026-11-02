@@ -1,6 +1,7 @@
 import { type CSSProperties, memo } from "react";
 
 import {
+  isOfficialCommandCodeProvider,
   normalizeProviderAccentColor,
   providerAccentForegroundColor,
   providerInstanceInitials,
@@ -36,13 +37,7 @@ export function isOfficialCommandCodeIcon(input: {
   readonly displayName: string;
   readonly agentId?: string | undefined;
 }): boolean {
-  if (input.driverKind === "command-code") return true;
-  if (input.driverKind !== "acpRegistry") return false;
-  return (
-    input.agentId === "command-code" ||
-    input.agentId === "command-code-omarchy" ||
-    /^Command Code(?: \([^)]+\))?$/.test(input.displayName)
-  );
+  return isOfficialCommandCodeProvider(input);
 }
 
 export function providerTextColor(driverKind: ProviderDriverKind): {

@@ -579,7 +579,10 @@ export const make = Effect.gen(function* () {
       .pipe(Effect.catchCause(() => Effect.succeed(false)));
     if (!exists) return { provider, dir, volumeId, files: null } satisfies ScannedDir;
     const { files, failedPaths } = yield* Effect.promise(() =>
-      listTranscriptFiles(dir, windowStartMs, fileName === undefined ? undefined : { fileName }),
+      listTranscriptFiles(dir, windowStartMs, {
+        ...(fileName === undefined ? {} : { fileName }),
+        excludeCommandCodeSidecars: provider === "command-code",
+      }),
     );
     const read = yield* Effect.forEach(
       files,

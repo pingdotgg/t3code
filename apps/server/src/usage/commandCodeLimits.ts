@@ -20,19 +20,6 @@ const ORIGIN = "https://api.commandcode.ai";
 const CLIENT_USER_AGENT = "command-code/1.88.2";
 const SOURCE_ID = UsageLimitSourceId.make("command-code-local");
 const DRIVER = ProviderDriverKind.make("command-code");
-// CLI 1.88.2's plan allowances; exact IDs only, as future plans can differ.
-const MONTHLY_PLAN_CREDITS: Readonly<Record<string, number>> = {
-  "individual-go": 10,
-  "individual-go-v1": 10,
-  "individual-goat": 70,
-  "individual-pro": 30,
-  "individual-pro-v1": 80,
-  "individual-provider": 15,
-  "individual-max": 150,
-  "individual-ultra": 300,
-  "teams-pro": 40,
-};
-
 function object(value: unknown): Record<string, unknown> | null {
   return value !== null && typeof value === "object" && !Array.isArray(value)
     ? (value as Record<string, unknown>)
@@ -63,16 +50,16 @@ export function commandCodeMonthlyWindow(
 ): ServerProviderUsageWindow | null {
   const credits = object(object(creditsPayload)?.credits);
   const subscription = object(object(subscriptionPayload)?.data);
-  const planId = subscription?.planId;
   const remaining = validNumber(credits?.monthlyCredits);
-  const allowance =
-    typeof planId === "string" && Object.hasOwn(MONTHLY_PLAN_CREDITS, planId)
-      ? MONTHLY_PLAN_CREDITS[planId]
-      : undefined;
+  // Published model-dependent "usage value" figures are not a guaranteed
+  // denominator for the remaining monthly credit balance. Use only the
+  // explicit credit allowance, if the CLI API returns one.
+  const allowance = validNumber(credits?.monthlyCreditsTotal);
   const resetsAt = resetTimestamp(subscription?.currentPeriodEnd);
   if (
     subscription?.status !== "active" ||
-    allowance === undefined ||
+    allowance === null ||
+    allowance <= 0 ||
     remaining === null ||
     remaining < 0 ||
     remaining > allowance ||
@@ -175,12 +162,22 @@ export const readCommandCodeLimitSource = Effect.fn("readCommandCodeLimitSource"
         typeof organizationId === "string" && organizationId.length > 0
           ? "?orgId=" + encodeURIComponent(organizationId)
           : "";
-      const credits = yield* get(ORIGIN + "/alpha/billing/credits" + query);
-      const subscription = yield* get(ORIGIN + "/alpha/billing/subscriptions" + query).pipe(
-        Effect.orElseSucceed(() => null),
+      // Both endpoints depend only on whoami; fetch them together so a slow
+      // optional subscription lookup cannot serialize the quota refresh.
+      const [credits, subscription] = yield* Effect.all(
+        [
+          get(ORIGIN + "/alpha/billing/credits" + query),
+          get(ORIGIN + "/alpha/billing/subscriptions" + query).pipe(
+            Effect.orElseSucceed(() => null),
+          ),
+        ],
+        { concurrency: 2 },
       );
       return { credits, subscription };
-    }).pipe(Effect.orElseSucceed(() => null));
+    }).pipe(
+      Effect.timeout("12 seconds"),
+      Effect.orElseSucceed(() => null),
+    );
 
     if (response === null)
       return { ...base, accounts: [], error: "Command Code quota API is unavailable." };

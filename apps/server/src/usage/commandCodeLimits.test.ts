@@ -20,7 +20,7 @@ describe("Command Code rolling quota windows", () => {
   it("reports subscription monthly credits separately from purchased credits", () => {
     assert.deepStrictEqual(
       commandCodeMonthlyWindow(
-        { credits: { monthlyCredits: 20, purchasedCredits: 100 } },
+        { credits: { monthlyCredits: 20, monthlyCreditsTotal: 30, purchasedCredits: 100 } },
         {
           data: {
             status: "active",
@@ -39,19 +39,31 @@ describe("Command Code rolling quota windows", () => {
     );
   });
   it("does not guess monthly credits for unknown, inactive or malformed plans", () => {
-    const credits = { credits: { monthlyCredits: 20 } };
+    const credits = { credits: { monthlyCredits: 20, monthlyCreditsTotal: 30 } };
     const active = {
       status: "active",
       planId: "individual-pro",
       currentPeriodEnd: "2026-12-01T00:00:00.000Z",
     };
     for (const data of [
-      { ...active, planId: "individual-pro-new" },
       { ...active, status: "cancelled" },
       { ...active, currentPeriodEnd: null },
     ])
       assert.isNull(commandCodeMonthlyWindow(credits, { data }));
-    assert.isNull(commandCodeMonthlyWindow({ credits: { monthlyCredits: 31 } }, { data: active }));
+    assert.isNull(
+      commandCodeMonthlyWindow(
+        { credits: { monthlyCredits: 31, monthlyCreditsTotal: 30 } },
+        { data: active },
+      ),
+    );
+    // Plan IDs and published advertised values cannot substitute for an API-reported allowance.
+    assert.isNull(commandCodeMonthlyWindow({ credits: { monthlyCredits: 20 } }, { data: active }));
+    assert.isNull(
+      commandCodeMonthlyWindow(
+        { credits: { monthlyCredits: 20, monthlyCreditsTotal: 0 } },
+        { data: active },
+      ),
+    );
     assert.isNull(commandCodeMonthlyWindow({}, { data: active }));
   });
 
@@ -154,7 +166,7 @@ describe("Command Code rolling quota windows", () => {
           return HttpClientResponse.fromWeb(
             request,
             Response.json({
-              credits: { monthlyCredits: 15 },
+              credits: { monthlyCredits: 15, monthlyCreditsTotal: 30 },
               windowLimits: {
                 fiveHour: { used: 3, cap: 14, resetAt: 1793509560432 },
                 weekly: { used: 7, cap: 35, resetAt: 1794078357384 },

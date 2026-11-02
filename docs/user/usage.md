@@ -26,7 +26,8 @@ server to read a different data directory; comma-separated paths read multiple d
 
 Command Code reads local `.jsonl` message history from `~/.commandcode/projects` to report
 input/output tokens, cache usage, and provider-reported USD costs. It deduplicates repeated
-transcript exports by session and message ID. These costs are usage records, not a subscription bill.
+transcript exports and forked messages using their message ID, timestamp, and model; checkpoint
+and prompt-history sidecars are ignored. These costs are usage records, not a subscription bill.
 
 Cursor reads account usage from Cursor's API for the account you signed in with in T3 or set as
 `CURSOR_API_KEY`, or otherwise the CLI login saved on the server.
@@ -167,7 +168,10 @@ refresh provider status.
 
 Command Code reports its 5-hour and weekly usage when the Command Code provider is configured
 locally and `~/.commandcode/auth.json` contains an API key. Supported active subscription plans
-may also report a monthly plan-credit allowance and reset date, separate from purchased credits.
+may also report a monthly plan-credit allowance and reset date, separate from purchased credits,
+**only if the quota API explicitly includes the monthly allowance and remaining balance**. A
+monthly percentage is withheld when the service does not provide a reliable denominator;
+published per-model usage-value estimates are not interchangeable with credit balance units.
 These readings use the local CLI's authenticated service API, which may change across Command Code
 versions. Unavailable or unrecognized quotas are omitted rather than guessed. The Command Code
 symbol shown in web and mobile Usage and for known ACP instances uses the official logomark from

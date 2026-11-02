@@ -73,6 +73,13 @@ it("reads Command Code history for Usage cost, token and cache breakdown", async
         model: "free-model",
         usage: { inputTokens: 0, outputTokens: 0 },
       },
+      {
+        type: "message",
+        id: "inconsistent-cache",
+        timestamp: "2026-10-31T19:06:46.500Z",
+        model: "free-model",
+        usage: { inputTokens: 20, outputTokens: 4, cacheReadTokens: 18, cacheWriteTokens: 5 },
+      },
       { type: "message", id: "assistant-without-usage", message: { role: "assistant" } },
     ];
     await NodeFSP.writeFile(file, lines.map((value) => JSON.stringify(value)).join("\n") + "\n");

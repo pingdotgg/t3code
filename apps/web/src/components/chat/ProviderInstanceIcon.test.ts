@@ -37,6 +37,19 @@ describe("Command Code official logo", () => {
     ).toBe(false);
     expect(
       isOfficialCommandCodeIcon({
+        driverKind: ProviderDriverKind.make("acpRegistry"),
+        displayName: "Command Code",
+        agentId: "other-agent",
+      }),
+    ).toBe(false);
+    expect(
+      isOfficialCommandCodeIcon({
+        driverKind: ProviderDriverKind.make("acpRegistry"),
+        displayName: "Command Code",
+      }),
+    ).toBe(true);
+    expect(
+      isOfficialCommandCodeIcon({
         driverKind: ProviderDriverKind.make("opencode"),
         displayName: "Command Code",
       }),

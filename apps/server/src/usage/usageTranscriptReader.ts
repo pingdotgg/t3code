@@ -70,7 +70,7 @@ function fnv1a(buffer: Buffer): number {
 export async function listTranscriptFiles(
   root: string,
   sinceMs: number,
-  options?: { readonly fileName?: string },
+  options?: { readonly fileName?: string; readonly excludeCommandCodeSidecars?: boolean },
 ): Promise<{ readonly files: readonly TranscriptFile[]; readonly failedPaths: number }> {
   const fileName = options?.fileName;
   const candidates: string[] = [];
@@ -87,9 +87,13 @@ export async function listTranscriptFiles(
       const child = NodePath.join(dir, entry.name);
       if (entry.isDirectory()) await walk(child);
       else if (
-        fileName !== undefined
+        !(
+          options?.excludeCommandCodeSidecars &&
+          (entry.name.endsWith(".checkpoints.jsonl") || entry.name.endsWith(".prompts.jsonl"))
+        ) &&
+        (fileName !== undefined
           ? entry.name === fileName
-          : entry.name.endsWith(".jsonl") || entry.name.endsWith(".jsonl.zst")
+          : entry.name.endsWith(".jsonl") || entry.name.endsWith(".jsonl.zst"))
       ) {
         candidates.push(child);
       }

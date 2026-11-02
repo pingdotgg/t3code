@@ -66,6 +66,7 @@ export function ComposerModelControl(props: {
           <ProviderIcon
             iconUrl={props.modelOption?.providerIconUrl}
             provider={props.modelOption?.providerDriver}
+            displayName={badge?.displayName}
             size={size}
           />
         )

@@ -2,6 +2,7 @@ import { Image } from "expo-image";
 import { Defs, LinearGradient, Path, Stop, Svg } from "react-native-svg";
 import { View } from "react-native";
 import {
+  isOfficialCommandCodeProvider,
   normalizeProviderAccentColor,
   providerAccentForegroundColor,
   providerInstanceInitials,
@@ -15,6 +16,8 @@ import { getProviderClient } from "@t3tools/client-runtime/provider-clients";
 
 type ProviderIconProps = {
   readonly provider: string | null | undefined;
+  readonly displayName?: string | undefined;
+  readonly agentId?: string | null | undefined;
   readonly iconUrl?: string | null | undefined;
   readonly size?: number;
 };
@@ -75,7 +78,13 @@ export function ProviderIcon(props: ProviderIconProps) {
   const size = props.size ?? 16;
   const mono = isDarkMode ? "#e5e5e5" : "#171717";
 
-  if (props.provider === "command-code") {
+  if (
+    isOfficialCommandCodeProvider({
+      driverKind: props.provider,
+      displayName: props.displayName,
+      agentId: props.agentId,
+    })
+  ) {
     return (
       <Image
         source={
@@ -179,7 +188,12 @@ export function ProviderInstanceIcon(props: {
   return (
     <View style={{ position: "relative" }}>
       <View style={{ opacity: 0.6 }}>
-        <ProviderIcon iconUrl={props.iconUrl} provider={props.provider} size={props.size} />
+        <ProviderIcon
+          iconUrl={props.iconUrl}
+          provider={props.provider}
+          displayName={props.displayName}
+          size={props.size}
+        />
       </View>
       {props.showBadge ? (
         // An absolute badge alone is capped at icon width and clips initials.

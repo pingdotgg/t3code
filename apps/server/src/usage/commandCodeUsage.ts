@@ -45,6 +45,9 @@ function parseRecord(value: unknown, state: typeof ScanState.Type): readonly Usa
   const cacheWrite = tokenCount(entry.usage.cacheWriteTokens);
   const input = tokenCount(entry.usage.inputTokens);
   const outputTokens = tokenCount(entry.usage.outputTokens);
+  // The CLI includes cached tokens in inputTokens. Malformed records must
+  // not inflate the total by reporting more cached tokens than input tokens.
+  if (cacheRead + cacheWrite > input) return [];
   const totals = {
     // Command Code's inputTokens includes cached tokens.
     uncachedInputTokens: Math.max(0, input - cacheRead - cacheWrite),
