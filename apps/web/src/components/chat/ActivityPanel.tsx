@@ -25,7 +25,7 @@ import {
   type ActivityFolder,
   type ActivityPlan,
   type ActivitySummary,
-} from "./activityPanel.logic";
+} from "@t3tools/client-runtime/work-log/activity-summary";
 import { ComposerPendingApprovalActions } from "./ComposerPendingApprovalActions";
 import { PierreEntryIcon } from "./PierreEntryIcon";
 

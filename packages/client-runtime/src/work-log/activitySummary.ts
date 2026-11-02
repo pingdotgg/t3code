@@ -1,5 +1,5 @@
-import type { ThreadStructureVisibleTurnItem } from "@t3tools/client-runtime/state/shell";
-import { turnItemIsWorkspacePreparation } from "@t3tools/client-runtime/state/turn-item-presentation";
+import type { ThreadStructureVisibleTurnItem } from "../state/models.ts";
+import { turnItemIsWorkspacePreparation } from "../state/turnItemPresentation.ts";
 import { isAbsolutePath, workspaceRelativeFilePath } from "@t3tools/shared/path";
 import * as DateTime from "effect/DateTime";
 
@@ -35,9 +35,9 @@ const ACTIVITY_ITEM_TYPES: ReadonlySet<TurnItem["type"]> = new Set<ActivityItem[
   "assistant_message",
 ]);
 
-export function isActivityItem(
-  item: TurnItem,
-): item is Extract<TurnItem, { readonly type: ActivityItem["type"] }> {
+export function isActivityItem<T extends TurnItem>(
+  item: T,
+): item is Extract<T, { readonly type: ActivityItem["type"] }> {
   // Setup the app does before the agent starts is not the agent's progress.
   return ACTIVITY_ITEM_TYPES.has(item.type) && !turnItemIsWorkspacePreparation(item);
 }

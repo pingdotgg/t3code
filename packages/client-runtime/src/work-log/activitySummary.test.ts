@@ -2,7 +2,7 @@ import { RunId, TurnItemId } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import { describe, expect, it } from "vite-plus/test";
 
-import { deriveActivitySummary, type ActivityItem } from "./activityPanel.logic";
+import { deriveActivitySummary, type ActivityItem } from "./activitySummary.ts";
 
 const run1 = RunId.make("run-1");
 const run2 = RunId.make("run-2");
