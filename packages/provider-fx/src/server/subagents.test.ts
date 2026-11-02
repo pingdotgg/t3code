@@ -205,6 +205,18 @@ describe("fx sub-agent hooks", () => {
       ]);
       return { status: run.update?.status, result: run.update?.result, steps: run.delivered };
     };
+    assert.deepEqual(
+      ["failed", "yielded", "cancelled"].map((phase) => ({
+        phase,
+        withoutOutput: settle(phase, []).status,
+        withPreview: settle(phase, [{ acp: preview("completed") }]).status,
+      })),
+      [
+        { phase: "failed", withoutOutput: "failed", withPreview: "failed" },
+        { phase: "yielded", withoutOutput: "idle", withPreview: "idle" },
+        { phase: "cancelled", withoutOutput: "cancelled", withPreview: "cancelled" },
+      ],
+    );
     const failure = JSON.stringify({ ok: false, result: "No package.json", error_code: null });
 
     const truncated = settle(

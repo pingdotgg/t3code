@@ -131,12 +131,12 @@ function hookedSubagentStatus(
   hooks: FxSubagentHookState,
 ): AcpAdapterV2SubagentUpdate["status"] {
   if (tool.status === "failed") return hooks.phase === "cancelled" ? "cancelled" : "failed";
-  // fx completes the ACP call before it reports the whole result.
-  if (hooks.output === undefined) return "running";
   if (hooks.phase === "yielded") return "idle";
   if (hooks.phase === "cancelled") return "cancelled";
-  if (hooks.phase === "failed" || fxSubagentOutcome(hooks.output)?.ok === false) return "failed";
-  return "completed";
+  if (hooks.phase === "failed") return "failed";
+  // fx completes the ACP call before it reports the whole result.
+  if (hooks.output === undefined) return "running";
+  return fxSubagentOutcome(hooks.output)?.ok === false ? "failed" : "completed";
 }
 
 /** Each `subagent` call becomes a child thread; with hooks it also gets the child's steps. */

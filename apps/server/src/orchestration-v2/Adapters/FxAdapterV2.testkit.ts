@@ -65,7 +65,7 @@ function layerFxProviderAdapterRegistryReplay(
             childProcessSpawner,
             fileSystem,
             cancelBehavior: FX_ACP_CANCEL_BEHAVIOR,
-            sessionMeta: FX_HOOKS_SESSION_META,
+            sessionMeta: () => FX_HOOKS_SESSION_META,
             ...(replayGate === undefined ? {} : { replayGate }),
           })(runtimeInput),
         assertComplete: makeAcpReplayCompletenessAssertion(fileSystem, statusPath, transcript),

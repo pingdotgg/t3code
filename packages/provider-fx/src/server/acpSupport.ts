@@ -233,7 +233,7 @@ export const makeFxAcpRuntime = Effect.fn("makeFxAcpRuntime")(function* (
         env: { ...environment },
       },
       cancelBehavior: FX_ACP_CANCEL_BEHAVIOR,
-      sessionMeta: FX_HOOKS_SESSION_META,
+      sessionMeta: () => FX_HOOKS_SESSION_META,
     }),
   );
   return yield* Effect.service(AcpSessionRuntime.AcpSessionRuntime).pipe(Effect.provide(context));
