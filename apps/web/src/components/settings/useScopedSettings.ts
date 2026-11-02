@@ -22,6 +22,7 @@ import { toastManager } from "../ui/toast";
 import { useOptionalSettingsScope, useSettingsScope } from "./SettingsScopeContext";
 import {
   applyPendingScopedWrites,
+  appendPendingScopedWrites,
   createScopedSettingsSaveQueue,
   persistScopedSettingsPatch,
   planProjectOverridesClear,
@@ -117,23 +118,7 @@ function useRunScopedPlan() {
         savedOver: savedSettings(environmentId) ?? previous,
       }),
     );
-    updatePendingScopedWrites((current) => [
-      ...current,
-      ...pending.map((write) => {
-        const previous = current
-          .filter(
-            (candidate) =>
-              candidate.environmentId === write.environmentId && candidate.confirmed !== undefined,
-          )
-          .at(-1);
-        return {
-          ...write,
-          predecessors: previous?.confirmed
-            ? [...(previous.predecessors ?? []), previous.confirmed]
-            : [],
-        };
-      }),
-    ]);
+    updatePendingScopedWrites((current) => appendPendingScopedWrites(current, pending));
     const settle = (
       target: Pick<PendingScopedWrite, "environmentId" | "patch">,
       confirmed?: ServerSettings,

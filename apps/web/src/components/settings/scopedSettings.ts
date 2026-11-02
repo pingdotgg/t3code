@@ -79,6 +79,32 @@ export interface PendingScopedWrite {
   readonly predecessors?: readonly ServerSettings[];
 }
 
+export function appendPendingScopedWrites(
+  current: readonly PendingScopedWrite[],
+  pending: readonly PendingScopedWrite[],
+) {
+  return [
+    ...current,
+    ...pending.map((write) => {
+      const previous = current
+        .filter((candidate) => candidate.environmentId === write.environmentId)
+        .at(-1);
+      const expected =
+        previous?.confirmed ??
+        (previous?.savedOver
+          ? applyServerSettingsPatch(
+              previous.predecessors?.at(-1) ?? previous.savedOver,
+              previous.patch,
+            )
+          : undefined);
+      return {
+        ...write,
+        predecessors: expected ? [...(previous?.predecessors ?? []), expected] : [],
+      };
+    }),
+  ];
+}
+
 export const pendingScopedWritesAtom = Atom.make<readonly PendingScopedWrite[]>([]).pipe(
   Atom.keepAlive,
   Atom.withLabel("web-settings:pending-scoped-writes"),

@@ -14,6 +14,7 @@ import { resolveWorktreeCleanup } from "@t3tools/shared/projectSettings";
 import type { SidebarProjectSnapshot } from "../../sidebarProjectGrouping";
 import {
   applyPendingScopedWrites,
+  appendPendingScopedWrites,
   createScopedSettingsSaveQueue,
   type PendingScopedWrite,
   persistScopedSettingsPatch,
@@ -630,6 +631,28 @@ describe("scoped settings mixed values", () => {
     expect(mixedAfter(saved)).toBe(false);
 
     const baseline = waiting.serverConfig!.settings;
+    const rapid = appendPendingScopedWrites(
+      [
+        {
+          environmentId: waiting.environmentId,
+          savedOver: baseline,
+          patch: { defaultRuntimeMode: "auto" },
+        },
+      ],
+      [
+        {
+          environmentId: waiting.environmentId,
+          savedOver: baseline,
+          patch: { defaultRuntimeMode: "approval-required" },
+        },
+      ],
+    );
+    const earlierReply = environment("Server", {
+      settings: applyServerSettingsPatch(baseline, { defaultRuntimeMode: "auto" }),
+    });
+    expect(
+      applyPendingScopedWrites([earlierReply], rapid)[0]!.serverConfig!.settings.defaultRuntimeMode,
+    ).toBe("approval-required");
     const first = applyServerSettingsPatch(baseline, { branchNamingMode: "custom" });
     const second = applyServerSettingsPatch(first, { branchNameInstructions: "Use verify/" });
     const intermediate = environment("Server", { settings: first });
