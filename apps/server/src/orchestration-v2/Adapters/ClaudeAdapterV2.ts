@@ -2905,6 +2905,7 @@ function claudePendingBackgroundTask(input: {
   readonly description: string | undefined;
   // Undeclared SDK field: the subagent whose own background work this is.
   readonly parentTaskId: unknown;
+  readonly nativeItemId?: string | undefined;
 }): OrchestrationV2PendingBackgroundTask {
   return {
     taskId: input.taskId,
@@ -2919,6 +2920,9 @@ function claudePendingBackgroundTask(input: {
     ...(typeof input.parentTaskId === "string" && input.parentTaskId.trim().length > 0
       ? { parentTaskId: input.parentTaskId }
       : {}),
+    ...(input.nativeItemId === undefined || input.nativeItemId.trim().length === 0
+      ? {}
+      : { nativeItemId: input.nativeItemId }),
   };
 }
 
@@ -8146,10 +8150,13 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               (taskId, task) =>
                 task.nativeThreadId === input.nativeThreadId && !listedTaskIds.has(taskId),
             );
+            const knownTasks = yield* Ref.get(lastKnownOpaqueTasks);
             for (const entry of roster) {
               const task = parseClaudeBackgroundTaskEntry(entry, monitorTasks);
               if (task !== null) {
-                nextTasks.push(task);
+                // Levels carry ids only; the launching tool call comes from task_started.
+                const nativeItemId = knownTasks.get(task.taskId)?.nativeItemId;
+                nextTasks.push(nativeItemId === undefined ? task : { ...task, nativeItemId });
               }
             }
             yield* replacePendingBackgroundTasks(input.nativeThreadId, nextTasks);
@@ -8171,6 +8178,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 description:
                   typeof message.description === "string" ? message.description : undefined,
                 parentTaskId: Reflect.get(message, "parent_task_id"),
+                nativeItemId: message.tool_use_id,
               }),
             );
             rosterChanged = true;

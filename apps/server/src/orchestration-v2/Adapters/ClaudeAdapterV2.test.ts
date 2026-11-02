@@ -8595,6 +8595,65 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       ),
   );
 
+  it.effect("links a background Bash task to the tool call that started it", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const harness = yield* makeWakeHarness;
+        const now = yield* DateTime.now;
+        const level = (uuid: string) =>
+          claudeSdkFrame({
+            type: "system",
+            subtype: "background_tasks_changed",
+            tasks: [
+              {
+                task_id: WAKE_TASK_ID,
+                task_type: "local_bash",
+                description: WAKE_TASK_DESCRIPTION,
+              },
+            ],
+            uuid,
+            session_id: WAKE_NATIVE_SESSION,
+          });
+
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now,
+            attemptId: RunAttemptId.make("attempt-claude-background-bash-link"),
+            text: "Run the build in the background.",
+            attachments: [],
+          }),
+        );
+        // The level precedes its task_started bookend.
+        yield* Queue.offer(harness.sdkMessages, level("00000000-0000-4000-8000-000000000211"));
+        yield* Queue.offer(harness.sdkMessages, wakeTaskStarted);
+        yield* Queue.offer(harness.sdkMessages, turnOneResult);
+        yield* harness.awaitTerminal(1);
+        const settled = providerThreadRosterEvents(harness.events).length;
+        // Levels never carry the tool call id, so a later one must keep the link.
+        yield* Queue.offer(harness.sdkMessages, level("00000000-0000-4000-8000-000000000212"));
+        yield* harness.until(() => providerThreadRosterEvents(harness.events).length > settled);
+
+        assert.deepEqual(
+          providerThreadRosterEvents(harness.events).at(-1)?.providerThread.pendingBackgroundTasks,
+          [
+            {
+              taskId: WAKE_TASK_ID,
+              kind: "command",
+              description: WAKE_TASK_DESCRIPTION,
+              nativeItemId: WAKE_TOOL_USE_ID,
+            },
+          ],
+        );
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+        ),
+      ),
+    ),
+  );
+
   it.effect("holds only the background tasks the agent marks awaited, until they end", () =>
     Effect.scoped(
       Effect.gen(function* () {
@@ -8847,7 +8906,12 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         const roster = providerThreadRosterEvents(harness.events).at(-1)?.providerThread
           .pendingBackgroundTasks;
         assert.deepEqual(roster, [
-          { taskId: longRunning.taskId, kind: "monitor", description: "Monitor 0" },
+          {
+            taskId: longRunning.taskId,
+            kind: "monitor",
+            description: "Monitor 0",
+            nativeItemId: "toolu_monitor_0",
+          },
         ]);
       }).pipe(
         Effect.provide(
@@ -9497,7 +9561,12 @@ describe("ClaudeAdapterV2 background wake turns", () => {
             (event) => event.providerThread.id === providerThreadA.id,
           )?.providerThread.pendingBackgroundTasks;
           assert.deepEqual(rosterAAfterSettle ?? [], [
-            { taskId: taskA, description: "work on A", kind: "command" },
+            {
+              taskId: taskA,
+              description: "work on A",
+              kind: "command",
+              nativeItemId: "toolu-roster-a",
+            },
           ]);
           assert.isTrue(yield* hasPendingBackgroundWork);
           assert.isTrue(yield* hasPendingBackgroundWorkForThread(providerThreadA));
