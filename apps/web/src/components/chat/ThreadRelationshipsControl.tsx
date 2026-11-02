@@ -77,6 +77,7 @@ import {
   applyProviderInstanceSettings,
   deriveProviderInstanceEntries,
   shouldShowInstanceBadge,
+  type ProviderInstanceEntry,
 } from "../../providerInstances";
 import { threadEnvironment } from "../../state/threads";
 import { orchestrationEnvironment } from "../../state/orchestration";
@@ -102,6 +103,7 @@ import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { toastManager } from "../ui/toast";
 import { Spinner } from "../ui/spinner";
 import { ProviderInstanceIcon } from "./ProviderInstanceIcon";
+import { getTriggerDisplayModelName } from "./providerIconUtils";
 import {
   THREAD_DETAILS_PANEL_ACTION_GROUP_CLASS,
   THREAD_DETAILS_PANEL_META_CLASS,
@@ -703,6 +705,13 @@ function useThreadLineage(props: {
   };
 }
 
+function lineageModelLabel(model: string, providerEntry: ProviderInstanceEntry | undefined) {
+  const selectedModel = providerEntry?.models.find((entry) => entry.slug === model);
+  return selectedModel
+    ? getTriggerDisplayModelName(selectedModel, providerEntry?.driverKind)
+    : formatModelSlugName(model);
+}
+
 export function ThreadRelationshipsPanel(props: {
   readonly environmentId: EnvironmentId;
   readonly threadId: ThreadId;
@@ -870,11 +879,11 @@ export function ThreadRelationshipsPanel(props: {
         )}
         <span className="flex min-w-0 flex-1 flex-col gap-0.5">
           <span className="truncate text-meta">{threadTitle}</span>
-          <span className="flex min-w-0 flex-col text-caption text-muted-foreground">
-            <span>{relationship}</span>
-            {node?.thread?.modelSelection.model ? (
-              <span>{formatModelSlugName(node.thread.modelSelection.model)}</span>
-            ) : null}
+          <span className="truncate text-caption text-muted-foreground">
+            {relationship}
+            {node?.thread?.modelSelection.model
+              ? ` · ${lineageModelLabel(node.thread.modelSelection.model, providerEntry)}`
+              : ""}
           </span>
         </span>
         <span className={`${THREAD_DETAILS_PANEL_META_CLASS} ${trailingVisibilityClass}`}>
@@ -1094,7 +1103,13 @@ export function ThreadRelationshipsPanel(props: {
               <span className="flex min-w-0 flex-1 flex-col gap-0.5">
                 <span className="truncate text-meta">{currentThread.title}</span>
                 <span className="truncate text-caption text-muted-foreground">
-                  {formatModelSlugName(currentThread.modelSelection.model)}
+                  This thread ·{" "}
+                  {lineageModelLabel(
+                    currentThread.modelSelection.model,
+                    providerEntries.find(
+                      (entry) => entry.instanceId === currentThread.modelSelection.instanceId,
+                    ),
+                  )}
                 </span>
               </span>
             </div>
