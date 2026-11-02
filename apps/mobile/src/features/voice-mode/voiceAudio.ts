@@ -14,7 +14,13 @@ export function setVoiceAudioActive(active: boolean): Promise<void> {
             shouldPlayInBackground: false,
             shouldRouteThroughEarpiece: false,
           }
-        : { allowsRecording: false },
+        : {
+            allowsRecording: false,
+            playsInSilentMode: true,
+            interruptionMode: "mixWithOthers",
+            shouldPlayInBackground: false,
+            shouldRouteThroughEarpiece: false,
+          },
     ),
   );
   pending = result.catch(() => {});

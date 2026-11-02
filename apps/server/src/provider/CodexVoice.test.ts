@@ -31,6 +31,7 @@ function delegation(input: string) {
 const makeFakeClient = Effect.gen(function* () {
   const handlers = new Map<string, Array<(payload: unknown) => Effect.Effect<void, Error>>>();
   const requests: Array<{ readonly method: string; readonly params: unknown }> = [];
+  let scheduledSpeechCount = 0;
   let closeOnStop = false;
   let onStart: Effect.Effect<void, CodexErrors.CodexAppServerError> = Effect.void;
   let onStop: Effect.Effect<void, CodexErrors.CodexAppServerError> = Effect.void;
@@ -48,8 +49,9 @@ const makeFakeClient = Effect.gen(function* () {
         handlers.set(method, [...(handlers.get(method) ?? []), handler]);
       }),
     raw: {
-      request: (method: string, params: unknown) =>
-        Effect.gen(function* () {
+      request: (method: string, params: unknown) => {
+        if (method === "thread/realtime/appendSpeech") scheduledSpeechCount += 1;
+        return Effect.gen(function* () {
           requests.push({ method, params });
           if (method === "thread/realtime/start") {
             yield* Deferred.succeed(startRequested, undefined);
@@ -72,7 +74,8 @@ const makeFakeClient = Effect.gen(function* () {
               });
           }
           return {};
-        }),
+        });
+      },
     },
   } as unknown as CodexClient.CodexAppServerClient["Service"];
   const emit = (method: string, payload: unknown) =>
@@ -87,6 +90,9 @@ const makeFakeClient = Effect.gen(function* () {
     secondStartRequested,
     thirdStartRequested,
     speechRequested,
+    get scheduledSpeechCount() {
+      return scheduledSpeechCount;
+    },
     setStart: (effect: typeof onStart) => {
       onStart = effect;
     },
@@ -494,6 +500,11 @@ describe("makeCodexVoice", () => {
         threadId: PROVIDER_THREAD,
         turn: { id: "typed", status: "completed" },
       });
+      yield* voice.registerTurn("voice-message", "capacity-failed");
+      yield* fake.emit("turn/completed", {
+        threadId: PROVIDER_THREAD,
+        turn: { id: "capacity-failed", status: "failed" },
+      });
       yield* voice.registerTurn("voice-message", "resubmitted");
       yield* fake.emit("item/started", {
         threadId: PROVIDER_THREAD,
@@ -514,7 +525,24 @@ describe("makeCodexVoice", () => {
         turn: { id: "resubmitted", status: "completed" },
       });
 
+      NodeAssert.equal(fake.scheduledSpeechCount, 1);
       yield* Deferred.await(fake.speechRequested);
+      yield* voice.registerTurn("voice-message", "after-success");
+      yield* fake.emit("item/completed", {
+        threadId: PROVIDER_THREAD,
+        turnId: "after-success",
+        item: {
+          type: "agentMessage",
+          id: "duplicate",
+          text: "Do not speak.",
+          phase: "final_answer",
+        },
+      });
+      yield* fake.emit("turn/completed", {
+        threadId: PROVIDER_THREAD,
+        turn: { id: "after-success", status: "completed" },
+      });
+      NodeAssert.equal(fake.scheduledSpeechCount, 1);
       NodeAssert.deepEqual(
         fake.requests.filter(({ method }) => method === "thread/realtime/appendSpeech"),
         [

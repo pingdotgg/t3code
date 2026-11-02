@@ -83,9 +83,8 @@ type VoiceQueue = Queue.Queue<ProviderVoiceSessionEvent, CodexVoiceSessionError 
 interface ActiveVoice {
   readonly providerThreadId: string;
   readonly queue: VoiceQueue;
-  /** Delegated turn id -> latest speakable answer in that turn. */
-  readonly delegatedTurns: Map<string, string | undefined>;
-  /** Handoffs resubmitted as ordinary runs, awaiting their native turn. */
+  readonly delegatedTurns: Map<string, { readonly messageId?: string; answer: string | undefined }>;
+  /** Handoff message identities survive native retries until successful completion. */
   readonly expectedHandoffs: Set<string>;
   closed: boolean;
   stopped: boolean;
@@ -171,7 +170,9 @@ export const makeCodexVoice = Effect.fn("makeCodexVoice")(function* (
     withActive(payload.threadId, (active) =>
       Effect.sync(() => {
         if (readRealtimeDelegationFromItem(payload.item) !== undefined) {
-          active.delegatedTurns.set(payload.turnId, undefined);
+          if (!active.delegatedTurns.has(payload.turnId)) {
+            active.delegatedTurns.set(payload.turnId, { answer: undefined });
+          }
           return;
         }
       }),
@@ -180,18 +181,24 @@ export const makeCodexVoice = Effect.fn("makeCodexVoice")(function* (
   yield* client.handleServerNotification("item/completed", (payload) =>
     withActive(payload.threadId, (active) =>
       Effect.sync(() => {
-        if (!active.delegatedTurns.has(payload.turnId)) return;
+        const delegatedTurn = active.delegatedTurns.get(payload.turnId);
+        if (delegatedTurn === undefined) return;
         const answer = readSpeakableAnswer(payload.item);
-        if (answer !== undefined) active.delegatedTurns.set(payload.turnId, answer);
+        if (answer !== undefined) delegatedTurn.answer = answer;
       }),
     ),
   );
   yield* client.handleServerNotification("turn/completed", (payload) =>
     withActive(payload.threadId, (active) =>
       Effect.suspend(() => {
-        const answer = active.delegatedTurns.get(payload.turn.id);
+        const delegatedTurn = active.delegatedTurns.get(payload.turn.id);
         active.delegatedTurns.delete(payload.turn.id);
-        if (answer === undefined || payload.turn.status !== "completed") return Effect.void;
+        if (payload.turn.status !== "completed") return Effect.void;
+        if (delegatedTurn?.messageId !== undefined) {
+          active.expectedHandoffs.delete(delegatedTurn.messageId);
+        }
+        const answer = delegatedTurn?.answer;
+        if (answer === undefined) return Effect.void;
         return client.raw
           .request("thread/realtime/appendSpeech", {
             threadId: active.providerThreadId,
@@ -290,8 +297,8 @@ export const makeCodexVoice = Effect.fn("makeCodexVoice")(function* (
 
   const registerTurn = (messageId: string, turnId: string) =>
     Effect.map(Ref.get(activeRef), (active) => {
-      if (active && !active.closed && active.expectedHandoffs.delete(messageId)) {
-        active.delegatedTurns.set(turnId, undefined);
+      if (active && !active.closed && active.expectedHandoffs.has(messageId)) {
+        active.delegatedTurns.set(turnId, { messageId, answer: undefined });
       }
     });
 
