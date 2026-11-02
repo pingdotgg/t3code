@@ -1489,7 +1489,7 @@ export default function GitActionsControl({
   return (
     <>
       {!showActions ? null : !isRepo && activeWorktreePath !== null ? (
-        // A worktree is always a checkout, so a non-repository status means its folder is gone.
+        // A worktree is always a checkout, so a non-repository status means it was removed.
         <ThreadDetailsControl size="xs" variant="ghost" part="row" panel tone="muted" disabled>
           <FolderXIcon className="size-3.5" aria-hidden />
           <span className={cn("ml-0.5", THREAD_DETAILS_PANEL_LABEL_CLASS)}>Worktree missing</span>

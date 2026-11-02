@@ -126,6 +126,7 @@ it("does not offer Initialize Git when the thread's worktree folder is missing",
     worktreePath: "/workspace/worktrees/render/t3-removed",
   });
 
+  await expect.element(page.getByText("Worktree missing")).toBeVisible();
   await expect
     .element(page.getByRole("button", { name: "Initialize Git" }))
     .not.toBeInTheDocument();

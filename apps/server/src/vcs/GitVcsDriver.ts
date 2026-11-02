@@ -780,7 +780,7 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
   const initRepository: VcsDriver.VcsDriver["Service"]["initRepository"] = Effect.fn(
     "GitVcsDriver.initRepository",
   )(function* (input) {
-    // A deleted worktree reports as a non-repository; `git init` there would recreate it.
+    // A deleted folder reports as a non-repository; say so instead of git's bare exit 128.
     const exists = yield* fileSystem.exists(input.cwd).pipe(Effect.orElseSucceed(() => true));
     if (!exists) {
       return yield* new VcsRepositoryDetectionError({
