@@ -1,10 +1,8 @@
 import { OrchestratorMcpFailure } from "@t3tools/contracts";
 import * as Option from "effect/Option";
-import * as GitWorkflow from "../../../git/GitWorkflowService.ts";
 import * as Project from "../../../project/ProjectService.ts";
 import { readThread, unavailable } from "../../threadAccess.ts";
 import * as Effect from "effect/Effect";
-import * as FileSystem from "effect/FileSystem";
 
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as McpToolAccess from "../../McpToolAccess.ts";
@@ -31,19 +29,12 @@ const handlers = {
           code: "invalid_request",
           message: "The project was not found.",
         });
-      const fileSystem = yield* FileSystem.FileSystem;
-      // Storage cleanup removes a worktree but keeps its path on the thread.
-      const worktreeExists =
-        thread.worktreePath !== null &&
-        (yield* fileSystem.exists(thread.worktreePath).pipe(Effect.orElseSucceed(() => false)));
-      const git = yield* GitWorkflow.GitWorkflowService;
-      return yield* git
+      const service = yield* WorktreeMcpService.WorktreeMcpService;
+      return yield* service
         .listRefs({
           ...refs,
-          cwd:
-            worktreeExists && thread.worktreePath !== null
-              ? thread.worktreePath
-              : project.value.workspaceRoot,
+          worktreePath: thread.worktreePath,
+          workspaceRoot: project.value.workspaceRoot,
         })
         .pipe(Effect.mapError(unavailable));
     }),
