@@ -31,8 +31,9 @@ export const make = Effect.gen(function* () {
   const settings = yield* ServerSettings.ServerSettingsService;
 
   const compactWhenDue = Effect.fn("IdleCompactionService.compactWhenDue")(
-    function* (threadId: ThreadId, runId: RunId) {
-      // Loops once after the wait: the thread may have moved on.
+    function* (threadId: ThreadId, completedRunId: RunId) {
+      let runId = completedRunId;
+      // Loops after the wait or a retarget: the thread may have moved on.
       while (true) {
         const current = yield* settings.getSettings;
         const thread = yield* projections.getThread(threadId);
@@ -72,6 +73,15 @@ export const make = Effect.gen(function* () {
           )
         )
           return;
+        const latestRun = records.runs.reduce<(typeof records.runs)[number] | undefined>(
+          (latest, run) => (latest === undefined || run.ordinal > latest.ordinal ? run : latest),
+          undefined,
+        );
+        // A late update for an earlier run replaced the latest run's timer, so take it over.
+        if (latestRun?.status === "completed" && latestRun.id !== runId) {
+          runId = latestRun.id;
+          continue;
+        }
         const nowMs = DateTime.toEpochMillis(yield* DateTime.now);
         const window = idleCompactionWindow(records, nowMs);
         if (window?.runId !== runId) return;
