@@ -20,6 +20,13 @@ commit links follow your **Open links in** setting; on web, when that opens a ne
 shows an **Open link** button. Command/Ctrl+Click always opens the link in your browser. Commit links follow the **Open pull requests in T3 Code**
 setting in **Settings → Diffs**.
 
+To hide stories, benchmarks, or other project-specific files alongside tests, add patterns under
+**Settings → Diffs → Additional hidden file patterns**, then enable **Hide matching files** in the
+diff or pull request Code toolbar. Enter one case-sensitive JavaScript regular expression per line,
+without surrounding `/` or flags: for example, `\.stories\.tsx$` or `\.(perf|bench)\.[^/]+$`.
+Patterns match full paths with `/` separators. Invalid expressions are shown without replacing the
+saved patterns. Clear the field or use its reset button to keep only the built-in test rules.
+
 ## Connect an account
 
 Install Git and configure authentication on the machine running your T3 Code server. For a remote

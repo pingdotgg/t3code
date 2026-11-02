@@ -52,7 +52,6 @@ import {
   canEditPullRequestComment,
   canResolvePullRequestThread,
 } from "@t3tools/client-runtime/pull-request-editing";
-import { isTestChangedFile } from "@t3tools/shared/changedFileKind";
 import { orderDiffFiles } from "./pullRequestFileOrder.logic";
 import {
   buildFileDiffRenderKey,
@@ -311,7 +310,7 @@ function PullRequestCodeTab({
     false,
     Schema.Boolean,
   );
-  const [hideTestFiles, setHideTestFiles] = useHideTestFiles();
+  const { hideTestFiles, setHideTestFiles, matchesHiddenFile, fileLabel } = useHideTestFiles();
   const [selectedLines, setSelectedLines] = useState<{
     id: string;
     range: SelectedLineRange;
@@ -506,17 +505,17 @@ function PullRequestCodeTab({
       parsed?.kind === "files" ? orderDiffFiles(parsed.files) : [],
     ),
   );
-  const testFileCount = loadedFiles.filter((file) =>
-    isTestChangedFile(resolveFileDiffPath(file)),
+  const matchingFileCount = loadedFiles.filter((file) =>
+    matchesHiddenFile(resolveFileDiffPath(file)),
   ).length;
   // A requested file stays visible so a jump to a hidden test still lands.
   const files = hideTestFiles
     ? loadedFiles.filter((file) => {
         const path = resolveFileDiffPath(file);
-        return path === revealRequest?.path || !isTestChangedFile(path);
+        return path === revealRequest?.path || !matchesHiddenFile(path);
       })
     : loadedFiles;
-  const hiddenTestFileCount = loadedFiles.length - files.length;
+  const hiddenFileCount = loadedFiles.length - files.length;
   const filePaths = files.map((file) => resolveFileDiffPath(file));
   const omittedFileStats = new Map(
     loadedSlices.flatMap((slice) =>
@@ -1089,9 +1088,9 @@ function PullRequestCodeTab({
             {files.length} {files.length === 1 ? "file" : "files"}
             {nextCursor === null ? "" : "+"}
           </span>
-          {hiddenTestFileCount > 0 ? (
+          {hiddenFileCount > 0 ? (
             <Button type="button" size="xs" variant="link" onClick={() => setHideTestFiles(false)}>
-              {hiddenTestFileCount} test {hiddenTestFileCount === 1 ? "file" : "files"} hidden
+              {hiddenFileCount} {fileLabel} {hiddenFileCount === 1 ? "file" : "files"} hidden
             </Button>
           ) : null}
           {filesViewed.enabled && files.length > 0 ? (
@@ -1306,12 +1305,12 @@ function PullRequestCodeTab({
             </TooltipPopup>
           </Tooltip>
         ) : null}
-        {testFileCount > 0 ? (
+        {matchingFileCount > 0 ? (
           <Tooltip>
             <TooltipTrigger
               render={
                 <Toggle
-                  aria-label="Hide test files"
+                  aria-label={`Hide ${fileLabel} files`}
                   variant="ghost"
                   size="sm"
                   pressed={hideTestFiles}
@@ -1322,7 +1321,7 @@ function PullRequestCodeTab({
               <FlaskConicalOffIcon className="size-3.5" />
             </TooltipTrigger>
             <TooltipPopup side="top">
-              {hideTestFiles ? "Show test files" : "Hide test files"}
+              {`${hideTestFiles ? "Show" : "Hide"} ${fileLabel} files`}
             </TooltipPopup>
           </Tooltip>
         ) : null}

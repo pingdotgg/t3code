@@ -73,6 +73,30 @@ export function isTestChangedFile(path: string): boolean {
   return kind === "tests" || kind === "mocks";
 }
 
+export function compileDiffHideFilePatterns(input: string) {
+  const patterns: RegExp[] = [];
+  const errors: { line: number; message: string }[] = [];
+  for (const [index, line] of input.split("\n").entries()) {
+    const source = line.trim();
+    if (!source) continue;
+    try {
+      patterns.push(new RegExp(source));
+    } catch (error) {
+      errors.push({
+        line: index + 1,
+        message: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+  return { patterns, errors };
+}
+
+export function matchesDiffHideFile(path: string, patterns: ReadonlyArray<RegExp>): boolean {
+  if (isTestChangedFile(path)) return true;
+  const normalizedPath = path.replaceAll("\\", "/");
+  return patterns.some((pattern) => pattern.test(normalizedPath));
+}
+
 export function classifyChangedFile(path: string): ChangedFileKind {
   const segments = path.replaceAll("\\", "/").split("/");
   const name = segments.pop() ?? "";

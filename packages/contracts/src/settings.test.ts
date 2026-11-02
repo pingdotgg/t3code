@@ -302,6 +302,23 @@ describe("resolveIdleCompaction", () => {
   });
 });
 
+describe("ClientSettings diff hide patterns", () => {
+  it("keeps existing settings unchanged and preserves regex sources through persistence", () => {
+    expect(decodeClientSettings({}).diffHideFilePatterns).toBe("");
+    const patch = decodeClientSettingsPatch({
+      diffHideFilePatterns: "\\.stories\\.tsx$\n^(benchmarks|performance)/",
+    });
+    const persisted = JSON.parse(JSON.stringify(encodeClientSettings(decodeClientSettings(patch))));
+    expect(decodeClientSettings(persisted).diffHideFilePatterns).toBe(patch.diffHideFilePatterns);
+    expect(
+      decodeClientSettings({
+        ...persisted,
+        ...decodeClientSettingsPatch({ diffHideFilePatterns: "" }),
+      }).diffHideFilePatterns,
+    ).toBe("");
+  });
+});
+
 describe("ClientSettings notifications", () => {
   it("requires opt-in when existing settings omit notification preferences", () => {
     expect(decodeClientSettings({}).notificationMode).toBe("off");

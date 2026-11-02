@@ -565,6 +565,14 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["collapsed expanded collapse expand files pull request pr code tab"],
   },
   {
+    id: "diff-hide-file-patterns",
+    title: "Additional hidden file patterns",
+    to: "/settings/diffs",
+    searchTerms: [
+      "diff hide test files regex regular expressions storybook stories performance benchmarks",
+    ],
+  },
+  {
     id: "diff-layout",
     title: "Diff layout",
     to: "/settings/diffs",

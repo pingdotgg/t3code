@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { classifyChangedFile } from "./changedFileKind.ts";
+import {
+  classifyChangedFile,
+  compileDiffHideFilePatterns,
+  matchesDiffHideFile,
+} from "./changedFileKind.ts";
 
 describe("classifyChangedFile", () => {
   it.each([
@@ -12,7 +16,46 @@ describe("classifyChangedFile", () => {
     ["evals/title-generation.ts", "tests"],
     ["README.md", "docs"],
     ["tests/README.md", "tests"],
+    ["src/Button.stories.tsx", "code"],
+    ["benchmarks/render.bench.ts", "code"],
   ] as const)("%s is %s", (path, kind) => {
     expect(classifyChangedFile(path)).toBe(kind);
+  });
+});
+
+describe("custom diff hide patterns", () => {
+  it("ignores blank lines and reports invalid patterns without losing valid ones", () => {
+    const result = compileDiffHideFilePatterns(
+      "\r\n  \\.stories\\.tsx$  \r\n[\r\n\r\n^(benchmarks|performance)/\r\n(\r\n",
+    );
+
+    expect(result.patterns.map((pattern) => pattern.source)).toEqual([
+      "\\.stories\\.tsx$",
+      "^(benchmarks|performance)\\/",
+    ]);
+    expect(result.errors.map((error) => error.line)).toEqual([3, 6]);
+    expect(result.errors.every((error) => error.message.length > 0)).toBe(true);
+    expect(matchesDiffHideFile("src/Button.stories.tsx", result.patterns)).toBe(true);
+    expect(matchesDiffHideFile("benchmarks/render.ts", result.patterns)).toBe(true);
+    expect(matchesDiffHideFile("src/Button.stories.tsx", [])).toBe(false);
+  });
+
+  it.each([
+    ["src/Button.stories.tsx", true],
+    ["src\\Button.stories.tsx", true],
+    ["benchmarks/render.bench.ts", true],
+    ["performance/render.ts", true],
+    ["src/Button.test.tsx", true],
+    ["src/__mocks__/Button.tsx", true],
+    ["src/Button.tsx", false],
+    ["src/Button.stories.ts", false],
+    ["src/Button.STORIES.tsx", false],
+    ["src/benchmarks.ts", false],
+    ["generated/api.ts", false],
+  ] as const)("matches %s: %s", (path, hidden) => {
+    const { patterns } = compileDiffHideFilePatterns(
+      "\\.stories\\.tsx$\n^(benchmarks|performance)/",
+    );
+    expect(matchesDiffHideFile(path, patterns)).toBe(hidden);
   });
 });
