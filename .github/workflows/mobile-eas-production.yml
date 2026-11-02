@@ -215,7 +215,7 @@ jobs:
           git config user.name "${APP_SLUG}[bot]"
           git config user.email "${user_id}+${APP_SLUG}[bot]@users.noreply.github.com"
           git add apps/mobile/app.config.ts
-          git commit \
+          git commit --no-verify \
             -m "chore(mobile): bump app version to $RELEASE_VERSION" \
             -m "Co-authored-by: codex <codex@users.noreply.github.com>"
           git push origin "HEAD:refs/heads/${GITHUB_REF_NAME}"

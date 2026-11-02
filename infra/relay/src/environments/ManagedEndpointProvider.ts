@@ -1127,19 +1127,22 @@ const make = Effect.gen(function* () {
             // A timed-out deletion may have succeeded; confirm Cloudflare state before rolling back the claim.
             return yield* deleteTunnel.pipe(
               Effect.as(true),
-              Effect.catchIf(
-                (error) => isManagedEndpointTunnelInUse(error.cause),
-                () => Effect.succeed(false),
-              ),
               Effect.catchTags({
                 ManagedEndpointDeprovisioningFailed: (failure) =>
-                  confirmTunnelGone(failure).pipe(Effect.as(true)),
+                  isManagedEndpointTunnelInUse(failure.cause)
+                    ? Effect.fail(failure)
+                    : confirmTunnelGone(failure).pipe(Effect.as(true)),
               }),
             );
           }),
         )
         .pipe(
           Effect.catchTags({
+            // Return false only after the refused deletion rolls back the release marker.
+            ManagedEndpointDeprovisioningFailed: (failure) =>
+              isManagedEndpointTunnelInUse(failure.cause)
+                ? Effect.succeedSome(false)
+                : Effect.fail(failure),
             ManagedEndpointAllocationPersistenceError: (cause) =>
               Effect.fail(
                 new ManagedEndpointDeprovisioningFailed({

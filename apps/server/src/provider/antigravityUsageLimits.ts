@@ -19,6 +19,10 @@ const ENDPOINTS = [
   "https://daily-cloudcode-pa.googleapis.com",
   "https://cloudcode-pa.googleapis.com",
 ];
+const SUMMARY_WINDOW_MINS = new Map([
+  ["5h", 5 * 60],
+  ["weekly", 7 * 24 * 60],
+]);
 const MANUAL_REDIRECT: RequestInit = { redirect: "manual" };
 const TokenFile = Schema.Struct({
   client_id: Schema.NonEmptyString,
@@ -40,6 +44,7 @@ const Bucket = Schema.Struct({
   bucketId: Schema.NonEmptyString,
   window: Schema.optional(Schema.String),
   displayName: Schema.optional(Schema.String),
+  description: Schema.optional(Schema.String),
   disabled: Schema.optional(Schema.Boolean),
 });
 const Summary = Schema.Struct({
@@ -96,7 +101,22 @@ function quotaWindow(
   };
 }
 
-function summaryWindows(summary: typeof Summary.Type) {
+function summaryResetTime(
+  bucket: typeof Bucket.Type,
+  windowDurationMins: number | undefined,
+  requestedAt: number,
+): string | undefined {
+  // Untouched summary buckets report a rolling full-window reset.
+  const untouched =
+    bucket.remainingFraction === 1 &&
+    bucket.description === undefined &&
+    windowDurationMins !== undefined &&
+    Math.abs(Date.parse(bucket.resetTime ?? "") - requestedAt - windowDurationMins * 60_000) <=
+      60_000;
+  return untouched ? undefined : bucket.resetTime;
+}
+
+function summaryWindows(summary: typeof Summary.Type, requestedAt: number) {
   const windows = new Map<string, ServerProviderUsageWindow>();
   const groups = summary.groups?.some((group) => group.buckets?.length)
     ? summary.groups
@@ -104,19 +124,23 @@ function summaryWindows(summary: typeof Summary.Type) {
   for (const group of groups ?? []) {
     for (const bucket of group.buckets ?? []) {
       if (bucket.disabled) continue;
-      const family = bucket.bucketId.startsWith("gemini-")
-        ? "Gemini"
-        : bucket.bucketId.startsWith("3p-")
-          ? "Claude & GPT (shared)"
-          : group.displayName?.trim() || bucket.bucketId;
+      // Argon is metered apart from the default Gemini buckets; keep its group name.
+      const family = bucket.bucketId.startsWith("gemini-argon-")
+        ? group.displayName?.trim() || "Gemini Argon"
+        : bucket.bucketId.startsWith("gemini-")
+          ? "Gemini"
+          : bucket.bucketId.startsWith("3p-")
+            ? "Claude & GPT (shared)"
+            : group.displayName?.trim() || bucket.bucketId;
       const weekly = bucket.window === "weekly";
       const session = bucket.window === "5h";
+      const windowDurationMins = SUMMARY_WINDOW_MINS.get(bucket.window ?? "");
       const window = quotaWindow(
         bucket.bucketId,
         `${family} · ${weekly ? "Weekly" : session ? "5-hour" : bucket.displayName?.trim() || "Quota"}`,
-        bucket,
+        { ...bucket, resetTime: summaryResetTime(bucket, windowDurationMins, requestedAt) },
         weekly ? "weekly" : session ? "session" : "other",
-        weekly ? 7 * 24 * 60 : session ? 5 * 60 : undefined,
+        windowDurationMins,
       );
       if (window) windows.set(window.id, window);
     }
@@ -248,25 +272,32 @@ export const makeAntigravityUsageProbe = Effect.fn("makeAntigravityUsageProbe")(
     // Merge endpoints because quota groups differ; keep each bucket's most-used reading.
     const fetchWindows = Effect.fn("AntigravityUsageProbe.fetchWindows")(function* <E>(
       operation: string,
-      parse: (response: unknown) => Effect.Effect<ServerProviderUsageWindow[], E>,
+      parse: (
+        response: unknown,
+        requestedAt: number,
+      ) => Effect.Effect<ServerProviderUsageWindow[], E>,
     ) {
       const responses = yield* Effect.forEach(
         ENDPOINTS,
         (endpoint) =>
-          request(
-            HttpClientRequest.post(`${endpoint}/v1internal:${operation}`).pipe(
-              HttpClientRequest.setHeaders({
-                Authorization: `Bearer ${accessToken}`,
-                "User-Agent": `antigravity/hub/1.0.0 (aidev_client; os_type=${platform}; arch=${architecture}; cl=963137146)`,
-              }),
-              HttpClientRequest.bodyJsonUnsafe(
-                token.project_id ? { project: token.project_id } : {},
+          Effect.gen(function* () {
+            // Capture each request after auth, so refresh latency does not widen the tolerance.
+            const requestedAt = yield* Clock.currentTimeMillis;
+            return yield* request(
+              HttpClientRequest.post(`${endpoint}/v1internal:${operation}`).pipe(
+                HttpClientRequest.setHeaders({
+                  Authorization: `Bearer ${accessToken}`,
+                  "User-Agent": `antigravity/hub/2.24.0 (aidev_client; os_type=${platform}; arch=${architecture}; cl=963137146)`,
+                }),
+                HttpClientRequest.bodyJsonUnsafe(
+                  token.project_id ? { project: token.project_id } : {},
+                ),
               ),
-            ),
-          ).pipe(
-            Effect.flatMap(parse),
-            Effect.orElseSucceed(() => []),
-          ),
+            ).pipe(
+              Effect.flatMap((response) => parse(response, requestedAt)),
+              Effect.orElseSucceed(() => []),
+            );
+          }),
         { concurrency: "unbounded" },
       );
       const windows = new Map<string, ServerProviderUsageWindow>();
@@ -276,8 +307,8 @@ export const makeAntigravityUsageProbe = Effect.fn("makeAntigravityUsageProbe")(
       }
       return [...windows.values()];
     });
-    const summary = yield* fetchWindows("retrieveUserQuotaSummary", (response) =>
-      decodeSummary(response).pipe(Effect.map(summaryWindows)),
+    const summary = yield* fetchWindows("retrieveUserQuotaSummary", (response, requestedAt) =>
+      decodeSummary(response).pipe(Effect.map((summary) => summaryWindows(summary, requestedAt))),
     );
     const windows = summary.length
       ? summary

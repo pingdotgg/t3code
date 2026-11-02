@@ -1,4 +1,5 @@
 import type { RelayManagedEndpointRuntimeConfig } from "@t3tools/contracts/relay";
+import { RotatingFileSink } from "@t3tools/shared/logging";
 import * as RelayClient from "@t3tools/shared/relayClient";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
@@ -7,7 +8,9 @@ import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
+import * as Logger from "effect/Logger";
 import * as Option from "effect/Option";
+import * as Path from "effect/Path";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Result from "effect/Result";
@@ -18,6 +21,11 @@ import * as Stream from "effect/Stream";
 import { HttpClient, HttpClientResponse } from "effect/http";
 import * as ChildProcess from "effect/process/ChildProcess";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
+
+import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
+import * as ServerConfig from "../config.ts";
+import * as ManagedLimits from "../policy/managedLimits.ts";
+import * as ManagedPolicy from "../policy/ManagedPolicy.ts";
 
 export type CloudManagedEndpointRuntimeStatus =
   | {
@@ -109,10 +117,17 @@ const ConnectorConfigBody = Schema.Struct({
 // immediately. Keep that evidence across registrations and connector restarts.
 const QUIC_STALLS_BEFORE_HTTP2 = 30;
 const QUIC_STALL_WINDOW_MS = 5 * 60_000;
+// Retry QUIC on a later startup after transient failures or network changes; reuse never renews this hint.
+const HTTP2_FALLBACK_TTL_MS = 24 * 60 * 60_000;
+const HTTP2_FALLBACK_STATE = "cloud-endpoint-http2-fallback";
+const Http2Fallback = Schema.fromJsonString(Schema.Struct({ fellBackAt: Schema.Number }));
+const decodeHttp2Fallback = Schema.decodeUnknownOption(Http2Fallback);
+const encodeHttp2Fallback = Schema.encodeSync(Http2Fallback);
 // A failed background install of the pinned relay client is retried no sooner
 // than this, so a crash-looping connector or an offline host does not redownload
 // on every reconcile.
 const RELAY_CLIENT_INSTALL_RETRY_INTERVAL_MS = 10 * 60_000;
+export const RELAY_CLIENT_LOG_FILE = "relay-client.ndjson";
 
 /** Preserve user-chosen PATH binaries and overrides; CLI downloads require consent. */
 function needsPinnedRelayClient(executable: RelayClient.RelayClientStatus): boolean {
@@ -182,7 +197,10 @@ const stopConnector = (connector: ActiveConnector | null) =>
 export const make = Effect.gen(function* () {
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const relayClient = yield* RelayClient.RelayClient;
+  const secrets = yield* ServerSecretStore.ServerSecretStore;
   const httpClient = HttpClient.withScope(yield* HttpClient.HttpClient);
+  // Without T3 Connect no connector ever runs, whoever asks for one.
+  const connectAllowed = ManagedLimits.allowsConnect(yield* ManagedPolicy.ManagedPolicy);
   const activeRef = yield* Ref.make<ActiveConnector | null>(null);
   const desiredConfigRef = yield* Ref.make<RelayManagedEndpointRuntimeConfig | null>(null);
   const recoveryRequests = yield* Queue.sliding<RelayManagedEndpointRuntimeConfig>(1);
@@ -199,9 +217,74 @@ export const make = Effect.gen(function* () {
   const notReadyChecksBeforeRestartRef = yield* Ref.make(CONNECTOR_NOT_READY_CHECKS_BEFORE_RESTART);
   // An explicit cloudflared transport in the environment is the user's choice.
   const transportChosenByUser = process.env.TUNNEL_TRANSPORT_PROTOCOL !== undefined;
-  const http2Ref = yield* Ref.make(false);
+  const previousFallback = transportChosenByUser
+    ? Option.none()
+    : yield* secrets.get(HTTP2_FALLBACK_STATE).pipe(
+        Effect.map(Option.flatMap((bytes) => decodeHttp2Fallback(new TextDecoder().decode(bytes)))),
+        Effect.orElseSucceed(() => Option.none()),
+      );
+  const now = yield* Clock.currentTimeMillis;
+  const http2Ref = yield* Ref.make(
+    Option.isSome(previousFallback) &&
+      now >= previousFallback.value.fellBackAt &&
+      now - previousFallback.value.fellBackAt < HTTP2_FALLBACK_TTL_MS,
+  );
   const quicStallsRef = yield* Ref.make<ReadonlyArray<number>>([]);
   let reconcileConfig: CloudManagedEndpointRuntime["Service"]["applyConfig"];
+
+  const { logsDir } = yield* ServerConfig.ServerConfig;
+  const path = yield* Path.Path;
+  const relayClientLogPath = path.join(logsDir, RELAY_CLIENT_LOG_FILE);
+  // Synchronous appends avoid a flush timer for this low-volume log.
+  const fallbackLoggers = yield* Effect.service(Logger.CurrentLoggers);
+  let writeFailureReported = false;
+  const relayClientLog = yield* Effect.try(
+    () =>
+      new RotatingFileSink({
+        filePath: relayClientLogPath,
+        maxBytes: 1024 * 1024,
+        maxFiles: 2,
+        throwOnError: true,
+      }),
+  ).pipe(
+    Effect.map((sink) =>
+      Logger.make((options) => {
+        try {
+          const entry = Logger.formatJson.log(options);
+          const bytes = Buffer.byteLength(entry) + 1;
+          sink.write(
+            bytes <= 1024 * 1024
+              ? `${entry}\n`
+              : `${JSON.stringify({
+                  timestamp: options.date.toISOString(),
+                  level: options.logLevel.toUpperCase(),
+                  message: ["Relay client log entry omitted: exceeds 1 MiB", { bytes }],
+                })}\n`,
+          );
+        } catch {
+          if (!writeFailureReported) {
+            writeFailureReported = true;
+            for (const logger of fallbackLoggers) {
+              logger.log({
+                ...options,
+                logLevel: "Warn",
+                message: ["Relay client log unavailable", { filePath: relayClientLogPath }],
+              });
+            }
+          }
+        }
+      }),
+    ),
+    Effect.catch((error) =>
+      Effect.logWarning("Relay client log unavailable", {
+        filePath: relayClientLogPath,
+        cause: error,
+      }).pipe(Effect.as(undefined)),
+    ),
+  );
+  // Forked connector fibers inherit this logger after the applyConfig span ends.
+  const withRelayClientLog = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+    relayClientLog ? Effect.withLogger(effect, relayClientLog) : effect;
 
   const stopActive = Effect.gen(function* () {
     const active = yield* Ref.getAndSet(activeRef, null);
@@ -452,6 +535,16 @@ export const make = Effect.gen(function* () {
     const desiredConfig = yield* Ref.get(desiredConfigRef);
     if ((yield* Ref.get(http2Ref)) || active !== connector || !desiredConfig) return;
     yield* Ref.set(http2Ref, true);
+    yield* secrets
+      .set(
+        HTTP2_FALLBACK_STATE,
+        new TextEncoder().encode(
+          encodeHttp2Fallback({ fellBackAt: yield* Clock.currentTimeMillis }),
+        ),
+      )
+      .pipe(
+        Effect.catch(() => Effect.logWarning("Could not persist the relay client HTTP/2 fallback")),
+      );
     yield* Effect.logWarning("Relay client keeps losing QUIC connections; switching to HTTP/2", {
       pid: Number(connector.child.pid),
       tunnelId: connector.config.tunnelId,
@@ -709,9 +802,10 @@ export const make = Effect.gen(function* () {
   });
 
   const applyConfig = Effect.fn("CloudManagedEndpointRuntime.applyConfig")(
-    (config: RelayManagedEndpointRuntimeConfig | null) =>
+    (requested: RelayManagedEndpointRuntimeConfig | null) =>
       reconcileSemaphore.withPermits(1)(
         Effect.gen(function* () {
+          const config = connectAllowed ? requested : null;
           // Keep backoff when recovery returns the same tunnel/token, or every recovery respawns a crash loop.
           const desired = yield* Ref.get(desiredConfigRef);
           const unchanged =
@@ -725,6 +819,7 @@ export const make = Effect.gen(function* () {
           return yield* reconcileConfig(config);
         }),
       ),
+    withRelayClientLog,
   );
 
   const readMetrics = <S extends Schema.Decoder<unknown>>(url: string, schema: S) =>
