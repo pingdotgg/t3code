@@ -754,8 +754,8 @@ export const layerWithOptions = (
       });
 
       // Read the session's provider threads as soon as it leaves the live map, before a
-      // replacement reports its own tasks. Keep OpenCode's roster: its background subagents share
-      // a server and can outlive the session.
+      // replacement reports its own tasks. Keep OpenCode's background work: its background
+      // subagents share a server and can outlive the session.
       const readReleasedProviderThreads = Effect.fn(
         "ProviderSessionManager.readReleasedProviderThreads",
       )(
@@ -859,38 +859,48 @@ export const layerWithOptions = (
         "ProviderSessionManager.writeReleasedToolCallEvents",
       )(function* (released: ReleasedProviderThread, releasedAt: DateTime.Utc) {
         const { threadId, providerSessionId, providerThreadId, driver } = released;
-        for (let attempt = 0; attempt < 3; attempt++) {
-          const projection = yield* projectionStore.getThreadRecords(threadId, ["turnItems"], {
+        const readCutOff = projectionStore
+          .getThreadRecords(threadId, ["turnItems"], {
             turnItemTypes: releasedToolCallTypes,
             turnItemStatuses: activeTurnItemStatuses,
-          });
-          const cutOff = projection.turnItems.filter(
-            (item) =>
-              item.providerThreadId === providerThreadId &&
-              DateTime.isLessThanOrEqualTo(item.startedAt ?? item.updatedAt, releasedAt),
+          })
+          .pipe(
+            Effect.map((projection) =>
+              projection.turnItems.filter(
+                (item) =>
+                  item.providerThreadId === providerThreadId &&
+                  DateTime.isLessThanOrEqualTo(item.startedAt ?? item.updatedAt, releasedAt),
+              ),
+            ),
           );
-          if (cutOff.length === 0) return;
-          const now = yield* DateTime.now;
-          const events: Array<OrchestrationV2DomainEvent> = [];
-          for (const item of cutOff) {
-            events.push({
-              id: yield* idAllocator.allocate.event({ threadId, providerSessionId }),
-              type: "turn-item.updated",
-              threadId,
-              ...(item.runId === null ? {} : { runId: item.runId }),
-              ...(item.nodeId === null ? {} : { nodeId: item.nodeId }),
-              driver,
-              occurredAt: now,
-              payload: { ...item, status: "interrupted", completedAt: now, updatedAt: now },
+        // One write per item: a late completion from the dead session's queued events rejects
+        // only the interrupt of its own item, and that item then is no longer open.
+        let pending = yield* readCutOff;
+        for (let attempt = 0; attempt < 3 && pending.length > 0; attempt++) {
+          const conflicted: Array<OrchestrationV2TurnItem["id"]> = [];
+          for (const item of pending) {
+            const now = yield* DateTime.now;
+            const { committed } = yield* eventSink.writeIfTurnItemUnchanged({
+              expected: item,
+              events: [
+                {
+                  id: yield* idAllocator.allocate.event({ threadId, providerSessionId }),
+                  type: "turn-item.updated",
+                  threadId,
+                  ...(item.runId === null ? {} : { runId: item.runId }),
+                  ...(item.nodeId === null ? {} : { nodeId: item.nodeId }),
+                  driver,
+                  occurredAt: now,
+                  payload: { ...item, status: "interrupted", completedAt: now, updatedAt: now },
+                },
+              ],
             });
+            if (!committed) conflicted.push(item.id);
           }
-          // A late completion from the dead session's queued events wins over the interrupt.
-          const { committed } = yield* eventSink.writeIfTurnItemsUnchanged({
-            expected: cutOff,
-            events,
-          });
-          if (committed) return;
+          if (conflicted.length === 0) return;
+          pending = (yield* readCutOff).filter((item) => conflicted.includes(item.id));
         }
+        if (pending.length === 0) return;
         yield* Effect.logWarning("orchestration-v2.provider-session-release-tool-call-conflict", {
           providerSessionId,
           providerThreadId,

@@ -17,6 +17,7 @@ import {
   ProviderInstanceId,
   type ProviderSessionId,
   ThreadId,
+  TurnItemId,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as DateTime from "effect/DateTime";
@@ -147,7 +148,8 @@ const layerPausingAttachEventSink = (pause: {
 
 const layerBeforeUnchangedWriteEventSink = (
   before: Ref.Ref<Effect.Effect<void>>,
-  beforeTurnItems: Ref.Ref<Effect.Effect<void>> | undefined,
+  // One effect runs before each turn-item write, in order.
+  beforeTurnItems: Ref.Ref<ReadonlyArray<Effect.Effect<void>>> | undefined,
 ) =>
   Layer.effect(
     EventSink.EventSinkV2,
@@ -160,11 +162,13 @@ const layerBeforeUnchangedWriteEventSink = (
             Effect.flatten,
             Effect.andThen(delegate.writeIfProviderThreadUnchanged(input)),
           ),
-        writeIfTurnItemsUnchanged: (input) =>
+        writeIfTurnItemUnchanged: (input) =>
           (beforeTurnItems === undefined
             ? Effect.void
-            : Ref.getAndSet(beforeTurnItems, Effect.void).pipe(Effect.flatten)
-          ).pipe(Effect.andThen(delegate.writeIfTurnItemsUnchanged(input))),
+            : Ref.modify(beforeTurnItems, ([next, ...rest]) => [next ?? Effect.void, rest]).pipe(
+                Effect.flatten,
+              )
+          ).pipe(Effect.andThen(delegate.writeIfTurnItemUnchanged(input))),
       });
     }),
   ).pipe(Layer.provide(layerTestEventSink));
@@ -486,7 +490,7 @@ function layerTest(input: {
   readonly flakyReleaseWrites?: FlakyReleaseWrites;
   readonly pauseAttachWrite?: Parameters<typeof layerPausingAttachEventSink>[0];
   readonly beforeUnchangedWrite?: Ref.Ref<Effect.Effect<void>>;
-  readonly beforeTurnItemsWrite?: Ref.Ref<Effect.Effect<void>>;
+  readonly beforeTurnItemsWrite?: Ref.Ref<ReadonlyArray<Effect.Effect<void>>>;
   readonly pauseResolve?: {
     readonly armed: Ref.Ref<boolean>;
     readonly paused: Deferred.Deferred<void>;
@@ -2517,16 +2521,19 @@ const openSessionWithBackgroundCommand = (fixtureName: string) =>
       });
     yield* Effect.forEach(Object.values(seededToolCalls), writeToolCall);
     yield* manager.open({ threadId, providerSessionId, modelSelection, runtimePolicy });
+    const toolCallStatus = (id: OrchestrationV2TurnItem["id"]) =>
+      Effect.gen(function* () {
+        const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
+        const projection = yield* projectionStore.getThreadProjection(threadId);
+        return projection.turnItems.find((item) => item.id === id)?.status;
+      });
     const toolCalls = Effect.gen(function* () {
-      const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
-      const projection = yield* projectionStore.getThreadProjection(threadId);
-      const statusOf = (seeded: OrchestrationV2TurnItem) =>
-        projection.turnItems.find((item) => item.id === seeded.id)?.status;
+      const statusOf = (seeded: OrchestrationV2TurnItem) => toolCallStatus(seeded.id);
       return {
-        cutOff: statusOf(seededToolCalls.cutOff),
-        finished: statusOf(seededToolCalls.finished),
-        otherSession: statusOf(seededToolCalls.otherSession),
-        replacement: statusOf(seededToolCalls.replacement),
+        cutOff: yield* statusOf(seededToolCalls.cutOff),
+        finished: yield* statusOf(seededToolCalls.finished),
+        otherSession: yield* statusOf(seededToolCalls.otherSession),
+        replacement: yield* statusOf(seededToolCalls.replacement),
       };
     });
     const rosters = Effect.gen(function* () {
@@ -2548,6 +2555,7 @@ const openSessionWithBackgroundCommand = (fixtureName: string) =>
       seededToolCalls,
       writeToolCall,
       toolCalls,
+      toolCallStatus,
     };
   });
 
@@ -2619,7 +2627,7 @@ it.effect("ProviderSessionManagerV2 keeps provider updates that land while relea
   Effect.gen(function* () {
     const state = yield* Ref.make(emptyState);
     const beforeUnchangedWrite = yield* Ref.make<Effect.Effect<void>>(Effect.void);
-    const beforeTurnItemsWrite = yield* Ref.make<Effect.Effect<void>>(Effect.void);
+    const beforeTurnItemsWrite = yield* Ref.make<ReadonlyArray<Effect.Effect<void>>>([]);
     const effect = Effect.gen(function* () {
       const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
       const {
@@ -2629,11 +2637,30 @@ it.effect("ProviderSessionManagerV2 keeps provider updates that land while relea
         rosters,
         seededToolCalls,
         writeToolCall,
-        toolCalls,
+        toolCallStatus,
       } = yield* openSessionWithBackgroundCommand("provider-session-manager-raced-roster");
+      // Before each cleanup write, one of these calls completes late. The completion must win,
+      // and the conflicts must not stop the open calls from being interrupted.
+      const lateCompleted = ["late-1", "late-2", "late-3", "late-4"].map((name) => ({
+        ...seededToolCalls.cutOff,
+        id: TurnItemId.make(`turn-item:${name}`),
+      }));
+      // Read after the late calls, so one write for all items would run out of tries first.
+      const lastOpen = { ...seededToolCalls.cutOff, id: TurnItemId.make("turn-item:last-open") };
+      yield* Effect.forEach([...lateCompleted, lastOpen], writeToolCall);
+      // The first hook also updates the cut-off call without ending it, so it needs a second try.
       yield* Ref.set(
         beforeTurnItemsWrite,
-        writeToolCall({ ...seededToolCalls.cutOff, status: "completed" }).pipe(Effect.orDie),
+        lateCompleted.map((item, index) =>
+          writeToolCall({ ...item, status: "completed" }).pipe(
+            Effect.andThen(
+              index === 0
+                ? writeToolCall({ ...seededToolCalls.cutOff, title: "late output" })
+                : Effect.void,
+            ),
+            Effect.orDie,
+          ),
+        ),
       );
       const seeded = providerThreads[0]!;
       yield* Ref.set(
@@ -2650,7 +2677,12 @@ it.effect("ProviderSessionManagerV2 keeps provider updates that land while relea
       yield* manager.close(providerSessionId);
 
       assert.deepStrictEqual(yield* rosters, [["replacement-task"], ["dev-server"]]);
-      assert.equal((yield* toolCalls).cutOff, "completed");
+      assert.deepStrictEqual(
+        yield* Effect.forEach([seededToolCalls.cutOff, ...lateCompleted, lastOpen], (item) =>
+          toolCallStatus(item.id),
+        ),
+        ["interrupted", "completed", "completed", "completed", "completed", "interrupted"],
+      );
     });
 
     yield* effect.pipe(
