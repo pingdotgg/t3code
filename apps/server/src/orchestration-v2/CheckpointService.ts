@@ -9,6 +9,7 @@ import {
   RunId,
   ThreadId,
 } from "@t3tools/contracts";
+import * as Cache from "effect/Cache";
 import * as Context from "effect/Context";
 import * as Digest from "effect/crypto/Digest";
 import * as DateTime from "effect/DateTime";
@@ -17,6 +18,7 @@ import * as Base64Url from "effect/encoding/Base64Url";
 import * as Hex from "effect/encoding/Hex";
 import * as KeyedLock from "@t3tools/shared/KeyedLock";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
 import { isGitImport, parseTurnDiffFilesFromNumstat } from "../checkpointing/Diffs.ts";
@@ -247,6 +249,27 @@ export const layer: Layer.Layer<
     const withWorkspaceLock = <A, E, R>(cwd: string, effect: Effect.Effect<A, E, R>) =>
       workspaceLocks.withLock(cwd, effect);
 
+    const captureTimeouts = yield* Cache.make<string, number>({
+      capacity: 128,
+      lookup: () => Effect.succeed(0),
+    });
+    // Both callers hold the workspace lock; post-turn captures always probe for recovery.
+    const captureWorkspaceCheckpoint = Effect.fn("CheckpointService.captureWorkspaceCheckpoint")(
+      function* (input: CheckpointStore.CaptureCheckpointInput) {
+        yield* checkpointStore.captureCheckpoint(input).pipe(
+          Effect.tap(() => Cache.invalidate(captureTimeouts, input.cwd)),
+          Effect.tapError((error) =>
+            error._tag === "VcsProcessTimeoutError"
+              ? Effect.gen(function* () {
+                  const previous = yield* Cache.get(captureTimeouts, input.cwd);
+                  yield* Cache.set(captureTimeouts, input.cwd, previous + 1);
+                })
+              : Cache.invalidate(captureTimeouts, input.cwd),
+          ),
+        );
+      },
+    );
+
     const isGitCheckpointable = (cwd: string) =>
       checkpointStore.isGitRepository(cwd).pipe(Effect.orElseSucceed(() => false));
 
@@ -270,16 +293,22 @@ export const layer: Layer.Layer<
             return;
           }
 
-          yield* checkpointStore
-            .captureCheckpoint({
-              cwd: input.scope.cwd,
-              checkpointRef,
-            })
-            .pipe(
-              Effect.catchTags({
-                VcsUnsupportedOperationError: () => Effect.void,
-              }),
+          const timeouts = yield* Cache.getOption(captureTimeouts, input.scope.cwd);
+          if (Option.isSome(timeouts) && timeouts.value >= 2) {
+            return yield* Effect.logWarning(
+              "orchestration V2 checkpoint baseline skipped after repeated capture timeouts",
+              { scopeId: input.scope.id, ordinalWithinScope: input.ordinalWithinScope },
             );
+          }
+
+          yield* captureWorkspaceCheckpoint({
+            cwd: input.scope.cwd,
+            checkpointRef,
+          }).pipe(
+            Effect.catchTags({
+              VcsUnsupportedOperationError: () => Effect.void,
+            }),
+          );
         }),
       ).pipe(
         Effect.mapError(
@@ -387,24 +416,22 @@ export const layer: Layer.Layer<
             });
           }
 
-          const captureStatus = yield* checkpointStore
-            .captureCheckpoint({
-              cwd: input.scope.cwd,
-              checkpointRef,
-            })
-            .pipe(
-              Effect.as("ready" as const),
-              Effect.catchTags({
-                VcsUnsupportedOperationError: () => Effect.succeed("missing" as const),
-              }),
-              Effect.catch((cause) =>
-                Effect.logWarning("orchestration V2 checkpoint capture failed", {
-                  scopeId: input.scope.id,
-                  checkpointRef,
-                  cause: String(cause),
-                }).pipe(Effect.as("error" as const)),
-              ),
-            );
+          const captureStatus = yield* captureWorkspaceCheckpoint({
+            cwd: input.scope.cwd,
+            checkpointRef,
+          }).pipe(
+            Effect.as("ready" as const),
+            Effect.catchTags({
+              VcsUnsupportedOperationError: () => Effect.succeed("missing" as const),
+            }),
+            Effect.catch((cause) =>
+              Effect.logWarning("orchestration V2 checkpoint capture failed", {
+                scopeId: input.scope.id,
+                checkpointRef,
+                cause: String(cause),
+              }).pipe(Effect.as("error" as const)),
+            ),
+          );
 
           if (captureStatus !== "ready") {
             return makeCheckpoint({
