@@ -602,7 +602,12 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
       const seen = yield* Fiber.join(collected);
       assert.deepInclude(errorRows(seen)[0], {
         status: "running",
-        failure: { class: failureClass, code: error.type, message: error.message, retryable: true },
+        failure: {
+          class: error.type === "provider.unknown" ? "provider_error" : failureClass,
+          code: error.type,
+          message: error.message,
+          retryable: true,
+        },
       });
       const ended = seen.find((event) => event.type === "turn.terminal");
       assert.equal(ended?.status, "failed");
