@@ -127,6 +127,20 @@ describe("serverSettings helpers", () => {
     });
   });
 
+  it("keeps a source control host's saved tokens when a patch sets another host's token", () => {
+    const reference = { provider: "vault", reference: "github/token" };
+    const saved = applyServerSettingsPatch(DEFAULT_SERVER_SETTINGS, {
+      sourceControlHosts: { github: { tokens: { "github.com": reference } } },
+    });
+    const patched = applyServerSettingsPatch(saved, {
+      sourceControlHosts: { github: { tokens: { "ghe.example": "x" } } },
+    });
+    expect(patched.sourceControlHosts.github?.tokens).toEqual({
+      "github.com": reference,
+      "ghe.example": "x",
+    });
+  });
+
   it("inherits actions, preserves existing actions, and supports empty overrides and reset", () => {
     const project = { id: ProjectId.make("project-actions"), scripts: [] };
     const action = {
