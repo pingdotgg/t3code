@@ -48,31 +48,21 @@ const HOLDER_AT = {
 // `config` and no more of it: not an identifier continuing (`$`, Unicode
 // letters and a `\u` escape do, where `\b` would not), nor a property.
 const CONFIG_AT = new RegExp("config" + HOLDER_END, "uy");
-// A part of `config` other than `extra`, such as `config.ios`. Spread at the top
-// it could bring its own `extra` (`...config.preview`), so it keeps the id only
-// as the first item of an array or of the entry it names (`ios: { ...config.ios`).
+// A part of `config` other than `extra`, such as `config.ios`; the last name is
+// captured. Spread at the top it could bring its own `extra` (`...config.preview`).
 const CONFIG_PART_AT = new RegExp(
-  String.raw`config(?:\s*\??\.\s*(?!extra(?![\p{ID_Continue}$]))[\p{ID_Start}$_][\p{ID_Continue}$\u200c\u200d]*)+` +
+  String.raw`config(?:\s*\??\.\s*(?!extra(?![\p{ID_Continue}$]))([\p{ID_Start}$_][\p{ID_Continue}$\u200c\u200d]*))+` +
     HOLDER_END,
   "uy",
 );
-const LAST_NAME = /[\p{ID_Continue}$\u200c\u200d]+$/u;
-// What opens the container just before a spread: `[`, or a bare or quoted key and `{`.
+// So a part keeps the id only as the first item of an array or of the entry it
+// names (`ios: { ...config.ios`); the entry's key is captured to compare.
 const PART_OPENER =
-  /(?:\[|(?<![\p{ID_Continue}$\u200c\u200d\\])(?:([\p{ID_Start}$_][\p{ID_Continue}$\u200c\u200d]*)|(["'])([^"'\n]*)\2)\s*:\s*\{)\s*$/u;
-// Enough text to hold an opener; a longer one gives no answer.
-const OPENER_WINDOW = 128;
-const opensOwnEntry = (source: string, spreadAt: number, part: string): boolean => {
-  const start = Math.max(0, spreadAt - OPENER_WINDOW);
-  const opener = PART_OPENER.exec(source.slice(start, spreadAt));
-  if (!opener || (opener.index === 0 && start > 0)) return false;
-  const key = opener[1] ?? opener[3];
-  return key === undefined || key === part.match(LAST_NAME)?.[0];
-};
+  /(?<=(?:\[|[{,]\s*["']?([\p{ID_Start}$_][\p{ID_Continue}$\u200c\u200d]*)["']?\s*:\s*\{)\s*)/uy;
 
 /**
- * Only Expo's `config` and its own `extra`/`extra.eas` spreads can preserve app.json's id.
- * Other spreads may replace it; no spreads leaves inheritance unclear.
+ * Only Expo's `config`, its own `extra`/`extra.eas`, and parts kept in their own entry can
+ * preserve app.json's id. Other spreads may replace it; no spreads leaves inheritance unclear.
  * Skip comments whole after spreads to keep scanning linear.
  */
 const staticConfigUse = (source: string): "spreads" | "replaces" | "unclear" => {
@@ -95,22 +85,21 @@ const staticConfigUse = (source: string): "spreads" | "replaces" | "unclear" => 
     }
     CONFIG_PART_AT.lastIndex = at;
     const part = CONFIG_PART_AT.exec(source);
-    if (part && opensOwnEntry(source, next, part[0])) continue;
+    PART_OPENER.lastIndex = next;
+    const opener = part && PART_OPENER.exec(source);
+    if (opener && (opener[1] === undefined || opener[1] === part[1])) continue;
     HOLDER_AT.extra.lastIndex = at;
     HOLDER_AT.eas.lastIndex = at;
     if (!HOLDER_AT.extra.test(source) && !HOLDER_AT.eas.test(source)) return "replaces";
   }
 };
 const ASSIGNS_OVER = /\bObject\s*\.\s*assign\b|\bassign\s*\(/;
-// A config may replace the object holding the entry, or the whole config,
-// from somewhere this scan cannot read: an assignment to `.extra` or `.eas`,
-// (as a property or in brackets), a `delete` of anything, or another file it
-// requires or imports.
+// A config may replace its entry or itself from where this scan cannot read:
+// assigning `.extra` or `.eas` (dotted or bracketed), a `delete`, or a file it
+// requires or imports. Typing it as `import('expo/config').ConfigContext`, in a
+// comment or not, loads only Expo's own module.
 const REPLACES_HOLDER =
-  /(?:\.\s*(?:extra|eas)|\[\s*["'`](?:extra|eas)["'`]\s*\])\s*=(?!=)|\bdelete\b|\brequire\s*\(|\bimport\s*\(/;
-// A comment that starts its line cannot sit inside a string, so dropping it
-// keeps a JSDoc `{import("expo/config").ConfigContext}` from reading as code.
-const LINE_COMMENT = /^[ \t]*(?:\/\/[^\n\r\u2028\u2029]*|\/\*(?:[^*]|\*(?!\/))*\*\/)/gm;
+  /(?:\.\s*(?:extra|eas)|\[\s*["'`](?:extra|eas)["'`]\s*\])\s*=(?!=)|\bdelete\b|\brequire\s*\(|\bimport\s*\((?!\s*(["'])expo\/config\1\s*\)\s*\.\s*[A-Z])/;
 // An `extra`/`eas` object must start by spreading the matching `config` entry to keep app.json's id.
 // Spreading the whole config there puts the id elsewhere; shorthand entries replace it too.
 // Stop reading once entries exceed MAX_MENTIONS.
@@ -182,14 +171,13 @@ const projectIdsOf = Effect.fn("easProjectId.projectIdsOf")(function* (dir: stri
     if (mentions > MAX_MENTIONS) return null;
     const entries = [...source.matchAll(QUOTED_PROJECT_ID)];
     const quoted = entries.map((match) => match[1]!);
-    const code = source.replace(LINE_COMMENT, "");
     // A template that interpolates could be any project too, and so could
     // one a spread after the entry, or an assignment anywhere, replaces;
     if (
       quoted.length !== mentions ||
       quoted.some((id) => id.includes("${")) ||
-      ASSIGNS_OVER.test(code) ||
-      REPLACES_HOLDER.test(code) ||
+      ASSIGNS_OVER.test(source) ||
+      REPLACES_HOLDER.test(source) ||
       entries.some((match) => SPREAD_LATER.test(source.slice(match.index + match[0].length)))
     ) {
       return null;
