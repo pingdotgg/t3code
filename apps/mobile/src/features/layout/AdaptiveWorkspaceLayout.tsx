@@ -15,7 +15,16 @@ import { EnvironmentId, ThreadId, type SidebarProjectGroupingMode } from "@t3too
 import { useAtomValue } from "@effect/atom-react";
 import { useFocusEffect } from "@react-navigation/native";
 import { NavigationContext, NavigationRouteContext, useNavigation } from "@react-navigation/native";
-import { use, useDeferredValue, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import {
+  use,
+  useDeferredValue,
+  useEffect,
+  useEffectEvent,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
 import { Keyboard, Platform, useWindowDimensions, View } from "react-native";
 import { KeyboardController, useKeyboardState } from "react-native-keyboard-controller";
 import Animated, {
@@ -129,12 +138,48 @@ export function useRegisterWorkspaceInspector(render: (() => ReactNode) | undefi
     );
   })();
 
-  // useFocusEffect re-runs when the renderer changes while focused, so the
-  // pane always shows this render's content, and its cleanup deactivates on
-  // blur and unmount.
-  useFocusEffect(() =>
-    wrappedRender === undefined ? undefined : registerWorkspaceInspector(wrappedRender),
-  );
+  const focusedRef = useRef(false);
+  const deactivateRef = useRef<(() => void) | null>(null);
+
+  const syncRegistration = useEffectEvent(() => {
+    if (!focusedRef.current || wrappedRender === undefined) {
+      deactivateRef.current?.();
+      return;
+    }
+    deactivateRef.current = registerWorkspaceInspector(wrappedRender);
+  });
+
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Navigation focus events own the inspector registration lifetime.
+  useEffect(() => {
+    if (navigation === undefined) return;
+    const focus = () => {
+      if (focusedRef.current) return;
+      focusedRef.current = true;
+      syncRegistration();
+    };
+    const blur = () => {
+      focusedRef.current = false;
+      syncRegistration();
+    };
+    if (navigation.isFocused()) focus();
+    const unsubscribeFocus = navigation.addListener("focus", focus);
+    const unsubscribeBlur = navigation.addListener("blur", blur);
+    return () => {
+      unsubscribeFocus();
+      unsubscribeBlur();
+      focusedRef.current = false;
+      deactivateRef.current?.();
+      deactivateRef.current = null;
+    };
+  }, [navigation]);
+
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Changed pane content replaces the focused inspector registration.
+  useEffect(() => {
+    if (focusedRef.current) {
+      syncRegistration();
+    }
+    // oxlint-disable-next-line react/exhaustive-effect-dependencies -- Changed pane content replaces its existing native workspace registration.
+  }, [wrappedRender]);
 }
 
 export function AdaptiveWorkspaceLayout(props: {
@@ -626,8 +671,10 @@ function AdaptiveWorkspaceLayoutContent(
     workspaceInspector !== null && workspaceInspector.active && panes.auxiliaryPaneVisible
       ? (panes.auxiliaryPaneWidth ?? 0)
       : 0;
+  // Android's split content is a rounded card: keep it off the screen edge like the list card.
+  const contentEndGap = Platform.OS === "android" && layout.usesSplitView ? 4 : 0;
   const contentTargetWidth = layout.usesSplitView
-    ? Math.max(0, panes.contentPaneWidth - inspectorColumnTargetWidth)
+    ? Math.max(0, panes.contentPaneWidth - inspectorColumnTargetWidth - contentEndGap)
     : null;
   const [listPaneSizing, setListPaneSizing] = useState({
     viewportWidth,
@@ -936,6 +983,7 @@ function AdaptiveWorkspaceLayoutContent(
                   flex: 1,
                   width: contentTargetWidth,
                   alignSelf: contentAnchor.end ? "flex-end" : "flex-start",
+                  marginRight: contentAnchor.end ? contentEndGap : 0,
                 }
               : { flex: 1 }
           }

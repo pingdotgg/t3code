@@ -7,6 +7,10 @@ import { Atom } from "effect/reactivity";
 import { threadComposerErrorsAtom } from "./thread-composer-error";
 vi.mock("../lib/uuid", () => ({ uuidv4: () => "saved-edit" }));
 import {
+  ATTACHMENT_ONLY_BOOTSTRAP_PROMPT,
+  restoreAttachmentOnlyBootstrapPrompt,
+} from "@t3tools/shared/composerContextReferences";
+import {
   ChatAttachmentId,
   CommandId,
   EnvironmentId,
@@ -41,6 +45,19 @@ import {
   removeComposerDraftAttachment,
   setComposerDraftText,
 } from "./use-composer-drafts";
+
+vi.mock("expo-file-system", () => ({
+  Directory: class {
+    create() {}
+  },
+  File: class {
+    exists = false;
+    create() {}
+    write() {}
+    moveSync() {}
+  },
+  Paths: { document: { uri: "file:///documents" } },
+}));
 
 const image = (id: string) => ({
   type: "image" as const,
@@ -371,6 +388,23 @@ describe("resolveQueuedEditPayload", () => {
 });
 
 describe("beginQueuedRunEdit", () => {
+  it.each(["", "Ultrathink:\n"])(
+    "opens attachment-only edits without changing their source (%j)",
+    (prefix) => {
+      const threadKey = `env:attachment-only-${prefix.length}`;
+      const original = {
+        ...edit([]),
+        originalText: prefix + ATTACHMENT_ONLY_BOOTSTRAP_PROMPT,
+      };
+      beginQueuedRunEdit(threadKey, original, []);
+      const draft = getComposerDraftSnapshot(queuedEditDraftKey(threadKey, original.runId));
+      expect(draft.text).toBe(prefix.trimEnd());
+      expect(restoreAttachmentOnlyBootstrapPrompt(draft.text, true)).toBe(original.originalText);
+      expect(draft.queuedEdit?.sourceText).toBe(original.originalText);
+      expect(recoverQueuedRunEdit(threadKey)).toBe(false);
+      expect(getQueuedRunEdit(threadKey)).toBeNull();
+    },
+  );
   it("recovers a changed edit after a failed save when its run starts offscreen", () => {
     const threadKey = "env-exit:thread-exit";
     const runId = RunId.make("run-1");

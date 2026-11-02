@@ -19,7 +19,6 @@ import type {
   PreviewAnnotationContextRecord,
   PreviewAnnotationPayload,
   ReviewCommentContextRecord,
-  ScopedThreadRef,
   TerminalContextRecord,
   ThreadContextRecord,
   ThreadId,
@@ -154,25 +153,8 @@ export function previewAnnotationContextReference(
   };
 }
 
-function threadContextId(threadId: ThreadId): ComposerContextId {
-  return toKindScopedComposerContextId("thread", threadId);
-}
-
 export function threadContextReference(record: ThreadContextRecord): ComposerContextReference {
   return { kind: "thread", contextId: record.contextId, label: record.label };
-}
-
-export function threadContextRecord(ref: ScopedThreadRef, title: string): ThreadContextRecord {
-  const label = sanitizeComposerContextLabel(title, "thread");
-  return {
-    version: 1,
-    kind: "thread",
-    contextId: threadContextId(ref.threadId),
-    label,
-    environmentId: ref.environmentId,
-    threadId: ref.threadId,
-    title: label,
-  };
 }
 
 /** One record per machine: mentioning the same machine twice reuses the chip. */
@@ -362,7 +344,7 @@ export function asKnownContextRecord(
   record: ComposerContextRecord | undefined,
 ): KnownComposerContextRecord | undefined {
   if (!record || "payload" in record) return undefined;
-  return record as KnownComposerContextRecord;
+  return record;
 }
 
 export function composerContextImportLookupIds(

@@ -1,6 +1,7 @@
 // Answers stay in the secret store behind one-use refs; orchestration records only request status.
 // Consuming tools keep values out of transcripts, projections, clients and model context.
 // A `file` request instead moves its value to an owner-only file for the agent's own shell.
+import { pipe } from "effect/Function";
 import {
   CommandId,
   SecretRef,
@@ -143,7 +144,7 @@ const make = Effect.gen(function* () {
           // Clear failed saves so the pending card can be answered again.
           Effect.tapError(() =>
             input.answer.type === "save"
-              ? removeLogged(storeName(refFor(salt, input.threadId, item.id)))
+              ? pipe(refFor(salt, input.threadId, item.id), storeName, removeLogged)
               : Effect.void,
           ),
         );
@@ -159,7 +160,7 @@ const make = Effect.gen(function* () {
         );
       const card = recorded.turnItems.find((candidate) => candidate.id === item.id);
       if (card?.type === "secret_request" && card.secretStatus !== "saved") {
-        yield* removeLogged(storeName(refFor(salt, input.threadId, item.id)));
+        yield* pipe(refFor(salt, input.threadId, item.id), storeName, removeLogged);
         return yield* new SecretRequestError({ reason: "agent_stopped" });
       }
     },

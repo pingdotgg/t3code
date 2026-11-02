@@ -252,9 +252,8 @@ function NativeHeaderToolbarRoot(props: {
     };
   }, [handlers, committedHandlers]);
   // UIKit's search placement item belongs to the toolbar, never a header group.
-  const headerItems = useMemo(
-    () => items.filter((item): item is NativeStackHeaderItem => item.type !== "searchBarPlacement"),
-    [items],
+  const headerItems = items.filter(
+    (item): item is NativeStackHeaderItem => item.type !== "searchBarPlacement",
   );
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- clears this placement's native header items through the navigator when the toolbar unmounts

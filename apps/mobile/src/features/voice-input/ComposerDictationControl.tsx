@@ -1,5 +1,5 @@
 import type { VoiceInputPhase, VoiceInputState } from "@t3tools/client-runtime/voice-input";
-import { memo, useCallback, useState, type ReactNode } from "react";
+import { memo, useState, type ReactNode } from "react";
 import { Linking, Pressable, Text as SystemText, View, type LayoutChangeEvent } from "react-native";
 import Animated, {
   Easing,
@@ -203,7 +203,7 @@ const VoiceWaveform = memo(function VoiceWaveform(props: {
   readonly audioLevels: SharedValue<ReadonlyArray<number>>;
 }) {
   const [barCount, setBarCount] = useState(0);
-  const handleLayout = useCallback((event: LayoutChangeEvent) => {
+  const handleLayout = (event: LayoutChangeEvent) => {
     setBarCount(
       Math.max(
         1,
@@ -213,7 +213,7 @@ const VoiceWaveform = memo(function VoiceWaveform(props: {
         ),
       ),
     );
-  }, []);
+  };
 
   return (
     <View
@@ -282,7 +282,8 @@ function VoiceActionButton(props: {
       style={{
         opacity: props.disabled && !props.loading ? 0.4 : 1,
         // Matches ComposerActionButton so the circle stays concentric with the large composer corner.
-        width: variant === "primary" && large ? 62 : undefined,
+        // An undefined width would still override the class's 44px width.
+        ...(variant === "primary" && large ? { width: 62 } : null),
       }}
     >
       <View

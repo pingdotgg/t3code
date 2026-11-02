@@ -1,4 +1,5 @@
 import {
+  stripAttachmentOnlyBootstrapPrompt,
   replaceComposerContextReferences,
   formatComposerContextReference,
   toKindScopedComposerContextId,
@@ -51,10 +52,13 @@ export async function prepareQueuedMessageEditDraft(input: {
         : [],
     ),
   );
-  const text = replaceComposerContextReferences(input.text, (ref) => {
-    const contextId = contextIds.get(ref.contextId);
-    return contextId ? formatComposerContextReference({ ...ref, contextId }) : ref.source;
-  });
+  const text = replaceComposerContextReferences(
+    stripAttachmentOnlyBootstrapPrompt(input.text),
+    (ref) => {
+      const contextId = contextIds.get(ref.contextId);
+      return contextId ? formatComposerContextReference({ ...ref, contextId }) : ref.source;
+    },
+  );
   const context = input.edit.context && {
     version: 1 as const,
     records: input.edit.context.records.map((record) => ({

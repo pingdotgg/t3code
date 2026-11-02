@@ -1,7 +1,7 @@
 import type { ChangeRequestTerminology } from "@t3tools/client-runtime/source-control-clients";
 import { EnvironmentId, ProjectId, type PullRequestListEntry } from "@t3tools/contracts";
 import { useAtomRefresh } from "@effect/atom-react";
-import { useCallback, useLayoutEffect, useMemo, useState } from "react";
+import { useLayoutEffect, useMemo, useState } from "react";
 
 import { composerPullRequests } from "../../state/pull-requests";
 import { useEnvironmentQuery } from "../../state/query";
@@ -117,23 +117,23 @@ export function usePullRequestDiff(
   const nextCursor = pages.at(-1)?.result.nextCursor ?? null;
   const canLoadMore =
     nextCursor !== null && nextCursor !== cursor && !query.isPending && query.error === null;
-  const loadMore = useCallback(() => {
+  const loadMore = () => {
     if (!canLoadMore) return;
     setState({ key, cursor: nextCursor, pages });
-  }, [canLoadMore, key, nextCursor, pages, setState]);
+  };
   const { error, refresh: refreshPage } = query;
-  const refresh = useCallback(() => {
+  const refresh = () => {
     if (cursor !== null && error !== null) {
       refreshPage();
       return;
     }
     setState({ key, cursor: null, pages: NO_PAGES });
     refreshFirstPage();
-  }, [cursor, error, refreshPage, key, refreshFirstPage, setState]);
-  const onPullRefresh = useCallback(() => {
+  };
+  const onPullRefresh = () => {
     setState({ key, cursor: null, pages: NO_PAGES });
     onRefresh();
-  }, [key, onRefresh, setState]);
+  };
   return {
     ...query,
     refresh,

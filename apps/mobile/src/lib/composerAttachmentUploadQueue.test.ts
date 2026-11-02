@@ -304,7 +304,7 @@ describe("draft upload scope and offline submission", () => {
       connected: true,
       serverConfig: {
         environment: {
-          capabilities: { attachmentUploads: true, fileAttachments: { maxUploadBytes: 1024 } },
+          capabilities: { fileAttachments: { maxUploadBytes: 1024 } },
         },
       },
       states: {},

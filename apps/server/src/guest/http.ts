@@ -1,7 +1,9 @@
 import {
   GUEST_ATTACHMENT_ROUTE,
   GUEST_COMMAND_OUTPUT_ROUTE,
+  GUEST_HISTORY_ROUTE,
   GUEST_ITEM_ROUTE,
+  GUEST_MEDIA_ROUTE,
   GUEST_RENDER_ROUTE,
   GUEST_ROUTE_PREFIX,
   GUEST_SHARE_PARAM,
@@ -15,6 +17,7 @@ import {
   isProviderSendTurnSupportedImageMimeType,
   OrchestrationV2CommandOutputFrame,
   OrchestrationV2GetTurnItemResult,
+  OrchestrationV2ThreadHistoryPage,
 } from "@t3tools/contracts";
 import * as ByteSize from "effect/ByteSize";
 import * as Duration from "effect/Duration";
@@ -34,6 +37,12 @@ import { GuestShareAccessError, GuestShareService } from "./GuestShareService.ts
 // Cloudflare closes idle streams after about 100 seconds.
 const HEARTBEAT_INTERVAL = Duration.seconds(20);
 const NO_STORE = { "cache-control": "no-store" };
+// A file never runs as a page on this origin, whatever its bytes.
+const FILE_HEADERS = {
+  ...NO_STORE,
+  "x-content-type-options": "nosniff",
+  "content-security-policy": "default-src 'none'; sandbox",
+};
 
 const decodeRedeem = Schema.decodeUnknownEffect(GuestRedeemRequest);
 const decodeSubmit = Schema.decodeUnknownEffect(GuestSubmitRequest);
@@ -45,6 +54,7 @@ const encodeOutputFrame = Schema.encodeEffect(
   Schema.fromJsonString(OrchestrationV2CommandOutputFrame),
 );
 const encodeItem = Schema.encodeEffect(Schema.toCodecJson(OrchestrationV2GetTurnItemResult));
+const encodeHistoryPage = Schema.encodeEffect(Schema.toCodecJson(OrchestrationV2ThreadHistoryPage));
 
 const errorResponse = (error: GuestShareAccessError) =>
   HttpServerResponse.json(
@@ -285,6 +295,26 @@ const itemRoute = HttpRouter.add(
   }),
 );
 
+const historyRoute = HttpRouter.add(
+  "GET",
+  GUEST_HISTORY_ROUTE,
+  Effect.gen(function* () {
+    const request = yield* HttpServerRequest.HttpServerRequest;
+    const cursor = new URLSearchParams(request.url.split("?", 2)[1] ?? "").get("cursor");
+    if (!cursor) return yield* badRequest;
+    const guestShares = yield* GuestShareService;
+    return yield* guestShares.history(yield* sessionToken, cursor).pipe(
+      Effect.flatMap((page) =>
+        encodeHistoryPage(page).pipe(
+          Effect.mapError(() => new GuestShareAccessError({ reason: "unavailable" })),
+        ),
+      ),
+      Effect.map((body) => HttpServerResponse.jsonUnsafe(body, { headers: NO_STORE })),
+      Effect.catchTags({ GuestShareAccessError: errorResponse }),
+    );
+  }),
+);
+
 // Ends when the command settles; the page closes its EventSource on that last frame, so the
 // browser does not reconnect.
 const commandOutputRoute = HttpRouter.add(
@@ -315,9 +345,7 @@ const attachmentRoute = HttpRouter.add(
       Effect.flatMap(({ path, attachment }) =>
         HttpServerResponse.file(path, {
           headers: {
-            ...NO_STORE,
-            "x-content-type-options": "nosniff",
-            "content-security-policy": "default-src 'none'; sandbox",
+            ...FILE_HEADERS,
             ...(attachment.type === "image" &&
             isProviderSendTurnSupportedImageMimeType(attachment.mimeType)
               ? { "content-type": attachment.mimeType }
@@ -334,6 +362,25 @@ const attachmentRoute = HttpRouter.add(
   }),
 );
 
+// Only an image an agent reply shows loads; anything else on the host is refused.
+const mediaRoute = HttpRouter.add(
+  "GET",
+  GUEST_MEDIA_ROUTE,
+  Effect.gen(function* () {
+    const request = yield* HttpServerRequest.HttpServerRequest;
+    const path = new URLSearchParams(request.url.split("?", 2)[1] ?? "").get("path");
+    if (!path) return yield* badRequest;
+    const guestShares = yield* GuestShareService;
+    return yield* guestShares.media(yield* sessionToken, path).pipe(
+      Effect.flatMap(({ path, mimeType }) =>
+        HttpServerResponse.file(path, { headers: { ...FILE_HEADERS, "content-type": mimeType } }),
+      ),
+      Effect.catchTags({ GuestShareAccessError: errorResponse }),
+      Effect.orElseSucceed(() => HttpServerResponse.empty({ status: 500, headers: NO_STORE })),
+    );
+  }),
+);
+
 export const layer = Layer.mergeAll(
   redeemRoute,
   sessionRoute,
@@ -341,6 +388,8 @@ export const layer = Layer.mergeAll(
   streamRoute,
   renderRoute,
   itemRoute,
+  historyRoute,
   commandOutputRoute,
   attachmentRoute,
+  mediaRoute,
 );

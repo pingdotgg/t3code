@@ -6,18 +6,33 @@ function clamp(value: number, min: number, max: number): number {
   return Math.min(Math.max(value, min), max);
 }
 
-export const SPLIT_LAYOUT_MIN_WIDTH = 720;
-export const SPLIT_LAYOUT_MIN_HEIGHT = 600;
+const SPLIT_LAYOUT_MIN_WIDTH = 720;
+const SPLIT_LAYOUT_MIN_HEIGHT = 600;
 
-export const SPLIT_SIDEBAR_MIN_WIDTH = 280;
+const SPLIT_SIDEBAR_MIN_WIDTH = 280;
 const SPLIT_SIDEBAR_DEFAULT_MAX_WIDTH = 380;
 
-export const AUXILIARY_PANE_MIN_CONTENT_WIDTH = 960;
+const AUXILIARY_PANE_MIN_CONTENT_WIDTH = 960;
 export const CHAT_CONTENT_MAX_WIDTH = 960;
 // Limit Android reading width for wide foldables and keyboard-open split views.
 export const ANDROID_READING_MAX_WIDTH = 640;
 // min-h-8 uses the 14px rem configured in metro.config.js.
 export const THREAD_WORK_ROW_MIN_HEIGHT = 28;
+
+export function deriveThreadArrangementSizing(input: {
+  readonly baseFontSize: number;
+  readonly fontScale: number;
+}) {
+  const bodyLineHeight = scaledTypographyLineHeight(MOBILE_TYPOGRAPHY.body, input.baseFontSize);
+  const headerLineHeight = scaledTypographyLineHeight(
+    MOBILE_TYPOGRAPHY.footnote,
+    input.baseFontSize,
+  );
+  return {
+    rowHeight: Math.max(56, Math.ceil(2 * bodyLineHeight * input.fontScale) + 10),
+    headerHeight: Math.max(48, Math.ceil(headerLineHeight * input.fontScale) + 24),
+  };
+}
 
 export function deriveThreadWorkLogSizing(input: {
   readonly baseFontSize: number;
@@ -38,8 +53,8 @@ export function deriveThreadWorkLogSizing(input: {
   };
 }
 
-export const AUXILIARY_PANE_MIN_WIDTH = 260;
-export const AUXILIARY_PANE_MAX_WIDTH = 480;
+const AUXILIARY_PANE_MIN_WIDTH = 260;
+const AUXILIARY_PANE_MAX_WIDTH = 480;
 const AUXILIARY_PANE_DEFAULT_MAX_WIDTH = 320;
 const FILE_INSPECTOR_MIN_VIEWPORT_WIDTH = 820;
 const FILE_INSPECTOR_MIN_MAIN_WIDTH = 560;

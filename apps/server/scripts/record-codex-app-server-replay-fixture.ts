@@ -39,22 +39,12 @@ import {
   THREAD_ROLLBACK_AFTER_PROMPT,
   THREAD_ROLLBACK_FIRST_PROMPT,
   THREAD_ROLLBACK_SECOND_PROMPT,
-  THREAD_FORK_NATIVE_CONTINUE_FIRST_PROMPT,
-  THREAD_FORK_NATIVE_CONTINUE_SECOND_PROMPT,
-  THREAD_FORK_NATIVE_CONTINUE_SOURCE_PROMPT,
-  THREAD_FORK_NATIVE_SIBLINGS_FIRST_PROMPT,
-  THREAD_FORK_NATIVE_SIBLINGS_SECOND_PROMPT,
-  THREAD_FORK_NATIVE_SIBLINGS_SOURCE_PROMPT,
-  THREAD_MERGE_BACK_FORK_PROMPT,
-  THREAD_MERGE_BACK_HANDOFF_PROMPT,
-  THREAD_MERGE_BACK_RECALL_PROMPT,
   THREAD_MERGE_BACK_SIBLINGS_FIRST_FORK_PROMPT,
   THREAD_MERGE_BACK_SIBLINGS_FIRST_HANDOFF_PROMPT,
   THREAD_MERGE_BACK_SIBLINGS_RECALL_PROMPT,
   THREAD_MERGE_BACK_SIBLINGS_SECOND_FORK_PROMPT,
   THREAD_MERGE_BACK_SIBLINGS_SECOND_HANDOFF_PROMPT,
   THREAD_MERGE_BACK_SIBLINGS_SOURCE_PROMPT,
-  THREAD_MERGE_BACK_SOURCE_PROMPT,
   TODO_LIST_PROMPT,
   TOOL_CALL_WRITE_PROMPT,
   TURN_INTERRUPT_MID_TOOL_PROMPT,
@@ -102,9 +92,6 @@ const SCENARIO_NAMES = [
   "thread_rollback",
   "thread_rollback_after_restart",
   "thread_rollback_to_stopped_turn",
-  "thread_fork_native_continue",
-  "thread_fork_native_siblings",
-  "thread_merge_back_continue",
   "thread_merge_back_siblings",
 ] as const;
 
@@ -896,134 +883,6 @@ function scenarios(): ReadonlyArray<ReplayScenario> {
               type: "turn",
               label: "post-rollback",
               prompt: THREAD_ROLLBACK_AFTER_PROMPT,
-            },
-          ],
-        },
-      ],
-    },
-    {
-      name: "thread_fork_native_continue",
-      fileName: "thread_fork_native_continue.ndjson",
-      description:
-        "One source marker turn, a native thread fork, a fork-local marker turn, and a recall turn that requires both contexts.",
-      runs: [
-        {
-          name: "continue-native-fork",
-          description:
-            "Proves the native fork inherits source context and retains its own first turn into a second fork-local turn.",
-          steps: [
-            {
-              type: "turn",
-              label: "source",
-              prompt: THREAD_FORK_NATIVE_CONTINUE_SOURCE_PROMPT,
-            },
-            {
-              type: "fork",
-              label: "fork-source",
-            },
-            {
-              type: "turn",
-              label: "fork-first-delta",
-              prompt: THREAD_FORK_NATIVE_CONTINUE_FIRST_PROMPT,
-            },
-            {
-              type: "turn",
-              label: "fork-second-delta",
-              prompt: THREAD_FORK_NATIVE_CONTINUE_SECOND_PROMPT,
-            },
-          ],
-        },
-      ],
-    },
-    {
-      name: "thread_fork_native_siblings",
-      fileName: "thread_fork_native_siblings.ndjson",
-      description:
-        "One source marker turn and two independent native forks that each recall the source plus only their own fork marker.",
-      // gpt-6-luna often recalls acknowledgements; gpt-6-sol recalls the markers.
-      model: "gpt-6-sol",
-      runs: [
-        {
-          name: "native-sibling-forks",
-          description:
-            "Creates two native forks from the same source provider thread and proves their contexts remain isolated.",
-          steps: [
-            {
-              type: "turn",
-              label: "source",
-              prompt: THREAD_FORK_NATIVE_SIBLINGS_SOURCE_PROMPT,
-              thread: "source",
-            },
-            {
-              type: "fork",
-              label: "fork-first",
-              from: "source",
-              as: "first",
-            },
-            {
-              type: "turn",
-              label: "first-recall",
-              prompt: THREAD_FORK_NATIVE_SIBLINGS_FIRST_PROMPT,
-              thread: "first",
-            },
-            {
-              type: "fork",
-              label: "fork-second",
-              from: "source",
-              as: "second",
-            },
-            {
-              type: "turn",
-              label: "second-recall",
-              prompt: THREAD_FORK_NATIVE_SIBLINGS_SECOND_PROMPT,
-              thread: "second",
-            },
-          ],
-        },
-      ],
-    },
-    {
-      name: "thread_merge_back_continue",
-      fileName: "thread_merge_back_continue.ndjson",
-      description:
-        "A source thread consumes one fork-delta handoff and later recalls source and transferred context.",
-      // gpt-6-luna often recalls acknowledgements; gpt-6-sol recalls the markers.
-      model: "gpt-6-sol",
-      runs: [
-        {
-          name: "merge-native-fork",
-          description:
-            "Proves a merge-back handoff becomes durable context on the original provider thread.",
-          steps: [
-            {
-              type: "turn",
-              label: "source",
-              prompt: THREAD_MERGE_BACK_SOURCE_PROMPT,
-              thread: "source",
-            },
-            {
-              type: "fork",
-              label: "fork",
-              from: "source",
-              as: "fork",
-            },
-            {
-              type: "turn",
-              label: "fork-delta",
-              prompt: THREAD_MERGE_BACK_FORK_PROMPT,
-              thread: "fork",
-            },
-            {
-              type: "turn",
-              label: "merge-back",
-              prompt: THREAD_MERGE_BACK_HANDOFF_PROMPT,
-              thread: "source",
-            },
-            {
-              type: "turn",
-              label: "source-recall",
-              prompt: THREAD_MERGE_BACK_RECALL_PROMPT,
-              thread: "source",
             },
           ],
         },

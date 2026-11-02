@@ -214,6 +214,7 @@ vi.mock("react-native-reanimated", () => {
   return {
     default: { View: ({ children }: { children?: ReactNode }) => children },
     FadeIn: transition,
+    FadeInDown: transition,
     FadeInUp: transition,
   };
 });
@@ -444,7 +445,6 @@ describe("ThreadInlineFilePreview playback", () => {
             dispatchingMessageId: null,
             onEditPendingMessage: null,
             contentPresentation: { kind: "ready" },
-            agentLabel: "agent",
             latestRun: null,
             activeWorkStartedAt: null,
             listRef: { current: null },
@@ -1384,7 +1384,6 @@ describe("ThreadFeed previews", () => {
           dispatchingMessageId: null,
           onEditPendingMessage: null,
           contentPresentation,
-          agentLabel: "agent",
           latestRun: null,
           activeWorkStartedAt: null,
           listRef: { current: null },

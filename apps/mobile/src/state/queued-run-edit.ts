@@ -15,6 +15,7 @@ import type {
 } from "@t3tools/contracts";
 import { useAtomValue } from "@effect/atom-react";
 import { Atom } from "effect/reactivity";
+import { stripAttachmentOnlyBootstrapPrompt } from "@t3tools/shared/composerContextReferences";
 import {
   makeQueuedRunEditStore,
   type QueuedRunsAtom,
@@ -221,7 +222,7 @@ export function beginQueuedRunEdit(
     });
   }
   if (!reuse) {
-    setComposerDraftText(draftKey, edit.originalText);
+    setComposerDraftText(draftKey, stripAttachmentOnlyBootstrapPrompt(edit.originalText));
     setComposerDraftContext(draftKey, edit.context);
     appendComposerDraftAttachments(draftKey, attachments);
   }

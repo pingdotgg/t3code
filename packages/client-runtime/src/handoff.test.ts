@@ -87,18 +87,16 @@ const projection = {
 } as unknown as OrchestrationV2ThreadProjection;
 
 describe("pending context handoff", () => {
-  it.each([from, to])("removes the preview while the handoff to %s starts", (instanceId) => {
-    const selection = { instanceId, model: "destination" };
-    const providers = [
-      { instanceId: from, requiresNewThreadForModelChange: true },
-    ] as unknown as ServerProvider[];
+  it("removes the preview while the handoff starts", () => {
+    const selection = { instanceId: to, model: "destination" };
+    const providers = [{ instanceId: from }] as unknown as ServerProvider[];
     const starting = {
       ...projection,
       runs: [
         ...projection.runs,
         {
           ...projection.runs[0]!,
-          ...run("target", 2, instanceId, "destination"),
+          ...run("target", 2, to, "destination"),
           status: "starting" as const,
           startedAt: null,
           contextHandoffId: ContextHandoffId.make("handoff"),
@@ -163,14 +161,6 @@ describe("pending context handoff", () => {
     expect(
       resolvePendingHandoff(toolRowsOnly, { instanceId: to, model: "first" }, [])?.to.model,
     ).toBe("first");
-  });
-  it("only previews a same-provider model change when it needs a fresh native thread", () => {
-    const providers = [
-      { instanceId: from, requiresNewThreadForModelChange: true },
-    ] as unknown as ServerProvider[];
-    expect(
-      resolvePendingHandoff(projection, { instanceId: from, model: "other" }, providers)?.to.model,
-    ).toBe("other");
   });
   it("resumes compatible account overlays without showing a handoff", () => {
     const providers = [from, to].map((instanceId) => ({
