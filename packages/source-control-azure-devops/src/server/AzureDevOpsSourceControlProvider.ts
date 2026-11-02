@@ -5,6 +5,9 @@ import { SourceControlProviderError, type ChangeRequest } from "@t3tools/contrac
 import * as AzureDevOpsCli from "./AzureDevOpsCli.ts";
 import type { NormalizedAzureDevOpsPullRequestRecord } from "./azureDevOpsPullRequests.ts";
 import * as SourceControlProvider from "@t3tools/source-control-core/server/SourceControlProvider";
+import * as SourceControlHost from "@t3tools/source-control-core/server/SourceControlHost";
+import { parseGitRemoteRepository } from "@t3tools/shared/git";
+import { definition } from "../shared/definition.ts";
 import {
   combinedAuthOutput,
   firstSafeAuthLine,
@@ -73,6 +76,7 @@ function toChangeRequest(summary: NormalizedAzureDevOpsPullRequestRecord): Chang
 
 export const make = Effect.gen(function* () {
   const azure = yield* AzureDevOpsCli.AzureDevOpsCli;
+  const { git } = yield* SourceControlHost.SourceControlHost;
 
   return SourceControlProvider.SourceControlProvider.of({
     kind: SourceControlProviderKind.make("azure-devops"),
@@ -200,7 +204,26 @@ export const make = Effect.gen(function* () {
     ),
     getDefaultBranch: Effect.fn("AzureDevOpsSourceControlProvider.getDefaultBranch")(
       function (input) {
-        return azure.getDefaultBranch({ cwd: input.cwd }).pipe(
+        return Effect.gen(function* () {
+          const remoteUrl =
+            input.context?.remoteUrl ??
+            (yield* Effect.gen(function* () {
+              const remote = yield* git.resolvePrimaryRemoteName(input.cwd);
+              return yield* git.readConfigValue(input.cwd, `remote.${remote}.url`);
+            }));
+          const remote = parseGitRemoteRepository(remoteUrl ?? "");
+          if (remote === null) return null;
+          const name = remote.path.split("/").at(-1);
+          if (!name) return null;
+          const repository = definition.repositorySelector({
+            provider: definition.kind,
+            owner: "",
+            name,
+            displayName: remote.path,
+          });
+          if (repository === null) return null;
+          return yield* azure.getDefaultBranch({ cwd: input.cwd, repository });
+        }).pipe(
           Effect.mapError(
             (error) =>
               new SourceControlProviderError({
