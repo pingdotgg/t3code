@@ -55,6 +55,7 @@
     "@t3tools/provider-core": "workspace:*",
     "@t3tools/shared": "workspace:*",
     "effect": "catalog:",
+    "jsonc-parser": "3.3.1",
     "yaml": "catalog:"
   },
   "devDependencies": {
