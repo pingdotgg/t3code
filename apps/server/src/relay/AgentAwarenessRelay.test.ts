@@ -482,6 +482,41 @@ describe("AgentAwarenessRelay", () => {
     }),
   );
 
+  it.effect("publishes a cleared thread's tombstone once while it stays cleared", () =>
+    Effect.gen(function* () {
+      const { relay, currentShell, publications } = yield* makeTestRelay();
+      yield* relay.publishThread(THREAD_ID);
+      const completed = shell({ status: "completed" });
+      yield* Ref.set(currentShell, completed);
+      yield* relay.publishThread(THREAD_ID);
+      yield* TestClock.adjust("5 seconds");
+      yield* relay.drain;
+      yield* Ref.set(currentShell, {
+        ...completed,
+        settledOverride: "settled",
+        settledAt: yield* DateTime.now,
+        lastVisitedAt: null,
+      });
+      yield* relay.publishThread(THREAD_ID);
+      yield* TestClock.adjust("5 seconds");
+      yield* relay.drain;
+      assert.deepEqual(
+        publications.map((publication) => publication.state?.phase ?? null),
+        ["running", "completed", null],
+      );
+
+      for (let i = 0; i < 3; i++) {
+        yield* relay.publishThread(THREAD_ID);
+        yield* TestClock.adjust("5 seconds");
+        yield* relay.drain;
+      }
+      assert.deepEqual(
+        publications.map((publication) => publication.state?.phase ?? null),
+        ["running", "completed", null],
+      );
+    }),
+  );
+
   it.effect("drops a held completion when a queued continuation hides the thread", () =>
     Effect.gen(function* () {
       const { relay, currentShell, publications } = yield* makeTestRelay();
