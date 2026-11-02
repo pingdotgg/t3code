@@ -132,6 +132,7 @@ export const definition = defineSourceControl({
   changeRequestActionsWhenUnreported: new Set(["close", "merge", "ready", "reopen"] as const),
   // One search reads every repository on the host.
   changeRequestListScope: "host",
+  hardLineBreaks: true,
   reviewSummaryRequired: () => false,
   checkoutCommandArgument: (input) => CHECKOUT_COMMAND.exec(input)?.[1]?.trim() ?? null,
   isChangeRequestReference: (url) => CHANGE_REQUEST_REFERENCE.test(url),
