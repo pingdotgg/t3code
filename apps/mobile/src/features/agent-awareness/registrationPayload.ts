@@ -18,6 +18,7 @@ export function makeRelayDeviceRegistrationRequest(
     readonly pushToken?: string;
     readonly pushToStartToken?: string;
     readonly notificationsEnabled: boolean;
+    readonly soundsEnabled?: boolean | undefined;
     readonly preferences: Preferences;
   } & (
     | { readonly platform?: "ios"; readonly iosMajorVersion: number }
@@ -45,6 +46,7 @@ export function makeRelayDeviceRegistrationRequest(
       notifyOnInput: true,
       notifyOnCompletion: true,
       notifyOnFailure: true,
+      ...(input.soundsEnabled === undefined ? {} : { soundsEnabled: input.soundsEnabled }),
     },
   };
 }
