@@ -426,7 +426,7 @@ describe("AcpRegistrySupport", () => {
     );
   });
 
-  it.effect("installs into T3 home a package and launches its exposed command", () => {
+  it.effect("installs into T3 home through npm shims and launches its exposed command", () => {
     const agent = makeAgent({
       npx: { package: "@example/acp@V1.2.3", args: ["--stdio"] },
     });
@@ -436,14 +436,15 @@ describe("AcpRegistrySupport", () => {
         prefix: "t3-acp-registry-global-package-",
       });
       const toolchain = yield* makeFakeNpmToolchain(cacheDir);
+      const environment = { ...toolchain.environment, FAKE_NPM_REQUIRE_PREFIX: "1" };
       const resolver = yield* AcpRegistrySupport.makeAcpRegistryCatalog({
         cacheDir,
         toolsDir: `${cacheDir}/tools`,
         registryUrl,
-      }).pipe(Effect.provideService(HostProcess.Environment, toolchain.environment));
+      }).pipe(Effect.provideService(HostProcess.Environment, environment));
 
-      const first = yield* resolver.resolve(settings(), "/workspace", toolchain.environment);
-      const second = yield* resolver.resolve(settings(), "/workspace", toolchain.environment);
+      const first = yield* resolver.resolve(settings(), "/workspace", environment);
+      const second = yield* resolver.resolve(settings(), "/workspace", environment);
 
       expect(first.spawn).toMatchObject({
         command: toolchain.executablePath,
@@ -453,7 +454,9 @@ describe("AcpRegistrySupport", () => {
       expect(second.spawn.command).toBe(toolchain.executablePath);
       const npmCommands = yield* fileSystem.readFileString(toolchain.logPath);
       expect(npmCommands.match(/^install --global /gmu)).toHaveLength(1);
-      expect(npmCommands).toContain("install --global @example/acp@V1.2.3");
+      expect(npmCommands).toContain(
+        `install --global --prefix ${cacheDir}/tools/example-agent/1.2.3/npm @example/acp@V1.2.3`,
+      );
     }).pipe(
       Effect.scoped,
       Effect.provide(

@@ -10,6 +10,12 @@ if [ "$1" = "prefix" ] && [ "$2" = "--global" ]; then
   exit 0
 fi
 if [ "$1" = "install" ] && [ "$2" = "--global" ]; then
+  if [ "$3" = "--prefix" ]; then
+    prefix="$4"
+  elif [ "$FAKE_NPM_REQUIRE_PREFIX" = "1" ]; then
+    # Volta handles global installs itself unless --prefix is explicit.
+    exit 0
+  fi
   package_root="$prefix/lib/node_modules/@example/acp"
   executable="$prefix/bin/example-agent"
   mkdir -p "$package_root" "$prefix/bin"
