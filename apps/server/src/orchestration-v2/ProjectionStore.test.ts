@@ -1271,6 +1271,16 @@ const threadWorktreePathsIncludeArchivedOnRequest = Effect.gen(function* () {
     { threadId: ThreadId.make("thread:active"), worktreePath: "/worktrees/active" },
     { threadId: ThreadId.make("thread:archived"), worktreePath: "/worktrees/archived" },
   ]);
+  assert.deepEqual(
+    yield* store.getThreadTitles([
+      deleted.id,
+      ThreadId.make("thread:unknown"),
+      ThreadId.make("thread:active"),
+      ThreadId.make("thread:archived"),
+    ]),
+    { "thread:active": "thread:active", "thread:archived": "thread:archived" },
+  );
+  assert.deepEqual(yield* store.getThreadTitles([]), {});
 });
 
 const commandReadsSkipSettledLeafNodes = Effect.gen(function* () {
@@ -2226,7 +2236,7 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
     () => runlessNativeSubagentNeedsRecovery,
   );
   it.effect(
-    "worktree path lookup defaults to active threads and can include archived threads",
+    "worktree path and title lookups skip deleted threads, and can include archived ones",
     () => threadWorktreePathsIncludeArchivedOnRequest,
   );
 
