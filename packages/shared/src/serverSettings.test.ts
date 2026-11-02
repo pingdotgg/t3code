@@ -139,6 +139,10 @@ describe("serverSettings helpers", () => {
       "github.com": reference,
       "ghe.example": "x",
     });
+    const recased = applyServerSettingsPatch(saved, {
+      sourceControlHosts: { github: { tokens: { " GitHub.com ": "ghp_new" } } },
+    });
+    expect(recased.sourceControlHosts.github?.tokens).toEqual({ "github.com": "ghp_new" });
   });
 
   it("inherits actions, preserves existing actions, and supports empty overrides and reset", () => {

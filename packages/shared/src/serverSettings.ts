@@ -227,6 +227,15 @@ function mergeSettingsEntries<Value>(
   return Object.fromEntries(next);
 }
 
+// Secret persistence keys tokens by trimmed, lowercased host, so merge on the same key.
+const byHost = (tokens: unknown) =>
+  Object.fromEntries(
+    Object.entries(Predicate.isObject(tokens) ? tokens : {}).map(([host, token]) => [
+      host.trim().toLowerCase(),
+      token,
+    ]),
+  );
+
 const knownProjectOverrideKeys = new Set(Object.keys(ProjectSettingsOverrides.fields));
 
 function pickOverrideKeys(entry: ProjectSettingsOverrides | undefined, known: boolean) {
@@ -543,8 +552,8 @@ export function applyServerSettingsPatch(
                     ...(Predicate.isObject(fields.tokens) && Object.keys(fields.tokens).length > 0
                       ? {
                           tokens: {
-                            ...(Predicate.isObject(saved?.tokens) ? saved.tokens : {}),
-                            ...fields.tokens,
+                            ...byHost(saved?.tokens),
+                            ...byHost(fields.tokens),
                           },
                         }
                       : {}),
