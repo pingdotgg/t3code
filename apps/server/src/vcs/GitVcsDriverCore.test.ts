@@ -1350,7 +1350,10 @@ it.effect("does not fetch for status when the branch tracks a local branch", () 
         Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
       );
       const cwd = yield* makeTmpDir();
+      const remote = yield* makeTmpDir("git-vcs-driver-remote-");
       yield* initRepoWithCommit(cwd);
+      yield* git(remote, ["init", "--bare"]);
+      yield* git(cwd, ["remote", "add", "feature", remote]);
       yield* git(cwd, ["branch", "feature/base"]);
       yield* git(cwd, ["checkout", "-b", "stacked", "--track", "feature/base"]);
 
