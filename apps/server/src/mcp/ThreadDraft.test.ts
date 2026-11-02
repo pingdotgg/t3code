@@ -304,7 +304,7 @@ const drafts = (machine: Machine) =>
 const structured = (result: { readonly structuredContent?: unknown }) =>
   result.structuredContent as Record<string, unknown>;
 
-it.live("records one fixed card with the cleaned prompt, and a retry shows the same card", () =>
+it.effect("records one fixed card with the cleaned prompt, and a retry shows the same card", () =>
   Effect.gen(function* () {
     const machine = yield* makeMachine;
     const runId = RunId.make("run:draft:1");
@@ -333,23 +333,25 @@ it.live("records one fixed card with the cleaned prompt, and a retry shows the s
   }),
 );
 
-it.live("a key reused in a later turn makes a new card instead of answering with the old one", () =>
-  Effect.gen(function* () {
-    const machine = yield* makeMachine;
-    yield* seedThread(machine, RunId.make("run:draft:1"));
-    const args = { prompt: "Start the docs fix", clientRequestId: "same-key" };
-    const first = structured(yield* machine.draft(args));
-    yield* nextRun(machine, RunId.make("run:draft:1"), RunId.make("run:draft:2"));
-    const second = structured(yield* machine.draft(args));
-    expect(second.turnItemId).not.toBe(first.turnItemId);
-    expect((yield* drafts(machine)).map((card) => card.runId)).toEqual([
-      "run:draft:1",
-      "run:draft:2",
-    ]);
-  }),
+it.effect(
+  "a key reused in a later turn makes a new card instead of answering with the old one",
+  () =>
+    Effect.gen(function* () {
+      const machine = yield* makeMachine;
+      yield* seedThread(machine, RunId.make("run:draft:1"));
+      const args = { prompt: "Start the docs fix", clientRequestId: "same-key" };
+      const first = structured(yield* machine.draft(args));
+      yield* nextRun(machine, RunId.make("run:draft:1"), RunId.make("run:draft:2"));
+      const second = structured(yield* machine.draft(args));
+      expect(second.turnItemId).not.toBe(first.turnItemId);
+      expect((yield* drafts(machine)).map((card) => card.runId)).toEqual([
+        "run:draft:1",
+        "run:draft:2",
+      ]);
+    }),
 );
 
-it.live("refuses a prompt the user could not read in full", () =>
+it.effect("refuses a prompt the user could not read in full", () =>
   Effect.gen(function* () {
     const machine = yield* makeMachine;
     yield* seedThread(machine, RunId.make("run:draft:1"));
@@ -363,37 +365,49 @@ it.live("refuses a prompt the user could not read in full", () =>
   }),
 );
 
-it.live(
-  "a draft recorded after Stop shows no card, and a retry of a recorded one stays as it was",
-  () =>
-    Effect.gen(function* () {
-      const machine = yield* makeMachine;
-      const runId = RunId.make("run:draft:1");
-      yield* seedThread(machine, runId);
-      const record = (key: string, turnItemId: TurnItemId) =>
-        machine.orchestrator.dispatch({
-          type: "thread_draft.record",
-          commandId: CommandId.make(`command:draft:${key}`),
-          threadId,
-          runId,
-          nodeId: rootNode,
-          turnItemId,
-          prompt: "Start the docs fix",
-          hiddenCharacters: 0,
-        });
-      const recorded = TurnItemId.make("turn-item:thread-draft:recorded");
-      yield* record("first", recorded);
-      yield* machine.orchestrator.dispatch({
-        type: "thread.stop",
-        commandId: CommandId.make("command:stop:draft"),
+it.effect("the card never changes once recorded, and needs the agent's own turn", () =>
+  Effect.gen(function* () {
+    const machine = yield* makeMachine;
+    const runId = RunId.make("run:draft:1");
+    yield* seedThread(machine, runId);
+    const record = (
+      key: string,
+      turnItemId: TurnItemId,
+      overrides: {
+        readonly runId?: RunId;
+        readonly nodeId?: NodeId;
+        readonly prompt?: string;
+      } = {},
+    ) =>
+      machine.orchestrator.dispatch({
+        type: "thread_draft.record",
+        commandId: CommandId.make(`command:draft:${key}`),
         threadId,
+        runId,
+        nodeId: rootNode,
+        turnItemId,
+        prompt: "Start the docs fix",
+        hiddenCharacters: 0,
+        ...overrides,
       });
-      // Another command for the recorded card reaches the handler, not the receipt.
-      yield* record("again", recorded);
-      const late = yield* record("late", TurnItemId.make("turn-item:thread-draft:late")).pipe(
-        Effect.flip,
-      );
-      expect(String(late.cause)).toContain("not active");
-      expect((yield* drafts(machine)).map((card) => card.id)).toEqual([recorded]);
-    }),
+    const recorded = TurnItemId.make("turn-item:thread-draft:recorded");
+    yield* record("first", recorded);
+    const [original] = yield* drafts(machine);
+    const notRoot = yield* record("child", TurnItemId.make("turn-item:thread-draft:child"), {
+      nodeId: NodeId.make("node:draft:child"),
+    }).pipe(Effect.flip);
+    expect(String(notRoot.cause)).toContain("root");
+    yield* machine.orchestrator.dispatch({
+      type: "thread.stop",
+      commandId: CommandId.make("command:stop:draft"),
+      threadId,
+    });
+    // Another command for the recorded card reaches the handler, not the receipt.
+    yield* record("again", recorded, { prompt: "rm -rf ~" });
+    const late = yield* record("late", TurnItemId.make("turn-item:thread-draft:late")).pipe(
+      Effect.flip,
+    );
+    expect(String(late.cause)).toContain("not active");
+    expect(yield* drafts(machine)).toEqual([original]);
+  }),
 );

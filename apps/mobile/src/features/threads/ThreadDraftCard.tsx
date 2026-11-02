@@ -6,8 +6,8 @@ import {
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
 import {
-  threadDraftInitialMachine,
-  threadDraftMachineName,
+  threadDraftCardModel,
+  type ThreadDraftCardModel,
   threadDraftProjectMatch,
 } from "@t3tools/client-runtime/thread-draft";
 import {
@@ -15,7 +15,6 @@ import {
   type EnvironmentId,
   type OrchestrationV2ProjectedTurnItem,
 } from "@t3tools/contracts";
-import { sanitizeThreadDraftText } from "@t3tools/shared/promptLinks";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Pressable, View, type ColorValue } from "react-native";
 
@@ -69,26 +68,18 @@ export function ThreadDraftCard(props: {
   );
   const eligibleIds = useEnvironmentsWithScope(connected, AuthOrchestrationOperateScope);
   if (item.type !== "thread_draft") return null;
-  const nameOf = (environmentId: EnvironmentId) => {
-    const machine = known.find((candidate) => candidate.environmentId === environmentId);
-    return machine === undefined ? null : threadDraftMachineName(machine, known);
-  };
-  // Re-checked here so what the user reads is what the other machine gets.
-  const prompt = sanitizeThreadDraftText(item.prompt);
-  const hint = item.hint === undefined ? undefined : sanitizeThreadDraftText(item.hint);
-  const usableHint =
-    hint === undefined || hint.malformed || hint.padded || hint.text.length === 0
-      ? undefined
-      : hint.text;
+  const card = threadDraftCardModel(
+    item,
+    known,
+    new Set(connected.map((environment) => environment.environmentId)),
+    eligibleIds,
+  );
   if (!canOperate) {
-    const offered =
-      (item.environmentId === undefined ? null : nameOf(item.environmentId)) ??
-      (usableHint === undefined ? "another machine" : `"${usableHint}"`);
     return (
       <View className="mb-3 min-h-9 flex-row items-center gap-2 px-1">
         <SymbolView name={SEND_SYMBOL} size={13} tintColor={props.iconColor} type="monochrome" />
         <Text className="flex-1 font-sans text-sm text-foreground-muted" numberOfLines={2}>
-          Offered a new thread on {offered}
+          Offered a new thread on {card.offeredName}
         </Text>
       </View>
     );
@@ -97,16 +88,7 @@ export function ThreadDraftCard(props: {
     <PendingThreadDraft
       sourceEnvironmentId={props.environmentId}
       threadId={item.threadId}
-      promptText={prompt.text}
-      hiddenCharacters={item.hiddenCharacters + prompt.hiddenCharacters}
-      unreadable={prompt.malformed || prompt.padded || prompt.text.length === 0}
-      initialMachine={threadDraftInitialMachine(
-        { environmentId: item.environmentId, hint: usableHint },
-        known,
-        eligibleIds,
-      )}
-      eligible={known.filter((machine) => eligibleIds.has(machine.environmentId))}
-      nameOf={nameOf}
+      card={card}
     />
   );
 }
@@ -114,16 +96,16 @@ export function ThreadDraftCard(props: {
 function PendingThreadDraft(props: {
   readonly sourceEnvironmentId: EnvironmentId;
   readonly threadId: OrchestrationV2ProjectedTurnItem["item"]["threadId"];
-  readonly promptText: string;
-  readonly hiddenCharacters: number;
-  readonly unreadable: boolean;
-  readonly initialMachine: EnvironmentId | null;
-  readonly eligible: ReadonlyArray<{ readonly environmentId: EnvironmentId }>;
-  readonly nameOf: (environmentId: EnvironmentId) => string | null;
+  readonly card: ThreadDraftCardModel;
 }) {
+  const { card } = props;
   const [picked, setPicked] = useState<EnvironmentId | null>(null);
-  const chosen = picked ?? props.initialMachine;
-  const chosenName = chosen === null ? null : props.nameOf(chosen);
+  // A picked machine that drops out (disconnects, loses access) falls back to the agent's choice.
+  const chosen =
+    picked !== null && card.eligible.some((machine) => machine.environmentId === picked)
+      ? picked
+      : card.initialMachine;
+  const chosenName = chosen === null ? null : card.nameOf(chosen);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const readiness = useEnvironmentShellReadiness(chosen);
@@ -154,7 +136,7 @@ function PendingThreadDraft(props: {
   }, [focused]);
 
   const loaded = readiness.status === "live";
-  const canApprove = chosen !== null && loaded && !pending && !props.unreadable;
+  const canApprove = chosen !== null && loaded && !pending && !card.unreadable;
 
   /** Opens the draft; returns what to tell the user when it could not, or null. */
   const openDraft = async (
@@ -191,7 +173,7 @@ function PendingThreadDraft(props: {
       environmentId: project.environmentId,
       projectId: project.id,
     });
-    setComposerDraftText(draftKey, props.promptText);
+    setComposerDraftText(draftKey, card.promptText);
     rootNavigationRef.dispatch(
       StackActions.push("Thread", { draft: { draftId: draftKey, title: project.title } }),
     );
@@ -205,21 +187,21 @@ function PendingThreadDraft(props: {
     setPending(true);
     setError(null);
     const failure = await openDraft(chosen, press).catch(() => "Could not open the draft.");
-    if (press.cancelled) return;
+    // Focus loss cancels the press but keeps the card mounted, so pending always ends.
     setPending(false);
-    setError(failure);
+    if (!press.cancelled) setError(failure);
   };
 
   return (
     <View className="mb-3 gap-3 rounded-[20px] border border-border bg-card-alt p-4">
       <View className="gap-2">
         <Text className="font-t3-bold text-base text-foreground">New thread on</Text>
-        {props.eligible.length === 0 ? (
+        {card.eligible.length === 0 ? (
           <Text className="font-sans text-sm text-foreground-muted">
             This app can't start threads on any connected machine.
           </Text>
         ) : (
-          props.eligible.map(({ environmentId }) => {
+          card.eligible.map(({ environmentId }) => {
             const selected = environmentId === chosen;
             return (
               <Pressable
@@ -238,23 +220,26 @@ function PendingThreadDraft(props: {
                   }
                 >
                   {selected ? "● " : "○ "}
-                  {props.nameOf(environmentId) ?? environmentId}
+                  {card.nameOf(environmentId) ?? environmentId}
                 </Text>
               </Pressable>
             );
           })
         )}
+        {chosen === null && card.reason !== null ? (
+          <Text className="font-sans text-xs text-foreground-muted">{card.reason}</Text>
+        ) : null}
       </View>
       <Text className="font-sans text-sm leading-5 text-foreground" selectable>
-        {props.promptText}
+        {card.promptText}
       </Text>
-      {props.hiddenCharacters > 0 ? (
+      {card.hiddenCharacters > 0 ? (
         <Text accessibilityRole="alert" className="font-sans text-xs text-warning-foreground">
-          This prompt had {props.hiddenCharacters} hidden character
-          {props.hiddenCharacters === 1 ? "" : "s"}, which T3 Code removed. It may be malicious.
+          This prompt had {card.hiddenCharacters} hidden character
+          {card.hiddenCharacters === 1 ? "" : "s"}, which T3 Code removed. It may be malicious.
         </Text>
       ) : null}
-      {props.unreadable ? (
+      {card.unreadable ? (
         <Text accessibilityRole="alert" className="font-sans text-xs text-danger-foreground">
           This prompt has hidden spacing. Ask the agent to send it again.
         </Text>

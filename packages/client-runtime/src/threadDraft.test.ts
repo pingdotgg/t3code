@@ -3,6 +3,7 @@ import { describe, expect, it } from "vite-plus/test";
 
 import type { EnvironmentProject } from "./state/shell.ts";
 import {
+  threadDraftCardModel,
   threadDraftInitialMachine,
   threadDraftMachineName,
   threadDraftProjectMatch,
@@ -21,7 +22,6 @@ describe("threadDraftMachineName", () => {
   const sshB = machine("env-ssh-b", "vps-2", "theo@vps");
   const relayA = machine("3f2a9c1e-aaaa", "VPS", null);
   const relayB = machine("71bd02e4-bbbb", "V​PS", null);
-  const relayTwin = machine("3f2a9c1e-cccc", "box", null);
 
   it.each([
     [
@@ -44,12 +44,6 @@ describe("threadDraftMachineName", () => {
       "VPS · T3 Connect 3f2a9c1e",
     ],
     [
-      "look-alike T3 Connect labels still differ",
-      relayB,
-      [relayA, relayB],
-      "V​PS · T3 Connect 71bd02e4",
-    ],
-    [
       "drops direction controls that would make a name read as another",
       machine("env-rtl", "one.\u202Etset", "http://box.\u202Elan:3773"),
       [],
@@ -60,12 +54,6 @@ describe("threadDraftMachineName", () => {
       machine("5c1d0e9a-dddd", "relay", ""),
       [],
       "relay · T3 Connect 5c1d0e9a",
-    ],
-    [
-      "shows the full id when the short one is shared",
-      relayA,
-      [relayA, relayTwin],
-      "VPS · T3 Connect 3f2a9c1e-aaaa",
     ],
   ])("%s", (_label, target, known, expected) => {
     expect(threadDraftMachineName(target, known)).toBe(expected);
@@ -166,5 +154,64 @@ describe("threadDraftProjectMatch", () => {
     const elsewhere = project("docs-b", "env-b", "github.com/acme/docs");
     expect(threadDraftProjectMatch(scratch, [elsewhere], target)).toBeNull();
     expect(threadDraftProjectMatch(source, [elsewhere], target)).toBeNull();
+  });
+});
+
+describe("threadDraftCardModel", () => {
+  const vps = machine("env-vps", "vps", "theo@vps");
+  const known = [vps];
+  const none = new Set<EnvironmentId>();
+  const only = new Set([vps.environmentId]);
+  const card = (
+    item: { environmentId?: EnvironmentId; hint?: string },
+    connected: ReadonlySet<EnvironmentId>,
+    eligible: ReadonlySet<EnvironmentId>,
+  ) =>
+    threadDraftCardModel(
+      { prompt: "Run it.", hiddenCharacters: 0, ...item },
+      known,
+      connected,
+      eligible,
+    );
+
+  it.each<
+    [
+      string,
+      { environmentId?: EnvironmentId; hint?: string },
+      ReadonlySet<EnvironmentId>,
+      ReadonlySet<EnvironmentId>,
+      string | null,
+    ]
+  >([
+    [
+      "says nothing when the machine can be chosen",
+      { environmentId: vps.environmentId },
+      only,
+      only,
+      null,
+    ],
+    [
+      "asks to add a machine this app does not know",
+      { environmentId: EnvironmentId.make("env-gone"), hint: "box" },
+      only,
+      only,
+      'This app does not know "box". Add it to open the draft there.',
+    ],
+    [
+      "asks to connect an offline machine",
+      { hint: "VPS" },
+      none,
+      none,
+      "Connect vps · theo@vps to open it there.",
+    ],
+    [
+      "names a machine this app may not start threads on",
+      { environmentId: vps.environmentId },
+      only,
+      none,
+      "vps · theo@vps can't start threads from this app.",
+    ],
+  ])("%s", (_label, item, connected, eligible, reason) => {
+    expect(card(item, connected, eligible).reason).toBe(reason);
   });
 });

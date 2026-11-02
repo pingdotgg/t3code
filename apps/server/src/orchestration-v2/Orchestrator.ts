@@ -8707,10 +8707,6 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
   );
 
   /**
-   * Records or updates the card for a link an agent asked the user to make.
-   * The pairing code goes straight to the link and never through orchestration.
-   */
-  /**
    * Records a thread draft an agent offered. The item never changes: a retry finds it and emits it
    * again, so only a new card needs the run's root, a live run and no Stop yet.
    */
@@ -8803,6 +8799,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     },
   );
 
+  /**
+   * Records or updates the card for a link an agent asked the user to make.
+   * The pairing code goes straight to the link and never through orchestration.
+   */
   const dispatchLinkRequestRecord = Effect.fn("orchestrationV2.dispatch.linkRequestRecord")(
     function* (
       command: Extract<OrchestrationV2InternalCommand, { readonly type: "link_request.record" }>,

@@ -6,6 +6,7 @@ import { NATIVE_LIQUID_GLASS_SUPPORTED } from "../../native/native-glass";
 import { useComposerAttachmentActions } from "../../state/use-composer-attachment-actions";
 import { useWorkspaceBackNavigation } from "../workspace/useAndroidWorkspaceNavigation";
 import { submittedThreadParams } from "./thread-route-state";
+import { Button } from "../../components/ui/Button";
 import { ThreadScreenBinding, ThreadScreenFallback } from "./ThreadScreenHost";
 import { draftThreadShell } from "./draft-thread-shell";
 import { useRememberThreadProject } from "./useRememberThreadProject";
@@ -706,6 +707,13 @@ export function NewTaskDraftScreen(props: {
             {selectedEnvironmentLabel}'s project is not available. Your draft is saved on this
             device.
           </Text>
+          <Button
+            label="Choose another project"
+            tone="secondary"
+            onPress={() =>
+              navigation.navigate("NewTaskProject", { incomingShareId: props.incomingShareId })
+            }
+          />
         </View>
       </ThreadScreenFallback>
     );

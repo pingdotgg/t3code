@@ -1,9 +1,8 @@
 import { scopeProjectRef } from "@t3tools/client-runtime/environment";
 import {
-  threadDraftInitialMachine,
+  threadDraftCardModel,
+  type ThreadDraftCardModel,
   type ThreadDraftItem,
-  type ThreadDraftMachine,
-  threadDraftMachineName,
   threadDraftProjectMatch,
 } from "@t3tools/client-runtime/thread-draft";
 import {
@@ -11,7 +10,6 @@ import {
   type EnvironmentId,
   type ScopedThreadRef,
 } from "@t3tools/contracts";
-import { sanitizeThreadDraftText } from "@t3tools/shared/promptLinks";
 import { SendIcon } from "lucide-react";
 import { useEffect, useId, useRef, useState } from "react";
 
@@ -36,7 +34,6 @@ export function ThreadDraftCard(props: {
   readonly threadRef: ScopedThreadRef | null;
   readonly canOperate: boolean;
 }) {
-  const { item } = props;
   const { environments } = useEnvironments();
   const known = environments.map(({ environmentId, label, displayUrl }) => ({
     environmentId,
@@ -47,92 +44,37 @@ export function ThreadDraftCard(props: {
     (environment) => environment.connection.phase === "connected",
   );
   const eligibleIds = useEnvironmentsWithScope(connected, AuthOrchestrationOperateScope);
-  const eligible = known.filter((machine) => eligibleIds.has(machine.environmentId));
-  const nameOf = (environmentId: EnvironmentId) => {
-    const machine = known.find((candidate) => candidate.environmentId === environmentId);
-    return machine === undefined ? null : threadDraftMachineName(machine, known);
-  };
-  // Re-checked here so what the user reads is what the other machine gets, whatever A sent.
-  const prompt = sanitizeThreadDraftText(item.prompt);
-  const hint = item.hint === undefined ? undefined : sanitizeThreadDraftText(item.hint);
-  const usableHint =
-    hint === undefined || hint.malformed || hint.padded || hint.text.length === 0
-      ? undefined
-      : hint.text;
-  const offeredName =
-    (item.environmentId === undefined ? null : nameOf(item.environmentId)) ??
-    (usableHint === undefined ? "another machine" : `"${usableHint}"`);
-
+  const card = threadDraftCardModel(
+    props.item,
+    known,
+    new Set(connected.map((environment) => environment.environmentId)),
+    eligibleIds,
+  );
   if (!props.canOperate) {
     return (
       <WorkLogRow
-        data-v2-item-type={item.type}
+        data-v2-item-type="thread_draft"
         icon={<SendIcon className="size-3.5 text-icon-muted" aria-hidden />}
-        label={`Offered a new thread on ${offeredName}`}
+        label={`Offered a new thread on ${card.offeredName}`}
       />
     );
   }
-  return (
-    <PendingThreadDraft
-      item={item}
-      threadRef={props.threadRef}
-      promptText={prompt.text}
-      hiddenCharacters={item.hiddenCharacters + prompt.hiddenCharacters}
-      unreadable={prompt.malformed || prompt.padded || prompt.text.length === 0}
-      initialMachine={threadDraftInitialMachine(
-        { ...item, ...(usableHint === undefined ? { hint: undefined } : { hint: usableHint }) },
-        known,
-        eligibleIds,
-      )}
-      eligible={eligible}
-      nameOf={nameOf}
-      reason={unavailableReason(item, usableHint, known, connected, eligibleIds)}
-    />
-  );
-}
-
-/** Why the machine the agent meant cannot be chosen, when the agent meant one. */
-function unavailableReason(
-  item: ThreadDraftItem,
-  hint: string | undefined,
-  known: ReadonlyArray<ThreadDraftMachine>,
-  connected: ReadonlyArray<{ readonly environmentId: EnvironmentId }>,
-  eligible: ReadonlySet<EnvironmentId>,
-): string | null {
-  const named =
-    item.environmentId !== undefined
-      ? known.find((machine) => machine.environmentId === item.environmentId)
-      : hint === undefined
-        ? undefined
-        : known.filter((machine) => machine.label.trim().toLowerCase() === hint.toLowerCase())
-              .length === 1
-          ? known.find((machine) => machine.label.trim().toLowerCase() === hint.toLowerCase())
-          : undefined;
-  if (item.environmentId !== undefined && named === undefined) {
-    return `This app does not know ${hint === undefined ? "that machine" : `"${hint}"`}. Add it to open the draft there.`;
-  }
-  if (named === undefined || eligible.has(named.environmentId)) return null;
-  const name = threadDraftMachineName(named, known);
-  return connected.some((machine) => machine.environmentId === named.environmentId)
-    ? `${name} can't start threads from this app.`
-    : `Connect ${name} to open it there.`;
+  return <PendingThreadDraft card={card} threadRef={props.threadRef} />;
 }
 
 function PendingThreadDraft(props: {
-  readonly item: ThreadDraftItem;
+  readonly card: ThreadDraftCardModel;
   readonly threadRef: ScopedThreadRef | null;
-  readonly promptText: string;
-  readonly hiddenCharacters: number;
-  readonly unreadable: boolean;
-  readonly initialMachine: EnvironmentId | null;
-  readonly eligible: ReadonlyArray<{ readonly environmentId: EnvironmentId }>;
-  readonly nameOf: (environmentId: EnvironmentId) => string | null;
-  readonly reason: string | null;
 }) {
+  const { card } = props;
   const labelId = useId();
   const [picked, setPicked] = useState<EnvironmentId | null>(null);
-  const chosen = picked ?? props.initialMachine;
-  const chosenName = chosen === null ? null : props.nameOf(chosen);
+  // A picked machine that drops out (disconnects, loses access) falls back to the agent's choice.
+  const chosen =
+    picked !== null && card.eligible.some((machine) => machine.environmentId === picked)
+      ? picked
+      : card.initialMachine;
+  const chosenName = chosen === null ? null : card.nameOf(chosen);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const shellStatus = useEnvironmentShellStatus(chosen);
@@ -161,7 +103,7 @@ function PendingThreadDraft(props: {
   );
 
   const loaded = shellStatus === "live";
-  const canApprove = chosen !== null && loaded && !pending && !props.unreadable;
+  const canApprove = chosen !== null && loaded && !pending && !card.unreadable;
 
   /** Opens the draft; returns what to tell the user when it could not, or null. */
   const openDraft = async (
@@ -180,12 +122,13 @@ function PendingThreadDraft(props: {
     }
     if (press.cancelled) return null;
     const opened = await handleNewThread(projectRef, {
-      prompt: props.promptText,
+      prompt: card.promptText,
       freshDraft: true,
       environmentSelection: "manual",
       shouldAbandon: () => press.cancelled,
     });
-    if (opened === null) return press.cancelled ? null : "Could not open the draft.";
+    // Null only when the open was abandoned because the user left.
+    if (opened === null) return null;
     toastManager.add({ type: "success", title: `Draft on ${chosenName}. Read it, then send.` });
     return null;
   };
@@ -197,14 +140,13 @@ function PendingThreadDraft(props: {
     setPending(true);
     setError(null);
     const failure = await openDraft(chosen, press).catch(() => "Could not open the draft.");
-    if (press.cancelled) return;
     setPending(false);
-    setError(failure);
+    if (!press.cancelled) setError(failure);
   };
 
   return (
     <div
-      data-v2-item-type={props.item.type}
+      data-v2-item-type="thread_draft"
       className="flex min-w-0 flex-col gap-3 rounded-xl border border-border/60 bg-card p-4"
     >
       <div className="flex min-w-0 flex-col gap-1.5">
@@ -221,32 +163,32 @@ function PendingThreadDraft(props: {
           <SelectTrigger aria-labelledby={labelId}>
             <SelectValue>
               {(selected: EnvironmentId | null) =>
-                selected === null ? "Choose a machine" : (props.nameOf(selected) ?? selected)
+                selected === null ? "Choose a machine" : (card.nameOf(selected) ?? selected)
               }
             </SelectValue>
           </SelectTrigger>
           <SelectPopup alignItemWithTrigger={false}>
-            {props.eligible.map(({ environmentId }) => (
+            {card.eligible.map(({ environmentId }) => (
               <SelectItem key={environmentId} value={environmentId} hideIndicator>
-                {props.nameOf(environmentId) ?? environmentId}
+                {card.nameOf(environmentId) ?? environmentId}
               </SelectItem>
             ))}
           </SelectPopup>
         </Select>
-        {chosen === null && props.reason !== null ? (
-          <p className="text-xs text-muted-foreground">{props.reason}</p>
+        {chosen === null && card.reason !== null ? (
+          <p className="text-xs text-muted-foreground">{card.reason}</p>
         ) : null}
       </div>
       <p className="min-w-0 whitespace-pre-wrap wrap-anywhere text-sm text-foreground">
-        {props.promptText}
+        {card.promptText}
       </p>
-      {props.hiddenCharacters > 0 ? (
+      {card.hiddenCharacters > 0 ? (
         <p role="alert" className="text-xs text-warning">
-          This prompt had {props.hiddenCharacters} hidden character
-          {props.hiddenCharacters === 1 ? "" : "s"}, which T3 Code removed. It may be malicious.
+          This prompt had {card.hiddenCharacters} hidden character
+          {card.hiddenCharacters === 1 ? "" : "s"}, which T3 Code removed. It may be malicious.
         </p>
       ) : null}
-      {props.unreadable ? (
+      {card.unreadable ? (
         <p role="alert" className="text-xs text-destructive">
           This prompt has hidden spacing. Ask the agent to send it again.
         </p>
