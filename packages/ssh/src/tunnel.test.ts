@@ -125,7 +125,7 @@ case "$1 $2" in
     ${scenario === "discovered" || scenario === "managed-recovering" ? `printf '${process.pid} 3773'` : "exit 1"} ;;
   '__ssh-helper wait-ready')
     printf '%s\\n' "$4" >> "$HOME/probes"
-    ${scenario === "fresh" ? "exit 0" : scenario === "recovering" || scenario === "managed-recovering" ? '[ "$4" -gt 2000 ]' : "exit 1"} ;;
+    ${scenario === "fresh" ? "exit 0" : scenario === "recovering" || scenario === "managed-recovering" ? '[ "$4" -gt 2000 ]' : '[ "$3" = 3774 ]'} ;;
   '__ssh-helper pick-port') printf 'pick-port\\n' >> "$HOME/spawns"; printf '3774' ;;
   'serve --host') printf 'serve\\n' >> "$HOME/spawns" ;;
   *) exit 2 ;;
@@ -140,7 +140,7 @@ esac
         timeout: 10_000,
       });
       assert.isUndefined(result.error);
-      if (scenario === "fresh") {
+      if (scenario === "fresh" || scenario === "unavailable" || scenario === "missing-port") {
         assert.equal(result.status, 0, result.stderr);
         assert.deepEqual(JSON.parse(result.stdout), { remotePort: 3774, serverKind: "managed" });
         return;

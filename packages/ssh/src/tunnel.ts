@@ -668,8 +668,13 @@ if [ "$REMOTE_MANAGED" = "external" ]; then
   if server_running "$ADOPTED_PID"; then
     :
   elif [ -z "$REMOTE_PORT" ] || ! wait_ready "@@T3_READY_TIMEOUT_MS@@"; then
-    printf 'The external T3 server did not become ready. Retry after its update or restart finishes; no replacement server was started.\\n' >&2
-    exit 1
+    if [ -n "$DEFAULT_RUNTIME_PID" ] && server_running "$DEFAULT_RUNTIME_PID"; then
+      printf 'The external T3 server did not become ready. Retry after its update or restart finishes; no replacement server was started.\\n' >&2
+      exit 1
+    fi
+    REMOTE_PID=""
+    REMOTE_PORT=""
+    REMOTE_MANAGED=""
   fi
 elif [ -n "$REMOTE_PID" ] && [ -n "$REMOTE_PORT" ] && server_running "$REMOTE_PID"; then
   # Reconnect owns the local tunnel, not the lifetime of an already running
