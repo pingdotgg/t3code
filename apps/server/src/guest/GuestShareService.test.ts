@@ -7,6 +7,7 @@ import {
   GuestShareId,
   type GuestStreamEvent,
   MessageId,
+  type OrchestrationV2ThreadHistoryPage,
   type OrchestrationV2TurnItem,
   ProjectId,
   ProviderDriverKind,
@@ -527,6 +528,90 @@ it.effect("gives the guest a command's detail and output, but no file diffs", ()
       assert.isTrue(Exit.isFailure(yield* Effect.exit(request)));
     }
   }).pipe(Effect.provide(layerTest)),
+);
+
+it.effect("pages the guest back through turns older than the stream's snapshot", () =>
+  Effect.gen(function* () {
+    const { guestShares, credential } = yield* shareThread;
+    const { token: session } = yield* guestShares.redeem({ credential, name: "Sam" });
+    const runId = yield* ownerRun;
+    const fileSystem = yield* FileSystem.FileSystem;
+    const directory = yield* fileSystem.makeTempDirectoryScoped();
+    const shot = `${directory}/old.png`;
+    yield* fileSystem.writeFile(shot, PNG);
+    const eventSink = yield* EventSink.EventSinkV2;
+    const now = yield* DateTime.now;
+    const base = { threadId, runId, nodeId: null, providerThreadId: null, providerTurnId: null };
+    const turnItem = (id: string, ordinal: number, payload: object) => ({
+      id: EventId.make(`event:${id}`),
+      type: "turn-item.updated" as const,
+      threadId,
+      driver: ProviderDriverKind.make("codex"),
+      providerInstanceId: instanceId,
+      occurredAt: now,
+      payload: {
+        ...base,
+        id: TurnItemId.make(id),
+        nativeItemRef: null,
+        parentItemId: null,
+        ordinal,
+        title: null,
+        status: "completed" as const,
+        startedAt: now,
+        completedAt: now,
+        updatedAt: now,
+        messageId: MessageId.make(id),
+        ...payload,
+      } as OrchestrationV2TurnItem,
+    });
+    yield* eventSink.write({
+      events: [
+        turnItem("item:old-image", 1, {
+          type: "assistant_message",
+          text: `![Old](${shot})`,
+          streaming: false,
+        }),
+        ...Array.from({ length: 30 }, (_, index) =>
+          turnItem(`item:ask-${index}`, index + 2, {
+            type: "user_message",
+            text: `Ask ${index}`,
+            createdBy: "user",
+            creationSource: "web",
+            inputIntent: "turn_start",
+            attachments: [],
+          }),
+        ),
+      ],
+    });
+
+    const [, opening] = Array.from(
+      yield* Stream.runCollect(Stream.take(yield* guestShares.stream(session), 2)),
+    );
+    if (opening?.type !== "thread" || opening.item.kind !== "snapshot") {
+      return assert.fail("Expected the thread snapshot second.");
+    }
+    const ids = (rows: ReadonlyArray<{ readonly sourceItemId: string }>) =>
+      rows.map((row) => row.sourceItemId);
+    assert.notInclude(ids(opening.item.projection.visibleTurnItems), "item:old-image");
+    let cursor = opening.item.historyCursor ?? null;
+    assert.isNotNull(cursor);
+    // The page has not shown the old reply yet, so its image does not load.
+    assert.equal((yield* Effect.flip(guestShares.media(session, shot))).reason, "unavailable");
+    // Only a session pages.
+    assert.isTrue(Exit.isFailure(yield* Effect.exit(guestShares.history(credential, cursor!))));
+
+    const older: Array<string> = [];
+    while (cursor !== null) {
+      const page: OrchestrationV2ThreadHistoryPage = yield* guestShares.history(session, cursor);
+      older.push(...ids(page.items));
+      cursor = page.hasMoreHistory ? page.nextCursor : null;
+    }
+    assert.include(older, "item:old-image");
+    assert.deepStrictEqual(yield* guestShares.media(session, shot), {
+      path: shot,
+      mimeType: "image/png",
+    });
+  }).pipe(Effect.scoped, Effect.provide(layerTest)),
 );
 
 it.effect("ends a running command's output once the owner stops sharing", () =>

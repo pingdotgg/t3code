@@ -106,6 +106,9 @@ export function useComposerResume(input: ComposerResumeInput) {
       if (resumableRunId === null) {
         return resumeThreadQueue({ environmentId, input: { threadId } });
       }
+      // Read before the first await: the composer follows the route, so after the user switches
+      // threads it holds the other thread's model.
+      const modelSelection = composerRef.current?.getSendContext().selectedModelSelection;
       const createdAt = new Date().toISOString();
       const settingsResult = await persistThreadSettingsForNextTurn({
         threadId,
@@ -117,7 +120,6 @@ export function useComposerResume(input: ComposerResumeInput) {
         interactionMode,
       });
       if (settingsResult._tag === "Failure") return settingsResult;
-      const modelSelection = composerRef.current?.getSendContext().selectedModelSelection;
       const turnResult = await startThreadTurn({
         environmentId,
         input: {
