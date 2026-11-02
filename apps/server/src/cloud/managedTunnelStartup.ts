@@ -5,6 +5,7 @@ import * as Effect from "effect/Effect";
 import * as Schedule from "effect/Schedule";
 import * as Semaphore from "effect/Semaphore";
 
+import { managedEndpointRuntimeConfigsMatch } from "./linkChecks.ts";
 import { isRelayUnavailable, relayRetryAfterMillis } from "./relayResponse.ts";
 
 // Relinking revoked environments is the user's choice; startup takes no action.
@@ -167,18 +168,20 @@ export const MANAGED_TUNNEL_FIRST_REGISTRATION_JITTER = Duration.seconds(30);
 /**
  * Runs one recovery per request, one at a time: waits out the current
  * cooldown, then calls the relay, retrying it while it stays unavailable.
+ * The runtime keeps asking while a recovery waits, so a request for the
+ * tunnel the last recovery replaced is skipped without touching the cooldown.
  */
 export const makeManagedTunnelRecovery = Effect.fn("ManagedTunnelRecovery.make")(function* <
-  A,
   E,
   R,
 >(options: {
-  readonly recover: (config: RelayManagedEndpointRuntimeConfig) => Effect.Effect<A, E, R>;
+  readonly recover: (config: RelayManagedEndpointRuntimeConfig) => Effect.Effect<boolean, E, R>;
   readonly isRetryable: (error: E) => boolean;
 }) {
   const lock = yield* Semaphore.make(1);
   let lastRecoveryAtMillis = Number.NEGATIVE_INFINITY;
   let cooldown = MANAGED_TUNNEL_RECOVERY_COOLDOWN;
+  let replaced: RelayManagedEndpointRuntimeConfig | undefined;
   const waitForCooldown = Effect.gen(function* () {
     const elapsed = (yield* Clock.currentTimeMillis) - lastRecoveryAtMillis;
     cooldown = nextManagedTunnelRecoveryCooldown({
@@ -199,16 +202,25 @@ export const makeManagedTunnelRecovery = Effect.fn("ManagedTunnelRecovery.make")
   );
   return (config: RelayManagedEndpointRuntimeConfig) =>
     lock.withPermits(1)(
-      waitForCooldown.pipe(
-        Effect.andThen(
-          options.recover(config).pipe(
-            Effect.retry({
-              while: options.isRetryable,
-              schedule: managedTunnelRecoveryRetrySchedule,
-            }),
-            Effect.ensuring(recordRecovery),
-          ),
-        ),
+      Effect.suspend(() =>
+        replaced !== undefined && managedEndpointRuntimeConfigsMatch(replaced, config)
+          ? Effect.succeed(false)
+          : waitForCooldown.pipe(
+              Effect.andThen(
+                options.recover(config).pipe(
+                  Effect.retry({
+                    while: options.isRetryable,
+                    schedule: managedTunnelRecoveryRetrySchedule,
+                  }),
+                  Effect.tap((recovered) =>
+                    Effect.sync(() => {
+                      if (recovered) replaced = config;
+                    }),
+                  ),
+                  Effect.ensuring(recordRecovery),
+                ),
+              ),
+            ),
       ),
     );
 });
