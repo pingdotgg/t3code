@@ -1004,11 +1004,12 @@ function pushBreakRun(acc: RichAccumulator, position?: number): void {
   acc.md += 1;
 }
 
-// Separate prose from quotes to avoid lazy continuation; an empty paragraph already separates them.
-function needsBlankLineAfterQuote(previous: ProseMirrorNode, block: ProseMirrorNode): boolean {
-  return (
-    previous.type.name === "blockquote" && block.type.name === "paragraph" && block.content.size > 0
-  );
+// Separate prose from quotes and lists to avoid lazy continuation; an empty paragraph already
+// separates them. An indented line after a list continues the item on purpose.
+function needsBlankLineBeforeParagraph(previous: ProseMirrorNode, block: ProseMirrorNode): boolean {
+  if (block.type.name !== "paragraph" || block.content.size === 0) return false;
+  if (previous.type.name === "blockquote") return true;
+  return LIST_NODE_NAMES.has(previous.type.name) && !/^[ \t]/.test(block.textContent);
 }
 
 // Blank-line runs own no document characters; offsets clamp to the paragraph start.
@@ -1454,7 +1455,7 @@ function serializeDoc(doc: ProseMirrorNode): RichDocMap {
   let pmBlockStart = 0;
   blocks.forEach((block, blockIndex) => {
     if (blockIndex > 0 && !isTrailingLineAfterRule(doc, blockIndex)) pushBreakRun(acc);
-    if (blockIndex > 0 && needsBlankLineAfterQuote(blocks[blockIndex - 1]!, block)) {
+    if (blockIndex > 0 && needsBlankLineBeforeParagraph(blocks[blockIndex - 1]!, block)) {
       pushBlankLineRun(acc, pmBlockStart + 1);
     }
     if (LIST_NODE_NAMES.has(block.type.name)) {

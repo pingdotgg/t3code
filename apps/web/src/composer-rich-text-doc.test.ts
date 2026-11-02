@@ -303,7 +303,7 @@ describe("composer rich text document model", () => {
     "- [ ] parent\n  - [ ] child\n  - [ ] sibling\n- [ ] uncle",
     "- [ ] empty task follows\n- [ ]",
     "- [ ] **bold** task with @README.md",
-    "para\n- [ ] task\npara",
+    "para\n- [ ] task\n\npara",
     "- [ ]No space stays literal",
     "-[ ] also literal",
     "@README.md explain this",
@@ -487,7 +487,7 @@ describe("composer rich text document model", () => {
     "- **bold** item with @README.md",
     "- [ ] task\n- bullet after",
     "- bullet\n- [x] task after",
-    "para\n- item\npara",
+    "- item\n  indented continuation",
     "\t- tab indented\n\t- again",
     "  - leading indent only",
     "- item\n\n- after a blank",
@@ -585,6 +585,16 @@ describe("composer rich text document model", () => {
       expect(flatToMarkdown(map, "quoted".length + 1)).toBe("> quoted\n\n".length);
       expect(flatToPm(map, "quoted".length + 1)).toBe(doc.child(0).nodeSize + 1);
     });
+  });
+
+  it.each([
+    ["para\n- item\npara", "para\n- item\n\npara"],
+    ["1. one\n2. two\nafter", "1. one\n2. two\n\nafter"],
+    ["- [ ] task\nafter", "- [ ] task\n\nafter"],
+    ["- a\n  - b\nafter", "- a\n  - b\n\nafter"],
+  ])("separates %j from the list, or Markdown folds it into the last item", (glued, settled) => {
+    expect(roundTrip(glued).value).toBe(settled);
+    expect(roundTrip(settled).value).toBe(settled);
   });
 
   it.each([
