@@ -1141,7 +1141,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
             }
           />
         }
-        appearance={variant === "slim" ? "icon" : "number"}
+        appearance="number"
         badge={prBadgeShape}
         pullRequests={thread.pullRequests}
         number={pr?.number ?? currentLinkedPr?.number}
@@ -1346,7 +1346,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
                   Regenerating title
                 </span>
               ) : null}
-              {multiline ? null : prBadge}
+              {multiline || variant === "slim" ? null : prBadge}
               {sortable?.isDragging ? (
                 dragDestination
               ) : (

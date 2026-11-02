@@ -164,11 +164,7 @@ export interface ThreadPullRequestBadgePresentation {
   readonly more: number;
 }
 
-/**
- * Composer footers use a state glyph; sidebar rows use a mono PR number and folded-link count;
- * short Snoozed and Settled rows use the glyph and folded-link count.
- */
-export type ThreadPullRequestBadgeAppearance = "glyph" | "number" | "icon";
+export type ThreadPullRequestBadgeAppearance = "glyph" | "number";
 
 function resolveThreadPullRequestBadgePresentation({
   badge,
@@ -317,11 +313,7 @@ function PullRequestBadge({
             className={cn("contents font-normal text-xs tabular-nums", presentation.toneClassName)}
           >
             <presentation.Icon aria-hidden className="size-3 shrink-0" />
-            {appearance !== "icon" ? (
-              <span>{presentation.text}</span>
-            ) : presentation.more > 0 ? (
-              <span className="opacity-60">+{presentation.more}</span>
-            ) : null}
+            <span>{presentation.text}</span>
           </span>
         )}
       </TooltipTrigger>
