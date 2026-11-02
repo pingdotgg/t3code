@@ -205,6 +205,20 @@ it.effect.each([
     expected: Option.none(),
   },
   {
+    case: "gives no answer when a config wraps a part of config under another key, as Expo reads expo",
+    files: {
+      "app.config.js": `module.exports = ({ config }) =>
+        process.env.APP_VARIANT === "preview" ? { expo: { ...config.preview } } : { ...config };`,
+      "app.json": JSON.stringify({
+        expo: {
+          extra: { eas: { projectId: ID_A } },
+          preview: { extra: { eas: { projectId: ID_B } } },
+        },
+      }),
+    },
+    expected: Option.none(),
+  },
+  {
     case: "gives no answer when a template line that only looks like a comment replaces extra",
     files: {
       "app.config.js": `module.exports = ({ config }) => {
