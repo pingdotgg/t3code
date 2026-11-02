@@ -514,7 +514,6 @@ function GuestThread({
             runningRunId={runningRunId}
             turnDiffSummaries={NO_TURN_DIFFS}
             runs={projection.runs}
-            attempts={projection.attempts}
             routeThreadKey={threadKey}
             onOpenThread={ignore}
             supportsConversationRollback={false}

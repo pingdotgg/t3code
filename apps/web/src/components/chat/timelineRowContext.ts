@@ -29,7 +29,6 @@ import { type MessagesTimelineRow, type WorkGroupScrollAnchor } from "./Messages
 import { type TimestampFormat } from "@t3tools/contracts/settings";
 import type { TurnItemDetailSource } from "../../state/queries";
 import { type HandoffTimelineRun } from "./V2LifecycleRow";
-import type { ModelSwitch } from "@t3tools/client-runtime/handoff";
 
 /**
  * Where an expanded row reads an item's detail and a command's output. The owner's rows read them
@@ -60,8 +59,6 @@ export interface TimelineRowSharedState {
   workspaceRoot: string | undefined;
   skills: ReadonlyArray<ServerProviderSkill>;
   runs: ReadonlyArray<HandoffTimelineRun>;
-  /** Keyed by the user message that started the switched run. */
-  modelSwitches: ReadonlyMap<MessageId, ModelSwitch>;
   activeThreadEnvironmentId: EnvironmentId;
   onRevertToTurnCount: (targetTurnCount: number, messageId: MessageId) => void;
   onUseArtifactTemplate: (template: CodexArtifactTemplate) => void;

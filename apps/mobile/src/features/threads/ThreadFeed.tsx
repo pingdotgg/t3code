@@ -15,9 +15,7 @@ import {
   enrichedSkillReference,
 } from "../../lib/enrichedLinkPresentation";
 import { ThreadContextDivider } from "./thread-context-divider";
-import { useAtomValue } from "@effect/atom-react";
 import {
-  modelSwitchesAtom,
   ThreadHandoffDivider,
   ThreadHandoffRow,
   ThreadModelSwitchDivider,
@@ -3142,12 +3140,6 @@ export const ThreadFeed = memo(function ThreadFeed({
     () => threadFeedCompactionLabels(props.feed),
     [props.feed],
   );
-  const modelSwitches = useAtomValue(
-    useMemo(
-      () => modelSwitchesAtom(props.environmentId, props.threadId),
-      [props.environmentId, props.threadId],
-    ),
-  );
   // LegendList does not invalidate visible rows when only the renderItem closure changes.
   // Include turn completion so unchanged message rows reveal their footer and spacing
   // even when the final message update arrives before the turn settles.
@@ -3169,7 +3161,6 @@ export const ThreadFeed = memo(function ThreadFeed({
     contentWidth,
     skills: props.skills,
     workflowOpening,
-    modelSwitches,
   };
   const reportHeaderMaterialVisibility = (visible: boolean) => {
     if (headerMaterialVisibleRef.current === visible) {
@@ -3591,81 +3582,77 @@ export const ThreadFeed = memo(function ThreadFeed({
     }
   }, [textSizeKey, contentWidth, hasHtmlRenders, beginReflow, listRef]);
 
-  const renderItem = (info: { item: GroupedThreadFeedRow; index: number }) => {
-    const modelSwitch =
-      info.item.type === "message" ? modelSwitches.get(info.item.message.id) : undefined;
-    return (
-      <Animated.View
-        key={info.item.id}
-        entering={disclosureToggleSettling ? THREAD_FEED_DISCLOSURE_ENTER_TRANSITION : undefined}
+  const renderItem = (info: { item: GroupedThreadFeedRow; index: number }) => (
+    <Animated.View
+      key={info.item.id}
+      entering={disclosureToggleSettling ? THREAD_FEED_DISCLOSURE_ENTER_TRANSITION : undefined}
+    >
+      <MessageImageGalleryScope
+        entry={info.item}
+        environmentId={props.environmentId}
+        threadId={props.threadId}
+        workspaceRoot={props.workspaceRoot}
       >
-        <MessageImageGalleryScope
-          entry={info.item}
-          environmentId={props.environmentId}
-          threadId={props.threadId}
-          workspaceRoot={props.workspaceRoot}
-        >
-          <ThreadMediaVisibility>
-            {modelSwitch ? (
-              <ThreadModelSwitchDivider
-                environmentId={props.environmentId}
-                modelSwitch={modelSwitch}
-                iconColor={iconSubtleColor}
-              />
-            ) : null}
-            {renderFeedEntry(info, {
-              userMessageGrouping: info.item.userMessageGrouping,
-              environmentId: props.environmentId,
-              dispatchingMessageId: props.dispatchingMessageId,
-              onEditPendingMessage: props.onEditPendingMessage,
-              onUseArtifactTemplate: props.onUseArtifactTemplate,
-              threadId: props.threadId,
-              copiedRowId,
-              expandedWorkRows,
-              workRowSizing,
-              workGroupScrollPositions,
-              terminalAssistantMessageIds,
-              unsettledTurnId,
-              compactionLabelsByEntryId,
-              failedRunIds,
-              onCopyWorkRow,
-              onToggleWorkGroup,
-              onToggleWorkRow,
-              onToggleTurnFold,
-              onOpenTurnDiff,
-              onPressPreview,
-              onPlaybackStart: onInlinePlaybackStart,
-              markdownLinkHandlers,
-              renderMarkdownImage,
-              renderViewedImage,
-              renderReasoning,
-              iconSubtleColor,
-              replyActionSize,
-              screenColor,
-              userBubbleColor,
-              markdownStyles,
-              reviewCommentColors,
-              reviewCommentBubbleWidth,
-              themeAppearance,
-              duoColumns,
-              userBubbleMaxWidth,
-              markdownContentWidth,
-              contentWidth,
-              threadTitle: props.threadTitle,
-              skills: props.skills,
-              workspaceRoot: props.workspaceRoot,
-              workflowOpening,
-            })}
-            {props.worktreeSetup && info.index === setupAnchorIndex ? (
-              <WorktreeSetupCard key={props.threadId} {...props.worktreeSetup} />
-            ) : props.setupWorkingStartedAt && info.index === setupAnchorIndex ? (
-              <WorktreeWorkingHeader startedAt={props.setupWorkingStartedAt} />
-            ) : null}
-          </ThreadMediaVisibility>
-        </MessageImageGalleryScope>
-      </Animated.View>
-    );
-  };
+        <ThreadMediaVisibility>
+          {info.item.type === "message" ? (
+            <ThreadModelSwitchDivider
+              environmentId={props.environmentId}
+              projectedItem={info.item.message.projectedItem}
+              iconColor={iconSubtleColor}
+            />
+          ) : null}
+          {renderFeedEntry(info, {
+            userMessageGrouping: info.item.userMessageGrouping,
+            environmentId: props.environmentId,
+            dispatchingMessageId: props.dispatchingMessageId,
+            onEditPendingMessage: props.onEditPendingMessage,
+            onUseArtifactTemplate: props.onUseArtifactTemplate,
+            threadId: props.threadId,
+            copiedRowId,
+            expandedWorkRows,
+            workRowSizing,
+            workGroupScrollPositions,
+            terminalAssistantMessageIds,
+            unsettledTurnId,
+            compactionLabelsByEntryId,
+            failedRunIds,
+            onCopyWorkRow,
+            onToggleWorkGroup,
+            onToggleWorkRow,
+            onToggleTurnFold,
+            onOpenTurnDiff,
+            onPressPreview,
+            onPlaybackStart: onInlinePlaybackStart,
+            markdownLinkHandlers,
+            renderMarkdownImage,
+            renderViewedImage,
+            renderReasoning,
+            iconSubtleColor,
+            replyActionSize,
+            screenColor,
+            userBubbleColor,
+            markdownStyles,
+            reviewCommentColors,
+            reviewCommentBubbleWidth,
+            themeAppearance,
+            duoColumns,
+            userBubbleMaxWidth,
+            markdownContentWidth,
+            contentWidth,
+            threadTitle: props.threadTitle,
+            skills: props.skills,
+            workspaceRoot: props.workspaceRoot,
+            workflowOpening,
+          })}
+          {props.worktreeSetup && info.index === setupAnchorIndex ? (
+            <WorktreeSetupCard key={props.threadId} {...props.worktreeSetup} />
+          ) : props.setupWorkingStartedAt && info.index === setupAnchorIndex ? (
+            <WorktreeWorkingHeader startedAt={props.setupWorkingStartedAt} />
+          ) : null}
+        </ThreadMediaVisibility>
+      </MessageImageGalleryScope>
+    </Animated.View>
+  );
 
   if (props.contentPresentation.kind === "unavailable" && props.queuedMessages.length === 0) {
     return (

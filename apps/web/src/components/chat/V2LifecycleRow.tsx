@@ -18,13 +18,13 @@ import {
   resolveHandoffEndpoints,
   type HandoffEndpoints,
   type HandoffTimelineRun,
-  type ModelSwitch,
-  formatModelSwitchEffort,
+  resolveModelSwitchChange,
 } from "@t3tools/client-runtime/handoff";
 import { formatSubagentDisplayTitle } from "@t3tools/client-runtime/state/subagent-display";
 import {
   ProviderDriverKind,
   type ModelSelection,
+  type OrchestrationV2ModelSwitch,
   type OrchestrationV2Notification,
   type OrchestrationV2TurnItem,
   type OrchestrationV2RemoteTaskChild,
@@ -600,20 +600,25 @@ function EnvironmentHandoffRow({
 /** A same-harness model or effort change. Shows only what changed. */
 export function ModelSwitchRow(props: {
   readonly environmentId: EnvironmentId;
-  readonly modelSwitch: ModelSwitch;
+  readonly modelSwitch: OrchestrationV2ModelSwitch;
 }) {
   const providers =
     useAtomValue(serverEnvironment.providersValueAtom(props.environmentId)) ??
     EMPTY_SERVER_PROVIDERS;
-  const { from, to, modelChanged, effortChanged } = props.modelSwitch;
-  const describe = (selection: ModelSelection) => {
+  const change = resolveModelSwitchChange(props.modelSwitch, providers);
+  if (change === null) return null;
+  const describe = (selection: ModelSelection, effort: string | undefined) => {
     const provider = providers.find((candidate) => candidate.instanceId === selection.instanceId);
     const model = provider?.models.find((candidate) => candidate.slug === selection.model);
     const modelName = model ? getTriggerDisplayModelName(model, provider?.driver) : selection.model;
-    const effort = effortChanged ? formatModelSwitchEffort(selection, provider?.models) : null;
-    return [modelChanged ? modelName : null, effort].filter(Boolean).join(" ");
+    return [change.modelChanged ? modelName : null, effort].filter(Boolean).join(" ");
   };
-  return <TimelineSystemDivider label={`${describe(from)} → ${describe(to)}`} />;
+  const { from, to } = props.modelSwitch;
+  return (
+    <TimelineSystemDivider
+      label={`${describe(from, change.effort?.from)} → ${describe(to, change.effort?.to)}`}
+    />
+  );
 }
 
 export function HandoffRow(props: {

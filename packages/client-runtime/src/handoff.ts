@@ -1,8 +1,7 @@
 import type {
-  MessageId,
   ModelSelection,
+  OrchestrationV2ModelSwitch,
   OrchestrationV2Run,
-  OrchestrationV2RunAttempt,
   OrchestrationV2TurnItem,
   ProviderInstanceId,
   ServerProvider,
@@ -90,144 +89,49 @@ function latestRunModelBefore(
   return latest?.modelSelection.model;
 }
 
-export type ModelSwitchRun = Pick<
-  OrchestrationV2Run,
-  | "id"
-  | "ordinal"
-  | "status"
-  | "startedAt"
-  | "modelSelection"
-  | "userMessageId"
-  | "contextHandoffId"
->;
-
-export type ModelSwitchAttempt = Pick<
-  OrchestrationV2RunAttempt,
-  "runId" | "attemptOrdinal" | "status" | "startedAt" | "restartedFrom"
->;
-
-export interface ModelSwitch {
-  readonly from: ModelSelection;
-  readonly to: ModelSelection;
+export interface ModelSwitchChange {
   readonly modelChanged: boolean;
-  /** When set, each side states its effort, defaults included. */
-  readonly effortChanged: boolean;
+  /** Effort labels, set only when the effort changed. */
+  readonly effort: { readonly from: string; readonly to: string } | null;
 }
 
 /**
- * Model or effort changes, keyed by the message that started each run or steering restart.
- * Starts that brought a context handoff are skipped; the handoff row already shows them.
- * `providers` resolves an unset effort to the model's default.
+ * What a recorded model switch visibly changed, or null when it changed neither the model nor the
+ * effort. The composer omits an untouched effort, so an unset effort reads as the model's default.
  */
-export function resolveModelSwitches(
-  runs: ReadonlyArray<ModelSwitchRun>,
-  attempts: ReadonlyArray<ModelSwitchAttempt> = [],
-  providers: ReadonlyArray<ServerProvider> = [],
-): ReadonlyMap<MessageId, ModelSwitch> {
-  const switches = new Map<MessageId, ModelSwitch>();
-  let previous: ModelSelection | undefined;
-  for (const run of [...runs].sort((left, right) => left.ordinal - right.ordinal)) {
-    for (const start of runStarts(run, attempts)) {
-      const from = previous;
-      const to = start.modelSelection;
-      previous = to;
-      if (from === undefined || start.handedOff) continue;
-      const fromEffort = resolveEffort(from, modelsFor(providers, from));
-      const toEffort = resolveEffort(to, modelsFor(providers, to));
-      const modelChanged = from.model !== to.model;
-      const effortChanged =
-        fromEffort !== undefined && toEffort !== undefined && fromEffort.value !== toEffort.value;
-      if (!modelChanged && !effortChanged) continue;
-      switches.set(start.userMessageId, {
-        from: effortChanged ? withEffort(from, fromEffort) : from,
-        to: effortChanged ? withEffort(to, toEffort) : to,
-        modelChanged,
-        effortChanged,
-      });
-    }
-  }
-  return switches;
+export function resolveModelSwitchChange(
+  { from, to }: OrchestrationV2ModelSwitch,
+  providers: ReadonlyArray<ServerProvider>,
+): ModelSwitchChange | null {
+  const modelsOf = (selection: ModelSelection) =>
+    providers.find((provider) => provider.instanceId === selection.instanceId)?.models;
+  const fromEffort = resolveEffort(from, modelsOf(from));
+  const toEffort = resolveEffort(to, modelsOf(to));
+  const modelChanged = from.model !== to.model;
+  const effort =
+    fromEffort && toEffort && fromEffort.value !== toEffort.value
+      ? { from: fromEffort.label, to: toEffort.label }
+      : null;
+  return modelChanged || effort ? { modelChanged, effort } : null;
 }
 
-/** Effort label for a switch endpoint; the stored value stands in when the catalog lacks it. */
-export function formatModelSwitchEffort(
-  selection: ModelSelection,
-  models: ReadonlyArray<ServerProviderModel> | undefined,
-): string | null {
-  const effort = resolveEffort(selection, models);
-  return effort?.label ?? effort?.value ?? null;
-}
-
-/**
- * The message and selection of each start that ran. A steering restart rewrites its run, so
- * earlier starts come from the restart attempts that replaced them.
- */
-function runStarts(run: ModelSwitchRun, attempts: ReadonlyArray<ModelSwitchAttempt>) {
-  // Runs that never ran do not change what the agent used.
-  if (
-    run.status === "rolled_back" ||
-    (run.startedAt === null && run.status !== "preparing" && run.status !== "starting")
-  ) {
-    return [];
-  }
-  const restarts = attempts
-    .filter((attempt) => attempt.runId === run.id && attempt.restartedFrom !== undefined)
-    .sort((left, right) => left.attemptOrdinal - right.attemptOrdinal);
-  const current = {
-    userMessageId: run.userMessageId,
-    modelSelection: run.modelSelection,
-    contextHandoffId: run.contextHandoffId,
-  };
-  return [...restarts.flatMap((attempt) => attempt.restartedFrom ?? []), current].flatMap(
-    (start, index, all) => {
-      // Each later start belongs to the restart that launched it; one stopped first never ran.
-      const launcher = index === 0 ? undefined : restarts[index - 1];
-      if (launcher && launcher.startedAt === null && launcher.status !== "pending") return [];
-      const handedOff =
-        start.contextHandoffId !== null &&
-        start.contextHandoffId !== all[index - 1]?.contextHandoffId;
-      return [{ ...start, handedOff }];
-    },
-  );
-}
-
-function modelsFor(providers: ReadonlyArray<ServerProvider>, selection: ModelSelection) {
-  return providers.find((provider) => provider.instanceId === selection.instanceId)?.models;
-}
-
-/** The model's reasoning control, as the composer picks it, or a stated effort without a catalog. */
+/** The composer's reasoning control for the model; stated values only without a catalog. */
 function resolveEffort(
   selection: ModelSelection,
   models: ReadonlyArray<ServerProviderModel> | undefined,
-): { readonly id: string; readonly value: string; readonly label?: string } | undefined {
+): { readonly value: string; readonly label: string } | undefined {
   const descriptor = models
     ?.find((model) => model.slug === selection.model)
     ?.capabilities?.optionDescriptors?.find(isReasoningSelect);
   if (descriptor === undefined) {
-    for (const id of REASONING_EFFORT_OPTION_IDS) {
-      const value = getModelSelectionStringOptionValue(selection, id);
-      if (value !== undefined) return { id, value };
-    }
-    return undefined;
+    const value = REASONING_EFFORT_OPTION_IDS.map((id) =>
+      getModelSelectionStringOptionValue(selection, id),
+    ).find((candidate) => candidate !== undefined);
+    return value === undefined ? undefined : { value, label: value };
   }
   const value =
     getModelSelectionStringOptionValue(selection, descriptor.id) ??
     getProviderOptionCurrentValue(descriptor, selection);
   if (typeof value !== "string") return undefined;
-  const label = descriptor.options.find((option) => option.id === value)?.label;
-  return { id: descriptor.id, value, ...(label === undefined ? {} : { label }) };
-}
-
-function withEffort(
-  selection: ModelSelection,
-  effort: { readonly id: string; readonly value: string },
-): ModelSelection {
-  if (getModelSelectionStringOptionValue(selection, effort.id) === effort.value) return selection;
-  return {
-    ...selection,
-    options: [
-      ...(selection.options ?? []).filter((option) => option.id !== effort.id),
-      { id: effort.id, value: effort.value },
-    ],
-  };
+  return { value, label: descriptor.options.find((option) => option.id === value)?.label ?? value };
 }

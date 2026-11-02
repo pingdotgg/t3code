@@ -48,6 +48,7 @@ import {
   type OrchestrationV2ProviderThread,
   type OrchestrationV2ProviderTurn,
   type OrchestrationV2RemoteTaskChild,
+  type OrchestrationV2ModelSwitch,
   type OrchestrationV2Run,
   type OrchestrationV2RunAttempt,
   type OrchestrationV2ThreadShell,
@@ -479,6 +480,28 @@ export class OrchestratorV2 extends Context.Service<OrchestratorV2, Orchestrator
 /** Run ordinals can skip values: a queued run moves past newer runs when it starts. */
 function nextRunOrdinal(projection: Pick<OrchestrationV2ThreadProjection, "runs">): number {
   return projection.runs.reduce((max, run) => Math.max(max, run.ordinal), 0) + 1;
+}
+
+/**
+ * The model or effort change a new run brings, measured from the last run that ran. Callers skip
+ * starts with a context handoff; their handoff item already shows the swap.
+ */
+function modelSwitchSince(
+  runs: ReadonlyArray<OrchestrationV2Run>,
+  to: ModelSelection,
+): Pick<Extract<OrchestrationV2TurnItem, { type: "user_message" }>, "modelSwitch"> {
+  const previous = runs.reduce<OrchestrationV2Run | undefined>(
+    (latest, run) =>
+      run.startedAt !== null &&
+      run.status !== "rolled_back" &&
+      (latest === undefined || run.ordinal > latest.ordinal)
+        ? run
+        : latest,
+    undefined,
+  );
+  return previous === undefined || modelSelectionsEqual(previous.modelSelection, to)
+    ? {}
+    : { modelSwitch: { from: previous.modelSelection, to } };
 }
 
 /** Stamp at wake start; queued prompts lack start times and delegated results jump the queue. */
@@ -2055,6 +2078,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         startedAt: now,
         completedAt: now,
         updatedAt: now,
+        ...(activeHandoff === null
+          ? modelSwitchSince(projection.runs, queuedRun.modelSelection)
+          : {}),
       };
       const handoffTurnItem: OrchestrationV2TurnItem | null =
         activeHandoff === null
@@ -4796,6 +4822,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         readonly providerTurnId: typeof providerTurn.id | null;
         readonly providerThreadId: OrchestrationV2ProviderThread["id"];
         readonly providerInstanceId: ProviderInstanceId;
+        readonly modelSwitch?: OrchestrationV2ModelSwitch | undefined;
       }) {
         const message: OrchestrationV2ConversationMessage = {
           createdBy: input.createdBy,
@@ -4851,6 +4878,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           text: input.text,
           attachments: input.attachments,
           ...(input.context ? { context: input.context } : {}),
+          ...(messageInput.modelSwitch === undefined
+            ? {}
+            : { modelSwitch: messageInput.modelSwitch }),
         };
         yield* emitEvent({
           type: "message.updated",
@@ -5183,11 +5213,6 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       status: "pending",
       startedAt: null,
       completedAt: null,
-      restartedFrom: {
-        userMessageId: targetRun.userMessageId,
-        modelSelection: targetRun.modelSelection,
-        contextHandoffId: targetRun.contextHandoffId,
-      },
     };
     const nextRootNode: OrchestrationV2ExecutionNode = {
       id: nextRootNodeId,
@@ -5316,6 +5341,11 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       providerTurnId: null,
       providerThreadId: restartProviderThread.id,
       providerInstanceId: input.modelSelection.instanceId,
+      // A restart rewrites the run, so the change is measured from the selection it replaces.
+      ...(restartHandoff === null &&
+      !modelSelectionsEqual(targetRun.modelSelection, input.modelSelection)
+        ? { modelSwitch: { from: targetRun.modelSelection, to: input.modelSelection } }
+        : {}),
     });
     const interruptedAttemptId = targetRun.activeAttemptId;
     if (interruptedAttemptId === null) {
@@ -6429,6 +6459,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         text: dispatchText,
         ...(command.context ? { context: command.context } : {}),
         attachments: command.attachments,
+        ...(run.contextHandoffId === null ? modelSwitchSince(projection.runs, modelSelection) : {}),
       };
       const preparationTurnItem: OrchestrationV2TurnItem | null =
         dispatchMode.type === "defer_start"
@@ -7180,6 +7211,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       text: dispatchText,
       ...(command.context ? { context: command.context } : {}),
       attachments: command.attachments,
+      ...(run.contextHandoffId === null ? modelSwitchSince(projection.runs, modelSelection) : {}),
     };
     const activeHandoff = portableForkHandoff ?? mergeBackHandoff ?? providerSwitchHandoff;
     const handoffSourceRuns =

@@ -2,11 +2,9 @@ import * as Dialog from "../../components/ui/Dialog";
 import { useAtomValue } from "@effect/atom-react";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import {
-  formatModelSwitchEffort,
   resolveHandoffEndpoints,
-  resolveModelSwitches,
+  resolveModelSwitchChange,
   type HandoffEndpoints,
-  type ModelSwitch,
 } from "@t3tools/client-runtime/handoff";
 import { resolveModelShortName } from "@t3tools/client-runtime/provider-clients";
 import {
@@ -16,12 +14,10 @@ import {
 } from "@t3tools/client-runtime/state/provider-instance-display";
 import type {
   EnvironmentId,
-  MessageId,
   ModelSelection,
   OrchestrationV2ProjectedTurnItem,
   ProviderInstanceId,
   ServerProvider,
-  ThreadId,
 } from "@t3tools/contracts";
 import { Atom } from "effect/reactivity";
 import { useMemo } from "react";
@@ -54,46 +50,31 @@ function handoffEndpointsAtom(
   });
 }
 
-/** Same-harness model and effort switches for a thread, keyed by the message where each applied. */
-export function modelSwitchesAtom(environmentId: EnvironmentId, threadId: ThreadId) {
-  let previous: { signature: string; value: ReadonlyMap<MessageId, ModelSwitch> } | null = null;
-  const ref = scopeThreadRef(environmentId, threadId);
-  return Atom.make((get) => {
-    const projection = get(environmentThreadDetails.threadAtom(ref))?.projection;
-    const providers = get(serverEnvironment.configValueAtom(environmentId))?.providers;
-    const value = resolveModelSwitches(
-      projection?.runs ?? [],
-      projection?.attempts ?? [],
-      providers,
-    );
-    // Run activity changes frequently; keep the map identity until a switch changes.
-    const signature = JSON.stringify([...value]);
-    if (previous?.signature !== signature) previous = { signature, value };
-    return previous.value;
-  });
-}
-
 /** A same-harness model or effort change. Shows only what changed. */
 export function ThreadModelSwitchDivider(props: {
   environmentId: EnvironmentId;
-  modelSwitch: ModelSwitch;
+  projectedItem: OrchestrationV2ProjectedTurnItem | undefined;
   iconColor: ColorValue;
 }) {
-  const providers = useAtomValue(serverEnvironment.configValueAtom(props.environmentId))?.providers;
-  const { from, to, modelChanged, effortChanged } = props.modelSwitch;
-  const describe = (selection: ModelSelection) => {
-    const provider = providers?.find((candidate) => candidate.instanceId === selection.instanceId);
+  const providers =
+    useAtomValue(serverEnvironment.configValueAtom(props.environmentId))?.providers ?? [];
+  const item = props.projectedItem?.item;
+  const modelSwitch = item?.type === "user_message" ? item.modelSwitch : undefined;
+  const change = modelSwitch ? resolveModelSwitchChange(modelSwitch, providers) : null;
+  if (modelSwitch === undefined || change === null) return null;
+  const describe = (selection: ModelSelection, effort: string | undefined) => {
+    const provider = providers.find((candidate) => candidate.instanceId === selection.instanceId);
     const model = provider?.models.find((candidate) => candidate.slug === selection.model);
     const modelName =
       (model ? resolveModelShortName(model, provider?.driver) : undefined) ??
       model?.name ??
       selection.model;
-    const effort = effortChanged ? formatModelSwitchEffort(selection, provider?.models) : null;
-    return [modelChanged ? modelName : null, effort].filter(Boolean).join(" ");
+    return [change.modelChanged ? modelName : null, effort].filter(Boolean).join(" ");
   };
+  const { from, to } = modelSwitch;
   return (
     <ThreadContextDivider
-      label={`${describe(from)} → ${describe(to)}`}
+      label={`${describe(from, change.effort?.from)} → ${describe(to, change.effort?.to)}`}
       iconColor={props.iconColor}
     />
   );

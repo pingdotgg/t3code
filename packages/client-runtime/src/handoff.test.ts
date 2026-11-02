@@ -1,22 +1,16 @@
 import {
   ContextHandoffId,
-  MessageId,
   ProviderInstanceId,
   RunId,
   type OrchestrationV2ThreadProjection,
   type ServerProvider,
 } from "@t3tools/contracts";
-import * as DateTime from "effect/DateTime";
 import { describe, expect, it } from "vite-plus/test";
 import {
-  formatModelSwitchEffort,
   resolveHandoffEndpoints,
-  resolveModelSwitches,
+  resolveModelSwitchChange,
   resolvePendingHandoff,
   type HandoffTimelineRun,
-  type ModelSwitch,
-  type ModelSwitchAttempt,
-  type ModelSwitchRun,
 } from "./handoff.ts";
 
 const from = ProviderInstanceId.make("codex_personal");
@@ -181,204 +175,79 @@ describe("pending context handoff", () => {
   });
 });
 
-describe("model switches", () => {
-  const switchRun = (
-    id: string,
-    ordinal: number,
-    model: string,
-    effort?: string,
-    overrides: Partial<ModelSwitchRun> = {},
-  ): ModelSwitchRun => ({
-    id: RunId.make(`run-${id}`),
-    ordinal,
-    status: "completed",
-    startedAt: DateTime.makeUnsafe("2026-10-11T00:00:00Z"),
-    modelSelection: {
+describe("model switch change", () => {
+  const selection = (model: string, options?: Record<string, string>) => ({
+    instanceId: from,
+    model,
+    ...(options === undefined
+      ? {}
+      : { options: Object.entries(options).map(([id, value]) => ({ id, value })) }),
+  });
+  const providers = [
+    {
       instanceId: from,
-      model,
-      ...(effort === undefined ? {} : { options: [{ id: "reasoningEffort", value: effort }] }),
-    },
-    userMessageId: MessageId.make(`message-${id}`),
-    contextHandoffId: null,
-    ...overrides,
-  });
-  const keys = (switches: ReadonlyMap<MessageId, unknown>) =>
-    [...switches.keys()].map((id) => id.replace("message-", ""));
-
-  it("marks model and stated effort changes in run order", () => {
-    const switches = resolveModelSwitches([
-      switchRun("d", 4, "gpt", "low"),
-      switchRun("a", 1, "gpt", "high"),
-      switchRun("b", 2, "gpt", "high"),
-      switchRun("c", 3, "gpt"),
-      switchRun("e", 5, "mini", "low"),
-    ]);
-    expect(keys(switches)).toEqual(["e"]);
-    expect(switches.get(MessageId.make("message-e"))).toMatchObject({
-      from: { model: "gpt" },
-      to: { model: "mini" },
-      modelChanged: true,
-      effortChanged: false,
-    });
-    expect(
-      resolveModelSwitches([switchRun("a", 1, "gpt", "high"), switchRun("b", 2, "gpt", "low")]).get(
-        MessageId.make("message-b"),
-      ),
-    ).toMatchObject({ modelChanged: false, effortChanged: true });
-  });
-
-  it("marks each steering restart against what it replaced", () => {
-    const restart = (
-      attemptOrdinal: number,
-      replaced: { message: string; model: string; handoff?: string },
-      overrides: Partial<ModelSwitchAttempt> = {},
-    ): ModelSwitchAttempt => ({
-      runId: RunId.make("run-b"),
-      attemptOrdinal,
-      status: "superseded",
-      startedAt: DateTime.makeUnsafe("2026-10-11T00:00:00Z"),
-      restartedFrom: {
-        userMessageId: MessageId.make(`message-${replaced.message}`),
-        modelSelection: { instanceId: from, model: replaced.model },
-        contextHandoffId:
-          replaced.handoff === undefined ? null : ContextHandoffId.make(replaced.handoff),
-      },
-      ...overrides,
-    });
-    const runs = (current: Partial<ModelSwitchRun> = {}) => [
-      switchRun("a", 1, "gpt"),
-      switchRun("s2", 2, "gpt", undefined, { id: RunId.make("run-b"), ...current }),
-    ];
-    const summary = (switches: ReadonlyMap<MessageId, ModelSwitch>) =>
-      [...switches].map(([id, change]) => [id, change.from.model, change.to.model]);
-
-    expect(
-      summary(
-        resolveModelSwitches(runs(), [
-          restart(3, { message: "s1", model: "max" }),
-          restart(2, { message: "b", model: "mini" }),
-        ]),
-      ),
-    ).toEqual([
-      ["message-b", "gpt", "mini"],
-      ["message-s1", "mini", "max"],
-      ["message-s2", "max", "gpt"],
-    ]);
-    // A later restart into another harness hands off; the first switch keeps its divider.
-    expect(
-      summary(
-        resolveModelSwitches(runs({ contextHandoffId: ContextHandoffId.make("restart-handoff") }), [
-          restart(2, { message: "b", model: "mini" }),
-        ]),
-      ),
-    ).toEqual([["message-b", "gpt", "mini"]]);
-    // A restart stopped before it ran changed nothing.
-    expect(
-      summary(
-        resolveModelSwitches(runs(), [
-          restart(2, { message: "b", model: "mini" }, { status: "cancelled", startedAt: null }),
-        ]),
-      ),
-    ).toEqual([["message-b", "gpt", "mini"]]);
-  });
-
-  it("reads an unset effort as the model's default", () => {
-    const providers = [
-      {
-        instanceId: from,
-        models: [
-          {
-            slug: "gpt",
-            capabilities: {
-              optionDescriptors: [
-                {
-                  id: "reasoningEffort",
-                  type: "select",
-                  options: [{ id: "medium", isDefault: true }, { id: "high" }],
-                },
+      models: ["gpt", "mini"].map((slug) => ({
+        slug,
+        capabilities: {
+          optionDescriptors: [
+            { id: "serviceTier", type: "select", options: [{ id: "fast", label: "Fast" }] },
+            {
+              id: "thought_level",
+              type: "select",
+              role: "reasoning",
+              options: [
+                { id: "medium", label: "Medium", isDefault: true },
+                { id: "high", label: "High" },
               ],
             },
-          },
-        ],
-      },
-    ] as unknown as ServerProvider[];
-    const switches = resolveModelSwitches(
-      [
-        switchRun("a", 1, "gpt"),
-        switchRun("b", 2, "gpt", "medium"),
-        switchRun("c", 3, "gpt", "high"),
-        switchRun("d", 4, "gpt"),
-      ],
-      [],
-      providers,
-    );
-    expect(keys(switches)).toEqual(["c", "d"]);
-    expect(switches.get(MessageId.make("message-d"))?.to.options).toEqual([
-      { id: "reasoningEffort", value: "medium" },
-    ]);
-  });
-
-  it("follows an agent's own reasoning control", () => {
-    const providers = [
-      {
-        instanceId: from,
-        models: [
-          {
-            slug: "acp",
-            capabilities: {
-              optionDescriptors: [
-                {
-                  id: "thought_level",
-                  type: "select",
-                  role: "reasoning",
-                  options: [
-                    { id: "low", label: "Low", isDefault: true },
-                    { id: "deep", label: "Deep" },
-                  ],
-                },
-              ],
-            },
-          },
-        ],
-      },
-    ] as unknown as ServerProvider[];
-    const thought = (id: string, ordinal: number, value?: string) =>
-      switchRun(id, ordinal, "acp", undefined, {
-        modelSelection: {
-          instanceId: from,
-          model: "acp",
-          ...(value === undefined ? {} : { options: [{ id: "thought_level", value }] }),
+          ],
         },
-      });
-    const effortSwitch = resolveModelSwitches(
-      [thought("a", 1), thought("b", 2, "deep")],
-      [],
-      providers,
-    ).get(MessageId.make("message-b"));
-    expect(effortSwitch).toMatchObject({ modelChanged: false, effortChanged: true });
+      })),
+    },
+  ] as unknown as ServerProvider[];
+
+  it("shows only what changed, reading an unset effort as the default", () => {
     expect(
-      [effortSwitch!.from, effortSwitch!.to].map((endpoint) =>
-        formatModelSwitchEffort(endpoint, providers[0]!.models),
+      resolveModelSwitchChange(
+        { from: selection("gpt"), to: selection("gpt", { thought_level: "high" }) },
+        providers,
       ),
-    ).toEqual(["Low", "Deep"]);
+    ).toEqual({ modelChanged: false, effort: { from: "Medium", to: "High" } });
+    expect(
+      resolveModelSwitchChange({ from: selection("gpt"), to: selection("mini") }, providers),
+    ).toEqual({ modelChanged: true, effort: null });
   });
 
-  it("skips runs that never ran, handoff runs, and account-only switches", () => {
-    const switches = resolveModelSwitches([
-      switchRun("a", 1, "gpt"),
-      switchRun("b", 2, "mini", undefined, { status: "rolled_back" }),
-      switchRun("c", 3, "mini", undefined, { status: "cancelled", startedAt: null }),
-      switchRun("d", 4, "mini", undefined, { status: "queued", startedAt: null }),
-      switchRun("e", 5, "mini", undefined, { status: "failed", startedAt: null }),
-      switchRun("f", 6, "mini", undefined, { status: "interrupted", startedAt: null }),
-      switchRun("g", 7, "gpt"),
-      switchRun("h", 8, "other", undefined, {
-        contextHandoffId: ContextHandoffId.make("handoff"),
-      }),
-      switchRun("i", 9, "other", undefined, {
-        modelSelection: { instanceId: to, model: "other" },
-      }),
-    ]);
-    expect(switches.size).toBe(0);
+  it("ignores changes the user cannot see", () => {
+    expect(
+      resolveModelSwitchChange(
+        { from: selection("gpt"), to: selection("gpt", { thought_level: "medium" }) },
+        providers,
+      ),
+    ).toBeNull();
+    expect(
+      resolveModelSwitchChange(
+        { from: selection("gpt"), to: selection("gpt", { serviceTier: "fast" }) },
+        providers,
+      ),
+    ).toBeNull();
+  });
+
+  it("falls back to stated efforts without a catalog", () => {
+    expect(
+      resolveModelSwitchChange(
+        {
+          from: selection("gpt", { reasoningEffort: "low" }),
+          to: selection("gpt", { reasoningEffort: "high" }),
+        },
+        [],
+      ),
+    ).toEqual({ modelChanged: false, effort: { from: "low", to: "high" } });
+    expect(
+      resolveModelSwitchChange(
+        { from: selection("gpt"), to: selection("gpt", { reasoningEffort: "high" }) },
+        [],
+      ),
+    ).toBeNull();
   });
 });

@@ -248,7 +248,8 @@ function UserVideoAttachment({
 
 export function UserMessageRow({ row }: { row: Extract<TimelineRow, { kind: "message" }> }) {
   const ctx = use(TimelineRowCtx);
-  const modelSwitch = ctx.modelSwitches.get(row.message.id);
+  const item = row.projectedItem?.item;
+  const modelSwitch = item?.type === "user_message" ? item.modelSwitch : undefined;
   return (
     <>
       {modelSwitch ? (
