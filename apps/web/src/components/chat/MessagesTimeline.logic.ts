@@ -1363,8 +1363,18 @@ function deriveTurnFolds(input: {
     const endingSegmentIndex = live
       ? -1
       : steerSegments.findLastIndex((_, index) => hidesNonCompactionWork(segmentEntries(index)));
+    const ending: TurnFoldEnding = failed
+      ? usageLimitedRunIds.has(runId)
+        ? "limited"
+        : "failed"
+      : !live && (isLatestInterruptedTurn || interruptedRunIds.has(runId))
+        ? "stopped"
+        : "worked";
+    const topEnding: TurnFoldEnding = endingSegmentIndex >= 0 ? "worked" : ending;
+    // "Worked for" is the first segment's length; a stop, failure or limit on
+    // the top row is when in the whole turn it happened.
     const elapsedMs =
-      firstSteer && (live || endingSegmentIndex >= 0)
+      firstSteer && (live || topEnding === "worked")
         ? computeElapsedMs(turnStart, firstSteer.steer.createdAt)
         : input.latestRun?.runId === runId &&
             input.latestRun.startedAt &&
@@ -1375,14 +1385,6 @@ function deriveTurnFolds(input: {
               maxIsoTimestamp(terminalEntry?.message.updatedAt ?? null, lastEntryEnd) ??
                 lastEntryEnd,
             );
-    const ending: TurnFoldEnding = failed
-      ? usageLimitedRunIds.has(runId)
-        ? "limited"
-        : "failed"
-      : !live && (isLatestInterruptedTurn || interruptedRunIds.has(runId))
-        ? "stopped"
-        : "worked";
-    const topEnding: TurnFoldEnding = endingSegmentIndex >= 0 ? "worked" : ending;
     const label = turnFoldLabel(topEnding, elapsedMs, "Worked");
     // An unsteered turn shows the checkpoint diff, as the changed-files card
     // does. A steered turn's rows each count their own provider edits.

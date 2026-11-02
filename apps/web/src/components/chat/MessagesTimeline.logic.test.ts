@@ -4529,6 +4529,14 @@ describe("working window", () => {
       "answer",
       "next",
     ]);
+    const live = run([
+      prompt("prompt", 0),
+      work("command", 2, { label: "Ran sleep", itemType: "command_execution" }),
+      prompt("steer", 3, "steer"),
+    ]);
+    expect(live.find((row) => row.id === `turn-fold:${runId}`)).toEqual(
+      rows.find((row) => row.id === `turn-fold:${runId}`),
+    );
   });
 
   it("reports the latest failed test run until a rerun passes", () => {
