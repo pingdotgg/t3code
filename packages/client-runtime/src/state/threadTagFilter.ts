@@ -55,7 +55,7 @@ export function visibleLinkedThreads<Row extends { readonly id: ThreadId }>(
   );
 }
 
-export function hasHiddenTag(
+function hasHiddenTag(
   tags: ReadonlyArray<string> | undefined,
   hiddenTags: ReadonlyArray<string> | null,
 ): boolean {

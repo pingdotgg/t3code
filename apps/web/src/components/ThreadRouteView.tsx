@@ -1,7 +1,7 @@
 import { useAtomValue } from "@effect/atom-react";
 import { scopedThreadKey } from "@t3tools/client-runtime/environment";
 import { parseThreadKey, threadKey } from "@t3tools/client-runtime/state/entities";
-import { hasHiddenTag, visibilityParentKey } from "@t3tools/client-runtime/state/threads";
+import { visibilityParentKey } from "@t3tools/client-runtime/state/threads";
 import * as Option from "effect/Option";
 import { Navigate, useNavigate } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
@@ -14,7 +14,6 @@ import { useSidebarPendingFileDropStore } from "../sidebarPendingFileDropStore";
 import {
   useEnvironmentThreadRefs,
   useAnyEnvironmentHiding,
-  useHiddenThreadTags,
   useQuietThreadShell,
 } from "../state/entities";
 import { useEnvironmentShellStatus } from "../state/shell";
@@ -90,8 +89,6 @@ export function ThreadRouteView({
     unlistedThreadRef?.threadId ?? null,
   );
   const hiddenKeys = useAtomValue(environmentThreadShells.hiddenThreadKeysAtom);
-  // A thread the shell leaves out (older settled, idle subagent) is judged from its loaded detail.
-  const unlistedHiddenTags = useHiddenThreadTags(unlistedThreadRef?.environmentId ?? null);
   const unlistedThread = Option.getOrNull(Option.map(unlistedThreadDetail.data, (p) => p.thread));
   const unlistedParentKey =
     unlistedThreadRef === null || unlistedThread === null
@@ -102,16 +99,7 @@ export function ThreadRouteView({
   );
   const hidingAnywhere = useAnyEnvironmentHiding();
   const draftRedirectShell = useQuietThreadShell(draftRedirect ?? null);
-  // Off-shell threads: a child follows its parent; while hiding, an unloaded parent hides it too.
-  const unlistedHidden =
-    unlistedThread !== null &&
-    (unlistedParentKey === null
-      ? hasHiddenTag(unlistedThread.tags, unlistedHiddenTags)
-      : unlistedParentShell === null
-        ? hidingAnywhere
-        : hiddenKeys.has(unlistedParentKey));
-  const hiddenByTagFilter =
-    serverThreadRef !== null && (hiddenKeys.has(threadKey(serverThreadRef)) || unlistedHidden);
+  const hiddenByTagFilter = serverThreadRef !== null && hiddenKeys.has(threadKey(serverThreadRef));
   // Cached detail can predate a tag or an archive, so while hiding an off-shell thread opens only
   // as the child of a loaded, visible parent (lineage never changes); anything else stays closed.
   const offShellBlocked =
@@ -148,7 +136,15 @@ export function ThreadRouteView({
   let view: React.ReactNode = null;
   let redirect: React.ReactNode = null;
   if (target.kind === "draft") {
-    if (draftSession) {
+    if (
+      draftSession &&
+      hiddenKeys.has(
+        threadKey({ environmentId: draftSession.environmentId, threadId: draftSession.threadId }),
+      )
+    ) {
+      // A draft whose thread is already live and hidden (mid-promotion): never mount it.
+      redirect = <Navigate to="/" replace />;
+    } else if (draftSession) {
       view = (
         <ChatView
           key={target.draftId}
