@@ -696,7 +696,13 @@ function textJsonForSpan(text: string, marks: RichTextMark[]): Record<string, un
 export function buildTiptapContent(
   value: string,
   skillLabelFor: (name: string) => SkillMeta | null,
-  options?: { styling?: boolean; blocks?: boolean; literalText?: boolean; literalLength?: number },
+  options?: {
+    styling?: boolean;
+    inlineSource?: boolean;
+    blocks?: boolean;
+    literalText?: boolean;
+    literalLength?: number;
+  },
 ): Record<string, unknown>[] {
   if (options?.literalText) {
     return value.split("\n").map((line) => ({
@@ -745,7 +751,21 @@ export function buildTiptapContent(
     .join("");
   let atomIndex = 0;
   const buildInline = (content: string): InlineJson[] => {
-    const spans = styling ? parseInlineMarkdown(content) : [{ text: content, marks: [] }];
+    let spans = styling ? parseInlineMarkdown(content) : [{ text: content, marks: [] }];
+    if (options?.inlineSource) {
+      let source = "";
+      let previous: RichTextMark[] = [];
+      for (const span of [...spans, { text: "", marks: [] }]) {
+        let common = 0;
+        while (common < previous.length && previous[common] === span.marks[common]) common += 1;
+        for (const mark of previous.slice(common).toReversed())
+          source += RICH_TEXT_DELIMITERS[mark];
+        for (const mark of span.marks.slice(common)) source += RICH_TEXT_DELIMITERS[mark];
+        source += span.text;
+        previous = span.marks;
+      }
+      spans = [{ text: source, marks: [] }];
+    }
     const inline: InlineJson[] = [];
     for (const span of spans) {
       span.text.split(sentinel).forEach((piece, index) => {
@@ -934,7 +954,7 @@ export function buildTiptapContent(
 export function buildDocJson(
   value: string,
   skillLabelFor: (name: string) => SkillMeta | null,
-  options?: { styling?: boolean; literalText?: boolean },
+  options?: { styling?: boolean; inlineSource?: boolean; literalText?: boolean },
 ) {
   const content = buildTiptapContent(value, skillLabelFor, options);
   if (content.at(-1)?.type === "horizontalRule") content.push({ type: "paragraph" });

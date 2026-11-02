@@ -31,18 +31,23 @@ const schema = getSchemaByResolvedExtensions(
   ]),
 );
 
-function directions(value: string) {
+function directions(value: string, inlineSource = false) {
   const doc = ProseMirrorNode.fromJSON(
     schema,
-    buildDocJson(value, (name) => ({ label: name, description: null })),
+    buildDocJson(value, (name) => ({ label: name, description: null }), { inlineSource }),
   );
   return composerTextDirections(doc).blocks;
 }
 
 describe("composerTextDirections", () => {
-  it("does not count inline code toward a line's direction", () => {
-    expect(directions("`useEffect` و `useLayoutEffect` في `React`")).toEqual(["rtl"]);
-  });
+  it.each([false, true])(
+    "does not count inline code toward direction (source: %s)",
+    (inlineSource) => {
+      for (const value of ["`useEffect` و `useLayoutEffect` في `React`", "شغل `npm run build`"]) {
+        expect(directions(value, inlineSource)).toEqual(["rtl"]);
+      }
+    },
+  );
 
   it("gives a list one direction, from all of its items", () => {
     expect(directions("- Vitest\n- اختبر الدالة الجديدة\n- وأضف تعليق")).toEqual(["rtl"]);

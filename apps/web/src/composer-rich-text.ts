@@ -26,7 +26,10 @@ function pushSpan(spans: RichTextSpan[], text: string, marks: RichTextMark[]): v
   }
 }
 
-export function parseInlineMarkdown(text: string): RichTextSpan[] {
+export function parseInlineMarkdown(
+  text: string,
+  options?: { underscoreItalic?: boolean },
+): RichTextSpan[] {
   const root: RichTextSpan[] = [];
   const stack: { delimiter: string; mark: RichTextMark; spans: RichTextSpan[] }[] = [];
   const current = () => stack.at(-1)?.spans ?? root;
@@ -84,7 +87,11 @@ export function parseInlineMarkdown(text: string): RichTextSpan[] {
         stack.pop();
         for (const span of top.spans) pushSpan(current(), span.text, [top.mark, ...span.marks]);
         index += top.delimiter.length;
-      } else if (canOpen && (char !== "~" || end - index >= 2)) {
+      } else if (
+        canOpen &&
+        (char !== "~" || end - index >= 2) &&
+        (char !== "_" || end - index >= 2 || options?.underscoreItalic !== false)
+      ) {
         const length = char === "~" || end - index >= 2 ? 2 : 1;
         const mark = char === "~" ? "strike" : length === 2 ? "bold" : "italic";
         // Prevent self-nesting, including alternate delimiters, to bound the stack by supported styles.

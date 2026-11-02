@@ -2452,8 +2452,10 @@ code {
   font-weight: 400;
   font-style: normal;
   text-decoration: none;
-  user-select: none;
-  pointer-events: none;
+}
+
+.composer-rich-marker-hidden {
+  display: none;
 }
 
 /* Selected chips (node selection from arrowing into or clicking a chip). */

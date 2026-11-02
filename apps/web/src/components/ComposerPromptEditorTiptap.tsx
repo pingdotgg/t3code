@@ -12,17 +12,10 @@ import {
 } from "@tiptap/core";
 import { ReactNodeViewRenderer, NodeViewWrapper, type NodeViewProps } from "@tiptap/react";
 import StarterKit from "@tiptap/starter-kit";
-import { type Node as ProseMirrorNode } from "@tiptap/pm/model";
 import { newlineInCode, splitBlockKeepMarks } from "@tiptap/pm/commands";
 import { isHistoryTransaction } from "@tiptap/pm/history";
-import {
-  type EditorState,
-  NodeSelection,
-  Plugin,
-  PluginKey,
-  TextSelection,
-} from "@tiptap/pm/state";
-import { Decoration, DecorationSet, type EditorView } from "@tiptap/pm/view";
+import { NodeSelection, TextSelection } from "@tiptap/pm/state";
+import type { EditorView } from "@tiptap/pm/view";
 import type { NodeType, ResolvedPos } from "@tiptap/pm/model";
 import type {
   AssistantCitation,
@@ -59,6 +52,7 @@ import {
 } from "~/composer-logic";
 import { useStableCallback } from "~/hooks/useStableCallback";
 import { caretLineDirection, ComposerTextDirectionExtension } from "~/composer-text-direction";
+import { ComposerMarkdownSourcePlugin } from "~/composer-markdown-source";
 import {
   collectComposerPromptInlineTokens,
   selectionTouchesMentionBoundary,
@@ -69,7 +63,6 @@ import {
   ComposerCodeBlockExtension,
   ComposerListExtensions,
   buildTiptapContent,
-  caretTakesMarksBefore,
   ComposerBoldSelectionOnlyExtension,
   convertBulletItemToTask,
   ComposerCodeExtension,
@@ -524,46 +517,6 @@ function ComposerContextReferenceNodeView({ node }: NodeViewProps) {
   );
 }
 
-type StyledRange = {
-  from: number;
-  to: number;
-  markers: { at: number; side: number; text: string }[];
-};
-
-function collectStyledRanges(doc: ProseMirrorNode): StyledRange[] {
-  const ranges: StyledRange[] = [];
-  const map = serializeEditorDoc(doc);
-  let range: StyledRange | null = null;
-  let openLength = 0;
-  for (const run of map.runs) {
-    if (run.nodeName === "codeBlock") continue;
-    if (run.openLen > 0) {
-      range ??= { from: run.pmPos, to: run.pmPos, markers: [] };
-      range.markers.push({
-        at: run.pmPos,
-        side: -1,
-        text: map.value.slice(run.mdStart, run.mdStart + run.openLen),
-      });
-    }
-    if (range === null) continue;
-    range.to = run.pmPos + run.docLen;
-    if (run.closeLen > 0) {
-      const end = run.mdStart + run.mdLen;
-      range.markers.push({
-        at: range.to,
-        side: -2,
-        text: map.value.slice(end - run.closeLen, end),
-      });
-    }
-    openLength += run.openLen - run.closeLen;
-    if (openLength === 0) {
-      ranges.push(range);
-      range = null;
-    }
-  }
-  return ranges;
-}
-
 /** Wait for a character after '- ' so task markers reach their input rule before becoming bullets. */
 function listMarkerInputRule(find: RegExp, listType: "bulletList" | "orderedList"): InputRule {
   return new InputRule({
@@ -684,72 +637,11 @@ function isInCodeBlock(view: EditorView): boolean {
   return view.state.selection.$from.parent.type.spec.code === true;
 }
 
-const MarkerPluginKey = new PluginKey("composer-rich-markers");
-
-const ComposerMarkerPlugin = new Plugin({
-  key: MarkerPluginKey,
-  state: {
-    init: (_, state) => decorationsForSelection(state),
-    apply: (tr, old, _, state) =>
-      tr.docChanged || tr.selectionSet || tr.storedMarksSet ? decorationsForSelection(state) : old,
-  },
-  props: {
-    decorations(state) {
-      return MarkerPluginKey.getState(state);
-    },
-  },
-});
-
-function decorationsForSelection(state: EditorState): DecorationSet {
-  const { doc, selection } = state;
-  const caretSide = caretTakesMarksBefore(state) ? 3 : 0;
-  const rtl = caretLineDirection(state) === "rtl";
-  const decorations: Decoration[] = [];
-  if (!selection.empty) {
-    doc.nodesBetween(selection.from, selection.to, (node, pos) => {
-      if (node.type.name.startsWith("composer-")) {
-        decorations.push(
-          Decoration.node(pos, pos + node.nodeSize, { class: "composer-chip-range-selected" }),
-        );
-        return false;
-      }
-      return true;
-    });
-  }
-  for (const range of collectStyledRanges(doc)) {
-    const active = selection.empty
-      ? selection.from >= range.from && selection.from <= range.to
-      : selection.from < range.to && selection.to > range.from;
-    if (!active) continue;
-    for (const { at, side: baseSide, text } of range.markers) {
-      const side = selection.empty && at === selection.from ? baseSide + caretSide : baseSide;
-      const marker = document.createElement("span");
-      marker.className = "composer-rich-marker";
-      marker.textContent = text;
-      marker.setAttribute("aria-hidden", "true");
-      // Inline code is isolated left to right. In a right-to-left line its
-      // opening backtick joins the closing one inside the isolate, or the line
-      // would put both on the same side of the code.
-      const codeMarks =
-        rtl && baseSide === -1 && /^`+$/.test(text)
-          ? doc.resolve(at).nodeAfter?.marks.filter((mark) => mark.type.spec.code)
-          : undefined;
-      decorations.push(
-        Decoration.widget(at, marker, {
-          side,
-          key: `marker-${at}-${side}-${marker.textContent}`,
-          ...(codeMarks?.length ? { marks: codeMarks } : {}),
-        }),
-      );
-    }
-  }
-  return DecorationSet.create(doc, decorations);
-}
-
 const ComposerMarkersExtension = Extension.create({
   name: "composer-rich-markers",
+  priority: 900,
   addProseMirrorPlugins() {
-    return [ComposerMarkerPlugin];
+    return [ComposerMarkdownSourcePlugin];
   },
 });
 
@@ -1108,6 +1000,7 @@ function ComposerPromptEditorTiptapInner(
       extensions: richText ? RICH_TEXT_EXTENSIONS : PLAIN_TEXT_EXTENSIONS,
       content: buildDocJson(value, (name) => composerSkillMeta(skills, name), {
         styling: richText,
+        inlineSource: richText,
         literalText,
       }),
       editable: !disabled,
@@ -1556,7 +1449,11 @@ function ComposerPromptEditorTiptapInner(
     if (previousSnapshot.value !== value) {
       saveCitationDraft(editor, previousSnapshot.value);
       editor.commands.setContent(
-        buildDocJson(value, skillLabelFor, { styling: richText, literalText }),
+        buildDocJson(value, skillLabelFor, {
+          styling: richText,
+          inlineSource: richText,
+          literalText,
+        }),
         {
           emitUpdate: false,
         },
@@ -1842,7 +1739,10 @@ function insertMarkdownParagraphs(
   options: { styling: boolean; blocks?: boolean; literalText?: boolean; literalLength?: number },
   insertContent: (content: JSONContent[] | JSONContent) => void,
 ): void {
-  const blocks = buildTiptapContent(value, skillLabelFor, options);
+  const blocks = buildTiptapContent(value, skillLabelFor, {
+    ...options,
+    inlineSource: options.styling,
+  });
   if (blocks.length === 1 && blocks[0]?.type === "paragraph") {
     const inline = (blocks[0]?.content ?? []) as JSONContent[];
     if (inline.length === 0) return;

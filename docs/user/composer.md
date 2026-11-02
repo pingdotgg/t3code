@@ -14,9 +14,10 @@ to keep a large paste editable in the composer instead.
 
 ## Formatting
 
-The composer writes Markdown and shows it styled as you type. Markers such as
-`**` stay in the text and show beside the styled words when your cursor is on
-them. Lines starting with `- `, `1. `, `- [ ] `, `> `, `# ` or `---` become lists,
+The composer writes Markdown and shows it styled as you type. Put your cursor in
+styled words to show their markers, such as `**`, as text you can edit: change
+`**` to `*` to switch bold to italic, or delete the markers to remove the style.
+Lines starting with `- `, `1. `, `- [ ] `, `> `, `# ` or `---` become lists,
 task lists, quotes, headings and rules; ` ``` ` followed by Enter opens a code
 block. What you typed is what the agent receives, markers and numbering
 included, and `#1234` without a space still looks up a pull request.

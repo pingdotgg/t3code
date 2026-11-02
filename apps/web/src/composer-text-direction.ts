@@ -3,6 +3,7 @@ import type { Node as ProseMirrorNode } from "@tiptap/pm/model";
 import { type EditorState, Plugin, PluginKey } from "@tiptap/pm/state";
 import { Decoration, DecorationSet } from "@tiptap/pm/view";
 
+import { parseInlineMarkdown } from "~/composer-rich-text";
 import { textDirection, type TextDirection } from "~/textDirection";
 
 interface ComposerTextDirections {
@@ -23,10 +24,14 @@ function proseText(block: ProseMirrorNode): string {
     if (node.isText) {
       text += node.marks.some((mark) => mark.type.spec.code) ? " " : node.text;
     } else if (node.isBlock || node.isAtom) {
-      text += " ";
+      text += node.isBlock || node.type.name === "hardBreak" ? "\n" : " ";
     }
   });
-  return text;
+  return block.type.schema.marks.code
+    ? parseInlineMarkdown(text)
+        .map((span) => (span.marks.includes("code") ? " " : span.text))
+        .join("")
+    : text;
 }
 
 function blockDirection(block: ProseMirrorNode): TextDirection | null {
