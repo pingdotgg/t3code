@@ -41,6 +41,7 @@ const makeHarness = Effect.fn(function* (options: {
   readonly history?: string;
   readonly opening?: Deferred.Deferred<void>;
   readonly shell?: string | null;
+  readonly observe?: boolean;
 }) {
   const listeners = new Set<(event: TerminalEvent) => Effect.Effect<void>>();
   const writes = yield* Queue.unbounded<string>();
@@ -84,7 +85,9 @@ const makeHarness = Effect.fn(function* (options: {
   const start = runner.runForThread({
     threadId,
     worktreePath: "/repo/.t3/worktrees/feature",
-    observeCompletion: { onOutputLine: (line) => Queue.offer(outputLines, line) },
+    ...(options.observe === false
+      ? {}
+      : { observeCompletion: { onOutputLine: (line) => Queue.offer(outputLines, line) } }),
     project: {
       id: ProjectId.make("project-1"),
       workspaceRoot: "/repo",
@@ -150,6 +153,18 @@ describe("ProjectSetupScriptRunner", () => {
         expect(openedEnvs[0]).not.toHaveProperty("FORCE_COLOR");
         expect(openedEnvs[0]).not.toHaveProperty("COLORTERM");
       }),
+  );
+
+  it.effect.each([
+    { shell: "/bin/zsh", written: " ( export NO_COLOR=1 FORCE_COLOR=0 COLORTERM=\rvp i\r)\r" },
+    { shell: "/opt/homebrew/bin/nu", written: " vp i\r" },
+  ])("types an unobserved script without a sentinel ($shell)", ({ shell, written }) =>
+    Effect.gen(function* () {
+      const { start, writes } = yield* makeHarness({ shell, observe: false });
+      yield* start;
+      yield* TestClock.adjust("3 seconds");
+      expect(yield* Queue.take(writes)).toBe(written);
+    }),
   );
 
   it.effect("shows a startup prompt and types only once the line editor starts", () =>

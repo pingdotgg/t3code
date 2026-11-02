@@ -168,8 +168,15 @@ function lineEditorReading(text: string, previous: boolean): boolean {
 
 type CompletionShell = "posix" | "fish" | "powershell";
 
+function shellName(shell: string): string {
+  return (shell.split(/[/\\]/).at(-1) ?? shell).toLowerCase().replace(/\.exe$/, "");
+}
+
+// Unobserved runs type the raw command for other shells, such as Nushell, that cannot parse the posix wrapper.
+const POSIX_SHELL_NAMES = new Set(["sh", "bash", "zsh", "dash", "ksh"]);
+
 function resolveCompletionShell(shell: string): CompletionShell | null {
-  const name = (shell.split(/[/\\]/).at(-1) ?? shell).toLowerCase().replace(/\.exe$/, "");
+  const name = shellName(shell);
   if (name === "cmd") return null;
   if (name === "fish") return "fish";
   if (name === "pwsh" || name === "powershell") return "powershell";
@@ -191,7 +198,7 @@ function wrapScriptCommand(
         ? "; if ($null -ne $LASTEXITCODE) { $__t3c = $LASTEXITCODE } elseif ($?) { $__t3c = 0 } else { $__t3c = 1 }"
         : "";
       const report = sentinel ? `; Write-Host "${sentinel}$__t3c"` : "";
-      return `$__t3color = $env:NO_COLOR, $env:FORCE_COLOR, $env:COLORTERM; $env:NO_COLOR = '1'; $env:FORCE_COLOR = '0'; $env:COLORTERM = $null; $global:LASTEXITCODE = $null; try { & {\r${body}\r}${exitCode} } finally { $env:NO_COLOR = $__t3color[0]; $env:FORCE_COLOR = $__t3color[1]; $env:COLORTERM = $__t3color[2] }${report}`;
+      return `$__t3color = $env:NO_COLOR, $env:FORCE_COLOR, $env:COLORTERM; $env:NO_COLOR = '1'; $env:FORCE_COLOR = '0'; $env:COLORTERM = $null; $global:LASTEXITCODE = $null; & {\r${body}\r}${exitCode}; $env:NO_COLOR = $__t3color[0]; $env:FORCE_COLOR = $__t3color[1]; $env:COLORTERM = $__t3color[2]${report}`;
     }
     case "fish": {
       const report = sentinel ? `; printf '\\n${sentinel}%s\\n' $status` : "";
@@ -506,11 +513,11 @@ export const make = Effect.gen(function* () {
         yield* terminalManager.closeIdle({ threadId: input.threadId, terminalId });
         return yield* new ProjectSetupScriptUnsupportedShellError({ shell });
       }
-      const commandLine = wrapScriptCommand(
-        script.command,
-        completionShell,
-        completionToken ? completionSentinel(completionToken) : null,
-      );
+      const sentinel = completionToken ? completionSentinel(completionToken) : null;
+      const commandLine =
+        sentinel === null && completionShell === "posix" && !POSIX_SHELL_NAMES.has(shellName(shell))
+          ? script.command
+          : wrapScriptCommand(script.command, completionShell, sentinel);
       echoedWrapperLines.push(...commandLine.split("\r").filter((line) => line.length > 0));
       return { completionShell, commandLine };
     }).pipe(
