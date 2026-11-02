@@ -1807,6 +1807,10 @@ it.layer(
         const events = yield* Ref.make<ReadonlyArray<"invalidate" | "refresh">>([]);
         const record = (event: "invalidate" | "refresh") =>
           Ref.update(events, (previous) => [...previous, event]);
+        const released = yield* Deferred.make<void>();
+        yield* Deferred.succeed(released, undefined);
+        const probeGate = yield* Ref.make(released);
+        const probeStarted = yield* Ref.make(yield* Deferred.make<void>());
         const instances = [
           {
             instanceId,
@@ -1824,7 +1828,13 @@ it.layer(
                   }),
                 ),
               getSnapshot: Effect.succeed(provider),
-              refresh: record("refresh").pipe(Effect.as(provider)),
+              refresh: record("refresh").pipe(
+                Effect.andThen(Ref.get(probeStarted)),
+                Effect.flatMap((started) => Deferred.succeed(started, undefined)),
+                Effect.andThen(Ref.get(probeGate)),
+                Effect.flatMap(Deferred.await),
+                Effect.as(provider),
+              ),
               streamChanges: Stream.empty,
               applyUsageLimits: () => Effect.void,
             },
@@ -1879,6 +1889,23 @@ it.layer(
           yield* Ref.set(events, []);
           yield* registry.reloadSecretsAndRefresh(undefined, { fresh: true });
           assert.deepStrictEqual(yield* Ref.get(events), ["invalidate", "refresh"]);
+
+          yield* Ref.set(events, []);
+          const gate = yield* Deferred.make<void>();
+          const started = yield* Deferred.make<void>();
+          yield* Ref.set(probeGate, gate);
+          yield* Ref.set(probeStarted, started);
+          const background = yield* Effect.forkChild(registry.refresh());
+          yield* Deferred.await(started);
+          const manual = yield* Effect.forkChild(registry.refresh(undefined, { fresh: true }), {
+            startImmediately: true,
+          });
+          assert.deepStrictEqual(yield* Ref.get(events), ["refresh"]);
+          yield* Ref.set(probeGate, released);
+          yield* Deferred.succeed(gate, undefined);
+          yield* Fiber.join(background);
+          yield* Fiber.join(manual);
+          assert.deepStrictEqual(yield* Ref.get(events), ["refresh", "invalidate", "refresh"]);
         }).pipe(Effect.provide(runtimeServices));
       }),
     );

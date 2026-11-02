@@ -677,9 +677,13 @@ export const layer = Layer.effect(
       options?: ProviderRefreshOptions,
     ) {
       if (provider === undefined) {
-        // A fresh caller that joins an in-flight pass still gets that pass's
-        // probe; the invalidation lands for the next one.
-        if (options?.fresh) yield* invalidateInstanceCaches();
+        if (options?.fresh) {
+          // An in-flight pass may already hold a cached probe, so let it finish
+          // and start one after the invalidation instead of joining it.
+          const inFlight = yield* Ref.get(refreshAllInFlightRef);
+          if (Option.isSome(inFlight)) yield* Effect.exit(Deferred.await(inFlight.value));
+          yield* invalidateInstanceCaches();
+        }
         return yield* refreshAll();
       }
       const defaultInstanceId = defaultInstanceIdForDriver(provider);

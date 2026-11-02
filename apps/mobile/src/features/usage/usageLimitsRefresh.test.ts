@@ -7,7 +7,10 @@ import { expect, it, vi } from "vite-plus/test";
 type RefreshResult = AsyncResult.AsyncResult<void, string>;
 
 const state = vi.hoisted(() => ({
-  refresh: (_environmentId: string): Promise<RefreshResult> => {
+  refresh: (
+    _environmentId: string,
+    _input: { readonly fresh?: boolean },
+  ): Promise<RefreshResult> => {
     throw new Error("refresh not set up");
   },
 }));
@@ -15,8 +18,10 @@ vi.mock("../../state/server", () => ({
   serverEnvironment: {
     refreshProviders: {
       label: "refresh providers",
-      run: (_registry: unknown, input: { readonly environmentId: string }) =>
-        state.refresh(input.environmentId),
+      run: (
+        _registry: unknown,
+        input: { readonly environmentId: string; readonly input: { readonly fresh?: boolean } },
+      ) => state.refresh(input.environmentId, input.input),
     },
   },
 }));
@@ -30,7 +35,9 @@ import {
 const success: RefreshResult = AsyncResult.success(undefined);
 const failure: RefreshResult = AsyncResult.failure(Cause.fail("offline"));
 
-function setup(refresh: (environmentId: string) => Promise<RefreshResult>) {
+function setup(
+  refresh: (environmentId: string, input: { readonly fresh?: boolean }) => Promise<RefreshResult>,
+) {
   state.refresh = refresh;
   const registry = AtomRegistry.make();
   return {
@@ -84,6 +91,18 @@ it("does not let an older refresh clear a newer failure for the same environment
   bFirst.resolve(success);
   await older;
   expect(failures([a, b])).toEqual([a]);
+});
+
+it("re-probes the provider CLI only for a user refresh", async () => {
+  const a = EnvironmentId.make("mobile-limits-fresh");
+  const sent: Array<boolean | undefined> = [];
+  const { registry } = setup((_environmentId, input) => {
+    sent.push(input.fresh);
+    return Promise.resolve(success);
+  });
+  await refreshEnvironmentLimits(registry, a, { automatic: true });
+  await refreshEnvironmentLimits(registry, a, { afterPending: true });
+  expect(sent).toEqual([false, true]);
 });
 
 it("skips an automatic refresh inside the throttle window without touching the outcome", async () => {

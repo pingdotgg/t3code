@@ -304,7 +304,7 @@ export function UsagePage() {
     if (showingLimits) {
       refreshingRef.current = true;
       setIsRefreshing(true);
-      void refreshLimits().finally(() => {
+      void refreshLimits(false, true).finally(() => {
         refreshingRef.current = false;
         setIsRefreshing(false);
       });
