@@ -1,4 +1,5 @@
 import {
+  AuthSettingsWriteScope,
   DEFAULT_SERVER_SETTINGS,
   type EditorId,
   type EnvironmentId,
@@ -28,7 +29,7 @@ import { environmentCatalog } from "../connection/catalog";
 import { connectionAtomRuntime } from "../connection/runtime";
 import { environmentAtomList } from "./environmentAtomList";
 import { primaryEnvironmentIdAtom } from "./primaryEnvironment";
-import { environmentSession } from "./session";
+import { environmentSession, sessionHasScope } from "./session";
 import { reuseProvidersIgnoringCheckedAt } from "./serverProviders.logic";
 
 // Subscribe to every environment's themes; primary can change without reconnecting or updating the subscription.
@@ -189,18 +190,26 @@ export const providersIgnoringCheckedAtAtom = Atom.family((environmentId: Enviro
 );
 
 /**
- * The tag-filter toggle: null when no connected environment lists tags to hide. The primary
- * environment is the write target when it lists tags; shared settings carry the switch to the rest.
+ * The tag-filter toggle: null when no connected environment lists tags to hide. The write target
+ * is an environment this client may write settings on, primary first; shared settings carry the
+ * switch to the rest.
  */
 type ThreadTagToggle = { readonly hiding: boolean; readonly environmentId: EnvironmentId } | null;
 
 export const threadTagToggleAtom = Atom.make((get): ThreadTagToggle => {
   const primaryEnvironmentId = get(primaryEnvironmentIdAtom);
   let toggle: ThreadTagToggle = null;
+  let rank = -1;
   for (const environmentId of enabledEnvironmentIds(get(environmentCatalog.catalogValueAtom))) {
     const settings = get(serverEnvironment.settingsValueAtom(environmentId));
     if (settings === null || !settings.hiddenThreadTags.some((tag) => tag.trim() !== "")) continue;
-    if (toggle === null || environmentId === primaryEnvironmentId) {
+    const writable = sessionHasScope(
+      get(environmentSession.sessionStateAtom(environmentId)),
+      AuthSettingsWriteScope,
+    );
+    const nextRank = (writable ? 2 : 0) + (environmentId === primaryEnvironmentId ? 1 : 0);
+    if (nextRank > rank) {
+      rank = nextRank;
       toggle = { hiding: settings.hideTaggedThreads, environmentId };
     }
   }

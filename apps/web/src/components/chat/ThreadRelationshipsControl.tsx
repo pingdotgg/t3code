@@ -66,6 +66,7 @@ import {
   useThreadProjection,
   useThreadRelationshipShells,
   useHiddenThreadKeys,
+  useHiddenThreadTags,
 } from "../../state/entities";
 import { useEnvironment, useEnvironmentProviders } from "../../state/environments";
 import { serverEnvironment } from "../../state/server";
@@ -389,6 +390,7 @@ export function ThreadRelationshipsPanel(props: {
   const settings = useAtomValue(serverEnvironment.settingsValueAtom(props.environmentId));
   const relationshipShells = useThreadRelationshipShells(ref);
   const hiddenKeys = useHiddenThreadKeys();
+  const hidingHere = useHiddenThreadTags(props.environmentId) !== null;
   const allProjects = useProjects();
   const archived = useArchivedThreadSnapshots([props.environmentId]);
   const archivedShells = archived.snapshots.find(
@@ -469,6 +471,11 @@ export function ThreadRelationshipsPanel(props: {
   const graph = deriveThreadRelationshipGraph({ threads: shells, projection });
   const isHiddenRelation = (threadId: ThreadId) =>
     hiddenKeys.has(threadKey({ environmentId: props.environmentId, threadId }));
+  // While hiding, a parent the client cannot load may be hidden (archived or older); children stay.
+  const isHiddenUnloadedParent = (row: { threadId: ThreadId; edge: ThreadRelationshipEdge }) =>
+    hidingHere &&
+    graph.nodes.get(row.threadId)?.missing === true &&
+    isParentThreadRelationship(row.edge, props.threadId);
   const currentProject = projects.find((project) => project.id === currentThread?.projectId);
   const latestMergeBackRun = projection === null ? null : resolveLatestMergeBackRun(projection);
   const mergeTargetThreadId = resolveMergeBackTargetThreadId(projection);
@@ -479,7 +486,7 @@ export function ThreadRelationshipsPanel(props: {
     mergeTargetThreadId,
   })
     // The graph rebuilds missing parents from lineage, so filter the rows it returns.
-    .filter((row) => !isHiddenRelation(row.threadId))
+    .filter((row) => !isHiddenRelation(row.threadId) && !isHiddenUnloadedParent(row))
     .map((row) => {
       const agent =
         row.edge.kind === "subagent" && !isParentThreadRelationship(row.edge, props.threadId)
