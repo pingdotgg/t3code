@@ -60,6 +60,7 @@ const compactionPromptOrdinals = new Set(
   (process.env.T3_ACP_COMPACTION_PROMPT_ORDINALS ?? "").split(",").map(Number),
 );
 const failSetModeConfigOption = process.env.T3_ACP_FAIL_SET_MODE_CONFIG_OPTION === "1";
+const requestPermissionOnSetModel = process.env.T3_ACP_REQUEST_PERMISSION_ON_SET_MODEL;
 const emitEmptyDefaultAgentOption = process.env.T3_ACP_EMIT_EMPTY_DEFAULT_AGENT_OPTION === "1";
 const promptResponseText = process.env.T3_ACP_PROMPT_RESPONSE_TEXT;
 const promptDelayMs = Number(process.env.T3_ACP_PROMPT_DELAY_MS ?? "0");
@@ -769,6 +770,32 @@ const program = Effect.gen(function* () {
         currentModeId = request.value;
       }
       if (request.configId === "model" && typeof request.value === "string") {
+        if (request.value === requestPermissionOnSetModel) {
+          const permission = yield* agent.client.requestPermission({
+            sessionId: request.sessionId,
+            title: `Switch model to ${request.value}`,
+            subject: {
+              type: "tool_call",
+              toolCall: {
+                toolCallId: `set-model-${request.value}`,
+                title: `Switch model to ${request.value}`,
+                kind: "other",
+                status: "pending",
+              },
+            },
+            options: [
+              { optionId: permissionOptionIds.allowOnce, name: "Allow once", kind: "allow_once" },
+              { optionId: permissionOptionIds.rejectOnce, name: "Reject", kind: "reject_once" },
+            ],
+          });
+          // Like Hermes, a declined switch keeps the model and fails the request.
+          if (
+            permission.outcome.outcome !== "selected" ||
+            permission.outcome.optionId !== permissionOptionIds.allowOnce
+          ) {
+            return yield* AcpError.AcpRequestError.internalError("model_switch_cancelled");
+          }
+        }
         currentModelId = request.value;
       }
       if (request.configId === "agent" && typeof request.value === "string") {
