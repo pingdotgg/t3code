@@ -213,6 +213,35 @@ const handler = Effect.gen(function* () {
   upstreamSearch.delete("wsTicket");
   upstreamSearch.delete("hostId");
   const search = upstreamSearch.size > 0 ? `?${upstreamSearch.toString()}` : "";
+  // The service owns iOS screenshot compatibility, such as Xcode 26's simctl. Hosts with their own
+  // upstreams keep their routing, and Simlock serves Android through serve-sim too.
+  const screenshotDevice = upstreamSearch.get("device");
+  if (
+    !ready.upstream &&
+    request.method === "POST" &&
+    hubPath === "/vendor/serve-sim/api/screenshot" &&
+    screenshotDevice &&
+    upstreamSearch.size === 1
+  ) {
+    return yield* devices.screenshot({ hostId: ready.hostId, deviceId: screenshotDevice }).pipe(
+      Effect.map(({ png }) =>
+        HttpServerResponse.uint8Array(png, {
+          contentType: "image/png",
+          headers: { "cache-control": "no-store" },
+        }),
+      ),
+      Effect.catch((error) =>
+        Effect.logWarning("Device screenshot failed", { cause: error }).pipe(
+          Effect.as(
+            HttpServerResponse.text(
+              error._tag === "DeviceNotFoundError" ? "Device not found" : "Screenshot failed",
+              { status: error._tag === "DeviceNotFoundError" ? 404 : 502 },
+            ),
+          ),
+        ),
+      ),
+    );
+  }
   // Hosts with several upstreams (one per cloud session) route and authenticate requests themselves.
   const routed = ready.upstream ? yield* ready.upstream(hubPath, upstreamSearch) : undefined;
   if (routed === null) {
