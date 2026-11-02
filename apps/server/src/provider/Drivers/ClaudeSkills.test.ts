@@ -75,7 +75,7 @@ it.layer(NodeServices.layer)("discoverClaudeSkills", (it) => {
       yield* writeSkill(bucket, "docs", "# Docs");
       yield* writeSkill(bucket, "xlsx", "# Sheets");
       const local = path.join(configDir, "skills");
-      yield* writeSkill(local, "anthropic-skills:docs", "---\ndescription: Local docs.\n---\n");
+      yield* writeSkill(local, "anthropic-skills", "---\ndescription: Local docs.\n---\n");
       yield* writeSkill(local, "notes", "---\nname: anthropic-skills:notes\n---\n");
       const plugin = path.join(configDir, "plugins", "cache", "shop", "anthropic-skills");
       yield* writeSkill(
