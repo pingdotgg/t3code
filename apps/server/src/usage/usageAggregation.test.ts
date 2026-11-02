@@ -1,7 +1,7 @@
 import { describe, expect, it } from "@effect/vitest";
 
 import { resolveModelAliases, UsageAggregator } from "./usageAggregation.ts";
-import type { RateTable } from "./usagePricing.ts";
+import { parseRateTable, type RateTable } from "./usagePricing.ts";
 import type { UsageRecord } from "@t3tools/provider-core/server/usage";
 
 const rates: RateTable = new Map([
@@ -19,6 +19,7 @@ const rates: RateTable = new Map([
         cacheCreationCostPerToken: 2.5e-5,
       },
       ultrafast: null,
+      contextTiers: [],
     },
   ],
 ]);
@@ -68,6 +69,41 @@ function aggregate(
 }
 
 describe("UsageAggregator", () => {
+  it("prices each request against the long-context threshold, not the bucket total", () => {
+    const aggregator = new UsageAggregator({
+      timeZone: "UTC",
+      sinceDay: "2026-08-01",
+      untilDay: "2026-08-31",
+      resolution: "day",
+      rates: parseRateTable({
+        "gpt-6-sol": {
+          input_cost_per_token: 2e-6,
+          output_cost_per_token: 1e-5,
+          input_cost_per_token_above_272k_tokens: 4e-6,
+          output_cost_per_token_above_272k_tokens: 1.5e-5,
+        },
+      }),
+    });
+    const request = (uncachedInputTokens: number) =>
+      record({
+        model: "gpt-6-sol",
+        totals: {
+          uncachedInputTokens,
+          cachedInputTokens: 0,
+          cacheCreationTokens: 0,
+          outputTokens: 1_000,
+          reasoningTokens: 0,
+        },
+      });
+    for (let index = 0; index < 4; index += 1) aggregator.add(request(100_000));
+    aggregator.add(request(300_000));
+    const [bucket] = aggregator.finish().buckets;
+
+    expect(bucket?.costUsd).toBeCloseTo(
+      4 * (100_000 * 2e-6 + 1_000 * 1e-5) + 300_000 * 4e-6 + 1_000 * 1.5e-5,
+      12,
+    );
+  });
   it("splits a bucket's cost by category and speed", () => {
     const [bucket] = aggregate([record(), record({ speed: "fast" })]).buckets;
 
