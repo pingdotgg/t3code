@@ -863,7 +863,7 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
         const routes = connectionRoutes(yield* Ref.get(currentEntry));
         const setup = Duration.toNanosUnsafe(Duration.times(establishmentTimeout, routes.length));
         // The desktop bounds SSH preparation, which may download a server
-        // release, so the clock stops while an SSH route is preparing.
+        // release, so for SSH-only entries the clock stops while preparing.
         const pausesWhilePreparing = routes.every((route) => connectionRouteKind(route) === "ssh");
         const preparing = (expected: boolean) =>
           SubscriptionRef.changes(state).pipe(
