@@ -1284,6 +1284,11 @@ export const layerWsRpc = (
       const projectStore = yield* ProjectStore.ProjectStoreV2;
       const projectService = yield* ProjectService.ProjectService;
       const managedFolders = yield* ManagedProjectFolders.ManagedProjectFolders;
+      const newProjectsRootFields = (settings: { readonly newProjectsDirectory: string }) => {
+        const newProjectsRoot = managedFolders.resolveNamedProjectsRoot(settings);
+        const defaultRoot = managedFolders.resolveNamedProjectsRoot({ newProjectsDirectory: "" });
+        return { newProjectsRoot, newProjectsRootIsCustom: newProjectsRoot !== defaultRoot };
+      };
       const scratchThreadPromotion = yield* ScratchThreadPromotion.ScratchThreadPromotion;
       const eventLoopMonitor = yield* EventLoopMonitor.EventLoopMonitor;
       const threadSearch = yield* ThreadSearch.ThreadSearch;
@@ -1849,7 +1854,7 @@ export const layerWsRpc = (
             onNone: () => ({}),
             onSome: (root) => ({ scratchWorkspaceRoot: root }),
           }),
-          newProjectsRoot: managedFolders.resolveNamedProjectsRoot(settings),
+          ...newProjectsRootFields(settings),
           ...(lastEventLoopStall === undefined ? {} : { lastEventLoopStall }),
         };
       });
@@ -3229,10 +3234,7 @@ export const layerWsRpc = (
                 Stream.map((settings) => ({
                   version: 1 as const,
                   type: "settingsUpdated" as const,
-                  payload: {
-                    settings,
-                    newProjectsRoot: managedFolders.resolveNamedProjectsRoot(settings),
-                  },
+                  payload: { settings, ...newProjectsRootFields(settings) },
                 })),
               );
 

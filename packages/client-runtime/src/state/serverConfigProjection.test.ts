@@ -88,13 +88,15 @@ describe("applyServerConfigProjection settingsUpdated", () => {
     });
     const moved = applyServerConfigProjection(current, {
       type: "settingsUpdated",
-      payload: { settings, newProjectsRoot: "/home/me/repos" },
+      payload: { settings, newProjectsRoot: "/home/me/repos", newProjectsRootIsCustom: true },
     } as ServerConfigStreamEvent);
     expect(Option.getOrThrow(moved).config.newProjectsRoot).toBe("/home/me/repos");
+    expect(Option.getOrThrow(moved).config.newProjectsRootIsCustom).toBe(true);
     const fromOlderServer = applyServerConfigProjection(moved, {
       type: "settingsUpdated",
       payload: { settings },
     } as ServerConfigStreamEvent);
     expect(Option.getOrThrow(fromOlderServer).config.newProjectsRoot).toBe("/home/me/repos");
+    expect(Option.getOrThrow(fromOlderServer).config.newProjectsRootIsCustom).toBe(true);
   });
 });

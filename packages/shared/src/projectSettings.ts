@@ -173,6 +173,7 @@ export function resolveNewThreadEnvMode(input: {
   readonly projectSettings: ResolvedProjectSettings<ResolvedServerSettings>;
   readonly workspaceRoot: string | null;
   readonly newProjectsRoot: string | null | undefined;
+  readonly newProjectsRootIsCustom: boolean | undefined;
   readonly projectHasThreads: boolean;
 }): ThreadEnvMode {
   const configured = input.projectSettings.settings.defaultThreadEnvMode;
@@ -182,7 +183,7 @@ export function resolveNewThreadEnvMode(input: {
     input.projectSettings.sources.defaultThreadEnvMode !== "environment" ||
     input.workspaceRoot === null ||
     input.newProjectsRoot == null ||
-    input.projectSettings.settings.newProjectsDirectory !== ""
+    input.newProjectsRootIsCustom === true
   ) {
     return configured;
   }

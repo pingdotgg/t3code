@@ -218,11 +218,25 @@ describe("resolveNewThreadEnvMode", () => {
     projectSettings: worktreeEnvironment,
     workspaceRoot: "/data/projects/pinball-stats",
     newProjectsRoot: "/data/projects/",
+    newProjectsRootIsCustom: false,
     projectHasThreads: false,
   };
 
   it("starts a new project's first thread in its checkout", () => {
     expect(resolveNewThreadEnvMode(newProject)).toBe("local");
+    const invalidFolder = resolveProjectSettings(
+      {
+        ...DEFAULT_SERVER_SETTINGS,
+        defaultThreadEnvMode: "worktree",
+        newProjectsDirectory: "relative/repos",
+      },
+      projectId,
+      null,
+      null,
+    );
+    expect(resolveNewThreadEnvMode({ ...newProject, projectSettings: invalidFolder })).toBe(
+      "local",
+    );
     expect(
       resolveNewThreadEnvMode({
         ...newProject,
@@ -244,22 +258,12 @@ describe("resolveNewThreadEnvMode", () => {
       "worktree",
     );
     expect(resolveNewThreadEnvMode({ ...newProject, newProjectsRoot: undefined })).toBe("worktree");
-    const customFolder = resolveProjectSettings(
-      {
-        ...DEFAULT_SERVER_SETTINGS,
-        defaultThreadEnvMode: "worktree",
-        newProjectsDirectory: "~/repos",
-      },
-      projectId,
-      null,
-      null,
-    );
     expect(
       resolveNewThreadEnvMode({
         ...newProject,
-        projectSettings: customFolder,
         workspaceRoot: "/home/me/repos/existing-app",
         newProjectsRoot: "/home/me/repos",
+        newProjectsRootIsCustom: true,
       }),
     ).toBe("worktree");
   });
