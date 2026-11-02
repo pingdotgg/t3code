@@ -3175,6 +3175,7 @@ describe("OrchestratorMcpService provider resolution", () => {
       readonly decide: (command: { readonly proposed: unknown }) => Decision;
       /** The parent's run ends while its card waits. */
       readonly parentRunEndsOnAsk?: boolean;
+      readonly parentRunInitiallyEnded?: boolean;
       readonly hasReceipt?: (commandId: CommandId) => boolean;
       /** The thread's selection, as `t3_thread_configure` leaves it, while its run keeps its own. */
       readonly threadSelection?: Parameters<typeof parentProjection>[1];
@@ -3184,7 +3185,7 @@ describe("OrchestratorMcpService provider resolution", () => {
         const remoteDelegations: Array<unknown> = [];
         const cards = new Map<string, Card>();
         const waiting = yield* Deferred.make<void>();
-        let parentRunEnded = false;
+        let parentRunEnded = input.parentRunInitiallyEnded === true;
         const task = {
           id: taskId,
           threadId: parentThreadId,
@@ -3568,6 +3569,20 @@ describe("OrchestratorMcpService provider resolution", () => {
           ),
           [{ ...proposed, options: [] }],
         );
+        const ended = yield* harness({
+          decide: () => "pending",
+          parentRunInitiallyEnded: true,
+        });
+        const inactive = yield* delegate(
+          ended.service,
+          { environmentId: remoteEnvironmentId, model: "other-model" },
+          "remote-inactive",
+        ).pipe(Effect.result);
+        assert.isTrue(Result.isFailure(inactive));
+        if (Result.isFailure(inactive)) {
+          assert.propertyVal(inactive.failure, "code", "parent_not_active");
+        }
+        assert.deepEqual(ended.remoteDelegations, []);
         // The inherited target goes there without a card.
         const { service, approvals, remoteDelegations } = yield* harness({
           decide: () => "pending",

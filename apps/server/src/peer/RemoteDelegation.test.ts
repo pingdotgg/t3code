@@ -1036,6 +1036,30 @@ it.effect("an approved task there launches with the target the user approved", (
       yield* seedParent(a);
       const approvals = yield* approvalsOn(a);
 
+      const staleRequest = {
+        task: "Run the suite on the box.",
+        parentRunId: RunId.make("run:laptop-previous"),
+        modelSelection,
+        target: { environmentId: box.environmentId },
+        clientRequestId: "stale-parent-run",
+      };
+      const stale = yield* a.remote
+        .delegate(
+          {
+            ...parentScope,
+            thread: {
+              threadId: parentThreadId,
+              providerSessionId: "provider-session:laptop-parent",
+              providerInstanceId: instanceId,
+            },
+          },
+          staleRequest,
+        )
+        .pipe(Effect.result);
+      expect(Result.isFailure(stale)).toBe(true);
+      if (Result.isFailure(stale)) expect(stale.failure.code).toBe("parent_not_active");
+      expect(yield* Ref.get(thread.launches)).toBe(0);
+
       const approved = yield* a
         .call("delegate_task", {
           task: "Run the full suite on the box.",
