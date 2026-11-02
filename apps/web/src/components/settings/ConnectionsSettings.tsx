@@ -1491,6 +1491,25 @@ export function ConnectionsSettings({ view }: { readonly view: "environments" | 
       {desktopBridge ? (
         <SettingsSection id="this-app" title="This app">
           <LocalEnvironmentSetting />
+          {savedEnvironments
+            .filter(
+              (environment) =>
+                environment.environmentId !== primaryEnvironmentId &&
+                isDesktopLocalConnectionTarget(environment.entry.target),
+            )
+            .map((environment) => (
+              <SettingsRow
+                key={environment.environmentId}
+                title={environment.label}
+                description="One character or emoji, shown on this device. Clear it to use the machine icon."
+                control={
+                  <EnvironmentGlyphInput
+                    environmentId={environment.environmentId}
+                    label={environment.label}
+                  />
+                }
+              />
+            ))}
         </SettingsSection>
       ) : null}
       <SettingsSection

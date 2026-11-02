@@ -38,6 +38,7 @@ export function EnvironmentGlyphInput({
           setDraft(value);
           if (!composing.current) setGlyph(value);
         }}
+        onFocus={(event) => event.currentTarget.select()}
         onCompositionStart={() => {
           composing.current = true;
         }}
