@@ -9,12 +9,7 @@ import * as AsyncResult from "effect/reactivity/AsyncResult";
 import * as Atom from "effect/reactivity/Atom";
 import { useContext, useState } from "react";
 import { useStableCallback } from "~/hooks/useStableCallback";
-import {
-  getRenderablePatch,
-  resolveFileDiffPath,
-  type DiffThemeName,
-  type RenderablePatch,
-} from "~/lib/diffRendering";
+import { getRenderablePatch, resolveFileDiffPath, type RenderablePatch } from "~/lib/diffRendering";
 import { reviewEnvironment } from "~/state/review";
 
 const filePathCollator = new Intl.Collator(undefined, {
@@ -38,7 +33,7 @@ export function useReviewFilePatches({
   source: ReviewDiffPreviewSource | null;
   baseRef: string | null;
   ignoreWhitespace: boolean;
-  theme: DiffThemeName;
+  theme: "light" | "dark";
   /** The preview the file list came from; a newer revision of it refreshes loaded patches. */
   previewInput: ReviewDiffPreviewInput | undefined;
   preview: RenderablePatch | null;
@@ -220,7 +215,7 @@ function sortedReviewFiles(source: ReviewDiffPreviewSource | null) {
 type ReviewPatchTarget = Parameters<typeof reviewEnvironment.diffFilePatch>[0];
 
 const parsedPatchAtom = Atom.family((key: string) => {
-  const [theme, target] = JSON.parse(key) as [DiffThemeName, ReviewPatchTarget];
+  const [theme, target] = JSON.parse(key) as ["light" | "dark", ReviewPatchTarget];
   return Atom.map(reviewEnvironment.diffFilePatch(target), (result) =>
     AsyncResult.map(result, (source) => {
       let patch = getRenderablePatch(source.diff, `diff-panel:${theme}`, {
@@ -240,7 +235,7 @@ const parsedPatchAtom = Atom.family((key: string) => {
 
 const reviewPatchesAtom = Atom.family((key: string) => {
   const [theme, entries] = JSON.parse(key) as [
-    DiffThemeName,
+    "light" | "dark",
     ReadonlyArray<readonly [number, ReviewPatchTarget]>,
   ];
   const parsed = entries.map(

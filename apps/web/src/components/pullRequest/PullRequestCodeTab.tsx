@@ -497,7 +497,7 @@ function PullRequestCodeTab({
   const parsedSlices = loadedSlices.map((slice) =>
     parseSlice(
       slice,
-      `pull-request:${scopeKey}:${diffThemeName}:${ignoreWhitespace}:${slice.cursor ?? "first"}:${fnv1a32(slice.patch)}`,
+      `pull-request:${scopeKey}:${resolvedTheme}:${ignoreWhitespace}:${slice.cursor ?? "first"}:${fnv1a32(slice.patch)}`,
       ignoreWhitespace,
     ),
   );

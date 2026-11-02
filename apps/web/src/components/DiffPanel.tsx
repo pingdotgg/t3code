@@ -479,7 +479,7 @@ export default function DiffPanel({
       : null;
   const renderablePatch = getRenderablePatch(
     lazySource ? undefined : selectedPatch,
-    `diff-panel:${diffThemeName}`,
+    `diff-panel:${resolvedTheme}`,
     {
       compactPartialHunkOffsets: isGitSelection,
       ...(toolCallSelection ? { ignoreWhitespace: diffIgnoreWhitespace } : {}),
@@ -582,7 +582,7 @@ export default function DiffPanel({
     baseRef:
       selectedCommitSha !== null ? selectedBaseRef : (lazySource?.baseRef ?? selectedBaseRef),
     ignoreWhitespace: diffIgnoreWhitespace,
-    theme: diffThemeName,
+    theme: resolvedTheme,
     previewInput: branchDiffPreviewInput,
     preview: renderablePatch,
   });
