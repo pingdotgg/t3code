@@ -271,7 +271,6 @@ describe("AcpSessionRuntime", () => {
           }),
         ),
       );
-      // A detached cmd.exe shim gets its own console, so the agent never sees T3's stdio pipes.
       expect(detached.map(Boolean)).toEqual([false]);
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
