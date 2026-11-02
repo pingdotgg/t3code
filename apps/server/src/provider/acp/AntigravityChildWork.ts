@@ -106,7 +106,8 @@ function protoFields(bytes: Uint8Array): ReadonlyArray<readonly [number, Uint8Ar
   return fields;
 }
 
-const textDecoder = new TextDecoder("utf-8", { fatal: true });
+// Keep a leading byte order mark: T3 stores launch text with it.
+const textDecoder = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });
 const messages = (bytes: Uint8Array, field: number) =>
   protoFields(bytes).flatMap(([number, value]) => (number === field ? [value] : []));
 const message = (bytes: Uint8Array | undefined, field: number) =>
@@ -256,8 +257,9 @@ function findInvokeRecord(
     if (idx === undefined) {
       if (
         sibling.title === ANTIGRAVITY_SUBAGENT_BATCH_TITLE ||
-        isCutAntigravityToolText(sibling.title ?? "") ||
-        (isCutAntigravityToolText(sibling.prompt) && sibling.title === input.launch.title)
+        (sibling.title !== null && isCutAntigravityToolText(sibling.title)) ||
+        (isCutAntigravityToolText(sibling.prompt) &&
+          (sibling.title === null || sibling.title === input.launch.title))
       )
         return undefined;
       continue;

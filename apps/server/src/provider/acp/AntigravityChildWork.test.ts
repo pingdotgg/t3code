@@ -97,6 +97,8 @@ it.layer(NodeServices.layer)("readAntigravityChildWork", (it) => {
     Effect.gen(function* () {
       const other = { role: "Test Runner", prompt: "Run the tests" };
       const long = { role: "Long Reader", prompt: `Read this:\n${"x".repeat(9_000)}` };
+      // A role's leading byte order mark is part of its text.
+      const marked = { role: "\uFEFFMarked", prompt: "Check the mark" };
       const { profile } = yield* makeProfile({
         steps: (logUri) => [
           [
@@ -108,6 +110,11 @@ it.layer(NodeServices.layer)("readAntigravityChildWork", (it) => {
             8,
             127,
             invokeStep({ callId: "w", launches: [long], children: [{ id: CHILD, logUri }] }),
+          ],
+          [
+            10,
+            127,
+            invokeStep({ callId: "v", launches: [marked], children: [{ id: CHILD, logUri }] }),
           ],
           [
             4,
@@ -135,6 +142,10 @@ it.layer(NodeServices.layer)("readAntigravityChildWork", (it) => {
       );
       const longMatch = yield* read(profile, opaque, describeAntigravitySubagentLaunches(stored!));
       expect(longMatch.map((child) => child.prompt)).toEqual([long.prompt]);
+      expect(
+        yield* read(profile, opaque, describeAntigravitySubagentLaunches([marked])),
+      ).toHaveLength(1);
+      expect(yield* read(profile, opaque, { title: "Marked", prompt: marked.prompt })).toEqual([]);
       expect(yield* read(profile, opaque, describeAntigravitySubagentLaunches([other]))).toEqual(
         [],
       );
@@ -163,6 +174,7 @@ it.layer(NodeServices.layer)("readAntigravityChildWork", (it) => {
         // Its stored launch was cut, so it may be this same launch.
         { nativeTaskId: "cut", title: LAUNCH.role, prompt: "[Earlier output truncated]\n\nmarker" },
         { nativeTaskId: "cut", title: "[Earlier output truncated]\n\nReader", prompt: "x" },
+        { nativeTaskId: "cut", title: null, prompt: "[Earlier output truncated]\n\nx" },
       ]) {
         expect(yield* read(profile, opaque, launch, [sibling])).toEqual([]);
       }

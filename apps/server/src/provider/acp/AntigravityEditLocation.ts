@@ -163,7 +163,12 @@ export function antigravityEditPatch(input: {
     )
       return ANTIGRAVITY_EDIT_DIFF_OMITTED;
     const hunks = snippetHunks(chunk.TargetContent, chunk.ReplacementContent, budget);
-    if (hunks === undefined) return ANTIGRAVITY_EDIT_DIFF_OMITTED;
+    // A change to the line ending alone leaves no LF hunk to show.
+    if (
+      hunks === undefined ||
+      (hunks.length === 0 && chunk.TargetContent !== chunk.ReplacementContent)
+    )
+      return ANTIGRAVITY_EDIT_DIFF_OMITTED;
     budget -= changedLines(hunks);
     if (budget < 0) return ANTIGRAVITY_EDIT_DIFF_OMITTED;
     let start: number | undefined;

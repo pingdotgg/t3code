@@ -87,6 +87,16 @@ describe("antigravityEditPatch", () => {
         readPreEditFile: () => crlf,
       }),
     ).toBe(expected);
+    // A change to the line ending alone has no LF hunk to place.
+    const endingOnly = {
+      TargetContent: "const target = 10;\r\n",
+      ReplacementContent: "const target = 10;\n",
+    };
+    for (const readPreEditFile of [() => crlf, undefined]) {
+      expect(antigravityEditPatch({ path, rawInput: endingOnly, readPreEditFile })).toBe(
+        ANTIGRAVITY_EDIT_DIFF_OMITTED,
+      );
+    }
     // A multi-line target written with LF still finds its lines in a CRLF file.
     expect(
       antigravityEditPatch({
