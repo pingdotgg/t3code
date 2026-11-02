@@ -17,16 +17,23 @@ import {
 const encodeUsageLimitSourceSnapshot = Schema.encodeSync(UsageLimitSourceSnapshot);
 
 describe("Command Code rolling quota windows", () => {
-  it("reports subscription monthly credits separately from purchased credits", () => {
+  it("derives current billing-cycle monthly usage from remaining and consumed credits", () => {
     assert.deepStrictEqual(
       commandCodeMonthlyWindow(
-        { credits: { monthlyCredits: 20, monthlyCreditsTotal: 30, purchasedCredits: 100 } },
+        { credits: { monthlyCredits: 20, purchasedCredits: 100, freeCredits: 40 } },
         {
           data: {
             status: "active",
-            planId: "individual-pro",
+            planId: "individual-goat",
+            currentPeriodStart: "2026-11-01T00:00:00.000Z",
             currentPeriodEnd: "2026-12-01T00:00:00.000Z",
           },
+        },
+        {
+          periodBasis: "billing-period",
+          periodStart: "2026-11-01T00:00:00.000Z",
+          totalMonthlyCredits: 10,
+          totalCredits: 90,
         },
       ),
       {
@@ -38,11 +45,12 @@ describe("Command Code rolling quota windows", () => {
       },
     );
   });
-  it("does not guess monthly credits for unknown, inactive or malformed plans", () => {
+  it("does not guess monthly credits for inactive, mismatched or malformed billing periods", () => {
     const credits = { credits: { monthlyCredits: 20, monthlyCreditsTotal: 30 } };
     const active = {
       status: "active",
       planId: "individual-pro",
+      currentPeriodStart: "2026-11-01T00:00:00.000Z",
       currentPeriodEnd: "2026-12-01T00:00:00.000Z",
     };
     for (const data of [
@@ -65,6 +73,56 @@ describe("Command Code rolling quota windows", () => {
       ),
     );
     assert.isNull(commandCodeMonthlyWindow({}, { data: active }));
+    const noTotal = { credits: { monthlyCredits: 20 } };
+    const currentCycle = {
+      periodBasis: "billing-period",
+      periodStart: "2026-11-01T00:00:00.000Z",
+      totalMonthlyCredits: 10,
+    };
+    assert.isNull(
+      commandCodeMonthlyWindow(
+        noTotal,
+        { data: active },
+        { ...currentCycle, totalMonthlyCredits: -1 },
+      ),
+    );
+    assert.isNull(
+      commandCodeMonthlyWindow(
+        noTotal,
+        { data: active },
+        { ...currentCycle, totalMonthlyCredits: Number.NaN },
+      ),
+    );
+    assert.isNull(
+      commandCodeMonthlyWindow(
+        noTotal,
+        { data: active },
+        { ...currentCycle, periodBasis: "calendar-month" },
+      ),
+    );
+    assert.isNull(
+      commandCodeMonthlyWindow(
+        noTotal,
+        { data: active },
+        { ...currentCycle, periodStart: "2026-10-01T00:00:00.000Z" },
+      ),
+    );
+    assert.isNull(commandCodeMonthlyWindow(noTotal, { data: active }, { totalCost: 10 }));
+    assert.isNull(
+      commandCodeMonthlyWindow(
+        { credits: { monthlyCredits: 0 } },
+        { data: active },
+        { ...currentCycle, totalMonthlyCredits: 0 },
+      ),
+    );
+    assert.deepStrictEqual(
+      commandCodeMonthlyWindow(
+        noTotal,
+        { data: { ...active, planId: "unknown-new-plan" } },
+        currentCycle,
+      )?.usedPercent,
+      (10 / 30) * 100,
+    );
   });
 
   it("uses API reported usage and cap rather than plan or token estimates", () => {
@@ -159,14 +217,25 @@ describe("Command Code rolling quota windows", () => {
                 data: {
                   status: "active",
                   planId: "individual-pro",
+                  currentPeriodStart: "2026-11-01T00:00:00.000Z",
                   currentPeriodEnd: "2026-12-01T00:00:00.000Z",
                 },
+              }),
+            );
+          if (request.url.includes("/alpha/usage/summary"))
+            return HttpClientResponse.fromWeb(
+              request,
+              Response.json({
+                periodBasis: "billing-period",
+                periodStart: "2026-11-01T00:00:00.000Z",
+                totalMonthlyCredits: 15,
+                totalCredits: 100,
               }),
             );
           return HttpClientResponse.fromWeb(
             request,
             Response.json({
-              credits: { monthlyCredits: 15, monthlyCreditsTotal: 30 },
+              credits: { monthlyCredits: 15, purchasedCredits: 200 },
               windowLimits: {
                 fiveHour: { used: 3, cap: 14, resetAt: 1793509560432 },
                 weekly: { used: 7, cap: 35, resetAt: 1794078357384 },
@@ -191,6 +260,7 @@ describe("Command Code rolling quota windows", () => {
           "https://api.commandcode.ai/alpha/whoami?limits=1",
           "https://api.commandcode.ai/alpha/billing/credits?orgId=org-for-test",
           "https://api.commandcode.ai/alpha/billing/subscriptions?orgId=org-for-test",
+          "https://api.commandcode.ai/alpha/usage/summary?orgId=org-for-test",
         ]);
       } finally {
         yield* Effect.promise(() => NodeFSP.rm(dir, { recursive: true, force: true }));

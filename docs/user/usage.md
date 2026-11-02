@@ -168,10 +168,13 @@ refresh provider status.
 
 Command Code reports its 5-hour and weekly usage when the Command Code provider is configured
 locally and `~/.commandcode/auth.json` contains an API key. Supported active subscription plans
-may also report a monthly plan-credit allowance and reset date, separate from purchased credits,
-**only if the quota API explicitly includes the monthly allowance and remaining balance**. A
-monthly percentage is withheld when the service does not provide a reliable denominator;
-published per-model usage-value estimates are not interchangeable with credit balance units.
+also report a **monthly plan-credit usage meter** and billing-cycle reset date when the API
+provides both a remaining plan-credit balance and consumed monthly credits for that same cycle.
+T3 reads the CLI's `/alpha/usage/summary` billing-period totals and derives the consumed
+percentage as `consumed / (remaining + consumed)`; purchased and free credits do not count.
+If the monthly summary is unavailable, belongs to a different cycle, or does not report
+monthly-credit consumption, the monthly percentage is withheld rather than estimated from
+published per-model usage values. The 5-hour and weekly windows remain independent.
 These readings use the local CLI's authenticated service API, which may change across Command Code
 versions. Unavailable or unrecognized quotas are omitted rather than guessed. The Command Code
 symbol shown in web and mobile Usage and for known ACP instances uses the official logomark from

@@ -47,14 +47,32 @@ function resetTimestamp(value: unknown): string | undefined {
 export function commandCodeMonthlyWindow(
   creditsPayload: unknown,
   subscriptionPayload: unknown,
+  summaryPayload?: unknown,
 ): ServerProviderUsageWindow | null {
   const credits = object(object(creditsPayload)?.credits);
   const subscription = object(object(subscriptionPayload)?.data);
   const remaining = validNumber(credits?.monthlyCredits);
-  // Published model-dependent "usage value" figures are not a guaranteed
-  // denominator for the remaining monthly credit balance. Use only the
-  // explicit credit allowance, if the CLI API returns one.
-  const allowance = validNumber(credits?.monthlyCreditsTotal);
+  const summary = object(summaryPayload);
+  const explicitAllowance = validNumber(credits?.monthlyCreditsTotal);
+  const periodStart = resetTimestamp(subscription?.currentPeriodStart);
+  const summaryPeriodStart = resetTimestamp(summary?.periodStart);
+  const consumed = validNumber(summary?.totalMonthlyCredits);
+  // The CLI's billing-period summary reports consumed *monthly* credits,
+  // excluding purchased/free credits. Reconstruct the effective allowance
+  // from consumed + remaining only when both describe the same billing period.
+  // Never use the published per-model usage-value allowances as a denominator.
+  const matchedBillingCycle =
+    summary?.periodBasis === "billing-period" &&
+    periodStart !== undefined &&
+    periodStart === summaryPeriodStart &&
+    consumed !== null &&
+    consumed >= 0;
+  const allowance =
+    explicitAllowance !== null
+      ? explicitAllowance
+      : matchedBillingCycle && remaining !== null
+        ? remaining + consumed
+        : null;
   const resetsAt = resetTimestamp(subscription?.currentPeriodEnd);
   if (
     subscription?.status !== "active" ||
@@ -63,6 +81,7 @@ export function commandCodeMonthlyWindow(
     remaining === null ||
     remaining < 0 ||
     remaining > allowance ||
+    !Number.isFinite(allowance) ||
     !resetsAt
   )
     return null;
@@ -162,18 +181,19 @@ export const readCommandCodeLimitSource = Effect.fn("readCommandCodeLimitSource"
         typeof organizationId === "string" && organizationId.length > 0
           ? "?orgId=" + encodeURIComponent(organizationId)
           : "";
-      // Both endpoints depend only on whoami; fetch them together so a slow
-      // optional subscription lookup cannot serialize the quota refresh.
-      const [credits, subscription] = yield* Effect.all(
+      // All three endpoints depend only on whoami; fetch together to keep
+      // the total refresh bounded even when optional billing data is slow.
+      const [credits, subscription, summary] = yield* Effect.all(
         [
           get(ORIGIN + "/alpha/billing/credits" + query),
           get(ORIGIN + "/alpha/billing/subscriptions" + query).pipe(
             Effect.orElseSucceed(() => null),
           ),
+          get(ORIGIN + "/alpha/usage/summary" + query).pipe(Effect.orElseSucceed(() => null)),
         ],
-        { concurrency: 2 },
+        { concurrency: 3 },
       );
-      return { credits, subscription };
+      return { credits, subscription, summary };
     }).pipe(
       Effect.timeout("12 seconds"),
       Effect.orElseSucceed(() => null),
@@ -182,7 +202,11 @@ export const readCommandCodeLimitSource = Effect.fn("readCommandCodeLimitSource"
     if (response === null)
       return { ...base, accounts: [], error: "Command Code quota API is unavailable." };
     const windows = commandCodeWindows(response.credits);
-    const monthly = commandCodeMonthlyWindow(response.credits, response.subscription);
+    const monthly = commandCodeMonthlyWindow(
+      response.credits,
+      response.subscription,
+      response.summary,
+    );
     if (monthly) windows.push(monthly);
     if (
       windows.length === 0 &&
