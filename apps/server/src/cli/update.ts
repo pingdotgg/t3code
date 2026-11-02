@@ -16,7 +16,13 @@ import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import { Argument, Command, Flag, GlobalFlag, Prompt } from "effect/cli";
-import { FetchHttpClient, HttpClient, HttpClientRequest, HttpClientResponse } from "effect/http";
+import {
+  FetchHttpClient,
+  HttpClient,
+  HttpClientError,
+  HttpClientRequest,
+  HttpClientResponse,
+} from "effect/http";
 
 import packageJson from "../../package.json" with { type: "json" };
 import * as BootService from "../cloud/bootService.ts";
@@ -485,7 +491,8 @@ export const runUpdate = Effect.fn("cli.update.run")(function* (input: {
       (error): error is PinnedRuntimeInstallError =>
         error._tag === "PinnedRuntimeInstallError" &&
         error.step.startsWith("downloading the t3 release checksums") &&
-        String(error.cause).includes("404"),
+        HttpClientError.isHttpClientError(error.cause) &&
+        error.cause.response?.status === 404,
       () =>
         Effect.fail(
           new CliUpdateError({

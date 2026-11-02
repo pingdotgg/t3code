@@ -10,7 +10,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as TestClock from "effect/testing/TestClock";
-import { HttpClient, HttpClientResponse } from "effect/http";
+import { HttpClient, HttpClientError, HttpClientResponse } from "effect/http";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import { afterEach, vi } from "vite-plus/test";
 
@@ -114,6 +114,83 @@ it.layer(NodeServices.layer)("t3 update under a managed policy", (it) => {
         assert.equal(
           error.message,
           "Example Corp manages T3 Code updates. Only stable releases can be installed.",
+        );
+      }
+    }),
+  );
+});
+
+it.layer(NodeServices.layer)("t3 update download failures", (it) => {
+  const updateFailure = (httpClient: HttpClient.HttpClient) =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-update-" });
+      return yield* runUpdate({
+        baseDir,
+        logsDir: baseDir,
+        serverRuntimeStatePath: path.join(baseDir, "server-runtime.json"),
+        channel: undefined,
+        // The checksums URL carries the version, so it contains "404" whatever the failure.
+        requestedVersion: "1.2.3-nightly.20260404.1",
+        allowDowngrade: true,
+        assumeYes: true,
+      }).pipe(
+        Effect.flip,
+        Effect.provideService(HostProcess.Platform, "linux"),
+        Effect.provideService(HostProcess.Architecture, "x64"),
+        Effect.provide(
+          Layer.mergeAll(
+            ManagedPolicy.layerTest(),
+            Layer.mock(BootService.BootService, {
+              status: Effect.succeed({
+                supported: false,
+                installed: false,
+                current: false,
+                unitPath: "",
+                logPath: "",
+              }),
+            }),
+            Layer.mock(ProcessRunner.ProcessRunner, {}),
+            Layer.succeed(HttpClient.HttpClient, httpClient),
+          ),
+        ),
+        Effect.scoped,
+      );
+    });
+
+  const respondWith = (status: number) =>
+    HttpClient.make((request) =>
+      Effect.succeed(HttpClientResponse.fromWeb(request, new Response("", { status }))),
+    );
+
+  it.effect("reports a missing release when the checksums return 404", () =>
+    Effect.gen(function* () {
+      const error = yield* updateFailure(respondWith(404));
+      assert.equal(
+        error.message,
+        "No release archive was published for t3@1.2.3-nightly.20260404.1.",
+      );
+    }),
+  );
+
+  it.effect("does not call a failed download a missing release", () =>
+    Effect.gen(function* () {
+      const reset = HttpClient.make((request) =>
+        Effect.fail(
+          new HttpClientError.HttpClientError({
+            reason: new HttpClientError.TransportError({
+              request,
+              cause: new Error("read ECONNRESET"),
+            }),
+          }),
+        ),
+      );
+      for (const httpClient of [reset, respondWith(503)]) {
+        const error = yield* updateFailure(httpClient);
+        assert.equal(
+          error.message,
+          "Pinned runtime install failed while downloading the t3 release checksums.",
         );
       }
     }),
