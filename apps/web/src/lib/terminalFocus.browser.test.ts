@@ -108,7 +108,7 @@ function mountThread(threadId: string, environmentId = "env") {
 }
 
 describe("thread focus restoration", () => {
-  it.each(["composer", "drawer", "panel"] as const)(
+  it.each(["composer", "drawer", "panel", "remounted composer"] as const)(
     "restores %s focus when returning to a thread with both terminals open",
     (control) => {
       using thread = mountThread(`return-${control}`);
@@ -116,29 +116,35 @@ describe("thread focus restoration", () => {
       using panel = thread.mountTerminal("panel");
       const leave = thread.enter();
       if (control === "panel") document.body.append(panel.input);
+      const remount = control === "remounted composer";
       const initial =
-        control === "composer"
+        control === "composer" || remount
           ? thread.composer
           : control === "drawer"
             ? drawer.input
             : panel.input;
       initial.focus();
       expect(document.activeElement).toBe(initial);
+      if (remount) focusTerminal(thread.ref, "not-ready");
       leave();
       thread.root.hidden = true;
-      focusTerminalOnThreadEnter(
-        scopeThreadRef(EnvironmentId.make("env"), ThreadId.make("other-thread")),
-      )();
+      if (!remount)
+        focusTerminalOnThreadEnter(
+          scopeThreadRef(EnvironmentId.make("env"), ThreadId.make("other-thread")),
+        )();
       drawer[Symbol.dispose]();
       panel[Symbol.dispose]();
-      thread.root.hidden = false;
-      using remountedDrawer = thread.mountTerminal("drawer");
-      using remountedPanel = thread.mountTerminal("panel");
+      if (remount) thread.root.remove();
+      using remountedThread = remount ? mountThread(`return-${control}`) : undefined;
+      const returnedThread = remountedThread ?? thread;
+      returnedThread.root.hidden = false;
+      using remountedDrawer = returnedThread.mountTerminal("drawer");
+      using remountedPanel = returnedThread.mountTerminal("panel");
       if (control === "panel") document.body.append(remountedPanel.input);
-      using _leave = { [Symbol.dispose]: thread.enter() };
+      using _leave = { [Symbol.dispose]: returnedThread.enter() };
       const expected =
-        control === "composer"
-          ? thread.composer
+        control === "composer" || remount
+          ? returnedThread.composer
           : control === "drawer"
             ? remountedDrawer.input
             : remountedPanel.input;

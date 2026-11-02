@@ -37,8 +37,8 @@ let pendingFocus: { readonly threadKey: string; readonly terminalId: string } | 
 // thread's viewports mount and consume the handler's request in the commit's
 // layout phase, before ChatView's thread-enter effect runs.
 let enteredThreadKey: string | null = null;
-// Survives effect cleanup so drawer visibility updates remain distinct from navigation.
-let lastEnteredThreadKey: string | null = null;
+// Drawer visibility reruns reuse the root; a remounted chat must not inherit parked requests.
+const lastEnteredThreadByRoot = new WeakMap<HTMLElement, string>();
 let navigationRequestThreadKey: string | null = null;
 
 function isPending(threadKey: string, terminalId: string): boolean {
@@ -125,9 +125,11 @@ export function focusTerminalOnThreadEnter(
   const threadKey = scopedThreadKey(threadRef);
   const requestedByHandler =
     navigationRequestThreadKey === threadKey ||
-    (lastEnteredThreadKey === threadKey && pendingFocus?.threadKey === threadKey);
+    (content !== undefined &&
+      lastEnteredThreadByRoot.get(content.root) === threadKey &&
+      pendingFocus?.threadKey === threadKey);
   if (!requestedByHandler) pendingFocus = null;
-  lastEnteredThreadKey = threadKey;
+  if (content) lastEnteredThreadByRoot.set(content.root, threadKey);
   navigationRequestThreadKey = null;
   enteredThreadKey = threadKey;
   const previous = lastThreadFocus.get(threadKey);
