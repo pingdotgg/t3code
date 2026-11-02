@@ -549,21 +549,23 @@ describe("what the list could not read", () => {
       [ENV_1, "Laptop"],
       [ENV_2, "Box"],
     ]);
-    for (const order of [
-      [ENV_2, ENV_1],
-      [ENV_1, ENV_2],
-    ] as const) {
-      const answers = {
-        [ENV_1]: answer(
-          [provider("github.com", "No GitHub credential on the server.")],
-          [
-            ["p1", "t3code", "pingdotgg/t3code could not be read."],
-            ["p2", "uploadthing", "pingdotgg/uploadthing could not be read."],
-          ],
-        ),
-        [ENV_2]: answer([provider("github.com", null)], []),
-      };
-      const merged = mergePullRequestLists(order.map((id) => [id, answers[id]] as const))!;
+    const unreadable = [
+      ENV_1,
+      answer(
+        [provider("github.com", "No GitHub credential on the server.")],
+        [
+          ["p1", "t3code", "pingdotgg/t3code could not be read."],
+          ["p2", "uploadthing", "pingdotgg/uploadthing could not be read."],
+        ],
+      ),
+    ] as const;
+    const readable = [ENV_2, answer([provider("github.com", null)], [])] as const;
+
+    for (const answers of [
+      [readable, unreadable],
+      [unreadable, readable],
+    ]) {
+      const merged = mergePullRequestLists(answers)!;
 
       expect(pullRequestListNotices(merged, projects, labels).map((notice) => notice.text)).toEqual(
         ["Laptop: github.com could not be read. No GitHub credential on the server."],
