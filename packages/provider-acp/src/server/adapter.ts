@@ -3007,9 +3007,11 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           context: ActiveAcpTurn,
           reported: AcpAdapterV2SubagentUpdate,
         ) {
-          // See stoppedToolStatus: after Stop, a failed subagent was interrupted.
+          // Providers with cancellation detection already classify their subagent failures.
           const update: AcpAdapterV2SubagentUpdate =
-            context.interrupted && reported.status === "failed"
+            flavor.isCancelledToolCall === undefined &&
+            context.interrupted &&
+            reported.status === "failed"
               ? { ...reported, status: "interrupted" }
               : reported;
           // Hydration uses a new toolCallId but references the original child by subagent_id or task id.

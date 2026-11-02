@@ -5332,6 +5332,19 @@ describe("AcpAdapterV2", () => {
         flavor: {
           driver: ACP_TEST_DRIVER,
           capabilities: AcpProviderCapabilitiesV2,
+          extractSubagentUpdate: (tool) =>
+            tool.toolCallId === "native-failed-tool"
+              ? {
+                  nativeTaskId: tool.toolCallId,
+                  childSessionId: null,
+                  prompt: "Run a command",
+                  title: null,
+                  model: null,
+                  status: tool.status === "failed" ? "failed" : "running",
+                  result: tool.status === "failed" ? "Permission denied" : null,
+                  suppressNormalTool: tool.status === "failed" ? false : undefined,
+                }
+              : undefined,
           isCancelledToolCall: Schema.is(
             Schema.Struct({
               update: Schema.Struct({ toolCallId: Schema.Literal("native-cancel-tool") }),
@@ -5437,6 +5450,14 @@ describe("AcpAdapterV2", () => {
         )
         .at(-1);
       assert.equal(failure?.status, "failed");
+      const subagent = untilTerminal
+        .flatMap((event) =>
+          event.type === "turn_item.updated" && event.turnItem.type === "subagent"
+            ? [event.turnItem]
+            : [],
+        )
+        .at(-1);
+      assert.equal(subagent?.status, "failed");
       assert.include(
         failure?.type === "command_execution" ? failure.output : "",
         "Permission denied",
