@@ -8,6 +8,7 @@ import {
 import {
   AuthOrchestrationOperateScope,
   DEFAULT_BROWSER_PROFILE_ID,
+  INCOGNITO_BROWSER_PROFILE_ID,
   FILL_PREVIEW_VIEWPORT,
   type PreviewAnnotationPayload,
   type ScopedThreadRef,
@@ -231,6 +232,7 @@ export function PreviewView({
     Boolean(previewBridge) &&
     snapshot !== null &&
     runtimeTabId !== null &&
+    activeProfileId !== INCOGNITO_BROWSER_PROFILE_ID &&
     (!serverOwnsRendering || nativeServerTab) &&
     (primaryEnvironmentId === null || threadRef.environmentId === primaryEnvironmentId);
   const panelRect = useBrowserSurfaceStore((state) =>

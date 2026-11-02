@@ -35,7 +35,8 @@ describe("wizard target selection", () => {
       kind: "new",
     });
     expect(initialTargetSelection(false, profiles, "incognito")).toEqual({
-      kind: "new",
+      kind: "existing",
+      profileId: "default",
     });
   });
 
