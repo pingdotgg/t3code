@@ -93,6 +93,7 @@ import { useCodeViewFileReveal } from "../diffs/useCodeViewFileReveal";
 import {
   DiffCursorOutline,
   DiffSingleFileToggle,
+  DiffViewedCount,
   DiffViewedToggle,
 } from "../diffs/DiffReviewControls";
 import {
@@ -710,7 +711,7 @@ function PullRequestCodeTab({
     setViewed: (file, viewed) => {
       if (filesViewedEnabled) setFileViewed(file.fileKey, viewed, false);
     },
-    revealFile: (file) => codeViewReveal.request(file.fileKey),
+    revealFile: (file, align) => codeViewReveal.request(file.fileKey, align),
     beginComment: (fileKey, range) => {
       const item = items.find((candidate) => candidate.id === fileKey);
       if (item) beginComment(range, { item });
@@ -1135,7 +1136,10 @@ function PullRequestCodeTab({
           {filesViewed.enabled && files.length > 0 ? (
             <span className="flex min-w-0 items-center gap-1 tabular-nums">
               <span className="shrink-0">
-                {filePaths.filter(isFileViewed).length} / {files.length}
+                <DiffViewedCount
+                  viewed={filePaths.filter(isFileViewed).length}
+                  total={files.length}
+                />
               </span>
               <span className="truncate">
                 {viewedFilesStore === "environment" ? `viewed in ${APP_BASE_NAME}` : "viewed"}

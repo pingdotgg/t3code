@@ -7,6 +7,7 @@ import {
   DiffReviewCursorContext,
   useDiffReviewCursorFilePath,
   useDiffReviewKeyboard,
+  useDiffReviewSelectedLines,
 } from "./useDiffReviewKeyboard";
 
 vi.mock("~/state/server", async () => {
@@ -21,10 +22,12 @@ const file = {
   fileDiff: parseDiffFromFile({ name: "a.ts", contents: "a\n" }, { name: "a.ts", contents: "b\n" }),
   rendered: true,
 };
+const otherFile = { ...file, fileKey: "b", filePath: "b.ts" };
 
 function CursorFile() {
   const filePath = useDiffReviewCursorFilePath();
-  return filePath === null ? null : <p>Cursor on {filePath}</p>;
+  const onLines = useDiffReviewSelectedLines() !== null;
+  return filePath === null ? null : <p>Cursor on {onLines ? `lines of ${filePath}` : filePath}</p>;
 }
 
 function Panel(props: {
@@ -33,11 +36,12 @@ function Panel(props: {
   reveals?: string[];
   renders?: string[];
   hidden?: boolean;
+  twoFiles?: boolean;
 }) {
   props.renders?.push("panel");
   const { rootRef, cursorStore, singleFile, toggleFileCollapsed } = useDiffReviewKeyboard({
     scopeKey: "scope",
-    files: [file],
+    files: props.twoFiles ? [file, otherFile] : [file],
     diffStyle: "unified",
     canLoadFullFiles: false,
     autoAdvanceOnViewed: false,
@@ -83,23 +87,23 @@ it("takes the keys from a clicked control and drops its focus ring", async () =>
   await userEvent.keyboard("j");
   expect(document.activeElement).toBe(screen.getByTestId("panel").element());
   await userEvent.click(screen.getByRole("button", { name: "Changes" }));
-  await userEvent.keyboard("{Enter} ");
+  await userEvent.keyboard("{Enter}");
 
-  expect(folds).toEqual(["a", "a"]);
+  expect(folds).toEqual(["a"]);
   expect(clicks).toEqual(["Changes", "Changes"]);
 });
 
-it("leaves only Enter and Space to a control reached with Tab", async () => {
+it("leaves Enter to a control reached with Tab", async () => {
   const folds: string[] = [];
   const clicks: string[] = [];
   await using screen = await render(<Panel folds={folds} clicks={clicks} />, options);
   screen.getByTestId("panel").element().focus();
   await userEvent.keyboard("j");
 
-  await userEvent.keyboard("{Tab}{Enter} ");
+  await userEvent.keyboard("{Tab}{Enter}");
 
   expect(folds).toEqual([]);
-  expect(clicks).toEqual(["Changes", "Changes"]);
+  expect(clicks).toEqual(["Changes"]);
   await userEvent.keyboard("j");
   expect(document.activeElement).toBe(screen.getByTestId("panel").element());
 });
@@ -152,4 +156,21 @@ it("returns to the full list when the single shown file is closed", async () => 
 
   await expect.element(screen.getByText("One file at a time")).not.toBeInTheDocument();
   expect(folds).toEqual(["a"]);
+});
+
+it("leaves a file's lines past either end", async () => {
+  const folds: string[] = [];
+  await using screen = await render(<Panel folds={folds} clicks={[]} twoFiles />, options);
+  screen.getByTestId("panel").element().focus();
+  await userEvent.keyboard("ji");
+  await expect.element(screen.getByText("Cursor on lines of a.ts")).toBeInTheDocument();
+
+  await userEvent.keyboard("k");
+  await expect.element(screen.getByText("Cursor on a.ts")).toBeInTheDocument();
+
+  await userEvent.keyboard("ijj");
+  const foldsBefore = [...folds];
+  await userEvent.keyboard("j");
+  await expect.element(screen.getByText("Cursor on b.ts")).toBeInTheDocument();
+  expect(folds).toEqual(foldsBefore);
 });

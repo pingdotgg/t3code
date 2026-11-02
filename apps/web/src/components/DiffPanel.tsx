@@ -75,6 +75,7 @@ import {
 import {
   DiffCursorOutline,
   DiffSingleFileToggle,
+  DiffViewedCount,
   DiffViewedToggle,
 } from "./diffs/DiffReviewControls";
 import {
@@ -721,13 +722,13 @@ export default function DiffPanel({
     viewerHandleRef.current = handle;
     codeViewReveal.attach(handle);
   });
-  const revealFileAt = (index: number) => {
+  const revealFileAt = (index: number, align?: "start" | "nearest") => {
     const file = renderableFileEntries[index];
     if (!file) return;
     if (lazySource && index >= settledFileCount) {
       requestFile(index);
     }
-    codeViewReveal.request(file.fileKey);
+    codeViewReveal.request(file.fileKey, align);
   };
   const reviewRef = useRef<AnnotatableCodeViewReview | null>(null);
   const { rootRef: reviewRootRef, ...review } = useDiffReviewKeyboard({
@@ -741,8 +742,11 @@ export default function DiffPanel({
     setCollapsed: setDiffFileCollapsed,
     isViewed: (file) => isFileViewed(file.fileDiff),
     setViewed: (file, viewed) => setFileViewed(file.fileDiff, viewed),
-    revealFile: (file) =>
-      revealFileAt(renderableFileEntries.findIndex(({ fileKey }) => fileKey === file.fileKey)),
+    revealFile: (file, align) =>
+      revealFileAt(
+        renderableFileEntries.findIndex(({ fileKey }) => fileKey === file.fileKey),
+        align,
+      ),
     beginComment: (fileKey, range) => reviewRef.current?.beginComment(fileKey, range),
   });
   const onPostRender = useStableCallback(() => {
@@ -1188,7 +1192,7 @@ export default function DiffPanel({
       >
         {shownFileEntries.length > 0 ? (
           <span className="mr-1 shrink-0 text-2xs text-muted-foreground tabular-nums">
-            {viewedFileCount} / {shownFileEntries.length} viewed
+            <DiffViewedCount viewed={viewedFileCount} total={shownFileEntries.length} /> viewed
           </span>
         ) : null}
         {codeViewFiles.length > 0 || (isGitSelection && selectedGitSource?.files?.length) ? (

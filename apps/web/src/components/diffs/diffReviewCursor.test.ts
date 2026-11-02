@@ -7,6 +7,7 @@ import {
   cursorFromSelectedRange,
   cursorSelectedRange,
   type DiffRow,
+  fileScrollAlign,
   fileToStartFrom,
   nearestGapExpansion,
   stepRow,
@@ -182,5 +183,18 @@ describe("file navigation", () => {
     expect(fileToStartFrom(placed, "c", view(1200))).toBeNull();
     expect(fileToStartFrom(placed, "d", view(1200))).toBeNull();
     expect(fileToStartFrom(placed, "d", view(1610))).toBeNull();
+  });
+
+  it("scrolls the least to a file that fits on screen and to the header of a taller one", () => {
+    const placed = [
+      { fileKey: "a", top: 0 },
+      { fileKey: "b", top: 32 },
+      { fileKey: "c", top: 400 },
+    ];
+    const view = { height: 300, contentEnd: 432 };
+    expect(fileScrollAlign(placed, "a", view)).toBe("nearest");
+    expect(fileScrollAlign(placed, "b", view)).toBe("start");
+    expect(fileScrollAlign(placed, "c", view)).toBe("nearest");
+    expect(fileScrollAlign(placed, "missing", view)).toBe("start");
   });
 });

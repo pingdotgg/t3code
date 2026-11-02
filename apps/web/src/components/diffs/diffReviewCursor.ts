@@ -176,6 +176,22 @@ export function fileToStartFrom(
   return inView;
 }
 
+/**
+ * How moving to a file scrolls: no further than it must while the whole file fits on screen,
+ * else to its header, since lining up a taller file's end would hide that header.
+ */
+export function fileScrollAlign(
+  placed: ReadonlyArray<PlacedFile>,
+  fileKey: string,
+  view: { readonly height: number; readonly contentEnd: number },
+): "nearest" | "start" {
+  const index = placed.findIndex((file) => file.fileKey === fileKey);
+  const file = placed[index];
+  if (!file) return "start";
+  const end = placed[index + 1]?.top ?? view.contentEnd;
+  return end - file.top <= view.height ? "nearest" : "start";
+}
+
 /** The neighbouring file, stopping at the ends; with no current file, the first. */
 export function adjacentFileKey(
   fileKeys: ReadonlyArray<string>,

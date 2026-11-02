@@ -76,12 +76,14 @@ On files:
 - `n` and `Shift+n` jump to the next or previous file you have not viewed.
 - After you scroll away from the current file, these keys start from the file on screen.
 - `v` marks the file viewed, which also folds it. Press it again to unmark.
-- Enter or `Space` folds or unfolds the file.
+- Enter folds or unfolds the file.
 - `f` shows only the current file. `j`, `k`, and `n` switch which file it shows.
+  Folding that file, or pressing `f` again, shows every file.
 
 On lines:
 
-- `j` and `k` move one line.
+- `j` and `k` move one line. `k` on the first line returns to the file, and `j`
+  on the last line moves on to the next file.
 - `Shift+j` and `Shift+k` show more of the unchanged lines below or above.
 - `c` comments on the line. In a pull request, that starts a review comment.
   After you send or cancel the comment, you are back on the line.
@@ -93,7 +95,8 @@ In the Diff panel, viewed marks belong to this device and thread, and a file tha
 changes after you view it shows as not viewed again. In a pull request, `v` sets
 the same marks as the Viewed checkbox; see
 [Mark files as viewed](./source-control.md#mark-files-as-viewed). To jump to the next unviewed file after each
-mark, turn on **Settings → Diffs → Auto-advance after marking viewed**.
+mark, turn on **Settings → Diffs → Auto-advance after marking viewed**. Once every
+file is viewed, the count above the diff reads **All viewed**.
 
 Change any of these keys in **Settings → Keybindings** under the **Diff**
 commands. Showing more unchanged lines needs the full files, so it is not

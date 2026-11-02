@@ -25,6 +25,7 @@ import {
   cursorSelectedRange,
   type DiffReviewCursor,
   type DiffRowRef,
+  fileScrollAlign,
   fileToStartFrom,
   nearestGapExpansion,
   stepRow,
@@ -65,6 +66,8 @@ const REPEATABLE_COMMANDS: ReadonlySet<DiffReviewCommand> = new Set([
 
 const NO_EXPANSIONS: ReadonlyMap<number, HunkExpansionRegion> = new Map();
 const SINGLE_FILE_STORAGE_KEY = "t3code.diffSingleFile";
+// The viewer's 100 lines per step pushes the cursor far off screen; a small step stays readable.
+const KEYBOARD_EXPANSION_LINES = 20;
 
 const CONTROL_SELECTOR =
   'button, a[href], input, select, [role="button"], [role="checkbox"], [role="switch"]';
@@ -153,8 +156,8 @@ interface DiffReviewKeyboardInput<Annotation> {
   readonly setCollapsed: (fileKey: string, collapsed: boolean) => void;
   readonly isViewed: (file: DiffReviewFile) => boolean;
   readonly setViewed: (file: DiffReviewFile, viewed: boolean) => void;
-  /** Loads the file if needed and scrolls its header into view. */
-  readonly revealFile: (file: DiffReviewFile) => void;
+  /** Loads the file if needed and scrolls it into view. */
+  readonly revealFile: (file: DiffReviewFile, align?: "start" | "nearest") => void;
   readonly beginComment: (fileKey: string, range: SelectedLineRange) => void;
 }
 
@@ -242,37 +245,53 @@ export function useDiffReviewKeyboard<Annotation>(input: DiffReviewKeyboardInput
     pendingScrollRef.current = null;
     viewer.scrollTo(target);
   });
-  const scrollToRow = (file: DiffReviewFile, row: DiffRowRef) => {
+  const queueScrollToRow = (
+    file: DiffReviewFile,
+    row: DiffRowRef,
+    align: "nearest" | "center" = "nearest",
+  ) => {
     pendingScrollRef.current = {
       type: "line",
       id: file.fileKey,
       lineNumber: row.lineNumber,
       side: row.side,
-      align: "nearest",
+      align,
     };
+  };
+  const scrollToRow = (file: DiffReviewFile, row: DiffRowRef) => {
+    queueScrollToRow(file, row);
     flushScroll();
+  };
+  const placeFiles = () => {
+    const viewer = input.getViewer()?.getInstance();
+    if (!viewer) return null;
+    const top = viewer.getScrollTop();
+    const height = viewer.getHeight();
+    return {
+      placed: files.flatMap(({ fileKey }) => {
+        const fileTop = viewer.getTopForItem(fileKey);
+        return fileTop === undefined ? [] : [{ fileKey, top: fileTop }];
+      }),
+      view: { top, bottom: top + height, height, contentEnd: viewer.getScrollHeight() },
+    };
   };
   const moveToFile = (fileKey: string | null) => {
     const file = files.find((candidate) => candidate.fileKey === fileKey);
     if (!file) return;
     pendingScrollRef.current = null;
     setCursor(fileCursor(file));
-    input.revealFile(file);
+    // Lining every file up at the top jolts the list, and the pull request header with it.
+    const placement = placeFiles();
+    input.revealFile(
+      file,
+      placement ? fileScrollAlign(placement.placed, file.fileKey, placement.view) : "start",
+    );
   };
 
   // After the reader scrolls away from the cursor, the file keys start from what is on screen.
   const fileKeyInView = (cursorKey: string | null) => {
-    const viewer = input.getViewer()?.getInstance();
-    if (!viewer) return null;
-    const top = viewer.getScrollTop();
-    return fileToStartFrom(
-      files.flatMap(({ fileKey }) => {
-        const fileTop = viewer.getTopForItem(fileKey);
-        return fileTop === undefined ? [] : [{ fileKey, top: fileTop }];
-      }),
-      cursorKey,
-      { top, bottom: top + viewer.getHeight(), contentEnd: viewer.getScrollHeight() },
-    );
+    const placement = placeFiles();
+    return placement ? fileToStartFrom(placement.placed, cursorKey, placement.view) : null;
   };
 
   const toggleFileCollapsed = useStableCallback((fileKey: string) => {
@@ -348,6 +367,9 @@ export function useDiffReviewKeyboard<Annotation>(input: DiffReviewKeyboardInput
         const firstRow = rowsFor(file)[0];
         if (!firstRow) return true;
         input.setCollapsed(file.fileKey, false);
+        // Shift+J and Shift+K need the full file; loading it on the first one draws the new
+        // lines after the scroll that should follow them.
+        if (canExpand(file)) void fileDiffInstance(file.fileKey)?.prepareForEditing();
         setCursor({ mode: "line", fileKey: file.fileKey, filePath: file.filePath, row: firstRow });
         scrollToRow(file, firstRow);
         return true;
@@ -357,8 +379,16 @@ export function useDiffReviewKeyboard<Annotation>(input: DiffReviewKeyboardInput
         if (!cursor || !cursorFile || cursor.mode === "file") return false;
         const delta = command === "diff.nextLine" ? 1 : -1;
         const rows = rowsFor(cursorFile);
-        const next = stepRow(rows, cursor.mode === "line" ? cursor.row : cursor.head, delta);
+        const at = cursor.mode === "line" ? cursor.row : cursor.head;
+        const next = stepRow(rows, at, delta);
         if (!next) return true;
+        if (cursor.mode === "line" && next.lineNumber === at.lineNumber && next.side === at.side) {
+          // Stepping past the first line returns to the file, past the last on to the next file.
+          const fileKey =
+            delta === -1 ? cursorFile.fileKey : adjacentFileKey(fileKeys, cursorFile.fileKey, 1);
+          if (delta === -1 || fileKey !== cursorFile.fileKey) moveToFile(fileKey);
+          return true;
+        }
         const row: DiffRowRef = { lineNumber: next.lineNumber, side: next.side };
         setCursor(cursor.mode === "line" ? { ...cursor, row } : { ...cursor, head: row });
         scrollToRow(cursorFile, row);
@@ -369,13 +399,20 @@ export function useDiffReviewKeyboard<Annotation>(input: DiffReviewKeyboardInput
         if (!cursor || !cursorFile || cursor.mode === "file") return false;
         const instance = fileDiffInstance(cursorFile.fileKey);
         if (!instance || !canExpand(cursorFile)) return true;
+        const row = cursor.mode === "line" ? cursor.row : cursor.head;
         const gap = nearestGapExpansion(
           cursorFile.fileDiff,
           rowsFor(cursorFile),
-          cursor.mode === "line" ? cursor.row : cursor.head,
+          row,
           command === "diff.expandBelow" ? "below" : "above",
         );
-        if (gap) instance.expandHunk(gap.hunkIndex, gap.direction);
+        if (!gap) return true;
+        instance.expandHunk(gap.hunkIndex, gap.direction, KEYBOARD_EXPANSION_LINES);
+        if (command === "diff.expandAbove") {
+          // Lines added above push the cursor down by heights the viewer only estimates until
+          // drawn, so centre it rather than aim for an edge it can miss.
+          queueScrollToRow(cursorFile, row, "center");
+        }
         return true;
       }
       case "diff.comment": {
@@ -450,9 +487,9 @@ export function useDiffReviewKeyboard<Annotation>(input: DiffReviewKeyboardInput
       capture: true,
       when: (event) => {
         if (!rootRef.current || !diffPanelHasFocus(rootRef.current)) return false;
-        // A control reached from the keyboard keeps Enter and Space; a clicked one hands them over.
+        // A control reached from the keyboard keeps Enter; a clicked one hands it over.
         return !(
-          (event.key === "Enter" || event.key === " ") &&
+          event.key === "Enter" &&
           isControlFocused() &&
           document.activeElement === tabbedToRef.current
         );

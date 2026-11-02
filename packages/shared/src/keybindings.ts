@@ -169,7 +169,6 @@ export const DEFAULT_KEYBINDINGS: ReadonlyArray<KeybindingRule> = [
   { key: "n", command: "diff.nextUnviewedFile", when: "diffFocus && !diffLineMode" },
   { key: "shift+n", command: "diff.previousUnviewedFile", when: "diffFocus && !diffLineMode" },
   { key: "enter", command: "diff.toggleFileCollapsed", when: "diffFocus && !diffLineMode" },
-  { key: "space", command: "diff.toggleFileCollapsed", when: "diffFocus && !diffLineMode" },
   { key: "v", command: "diff.toggleFileViewed", when: "diffFocus" },
   { key: "f", command: "diff.toggleSingleFile", when: "diffFocus && !diffLineMode" },
   { key: "i", command: "diff.enterLineMode", when: "diffFocus && !diffLineMode" },

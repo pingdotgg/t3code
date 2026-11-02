@@ -1,4 +1,4 @@
-import { FileIcon } from "lucide-react";
+import { CheckIcon, FileIcon } from "lucide-react";
 
 import { Checkbox } from "../ui/checkbox";
 import { Toggle } from "../ui/toggle-group";
@@ -7,6 +7,23 @@ import { useIsDiffReviewCursorFile } from "./useDiffReviewKeyboard";
 
 const withShortcut = (label: string, shortcut: string | null) =>
   shortcut ? `${label} (${shortcut})` : label;
+
+/** The viewed count; once every file is viewed it reads as a finished review. */
+export function DiffViewedCount({ viewed, total }: { viewed: number; total: number }) {
+  if (total === 0 || viewed < total) {
+    return (
+      <>
+        {viewed} / {total}
+      </>
+    );
+  }
+  return (
+    <span className="inline-flex items-center gap-1 text-success-foreground">
+      <CheckIcon aria-hidden className="size-3.5" />
+      All {total}
+    </span>
+  );
+}
 
 /** Outlines the file header under the review cursor; render it in the header prefix. */
 export function DiffCursorOutline({ filePath }: { filePath: string }) {
