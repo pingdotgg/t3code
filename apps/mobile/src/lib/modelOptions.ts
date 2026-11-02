@@ -35,6 +35,7 @@ export type ModelOption = {
   readonly providerIconUrl?: string | undefined;
   readonly providerBadge?: {
     readonly displayName: string;
+    readonly agentId?: string;
     readonly accentColor?: string;
     readonly showBadge: boolean;
   };
@@ -317,6 +318,7 @@ export function buildModelOptions(
     const accentColor = normalizeProviderAccentColor(
       snapshot?.accentColor ?? instance?.accentColor,
     );
+    const agentId = registryAgentId(instanceId);
     return {
       displayName: resolveProviderInstanceDisplayName({
         instanceId,
@@ -324,11 +326,12 @@ export function buildModelOptions(
         displayName: snapshot?.displayName ?? instance?.displayName,
       }),
       ...(accentColor ? { accentColor } : {}),
+      ...(agentId ? { agentId } : {}),
       showBadge: shouldShowInstanceBadge(
         {
           driverKind: driver,
           accentColor,
-          acpRegistryAgentId: registryAgentId(instanceId),
+          acpRegistryAgentId: agentId,
           enabled: snapshot?.enabled ?? instance?.enabled ?? false,
         },
         badgeEntries,

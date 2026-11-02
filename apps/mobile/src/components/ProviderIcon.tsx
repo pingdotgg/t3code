@@ -178,6 +178,7 @@ export function ProviderIcon(props: ProviderIconProps) {
 export function ProviderInstanceIcon(props: {
   readonly iconUrl?: string | null;
   readonly provider: string | null | undefined;
+  readonly agentId?: string | null | undefined;
   readonly size?: number;
   readonly displayName: string;
   readonly accentColor?: string;
@@ -192,6 +193,7 @@ export function ProviderInstanceIcon(props: {
           iconUrl={props.iconUrl}
           provider={props.provider}
           displayName={props.displayName}
+          agentId={props.agentId}
           size={props.size}
         />
       </View>
