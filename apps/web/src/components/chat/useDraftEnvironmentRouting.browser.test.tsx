@@ -50,9 +50,10 @@ vi.mock(import("../../hooks/useScratchProject"), async (original) => ({
   ...(await original()),
   useScratchProject: (() => ({ openScratchProject: scratchOpens.open })) as never,
 }));
+const projects = vi.hoisted(() => ({ list: [] as unknown[] }));
 vi.mock(import("../../state/entities"), async (original) => ({
   ...(await original()),
-  useProjects: (() => []) as never,
+  useProjects: (() => projects.list) as never,
 }));
 
 import { DraftId, useComposerDraftStore } from "../../composerDraftStore";
@@ -61,7 +62,13 @@ import { useDraftEnvironmentRouting } from "./useDraftEnvironmentRouting";
 const local = EnvironmentId.make("environment-local");
 const machineA = EnvironmentId.make("environment-a");
 const machineB = EnvironmentId.make("environment-b");
-function Harness({ draftId }: { readonly draftId: DraftId }) {
+function Harness({
+  draftId,
+  scratch = true,
+}: {
+  readonly draftId: DraftId;
+  readonly scratch?: boolean;
+}) {
   const draftThread = useComposerDraftStore((store) => store.getDraftSession(draftId));
   const routing = useDraftEnvironmentRouting({
     draftId,
@@ -70,7 +77,11 @@ function Harness({ draftId }: { readonly draftId: DraftId }) {
     automaticEnvironment: draftThread?.environmentSelection !== "manual",
     logicalProjectEnvironments: [local, machineA, machineB].map((environmentId) => ({
       environmentId,
-      projectId: environmentId === local ? ProjectId.make("scratch-local") : null,
+      projectId: scratch
+        ? environmentId === local
+          ? ProjectId.make("scratch-local")
+          : null
+        : ProjectId.make(`project-${environmentId}`),
       label: environmentId,
       isPrimary: environmentId === local,
     })) as never,
@@ -81,8 +92,8 @@ function Harness({ draftId }: { readonly draftId: DraftId }) {
     activeProviderInstanceId: null,
     selectedProvider: "codex" as never,
     composerHasAttachments: false,
-    activeProjectKey: "scratch-local",
-    activeProjectIsScratch: true,
+    activeProjectKey: scratch ? "scratch-local" : "repo",
+    activeProjectIsScratch: scratch,
     projectGroupingSettings: {
       sidebarProjectGroupingMode: "repository",
       sidebarProjectGroupingOverrides: {},
@@ -114,6 +125,7 @@ const scratchProject = (environmentId: EnvironmentId) => ({
 function setup(name: string, balancedEnvironmentId: EnvironmentId) {
   balancer.setup(balancedEnvironmentId);
   scratchOpens.setup();
+  projects.list = [];
   const draftId = DraftId.make(name);
   useComposerDraftStore
     .getState()
@@ -144,6 +156,34 @@ describe("useDraftEnvironmentRouting", () => {
     expect(draft()).toMatchObject({
       environmentId: machineB,
       projectId: `scratch-${machineB}`,
+      environmentSelection: "auto",
+      loadBalancedEnvironmentId: machineB,
+    });
+  });
+
+  it("moves a project draft to the balanced machine's copy of the project without opening one", async () => {
+    balancer.setup(machineB);
+    scratchOpens.setup();
+    projects.list = [local, machineA, machineB].map((environmentId) => ({
+      environmentId,
+      id: ProjectId.make(`project-${environmentId}`),
+    }));
+    const draftId = DraftId.make("draft-auto-project");
+    useComposerDraftStore
+      .getState()
+      .setLogicalProjectDraftThreadId(
+        "repo",
+        scopeProjectRef(local, ProjectId.make(`project-${local}`)),
+        draftId,
+        { environmentSelection: "auto" },
+      );
+    await using screen = await render(<Harness draftId={draftId} scratch={false} />);
+
+    await expect.element(screen.getByText("Ready")).toBeInTheDocument();
+    expect(scratchOpens.opens).toEqual([]);
+    expect(useComposerDraftStore.getState().getDraftSession(draftId)).toMatchObject({
+      environmentId: machineB,
+      projectId: `project-${machineB}`,
       environmentSelection: "auto",
       loadBalancedEnvironmentId: machineB,
     });

@@ -246,8 +246,6 @@ vi.mock("../uiStateStore", () => ({
   useUiStateStore: () => [],
 }));
 vi.mock("./useSettings", () => ({ getClientSettings: () => ({}) }));
-vi.mock("@t3tools/shared/model", () => ({}));
-vi.mock("../modelSelection", () => ({}));
 
 import { useNewThreadHandler } from "./useHandleNewThread";
 
