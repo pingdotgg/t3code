@@ -832,7 +832,6 @@ export function PullRequestRouteScreen({ route }: StaticScreenProps<PullRequestP
                               />
                               {pr ? (
                                 <PullRequestOverview
-                                  // Android swaps the shown PR in place; checkbox saves belong to one.
                                   key={pullRequestKey}
                                   pr={pr}
                                   params={params}
