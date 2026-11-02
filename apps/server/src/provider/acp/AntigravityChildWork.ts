@@ -14,6 +14,7 @@ import * as Predicate from "effect/Predicate";
 import * as Schema from "effect/Schema";
 
 import { antigravityManagedPath, antigravityProfileRoot } from "./AntigravityProfilePaths.ts";
+import { boundAntigravityToolText } from "./AntigravityProtocol.ts";
 
 // Field numbers from the runtime's trajectory protos (exa.cortex_pb).
 const STEP_METADATA = 5;
@@ -167,10 +168,9 @@ const payloadOf = (row: unknown) =>
     : undefined;
 
 /**
- * Finds the parent record a subagent tool call created. Auto-approved calls carry
- * `<sessionId>:<plannerStep>`, and the record carrying that planner call's id is the proof.
- * Permission prompts carry a random id, so the launch text must match exactly one record
- * in a complete scan; an oversized, unreadable or over-budget table declines.
+ * Auto-approved calls carry `<sessionId>:<plannerStep>`; the record with that planner call's id
+ * is the proof. Permission prompts carry a random id, so the launch text must match one record
+ * in a complete scan and one batch T3 knows; an oversized or unreadable table declines.
  */
 function findInvokeRecord(
   database: NodeSqlite.DatabaseSync,
@@ -178,6 +178,7 @@ function findInvokeRecord(
     readonly rootSessionId: string;
     readonly nativeTaskId: string;
     readonly launch: { readonly title: string | null; readonly prompt: string };
+    readonly sameLaunchBatches: number;
   },
 ): InvokeRecord | undefined {
   const stepId = /^(.+):(\d+)$/.exec(input.nativeTaskId);
@@ -222,6 +223,7 @@ function findInvokeRecord(
   const total = (key: string) =>
     totals !== undefined && key in totals ? Number(totals[key as keyof typeof totals] ?? 0) : 0;
   if (
+    input.sameLaunchBatches !== 1 ||
     total("rows") > MAX_INVOKE_ROWS ||
     total("bytes") > MAX_SCAN_BYTES ||
     total("largest") > MAX_STEP_BYTES ||
@@ -237,7 +239,13 @@ function findInvokeRecord(
     const record = payload === undefined ? undefined : decodeInvokeRecord(payload);
     // An unreadable record could be an identical launch, so uniqueness is unproven.
     if (record === undefined) return undefined;
-    const described = describeAntigravitySubagentLaunches(record.launches);
+    // T3 stored the launch from the bounded tool payload, so bound the record the same way.
+    const described = describeAntigravitySubagentLaunches(
+      record.launches.map((launch) => ({
+        role: boundAntigravityToolText(launch.role),
+        prompt: boundAntigravityToolText(launch.prompt),
+      })),
+    );
     if (described.title === input.launch.title && described.prompt === input.launch.prompt) {
       matches.push(record);
     }
@@ -376,6 +384,8 @@ export const readAntigravityChildWork = Effect.fn("readAntigravityChildWork")(fu
   readonly rootSessionId: string;
   readonly nativeTaskId: string;
   readonly launch: { readonly title: string | null; readonly prompt: string };
+  /** Batches T3 knows in this thread with the same launch text. */
+  readonly sameLaunchBatches: number;
 }) {
   if (!NATIVE_ID.test(input.rootSessionId)) return [];
   return yield* Effect.tryPromise({

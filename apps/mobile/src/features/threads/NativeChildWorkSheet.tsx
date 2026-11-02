@@ -103,7 +103,7 @@ function NativeChild(props: { readonly child: OrchestrationV2NativeChildWork }) 
                 </Text>
               )}
               {step.text === null ? null : (
-                <Text selectable numberOfLines={12} className="font-mono text-xs text-foreground">
+                <Text selectable className="font-mono text-xs text-foreground">
                   {step.text}
                 </Text>
               )}

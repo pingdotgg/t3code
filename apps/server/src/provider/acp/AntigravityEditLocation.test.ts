@@ -59,7 +59,6 @@ describe("antigravityEditPatch", () => {
             StartLine: 10,
             EndLine: 10,
           },
-          { TargetContent: "missing", ReplacementContent: "still missing" },
         ],
       },
       readPreEditFile: () => file,
@@ -75,13 +74,27 @@ describe("antigravityEditPatch", () => {
         "-const other = 15;",
         "+const other = 150;",
         "",
-        header.trimEnd(),
-        "@@ -1,1 +1,1 @@ snippet, line unknown",
-        "-missing",
-        "+still missing",
-        "",
       ].join("\n"),
     );
+  });
+
+  it("omits the preview when only some chunks can be placed", () => {
+    const patch = antigravityEditPatch({
+      path,
+      rawInput: {
+        ReplacementChunks: [
+          {
+            TargetContent: "const target = 10;\n",
+            ReplacementContent: "const target = 100;\n",
+            StartLine: 10,
+            EndLine: 10,
+          },
+          { TargetContent: "missing", ReplacementContent: "still missing" },
+        ],
+      },
+      readPreEditFile: () => file,
+    });
+    expect(patch).toBe(ANTIGRAVITY_EDIT_DIFF_OMITTED);
   });
 
   it("leaves whole-file writes and unknown inputs to the generic diff", () => {

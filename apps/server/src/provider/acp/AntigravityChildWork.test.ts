@@ -8,9 +8,11 @@ import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 
 import {
+  antigravitySubagentLaunches,
   describeAntigravitySubagentLaunches,
   readAntigravityChildWork,
 } from "./AntigravityChildWork.ts";
+import { sanitizeAntigravityToolPayload } from "./AntigravityProtocol.ts";
 import {
   autoApproved,
   CHILD,
@@ -29,7 +31,15 @@ const read = (
     title: null,
     prompt: "Readme check",
   },
-) => readAntigravityChildWork({ profileDirectory, rootSessionId: ROOT, nativeTaskId, launch });
+  sameLaunchBatches = 1,
+) =>
+  readAntigravityChildWork({
+    profileDirectory,
+    rootSessionId: ROOT,
+    nativeTaskId,
+    launch,
+    sameLaunchBatches,
+  });
 
 it.layer(NodeServices.layer)("readAntigravityChildWork", (it) => {
   it.effect("follows an auto-approved call id through its planner step to the record", () =>
@@ -81,12 +91,18 @@ it.layer(NodeServices.layer)("readAntigravityChildWork", (it) => {
   it.effect("matches a permission-prompt call by its launch text, only when unique", () =>
     Effect.gen(function* () {
       const other = { role: "Test Runner", prompt: "Run the tests" };
+      const long = { role: "Long Reader", prompt: `Read this:\n${"x".repeat(9_000)}` };
       const { profile } = yield* makeProfile({
         steps: (logUri) => [
           [
             2,
             127,
             invokeStep({ callId: "x", launches: [LAUNCH], children: [{ id: CHILD, logUri }] }),
+          ],
+          [
+            8,
+            127,
+            invokeStep({ callId: "w", launches: [long], children: [{ id: CHILD, logUri }] }),
           ],
           [
             4,
@@ -103,6 +119,16 @@ it.layer(NodeServices.layer)("readAntigravityChildWork", (it) => {
       const opaque = "35bea692fa95447fbdae6333fec5515f";
       const matched = yield* read(profile, opaque, describeAntigravitySubagentLaunches([LAUNCH]));
       expect(matched.map((child) => child.role)).toEqual([LAUNCH.role]);
+      // T3 knows a second batch with this text that the agent has not recorded yet.
+      expect(
+        yield* read(profile, opaque, describeAntigravitySubagentLaunches([LAUNCH]), 2),
+      ).toEqual([]);
+      // T3 stores the launch from the bounded tool payload, which keeps only a long prompt's tail.
+      const stored = antigravitySubagentLaunches(
+        sanitizeAntigravityToolPayload({ Subagents: [{ Role: long.role, Prompt: long.prompt }] }),
+      );
+      const longMatch = yield* read(profile, opaque, describeAntigravitySubagentLaunches(stored!));
+      expect(longMatch.map((child) => child.prompt)).toEqual([long.prompt]);
       expect(yield* read(profile, opaque, describeAntigravitySubagentLaunches([other]))).toEqual(
         [],
       );

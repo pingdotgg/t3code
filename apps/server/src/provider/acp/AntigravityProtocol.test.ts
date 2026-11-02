@@ -386,6 +386,24 @@ describe("Antigravity tool results", () => {
       });
       expect(kept.data.content).toEqual([{ type: "diff", path, patch: { format: "omitted" } }]);
     }
+    // A whole-file write whose old text was cut to its tail must not show the cut as deletions.
+    const overwrite = normalizeAntigravityToolCall({
+      toolCallId: "edit-overwrite",
+      kind: "edit",
+      status: "completed",
+      data: {
+        rawInput: { TargetFile: path, CodeContent: "one line\n" },
+        content: [
+          {
+            type: "diff",
+            path,
+            oldText: "[Earlier output truncated]\n\nrow 999\n",
+            newText: "one line\n",
+          },
+        ],
+      },
+    });
+    expect(acpToolCallDiffPatch(overwrite.data.content)).toBeUndefined();
     // A patch too long to keep, or input cut to its tail, must not fall back to line-1 snippets.
     for (const width of [60, 120]) {
       const block = (value: string) =>

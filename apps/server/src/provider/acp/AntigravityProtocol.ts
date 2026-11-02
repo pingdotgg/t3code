@@ -170,6 +170,9 @@ function boundText(text: string, limit = TOOL_TEXT_LIMIT): string {
     : copyBoundedText(`${TOOL_TEXT_TRUNCATED}${text.slice(-limit)}`);
 }
 
+/** Keeps the tail of long tool text, as every bounded tool payload does. */
+export { boundText as boundAntigravityToolText };
+
 interface ToolPayloadBudget {
   nodes: number;
   text: number;
@@ -381,8 +384,10 @@ function withAntigravityEditPatches(
         (typeof patch.text !== "string" || patch.text.startsWith(TOOL_TEXT_TRUNCATED));
       return cut ? { ...entry, patch: { format: "omitted" } } : entry;
     }
-    // Bounding keeps only the tail of long input, so a cut snippet cannot be located.
-    if (hasTruncatedText(data.rawInput)) return { ...entry, patch: { format: "omitted" } };
+    // Bounding keeps only the tail of long text, so a cut snippet cannot be located and a cut
+    // old or new text would render the cut as file content.
+    if ([data.rawInput, entry.oldText, entry.newText].some(hasTruncatedText))
+      return { ...entry, patch: { format: "omitted" } };
     const text = antigravityEditPatch({
       path: entry.path,
       rawInput: data.rawInput,

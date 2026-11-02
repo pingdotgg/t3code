@@ -16,7 +16,7 @@ const EDIT_TEXT_BUDGET = 256 * 1024;
 export const ANTIGRAVITY_EDIT_DIFF_OMITTED = Symbol("AntigravityEditDiffOmitted");
 const SNIPPET_LABEL = " snippet, line unknown";
 
-/** True when no chunk could be placed: the patch's first hunk is already a snippet. */
+/** True when no chunk could be placed; a patch never mixes placed and unplaced chunks. */
 export function isAntigravitySnippetPatch(patch: string): boolean {
   return /^@@ .* @@.*$/m.exec(patch)?.[0].endsWith(SNIPPET_LABEL) === true;
 }
@@ -121,6 +121,8 @@ export function antigravityEditPatch(input: {
     if (start === undefined) snippets.push(...hunks);
     else placed.push({ start, hunks });
   }
+  // A placed hunk beside an unplaced one would still number the unplaced one from line 1.
+  if (placed.length > 0 && snippets.length > 0) return ANTIGRAVITY_EDIT_DIFF_OMITTED;
   let shift = 0;
   const placedHunks = placed
     .toSorted((left, right) => left.start - right.start)

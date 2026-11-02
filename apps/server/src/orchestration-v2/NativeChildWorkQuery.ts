@@ -48,9 +48,7 @@ const make = Effect.gen(function* () {
         return NO_CHILDREN;
       }
       const subagentId = thread.forkedFrom.nodeId;
-      const { subagents } = yield* threads.getThreadRecords(parentThreadId, ["subagents"], {
-        subagentIds: [subagentId],
-      });
+      const { subagents } = yield* threads.getThreadRecords(parentThreadId, ["subagents"]);
       const subagent = subagents.find(
         (candidate) => candidate.id === subagentId && candidate.childThreadId === thread.id,
       );
@@ -83,6 +81,14 @@ const make = Effect.gen(function* () {
         rootSessionId,
         nativeTaskId,
         launch: { title: subagent.title, prompt: subagent.prompt },
+        sameLaunchBatches: subagents.filter(
+          (candidate) =>
+            candidate.driver === "antigravity" &&
+            candidate.origin === "provider_native" &&
+            candidate.providerInstanceId === subagent.providerInstanceId &&
+            candidate.title === subagent.title &&
+            candidate.prompt === subagent.prompt,
+        ).length,
       });
       return { children };
     },

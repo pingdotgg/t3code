@@ -145,7 +145,6 @@ const ACP_DEFERRED_FINALIZE_DEBOUNCE: Duration.Input = "3000 millis";
 const ACP_TEXT_FLUSH_INTERVAL: Duration.Input = "50 millis";
 
 export interface AcpAdapterV2RuntimeInput {
-  readonly threadId: ThreadId;
   readonly cwd: string;
   readonly runtimePolicy: ProviderAdapter.ProviderAdapterV2RuntimePolicy;
   readonly mcpServers: ReadonlyArray<EffectAcpSchema.McpServer>;
@@ -236,12 +235,15 @@ export function acpPerTurnPromptUsage(
   usage: EffectAcpSchema.Usage | null | undefined,
   hasSubagents: boolean,
   terminalStatus: OrchestrationV2ProviderTurn["status"],
-  thoughtsOutsideOutput = false,
+  geminiUsage = false,
 ): TurnTokenUsage {
   if (usage == null) {
     return { usageScope: "main_agent", usageStatus: "unavailable", hasSubagents };
   }
-  const outputTokens = thoughtsOutsideOutput
+  const inputTokens = geminiUsage
+    ? usage.inputTokens + (usage.cachedReadTokens ?? 0)
+    : usage.inputTokens;
+  const outputTokens = geminiUsage
     ? usage.outputTokens + (usage.thoughtTokens ?? 0)
     : usage.outputTokens;
   // TurnTokenUsage contract: input includes cache read + write and reasoning
@@ -250,17 +252,17 @@ export function acpPerTurnPromptUsage(
   // cache reads leave of input, so the pair cannot exceed it.
   const clampSubset = (value: number | null | undefined, parent: number) =>
     value == null ? undefined : Math.min(value, parent);
-  const cachedInputTokens = clampSubset(usage.cachedReadTokens, usage.inputTokens);
+  const cachedInputTokens = clampSubset(usage.cachedReadTokens, inputTokens);
   const cacheCreationTokens = clampSubset(
     usage.cachedWriteTokens,
-    usage.inputTokens - (cachedInputTokens ?? 0),
+    inputTokens - (cachedInputTokens ?? 0),
   );
   const reasoningTokens = clampSubset(usage.thoughtTokens, outputTokens);
   return {
     usageScope: "main_agent",
     usageStatus: terminalStatus === "completed" ? "complete" : "partial",
     hasSubagents,
-    inputTokens: usage.inputTokens,
+    inputTokens,
     outputTokens,
     ...(cachedInputTokens === undefined ? {} : { cachedInputTokens }),
     ...(cacheCreationTokens === undefined ? {} : { cacheCreationTokens }),
@@ -433,8 +435,8 @@ export interface AcpAdapterV2Flavor {
    * leaves usage semantics open, so this stays unset until proven live.
    */
   readonly reportsPerTurnPromptUsage?: boolean;
-  /** Gemini-style usage: outputTokens leaves out thoughtTokens, and totalTokens adds both. */
-  readonly promptUsageThoughtsOutsideOutput?: boolean;
+  /** Gemini-style usage: inputTokens leaves out cachedReadTokens, outputTokens leaves out thoughtTokens. */
+  readonly geminiPromptUsage?: boolean;
   /** Grok can retain task_already_running until process exit. */
   readonly restartRuntimeAfterInterrupt?: boolean;
   /** Prompt failures after which the agent process keeps failing until replaced. */
@@ -2138,7 +2140,6 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             handleRuntimeTerminationAtGeneration(runtimeGeneration),
         ): AcpAdapterV2RuntimeInput => {
           return {
-            threadId: input.threadId,
             cwd: input.runtimePolicy.cwd ?? process.cwd(),
             runtimePolicy: input.runtimePolicy,
             mcpServers: mcpContext.servers,
@@ -7160,7 +7161,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                   context.promptUsage,
                   context.subagents.size > 0,
                   status,
-                  flavor.promptUsageThoughtsOutsideOutput,
+                  flavor.geminiPromptUsage,
                 ),
               }),
         });
