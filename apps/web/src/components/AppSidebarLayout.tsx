@@ -379,6 +379,7 @@ function SidebarControl() {
         isMobile && mobileSheetMounted && "hidden",
         // Transparent rather than hidden, so focus can still return to the toggle.
         "in-[[data-slot=sidebar-wrapper]:has([data-peek])]:opacity-0 in-[[data-slot=sidebar-wrapper]:has([data-peek])]:**:pointer-events-none!",
+        "has-focus-visible:opacity-100",
       )}
       data-sidebar-control=""
     >
