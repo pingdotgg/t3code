@@ -8,6 +8,7 @@ import { describe, expect, it } from "vite-plus/test";
 
 import type { SettingsTarget } from "./settings-environment-filter";
 import {
+  managedSettingReason,
   planMobileScopedSettingsClear,
   planMobileScopedSettingsPatch,
   resolveMobileSettingsTargets,
@@ -160,5 +161,30 @@ describe("mobile project settings scope", () => {
     expect(
       planMobileScopedSettingsPatch(targets, true, { enableProviderUpdateChecks: false }),
     ).toEqual([]);
+  });
+});
+
+describe("managed settings across environments", () => {
+  it("names the manager when any selected environment locks the setting", () => {
+    const managed = {
+      ...environment(secondId, DEFAULT_SERVER_SETTINGS),
+      serverConfig: {
+        ...environment(secondId, DEFAULT_SERVER_SETTINGS).serverConfig,
+        managedPolicy: { organization: "Example Corp", lockedSettings: ["storageCleanup"] },
+      },
+    } as SettingsTarget;
+    const targets = resolveMobileSettingsTargets(
+      [environment(firstId, DEFAULT_SERVER_SETTINGS), managed],
+      null,
+    );
+
+    expect(managedSettingReason(targets, "storageCleanup.logsAfterDays")).toBe(
+      "Managed by Example Corp.",
+    );
+    expect(managedSettingReason(targets, "defaultAutoPull", "storageCleanup")).toBe(
+      "Managed by Example Corp.",
+    );
+    expect(managedSettingReason(targets, "defaultAutoPull")).toBeUndefined();
+    expect(managedSettingReason(targets.slice(0, 1), "storageCleanup")).toBeUndefined();
   });
 });
