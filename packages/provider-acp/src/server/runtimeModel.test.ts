@@ -1047,10 +1047,7 @@ describe("AcpRuntimeModel", () => {
         data: { rawOutput: "Retained the implementation decisions." },
       },
     });
-    expect(idle.events[0]).toMatchObject({
-      _tag: "UsageUpdated",
-      usage: { usedTokens: 420 },
-    });
+    expect(idle.events).toEqual([]);
   });
 
   it("applies ACP v2 agent-owned terminal snapshots and output chunks", () => {
