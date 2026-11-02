@@ -346,7 +346,7 @@ describe("Antigravity tool results", () => {
     ).join("\n");
     const postEdit = preEdit.replace(replace.TargetContent, replace.ReplacementContent);
     for (const [pending, readFile] of [
-      [frame({ ...replace, StartLine: 10, EndLine: 10 }, 10), () => postEdit],
+      [frame({ ...replace, StartLine: 5, EndLine: 12 }, 5), () => preEdit],
       [frame(replace), () => preEdit],
     ] as const) {
       let toolCall = normalizeAntigravityToolCall(parseToolUpdate(pending).toolCall, readFile);

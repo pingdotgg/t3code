@@ -21,11 +21,12 @@ export function isAntigravitySnippetPatch(patch: string): boolean {
   return /^@@ .* @@.*$/m.exec(patch)?.[0].endsWith(SNIPPET_LABEL) === true;
 }
 
-const StartLine = Schema.optional(PositiveInt);
+const Line = Schema.optional(PositiveInt);
 const ReplacementChunk = Schema.Struct({
   TargetContent: Schema.String,
   ReplacementContent: Schema.String,
-  StartLine,
+  StartLine: Line,
+  EndLine: Line,
 });
 // replace_file_content sends one chunk at the top level; multi_replace_file_content sends a list.
 const decodeEditInput = Schema.decodeUnknownOption(
@@ -34,9 +35,23 @@ const decodeEditInput = Schema.decodeUnknownOption(
     ReplacementChunk,
   ]),
 );
-const decodeLocations = Schema.decodeUnknownOption(
-  Schema.Array(Schema.Struct({ line: StartLine })),
-);
+const decodeLocations = Schema.decodeUnknownOption(Schema.Array(Schema.Struct({ line: Line })));
+// The runtime accepts edit arguments in either casing.
+const PASCAL_KEYS: Readonly<Record<string, string>> = {
+  replacement_chunks: "ReplacementChunks",
+  target_content: "TargetContent",
+  replacement_content: "ReplacementContent",
+  start_line: "StartLine",
+  end_line: "EndLine",
+};
+const pascalKeys = (value: unknown): unknown =>
+  Array.isArray(value)
+    ? value.map(pascalKeys)
+    : typeof value === "object" && value !== null
+      ? Object.fromEntries(
+          Object.entries(value).map(([key, entry]) => [PASCAL_KEYS[key] ?? key, pascalKeys(entry)]),
+        )
+      : value;
 
 /** Reads a small file for snippet matching; edits to large or unreadable files stay unlocated. */
 export function readAntigravityPreEditFile(path: string): string | undefined {
@@ -50,13 +65,32 @@ export function readAntigravityPreEditFile(path: string): string | undefined {
   }
 }
 
-function uniqueStartLine(text: string | undefined, snippet: string): number | undefined {
+/** The line of the snippet's only match that starts within `from`..`to`. */
+function uniqueStartLine(
+  text: string | undefined,
+  snippet: string,
+  from = 1,
+  to = Number.POSITIVE_INFINITY,
+): number | undefined {
   if (text === undefined || snippet === "") return undefined;
-  const index = text.indexOf(snippet);
-  if (index === -1 || text.indexOf(snippet, index + 1) !== -1) return undefined;
+  let found: number | undefined;
   let line = 1;
-  for (let i = text.indexOf("\n"); i !== -1 && i < index; i = text.indexOf("\n", i + 1)) line++;
-  return line;
+  let counted = 0;
+  for (let index = text.indexOf(snippet); index !== -1; index = text.indexOf(snippet, index + 1)) {
+    for (
+      let i = text.indexOf("\n", counted);
+      i !== -1 && i < index;
+      i = text.indexOf("\n", i + 1)
+    ) {
+      line++;
+      counted = i + 1;
+    }
+    if (line > to) break;
+    if (line < from) continue;
+    if (found !== undefined) return undefined;
+    found = line;
+  }
+  return found;
 }
 
 function snippetHunks(
@@ -79,9 +113,9 @@ const changedLines = (hunks: ReadonlyArray<StructuredPatchHunk>) =>
   );
 
 /**
- * Antigravity reports replacements as bare old/new snippets. Builds a unified patch at the
- * announced start line, else at the snippet's unique match in the pre-edit file. Unplaced
- * chunks go in a second section whose hunks are labeled as snippets.
+ * Antigravity reports replacements as bare old/new snippets. `StartLine` only starts the
+ * runtime's search range, so a chunk is placed at its unique match in the pre-edit file within
+ * that range. All-unplaced chunks get hunks labeled as snippets; a mix is omitted.
  */
 export function antigravityEditPatch(input: {
   readonly path: string;
@@ -90,7 +124,7 @@ export function antigravityEditPatch(input: {
   /** Pass only while the edit is pending, when the file still holds the old text. */
   readonly readPreEditFile?: ((path: string) => string | undefined) | undefined;
 }): string | typeof ANTIGRAVITY_EDIT_DIFF_OMITTED | undefined {
-  const edit = Option.getOrUndefined(decodeEditInput(input.rawInput));
+  const edit = Option.getOrUndefined(decodeEditInput(pascalKeys(input.rawInput)));
   if (edit === undefined) return undefined;
   const announced = Option.getOrUndefined(decodeLocations(input.locations))?.[0]?.line;
   const chunks =
@@ -112,11 +146,11 @@ export function antigravityEditPatch(input: {
     if (hunks === undefined) return ANTIGRAVITY_EDIT_DIFF_OMITTED;
     budget -= changedLines(hunks);
     if (budget < 0) return ANTIGRAVITY_EDIT_DIFF_OMITTED;
-    let start = chunk.StartLine;
-    if (start === undefined && input.readPreEditFile !== undefined) {
+    let start: number | undefined;
+    if (input.readPreEditFile !== undefined) {
       if (!fileRead) file = input.readPreEditFile(input.path);
       fileRead = true;
-      start = uniqueStartLine(file, chunk.TargetContent);
+      start = uniqueStartLine(file, chunk.TargetContent, chunk.StartLine, chunk.EndLine);
     }
     if (start === undefined) snippets.push(...hunks);
     else placed.push({ start, hunks });

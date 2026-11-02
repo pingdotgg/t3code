@@ -14,14 +14,50 @@ const replace = { TargetContent: "const target = 10;", ReplacementContent: "cons
 const header = `--- ${path}\n+++ ${path}\n`;
 
 describe("antigravityEditPatch", () => {
-  it("keeps the announced start line from rawInput or the tool location", () => {
+  it("finds the target inside the announced search range, in either argument casing", () => {
     const expected = `${header}@@ -10,1 +10,1 @@\n-const target = 10;\n+const target = 100;\n`;
+    const readPreEditFile = () => file;
+    for (const rawInput of [
+      { ...replace, StartLine: 5, EndLine: 20 },
+      {
+        target_content: replace.TargetContent,
+        replacement_content: replace.ReplacementContent,
+        start_line: 5,
+        end_line: 20,
+      },
+      {
+        replacement_chunks: [
+          {
+            target_content: replace.TargetContent,
+            replacement_content: replace.ReplacementContent,
+            start_line: 5,
+            end_line: 20,
+          },
+        ],
+      },
+    ]) {
+      expect(antigravityEditPatch({ path, rawInput, readPreEditFile })).toBe(expected);
+    }
     expect(
-      antigravityEditPatch({ path, rawInput: { ...replace, StartLine: 10, EndLine: 10 } }),
+      antigravityEditPatch({
+        path,
+        rawInput: replace,
+        locations: [{ path, line: 5 }],
+        readPreEditFile,
+      }),
     ).toBe(expected);
-    expect(antigravityEditPatch({ path, rawInput: replace, locations: [{ path, line: 10 }] })).toBe(
-      expected,
-    );
+    // The range start is not the target's line: without the file, or outside the range, it stays unplaced.
+    const snippet = `${header}@@ -1,1 +1,1 @@ snippet, line unknown\n-const target = 10;\n+const target = 100;\n`;
+    expect(
+      antigravityEditPatch({ path, rawInput: { ...replace, StartLine: 5, EndLine: 20 } }),
+    ).toBe(snippet);
+    expect(
+      antigravityEditPatch({
+        path,
+        rawInput: { ...replace, StartLine: 11, EndLine: 20 },
+        readPreEditFile,
+      }),
+    ).toBe(snippet);
   });
 
   it("finds an unannounced snippet in the pre-edit file", () => {
@@ -140,7 +176,7 @@ describe("antigravityEditPatch", () => {
       }),
     ).toBe(ANTIGRAVITY_EDIT_DIFF_OMITTED);
     expect(antigravityEditPatch({ path, rawInput: { ReplacementChunks: [chunk(1)] } })).toMatch(
-      /^@@ -1,300 \+1,300 @@$/m,
+      /^@@ -1,300 \+1,300 @@/m,
     );
   });
 });

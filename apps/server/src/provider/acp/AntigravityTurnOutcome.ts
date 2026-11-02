@@ -7,6 +7,7 @@ import type { OrchestrationV2ProviderFailure } from "@t3tools/contracts";
 import { makeProviderFailure } from "@t3tools/provider-core/server/failure";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
 import type * as EffectAcpSchema from "effect-acp/compat";
 
 import { antigravityManagedPath, antigravityProfileRoot } from "./AntigravityProfilePaths.ts";
@@ -72,9 +73,9 @@ const lastStepAfter =
   };
 
 function resetAtFrom(text: string, now: DateTime.Utc): string | undefined {
-  // makeProviderFailure drops a timestamp that does not parse.
+  // makeProviderFailure drops a timestamp that does not parse, so fall back to the delay.
   const timestamp = RESET_TIMESTAMP.exec(text)?.[1];
-  if (timestamp !== undefined) return timestamp;
+  if (timestamp !== undefined && Option.isSome(DateTime.make(timestamp))) return timestamp;
   const delay = RESET_DELAY.exec(text)?.[1];
   if (delay === undefined) return undefined;
   let delayMs = 0;

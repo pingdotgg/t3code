@@ -81,14 +81,16 @@ const make = Effect.gen(function* () {
         rootSessionId,
         nativeTaskId,
         launch: { title: subagent.title, prompt: subagent.prompt },
-        sameLaunchBatches: subagents.filter(
-          (candidate) =>
+        siblings: subagents.flatMap((candidate) => {
+          const id = candidate.nativeTaskRef?.nativeId;
+          return candidate.id !== subagent.id &&
             candidate.driver === "antigravity" &&
             candidate.origin === "provider_native" &&
             candidate.providerInstanceId === subagent.providerInstanceId &&
-            candidate.title === subagent.title &&
-            candidate.prompt === subagent.prompt,
-        ).length,
+            id
+            ? [{ nativeTaskId: id, title: candidate.title, prompt: candidate.prompt }]
+            : [];
+        }),
       });
       return { children };
     },

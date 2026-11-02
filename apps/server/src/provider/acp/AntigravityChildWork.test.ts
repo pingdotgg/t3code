@@ -31,14 +31,18 @@ const read = (
     title: null,
     prompt: "Readme check",
   },
-  sameLaunchBatches = 1,
+  siblings: ReadonlyArray<{
+    readonly nativeTaskId: string;
+    readonly title: string | null;
+    readonly prompt: string;
+  }> = [],
 ) =>
   readAntigravityChildWork({
     profileDirectory,
     rootSessionId: ROOT,
     nativeTaskId,
     launch,
-    sameLaunchBatches,
+    siblings,
   });
 
 it.layer(NodeServices.layer)("readAntigravityChildWork", (it) => {
@@ -120,8 +124,9 @@ it.layer(NodeServices.layer)("readAntigravityChildWork", (it) => {
       const matched = yield* read(profile, opaque, describeAntigravitySubagentLaunches([LAUNCH]));
       expect(matched.map((child) => child.role)).toEqual([LAUNCH.role]);
       // T3 knows a second batch with this text that the agent has not recorded yet.
+      const twin = { nativeTaskId: "f00d", ...describeAntigravitySubagentLaunches([LAUNCH]) };
       expect(
-        yield* read(profile, opaque, describeAntigravitySubagentLaunches([LAUNCH]), 2),
+        yield* read(profile, opaque, describeAntigravitySubagentLaunches([LAUNCH]), [twin]),
       ).toEqual([]);
       // T3 stores the launch from the bounded tool payload, which keeps only a long prompt's tail.
       const stored = antigravitySubagentLaunches(
@@ -133,6 +138,18 @@ it.layer(NodeServices.layer)("readAntigravityChildWork", (it) => {
         [],
       );
       expect(yield* read(profile, opaque, { title: null, prompt: "Readme check" })).toEqual([]);
+    }),
+  );
+
+  it.effect("leaves an auto-approved batch's record out of a launch-text match", () =>
+    Effect.gen(function* () {
+      const { profile } = yield* makeProfile({ steps: autoApproved });
+      const launch = describeAntigravitySubagentLaunches([LAUNCH]);
+      const opaque = "35bea692fa95447fbdae6333fec5515f";
+      expect(yield* read(profile, opaque, launch)).toHaveLength(1);
+      // An earlier auto-approved batch stored no launch text, but its planner step claims the record.
+      const auto = { nativeTaskId: `${ROOT}:1`, title: "Antigravity subagent batch", prompt: "" };
+      expect(yield* read(profile, opaque, launch, [auto])).toEqual([]);
     }),
   );
 

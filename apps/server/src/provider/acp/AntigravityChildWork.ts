@@ -167,32 +167,44 @@ const payloadOf = (row: unknown) =>
     ? row.step_payload
     : undefined;
 
+interface BatchLaunch {
+  readonly title: string | null;
+  readonly prompt: string;
+}
+
+const plannerCallIdsAt = (database: NodeSqlite.DatabaseSync, plannerIdx: number) => {
+  const planner = payloadOf(
+    database
+      .prepare(
+        "SELECT step_payload FROM steps WHERE idx = ? AND step_format = 0 AND length(step_payload) <= ?",
+      )
+      .get(plannerIdx, MAX_STEP_BYTES),
+  );
+  return (planner === undefined ? undefined : plannerInvokeCallIds(planner)) ?? [];
+};
+
 /**
  * Auto-approved calls carry `<sessionId>:<plannerStep>`; the record with that planner call's id
  * is the proof. Permission prompts carry a random id, so the launch text must match one record
- * in a complete scan and one batch T3 knows; an oversized or unreadable table declines.
+ * no auto-approved sibling claims, and no sibling may share the text.
  */
 function findInvokeRecord(
   database: NodeSqlite.DatabaseSync,
   input: {
     readonly rootSessionId: string;
     readonly nativeTaskId: string;
-    readonly launch: { readonly title: string | null; readonly prompt: string };
-    readonly sameLaunchBatches: number;
+    readonly launch: BatchLaunch;
+    readonly siblings: ReadonlyArray<BatchLaunch & { readonly nativeTaskId: string }>;
   },
 ): InvokeRecord | undefined {
-  const stepId = /^(.+):(\d+)$/.exec(input.nativeTaskId);
-  if (stepId !== null) {
-    if (stepId[1] !== input.rootSessionId) return undefined;
-    const plannerIdx = Number(stepId[2]);
-    const planner = payloadOf(
-      database
-        .prepare(
-          "SELECT step_payload FROM steps WHERE idx = ? AND step_format = 0 AND length(step_payload) <= ?",
-        )
-        .get(plannerIdx, MAX_STEP_BYTES),
-    );
-    const callIds = (planner === undefined ? undefined : plannerInvokeCallIds(planner)) ?? [];
+  const plannerIdxOf = (nativeTaskId: string) => {
+    const stepId = /^(.+):(\d+)$/.exec(nativeTaskId);
+    return stepId === null ? undefined : stepId[1] === input.rootSessionId ? Number(stepId[2]) : -1;
+  };
+  const plannerIdx = plannerIdxOf(input.nativeTaskId);
+  if (plannerIdx !== undefined) {
+    if (plannerIdx < 0) return undefined;
+    const callIds = plannerCallIdsAt(database, plannerIdx);
     const [callId] = callIds;
     if (callIds.length !== 1) return undefined;
     // The record follows the planner step that issued the call.
@@ -222,8 +234,10 @@ function findInvokeRecord(
     .get(INVOKE_SUBAGENT_STEP_TYPE);
   const total = (key: string) =>
     totals !== undefined && key in totals ? Number(totals[key as keyof typeof totals] ?? 0) : 0;
+  const sameText = (launch: BatchLaunch) =>
+    launch.title === input.launch.title && launch.prompt === input.launch.prompt;
   if (
-    input.sameLaunchBatches !== 1 ||
+    input.siblings.some(sameText) ||
     total("rows") > MAX_INVOKE_ROWS ||
     total("bytes") > MAX_SCAN_BYTES ||
     total("largest") > MAX_STEP_BYTES ||
@@ -231,6 +245,12 @@ function findInvokeRecord(
   ) {
     return undefined;
   }
+  const claimed = new Set(
+    input.siblings.flatMap((sibling) => {
+      const idx = plannerIdxOf(sibling.nativeTaskId);
+      return idx === undefined || idx < 0 ? [] : plannerCallIdsAt(database, idx);
+    }),
+  );
   const matches: Array<InvokeRecord> = [];
   for (const row of database
     .prepare("SELECT step_payload FROM steps WHERE step_type = ? ORDER BY idx")
@@ -239,6 +259,7 @@ function findInvokeRecord(
     const record = payload === undefined ? undefined : decodeInvokeRecord(payload);
     // An unreadable record could be an identical launch, so uniqueness is unproven.
     if (record === undefined) return undefined;
+    if (record.toolCallId !== undefined && claimed.has(record.toolCallId)) continue;
     // T3 stored the launch from the bounded tool payload, so bound the record the same way.
     const described = describeAntigravitySubagentLaunches(
       record.launches.map((launch) => ({
@@ -246,7 +267,7 @@ function findInvokeRecord(
         prompt: boundAntigravityToolText(launch.prompt),
       })),
     );
-    if (described.title === input.launch.title && described.prompt === input.launch.prompt) {
+    if (sameText(described)) {
       matches.push(record);
     }
   }
@@ -383,9 +404,9 @@ export const readAntigravityChildWork = Effect.fn("readAntigravityChildWork")(fu
   readonly profileDirectory: string;
   readonly rootSessionId: string;
   readonly nativeTaskId: string;
-  readonly launch: { readonly title: string | null; readonly prompt: string };
-  /** Batches T3 knows in this thread with the same launch text. */
-  readonly sameLaunchBatches: number;
+  readonly launch: BatchLaunch;
+  /** The thread's other Antigravity batches from this instance. */
+  readonly siblings: ReadonlyArray<BatchLaunch & { readonly nativeTaskId: string }>;
 }) {
   if (!NATIVE_ID.test(input.rootSessionId)) return [];
   return yield* Effect.tryPromise({
