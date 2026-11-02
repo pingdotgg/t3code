@@ -23,6 +23,7 @@ import {
   type DpopFailureReason as DpopFailureReasonType,
   mcpClientScopes,
 } from "@t3tools/contracts";
+import { isLocalLoopbackHost } from "@t3tools/shared/hostClassification";
 import { encodeOAuthScope } from "@t3tools/shared/oauthScope";
 import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
@@ -45,6 +46,8 @@ import { REUSABLE_DEV_SESSION_EXPIRES_AT, resolveReusableDevAuth } from "./Reusa
 import { verifyRequestDpopProof } from "./dpop.ts";
 import { DESKTOP_RENDERER_ORIGINS } from "../httpCors.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
+import * as ManagedLimits from "../policy/managedLimits.ts";
+import * as ManagedPolicy from "../policy/ManagedPolicy.ts";
 
 const DEFAULT_SESSION_SUBJECT = "cli-issued-session";
 export const INTERNAL_ADMINISTRATIVE_BOOTSTRAP_SUBJECT = "administrative-bootstrap";
@@ -484,10 +487,16 @@ export class EnvironmentAuth extends Context.Service<
       readonly subject?: string;
       readonly proofKeyThumbprint?: string;
       readonly purpose?: "startup";
-    }) => Effect.Effect<IssuedPairingLink, ServerAuthInternalError>;
+    }) => Effect.Effect<
+      IssuedPairingLink,
+      ServerAuthInternalError | ManagedLimits.ManagedPolicyRefusedError
+    >;
     readonly issuePairingCredential: (
       input?: AuthCreatePairingCredentialInput,
-    ) => Effect.Effect<AuthPairingCredentialResult, ServerAuthInternalError>;
+    ) => Effect.Effect<
+      AuthPairingCredentialResult,
+      ServerAuthInternalError | ManagedLimits.ManagedPolicyRefusedError
+    >;
     readonly issueStartupPairingCredential: () => Effect.Effect<
       AuthPairingCredentialResult,
       ServerAuthInternalError
@@ -619,9 +628,9 @@ const mapSessionVerificationErrors = <A, R>(
     ),
   );
 
-function parseBearerToken(request: HttpServerRequest.HttpServerRequest): string | null {
+export function parseBearerToken(request: HttpServerRequest.HttpServerRequest): string | null {
   const header = request.headers["authorization"];
-  if (typeof header !== "string" || !header.startsWith(AUTHORIZATION_PREFIX)) {
+  if (typeof header !== "string" || !/^Bearer /i.test(header)) {
     return null;
   }
   const token = header.slice(AUTHORIZATION_PREFIX.length).trim();
@@ -643,7 +652,7 @@ export function selectRequestCredential(
   legacyCookieName: string | undefined,
 ) {
   const cookieToken = request.cookies[cookieName];
-  if (cookieToken !== undefined) {
+  if (cookieToken) {
     return { token: cookieToken, source: "cookie" } as const;
   }
 
@@ -707,6 +716,7 @@ export const make = Effect.gen(function* () {
   const crypto = yield* Crypto.Crypto;
   const descriptor = yield* policy.getDescriptor();
   const config = yield* ServerConfig.ServerConfig;
+  const managedPolicy = yield* ManagedPolicy.ManagedPolicy;
   const devAuth = resolveReusableDevAuth(config);
 
   const authenticateToken = (
@@ -1004,33 +1014,15 @@ export const make = Effect.gen(function* () {
       );
     };
 
-  const issuePairingCredentialForSubject = (input: {
-    readonly scopes: ReadonlyArray<AuthEnvironmentScope>;
-    readonly subject: string;
-    readonly label?: string;
-    readonly purpose?: "startup";
-  }) =>
-    createPairingLink({
-      scopes: input.scopes,
-      subject: input.subject,
-      ...(input.label ? { label: input.label } : {}),
-      ...(input.purpose ? { purpose: input.purpose } : {}),
-    }).pipe(
-      Effect.map(
-        (issued) =>
-          ({
-            id: issued.id,
-            credential: issued.credential,
-            ...(issued.label ? { label: issued.label } : {}),
-            expiresAt: issued.expiresAt,
-          }) satisfies AuthPairingCredentialResult,
-      ),
-    );
+  const toPairingCredential = (issued: IssuedPairingLink): AuthPairingCredentialResult => ({
+    id: issued.id,
+    credential: issued.credential,
+    ...(issued.label ? { label: issued.label } : {}),
+    expiresAt: issued.expiresAt,
+  });
 
-  const createPairingLink: EnvironmentAuth["Service"]["createPairingLink"] = Effect.fn(
-    "EnvironmentAuth.createPairingLink",
-  )(
-    function* (input) {
+  const issuePairingLink = Effect.fn("EnvironmentAuth.issuePairingLink")(
+    function* (input: Parameters<EnvironmentAuth["Service"]["createPairingLink"]>[0]) {
       const createdAt = yield* DateTime.now;
       const issued = yield* bootstrapCredentials.issueOneTimeToken({
         scopes: input?.scopes ?? AuthStandardClientScopes,
@@ -1052,6 +1044,19 @@ export const make = Effect.gen(function* () {
     },
     Effect.mapError((cause) => new ServerAuthPairingLinkCreationError({ cause })),
   );
+
+  const createPairingLink: EnvironmentAuth["Service"]["createPairingLink"] = Effect.fn(
+    "EnvironmentAuth.createPairingLink",
+  )(function* (input) {
+    // The startup link is for a browser on this machine; every other link lets a device pair.
+    if (input?.purpose !== "startup" && !ManagedLimits.allowsRemoteClients(managedPolicy)) {
+      return yield* ManagedLimits.refuseRemoteClients(
+        managedPolicy,
+        "so this server cannot create pairing links",
+      );
+    }
+    return yield* issuePairingLink(input);
+  });
 
   const listPairingLinks: EnvironmentAuth["Service"]["listPairingLinks"] = (input) =>
     bootstrapCredentials.listActive().pipe(
@@ -1125,19 +1130,23 @@ export const make = Effect.gen(function* () {
     );
 
   const issuePairingCredential: EnvironmentAuth["Service"]["issuePairingCredential"] = (input) =>
-    issuePairingCredentialForSubject({
+    createPairingLink({
       scopes: input?.scopes ?? AuthStandardClientScopes,
       subject: "one-time-token",
       ...(input?.label ? { label: input.label } : {}),
-    }).pipe(Effect.withSpan("EnvironmentAuth.issuePairingCredential"));
+    }).pipe(
+      Effect.map(toPairingCredential),
+      Effect.withSpan("EnvironmentAuth.issuePairingCredential"),
+    );
 
   const issueStartupPairingCredential: EnvironmentAuth["Service"]["issueStartupPairingCredential"] =
     () => {
-      const fallback = issuePairingCredentialForSubject({
+      // Unguarded: startup already refused auth policies the managed policy leaves out.
+      const fallback = issuePairingLink({
         scopes: AuthStandardClientScopes,
         subject: INTERNAL_ADMINISTRATIVE_BOOTSTRAP_SUBJECT,
         purpose: "startup",
-      });
+      }).pipe(Effect.map(toPairingCredential));
       if (!devAuth) {
         return fallback.pipe(Effect.withSpan("EnvironmentAuth.issueStartupPairingCredential"));
       }
@@ -1366,6 +1375,11 @@ export const make = Effect.gen(function* () {
       Effect.withSpan("EnvironmentAuth.consumeMcpApprovalCode"),
     );
 
+  yield* revokePairedClientsThePolicyDisallows(managedPolicy, {
+    sessions,
+    pairingLinks: bootstrapCredentials,
+  });
+
   return EnvironmentAuth.of({
     getDescriptor: Effect.fn("EnvironmentAuth.getDescriptor")(function () {
       return Effect.succeed(descriptor);
@@ -1395,6 +1409,51 @@ export const make = Effect.gen(function* () {
   });
 });
 
+/** Subjects of sessions and links a pairing link created, keyed by how the client paired. */
+const LINK_PAIRED_SUBJECTS = { link: "one-time-token", connect: "cloud-connect" } as const;
+
+/**
+ * Revokes sessions and unused links from pairing the policy no longer allows, so a policy rolled
+ * out to a machine that already had phones paired takes effect on the next start.
+ */
+const revokePairedClientsThePolicyDisallows = Effect.fn(
+  "EnvironmentAuth.revokePairedClientsThePolicyDisallows",
+)(function* (
+  policy: ManagedPolicy.ManagedPolicy["Service"],
+  stores: {
+    readonly sessions: SessionStore.SessionStore["Service"];
+    readonly pairingLinks: PairingGrantStore.PairingGrantStore["Service"];
+  },
+) {
+  const remoteAllowed = ManagedLimits.allowsRemoteClients(policy);
+  const disallowed = new Set<string>();
+  if (!remoteAllowed) disallowed.add(LINK_PAIRED_SUBJECTS.link);
+  if (!ManagedLimits.allowsConnect(policy)) disallowed.add(LINK_PAIRED_SUBJECTS.connect);
+  if (disallowed.size === 0) return;
+  const sessions = (yield* stores.sessions.listActive()).filter(
+    (session) =>
+      disallowed.has(session.subject) ||
+      // The startup link also pairs browsers on this machine; only a device elsewhere goes.
+      (!remoteAllowed &&
+        session.subject === INTERNAL_ADMINISTRATIVE_BOOTSTRAP_SUBJECT &&
+        session.client.ipAddress !== undefined &&
+        !isLocalLoopbackHost(session.client.ipAddress)),
+  );
+  const links = (yield* stores.pairingLinks.listActive()).filter((link) =>
+    disallowed.has(link.subject),
+  );
+  yield* Effect.forEach(sessions, (session) => stores.sessions.revoke(session.sessionId), {
+    discard: true,
+  });
+  yield* Effect.forEach(links, (link) => stores.pairingLinks.revoke(link.id), { discard: true });
+  if (sessions.length > 0 || links.length > 0) {
+    yield* Effect.logInfo("Revoked clients the managed policy does not allow.", {
+      sessions: sessions.length,
+      pairingLinks: links.length,
+    });
+  }
+});
+
 export const layer = Layer.effect(EnvironmentAuth, make).pipe(
   Layer.provideMerge(PairingGrantStore.layer),
   Layer.provideMerge(SessionStore.layer),
@@ -1404,6 +1463,7 @@ export const layer = Layer.effect(EnvironmentAuth, make).pipe(
 const layerStorage = Layer.mergeAll(ServerSecretStore.layer, SqlitePersistence.layerConfig);
 
 export const layerRuntime = layer.pipe(
+  Layer.provideMerge(ManagedPolicy.layer),
   Layer.provideMerge(layerStorage),
   Layer.provideMerge(ServerEnvironment.layerIdentity),
 );
