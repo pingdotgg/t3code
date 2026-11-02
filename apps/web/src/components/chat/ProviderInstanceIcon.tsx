@@ -30,6 +30,21 @@ const PROVIDER_TEXT_COLOR_BY_PROVIDER: Partial<Record<ProviderDriverKind, string
   [ProviderDriverKind.make("antigravity")]: "text-[#5b87bf]",
 };
 
+/** Official Command Code logomark, used instead of a name-derived placeholder. */
+export function isOfficialCommandCodeIcon(input: {
+  readonly driverKind: ProviderDriverKind;
+  readonly displayName: string;
+  readonly agentId?: string | undefined;
+}): boolean {
+  if (input.driverKind === "command-code") return true;
+  if (input.driverKind !== "acpRegistry") return false;
+  return (
+    input.agentId === "command-code" ||
+    input.agentId === "command-code-omarchy" ||
+    /^Command Code(?: \([^)]+\))?$/.test(input.displayName)
+  );
+}
+
 export function providerTextColor(driverKind: ProviderDriverKind): {
   readonly className?: string;
   readonly style?: CSSProperties;
@@ -84,6 +99,11 @@ export const ProviderInstanceIcon = memo(function ProviderInstanceIcon(props: {
   const badgeContent = props.badgeContent ?? "initials";
   const iconClassName = cn(props.size === "compact" && "size-3.5", props.iconClassName);
   const isAcpRegistry = props.driverKind === "acpRegistry";
+  const commandCodeIcon = isOfficialCommandCodeIcon({
+    driverKind: props.driverKind,
+    displayName: props.displayName,
+    agentId: props.acpRegistryAgentId,
+  });
   const acpRegistryIconUrl = resolveProviderInstanceAcpRegistryIconUrl({
     driverKind: props.driverKind,
     agentId: props.acpRegistryAgentId,
@@ -99,7 +119,21 @@ export const ProviderInstanceIcon = memo(function ProviderInstanceIcon(props: {
       style={accentStyle}
       data-provider-accent-color={accentColor}
     >
-      {isAcpRegistry ? (
+      {commandCodeIcon ? (
+        <>
+          <img
+            src="/assets/command-code-symbol-dark.svg"
+            alt={props.displayName}
+            className={cn("size-5 shrink-0 object-contain dark:hidden", iconClassName)}
+          />
+          <img
+            src="/assets/command-code-symbol-light.svg"
+            alt=""
+            aria-hidden
+            className={cn("hidden size-5 shrink-0 object-contain dark:block", iconClassName)}
+          />
+        </>
+      ) : isAcpRegistry ? (
         <AcpRegistryAgentIcon
           className={cn("size-5 rounded-none bg-transparent", iconClassName)}
           fallbackClassName="size-full"

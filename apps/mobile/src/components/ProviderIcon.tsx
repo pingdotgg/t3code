@@ -75,6 +75,20 @@ export function ProviderIcon(props: ProviderIconProps) {
   const size = props.size ?? 16;
   const mono = isDarkMode ? "#e5e5e5" : "#171717";
 
+  if (props.provider === "command-code") {
+    return (
+      <Image
+        source={
+          isDarkMode
+            ? require("../../assets/command-code-symbol-light.png")
+            : require("../../assets/command-code-symbol-dark.png")
+        }
+        style={{ width: size, height: size }}
+        contentFit="contain"
+      />
+    );
+  }
+
   if (props.provider?.trim().toLowerCase() === "antigravity") {
     return (
       <Image

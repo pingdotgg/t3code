@@ -643,10 +643,27 @@ function UsageOverview({
     PROVIDER_ORDER.filter((provider) => loading.everyProvider || loading.providers.has(provider)),
   );
   const providersWithData = new Set(providersWithUsage(merged.providers));
+  // The usage summaries include sources even when the installed provider has
+  // no completed sessions. Show a zero-usage row instead of making it disappear.
+  const providersWithSources = new Set<UsageProviderKind>(
+    selectedEnvironments.flatMap(
+      (environment) =>
+        environment.summary?.sources.flatMap((source) =>
+          source.fingerprint.provider === "command-code" &&
+          (source.status === "ok" || source.status === "partial") &&
+          !hiddenProviders.has(source.fingerprint.provider)
+            ? [source.fingerprint.provider]
+            : [],
+        ) ?? [],
+    ),
+  );
   // Only loading.providers excludes hidden providers without data. Filter a fresh array so the compiler can
   // cache independently.
   const activeProviders = [...PROVIDER_ORDER].filter(
-    (provider) => providersWithData.has(provider) || loading.providers.has(provider),
+    (provider) =>
+      providersWithData.has(provider) ||
+      providersWithSources.has(provider) ||
+      loading.providers.has(provider),
   );
   const chartLoadingProviders = new Set(
     activeProviders.filter((provider) => loadingProviders.has(provider)),

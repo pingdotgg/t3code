@@ -19,10 +19,12 @@ import * as PubSub from "effect/PubSub";
 import * as Ref from "effect/Ref";
 import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
+import { HttpClient } from "effect/http";
 
 import * as BackgroundPolicy from "../background/BackgroundPolicy.ts";
 import * as Settings from "../serverSettings.ts";
 import { makeCliproxyApi } from "./cliproxyApi.ts";
+import { readCommandCodeLimitSource } from "./commandCodeLimits.ts";
 
 export class UsageLimitSources extends Context.Service<
   UsageLimitSources,
@@ -49,6 +51,7 @@ function sourceLabel(id: string, config: UsageLimitSourceConfig): string {
 /** @public */
 export const make = Effect.gen(function* () {
   const api = yield* makeCliproxyApi;
+  const httpClient = yield* HttpClient.HttpClient;
   const settingsService = yield* Settings.ServerSettingsService;
   const backgroundPolicy = yield* BackgroundPolicy.BackgroundPolicy;
   const stateRef = yield* Ref.make<ReadonlyArray<UsageLimitSourceSnapshot>>([]);
@@ -97,7 +100,15 @@ export const make = Effect.gen(function* () {
       ([id, config]) => readSource(id as UsageLimitSourceId, config),
       { concurrency: 4 },
     );
-    yield* publish(snapshots);
+    const commandCodeConfigured = Object.keys(settings?.providerInstances ?? {}).some((id) =>
+      id.toLowerCase().includes("command-code"),
+    );
+    const commandCode = commandCodeConfigured
+      ? yield* readCommandCodeLimitSource().pipe(
+          Effect.provideService(HttpClient.HttpClient, httpClient),
+        )
+      : null;
+    yield* publish(commandCode === null ? snapshots : [...snapshots, commandCode]);
   }).pipe(refreshLock.withPermits(1), Effect.ignoreCause({ log: true }));
 
   // Shares the refresh lock so a stale in-flight read cannot overwrite a redemption.

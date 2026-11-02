@@ -24,6 +24,10 @@ OpenCode reads its SQLite database and older JSON history. Antigravity reads loc
 databases, including T3-managed profiles. Set `OPENCODE_DATA_DIR` or `ANTIGRAVITY_DATA_DIR` on the
 server to read a different data directory; comma-separated paths read multiple directories.
 
+Command Code reads local `.jsonl` message history from `~/.commandcode/projects` to report
+input/output tokens, cache usage, and provider-reported USD costs. It deduplicates repeated
+transcript exports by session and message ID. These costs are usage records, not a subscription bill.
+
 Cursor reads account usage from Cursor's API for the account you signed in with in T3 or set as
 `CURSOR_API_KEY`, or otherwise the CLI login saved on the server.
 This includes headless T3 sessions and desktop usage across machines; the same account counts
@@ -159,7 +163,17 @@ the environment. T3 cannot report limits for external OpenCode servers because t
 belong to the remote server. Limits need an OpenCode Go API key, or an OpenCode Console connected
 in OpenCode with an API key. A Console browser sign-in alone does not report them. You can also add
 your Go API key as `OPENCODE_API_KEY` in the OpenCode instance's **Environment variables**, then
-refresh provider status. Cursor reports
+refresh provider status.
+
+Command Code reports its 5-hour and weekly usage when the Command Code provider is configured
+locally and `~/.commandcode/auth.json` contains an API key. Supported active subscription plans
+may also report a monthly plan-credit allowance and reset date, separate from purchased credits.
+These readings use the local CLI's authenticated service API, which may change across Command Code
+versions. Unavailable or unrecognized quotas are omitted rather than guessed. The Command Code
+symbol shown in web and mobile Usage and for known ACP instances uses the official logomark from
+the [Command Code brand resources](https://commandcode.ai/brand).
+
+Cursor reports
 its monthly allowance, including separate Auto and API usage, for `CURSOR_AUTH_TOKEN` when it is set,
 otherwise for the account you signed in with in T3 or set as `CURSOR_API_KEY`, otherwise for the CLI
 login. On macOS, this includes the default Keychain login after you enable Cursor usage. Sign-in, API key,

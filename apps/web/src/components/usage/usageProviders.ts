@@ -30,6 +30,11 @@ export const PROVIDER_PRESENTATION = {
     color: "#5b9bbd",
     driverKind: ProviderDriverKind.make("opencode"),
   },
+  "command-code": {
+    label: "Command Code",
+    color: "#a982e5",
+    driverKind: ProviderDriverKind.make("command-code"),
+  },
   antigravity: {
     label: "Antigravity",
     color: "#8c7bd1",

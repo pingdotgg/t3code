@@ -40,6 +40,7 @@ import type {
   UsageRecord,
 } from "@t3tools/provider-core/server/usage";
 import { canonicalModelFilter, resolveModelAliases, UsageAggregator } from "./usageAggregation.ts";
+import { commandCodeUsageFormat } from "./commandCodeUsage.ts";
 import { createOverrideRateTable, parseRateTable, type RateTable } from "./usagePricing.ts";
 import {
   listTranscriptFiles,
@@ -82,9 +83,10 @@ const scanReaders = BUILT_IN_USAGE_DRIVERS.flatMap((driver) =>
   driver.usage?.kind === "scan" ? [{ driver, reader: driver.usage }] : [],
 );
 
-const transcriptFormats = new Map(
-  transcriptReaders.map(({ reader }) => [reader.provider, reader.format] as const),
-);
+const transcriptFormats = new Map([
+  ...transcriptReaders.map(({ reader }) => [reader.provider, reader.format] as const),
+  ["command-code", commandCodeUsageFormat] as const,
+]);
 
 interface TranscriptSource {
   readonly provider: UsageProviderKind;
@@ -332,13 +334,12 @@ export const make = Effect.gen(function* () {
   ) {
     const dirs: Array<TranscriptSource> = [];
     const seen = new Set<string>();
-    for (const { driver, reader } of transcriptReaders) {
-      const { provider, format } = reader;
-      const directories = yield* Effect.forEach(
-        yield* usageInstances(driver, settings),
-        (instance) => reader.directories(instance),
-      );
-      for (const { dir: directory, fileName } of directories.flat()) {
+    const addSources = Effect.fn("UsageService.addTranscriptSources")(function* (
+      provider: UsageProviderKind,
+      format: TranscriptUsageFormat<unknown>,
+      directories: ReadonlyArray<{ readonly dir: string; readonly fileName?: string }>,
+    ) {
+      for (const { dir: directory, fileName } of directories) {
         const sourceKey = provider + "\0" + directory;
         const previous = sourceCache.get(sourceKey);
         const dir = yield* fileSystem
@@ -373,6 +374,18 @@ export const make = Effect.gen(function* () {
           ...(fileName === undefined ? {} : { fileName }),
         });
       }
+    });
+    for (const { driver, reader } of transcriptReaders) {
+      const directories = yield* Effect.forEach(
+        yield* usageInstances(driver, settings),
+        (instance) => reader.directories(instance),
+      );
+      yield* addSources(reader.provider, reader.format, directories.flat());
+    }
+    const home = hostEnvironment.HOME ?? (yield* HostProcess.HomeDirectory);
+    const commandCodeDir = path.join(home, ".commandcode", "projects");
+    if (yield* fileSystem.exists(commandCodeDir).pipe(Effect.orElseSucceed(() => false))) {
+      yield* addSources("command-code", commandCodeUsageFormat, [{ dir: commandCodeDir }]);
     }
     return dirs;
   });
