@@ -39,8 +39,8 @@ const decodeJson = Schema.decodeUnknownSync(Schema.fromJsonString(Schema.Unknown
 
 // Kiro broadcasts T3 never reads. They carry the account's governance flags,
 // the full text of Kiro's bundled steering documents, its powers, the user's
-// hooks and the session roster; the client ignores every one of them (no
-// handler is registered).
+// hooks, the session roster and memory sync state; the client ignores every
+// one of them (no handler is registered).
 const DROPPED_INBOUND_METHODS = new Set([
   "_kiro/governance/state",
   "_kiro/powers/items_changed",
@@ -50,6 +50,7 @@ const DROPPED_INBOUND_METHODS = new Set([
   "_kiro/tools/didChange",
   "_kiro/hooks/didChange",
   "_kiro/mcp/status",
+  "_kiro/memory/syncStatus",
 ]);
 const HOME_PLACEHOLDER = "/home/kiro-replay";
 
@@ -541,7 +542,7 @@ const recordScenario = Effect.fn("recordKiroScenario")(function* (fixtureName: s
       generatedBy: "live-kiro-recorder",
       kiroVersion: process.env.T3_KIRO_VERSION ?? "unknown",
       normalization:
-        "Session ids are fixed sess_ UUIDs and other UUIDs (message and request ids) are numbered in first-seen order, the workspace is <workspace>, HOME is /home/kiro-replay and the recording user is kiro-replay. T3-owned prompt text, MCP servers and initialize params other than clientCapabilities and _meta are <any>. Kiro's log directory, user-scoped commands and agents, and the _kiro/* broadcasts T3 ignores (governance, steering documents, powers, tools, hooks, MCP status, session roster) are removed. Timestamps are kept as recorded.",
+        "Session ids are fixed sess_ UUIDs and other UUIDs (message and request ids) are numbered in first-seen order, the workspace is <workspace>, HOME is /home/kiro-replay and the recording user is kiro-replay. T3-owned prompt text, MCP servers and initialize params other than clientCapabilities and _meta are <any>. Kiro's log directory, user-scoped commands and agents, and the _kiro/* broadcasts T3 ignores (governance, steering documents, powers, tools, hooks, MCP status, session roster, memory sync) are removed. Timestamps are kept as recorded.",
       droppedFrames,
     },
     entries: [
