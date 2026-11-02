@@ -2600,7 +2600,7 @@ export type WorkingWindowItem =
     };
 
 export interface WorkingWindow {
-  /** Changes with each prompt or steer. */
+  /** Changes with each prompt or steer, which closes an open history. */
   readonly key: string;
   readonly items: ReadonlyArray<WorkingWindowItem>;
   readonly diff: DiffLineStat | null;
@@ -2610,6 +2610,7 @@ export interface WorkingWindow {
   readonly retryAttempt: number | null;
   /** Stop was requested and the provider has not let go yet. */
   readonly stopping: boolean;
+  readonly historyOpen: boolean;
   /** A standalone /compact owns its progress row and clock. */
   readonly compactCommand?: boolean;
 }
@@ -2638,6 +2639,7 @@ function sameWorkingWindow(a: WorkingWindow | undefined, b: WorkingWindow | unde
   if (a === undefined || b === undefined) return false;
   return (
     a.key === b.key &&
+    a.historyOpen === b.historyOpen &&
     a.stopping === b.stopping &&
     a.compactCommand === b.compactCommand &&
     a.retryAttempt === b.retryAttempt &&
@@ -2735,6 +2737,7 @@ export function applyWorkingWindow(
     | "runlessWorkActive"
     | "pendingApprovalRequestIds"
   >,
+  historyOpenKey: string | null = null,
 ): MessagesTimelineRow[] {
   const workingIndex = input.isWorking ? rows.findIndex((row) => row.kind === "working") : -1;
   if (workingIndex < 0) return rows as MessagesTimelineRow[];
@@ -2864,6 +2867,7 @@ export function applyWorkingWindow(
     failedTests: deriveFailedTests(items),
     retryAttempt: deriveRetryAttempt(items),
     stopping: interruptRequested && !interruptSettled,
+    historyOpen: historyOpenKey === key,
   };
   return [
     ...rows.slice(0, workingIndex),

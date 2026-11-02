@@ -506,6 +506,8 @@ const ConversationTimeline = memo(function ConversationTimeline({
   const citationThreadRef = parseScopedThreadKey(routeThreadKey);
   const openPullRequest = useOpenPrLink(citationThreadRef ?? undefined);
   const [minimapStripMap] = useState(() => new Map<string, HTMLSpanElement>());
+  // The open history belongs to the prompt that opened it; sending closes it.
+  const [workingHistoryKey, setWorkingHistoryKey] = useState<string | null>(null);
   const [disclosureToggleSettling, setDisclosureToggleSettling] = useState(false);
   const disclosureAnchorKeyRef = useRef<string | null>(null);
   const disclosureSettleFrameRef = useRef<number | null>(null);
@@ -540,9 +542,10 @@ const ConversationTimeline = memo(function ConversationTimeline({
     });
   };
 
-  const suspendEndScrollMaintenanceForDisclosure = (anchorKey: string) => {
+  const suspendEndScrollMaintenanceForDisclosure = (anchorKey: string, holdScroll = false) => {
     disclosureAnchorKeyRef.current = anchorKey;
-    disclosurePinsEndRef.current = resolveTimelineIsAtEnd(listRef.current?.getState()) === true;
+    disclosurePinsEndRef.current =
+      !holdScroll && resolveTimelineIsAtEnd(listRef.current?.getState()) === true;
     setDisclosureToggleSettling(true);
     scheduleDisclosureSettle();
   };
@@ -576,6 +579,13 @@ const ConversationTimeline = memo(function ConversationTimeline({
       }
       return next;
     });
+  };
+  const onToggleWorkingHistory = (key: string) => {
+    // Either way the bar holds still: the history grows and shrinks below it.
+    suspendEndScrollMaintenanceForDisclosure("working-indicator-row", true);
+    const list = listRef.current;
+    if (list) void list.scrollToOffset({ offset: list.getState().scroll, animated: false });
+    setWorkingHistoryKey((current) => (current === key ? null : key));
   };
   const onToggleAttemptFold = (attemptId: RunAttemptId) => {
     suspendEndScrollMaintenanceForDisclosure(`attempt-fold:${attemptId}`);
@@ -678,9 +688,13 @@ const ConversationTimeline = memo(function ConversationTimeline({
     hasThreadError: threadErrorMessage !== null,
     isWorking,
     runlessWorkActive,
+    workingHistoryKey,
     windowlessCitation,
     activeFindEntryId,
   });
+  const workingHistoryOpen = rows.some(
+    (row) => row.kind === "working" && row.window?.historyOpen === true,
+  );
   // Opens whatever hides a cited response. False when nothing does, so the citation stops waiting.
   const revealCitedEntry = (entryId: string, runId: RunId | null) => {
     const fold = timelineTurnFoldRunIdsByEntryId({
@@ -1146,6 +1160,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
     onRetryWorkspacePreparation: onRetryWorkspacePreparation ?? null,
     onWorktreeSetupWorkLocally: onWorktreeSetupWorkLocally ?? null,
     onOpenWorktreeSetupTerminal: onOpenWorktreeSetupTerminal ?? null,
+    onToggleWorkingHistory,
     onFocusComposer: onFocusComposer ?? null,
     onInterrupt: onInterrupt ?? null,
     workGroupViewState,
@@ -1441,7 +1456,8 @@ const ConversationTimeline = memo(function ConversationTimeline({
                 anchoredEndSpace ||
                 !liveFollowEnabled ||
                 fullscreenAppRowId !== null ||
-                disclosureToggleSettling
+                disclosureToggleSettling ||
+                workingHistoryOpen
                   ? false
                   : isWorking && !prefersReducedMotion && settlingListIdentity === null
                     ? TIMELINE_MAINTAIN_SCROLL_AT_END_SMOOTH
