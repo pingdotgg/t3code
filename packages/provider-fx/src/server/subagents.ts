@@ -214,7 +214,8 @@ function childToolCall(call: typeof HookCall.Type) {
   const rawInput = Option.getOrUndefined(decodeArguments(call.argumentsJson));
   return {
     toolCallId: call.callId,
-    name: call.name,
+    // Nested delegations are child steps, not new top-level subagent tasks.
+    ...(call.name === FX_SUBAGENT_TOOL ? {} : { name: call.name }),
     title: call.name,
     kind: fxToolKind(call.name),
     ...(rawInput === undefined ? {} : { rawInput }),

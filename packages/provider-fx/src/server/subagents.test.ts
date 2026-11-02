@@ -150,6 +150,18 @@ describe("fx sub-agent hooks", () => {
           status: "success",
         }),
       },
+      {
+        hook: hook(CHILD, "tool.start", {
+          call: call("call_nested", "subagent", '{"action":"run","task":"Check scripts"}'),
+        }),
+      },
+      {
+        hook: hook(CHILD, "tool.end", {
+          call: call("call_nested", "subagent"),
+          output: '{"ok":true,"result":"Scripts checked"}',
+          status: "success",
+        }),
+      },
       { hook: hook(CHILD, "model.start", { modelCallId: 2, purpose: "permission_review" }) },
       { hook: hook(CHILD, "model.end", { modelCallId: 2, output: "allow", toolCalls: [{}] }) },
       { hook: hook(CHILD, "model.start", { modelCallId: 3, purpose: "agent" }) },
@@ -168,10 +180,28 @@ describe("fx sub-agent hooks", () => {
       "tool_call call_read in_progress",
       "tool_call_update call_read completed",
       "tool_call_update call_read completed",
+      "tool_call call_nested in_progress",
+      "tool_call_update call_nested completed",
       `agent_message result: ${REPLY}`,
     ]);
     const read = run.delivered[1]?.update;
     assert.deepInclude(read, { kind: "read", rawInput: { path: "package.json" } });
+    let nested: AcpToolCallState | undefined;
+    for (const notification of run.delivered.slice(4, 6)) {
+      for (const event of parseSessionUpdateEvent(notification).events) {
+        if (event._tag !== "ToolCallUpdated") continue;
+        nested = mergeToolCallState(nested, event.toolCall);
+        assert.isUndefined(extractFxSubagentUpdate(nested));
+      }
+    }
+    assert.deepInclude(nested, {
+      toolCallId: "call_nested",
+      status: "completed",
+      title: "subagent",
+    });
+    assert.deepInclude(nested?.data, {
+      rawInput: { action: "run", task: "Check scripts" },
+    });
     // fx completes the ACP call before it reports the whole result.
     assert.deepEqual(run.statuses, [
       "running",
