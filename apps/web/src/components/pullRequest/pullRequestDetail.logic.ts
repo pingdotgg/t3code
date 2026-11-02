@@ -1399,7 +1399,11 @@ export function resolveDisplayedPullRequestDetail(input: {
   }
   if (input.reference.host === undefined) return input.cached;
   const link = sourceControlClients.parseChangeRequestUrl(input.cached.url)?.link;
-  return link !== undefined && (link.authority ?? link.host) === input.reference.host.toLowerCase()
-    ? input.cached
-    : null;
+  if (link === undefined) return null;
+  const host = input.reference.host.toLowerCase();
+  // Older GitHub/GitLab references keyed custom-port snapshots by hostname alone.
+  const legacyHost =
+    (input.cached.provider === "github" || input.cached.provider === "gitlab") &&
+    link.host === host;
+  return (link.authority ?? link.host) === host || legacyHost ? input.cached : null;
 }

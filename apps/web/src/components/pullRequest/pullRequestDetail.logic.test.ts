@@ -1426,7 +1426,7 @@ describe("cached pull request detail", () => {
 
   // regression: #12168 cached PR details were missed across entry points on custom ports
   it.each(["github", "gitlab"] as const)(
-    "retains portless %s snapshot identities for custom web ports",
+    "retains legacy portless %s snapshots without mixing explicit web ports",
     (providerName) => {
       const provider = SourceControlProviderKind.make(providerName);
       const storage = makeStorage();
@@ -1438,6 +1438,20 @@ describe("cached pull request detail", () => {
       });
       writePullRequestDetailSnapshot(storage, "env-1", hosted, cached);
       expect(readPullRequestDetailSnapshot(storage, "env-1", hosted)?.title).toBe(cached.title);
+      expect(
+        resolveDisplayedPullRequestDetail({
+          live: null,
+          cached,
+          reference: { ...reference, host: `${host}:8443` },
+        }),
+      ).toBe(cached);
+      expect(
+        resolveDisplayedPullRequestDetail({
+          live: null,
+          cached,
+          reference: { ...reference, host: `${host}:9443` },
+        }),
+      ).toBeNull();
     },
   );
 
