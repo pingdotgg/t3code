@@ -1,5 +1,6 @@
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import { expect, it } from "@effect/vitest";
+import { vi } from "vite-plus/test";
 import {
   ProviderDriverKind,
   ProviderInstanceId,
@@ -14,6 +15,7 @@ import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
+import * as Fiber from "effect/Fiber";
 import { HttpClient } from "effect/http";
 
 import * as BackgroundPolicy from "../background/BackgroundPolicy.ts";
@@ -21,6 +23,23 @@ import * as ServerSettings from "../serverSettings.ts";
 import * as UsageLimitSources from "./UsageLimitSources.ts";
 
 const encodeConfigEvent = Schema.encodeSync(ServerConfigStreamEvent);
+
+vi.mock("./commandCodeLimits.ts", () => ({
+  readCommandCodeLimitSource: () =>
+    Effect.succeed({
+      id: UsageLimitSourceId.make("command-code-local"),
+      kind: "cliproxy" as const,
+      label: "Command Code",
+      checkedAt: "2026-11-02T00:00:00.000Z",
+      accounts: [
+        {
+          id: "Command Code",
+          driver: ProviderDriverKind.make("command-code"),
+          usageLimits: { checkedAt: "2026-11-02T00:00:00.000Z", windows: [] },
+        },
+      ],
+    }),
+}));
 
 it("recognizes Command Code by provider driver or ACP agent, never by instance key", () => {
   const providerInstances = {
@@ -59,19 +78,17 @@ it.effect("refreshes usage limits when a Command Code provider instance is added
     const initial = yield* baseSettings.getSettings;
     const current = yield* Ref.make(initial);
     const updates = yield* Queue.unbounded<typeof initial>();
-    const firstEventObserved = yield* Deferred.make<void>();
-    const refreshedWithProvider = yield* Deferred.make<void>();
+    const initialEventProcessed = yield* Deferred.make<void>();
     const settings = {
       ...baseSettings,
-      getSettings: Ref.get(current).pipe(
-        Effect.tap((snapshot) =>
-          UsageLimitSources.hasConfiguredCommandCodeProvider(snapshot.providerInstances)
-            ? Deferred.succeed(refreshedWithProvider, undefined).pipe(Effect.ignore)
-            : Effect.void,
+      getSettings: Ref.get(current),
+      streamChanges: Stream.concat(
+        Stream.make(initial),
+        Stream.unwrap(
+          Deferred.succeed(initialEventProcessed, undefined).pipe(
+            Effect.as(Stream.fromQueue(updates)),
+          ),
         ),
-      ),
-      streamChanges: Stream.fromQueue(updates).pipe(
-        Stream.tap(() => Deferred.succeed(firstEventObserved, undefined).pipe(Effect.ignore)),
       ),
     };
 
@@ -79,8 +96,15 @@ it.effect("refreshes usage limits when a Command Code provider instance is added
       Effect.provideService(ServerSettings.ServerSettingsService, settings),
     );
     yield* sources.refresh;
-    yield* Queue.offer(updates, initial);
-    yield* Deferred.await(firstEventObserved);
+    yield* Deferred.await(initialEventProcessed);
+    expect(yield* sources.current).toEqual([]);
+    const published = yield* sources.streamChanges.pipe(
+      Stream.filter((snapshots) =>
+        snapshots.some((snapshot) => snapshot.id === "command-code-local"),
+      ),
+      Stream.runHead,
+      Effect.forkScoped,
+    );
 
     const configured = {
       ...initial,
@@ -94,7 +118,11 @@ it.effect("refreshes usage limits when a Command Code provider instance is added
     };
     yield* Ref.set(current, configured);
     yield* Queue.offer(updates, configured);
-    yield* Deferred.await(refreshedWithProvider);
+    const update = yield* Fiber.join(published);
+    expect(update._tag).toBe("Some");
+    expect(update._tag === "Some" ? update.value[0]?.accounts[0]?.driver : null).toBe(
+      "command-code",
+    );
   }).pipe(
     Effect.provide([
       Layer.mock(BackgroundPolicy.BackgroundPolicy)({
