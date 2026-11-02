@@ -2,12 +2,14 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientError from "effect/http/HttpClientError";
 import * as HttpClientResponse from "effect/http/HttpClientResponse";
 import * as Path from "effect/Path";
+import * as TestClock from "effect/testing/TestClock";
 
 import * as CursorKeychain from "./CursorKeychain.ts";
 import { readCursorAccountUsage } from "./accountUsage.ts";
@@ -313,6 +315,22 @@ describe("readCursorAccountUsage", () => {
         ],
       ]);
       assert.strictEqual(result.records[0]?.totals.outputTokens, 4);
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("stops waiting for an API key exchange that never answers", () =>
+    Effect.gen(function* () {
+      const read = yield* Effect.forkChild(
+        readAccountUsage(
+          { kind: "apiKey", apiKey: "api-key" },
+          0,
+          1781000000000,
+          () => new Promise<Response>(() => {}),
+        ),
+      );
+      yield* TestClock.adjust("10 seconds");
+      const result = yield* Fiber.join(read);
+      assert.strictEqual(result.error, "Cursor account usage could not be read.");
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 
