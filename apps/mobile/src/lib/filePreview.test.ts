@@ -269,7 +269,7 @@ vi.mock("./openExternalUrl", () => ({}));
 vi.mock("./attachmentDownload", () => ({}));
 vi.mock("./uuid", () => ({}));
 vi.mock("../features/threads/thread-context-divider", () => ({}));
-vi.mock("../features/threads/thread-handoff-row", () => ({}));
+vi.mock("../features/threads/thread-handoff-row", () => ({ ThreadModelSwitchDivider: () => null }));
 vi.mock("../features/threads/ThreadGuestShareBar", () => ({ useThreadGuestShare: () => null }));
 vi.mock("../features/threads/SecretRequestCard", () => ({}));
 vi.mock("../features/threads/LinkRequestCard", () => ({ LinkRequestCard: () => null }));

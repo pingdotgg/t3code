@@ -1175,6 +1175,55 @@ it.effect("steers a promoted queued message with the selection it was queued wit
   ),
 );
 
+it.effect("marks the model switch on a promoted message that restarts the turn", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const { started, layer, startFirstTurn } = yield* nextTurnSelectionHarness(
+        "promote-restart-switch",
+        true,
+        false,
+      );
+      const otherSelection = { ...runSelection, model: "other-model" };
+      yield* Effect.gen(function* () {
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+        const threadId = yield* startFirstTurn;
+        yield* orchestrator.dispatch({
+          type: "message.dispatch",
+          commandId: CommandId.make("queued"),
+          threadId,
+          messageId: MessageId.make("message:queued"),
+          text: "queued",
+          attachments: [],
+          modelSelection: otherSelection,
+          dispatchMode: { type: "queue_after_active" },
+          createdBy: "user",
+          creationSource: "web",
+        });
+        const queuedRun = (yield* orchestrator.getThreadProjection(threadId)).runs.find(
+          (run) => run.status === "queued",
+        )!;
+        yield* orchestrator.dispatch({
+          type: "queued-message.promote-to-steer",
+          commandId: CommandId.make("promote"),
+          threadId,
+          queuedRunId: queuedRun.id,
+          targetRunId: started[0]!.runId,
+        });
+        yield* worker.drain();
+
+        const promoted = (yield* orchestrator.getThreadProjection(threadId)).turnItems.find(
+          (item) => item.type === "user_message" && item.messageId === "message:queued",
+        );
+        assert.deepEqual(promoted?.type === "user_message" ? promoted.modelSwitch : undefined, {
+          from: runSelection,
+          to: otherSelection,
+        });
+      }).pipe(Effect.provide(layer));
+    }),
+  ),
+);
+
 it.effect("keeps a queued message queued when promoted into a run that Stop reached", () =>
   Effect.scoped(
     Effect.gen(function* () {
