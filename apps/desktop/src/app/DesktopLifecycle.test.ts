@@ -261,12 +261,17 @@ describe("DesktopLifecycle", () => {
         Effect.provideService(HostProcess.Arguments, [
           "/opt/T3 Code/t3code",
           "--no-sandbox",
-          "T3CODE://pair?token=spent",
+          "T3LEARN://pair?token=spent",
+          "t3learn://new?prompt=hello",
           "t3code://new?prompt=hello",
         ]),
       );
 
-      assert.deepEqual(options, { execPath: "/opt/T3 Code/t3code", args: ["--no-sandbox"] });
+      // T3 Learn drops only its own app links; a t3code:// link is T3 Code's.
+      assert.deepEqual(options, {
+        execPath: "/opt/T3 Code/t3code",
+        args: ["--no-sandbox", "t3code://new?prompt=hello"],
+      });
     }),
   );
 
