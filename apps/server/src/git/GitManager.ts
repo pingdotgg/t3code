@@ -764,7 +764,7 @@ export const make = Effect.gen(function* () {
       submodules,
     });
     if (input.newRefName && input.baseRefName) {
-      yield* shareBranchBase(input.cwd, input.newRefName);
+      yield* shareBranchBase(input.cwd, result.worktree.refName);
     }
     return result;
   });

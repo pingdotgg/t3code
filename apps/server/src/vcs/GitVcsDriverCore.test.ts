@@ -3988,6 +3988,46 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
         }
       }),
     );
+
+    it.effect("suffixes a requested branch that already exists when asked to", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        const { initialBranch } = yield* initRepoWithCommit(cwd);
+        const path = yield* Path.Path;
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+        yield* git(cwd, ["branch", "feature/taken"]);
+        yield* writeTextFile(cwd, "later.txt", "later\n");
+        yield* git(cwd, ["add", "."]);
+        yield* git(cwd, ["commit", "-m", "later"]);
+        const takenHead = yield* git(cwd, ["rev-parse", "feature/taken"]);
+
+        const created = yield* driver.createWorktree(
+          {
+            cwd,
+            path: path.join(yield* makeTmpDir("git-worktrees-"), "taken"),
+            refName: initialBranch,
+            newRefName: "feature/taken",
+            baseRefName: initialBranch,
+          },
+          { renameBranchIfTaken: true },
+        );
+
+        assert.equal(created.worktree.refName, "feature/taken-1");
+        assert.equal(
+          yield* git(created.worktree.path, ["branch", "--show-current"]),
+          "feature/taken-1",
+        );
+        assert.equal(
+          yield* git(created.worktree.path, ["rev-parse", "HEAD"]),
+          yield* git(cwd, ["rev-parse", initialBranch]),
+        );
+        assert.equal(yield* git(cwd, ["rev-parse", "feature/taken"]), takenHead);
+        assert.equal(
+          yield* git(cwd, ["config", "branch.feature/taken-1.t3-merge-base"]),
+          initialBranch,
+        );
+      }),
+    );
     it.effect.each(["commit", "short-commit", "tag", "revision"] as const)(
       "creates a worktree from a %s without recording it as a PR base",
       (kind) =>

@@ -444,6 +444,7 @@ const make = Effect.gen(function* () {
               path: null,
             },
             {
+              renameBranchIfTaken: true,
               progress: {
                 onWorktreeClaimed: (path) =>
                   Effect.sync(() => {

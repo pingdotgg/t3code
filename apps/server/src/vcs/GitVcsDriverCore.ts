@@ -4120,7 +4120,11 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
   )(function* (input, options) {
     yield* refuseOptionLikeRefName("GitVcsDriver.createWorktree", input.cwd, input.refName);
     yield* refuseOptionLikeRefName("GitVcsDriver.createWorktree", input.cwd, input.newRefName);
-    const targetBranch = input.newRefName ?? input.refName;
+    const newRefName =
+      input.newRefName && options?.renameBranchIfTaken
+        ? yield* resolveAvailableBranchName(input.cwd, input.newRefName)
+        : input.newRefName;
+    const targetBranch = newRefName ?? input.refName;
     // Resolve sub/.. before taking the basename.
     const repoName = path.basename(path.resolve(input.cwd));
     let worktreePath = input.path;
@@ -4151,15 +4155,15 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       }
       worktreePath = path.join(parentDir, repoName, directoryName);
     }
-    if (input.newRefName) {
+    if (newRefName) {
       // Kept apart from the checkout so the shared-config lock only covers the tracking write.
       yield* createBranchAt(
         "GitVcsDriver.createWorktree.createBranch",
-        { cwd: input.cwd, branch: input.newRefName, startPoint: input.refName },
+        { cwd: input.cwd, branch: newRefName, startPoint: input.refName },
         "git worktree add failed",
       );
     }
-    const args = ["worktree", "add", "--", worktreePath, input.newRefName ?? input.refName];
+    const args = ["worktree", "add", "--", worktreePath, targetBranch];
     const progress = options?.progress;
     const onCheckoutProgress = progress?.onCheckoutProgress;
 
@@ -4167,7 +4171,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     const [configuredCheckoutWorkers, base] = yield* Effect.all(
       [
         readConfigValue(input.cwd, "checkout.workers"),
-        input.newRefName && input.baseRefName
+        newRefName && input.baseRefName
           ? resolveBranchBase(input.cwd, input.baseRefName)
           : Effect.succeed(null),
       ],
@@ -4282,7 +4286,6 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       );
     }
 
-    const newRefName = input.newRefName;
     if (newRefName && base) {
       yield* Effect.gen(function* () {
         yield* writeConfigValue({

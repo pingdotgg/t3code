@@ -144,6 +144,8 @@ export interface CreateWorktreeOptions {
   /** Null or omitted defers to the checkout's t3.json. */
   readonly submodules?: WorktreeSubmodules | null;
   readonly worktreesDirectory?: string;
+  /** Suffixes `newRefName` when that branch exists; the result names the branch used. */
+  readonly renameBranchIfTaken?: boolean;
 }
 
 export interface GitCommitProgress {
