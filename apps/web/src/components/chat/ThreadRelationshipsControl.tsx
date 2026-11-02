@@ -879,11 +879,11 @@ export function ThreadRelationshipsPanel(props: {
         )}
         <span className="flex min-w-0 flex-1 flex-col gap-0.5">
           <span className="truncate text-meta">{threadTitle}</span>
-          <span className="truncate text-caption text-muted-foreground">
-            {relationship}
-            {node?.thread?.modelSelection.model
-              ? ` · ${lineageModelLabel(node.thread.modelSelection.model, providerEntry)}`
-              : ""}
+          <span className="flex min-w-0 flex-col text-caption text-muted-foreground">
+            <span>{relationship}</span>
+            {node?.thread?.modelSelection.model ? (
+              <span>{lineageModelLabel(node.thread.modelSelection.model, providerEntry)}</span>
+            ) : null}
           </span>
         </span>
         <span className={`${THREAD_DETAILS_PANEL_META_CLASS} ${trailingVisibilityClass}`}>
@@ -1103,7 +1103,6 @@ export function ThreadRelationshipsPanel(props: {
               <span className="flex min-w-0 flex-1 flex-col gap-0.5">
                 <span className="truncate text-meta">{currentThread.title}</span>
                 <span className="truncate text-caption text-muted-foreground">
-                  This thread ·{" "}
                   {lineageModelLabel(
                     currentThread.modelSelection.model,
                     providerEntries.find(
