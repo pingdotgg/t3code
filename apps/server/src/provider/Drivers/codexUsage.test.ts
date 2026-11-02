@@ -48,6 +48,7 @@ describe("parseCodexLine", () => {
         info: { last_token_usage: last, total_token_usage: total, ...extra },
       },
     });
+  const at = (second: number, line: string) => line.replace("49.919Z", `${second}.919Z`);
 
   it("attributes usage to the model from the preceding turn context", () => {
     const state = initialCodexScanState();
@@ -378,11 +379,11 @@ describe("parseCodexLine", () => {
     const state = initialCodexScanState();
     parseCodexLine(turnContext, state);
     const processed = [
-      counted(counters(1000, 200), counters(1000, 200)),
-      counted(counters(100, 20), counters(1100, 220)),
-      counted(counters(300, 50), counters(1400, 270)),
-      counted(counters(200, 40), counters(1300, 260)),
-      counted(counters(10, 2), counters(1310, 262)),
+      at(50, counted(counters(1000, 200), counters(1000, 200))),
+      at(51, counted(counters(100, 20), counters(1100, 220))),
+      at(52, counted(counters(300, 50), counters(1400, 270))),
+      at(53, counted(counters(200, 40), counters(1300, 260))),
+      at(54, counted(counters(10, 2), counters(1310, 262))),
     ].map((line) => {
       const record = parseCodexLine(line, state);
       return record === null ? 0 : totalTokens(record.totals);
@@ -392,6 +393,27 @@ describe("parseCodexLine", () => {
       processed,
       skipped: codexUsageFormat.readMalformedRecords?.(state),
     }).toEqual({ processed: [1200, 120, 350, 240, 12], skipped: 0 });
+  });
+
+  it("does not bill a replay of an earlier request as a counter rewind", () => {
+    const state = initialCodexScanState();
+    parseCodexLine(turnContext, state);
+    const replayed = at(51, counted(counters(100, 20), counters(1100, 220)));
+    const processed = [
+      at(50, counted(counters(1000, 200), counters(1000, 200))),
+      replayed,
+      at(52, counted(counters(300, 50), counters(1400, 270))),
+      replayed,
+      at(53, counted(counters(10, 2), counters(1110, 222))),
+    ].map((line) => {
+      const record = parseCodexLine(line, state);
+      return record === null ? 0 : totalTokens(record.totals);
+    });
+
+    expect({
+      processed,
+      skipped: codexUsageFormat.readMalformedRecords?.(state),
+    }).toEqual({ processed: [1200, 120, 350, 0, 12], skipped: 1 });
   });
 
   it("ignores a replay of the current sequence's first request without rewinding the baseline", () => {

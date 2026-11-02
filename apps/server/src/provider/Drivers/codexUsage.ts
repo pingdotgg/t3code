@@ -79,6 +79,7 @@ export const CodexScanState = Schema.Struct({
   lastCumulativeUsage: Schema.mutableKey(Schema.NullOr(CodexTokenUsage)),
   // Optional so scan states cached before this field existed stay valid.
   sequenceStartSignature: Schema.mutableKey(Schema.optionalKey(Schema.String)),
+  lastRequestTimestampMs: Schema.mutableKey(Schema.optionalKey(Schema.Finite)),
   malformedRecords: Schema.mutableKey(TokenCount),
   sawSessionMeta: Schema.mutableKey(Schema.Boolean),
   modelProvider: Schema.mutableKey(Schema.String),
@@ -206,6 +207,7 @@ function parseCodexRecord(parsed: unknown, state: CodexScanState): UsageRecord |
         state.lastCumulativeUsage = advanceCodexUsage(state.lastCumulativeUsage, last);
       }
       state.lastUsageSignature = signature;
+      state.lastRequestTimestampMs = timestampMs;
       return null;
     }
     state.suppressingForkCopies = false;
@@ -256,9 +258,16 @@ function parseCodexRecord(parsed: unknown, state: CodexScanState): UsageRecord |
       Object.fromEntries(CODEX_USAGE_FIELDS.map((key) => [key, cumulative[key] - last[key]])),
     );
     // Counters may also continue from an earlier snapshot of this sequence, never past the baseline.
+    // A replay keeps its original timestamp, so only a later request may rewind the counters.
+    const mayRewind =
+      restarted ||
+      state.lastRequestTimestampMs === undefined ||
+      timestampMs > state.lastRequestTimestampMs;
     const reconciled =
       base !== null &&
-      (previous === null || CODEX_USAGE_FIELDS.every((key) => base[key] <= previous[key]));
+      (previous === null ||
+        CODEX_USAGE_FIELDS.every((key) => base[key] === previous[key]) ||
+        (mayRewind && CODEX_USAGE_FIELDS.every((key) => base[key] <= previous[key])));
     if (!reconciled) {
       state.malformedRecords += 1;
       return null;
@@ -275,6 +284,7 @@ function parseCodexRecord(parsed: unknown, state: CodexScanState): UsageRecord |
     state.lastCumulativeUsage = advanced;
   }
   state.lastUsageSignature = signature;
+  state.lastRequestTimestampMs = timestampMs;
 
   const inputTokens = last.input_tokens;
   const cachedInputTokens = last.cached_input_tokens;
