@@ -720,7 +720,10 @@ export const fingerprintClaudeCommandSources = Effect.fn("fingerprintClaudeComma
       const contents = yield* fileSystem
         .readFileString(settingsPath)
         .pipe(Effect.catchReason("PlatformError", "NotFound", () => Effect.undefined));
-      if (CLAUDE_COMMAND_SOURCE_REDIRECTS.some((name) => contents?.includes(name))) {
+      if (
+        contents?.includes("CLAUDE_CODE_PLUGIN_CACHE_DIR") ||
+        CLAUDE_COMMAND_SOURCE_REDIRECTS.some((name) => contents?.includes(name))
+      ) {
         return yield* Effect.fail("redirected" as const);
       }
       hash.update(`${settingsPath}\0${contents ?? "absent"}\0`);

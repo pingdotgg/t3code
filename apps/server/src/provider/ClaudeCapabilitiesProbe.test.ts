@@ -205,6 +205,29 @@ it.effect("always starts the CLI when its sources cannot be vouched for", () =>
     yield* probesTwice(commands);
     yield* write(settings, "{}");
 
+    const redirectedPlugins = path.join(root, "redirected-plugins");
+    const redirectedCommand = path.join(
+      redirectedPlugins,
+      "cache",
+      "a",
+      "1.0.0",
+      "commands",
+      "review.md",
+    );
+    for (const settingsPath of [path.join(config, "settings.json"), settings]) {
+      yield* write(
+        settingsPath,
+        JSON.stringify({ env: { CLAUDE_CODE_PLUGIN_CACHE_DIR: redirectedPlugins } }),
+      );
+      yield* write(redirectedCommand, "before edit");
+      yield* probesTwice(commands);
+      const beforeRedirectedEdit = probes();
+      yield* write(redirectedCommand, "after redirected command edit");
+      yield* commands.get(machine, cwd);
+      assert.strictEqual(probes(), beforeRedirectedEdit + 1);
+      yield* write(settingsPath, "{}");
+    }
+
     const installed = path.join(config, "plugins", "installed_plugins.json");
     yield* write(
       installed,
