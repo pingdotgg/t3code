@@ -2349,6 +2349,7 @@ export default function ChatView(props: ChatViewProps) {
     copyRightPanelFilePathStable,
     createBrowserSurface,
     createBrowserSurfaceStable,
+    duplicateBrowserSurface,
     moveRightPanelSurfaceStable,
     onOpenToolDiffStable,
     onOpenTurnDiffStable,
@@ -3980,6 +3981,7 @@ export default function ChatView(props: ChatViewProps) {
           onCopyFilePath={copyRightPanelFilePathStable}
           onAddBrowser={() => createBrowserSurface()}
           onAddBrowserInProfile={createBrowserSurfaceStable}
+          onDuplicateBrowser={duplicateBrowserSurface}
           onAddTerminal={addTerminalSurfaceStable}
           onAddDiff={addDiffSurfaceStable}
           onAddFiles={addFilesSurfaceStable}
