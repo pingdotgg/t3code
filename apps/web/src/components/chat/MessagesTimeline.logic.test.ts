@@ -1487,7 +1487,7 @@ describe("deriveMessagesTimelineRows", () => {
     },
   );
 
-  it("splits a settled turn's work at each steer and keeps the total time on top", () => {
+  it("splits a settled turn's work at each steer, each row with its own time and edits", () => {
     const runId = RunId.make("steered-run");
     const time = (second: number) => new Date(Date.UTC(2026, 0, 1, 0, 0, second)).toISOString();
     const message = (
@@ -1510,25 +1510,61 @@ describe("deriveMessagesTimelineRows", () => {
         streaming: false,
       },
     });
-    const work = (id: string, second: number): TimelineEntry => ({
+    const work = (
+      id: string,
+      second: number,
+      additions: number,
+      deletions: number,
+    ): TimelineEntry => ({
       kind: "work",
       id,
       createdAt: time(second),
-      entry: { id, createdAt: time(second), runId, label: "Ran command", tone: "tool" },
+      entry: {
+        id,
+        createdAt: time(second),
+        runId,
+        label: "Edited a.ts",
+        tone: "tool",
+        projectedItem: {
+          position: 0,
+          visibility: "local",
+          sourceThreadId: ThreadId.make("thread"),
+          sourceItemId: id,
+          item: {
+            id,
+            runId,
+            status: "completed",
+            parentItemId: null,
+            type: "file_change",
+            additions,
+            deletions,
+          },
+        } as never,
+      },
     });
     const rows = (expandedRunIds: ReadonlySet<RunId>) =>
       deriveMessagesTimelineRows({
         timelineEntries: [
           message("prompt", 0, "user", "turn_start"),
-          work("work-before-steer", 4),
+          work("work-before-steer", 4, 12, 1),
           message("steer", 10, "user", "steer"),
-          work("work-after-steer", 15),
+          work("work-after-steer", 15, 40, 0),
           message("final", 30, "assistant"),
         ],
         latestRun: { runId, status: "completed", startedAt: time(0), completedAt: time(30) },
         isWorking: false,
         expandedRunIds,
-        turnDiffSummaries: [],
+        turnDiffSummaries: [
+          {
+            runId,
+            completedAt: time(30),
+            assistantMessageId: MessageId.make("final"),
+            checkpointTurnCount: 1,
+            checkpointRef: "checkpoint-1" as never,
+            status: "ready",
+            files: [{ path: "a.ts", kind: "modified", additions: 30, deletions: 2 }],
+          },
+        ],
         supportsConversationRollback: false,
       });
 
@@ -1541,8 +1577,15 @@ describe("deriveMessagesTimelineRows", () => {
       `turn-fold:${segmentKey}`,
       "final",
     ]);
-    expect(collapsed[1]).toMatchObject({ label: "Worked for 30s" });
-    expect(collapsed[3]).toMatchObject({ label: "Continued for 20s", createdAt: time(10) });
+    expect(collapsed[1]).toMatchObject({
+      label: "Worked for 10s",
+      diff: { additions: 12, deletions: 1 },
+    });
+    expect(collapsed[3]).toMatchObject({
+      label: "Continued for 20s",
+      createdAt: time(10),
+      diff: { additions: 40, deletions: 0 },
+    });
 
     expect(rows(new Set([segmentKey])).map((row) => row.id)).toEqual([
       "prompt",
@@ -1552,6 +1595,27 @@ describe("deriveMessagesTimelineRows", () => {
       "work-after-steer",
       "final",
     ]);
+
+    const stopped = deriveMessagesTimelineRows({
+      timelineEntries: [
+        message("prompt", 0, "user", "turn_start"),
+        work("work-before-steer", 4, 12, 1),
+        message("steer", 10, "user", "steer"),
+        work("work-after-steer", 15, 40, 0),
+        message("final", 30, "assistant"),
+      ],
+      latestRun: { runId, status: "interrupted", startedAt: time(0), completedAt: time(30) },
+      isWorking: false,
+      expandedRunIds: new Set(),
+      turnDiffSummaries: [],
+      supportsConversationRollback: false,
+    });
+    expect(stopped.find((row) => row.id === `turn-fold:${runId}`)).toMatchObject({
+      ending: "worked",
+    });
+    expect(stopped.find((row) => row.id === `turn-fold:${segmentKey}`)).toMatchObject({
+      ending: "stopped",
+    });
   });
 
   it("stacks back-to-back steers as one burst with a single steer label", () => {
@@ -3459,8 +3523,8 @@ describe("v2 run and attempt history", () => {
       ],
     } satisfies Parameters<typeof deriveMessagesTimelineRows>[0];
     const steeredRows = deriveMessagesTimelineRows(steeredInput);
-    expect(steeredRows[0]).toMatchObject({ ending: "stopped", foldable: true });
-    expect(steeredRows.at(-1)).toMatchObject({ ending: "worked", foldable: false });
+    expect(steeredRows[0]).toMatchObject({ ending: "worked", foldable: true });
+    expect(steeredRows.at(-1)).toMatchObject({ ending: "stopped", foldable: false });
     expect(
       deriveMessagesTimelineRows({ ...steeredInput, expandedRunIds: new Set([runId]) }).map(
         (row) => row.id,
