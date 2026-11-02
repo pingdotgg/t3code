@@ -411,6 +411,15 @@ function sanitizedHtmlFrom(container: Element): string {
   return `<meta charset="utf-8">${container.innerHTML}`;
 }
 
+export function serializeTableElementToHtml(table: Element): string {
+  const clone = table.cloneNode(true) as Element;
+  // Word and Outlook paste a table without a border attribute as gridless text.
+  clone.setAttribute("border", "1");
+  const container = document.createElement("div");
+  container.append(clone);
+  return sanitizedHtmlFrom(container);
+}
+
 export function chatMarkdownClipboardPayload(
   selection: Selection,
 ): MarkdownClipboardPayload | null {

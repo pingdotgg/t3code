@@ -70,3 +70,35 @@ describe("markdown copy without the async clipboard", () => {
     expect(clipboard.execCommand).toHaveBeenCalledWith("copy");
   });
 });
+
+describe("table copy as rich text", () => {
+  it("copies a table as rich text with an HTML table flavor", async () => {
+    await using screen = await render(
+      <MarkdownTable>
+        <thead>
+          <tr>
+            <th>Name</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>Ada</td>
+          </tr>
+        </tbody>
+      </MarkdownTable>,
+      // The table renders no links and reads no route.
+      { router: false },
+    );
+    using write = vi.spyOn(navigator.clipboard, "write").mockResolvedValue();
+
+    await userEvent.click(screen.getByRole("button", { name: "Copy table" }));
+    await userEvent.click(page.getByRole("menuitem", { name: "Copy as rich text" }));
+    await expect.element(screen.getByRole("button", { name: "Copied" })).toBeInTheDocument();
+    const [item] = write.mock.calls[0]![0];
+    const html = await (await item!.getType("text/html")).text();
+    const text = await (await item!.getType("text/plain")).text();
+    expect(html).toContain('<table border="1">');
+    expect(html).toContain("<td>Ada</td>");
+    expect(text).toContain("| Name |");
+  });
+});
