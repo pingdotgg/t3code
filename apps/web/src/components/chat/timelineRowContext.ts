@@ -114,6 +114,8 @@ export interface TimelineRowActivityState {
   pendingRequest: TimelinePendingRequest | null;
   /** Background work that outlived the latest turn, named on its fold. */
   backgroundTaskLabel: string | null;
+  backgroundTaskIsCommand: boolean;
+  backgroundTaskMore: number;
   usageLimit: TimelineUsageLimit | null;
   /** The latest run's error as the composer banner shows it. */
   threadErrorMessage: string | null;
