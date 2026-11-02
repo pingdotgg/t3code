@@ -366,7 +366,7 @@ function Sidebar({
       {revealOnHover && offcanvasCollapsed && side === "left" && hasHover && (
         <div
           aria-hidden="true"
-          className="fixed bottom-0 left-0 top-[var(--workspace-topbar-height)] z-40 w-1.5 [-webkit-app-region:no-drag]"
+          className="fixed bottom-0 left-0 top-[var(--workspace-topbar-height)] z-40 w-3 [-webkit-app-region:no-drag]"
           data-slot="sidebar-hover-edge"
           onPointerEnter={peek.edgeEnter}
           onPointerLeave={peek.edgeLeave}
