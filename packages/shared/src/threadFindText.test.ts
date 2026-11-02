@@ -73,8 +73,10 @@ const assistantSegments = (text: string, cwd?: string) =>
 
 it("searches displayed prose and file-chip labels without hidden paths", () => {
   expect(
-    assistantSegments("[important description](/tmp/actual.ts). `/tmp/inline-example.ts:42`"),
-  ).toEqual(["important description actual.ts. inline-example.ts · L42"]);
+    assistantSegments(
+      "[important description](/tmp/actual.ts). `avatars/u1.webp` `/tmp/inline-example.ts:42`",
+    ),
+  ).toEqual(["important description actual.ts. avatars/u1.webp /tmp/inline-example.ts:42"]);
   expect(assistantSegments("[label](src/main.ts#L3C2)", "/workspace/repo")).toEqual([
     "label main.ts · L3:C2",
   ]);

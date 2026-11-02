@@ -60,6 +60,7 @@ export function withChipIcon(
 function presentation(
   url: string,
   props: Pick<SelectableMarkdownTextProps, "linkCustomization" | "skills" | "textStyle">,
+  inlineCode: boolean,
 ): MarkdownLinkCustomization | undefined {
   const custom = props.linkCustomization?.(url);
   if (custom) return custom;
@@ -75,7 +76,8 @@ function presentation(
   const link = resolveMarkdownLinkPresentation(url);
   if (link.kind === "file")
     return {
-      label: link.label,
+      // Inline code becomes `[path](<path>)`, so omitting the label keeps the written path.
+      ...(inlineCode ? {} : { label: link.label }),
       icon: markdownFileIconSource(link.icon),
       chip: { accent: contextChipPresentation("mention").accent, tintsIcon: false },
     };
@@ -96,8 +98,11 @@ export function useEnrichedLinkVariants(
 ) {
   const { linkCustomization, skills, textStyle, fileEmbedLabel } = props;
   const theme = useUniwindTheme();
+  // Joined so a streaming tick keeps `links` stable.
+  const inlineCodeUrlKey = urls.filter((url) => props.markdown.includes(`\`${url}\``)).join("\n");
   const links = useMemo(() => {
     const byUrl = new Map<string, MarkdownLinkCustomization>();
+    const inlineCodeUrls = new Set(inlineCodeUrlKey.split("\n"));
     for (const url of urls) {
       if (byUrl.has(url)) continue;
       const label = fileHrefs.has(url) ? fileEmbedLabel?.(url, false) : null;
@@ -107,11 +112,11 @@ export function useEnrichedLinkVariants(
             color: textStyle.fileTextColor,
             icon: markdownFileIconSource(resolveMarkdownFileIcon(label)),
           }
-        : presentation(url, { linkCustomization, skills, textStyle });
+        : presentation(url, { linkCustomization, skills, textStyle }, inlineCodeUrls.has(url));
       if (value) byUrl.set(url, value);
     }
     return byUrl;
-  }, [urls, linkCustomization, skills, textStyle, fileHrefs, fileEmbedLabel]);
+  }, [urls, inlineCodeUrlKey, linkCustomization, skills, textStyle, fileHrefs, fileEmbedLabel]);
   const chipForegrounds = useMemo(
     () =>
       new Map(
