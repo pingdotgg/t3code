@@ -1293,9 +1293,39 @@ const commandReadsSkipSettledLeafNodes = Effect.gen(function* () {
     ["delivered"],
   );
   assert.strictEqual(yield* store.getSubagentCount(threadId), subagents.length);
+  const nativeThreadId = ThreadId.make("thread:settled-subagents:native");
+  const nestedChildThreadId = ThreadId.make("thread:settled-subagents:nested-child");
+  const template = (yield* store.getThreadRecords(threadId, ["subagents"])).subagents[0]!;
+  for (const [name, executionThreadId] of [
+    ["native-owned", threadId],
+    ["other-execution", nativeThreadId],
+  ] as const) {
+    const id = NodeId.make(`node:settled-subagents:${name}`);
+    yield* store.apply({
+      id: EventId.make(`event:settled-subagents:${name}`),
+      type: "subagent.updated",
+      threadId: nativeThreadId,
+      runId: activeRun.id,
+      nodeId: id,
+      driver,
+      providerInstanceId,
+      occurredAt: now,
+      payload: {
+        ...template,
+        id,
+        threadId: nativeThreadId,
+        runId: activeRun.id,
+        executionThreadId,
+        childThreadId:
+          executionThreadId === threadId
+            ? nestedChildThreadId
+            : ThreadId.make("thread:settled-subagents:other-child"),
+      },
+    });
+  }
   assert.deepEqual(
     [...(yield* store.listAppOwnedChildThreadIds(threadId))],
-    [childThreadIds.delivered, childThreadIds["no-delivery"]],
+    [childThreadIds.delivered, nestedChildThreadId, childThreadIds["no-delivery"]],
   );
 });
 

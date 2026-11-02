@@ -5424,7 +5424,12 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
     ) =>
       sql<{ readonly child_thread_id: string }>`SELECT child_thread_id
         FROM orchestration_v2_projection_subagents
-        WHERE thread_id = ${threadId} AND origin = 'app_owned' AND child_thread_id IS NOT NULL
+        WHERE (
+          thread_id = ${threadId} OR (
+            run_id IN (SELECT run_id FROM orchestration_v2_projection_runs WHERE thread_id = ${threadId})
+            AND json_extract(payload_json, '$.executionThreadId') = ${threadId}
+          )
+        ) AND origin = 'app_owned' AND child_thread_id IS NOT NULL
         ORDER BY COALESCE(started_at, ''), subagent_id ASC`.pipe(
         Effect.map((rows) => [...new Set(rows.map((row) => ThreadId.make(row.child_thread_id)))]),
         Effect.mapError(controlReadError(threadId)),
