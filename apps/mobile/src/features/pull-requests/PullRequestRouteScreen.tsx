@@ -766,7 +766,7 @@ function PullRequestRouteContent({ route }: StaticScreenProps<PullRequestParams>
                             className="-mx-3.5"
                           />
                         ) : (
-                          <View style={{ height: 32 }} />
+                          <View style={{ height: 44 }} />
                         )}
                       </View>
                       <PullRequestDiffContent params={{ ...params, path: "" }} embedded />
@@ -963,7 +963,7 @@ function PullRequestRouteContent({ route }: StaticScreenProps<PullRequestParams>
                                   className="-mx-3.5"
                                 />
                               ) : (
-                                <View style={{ height: 32 }} />
+                                <View style={{ height: 44 }} />
                               )}
                             </View>
                           ) : null}

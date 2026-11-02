@@ -1,6 +1,6 @@
 import { GlassView } from "expo-glass-effect";
 import { useState, type ReactNode } from "react";
-import { Pressable, View } from "react-native";
+import { Pressable, ScrollView, View } from "react-native";
 import Animated, { useAnimatedStyle, useReducedMotion, withTiming } from "react-native-reanimated";
 import { withUniwind } from "uniwind";
 
@@ -36,55 +36,61 @@ export function Tabs<Value extends string>(props: TabsProps<Value>) {
   }));
 
   return (
-    <View accessibilityRole="tablist" className={cn("flex-row", props.className)}>
-      {frame ? (
-        <Animated.View
-          pointerEvents="none"
-          className="absolute bottom-0 left-0 top-0 rounded-full border border-border-subtle"
-          style={indicatorStyle}
-        >
-          {NATIVE_LIQUID_GLASS_SUPPORTED ? (
-            <TabGlass
-              className="flex-1 rounded-full"
-              colorScheme={themeAppearance === "dark" ? "dark" : "light"}
-            />
-          ) : (
-            <View className="flex-1 rounded-full bg-grouped-card" />
-          )}
-        </Animated.View>
-      ) : null}
-      {props.options.map((option) => {
-        const selected = option.value === props.selected;
-        return (
-          <Pressable
-            key={option.value}
-            accessibilityRole="tab"
-            accessibilityLabel={option.label}
-            accessibilityState={{ selected }}
-            onPress={() => props.onSelect(option.value)}
-            onLayout={({ nativeEvent: { layout } }) =>
-              setFrames((current) =>
-                current[option.value]?.x === layout.x &&
-                current[option.value]?.width === layout.width
-                  ? current
-                  : { ...current, [option.value]: { x: layout.x, width: layout.width } },
-              )
-            }
-            className="min-h-8 flex-row items-center gap-1.5 rounded-full px-3.5 active:opacity-70"
+    <ScrollView
+      horizontal
+      showsHorizontalScrollIndicator={false}
+      className={cn("grow-0", props.className)}
+    >
+      <View accessibilityRole="tablist" className="flex-row">
+        {frame ? (
+          <Animated.View
+            pointerEvents="none"
+            className="absolute bottom-0 left-0 top-0 rounded-full border border-border-subtle"
+            style={indicatorStyle}
           >
-            <AppText
-              textRole="footnote"
-              className={cn(
-                "font-t3-semibold",
-                selected ? "text-foreground" : "text-foreground-muted",
-              )}
+            {NATIVE_LIQUID_GLASS_SUPPORTED ? (
+              <TabGlass
+                className="flex-1 rounded-full"
+                colorScheme={themeAppearance === "dark" ? "dark" : "light"}
+              />
+            ) : (
+              <View className="flex-1 rounded-full bg-grouped-card" />
+            )}
+          </Animated.View>
+        ) : null}
+        {props.options.map((option) => {
+          const selected = option.value === props.selected;
+          return (
+            <Pressable
+              key={option.value}
+              accessibilityRole="tab"
+              accessibilityLabel={option.label}
+              accessibilityState={{ selected }}
+              onPress={() => props.onSelect(option.value)}
+              onLayout={({ nativeEvent: { layout } }) =>
+                setFrames((current) =>
+                  current[option.value]?.x === layout.x &&
+                  current[option.value]?.width === layout.width
+                    ? current
+                    : { ...current, [option.value]: { x: layout.x, width: layout.width } },
+                )
+              }
+              className="min-h-11 shrink-0 flex-row items-center gap-1.5 rounded-full px-3.5 active:opacity-70"
             >
-              {option.label}
-            </AppText>
-            {option.trailing}
-          </Pressable>
-        );
-      })}
-    </View>
+              <AppText
+                textRole="footnote"
+                className={cn(
+                  "font-t3-semibold",
+                  selected ? "text-foreground" : "text-foreground-muted",
+                )}
+              >
+                {option.label}
+              </AppText>
+              {option.trailing}
+            </Pressable>
+          );
+        })}
+      </View>
+    </ScrollView>
   );
 }
