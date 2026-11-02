@@ -10,21 +10,29 @@ import * as Effect from "effect/Effect";
 import * as Hex from "effect/encoding/Hex";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
+import * as Schema from "effect/Schema";
+import { OrchestratorRuntimeModeAboveCeilingError } from "../../../orchestration-v2/Orchestrator.ts";
 import * as ThreadLaunch from "../../../orchestration-v2/ThreadLaunchService.ts";
 import * as ThreadMessageIntake from "../../../orchestration-v2/ThreadMessageIntake.ts";
 import * as Claims from "../../../orchestration-v2/AttachmentClaims.ts";
 import * as Project from "../../../project/ProjectService.ts";
+import * as ProjectCloneTracker from "../../../project/ProjectCloneTracker.ts";
+import { mutateProjectWithClone } from "../../../project/ProjectMutation.ts";
 import * as ManagedProjectFolders from "../../../project/ManagedProjectFolders.ts";
 import * as Repositories from "../../../sourceControl/SourceControlRepositoryService.ts";
 import * as GitVcsDriver from "../../../vcs/GitVcsDriver.ts";
 import * as ServerSettings from "../../../serverSettings.ts";
+import * as ProviderRegistry from "../../../provider/ProviderRegistry.ts";
+import * as DateTime from "effect/DateTime";
+import { resolveNewThreadModelSelection } from "@t3tools/shared/usageLimits";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
-import { formatThreadLink } from "@t3tools/shared/threadLinks";
 import { resolveRuntimeMode } from "../../delegatedTaskModes.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as McpToolAccess from "../../McpToolAccess.ts";
 import { newCommandId, readCaller, resolveProjectId, unavailable } from "../../threadAccess.ts";
 import { ProjectToolkit } from "./tools.ts";
+
+const isAboveCeilingError = Schema.is(OrchestratorRuntimeModeAboveCeilingError);
 
 function projectFailure(error: Project.ProjectServiceError) {
   if (error._tag === "ProjectOperationError") return unavailable();
@@ -181,7 +189,18 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
           input.modelSelection ??
           launchedModel ??
           caller?.modelSelection ??
-          projectDefaults?.defaultModelSelection ??
+          (projectDefaults
+            ? resolveNewThreadModelSelection({
+                defaultSelection: projectDefaults.defaultModelSelection,
+                fallbackSelection: projectDefaults.fallbackModelSelection,
+                providers: yield* ProviderRegistry.ProviderRegistry.pipe(
+                  Effect.flatMap((registry) => registry.getProviders),
+                ),
+                settings: projectDefaults,
+                projectId,
+                now: DateTime.toEpochMillis(yield* DateTime.now),
+              }).selection
+            : null) ??
           undefined;
         if (modelSelection === undefined)
           return yield* new OrchestratorMcpFailure({
@@ -189,12 +208,21 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
             message:
               "Pass modelSelection: the project has no default model. orchestrator_capabilities lists providers and models.",
           });
-        const startedRuntimeMode =
+        let startedRuntimeMode =
           projectDefaults !== undefined && input.runtimeMode === undefined
             ? yield* resolveRuntimeMode(runtimeMode, projectDefaults.defaultRuntimeMode).pipe(
                 Effect.orElseSucceed(() => runtimeMode),
               )
             : runtimeMode;
+        if (!replaying) {
+          const providers = yield* (yield* ProviderRegistry.ProviderRegistry).getProviders;
+          startedRuntimeMode = yield* resolveRuntimeMode(startedRuntimeMode, input.runtimeMode, {
+            modelSelection,
+            supportedRuntimeModes: providers.find(
+              (provider) => provider.instanceId === modelSelection.instanceId,
+            )?.supportedRuntimeModes,
+          });
+        }
         const result = yield* ThreadMessageIntake.launchThread({
           commandId,
           threadId,
@@ -233,6 +261,13 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
                 message: error.message,
               });
             }
+            // The administrator's ceiling refuses the mode; say so rather than "unavailable".
+            if (error._tag === "ThreadLaunchError" && isAboveCeilingError(error.cause)) {
+              return new OrchestratorMcpFailure({
+                code: "invalid_request",
+                message: error.cause.message,
+              });
+            }
             return unavailable();
           }),
         );
@@ -240,7 +275,7 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
         const run = result.projection.runs.find((run) => run.userMessageId === messageId);
         return {
           threadId: thread.id,
-          link: formatThreadLink({ environmentId: scope.environmentId, threadId: thread.id }),
+          link: McpInvocationContext.threadLinkFor(scope, thread.id),
           projectId: thread.projectId,
           modelSelection: thread.modelSelection,
           runId: run?.id ?? null,
@@ -330,9 +365,12 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
   t3_project_delete: McpToolAccess.writesEnvironment((input) =>
     Effect.gen(function* () {
       const projects = yield* Project.ProjectService;
-      return yield* projects
-        .delete({ ...input, commandId: yield* newCommandId() })
-        .pipe(Effect.mapError(projectFailure));
+      const clones = yield* ProjectCloneTracker.ProjectCloneTracker;
+      return yield* mutateProjectWithClone(projects, clones, {
+        ...input,
+        type: "project.delete",
+        commandId: yield* newCommandId(),
+      }).pipe(Effect.mapError(projectFailure));
     }),
   ),
   t3_project_clone: McpToolAccess.writesEnvironment(

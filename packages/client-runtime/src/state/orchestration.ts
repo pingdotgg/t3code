@@ -103,9 +103,20 @@ export function createOrchestrationEnvironmentAtoms<R, E>(
       staleTimeMs: 300_000,
       idleTtlMs: 300_000,
     }),
+    // Mounted only while a subagent inspector is open; running children change between opens.
+    nativeChildWork: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:orchestration:native-child-work",
+      tag: ORCHESTRATION_V2_WS_METHODS.getNativeChildWork,
+      staleTimeMs: 0,
+      idleTtlMs: 0,
+    }),
     stopWorkflow: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:orchestration:stop-workflow",
       tag: ORCHESTRATION_V2_WS_METHODS.stopWorkflow,
+    }),
+    forceStopThread: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:orchestration:force-stop-thread",
+      tag: ORCHESTRATION_V2_WS_METHODS.forceStopThread,
     }),
     turnItem: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:orchestration:turn-item",

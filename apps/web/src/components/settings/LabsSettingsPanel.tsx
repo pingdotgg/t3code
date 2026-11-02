@@ -1,5 +1,6 @@
 import { useAuth } from "@clerk/react";
 import { Link } from "@tanstack/react-router";
+import { managedCapabilityDenial } from "@t3tools/contracts";
 
 import { hasCloudPublicConfig } from "~/cloud/publicConfig";
 import { useT3ConnectAuthPrompt } from "../clerk/useT3ConnectAuthPrompt";
@@ -10,6 +11,8 @@ import { SettingsPageContainer, SettingsRow, SettingsSection } from "./settingsL
 import { searchableSetting } from "./settingsSearch";
 import { LegacyFeaturesSection } from "./SettingsPanels";
 import { useScopedSettings, useUpdateScopedSettings } from "./useScopedSettings";
+import { useOptionalSettingsScope } from "./SettingsScopeContext";
+import { firstManagedDenial, usePrimaryManagedPolicy } from "~/state/managedPolicy";
 
 /** Features still settling in, and legacy behavior kept for people who rely on it. */
 export function LabsSettingsPanel() {
@@ -21,6 +24,7 @@ export function LabsSettingsPanel() {
         {/* Clerk is only mounted when this build has T3 Connect. */}
         {hasCloudPublicConfig() ? <GuestLinksRowWithSignIn /> : <GuestLinksRow />}
         <LinkedEnvironmentsRow />
+        <SimlockHostsRow />
       </SettingsSection>
       <LegacyFeaturesSection />
     </SettingsPageContainer>
@@ -90,11 +94,22 @@ function GuestLinksRowWithSignIn() {
 function GuestLinksRow() {
   const settings = useScopedSettings();
   const updateSettings = useUpdateScopedSettings();
+  const scope = useOptionalSettingsScope();
+  const primaryPolicy = usePrimaryManagedPolicy();
+  // Guests arrive through T3 Connect, so a policy that turns Connect off turns this off too.
+  const connectDenial = firstManagedDenial(
+    scope
+      ? scope.connectedEnvironments.map((environment) => environment.serverConfig?.managedPolicy)
+      : [primaryPolicy],
+    (policy) => managedCapabilityDenial(policy, "connect"),
+  );
   return (
     <SettingsRow
       serverScoped
       {...searchableSetting("guest-links")}
       settingKeys={["guestSharingEnabled"]}
+      // Turning guest links off still works without T3 Connect.
+      managed={settings.guestSharingEnabled ? undefined : connectDenial}
       description={
         <>
           Share a thread with a guest who watches it live in their browser and sends messages you
@@ -143,6 +158,46 @@ function LinkedEnvironmentsRow() {
             updateSettings({ linkedEnvironmentsEnabled: Boolean(checked) })
           }
           aria-label="Linked environments"
+        />
+      }
+    />
+  );
+}
+
+function SimlockHostsRow() {
+  const settings = useScopedSettings();
+  const updateSettings = useUpdateScopedSettings();
+  return (
+    <SettingsRow
+      serverScoped
+      {...searchableSetting("simlock-hosts")}
+      settingKeys={["simlockDeviceHostsEnabled"]}
+      description={
+        <>
+          Let the Device panel lease simulators and emulators from your own{" "}
+          <a
+            href="https://incubator.callstack.com/simlock/"
+            target="_blank"
+            rel="noreferrer"
+            className="underline underline-offset-2"
+          >
+            Simlock
+          </a>{" "}
+          pool, added in{" "}
+          <Link to="/settings/devices" className="underline underline-offset-2">
+            Devices
+          </Link>
+          . An alpha that may change or break. T3 Code never installs Simlock.
+        </>
+      }
+      control={
+        <ScopedSwitch
+          settingKeys={["simlockDeviceHostsEnabled"]}
+          checked={settings.simlockDeviceHostsEnabled}
+          onCheckedChange={(checked) =>
+            updateSettings({ simlockDeviceHostsEnabled: Boolean(checked) })
+          }
+          aria-label="Simlock device hosts"
         />
       }
     />

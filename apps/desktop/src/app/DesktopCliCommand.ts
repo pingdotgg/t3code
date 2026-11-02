@@ -1,3 +1,6 @@
+// @effect-diagnostics-next-line nodeBuiltinImport:off -- FileSystem.access has no execute check.
+import * as NodeFSP from "node:fs/promises";
+
 import type { DesktopCliCommandState } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
@@ -89,6 +92,19 @@ export const make = Effect.gen(function* () {
     Effect.orElseSucceed(() => false),
   );
 
+  // PATH can reach the regular launcher directly; removal still requires isOurLink.
+  const runsOurLauncher = Effect.fn("DesktopCliCommand.runsOurLauncher")(
+    function* (candidate: string) {
+      if (yield* isOurLink(candidate)) return true;
+      const [resolved, ours] = yield* Effect.all([fs.realPath(candidate), fs.realPath(launcher)]);
+      if (resolved !== ours) return false;
+      const info = yield* fs.stat(candidate);
+      if (info.type !== "File" || Number(info.size) > 16_384) return false;
+      return (yield* fs.readFileString(candidate)).includes(DesktopCliShim.MARKER);
+    },
+    Effect.orElseSucceed(() => false),
+  );
+
   const powershell = (env: Record<string, string>) =>
     Effect.scoped(
       Effect.gen(function* () {
@@ -118,10 +134,19 @@ export const make = Effect.gen(function* () {
       Effect.mapError(() => fail("Could not update your PATH.")),
     );
 
+  const isExecutableFile = Effect.fn("DesktopCliCommand.isExecutableFile")(
+    function* (target: string) {
+      if ((yield* fs.stat(target)).type !== "File") return false;
+      yield* Effect.tryPromise(() => NodeFSP.access(target, NodeFSP.constants.X_OK));
+      return true;
+    },
+    Effect.orElseSucceed(() => false),
+  );
+
   const firstOnPath = Effect.gen(function* () {
     for (const directory of pathEntries(process.env.PATH, ":")) {
       const candidate = path.join(directory, "t3");
-      if (yield* exists(candidate)) return Option.some(candidate);
+      if (yield* isExecutableFile(candidate)) return Option.some(candidate);
     }
     return Option.none<string>();
   });
@@ -129,7 +154,7 @@ export const make = Effect.gen(function* () {
   const foreignFirstOnPath = Effect.gen(function* () {
     if (windows) return Option.none<string>();
     const first = yield* firstOnPath;
-    if (Option.isNone(first) || (yield* isOurLink(first.value))) return Option.none<string>();
+    if (Option.isNone(first) || (yield* runsOurLauncher(first.value))) return Option.none<string>();
     return first;
   });
 
@@ -156,12 +181,17 @@ export const make = Effect.gen(function* () {
     const installed = yield* installedAt;
     const shadowedBy = yield* foreignFirstOnPath;
     const shadow = Option.isSome(shadowedBy) ? { shadowedBy: shadowedBy.value } : {};
-    if (Option.isNone(installed)) {
-      return { supported: true, installedPath: null, onPath: false, launcherPath, ...shadow };
-    }
     const first = yield* firstOnPath;
-    const onPath = windows || (Option.isSome(first) && (yield* isOurLink(first.value)));
-    return { supported: true, installedPath: installed.value, onPath, launcherPath, ...shadow };
+    const onPath = windows
+      ? Option.isSome(installed)
+      : Option.isSome(first) && (yield* runsOurLauncher(first.value));
+    return {
+      supported: true,
+      installedPath: Option.getOrNull(installed),
+      onPath,
+      launcherPath,
+      ...shadow,
+    };
   }).pipe(
     Effect.orElseSucceed(() => ({
       supported: false,

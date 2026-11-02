@@ -12,6 +12,7 @@ import {
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
+import { formatThreadLink } from "@t3tools/shared/threadLinks";
 
 const ALL_MCP_CAPABILITIES = [
   "preview",
@@ -44,6 +45,8 @@ export interface McpClientCaller {
    * another environment passing on the limits of the agent it calls for.
    */
   readonly narrowedTo?: ClientModes | undefined;
+  /** The origin an outside client reached; its thread links open the web app there. */
+  readonly webOrigin?: string | undefined;
 }
 
 /**
@@ -93,6 +96,31 @@ export const clientModeCeiling = (client: McpClientCaller | undefined): ClientMo
   };
 };
 
+/**
+ * A client approved above an administrator's runtime-mode ceiling acts as if it had narrowed
+ * itself to the ceiling, so what it starts and schedules is not refused for a mode it never chose.
+ */
+export const withRuntimeModeCeiling = (
+  scope: McpInvocationScope,
+  ceiling: RuntimeMode | undefined,
+): McpInvocationScope => {
+  if (ceiling === undefined || scope.client === undefined) return scope;
+  const asked = scope.client.narrowedTo;
+  return {
+    ...scope,
+    client: {
+      ...scope.client,
+      narrowedTo: {
+        runtimeMode:
+          asked !== undefined && runtimeModeRank[asked.runtimeMode] < runtimeModeRank[ceiling]
+            ? asked.runtimeMode
+            : ceiling,
+        interactionMode: asked?.interactionMode ?? "default",
+      },
+    },
+  };
+};
+
 /** Thread callers default to their own thread; client callers need thread for tools that act as the caller. */
 export interface McpInvocationScope {
   readonly environmentId: EnvironmentId;
@@ -104,6 +132,20 @@ export interface McpInvocationScope {
   /** False while the Linked environments beta is off here; `/mcp` reads it per request. */
   readonly linkedEnvironments?: boolean;
 }
+
+/**
+ * T3 Code renders `t3-thread://` links as thread chips. Other MCP clients cannot open them, so
+ * they get a web URL on the origin they reached instead.
+ */
+export const threadLinkFor = (
+  scope: Pick<McpInvocationScope, "environmentId" | "client">,
+  threadId: ThreadId,
+): string => {
+  const origin = scope.client?.webOrigin;
+  return origin === undefined
+    ? formatThreadLink({ environmentId: scope.environmentId, threadId })
+    : `${origin}/${encodeURIComponent(scope.environmentId)}/${encodeURIComponent(threadId)}`;
+};
 
 export class McpInvocationContext extends Context.Service<
   McpInvocationContext,
