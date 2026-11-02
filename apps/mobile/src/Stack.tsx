@@ -95,6 +95,7 @@ import { SettingsNavigationRouteScreen } from "./features/settings/SettingsNavig
 import { SettingsAppearanceRouteScreen } from "./features/settings/SettingsAppearanceRouteScreen";
 import { SettingsClientStorageRouteScreen } from "./features/settings/SettingsClientStorageRouteScreen";
 import { SettingsDiagnosticsRouteScreen } from "./features/diagnostics/SettingsDiagnosticsRouteScreen";
+import { SettingsNativeToolsRouteScreen } from "./features/settings/SettingsNativeToolsRouteScreen";
 import { SettingsProviderAccountsRouteScreen } from "./features/settings/SettingsProviderAccountsRouteScreen";
 import { SettingsAuthRouteScreen } from "./features/settings/SettingsAuthRouteScreen";
 import { SettingsEnvironmentDetailRouteScreen } from "./features/settings/SettingsEnvironmentDetailRouteScreen";
@@ -281,6 +282,11 @@ const SETTINGS_SCREENS = {
     screen: SettingsLabsRouteScreen,
     linking: "settings/labs",
     options: { ...SETTINGS_PAGE_OPTIONS, title: "Labs" },
+  }),
+  SettingsNativeTools: createNativeStackScreen({
+    screen: SettingsNativeToolsRouteScreen,
+    linking: "settings/tools",
+    options: { ...SETTINGS_PAGE_OPTIONS, title: "T3 tools" },
   }),
   SettingsProviderAccounts: createNativeStackScreen({
     screen: SettingsProviderAccountsRouteScreen,

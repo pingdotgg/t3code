@@ -24,6 +24,7 @@ export type SettingsPath =
   | "/settings/diffs"
   | "/settings/keybindings"
   | "/settings/snap-shot"
+  | "/settings/tools"
   | "/settings/providers"
   | "/settings/threads"
   | "/settings/browser"
@@ -94,6 +95,7 @@ export const SETTINGS_SECTION_LABELS: Readonly<Record<SettingsPath, string>> = {
   "/settings/diffs": "Diffs & pull requests",
   "/settings/keybindings": "Keybindings",
   "/settings/snap-shot": "SnapShots",
+  "/settings/tools": "T3 tools",
   "/settings/providers": "Providers",
   "/settings/threads": "Threads",
   "/settings/browser": "Browser",
@@ -130,6 +132,7 @@ export const SETTINGS_NAV_GROUPS: ReadonlyArray<{
     heading: "Agents",
     paths: [
       "/settings/providers",
+      "/settings/tools",
       "/settings/threads",
       "/settings/browser",
       "/settings/devices",
@@ -216,6 +219,13 @@ const SOURCE_CONTROL_HOST_TERMS = sourceControlClients.definitions
   .join(" ");
 
 export const SETTINGS_SEARCH_ITEMS = [
+  {
+    id: "native-tools",
+    title: "T3 tools",
+    to: "/settings/tools",
+    scope: "environment",
+    searchTerms: ["native tools MCP enable disable t3_thread_send providers permissions"],
+  },
   {
     id: "storage-worktree-keep-when",
     targetId: "storage-worktrees",
@@ -1199,6 +1209,7 @@ const SETTINGS_CATEGORY_SCOPES: Readonly<Record<SettingsPath, SettingsSearchScop
   "/settings/snap-shot": null,
   "/settings/keybindings": null,
   "/settings/providers": null,
+  "/settings/tools": "environment",
   "/settings/threads": null,
   "/settings/browser": null,
   "/settings/devices": null,

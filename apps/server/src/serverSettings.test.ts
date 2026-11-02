@@ -134,7 +134,7 @@ it.layer(NodeServices.layer)("server settings", (it) => {
       assert.deepEqual(settings.providerModelPreferences?.[provider]?.modelOrder, ["luna", "sol"]);
     }).pipe(Effect.provide(layerServerSettings())),
   );
-  it.effect("persists and broadcasts model preferences to other connected clients", () =>
+  it.effect("persists and broadcasts settings to other connected clients", () =>
     Effect.scoped(
       Effect.gen(function* () {
         const service = yield* ServerSettingsModule.ServerSettingsService;
@@ -142,6 +142,7 @@ it.layer(NodeServices.layer)("server settings", (it) => {
         const fs = yield* FileSystem.FileSystem;
         const provider = ProviderInstanceId.make("codex_work");
         const patch = {
+          nativeToolEnabled: { t3_thread_send: false },
           favorites: [{ provider, model: "sol" }],
           providerModelPreferences: {
             [provider]: { hiddenModels: ["astra"], modelOrder: ["sol"] },
@@ -150,10 +151,27 @@ it.layer(NodeServices.layer)("server settings", (it) => {
         const changes = yield* service.subscribeChanges;
         yield* service.updateSettings(patch);
         const received = Option.getOrThrow(yield* Stream.runHead(changes));
+        assert.deepEqual(received.nativeToolEnabled, patch.nativeToolEnabled);
         assert.deepEqual(received.favorites, patch.favorites);
         assert.deepEqual(received.providerModelPreferences, patch.providerModelPreferences);
         const saved = yield* decodeServerSettingsJson(
           yield* fs.readFileString(config.settingsPath),
+        );
+        assert.deepEqual(saved.nativeToolEnabled, patch.nativeToolEnabled);
+        yield* service.updateSettings({
+          nativeToolEnabled: { t3_thread_send_attachments: false },
+        });
+        const reenabled = yield* service.updateSettings({
+          nativeToolEnabled: { t3_thread_send: true },
+        });
+        assert.deepEqual(reenabled.nativeToolEnabled, {
+          t3_thread_send: true,
+          t3_thread_send_attachments: false,
+        });
+        assert.deepEqual(
+          (yield* decodeServerSettingsJson(yield* fs.readFileString(config.settingsPath)))
+            .nativeToolEnabled,
+          reenabled.nativeToolEnabled,
         );
         assert.deepEqual(saved.favorites, patch.favorites);
         assert.deepEqual(saved.providerModelPreferences, patch.providerModelPreferences);

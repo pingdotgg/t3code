@@ -1,3 +1,4 @@
+import { nativeToolCatalog } from "../mcp/nativeToolCatalog.ts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { expect, it } from "@effect/vitest";
 import { ProviderInstanceId } from "@t3tools/contracts";
@@ -110,6 +111,9 @@ const codexAdditionalContext = () =>
 it.effect("agent context matches the committed budget", () =>
   Effect.gen(function* () {
     const mcp = yield* McpServer.McpServer;
+    expect(nativeToolCatalog.map((tool) => tool.name).toSorted()).toEqual(
+      mcp.tools.map(({ tool }) => tool.name).toSorted(),
+    );
     const measured = {
       claudeSystemAppendBytes: utf8Bytes(claudeSystemAppend()),
       codexAdditionalContextBytes: utf8Bytes(codexAdditionalContext()),

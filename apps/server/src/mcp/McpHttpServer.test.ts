@@ -1167,6 +1167,14 @@ it.effect("hides tools for links and refuses another environment while the beta 
       });
       expect((yield* ranIn(environmentId)).structuredContent).toEqual({ ranIn: "here" });
 
+      yield* settings.updateSettings({ nativeToolEnabled: { where: false, links: true } });
+      expect(yield* listed()).toEqual([]);
+      const denied = yield* rpc("tools/call", { name: "where", arguments: { environmentId } });
+      expect(denied).toMatchObject({ error: { code: -32602 } });
+      yield* settings.updateSettings({ nativeToolEnabled: { where: true } });
+      expect(yield* listed()).toEqual(["where"]);
+      expect((yield* ranIn(environmentId)).structuredContent).toEqual({ ranIn: "here" });
+
       yield* settings.updateSettings({ linkedEnvironmentsEnabled: true });
       expect(yield* listed()).toEqual(["links", "where"]);
       // On, the call goes on to the forwarding, which this server lacks.

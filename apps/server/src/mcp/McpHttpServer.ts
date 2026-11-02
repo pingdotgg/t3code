@@ -198,10 +198,6 @@ const makeMcpAuthMiddleware = Effect.gen(function* () {
   const clients = yield* Effect.serviceOption(McpClientAuthenticator);
   const serverSettings = yield* ServerSettings.ServerSettingsService;
   const runtimeModeCeiling = serverSettings.managedPolicy?.limits?.maxRuntimeMode;
-  const linksEnabled = serverSettings.getSettings.pipe(
-    Effect.map((settings) => settings.linkedEnvironmentsEnabled),
-    Effect.orElseSucceed(() => false),
-  );
   return Effect.fn("McpHttpServer.authenticateRequest")(function* (httpEffect) {
     const request = yield* HttpServerRequest.HttpServerRequest;
     const authorization = request.headers.authorization;
@@ -231,12 +227,14 @@ const makeMcpAuthMiddleware = Effect.gen(function* () {
     const asked = withModeLimit(invocation, request);
     if (asked === undefined) return invalidModeLimit;
     const limited = McpInvocationContext.withRuntimeModeCeiling(asked, runtimeModeCeiling);
-    const linkedEnvironments = yield* linksEnabled;
+    const settings = yield* serverSettings.getSettings.pipe(Effect.orDie);
+    const linkedEnvironments = settings.linkedEnvironmentsEnabled;
     if (limited.client?.linked === true && !linkedEnvironments) return linkedEnvironmentsOff;
     return yield* httpEffect.pipe(
       Effect.provideService(McpInvocationContext.McpInvocationContext, {
         ...limited,
         linkedEnvironments,
+        nativeToolEnabled: settings.nativeToolEnabled,
       }),
       Effect.map(normalizeMcpHttpResponse),
     );
@@ -1017,6 +1015,29 @@ const withToolAnalytics =
     return yield* registration.pipe(Effect.provideService(McpServer.McpServer, recordingServer));
   });
 
+const withToolAvailability = Effect.fn("McpHttpServer.withToolAvailability")(function* <A, E, R>(
+  registration: Effect.Effect<A, E, R>,
+) {
+  const server = yield* McpServer.McpServer;
+  const filteredServer = McpServer.McpServer.of({
+    ...server,
+    addTool: Effect.fn("McpHttpServer.addAvailableTool")((options) => {
+      const enabledWhen = Context.getOrUndefined(options.annotations, McpSchema.EnabledWhen);
+      return server.addTool({
+        ...options,
+        annotations: Context.add(
+          options.annotations,
+          McpSchema.EnabledWhen,
+          (client) =>
+            McpInvocationContext.isToolEnabled(options.tool.name) &&
+            (enabledWhen === undefined || enabledWhen(client)),
+        ),
+      });
+    }),
+  });
+  return yield* registration.pipe(Effect.provideService(McpServer.McpServer, filteredServer));
+});
+
 /** `McpServer.registerToolkit` advertises the full codec schema; agents get the compact one. */
 const withAdvertisedSchemas = Effect.fn("McpHttpServer.withAdvertisedSchemas")(function* <
   Tools extends Record<string, Tool.Any>,
@@ -1057,8 +1078,10 @@ export const toolkitRegistration = <Tools extends Record<string, Tool.Any>, EX, 
   handlers: McpToolAccess.HandlersLayer<Tools, EX, RX>,
 ) => {
   const registration = Layer.effectDiscard(
-    withToolAnalytics(
-      withAdvertisedSchemas(toolkit, McpServer.registerToolkit(decodeAsAdvertised(toolkit))),
+    withToolAvailability(
+      withToolAnalytics(
+        withAdvertisedSchemas(toolkit, McpServer.registerToolkit(decodeAsAdvertised(toolkit))),
+      ),
     ),
   ).pipe(Layer.provide(McpServer.McpServer.layer));
   // @effect-diagnostics-next-line unsafeEffectTypeAssertion:off - the auth middleware provides it per request.
@@ -1074,7 +1097,7 @@ const imageToolRegistration = <Tools extends Record<string, Tool.Any>, A, E, R, 
   register: Effect.Effect<A, E, R>,
   handlers: McpToolAccess.HandlersLayer<Tools, EX, RX>,
 ) =>
-  Layer.effectDiscard(withToolAnalytics(register)).pipe(
+  Layer.effectDiscard(withToolAvailability(withToolAnalytics(register))).pipe(
     Layer.provide(McpToolAccess.HandlersLayer.layer(handlers)),
   );
 
