@@ -110,10 +110,14 @@ describe("deriveMessagesTimelineRows", () => {
         toolLifecycleStatus: "inProgress",
       },
     };
-    const rows = (timelineEntries: ReadonlyArray<TimelineEntry>) =>
+    const rows = (
+      timelineEntries: ReadonlyArray<TimelineEntry>,
+      expandedRunIds: ReadonlySet<RunId> = new Set(),
+    ) =>
       deriveMessagesTimelineRows({
         timelineEntries,
         runningRunId: runId,
+        expandedRunIds,
         isWorking: true,
         activeTurnStartedAt: at,
         turnDiffSummaries: [],
@@ -126,9 +130,12 @@ describe("deriveMessagesTimelineRows", () => {
     const afterSteer = rows([first, steer]);
     expect(afterSteer.some((row) => row.kind === "work-live")).toBe(false);
     expect(afterSteer.at(-1)?.kind).toBe("thinking");
-    expect(afterSteer.find((row) => row.kind === "work")).toMatchObject({
-      groupedEntries: [{ id: "first-thought", toolLifecycleStatus: "completed" }],
-    });
+    expect(afterSteer.some((row) => row.kind === "turn-fold")).toBe(true);
+    expect(rows([first, steer], new Set([runId])).find((row) => row.kind === "work")).toMatchObject(
+      {
+        groupedEntries: [{ id: "first-thought", toolLifecycleStatus: "completed" }],
+      },
+    );
     for (const entries of [
       [first, steer, next],
       [first, next],
@@ -3042,6 +3049,7 @@ describe("v2 run and attempt history", () => {
         completedAt: null,
       },
       isWorking: false,
+      expandedRunIds: new Set([runId]),
       turnDiffSummaries: [],
       supportsConversationRollback: false,
     };
@@ -3050,6 +3058,7 @@ describe("v2 run and attempt history", () => {
     expect(collapsedRows.map((row) => row.id)).toEqual([
       "context-handoff-entry",
       "initial-user-entry",
+      `turn-fold:${runId}`,
       `attempt-fold:${supersededAttemptId}`,
       "superseded-thread-created-entry",
       "steer-user-entry",
@@ -3070,6 +3079,7 @@ describe("v2 run and attempt history", () => {
     expect(expandedRows.map((row) => row.id)).toEqual([
       "context-handoff-entry",
       "initial-user-entry",
+      `turn-fold:${runId}`,
       `attempt-fold:${supersededAttemptId}`,
       "superseded-assistant-entry",
       "superseded-work-entry",
@@ -3173,6 +3183,7 @@ describe("v2 run and attempt history", () => {
     const rowsFor = (
       replyCompletedSecond: number,
       runStatus: "running" | "completed" = "completed",
+      expandedRunIds: ReadonlySet<RunId> = new Set(),
     ) =>
       deriveMessagesTimelineRows({
         timelineEntries: [
@@ -3224,6 +3235,7 @@ describe("v2 run and attempt history", () => {
           startedAt: at(0),
           completedAt: runStatus === "completed" ? at(14) : null,
         },
+        expandedRunIds,
         isWorking: false,
         turnDiffSummaries: [],
         supportsConversationRollback: false,
@@ -3239,7 +3251,7 @@ describe("v2 run and attempt history", () => {
     );
 
     it("folds a reply the steer cut off as partial output", () => {
-      const rows = rowsFor(11, "running");
+      const rows = rowsFor(11, "running", new Set([runId]));
       expect(rows.find((row) => row.kind === "attempt-fold")).toMatchObject({
         attemptId: supersededAttempt.id,
         label: "Superseded attempt",
@@ -4408,30 +4420,79 @@ describe("working window", () => {
       (row): row is Extract<MessagesTimelineRow, { kind: "working" }> => row.kind === "working",
     );
 
-  it("moves the running turn's work under the bar and steers above it", () => {
-    const rows = run([
-      prompt("prompt", 0),
-      work("edit", 2, {
+  it("folds the work before each steer and keeps only later work under the bar", () => {
+    const edit = (id: string, second: number, additions: number) =>
+      work(id, second, {
         label: "Edited a.ts",
         itemType: "file_change",
-        projectedItem: turnItem("edit", {
-          type: "file_change",
-          additions: 84,
-          deletions: 22,
-        }) as never,
-      }),
-      prompt("steer", 3, "steer"),
-      work("command", 4, {
-        label: "Running bun typecheck",
+        projectedItem: turnItem(id, { type: "file_change", additions, deletions: 2 }) as never,
+      });
+    const command = (status: "inProgress" | "completed") =>
+      work("command", 9, {
+        label: "Ran bun typecheck",
         itemType: "command_execution",
-        toolLifecycleStatus: "inProgress",
-      }),
+        toolLifecycleStatus: status,
+      });
+    const steered = [
+      prompt("prompt", 0),
+      edit("edit-1", 2, 84),
+      prompt("steer-1", 3, "steer"),
+      edit("edit-2", 5, 10),
+      prompt("steer-2", 8, "steer"),
+    ];
+    const segmentFold = `turn-fold:${RunId.make(`${runId}:steer:steer-1`)}`;
+    const folds = (rows: ReadonlyArray<MessagesTimelineRow>) =>
+      rows.filter((row) => row.kind === "turn-fold");
+
+    const once = run(steered.slice(0, 4));
+    expect(once.map((row) => row.id)).toEqual([
+      "prompt",
+      `turn-fold:${runId}`,
+      "steer-1",
+      "working-indicator-row",
     ]);
-    expect(rows.map((row) => row.id)).toEqual(["prompt", "steer", "working-indicator-row"]);
-    const window = workingRow(rows)?.window;
-    expect(window?.items.map((item) => item.id)).toEqual(["edit", "command"]);
-    expect(window?.diff).toEqual({ additions: 84, deletions: 22 });
-    expect(window?.key).toBe("steer");
+    expect(folds(once)[0]).toMatchObject({ diff: { additions: 84, deletions: 2 } });
+    expect(workingRow(once)).toMatchObject({
+      createdAt: time(3),
+      window: { key: "steer-1", diff: { additions: 10, deletions: 2 } },
+    });
+    expect(workingRow(once)?.window?.items.map((item) => item.id)).toEqual(["edit-2"]);
+
+    const twice = run([...steered, command("inProgress")]);
+    expect(twice.map((row) => row.id)).toEqual([
+      "prompt",
+      `turn-fold:${runId}`,
+      "steer-1",
+      segmentFold,
+      "steer-2",
+      "working-indicator-row",
+    ]);
+    expect(folds(twice).map((row) => row.kind === "turn-fold" && row.diff)).toEqual([
+      { additions: 84, deletions: 2 },
+      { additions: 10, deletions: 2 },
+    ]);
+    expect(workingRow(twice)).toMatchObject({
+      createdAt: time(8),
+      window: { key: "steer-2", diff: null },
+    });
+    expect(workingRow(twice)?.window?.items.map((item) => item.id)).toEqual(["command"]);
+
+    const settled = deriveMessagesTimelineRows({
+      timelineEntries: [...steered, command("completed")] as never,
+      latestRun: { runId, status: "completed", startedAt: time(0), completedAt: time(12) },
+      isWorking: false,
+      turnDiffSummaries: [],
+      supportsConversationRollback: false,
+    });
+    expect(settled.map((row) => row.id)).toEqual([
+      "prompt",
+      `turn-fold:${runId}`,
+      "steer-1",
+      segmentFold,
+      "steer-2",
+      `turn-fold:${RunId.make(`${runId}:steer:steer-2`)}`,
+    ]);
+    expect(folds(settled).slice(0, 2)).toEqual(folds(twice));
   });
 
   it("keeps steers between work segments once the turn settles", () => {

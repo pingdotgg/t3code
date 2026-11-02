@@ -1176,7 +1176,6 @@ function deriveTurnFolds(input: {
   interface TurnGroup {
     entries: Array<TimelineEntry>;
     terminalEntry: Extract<TimelineEntry, { kind: "message" }> | null;
-    hasStreamingMessage: boolean;
     // Entry timestamps omit startup and can collapse steered turns to an instant.
     startBoundary: string | null;
     anchorEntryId: string;
@@ -1241,7 +1240,6 @@ function deriveTurnFolds(input: {
       group = {
         entries: [],
         terminalEntry: null,
-        hasStreamingMessage: false,
         startBoundary: pendingBoundary?.createdAt ?? null,
         anchorEntryId: pendingBoundary?.anchorEntryId ?? entry.id,
         steerSegments: [],
@@ -1250,13 +1248,8 @@ function deriveTurnFolds(input: {
       groupsByRunId.set(runId, group);
     }
     group.entries.push(entry);
-    if (entry.kind === "message") {
-      if (input.terminalAssistantMessageIds.has(entry.message.id)) {
-        group.terminalEntry = entry;
-      }
-      if (entry.message.streaming) {
-        group.hasStreamingMessage = true;
-      }
+    if (entry.kind === "message" && input.terminalAssistantMessageIds.has(entry.message.id)) {
+      group.terminalEntry = entry;
     }
   }
 
@@ -1267,28 +1260,38 @@ function deriveTurnFolds(input: {
   }
   const foldsByAnchorEntryId = new Map<string, TurnFold>();
   for (const [runId, group] of groupsByRunId) {
-    if (input.unfoldedRunIds.has(runId) || (input.runlessWorkActive && runId === runlessKey)) {
+    const live =
+      input.unfoldedRunIds.has(runId) || (input.runlessWorkActive && runId === runlessKey);
+    const liveSegmentStart = group.steerSegments.at(-1)?.startIndex;
+    if (live && liveSegmentStart === undefined) {
       continue;
     }
-    if (group.hasStreamingMessage) {
+    const { entries, terminalEntry, steerSegments } = live
+      ? {
+          entries: group.entries.slice(0, liveSegmentStart),
+          terminalEntry: null,
+          steerSegments: group.steerSegments.slice(0, -1),
+        }
+      : group;
+    if (entries.some((entry) => entry.kind === "message" && entry.message.streaming)) {
       continue;
     }
-    const failed = input.failedRunIds.has(runId) || runlessFailedKeys.has(runId);
+    const failed = !live && (input.failedRunIds.has(runId) || runlessFailedKeys.has(runId));
     const prompt = input.timelineEntries[promptIndexByRunId.get(runId) ?? -1];
     const compactionHasStopRow =
       prompt?.kind === "message" &&
       isCompactionCommandMessage(prompt.message) &&
       idleCompactionOf(prompt.message) !== undefined &&
-      group.entries.some(timelineEntryIsCompaction);
+      entries.some(timelineEntryIsCompaction);
     const hiddenEntryIds = new Set<string>();
     const endingEntryIds = new Set<string>();
     let failureMessage: string | null = null;
     let noticeMessage: string | null = null;
-    const terminalEntryIndex = group.terminalEntry
-      ? group.entries.findIndex((entry) => entry.id === group.terminalEntry?.id)
-      : group.entries.length;
-    for (const [index, entry] of group.entries.entries()) {
-      if (entry.id === group.terminalEntry?.id) {
+    const terminalEntryIndex = terminalEntry
+      ? entries.findIndex((entry) => entry.id === terminalEntry?.id)
+      : entries.length;
+    for (const [index, entry] of entries.entries()) {
+      if (entry.id === terminalEntry?.id) {
         continue;
       }
       if (failed) {
@@ -1336,12 +1339,12 @@ function deriveTurnFolds(input: {
     const hidesNonCompactionWork = (entries: ReadonlyArray<TimelineEntry>) =>
       entries.some((entry) => hiddenEntryIds.has(entry.id) && !timelineEntryIsCompaction(entry));
     // A reply still owns its duration bar when there was no work to expand.
-    if (!hidesNonCompactionWork(group.entries) && group.terminalEntry === null) {
+    if (!hidesNonCompactionWork(entries) && terminalEntry === null) {
       continue;
     }
 
-    const firstEntry = group.entries[0];
-    const lastEntry = group.entries.at(-1);
+    const firstEntry = entries[0];
+    const lastEntry = entries.at(-1);
     if (!firstEntry || !lastEntry) {
       continue;
     }
@@ -1353,18 +1356,15 @@ function deriveTurnFolds(input: {
     const lastEntryEnd = timelineEntryEnd(lastEntry);
     const turnStart = group.startBoundary ?? firstEntry.createdAt;
     const firstSteer = group.steerSegments[0];
-    const firstSegment = group.entries.slice(0, firstSteer?.startIndex);
+    const firstSegment = entries.slice(0, firstSteer?.startIndex);
     const segmentEntries = (index: number) =>
-      group.entries.slice(
-        group.steerSegments[index]!.startIndex,
-        group.steerSegments[index + 1]?.startIndex,
-      );
+      entries.slice(steerSegments[index]!.startIndex, steerSegments[index + 1]?.startIndex);
     // The last steer segment with its own row says how the turn ended.
-    const endingSegmentIndex = group.steerSegments.findLastIndex((_, index) =>
-      hidesNonCompactionWork(segmentEntries(index)),
-    );
+    const endingSegmentIndex = live
+      ? -1
+      : steerSegments.findLastIndex((_, index) => hidesNonCompactionWork(segmentEntries(index)));
     const elapsedMs =
-      firstSteer && endingSegmentIndex >= 0
+      firstSteer && (live || endingSegmentIndex >= 0)
         ? computeElapsedMs(turnStart, firstSteer.steer.createdAt)
         : input.latestRun?.runId === runId &&
             input.latestRun.startedAt &&
@@ -1372,14 +1372,14 @@ function deriveTurnFolds(input: {
           ? computeElapsedMs(input.latestRun.startedAt, input.latestRun.completedAt)
           : computeElapsedMs(
               turnStart,
-              maxIsoTimestamp(group.terminalEntry?.message.updatedAt ?? null, lastEntryEnd) ??
+              maxIsoTimestamp(terminalEntry?.message.updatedAt ?? null, lastEntryEnd) ??
                 lastEntryEnd,
             );
     const ending: TurnFoldEnding = failed
       ? usageLimitedRunIds.has(runId)
         ? "limited"
         : "failed"
-      : isLatestInterruptedTurn || interruptedRunIds.has(runId)
+      : !live && (isLatestInterruptedTurn || interruptedRunIds.has(runId))
         ? "stopped"
         : "worked";
     const topEnding: TurnFoldEnding = endingSegmentIndex >= 0 ? "worked" : ending;
@@ -1408,7 +1408,7 @@ function deriveTurnFolds(input: {
       failureMessage: topEnding === ending ? failureMessage : null,
       noticeMessage: topEnding === ending ? noticeMessage : null,
     });
-    for (const [index, { steer }] of group.steerSegments.entries()) {
+    for (const [index, { steer }] of steerSegments.entries()) {
       const entries = segmentEntries(index);
       const anchorEntry = entries[0];
       if (anchorEntry === undefined || !hidesNonCompactionWork(entries)) continue;
@@ -2739,10 +2739,10 @@ function rowIsReplacedByWindow(row: MessagesTimelineRow, ids: ReadonlySet<string
 }
 
 /**
- * Moves the running turn's work under the working bar. Tool calls, commentary
- * and subagents become window items; steers move above the bar so the prompt
- * stack reads top to bottom. Everything else (plans, resource cards, notices)
- * keeps its row.
+ * Moves the running turn's work since the latest steer under the working bar.
+ * Tool calls, commentary and subagents become window items. Earlier segments'
+ * folds and the steers stay above the bar in timeline order. Everything else
+ * (plans, resource cards, notices) keeps its row.
  */
 export function applyWorkingWindow(
   rows: ReadonlyArray<MessagesTimelineRow>,
@@ -2794,6 +2794,7 @@ export function applyWorkingWindow(
     const entry = entries[index]!;
     if (entry.kind === "message" && entry.message.role === "user") {
       key = entry.id;
+      items.length = 0;
       continue;
     }
     if (entry.attempt?.status === "superseded") continue;
@@ -2864,16 +2865,18 @@ export function applyWorkingWindow(
   }
 
   const ids = collectWindowIds(items);
-  const before: MessagesTimelineRow[] = [];
-  const after: MessagesTimelineRow[] = [];
-  for (const [index, row] of rows.entries()) {
-    if (index <= workingIndex) continue;
-    if (row.kind === "message" && row.message.role === "user") {
-      before.push(row);
-    } else if (!rowIsReplacedByWindow(row, ids)) {
-      after.push(row);
-    }
-  }
+  const windowStartIndex = Math.max(
+    workingIndex,
+    rows.findLastIndex((row) => row.kind === "message" && row.message.role === "user"),
+  );
+  const keptRows = (start: number, end?: number) =>
+    rows.slice(start, end).filter((row) => !rowIsReplacedByWindow(row, ids));
+  const before = keptRows(workingIndex + 1, windowStartIndex + 1);
+  const after = keptRows(windowStartIndex + 1);
+  const createdAt =
+    workingRow.compacting === undefined && before.some((row) => row.kind === "turn-fold")
+      ? rows[windowStartIndex]!.createdAt
+      : workingRow.createdAt;
   const window: WorkingWindow = {
     key,
     items,
@@ -2888,7 +2891,7 @@ export function applyWorkingWindow(
   return [
     ...rows.slice(0, workingIndex),
     ...before,
-    { ...workingRow, window },
+    { ...workingRow, createdAt, window },
     ...after.map((row) => (row.continuesWorkLog ? { ...row, continuesWorkLog: false } : row)),
   ];
 }
