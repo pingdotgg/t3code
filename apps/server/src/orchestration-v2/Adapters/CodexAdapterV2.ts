@@ -6697,9 +6697,12 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
         });
 
         // Codex refuses to resume a session archived elsewhere until it is unarchived.
-        const resumeNativeThread = (threadId: string, params: Record<string, unknown>) => {
+        const resumeNativeThread = Effect.fn("CodexAdapterV2.resumeNativeThread")(function* (
+          threadId: string,
+          params: Record<string, unknown>,
+        ) {
           const resume = client.raw.request("thread/resume", { threadId, ...params });
-          return resume.pipe(
+          return yield* resume.pipe(
             Effect.catchTags({
               CodexAppServerRequestError: (cause) =>
                 /\bsession \S+ is archived\b|\bcodex unarchive\b/i.test(cause.errorMessage)
@@ -6709,7 +6712,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                   : Effect.fail(cause),
             }),
           );
-        };
+        });
 
         const startNativeTurn = Effect.fn("CodexAdapterV2.startNativeTurn")(
           function* (
