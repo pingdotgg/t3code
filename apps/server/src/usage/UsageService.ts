@@ -34,18 +34,15 @@ import * as ServerSettings from "../serverSettings.ts";
 import { BUILT_IN_USAGE_DRIVERS, type BuiltInUsageReadersEnv } from "../provider/builtInDrivers.ts";
 import type { ProviderDriver } from "@t3tools/provider-core/server/driver";
 import { mergeProviderInstanceEnvironment } from "@t3tools/provider-core/server/instanceEnvironment";
-import type {
-  ProviderUsageInstance,
-  TranscriptUsageFormat,
-  UsageRecord,
-} from "@t3tools/provider-core/server/usage";
+import type { ProviderUsageInstance, UsageRecord } from "@t3tools/provider-core/server/usage";
 import { canonicalModelFilter, resolveModelAliases, UsageAggregator } from "./usageAggregation.ts";
 import { createOverrideRateTable, parseRateTable, type RateTable } from "./usagePricing.ts";
 import {
   listTranscriptFiles,
   readDirectoryVolumeId,
-  readTranscriptRecords,
+  type TranscriptParseResult,
 } from "./usageTranscriptReader.ts";
+import { type TranscriptParseRequest, UsageTranscriptParser } from "./UsageTranscriptParser.ts";
 import {
   decodeScanCache,
   dedupeWithinFile,
@@ -72,8 +69,6 @@ const MAX_HOURLY_WINDOW_MS = 24 * 60 * 60 * 1000;
 
 const CACHE_RETENTION_DAYS = 92;
 
-const TRANSCRIPT_READ_CONCURRENCY = 4;
-
 const transcriptReaders = BUILT_IN_USAGE_DRIVERS.flatMap((driver) =>
   driver.usage?.kind === "transcripts" ? [{ driver, reader: driver.usage }] : [],
 );
@@ -88,7 +83,6 @@ const transcriptFormats = new Map(
 
 interface TranscriptSource {
   readonly provider: UsageProviderKind;
-  readonly format: TranscriptUsageFormat<unknown>;
   readonly dir: string;
   readonly volumeId: string;
   readonly fileName?: string;
@@ -156,6 +150,7 @@ export const make = Effect.gen(function* () {
   const hostEnvironment = yield* HostProcess.Environment;
   const hostname = yield* HostProcess.Hostname;
   const readerContext = yield* Effect.context<BuiltInUsageReadersEnv>();
+  const transcriptParser = yield* UsageTranscriptParser;
 
   const fileCache: ScanCache = new Map();
   // Reads from concurrent windows can still hold the original record after it is corrected.
@@ -333,7 +328,7 @@ export const make = Effect.gen(function* () {
     const dirs: Array<TranscriptSource> = [];
     const seen = new Set<string>();
     for (const { driver, reader } of transcriptReaders) {
-      const { provider, format } = reader;
+      const { provider } = reader;
       const directories = yield* Effect.forEach(
         yield* usageInstances(driver, settings),
         (instance) => reader.directories(instance),
@@ -367,7 +362,6 @@ export const make = Effect.gen(function* () {
         seen.add(key);
         dirs.push({
           provider,
-          format,
           dir,
           volumeId,
           ...(fileName === undefined ? {} : { fileName }),
@@ -436,23 +430,26 @@ export const make = Effect.gen(function* () {
   );
   yield* Effect.addFinalizer(() => awaitPersisted);
 
-  /**
-   * Reads run concurrently, and the caller stores updates in walk order rather
-   * than completion order: saved records of deleted transcripts aggregate in
-   * cache order, where the first copy of a duplicate wins.
-   */
-  const readFileRecords = Effect.fn("UsageService.readFileRecords")(function* (
-    filePath: string,
-    size: number,
-    mtimeMs: number,
-    provider: UsageProviderKind,
-    format: TranscriptUsageFormat<unknown>,
-  ): Effect.fn.Return<{
+  interface FileRead {
     readonly records: readonly UsageRecord[];
     readonly malformedRecords: number;
     readonly failed?: true;
     readonly update?: { readonly entry: CachedFile; readonly replaces: CachedFile | undefined };
-  }> {
+  }
+
+  /**
+   * Parsing runs elsewhere, so the caller stores updates in walk order rather
+   * than completion order: saved records of deleted transcripts aggregate in
+   * cache order, where the first copy of a duplicate wins.
+   */
+  const planFileRead = (
+    filePath: string,
+    size: number,
+    mtimeMs: number,
+    provider: UsageProviderKind,
+  ):
+    | { readonly hit: FileRead }
+    | { readonly cached: CachedFile | undefined; readonly request: TranscriptParseRequest } => {
     const cached = fileCache.get(filePath);
     // Provider is part of the identity: if both providers were ever pointed
     // at one directory, a hit parsed by the other parser must not be reused.
@@ -463,11 +460,13 @@ export const make = Effect.gen(function* () {
       cached.provider === provider
     ) {
       return {
-        records:
-          cached.tailRecords.length === 0
-            ? cached.records
-            : [...cached.records, ...cached.tailRecords],
-        malformedRecords: cached.malformedRecords,
+        hit: {
+          records:
+            cached.tailRecords.length === 0
+              ? cached.records
+              : [...cached.records, ...cached.tailRecords],
+          malformedRecords: cached.malformedRecords,
+        },
       };
     }
 
@@ -477,8 +476,24 @@ export const make = Effect.gen(function* () {
       cached !== undefined && cached.provider === provider && size > cached.size
         ? cached.position
         : undefined;
+    return {
+      cached,
+      request: {
+        path: filePath,
+        provider,
+        size,
+        ...(resumeFrom === undefined ? {} : { resumeFrom }),
+      },
+    };
+  };
 
-    const parsed = yield* Effect.promise(() => readTranscriptRecords(filePath, format, resumeFrom));
+  const applyParsedFile = (
+    size: number,
+    mtimeMs: number,
+    provider: UsageProviderKind,
+    cached: CachedFile | undefined,
+    parsed: TranscriptParseResult | null,
+  ): FileRead => {
     // A read failure is not an empty transcript: caching it under this
     // (size, mtime) would silently drop the file's usage until it changes.
     if (parsed === null)
@@ -536,7 +551,7 @@ export const make = Effect.gen(function* () {
         replaces: cached,
       },
     };
-  });
+  };
 
   interface ScannedDir {
     readonly provider: UsageProviderKind;
@@ -560,7 +575,7 @@ export const make = Effect.gen(function* () {
     source: TranscriptSource,
     windowStartMs: number,
   ) {
-    const { provider, format, dir, volumeId, fileName } = source;
+    const { provider, dir, volumeId, fileName } = source;
     const exists = yield* fileSystem
       .exists(dir)
       .pipe(Effect.catchCause(() => Effect.succeed(false)));
@@ -568,14 +583,19 @@ export const make = Effect.gen(function* () {
     const { files, failedPaths } = yield* Effect.promise(() =>
       listTranscriptFiles(dir, windowStartMs, fileName === undefined ? undefined : { fileName }),
     );
-    const read = yield* Effect.forEach(
-      files,
-      (file) =>
-        readFileRecords(file.path, file.size, file.mtimeMs, provider, format).pipe(
-          Effect.map((result) => ({ path: file.path, ...result })),
-        ),
-      { concurrency: TRANSCRIPT_READ_CONCURRENCY },
+    const plans = files.map((file) => planFileRead(file.path, file.size, file.mtimeMs, provider));
+    const parsed = yield* transcriptParser.parse(
+      plans.flatMap((plan) => ("request" in plan ? [plan.request] : [])),
     );
+    let parsedIndex = 0;
+    const read = files.map((file, index) => {
+      const plan = plans[index]!;
+      const result =
+        "hit" in plan
+          ? plan.hit
+          : applyParsedFile(file.size, file.mtimeMs, provider, plan.cached, parsed[parsedIndex++]!);
+      return { path: file.path, ...result };
+    });
     const parsedFiles = read.map(({ path, records, malformedRecords, update }) => {
       if (update === undefined) return { path, records, malformedRecords };
       // A scan of another window may have cached its own read of this file
