@@ -75,13 +75,13 @@ export function startThreadNotifications(
     pending.set(notification.tag, { environmentId, threadId, notification });
     setNotificationBadge(pending.size);
   };
-  // Toast ids by thread key, so hiding a thread can close its open toast.
-  const openToasts = new Map<string, ReturnType<typeof toastManager.add>>();
+  // Toast ids by thread key, so hiding a thread can close its open toasts.
+  const openToasts = new Map<string, Array<ReturnType<typeof toastManager.add>>>();
   // A notification shown before the tag filter turned on must not stay on screen.
   const closeHiddenPending = (hidden: ReadonlySet<string>) => {
-    for (const [key, toastId] of openToasts) {
+    for (const [key, toastIds] of openToasts) {
       if (!hidden.has(key)) continue;
-      toastManager.close(toastId);
+      for (const toastId of toastIds) toastManager.close(toastId);
       openToasts.delete(key);
     }
     const count = pending.size;
@@ -170,9 +170,7 @@ export function startThreadNotifications(
         },
       });
       const toastKey = threadKey({ environmentId, threadId: thread.id });
-      const previousToastId = openToasts.get(toastKey);
-      if (previousToastId !== undefined) toastManager.close(previousToastId);
-      openToasts.set(toastKey, toastId);
+      openToasts.set(toastKey, [...(openToasts.get(toastKey) ?? []), toastId]);
       return;
     }
     if (
