@@ -48,6 +48,7 @@ export class PullRequestProviderError extends Schema.TaggedError<PullRequestProv
     reason: Schema.Literals([
       "missing-tool",
       "unauthenticated",
+      "forbidden",
       "rate-limited",
       "not-found",
       "failed",
