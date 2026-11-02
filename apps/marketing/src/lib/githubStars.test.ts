@@ -12,7 +12,7 @@ afterEach(() => {
 describe("fetchGitHubStars", () => {
   it.each([
     [38_947, "38.9k"],
-    [38_999, "38.9k"],
+    [40_199, "40.1k"],
     [39_000, "39k"],
     [120_000, "120k"],
   ])("formats %i stars as %s", async (count, expected) => {
