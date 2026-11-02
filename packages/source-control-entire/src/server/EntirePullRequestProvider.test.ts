@@ -8,6 +8,7 @@ import * as EntirePullRequestProvider from "./EntirePullRequestProvider.ts";
 import * as Fixtures from "./entireFixtures.ts";
 import {
   Answer,
+  API_ORIGIN,
   fakeEntire,
   PROJECT_CELL_ORIGIN,
   PROJECT_TRAILS,
@@ -247,6 +248,38 @@ describe("EntirePullRequestProvider", () => {
         assert.strictEqual(write?.origin, PROJECT_CELL_ORIGIN);
       }).pipe(Effect.provide(server.layer));
     });
+
+    it.effect(
+      "reads and saves a project trail whose project names no cell at the repository's",
+      () => {
+        const server = fakeEntire(
+          {
+            "GET /trails/7": { ...change, parent: { ...parent, primary_processing_cell: "" } },
+            [`GET ${trailPath}`]: { bodyDocument: { text_snapshot: "Old intent" } },
+            [`PATCH ${trailPath}`]: {},
+          },
+          { etag: 'W/"p1"' },
+        );
+        return Effect.gen(function* () {
+          const provider = yield* EntirePullRequestProvider.make;
+          assert.strictEqual(
+            (yield* provider.getChangeRequest(target)).body,
+            `${link}\n\nOld intent`,
+          );
+          yield* provider.updateChangeRequest!({ ...target, body: `${link}\n\nNew intent` });
+          assert.deepStrictEqual(
+            server.sent
+              .filter((request) => request.path === trailPath)
+              .map((request) => [request.method, request.origin]),
+            [
+              ["GET", API_ORIGIN],
+              ["GET", API_ORIGIN],
+              ["PATCH", API_ORIGIN],
+            ],
+          );
+        }).pipe(Effect.provide(server.layer));
+      },
+    );
 
     it.effect("saves over a project trail description it renders in full", () => {
       const server = fakeEntire(

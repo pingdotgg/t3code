@@ -157,7 +157,7 @@ export const make = Effect.gen(function* () {
     readVersioned(
       operation,
       input,
-      { scope: "collection", path: route.path, cell: route.cell },
+      { scope: "collection", path: route.path, ...(route.cell ? { cell: route.cell } : {}) },
       Json.EntireProjectTrail,
     );
 
@@ -704,7 +704,7 @@ export const make = Effect.gen(function* () {
           method: "PATCH",
           scope: "collection",
           path: route.path,
-          cell: route.cell,
+          ...(route.cell ? { cell: route.cell } : {}),
           headers: { "if-match": projectTrail.etag },
           body: { body: markdown },
         },

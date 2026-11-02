@@ -493,17 +493,20 @@ const PROJECT_TRAIL_PATH = /^\/api\/v1(\/(?:gh|et)\/[a-z0-9-]+\/trails\/[0-9A-HJ
 
 /**
  * Where the change's project trail is read and written: its route below `/api/v1`, and the cell
- * that serves it. Null for a change with no project trail, or a reference too thin to route.
+ * that serves it, absent where the project names none and the repository's serves it, as the
+ * Entire CLI does. Null for a change with no project trail, or a reference too thin to route.
  */
 export function projectTrailRoute(detail: EntireTrailDetail): {
   readonly path: string;
-  readonly cell: { readonly slug: string; readonly jurisdiction: string };
+  readonly cell?: { readonly slug: string; readonly jurisdiction: string };
 } | null {
   const parent = detail.parent;
   const path = parent?.path ? PROJECT_TRAIL_PATH.exec(parent.path)?.[1] : undefined;
+  if (!path) return null;
   const slug = parent?.primary_processing_cell?.trim();
+  if (!slug) return { path };
   const jurisdiction = parent?.jurisdiction?.trim();
-  return path && slug && jurisdiction ? { path, cell: { slug, jurisdiction } } : null;
+  return jurisdiction ? { path, cell: { slug, jurisdiction } } : null;
 }
 
 /**
