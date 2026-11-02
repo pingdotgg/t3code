@@ -19,7 +19,7 @@ import {
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
 import * as Haptics from "expo-haptics";
-import { useNavigation, type StaticScreenProps } from "@react-navigation/native";
+import { StackActions, useNavigation, type StaticScreenProps } from "@react-navigation/native";
 import { useRef, useState, type ReactNode } from "react";
 import { sanitizeNewRefName } from "@t3tools/shared/git";
 import { Platform, Pressable, ScrollView, View } from "react-native";
@@ -225,12 +225,16 @@ export function NewTaskEnvironmentPickerRouteScreen({
                 onPress={() => {
                   void Haptics.selectionAsync();
                   // No silent retarget: a machine without this project goes
-                  // to the project picker for an explicit choice.
+                  // to the project picker for an explicit choice. Replace
+                  // (not push) so the draft stays underneath and setProject
+                  // carries the prompt and attachments over.
                   if (!flow.canSwitchEnvironmentDirectly(environment.environmentId)) {
                     if (shareId === undefined) {
-                      navigation.navigate("NewTaskProject");
+                      navigation.dispatch(StackActions.replace("NewTaskProject"));
                     } else {
-                      navigation.navigate("NewTaskProject", { incomingShareId: shareId });
+                      navigation.dispatch(
+                        StackActions.replace("NewTaskProject", { incomingShareId: shareId }),
+                      );
                     }
                     return;
                   }
