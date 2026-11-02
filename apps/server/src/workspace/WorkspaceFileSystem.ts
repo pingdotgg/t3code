@@ -406,33 +406,24 @@ export const make = Effect.gen(function* () {
 
           const bytesToRead = Math.min(stat.size, PROJECT_READ_FILE_MAX_BYTES);
           const buffer = Buffer.alloc(bytesToRead);
-          const bytesRead = yield* Effect.tryPromise({
-            // A read can return fewer bytes than asked; only 0 means end of file.
-            try: async () => {
-              let offset = 0;
-              while (offset < bytesToRead) {
-                const { bytesRead } = await handle.read(
-                  buffer,
-                  offset,
-                  bytesToRead - offset,
-                  offset,
-                );
-                if (bytesRead === 0) break;
-                offset += bytesRead;
-              }
-              return offset;
-            },
-            catch: (cause) =>
-              new WorkspaceFileSystemOperationError({
-                workspaceRoot: input.cwd,
-                relativePath: input.relativePath,
-                resolvedPath: realTargetPath,
-                operationPath: realTargetPath,
-                operation: "read",
-                cause,
-              }),
-          });
-          const fileBytes = buffer.subarray(0, bytesRead);
+          let offset = 0;
+          while (offset < bytesToRead) {
+            const { bytesRead } = yield* Effect.tryPromise({
+              try: () => handle.read(buffer, offset, bytesToRead - offset, offset),
+              catch: (cause) =>
+                new WorkspaceFileSystemOperationError({
+                  workspaceRoot: input.cwd,
+                  relativePath: input.relativePath,
+                  resolvedPath: realTargetPath,
+                  operationPath: realTargetPath,
+                  operation: "read",
+                  cause,
+                }),
+            });
+            if (bytesRead <= 0) break;
+            offset += bytesRead;
+          }
+          const fileBytes = buffer.subarray(0, offset);
           const result = {
             relativePath: target.relativePath,
             byteLength: stat.size,
@@ -441,14 +432,14 @@ export const make = Effect.gen(function* () {
           if (input.encoding === "base64") {
             // A copy must carry every byte the size promises, so a file that
             // shrank mid-read fails instead of arriving short.
-            if (bytesRead < bytesToRead) {
+            if (offset < bytesToRead) {
               return yield* new WorkspaceFileSystemOperationError({
                 workspaceRoot: input.cwd,
                 relativePath: input.relativePath,
                 resolvedPath: realTargetPath,
                 operationPath: realTargetPath,
                 operation: "read",
-                cause: new Error(`File ended after ${bytesRead} of ${bytesToRead} bytes.`),
+                cause: new Error(`File ended after ${offset} of ${bytesToRead} bytes.`),
               });
             }
             return { ...result, contents: fileBytes.toString("base64") };
