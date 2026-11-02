@@ -110,8 +110,12 @@ function snapshotToPersist(
   return { snapshotSequence, projection };
 }
 
-// Mirrors the server's THREAD_HISTORY_TURN_SNAPSHOT_ROW_LIMIT: the most local rows a snapshot holds.
+// Mirrors the server's THREAD_HISTORY_TURN_SNAPSHOT_ROW_LIMIT, the row window of a snapshot.
 const BOUNDED_SNAPSHOT_TURN_ITEM_LIMIT = 502;
+
+function isBoundedProjection(thread: OrchestrationV2ThreadProjection): boolean {
+  return thread.turnItems.length <= BOUNDED_SNAPSHOT_TURN_ITEM_LIMIT;
+}
 
 function shouldPersistThread(
   thread: OrchestrationV2ThreadProjection,
@@ -119,7 +123,7 @@ function shouldPersistThread(
 ): boolean {
   // Older pages and streamed events grow the in-memory timeline past a bounded
   // snapshot. Keep those projections out of the monolithic cache.
-  if (history.expanded || thread.turnItems.length > BOUNDED_SNAPSHOT_TURN_ITEM_LIMIT) {
+  if (history.expanded || !isBoundedProjection(thread)) {
     return false;
   }
   return !thread.runs.some(
@@ -214,6 +218,8 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
   const cached =
     retained === undefined
       ? yield* cache.loadThread(environmentId, threadId).pipe(
+          // An oversized cache predates the row limit; a fresh bounded snapshot replaces it.
+          Effect.map(Option.filter((snapshot) => isBoundedProjection(snapshot.projection))),
           Effect.catch((error) =>
             Effect.logWarning("Could not load cached thread.").pipe(
               Effect.annotateLogs({
@@ -876,7 +882,7 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
                 .loadThread(environmentId, threadId)
                 .pipe(Effect.orElseSucceed(() => Option.none())),
             );
-          if (saved === undefined) return;
+          if (saved === undefined || !isBoundedProjection(saved.projection)) return;
           const projection = settleTurnItems(threadId, saved.projection, latestItems);
           if (projection !== saved.projection) yield* queuePersist({ ...saved, projection });
         }),

@@ -79,6 +79,28 @@ const BASE_PROJECTION: OrchestrationV2ThreadProjection = {
   thread: { ...v2Projection.thread, title: "Cached thread" },
 };
 
+// The server's THREAD_HISTORY_TURN_SNAPSHOT_ROW_LIMIT.
+const BOUNDED_SNAPSHOT_ROW_LIMIT = 502;
+
+const noticeItem = (index: number): OrchestrationV2TurnItem => ({
+  id: TurnItemId.make(`streamed-item-${index}`),
+  threadId: THREAD_ID,
+  runId: null,
+  nodeId: null,
+  providerThreadId: null,
+  providerTurnId: null,
+  nativeItemRef: null,
+  parentItemId: null,
+  ordinal: index + 1,
+  status: "completed",
+  title: null,
+  startedAt: v2Now,
+  completedAt: v2Now,
+  updatedAt: v2Now,
+  type: "system_notice",
+  message: `Notice ${index}`,
+});
+
 type TestThreadInput = OrchestrationV2ThreadStreamItem | Error;
 
 function testSession(client: WsRpcProtocolClient): RpcSession.RpcSession {
@@ -494,8 +516,6 @@ describe("EnvironmentThreads", () => {
 
   it.effect("does not cache more rows than a bounded snapshot after events grow the thread", () =>
     Effect.gen(function* () {
-      // The server's THREAD_HISTORY_TURN_SNAPSHOT_ROW_LIMIT.
-      const boundedSnapshotRowLimit = 502;
       const appendedItems = 600;
       const saved = yield* Effect.scoped(
         Effect.gen(function* () {
@@ -504,24 +524,7 @@ describe("EnvironmentThreads", () => {
             cachedHistory: { historyCursor: "older", hasMoreHistory: true },
           });
           for (let index = 0; index < appendedItems; index++) {
-            const item: OrchestrationV2TurnItem = {
-              id: TurnItemId.make(`streamed-item-${index}`),
-              threadId: THREAD_ID,
-              runId: null,
-              nodeId: null,
-              providerThreadId: null,
-              providerTurnId: null,
-              nativeItemRef: null,
-              parentItemId: null,
-              ordinal: index + 1,
-              status: "completed",
-              title: null,
-              startedAt: v2Now,
-              completedAt: v2Now,
-              updatedAt: v2Now,
-              type: "system_notice",
-              message: `Notice ${index}`,
-            };
+            const item = noticeItem(index);
             yield* Queue.offer(h.inputs, {
               kind: "event",
               sequence: CACHED_SNAPSHOT_SEQUENCE + 1 + index,
@@ -546,7 +549,32 @@ describe("EnvironmentThreads", () => {
       const savedRows = (yield* Ref.get(saved)).map(
         (snapshot) => snapshot.projection.turnItems.length,
       );
-      expect(Math.max(0, ...savedRows)).toBeLessThanOrEqual(boundedSnapshotRowLimit);
+      expect(Math.max(0, ...savedRows)).toBeLessThanOrEqual(BOUNDED_SNAPSHOT_ROW_LIMIT);
+    }),
+  );
+
+  it.effect("replaces an oversized cache with a fresh bounded snapshot", () =>
+    Effect.gen(function* () {
+      const h = yield* makeHarness({
+        cached: {
+          ...BASE_PROJECTION,
+          turnItems: Array.from({ length: BOUNDED_SNAPSHOT_ROW_LIMIT + 1 }, (_, index) =>
+            noticeItem(index),
+          ),
+        },
+        cachedHistory: { historyCursor: "older", hasMoreHistory: true },
+        httpSnapshot: {
+          _tag: "present",
+          snapshot: { snapshotSequence: CACHED_SNAPSHOT_SEQUENCE, projection: BASE_PROJECTION },
+          history: { historyCursor: "fresh-bounded-cursor", hasMoreHistory: true },
+        },
+      });
+      const state = yield* awaitThreadState(h.observed, (value) => value.status === "live");
+      expect(yield* Ref.get(h.loaderCalls)).toBe(1);
+      expect(Option.getOrThrow(state.data)).toEqual(BASE_PROJECTION);
+      yield* TestClock.adjust("500 millis");
+      const saved = yield* Ref.get(h.savedThreads);
+      expect(saved.map((snapshot) => snapshot.projection)).toEqual([BASE_PROJECTION]);
     }),
   );
 
