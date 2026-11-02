@@ -148,6 +148,9 @@ export function ThreadRouteView({
           forceExpandedMobileComposer
         />
       );
+    } else if (draftRedirect && hiddenKeys.has(threadKey(draftRedirect))) {
+      // Back to a promoted draft whose thread is now hidden: never mount it.
+      redirect = <Navigate to="/" replace />;
     } else if (draftRedirect) {
       // Same slot and key as the server route renders, so the swap keeps this instance.
       view = (
