@@ -334,17 +334,17 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
     learn: NonNullable<EnvironmentSupervisorOptions["learnRoutes"]>,
     lease: ConnectionDriver.EnvironmentConnectionLease,
   ) {
+    const activeId = connectionRouteId(lease.prepared.target);
+    const activeRoute = (yield* currentRoutes).find(
+      (route) => connectionRouteId(route.target) === activeId,
+    );
+    if (activeRoute === undefined) return;
     yield* lease.session.subscribeServerConfig().pipe(
       Stream.filter((event) => event.type === "snapshot"),
       Stream.map((event) => event.config.directEndpoints ?? []),
       Stream.changesWith((previous, next) => JSON.stringify(previous) === JSON.stringify(next)),
       Stream.runForEach((reported) =>
         Effect.gen(function* () {
-          const activeId = connectionRouteId(lease.prepared.target);
-          const activeRoute = (yield* currentRoutes).find(
-            (route) => connectionRouteId(route.target) === activeId,
-          );
-          if (activeRoute === undefined) return;
           const updated = yield* learn({ activeRoute, reported });
           if (Option.isSome(updated)) {
             yield* Ref.set(currentEntry, updated.value);

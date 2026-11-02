@@ -84,7 +84,7 @@ const LAN_TARGET = new BearerConnectionTarget({
   label: TARGET.label,
   connectionId: "bearer:lan",
 });
-const LAN_ROUTE: ConnectionRoute = {
+const LAN_ROUTE = {
   target: LAN_TARGET,
   profile: Option.some(
     new BearerConnectionProfile({
@@ -95,7 +95,7 @@ const LAN_ROUTE: ConnectionRoute = {
       wsBaseUrl: "ws://192.168.1.10:3773/",
     }),
   ),
-};
+} satisfies ConnectionRoute;
 const LAN_THEN_RELAY_ENTRY: ConnectionCatalogEntry = {
   target: LAN_ROUTE.target,
   profile: LAN_ROUTE.profile,
@@ -1801,22 +1801,37 @@ describe("EnvironmentSupervisor routes", () => {
     }),
   );
 
-  it.effect.each(["initial", "late"] as const)(
-    "learns the %s direct endpoint over T3 Connect and moves to it",
+  it.effect.each(["initial", "late", "withdrawn"] as const)(
+    "learns the %s direct endpoint over T3 Connect",
     (discovery) =>
       Effect.gen(function* () {
-        const relayEntry: ConnectionCatalogEntry = {
-          target: RELAY_TARGET,
-          profile: Option.none(),
-          enabled: true,
-        };
+        const relayEntry: ConnectionCatalogEntry =
+          discovery === "withdrawn"
+            ? {
+                target: LAN_ROUTE.target,
+                profile: Option.some(
+                  new BearerConnectionProfile({
+                    ...Option.getOrThrow(LAN_ROUTE.profile),
+                    learned: true,
+                    authorization: "t3-connect",
+                  }),
+                ),
+                alternateRoutes: [{ target: RELAY_TARGET, profile: Option.none() }],
+                enabled: true,
+              }
+            : {
+                target: RELAY_TARGET,
+                profile: Option.none(),
+                enabled: true,
+              };
+        const discoveryProcessed = yield* Deferred.make<void>();
         const discoveryStarted = yield* Deferred.make<void>();
         const finishDiscovery = yield* Deferred.make<void>();
         const lateAddress = "https://fixture.tail1234.ts.net/";
         const learned = yield* Ref.make<ReadonlyArray<string>>([]);
         const harness = yield* makeHarness({
           configEvents:
-            discovery === "late"
+            discovery !== "initial"
               ? Stream.concat(
                   Stream.make({
                     version: 1 as const,
@@ -1834,7 +1849,7 @@ describe("EnvironmentSupervisor routes", () => {
                       }),
                     ),
                   ),
-                )
+                ).pipe(Stream.ensuring(Deferred.succeed(discoveryProcessed, undefined)))
               : undefined,
           checkRoute: (route) =>
             route.target._tag === "BearerConnectionTarget"
@@ -1844,7 +1859,7 @@ describe("EnvironmentSupervisor routes", () => {
           initialConfig: () =>
             Effect.succeed({
               directEndpoints:
-                discovery === "late"
+                discovery !== "initial"
                   ? []
                   : [{ kind: "lan", httpBaseUrl: "http://192.168.1.10:3773/" }],
             } as unknown as ServerConfig),
@@ -1875,6 +1890,14 @@ describe("EnvironmentSupervisor routes", () => {
 
         yield* Deferred.await(discoveryStarted);
         yield* Deferred.succeed(finishDiscovery, undefined);
+        if (discovery === "withdrawn") {
+          yield* Deferred.await(discoveryProcessed);
+          expect(yield* Ref.get(learned)).toContain(
+            `learned:${TARGET.environmentId}:https://fixture.tail1234.ts.net`,
+          );
+          expect((yield* SubscriptionRef.get(supervisor.state)).generation).toBe(1);
+          return;
+        }
         yield* awaitState(
           supervisor.state,
           (state) => state.phase === "connected" && state.generation === 2,
@@ -1883,7 +1906,7 @@ describe("EnvironmentSupervisor routes", () => {
           "BearerConnectionTarget",
         );
         expect(yield* Ref.get(learned)).toEqual([
-          `learned:${TARGET.environmentId}:${discovery === "late" ? "https://fixture.tail1234.ts.net" : "http://192.168.1.10:3773"}`,
+          `learned:${TARGET.environmentId}:${discovery !== "initial" ? "https://fixture.tail1234.ts.net" : "http://192.168.1.10:3773"}`,
         ]);
       }),
   );
