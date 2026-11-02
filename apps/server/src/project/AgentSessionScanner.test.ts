@@ -1699,8 +1699,8 @@ it.layer(NodeServices.layer)("AgentSessionScanner", (it) => {
         const workspace = yield* makeTempDir("t3code-long-conversation-workspace-");
         const record = (fields: Record<string, unknown>) =>
           encodeTranscriptRecord({ sessionId: "claude-long", ...fields });
-        const longText = "x".repeat(100 * 1024);
-        const middleCount = 240;
+        const longText = "x".repeat(64 * 1024);
+        const middleCount = 400;
         yield* writeTranscript({
           filePath: path.join(claudeHomePath, "projects", "-slug", "claude-long.jsonl"),
           contents: [
@@ -1709,7 +1709,7 @@ it.layer(NodeServices.layer)("AgentSessionScanner", (it) => {
               cwd: workspace,
               message: { role: "user", content: "First prompt" },
             }),
-            // 24 MiB of conversation text exceeds the real 32 MiB selected-history budget.
+            // The whole history exceeds the real 32 MiB selected-history budget; the shown window fits.
             ...Array.from({ length: middleCount }, (_, index) => {
               const role = index % 2 === 0 ? "assistant" : "user";
               return record({ type: role, message: { role, content: longText } });
@@ -1731,6 +1731,48 @@ it.layer(NodeServices.layer)("AgentSessionScanner", (it) => {
         expect(thread?.messages.at(-1)).toMatchObject({ role: "user", text: "Latest prompt" });
         expect(thread?.messages).toHaveLength(200);
         expect(thread?.omittedMessageCount).toBe(middleCount + 2 - 200);
+      }),
+    );
+
+    it.effect("imports a late first Claude prompt once when older replies are dropped", () =>
+      Effect.gen(function* () {
+        const path = yield* Path.Path;
+        const nowMs = Date.parse("2026-08-24T12:00:00.000Z");
+        yield* TestClock.setTime(nowMs);
+        const claudeHomePath = yield* makeTempDir("t3code-late-prompt-claude-");
+        const codexHomePath = yield* makeTempDir("t3code-late-prompt-codex-");
+        const workspace = yield* makeTempDir("t3code-late-prompt-workspace-");
+        const contents = [
+          encodeTranscriptRecord({ type: "attachment", sessionId: "late-prompt", cwd: workspace }),
+          // The first prompt is still among the latest 200 messages after older replies drop out.
+          ...Array.from({ length: 250 }, (_, index) => {
+            const role = index < 60 || index % 2 === 1 ? "assistant" : "user";
+            return encodeTranscriptRecord({
+              type: role,
+              sessionId: "late-prompt",
+              message: { role, content: `${role} ${index}` },
+            });
+          }),
+        ].join("\n");
+        const filePath = path.join(claudeHomePath, "projects", "-slug", "late-prompt.jsonl");
+        yield* writeTranscript({ filePath, contents, mtimeMs: nowMs - 60_000 });
+
+        const [thread] = yield* runRecentThreads({
+          claudeHomePath,
+          codexHomePath,
+          workspaceRoot: workspace,
+        });
+
+        expect(thread?.messages[0]).toMatchObject({ role: "assistant", text: "assistant 50" });
+        expect(thread).toEqual(
+          AgentSessionScanner.parseAgentSessionTranscript({
+            source: "claudeAgent",
+            providerInstanceId: ProviderInstanceId.make("claudeAgent"),
+            fallbackSessionId: "late-prompt",
+            lastActiveAtMs: nowMs - 60_000,
+            contents,
+          }),
+        );
       }),
     );
 
