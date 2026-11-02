@@ -1,5 +1,6 @@
 import type { UiLanguage } from "@t3tools/contracts";
 
+import { enMessages as chatEn, zhHansMessages as chatZh } from "./messagesChat.ts";
 import { enMessages as generalEn, zhHansMessages as generalZh } from "./messagesGeneral.ts";
 import { enMessages as interfaceEn, zhHansMessages as interfaceZh } from "./messages.ts";
 import { enMessages as navEn, zhHansMessages as navZh } from "./messagesSettingsNav.ts";
@@ -16,6 +17,7 @@ export type UiLocale = Exclude<UiLanguage, "system">;
 const enCatalog = {
   ...interfaceEn,
   ...generalEn,
+  ...chatEn,
   ...navEn,
   ...typographyEn,
 };
@@ -25,6 +27,7 @@ export type MessageKey = keyof typeof enCatalog;
 const zhCatalog: Partial<Record<MessageKey, string>> = {
   ...interfaceZh,
   ...generalZh,
+  ...chatZh,
   ...navZh,
   ...typographyZh,
 };

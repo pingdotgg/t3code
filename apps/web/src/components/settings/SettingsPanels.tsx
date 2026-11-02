@@ -1070,25 +1070,33 @@ export function GeneralSettingsPanel() {
 
 export function ChatSettingsPanel() {
   const modifierLabel = isMacPlatform(navigator.platform) ? "⌘" : "Ctrl";
+  const t = useT();
   const sendShortcutOptions = [
-    { value: "enter", label: "Enter" },
-    { value: "mod-enter-multiline", label: `${modifierLabel} + Enter for multiline prompts` },
-    { value: "mod-enter", label: `${modifierLabel} + Enter always` },
+    { value: "enter", label: t("settings.chat.sendShortcut.enter") },
+    {
+      value: "mod-enter-multiline",
+      label: t("settings.chat.sendShortcut.modEnterMultiline", { mod: modifierLabel }),
+    },
+    {
+      value: "mod-enter",
+      label: t("settings.chat.sendShortcut.modEnter", { mod: modifierLabel }),
+    },
   ] as const;
   const settings = useScopedSettings();
   const updateSettings = useUpdateScopedSettings();
 
   return (
     <SettingsPageContainer>
-      <SettingsSection id="composer" title="Composer">
+      <SettingsSection id="composer" title={t("settings.chat.composer.title")}>
         <SettingsRow
           {...searchableSetting("composer-rich-text")}
-          description="Show formatted Markdown as you type."
+          title={t("settings.chat.richText.title")}
+          description={t("settings.chat.richText.description")}
           resetAction={
             settings.composerRichTextEnabled !==
             DEFAULT_UNIFIED_SETTINGS.composerRichTextEnabled ? (
               <SettingResetButton
-                label="rich text composer"
+                label={t("settings.chat.richText.resetLabel")}
                 onClick={() =>
                   updateSettings({
                     composerRichTextEnabled: DEFAULT_UNIFIED_SETTINGS.composerRichTextEnabled,
@@ -1103,17 +1111,18 @@ export function ChatSettingsPanel() {
               onCheckedChange={(checked) =>
                 updateSettings({ composerRichTextEnabled: Boolean(checked) })
               }
-              aria-label="Rich text composer"
+              aria-label={t("settings.chat.richText.a11y")}
             />
           }
         />
         <SettingsRow
           {...searchableSetting("send-shortcut")}
-          description="Choose when Enter sends a prompt or inserts a new line"
+          title={t("settings.chat.sendShortcut.title")}
+          description={t("settings.chat.sendShortcut.description")}
           resetAction={
             settings.sendShortcut !== DEFAULT_UNIFIED_SETTINGS.sendShortcut ? (
               <SettingResetButton
-                label="send shortcut"
+                label={t("settings.chat.sendShortcut.resetLabel")}
                 onClick={() =>
                   updateSettings({ sendShortcut: DEFAULT_UNIFIED_SETTINGS.sendShortcut })
                 }
@@ -1131,7 +1140,7 @@ export function ChatSettingsPanel() {
               <SelectTrigger
                 size="sm"
                 className="w-auto min-w-0 max-w-full"
-                aria-label="Send shortcut"
+                aria-label={t("settings.chat.sendShortcut.a11y")}
               >
                 <SelectValue>
                   {
@@ -1156,11 +1165,12 @@ export function ChatSettingsPanel() {
         <AdvancedSettings targetIds={[searchableSetting("skills-in-slash-menu").id]}>
           <SettingsRow
             {...searchableSetting("skills-in-slash-menu")}
-            description="Also include skills in the / command menu. Skills always appear when you type $."
+            title={t("settings.chat.skillsInSlashMenu.title")}
+            description={t("settings.chat.skillsInSlashMenu.description")}
             resetAction={
               settings.showSkillsInSlashMenu !== DEFAULT_UNIFIED_SETTINGS.showSkillsInSlashMenu ? (
                 <SettingResetButton
-                  label="skills in slash menu"
+                  label={t("settings.chat.skillsInSlashMenu.resetLabel")}
                   onClick={() =>
                     updateSettings({
                       showSkillsInSlashMenu: DEFAULT_UNIFIED_SETTINGS.showSkillsInSlashMenu,
@@ -1175,26 +1185,29 @@ export function ChatSettingsPanel() {
                 onCheckedChange={(checked) =>
                   updateSettings({ showSkillsInSlashMenu: Boolean(checked) })
                 }
-                aria-label="Show skills in slash menu"
+                aria-label={t("settings.chat.skillsInSlashMenu.a11y")}
               />
             }
           />
         </AdvancedSettings>
       </SettingsSection>
 
-      <SettingsSection id="follow-ups" title="Follow-ups">
+      <SettingsSection id="follow-ups" title={t("settings.chat.followUps.title")}>
         <SettingsRow
           {...searchableSetting("follow-up-behavior")}
-          description={
-            "Queue follow-ups while the agent runs or steer the current run. " +
-            (settings.sendShortcut === "mod-enter-multiline"
-              ? `Press ${modifierLabel} + Enter for single-line prompts or ${modifierLabel} + Shift + Enter for multiline prompts to do the opposite for one message.`
-              : `Press ${modifierLabel}${settings.sendShortcut === "mod-enter" ? " + Shift" : ""} + Enter to do the opposite for one message.`)
-          }
+          title={t("settings.chat.followUpBehavior.title")}
+          description={t("settings.chat.followUpBehavior.description", {
+            opposite:
+              settings.sendShortcut === "mod-enter-multiline"
+                ? t("settings.chat.followUpBehavior.oppositeMultiline", { mod: modifierLabel })
+                : t("settings.chat.followUpBehavior.opposite", {
+                    shortcut: `${modifierLabel}${settings.sendShortcut === "mod-enter" ? " + Shift" : ""}`,
+                  }),
+          })}
           resetAction={
             settings.followUpBehavior !== DEFAULT_UNIFIED_SETTINGS.followUpBehavior ? (
               <SettingResetButton
-                label="follow-up behavior"
+                label={t("settings.chat.followUpBehavior.resetLabel")}
                 onClick={() =>
                   updateSettings({
                     followUpBehavior: DEFAULT_UNIFIED_SETTINGS.followUpBehavior,
@@ -1212,14 +1225,20 @@ export function ChatSettingsPanel() {
                 }
               }}
             >
-              <SelectTrigger size="sm" className="w-auto min-w-0" aria-label="Follow-up behavior">
+              <SelectTrigger
+                size="sm"
+                className="w-auto min-w-0"
+                aria-label={t("settings.chat.followUpBehavior.a11y")}
+              >
                 <SelectValue>
-                  {settings.followUpBehavior === "queue" ? "Queue" : "Steer"}
+                  {settings.followUpBehavior === "queue"
+                    ? t("settings.chat.followUpBehavior.queue")
+                    : t("settings.chat.followUpBehavior.steer")}
                 </SelectValue>
               </SelectTrigger>
               <SelectPopup align="end" alignItemWithTrigger={false}>
-                <SelectItem value="queue">Queue</SelectItem>
-                <SelectItem value="steer">Steer</SelectItem>
+                <SelectItem value="queue">{t("settings.chat.followUpBehavior.queue")}</SelectItem>
+                <SelectItem value="steer">{t("settings.chat.followUpBehavior.steer")}</SelectItem>
               </SelectPopup>
             </Select>
           }
