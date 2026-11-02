@@ -53,6 +53,22 @@ export const discovery = {
     "Install the Azure command-line tools (`az`), then enable Azure DevOps support with `az extension add --name azure-devops`.",
 } satisfies SourceControlCliDiscoverySpec;
 
+/** The repository name a remote ends in; `az` takes it decoded and finds org and project itself. */
+function repositoryNameFromRemote(remoteUrl: string): string | null {
+  const name = remoteUrl
+    .trim()
+    .replace(/\/+$/u, "")
+    .replace(/\.git$/iu, "")
+    .split(/[/:]/u)
+    .at(-1);
+  if (!name) return null;
+  try {
+    return decodeURIComponent(name);
+  } catch {
+    return name;
+  }
+}
+
 function toChangeRequest(summary: NormalizedAzureDevOpsPullRequestRecord): ChangeRequest {
   return {
     provider: SourceControlProviderKind.make("azure-devops"),
@@ -205,7 +221,10 @@ export const make = Effect.gen(function* () {
     ),
     getDefaultBranch: Effect.fn("AzureDevOpsSourceControlProvider.getDefaultBranch")(
       function (input) {
-        return azure.getDefaultBranch({ cwd: input.cwd }).pipe(
+        const repository =
+          input.context === undefined ? null : repositoryNameFromRemote(input.context.remoteUrl);
+        if (repository === null) return Effect.succeed(null);
+        return azure.getDefaultBranch({ cwd: input.cwd, repository }).pipe(
           Effect.mapError(
             (error) =>
               new SourceControlProviderError({
