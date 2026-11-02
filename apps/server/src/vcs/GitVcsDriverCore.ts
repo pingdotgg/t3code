@@ -1655,12 +1655,20 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         },
       );
       if (result.exitCode !== 0) return null;
+      const symbolicHead = yield* executeGit(
+        "GitVcsDriver.readRefSnapshot",
+        cwd,
+        ["symbolic-ref", "--quiet", "HEAD"],
+        { allowNonZeroExit: true },
+      );
+      // Exit 1 means detached HEAD; other failures require a full status read.
+      if (symbolicHead.exitCode !== 0 && symbolicHead.exitCode !== 1) return null;
       // Deepening a shallow clone changes ancestry without moving refs.
       const shallowPath = path.join(yield* resolveGitCommonDir(cwd), "shallow");
       const shallow = (yield* fileSystem.exists(shallowPath))
         ? yield* fileSystem.readFileString(shallowPath)
         : "";
-      return `${result.stdout}\0${shallow}`;
+      return `${result.stdout}\0${symbolicHead.stdout}\0${shallow}`;
     },
     Effect.orElseSucceed(() => null),
   );
