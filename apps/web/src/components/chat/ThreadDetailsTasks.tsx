@@ -4,6 +4,7 @@ import { useState } from "react";
 
 import { cn } from "../../lib/utils";
 import { formatDuration, type TaskListPlan } from "../../session-logic";
+import { Button } from "../ui/button";
 import { ThreadDetailsSection } from "./ThreadDetailsSection";
 
 const STATUS_LABEL = {
@@ -59,11 +60,11 @@ export function ThreadDetailsTasks({
       headingId="thread-details-tasks-heading"
       title="Tasks"
       actions={
-        <button
-          type="button"
+        <Button
+          variant="ghost-muted"
+          size="micro"
           aria-expanded={expanded}
-          aria-label={`${expanded ? "Collapse" : "Expand"} tasks`}
-          className="flex cursor-pointer items-center gap-1.5 rounded-sm text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring/70 focus-visible:ring-inset focus-visible:outline-none"
+          aria-label={`${expanded ? "Collapse" : "Expand"} tasks, ${done} of ${plan.steps.length} completed`}
           onClick={() => setExpanded((value) => !value)}
         >
           {count}
@@ -71,7 +72,7 @@ export function ThreadDetailsTasks({
             aria-hidden
             className={cn("size-3 shrink-0 transition-transform", !expanded && "-rotate-90")}
           />
-        </button>
+        </Button>
       }
     >
       <ul className="flex max-h-48 flex-col overflow-y-auto text-xs">
