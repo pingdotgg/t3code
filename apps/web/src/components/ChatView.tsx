@@ -3489,14 +3489,14 @@ export default function ChatView(props: ChatViewProps) {
                   : { historyControls: threadHistoryControls })}
               />
 
-              {(showScrollToBottom || showScrollToLastUserMessage) && !isThreadFindActive && (
+              {showScrollToBottom && !isThreadFindActive && (
                 <TimelineJumpButtons
                   bottom={scrollToEndClearance + 4}
                   summary={scrollToEndSummary}
                   onScrollToLastUserMessage={
                     showScrollToLastUserMessage ? scrollToLastUserMessage : null
                   }
-                  onScrollToEnd={showScrollToBottom ? () => scrollToEnd(true) : null}
+                  onScrollToEnd={() => scrollToEnd(true)}
                 />
               )}
             </div>

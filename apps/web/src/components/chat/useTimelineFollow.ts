@@ -208,10 +208,9 @@ export function useTimelineFollow(input: TimelineFollowInput) {
     readonly visit: TimelineFollowVisit;
     readonly above: boolean;
   }>({ visit, above: false });
-  // Landing on a thread stays quiet; the pill waits for the user to scroll.
-  const [scrolledVisit, setScrolledVisit] = useState<TimelineFollowVisit | null>(null);
+  // Like "Scroll to end", it shows only away from the end.
   const showScrollToLastUserMessage =
-    scrolledVisit === visit && lastUserMessage.visit === visit && lastUserMessage.above;
+    showScrollToBottom && lastUserMessage.visit === visit && lastUserMessage.above;
   // Reported on every scroll frame; an unchanged value must not re-render ChatView.
   const onLastUserMessageAboveChange = (above: boolean) =>
     setLastUserMessage((current) =>
@@ -303,13 +302,6 @@ export function useTimelineFollow(input: TimelineFollowInput) {
       dispatchedUserItem?.item.type === "user_message" ? dispatchedUserItem.item.messageId : null,
   });
   if (!sameRunObservation(runObservation.observation, observedRun)) {
-    // A new turn, sent directly or from the queue, starts quiet until the next scroll.
-    if (
-      observedRun?.hydrated &&
-      runObservation.observation.runId !== null &&
-      runObservation.observation.runId !== observedRun.runId
-    )
-      setScrolledVisit(null);
     setObservedRun(runObservation.observation);
     const startedRunAnchor = runObservation.anchorMessageId;
     if (startedRunAnchor !== null && !anchorPending && timelineLiveFollowEnabled) {
@@ -394,14 +386,6 @@ export function useTimelineFollow(input: TimelineFollowInput) {
   }, [composerTimelineInset, readCurrentFollow, scrollToEndStable]);
 
   const handleNavigation = (navigation: TimelineNavigation) => {
-    // Clicks on rows and follow's own scroll to the end are not the user scrolling. A restore
-    // away from the end counts: the user scrolled there on an earlier visit.
-    if (
-      navigation.source === "pointer"
-        ? navigation.onScrollbar
-        : navigation.source !== "command" || navigation.releasesFollow
-    )
-      setScrolledVisit(visit);
     const awayFromEnd = () => resolveTimelineIsAtEnd(legendListRef.current?.getState()) === false;
     const releases = navigationReleasesFollow(navigation, {
       contentScrollsUp: timelineRealContentOverflowsViewport,

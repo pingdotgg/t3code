@@ -27,7 +27,7 @@ export function TimelineJumpButtons(props: {
   readonly bottom: number;
   readonly summary: string | null;
   readonly onScrollToLastUserMessage: (() => void) | null;
-  readonly onScrollToEnd: (() => void) | null;
+  readonly onScrollToEnd: () => void;
 }) {
   return (
     <div
@@ -47,24 +47,22 @@ export function TimelineJumpButtons(props: {
             Your last message
           </Button>
         )}
-        {props.onScrollToEnd === null ? null : (
-          <Button
-            onPointerDown={(event) => event.preventDefault()}
-            onClick={props.onScrollToEnd}
-            className="pointer-events-auto"
-            size="xs"
-            variant="glass"
-          >
-            <ChevronDownIcon className="size-3.5" />
-            Scroll to end
-            {props.summary === null ? null : (
-              <span className="text-muted-foreground">
-                <span aria-hidden>· </span>
-                {props.summary}
-              </span>
-            )}
-          </Button>
-        )}
+        <Button
+          onPointerDown={(event) => event.preventDefault()}
+          onClick={props.onScrollToEnd}
+          className="pointer-events-auto"
+          size="xs"
+          variant="glass"
+        >
+          <ChevronDownIcon className="size-3.5" />
+          Scroll to end
+          {props.summary === null ? null : (
+            <span className="text-muted-foreground">
+              <span aria-hidden>· </span>
+              {props.summary}
+            </span>
+          )}
+        </Button>
       </div>
     </div>
   );
