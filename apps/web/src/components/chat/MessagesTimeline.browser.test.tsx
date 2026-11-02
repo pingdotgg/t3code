@@ -590,9 +590,13 @@ describe("MessagesTimeline messages", () => {
       detail: () => Atom.make(AsyncResult.initial()),
       commandOutput: () => Atom.make(AsyncResult.initial()),
     };
+    let outerGrowth = false;
+    let routeThreadKey = props.routeThreadKey;
     const timeline = () => (
       <MessagesTimeline
         {...props}
+        routeThreadKey={routeThreadKey}
+        liveFollowEnabled={false}
         {...(mode === "inline"
           ? {}
           : {
@@ -647,13 +651,31 @@ describe("MessagesTimeline messages", () => {
           ...(mode === "grouped-end"
             ? [message("Completed.", { role: "assistant" }, "final-message")]
             : tallEntries.slice(6)),
+          ...(outerGrowth
+            ? [message("Later output\n\n".repeat(20), { role: "assistant" }, "outer-growth")]
+            : []),
         ]}
       />
     );
-    await using screen = await renderElement(timeline());
+    await using screen = await renderElement(
+      mode === "grouped-delayed" ? (
+        <MessagesTimeline {...props} timelineEntries={[message("Previous thread")]} />
+      ) : (
+        timeline()
+      ),
+    );
     if (mode === "grouped-end") screen.container.style.height = "648px";
     await vi.waitFor(() => expect(props.listRef.current?.getScrollableNode()).toBeTruthy());
     const viewport = props.listRef.current!.getScrollableNode()!;
+    if (mode === "grouped-delayed") {
+      routeThreadKey = `${routeThreadKey}-switched`;
+      await screen.rerender(timeline());
+      await vi.waitFor(() =>
+        expect(
+          viewport.scrollHeight - viewport.clientHeight - viewport.scrollTop,
+        ).toBeLessThanOrEqual(1),
+      );
+    }
     if (mode.startsWith("grouped-")) {
       await act(() => {
         void props.listRef.current!.scrollToIndex({ index: 6, animated: false });
@@ -712,8 +734,14 @@ describe("MessagesTimeline messages", () => {
     });
 
     const collapsedScrollTop = viewport.scrollTop;
+    using scrollBy = vi.spyOn(viewport, "scrollBy");
+    // The nested row can measure before the outer scroller gains its new range.
+    if (mode === "grouped-delayed") scrollBy.mockImplementationOnce(() => {});
     await click(header());
     if (mode === "grouped-delayed") {
+      await vi.waitFor(() => expect(scrollBy).toHaveBeenCalled());
+      outerGrowth = true;
+      await screen.rerender(timeline());
       await vi.waitFor(() => expect(viewport.scrollTop).toBeGreaterThan(collapsedScrollTop));
     }
     if (mode !== "inline" && mode !== "grouped-end") {

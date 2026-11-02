@@ -481,7 +481,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
 
   // Visible-position anchoring keeps the toggled row still, so content that
   // expands below it near the bottom would otherwise land under the composer.
-  const revealExpandedDisclosure = () => {
+  const revealExpandedDisclosure = useStableCallback(() => {
     const pending = disclosureRevealRef.current;
     if (!pending || pending.identity !== listIdentityKey) return;
     const anchorKey = pending.key;
@@ -512,7 +512,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
     if (delta > 0) {
       element.scrollBy({ top: delta, behavior: prefersReducedMotion ? "auto" : "smooth" });
     }
-  };
+  });
 
   const scheduleDisclosureSettle = () => {
     if (disclosureSettleFrameRef.current !== null) {
