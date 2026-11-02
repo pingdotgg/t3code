@@ -429,7 +429,24 @@ it.layer(layerTest)("orchestration V2 foundation persistence", (it) => {
           },
         ],
       });
-      const before = yield* store.getThreadsWithPullRequests();
+      const pollingQueries: Array<string> = [];
+      const capturePollingQuery: Statement.Transformer = (statement) => {
+        pollingQueries.push(statement.compile()[0]);
+        return Effect.succeed(statement);
+      };
+      const before = yield* store
+        .getThreadsWithPullRequests()
+        .pipe(Effect.provideService(Statement.CurrentTransformer, capturePollingQuery));
+      assert.lengthOf(pollingQueries, 1);
+      const plan = yield* sql.unsafe<{ readonly detail: string }>(
+        `EXPLAIN QUERY PLAN ${pollingQueries[0]}`,
+      );
+      assert.ok(
+        plan.some((row) =>
+          row.detail.includes("orchestration_v2_projection_threads_pull_request_poll_idx"),
+        ),
+      );
+      assert.ok(plan.every((row) => !row.detail.includes("TEMP B-TREE")));
       assert.deepEqual(
         before.map((thread) => thread.id),
         [threadId],

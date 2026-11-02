@@ -45,16 +45,6 @@ it.layer(NodeSqliteClient.layer({ filename: ":memory:" }))("078_PullRequestPolli
       assert.deepEqual(yield* runMigrations(), []);
       assert.deepEqual(yield* sql.unsafe(query), before);
       assert.deepEqual(before, [{ thread_id: "a" }, { thread_id: "b" }, { thread_id: "later" }]);
-      const pollingQuery = query.replace("SELECT thread_id", "SELECT payload_json");
-      const plan = yield* sql.unsafe<{ readonly detail: string }>(
-        `EXPLAIN QUERY PLAN ${pollingQuery}`,
-      );
-      assert.ok(
-        plan.some((row) =>
-          row.detail.includes("orchestration_v2_projection_threads_pull_request_poll_idx"),
-        ),
-      );
-      assert.ok(plan.every((row) => !row.detail.includes("TEMP B-TREE")));
       yield* sql`UPDATE orchestration_v2_projection_threads SET payload_json = '{"pullRequests":[]}' WHERE thread_id = 'a'`;
       yield* sql`UPDATE orchestration_v2_projection_threads SET payload_json = '{"pullRequests":[{"number":6}]}' WHERE thread_id = 'missing'`;
       yield* sql`UPDATE orchestration_v2_projection_threads SET deleted_at = NULL WHERE thread_id = 'deleted'`;
