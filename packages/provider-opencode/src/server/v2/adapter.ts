@@ -524,6 +524,12 @@ const wakeTurnId = (sessionId: string, attemptId: string) => `${sessionId}:wake:
 const isWakeTurn = (turn: OrchestrationV2ProviderTurn) =>
   turn.nativeTurnRef?.nativeId?.includes(":wake:") === true;
 
+// OpenCode's claude-agent reports a spent Claude plan as provider.unknown with Claude's own text.
+const claudeUsageLimit = (message: string | undefined) =>
+  message !== undefined && /^You've hit your [^\n·]*\blimit\b/.test(message)
+    ? { resetAt: /\bResets at (\d{4}-\d\d-\d\dT[\d:.]+Z)\.?\s*$/.exec(message)?.[1] ?? null }
+    : undefined;
+
 const INTERRUPT_TIMEOUT = "10 seconds";
 const INSTRUCTIONS_KEY = "t3-code";
 const RECONNECT_ATTEMPTS = 5;
@@ -2152,14 +2158,18 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
           const { type, message, status, response } = event.data.error;
           // OpenCode types an empty balance as provider.quota too, but it answers
           // that with HTTP 402 and it never resets. Usage windows and budgets are 429.
+          const claudeLimit = claudeUsageLimit(message);
           const usageLimit =
-            (type === "provider.quota" && status !== 402) || type === "provider.rate-limit";
+            (type === "provider.quota" && status !== 402) ||
+            type === "provider.rate-limit" ||
+            claudeLimit !== undefined;
           return yield* endExecution(state, turn, {
             status: "failed",
             failure: makeProviderFailure({
               message: readableProviderErrorMessage(message, status, response?.body),
               code: type,
               class: usageLimit ? "usage_limit" : "provider_error",
+              resetAt: claudeLimit?.resetAt ?? null,
             }),
           });
         }
