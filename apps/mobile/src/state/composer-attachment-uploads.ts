@@ -75,7 +75,12 @@ export function composerAttachmentUploadRequests(input: {
 }): ReadonlyArray<ComposerAttachmentUploadRequest> {
   const queued = flattenQueuedThreadMessages(input.queuedMessagesByThreadKey);
   return Object.entries(input.drafts).flatMap(([key, draft]) => {
-    const environmentId = composerDraftEnvironmentId(key, queued, draft);
+    const environmentId = composerDraftEnvironmentId(
+      key,
+      input.connectedEnvironmentIds,
+      queued,
+      draft,
+    );
     if (
       environmentId === null ||
       !input.connectedEnvironmentIds.has(environmentId) ||
@@ -147,7 +152,7 @@ export function createComposerAttachmentUploadWorker(
             let retained = false;
             for (const [key, draft] of Object.entries(appAtomRegistry.get(composerDraftsAtom))) {
               if (
-                composerDraftEnvironmentId(key, queued, draft) === environmentId &&
+                composerDraftEnvironmentId(key, [environmentId], queued, draft) === environmentId &&
                 draft.attachments.some((candidate) => candidate.id === attachment.id)
               ) {
                 retained = setComposerDraftAttachmentUpload(key, uploaded) || retained;
