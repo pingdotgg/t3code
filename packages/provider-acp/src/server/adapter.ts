@@ -956,20 +956,22 @@ export function acpToolCallSnippetEdit(content: unknown) {
     : undefined;
 }
 
-/** A flavor marked the diff `omitted`: too large to preview; the checkpoint diff shows it. */
-function acpToolCallDiffOmitted(content: unknown): boolean {
+/**
+ * No preview when a flavor marked a diff `omitted` (too large) or `snippet` (line unknown);
+ * the checkpoint diff shows it.
+ */
+function acpToolCallDiffUnpreviewable(content: unknown): boolean {
   return (
     Array.isArray(content) &&
-    content.some((entry) => unknownRecord(unknownRecord(entry)?.patch)?.format === "omitted")
+    content.some((entry) => {
+      const format = unknownRecord(unknownRecord(entry)?.patch)?.format;
+      return format === "omitted" || format === "snippet";
+    })
   );
 }
 
 export function acpToolCallDiffPatch(content: unknown): string | undefined {
-  if (
-    !Array.isArray(content) ||
-    acpToolCallSnippetEdit(content) !== undefined ||
-    acpToolCallDiffOmitted(content)
-  ) {
+  if (!Array.isArray(content) || acpToolCallDiffUnpreviewable(content)) {
     return undefined;
   }
   const diffs = content.flatMap((entry) => {
@@ -3980,12 +3982,13 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               case "delete":
               case "move": {
                 const snippet = acpToolCallSnippetEdit(toolCall.data.content);
-                const omitted = acpToolCallDiffOmitted(toolCall.data.content);
+                const unpreviewable = acpToolCallDiffUnpreviewable(toolCall.data.content);
                 turnItem = {
                   ...base,
                   type: "file_change",
                   fileName: path ?? toolCall.title ?? "File change",
-                  ...(snippet ?? (omitted || diffText === undefined ? {} : { diffStr: diffText })),
+                  ...(snippet ??
+                    (unpreviewable || diffText === undefined ? {} : { diffStr: diffText })),
                 };
                 break;
               }

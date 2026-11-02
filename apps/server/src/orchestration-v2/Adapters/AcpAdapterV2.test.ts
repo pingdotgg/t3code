@@ -282,6 +282,19 @@ describe("acpToolCallDiffPatch", () => {
         newStr: "const target = 100;",
       });
     }
+    // Beside another diff, the snippet is neither a patch nor a placed edit.
+    const twoDiffs = [
+      ...content,
+      {
+        type: "diff",
+        path: "/repo/b.ts",
+        oldText: "b\n",
+        newText: "B\n",
+        patch: { text: "@@ -1 +1 @@\n-b\n+B\n" },
+      },
+    ];
+    assert.isUndefined(acpToolCallDiffPatch(twoDiffs));
+    assert.isUndefined(acpToolCallSnippetEdit(twoDiffs));
   });
 
   it("builds per-file patches from ACP hunks and recorded old/new text", () => {
