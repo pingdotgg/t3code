@@ -1,6 +1,6 @@
 import { useAtomValue } from "@effect/atom-react";
 import { useRoute, type RouteProp } from "@react-navigation/native";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
   EnvironmentId,
   ThreadId,
@@ -21,7 +21,8 @@ import * as Option from "effect/Option";
 
 import { scopedThreadKey } from "../lib/scopedEntities";
 import { useProject, useQuietThreadShell } from "../state/entities";
-import { useEnvironmentThread } from "../state/threads";
+import { threadFamilies, useEnvironmentThread } from "../state/threads";
+import { appAtomRegistry } from "./atom-registry";
 import {
   resolvePendingThreadCreation,
   pendingThreadCreationOutcomesAtom,
@@ -139,6 +140,13 @@ function useResolvedThreadSelection(params: ThreadSelectionRouteParams | undefin
             threadId: ThreadId.make(routeThreadId),
           }
       : lastRouteThreadRef;
+  const familyEnvironmentId = selectedThreadRef?.environmentId;
+  const familyThreadId = selectedThreadRef?.threadId;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- keeps the viewed thread's omitted family rows mounted until navigation
+  useEffect(() => {
+    if (familyEnvironmentId === undefined || familyThreadId === undefined) return;
+    return threadFamilies.mount(appAtomRegistry, familyEnvironmentId, familyThreadId);
+  }, [familyEnvironmentId, familyThreadId]);
   const selectedThreadShell = useQuietThreadShell(selectedThreadRef);
   const selectedThreadKey =
     selectedThreadRef === null
