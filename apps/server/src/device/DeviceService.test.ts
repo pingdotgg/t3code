@@ -42,6 +42,37 @@ const decodeJson = Schema.decodeUnknownSync(Schema.fromJsonString(Schema.Unknown
 const decodeBootError = Schema.decodeUnknownSync(Schema.fromJsonString(DeviceBootError));
 const encodeBootError = Schema.encodeSync(Schema.fromJsonString(DeviceBootError));
 
+it.effect.each([400, 500])(
+  "distinguishes screenshot HTTP rejection (%s) from transport failure",
+  (status) =>
+    Effect.gen(function* () {
+      const operations = makeDeviceHubOperations({
+        hostId: LOCAL_DEVICE_HOST_ID,
+        origin: "http://device.test",
+        http: HttpClient.make((request) =>
+          Effect.succeed(
+            HttpClientResponse.fromWeb(request, new Response("private hub output", { status })),
+          ),
+        ),
+        run: () => Effect.die("Screenshot does not run a command"),
+        androidAvailable: Effect.succeed(false),
+      });
+      const result = yield* operations
+        .screenshot({
+          id: "phone",
+          name: "Phone",
+          version: "iOS 26.3",
+          platform: "ios",
+          booted: true,
+          physical: false,
+        })
+        .pipe(Effect.result);
+      expect(result).toMatchObject({
+        failure: { _tag: "DeviceOperationError", reason: "hub_rejected" },
+      });
+    }),
+);
+
 const fixture = Effect.fn("fixture")(function* (
   onBoot: Effect.Effect<void> = Effect.void,
   bootError?: string | { error?: string; errors?: Array<{ message: string; error?: string }> },
@@ -604,6 +635,57 @@ it.effect("hides Android discovery failures when the host has no Android SDK", (
     yield* Ref.set(androidAvailable, true);
     const withSdk = yield* service.list;
     expect(withSdk.hostStatusDetail).toBe(`${avdmanagerFailure.message}\niOS discovery failed.`);
+  }).pipe(Effect.scoped),
+);
+
+// The hub reports `error` as a util.inspect of Node's exec error.
+const simctlMessage = "[apple-utils] Failed to run `xcrun simctl list devices --json`:";
+const simctlCause =
+  "An error was encountered processing the command (domain=NSPOSIXErrorDomain, code=60): Unable to connect to CoreSimulatorService [xcrun shim fail mode]";
+const simctlError = `Error: Command failed: xcrun simctl list devices --json
+${simctlCause}
+
+    at genericNodeError (node:internal/errors:986:15)
+    at wrappedFn (node:internal/errors:540:14)
+    at ChildProcess.exithandler (node:child_process:417:12)
+    at ChildProcess._handle.onexit (node:internal/child_process:335:5) {
+  code: 1,
+  killed: false,
+  signal: null,
+  cmd: 'xcrun simctl list devices --json',
+  stdout: '',
+  stderr: '${simctlCause}\\n'
+}`;
+const avdmanager = "/Users/test/Library/Android/sdk/cmdline-tools/latest/bin/avdmanager";
+const avdmanagerError = `Error: spawn ${avdmanager} ENOENT
+    at ChildProcess._handle.onexit (node:internal/child_process:316:19)
+    at onErrorNT (node:internal/child_process:524:16) {
+  errno: -2,
+  code: 'ENOENT',
+  syscall: 'spawn ${avdmanager}',
+  path: '${avdmanager}',
+  spawnargs: [ 'list', 'avd' ],
+  cmd: '${avdmanager} list avd',
+  stdout: '',
+  stderr: ''
+}`;
+
+it.effect("keeps the cause from the hub's error in discovery warnings, without the stack", () =>
+  Effect.gen(function* () {
+    const { service, discoveryErrors } = yield* fixture();
+    yield* Ref.set(discoveryErrors, [
+      { message: simctlMessage, error: simctlError },
+      { message: "[android-utils] Failed to run `avdmanager list avd`:", error: avdmanagerError },
+    ]);
+    const state = yield* service.configure({ enabled: true });
+    expect(state.hostStatusDetail).toBe(
+      [
+        `${simctlMessage} Error: Command failed: xcrun simctl list devices --json ${simctlCause}`,
+        `[android-utils] Failed to run \`avdmanager list avd\`: Error: spawn ${avdmanager} ENOENT`,
+      ].join("\n"),
+    );
+    expect(state.hostStatusDetail).not.toContain("    at ");
+    expect(state.hostStatusDetail).not.toContain("stderr:");
   }).pipe(Effect.scoped),
 );
 

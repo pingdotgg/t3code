@@ -7,13 +7,14 @@ import {
 import type { EnvironmentId, PullRequestSummary } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import { Atom } from "effect/reactivity";
-import { useMemo } from "react";
+import { use, useMemo } from "react";
 
 import { connectionAtomRuntime } from "../connection/runtime";
 import { appAtomRegistry } from "./atom-registry";
 import { serverEnvironment } from "./server";
 import { environmentThreadShells } from "./threads";
 import { useEnvironmentQuery } from "./query";
+import { ThreadPrDemandContext } from "./thread-pr-demand";
 import {
   knownPullRequestSummary,
   rememberBounded,
@@ -82,6 +83,7 @@ export function withKnownPullRequestSummary<
 }
 
 export function useThreadPr(thread: EnvironmentThreadShell): ThreadPrPresentation | null {
+  const demand = use(ThreadPrDemandContext);
   const supportsLinks = useAtomValue(
     serverEnvironment.configValueAtom(thread.environmentId),
     (config) => config !== null,
@@ -104,7 +106,7 @@ export function useThreadPr(thread: EnvironmentThreadShell): ThreadPrPresentatio
     key === null ? undefined : current.get(key),
   );
   const pullRequestSummary = useEnvironmentQuery(
-    pullRequestRef === null
+    pullRequestRef === null || !demand
       ? null
       : pullRequestSummaryAtom({
           environmentId: thread.environmentId,
