@@ -959,6 +959,38 @@ describe("environment query lifecycle", () => {
     ),
   );
 
+  it.effect("keeps its answer through an idle trigger and refreshes it once when reopened", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        let executions = 0;
+        const trigger = Atom.make(0).pipe(Atom.keepAlive);
+        const harness = yield* makeEnvironmentQueryHarness(
+          Effect.suspend(() => (++executions === 1 ? Effect.succeed("cached") : Effect.never)),
+          { refreshTrigger: trigger },
+        );
+        const registry = AtomRegistry.make();
+        yield* Effect.addFinalizer(() => Effect.sync(() => registry.dispose()));
+
+        const unmount = registry.mount(harness.atom);
+        expect(yield* readEnvironmentQuery(registry, harness.atom)).toBe("cached");
+        unmount();
+        yield* Effect.yieldNow;
+        registry.dispatcher.flush();
+        registry.set(trigger, 1);
+        yield* Effect.yieldNow;
+        registry.dispatcher.flush();
+
+        registry.mount(harness.atom);
+        expect(registry.get(harness.atom)).toMatchObject({
+          _tag: "Success",
+          value: "cached",
+          waiting: true,
+        });
+        expect(executions).toBe(2);
+      }),
+    ),
+  );
+
   it.effect("a reader that reopens a query older than its stale time gets the fresh answer", () =>
     Effect.scoped(
       Effect.gen(function* () {

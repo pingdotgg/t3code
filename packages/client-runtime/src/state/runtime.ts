@@ -667,6 +667,7 @@ export function createEnvironmentQueryAtomFamily<R, ER, Input, A, E>(
     const isFinal = (result: AsyncResult.AsyncResult<A, unknown>) =>
       options.isFinal !== undefined && Option.exists(AsyncResult.value(result), options.isFinal);
     const refreshTrigger = options.refreshTrigger?.(target);
+    const idleTtlMs = options.idleTtlMs ?? 5 * 60_000;
     const queryAtom = runtime
       .atom<
         A,
@@ -780,13 +781,17 @@ export function createEnvironmentQueryAtomFamily<R, ER, Input, A, E>(
         });
       })
       .pipe(
+        // The idle TTL keeps the data, and the signal it was read under, but nothing above it:
+        // `swr` checks staleness only when its node is built, and polling serves only readers.
+        // An idle signal change drops the wrapper's hold on the data, so both need it.
+        Atom.setIdleTTL(idleTtlMs),
         (self) =>
           refreshTrigger === undefined
             ? self
-            : self.pipe(refreshOnSignalWhileRead(refreshTrigger, isFinal)),
-        // The idle TTL keeps the data (and the signal it was read under), but nothing above it:
-        // `swr` checks staleness only when its node is built, and polling serves only readers.
-        Atom.setIdleTTL(options.idleTtlMs ?? 5 * 60_000),
+            : self.pipe(
+                refreshOnSignalWhileRead(refreshTrigger, isFinal),
+                Atom.setIdleTTL(idleTtlMs),
+              ),
       );
     return (
       options.refreshIntervalMs === undefined
