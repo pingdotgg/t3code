@@ -91,7 +91,7 @@ describe("Sidebar", () => {
     const dispatch = (target: HTMLElement, type: string, clientX: number) =>
       target.dispatchEvent(new PointerEvent(type, { ...pointer, clientX }));
     dispatch(rail, "pointerdown", 255);
-    dispatch(rail, "pointermove", 99);
+    dispatch(rail, "pointermove", 40);
     await vi.waitFor(() =>
       expect(
         sidebar.querySelector('[data-slot="sidebar-container"]')!.getBoundingClientRect().width,
@@ -100,7 +100,7 @@ describe("Sidebar", () => {
     expect(
       sidebar.querySelector('[data-slot="sidebar-container"]')!.getBoundingClientRect().left,
     ).toBe(0);
-    dispatch(rail, "pointermove", 96);
+    dispatch(rail, "pointermove", 38);
     await vi.waitFor(() =>
       expect(
         sidebar.querySelector('[data-slot="sidebar-container"]')!.getBoundingClientRect().right,
