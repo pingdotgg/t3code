@@ -106,7 +106,7 @@ const V2SubagentGroup = memo(function V2SubagentGroup({
               <EnvironmentSubagentAvatar
                 key={item.id}
                 className={cn(
-                  "size-[22px] border-0 ring-(--subagent-avatar-ring,var(--card)) [&_svg]:size-3",
+                  "border-0 ring-(--subagent-avatar-ring,var(--card))",
                   index === 0
                     ? "bg-(--subagent-avatar-1,var(--muted))"
                     : index === 1
@@ -121,7 +121,7 @@ const V2SubagentGroup = memo(function V2SubagentGroup({
               />
             ))}
             {agents.length > 3 ? (
-              <span className="relative inline-flex size-[22px] items-center justify-center rounded-full bg-muted text-3xs font-medium text-muted-foreground ring-2 ring-(--subagent-avatar-ring,var(--card))">
+              <span className="relative inline-flex size-6 items-center justify-center rounded-full bg-muted text-3xs font-medium text-muted-foreground ring-2 ring-(--subagent-avatar-ring,var(--card))">
                 +{agents.length - 3}
               </span>
             ) : null}
