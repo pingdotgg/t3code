@@ -13,7 +13,8 @@ import * as Exit from "effect/Exit";
 import * as Queue from "effect/Queue";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
-import { HttpClient, HttpClientResponse } from "effect/http";
+import { HttpClient, HttpClientError, HttpClientRequest, HttpClientResponse } from "effect/http";
+import * as TestClock from "effect/testing/TestClock";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import * as CodexInstallation from "./CodexInstallation.ts";
 
@@ -31,7 +32,8 @@ const makeHarness = Effect.fn("test.makeCodexInstallation")(function* (
   input: {
     options?: Partial<CodexInstallation.CodexInstallationOptions>;
     manifestCurrent?: Effect.Effect<ModelManifest.ModelManifestData>;
-    body?: Stream.Stream<Uint8Array>;
+    body?: Stream.Stream<Uint8Array, HttpClientError.HttpClientError>;
+    downloadStatus?: number;
     baseDir?: string;
     local?: { version: string; appServerFails?: boolean; versionFails?: boolean };
     platform?: NodeJS.Platform;
@@ -106,7 +108,10 @@ const makeHarness = Effect.fn("test.makeCodexInstallation")(function* (
         Effect.sync(() => {
           downloads++;
           return Object.defineProperty(
-            HttpClientResponse.fromWeb(request, new Response(null)),
+            HttpClientResponse.fromWeb(
+              request,
+              new Response(null, { status: input.downloadStatus ?? 200 }),
+            ),
             "stream",
             {
               value: input.body ?? Stream.succeed(archive),
@@ -363,6 +368,81 @@ it.effect("rejects corrupted downloads without publishing a runtime", () =>
     expect(state.message).toContain("SHA-256");
     expect(yield* fs.exists(`${installation.managedDirectory}/active.json`)).toBe(false);
     expect(yield* fs.exists(`${installation.managedDirectory}/0.156.1`)).toBe(false);
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
+it.effect.each(["interrupted body", "HTTP 404"] as const)(
+  "reports a download failure for %s without blaming disk access",
+  (failure) =>
+    Effect.gen(function* () {
+      const request = HttpClientRequest.get(asset.url);
+      const response = HttpClientResponse.fromWeb(request, new Response(null));
+      const h = yield* makeHarness(
+        failure === "HTTP 404"
+          ? { downloadStatus: 404 }
+          : {
+              body: Stream.concat(
+                Stream.succeed(archive.subarray(0, 10)),
+                Stream.fail(
+                  new HttpClientError.HttpClientError({
+                    reason: new HttpClientError.DecodeError({
+                      request,
+                      response,
+                      cause: new TypeError("terminated"),
+                    }),
+                  }),
+                ),
+              ),
+            },
+      );
+      yield* h.installation.start;
+      expect(yield* terminalState(h.installation)).toMatchObject({
+        phase: "failed",
+        message:
+          failure === "HTTP 404"
+            ? "The Codex download server returned HTTP 404. Try again later."
+            : "The Codex download was interrupted. Check your internet connection, then retry installation.",
+      });
+      expect(h.downloads()).toBe(1);
+      expect(yield* h.fs.readDirectory(h.installation.managedDirectory)).toEqual([]);
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
+it.effect(
+  "preserves the filesystem failure message when installation cannot create its directory",
+  () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const directory = yield* fs.makeTempDirectoryScoped({ prefix: "t3-codex-install-test-" });
+      const baseDir = `${directory}/not-a-directory`;
+      yield* fs.writeFileString(baseDir, "existing file");
+      const h = yield* makeHarness({ baseDir });
+      yield* h.installation.start;
+      expect(yield* terminalState(h.installation)).toMatchObject({
+        phase: "failed",
+        message: "Could not install Codex. Check disk space and directory access, then try again.",
+      });
+      expect(h.downloads()).toBe(0);
+      expect(yield* fs.readFileString(baseDir)).toBe("existing file");
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
+it.effect("reports a download timeout and cleans the staging directory", () =>
+  Effect.gen(function* () {
+    const started = yield* Deferred.make<void>();
+    const stall = Deferred.succeed(started, undefined).pipe(Effect.andThen(Effect.never));
+    const h = yield* makeHarness({
+      body: Stream.concat(Stream.succeed(archive.subarray(0, 10)), Stream.fromEffect(stall)),
+    });
+    yield* h.installation.start;
+    yield* Deferred.await(started);
+    yield* TestClock.adjust("45 minutes");
+    expect(yield* terminalState(h.installation)).toMatchObject({
+      phase: "failed",
+      message: "The Codex download timed out. Retry installation.",
+    });
+    expect(h.downloads()).toBe(1);
+    expect(yield* h.fs.readDirectory(h.installation.managedDirectory)).toEqual([]);
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
 

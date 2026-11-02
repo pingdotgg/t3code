@@ -1,9 +1,12 @@
+import { DeviceOperationError } from "@t3tools/contracts";
 import * as Crypto from "effect/Crypto";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Hex from "effect/encoding/Hex";
 import * as Schema from "effect/Schema";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
+import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/http";
 
 import type { AgentDaemonEndpoint } from "./DeviceHost.ts";
 
@@ -62,3 +65,36 @@ export const writeAgentDeviceConfig = Effect.fn("AgentDeviceTarget.writeConfig")
     yield* fs.rename(temporary, file);
   }).pipe(Effect.ensuring(fs.remove(temporary, { force: true }).pipe(Effect.ignore)));
 });
+
+const AgentCloseResult = Schema.Union([
+  Schema.Struct({ result: Schema.Struct({ ok: Schema.Literal(true) }) }),
+  Schema.Struct({
+    error: Schema.Struct({
+      data: Schema.Struct({ code: Schema.Literal("SESSION_NOT_FOUND") }),
+    }),
+  }),
+]);
+
+/** Ends an agent-device session on a running daemon; an already-released session succeeds. */
+export const releaseAgentDeviceSession =
+  (http: HttpClient.HttpClient, endpoint: AgentDaemonEndpoint) => (session: string) =>
+    HttpClientRequest.post(`${endpoint.baseUrl}/rpc`).pipe(
+      HttpClientRequest.bearerToken(endpoint.token),
+      HttpClientRequest.bodyJson({
+        jsonrpc: "2.0",
+        id: session,
+        method: "agent_device.command",
+        params: { command: "close", session, positionals: [], flags: {} },
+      }),
+      Effect.flatMap((request) => http.pipe(HttpClient.withScope).execute(request)),
+      // agent-device reports an already-released session as HTTP 404.
+      Effect.filterOrElse((response) => response.status === 404, HttpClientResponse.filterStatusOk),
+      Effect.flatMap(HttpClientResponse.schemaBodyJson(AgentCloseResult)),
+      Effect.scoped,
+      Effect.timeout(Duration.seconds(15)),
+      Effect.asVoid,
+      Effect.mapError(
+        (cause) =>
+          new DeviceOperationError({ operation: "close", reason: "request_failed", cause }),
+      ),
+    );
