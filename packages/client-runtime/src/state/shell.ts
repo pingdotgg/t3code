@@ -437,7 +437,9 @@ export const makeEnvironmentShellState = Effect.fn("EnvironmentShellState.make")
         }
 
         const omission = {
-          ...(omitIdleSubagents ? { omitIdleSubagents: true as const } : {}),
+          ...(omitIdleSubagents
+            ? { omitIdleSubagents: true as const, omitIdleSubagentParents: true as const }
+            : {}),
           ...(omitOlderSettled ? { omitOlderSettled: true as const } : {}),
         };
         if (!canResume || Option.isNone(current.snapshot)) {

@@ -874,6 +874,7 @@ describe("environment shell synchronization", () => {
       expect(yield* Deferred.await(subscribeInput)).toMatchObject({
         afterSequence: 1,
         omitIdleSubagents: true,
+        omitIdleSubagentParents: true,
         omitOlderSettled: true,
       });
       expect(yield* Ref.get(loadOptions)).toEqual([

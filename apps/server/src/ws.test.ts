@@ -453,9 +453,12 @@ it.effect("shell snapshots omit idle children and older settled threads only on 
       shell("live", "parent", "running"),
       ...Array.from({ length: 25 }, (_, index) => shell(`recent-${index}`, null, null, 1)),
       shell("old", null, null, 30),
+      shell("middle", "parent", null),
+      shell("leaf", "middle", null),
     ];
     const firstSnapshot = (input: {
       readonly omitIdleSubagents?: boolean;
+      readonly omitIdleSubagentParents?: boolean;
       readonly omitOlderSettled?: boolean;
     }) =>
       subscribeOrchestrationV2Shell(input).pipe(
@@ -512,12 +515,20 @@ it.effect("shell snapshots omit idle children and older settled threads only on 
     const withoutChildren = yield* firstSnapshot({ omitIdleSubagents: true });
     assert.deepEqual(
       withoutChildren?.threads.map((thread) => thread.id),
+      ["parent", "live", ...recent, "old", "middle"],
+    );
+    const withoutIdleParents = yield* firstSnapshot({
+      omitIdleSubagents: true,
+      omitIdleSubagentParents: true,
+    });
+    assert.deepEqual(
+      withoutIdleParents?.threads.map((thread) => thread.id),
       ["parent", "live", ...recent, "old"],
     );
     const withoutOld = yield* firstSnapshot({ omitIdleSubagents: true, omitOlderSettled: true });
     assert.deepEqual(
       withoutOld?.threads.map((thread) => thread.id),
-      ["parent", "live", ...recent],
+      ["parent", "live", ...recent, "middle"],
     );
     assert.deepEqual(withoutOld?.olderSettled?.counts, [
       { projectId: ProjectId.make("project"), count: 1 },

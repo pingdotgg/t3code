@@ -33,8 +33,12 @@ import {
   threadFamilyRowsMissingFromShell,
 } from "./threadFamilies.ts";
 
-const row = (id: string, title = id) =>
-  ({ id: ThreadId.make(id), title }) as unknown as OrchestrationV2ThreadShell;
+const row = (id: string, title = id, parentThreadId: string | null = null, rootThreadId = id) =>
+  ({
+    id: ThreadId.make(id),
+    title,
+    lineage: { parentThreadId, rootThreadId, relationshipToParent: "subagent" },
+  }) as unknown as OrchestrationV2ThreadShell;
 
 describe("threadFamilyRowsMissingFromShell", () => {
   it("adds only the rows the shell left out, once, with shell rows winning", () => {
@@ -177,10 +181,10 @@ describe("createThreadFamilyAtoms", () => {
           threads: [parent],
           archivedThreads: [],
         } as OrchestrationV2ShellSnapshot;
-        const shellAt = (generation: number): EnvironmentShellState => ({
+        const shellAt = (generation: number, threads = shellSnapshot.threads) => ({
           ...EMPTY_SHELL_STATE,
-          status: "live",
-          snapshot: Option.some(shellSnapshot),
+          status: "live" as const,
+          snapshot: Option.some({ ...shellSnapshot, threads }),
           generation,
         });
         const shellState = Atom.make<AsyncResult.AsyncResult<EnvironmentShellState>>(
@@ -199,7 +203,7 @@ describe("createThreadFamilyAtoms", () => {
           Effect.tap(() => Effect.yieldNow),
         );
         registry.mount(families.snapshotAtom(TARGET.environmentId));
-        families.mount(registry, TARGET.environmentId, parent.id);
+        const release = families.mount(registry, TARGET.environmentId, parent.id);
 
         // A cached shell from before this session's first snapshot reads nothing.
         expect(threadFamilyRead(registry.get(family))).toBe("pending");
@@ -230,6 +234,17 @@ describe("createThreadFamilyAtoms", () => {
         yield* settle;
         expect(threadFamilyRead(registry.get(family))).toBe("settled");
         expect(mergedIds()).toEqual(["parent", "idle-child"]);
+
+        // A child that woke after the shell left out its idle parent reads its family unmounted.
+        release();
+        const woken = row("woken", "woken", child.id, parent.id);
+        registry.set(shellState, AsyncResult.success(shellAt(3, [parent, woken])));
+        yield* Queue.offer(
+          replies,
+          Effect.succeed({ snapshotSequence: 6, threads: [parent, child, woken] }),
+        );
+        yield* settle;
+        expect(mergedIds()).toEqual(["parent", "woken", "idle-child"]);
       }),
     ),
   );

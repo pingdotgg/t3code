@@ -77,6 +77,7 @@ export const layer = HttpApiBuilder.group(
     const loadShellSnapshot = Effect.fn("http.orchestration.loadShellSnapshot")(
       function* (options: {
         readonly omitIdleSubagents: boolean;
+        readonly omitIdleSubagentParents: boolean;
         readonly omitOlderSettled: boolean;
       }) {
         const { snapshot } = yield* loadSubscriberShellSnapshot({
@@ -166,6 +167,7 @@ export const layer = HttpApiBuilder.group(
           yield* requireEnvironmentScope(AuthOrchestrationReadScope);
           return yield* loadShellSnapshot({
             omitIdleSubagents: args.query.omitIdleSubagents === "1",
+            omitIdleSubagentParents: args.query.omitIdleSubagentParents === "1",
             omitOlderSettled: args.query.omitOlderSettled === "1",
           }).pipe(
             traceLocalHandlerWork,
