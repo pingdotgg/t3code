@@ -76,6 +76,7 @@ import {
   managedRuntimeModeCeilingMessage,
 } from "@t3tools/contracts";
 import { modelSelectionsEqual } from "@t3tools/shared/model";
+import { modelSwitchSince } from "./modelSwitch.ts";
 import { recordThreadOpen } from "@t3tools/shared/paletteSearch";
 import {
   backgroundWorkHoldsCompletion,
@@ -480,28 +481,6 @@ export class OrchestratorV2 extends Context.Service<OrchestratorV2, Orchestrator
 /** Run ordinals can skip values: a queued run moves past newer runs when it starts. */
 function nextRunOrdinal(projection: Pick<OrchestrationV2ThreadProjection, "runs">): number {
   return projection.runs.reduce((max, run) => Math.max(max, run.ordinal), 0) + 1;
-}
-
-/**
- * The model or effort change a new run brings, measured from the last run that ran. Callers skip
- * starts with a context handoff; their handoff item already shows the swap.
- */
-function modelSwitchSince(
-  runs: ReadonlyArray<OrchestrationV2Run>,
-  to: ModelSelection,
-): Pick<Extract<OrchestrationV2TurnItem, { type: "user_message" }>, "modelSwitch"> {
-  const previous = runs.reduce<OrchestrationV2Run | undefined>(
-    (latest, run) =>
-      run.startedAt !== null &&
-      run.status !== "rolled_back" &&
-      (latest === undefined || run.ordinal > latest.ordinal)
-        ? run
-        : latest,
-    undefined,
-  );
-  return previous === undefined || modelSelectionsEqual(previous.modelSelection, to)
-    ? {}
-    : { modelSwitch: { from: previous.modelSelection, to } };
 }
 
 /** Stamp at wake start; queued prompts lack start times and delegated results jump the queue. */
@@ -2079,7 +2058,13 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         completedAt: now,
         updatedAt: now,
         ...(activeHandoff === null
-          ? modelSwitchSince(projection.runs, queuedRun.modelSelection)
+          ? modelSwitchSince(
+              {
+                runs: projection.runs.filter((run) => run.id !== queuedRun.id),
+                turnItems: projection.turnItems,
+              },
+              queuedRun.modelSelection,
+            )
           : {}),
       };
       const handoffTurnItem: OrchestrationV2TurnItem | null =
@@ -6459,7 +6444,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         text: dispatchText,
         ...(command.context ? { context: command.context } : {}),
         attachments: command.attachments,
-        ...(run.contextHandoffId === null ? modelSwitchSince(projection.runs, modelSelection) : {}),
+        ...(run.contextHandoffId === null ? modelSwitchSince(projection, modelSelection) : {}),
       };
       const preparationTurnItem: OrchestrationV2TurnItem | null =
         dispatchMode.type === "defer_start"
@@ -7211,7 +7196,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       text: dispatchText,
       ...(command.context ? { context: command.context } : {}),
       attachments: command.attachments,
-      ...(run.contextHandoffId === null ? modelSwitchSince(projection.runs, modelSelection) : {}),
+      ...(run.contextHandoffId === null ? modelSwitchSince(projection, modelSelection) : {}),
     };
     const activeHandoff = portableForkHandoff ?? mergeBackHandoff ?? providerSwitchHandoff;
     const handoffSourceRuns =

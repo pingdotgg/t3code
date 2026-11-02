@@ -1,0 +1,55 @@
+import {
+  MessageId,
+  ProviderInstanceId,
+  type OrchestrationV2ThreadProjection,
+} from "@t3tools/contracts";
+import { describe, expect, it } from "vite-plus/test";
+
+import { modelSwitchSince } from "./modelSwitch.ts";
+
+const instanceId = ProviderInstanceId.make("codex");
+const selection = (model: string) => ({ instanceId, model });
+const run = (
+  message: string,
+  ordinal: number,
+  model: string,
+  status: OrchestrationV2ThreadProjection["runs"][number]["status"] = "completed",
+) =>
+  ({
+    ordinal,
+    status,
+    userMessageId: MessageId.make(message),
+    modelSelection: selection(model),
+  }) as OrchestrationV2ThreadProjection["runs"][number];
+const shown = (...messages: ReadonlyArray<string>) =>
+  messages.map((message) => ({
+    type: "user_message",
+    messageId: MessageId.make(message),
+  })) as unknown as OrchestrationV2ThreadProjection["turnItems"];
+
+describe("modelSwitchSince", () => {
+  it("measures from the latest run whose message is in the timeline", () => {
+    // B failed before it started; its message shows "a -> b", so the next one must show "b -> a".
+    expect(
+      modelSwitchSince(
+        {
+          runs: [
+            run("first", 1, "a"),
+            run("failed", 2, "b", "failed"),
+            run("queued", 3, "c", "queued"),
+            run("undone", 4, "d", "rolled_back"),
+          ],
+          turnItems: shown("first", "failed", "undone"),
+        },
+        selection("a"),
+      ),
+    ).toEqual({ modelSwitch: { from: selection("b"), to: selection("a") } });
+  });
+
+  it("records nothing for the first run or an unchanged selection", () => {
+    expect(modelSwitchSince({ runs: [], turnItems: [] }, selection("a"))).toEqual({});
+    expect(
+      modelSwitchSince({ runs: [run("first", 1, "a")], turnItems: shown("first") }, selection("a")),
+    ).toEqual({});
+  });
+});
