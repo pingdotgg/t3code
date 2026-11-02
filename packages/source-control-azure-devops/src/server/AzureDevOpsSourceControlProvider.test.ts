@@ -53,11 +53,15 @@ it.effect("names the remote's repository when reading the default branch", () =>
   );
   return Effect.gen(function* () {
     const provider = yield* AzureDevOpsSourceControlProvider.make;
-    for (const remoteUrl of [
-      "https://acme@dev.azure.com/acme/project/_git/My%20Repo",
-      "https://acme.visualstudio.com/DefaultCollection/project/_git/My%20Repo/",
-      "git@ssh.dev.azure.com:v3/acme/project/My%20Repo",
-    ]) {
+    for (const [remoteUrl, repository] of [
+      ["https://acme@dev.azure.com/acme/project/_git/My%20Repo", "My Repo"],
+      ["https://acme.visualstudio.com/DefaultCollection/project/_git/My%20Repo/", "My Repo"],
+      ["git@ssh.dev.azure.com:v3/acme/project/My%20Repo", "My Repo"],
+      ["https://dev.azure.com/acme/project/_git/service.git", "service.git"],
+      ["https://dev.azure.com/acme/project/_git/-repo", "-repo"],
+      ["https://dev.azure.com/acme/project/_git/%40.env", null],
+    ] as const) {
+      run.mockClear();
       const branch = yield* provider.getDefaultBranch({
         cwd: "/repo",
         context: {
@@ -70,9 +74,17 @@ it.effect("names the remote's repository when reading the default branch", () =>
           remoteUrl,
         },
       });
-      assert.strictEqual(branch, "master");
-      const args = run.mock.calls.at(-1)?.[0].args ?? [];
-      assert.strictEqual(args[args.indexOf("--repository") + 1], "My Repo", remoteUrl);
+      if (repository === null) {
+        assert.strictEqual(branch, null, remoteUrl);
+        assert.strictEqual(run.mock.calls.length, 0, remoteUrl);
+        continue;
+      }
+      assert.strictEqual(branch, "master", remoteUrl);
+      assert.include(
+        [...(run.mock.calls[0]?.[0].args ?? [])],
+        `--repository=${repository}`,
+        remoteUrl,
+      );
     }
   }).pipe(Effect.provide(AzureDevOpsCli.layer.pipe(Layer.provide(support))));
 });

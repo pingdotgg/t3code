@@ -561,8 +561,8 @@ export const make = Effect.gen(function* () {
           "show",
           "--detect",
           "true",
-          "--repository",
-          repository.name,
+          // Joined so a name starting with `-` stays the option's value.
+          `--repository=${repository.name}`,
           ...(repository.project ? ["--project", repository.project] : []),
         ],
       }).pipe(
