@@ -82,6 +82,7 @@ describe("rightPanelStore", () => {
     const store = useRightPanelStore.getState();
     store.open(refA, "files");
     store.open(refA, "diff");
+    store.open(refA, "activity");
     store.open(refA, "device");
     store.activateSurface(refA, "diff");
     store.closeAllSurfaces(refA);
@@ -90,7 +91,7 @@ describe("rightPanelStore", () => {
       useClosedViewStore
         .getState()
         .entries.map((entry) => entry.kind === "panel-tab" && entry.surface.id),
-    ).toEqual(["diff", "device", "files"]);
+    ).toEqual(["diff", "device", "activity", "files"]);
   });
 
   it("does not save an incidental Files replacement when opening an existing file", () => {

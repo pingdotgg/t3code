@@ -10,6 +10,7 @@ import type {
 } from "@t3tools/contracts";
 import { scopedThreadKey } from "@t3tools/client-runtime/environment";
 import { lazy, Suspense } from "react";
+import { ActivityPanel } from "./ActivityPanel";
 import SideChatPane from "./SideChatPane";
 import type { ComposerImageAttachment, DraftId } from "../../composerDraftStore";
 import type { ShortcutMatchContext } from "../../keybindings";
@@ -115,6 +116,15 @@ export function RightPanelSurfaceContent(props: {
             visible={visible}
           />
         </Suspense>
+      );
+    case "activity":
+      return (
+        <ActivityPanel
+          key={scopedThreadKey(threadRef)}
+          threadRef={threadRef}
+          workspaceRoot={props.files.workspaceRoot}
+          onOpenFile={props.files.onOpenFile}
+        />
       );
     case "pull-request": {
       const pullRequest = props.pullRequest;

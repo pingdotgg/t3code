@@ -1,14 +1,13 @@
 import {
   ORCHESTRATION_V2_WORKSPACE_PREPARATION_FAILURE_CODE,
   type OrchestrationV2Run,
-  type OrchestrationV2TurnItem,
 } from "@t3tools/contracts";
 
 import type { ThreadStructureTurnItem } from "./models.ts";
 
 const WORKSPACE_PREPARATION_INPUT = "Preparing workspace";
 
-export function turnItemIsWorkspacePreparation(item: OrchestrationV2TurnItem): boolean {
+export function turnItemIsWorkspacePreparation(item: ThreadStructureTurnItem): boolean {
   return (
     (item.type === "command_execution" && item.input === WORKSPACE_PREPARATION_INPUT) ||
     (item.type === "error" &&
