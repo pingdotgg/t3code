@@ -91,7 +91,9 @@ import {
   useVcsInitAction,
   useVcsPullAction,
 } from "../state/sourceControlActions";
-import { useQuietThreadProjection, useQuietThreadShell } from "~/state/entities";
+import { useProject, useQuietThreadProjection, useQuietThreadShell } from "~/state/entities";
+import { scopeProjectRef } from "@t3tools/client-runtime/environment";
+import { isScratchProject } from "@t3tools/client-runtime/state/projects";
 import { readEnvironmentScope, useEnvironmentScope } from "~/state/session";
 import { useEnvironmentQuery } from "~/state/query";
 import { serverEnvironment } from "~/state/server";
@@ -966,9 +968,17 @@ export default function GitActionsControl({
   const activeServerThread =
     activeServerThreadShell ?? activeServerThreadProjection?.projection.thread ?? null;
   const isLocalDraftThread = activeDraftThread !== null && activeServerThread === null;
-  const activeWorktreePath = activeServerThread
-    ? activeServerThread.worktreePath
-    : (activeDraftThread?.worktreePath ?? null);
+  const activeThreadContext = activeServerThread ?? activeDraftThread;
+  const activeProject = useProject(
+    activeEnvironmentId !== null && activeThreadContext !== null
+      ? scopeProjectRef(activeEnvironmentId, activeThreadContext.projectId)
+      : null,
+  );
+  // No project threads keep a plain scratch folder in worktreePath, not a checkout.
+  const isWorktreeThread =
+    activeThreadContext?.worktreePath != null &&
+    activeProject !== null &&
+    !isScratchProject(activeProject, serverConfig?.scratchWorkspaceRoot);
   const canChangeThreadBranch = canWriteSourceControl && (isLocalDraftThread || canOperateThread);
   const setDraftThreadContext = useComposerDraftStore((store) => store.setDraftThreadContext);
   const [isCommitDialogOpen, setIsCommitDialogOpen] = useState(false);
@@ -1488,7 +1498,7 @@ export default function GitActionsControl({
 
   return (
     <>
-      {!showActions ? null : !isRepo && activeWorktreePath !== null ? (
+      {!showActions ? null : !isRepo && isWorktreeThread ? (
         // A worktree is always a checkout, so a non-repository status means it was removed.
         <ThreadDetailsControl size="xs" variant="ghost" part="row" panel tone="muted" disabled>
           <FolderXIcon className="size-3.5" aria-hidden />

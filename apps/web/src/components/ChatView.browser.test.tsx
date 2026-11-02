@@ -17,6 +17,7 @@ import { getRouter } from "~/router";
 import {
   ENVIRONMENT_ID,
   PROJECT_ID,
+  emitServerConfig,
   emitVcsStatus,
   installFakeEnvironment,
   threadWithHistory,
@@ -130,4 +131,19 @@ it("does not offer Initialize Git when the thread's worktree folder is missing",
   await expect
     .element(page.getByRole("button", { name: "Initialize Git" }))
     .not.toBeInTheDocument();
+});
+
+it("keeps Initialize Git for a No project thread's scratch folder", async () => {
+  // No project threads store their plain scratch folder as worktreePath.
+  await using _app = await openThreadDetailsOnNonRepository({
+    ...threadWithHistory("scratch-thread", 1),
+    worktreePath: "/workspace/render/2026-11-02-x",
+  });
+  await using _scratch = {
+    [Symbol.asyncDispose]: () => act(() => emitServerConfig()),
+  };
+  await act(() => emitServerConfig({ scratchWorkspaceRoot: "/workspace/render" }));
+
+  await expect.element(page.getByRole("button", { name: "Initialize Git" })).toBeVisible();
+  await expect.element(page.getByText("Worktree missing")).not.toBeInTheDocument();
 });
