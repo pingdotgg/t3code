@@ -86,23 +86,32 @@ const layerLsofScanner = (input: {
   readonly pid: () => number;
   readonly fetch: typeof globalThis.fetch;
   readonly stdout?: () => string;
+  readonly fails?: () => boolean;
 }) =>
   PortScanner.layer.pipe(
     Layer.provide(
       Layer.mergeAll(
         layerNoProc,
         Layer.succeed(ProcessRunner.ProcessRunner, {
-          run: () =>
-            Effect.succeed({
-              stdout: input.stdout?.() ?? `p${input.pid()}\ncnode\nn*:${LSOF_TEST_PORT}\n`,
-              stderr: "",
-              code: null,
-              timedOut: false,
-              stdoutTruncated: false,
-              stderrTruncated: false,
-              stdoutInvalidUtf8: false,
-              stderrInvalidUtf8: false,
-            }),
+          run: (run) =>
+            input.fails?.()
+              ? Effect.fail(
+                  new ProcessRunner.ProcessTimeoutError({
+                    command: run.command,
+                    argumentCount: run.args.length,
+                    timeoutMs: 5_000,
+                  }),
+                )
+              : Effect.succeed({
+                  stdout: input.stdout?.() ?? `p${input.pid()}\ncnode\nn*:${LSOF_TEST_PORT}\n`,
+                  stderr: "",
+                  code: null,
+                  timedOut: false,
+                  stdoutTruncated: false,
+                  stderrTruncated: false,
+                  stdoutInvalidUtf8: false,
+                  stderrInvalidUtf8: false,
+                }),
         }),
         Layer.succeed(HostProcess.Platform, "linux"),
         FetchHttpClient.layer.pipe(
@@ -382,10 +391,12 @@ effectIt.effect("lists a new owned listener once it outlives a poll", () => {
   const devServer = listener(1234, LSOF_TEST_PORT);
   const testRunner = listener(1235, LSOF_TEST_PORT + 1);
   let stdout = devServer;
+  let lsofFails = false;
   const layer = layerLsofScanner({
     pid: () => 1234,
     fetch: globalThis.fetch,
     stdout: () => stdout,
+    fails: () => lsofFails,
   });
   const ports = (servers: ReadonlyArray<DiscoveredLocalServer>) =>
     servers.map((server) => server.port);
@@ -401,13 +412,27 @@ effectIt.effect("lists a new owned listener once it outlives a poll", () => {
     stdout = devServer;
     expect(ports(yield* scanner.scan())).toEqual([LSOF_TEST_PORT]);
 
-    // One still listening a poll later does, and a restart under a new pid keeps it listed.
+    // One still listening a poll later does, even across a failed read, and a restart under a
+    // new pid keeps it listed.
     stdout = `${devServer}${testRunner}`;
     expect(ports(yield* scanner.scan())).toEqual([LSOF_TEST_PORT]);
-    yield* TestClock.adjust(Duration.seconds(3));
+    yield* TestClock.adjust(Duration.seconds(2));
+    lsofFails = true;
+    expect(yield* scanner.scan()).toEqual([]);
+    lsofFails = false;
+    yield* TestClock.adjust(Duration.seconds(1));
     expect(ports(yield* scanner.scan())).toEqual([LSOF_TEST_PORT, LSOF_TEST_PORT + 1]);
     stdout = `${devServer}${listener(1236, LSOF_TEST_PORT + 1)}`;
     expect(yield* scanner.scan()).toMatchObject([{ pid: 1234 }, { pid: 1236 }]);
+
+    // Another thread taking the port waits like any new listener.
+    yield* scanner.registerTerminalProcesses({
+      threadId: "other-thread",
+      terminalId: "other-terminal",
+      processIds: [1237],
+    });
+    stdout = `${devServer}${listener(1237, LSOF_TEST_PORT + 1)}`;
+    expect(ports(yield* scanner.scan())).toEqual([LSOF_TEST_PORT]);
 
     // Listeners that started while no client looked show as soon as one does.
     stdout = `${devServer}${testRunner}${listener(1236, LSOF_TEST_PORT + 2)}`;

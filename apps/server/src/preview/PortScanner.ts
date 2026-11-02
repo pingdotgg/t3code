@@ -123,6 +123,10 @@ const UNOWNED: ServerOwner = { terminal: null, agent: null };
 const isOwned = (server: DiscoveredLocalServer): boolean =>
   server.terminal !== null || (server.agent ?? null) !== null;
 
+/** Keyed by thread, not pid, so a server that restarts on its port stays settled. */
+const settleKey = (server: DiscoveredLocalServer): string =>
+  `${server.terminal?.threadId ?? server.agent?.threadId}:${server.port}`;
+
 interface ProcessTableRow {
   readonly pid: number;
   readonly ppid: number;
@@ -516,9 +520,9 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
     retainCount: 0,
   });
   const webProbeCacheRef = yield* Ref.make<ReadonlyMap<string, WebProbeCacheEntry>>(new Map());
-  // When each owned port was first read, or null before the first read since idle: a client that
-  // just opened can't tell those listeners from long-running ones.
-  const listenerFirstSeenRef = yield* Ref.make<ReadonlyMap<number, number> | null>(null);
+  // When each thread's port was first read, or null before the first read since idle: a client
+  // that just opened can't tell those listeners from long-running ones.
+  const listenerFirstSeenRef = yield* Ref.make<ReadonlyMap<string, number> | null>(null);
   const scanSemaphore = yield* Semaphore.make(1);
   const lsofMissingRef = yield* Ref.make(false);
   const windowsProcessNamesRef = yield* Ref.make<
@@ -782,14 +786,14 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
     const owned = servers.filter(isOwned);
     const known = yield* Ref.get(listenerFirstSeenRef);
     const firstSeen = new Map(
-      owned.map(({ port }) => [
-        port,
-        known === null ? Number.NEGATIVE_INFINITY : (known.get(port) ?? nowMillis),
-      ]),
+      owned.map((server) => {
+        const key = settleKey(server);
+        return [key, known === null ? Number.NEGATIVE_INFINITY : (known.get(key) ?? nowMillis)];
+      }),
     );
     yield* Ref.set(listenerFirstSeenRef, firstSeen);
     const discovered = owned.filter(
-      ({ port }) => nowMillis - (firstSeen.get(port) ?? nowMillis) >= LISTENER_SETTLE_MS,
+      (server) => nowMillis - (firstSeen.get(settleKey(server)) ?? nowMillis) >= LISTENER_SETTLE_MS,
     );
     return { discovered, configured } satisfies WebProbeSnapshot;
   });
