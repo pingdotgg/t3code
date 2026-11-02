@@ -2382,20 +2382,26 @@ const make = Effect.gen(function* () {
         const project = yield* requireProject(projectId);
         let revision = "HEAD";
         if (crossProject) {
-          const branch = yield* gitDriver.resolvePrimaryRemoteName(project.workspaceRoot).pipe(
+          const defaultRef = yield* gitDriver.resolvePrimaryRemoteName(project.workspaceRoot).pipe(
             Effect.flatMap((remote) =>
-              gitDriver.resolveDefaultBranchName(project.workspaceRoot, remote),
+              gitDriver
+                .resolveDefaultBranchName(project.workspaceRoot, remote)
+                .pipe(
+                  Effect.map((branch) =>
+                    branch === null ? null : `refs/remotes/${remote}/${branch}`,
+                  ),
+                ),
             ),
             Effect.mapError(() =>
               failure("invalid_request", "Unable to resolve the target project's default branch."),
             ),
           );
-          if (branch === null)
+          if (defaultRef === null)
             return yield* failure(
               "invalid_request",
               "The target project's default branch was not found.",
             );
-          revision = branch;
+          revision = defaultRef;
         }
         const base = yield* gitDriver
           .resolveCommit({

@@ -1840,15 +1840,18 @@ describe("OrchestratorMcpService provider resolution", () => {
           }),
           Layer.mock(ThreadLaunchService.ThreadLaunchService)({}),
           Layer.mock(GitVcsDriver.GitVcsDriver)({
-            resolvePrimaryRemoteName: () => Effect.succeed("origin"),
-            resolveDefaultBranchName: (cwd) => {
+            resolvePrimaryRemoteName: () => Effect.succeed("upstream"),
+            resolveDefaultBranchName: (cwd, remote) => {
               assert.equal(cwd, "/destination");
+              assert.equal(remote, "upstream");
               return Effect.succeed("trunk");
             },
             resolveCommit: ({ cwd, revision }) => {
               assert.equal(cwd, "/destination");
-              assert.equal(revision, "trunk");
-              return Effect.succeed({ commitSha: "target-sha" } as never);
+              assert.include(["trunk", "refs/remotes/upstream/trunk"], revision);
+              return Effect.succeed({
+                commitSha: revision === "trunk" ? "stale-local-sha" : "target-sha",
+              } as never);
             },
           }),
           Layer.mock(SecretRequests.SecretRequests)({}),
