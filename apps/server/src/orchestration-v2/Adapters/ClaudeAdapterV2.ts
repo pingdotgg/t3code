@@ -4131,6 +4131,8 @@ interface ActiveClaudeSubagent {
 interface ClaudeLiveQueryContext {
   readonly queryPolicy: ClaudeRuntimeQueryPolicy;
   readonly nativeThreadId: string;
+  readonly settingsCwd: string | null;
+  readonly launchArgSettings: ClaudeSdkSettings | undefined;
   readonly query: ClaudeAgentSdkQuerySession;
   readonly queryPolicyKey: string;
   selection: CompiledClaudeModelSelection;
@@ -4720,6 +4722,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
   const resolveAutoCompactWindow = Effect.fn("ClaudeAdapterV2.resolveAutoCompactWindow")(function* (
     cwd: string | null,
     modelSelection: ModelSelection,
+    launchArgSettings: ClaudeSdkSettings | undefined,
   ) {
     if (adapterOptions.settings.autoCompactWindow !== "")
       return adapterOptions.settings.autoCompactWindow;
@@ -4743,13 +4746,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
       };
       return validWindow(modelWindow) ?? validWindow(Reflect.get(settings, "autoCompactWindow"));
     };
-    const launch = yield* readClaudeLaunchArgSettings({
-      settings: adapterOptions.settings,
-      cwd,
-      fileSystem,
-      path,
-    });
-    const launchWindow = windowFrom(launch);
+    const launchWindow = windowFrom(launchArgSettings);
     if (launchWindow !== undefined) return launchWindow;
     for (const settingsFile of yield* settingsFilesByPrecedence(cwd)) {
       const settings = yield* fileSystem.readFileString(settingsFile).pipe(
@@ -10480,6 +10477,8 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           const context: ClaudeLiveQueryContext = {
             queryPolicy,
             nativeThreadId,
+            settingsCwd: turnInput.runtimePolicy.cwd,
+            launchArgSettings,
             query: querySession,
             queryPolicyKey,
             selection: compiledSelection,
@@ -10642,11 +10641,12 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                     Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
                     Effect.provideService(Path.Path, path),
                   );
-            const autoCompactWindow = yield* resolveAutoCompactWindow(
-              turnInput.runtimePolicy.cwd,
-              turnInput.modelSelection,
-            );
             const querySession = yield* openQuery(turnInput, nativeThreadId);
+            const autoCompactWindow = yield* resolveAutoCompactWindow(
+              querySession.settingsCwd,
+              turnInput.modelSelection,
+              querySession.launchArgSettings,
+            );
             const context: ActiveClaudeTurnContext = {
               input: turnInput,
               autoCompactWindow,

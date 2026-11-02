@@ -7025,6 +7025,84 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       ),
   );
 
+  it.effect("reports the settings directory of a reused Claude query", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const home = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-claude-home-" });
+      const first = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-claude-first-" });
+      const second = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-claude-second-" });
+      for (const [directory, window] of [
+        [first, 150_000],
+        [second, 180_000],
+      ] as const) {
+        yield* fileSystem.makeDirectory(path.join(directory, ".claude"));
+        yield* fileSystem.writeFileString(
+          path.join(directory, ".claude", "settings.json"),
+          JSON.stringify({ autoCompactWindow: window }),
+        );
+      }
+      const harness = yield* makeWakeHarnessWithOptions({
+        settings: { ...DEFAULT_CLAUDE_SETTINGS, homePath: home },
+      });
+      let firstOptions: ReturnType<typeof harness.getOpenedOptions>;
+      for (const [ordinal, cwd] of [
+        [1, first],
+        [2, second],
+      ] as const) {
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make(`attempt-compact-cwd-${ordinal}`),
+            providerTurnOrdinal: ordinal,
+            text: "Continue.",
+            attachments: [],
+            runtimePolicy: ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+              ...CLAUDE_TEST_RUNTIME_POLICY,
+              cwd,
+            }),
+          }),
+        );
+        if (ordinal === 1) firstOptions = harness.getOpenedOptions();
+        else assert.strictEqual(harness.getOpenedOptions(), firstOptions);
+        yield* Queue.offer(
+          harness.sdkMessages,
+          usageSnapshotFrame(
+            `msg_cwd_${ordinal}`,
+            `00000000-0000-4000-8000-00000000080${ordinal}`,
+            {
+              ...zeroUsage,
+              input_tokens: 1_000,
+              output_tokens: 10,
+            },
+          ),
+        );
+        yield* Queue.offer(
+          harness.sdkMessages,
+          makeResultFrame({
+            uuid: `00000000-0000-4000-8000-00000000081${ordinal}`,
+            result: "Done.",
+          }),
+        );
+        assert.equal((yield* Queue.take(harness.terminalReceipts)).status, "completed");
+      }
+      assert.deepEqual(
+        harness.events.flatMap((event) =>
+          event.type === "provider_turn.updated" && event.providerTurn.tokenUsage
+            ? [event.providerTurn.tokenUsage.autoCompactThreshold]
+            : [],
+        ),
+        [117_000, 117_000],
+      );
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+      ),
+    ),
+  );
+
   it.effect("shows a hook-dropped Claude prompt once and skips info-level lines", () =>
     Effect.gen(function* () {
       const harness = yield* makeWakeHarness;
