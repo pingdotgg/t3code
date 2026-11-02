@@ -358,7 +358,7 @@ export async function recoverEditedCreationAfterDelivery(
     appendComposerDraftAttachments(
       draftKey,
       kept.attachments.filter((attachment) => !existingAttachmentIds.has(attachment.id)),
-      { allowOverflow: true },
+      { restore: true },
     );
     updateComposerDraftSettings(draftKey, {
       ...(kept.modelSelection !== undefined ? { modelSelection: kept.modelSelection } : {}),
