@@ -1739,6 +1739,59 @@ describe("MuseAdapterV2", () => {
     }).pipe(Effect.scoped, Effect.provide(testLayer)),
   );
 
+  it.effect("lists a running subagent under its turn item's native id as Muse reveals it", () =>
+    Effect.gen(function* () {
+      const fake = yield* makeFakeMuse();
+      const harness = yield* makeHarness(fake);
+      const { nativeId } = yield* startConversation(harness, fake);
+      const revisions = [
+        { revision: 1, status: "inProgress" },
+        { revision: 2, status: "inProgress", subagentId: "" },
+        { revision: 3, status: "inProgress", subagentId: "subagent-1" },
+        {
+          revision: 4,
+          status: "inProgress",
+          subagentId: "subagent-1",
+          childSessionId: "child-session-1",
+        },
+        {
+          revision: 5,
+          status: "completed",
+          subagentId: "subagent-1",
+          childSessionId: "child-session-1",
+        },
+      ];
+      const listed: Array<{ nativeId: string | null | undefined; roster: Array<string> }> = [];
+      for (const fields of revisions) {
+        yield* fake.emit(fields.revision === 1 ? "item/started" : "item/updated", {
+          turnId: nativeId,
+          item: { itemId: "sub-1", kind: "subagent", turnId: nativeId, ...fields },
+        });
+        const item = yield* harness.takeEvent(
+          "turn_item.updated",
+          (event) => event.turnItem.type === "subagent",
+        );
+        const roster = harness.allEvents.findLast(
+          (event) => event.type === "provider_thread.updated",
+        );
+        listed.push({
+          nativeId: item.turnItem.nativeItemRef?.nativeId,
+          roster:
+            roster?.type === "provider_thread.updated"
+              ? (roster.providerThread.pendingBackgroundTasks ?? []).map((task) => task.taskId)
+              : [],
+        });
+      }
+      assert.deepStrictEqual(listed, [
+        { nativeId: "sub-1", roster: ["sub-1"] },
+        { nativeId: "sub-1", roster: ["sub-1"] },
+        { nativeId: "subagent-1", roster: ["subagent-1"] },
+        { nativeId: "child-session-1", roster: ["child-session-1"] },
+        { nativeId: "child-session-1", roster: [] },
+      ]);
+    }).pipe(Effect.scoped, Effect.provide(testLayer)),
+  );
+
   it.effect("keeps a workflow child's first label after later revisions drop it", () =>
     Effect.gen(function* () {
       const fake = yield* makeFakeMuse();
