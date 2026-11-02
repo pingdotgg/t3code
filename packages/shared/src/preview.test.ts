@@ -76,6 +76,11 @@ describe("resolveAddressBarInput", () => {
     expect(resolveAddressBarInput("example.com:8080")).toBe("https://example.com:8080/");
     expect(resolveAddressBarInput("[::1]:3000")).toBe("http://[::1]:3000/");
     expect(resolveAddressBarInput("192.168.1.5:3000")).toBe("https://192.168.1.5:3000/");
+    expect(resolveAddressBarInput("127.0.0.2.example.com:3000")).toBe(
+      "https://127.0.0.2.example.com:3000/",
+    );
+    expect(resolveAddressBarInput("https://127.0.0.2:3000")).toBe("https://127.0.0.2:3000/");
+    expect(resolveAddressBarInput("127.0.0.2:3000")).toBe("http://127.0.0.2:3000/");
   });
 
   it("searches for text that is not an address", () => {
@@ -149,6 +154,15 @@ describe("resolveSearchUrlTemplate", () => {
 });
 
 describe("normalizePreviewUrl", () => {
+  it.each([
+    ["127.0.0.2:3000", "http://127.0.0.2:3000/"],
+    ["127.0.0.2", "http://127.0.0.2/"],
+    ["127.1.2.3:8080/path", "http://127.1.2.3:8080/path"],
+    ["127.255.255.254:3000", "http://127.255.255.254:3000/"],
+  ])("opens schemeless loopback address %s over http", (input, expected) => {
+    expect(normalizePreviewUrl(input)).toBe(expected);
+  });
+
   it("rejects unparseable input without retaining credentials or tokens", () => {
     const rawUrl = "https://user:password@example.com:bad/path?access_token=secret#fragment";
     try {
