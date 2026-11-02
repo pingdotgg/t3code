@@ -8,9 +8,14 @@ import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 
 import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
-import { PASSKEY_CREATE_CHANNEL, PASSKEY_GET_CHANNEL } from "./GuestProtocol.ts";
+import {
+  PASSKEY_CREATE_CHANNEL,
+  PASSKEY_GET_CHANNEL,
+  PASSKEY_CANCEL_CHANNEL,
+} from "./GuestProtocol.ts";
 import type { PasskeyBackend, PasskeyCeremonyContext } from "./PasskeyBackend.ts";
 import { macPasskeyBackend } from "./PasskeyBackendMac.ts";
+import { linuxPasskeyBackend } from "./PasskeyBackendLinux.ts";
 import type { PasskeyCeremonyResult } from "./PasskeyBridge.ts";
 
 const PasskeyPackageMetadata = Schema.Struct({
@@ -128,7 +133,23 @@ const make = Effect.gen(function* () {
           )
       : undefined;
   const keychainAccessGroup = metadata?.touchIdKeychainAccessGroup;
-  const backend = metadata?.browserPasskeys === true ? backendFor(environment.platform) : undefined;
+  const backend =
+    environment.platform === "linux"
+      ? linuxPasskeyBackend(
+          environment.isPackaged
+            ? environment.path.join(
+                environment.resourcesPath,
+                "phone-passkeys",
+                "t3-phone-passkeys",
+              )
+            : environment.path.join(
+                environment.rootDir,
+                "native/phone-passkeys/target/release/t3-phone-passkeys",
+              ),
+        )
+      : metadata?.browserPasskeys === true
+        ? backendFor(environment.platform)
+        : undefined;
   const bridgeEnabled = backend !== undefined;
   const sessionsWithHandlers = new WeakSet<Session>();
 
@@ -155,6 +176,15 @@ const make = Effect.gen(function* () {
     attachGuest: (guest) => {
       if (backend === undefined) return () => {};
       let ceremonyPending = false;
+      let active: AbortController | undefined;
+      const cancel = () => active?.abort();
+      const onNavigation = (
+        event: Electron.Event<Electron.WebContentsDidStartNavigationEventParams>,
+      ) => {
+        if (event.isMainFrame && !event.isSameDocument) cancel();
+      };
+      guest.on("did-start-navigation", onNavigation);
+      guest.on("destroyed", cancel);
       const serve = async (
         event: IpcMainInvokeEvent,
         publicKey: { readonly timeout?: unknown } | undefined,
@@ -177,9 +207,16 @@ const make = Effect.gen(function* () {
         if (!host || host.isDestroyed()) return notAllowed;
 
         ceremonyPending = true;
+        const controller = new AbortController();
+        active = controller;
         try {
           const result = await withDeadline(
-            ceremony({ origin, nativeWindowHandle: host.getNativeWindowHandle() }),
+            ceremony({
+              origin,
+              nativeWindowHandle: host.getNativeWindowHandle(),
+              window: host,
+              signal: controller.signal,
+            }),
             ceremonyDeadline(publicKey.timeout),
           );
           // A credential minted for a document that navigated away belongs to nobody.
@@ -189,14 +226,25 @@ const make = Effect.gen(function* () {
         } catch {
           return notAllowed;
         } finally {
+          controller.abort();
+          active = undefined;
           ceremonyPending = false;
         }
       };
       const detach = () => {
+        cancel();
+        guest.removeListener("did-start-navigation", onNavigation);
+        guest.removeListener("destroyed", cancel);
         guest.ipc.removeHandler(PASSKEY_CREATE_CHANNEL);
         guest.ipc.removeHandler(PASSKEY_GET_CHANNEL);
+        guest.ipc.removeHandler(PASSKEY_CANCEL_CHANNEL);
       };
-      detach();
+      guest.ipc.removeHandler(PASSKEY_CREATE_CHANNEL);
+      guest.ipc.removeHandler(PASSKEY_GET_CHANNEL);
+      guest.ipc.removeHandler(PASSKEY_CANCEL_CHANNEL);
+      guest.ipc.handle(PASSKEY_CANCEL_CHANNEL, (event) => {
+        if (event.senderFrame === guest.mainFrame) cancel();
+      });
       guest.ipc.handle(
         PASSKEY_CREATE_CHANNEL,
         (event, publicKey: PublicKeyCredentialCreationOptions) =>

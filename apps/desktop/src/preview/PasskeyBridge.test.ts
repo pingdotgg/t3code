@@ -1,7 +1,11 @@
 import { assert, describe, it } from "@effect/vitest";
 import { afterEach, vi } from "vite-plus/test";
 
-import { PASSKEY_CREATE_CHANNEL, PASSKEY_GET_CHANNEL } from "./GuestProtocol.ts";
+import {
+  PASSKEY_CREATE_CHANNEL,
+  PASSKEY_GET_CHANNEL,
+  PASSKEY_CANCEL_CHANNEL,
+} from "./GuestProtocol.ts";
 import { installPasskeyBridge } from "./PasskeyBridge.ts";
 
 const base64Url = (bytes: ReadonlyArray<number>) => Buffer.from(bytes).toString("base64url");
@@ -145,8 +149,24 @@ describe("installPasskeyBridge", () => {
     assert.instanceOf(fetched, TypeError);
   });
 
+  it("lets the user return to Chromium's security-key authenticator", async () => {
+    const { credentials } = install(() => ({
+      success: false,
+      error: "NotSupportedError",
+      fallbackToNative: true,
+    }));
+    assert.strictEqual(
+      (await credentials.get({ publicKey: { challenge: new Uint8Array([1]) } })) as unknown,
+      "native-get",
+    );
+    assert.strictEqual(
+      (await credentials.create({ publicKey: creationOptions })) as unknown,
+      "native-create",
+    );
+  });
+
   it("rejects as soon as the page aborts, without waiting on the system sheet", async () => {
-    const { credentials } = install(() => new Promise(() => {}));
+    const { credentials, invoke } = install(() => new Promise(() => {}));
     const controller = new AbortController();
 
     const pending = credentials
@@ -157,5 +177,6 @@ describe("installPasskeyBridge", () => {
     const error = await pending;
     assert.instanceOf(error, DOMException);
     assert.strictEqual((error as DOMException).name, "AbortError");
+    assert.deepStrictEqual(invoke.mock.calls.at(-1), [PASSKEY_CANCEL_CHANNEL, null]);
   });
 });

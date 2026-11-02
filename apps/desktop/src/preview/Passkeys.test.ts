@@ -24,15 +24,17 @@ import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
 import { PASSKEY_CREATE_CHANNEL, PASSKEY_GET_CHANNEL } from "./GuestProtocol.ts";
 import * as PreviewPasskeys from "./Passkeys.ts";
 
-const layerFor = (packageJson: object, isPackaged = true) =>
+const layerFor = (packageJson: object, isPackaged = true, platform: NodeJS.Platform = "darwin") =>
   PreviewPasskeys.layer.pipe(
     Layer.provide(
       Layer.succeed(
         DesktopEnvironment.DesktopEnvironment,
         DesktopEnvironment.DesktopEnvironment.of({
-          platform: "darwin",
+          platform,
           isPackaged,
           appRoot: "/app",
+          resourcesPath: "/resources",
+          rootDir: "/repo",
           path: { join: (...parts: ReadonlyArray<string>) => parts.join("/") },
         } as DesktopEnvironment.DesktopEnvironment["Service"]),
       ),
@@ -54,6 +56,8 @@ const makeGuest = (origin = "https://accounts.example.com") => {
     mainFrame,
     hostWebContents: {},
     isFocused: () => state.focused,
+    on: vi.fn(),
+    removeListener: vi.fn(),
     ipc: {
       handle: (channel: string, handler: Handler) => handlers.set(channel, handler),
       removeHandler: (channel: string) => handlers.delete(channel),
@@ -269,7 +273,7 @@ describe("PreviewPasskeys", () => {
     }).pipe(Effect.provide(bridgeLayer)),
   );
 
-  it.effect("turns each path on only for builds signed for it", () =>
+  it.effect("enables each platform's available passkey backend", () =>
     Effect.gen(function* () {
       const entitled = yield* PreviewPasskeys.PreviewPasskeys.pipe(
         Effect.provide(
@@ -301,6 +305,11 @@ describe("PreviewPasskeys", () => {
       yield* unpackaged.configure;
       assert.strictEqual(electron.configureWebAuthn.mock.calls.length, 1);
       assert.isFalse(unpackaged.bridgeEnabled);
+
+      const linux = yield* PreviewPasskeys.PreviewPasskeys.pipe(
+        Effect.provide(layerFor({}, false, "linux")),
+      );
+      assert.isTrue(linux.bridgeEnabled);
     }),
   );
 

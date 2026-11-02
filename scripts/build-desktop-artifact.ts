@@ -1117,6 +1117,7 @@ export const LINUX_CAPTURE_EXTRA_RESOURCES = [
 ] as const;
 export const LINUX_BROWSER_SECRET_EXTRA_RESOURCES = [
   { from: "apps/desktop/prod-resources/browser-secret", to: "browser-secret" },
+  { from: "apps/desktop/prod-resources/phone-passkeys", to: "phone-passkeys" },
 ] as const;
 
 export interface MacPasskeySigningConfiguration {
@@ -2345,6 +2346,46 @@ export const stageLinuxCaptureHelper = Effect.fn("stageLinuxCaptureHelper")(func
       path.join(destination, "protocols"),
     );
   }
+});
+
+export const stagePhonePasskeys = Effect.fn("stagePhonePasskeys")(function* (input: {
+  readonly repoRoot: string;
+  readonly stageResourcesDir: string;
+  readonly arch: typeof BuildArch.Type;
+  readonly verbose: boolean;
+}) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const [rustTarget] = resolveResourceMonitorRustTargets("linux", input.arch);
+  const spawnCommand = yield* resolveSpawnCommand("cargo", [
+    "build",
+    "--locked",
+    "--release",
+    "--manifest-path",
+    path.join(input.repoRoot, "native/phone-passkeys/Cargo.toml"),
+    "--target",
+    rustTarget!,
+  ]);
+  yield* runCommand(
+    ChildProcess.make(spawnCommand.command, spawnCommand.args, {
+      cwd: input.repoRoot,
+      shell: spawnCommand.shell,
+    }),
+    { label: `cargo build phone passkeys (${rustTarget})`, verbose: input.verbose },
+  );
+  const directory = path.join(input.stageResourcesDir, "phone-passkeys");
+  yield* fs.makeDirectory(directory, { recursive: true });
+  const executable = path.join(directory, "t3-phone-passkeys");
+  yield* fs.copyFile(
+    path.join(
+      input.repoRoot,
+      "native/phone-passkeys/target",
+      rustTarget!,
+      "release/t3-phone-passkeys",
+    ),
+    executable,
+  );
+  yield* fs.chmod(executable, 0o755);
 });
 
 export const stageResourceMonitor = Effect.fn("stageResourceMonitor")(function* (input: {
@@ -3773,6 +3814,12 @@ const buildDesktopArtifactUnlocked = Effect.fn("buildDesktopArtifactUnlocked")(f
     verbose: options.verbose,
   });
   if (options.platform === "linux") {
+    yield* stagePhonePasskeys({
+      repoRoot,
+      stageResourcesDir,
+      arch: options.arch,
+      verbose: options.verbose,
+    });
     for (const backend of ["kde", "hyprland"] as const)
       yield* stageLinuxCaptureHelper({
         backend,
