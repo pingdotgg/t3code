@@ -13,6 +13,8 @@ import * as PlatformError from "effect/PlatformError";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 
+import type { CursorCredentialSource } from "./accountCache.ts";
+import { DEFAULT_CURSOR_API_ENDPOINT, exchangeCursorApiKey } from "./apiKey.ts";
 import * as CursorKeychain from "./CursorKeychain.ts";
 
 function object(value: unknown): Record<string, unknown> {
@@ -90,7 +92,7 @@ const DASHBOARD_USAGE_URL = "https://cursor.com/api/dashboard/get-filtered-usage
 const NO_REDIRECT: RequestInit = { redirect: "error" };
 
 export const readCursorAccountUsage = Effect.fn("readCursorAccountUsage")(function* (
-  credentialSource: string | { readonly kind: "keychain" },
+  credentialSource: CursorCredentialSource,
   sinceMs: number,
   endDate: number,
   keychainToken: Effect.Effect<
@@ -120,7 +122,14 @@ export const readCursorAccountUsage = Effect.fn("readCursorAccountUsage")(functi
           Effect.flatMap(decodeJson),
           Effect.map((credentials) => object(credentials).accessToken),
         )
-      : keychainToken,
+      : credentialSource.kind === "apiKey"
+        ? exchangeCursorApiKey(credentialSource.apiKey).pipe(
+            Effect.provideService(HttpClient.HttpClient, httpClient),
+            Effect.mapError(
+              () => new CursorAccountUsageInvalidError({ reason: "Invalid API key" }),
+            ),
+          )
+        : keychainToken,
   );
   if (Result.isFailure(credential)) {
     const cause = credential.failure;
@@ -136,9 +145,11 @@ export const readCursorAccountUsage = Effect.fn("readCursorAccountUsage")(functi
         ? null
         : typeof credentialSource === "string"
           ? "Cursor credentials could not be read."
-          : CursorKeychain.isCursorKeychainTimeoutError(cause)
-            ? "Allow Keychain access on the Mac running T3 Code, then refresh."
-            : "Cursor Keychain credentials could not be read.",
+          : credentialSource.kind === "apiKey"
+            ? "Cursor account usage could not be read."
+            : CursorKeychain.isCursorKeychainTimeoutError(cause)
+              ? "Allow Keychain access on the Mac running T3 Code, then refresh."
+              : "Cursor Keychain credentials could not be read.",
     };
   }
   const accessToken = credential.success;
@@ -168,6 +179,21 @@ export const readCursorAccountUsage = Effect.fn("readCursorAccountUsage")(functi
     accountKey = yield* accountHash(subject);
     if (!Number.isFinite(sinceMs) || !Number.isFinite(endDate) || sinceMs < 0 || sinceMs > endDate)
       return yield* invalid("Invalid date window");
+    // The web dashboard rejects API-key tokens; Cursor's RPC API accepts them.
+    const pageRequest =
+      typeof credentialSource !== "string" && credentialSource.kind === "apiKey"
+        ? HttpClientRequest.post(
+            `${DEFAULT_CURSOR_API_ENDPOINT}/aiserver.v1.DashboardService/GetFilteredUsageEvents`,
+          ).pipe(
+            HttpClientRequest.bearerToken(accessToken),
+            HttpClientRequest.setHeader("connect-protocol-version", "1"),
+          )
+        : HttpClientRequest.post(DASHBOARD_USAGE_URL).pipe(
+            HttpClientRequest.setHeaders({
+              Origin: "https://cursor.com",
+              Cookie: `WorkosCursorSessionToken=${encodeURIComponent(`${userId}::${accessToken}`)}`,
+            }),
+          );
     const records: UsageRecord[] = [];
     const occurrences = new Map<string, number>();
     const pages: unknown[][] = [];
@@ -183,11 +209,7 @@ export const readCursorAccountUsage = Effect.fn("readCursorAccountUsage")(functi
         }
         const response = yield* httpClient
           .execute(
-            HttpClientRequest.post(DASHBOARD_USAGE_URL).pipe(
-              HttpClientRequest.setHeaders({
-                Origin: "https://cursor.com",
-                Cookie: `WorkosCursorSessionToken=${encodeURIComponent(`${userId}::${accessToken}`)}`,
-              }),
+            pageRequest.pipe(
               HttpClientRequest.bodyText(
                 pageRequestBody(page, pageSize, sinceMs, endDate),
                 "application/json",

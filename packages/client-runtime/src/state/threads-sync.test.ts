@@ -85,7 +85,7 @@ function testSession(client: WsRpcProtocolClient): RpcSession.RpcSession {
   return {
     client,
     initialConfig: Effect.succeed({} as never),
-    subscribeServerConfig: (input) => client.subscribeServerConfig(input),
+    subscribeServerConfig: (input = {}) => client.subscribeServerConfig(input),
     ready: Effect.void,
     probe: Effect.void,
     inboundFrames: Effect.succeed(0),
@@ -670,6 +670,31 @@ describe("EnvironmentThreads", () => {
       );
       expect(Option.isNone(state.data)).toBe(true);
       expect(yield* Ref.get(resumed.loaderCalls)).toBe(0);
+    }),
+  );
+
+  it.effect("asks the server again after an HTTP miss, since the thread may not exist yet", () =>
+    Effect.gen(function* () {
+      const resumeCache: NonNullable<Parameters<typeof makeEnvironmentThreadState>[1]> = {
+        snapshot: undefined,
+        owner: undefined,
+      };
+      yield* Effect.scoped(
+        Effect.gen(function* () {
+          const first = yield* makeHarness({ httpSnapshot: { _tag: "missing" }, resumeCache });
+          yield* awaitThreadState(first.observed, (value) => value.status === "deleted");
+        }),
+      );
+      const resumed = yield* makeHarness({
+        resumeCache,
+        httpSnapshot: {
+          _tag: "present",
+          snapshot: { snapshotSequence: CACHED_SNAPSHOT_SEQUENCE, projection: BASE_PROJECTION },
+        },
+      });
+      const state = yield* awaitThreadState(resumed.observed, (value) => value.status === "live");
+      expect(Option.getOrThrow(state.data)).toEqual(BASE_PROJECTION);
+      expect(yield* Ref.get(resumed.loaderCalls)).toBe(1);
     }),
   );
 

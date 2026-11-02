@@ -517,6 +517,75 @@ describe("pull request toolkit handlers", () => {
     }),
   );
 
+  it.effect("reports a dismissed stack member as not linked and leaves it dismissed", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness({
+        thread: makeThread([makeLink(9, { source: "stack-dismissed" })]),
+      });
+      const result = yield* harness.call("unlink_pull_request", {
+        repository: "t3tools/t3code",
+        number: 9,
+      });
+      expect(result.wasLinked).toBe(false);
+      expect(yield* Ref.get(harness.commands)).toEqual([]);
+    }),
+  );
+
+  it.effect("links several pull requests in one call", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness({
+        thread: makeThread([makeLink(1), { ...makeLink(2), source: "stack-dismissed" }]),
+      });
+      const url = (number: number) => `https://github.com/t3tools/t3code/pull/${number}`;
+      const result = yield* harness.call("link_pull_requests", {
+        urls: [url(1), url(2), url(3), url(3), "https://example.com/not-a-pr"],
+      });
+      expect(result).toEqual({
+        linked: [{ host: "github.com", repository: "t3tools/t3code", numbers: [2, 3] }],
+        alreadyLinked: [{ host: "github.com", repository: "t3tools/t3code", numbers: [1] }],
+        linkedCount: 3,
+        invalidUrls: ["https://example.com/not-a-pr"],
+      });
+      expect(yield* Ref.get(harness.commands)).toMatchObject([
+        { type: "thread.pull-request.link", number: 2, source: "agent" },
+        { type: "thread.pull-request.link", number: 3, source: "agent" },
+      ]);
+    }),
+  );
+
+  it.effect("unlinks every visible pull request in the given states in one call", () =>
+    Effect.gen(function* () {
+      const withState = (number: number, state: "open" | "closed" | "merged") => {
+        const link = makeLink(number, { headBranch: `branch-${number}` });
+        return { ...link, snapshot: { ...link.snapshot!, state } };
+      };
+      const harness = yield* makeHarness({
+        thread: makeThread([
+          withState(1, "merged"),
+          withState(2, "open"),
+          withState(3, "closed"),
+          makeLink(4),
+          { ...withState(5, "merged"), source: "stack-dismissed" },
+        ]),
+      });
+      const result = yield* harness.call("unlink_pull_requests", {
+        states: ["closed", "merged"],
+      });
+      expect(result).toEqual({
+        unlinked: [
+          { host: "github.com", repository: "t3tools/t3code", state: "merged", numbers: [1] },
+          { host: "github.com", repository: "t3tools/t3code", state: "closed", numbers: [3] },
+        ],
+        unlinkedCount: 2,
+        remaining: 2,
+      });
+      expect(yield* Ref.get(harness.commands)).toMatchObject([
+        { type: "thread.pull-request.unlink", number: 1 },
+        { type: "thread.pull-request.unlink", number: 3 },
+      ]);
+    }),
+  );
+
   it("reports an older Forgejo link's HTTP port when listing thread links", () => {
     const result = listThreadPullRequests(
       makeThread([
