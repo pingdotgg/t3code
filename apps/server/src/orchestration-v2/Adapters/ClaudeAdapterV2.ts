@@ -6750,6 +6750,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           readonly title?: string;
           readonly model?: string;
           readonly effort?: string;
+          readonly unknownEffort?: boolean;
           readonly owner?: ActiveClaudeSubagent;
           readonly nativeTaskType?: string;
           readonly progress?: string;
@@ -6847,10 +6848,12 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               : withWorkflowMemberThreadIds(workflow, childThreadId);
           const effort =
             existingSubagent === undefined
-              ? (input.effort ??
-                input.owner?.effort ??
-                compileClaudeModelSelection(input.context.input.modelSelection, modelCatalog)
-                  .effort)
+              ? input.unknownEffort === true
+                ? undefined
+                : (input.effort ??
+                  input.owner?.effort ??
+                  compileClaudeModelSelection(input.context.input.modelSelection, modelCatalog)
+                    .effort)
               : existingSubagent.effort;
           const model = input.model ?? priorTask?.model ?? null;
           const task = {
@@ -8998,6 +9001,20 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           }
           yield* trackClaudeGoal({ nativeThreadId: liveQuery.nativeThreadId, context, message });
 
+          const forkToolUseId = parentToolUseIdFromSdkMessage(message);
+          const forkAgentId = text(field(message, "agent_id"));
+          if (
+            forkToolUseId?.startsWith("forked-command-") === true &&
+            forkAgentId !== undefined &&
+            (yield* Ref.get(sessionSubagentsByTaskId)).has(forkAgentId)
+          ) {
+            yield* Ref.update(sessionSubagentTaskIdsByToolUseId, (current) =>
+              current.get(forkToolUseId) === forkAgentId
+                ? current
+                : new Map(current).set(forkToolUseId, forkAgentId),
+            );
+          }
+
           if (message.type === "stream_event" && !message.parent_tool_use_id) {
             const event = message.event;
             const reasoning = context.reasoning;
@@ -9398,7 +9415,14 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                   parentToolUseId,
                   { model },
                 );
-              } else if (subagent.task.status === "running" && subagent.task.model !== model) {
+              } else if (
+                (subagent.task.status === "running" ||
+                  (parentToolUseId.startsWith("forked-command-") &&
+                    (subagent.task.status === "completed" ||
+                      subagent.task.status === "failed" ||
+                      subagent.task.status === "cancelled"))) &&
+                subagent.task.model !== model
+              ) {
                 yield* updateClaudeSubagentNode({
                   context,
                   taskId: subagent.task.nativeTaskRef?.nativeId ?? String(subagent.task.id),
@@ -9535,6 +9559,11 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 ...(message.prompt === undefined ? {} : { prompt: message.prompt }),
                 ...(model === undefined ? {} : { model }),
                 ...(launch?.effort === undefined ? {} : { effort: launch.effort }),
+                ...(message.tool_use_id === undefined &&
+                message.skip_transcript === true &&
+                message.description.startsWith("/")
+                  ? { unknownEffort: true }
+                  : {}),
                 ...(owner === undefined ? {} : { owner }),
                 ...(isWorkflow
                   ? {
