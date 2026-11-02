@@ -20,6 +20,7 @@ import {
   deriveWorkspaceMutationId,
   sameThreadStructure,
 } from "./threadDetail.ts";
+import { presentRunStop } from "./threadExecution.ts";
 import { mergeOlderHistoryIntoProjection } from "./threadHistoryMerge.ts";
 import { EMPTY_ENVIRONMENT_THREAD_STATE } from "./threadState.ts";
 
@@ -384,5 +385,182 @@ describe("deriveWorkspaceMutationId", () => {
     expect(deriveWorkspaceMutationId([item("reply", "assistant_message", "completed")], null)).toBe(
       null,
     );
+  });
+});
+
+describe("runStopAtom", () => {
+  const ref = { environmentId: EnvironmentId.make("environment-1"), threadId: v2ThreadId };
+  const running: OrchestrationV2ThreadProjection["runs"][number] = {
+    id: RunId.make("run-1"),
+    threadId: v2ThreadId,
+    ordinal: 1,
+    providerInstanceId: v2Projection.thread.providerInstanceId,
+    modelSelection: v2Projection.thread.modelSelection,
+    providerThreadId: null,
+    userMessageId: MessageId.make("message-user"),
+    rootNodeId: null,
+    activeAttemptId: null,
+    status: "running",
+    requestedAt: v2Now,
+    startedAt: v2Now,
+    completedAt: null,
+    checkpointId: null,
+    contextHandoffId: null,
+  };
+  const request: OrchestrationV2TurnItem = {
+    id: TurnItemId.make("item-request"),
+    threadId: v2ThreadId,
+    runId: assistant.runId,
+    nodeId: null,
+    providerThreadId: null,
+    providerTurnId: null,
+    nativeItemRef: null,
+    parentItemId: null,
+    ordinal: 2,
+    status: "completed",
+    title: null,
+    startedAt: v2Now,
+    completedAt: null,
+    updatedAt: v2Now,
+    type: "run_interrupt_request",
+    message: "Stopped by user",
+  };
+  const result: OrchestrationV2TurnItem = {
+    ...request,
+    id: TurnItemId.make("item-result"),
+    ordinal: 3,
+    status: "interrupted",
+    type: "run_interrupt_result",
+  };
+  const unresponsive = { ...request, unresponsiveAt: later };
+  const text = (value: string) => ({ ...assistant, text: value, updatedAt: later });
+
+  function setup(initial: OrchestrationV2ThreadProjection) {
+    const stateAtom = Atom.make(
+      AsyncResult.success({ ...EMPTY_ENVIRONMENT_THREAD_STATE, data: Option.some(initial) }),
+    );
+    const stopAtom = createEnvironmentThreadDetailAtoms(() => stateAtom).runStopAtom(ref);
+    const registry = AtomRegistry.make();
+    registry.mount(stopAtom);
+    return {
+      read: () => registry.get(stopAtom),
+      [Symbol.dispose]: () => registry.dispose(),
+      push: (projection: OrchestrationV2ThreadProjection | null) =>
+        registry.set(
+          stateAtom,
+          AsyncResult.success({
+            ...EMPTY_ENVIRONMENT_THREAD_STATE,
+            data: Option.fromNullishOr(projection),
+          }),
+        ),
+    };
+  }
+
+  it("does not rescan history for consecutive replacements unrelated to Stop", () => {
+    let runIdReads = 0;
+    const history = Array.from({ length: 99 }, (_, index) =>
+      Object.defineProperty({ ...assistant, id: TurnItemId.make(`history-${index}`) }, "runId", {
+        enumerable: true,
+        get: () => {
+          runIdReads++;
+          return assistant.runId;
+        },
+      }),
+    );
+    const initial = {
+      ...withItem(assistant),
+      runs: [running],
+      turnItems: [...history, assistant],
+    };
+    using thread = setup(initial);
+    thread.read();
+    const first = replaceItem(initial, text("Hello"));
+    const second = replaceItem(first, text("Hello there"));
+    runIdReads = 0;
+
+    thread.push(first);
+    expect(thread.read()).toBeNull();
+    thread.push(second);
+    expect(thread.read()).toBeNull();
+    expect(runIdReads).toBe(0);
+  });
+
+  it("matches a full derivation across every kind of change", () => {
+    type Projection = OrchestrationV2ThreadProjection;
+    const setRun = (projection: Projection, status: "running" | "completed") => ({
+      ...projection,
+      runs: [{ ...running, status }],
+    });
+    const steps: ReadonlyArray<{
+      readonly name: string;
+      readonly apply: (projection: Projection) => Projection;
+      readonly state: "stopping" | "unresponsive" | null;
+    }> = [
+      { name: "text", apply: (p) => replaceItem(p, text("Hello")), state: null },
+      { name: "request inserted", apply: (p) => replaceItem(p, request), state: "stopping" },
+      { name: "text while stopping", apply: (p) => replaceItem(p, text("A")), state: "stopping" },
+      {
+        name: "request turned unresponsive",
+        apply: (p) => replaceItem(p, unresponsive),
+        state: "unresponsive",
+      },
+      {
+        name: "text while unresponsive",
+        apply: (p) => replaceItem(p, text("B")),
+        state: "unresponsive",
+      },
+      {
+        name: "request rewritten to text",
+        apply: (p) => replaceItem(p, { ...assistant, id: request.id, text: "C" }),
+        state: null,
+      },
+      {
+        name: "text rewritten to request",
+        apply: (p) => replaceItem(p, request),
+        state: "stopping",
+      },
+      {
+        name: "skipped request update with a later text update",
+        apply: (p) => replaceItem(replaceItem(p, unresponsive), text("D")),
+        state: "unresponsive",
+      },
+      {
+        name: "skipped request reset with a later text update",
+        apply: (p) => replaceItem(replaceItem(p, request), text("E")),
+        state: "stopping",
+      },
+      { name: "run settled", apply: (p) => setRun(p, "completed"), state: null },
+      { name: "run resumed", apply: (p) => setRun(p, "running"), state: "stopping" },
+      { name: "result inserted", apply: (p) => replaceItem(p, result), state: null },
+      { name: "text after result", apply: (p) => replaceItem(p, text("F")), state: null },
+      {
+        name: "result removed by a snapshot",
+        apply: (p) => ({ ...p, turnItems: p.turnItems.filter((item) => item.id !== result.id) }),
+        state: "stopping",
+      },
+      {
+        name: "reconnect snapshot",
+        apply: (p) => ({
+          ...p,
+          turnItems: p.turnItems.map((item) => (item.id === request.id ? unresponsive : item)),
+        }),
+        state: "unresponsive",
+      },
+    ];
+
+    let projection: Projection = { ...withItem(assistant), runs: [running] };
+    using thread = setup(projection);
+    thread.read();
+    for (const { name, apply, state } of steps) {
+      projection = apply(projection);
+      thread.push(projection);
+      expect({ name, state: thread.read()?.state ?? null }).toEqual({ name, state });
+      expect(thread.read()).toEqual(presentRunStop(projection));
+    }
+
+    thread.push(null);
+    expect(thread.read()).toBeNull();
+    thread.push(projection);
+    expect(thread.read()?.state).toBe("unresponsive");
   });
 });
