@@ -232,6 +232,10 @@ describe("settings search targets", () => {
     expect(isSettingsSearchScopeAvailable(fallback.scope, "environment")).toBe(true);
     expect(isSettingsSearchScopeAvailable(fallback.scope, "all")).toBe(true);
     expect(isSettingsSearchScopeAvailable(fallback.scope, "project")).toBe(false);
+    const compaction = getSettingsSearchTargetScope("compact-before-usage-limit")!;
+    expect(isSettingsSearchScopeAvailable(compaction.scope, "environment")).toBe(true);
+    expect(isSettingsSearchScopeAvailable(compaction.scope, "all")).toBe(true);
+    expect(isSettingsSearchScopeAvailable(compaction.scope, "project")).toBe(false);
     const streaming = getSettingsSearchTargetScope("response-streaming")!;
     expect(streaming.scope).toBe("project-defaults");
     expect(isSettingsSearchScopeAvailable(streaming.scope, "project")).toBe(true);

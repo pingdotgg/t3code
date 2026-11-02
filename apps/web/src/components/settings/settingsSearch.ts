@@ -445,6 +445,7 @@ export const SETTINGS_SEARCH_ITEMS = [
     id: "compact-before-usage-limit",
     title: "Compact before usage limits",
     to: "/settings/threads",
+    scope: "environment-defaults",
     searchTerms: ["usage quota rate limit compaction compact context prompt cache expire cost"],
   },
   {
