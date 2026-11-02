@@ -65,6 +65,7 @@ import {
 } from "../../state/use-composer-drafts";
 import { appAtomRegistry } from "../../state/atom-registry";
 import type { ComposerDocumentAttachment } from "../../lib/composerContext";
+import { changeRequestTermsFor } from "@t3tools/client-runtime/source-control-clients";
 import { useProject, useVisibleThreadShells } from "../../state/entities";
 import { useMentionableEnvironments } from "../../state/environments";
 import { useLinkedEnvironments } from "../../state/peerLinks";
@@ -839,6 +840,7 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
               isLoading={composerMenu.isLoading}
               error={composerMenu.error}
               onSelect={composerMenu.onSelect}
+              pullRequestTerms={changeRequestTermsFor(project?.repositoryIdentity?.provider)}
             />
           </ComposerPopoverAnchor>
         ) : null}

@@ -32,7 +32,8 @@ import { threadChipTargets } from "../lib/enrichedLinkPresentation";
 import { resolveProjectChipIcon } from "../lib/projectIcon";
 import { projectGlyphImageAtom, projectGlyphKey } from "../native/ProjectChipIconImages";
 import { projectFaviconUrlAtom } from "./assets";
-import { environmentProjects } from "./projects";
+import { changeRequestTermsForHosts } from "@t3tools/client-runtime/source-control-clients";
+import { environmentProjects, projectHostKindsAtom } from "./projects";
 import { environmentServerConfigsAtom, serverEnvironment } from "./server";
 import { environmentThreadDetails, environmentThreadShells } from "./threads";
 
@@ -167,6 +168,11 @@ export function waitForProject(
 
 export function useProjects(): ReadonlyArray<EnvironmentProject> {
   return useAtomValue(environmentProjects.projectsAtom);
+}
+
+/** Terms for surfaces spanning every project, such as the pull requests tab. */
+export function useProjectsChangeRequestTerms() {
+  return changeRequestTermsForHosts(useAtomValue(projectHostKindsAtom).split(" "));
 }
 
 export function useThreadShells(): ReadonlyArray<EnvironmentThreadShell> {

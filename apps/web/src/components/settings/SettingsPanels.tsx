@@ -1,4 +1,6 @@
 import { useAtomValue } from "@effect/atom-react";
+import { capitalizeTerm } from "@t3tools/client-runtime/source-control-clients";
+import { useProjectsChangeRequestTerms } from "~/state/entities";
 import { NotificationSettings } from "./NotificationSettings";
 import { PRIVACY_POLICY_URL } from "../../legalLinks";
 import { CheckIcon } from "lucide-react";
@@ -1288,6 +1290,7 @@ function DiffColorsSettingsRow() {
 
 export function DiffsSettingsPanel() {
   const settings = useScopedSettings();
+  const changeRequestTerms = useProjectsChangeRequestTerms();
   const updateSettings = useUpdateScopedSettings();
 
   return (
@@ -1397,10 +1400,10 @@ export function DiffsSettingsPanel() {
         <DiffColorsSettingsRow />
       </SettingsSection>
 
-      <SettingsSection id="pull-requests" title="Pull requests">
+      <SettingsSection id="pull-requests" title={capitalizeTerm(changeRequestTerms.plural)}>
         <SettingsRow
           {...searchableSetting("proactive-panels")}
-          description="Open linked pull requests first. Otherwise, open Changes for edits to at least 3 files or 50 lines."
+          description={`Open linked ${changeRequestTerms.plural} first. Otherwise, open Changes for edits to at least 3 files or 50 lines.`}
           resetAction={
             settings.proactivePanelsEnabled !== DEFAULT_UNIFIED_SETTINGS.proactivePanelsEnabled ? (
               <SettingResetButton

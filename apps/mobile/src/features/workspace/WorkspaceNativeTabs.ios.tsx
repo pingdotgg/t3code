@@ -1,5 +1,5 @@
 import {
-  WORKSPACE_TAB_LABELS,
+  useWorkspaceTabLabels,
   NAVIGATION_TAB_ICONS,
   useEnabledNavigationTabs,
 } from "./navigation-tabs";
@@ -76,6 +76,7 @@ export function WorkspaceNativeTabs(props: {
 }) {
   const workspace = useWorkspaceTabs()!;
   const order = useEnabledNavigationTabs();
+  const tabLabels = useWorkspaceTabLabels();
   const primaryTabs = order.slice(0, 4);
   const overflow = order[4];
   const selectTab = useSelectWorkspaceTab();
@@ -125,7 +126,7 @@ export function WorkspaceNativeTabs(props: {
               key={slot}
               screenKey={slot}
               title=""
-              tabBarItemAccessibilityLabel={settings ? "Settings" : WORKSPACE_TAB_LABELS[tab]}
+              tabBarItemAccessibilityLabel={settings ? "Settings" : tabLabels[tab]}
               ios={{
                 icon: settings
                   ? { type: "sfSymbol", name: "gearshape" }

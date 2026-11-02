@@ -6,6 +6,7 @@ import {
   resolveChangeRequestTerms,
   type SourceControlAppSignIn,
   type SourceControlDefinition,
+  UNKNOWN_SOURCE_CONTROL_CLIENT,
 } from "@t3tools/source-control-core/shared/definition";
 import type { ServerSettings, SourceControlAppAccessInput } from "@t3tools/contracts";
 import { parseGitRemoteRepository } from "@t3tools/shared/git";
@@ -45,6 +46,22 @@ export function changeRequestTermsFor(
   const definition =
     typeof host === "object" && host !== null ? host : sourceControlClients.get(host);
   return resolveChangeRequestTerms(definition, providerChangeRequestTerms);
+}
+
+/** One set of terms for a list spanning hosts: theirs when every host agrees, else "pull request". */
+export function changeRequestTermsForHosts(
+  hosts: Iterable<string | null | undefined>,
+  useProviderTerms = providerChangeRequestTerms,
+): ChangeRequestTerminology {
+  const pullRequest = resolveChangeRequestTerms(UNKNOWN_SOURCE_CONTROL_CLIENT, false);
+  let shared: ChangeRequestTerminology | undefined;
+  for (const host of hosts) {
+    if (!host) continue;
+    const terms = resolveChangeRequestTerms(sourceControlClients.get(host), useProviderTerms);
+    if (shared !== undefined && shared.plural !== terms.plural) return pullRequest;
+    shared = terms;
+  }
+  return shared ?? pullRequest;
 }
 
 /** The saved per-hostname accounts and tokens of a host whose definition has `credentials`. */

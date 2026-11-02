@@ -4,6 +4,7 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   appSignInTargetForRemote,
   changeRequestTermsFor,
+  changeRequestTermsForHosts,
   setProviderChangeRequestTerms,
   sourceControlClients,
 } from "./sourceControlClients.ts";
@@ -416,5 +417,14 @@ describe("changeRequestTermsFor", () => {
     } finally {
       setProviderChangeRequestTerms(true);
     }
+  });
+
+  it("names a list after its hosts only when they all agree", () => {
+    expect(changeRequestTermsForHosts(["gitlab", undefined, "gitlab"]).plural).toBe(
+      "merge requests",
+    );
+    expect(changeRequestTermsForHosts(["gitlab", "github"]).plural).toBe("pull requests");
+    expect(changeRequestTermsForHosts([]).plural).toBe("pull requests");
+    expect(changeRequestTermsForHosts(["gitlab"], false).plural).toBe("pull requests");
   });
 });

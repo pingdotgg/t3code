@@ -1,4 +1,5 @@
 import { useFocusEffect } from "@react-navigation/native";
+import { useProjectsChangeRequestTerms } from "../../state/entities";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   Keyboard,
@@ -58,6 +59,7 @@ export function WorkspaceToolbar(props: {
   const edge = width < 360 ? 12 : WORKSPACE_TOOLBAR.edge;
   const gap = width < 360 ? 6 : WORKSPACE_TOOLBAR.gap;
   const keyboardVisible = useKeyboardState((state) => state.isVisible);
+  const changeRequestTerms = useProjectsChangeRequestTerms();
   const focusSearch = () => {
     if (!workspace) return false;
     const tab = workspace.state.selectedTab;
@@ -94,6 +96,8 @@ export function WorkspaceToolbar(props: {
   const { state, dispatch } = workspace;
   const tab = state.tabs[state.selectedTab];
   const activeTab = TABS.find((item) => item.id === state.selectedTab)!;
+  const activeTabLabel =
+    activeTab.id === "pullRequests" ? `${changeRequestTerms.shortLabel}s` : activeTab.label;
   const searching = tab.searchMode !== "resting";
   const expanded = tab.searchMode === "expanded" && !keyboardVisible;
   const showNavigation = !searching || expanded;
@@ -113,7 +117,7 @@ export function WorkspaceToolbar(props: {
           <View className="flex-row items-center" style={{ gap }}>
             {!keyboardVisible && !expanded ? (
               <ToolbarButton
-                label={`Show tabs, ${activeTab.label} selected`}
+                label={`Show tabs, ${activeTabLabel} selected`}
                 icon={activeTab.icon}
                 size={48}
                 onPress={() => dispatch({ type: "expand" })}

@@ -136,6 +136,7 @@ import {
   useHiddenThreadKeys,
   useEnvironmentThreadRefs,
   useProjects,
+  useProjectsChangeRequestTerms,
   useServerConfigs,
   useVisibleThreadShells,
   waitForProject,
@@ -434,6 +435,7 @@ function OpenCommandPaletteDialog(props: {
     setHighlightedItemValue(null);
   }
   const clientSettings = useClientSettings(selectCommandPaletteClientSettings);
+  const projectsChangeRequestTerms = useProjectsChangeRequestTerms();
   const createProject = useAtomCommand(projectEnvironment.create, {
     reportFailure: false,
   });
@@ -1576,7 +1578,7 @@ function OpenCommandPaletteDialog(props: {
         "merge",
         "branch",
       ],
-      title: "Open pull requests",
+      title: `Open ${projectsChangeRequestTerms.plural}`,
       icon: <PullRequestGlyph.pullRequest className={ITEM_ICON_CLASS} />,
       run: async () => {
         await navigate({ to: "/pull-requests", search: readPullRequestListPreferences() });

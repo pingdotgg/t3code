@@ -2,6 +2,10 @@ import {
   resolveProviderSkillSourceKind,
   type ProviderSkillSourceKind,
 } from "@t3tools/client-runtime/providerSkills";
+import {
+  capitalizeTerm,
+  type ChangeRequestTerminology,
+} from "@t3tools/client-runtime/source-control-clients";
 import type {
   EnvironmentId,
   EnvironmentMachineKind,
@@ -79,6 +83,7 @@ interface ComposerCommandPopoverProps {
   readonly isLoading: boolean;
   readonly error?: string | null;
   readonly onSelect: (item: ComposerCommandItem) => void;
+  readonly pullRequestTerms: ChangeRequestTerminology;
 }
 
 function PopoverSurface(props: { readonly children: React.ReactNode; readonly style?: ViewStyle }) {
@@ -126,10 +131,13 @@ function itemIcon(item: ComposerCommandItem): AppSymbolName | null {
   }
 }
 
-function groupLabel(triggerKind: ComposerTriggerKind | null): string | null {
+function groupLabel(
+  triggerKind: ComposerTriggerKind | null,
+  pullRequestTerms: ChangeRequestTerminology,
+): string | null {
   switch (triggerKind) {
     case "pull-request":
-      return "Pull requests";
+      return capitalizeTerm(pullRequestTerms.plural);
     case "slash-command":
       return "Commands";
     case "skill":
@@ -141,13 +149,17 @@ function groupLabel(triggerKind: ComposerTriggerKind | null): string | null {
   }
 }
 
-function emptyText(triggerKind: ComposerTriggerKind | null, isLoading: boolean): string {
+function emptyText(
+  triggerKind: ComposerTriggerKind | null,
+  isLoading: boolean,
+  pullRequestTerms: ChangeRequestTerminology,
+): string {
   if (isLoading) {
     return triggerKind === "path" ? "Searching files…" : "Loading…";
   }
   switch (triggerKind) {
     case "pull-request":
-      return "No matching pull requests.";
+      return `No matching ${pullRequestTerms.plural}.`;
     case "path":
       return "No matching files or folders.";
     case "skill":
@@ -210,7 +222,7 @@ const CommandRow = memo(function CommandRow(props: {
 export const ComposerCommandPopover = memo(function ComposerCommandPopover(
   props: ComposerCommandPopoverProps,
 ) {
-  const label = groupLabel(props.triggerKind);
+  const label = groupLabel(props.triggerKind, props.pullRequestTerms);
 
   return (
     <PopoverSurface>
@@ -240,7 +252,7 @@ export const ComposerCommandPopover = memo(function ComposerCommandPopover(
       ) : (
         <View className="px-3.5 py-2.5">
           <Text className="text-xs text-foreground-tertiary">
-            {props.error ?? emptyText(props.triggerKind, props.isLoading)}
+            {props.error ?? emptyText(props.triggerKind, props.isLoading, props.pullRequestTerms)}
           </Text>
         </View>
       )}

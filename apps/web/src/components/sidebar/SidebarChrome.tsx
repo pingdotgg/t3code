@@ -14,6 +14,8 @@ import {
 import { primaryServerKeybindingsAtom } from "../../state/server";
 import { cn } from "../../lib/utils";
 import { usePullRequestsSupported } from "../../state/environments";
+import { useProjectsChangeRequestTerms } from "../../state/entities";
+import { capitalizeTerm } from "@t3tools/client-runtime/source-control-clients";
 import { T3Wordmark } from "../T3Wordmark";
 import {
   resolveEnvironmentIdentificationPillLabel,
@@ -226,6 +228,7 @@ const SidebarUtilityMenu = memo(function SidebarUtilityMenu() {
     select: (location) => isSidebarUtilityPage(location.pathname),
   });
   const pullRequestsSupported = usePullRequestsSupported();
+  const changeRequestTerms = useProjectsChangeRequestTerms();
   const closeMobileSidebar = () => {
     if (isMobile) {
       setOpenMobile(false);
@@ -274,7 +277,7 @@ const SidebarUtilityMenu = memo(function SidebarUtilityMenu() {
           {pullRequestsSupported ? (
             <SidebarUtilityItem
               icon={<PullRequestGlyph.pullRequest />}
-              label="Pull requests"
+              label={capitalizeTerm(changeRequestTerms.plural)}
               onClick={handlePullRequestsClick}
             />
           ) : null}

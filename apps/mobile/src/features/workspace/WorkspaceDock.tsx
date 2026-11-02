@@ -1,5 +1,7 @@
 import { Keyboard, Pressable, View } from "react-native";
 
+import { useProjectsChangeRequestTerms } from "../../state/entities";
+import { capitalizeTerm } from "@t3tools/client-runtime/source-control-clients";
 import { SymbolView } from "../../components/ui/AppSymbol";
 import { GlassSurface } from "../../components/ui/GlassSurface";
 import { useWorkspaceTabs } from "./WorkspaceTabsContext";
@@ -8,6 +10,7 @@ import { PullRequestGlyph } from "../pull-requests/pullRequestGlyphs";
 
 export function WorkspaceDock(props: { readonly onNewTask: () => void }) {
   const workspace = useWorkspaceTabs()!;
+  const changeRequestTerms = useProjectsChangeRequestTerms();
   return (
     <View
       className="w-full flex-row items-center justify-between"
@@ -27,7 +30,9 @@ export function WorkspaceDock(props: { readonly onNewTask: () => void }) {
               <Pressable
                 key={tab}
                 accessibilityRole="tab"
-                accessibilityLabel={tab === "threads" ? "Threads" : "Pull requests"}
+                accessibilityLabel={
+                  tab === "threads" ? "Threads" : capitalizeTerm(changeRequestTerms.plural)
+                }
                 accessibilityState={{ selected }}
                 onPress={() => {
                   if (selected) return;

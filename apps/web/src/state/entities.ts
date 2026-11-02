@@ -28,7 +28,9 @@ import type {
 import type { ThreadCheckpointSummary } from "@t3tools/client-runtime/state/thread-checkpoints";
 import { Atom } from "effect/reactivity";
 import { appAtomRegistry } from "../rpc/atomRegistry";
-import { environmentProjects } from "./projects";
+import { changeRequestTermsForHosts } from "@t3tools/client-runtime/source-control-clients";
+import { useClientSettings } from "../hooks/useSettings";
+import { environmentProjects, projectHostKindsAtom } from "./projects";
 import { environmentPresentations } from "./presentation";
 import { environmentServerConfigsAtom } from "./server";
 import {
@@ -94,6 +96,13 @@ export function useEnvironmentThreadRefs(
 
 export function useProjects(): ReadonlyArray<EnvironmentProject> {
   return useAtomValue(environmentProjects.projectsAtom);
+}
+
+/** Terms for surfaces spanning every project, such as the sidebar and the pull requests page. */
+export function useProjectsChangeRequestTerms() {
+  const hostKinds = useAtomValue(projectHostKindsAtom);
+  const providerTerms = useClientSettings((settings) => settings.providerSpecificTerminology);
+  return changeRequestTermsForHosts(hostKinds.split(" "), providerTerms);
 }
 
 /** Providers are left out; read them with `useEnvironmentProviders()`. */
