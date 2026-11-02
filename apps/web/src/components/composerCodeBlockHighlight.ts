@@ -39,6 +39,7 @@ function collectCodeBlocks(state: EditorState): Array<{ node: ProseMirrorNode; p
 
 export function composerCodeBlockHighlight(options: {
   resolveTheme: () => DiffThemeName;
+  subscribeToThemeChanges?: (listener: () => void) => () => void;
 }): Extension {
   return Extension.create({
     name: "composerCodeBlockHighlight",
@@ -149,6 +150,7 @@ export function composerCodeBlockHighlight(options: {
             themeObserver.observe(document.documentElement, {
               attributeFilter: ["class"],
             });
+            const unsubscribeTheme = options.subscribeToThemeChanges?.(() => refresh(false));
 
             return {
               update: () => refresh(true),
@@ -156,6 +158,7 @@ export function composerCodeBlockHighlight(options: {
                 disposed = true;
                 clearTimeout(deferredRefresh);
                 themeObserver.disconnect();
+                unsubscribeTheme?.();
               },
             };
           },

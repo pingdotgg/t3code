@@ -22,7 +22,7 @@ export default function ReadOnlySourcePreview(props: {
   return (
     <DiffWorkerPoolProvider>
       <Virtualizer
-        key={`${props.name}:${diffThemeName}:${props.text.length}`}
+        key={`${props.name}:${resolvedTheme}:${props.text.length}`}
         className="file-preview-virtualizer min-h-0 flex-1 overflow-auto"
         config={{ overscrollSize: 600, intersectionObserverMargin: 1200 }}
       >

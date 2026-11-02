@@ -1009,7 +1009,6 @@ export default function FilePreviewPanel({
     attachment === undefined ? resolveFilePreviewPath(requestedPath, cwd) : requestedPath;
   const draft = typeof composerDraftTarget === "string";
   const { resolvedTheme } = useTheme();
-  const diffThemeNames = useDiffThemeNames();
   const defaultWordWrap = useClientSettings((settings) => settings.wordWrap);
   const [wordWrapOverride, setWordWrapOverride] = useState<boolean | null>(null);
   const wordWrap = wordWrapOverride ?? defaultWordWrap;
@@ -1510,7 +1509,7 @@ export default function FilePreviewPanel({
             ) : (
               <DiffWorkerPoolProvider>
                 <EditableFileSurface
-                  key={`${relativePath}:${diffThemeNames[resolvedTheme]}`}
+                  key={`${relativePath}:${resolvedTheme}`}
                   environmentId={environmentId}
                   cwd={cwd}
                   relativePath={relativePath}
