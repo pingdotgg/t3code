@@ -16,6 +16,8 @@ import {
   OrchestratorMcpEnvironmentTarget,
   OrchestratorMcpRequestSecretInput,
   OrchestratorMcpRequestSecretResult,
+  OrchestratorMcpThreadDraftInput,
+  OrchestratorMcpThreadDraftResult,
   OrchestratorMcpFailure,
   OrchestratorMcpListScheduledTasksInput,
   OrchestratorMcpListScheduledTasksResult,
@@ -207,6 +209,21 @@ const RequestSecretTool = Tool.make("request_secret", {
   .annotate(Tool.Title, "Request a secret from the user")
   .annotate(Tool.Destructive, false);
 
+const ThreadDraftTool = Tool.make("t3_thread_draft", {
+  description:
+    "Offer the user a new thread on another of their machines with this prompt. They review it, approve it, and send it from their app; nothing runs before that, and this machine gets no access to the other one. Use it for a machine with no link that can launch there when no result needs to come back here, or for any machine when the user wants to review the prompt first. If the user also wants a result back, say it stays in that machine's thread: automatic results need a link that can launch there, and changing a link's access is the user's call; never ask for more access than the request needs. The new thread has none of this thread's history, files or uncommitted work: put the context it needs in the prompt as plain text, such as the relevant code or log lines; context links (`t3-context:`) do not carry over.",
+  parameters: OrchestratorMcpThreadDraftInput,
+  success: OrchestratorMcpThreadDraftResult,
+  failure: OrchestratorMcpFailure,
+  failureMode: "return",
+  dependencies,
+})
+  .annotate(Tool.Title, "Offer a thread on another machine")
+  // It only posts a card, like html_render: plan-mode agents may offer a draft; Approve and Send are the gates.
+  .annotate(Tool.Readonly, true)
+  .annotate(Tool.Destructive, false)
+  .annotate(McpSchema.EnabledWhen, McpInvocationContext.hiddenFromSubagents);
+
 const CreateThreadsTool = Tool.make("create_threads", {
   description:
     "Create new top-level threads in this checkout. Not delegation. One thread or its own worktree: `t3_thread_launch`. Project, branch, and worktree inherit.",
@@ -307,7 +324,7 @@ const ThreadInterruptTool = Tool.make("t3_thread_interrupt", {
 
 const EnvironmentLinksTool = Tool.make("t3_environment_links", {
   description:
-    "List linked environments (the user's other machines) and whether each answers now. Pass one's `environmentId` to a tool to act there; `delegate_task` takes `target.environmentId`. Expired: link it again with `t3_environment_link`.",
+    "List linked environments (the user's other machines) and whether each answers now. Pass one's `environmentId` to a tool to act there; `delegate_task` takes `target.environmentId`. Expired: for one new thread there, `t3_thread_draft`; for ongoing access, link it again with `t3_environment_link`.",
   success: OrchestratorMcpEnvironmentLinksResult,
   failure: OrchestratorMcpFailure,
   failureMode: "return",
@@ -321,7 +338,7 @@ const EnvironmentLinksTool = Tool.make("t3_environment_links", {
 
 const EnvironmentLinkTool = Tool.make("t3_environment_link", {
   description:
-    "Ask the user to link another machine, in a card. For a machine the user names that is not linked. Pass `hint` from their words, `environmentId` when one names it (already linked: returns `linked`), `url` only when the user gave an address. Returns `pending`; the outcome arrives as a message in this thread. Do not wait, poll, or call it again to check. Never ask for a pairing code in chat.",
+    "Ask the user to link another machine, in a card. For a machine the user names that is not linked. For one new thread on that machine with no result back, or when the user wants to review the prompt first, use t3_thread_draft instead. Pass `hint` from their words, `environmentId` when one names it (already linked: returns `linked`), `url` only when the user gave an address. Returns `pending`; the outcome arrives as a message in this thread. Do not wait, poll, or call it again to check. Never ask for a pairing code in chat.",
   parameters: OrchestratorMcpEnvironmentLinkInput,
   success: OrchestratorMcpEnvironmentLinkResult,
   failure: OrchestratorMcpFailure,
@@ -358,6 +375,7 @@ export const OrchestratorToolkit = Toolkit.make(
   ListScheduledTasksTool,
   DeleteScheduledTaskTool,
   RequestSecretTool,
+  ThreadDraftTool,
   CreateThreadsTool,
   ThreadListTool,
   ThreadReadTool,

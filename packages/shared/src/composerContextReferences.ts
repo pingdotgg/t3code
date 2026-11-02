@@ -308,7 +308,7 @@ function formatComposerContextProviderPayload(record: KnownComposerContextRecord
       return [
         `label: ${record.label}`,
         `environmentId: ${record.environmentId}`,
-        "The user means this machine. Not linked here yet: call t3_environment_link with this environmentId. Linked: pass it as environmentId, or target.environmentId for delegate_task.",
+        "The user means this machine. Linked here with launch access: pass it as environmentId, or target.environmentId for delegate_task, unless the user wants to review the prompt first. Linked read-only: reading there works; for a new thread there, t3_thread_draft with this environmentId. Linked but expired: no call through it works; for a new thread there, t3_thread_draft with this environmentId; for ongoing access, t3_environment_link renews it. Not linked: for one thread there with no result back, or to review the prompt first, t3_thread_draft with this environmentId; for ongoing access or a result back, call t3_environment_link with this environmentId.",
       ].join("\n");
   }
 }

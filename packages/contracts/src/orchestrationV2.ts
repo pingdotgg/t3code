@@ -1590,6 +1590,22 @@ const OrchestrationV2LinkRequestFields = {
   failure: Schema.optional(Schema.String),
 } as const;
 
+/** The longest prompt a thread draft card holds: the card shows all of it, so it stays readable. */
+export const THREAD_DRAFT_PROMPT_MAX_LENGTH = 8_000;
+
+/**
+ * An agent offered the user a new thread on another of their machines. The user's client reviews
+ * it, opens a draft there with the user's own session, and the user sends it. Nothing here grants
+ * this environment any access to the other one, and the item never changes after it is recorded.
+ */
+const OrchestrationV2ThreadDraftFields = {
+  type: Schema.Literal("thread_draft"),
+  prompt: TrimmedNonEmptyString.check(Schema.isMaxLength(THREAD_DRAFT_PROMPT_MAX_LENGTH)),
+  hiddenCharacters: NonNegativeInt,
+  environmentId: Schema.optional(EnvironmentId),
+  hint: Schema.optional(TrimmedNonEmptyString.check(Schema.isMaxLength(100))),
+} as const;
+
 export const OrchestrationV2TurnItem = Schema.Union([
   Schema.Struct({
     ...OrchestrationV2TurnItemBaseFields,
@@ -1786,6 +1802,10 @@ export const OrchestrationV2TurnItem = Schema.Union([
   Schema.Struct({
     ...OrchestrationV2TurnItemBaseFields,
     ...OrchestrationV2LinkRequestFields,
+  }),
+  Schema.Struct({
+    ...OrchestrationV2TurnItemBaseFields,
+    ...OrchestrationV2ThreadDraftFields,
   }),
   Schema.Struct({
     ...OrchestrationV2TurnItemBaseFields,
@@ -2615,6 +2635,10 @@ export const OrchestrationV2TurnItemJson = Schema.Union([
   Schema.Struct({
     ...OrchestrationV2TurnItemJsonBaseFields,
     ...OrchestrationV2LinkRequestFields,
+  }),
+  Schema.Struct({
+    ...OrchestrationV2TurnItemJsonBaseFields,
+    ...OrchestrationV2ThreadDraftFields,
   }),
   Schema.Struct({
     ...OrchestrationV2TurnItemJsonBaseFields,
@@ -3563,6 +3587,22 @@ const OrchestrationV2InternalCommand = Schema.Union([
         notification: OrchestrationV2Notification,
       }),
     ),
+  }),
+  /**
+   * Records a thread draft an agent offered. Internal so no client can put a card in a
+   * thread; the item is never updated.
+   */
+  Schema.Struct({
+    type: Schema.Literal("thread_draft.record"),
+    commandId: CommandId,
+    threadId: ThreadId,
+    runId: RunId,
+    nodeId: NodeId,
+    turnItemId: TurnItemId,
+    prompt: OrchestrationV2ThreadDraftFields.prompt,
+    hiddenCharacters: NonNegativeInt,
+    environmentId: Schema.optional(EnvironmentId),
+    hint: OrchestrationV2ThreadDraftFields.hint,
   }),
 ]);
 export type OrchestrationV2InternalCommand = typeof OrchestrationV2InternalCommand.Type;

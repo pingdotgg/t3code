@@ -84,7 +84,7 @@ export class PeerForwarding extends Context.Service<
 export const linkedEnvironmentsOff = new OrchestratorMcpFailure({
   code: "capability_denied",
   message:
-    "Linked environments is off on this machine, so no tool can act on another machine. Leave out environmentId to work here; the user can turn it on in Settings → Labs.",
+    "Linked environments is off on this machine, so no tool can act on another machine. Leave out environmentId to work here; for one new thread on another machine, use t3_thread_draft with that machine's environmentId or a hint; it works while links are off; the user can turn links on in Settings → Labs.",
 });
 
 /** The linked environment a call names, or nothing when it names this one. */
@@ -236,7 +236,7 @@ const make = Effect.gen(function* () {
    * empty list reads as a dead end and agents go looking elsewhere.
    */
   const NOT_LISTED =
-    "Not listed: not linked yet. Call t3_environment_link with a hint from the user's words.";
+    "Not listed: not linked yet. For one new thread there with no result back, or when the user wants to review the prompt first, call t3_thread_draft with a hint from the user's words; otherwise, for ongoing access or a result back, call t3_environment_link with that hint.";
 
   const listLinks: PeerForwarding["Service"]["links"] = Effect.fn("PeerForwarding.listLinks")(
     function* (scope) {

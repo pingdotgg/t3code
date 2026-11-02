@@ -6,6 +6,7 @@ import {
   type ModelSelection,
   NodeId,
   ORCHESTRATOR_MCP_RUNNING_TASK_NEXT,
+  ORCHESTRATOR_MCP_THREAD_DRAFT_NOTE,
   TurnItemId,
   type OrchestrationV2Run,
   type OrchestrationV2Subagent,
@@ -25,6 +26,8 @@ import {
   type OrchestratorMcpDeleteScheduledTaskInput,
   type OrchestratorMcpRequestSecretInput,
   type OrchestratorMcpRequestSecretResult,
+  type OrchestratorMcpThreadDraftInput,
+  type OrchestratorMcpThreadDraftResult,
   type OrchestratorMcpDeleteScheduledTaskResult,
   type OrchestratorMcpListScheduledTasksResult,
   type OrchestratorMcpScheduledTask,
@@ -64,6 +67,7 @@ import {
   isOrchestrationV2WorkActive,
 } from "@t3tools/contracts";
 import { getProviderOptionCurrentValue } from "@t3tools/shared/model";
+import { sanitizeThreadDraftText } from "@t3tools/shared/promptLinks";
 import { runRanAfter } from "@t3tools/shared/orchestrationV2ThreadError";
 import { formatThreadLink } from "@t3tools/shared/threadLinks";
 import {
@@ -189,6 +193,11 @@ export interface OrchestratorMcpServiceShape {
     scope: McpInvocationScope,
     input: OrchestratorMcpRequestSecretInput,
   ) => Effect.Effect<OrchestratorMcpRequestSecretResult, OrchestratorMcpFailure>;
+  /** Records a card that offers the user one new thread on another machine; it waits for nothing. */
+  readonly draftThread: (
+    scope: McpInvocationScope,
+    input: OrchestratorMcpThreadDraftInput,
+  ) => Effect.Effect<OrchestratorMcpThreadDraftResult, OrchestratorMcpFailure>;
   readonly listThreads: (
     scope: McpInvocationScope,
     input: OrchestratorMcpThreadListInput,
@@ -941,6 +950,9 @@ function turnItemText(item: OrchestrationV2TurnItem): string | null {
       return item.linkStatus === "linked"
         ? `Linked ${item.linkedLabel ?? item.label ?? item.url ?? "an environment"} (${item.linkedAccess}).`
         : `Asked the user to link ${item.label ?? item.url ?? "an environment"}: ${item.linkStatus}.`;
+    case "thread_draft":
+      // The title says what it is; the prompt is already in the tool call's input.
+      return null;
     case "subagent":
       return item.result ?? item.progress ?? item.prompt;
     case "dynamic_tool":
@@ -2105,6 +2117,84 @@ const make = Effect.gen(function* () {
         return { scheduledTaskId: existing.id, deleted: true };
       },
     ),
+    draftThread: Effect.fn("OrchestratorMcpService.draftThread")(function* (scope, input) {
+      yield* requireCapability(scope);
+      const threadScope = yield* requireThreadScope(scope, "t3_thread_draft");
+      const threadId = threadScope.thread.threadId;
+      const prompt = sanitizeThreadDraftText(input.prompt);
+      if (prompt.malformed) {
+        return yield* failure("invalid_request", "The prompt is not valid text.");
+      }
+      if (prompt.text.length === 0) {
+        return yield* failure(
+          "invalid_request",
+          "The prompt had only hidden characters. Write it as plain text.",
+        );
+      }
+      if (prompt.padded) {
+        return yield* failure(
+          "invalid_request",
+          "The prompt has long runs of blank lines or spaces. Remove them so the user can read it in one view.",
+        );
+      }
+      const hint = input.hint === undefined ? undefined : sanitizeThreadDraftText(input.hint);
+      const usableHint =
+        hint === undefined || hint.malformed || hint.padded || hint.text.length === 0
+          ? undefined
+          : hint.text;
+      const records = yield* threadManagement
+        .getThreadRecords(threadId, ["runs"])
+        .pipe(
+          Effect.mapError((error) =>
+            failure(
+              "orchestration_error",
+              `Unable to read thread ${threadId}: ${errorMessage(error)}`,
+            ),
+          ),
+        );
+      const run = ThreadManagementService.latestActiveRun(records);
+      if (
+        run === undefined ||
+        run.rootNodeId === null ||
+        run.providerInstanceId !== threadScope.thread.providerInstanceId
+      ) {
+        return yield* failure(
+          "parent_not_active",
+          "Offering a thread draft requires an active run owned by this MCP provider session.",
+        );
+      }
+      const key = yield* requestKey(input.clientRequestId);
+      // The run is in both ids: a key reused in a later turn makes a new card, never an old receipt.
+      const turnItemId = TurnItemId.make(
+        `turn-item:thread-draft:${stablePart(threadId)}:${stablePart(scope.requestNamespace)}:${stablePart(run.id)}:${stablePart(key)}`,
+      );
+      yield* threadManagement
+        .dispatch({
+          type: "thread_draft.record",
+          commandId: stableCommandId({
+            scope,
+            requestKey: key,
+            operation: `thread-draft:${run.id}`,
+          }),
+          threadId,
+          runId: run.id,
+          nodeId: run.rootNodeId,
+          turnItemId,
+          prompt: prompt.text,
+          hiddenCharacters: prompt.hiddenCharacters,
+          ...(input.environmentId === undefined ? {} : { environmentId: input.environmentId }),
+          ...(usableHint === undefined ? {} : { hint: usableHint }),
+        })
+        .pipe(
+          Effect.mapError((error) =>
+            failure(
+              "orchestration_error",
+              `Could not record the thread draft: ${errorMessage(error)}`,
+            ),
+          ),
+        );
+      return { status: "shown", turnItemId, note: ORCHESTRATOR_MCP_THREAD_DRAFT_NOTE } as const;
+    }),
     requestSecret: Effect.fn("OrchestratorMcpService.requestSecret")(function* (scope, input) {
       const { scope: threadScope, parent } = yield* loadThreadCaller(scope, "request_secret");
       const threadId = threadScope.thread.threadId;

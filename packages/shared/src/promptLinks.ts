@@ -1,3 +1,5 @@
+import { hasOnlyPairedSurrogates } from "@t3tools/contracts";
+
 import { DEFAULT_HOSTED_APP_URL } from "./connectAuth.ts";
 
 export const PROMPT_LINK_MAX_PROMPT_LENGTH = 8_000;
@@ -64,6 +66,109 @@ export function sanitizeLinkedPrompt(raw: string): LinkedPrompt {
     })
     .join("");
   return { text: text.trim(), hiddenCharacters };
+}
+
+export interface ThreadDraftText extends LinkedPrompt {
+  /** Long blank stretches that could push part of the prompt out of view. */
+  readonly padded: boolean;
+  /** Unpaired surrogates: removing a character could pair two halves into a hidden one. */
+  readonly malformed: boolean;
+}
+
+// Unicode 17. Characters drawn as nothing by design count as padding; together with
+// HIDDEN_CHARACTERS this covers every White_Space, Default_Ignorable and Cf code point.
+const PADDING_CODE_POINTS = new Set([
+  0x200d, 0xfe0e, 0xfe0f, 0x2800, 0x1d159, 0x16fe4, 0x303f, 0x2d7f, 0x1107f,
+  // Invisible_Stacker
+  0x1039, 0x17d2, 0x1a60, 0x1bab, 0xaaf6, 0x10a3f, 0x11133, 0x113d0, 0x1193e, 0x11a47, 0x11a99,
+  0x11d45, 0x11d97, 0x11f42,
+  // Prepended_Concatenation_Mark
+  0x0600, 0x0601, 0x0602, 0x0603, 0x0604, 0x0605, 0x06dd, 0x070f, 0x0890, 0x0891, 0x08e2, 0x110bd,
+  0x110cd,
+]);
+const isPadding = (character: string) => {
+  const codePoint = character.codePointAt(0) ?? 0;
+  return (
+    (character !== "\n" && /\s/u.test(character)) ||
+    PADDING_CODE_POINTS.has(codePoint) ||
+    // Egyptian hieroglyph format controls and FULL/HALF BLANK.
+    (codePoint >= 0x13430 && codePoint <= 0x13442)
+  );
+};
+const PADDING_MAX_CODE_POINTS = 200;
+const PADDING_MAX_LINE_BREAKS = 6;
+const isSelector = (character: string | undefined) =>
+  character === "\uFE0E" || character === "\uFE0F";
+const isKeycapBase = (character: string | undefined) =>
+  character !== undefined && /^[#*0-9]$/.test(character);
+
+/**
+ * Agent-written text the user approves on a thread draft card. Shared by the server and both
+ * clients so the card, the draft and the thread on the other machine hold the same text.
+ */
+export function sanitizeThreadDraftText(raw: string): ThreadDraftText {
+  if (!hasOnlyPairedSurrogates(raw)) {
+    return { text: raw, hiddenCharacters: 0, padded: false, malformed: true };
+  }
+  // The web composer strips its terminal-context placeholder when it restores a draft.
+  let hiddenCharacters = 0;
+  const withoutPlaceholder = raw.replace(/\uFFFC/g, () => {
+    hiddenCharacters++;
+    return "";
+  });
+  const linked = sanitizeLinkedPrompt(withoutPlaceholder);
+  hiddenCharacters += linked.hiddenCharacters;
+  const characters = Array.from(linked.text);
+  // A selector or joiner outside emoji can change a path without a visible trace.
+  const selectorsKept: string[] = [];
+  characters.forEach((character, index) => {
+    if (!isSelector(character)) {
+      selectorsKept.push(character);
+      return;
+    }
+    const previous = selectorsKept.at(-1);
+    const afterEmoji =
+      previous !== "\u200D" && !isSelector(previous) && isEmojiPart(previous?.codePointAt(0));
+    const inKeycap = isKeycapBase(previous) && characters[index + 1] === "\u20E3";
+    if (afterEmoji || inKeycap) selectorsKept.push(character);
+    else hiddenCharacters++;
+  });
+  const kept: string[] = [];
+  selectorsKept.forEach((character, index) => {
+    if (character !== "\u200D") {
+      kept.push(character);
+      return;
+    }
+    const joins =
+      isEmojiPart(kept.at(-1)?.codePointAt(0)) &&
+      isEmojiPart(selectorsKept[index + 1]?.codePointAt(0));
+    if (joins) kept.push(character);
+    else hiddenCharacters++;
+  });
+  const text = kept.join("").trim();
+  return { text, hiddenCharacters, padded: hasLongPadding(text), malformed: false };
+}
+
+/** A stretch of padding and line breaks between visible characters that is too long to read past. */
+function hasLongPadding(text: string): boolean {
+  if (text.length === 0) return false;
+  let codePoints = 0;
+  let lineBreaks = 0;
+  let visible = false;
+  for (const character of text) {
+    if (character === "\n" || isPadding(character)) {
+      codePoints++;
+      if (character === "\n") lineBreaks++;
+      if (codePoints >= PADDING_MAX_CODE_POINTS || lineBreaks >= PADDING_MAX_LINE_BREAKS) {
+        return true;
+      }
+      continue;
+    }
+    visible = true;
+    codePoints = 0;
+    lineBreaks = 0;
+  }
+  return !visible;
 }
 
 const OWNER = /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})$/;

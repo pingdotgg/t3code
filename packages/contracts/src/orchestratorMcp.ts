@@ -39,6 +39,7 @@ import {
   OrchestrationV2CreationSource,
   OrchestrationV2RunStatus,
   OrchestrationV2TurnItemStatus,
+  THREAD_DRAFT_PROMPT_MAX_LENGTH,
 } from "./orchestrationV2.ts";
 import { ProviderOptionSelection, ProviderOptionSelectionValue } from "./model.ts";
 import { ProviderDriverKind, ProviderInstanceId } from "./providerInstance.ts";
@@ -771,6 +772,36 @@ export const OrchestratorMcpRequestSecretResult = Schema.Union([
   }),
 ]);
 export type OrchestratorMcpRequestSecretResult = typeof OrchestratorMcpRequestSecretResult.Type;
+
+/** What a thread draft tells the agent; the eval harness imports it so it tests the real text. */
+export const ORCHESTRATOR_MCP_THREAD_DRAFT_NOTE =
+  "The user sees a card in this thread, reviews the prompt, picks the machine and sends it from their app. That is the whole handoff: do not also link the machine or launch a thread, and tell the user the card is waiting here. You will not learn whether they send it.";
+
+export const OrchestratorMcpThreadDraftInput = Schema.Struct({
+  prompt: TrimmedNonEmptyString.check(Schema.isMaxLength(THREAD_DRAFT_PROMPT_MAX_LENGTH)).annotate({
+    description:
+      "The first message of the new thread, at most 8,000 characters (the card shows all of it). It must stand alone: the new thread has none of this thread's history or files.",
+  }),
+  environmentId: Schema.optional(EnvironmentId).annotate({
+    description:
+      "The machine to offer it on, from an @ mention or t3_environment_links. It does not need to be linked.",
+  }),
+  hint: Schema.optional(TrimmedNonEmptyString.check(Schema.isMaxLength(100))).annotate({
+    description: "The user's words for the machine, such as 'vps', when you have no environmentId.",
+  }),
+  clientRequestId: Schema.optional(OrchestratorMcpClientRequestId).annotate({
+    description:
+      "Retrying with it in the same turn returns the first card; a new or changed prompt needs a new key.",
+  }),
+});
+export type OrchestratorMcpThreadDraftInput = typeof OrchestratorMcpThreadDraftInput.Type;
+
+export const OrchestratorMcpThreadDraftResult = Schema.Struct({
+  status: Schema.Literal("shown"),
+  turnItemId: TurnItemId,
+  note: Schema.Literal(ORCHESTRATOR_MCP_THREAD_DRAFT_NOTE),
+});
+export type OrchestratorMcpThreadDraftResult = typeof OrchestratorMcpThreadDraftResult.Type;
 
 export const OrchestratorMcpEnvironmentLinkInput = Schema.Struct({
   environmentId: Schema.optional(EnvironmentId).annotate({
