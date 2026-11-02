@@ -253,7 +253,7 @@ export const makeAntigravityAuth = Effect.fn("makeAntigravityAuth")(function* <
       Effect.flatMap((authorization) =>
         lock.withPermits(1)(
           Effect.gen(function* () {
-            if (activeFlow !== flow || operation !== "auth") return;
+            if (activeFlow !== flow || operation !== "auth" || flow.authenticated) return;
             if (flow.pending) {
               if (flow.pending.authorizationUrl === authorization.authorizationUrl) return;
               return yield* new AcpErrors.AcpTransportError({

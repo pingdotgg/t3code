@@ -330,6 +330,23 @@ it.layer(NodeServices.layer)("AntigravityAuth", (it) => {
     }),
   );
 
+  it.effect("ignores a late duplicate Google link once sign-in authenticates", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness();
+      yield* harness.auth.controller.start(owner);
+      yield* phase(harness.auth, "waiting");
+      yield* Deferred.succeed(harness.authenticated, undefined);
+      yield* Deferred.await(harness.sessionRequested);
+
+      yield* harness.receiveAuthorizationUrl(authorizationUrl);
+      const current = yield* harness.auth.controller
+        .subscribe(owner)
+        .pipe(Stream.runHead, Effect.map(Option.getOrThrow));
+      assert.equal(current.phase, "verifying");
+      assert.isNull(current.authorizationUrl);
+    }),
+  );
+
   it.effect("does not call a completed Google sign-in expired when no session opens", () =>
     Effect.gen(function* () {
       const harness = yield* makeHarness();
