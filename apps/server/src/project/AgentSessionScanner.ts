@@ -4,6 +4,7 @@ import {
   AgentSessionScanError,
   ClaudeSettings,
   CodexSettings,
+  isSecretReference,
   ProviderDriverKind,
   ProviderInstanceId,
   resolveProviderInstanceEnabled,
@@ -12,6 +13,8 @@ import {
   type AgentSessionProjectGit,
   type AgentSessionScanResult,
   type ProviderInstanceConfig,
+  type ProviderInstanceEnvironment,
+  type ProviderInstanceEnvironmentVariable,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
@@ -24,6 +27,7 @@ import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 
+import * as SecretResolver from "@t3tools/secret-provider-core/server/SecretResolver";
 import { isBareGitConfig, parseOriginUrlFromGitConfig } from "@t3tools/shared/git";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { normalizeProjectPathForComparison } from "@t3tools/shared/path";
@@ -729,9 +733,10 @@ export const make = Effect.gen(function* () {
   const projectStore = yield* ProjectStore.ProjectStoreV2;
   const baseDir = path.resolve(serverConfig.baseDir);
   const worktreesDir = path.resolve(serverConfig.worktreesDir);
-  const foldWorktreeCase = (yield* HostProcess.Platform) === "win32";
+  const windows = (yield* HostProcess.Platform) === "win32";
   const hostEnvironment = yield* HostProcess.Environment;
   const homeDir = yield* HostProcess.HomeDirectory;
+  const secretResolver = yield* SecretResolver.SecretResolver;
   // `/private/tmp` is what macOS reports for sessions started in `/tmp`.
   const excludedProjectRoots = new Set(
     [homeDir, NodeOS.tmpdir(), "/tmp", "/private/tmp"].map((directory) =>
@@ -746,20 +751,45 @@ export const make = Effect.gen(function* () {
   const isExcludedProjectPath = (candidatePath: string) =>
     excludedProjectRoots.has(normalizeProjectPathForComparison(candidatePath)) ||
     excludedProjectAncestors.some((ancestor) =>
-      normalizeForWorktreeMatch(candidatePath, foldWorktreeCase).startsWith(
-        normalizeForWorktreeMatch(ancestor, foldWorktreeCase),
+      normalizeForWorktreeMatch(candidatePath, windows).startsWith(
+        normalizeForWorktreeMatch(ancestor, windows),
       ),
     ) ||
-    normalizeForWorktreeMatch(candidatePath, foldWorktreeCase).startsWith(
-      normalizeForWorktreeMatch(baseDir, foldWorktreeCase),
+    normalizeForWorktreeMatch(candidatePath, windows).startsWith(
+      normalizeForWorktreeMatch(baseDir, windows),
     ) ||
-    isT3ManagedWorktree(candidatePath, worktreesDir, foldWorktreeCase);
+    isT3ManagedWorktree(candidatePath, worktreesDir, windows);
 
   const listDirectory = (directory: string) =>
     fileSystem.readDirectory(directory).pipe(Effect.orElseSucceed((): ReadonlyArray<string> => []));
 
   const statOption = (target: string) =>
     fileSystem.stat(target).pipe(Effect.asSome, Effect.orElseSucceed(Option.none));
+
+  // Drivers see the environment with secret references resolved (readInstanceSecrets); discovery
+  // must read the same values or a secret-backed home goes undiscovered. Home selection only
+  // reads `relevant` variables, so only their references are read; the rest are dropped because
+  // every consumer either matches relevant names or skips non-string values.
+  const resolveInstanceEnvironment = Effect.fn("AgentSessionScanner.resolveInstanceEnvironment")(
+    function* (
+      environment: ProviderInstanceEnvironment | undefined,
+      relevant: (variable: ProviderInstanceEnvironmentVariable) => boolean,
+    ) {
+      const variables = environment ?? [];
+      const references = variables
+        .filter(relevant)
+        .flatMap((variable) => (isSecretReference(variable.value) ? [variable.value] : []));
+      const values = references.length === 0 ? [] : yield* secretResolver.read(references);
+      let index = 0;
+      return variables.flatMap((variable) => {
+        if (typeof variable.value === "string") return [{ ...variable, value: variable.value }];
+        if (!relevant(variable)) return [];
+        const secret = values[index++];
+        // An unreadable reference stays out, matching the driver's environment.
+        return secret === undefined ? [] : [{ ...variable, value: secret, sensitive: true }];
+      });
+    },
+  );
 
   const directoryIdentity = Effect.fn("AgentSessionScanner.directoryIdentity")(function* (
     target: string,
@@ -1305,17 +1335,30 @@ export const make = Effect.gen(function* () {
       const homes: Array<{ homePath: string; providerInstanceId: ProviderInstanceId }> = [];
       const seenHomes = new Set<string>();
       for (const { instanceId, config: instance } of instances) {
+        // Resolve only the secrets home selection reads; other instance secrets stay unread.
+        const homeVariableNames =
+          source === "pi"
+            ? ["PI_CODING_AGENT_DIR", "PI_CODING_AGENT_SESSION_DIR"]
+            : ["CLAUDE_CONFIG_DIR", "CODEX_HOME"];
+        const instanceEnvironment = yield* resolveInstanceEnvironment(
+          instance.environment,
+          (variable) =>
+            // Windows merges variable names case-insensitively; discovery must match the merge.
+            homeVariableNames.some((name) =>
+              windows ? variable.name.toUpperCase() === name : variable.name === name,
+            ),
+        );
         const environmentHome = (name: "CLAUDE_CONFIG_DIR" | "CODEX_HOME") => {
-          const configured = instance.environment?.findLast(
-            (variable) => variable.name === name,
+          const configured = instanceEnvironment.findLast((variable) =>
+            windows ? variable.name.toUpperCase() === name : variable.name === name,
           )?.value;
-          return typeof configured === "string" ? configured : hostEnvironment[name];
+          return configured ?? hostEnvironment[name];
         };
 
         let homePath: string;
         if (source === "pi") {
           const environment = yield* mergeProviderInstanceEnvironment(
-            instance.environment,
+            instanceEnvironment,
             hostEnvironment,
           ).pipe(Effect.provideService(HostProcess.HomeDirectory, homeDir));
           homePath = resolvePiSessionsDir(environment, homeDir, path);

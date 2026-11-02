@@ -7,8 +7,11 @@ import {
   ProjectId,
   ProviderDriverKind,
   ProviderInstanceId,
+  SecretProviderId,
   type ServerSettings as ContractServerSettings,
 } from "@t3tools/contracts";
+import * as SecretResolver from "@t3tools/secret-provider-core/server/SecretResolver";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import { symlinksSupported } from "@t3tools/shared/testing/symlinks";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -49,7 +52,14 @@ interface ScannerTestInput {
   readonly piAgentDir?: string;
   readonly importedWorkspaceRoots?: ReadonlyArray<string>;
   readonly configBaseDir?: string;
+  readonly hostPlatform?: NodeJS.Platform;
+  readonly hostEnvironment?: NodeJS.ProcessEnv;
+  readonly hostHomeDirectory?: string;
   readonly providerInstances?: ContractServerSettings["providerInstances"];
+  /** Secret values the test resolver hands back, keyed by `SecretReference.reference`. */
+  readonly secretValues?: Readonly<Record<string, string>>;
+  /** Collects every reference `SecretResolver.read` receives, in order. */
+  readonly secretReads?: Array<string>;
 }
 
 const layerScannerTest = (input: ScannerTestInput) =>
@@ -88,6 +98,23 @@ const layerScannerTest = (input: ScannerTestInput) =>
           input.configBaseDir ?? { prefix: "t3code-scanner-config-" },
         ),
         layerProjectStore(input.importedWorkspaceRoots ?? []),
+        ...(input.hostPlatform === undefined
+          ? []
+          : [Layer.succeed(HostProcess.Platform, input.hostPlatform)]),
+        ...(input.hostEnvironment === undefined
+          ? []
+          : [Layer.succeed(HostProcess.Environment, input.hostEnvironment)]),
+        ...(input.hostHomeDirectory === undefined
+          ? []
+          : [Layer.succeed(HostProcess.HomeDirectory, input.hostHomeDirectory)]),
+        Layer.succeed(SecretResolver.SecretResolver, {
+          read: (references) => {
+            for (const reference of references) input.secretReads?.push(reference.reference);
+            const secretValues = input.secretValues ?? {};
+            return Effect.succeed(references.map((reference) => secretValues[reference.reference]));
+          },
+          invalidate: () => Effect.void,
+        }),
       ),
     ),
   );
@@ -661,6 +688,110 @@ it.layer(NodeServices.layer)("AgentSessionScanner", (it) => {
           [piWorkspace, ["pi"]],
           [codexWorkspace, ["codex"]],
           [claudeWorkspace, ["claudeAgent"]],
+        ]);
+      }),
+    );
+
+    it.effect("matches Windows-cased provider environment variable names", () =>
+      Effect.gen(function* () {
+        const path = yield* Path.Path;
+        const claudeHomePath = yield* makeTempDir("t3code-claude-home-");
+        const codexHomePath = yield* makeTempDir("t3code-codex-home-");
+        const hostHomePath = yield* makeTempDir("t3code-host-home-");
+        const codexEnvironmentHome = yield* makeTempDir("t3code-codex-env-");
+        const workspace = yield* makeTempDir("t3code-workspace-codex-");
+
+        yield* writeTranscript({
+          filePath: path.join(
+            codexEnvironmentHome,
+            "sessions",
+            "2026",
+            "01",
+            "01",
+            "rollout-session.jsonl",
+          ),
+          contents: codexRolloutLine(workspace),
+          mtimeMs: Date.parse("2026-01-02T00:00:00.000Z"),
+        });
+
+        const result = yield* runScan({
+          claudeHomePath,
+          codexHomePath,
+          hostPlatform: "win32",
+          hostEnvironment: {},
+          hostHomeDirectory: hostHomePath,
+          providerInstances: {
+            [ProviderInstanceId.make("codex")]: {
+              driver: ProviderDriverKind.make("codex"),
+              // Windows merges variable names case-insensitively; discovery must match the merge.
+              environment: [{ name: "Codex_Home", value: codexEnvironmentHome, sensitive: false }],
+              config: {},
+            },
+          },
+        });
+
+        expect(result.candidates.map((candidate) => [candidate.path, candidate.sources])).toEqual([
+          [workspace, ["codex"]],
+        ]);
+      }),
+    );
+
+    it.effect("resolves secret-backed provider instance home variables", () =>
+      Effect.gen(function* () {
+        const path = yield* Path.Path;
+        const claudeHomePath = yield* makeTempDir("t3code-claude-home-");
+        const codexHomePath = yield* makeTempDir("t3code-codex-home-");
+        const hostHomePath = yield* makeTempDir("t3code-host-home-");
+        const secretHomePath = yield* makeTempDir("t3code-codex-secret-");
+        const workspace = yield* makeTempDir("t3code-workspace-codex-");
+        const secretReads: Array<string> = [];
+
+        yield* writeTranscript({
+          filePath: path.join(
+            secretHomePath,
+            "sessions",
+            "2026",
+            "01",
+            "01",
+            "rollout-session.jsonl",
+          ),
+          contents: codexRolloutLine(workspace),
+          mtimeMs: Date.parse("2026-01-02T00:00:00.000Z"),
+        });
+
+        const result = yield* runScan({
+          claudeHomePath,
+          codexHomePath,
+          hostEnvironment: {},
+          hostHomeDirectory: hostHomePath,
+          providerInstances: {
+            [ProviderInstanceId.make("codex")]: {
+              driver: ProviderDriverKind.make("codex"),
+              // Drivers read the resolved secret; discovery must see the same home. The API
+              // key cannot affect discovery, so its reference must stay unread.
+              environment: [
+                {
+                  name: "CODEX_HOME",
+                  value: { provider: SecretProviderId.make("test"), reference: "vault:codex-home" },
+                  sensitive: false,
+                },
+                {
+                  name: "OPENAI_API_KEY",
+                  value: { provider: SecretProviderId.make("test"), reference: "vault:api-key" },
+                  sensitive: true,
+                },
+              ],
+              // Blank so the secret home wins over the harness default settings home.
+              config: { homePath: "" },
+            },
+          },
+          secretValues: { "vault:codex-home": secretHomePath },
+          secretReads,
+        });
+
+        expect(secretReads).toEqual(["vault:codex-home"]);
+        expect(result.candidates.map((candidate) => [candidate.path, candidate.sources])).toEqual([
+          [workspace, ["codex"]],
         ]);
       }),
     );
