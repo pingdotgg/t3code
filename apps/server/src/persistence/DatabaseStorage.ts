@@ -31,7 +31,7 @@ export class DatabaseStorage extends Context.Service<
   }
 >()("t3/persistence/DatabaseStorage") {}
 
-// Deleted events have newer retained replacements; old cursors replay to the same state.
+// Expired thread history raises a replay floor; older cursors receive a snapshot.
 const make = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
   const maintenance = yield* ProjectionMaintenance.ProjectionMaintenanceV2;
@@ -98,7 +98,8 @@ const make = Effect.gen(function* () {
 
   // Even a pass that deletes nothing scans the event store. Persist completion
   // so restarting does not trigger another scan before the six-hour interval.
-  const compactedAtPath = path.join(path.dirname(config.dbPath), "compacted-at");
+  // A new marker starts retention shortly after upgrade instead of waiting six hours.
+  const historyRetainedAtPath = path.join(path.dirname(config.dbPath), "history-retained-at");
   const compact = Effect.gen(function* () {
     let sliceStarted = yield* Clock.monotonicTimeNanos;
     const betweenPages = Effect.gen(function* () {
@@ -110,7 +111,7 @@ const make = Effect.gen(function* () {
     });
     const result = yield* maintenance.compactEventStore(betweenPages);
     const completedAt = yield* Clock.currentTimeMillis;
-    yield* fs.writeFileString(compactedAtPath, String(completedAt)).pipe(Effect.ignore);
+    yield* fs.writeFileString(historyRetainedAtPath, String(completedAt)).pipe(Effect.ignore);
     if (result.deletedEventCount > 0 || result.deletedReceiptCount > 0) {
       yield* Effect.logInfo("Compacted orchestration history", result);
     }
@@ -119,7 +120,7 @@ const make = Effect.gen(function* () {
       Effect.logWarning("Orchestration history compaction failed", { cause }),
     ),
   );
-  const lastCompactedAt = yield* fs.readFileString(compactedAtPath).pipe(
+  const lastCompactedAt = yield* fs.readFileString(historyRetainedAtPath).pipe(
     Effect.map(Number),
     Effect.orElseSucceed(() => Number.NaN),
   );

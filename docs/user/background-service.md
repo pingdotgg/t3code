@@ -32,7 +32,9 @@ before updating; to match a remote client's version, follow
 [Updating T3 Code](./updating.md).
 
 Pass an exact version (`t3 update 0.0.42`) to pin one, `--channel nightly` to
-switch trains, or `--allow-downgrade` to move backwards. `preview` is a
+switch trains, or `--allow-downgrade` to move backwards. After one-day history
+cleanup has pruned events, do not downgrade to a version from before that
+cleanup. An older version may show incomplete conversation history. `preview` is a
 maintainers' test train: its builds can be broken and are never offered as
 updates, so the installer and `t3 update` ask for confirmation before
 installing one.
@@ -161,8 +163,9 @@ For failures after signing in to T3 Connect, see
 
 ## Reclaim database space
 
-T3 Code removes superseded internal history on its own while it runs; your
-conversations are kept. Databases created before this shrank automatically
+T3 Code keeps your conversations and removes internal event history it no
+longer needs, such as streaming updates older than a day, while it runs.
+Databases created before this shrank automatically
 still hold the freed space on disk until a one-time offline repair returns it
 and turns on automatic shrinking. Settings > Maintenance (web and desktop) or
 Settings > Maintenance (mobile) suggests the repair when at least 1 GiB can be
