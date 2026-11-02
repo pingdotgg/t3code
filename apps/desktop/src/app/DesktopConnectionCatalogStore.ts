@@ -21,8 +21,12 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
+import * as Semaphore from "effect/Semaphore";
+import { ChildProcessSpawner } from "effect/process";
 
 import * as ElectronSafeStorage from "../electron/ElectronSafeStorage.ts";
+import { decryptChromiumValue } from "../preview/BrowserImport/ChromiumCookies.ts";
+import { resolveChromiumKeys } from "../preview/BrowserImport/ChromiumKeys.ts";
 import * as DesktopSavedEnvironments from "../settings/DesktopSavedEnvironments.ts";
 import * as DesktopEnvironment from "./DesktopEnvironment.ts";
 
@@ -45,6 +49,14 @@ const RuntimeConnectionCatalogDocumentJson = Schema.fromJsonString(
 const encodeRuntimeConnectionCatalogDocumentJson = Schema.encodeEffect(
   RuntimeConnectionCatalogDocumentJson,
 );
+const decodeRuntimeConnectionCatalogDocumentJsonOption = Schema.decodeOption(
+  RuntimeConnectionCatalogDocumentJson,
+);
+const decodeJsonOption = Schema.decodeOption(Schema.fromJsonString(Schema.Unknown));
+
+// Linux source builds keep apps/desktop's productName, so their libsecret key is stored under it;
+// the official AppImage is "t3code" and must stay that way for its existing users.
+const SOURCE_BUILD_LINUX_SAFE_STORAGE_NAME = "T3 Code (Beta)";
 
 const DesktopConnectionCatalogStoreWriteOperation = Schema.Literals([
   "create-temporary-file-name",
@@ -375,6 +387,37 @@ const migrateSavedEnvironmentRecords = Effect.fn(
   };
 });
 
+const decryptWithSourceBuildLinuxKey = Effect.fn(
+  "desktop.connectionCatalogStore.decryptWithSourceBuildLinuxKey",
+)(function* (encrypted: Uint8Array) {
+  // decryptChromiumValue also accepts plaintext, and v10 uses a fixed passphrase, so only v11
+  // can depend on the app name.
+  if (Buffer.from(encrypted.subarray(0, 3)).toString("latin1") !== "v11") {
+    return Option.none<string>();
+  }
+  const keys = yield* resolveChromiumKeys({
+    platform: "linux",
+    keychainService: undefined,
+    keychainAccount: undefined,
+    linuxSecretApplication: SOURCE_BUILD_LINUX_SAFE_STORAGE_NAME,
+  }).pipe(
+    Effect.tapError((error) =>
+      Effect.logWarning("Could not read the source build safe storage key.", {
+        reason: error.reason,
+      }),
+    ),
+    Effect.option,
+  );
+  return Option.flatMapNullishOr(keys, (material) => {
+    if (material.cbcV11 === undefined) return null;
+    return decryptChromiumValue(encrypted, { cbcV11: material.cbcV11 }, "", undefined, "linux");
+  }).pipe(
+    Option.filter((catalog) =>
+      Option.isSome(decodeRuntimeConnectionCatalogDocumentJsonOption(catalog)),
+    ),
+  );
+});
+
 /** @public */
 export const make = Effect.gen(function* () {
   const environment = yield* DesktopEnvironment.DesktopEnvironment;
@@ -383,6 +426,8 @@ export const make = Effect.gen(function* () {
   const safeStorage = yield* ElectronSafeStorage.ElectronSafeStorage;
   const crypto = yield* Crypto.Crypto;
   const savedEnvironments = yield* DesktopSavedEnvironments.DesktopSavedEnvironments;
+  const services = yield* Effect.context<ChildProcessSpawner.ChildProcessSpawner>();
+  const writeLock = yield* Semaphore.make(1);
   const catalogPath = path.join(environment.stateDir, "connection-catalog.json");
   const encryptionAvailable = safeStorage.isEncryptionAvailable.pipe(
     Effect.mapError(
@@ -470,6 +515,33 @@ export const make = Effect.gen(function* () {
     return Option.some(encoded);
   });
 
+  const recoverSourceBuildLinuxCatalog = Effect.fn(
+    "desktop.connectionCatalogStore.recoverSourceBuildLinuxCatalog",
+  )(function* (document: EncryptedConnectionCatalogDocument, encryptedCatalog: Uint8Array) {
+    const recovered = yield* decryptWithSourceBuildLinuxKey(encryptedCatalog).pipe(
+      Effect.provide(services),
+    );
+    if (Option.isNone(recovered)) {
+      return recovered;
+    }
+    // Reading the key can wait on a keyring unlock prompt; keep any catalog saved meanwhile.
+    yield* Effect.gen(function* () {
+      const current = yield* readDocument(fileSystem, catalogPath);
+      if (Option.isSome(current) && current.value.encryptedCatalog === document.encryptedCatalog) {
+        yield* writeCatalog(recovered.value);
+      }
+    }).pipe(
+      writeLock.withPermits(1),
+      Effect.catch((error) =>
+        Effect.logWarning("Could not re-encrypt the recovered connection catalog.", {
+          catalogPath,
+          errorTag: error._tag,
+        }),
+      ),
+    );
+    return recovered;
+  });
+
   return DesktopConnectionCatalogStore.of({
     get: Effect.gen(function* () {
       const document = yield* readDocument(fileSystem, catalogPath);
@@ -479,27 +551,35 @@ export const make = Effect.gen(function* () {
       if (!(yield* encryptionAvailable)) {
         return Option.none<string>();
       }
-      const decrypted = yield* decodeSecretBytes(catalogPath, document.value.encryptedCatalog).pipe(
-        Effect.flatMap((encryptedCatalog) =>
-          safeStorage.decryptString(encryptedCatalog).pipe(
-            Effect.mapError(
-              (cause) =>
-                new DesktopConnectionCatalogStoreProtectionError({
-                  operation: "decrypt-catalog",
-                  catalogPath,
-                  cause,
-                }),
-            ),
-          ),
-        ),
+      const encryptedCatalog = yield* decodeSecretBytes(
+        catalogPath,
+        document.value.encryptedCatalog,
       );
-      return Option.some(decrypted);
+      const decrypted = yield* Effect.result(safeStorage.decryptString(encryptedCatalog));
+      // AES-CBC under the wrong key passes its padding check about 1 time in 256.
+      if (
+        environment.platform === "linux" &&
+        (decrypted._tag === "Failure" || Option.isNone(decodeJsonOption(decrypted.success)))
+      ) {
+        const recovered = yield* recoverSourceBuildLinuxCatalog(document.value, encryptedCatalog);
+        if (Option.isSome(recovered)) {
+          return recovered;
+        }
+      }
+      if (decrypted._tag === "Failure") {
+        return yield* new DesktopConnectionCatalogStoreProtectionError({
+          operation: "decrypt-catalog",
+          catalogPath,
+          cause: decrypted.failure,
+        });
+      }
+      return Option.some(decrypted.success);
     }).pipe(Effect.withSpan("desktop.connectionCatalogStore.get")),
     set: Effect.fn("desktop.connectionCatalogStore.set")(function* (catalog) {
       if (!(yield* encryptionAvailable)) {
         return false;
       }
-      yield* writeCatalog(catalog);
+      yield* writeCatalog(catalog).pipe(writeLock.withPermits(1));
       return true;
     }),
   });
