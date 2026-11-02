@@ -7,6 +7,7 @@ import {
   cursorFromSelectedRange,
   cursorSelectedRange,
   type DiffRow,
+  fileToStartFrom,
   nearestGapExpansion,
   stepRow,
   topToBottomRange,
@@ -169,5 +170,17 @@ describe("file navigation", () => {
     expect(adjacentUnviewedFileKey(keys, null, 1, isViewed)).toBe("b");
     expect(adjacentUnviewedFileKey(keys, null, -1, isViewed)).toBe("c");
     expect(adjacentUnviewedFileKey(keys, "a", 1, () => true)).toBeNull();
+  });
+
+  it("starts from the file in view when the cursor's file is off screen", () => {
+    const placed = keys.map((fileKey, index) => ({ fileKey, top: 10 + index * 500 }));
+    const view = (top: number) => ({ top, bottom: top + 400, contentEnd: 2010 });
+    expect(fileToStartFrom(placed, null, view(0))).toBe("a");
+    expect(fileToStartFrom(placed, null, view(1200))).toBe("c");
+    expect(fileToStartFrom(placed, "a", view(1200))).toBe("c");
+    expect(fileToStartFrom(placed, "b", view(1200))).toBe("c");
+    expect(fileToStartFrom(placed, "c", view(1200))).toBeNull();
+    expect(fileToStartFrom(placed, "d", view(1200))).toBeNull();
+    expect(fileToStartFrom(placed, "d", view(1610))).toBeNull();
   });
 });

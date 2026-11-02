@@ -147,6 +147,35 @@ export function cursorFromSelectedRange(
   return { mode: "select", ...file, anchor, head };
 }
 
+export interface PlacedFile {
+  readonly fileKey: string;
+  /** Where the file's header sits in the scrolled content. */
+  readonly top: number;
+}
+
+/**
+ * The file whose rows cross the top of the view, to start from when the cursor's file is off
+ * screen or there is no cursor. Null while the cursor's file is on screen.
+ */
+export function fileToStartFrom(
+  placed: ReadonlyArray<PlacedFile>,
+  cursorKey: string | null,
+  view: { readonly top: number; readonly bottom: number; readonly contentEnd: number },
+): string | null {
+  const cursorIndex = placed.findIndex((file) => file.fileKey === cursorKey);
+  const cursorFile = placed[cursorIndex];
+  if (cursorFile) {
+    const end = placed[cursorIndex + 1]?.top ?? view.contentEnd;
+    if (cursorFile.top < view.bottom && end > view.top) return null;
+  }
+  let inView = placed[0]?.fileKey ?? null;
+  for (const file of placed) {
+    if (file.top > view.top) break;
+    inView = file.fileKey;
+  }
+  return inView;
+}
+
 /** The neighbouring file, stopping at the ends; with no current file, the first. */
 export function adjacentFileKey(
   fileKeys: ReadonlyArray<string>,

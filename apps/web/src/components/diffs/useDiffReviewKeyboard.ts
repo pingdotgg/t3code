@@ -25,6 +25,7 @@ import {
   cursorSelectedRange,
   type DiffReviewCursor,
   type DiffRowRef,
+  fileToStartFrom,
   nearestGapExpansion,
   stepRow,
   topToBottomRange,
@@ -189,6 +190,21 @@ export function useDiffReviewKeyboard<Annotation>(input: DiffReviewKeyboardInput
     input.revealFile(file);
   };
 
+  // After the reader scrolls away from the cursor, the file keys start from what is on screen.
+  const fileKeyInView = () => {
+    const viewer = input.getViewer()?.getInstance();
+    if (!viewer) return null;
+    const top = viewer.getScrollTop();
+    return fileToStartFrom(
+      files.flatMap(({ fileKey }) => {
+        const fileTop = viewer.getTopForItem(fileKey);
+        return fileTop === undefined ? [] : [{ fileKey, top: fileTop }];
+      }),
+      cursorFile?.fileKey ?? null,
+      { top, bottom: top + viewer.getHeight(), contentEnd: viewer.getScrollHeight() },
+    );
+  };
+
   const runCommand = (command: DiffReviewCommand): boolean => {
     const fileKeys = files.map((file) => file.fileKey);
     const currentKey = cursorFile?.fileKey ?? null;
@@ -200,14 +216,20 @@ export function useDiffReviewKeyboard<Annotation>(input: DiffReviewKeyboardInput
       case "diff.nextFile":
       case "diff.previousFile": {
         if (files.length === 0) return false;
-        moveToFile(adjacentFileKey(fileKeys, currentKey, command === "diff.nextFile" ? 1 : -1));
+        const delta = command === "diff.nextFile" ? 1 : -1;
+        moveToFile(fileKeyInView() ?? adjacentFileKey(fileKeys, currentKey, delta));
         return true;
       }
       case "diff.nextUnviewedFile":
       case "diff.previousUnviewedFile": {
         if (files.length === 0) return false;
         const delta = command === "diff.nextUnviewedFile" ? 1 : -1;
-        moveToFile(adjacentUnviewedFileKey(fileKeys, currentKey, delta, isKeyViewed));
+        const inView = fileKeyInView();
+        moveToFile(
+          inView !== null && !isKeyViewed(inView)
+            ? inView
+            : adjacentUnviewedFileKey(fileKeys, inView ?? currentKey, delta, isKeyViewed),
+        );
         return true;
       }
       case "diff.toggleFileCollapsed": {

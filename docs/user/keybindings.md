@@ -74,6 +74,7 @@ On files:
 
 - `j` and `k` move to the next or previous file.
 - `n` and `Shift+n` jump to the next or previous file you have not viewed.
+- After you scroll away from the current file, these keys start from the file on screen.
 - `v` marks the file viewed, which also folds it. Press it again to unmark.
 - Enter or `Space` folds or unfolds the file.
 - `f` shows only the current file. `j`, `k`, and `n` switch which file it shows.
