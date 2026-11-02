@@ -2504,10 +2504,18 @@ const make = Effect.gen(function* () {
             : tab.page.goForward(VIEWER_NAVIGATION_OPTIONS),
         );
         return;
-      case "stopLoading":
-        tab.stoppedGeneration = tab.navigationGeneration;
+      case "stopLoading": {
+        const generation = tab.navigationGeneration;
+        tab.stoppedGeneration = generation;
         await session.send("Page.stopLoading");
+        // Stopping a committed document need not emit Playwright's load or requestfailed events.
+        if (tab.navigationGeneration === generation && tab.loading) {
+          clearAbortedNavigation(tab);
+          tab.loading = false;
+          await reportLoaded(tab);
+        }
         return;
+      }
       case "reload":
         if (message.ignoreCache === true) {
           await session.send("Page.reload", { ignoreCache: true });

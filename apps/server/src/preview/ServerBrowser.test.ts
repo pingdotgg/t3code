@@ -655,11 +655,16 @@ it.effect("a desktop page that loaded before the server attached reports its loa
 );
 
 it.live.each([
-  { method: "goto" as const, message: { type: "navigate", url: "http://10.255.255.1/" } },
-  { method: "goBack" as const, message: { type: "history", delta: -1 } },
-  { method: "goForward" as const, message: { type: "history", delta: 1 } },
-  { method: "reload" as const, message: { type: "reload" } },
-])("a pending viewer $method allows input, correction and cancellation", ({ method, message }) =>
+  {
+    method: "goto" as const,
+    message: { type: "navigate", url: "http://10.255.255.1/" },
+    abortEvent: "before",
+  },
+  { method: "goBack" as const, message: { type: "history", delta: -1 }, abortEvent: "before" },
+  { method: "goForward" as const, message: { type: "history", delta: 1 }, abortEvent: "before" },
+  { method: "reload" as const, message: { type: "reload" }, abortEvent: "after" },
+  { method: "reload" as const, message: { type: "reload" }, abortEvent: "none" },
+])("viewer $method Stop settles ($abortEvent abort event)", ({ method, message, abortEvent }) =>
   Effect.scoped(
     Effect.gen(function* () {
       const { browser, broker, tabId } = yield* ready;
@@ -692,7 +697,7 @@ it.live.each([
         if (operation === "Page.stopLoading") {
           cancelled = true;
           committed.reject(new Error("net::ERR_ABORTED"));
-          if (method !== "reload") page.emit("requestfailed", request);
+          if (abortEvent === "before") page.emit("requestfailed", request);
         }
         return send(operation, input);
       });
@@ -721,9 +726,10 @@ it.live.each([
       const reader = yield* browser.attachViewer(viewerInput(tabId, false));
       yield* reader.input({ type: "stopLoading" });
       expect(cancelled).toBe(false);
+      if (abortEvent === "none") committed.resolve();
       yield* viewer.input({ type: "stopLoading" });
       expect(cancelled).toBe(true);
-      if (method === "reload") page.emit("requestfailed", request);
+      if (abortEvent === "after") page.emit("requestfailed", request);
       const status = yield* broker.invoke<PreviewAutomationStatus>({
         scope,
         tabId,
