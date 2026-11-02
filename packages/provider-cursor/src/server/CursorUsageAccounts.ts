@@ -308,7 +308,12 @@ const make = Effect.gen(function* () {
             awaitRefresh,
           ),
         );
-        return sources.filter((source) => source !== null);
+        // Keys for one account share its source, and a repeated source would count sessions twice.
+        return [
+          ...new Map(
+            sources.filter((source) => source !== null).map((source) => [source.dir, source]),
+          ).values(),
+        ];
       }
       const credentialStore = hostEnvironment["AGENT_CLI_CREDENTIAL_STORE"];
       const loginUnavailable =
