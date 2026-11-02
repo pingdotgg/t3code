@@ -24,6 +24,7 @@ const ALL_MCP_CAPABILITIES = [
 export type McpCapability = (typeof ALL_MCP_CAPABILITIES)[number];
 
 export interface McpThreadCaller {
+  readonly boundedExecution?: boolean;
   readonly threadId: ThreadId;
   readonly providerSessionId: string;
   readonly providerInstanceId: ProviderInstanceId;

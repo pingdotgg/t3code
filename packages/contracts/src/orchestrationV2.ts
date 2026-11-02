@@ -1,3 +1,4 @@
+import { DelegatedExecution } from "./delegatedExecution.ts";
 import { OrchestrationMessageContext } from "./composerContext.ts";
 import { withRecordIdTable } from "./orchestrationV2IdTable.ts";
 import * as DateTime from "effect/DateTime";
@@ -439,6 +440,7 @@ const LenientThreadOpens = Schema.NullOr(OrchestrationV2ThreadOpens).pipe(
 );
 
 export const OrchestrationV2AppThread = Schema.Struct({
+  delegatedExecution: Schema.optional(DelegatedExecution),
   ...OrchestrationV2CreationFields,
   id: ThreadId,
   projectId: ProjectId,
@@ -3293,6 +3295,7 @@ export const OrchestrationV2Command = Schema.Union([
   }),
   Schema.Struct({
     type: Schema.Literal("delegated_task.request"),
+    approvalPolicy: Schema.optional(Schema.Literals(["inherit", "never"])),
     ...OrchestrationV2CreationFields,
     commandId: CommandId,
     parentThreadId: ThreadId,

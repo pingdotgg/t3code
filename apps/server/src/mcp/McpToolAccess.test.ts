@@ -112,6 +112,7 @@ const probe = {
   ],
 };
 const ProbeToolkit = Toolkit.make(
+  Tool.make("delegate_task", probe),
   Tool.make("reads", probe),
   Tool.make("reads_as_caller", probe),
   Tool.make("acts_as_caller", probe),
@@ -132,6 +133,7 @@ const ProbeToolkit = Toolkit.make(
 );
 const ran = Effect.succeed({ ran: "ran" });
 const probeHandlers: McpToolAccess.Handlers<typeof ProbeToolkit.tools> = {
+  delegate_task: McpToolAccess.actsAsCaller(() => ran),
   reads: McpToolAccess.reads(() => ran),
   reads_as_caller: McpToolAccess.readsAsCaller(() => ran),
   acts_as_caller: McpToolAccess.actsAsCaller(() => ran),
@@ -178,6 +180,7 @@ export const refusedAtCompileTime = () => {
     ProbeToolkit,
     // @ts-expect-error a handlers layer that skipped `McpToolAccess.toLayer`
     ProbeToolkit.toLayer({
+      delegate_task: unchecked,
       reads: unchecked,
       reads_as_caller: unchecked,
       acts_as_caller: unchecked,
@@ -465,4 +468,59 @@ it.effect("refuses a linked environment to a tool that acts as its calling threa
     ).pipe(Effect.scoped, Effect.exit);
     expect(Exit.isFailure(built) && Cause.hasDies(built.cause)).toBe(true);
   }),
+);
+
+it.effect("bounded credentials cannot escape through other T3 tools", () =>
+  Effect.gen(function* () {
+    const scope: McpInvocationContext.McpInvocationScope = {
+      environmentId: EnvironmentId.make("bounded-test"),
+      requestNamespace: "bounded",
+      issuedAt: 0,
+      client: undefined,
+      capabilities: new Set(["orchestration"]),
+      thread: {
+        threadId: ThreadId.make("bounded"),
+        providerInstanceId: ProviderInstanceId.make("codex"),
+        providerSessionId: "bounded",
+        boundedExecution: true,
+      },
+    };
+    for (const tool of ["delegate_task", "task_status", "task_cancel", "orchestrator_capabilities"])
+      yield* McpToolAccess.assertBoundedToolAccess(scope, tool);
+    for (const tool of [
+      "t3_thread_launch",
+      "create_threads",
+      "t3_thread_send",
+      "schedule_task",
+      "t3_terminal_send",
+      "request_secret",
+    ]) {
+      const error = yield* McpToolAccess.assertBoundedToolAccess(scope, tool).pipe(Effect.flip);
+      expect(error.code).toBe("capability_denied");
+    }
+  }),
+);
+
+it.effect("enforces bounded access through the registered routed toolkit", () =>
+  Effect.gen(function* () {
+    const scope: McpInvocationContext.McpInvocationScope = {
+      ...fullAccess,
+      thread: {
+        threadId: fullAccessThreadId,
+        providerInstanceId: ProviderInstanceId.make("codex"),
+        providerSessionId: "bounded",
+        boundedExecution: true,
+      },
+    };
+    expect(yield* call("reads", scope)).toBe("capability_denied");
+    expect(yield* call("delegate_task", scope)).toBe("ran");
+  }).pipe(
+    Effect.provide(
+      probeServer(
+        Layer.mock(ThreadManagement.ThreadManagementService)({
+          getThreadShell: (threadId) => Effect.succeed(shells.get(threadId) ?? null),
+        }),
+      ),
+    ),
+  ),
 );

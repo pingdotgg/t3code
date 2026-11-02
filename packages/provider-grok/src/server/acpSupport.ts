@@ -34,6 +34,7 @@ interface GrokAcpRuntimeInput extends Omit<
   readonly grokSettings: GrokAcpRuntimeGrokSettings | null | undefined;
   readonly environment?: NodeJS.ProcessEnv;
   readonly runtimeMode?: RuntimeMode;
+  readonly noninteractive?: boolean;
 }
 
 // grok agent treats settings-only acceptEdits as ask; it has no Auto-accept edits launch mode.
@@ -62,10 +63,14 @@ function buildGrokAcpSpawnInput(
   cwd: string,
   environment?: NodeJS.ProcessEnv,
   runtimeMode?: RuntimeMode,
+  noninteractive = false,
 ): AcpSessionRuntime.AcpSpawnInput {
   return {
     command: grokSettings?.binaryPath || "grok",
-    args: [...grokAcpSpawnArgs(runtimeMode)],
+    args: [
+      ...(noninteractive ? ["--sandbox", "off", "--no-subagents"] : []),
+      ...grokAcpSpawnArgs(runtimeMode),
+    ],
     cwd,
     env: {
       ...environment,
@@ -137,6 +142,7 @@ export const makeGrokAcpRuntime = Effect.fn("GrokAcpSupport.makeGrokAcpRuntime")
         input.cwd,
         input.environment,
         input.runtimeMode,
+        input.noninteractive,
       ),
       authMethodId: resolveGrokAuthMethodId(input.environment),
       cancelMeta: { ...input.cancelMeta, ...GROK_ACP_CANCEL_META },

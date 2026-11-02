@@ -210,10 +210,11 @@ const registerGrokAskUserQuestionExtensions = ({
     { discard: true },
   );
 
-/** Explicit policy overrides launch in ask mode so Grok cannot bypass T3 approval checks. */
 export function grokLaunchRuntimeMode(
   runtimePolicy: ProviderAdapter.ProviderAdapterV2RuntimePolicy,
 ): RuntimeMode {
+  if (runtimePolicy.delegatedExecution?.sandboxPolicy.type === "dangerFullAccess")
+    return "full-access";
   return runtimePolicy.approvalPolicy === undefined && runtimePolicy.sandboxPolicy === undefined
     ? runtimePolicy.runtimeMode
     : "approval-required";
@@ -223,8 +224,36 @@ export function makeGrokAcpAdapterFlavor(
   options: GrokAdapterV2Options,
   homeDirectory: string,
 ): AcpAdapterV2Flavor {
+  const captureDelegatedExecution = (policy: ProviderAdapter.ProviderAdapterV2RuntimePolicy) => {
+    const ceiling = policy.delegatedExecution;
+    return ceiling?.sandboxPolicy.type === "dangerFullAccess" &&
+      ceiling.providerInstanceId === options.instanceId &&
+      ceiling.cwd === policy.cwd &&
+      policy.runtimeMode === "full-access" &&
+      policy.sandboxPolicy === undefined &&
+      (policy.approvalPolicy === undefined || policy.approvalPolicy === "never")
+      ? ceiling
+      : undefined;
+  };
   return {
     driver: GROK_PROVIDER,
+    captureDelegatedExecution,
+    validateRuntimePolicy: (policy, initial) => {
+      const expected = initial.delegatedExecution;
+      const current = captureDelegatedExecution(policy);
+      if (policy.delegatedExecution !== undefined && current === undefined)
+        return "Grok noninteractive delegation requires unrestricted access, the recorded provider and directory, and never approval policy.";
+      if (expected === undefined && current !== undefined)
+        return "Cannot add delegated execution to an existing Grok runtime.";
+      if (
+        expected !== undefined &&
+        (current === undefined ||
+          current.providerInstanceId !== expected.providerInstanceId ||
+          current.cwd !== expected.cwd)
+      )
+        return "Cannot remove or change the inherited Grok execution policy.";
+      return undefined;
+    },
     runtimeHarness: "Grok",
     capabilities: GrokProviderCapabilitiesV2,
     interruptPromptOnCancel: false,
@@ -296,10 +325,16 @@ export function makeGrokAcpAdapterFlavor(
           grokSettings: options.settings,
           environment: options.environment,
           runtimeMode: grokLaunchRuntimeMode(runtimePolicy),
+          noninteractive:
+            runtimePolicy.delegatedExecution?.sandboxPolicy.type === "dangerFullAccess",
         })),
     // Auto prompts represent classifier refusals and must reach the user.
     permissionDisposition: (policy, request) =>
-      grokLaunchRuntimeMode(policy) === "auto" ? "ask" : acpPermissionDisposition(policy, request),
+      policy.delegatedExecution?.sandboxPolicy.type === "dangerFullAccess"
+        ? "deny"
+        : grokLaunchRuntimeMode(policy) === "auto"
+          ? "ask"
+          : acpPermissionDisposition(policy, request),
     approvalOptions: grokApprovalOptions,
     promptFailure: (cause) =>
       makeProviderFailure({
