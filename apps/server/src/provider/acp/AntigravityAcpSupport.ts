@@ -23,6 +23,7 @@ import {
   makeAntigravityStdoutTransform,
 } from "../antigravityAuthSupport.ts";
 import * as AcpSessionRuntime from "@t3tools/provider-acp/server/AcpSessionRuntime";
+import packageJson from "../../../package.json" with { type: "json" };
 import { normalizeAntigravitySessionUpdate } from "./AntigravityProtocol.ts";
 
 export interface AntigravityAcpRuntimeInput extends Omit<
@@ -42,7 +43,7 @@ export interface AntigravityAcpRuntimeInput extends Omit<
   readonly onAuthorizationUrl?: (url: string) => Effect.Effect<void, EffectAcpErrors.AcpError>;
   /** Serve `fs/read_text_file` for runtimes whose native reader is not qualified. */
   readonly clientFileReads?: boolean;
-  /** The installed version, known before `initialize`; it picks the file reader. */
+  /** The installed version, known before `initialize`; it picks the file reader and client name. */
   readonly runtimeVersion?: string | null;
   /** Conversational sessions only; helpers and probes leave the system prompt untouched. */
   readonly sessionSystemPromptAppend?: string;
@@ -83,6 +84,17 @@ export function isQualifiedAntigravityRelease(version: string | null | undefined
   return version?.trim() === "1.4.5";
 }
 
+// Must match the first agy-acp-server release that offers every model to `t3-code`.
+const T3_CLIENT_NAME_RELEASE = [1, 4, 6] as const;
+
+/** Older releases offer non-Gemini models only to allowlisted clients such as Zed. */
+export function antigravityClientInfo(version: string | null | undefined) {
+  const parsed = parseAntigravityVersion(version);
+  return parsed !== undefined && compareVersions(parsed, T3_CLIENT_NAME_RELEASE) >= 0
+    ? { name: "t3-code", title: "T3 Code", version: packageJson.version }
+    : { name: "zed", version: "0.0.0" };
+}
+
 /**
  * 1.4.5 appends `systemPrompt.append` to its system instructions on new, load and resume, and
  * keeps none of it between processes, so every activation sends it again.
@@ -120,8 +132,7 @@ export const makeAntigravityAcpRuntime = Effect.fn("makeAntigravityAcpRuntime")(
       authenticateEagerly: true,
       resumeMethod: "resume",
       cancelBehavior: "wait-for-prompt",
-      // The agent offers non-Gemini models only to allowlisted clients such as Zed.
-      clientInfo: { name: "zed", version: "0.0.0" },
+      clientInfo: antigravityClientInfo(input.runtimeVersion),
       sessionMeta: (initializeResult) =>
         antigravitySessionMeta(initializeResult, input.sessionSystemPromptAppend),
       clientCapabilities: {
