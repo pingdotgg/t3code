@@ -147,6 +147,24 @@ const fakeExpo = (
       if (operation === "T3ActiveEasSimulatorSessions" && options.failList?.()) {
         return HttpClientResponse.fromWeb(request, new Response("bad gateway", { status: 502 }));
       }
+      // The account's feature gate is off, as for an Expo admin whom the create still admits.
+      if (body.query.includes("accountFeatureGates")) {
+        return HttpClientResponse.fromWeb(
+          request,
+          Response.json({
+            data: {
+              app: {
+                byId: {
+                  ownerAccount: {
+                    name: "pingdotgg",
+                    accountFeatureGates: { "device-run-sessions": false },
+                  },
+                },
+              },
+            },
+          }),
+        );
+      }
       const sessionGate =
         operation === "T3EasSimulatorSession" ? options.sessionGate?.() : undefined;
       if (sessionGate && !sessionGated) {
@@ -454,6 +472,17 @@ describe("EAS Simulator host", () => {
         yield* Fiber.join(listing);
         expect(expo.stopped()).toEqual(["session-1"]);
       }).pipe(Effect.scoped, Effect.provide(layer)),
+  );
+
+  it.effect("leaves admission to Expo's create although the account's gate is off", () =>
+    Effect.gen(function* () {
+      const expo = fakeExpo();
+      const host = yield* makeHost(expo, config(), yield* Scope.make());
+      const ready = yield* host.ensureReady(() => Effect.void);
+      const [catalogDevice] = (yield* ready.devices.list).devices;
+      expect(yield* ready.devices.boot(catalogDevice!)).toBe("session-1");
+      expect(expo.named("T3CreateEasSimulatorSession")).toHaveLength(1);
+    }).pipe(Effect.scoped, Effect.provide(layer)),
   );
 
   it.effect("stops the session a refused create made anyway", () =>
