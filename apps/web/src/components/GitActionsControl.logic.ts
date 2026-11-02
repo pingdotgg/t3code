@@ -425,3 +425,28 @@ export function resolveLiveThreadBranchUpdate(input: {
     branch: input.gitStatus.refName,
   };
 }
+
+export type ChangesLineTotals = {
+  readonly insertions: number;
+  readonly deletions: number;
+};
+
+// `branchChanges ?? workingTree` treats `{0,0}` as present, so a zero branch total hid a dirty
+// working tree and the Changes row read +0 while Diff still showed the work.
+export function resolveChangesTotals(
+  status: VcsStatusResult | null | undefined,
+): ChangesLineTotals | null {
+  if (!status) return null;
+  const branch = status.branchChanges;
+  const tree = status.workingTree;
+  if (branch && (branch.insertions > 0 || branch.deletions > 0)) {
+    return { insertions: branch.insertions, deletions: branch.deletions };
+  }
+  if (tree.insertions > 0 || tree.deletions > 0) {
+    return { insertions: tree.insertions, deletions: tree.deletions };
+  }
+  if (branch) {
+    return { insertions: branch.insertions, deletions: branch.deletions };
+  }
+  return { insertions: tree.insertions, deletions: tree.deletions };
+}

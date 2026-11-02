@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vite-plus/test";
+import { describe, expect, it, vi } from "vite-plus/test";
 import { EnvironmentId, ThreadId, type ScopedThreadRef } from "@t3tools/contracts";
 
 import {
@@ -141,6 +141,22 @@ describe("thread links", () => {
         local,
       ),
     ).toEqual([ref("there", "t1"), ref("local", "t%3A2"), ref("local", "t:2")]);
+  });
+
+  it("lists a message's thread links on runtimes whose matchAll omits named groups, such as Hermes", () => {
+    const matchAll = String.prototype.matchAll;
+    using _hermes = vi.spyOn(String.prototype, "matchAll").mockImplementation(function (
+      this: string,
+      regexp: RegExp,
+    ) {
+      return matchAll.call(this, regexp).map((match) => {
+        delete match.groups;
+        return match;
+      });
+    });
+    expect(threadLinkRefs("<t3-thread://v2/local/t1> [a](t3-thread://v2/there/t2)", local)).toEqual(
+      [ref("local", "t1"), ref("there", "t2")],
+    );
   });
 
   it("writes a titleless autolink that opens that exact thread", () => {

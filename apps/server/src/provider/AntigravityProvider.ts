@@ -164,6 +164,14 @@ export const makeAntigravityProvider = Effect.fn("makeAntigravityProvider")(func
   settings: AntigravitySettings,
   options: AntigravityProviderOptions,
 ) {
+  const usesCredentials =
+    options.auth?.type === "gemini-api-key" || options.auth?.type === "agent-platform";
+  const signInMessage = usesCredentials
+    ? `Connect with ${options.auth.label} to use Antigravity and load models.`
+    : SIGN_IN_MESSAGE;
+  const authUncheckedMessage = usesCredentials
+    ? `Antigravity is installed. Connect with ${options.auth.label} to load models.`
+    : AUTH_UNCHECKED_MESSAGE;
   const checkedAt = DateTime.formatIso(yield* DateTime.now);
   const initialDraft = {
     ...buildServerProvider({
@@ -243,8 +251,8 @@ export const makeAntigravityProvider = Effect.fn("makeAntigravityProvider")(func
         (authenticated
           ? undefined
           : draft.auth.status === "unauthenticated"
-            ? SIGN_IN_MESSAGE
-            : AUTH_UNCHECKED_MESSAGE);
+            ? signInMessage
+            : authUncheckedMessage);
       return {
         ...state,
         draft: {
@@ -420,9 +428,12 @@ export const makeAntigravityProvider = Effect.fn("makeAntigravityProvider")(func
           authRevision: state.authRevision + 1,
           draft: {
             ...state.draft,
-            auth: { status: "unauthenticated" },
+            auth: {
+              status: "unauthenticated",
+              ...(usesCredentials ? options.auth : {}),
+            },
             status: "warning",
-            message: SIGN_IN_MESSAGE,
+            message: signInMessage,
             checkedAt: updatedAt,
             models: [],
             slashCommands: [],

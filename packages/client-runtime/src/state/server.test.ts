@@ -1,7 +1,10 @@
 import {
   EnvironmentId,
+  ProviderDriverKind,
   ServerSelfUpdateError,
   ProviderInstanceId,
+  type ProviderInstallState,
+  type ProviderSetupInput,
   ServerObservability,
   EnvironmentThemeId,
   UsageLimitSourceId,
@@ -34,8 +37,8 @@ import {
   PrimaryConnectionTarget,
   type PreparedConnection,
 } from "../connection/model.ts";
-import * as EnvironmentSupervisor from "../connection/supervisor.ts";
 import * as EnvironmentRegistry from "../connection/registry.ts";
+import * as EnvironmentSupervisor from "../connection/supervisor.ts";
 import { RpcPermissionGuard } from "../rpc/client.ts";
 import * as Persistence from "../platform/persistence.ts";
 import type { WsRpcProtocolClient } from "../rpc/protocol.ts";
@@ -1307,5 +1310,87 @@ describe("server state projection", () => {
       // Cached, it would read as a fresh freeze on the next launch.
       expect(yield* Queue.take(savedConfigs)).not.toHaveProperty("lastEventLoopStall");
     }),
+  );
+});
+
+describe("provider setup commands", () => {
+  it.effect("starts installs for two instances in one environment separately", () =>
+    Effect.gen(function* () {
+      const requested = yield* Queue.unbounded<ProviderInstanceId>();
+      const release = yield* Deferred.make<void>();
+      const installState = (driver: string): ProviderInstallState => ({
+        driver: ProviderDriverKind.make(driver),
+        operationId: null,
+        phase: "downloading",
+        downloadedBytes: 0,
+        totalBytes: null,
+        version: null,
+        installedVersion: null,
+        canRemove: false,
+        message: null,
+      });
+      const client = {
+        [WS_METHODS.providerInstallStart]: ({ instanceId }: ProviderSetupInput) =>
+          Queue.offer(requested, instanceId).pipe(
+            Effect.andThen(Deferred.await(release)),
+            Effect.as(installState(instanceId)),
+          ),
+      } as unknown as WsRpcProtocolClient;
+      const supervisor = EnvironmentSupervisor.EnvironmentSupervisor.of({
+        target: TARGET,
+        state: yield* SubscriptionRef.make(AVAILABLE_CONNECTION_STATE),
+        session: yield* SubscriptionRef.make(Option.some(session(client))),
+        prepared: yield* SubscriptionRef.make(Option.none<PreparedConnection>()),
+        connect: Effect.void,
+        disconnect: Effect.void,
+        retryNow: Effect.void,
+      } satisfies EnvironmentSupervisor.EnvironmentSupervisor["Service"]);
+      const runtime = Atom.runtime(
+        Layer.merge(
+          Layer.succeed(EnvironmentRegistry.EnvironmentRegistry, {
+            run: (_environmentId, effect) =>
+              Effect.provideService(
+                effect,
+                EnvironmentSupervisor.EnvironmentSupervisor,
+                supervisor,
+              ),
+          } as EnvironmentRegistry.EnvironmentRegistry["Service"]),
+          Layer.succeed(
+            Persistence.EnvironmentCacheStore,
+            {} as Persistence.EnvironmentCacheStore["Service"],
+          ),
+        ),
+      );
+      const atoms = createServerEnvironmentAtoms(runtime, {
+        initialConfigValueAtom: () => Atom.make(CONFIG),
+      });
+      const registry = yield* Effect.acquireRelease(Effect.sync(AtomRegistry.make), (registry) =>
+        Effect.sync(() => registry.dispose()),
+      );
+      const install = (instanceId: string) =>
+        atoms.startProviderInstall.run(registry, {
+          environmentId: TARGET.environmentId,
+          input: { instanceId: ProviderInstanceId.make(instanceId) },
+        });
+
+      const codex = install("codex");
+      expect(yield* Queue.take(requested)).toBe("codex");
+      const duplicateCodex = install("codex");
+      const antigravity = install("antigravity");
+      yield* Deferred.succeed(release, undefined);
+
+      expect(yield* Effect.promise(() => codex)).toMatchObject({
+        _tag: "Success",
+        value: { driver: "codex" },
+      });
+      expect(yield* Effect.promise(() => duplicateCodex)).toEqual(
+        yield* Effect.promise(() => codex),
+      );
+      expect(yield* Effect.promise(() => antigravity)).toMatchObject({
+        _tag: "Success",
+        value: { driver: "antigravity" },
+      });
+      expect(yield* Queue.takeAll(requested)).toEqual(["antigravity"]);
+    }).pipe(Effect.scoped),
   );
 });

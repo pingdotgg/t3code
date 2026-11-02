@@ -192,7 +192,16 @@ export function ThreadMarkdownImageView(props: {
                     key={props.sourceKey}
                     uri={props.uri}
                     cacheKey={props.cacheKey}
-                    onLoad={(size) => setDecoded({ sourceKey: props.sourceKey, size })}
+                    onLoad={(size) =>
+                      // Only the first decode counts: later loads report the bitmap
+                      // downsampled for the current frame (969 vs 970 wide), so keeping
+                      // them resizes the frame, which reloads the image, and so on.
+                      setDecoded((current) =>
+                        current?.sourceKey === props.sourceKey
+                          ? current
+                          : { sourceKey: props.sourceKey, size },
+                      )
+                    }
                     onError={() => setFailure({ uri: props.uri, failed: true })}
                   />
                 )}
@@ -269,6 +278,18 @@ export function ThreadMarkdownImage(props: {
 }) {
   const withGallery = useFilePreviewGallery();
   const assetUrl = useAssetUrlState(props.environmentId, props.resource);
+  const resourceKey =
+    props.resource._tag === "attachment"
+      ? `attachment:${props.resource.attachmentId}`
+      : props.resource._tag === "tool-output-image"
+        ? `tool-output:${props.resource.itemId}:${props.resource.index}`
+        : `workspace:${props.resource.path}`;
+  // The view keeps the first decoded size per key, so a file edited in place needs a
+  // new key; a re-signed URL for the same revision must not get one.
+  const sourceKey =
+    assetUrl._tag === "Success" && assetUrl.fileRevision !== undefined
+      ? `${resourceKey}@${assetUrl.fileRevision}`
+      : resourceKey;
 
   return (
     <ThreadMarkdownImageView
@@ -278,13 +299,7 @@ export function ThreadMarkdownImage(props: {
           ? assetImageCacheKey(props.environmentId, props.resource, assetUrl.fileRevision)
           : undefined
       }
-      sourceKey={
-        props.resource._tag === "attachment"
-          ? `attachment:${props.resource.attachmentId}`
-          : props.resource._tag === "tool-output-image"
-            ? `tool-output:${props.resource.itemId}:${props.resource.index}`
-            : `workspace:${props.resource.path}`
-      }
+      sourceKey={sourceKey}
       unavailable={assetUrl._tag === "Failure"}
       unavailableDetail={
         assetUrl._tag === "Failure" && assetUrl.reason === "missing-file-access"

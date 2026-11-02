@@ -4,6 +4,7 @@ import * as NodeCrypto from "node:crypto";
 import * as NodePlatformCrypto from "@effect/platform-node/NodeCrypto";
 import { assert, it } from "@effect/vitest";
 import {
+  type ManagedPolicyDocument,
   ScheduledTaskUpsertInput,
   ScheduledTaskWebhookDeliveryId,
   SecretRequestError,
@@ -12,6 +13,7 @@ import * as DateTime from "effect/DateTime";
 import * as Crypto from "effect/Crypto";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Queue from "effect/Queue";
@@ -22,6 +24,7 @@ import * as TestClock from "effect/testing/TestClock";
 import * as Tracer from "effect/Tracer";
 
 import * as ThreadLaunchService from "../orchestration-v2/ThreadLaunchService.ts";
+import * as ManagedPolicy from "../policy/ManagedPolicy.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
 import * as SecretRequests from "../secrets/SecretRequests.ts";
 import * as ManagedProjectFolders from "../project/ManagedProjectFolders.ts";
@@ -172,6 +175,7 @@ const withService = <A, E>(
     readonly relayHookBaseUrl?: string;
     readonly sql?: SqlClient.SqlClient;
     readonly workers?: Map<string, Effect.Effect<void>>;
+    readonly policy?: ManagedPolicyDocument;
   } = {},
 ) =>
   Effect.gen(function* () {
@@ -248,6 +252,7 @@ const withService = <A, E>(
         ScheduledTaskService.ScheduledTaskWebhookOrigin,
         Effect.succeed({ relayHookBaseUrl: options.relayHookBaseUrl ?? null }),
       ),
+      ManagedPolicy.layerTest(options.policy),
     );
     return yield* Effect.gen(function* () {
       const service = yield* ScheduledTaskService.ScheduledTaskService;
@@ -422,6 +427,62 @@ it.effect("checks the configured signature and keeps the secret write-only", () 
         ["accepted", true],
         ["rejected_signature", false],
       ]);
+    }),
+  ),
+);
+
+it.effect("a policy without webhook tasks keeps existing ones but refuses saves and requests", () =>
+  withService(({ service, sql }) =>
+    Effect.gen(function* () {
+      const { task } = yield* service.upsert(yield* webhookTaskInput());
+      const timer = yield* webhookTaskInput({
+        id: "scheduled-task:timer",
+        schedule: { type: "interval", everyMs: 3_600_000 },
+      });
+      yield* withService(
+        ({ service, launches }) =>
+          Effect.gen(function* () {
+            const blocked = "Example Corp's policy does not allow webhook tasks.";
+            const listed = (yield* service.list()).tasks.find(({ id }) => id === task.id);
+            assert.equal(listed?.blockedByPolicy, blocked);
+            assert.isTrue(listed?.enabled);
+
+            const refused = yield* service.upsert(yield* webhookTaskInput()).pipe(Effect.flip);
+            assert.equal(refused.message, blocked);
+            const created = yield* service
+              .upsert(yield* webhookTaskInput({ id: "scheduled-task:new-hook" }))
+              .pipe(Effect.flip);
+            assert.equal(created.message, blocked);
+
+            // Turned off, it can still be edited, but not turned back on.
+            yield* service.setEnabled({ id: task.id, enabled: false });
+            yield* service.upsert(yield* webhookTaskInput({ enabled: false }));
+            const reenabled = yield* service
+              .setEnabled({ id: task.id, enabled: true })
+              .pipe(Effect.flip);
+            assert.equal(reenabled.message, blocked);
+
+            const result = yield* service.triggerWebhook(requestFor(task));
+            assert.equal(result._tag, "blocked_by_policy");
+            assert.equal(yield* Queue.size(launches), 0);
+            assert.equal((yield* sql`SELECT * FROM scheduled_task_webhook_deliveries`).length, 0);
+
+            // Timer tasks are unaffected, including a webhook task switched to a timer.
+            assert.isUndefined((yield* service.upsert(timer)).task.blockedByPolicy);
+            const switched = yield* service.upsert(
+              yield* webhookTaskInput({ schedule: { type: "interval", everyMs: 3_600_000 } }),
+            );
+            assert.isUndefined(switched.task.blockedByPolicy);
+          }),
+        {
+          sql,
+          policy: {
+            schemaVersion: 1,
+            organization: "Example Corp",
+            limits: { webhookTasks: false },
+          },
+        },
+      );
     }),
   ),
 );
@@ -1005,6 +1066,57 @@ it.effect("recovers a persisted coalescing window after restarting the service",
   );
 });
 
+it.effect("a pending dispatch interrupted at its permit does not block later polls", () => {
+  const workers = new Map<string, Effect.Effect<void>>();
+  // One shared dispatcher lets the test run the retry's forked worker to completion.
+  const mixed = new EffectScheduler.MixedScheduler("sync");
+  const dispatcher = mixed.makeDispatcher();
+  return withService(
+    ({ service, sql, launches }) =>
+      Effect.gen(function* () {
+        const { task } = yield* service.upsert(
+          yield* webhookTaskInput({
+            schedule: {
+              type: "webhook",
+              dedupe: { coalesceKey: "{{headers.content-type}}", coalesceWindowSeconds: 10 },
+            },
+          }),
+        );
+        yield* service.triggerWebhook(requestFor(task));
+        yield* TestClock.adjust("10 seconds");
+        const poll = workers.get("webhook-coalescing")!;
+
+        const entered = yield* Deferred.make<Fiber.Fiber<unknown, unknown>>();
+        const interruptAtPermit = Tracer.make({
+          span: (options) => {
+            if (options.name === "ScheduledTaskService.webhookPermit") {
+              const fiber = Fiber.getCurrent()!;
+              Deferred.doneUnsafe(entered, Effect.succeed(fiber));
+              fiber.interruptUnsafe();
+            }
+            return new Tracer.NativeSpan(options);
+          },
+        });
+        const firstPoll = yield* poll.pipe(Effect.withTracer(interruptAtPermit), Effect.forkChild);
+        assert.isTrue(Exit.hasInterrupts(yield* Fiber.await(yield* Deferred.await(entered))));
+        yield* Fiber.await(firstPoll);
+
+        yield* poll;
+        dispatcher.flush();
+
+        assert.equal(yield* Queue.size(launches), 1);
+        assert.lengthOf(yield* sql`SELECT 1 FROM scheduled_task_webhook_pending`, 0);
+      }),
+    { workers },
+  ).pipe(
+    Effect.provideService(EffectScheduler.Scheduler, {
+      executionMode: mixed.executionMode,
+      makeDispatcher: () => dispatcher,
+      shouldYield: (fiber) => mixed.shouldYield(fiber),
+    }),
+  );
+});
+
 it.effect("rolls back replay and pending state when recording a delivery fails", () => {
   const workers = new Map<string, Effect.Effect<void>>();
   return withService(
@@ -1197,6 +1309,32 @@ it.effect("start failures release both replay keys and relay claims for redelive
       }),
     { failLaunches: { remaining: 1 } },
   ),
+);
+
+it.effect("a start failure releases the relay claim when the task row is replaced mid-run", () =>
+  Effect.gen(function* () {
+    const gate = yield* Deferred.make<void>();
+    yield* withService(
+      ({ service, sql, launches }) =>
+        Effect.gen(function* () {
+          const { task } = yield* service.upsert(yield* webhookTaskInput());
+          const request = requestFor(task, { relayDeliveryId: "replaced-mid-run" });
+          const first = yield* waitForSpan(
+            service.triggerWebhook(request),
+            "ScheduledTaskService.runWebhookDelivery",
+          ).pipe(Effect.forkChild);
+          yield* Queue.take(launches);
+          // A same-id recreate while the launch is out: the stored row is no longer this run's.
+          yield* sql`UPDATE scheduled_tasks SET last_run_status = 'never', last_run_at = NULL`;
+          yield* Deferred.succeed(gate, undefined);
+          yield* Fiber.join(first);
+          const retry = yield* service.triggerWebhook(request);
+          assert.equal(retry._tag === "accepted" && retry.outcome, "accepted");
+          yield* Queue.take(launches);
+        }),
+      { gate, failLaunches: { remaining: 1 } },
+    );
+  }),
 );
 
 it.effect("main retention keeps fifty runs and preserves filtered and dedupe buckets", () =>

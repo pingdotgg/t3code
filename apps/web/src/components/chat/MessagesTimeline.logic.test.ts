@@ -1528,6 +1528,60 @@ describe("deriveMessagesTimelineRows", () => {
     expect(rows.at(-1)).toMatchObject({ kind: "thinking" });
   });
 
+  it("keeps the latest finished reply's timestamp while a command is still running", () => {
+    const reply = (streaming: boolean) => ({
+      id: "assistant-reply-entry",
+      kind: "message" as const,
+      createdAt: "2026-01-01T00:00:10Z",
+      message: {
+        id: "assistant-reply" as never,
+        role: "assistant" as const,
+        text: "Training finished, checking memory next.",
+        runId: "turn-1" as never,
+        createdAt: "2026-01-01T00:00:10Z",
+        updatedAt: "2026-01-01T00:00:12Z",
+        streaming,
+      },
+    });
+    const rowsWith = (streaming: boolean) =>
+      deriveMessagesTimelineRows({
+        timelineEntries: [
+          reply(streaming),
+          {
+            id: "command-entry",
+            kind: "work",
+            createdAt: "2026-01-01T00:00:15Z",
+            entry: {
+              id: "command",
+              createdAt: "2026-01-01T00:00:15Z",
+              runId: "turn-1" as never,
+              label: "Running command",
+              command: "nvidia-smi",
+              tone: "tool" as const,
+              toolLifecycleStatus: "inProgress" as const,
+            },
+          },
+        ],
+        latestRun: {
+          runId: "turn-1" as never,
+          status: "running",
+          startedAt: "2026-01-01T00:00:00Z",
+          completedAt: null,
+        },
+        isWorking: true,
+        activeTurnStartedAt: "2026-01-01T00:00:00Z",
+        turnDiffSummaries: [],
+        supportsConversationRollback: false,
+      }).find((row) => row.id === "assistant-reply-entry");
+
+    expect(rowsWith(false)).toMatchObject({
+      showAssistantMeta: false,
+      showAssistantTimestamp: true,
+      showAssistantCopyButton: false,
+    });
+    expect(rowsWith(true)).toMatchObject({ showAssistantTimestamp: false });
+  });
+
   it("does not show Thinking once the open run's provider turn has ended", () => {
     const input = {
       timelineEntries: [

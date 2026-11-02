@@ -1,6 +1,8 @@
 import { assert, it } from "@effect/vitest";
 import {
   CheckpointId,
+  CheckpointRef,
+  CheckpointScopeId,
   CommandId,
   EventId,
   MessageId,
@@ -17,6 +19,7 @@ import {
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as Statement from "effect/sql/Statement";
 import * as TestClock from "effect/testing/TestClock";
 
 import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
@@ -865,6 +868,61 @@ const askSideChat = (threadId: ThreadId, commandId: string) =>
     });
   });
 
+it.effect("resolves an explicit checkpoint fork to its source run", () =>
+  Effect.gen(function* () {
+    const orchestrator = yield* Orchestrator.OrchestratorV2;
+    const eventSink = yield* EventSink.EventSinkV2;
+    const now = yield* DateTime.now;
+    const parentId = ThreadId.make("checkpoint-fork-parent");
+    const childId = ThreadId.make("checkpoint-fork-child");
+    const runId = RunId.make("checkpoint-fork-run");
+    const checkpointId = CheckpointId.make("checkpoint-fork-checkpoint");
+    yield* createParent(parentId);
+    yield* writeParentRun({
+      threadId: parentId,
+      runId,
+      ordinal: 1,
+      status: "completed",
+      text: "Work",
+    });
+    yield* eventSink.write({
+      events: [
+        {
+          id: EventId.make("checkpoint-fork-captured"),
+          type: "checkpoint.captured",
+          threadId: parentId,
+          occurredAt: now,
+          payload: {
+            id: checkpointId,
+            threadId: parentId,
+            scopeId: CheckpointScopeId.make("checkpoint-fork-scope"),
+            runId,
+            nodeId: NodeId.make("checkpoint-fork-node"),
+            parentCheckpointId: null,
+            ordinalWithinScope: 1,
+            appRunOrdinal: 1,
+            ref: CheckpointRef.make("refs/t3/checkpoint-fork/1"),
+            status: "ready",
+            files: [],
+            capturedAt: now,
+          },
+        },
+      ],
+    });
+    yield* orchestrator.dispatch({
+      type: "thread.fork",
+      commandId: CommandId.make("checkpoint-fork"),
+      sourceThreadId: parentId,
+      targetThreadId: childId,
+      sourcePoint: { type: "checkpoint", checkpointId },
+      createdBy: "user",
+      creationSource: "mcp",
+    });
+    const child = yield* orchestrator.getThreadShell(childId);
+    assert.deepEqual(child?.forkedFrom, { type: "run", threadId: parentId, runId });
+  }).pipe(Effect.provide(forkCases[0]!.layer)),
+);
+
 it.effect("a side chat of an idle parent still starts with the framing note", () =>
   Effect.gen(function* () {
     const orchestrator = yield* Orchestrator.OrchestratorV2;
@@ -880,7 +938,22 @@ it.effect("a side chat of an idle parent still starts with the framing note", ()
       stable: true,
     });
 
-    yield* forkSideChat("side-chat-idle-fork", parentId, sideChatId);
+    const reads: Array<string> = [];
+    const recordReads: Statement.Transformer = (statement) => {
+      const [query] = statement.compile();
+      if (/^\s*SELECT/i.test(query)) reads.push(query);
+      return Effect.succeed(statement);
+    };
+    yield* forkSideChat("side-chat-idle-fork", parentId, sideChatId).pipe(
+      Effect.provideService(Statement.CurrentTransformer, recordReads),
+    );
+    assert.isEmpty(
+      reads.filter(
+        (query) =>
+          query.includes("FROM orchestration_v2_projection_checkpoints") ||
+          query.includes("FROM orchestration_v2_projection_context_transfers"),
+      ),
+    );
     yield* askSideChat(sideChatId, "side-chat-idle-first-message");
 
     const started = yield* orchestrator.getThreadProjection(sideChatId);

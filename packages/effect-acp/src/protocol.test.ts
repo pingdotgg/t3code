@@ -108,37 +108,39 @@ it.layer(NodeServices.layer)("effect-acp protocol", (it) => {
           },
         });
 
-        yield* Queue.offer(
-          input,
-          yield* encodeJsonl(SessionUpdateNotification, {
-            jsonrpc: "2.0",
-            method: "session/update",
-            params: {
-              sessionId: "session-1",
-              update: {
-                sessionUpdate: "plan",
-                entries: [
-                  {
-                    content: "Inspect repository",
-                    priority: "high",
-                    status: "in_progress",
-                  },
-                ],
-              },
+        const updateFrame = yield* encodeJsonl(SessionUpdateNotification, {
+          jsonrpc: "2.0",
+          method: "session/update",
+          params: {
+            sessionId: "session-1",
+            update: {
+              sessionUpdate: "plan",
+              entries: [
+                {
+                  content: "Inspect repository",
+                  priority: "high",
+                  status: "in_progress",
+                },
+              ],
             },
-          }),
-        );
+          },
+        });
+        const completionFrame = yield* encodeJsonl(ElicitationCompleteNotification, {
+          jsonrpc: "2.0",
+          method: "elicitation/complete",
+          params: {
+            elicitationId: "elicitation-1",
+          },
+        });
 
-        yield* Queue.offer(
-          input,
-          yield* encodeJsonl(ElicitationCompleteNotification, {
-            jsonrpc: "2.0",
-            method: "elicitation/complete",
-            params: {
-              elicitationId: "elicitation-1",
-            },
-          }),
-        );
+        // Frames split across reads, with one read ending one frame and starting the next.
+        const wire = new Uint8Array([...updateFrame, ...completionFrame]);
+        const splits = [10, updateFrame.length + 10, wire.length];
+        let start = 0;
+        for (const end of splits) {
+          yield* Queue.offer(input, wire.subarray(start, end));
+          start = end;
+        }
 
         const [update, completion] = yield* Deferred.await(notifications);
         assert.equal(update?._tag, "SessionUpdate");

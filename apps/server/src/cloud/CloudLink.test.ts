@@ -19,11 +19,13 @@ import * as CloudLink from "./CloudLink.ts";
 import * as ConnectReachability from "./ConnectReachability.ts";
 import * as ManagedEndpointRuntime from "./ManagedEndpointRuntime.ts";
 import {
+  CLOUD_LINKED_USER_ID,
   HOLD_WEBHOOKS_WHILE_OFFLINE_SECRET,
   PUBLISH_AGENT_ACTIVITY_SECRET,
   RELAY_ENVIRONMENT_CREDENTIAL_SECRET,
   RELAY_URL_SECRET,
 } from "./config.ts";
+import * as ManagedPolicy from "../policy/ManagedPolicy.ts";
 
 const encode = (value: string) => new TextEncoder().encode(value);
 
@@ -95,6 +97,7 @@ const withService = <A, E>(
       }),
       Layer.mock(AgentAwarenessRelay.AgentAwarenessRelay)({ requestCatchUp: () => Effect.void }),
       Layer.mock(ManagedEndpointRuntime.CloudManagedEndpointRuntime)({}),
+      ManagedPolicy.layerTest(),
       Layer.mock(ConnectReachability.ConnectReachability)({
         latest: Effect.succeedNone,
       }),
@@ -244,3 +247,57 @@ it.effect("an update the client walks away from still finishes", () => {
     }),
   );
 });
+
+it.effect("unlinks on startup and refuses to link when the policy turns Connect off", () =>
+  Effect.gen(function* () {
+    const stored = new Map<string, Uint8Array>([
+      [CLOUD_LINKED_USER_ID, encode("user-1")],
+      [RELAY_URL_SECRET, encode("https://relay.test")],
+    ]);
+    const appliedConfigs: Array<unknown> = [];
+    const layerDependencies = Layer.mergeAll(
+      Layer.mock(ServerSecretStore.ServerSecretStore)({
+        get: (name) => Effect.succeed(Option.fromNullishOr(stored.get(name))),
+        set: (name, value) => Effect.sync(() => void stored.set(name, value)),
+        remove: (name) => Effect.sync(() => void stored.delete(name)),
+      }),
+      Layer.mock(ServerEnvironment.ServerEnvironment)({}),
+      Layer.mock(AgentAwarenessRelay.AgentAwarenessRelay)({}),
+      Layer.mock(ManagedEndpointRuntime.CloudManagedEndpointRuntime)({
+        withLinkStateLock: (effect) => effect,
+        applyConfig: (config) =>
+          Effect.sync(() => {
+            appliedConfigs.push(config);
+            return { status: "disabled" as const };
+          }),
+      }),
+      ManagedPolicy.layerTest({
+        schemaVersion: 1,
+        organization: "Example Corp",
+        limits: { connect: false },
+      }),
+      Layer.mock(ConnectReachability.ConnectReachability)({}),
+      Layer.mock(EnvironmentAuth.EnvironmentAuth)({}),
+      Layer.mock(CliTokenManager.CloudCliTokenManager)({}),
+      Layer.mock(HttpServer.HttpServer)({
+        address: NetAddress.inetAddressFromIpStringUnsafe("127.0.0.1", 3773),
+      }),
+      Layer.mock(ServerConfig.ServerConfig)({} as ServerConfig.ServerConfig["Service"]),
+      Layer.succeed(
+        HttpClient.HttpClient,
+        HttpClient.make(() => Effect.die("unused")),
+      ),
+      NodeServices.layer,
+    );
+    yield* Effect.gen(function* () {
+      const link = yield* CloudLink.CloudLink;
+      assert.isFalse(stored.has(CLOUD_LINKED_USER_ID));
+      assert.deepEqual(appliedConfigs, [null]);
+
+      const applyError = yield* link.applyRelayConfig({} as never).pipe(Effect.flip);
+      const mintError = yield* link.mintCredential({} as never).pipe(Effect.flip);
+      assert.equal(applyError.message, "Example Corp's policy does not allow T3 Connect.");
+      assert.equal(mintError._tag, "ManagedPolicyRefusedError");
+    }).pipe(Effect.provide(CloudLink.layer.pipe(Layer.provide(layerDependencies))));
+  }),
+);
