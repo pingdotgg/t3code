@@ -57,7 +57,11 @@ export function ThreadGuestShareSheet({ route }: StaticScreenProps<GuestShareTar
     () => scopeThreadRef(environmentId, threadId),
     [environmentId, threadId],
   );
-  const activeShare = useThreadGuestShare(threadRef);
+  const guestShare = useThreadGuestShare(threadRef);
+  const shareExpired = useDeadlinePassed(
+    guestShare === null ? null : Date.parse(guestShare.expiresAt),
+  );
+  const activeShare = shareExpired ? null : guestShare;
   // From the thread list the detail loads only now; until it does, an active link is unknown and a
   // new link would end it without the warning.
   const threadLoaded = useAtomValue(
