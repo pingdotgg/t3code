@@ -439,6 +439,19 @@
         object-fit: contain;
       }
 
+      html[data-theme-id]:not(
+          :is(
+            [data-theme-id="t3-chat"],
+            [data-theme-id="grove"],
+            [data-theme-id="ocean"],
+            [data-theme-id="ember"],
+            [data-theme-id="iris"]
+          )
+        )
+        #boot-shell-logo {
+        filter: drop-shadow(0 0 6px color-mix(in oklab, var(--boot-accent) 45%, transparent));
+      }
+
       /* App CSS locks body and #root scrolling once main loads, so the error screen scrolls itself. */
       #boot-shell:has(> #boot-error) {
         height: 100%;
