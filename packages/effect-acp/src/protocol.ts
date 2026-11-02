@@ -763,9 +763,14 @@ export const makeAcpPatchedProtocol = Effect.fn("makeAcpPatchedProtocol")(functi
           }),
         ),
         Effect.flatMap((messages) =>
-          Effect.forEach(messages, routeDecodedMessage, {
-            discard: true,
-          }),
+          // Forked extension handlers can terminate the protocol without failing the reader.
+          Effect.forEach(
+            messages,
+            (message) => Effect.andThen(ensureActive, () => routeDecodedMessage(message)),
+            {
+              discard: true,
+            },
+          ),
         ),
       ),
     ),

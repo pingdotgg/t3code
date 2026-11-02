@@ -291,6 +291,48 @@ it.layer(NodeServices.layer)("effect-acp protocol", (it) => {
         }),
       );
       assert.instanceOf(yield* Deferred.await(extensionTermination), AcpError.AcpTransportError);
+
+      const failedInput = yield* Queue.unbounded<Uint8Array>();
+      const readerStopped = yield* Deferred.make<void>();
+      const observed = yield* Queue.unbounded<string>();
+      const writerTermination = yield* Deferred.make<AcpError.AcpError>();
+      yield* AcpProtocol.makeAcpPatchedProtocol({
+        stdio: Stdio.make({
+          args: Effect.succeed([]),
+          stdin: Stream.fromQueue(failedInput).pipe(
+            Stream.ensuring(Deferred.succeed(readerStopped, undefined)),
+          ),
+          stdout: () => Sink.forEach(() => Effect.die("stdout failed")),
+          stderr: () => Sink.drain,
+        }),
+        serverRequestMethods: new Set(),
+        onIncomingRequest: (requestId) => {
+          Queue.offerUnsafe(observed, requestId);
+          return Effect.void;
+        },
+        onExtRequest: () => Effect.succeed({ ok: true }),
+        onTermination: (error) => Deferred.succeed(writerTermination, error).pipe(Effect.asVoid),
+      });
+      const extRequest = (id: number) =>
+        encodeJsonl(ExtRequest, {
+          jsonrpc: "2.0",
+          id,
+          method: "x/test",
+          params: { hello: "world" },
+          headers: [],
+        });
+      yield* Queue.offer(failedInput, yield* extRequest(9));
+      assert.equal(yield* Queue.take(observed), AcpProtocol.acpRequestIdentity(9));
+      yield* Deferred.await(writerTermination);
+      yield* Queue.offer(failedInput, yield* extRequest(10));
+      assert.equal(
+        yield* Effect.raceFirst(
+          Deferred.await(readerStopped).pipe(Effect.as("stopped")),
+          Queue.take(observed),
+        ),
+        "stopped",
+      );
+      assert.equal(yield* Queue.size(observed), 0);
     }),
   );
 
