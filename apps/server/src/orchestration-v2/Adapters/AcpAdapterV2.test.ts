@@ -5342,7 +5342,7 @@ describe("AcpAdapterV2", () => {
                   model: null,
                   status: tool.status === "failed" ? "failed" : "running",
                   result: tool.status === "failed" ? "Permission denied" : null,
-                  suppressNormalTool: tool.status === "failed" ? false : undefined,
+                  suppressNormalTool: tool.status !== "failed",
                 }
               : undefined,
           isCancelledToolCall: Schema.is(
