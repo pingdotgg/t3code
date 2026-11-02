@@ -82,6 +82,8 @@ export function PullRequestMergeControls(props: {
       ? `${MERGE_METHODS[method].title} stack (${scope.layers.length})`
       : MERGE_METHODS[method].title
     : "Merge unavailable";
+  const autoMergeArmed = pr.state === "open" && pr.autoMergeEnabled === true;
+  const armedLabel = `Auto-merge pending${pr.autoMergeMethod ? ` (${pr.autoMergeMethod})` : ""}`;
   const autoAction = pr.autoMergeEnabled ? "disable-auto-merge" : "enable-auto-merge";
   const canAutoMerge =
     !busy &&
@@ -167,13 +169,25 @@ export function PullRequestMergeControls(props: {
   return (
     <View className="gap-2 border-t border-border-subtle p-3">
       <SplitButton
-        label={busy ? "Working…" : !permissions.connected ? "Reconnect to merge" : label}
-        accessibilityLabel={
-          scope ? `${label}, ${scope.layers.length} stack layers through #${pr.number}` : label
+        label={
+          busy
+            ? "Working…"
+            : !permissions.connected
+              ? "Reconnect to merge"
+              : autoMergeArmed
+                ? armedLabel
+                : label
         }
-        icon={PullRequestGlyph.merged}
-        disabled={!canMerge}
-        loading={busy || checkingStack}
+        accessibilityLabel={
+          autoMergeArmed
+            ? `${armedLabel}, merges once its requirements are met`
+            : scope
+              ? `${label}, ${scope.layers.length} stack layers through #${pr.number}`
+              : label
+        }
+        icon={autoMergeArmed ? "clock" : PullRequestGlyph.merged}
+        disabled={!canMerge || autoMergeArmed}
+        loading={busy || (!autoMergeArmed && checkingStack)}
         onPress={() => confirm("merge")}
         menuTitle="Merge options"
         actions={[
@@ -202,16 +216,12 @@ export function PullRequestMergeControls(props: {
         }}
       />
       {permissions.connected &&
+      !autoMergeArmed &&
       reason &&
       reason !== MERGE_CONFLICT_REASON &&
       reason !== "Checking stack membership…" &&
       !(checkingStack && reason === "Refresh the stack before merging.") ? (
         <Text className="px-1 text-xs text-foreground-muted">{reason}</Text>
-      ) : null}
-      {pr.autoMergeEnabled ? (
-        <Text className="px-1 text-xs text-foreground-muted">
-          Auto-merge is enabled{pr.autoMergeMethod ? ` · ${pr.autoMergeMethod}` : ""}
-        </Text>
       ) : null}
       {stack.error && stack.supportsStackActions ? (
         <Button label="Retry stack lookup" tone="text" onPress={stack.refresh} />
