@@ -4431,9 +4431,7 @@ describe("working window", () => {
     const window = workingRow(rows)?.window;
     expect(window?.items.map((item) => item.id)).toEqual(["edit", "command"]);
     expect(window?.diff).toEqual({ additions: 84, deletions: 22 });
-    // Sending a steer re-keys the window, which closes an open history.
     expect(window?.key).toBe("steer");
-    expect(window?.historyOpen).toBe(false);
   });
 
   it("keeps steers between work segments once the turn settles", () => {

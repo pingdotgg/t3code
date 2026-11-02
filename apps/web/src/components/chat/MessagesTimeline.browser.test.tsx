@@ -330,19 +330,17 @@ describe("MessagesTimeline work rows", () => {
         .element()
         .closest('[data-assistant-citation-source="live-answer"]'),
     ).not.toBeNull();
-    await screen.getByRole("button", { name: "Open work history" }).click();
     await expect.element(screen.getByRole("region", { name: "Work history" })).toBeVisible();
     const history = screen.getByRole("region", { name: "Work history" }).element();
-    await expect.element(screen.getByText("History answer 0", { exact: true })).toBeVisible();
     expect(history.clientHeight).toBeGreaterThan(0);
     expect(history.scrollHeight).toBeGreaterThan(history.clientHeight);
     expect(
       screen.container.querySelectorAll("[data-assistant-citation-source]").length,
     ).toBeLessThan(60);
     await act(() => {
-      history.scrollTop = history.scrollHeight;
+      history.scrollTop = 0;
     });
-    await expect.element(screen.getByText("Live answer", { exact: true })).toBeVisible();
+    await expect.element(screen.getByText("History answer 0", { exact: true })).toBeVisible();
   });
 
   it.each(["delegated", "legacy", "missing"] as const)(

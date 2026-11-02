@@ -114,7 +114,7 @@ export function WorkingBarControl({
   render,
   ...props
 }: Omit<useRender.ComponentProps<"button">, "className"> & {
-  variant: "chip" | "history" | "question";
+  variant: "chip" | "question";
   tone?: "neutral" | "warning";
 }) {
   const defaultProps = {
@@ -122,9 +122,7 @@ export function WorkingBarControl({
     className: cn(
       variant === "chip"
         ? "inline-flex h-[22px] shrink-0 cursor-pointer items-center gap-1.5 rounded-row px-2 text-meta whitespace-nowrap transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70 disabled:pointer-events-none disabled:opacity-64 [&_svg]:size-3 [&_svg]:shrink-0"
-        : variant === "history"
-          ? "flex shrink-0 cursor-pointer select-none items-center gap-2 self-stretch rounded-md text-left text-label text-muted-foreground tabular-nums focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70 disabled:cursor-default"
-          : "inline-flex h-[22px] min-w-0 shrink items-center gap-1.5 rounded-row text-meta focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70 text-info-foreground cursor-pointer",
+        : "inline-flex h-[22px] min-w-0 shrink items-center gap-1.5 rounded-row text-meta focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70 text-info-foreground cursor-pointer",
       variant === "chip" &&
         (tone === "warning"
           ? "bg-warning-foreground/10 text-warning-foreground hover:bg-warning-foreground/15"

@@ -14,7 +14,6 @@ import {
   MESSAGE_HEADING_LEVEL,
   SlashCommandChip,
   WORKING_BAR_CLASS_NAME,
-  WorkFoldChevron,
   WorkingBarControl,
 } from "./TimelineRowParts";
 import {
@@ -324,7 +323,6 @@ function ExpandedWorkGroupEntries({
 const workEntryKey = (entry: TimelineWorkEntry) => entry.id;
 
 export function WorkingTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "working" }> }) {
-  const ctx = use(TimelineRowCtx);
   const { isCompacting, isPreparingWorktree, backgroundWorktreeSetup, pendingRequest } =
     use(TimelineRowActivityCtx);
   const window = row.window;
@@ -364,22 +362,10 @@ export function WorkingTimelineRow({ row }: { row: Extract<TimelineRow, { kind: 
   ) : (
     "Working..."
   );
-  const historyOpen = window?.historyOpen ?? false;
-  // Like the finished turn's bar, the chevron shows whenever there is work to fold.
-  const foldable = window !== undefined && (historyOpen || window.items.length > 0);
   return (
     <div>
       <div className={WORKING_BAR_CLASS_NAME}>
-        <WorkingBarControl
-          variant="history"
-          aria-expanded={foldable ? historyOpen : undefined}
-          aria-label={
-            foldable ? (historyOpen ? "Close work history" : "Open work history") : undefined
-          }
-          disabled={!foldable}
-          data-scroll-anchor-ignore
-          onClick={foldable ? () => ctx.onToggleWorkingHistory(window.key) : undefined}
-        >
+        <div className="flex shrink-0 select-none items-center self-stretch text-label text-muted-foreground tabular-nums">
           <span
             ref={isPreparingWorktree ? observeVisibleAnimation : undefined}
             className="relative shrink-0 overflow-hidden whitespace-nowrap"
@@ -387,8 +373,7 @@ export function WorkingTimelineRow({ row }: { row: Extract<TimelineRow, { kind: 
             {label}
             {isPreparingWorktree ? <ActivityShimmerOverlay>{label}</ActivityShimmerOverlay> : null}
           </span>
-          {foldable ? <WorkFoldChevron expanded={historyOpen} /> : null}
-        </WorkingBarControl>
+        </div>
         {backgroundWorktreeSetup ? (
           <BackgroundWorktreeSetupChip snapshot={backgroundWorktreeSetup} />
         ) : null}
@@ -884,12 +869,10 @@ const WorkingWindowItemView = memo(function WorkingWindowItemView({
   item,
   itemKey,
   current,
-  historyOpen,
 }: {
   item: WorkingWindowItem;
   itemKey: string;
   current: boolean;
-  historyOpen: boolean;
 }) {
   const ctx = use(TimelineRowCtx);
   if (item.kind === "text") {
@@ -921,7 +904,6 @@ const WorkingWindowItemView = memo(function WorkingWindowItemView({
     <SimpleWorkEntryRow
       workEntry={entry}
       workspaceRoot={ctx.workspaceRoot}
-      expandable={historyOpen}
       severeFailure={failedTestRun}
     />
   );
@@ -931,15 +913,13 @@ function WorkingWindowView({ window, itemKey }: { window: WorkingWindow; itemKey
   const ctx = use(TimelineRowCtx);
   const { isCompacting, isPreparingWorktree, turnEnded, pendingRequest } =
     use(TimelineRowActivityCtx);
-  const [full, setFull] = useState(false);
-  const observeHeight = (element: HTMLDivElement | null) => {
+  const listRef = useRef<LegendListRef>(null);
+  const [scrolledFromTop, setScrolledFromTop] = useState(false);
+  const updateTopFade = () => {
+    const element = listRef.current?.getScrollableNode();
     if (!element) return;
-    const update = () => {
-      const next = element.clientHeight >= WORKING_WINDOW_MAX_HEIGHT - 1;
-      setFull((current) => (current === next ? current : next));
-    };
-    update();
-    return observeResize(element, update);
+    const next = element.scrollTop > 1;
+    setScrolledFromTop((current) => (current === next ? current : next));
   };
   const { workGroupViewState, onToggleWorkEntry } = ctx;
   // Entries opened in the history keep their state, and toggling one keeps the bar in place.
@@ -947,8 +927,6 @@ function WorkingWindowView({ window, itemKey }: { window: WorkingWindow; itemKey
     state: workGroupViewState,
     onToggleEntry: () => onToggleWorkEntry("working-indicator-row"),
   }))();
-  const open = window.historyOpen;
-  const shown = open ? window.items : window.items.slice(-WORKING_WINDOW_TAIL);
   const showThinking =
     !turnEnded &&
     !pendingRequest &&
@@ -956,71 +934,46 @@ function WorkingWindowView({ window, itemKey }: { window: WorkingWindow; itemKey
     !isCompacting &&
     !isPreparingWorktree &&
     !workingWindowHasActiveCompaction(window);
-  if (shown.length === 0 && !showThinking) return null;
-  const openable = !open && shown.length > 0;
+  if (window.items.length === 0 && !showThinking) return null;
   const thinking = showThinking ? (
-    <LiveActivityRow label="Thinking" iconName="brain" active interruptible />
+    <div className={window.items.length > 0 ? "pt-1" : "pt-2"}>
+      <LiveActivityRow label="Thinking" iconName="brain" active interruptible />
+    </div>
   ) : null;
   return (
     <WorkGroupViewCtx value={groupView}>
-      {/* The bar is the keyboard control; the window is a larger pointer target for it. */}
-      <div
-        className={openable ? "cursor-pointer" : undefined}
-        data-working-window={openable ? "" : undefined}
-        onClick={openable ? () => ctx.onToggleWorkingHistory(window.key) : undefined}
-      >
-        {open ? (
-          <LegendList
-            data={window.items}
-            keyExtractor={workingWindowItemKey}
-            renderItem={({ item }) => (
-              <div className="min-w-0">
-                <WorkingWindowItemView
-                  item={item}
-                  itemKey={itemKey}
-                  current={item === window.items.at(-1)}
-                  historyOpen={open}
-                />
-              </div>
-            )}
-            estimatedItemSize={compactWorkEntryHeight}
-            drawDistance={240}
-            recycleItems
-            maintainVisibleContentPosition
-            ListFooterComponent={thinking}
-            tabIndex={0}
-            role="region"
-            aria-label="Work history"
-            className="max-h-[min(18rem,50dvh)] min-w-0 overflow-x-hidden pt-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70"
-          />
-        ) : (
-          <div
-            ref={observeHeight}
-            className={cn(
-              // The gap under the bar sits inside the window, so its fade reaches the hairline.
-              "flex min-w-0 flex-col gap-1 pt-2",
-              !open && "max-h-[220px] justify-end overflow-hidden",
-              !open && full && "[mask-image:linear-gradient(to_bottom,transparent,black_36px)]",
-            )}
-          >
-            {shown.map((item) => (
-              <div
-                key={item.id}
-                inert={!open && !workingWindowItemIsLive(item)}
-                className="min-w-0"
-              >
-                <WorkingWindowItemView
-                  item={item}
-                  itemKey={itemKey}
-                  current={item === window.items.at(-1)}
-                  historyOpen={open}
-                />
-              </div>
-            ))}
-            {thinking}
+      <LegendList
+        key={window.key}
+        ref={listRef}
+        data={window.items}
+        keyExtractor={workingWindowItemKey}
+        renderItem={({ item, index }) => (
+          <div className={cn("min-w-0", index === 0 ? "pt-2" : "pt-1")}>
+            <WorkingWindowItemView
+              item={item}
+              itemKey={itemKey}
+              current={item === window.items.at(-1)}
+            />
           </div>
         )}
-      </div>
+        estimatedItemSize={compactWorkEntryHeight}
+        drawDistance={240}
+        initialScrollAtEnd
+        maintainScrollAtEnd={{
+          animated: false,
+          on: { dataChange: true, itemLayout: true, footerLayout: true },
+        }}
+        maintainVisibleContentPosition
+        ListFooterComponent={thinking}
+        onScroll={updateTopFade}
+        tabIndex={0}
+        role="region"
+        aria-label="Work history"
+        className={cn(
+          "scrollbar-gutter-stable -me-(--chat-lane-reach) max-h-[220px] min-w-0 overflow-x-hidden rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70",
+          scrolledFromTop && "[mask-image:linear-gradient(to_bottom,transparent,black_36px)]",
+        )}
+      />
     </WorkGroupViewCtx>
   );
 }
@@ -1035,11 +988,6 @@ function workingWindowItemIsLive(item: WorkingWindowItem | undefined): boolean {
     subagentItemIsLive(member.status),
   );
 }
-
-// Includes the 8px gap under the bar so the fade reaches its hairline.
-const WORKING_WINDOW_MAX_HEIGHT = 220;
-
-const WORKING_WINDOW_TAIL = 12;
 
 /** Running subagents outrank the diff; live statuses come from the thread's subagent roster. */
 function WorkingAgentsSlot({
