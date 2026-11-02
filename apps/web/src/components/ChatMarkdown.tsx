@@ -795,13 +795,13 @@ function useChatMarkdownState({
     if (isBasename) {
       return pickWorkspaceBasenameMatch(workspaceRelativePath, result.value.entries);
     }
-    if (strippedPath === null) {
-      return pickWorkspaceSuffixMatch(workspaceRelativePath, cwd, result.value.entries);
-    }
-    const match = pickStrippedWorkspaceMatch(strippedPath, cwd, result.value.entries);
+    const match =
+      strippedPath === null
+        ? pickWorkspaceSuffixMatch(workspaceRelativePath, cwd, result.value.entries)
+        : pickStrippedWorkspaceMatch(strippedPath, cwd, result.value.entries);
     if (match === null) return null;
-    // Search can be truncated or still scanning, so it cannot rule out the
-    // literal path. Check the host before redirecting to the stripped match.
+    // Search can be truncated or still scanning, and the literal path can appear
+    // while it runs. Check the host before redirecting to the match.
     return (await literalPathIsMissing()) ? match : null;
   };
   const openFileInPanel = (fileLinkMeta: MarkdownFileLinkMeta, panelPath: string) => {
