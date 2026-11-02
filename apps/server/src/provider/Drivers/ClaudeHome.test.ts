@@ -116,6 +116,15 @@ it.layer(NodeServices.layer)("ClaudeHome", (it) => {
 
         yield* fileSystem.writeFileString(
           path.join(homePath, "settings.json"),
+          JSON.stringify({ env: { ANTHROPIC_API_KEY: "" } }),
+        );
+        expect(
+          (yield* mergeClaudeProcessEnvironment({ homePath }, [apiKey], host))
+            .CLAUDE_CODE_ENTRYPOINT,
+        ).toBe("t3-code");
+
+        yield* fileSystem.writeFileString(
+          path.join(homePath, "settings.json"),
           JSON.stringify({ env: { CLAUDE_CODE_ENTRYPOINT: "custom" } }),
         );
         expect(
