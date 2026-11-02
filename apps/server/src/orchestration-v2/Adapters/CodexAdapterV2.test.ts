@@ -69,6 +69,7 @@ import * as ProviderReplayHarness from "../testkit/ProviderReplayHarness.ts";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import type * as ProviderContinuationRequests from "@t3tools/provider-core/server/ProviderContinuationRequests";
 import * as ModelManifest from "../../provider/ModelManifest.ts";
+import * as PortScanner from "../../preview/PortScanner.ts";
 import { resolveProviderCompatibility } from "../../provider/providerCompatibility.ts";
 import * as CodexAdapterV2 from "./CodexAdapterV2.ts";
 import { withCodexReplayChildMetadata } from "./CodexAdapterV2.testkit.ts";
@@ -879,6 +880,50 @@ describe("CodexAdapterV2 process exit", () => {
       ),
     ),
   );
+
+  it.effect("counts the app-server as a running agent until its session closes", () => {
+    let runningAgents = 0;
+    const factoryLayer = CodexAdapterV2.layerAppServerClientFactory.pipe(
+      Layer.provide(
+        Layer.mock(PortScanner.PortDiscovery)({
+          trackAgent: () => {
+            runningAgents += 1;
+            return () => {
+              runningAgents -= 1;
+            };
+          },
+        }),
+      ),
+      Layer.provide(
+        Layer.succeed(ProviderEventLoggers.ProviderEventLoggers, {
+          native: undefined,
+          canonical: undefined,
+        }),
+      ),
+      Layer.provide(NodeServices.layer),
+    );
+    return Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const dir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-codex-cli-" });
+      const binaryPath = `${dir}/codex`;
+      yield* fs.writeFileString(binaryPath, "#!/bin/sh\ncat > /dev/null\n");
+      yield* fs.chmod(binaryPath, 0o755);
+      const factory = yield* CodexAdapterV2.CodexAppServerClientFactory;
+      yield* Effect.scoped(
+        factory
+          .open({
+            instanceId: CodexAdapterV2.CODEX_DEFAULT_INSTANCE_ID,
+            threadId: ThreadId.make("thread-codex-agent"),
+            providerSessionId: ProviderSessionId.make("session-codex-agent"),
+            runtimePolicy: CODEX_TEST_RUNTIME_POLICY,
+            settings: { ...DEFAULT_CODEX_SETTINGS, binaryPath },
+            environment: {},
+          })
+          .pipe(Effect.tap(() => Effect.sync(() => assert.equal(runningAgents, 1)))),
+      );
+      assert.equal(runningAgents, 0);
+    }).pipe(Effect.scoped, Effect.provide(Layer.merge(factoryLayer, NodeServices.layer)));
+  });
 });
 
 describe("CodexAdapterV2 session initialize", () => {
