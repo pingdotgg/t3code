@@ -193,7 +193,7 @@ const FINISHED_ROW_STATUSES = new Set([
   "rolled_back",
 ]);
 
-function rowStatusRank(status: string | null): number {
+export function webThreadLineageStatusRank(status: string | null): number {
   if (status !== null && WORKING_ROW_STATUSES.has(status)) return 0;
   if (status !== null && FINISHED_ROW_STATUSES.has(status)) return 2;
   return 1;
@@ -219,8 +219,8 @@ export function orderWebThreadLineageRows(input: {
     const rankDelta = pinRank(left) - pinRank(right);
     if (rankDelta !== 0) return rankDelta;
     const statusDelta =
-      rowStatusRank(threadRelationshipRowStatus(input.graph, left)) -
-      rowStatusRank(threadRelationshipRowStatus(input.graph, right));
+      webThreadLineageStatusRank(threadRelationshipRowStatus(input.graph, left)) -
+      webThreadLineageStatusRank(threadRelationshipRowStatus(input.graph, right));
     if (statusDelta !== 0) return statusDelta;
     const leftCreatedAt = threadCreatedAtMillis(input.graph.nodes.get(left.threadId));
     const rightCreatedAt = threadCreatedAtMillis(input.graph.nodes.get(right.threadId));
