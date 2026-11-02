@@ -2734,14 +2734,29 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           yield* writeSubagentAssistant(subagent, nativeItemId, false);
         });
 
-        const flushSubagentAssistant = (subagent: ActiveAcpSubagent) =>
-          Effect.forEach(
-            [...subagent.pendingAssistantMessages],
-            (nativeItemId) => writeSubagentAssistant(subagent, nativeItemId, true),
-            { discard: true },
+        // Reads the pending set under the permit, so it also waits for a write in progress.
+        const flushPendingSubagentAssistant = (subagent: ActiveAcpSubagent) =>
+          Effect.suspend(() =>
+            Effect.forEach(
+              [...subagent.pendingAssistantMessages],
+              (nativeItemId) => writeSubagentAssistantUnlocked(subagent, nativeItemId, true),
+              { discard: true },
+            ),
           );
 
-        const writeSubagentAssistant = Effect.fnUntraced(function* (
+        const flushSubagentAssistant = (subagent: ActiveAcpSubagent) =>
+          textEmissionPermit.withPermit(flushPendingSubagentAssistant(subagent));
+
+        const writeSubagentAssistant = (
+          subagent: ActiveAcpSubagent,
+          nativeItemId: string,
+          onlyIfPending: boolean,
+        ) =>
+          textEmissionPermit.withPermit(
+            writeSubagentAssistantUnlocked(subagent, nativeItemId, onlyIfPending),
+          );
+
+        const writeSubagentAssistantUnlocked = Effect.fnUntraced(function* (
           subagent: ActiveAcpSubagent,
           nativeItemId: string,
           onlyIfPending: boolean,
@@ -2770,7 +2785,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             driver,
             turnItem: artifacts.turnItem,
           });
-        }, textEmissionPermit.withPermit);
+        });
 
         const projectSubagentNotification = Effect.fnUntraced(function* (
           subagent: ActiveAcpSubagent,
@@ -7294,9 +7309,11 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           }
           yield* closeTextStreams(context);
           // Ingestion may stop at turn.terminal, before a delayed flush would run.
-          yield* Effect.forEach(context.subagents.values(), flushSubagentAssistant, {
-            discard: true,
-          });
+          yield* textEmissionPermit.withPermit(
+            Effect.forEach(context.subagents.values(), flushPendingSubagentAssistant, {
+              discard: true,
+            }),
+          );
           if (settledStatus !== "failed") {
             yield* emitProviderRetry(context, settledStatus);
           }
