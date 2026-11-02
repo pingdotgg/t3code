@@ -12,6 +12,7 @@ type ChatRightPanelProps = Omit<RightPanelTabsProps, "mode" | "inlineSize" | "ma
   readonly maximized: boolean;
   readonly workspaceLayoutElement: HTMLElement | null;
   readonly canvasStore: ChatCanvasStore;
+  readonly hasFloatingPreview: boolean;
   readonly widthStorageKey: string;
   readonly sheetAnimationDurationMs: number;
   readonly onCloseSheet: () => void;
@@ -27,6 +28,7 @@ export function ChatRightPanel(props: ChatRightPanelProps) {
     sheet,
     workspaceLayoutElement,
     canvasStore,
+    hasFloatingPreview,
     widthStorageKey,
     sheetAnimationDurationMs,
     onCloseSheet,
@@ -35,7 +37,7 @@ export function ChatRightPanel(props: ChatRightPanelProps) {
     ...tabs
   } = props;
   const chatWidth = useClientSettings((settings) => settings.chatWidth);
-  const autoSize = !sheet && !maximized && chatWidth !== "full";
+  const autoSize = !sheet && !maximized && !hasFloatingPreview && chatWidth !== "full";
   // Keep the card's slot when closed so reopening it does not switch to a popover.
   const preferredSiblingWidth = useStore(canvasStore, ({ measurements }) => {
     if (!autoSize) return undefined;
