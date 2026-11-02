@@ -24,6 +24,7 @@ import * as Option from "effect/Option";
 import * as PlatformError from "effect/PlatformError";
 import * as Path from "effect/Path";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
+import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
@@ -316,6 +317,73 @@ const createManager = (
       };
     }),
   );
+
+// Holds each 250 ms persist debounce and records every history write attempt.
+const createPersistFixture = Effect.gen(function* () {
+  const fs = yield* FileSystem.FileSystem;
+  const clock = yield* Clock.Clock;
+  const debounces = yield* Queue.unbounded<Deferred.Deferred<void>>();
+  const attempts: Array<string> = [];
+  let beforeNextWrite: Effect.Effect<void, PlatformError.PlatformError> = Effect.void;
+
+  const gatedClock: Clock.Clock = {
+    currentTimeMillisUnsafe: () => clock.currentTimeMillisUnsafe(),
+    currentTimeMillis: clock.currentTimeMillis,
+    currentTimeNanosUnsafe: () => clock.currentTimeNanosUnsafe(),
+    currentTimeNanos: clock.currentTimeNanos,
+    monotonicTimeNanosUnsafe: () => clock.monotonicTimeNanosUnsafe(),
+    monotonicTimeNanos: clock.monotonicTimeNanos,
+    sleep: (duration) =>
+      Duration.toMillis(duration) === 250
+        ? Effect.gen(function* () {
+            const release = yield* Deferred.make<void>();
+            yield* Queue.offer(debounces, release);
+            yield* Deferred.await(release);
+          })
+        : clock.sleep(duration),
+  };
+  const recording = FileSystem.FileSystem.of({
+    ...fs,
+    writeFileString: (filePath, data, options) => {
+      attempts.push(data);
+      const before = beforeNextWrite;
+      beforeNextWrite = Effect.void;
+      return Effect.andThen(before, fs.writeFileString(filePath, data, options));
+    },
+  });
+  const { manager, ptyAdapter, logsDir } = yield* createManager().pipe(
+    Effect.provideService(FileSystem.FileSystem, recording),
+    Effect.provideService(Clock.Clock, gatedClock),
+  );
+
+  const emitOutput = (processIndex: number, data: string) =>
+    Effect.gen(function* () {
+      const persistQueued = yield* Deferred.make<void>();
+      const unsubscribe = yield* manager.subscribe((event) =>
+        event.type === "output" && event.data === data
+          ? Deferred.succeed(persistQueued, undefined).pipe(Effect.asVoid)
+          : Effect.void,
+      );
+      ptyAdapter.processes[processIndex]!.emitData(data);
+      yield* Deferred.await(persistQueued);
+      unsubscribe();
+    });
+  const releaseNextDebounce = Effect.flatMap(Queue.take(debounces), (release) =>
+    Deferred.succeed(release, undefined),
+  );
+
+  return {
+    manager,
+    attempts,
+    emitOutput,
+    releaseNextDebounce,
+    nextDebounce: Queue.take(debounces),
+    readHistory: Effect.flatMap(historyLogPath(logsDir), (filePath) => fs.readFileString(filePath)),
+    setBeforeNextWrite: (effect: Effect.Effect<void, PlatformError.PlatformError>) => {
+      beforeNextWrite = effect;
+    },
+  };
+});
 
 const layerWithHostPlatform = (platform: NodeJS.Platform) =>
   Layer.succeed(HostProcess.Platform, platform);
@@ -1498,6 +1566,117 @@ it.layer(
       expect(yield* fs.readFileString(oldPath)).toBe("preserve me\n");
       expect(yield* fs.readDirectory(logsDir)).toHaveLength(1);
       expect((yield* manager.open(openInput({ threadId }))).history).toBe("preserve me\n");
+    }),
+  );
+
+  it.effect("skips a background history write the previous write already covered", () =>
+    Effect.gen(function* () {
+      const { manager, attempts, emitOutput, releaseNextDebounce, nextDebounce, readHistory } =
+        yield* createPersistFixture;
+      yield* manager.open(openInput());
+      yield* emitOutput(0, "first\n");
+      const firstDebounce = yield* nextDebounce;
+      yield* emitOutput(0, "second\n");
+      yield* Deferred.succeed(firstDebounce, undefined);
+      yield* releaseNextDebounce;
+      yield* manager.close({ threadId: "thread-1" });
+
+      // The final attempt is close's forced write of an unchanged revision.
+      expect(attempts).toEqual(["first\nsecond\n", "first\nsecond\n"]);
+      expect(yield* readHistory).toBe("first\nsecond\n");
+    }),
+  );
+
+  it.effect("persists output that arrives while a history write is in flight", () =>
+    Effect.gen(function* () {
+      const fixture = yield* createPersistFixture;
+      const { manager, attempts, emitOutput, releaseNextDebounce, readHistory } = fixture;
+      const writeStarted = yield* Deferred.make<void>();
+      const releaseWrite = yield* Deferred.make<void>();
+      fixture.setBeforeNextWrite(
+        Deferred.succeed(writeStarted, undefined).pipe(
+          Effect.andThen(Deferred.await(releaseWrite)),
+        ),
+      );
+      yield* manager.open(openInput());
+      yield* emitOutput(0, "first\n");
+      yield* releaseNextDebounce;
+      yield* Deferred.await(writeStarted);
+      yield* emitOutput(0, "second\n");
+      yield* Deferred.succeed(releaseWrite, undefined);
+      yield* releaseNextDebounce;
+      yield* manager.close({ threadId: "thread-1" });
+
+      expect(attempts).toEqual(["first\n", "first\nsecond\n", "first\nsecond\n"]);
+      expect(yield* readHistory).toBe("first\nsecond\n");
+    }),
+  );
+
+  it.effect("retries a coalesced background write after the first attempt fails", () =>
+    Effect.gen(function* () {
+      const fixture = yield* createPersistFixture;
+      const { manager, attempts, emitOutput, releaseNextDebounce, nextDebounce, readHistory } =
+        fixture;
+      fixture.setBeforeNextWrite(
+        Effect.fail(
+          PlatformError.systemError({
+            _tag: "Unknown",
+            module: "FileSystem",
+            method: "writeFileString",
+            cause: { code: "ENOSPC" },
+          }),
+        ),
+      );
+      yield* manager.open(openInput());
+      yield* emitOutput(0, "first\n");
+      const firstDebounce = yield* nextDebounce;
+      yield* emitOutput(0, "second\n");
+      yield* Deferred.succeed(firstDebounce, undefined);
+      yield* releaseNextDebounce;
+      // Close blocks on the worker, so its forced write is always the last attempt.
+      yield* manager.close({ threadId: "thread-1" });
+
+      expect(attempts).toEqual(["first\nsecond\n", "first\nsecond\n", "first\nsecond\n"]);
+      expect(yield* readHistory).toBe("first\nsecond\n");
+    }),
+  );
+
+  it.effect("writes a clear that lands while a redundant background pass is pending", () =>
+    Effect.gen(function* () {
+      const { manager, attempts, emitOutput, nextDebounce, readHistory } =
+        yield* createPersistFixture;
+      yield* manager.open(openInput());
+      yield* emitOutput(0, "first\n");
+      const firstDebounce = yield* nextDebounce;
+      yield* emitOutput(0, "second\n");
+      yield* Deferred.succeed(firstDebounce, undefined);
+      const pendingDebounce = yield* nextDebounce;
+      const clearing = yield* Effect.forkChild(
+        manager.clear({ threadId: "thread-1", terminalId: DEFAULT_TERMINAL_ID }),
+      );
+      yield* Deferred.succeed(pendingDebounce, undefined);
+      yield* Fiber.join(clearing);
+
+      expect(attempts.at(-1)).toBe("");
+      expect(yield* readHistory).toBe("");
+    }),
+  );
+
+  it.effect("persists a reopened terminal's history under the same id", () =>
+    Effect.gen(function* () {
+      const { manager, attempts, emitOutput, releaseNextDebounce, readHistory } =
+        yield* createPersistFixture;
+      yield* manager.open(openInput());
+      yield* emitOutput(0, "first\n");
+      yield* releaseNextDebounce;
+      yield* manager.close({ threadId: "thread-1" });
+      yield* manager.open(openInput());
+      yield* emitOutput(1, "second\n");
+      yield* releaseNextDebounce;
+      yield* manager.close({ threadId: "thread-1" });
+
+      expect(attempts).toEqual(["first\n", "first\n", "first\nsecond\n", "first\nsecond\n"]);
+      expect(yield* readHistory).toBe("first\nsecond\n");
     }),
   );
 

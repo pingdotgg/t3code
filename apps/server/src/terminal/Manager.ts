@@ -879,6 +879,8 @@ export class BoundedTerminalHistory {
   // Reading the old string's tail on each append can force chunk concatenation.
   private lastCodeUnit: number | undefined;
   private cachedValue: string | null = "";
+  revision = 0;
+  persistedRevision: number | null = null;
 
   constructor(maxLines: number, initial: string, maxBytes = DEFAULT_HISTORY_BYTE_LIMIT) {
     this.maxLines = maxLines;
@@ -888,6 +890,7 @@ export class BoundedTerminalHistory {
 
   append(text: string): void {
     if (text.length === 0) return;
+    this.revision += 1;
     this.cachedValue = null;
     if (this.maxBytes <= 0 || this.maxLines <= 0) {
       this.clear();
@@ -1026,6 +1029,7 @@ export class BoundedTerminalHistory {
   }
 
   clear(): void {
+    this.revision += 1;
     this.chunks = [];
     this.start = 0;
     this.byteLength = 0;
@@ -1969,17 +1973,27 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
         return;
       }
 
-      yield* fileSystem
-        .writeFileString(historyPath(threadId, terminalId), request.history.value())
-        .pipe(
-          Effect.catch((error) =>
-            Effect.logWarning("failed to persist terminal history", {
-              threadId,
-              terminalId,
-              error,
-            }),
-          ),
-        );
+      const { history } = request;
+      if (!request.immediate && history.persistedRevision === history.revision) {
+        return;
+      }
+
+      // Captured with the serialized value: output during the write must stay unpersisted.
+      const revision = history.revision;
+      yield* fileSystem.writeFileString(historyPath(threadId, terminalId), history.value()).pipe(
+        Effect.tap(() =>
+          Effect.sync(() => {
+            history.persistedRevision = revision;
+          }),
+        ),
+        Effect.catch((error) =>
+          Effect.logWarning("failed to persist terminal history", {
+            threadId,
+            terminalId,
+            error,
+          }),
+        ),
+      );
     }),
   });
 
