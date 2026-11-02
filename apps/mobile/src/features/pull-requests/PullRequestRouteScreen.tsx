@@ -83,6 +83,12 @@ import { PullRequestReactions } from "./PullRequestReactions";
 import { composerPullRequests } from "../../state/pull-requests";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { setMarkdownTaskChecked } from "@t3tools/shared/markdownTaskList";
+import {
+  shownTaskListBody,
+  taskListEditEnded,
+  tickTaskListEdit,
+  type TaskListEdit,
+} from "@t3tools/client-runtime/pull-request-task-list";
 import { AsyncResult } from "effect/reactivity";
 import { useEnvironmentQuery } from "../../state/query";
 import { SourceControlAppAccessNotice } from "./SourceControlAppAccessNotice";
@@ -310,23 +316,13 @@ function PullRequestOverview(props: {
   const update = useAtomCommand(composerPullRequests.update);
   const refreshDetail = useAtomRefresh(composerPullRequests.detail(requestTarget(props.params)));
   // A checkbox ticks itself natively on tap and stays tappable while saving. Saves run one at a
-  // time with the latest body; a refresh carrying a body from before the latest tap is ignored,
-  // and any other body ends the edit. A tap that can't be written back remounts the description
-  // to undo the tick.
-  const [taskEdit, setTaskEdit] = useState<{
-    readonly stale: ReadonlyArray<string>;
-    readonly to: string;
-    readonly saving: boolean;
-  } | null>(null);
+  // time with the latest body. A tap that can't be written back remounts the description to undo
+  // the tick.
+  const [taskEdit, setTaskEdit] = useState<TaskListEdit | null>(null);
   const nextTaskBody = useRef<string | null>(null);
   const [taskReset, setTaskReset] = useState(0);
-  if (taskEdit !== null && !taskEdit.saving && !taskEdit.stale.includes(pr.body)) {
-    setTaskEdit(null);
-  }
-  const shownBody =
-    taskEdit !== null && (taskEdit.saving || taskEdit.stale.includes(pr.body))
-      ? taskEdit.to
-      : pr.body;
+  if (taskListEditEnded(taskEdit, pr.body)) setTaskEdit(null);
+  const shownBody = shownTaskListBody(taskEdit, pr.body);
   const saveTasks = async (finish: () => void) => {
     const target = requestTarget(props.params);
     for (let body = nextTaskBody.current; body !== null; body = nextTaskBody.current) {
@@ -355,8 +351,7 @@ function PullRequestOverview(props: {
       return;
     }
     const saving = taskEdit?.saving === true;
-    const stale = taskEdit !== null && shownBody !== pr.body ? [...taskEdit.stale, shownBody] : [];
-    setTaskEdit({ stale: [...stale, pr.body], to: body, saving: true });
+    setTaskEdit(tickTaskListEdit(taskEdit, pr.body, body));
     nextTaskBody.current = body;
     if (saving) return;
     void saveTasks(props.onTaskSaveStart());

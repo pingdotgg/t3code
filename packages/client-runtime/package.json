@@ -503,6 +503,10 @@
       "types": "./src/pullRequestEditing.ts",
       "default": "./src/pullRequestEditing.ts"
     },
+    "./pull-request-task-list": {
+      "types": "./src/pullRequestTaskList.ts",
+      "default": "./src/pullRequestTaskList.ts"
+    },
     "./pull-request-reactions": {
       "types": "./src/pullRequestReactions.ts",
       "default": "./src/pullRequestReactions.ts"

@@ -75,6 +75,12 @@ import {
   canEditPullRequestComment,
 } from "@t3tools/client-runtime/pull-request-editing";
 import { setMarkdownTaskChecked } from "@t3tools/shared/markdownTaskList";
+import {
+  shownTaskListBody,
+  taskListEditEnded,
+  tickTaskListEdit,
+  type TaskListEdit,
+} from "@t3tools/client-runtime/pull-request-task-list";
 import { PullRequestMarkdown } from "./PullRequestMarkdown";
 import { PullRequestCommentBody } from "./PullRequestCommentBody";
 import { PullRequestMoreReplies } from "./PullRequestMoreReplies";
@@ -515,21 +521,11 @@ export function PullRequestSummaryTab({
   };
 
   // Ticks show at once and stay clickable while saving. Saves run one at a time with the latest
-  // body, so quick ticks can't land out of order. A refresh can still carry a body from before
-  // the latest tick; those are `stale` and ignored, while any other body ends the edit.
-  const [taskEdit, setTaskEdit] = useState<{
-    readonly stale: ReadonlyArray<string>;
-    readonly to: string;
-    readonly saving: boolean;
-  } | null>(null);
+  // body, so quick ticks can't land out of order.
+  const [taskEdit, setTaskEdit] = useState<TaskListEdit | null>(null);
   const nextTaskBody = useRef<string | null>(null);
-  if (taskEdit !== null && !taskEdit.saving && !taskEdit.stale.includes(detail.body)) {
-    setTaskEdit(null);
-  }
-  const shownBody =
-    taskEdit !== null && (taskEdit.saving || taskEdit.stale.includes(detail.body))
-      ? taskEdit.to
-      : detail.body;
+  if (taskListEditEnded(taskEdit, detail.body)) setTaskEdit(null);
+  const shownBody = shownTaskListBody(taskEdit, detail.body);
   const saveTasks = async () => {
     for (let body = nextTaskBody.current; body !== null; body = nextTaskBody.current) {
       nextTaskBody.current = null;
@@ -550,9 +546,7 @@ export function PullRequestSummaryTab({
     const body = setMarkdownTaskChecked(shownBody, markerOffset, checked);
     if (body === shownBody) return;
     const saving = taskEdit?.saving === true;
-    const stale =
-      taskEdit !== null && shownBody !== detail.body ? [...taskEdit.stale, shownBody] : [];
-    setTaskEdit({ stale: [...stale, detail.body], to: body, saving: true });
+    setTaskEdit(tickTaskListEdit(taskEdit, detail.body, body));
     nextTaskBody.current = body;
     if (!saving) void saveTasks();
   };
