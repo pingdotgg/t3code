@@ -808,15 +808,18 @@ const ConversationTimeline = memo(function ConversationTimeline({
   const [timelineViewportElement, setTimelineViewportElement] = useState<HTMLDivElement | null>(
     null,
   );
-  const pinnedAlwaysRenderKey = usePinnedSelectionTimeline({
+  const pinnedTimeline = usePinnedSelectionTimeline(listRef, {
     threadRef: citationThreadRef,
     rows,
     timelineEntries,
-    listRef,
     viewport: timelineViewportElement,
     historyControls,
     reveal: pinnedReveal,
     pin: activePinnedSelection,
+    holdProgrammaticScroll: () => viewportRef.current?.holdProgrammaticScroll() ?? (() => {}),
+    releaseFollow: () => {
+      viewportRef.current?.navigate({ releasesFollow: true });
+    },
   });
   const {
     target: readyCitationRequest,
@@ -856,7 +859,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
     ...(firstMessageRow ? [firstMessageRow.id] : []),
     ...(lastMessageRow && lastMessageRow !== firstMessageRow ? [lastMessageRow.id] : []),
     ...(citationAlwaysRender?.keys ?? []),
-    ...(pinnedAlwaysRenderKey === null ? [] : [pinnedAlwaysRenderKey]),
+    ...(pinnedTimeline.alwaysRenderKey === null ? [] : [pinnedTimeline.alwaysRenderKey]),
     ...(fullscreenAppRowId === null ? [] : [fullscreenAppRowId]),
     ...new Set(
       [...playingAudioRows].filter(([audio]) => audio.isConnected).map(([, rowId]) => rowId),
@@ -1390,6 +1393,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
               contentInsetEndAdjustment={anchoredEndSpace ? contentInsetEndAdjustment : 0}
               maintainScrollAtEnd={
                 citationPositioning ||
+                pinnedTimeline.positioning ||
                 (restoringThreadPosition && rememberedPosition?.atEnd === false) ||
                 anchoredEndSpace ||
                 !liveFollowEnabled ||
@@ -1403,6 +1407,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
               maintainVisibleContentPosition={
                 findActive ||
                 citationPositioning ||
+                pinnedTimeline.positioning ||
                 (restoringThreadPosition && rememberedPosition?.atEnd === false)
                   ? false
                   : maintainVisibleContentPosition
