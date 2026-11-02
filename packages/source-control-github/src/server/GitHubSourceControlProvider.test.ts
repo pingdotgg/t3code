@@ -164,6 +164,7 @@ function harness(input: {
   readonly localBranches?: ReadonlyArray<string>;
   readonly resolved?: string;
   readonly gitFailure?: unknown;
+  readonly originUrls?: string;
 }) {
   const git: Array<readonly [string, unknown]> = [];
   const graphqlCalls: Array<GraphQlCall> = [];
@@ -178,7 +179,9 @@ function harness(input: {
     execute: (args) =>
       Effect.sync(() => {
         git.push(["execute", args.args]);
-        return processOutput("");
+        return processOutput(
+          args.args[0] === "config" ? (input.originUrls ?? "git@github.com:acme/web.git\n") : "",
+        );
       }),
     resolvePrimaryRemoteName: () => Effect.succeed("origin"),
     readConfigValue: () => Effect.succeed("git@github.com:acme/web.git"),
@@ -652,13 +655,14 @@ describe("GitHubSourceControlProvider.checkoutChangeRequest", () => {
   });
 
   it.effect("adds a fork remote with the protocol of the URL origin fetches from", () => {
-    // The harness's `remote.origin.url` config read answers with an SSH second URL.
+    // `git remote -v` shows origin's SSH `insteadOf` rewrite; config holds HTTPS, then an SSH push URL.
     const { layer, git } = harness({
       remotes: [
-        "origin\thttps://github.com/acme/web.git (fetch)",
-        "origin\thttps://github.com/acme/web.git (push)",
+        "origin\tgit@github.com:acme/web.git (fetch)",
+        "origin\tgit@github.com:acme/web.git (push)",
         "origin\tgit@github.com:acme/web.git (push)",
       ].join("\n"),
+      originUrls: "https://github.com/acme/web.git\ngit@github.com:acme/web.git\n",
       graphql: () => ({ pullRequest: node(7, "feature", "someone") }),
       api: {
         rest: (input) => {

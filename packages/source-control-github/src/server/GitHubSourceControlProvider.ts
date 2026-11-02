@@ -724,9 +724,16 @@ export const make = Effect.gen(function* () {
         if (known !== null) return known;
         const [owner, name] = headNameWithOwner.split("/");
         const fork = yield* readRepository({ host: base.host, owner: owner!, name: name! });
-        // Git fetches from a remote's first URL; `config --get` returns the last of several.
-        const originUrl =
-          parseFetchRemotes(remotes).find((remote) => remote.name === "origin")?.url ?? null;
+        // Git fetches from a remote's first URL; `config --get` returns the last of several, and
+        // `git remote -v` applies `insteadOf` rewrites.
+        const originUrl = yield* runGit(input.cwd, "readOriginUrl", [
+          "config",
+          "--get-all",
+          "remote.origin.url",
+        ]).pipe(
+          Effect.map((result) => result.stdout.split("\n", 1)[0]?.trim() || null),
+          Effect.orElseSucceed(() => null),
+        );
         return yield* git.ensureRemote({
           cwd: input.cwd,
           preferredName: headOwner ?? "fork",
