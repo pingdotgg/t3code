@@ -24,6 +24,7 @@ import * as ServerSettings from "../serverSettings.ts";
 import * as ProviderHostLive from "./ProviderHostLive.ts";
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import type * as AcpSessionRuntime from "@t3tools/provider-acp/server/AcpSessionRuntime";
+import type { ServerProvider } from "@t3tools/contracts";
 import {
   buildAntigravityModelsFromSession,
   makeAntigravityProvider,
@@ -129,6 +130,7 @@ type ProbeError = EffectAcpErrors.AcpError | ProviderSetupError;
 
 const makeHarness = Effect.fn("makeAntigravityProviderHarness")(function* (
   options: {
+    readonly auth?: { readonly type: string; readonly label: string };
     readonly enabled?: boolean;
     readonly safe?: boolean;
     readonly probeUsage?: Effect.Effect<ServerProviderUsageLimits>;
@@ -145,6 +147,7 @@ const makeHarness = Effect.fn("makeAntigravityProviderHarness")(function* (
     decodeSettings({ enabled: options.enabled ?? true, customModels: ["do-not-seed-me"] }),
     {
       stampIdentity: (snapshot) => Effect.succeed({ ...snapshot, instanceId, driver }),
+      ...(options.auth ? { auth: options.auth } : {}),
       ...(options.probeUsage ? { probeUsage: options.probeUsage } : {}),
       probe: Ref.update(probeCalls, (count) => count + 1).pipe(
         Effect.andThen(Ref.get(probe)),
@@ -165,6 +168,11 @@ const makeHarness = Effect.fn("makeAntigravityProviderHarness")(function* (
     Effect.andThen(initialUpdate),
     Effect.asVoid,
   );
+  // Subscribe before the trigger; yield the returned pull to await the publish.
+  const nextPublish = (predicate: (snapshot: ServerProvider) => boolean) =>
+    Stream.toPull(provider.snapshot.streamChanges.pipe(Stream.filter(predicate))).pipe(
+      Effect.map((pull) => pull.pipe(Effect.map((snapshots) => snapshots[0]))),
+    );
   return {
     provider,
     probe,
@@ -174,6 +182,7 @@ const makeHarness = Effect.fn("makeAntigravityProviderHarness")(function* (
     initialProbe,
     initialUpdate,
     initialize,
+    nextPublish,
   };
 });
 
@@ -305,23 +314,35 @@ it.layer(layerTest)("Antigravity provider snapshots", (it) => {
   it.effect("treats initialize as installation proof, not account or model discovery", () =>
     Effect.scoped(
       Effect.gen(function* () {
-        const harness = yield* makeHarness();
-        expect(yield* harness.provider.snapshot.getSnapshot).toMatchObject({
-          installed: false,
-          status: "warning",
-          auth: { status: "unknown" },
-          models: [],
-        });
-        yield* harness.initialize;
-        const snapshot = yield* harness.provider.snapshot.getSnapshot;
-        expect(snapshot).toMatchObject({
-          installed: true,
-          status: "warning",
-          version: "agy_acp_server_20260818_01_RC01",
-          auth: { status: "unknown" },
-          models: [],
-        });
-        expect(yield* Ref.get(harness.probeCalls)).toBe(1);
+        for (const auth of [
+          undefined,
+          { type: "oauth-personal", label: "Google account" },
+          { type: "oauth-business", label: "Gemini Enterprise" },
+          { type: "gemini-api-key", label: "Gemini API key" },
+          { type: "agent-platform", label: "Agent Platform" },
+        ]) {
+          const harness = yield* makeHarness(auth ? { auth } : {});
+          expect(yield* harness.provider.snapshot.getSnapshot).toMatchObject({
+            installed: false,
+            status: "warning",
+            auth: { status: "unknown" },
+            models: [],
+          });
+          yield* harness.initialize;
+          const snapshot = yield* harness.provider.snapshot.getSnapshot;
+          expect(snapshot).toMatchObject({
+            installed: true,
+            status: "warning",
+            version: "agy_acp_server_20260818_01_RC01",
+            auth: { status: "unknown", ...(auth ? { type: auth.type } : {}) },
+            message:
+              auth?.type === "gemini-api-key" || auth?.type === "agent-platform"
+                ? `Antigravity is installed. Connect with ${auth.label} to load models.`
+                : "Antigravity is installed. Google account access is not checked yet.",
+            models: [],
+          });
+          expect(yield* Ref.get(harness.probeCalls)).toBe(1);
+        }
       }),
     ),
   );
@@ -360,7 +381,8 @@ it.layer(layerTest)("Antigravity provider snapshots", (it) => {
   it.effect("clears all account metadata on sign-out and authentication failure", () =>
     Effect.scoped(
       Effect.gen(function* () {
-        const harness = yield* makeHarness();
+        const auth = { type: "gemini-api-key", label: "Gemini API key" };
+        const harness = yield* makeHarness({ auth });
         yield* harness.initialize;
         for (const clear of [harness.provider.onSignedOut, harness.provider.onAuthRequired]) {
           yield* harness.provider.onSessionStarted(started, "/workspace");
@@ -369,7 +391,8 @@ it.layer(layerTest)("Antigravity provider snapshots", (it) => {
           expect(yield* harness.provider.snapshot.getSnapshot).toMatchObject({
             installed: true,
             status: "warning",
-            auth: { status: "unauthenticated" },
+            auth: { status: "unauthenticated", type: auth.type, label: auth.label },
+            message: "Connect with Gemini API key to use Antigravity and load models.",
             models: [],
             slashCommands: [],
             skills: [],
@@ -382,7 +405,14 @@ it.layer(layerTest)("Antigravity provider snapshots", (it) => {
           expect((yield* harness.provider.snapshot.getSnapshot).models).toEqual([]);
         }
         const refreshed = yield* harness.provider.snapshot.refresh;
-        expect(refreshed.auth.status).toBe("unauthenticated");
+        expect(refreshed.auth).toEqual({
+          status: "unauthenticated",
+          type: auth.type,
+          label: auth.label,
+        });
+        expect(refreshed.message).toBe(
+          "Connect with Gemini API key to use Antigravity and load models.",
+        );
         expect(refreshed.supportsTextGeneration).toBe(false);
       }),
     ),
@@ -664,15 +694,29 @@ it.layer(layerTest)("Antigravity provider snapshots", (it) => {
           };
           const usage = yield* Ref.make(limits);
           const harness = yield* makeHarness({ probeUsage: Ref.get(usage) });
+          const published = yield* harness.nextPublish((snapshot) => !!snapshot.usageLimits);
           yield* harness.initialize;
-          expect((yield* harness.provider.snapshot.getSnapshot).usageLimits).toEqual(limits);
-          yield* Ref.set(harness.probe, Effect.succeed(initializeResult));
+          expect((yield* published)?.usageLimits).toEqual(limits);
+          // The second health check is the one the failed background read triggers.
+          const checks = yield* Ref.make(0);
+          const failedReadApplied = yield* Deferred.make<void>();
+          yield* Ref.set(
+            harness.probe,
+            Ref.updateAndGet(checks, (count) => count + 1).pipe(
+              Effect.tap((count) =>
+                count === 2 ? Deferred.succeed(failedReadApplied, undefined) : Effect.void,
+              ),
+              Effect.as(initializeResult),
+            ),
+          );
           yield* Ref.set(usage, {
             checkedAt: "2026-10-09T12:01:00.000Z",
             windows: [],
             unavailable: { reason: "probeFailed" },
           });
-          expect((yield* harness.provider.snapshot.refresh).usageLimits).toEqual(limits);
+          yield* harness.provider.snapshot.refresh;
+          yield* Deferred.await(failedReadApplied);
+          expect((yield* harness.provider.snapshot.getSnapshot).usageLimits).toEqual(limits);
           yield* harness.provider.onSignedOut;
           expect((yield* harness.provider.snapshot.getSnapshot).usageLimits).toBeUndefined();
           yield* Ref.set(usage, {
@@ -680,7 +724,11 @@ it.layer(layerTest)("Antigravity provider snapshots", (it) => {
             windows: [],
             unavailable: { reason: "unsupported" },
           });
-          expect((yield* harness.provider.snapshot.refresh).usageLimits?.windows).toEqual([]);
+          const unsupported = yield* harness.nextPublish(
+            (snapshot) => snapshot.usageLimits?.unavailable?.reason === "unsupported",
+          );
+          yield* harness.provider.snapshot.refresh;
+          expect((yield* unsupported)?.usageLimits?.windows).toEqual([]);
         }),
       ),
   );
@@ -711,6 +759,76 @@ it.layer(layerTest)("Antigravity provider snapshots", (it) => {
         });
         yield* Fiber.join(refresh);
         expect((yield* harness.provider.snapshot.getSnapshot).usageLimits).toBeUndefined();
+      }),
+    ),
+  );
+
+  it.effect("reports ready and starts sessions while one shared quota read is pending", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const reads = yield* Ref.make(0);
+        const readStarted = yield* Deferred.make<void>();
+        const readResult = yield* Deferred.make<ServerProviderUsageLimits>();
+        const harness = yield* makeHarness({
+          probeUsage: Ref.update(reads, (count) => count + 1).pipe(
+            Effect.andThen(Deferred.succeed(readStarted, undefined)),
+            Effect.andThen(Deferred.await(readResult)),
+          ),
+        });
+        const published = yield* harness.nextPublish((snapshot) => !!snapshot.usageLimits);
+        yield* harness.initialize;
+        yield* Deferred.await(readStarted);
+        yield* harness.provider.onSessionStarted(started, "/workspace");
+        yield* harness.provider.onSessionStarted(started, "/other");
+        const ready = yield* harness.provider.snapshot.getSnapshot;
+        expect(ready).toMatchObject({ status: "ready", auth: { status: "authenticated" } });
+        expect(ready.usageLimits).toBeUndefined();
+        expect(yield* Ref.get(reads)).toBe(1);
+        const limits = {
+          checkedAt: "2026-10-09T12:00:00.000Z",
+          windows: [
+            { id: "gemini-5h", kind: "session", label: "Gemini · 5-hour", usedPercent: 10 },
+          ],
+        } satisfies ServerProviderUsageLimits;
+        yield* Deferred.succeed(readResult, limits);
+        expect((yield* published)?.usageLimits).toEqual(limits);
+      }),
+    ),
+  );
+
+  it.effect("a quota read for the previous account is dropped after a new sign-in", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const oldReadStarted = yield* Deferred.make<void>();
+        const newLimits = {
+          checkedAt: "2026-10-09T12:01:00.000Z",
+          windows: [{ id: "3p-weekly", kind: "weekly", label: "Weekly", usedPercent: 40 }],
+        } satisfies ServerProviderUsageLimits;
+        const usage = yield* Ref.make<Effect.Effect<ServerProviderUsageLimits>>(
+          Deferred.succeed(oldReadStarted, undefined).pipe(Effect.andThen(Effect.never)),
+        );
+        const harness = yield* makeHarness({ probeUsage: Ref.get(usage).pipe(Effect.flatten) });
+        const published = yield* harness.nextPublish((snapshot) => !!snapshot.usageLimits);
+        yield* harness.initialize;
+        yield* Deferred.await(oldReadStarted);
+        yield* Ref.set(usage, Effect.succeed(newLimits));
+        yield* harness.provider.onSignedIn;
+        yield* harness.provider.onSessionStarted(started);
+        expect((yield* published)?.usageLimits).toEqual(newLimits);
+        // Switching again must not republish the previous account's limits, even if the read fails.
+        const failed = {
+          checkedAt: "2026-10-09T12:02:00.000Z",
+          windows: [],
+          unavailable: { reason: "probeFailed" },
+        } satisfies ServerProviderUsageLimits;
+        yield* Ref.set(usage, Effect.succeed(failed));
+        const republished = yield* harness.nextPublish(
+          (snapshot) => snapshot.usageLimits?.unavailable?.reason === "probeFailed",
+        );
+        yield* harness.provider.onSignedIn;
+        expect((yield* harness.provider.snapshot.getSnapshot).usageLimits).toBeUndefined();
+        yield* harness.provider.onSessionStarted(started);
+        expect((yield* republished)?.usageLimits).toEqual(failed);
       }),
     ),
   );
