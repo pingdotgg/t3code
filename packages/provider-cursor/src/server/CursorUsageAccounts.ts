@@ -309,11 +309,16 @@ const make = Effect.gen(function* () {
           ),
         );
         // Keys for one account share its source, and a repeated source would count sessions twice.
-        return [
-          ...new Map(
-            sources.filter((source) => source !== null).map((source) => [source.dir, source]),
-          ).values(),
-        ];
+        // A key whose refresh failed still holds older records, so a current read wins.
+        const byAccount = new Map<string, ProviderUsageScan>();
+        for (const source of sources) {
+          if (source === null) continue;
+          const kept = byAccount.get(source.dir);
+          if (kept === undefined || (kept.status !== "ok" && source.status === "ok")) {
+            byAccount.set(source.dir, source);
+          }
+        }
+        return [...byAccount.values()];
       }
       const credentialStore = hostEnvironment["AGENT_CLI_CREDENTIAL_STORE"];
       const loginUnavailable =
