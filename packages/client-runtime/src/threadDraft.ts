@@ -41,7 +41,15 @@ export function threadDraftMachineName(
 ): string {
   const host = hostText(machine);
   if (host === null) {
-    return `${plain(machine.label)} · T3 Connect ${machine.environmentId.slice(0, RELAY_ID_PREFIX_LENGTH)}`;
+    const prefix = machine.environmentId.slice(0, RELAY_ID_PREFIX_LENGTH);
+    // Ids that are not random, such as `environment-…`, can share the prefix.
+    const prefixShared = known.some(
+      (other) =>
+        other.environmentId !== machine.environmentId &&
+        hostText(other) === null &&
+        other.environmentId.startsWith(prefix),
+    );
+    return `${plain(machine.label)} · T3 Connect ${prefixShared ? machine.environmentId : prefix}`;
   }
   const hostShared = known.some(
     (other) => other.environmentId !== machine.environmentId && hostText(other) === host,
@@ -148,7 +156,7 @@ const MATCH_GROUPING = {
 /**
  * The project on `environmentId` a draft from `source` opens in: the first one, in the order
  * given, with the same repository and path. Repository identities load after the project list, so
- * while either side's is unknown the folder name stands in, as for mobile's machine switch. Null
+ * while either side's is unknown a folder name that only one project has stands in. Null
  * opens a scratch draft there: the source is a scratch project, or that machine has no such project.
  */
 export function threadDraftProjectMatch(
@@ -169,15 +177,18 @@ export function threadDraftProjectMatch(
     candidates.find(
       (project) => deriveLogicalProjectKeyFromSettings(project, MATCH_GROUPING) === key,
     ) ??
-    candidates.find(
-      (project) =>
-        (source.repositoryIdentity == null || project.repositoryIdentity == null) &&
-        folder !== null &&
-        folderName(project.workspaceRoot) === folder,
-    ) ??
-    null
+    onlyOne(
+      candidates.filter(
+        (project) =>
+          (source.repositoryIdentity == null || project.repositoryIdentity == null) &&
+          folder !== null &&
+          folderName(project.workspaceRoot) === folder,
+      ),
+    )
   );
 }
+
+const onlyOne = <A>(items: ReadonlyArray<A>): A | null => (items.length === 1 ? items[0]! : null);
 
 const folderName = (workspaceRoot: string) =>
   workspaceRoot.split(/[\\/]/).findLast(Boolean) ?? null;

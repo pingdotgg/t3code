@@ -8761,6 +8761,15 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         }
       }
       const now = yield* DateTime.now;
+      const {
+        type: _type,
+        commandId: _commandId,
+        threadId: _threadId,
+        runId: _runId,
+        nodeId: _nodeId,
+        turnItemId: _turnItemId,
+        ...draft
+      } = command;
       const turnItem: OrchestrationV2TurnItem =
         existing ??
         ({
@@ -8778,11 +8787,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           startedAt: now,
           completedAt: now,
           updatedAt: now,
+          ...draft,
           type: "thread_draft",
-          prompt: command.prompt,
-          hiddenCharacters: command.hiddenCharacters,
-          ...(command.environmentId === undefined ? {} : { environmentId: command.environmentId }),
-          ...(command.hint === undefined ? {} : { hint: command.hint }),
         } satisfies OrchestrationV2TurnItem);
       yield* emit(
         events,

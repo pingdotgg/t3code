@@ -7,6 +7,7 @@ import { useComposerAttachmentActions } from "../../state/use-composer-attachmen
 import { useWorkspaceBackNavigation } from "../workspace/useAndroidWorkspaceNavigation";
 import { submittedThreadParams } from "./thread-route-state";
 import { Button } from "../../components/ui/Button";
+import { useEnvironments } from "../../state/environments";
 import { ThreadScreenBinding, ThreadScreenFallback } from "./ThreadScreenHost";
 import { draftThreadShell } from "./draft-thread-shell";
 import { useRememberThreadProject } from "./useRememberThreadProject";
@@ -518,10 +519,16 @@ export function NewTaskDraftScreen(props: {
     loadBranches();
   }, [loadBranches, selectedProject]);
 
+  const { environments: knownEnvironments } = useEnvironments();
   const selectedEnvironmentLabel =
     flow.environments.find(
       (environment) => environment.environmentId === flow.selectedEnvironmentId,
-    )?.environmentLabel ?? "Environment";
+    )?.environmentLabel ??
+    // A bound machine with no loaded projects is missing from the flow's list.
+    knownEnvironments.find(
+      (environment) => environment.environmentId === flow.selectedEnvironmentId,
+    )?.label ??
+    "Environment";
   const availableCurrentBranchName =
     flow.availableBranches.find((branch) => branch.current)?.name ??
     flow.availableBranches.find((branch) => branch.isDefault)?.name ??

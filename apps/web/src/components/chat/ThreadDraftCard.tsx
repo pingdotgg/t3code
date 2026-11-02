@@ -10,6 +10,7 @@ import {
   type EnvironmentId,
   type ProjectId,
 } from "@t3tools/contracts";
+import { useRouter } from "@tanstack/react-router";
 import { SendIcon } from "lucide-react";
 import { useEffect, useId, useRef, useState } from "react";
 
@@ -94,6 +95,7 @@ function PendingThreadDraft(props: {
     ) ?? null;
   // Read in the render that enables Approve, once the machine's projects have loaded.
   const match = chosen === null ? null : threadDraftProjectMatch(source, projects, chosen);
+  const router = useRouter();
   const handleNewThread = useNewThreadHandler();
   const { openScratchProject } = useScratchProject();
   // Each press gets its own token; leaving the view that shows the card cancels it.
@@ -125,14 +127,18 @@ function PendingThreadDraft(props: {
       projectRef = scopeProjectRef(scratch.environmentId, scratch.id);
     }
     if (press.cancelled) return null;
+    const startHref = router.state.location.href;
     const opened = await handleNewThread(projectRef, {
       prompt: card.promptText,
       freshDraft: true,
       environmentSelection: "manual",
       shouldAbandon: () => press.cancelled,
     });
-    // Null only when the open was abandoned because the user left.
-    if (opened === null) return null;
+    if (opened === null) {
+      // Leaving, or a route change from a side surface, abandons the open quietly.
+      const left = press.cancelled || router.state.location.href !== startHref;
+      return left ? null : "Could not open the draft.";
+    }
     toastManager.add({ type: "success", title: `Draft on ${chosenName}. Read it, then send.` });
     return null;
   };

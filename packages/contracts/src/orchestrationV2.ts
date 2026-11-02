@@ -3593,16 +3593,13 @@ const OrchestrationV2InternalCommand = Schema.Union([
    * thread; the item is never updated.
    */
   Schema.Struct({
+    ...OrchestrationV2ThreadDraftFields,
     type: Schema.Literal("thread_draft.record"),
     commandId: CommandId,
     threadId: ThreadId,
     runId: RunId,
     nodeId: NodeId,
     turnItemId: TurnItemId,
-    prompt: OrchestrationV2ThreadDraftFields.prompt,
-    hiddenCharacters: NonNegativeInt,
-    environmentId: Schema.optional(EnvironmentId),
-    hint: OrchestrationV2ThreadDraftFields.hint,
   }),
 ]);
 export type OrchestrationV2InternalCommand = typeof OrchestrationV2InternalCommand.Type;

@@ -55,6 +55,12 @@ describe("threadDraftMachineName", () => {
       [],
       "relay · T3 Connect 5c1d0e9a",
     ],
+    [
+      "shows the full id when the short one is shared",
+      machine("environment-box", "box", null),
+      [machine("environment-box", "box", null), machine("environment-vps", "vps", null)],
+      "box · T3 Connect environment-box",
+    ],
   ])("%s", (_label, target, known, expected) => {
     expect(threadDraftMachineName(target, known)).toBe(expected);
   });
@@ -154,6 +160,8 @@ describe("threadDraftProjectMatch", () => {
     const otherRepo = project("app-a", "env-b", "github.com/acme/other");
     expect(threadDraftProjectMatch(source, [loading], target)).toBe(loading);
     expect(threadDraftProjectMatch(source, [otherRepo], target)).toBeNull();
+    const twin = project("app-a", "env-b", null, { workspaceRoot: "/other/app-a" } as never);
+    expect(threadDraftProjectMatch(source, [loading, twin], target)).toBeNull();
   });
 
   it("opens scratch when the source is scratch or the machine lacks the repository", () => {
