@@ -140,7 +140,6 @@ export function PullRequestDetailGhost({
             ) : null}
             {seed ? (
               <>
-                <span className="shrink-0 font-medium">{seed.repository}</span>
                 <InlineButton
                   onClick={() => void readLocalApi()?.shell.openExternal(seed.url)}
                   aria-label={`Open ${terminology.singular} #${seed.number} on host`}
