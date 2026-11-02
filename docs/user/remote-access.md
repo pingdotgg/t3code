@@ -358,6 +358,8 @@ An agent can also hand a task to a linked machine with `delegate_task`: it runs
 there as an ordinary thread, in the project with the same repository (or the
 one `target.projectId` names), and this thread wakes with its result when it
 ends, as for any delegated task. It keeps following the task across restarts.
+A task there on a different provider, model, or options waits for your approval
+first, as one here does.
 If the other machine revokes the link, or the link is removed here, the task
 fails with that reason.
 

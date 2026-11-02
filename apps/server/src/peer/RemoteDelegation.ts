@@ -1,6 +1,7 @@
 import {
   CommandId,
   type EnvironmentId,
+  type ModelSelection,
   NodeId,
   OrchestratorMcpFailure,
   type OrchestratorMcpDelegateTaskInput,
@@ -99,6 +100,31 @@ export class RemoteDelegation extends Context.Service<
     readonly start: () => Effect.Effect<void, never, Scope.Scope>;
   }
 >()("t3/peer/RemoteDelegation") {}
+
+/**
+ * The provider and model inherit as they do for a task here. Another provider
+ * there has no model to inherit, so the caller names one; without it, none.
+ */
+export function remoteModelSelection(
+  inherited: ModelSelection,
+  target: NonNullable<OrchestratorMcpDelegateTaskInput["target"]>,
+): ModelSelection | undefined {
+  const instanceId = target.providerInstanceId ?? inherited.instanceId;
+  const model = target.model ?? (instanceId === inherited.instanceId ? inherited.model : undefined);
+  if (model === undefined) return undefined;
+  const options =
+    target.options ??
+    (instanceId === inherited.instanceId && model === inherited.model
+      ? inherited.options
+      : undefined);
+  return { instanceId, model, ...(options === undefined ? {} : { options }) };
+}
+
+/** The command recording a remote task here; its receipt marks a delegation already made. */
+export const recordCommandId = (scope: ThreadScope, key: string) =>
+  CommandId.make(
+    `command:mcp:${encodeURIComponent(scope.requestNamespace)}:remote-delegate:${encodeURIComponent(key)}`,
+  );
 
 /** The other side refused because the thread there runs above this caller's modes. */
 const isModeRefusal = (error: OrchestratorMcpFailure) =>
@@ -221,23 +247,13 @@ const make = Effect.gen(function* () {
             'A task in a linked environment runs in that project\'s checkout; isolation "worktree" is not supported there. Omit isolation, or use t3_thread_launch with environmentId and a worktree workspaceStrategy.',
         });
       }
-      // The provider and model inherit as they do for a task here. Another
-      // provider there has no model to inherit, so the caller names one.
-      const inherited = parent.thread.modelSelection;
-      const instanceId = target.providerInstanceId ?? inherited.instanceId;
-      const model =
-        target.model ?? (instanceId === inherited.instanceId ? inherited.model : undefined);
-      if (model === undefined) {
+      const modelSelection = remoteModelSelection(parent.thread.modelSelection, target);
+      if (modelSelection === undefined) {
         return yield* new OrchestratorMcpFailure({
           code: "target_required",
           message: "Pass target.model from orchestrator_capabilities with this environmentId.",
         });
       }
-      const options =
-        target.options ??
-        (instanceId === inherited.instanceId && model === inherited.model
-          ? inherited.options
-          : undefined);
       // Modes asked for are checked against this thread. Omitted ones are left
       // to the other side, which inherits this thread's modes capped by the
       // link's access, so a narrower link still takes the task.
@@ -268,7 +284,7 @@ const make = Effect.gen(function* () {
         {
           projectId,
           title,
-          modelSelection: { instanceId, model, ...(options === undefined ? {} : { options }) },
+          modelSelection,
           ...(runtimeMode === undefined ? {} : { runtimeMode }),
           ...(interactionMode === undefined ? {} : { interactionMode }),
           message: task,
@@ -285,9 +301,7 @@ const make = Effect.gen(function* () {
         Effect.map(Option.getOrUndefined),
         Effect.orElseSucceed(() => undefined),
       );
-      const commandId = CommandId.make(
-        `command:mcp:${encodeURIComponent(scope.requestNamespace)}:remote-delegate:${encodeURIComponent(key)}`,
-      );
+      const commandId = recordCommandId(scope, key);
       const remoteChild: OrchestrationV2RemoteTaskChild = {
         environmentId: target.environmentId,
         threadId: launched.threadId,

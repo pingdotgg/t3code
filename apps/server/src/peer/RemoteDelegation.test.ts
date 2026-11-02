@@ -23,10 +23,12 @@ import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
+import * as Result from "effect/Result";
 import * as Schedule from "effect/Schedule";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
@@ -35,6 +37,7 @@ import type * as SqlClient from "effect/sql/SqlClient";
 import { McpSchema, McpServer } from "effect/ai";
 
 import * as ServerConfig from "../config.ts";
+import * as DelegationApprovals from "../mcp/DelegationApprovals.ts";
 import * as McpHttpServer from "../mcp/McpHttpServer.ts";
 import * as McpInvocationContext from "../mcp/McpInvocationContext.ts";
 import { idleThreadProjection, liveThreadShell } from "../mcp/McpToolAccess.testkit.ts";
@@ -927,6 +930,97 @@ it.effect("a task delegated to the box wakes the laptop's parent when it ends th
       expect(acknowledged.subagents[0]?.completionDelivery).toEqual({
         state: "acknowledged",
         observedByRunId: parentRunId,
+      });
+    }),
+  ).pipe(Effect.provide(NodeHttpServer.layerTest)),
+);
+
+it.effect("a task on another model waits for the user's answer before the box launches it", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const thread = yield* makeBoxThread;
+      const b = yield* serveBox(thread);
+      const offers = yield* SubscriptionRef.make<
+        ReadonlyArray<ProviderContinuationRequests.ProviderContinuationRequest>
+      >([]);
+      const database = yield* SqlitePersistence.layerMemory.pipe(Layer.build);
+      const a = yield* makeLaptop(database, offers);
+      yield* linkTo(a.links, b, "full-access");
+      yield* seedParent(a);
+      const approvals = yield* DelegationApprovals.DelegationApprovals.pipe(
+        Effect.provide(
+          DelegationApprovals.layer.pipe(
+            Layer.provide(Layer.succeed(ThreadManagement.ThreadManagementService, a.threads)),
+          ),
+        ),
+      );
+      const delegate = (clientRequestId: string) =>
+        a.call("delegate_task", {
+          task: "Run the full suite on the box.",
+          target: {
+            environmentId: box.environmentId,
+            providerInstanceId: instanceId,
+            model: "gpt-5.5",
+          },
+          mode: "async",
+          clientRequestId,
+        });
+      const nextCard = (afterSequence: number) =>
+        a.orchestrator
+          .streamStoredEventsFrom({
+            threadId: parentThreadId,
+            afterSequence,
+            eventType: "turn-item.updated",
+          })
+          .pipe(
+            Stream.filterMap((stored) =>
+              stored.event.type === "turn-item.updated" &&
+              stored.event.payload.type === "delegation_approval" &&
+              stored.event.payload.approvalStatus === "pending"
+                ? Result.succeed(stored.event.payload)
+                : Result.failVoid,
+            ),
+            Stream.runHead,
+            Effect.map(Option.getOrThrow),
+          );
+
+      const declined = yield* delegate("declined").pipe(Effect.forkChild);
+      const card = yield* nextCard(0);
+      expect(card).toMatchObject({
+        environmentId: box.environmentId,
+        current: modelSelection,
+        proposed: { instanceId, model: "gpt-5.5" },
+      });
+      yield* approvals.answer({
+        threadId: parentThreadId,
+        turnItemId: card.id,
+        decision: "decline",
+      });
+      const refused = yield* Fiber.join(declined);
+      expect(refused.isError).toBe(true);
+      expect(JSON.stringify(refused.content)).toContain("delegation_not_approved");
+      expect(yield* Ref.get(thread.launched)).toBeNull();
+      // The first answer stands.
+      const late = yield* approvals
+        .answer({ threadId: parentThreadId, turnItemId: card.id, decision: "approve" })
+        .pipe(Effect.flip);
+      expect(late.reason).toBe("already_answered");
+
+      const sequence = yield* a.threads.getThreadEventSequence(parentThreadId);
+      const approved = yield* delegate("approved").pipe(Effect.forkChild);
+      const second = yield* nextCard(sequence);
+      expect(second.id).not.toBe(card.id);
+      expect(yield* Ref.get(thread.launched)).toBeNull();
+      yield* approvals.answer({
+        threadId: parentThreadId,
+        turnItemId: second.id,
+        decision: "approve",
+      });
+      const started = yield* Fiber.join(approved);
+      expect(started.isError, JSON.stringify(started.content)).toBe(false);
+      expect((yield* Ref.get(thread.launchedWith))?.modelSelection).toEqual({
+        instanceId,
+        model: "gpt-5.5",
       });
     }),
   ).pipe(Effect.provide(NodeHttpServer.layerTest)),

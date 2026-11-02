@@ -75,6 +75,10 @@
       "types": "./src/secretRequest.ts",
       "default": "./src/secretRequest.ts"
     },
+    "./delegation-approval": {
+      "types": "./src/delegationApproval.ts",
+      "default": "./src/delegationApproval.ts"
+    },
     "./link-request": {
       "types": "./src/linkRequest.ts",
       "default": "./src/linkRequest.ts"

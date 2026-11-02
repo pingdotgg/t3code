@@ -1,5 +1,6 @@
 import {
   CommandId,
+  type EnvironmentId,
   type RunId,
   isProviderAvailable,
   MessageId,
@@ -385,6 +386,33 @@ function knownOptions(
   if (options === undefined || descriptors === undefined) return options;
   return options.filter((option) => descriptors.some((descriptor) => descriptor.id === option.id));
 }
+
+/** Options compare as a set: their order carries no meaning. */
+function optionsKey(options: ReadonlyArray<ProviderOptionSelection> | undefined): string {
+  return JSON.stringify(
+    (options ?? [])
+      .map((option) => [option.id, option.value] as const)
+      .toSorted(([left], [right]) => (left < right ? -1 : left > right ? 1 : 0)),
+  );
+}
+
+function sameSelection(left: ModelSelection, right: ModelSelection): boolean {
+  return (
+    left.instanceId === right.instanceId &&
+    left.model === right.model &&
+    optionsKey(left.options) === optionsKey(right.options)
+  );
+}
+
+function describeSelection(selection: ModelSelection): string {
+  const options = (selection.options ?? [])
+    .map((option) => `${option.id}=${String(option.value)}`)
+    .join(", ");
+  return `${selection.instanceId} ${selection.model}${options === "" ? "" : ` (${options})`}`;
+}
+
+/** How much of a task's prompt its approval card shows. */
+const DELEGATION_APPROVAL_TASK_CHARS = 500;
 
 /** Skip checks without descriptors; reject duplicate IDs because consumers disagree on precedence. */
 function invalidOptionSelections(
@@ -970,6 +998,8 @@ function turnItemText(item: OrchestrationV2TurnItem): string | null {
       return item.linkStatus === "linked"
         ? `Linked ${item.linkedLabel ?? item.label ?? item.url ?? "an environment"} (${item.linkedAccess}).`
         : `Asked the user to link ${item.label ?? item.url ?? "an environment"}: ${item.linkStatus}.`;
+    case "delegation_approval":
+      return `Asked the user to delegate to ${describeSelection(item.proposed)}: ${item.approvalStatus}.`;
     case "subagent":
       return item.result ?? item.progress ?? item.prompt;
     case "dynamic_tool":
@@ -1025,6 +1055,20 @@ function timelineItem(input: {
     nextTextOffset: textTruncated ? end : null,
     updatedAt: DateTime.formatIso(input.row.item.updatedAt),
   };
+}
+
+function activeParentRun(
+  parent: Pick<OrchestrationV2ThreadProjection, "runs">,
+  scope: McpThreadInvocationScope,
+): (OrchestrationV2Run & { readonly rootNodeId: NodeId }) | undefined {
+  const run = parent.runs
+    .filter(ThreadManagementService.isActiveRun)
+    .toSorted((left, right) => right.ordinal - left.ordinal)[0];
+  return run === undefined ||
+    run.rootNodeId === null ||
+    run.providerInstanceId !== scope.thread.providerInstanceId
+    ? undefined
+    : { ...run, rootNodeId: run.rootNodeId };
 }
 
 const make = Effect.gen(function* () {
@@ -1490,6 +1534,154 @@ const make = Effect.gen(function* () {
 
   const requestKey = (clientRequestId: string | undefined): Effect.Effect<string> =>
     clientRequestId === undefined ? random.uuidV4() : Effect.succeed(clientRequestId);
+
+  /**
+   * A task on a provider, model or options other than this thread's starts
+   * only after the user approves that exact target on a card in this run. The
+   * card is keyed by run, request key, destination and target, so an answer
+   * never covers another target, and it closes with this call.
+   */
+  const awaitDelegationApproval = Effect.fn("OrchestratorMcpService.awaitDelegationApproval")(
+    function* (input: {
+      readonly scope: McpThreadInvocationScope;
+      readonly parentRun: { readonly id: RunId; readonly rootNodeId: NodeId };
+      readonly requestKey: string;
+      readonly current: ModelSelection;
+      readonly proposed: ModelSelection;
+      readonly environmentId?: EnvironmentId | undefined;
+      readonly title: string | undefined;
+      readonly task: string;
+    }) {
+      if (sameSelection(input.current, input.proposed)) return;
+      const { scope, parentRun, proposed } = input;
+      const threadId = scope.thread.threadId;
+      const digest = yield* crypto
+        .digest(
+          "SHA-256",
+          new TextEncoder().encode(
+            [
+              scope.requestNamespace,
+              parentRun.id,
+              input.requestKey,
+              input.environmentId ?? "",
+              proposed.instanceId,
+              proposed.model,
+              optionsKey(proposed.options),
+            ].join("\u0000"),
+          ),
+        )
+        .pipe(Effect.orDie);
+      const cardKey = Buffer.from(digest).toString("hex").slice(0, 32);
+      const turnItemId = TurnItemId.make(
+        `turn-item:delegation-approval:${stablePart(threadId)}:${cardKey}`,
+      );
+      const record = (approvalStatus: "pending" | "cancelled") =>
+        threadManagement
+          .dispatch({
+            type: "delegation_approval.record",
+            commandId: stableCommandId({
+              scope,
+              requestKey: cardKey,
+              operation: `delegation-approval-${approvalStatus}`,
+            }),
+            threadId,
+            runId: parentRun.id,
+            nodeId: parentRun.rootNodeId,
+            turnItemId,
+            title: input.title?.trim() || "Delegate a task",
+            task: input.task.slice(0, DELEGATION_APPROVAL_TASK_CHARS),
+            current: input.current,
+            proposed,
+            ...(input.environmentId === undefined ? {} : { environmentId: input.environmentId }),
+            approvalStatus,
+          })
+          .pipe(
+            Effect.mapError((error) =>
+              failure(
+                "orchestration_error",
+                `Could not record the delegation request: ${errorMessage(error)}`,
+              ),
+            ),
+          );
+      const readFailure = (error: unknown) =>
+        failure(
+          "orchestration_error",
+          `Unable to read the delegation request: ${errorMessage(error)}`,
+        );
+      // An approval counts only while the run that asked is still open, so
+      // a stopped parent never starts the child it asked for.
+      const readAnswer = () =>
+        threadManagement
+          .getThreadRecords(threadId, ["runs", "turnItems"], {
+            turnItemTypes: ["delegation_approval"],
+            messageRoles: [],
+          })
+          .pipe(
+            Effect.mapError(readFailure),
+            Effect.map((records) => {
+              const item = records.turnItems.find((candidate) => candidate.id === turnItemId);
+              const run = records.runs.find((candidate) => candidate.id === parentRun.id);
+              const open = run !== undefined && ThreadManagementService.isActiveRun(run);
+              if (item?.type === "delegation_approval" && item.approvalStatus !== "pending") {
+                return item.approvalStatus === "approved" &&
+                  !(open && sameSelection(item.proposed, proposed))
+                  ? ("cancelled" as const)
+                  : item.approvalStatus;
+              }
+              return open ? ("pending" as const) : ("cancelled" as const);
+            }),
+          );
+      yield* record("pending");
+      const closeCard = record("cancelled").pipe(
+        Effect.catch((error) =>
+          Effect.logWarning("Could not close a delegation approval card", {
+            error: error.message,
+          }),
+        ),
+      );
+      const answer = yield* Effect.gen(function* () {
+        // One cursor before the first read catches an answer that lands between them.
+        const afterSequence = yield* threadManagement
+          .getThreadEventSequence(threadId)
+          .pipe(Effect.mapError(readFailure));
+        const initial = yield* readAnswer();
+        if (initial !== "pending") return Option.some(initial);
+        return yield* Stream.merge(
+          threadManagement
+            .streamStoredEventsFrom({ threadId, afterSequence, eventType: "turn-item.updated" })
+            .pipe(
+              Stream.filter(
+                ({ event }) =>
+                  event.type === "turn-item.updated" && event.payload.id === turnItemId,
+              ),
+            ),
+          threadManagement
+            .streamStoredEventsFrom({ threadId, afterSequence, eventType: "run.updated" })
+            .pipe(Stream.filter(({ event }) => event.runId === parentRun.id)),
+        ).pipe(
+          Stream.mapError(readFailure),
+          Stream.mapEffect(readAnswer),
+          Stream.filter((status) => status !== "pending"),
+          Stream.runHead,
+        );
+      }).pipe(
+        Effect.timeoutOption(Duration.millis(DEFAULT_WAIT_TIMEOUT_MS)),
+        Effect.map(Option.flatten),
+        Effect.onExit((exit) => (Exit.isSuccess(exit) ? Effect.void : closeCard)),
+      );
+      const status = Option.getOrElse(answer, () => "cancelled" as const);
+      yield* Effect.annotateCurrentSpan({ "delegation_approval.status": status });
+      if (status === "approved") return;
+      // A card nobody answered closes now; a declined one keeps its answer.
+      if (status === "cancelled") yield* closeCard;
+      return yield* failure(
+        "delegation_not_approved",
+        status === "declined"
+          ? `The user declined running this task on ${describeSelection(proposed)}, so it did not start. Delegate it without a target to use your own provider and model, or do it yourself.`
+          : `The user did not approve running this task on ${describeSelection(proposed)}, so it did not start. Delegate it without a target to use your own provider and model, or ask the user and delegate again with a new clientRequestId.`,
+      );
+    },
+  );
 
   const readTask = Effect.fn("OrchestratorMcpService.readTask")(function* (
     scope: McpThreadInvocationScope,
@@ -2428,9 +2620,35 @@ const make = Effect.gen(function* () {
       if (input.target !== undefined && environmentId !== undefined) {
         yield* requireCapability(callerScope);
         const scope = yield* requireThreadScope(callerScope, "delegate_task");
+        const parent = yield* threadManagement
+          .getThreadRecords(scope.thread.threadId, ["runs"])
+          .pipe(Effect.mapError(threadManagementFailure));
+        const parentRun = activeParentRun(parent, scope);
+        const key = yield* requestKey(input.clientRequestId);
+        const proposed = RemoteDelegation.remoteModelSelection(
+          parent.thread.modelSelection,
+          input.target,
+        );
+        if (
+          parentRun !== undefined &&
+          proposed !== undefined &&
+          !(yield* threadManagement.hasReceipt(RemoteDelegation.recordCommandId(scope, key)))
+        ) {
+          yield* awaitDelegationApproval({
+            scope,
+            parentRun,
+            requestKey: key,
+            current: parent.thread.modelSelection,
+            proposed,
+            environmentId,
+            title: input.title,
+            task: taskPrompt(input),
+          });
+        }
         // The task's child runs as an ordinary thread there; this thread keeps the task.
         const { taskId } = yield* remoteDelegation.delegate(scope, {
           ...input,
+          clientRequestId: key,
           target: { ...input.target, environmentId },
         });
         return yield* input.mode === "wait"
@@ -2447,14 +2665,8 @@ const make = Effect.gen(function* () {
           "A local task runs in this thread's project. Omit target.projectId, or pass target.environmentId to run it in that environment's project.",
         );
       }
-      const parentRun = parent.runs
-        .filter(ThreadManagementService.isActiveRun)
-        .toSorted((left, right) => right.ordinal - left.ordinal)[0];
-      if (
-        parentRun === undefined ||
-        parentRun.rootNodeId === null ||
-        parentRun.providerInstanceId !== scope.thread.providerInstanceId
-      ) {
+      const parentRun = activeParentRun(parent, scope);
+      if (parentRun === undefined) {
         return yield* failure(
           "parent_not_active",
           "Delegated tasks require an active run owned by this MCP provider session.",
@@ -2483,6 +2695,22 @@ const make = Effect.gen(function* () {
         parent.thread.interactionMode,
         input.interactionMode,
       );
+      // A replayed receipt starts nothing new, so it needs no second answer.
+      if (input.target !== undefined && !isRetryOfAcceptedDelegation) {
+        const inherited = yield* resolveTarget({ parent, target: undefined, providers }).pipe(
+          Effect.map((resolved) => resolved.modelSelection),
+          Effect.orElseSucceed(() => parent.thread.modelSelection),
+        );
+        yield* awaitDelegationApproval({
+          scope,
+          parentRun,
+          requestKey: key,
+          current: inherited,
+          proposed: target.modelSelection,
+          title: input.title,
+          task: taskPrompt(input),
+        });
+      }
       let workspaceStrategy: OrchestrationV2ThreadLaunchWorkspaceStrategy | undefined;
       if (input.isolation === "worktree" && !isRetryOfAcceptedDelegation) {
         const project = yield* requireProject(parent.thread.projectId);
