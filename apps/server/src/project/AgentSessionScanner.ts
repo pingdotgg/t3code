@@ -46,6 +46,7 @@ import {
 const TRANSCRIPT_PREFIX_BYTES = 32 * 1024;
 const METADATA_READ_BYTES = 8 * 1024;
 const MAX_TRANSCRIPT_SCAN_BYTES = 1024 * 1024;
+const MAX_CODEX_SESSION_INDEX_BYTES = 1024 * 1024;
 
 const MAX_TRANSCRIPTS_PER_SOURCE = 5000;
 
@@ -108,6 +109,11 @@ const TranscriptRecord = Schema.Struct({
   ),
 });
 
+const CodexSessionIndexEntry = Schema.Struct({
+  id: Schema.String,
+  thread_name: Schema.String,
+});
+
 const decodeClaudeSettings = Schema.decodeUnknownOption(ClaudeSettings);
 const decodeCodexSettings = Schema.decodeUnknownOption(CodexSettings);
 const decodeTranscriptRecord = Schema.decodeUnknownOption(Schema.fromJsonString(TranscriptRecord));
@@ -121,6 +127,9 @@ const decodePiEntryLinks = Schema.decodeUnknownOption(
 );
 const selectTranscriptPath = createTranscriptJsonSelector(TranscriptRecord);
 const decodeCodexTurnMetadata = Schema.decodeUnknownOption(CodexTurnMetadata);
+const decodeCodexSessionIndexEntry = Schema.decodeUnknownOption(
+  Schema.fromJsonString(CodexSessionIndexEntry),
+);
 
 type DecodedTranscriptRecord = typeof TranscriptRecord.Type;
 
@@ -146,6 +155,7 @@ export interface AgentSessionThread {
   readonly createdAt: string;
   readonly updatedAt: string;
   readonly messages: ReadonlyArray<AgentSessionThreadMessage>;
+  readonly omittedMessageCount: number;
 }
 
 export type AgentSessionRecentThread =
@@ -175,6 +185,7 @@ interface RawCandidate {
   readonly cwd: string;
   readonly source: AgentSessionSource;
   readonly providerInstanceId: ProviderInstanceId;
+  readonly homePath: string;
   readonly threadCount: number;
   readonly lastActiveAtMs: number | null;
   readonly transcripts: ReadonlyArray<{
@@ -187,6 +198,7 @@ interface TranscriptCandidate {
   readonly filePath: string;
   readonly mtimeMs: number;
   readonly providerInstanceId: ProviderInstanceId;
+  readonly homePath: string;
   readonly size: number;
 }
 
@@ -294,6 +306,17 @@ function foldClaudeFields(fields: ClaudeFields, record: DecodedTranscriptRecord)
 // these leading blocks when deriving a title; imported messages keep them.
 const CODEX_TITLE_PREAMBLE =
   /^(?:\s*(?:<(recommended_plugins|environment_context|user_instructions|INSTRUCTIONS|in-app-browser-context)(?:\s[^>]*)?>[\s\S]*?<\/\1>|# AGENTS\.md instructions\b[^\n]*|## My request for Codex:))+/;
+
+// Codex appends an entry per rename; like Codex, the newest nonempty name wins.
+function parseCodexThreadNames(contents: string): ReadonlyMap<string, string> {
+  const names = new Map<string, string>();
+  for (const line of contents.split("\n")) {
+    const entry = Option.getOrUndefined(decodeCodexSessionIndexEntry(line));
+    const name = entry?.thread_name.trim();
+    if (entry !== undefined && name) names.set(entry.id, name);
+  }
+  return names;
+}
 
 function deriveTitle(source: AgentSessionSource, text: string): string | undefined {
   const request = source === "codex" ? text.replace(CODEX_TITLE_PREAMBLE, "") : text;
@@ -427,6 +450,7 @@ function parseAgentSessionRecords(
     finishCodexTurn();
   }
 
+  let conversationMessageCount = 0;
   const retainMessage = (
     message: AgentSessionThreadMessage & { readonly codexResponseUser: boolean },
   ) => {
@@ -436,6 +460,7 @@ function parseAgentSessionRecords(
     if (derivedTitle === undefined && message.role === "user") {
       derivedTitle = deriveTitle(input.source, message.text);
     }
+    conversationMessageCount += 1;
     messages.push(message);
     if (messages.length > MAX_IMPORTED_MESSAGES) messages.shift();
   };
@@ -507,6 +532,7 @@ function parseAgentSessionRecords(
         if (message?.codexResponseUser === true && message.text.trim() === text.trim()) {
           if (firstUserMessage === message) firstUserMessage = undefined;
           messages.splice(index, 1);
+          conversationMessageCount -= 1;
           break;
         }
       }
@@ -561,6 +587,7 @@ function parseAgentSessionRecords(
     createdAt: retainedMessages[0]?.createdAt ?? fallbackTimestamp,
     updatedAt: fallbackTimestamp,
     messages: retainedMessages,
+    omittedMessageCount: conversationMessageCount - retainedMessages.length,
   };
 }
 
@@ -984,6 +1011,29 @@ export const make = Effect.gen(function* () {
     );
   });
 
+  const readCodexThreadNames = Effect.fn("AgentSessionScanner.readCodexThreadNames")(function* (
+    homePath: string,
+  ) {
+    const indexPath = path.join(homePath, "session_index.jsonl");
+    return yield* Effect.scoped(
+      Effect.gen(function* () {
+        const file = yield* fileSystem.open(indexPath, { flag: "r" });
+        const size = Number((yield* file.stat).size);
+        const start = Math.max(0, size - MAX_CODEX_SESSION_INDEX_BYTES);
+        yield* file.seek(BigInt(start), "start");
+        const bytes = yield* file.readAlloc(size - start);
+        const contents = Option.match(bytes, {
+          onNone: () => "",
+          onSome: (value) => new TextDecoder().decode(value),
+        });
+        // A tail read can start mid-record.
+        return parseCodexThreadNames(
+          start > 0 ? contents.slice(contents.indexOf("\n") + 1) : contents,
+        );
+      }),
+    ).pipe(Effect.orElseSucceed((): ReadonlyMap<string, string> => new Map()));
+  });
+
   const resolveClaudeConfigDir = (homePath: string, environmentHome?: string): string => {
     const configured = homePath.trim();
     if (configured.length > 0) {
@@ -1040,6 +1090,7 @@ export const make = Effect.gen(function* () {
             filePath,
             mtimeMs: stats.value.mtime.value.getTime(),
             providerInstanceId,
+            homePath,
             size: Number(stats.value.size),
           });
         }
@@ -1101,6 +1152,7 @@ export const make = Effect.gen(function* () {
                   filePath,
                   mtimeMs: stats.value.mtime.value.getTime(),
                   providerInstanceId,
+                  homePath,
                   size: Number(stats.value.size),
                 });
               }
@@ -1157,6 +1209,7 @@ export const make = Effect.gen(function* () {
             filePath,
             mtimeMs: stats.value.mtime.value.getTime(),
             providerInstanceId,
+            homePath: sessionsDir,
             size: Number(stats.value.size),
           });
         }
@@ -1175,6 +1228,7 @@ export const make = Effect.gen(function* () {
       {
         cwd: string;
         providerInstanceId: ProviderInstanceId;
+        homePath: string;
         lastActiveAtMs: number;
         transcripts: Array<{ filePath: string; mtimeMs: number }>;
       }
@@ -1192,6 +1246,7 @@ export const make = Effect.gen(function* () {
         byOwnerAndCwd.set(key, {
           cwd,
           providerInstanceId: transcript.providerInstanceId,
+          homePath: transcript.homePath,
           lastActiveAtMs: transcript.mtimeMs,
           transcripts: [transcript],
         });
@@ -1202,6 +1257,7 @@ export const make = Effect.gen(function* () {
       cwd: group.cwd,
       source,
       providerInstanceId: group.providerInstanceId,
+      homePath: group.homePath,
       threadCount: group.transcripts.length,
       lastActiveAtMs: group.lastActiveAtMs,
       transcripts: group.transcripts,
@@ -1504,6 +1560,7 @@ export const make = Effect.gen(function* () {
       (source) => `${source.providerInstanceId}\0${source.filePath}`,
     );
     const importedSessions = new Set<string>();
+    const codexThreadNamesByHome = new Map<string, ReadonlyMap<string, string>>();
     let bytesRemaining = MAX_IMPORT_BYTES;
     let transcriptsRemaining = MAX_IMPORT_TRANSCRIPTS;
     let recordsRemaining = MAX_IMPORT_RECORDS;
@@ -1582,6 +1639,14 @@ export const make = Effect.gen(function* () {
           if (parsedThread === null) {
             return Option.some<AgentSessionRecentThread>({ _tag: "Skipped" });
           }
+          let savedTitle: string | undefined;
+          if (candidate.source === "codex") {
+            const names =
+              codexThreadNamesByHome.get(candidate.homePath) ??
+              (yield* readCodexThreadNames(candidate.homePath));
+            codexThreadNamesByHome.set(candidate.homePath, names);
+            savedTitle = names.get(parsedThread.providerSessionId);
+          }
 
           const source: AgentSessionImportSource = {
             ...identity,
@@ -1596,7 +1661,8 @@ export const make = Effect.gen(function* () {
           importedSessions.add(sessionKey);
           return Option.some<AgentSessionRecentThread>({
             _tag: "Importable",
-            thread: parsedThread,
+            thread:
+              savedTitle === undefined ? parsedThread : { ...parsedThread, title: savedTitle },
             source,
           });
         }).pipe(importReadLock.withPermits(1)),

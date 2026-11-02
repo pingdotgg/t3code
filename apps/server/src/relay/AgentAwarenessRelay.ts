@@ -113,6 +113,7 @@ function shouldPublishAgentAwarenessEvent(
     case "thread.unpinned":
     case "thread.pin-reordered":
     case "thread.active-reordered":
+    case "thread.tags-updated":
     case "thread.visited":
     case "thread.marked-unread":
     case "thread.runtime-mode-updated":
@@ -162,6 +163,17 @@ function agentAwarenessPublishIdentity(state: RelayAgentActivityState | null): s
   }
   const { updatedAt: _updatedAt, ...meaningfulState } = state;
   return JSON.stringify(meaningfulState);
+}
+
+const CLEARED_PUBLISH_IDENTITY = agentAwarenessPublishIdentity(null);
+
+// A published tombstone stays recorded so repeats are skipped, but it is not live state.
+function hasLivePublishedState(
+  publishedStateByThread: ReadonlyMap<ThreadId, string>,
+  threadId: ThreadId,
+): boolean {
+  const identity = publishedStateByThread.get(threadId);
+  return identity !== undefined && identity !== CLEARED_PUBLISH_IDENTITY;
 }
 
 function resolveAgentActivityPublishingStartupState(input: {
@@ -369,7 +381,6 @@ export const make = Effect.gen(function* () {
   const scope = yield* Effect.scope;
   const cloudLinkKeyPair = yield* getOrCreateEnvironmentKeyPairFromSecretStore(secrets);
   const startedAt = (yield* DateTime.now).epochMilliseconds;
-  const activeSnapshotPublishedRef = yield* Ref.make(false);
   const catchUpRequests = yield* Queue.dropping<void>(1);
   const publishedStateByThreadRef = yield* Ref.make(new Map<ThreadId, string>());
 
@@ -517,7 +528,7 @@ export const make = Effect.gen(function* () {
     if (
       threadShell !== null &&
       !isListedThreadLineage(threadShell.lineage) &&
-      !(yield* Ref.get(publishedStateByThreadRef)).has(threadId)
+      !hasLivePublishedState(yield* Ref.get(publishedStateByThreadRef), threadId)
     ) {
       // Subagents and side chats have no relay rows to clear; per-event tombstones would needlessly redeliver user aggregates.
       return;
@@ -538,11 +549,15 @@ export const make = Effect.gen(function* () {
     const publishedStateByThread = yield* Ref.get(publishedStateByThreadRef);
     if (
       (snapshot.state?.phase === "completed" || snapshot.state?.phase === "failed") &&
-      !publishedStateByThread.has(threadId)
+      !hasLivePublishedState(publishedStateByThread, threadId)
     ) {
       if (Option.isNone(thread) || !terminalWorkSinceStart(thread.value, startedAt)) return;
     }
-    if (publishedStateByThread.get(threadId) === publishIdentity) {
+    if (
+      publishedStateByThread.get(threadId) === publishIdentity &&
+      // A held completion settled after an earlier clear still has to alert.
+      !(snapshot.state === null && heldCompletions.has(threadId))
+    ) {
       // Clear moot deadlines so later transient nulls cannot skip their deferral window.
       publishConfirmDeadlines.delete(threadId);
       heldCompletions.delete(threadId);
@@ -557,10 +572,7 @@ export const make = Effect.gen(function* () {
     // Confirm tombstones over live state to avoid removing active cards.
     // Confirm completion: a run can end moments before its continuation starts, and the relay
     // alerts on every move into completed.
-    const requiresConfirmation =
-      (snapshot.state === null &&
-        publishedStateByThread.get(threadId) !== agentAwarenessPublishIdentity(null)) ||
-      snapshot.state?.phase === "completed";
+    const requiresConfirmation = snapshot.state === null || snapshot.state?.phase === "completed";
     if (requiresConfirmation) {
       if (snapshot.state?.phase === "completed") heldCompletions.add(threadId);
       const nowMs = (yield* DateTime.now).epochMilliseconds;
@@ -640,15 +652,9 @@ export const make = Effect.gen(function* () {
     }).pipe(withRelayClientTracing);
     publishConfirmDeadlines.delete(threadId);
     heldCompletions.delete(threadId);
-    yield* Ref.update(publishedStateByThreadRef, (publishedStates) => {
-      const nextPublishedStates = new Map(publishedStates);
-      if (snapshot.state === null) {
-        nextPublishedStates.delete(threadId);
-      } else {
-        nextPublishedStates.set(threadId, publishIdentity);
-      }
-      return nextPublishedStates;
-    });
+    yield* Ref.update(publishedStateByThreadRef, (publishedStates) =>
+      new Map(publishedStates).set(threadId, publishIdentity),
+    );
   });
 
   const processThreadPublish = Effect.fnUntraced(function* (threadId: ThreadId) {
@@ -759,23 +765,25 @@ export const make = Effect.gen(function* () {
   // s to 60 s. A linked environment keeps the 5 s retry, because `t3 connect
   // publish` can turn publishing on from another process. Keep this untraced:
   // an unlinked environment can retry for the lifetime of the process.
-  const publishActiveThreadsOnceWhenConfigured = Effect.fnUntraced(function* (
+  const publishActiveThreadsWhenConfigured = Effect.fnUntraced(function* (
     logEnabledWhenReady: boolean,
   ) {
     let unlinkedRetryDelayMs = 5_000;
-    while (!(yield* Ref.get(activeSnapshotPublishedRef))) {
+    while (true) {
       const result = yield* publishActiveThreadsUnsafe.pipe(
         Effect.orElseSucceed(() => "failed" as const),
       );
       if (result === "published") {
-        yield* Ref.set(activeSnapshotPublishedRef, true);
         if (logEnabledWhenReady) {
           const relayConfig = yield* readRelayConfig.pipe(Effect.orElseSucceed(() => null));
           yield* Effect.logInfo("agent activity publishing enabled after link reconciliation", {
             relayUrl: relayConfig?.url,
           });
         }
-        return;
+        logEnabledWhenReady = false;
+        unlinkedRetryDelayMs = 5_000;
+        yield* Queue.take(catchUpRequests);
+        continue;
       }
       const retryDelayMs = result === "unlinked" ? unlinkedRetryDelayMs : 5_000;
       yield* Effect.race(Effect.sleep(retryDelayMs), Queue.take(catchUpRequests));
@@ -826,7 +834,7 @@ export const make = Effect.gen(function* () {
       }
       yield* forkParked(
         Effect.sleep("1 second").pipe(
-          Effect.andThen(publishActiveThreadsOnceWhenConfigured(startupState !== "enabled")),
+          Effect.andThen(publishActiveThreadsWhenConfigured(startupState !== "enabled")),
         ),
       );
       yield* forkParked(

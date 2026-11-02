@@ -117,6 +117,8 @@ it.layer(layerTest)("GrokDriver", (it) => {
         executable: binaryPath,
         args: ["update"],
         lockKey: "grok",
+        // npm 12 otherwise skips the postinstall that installs the new binary.
+        env: expect.objectContaining({ npm_config_allow_scripts: "@xai-official/grok" }),
       }),
     },
   ] as const;

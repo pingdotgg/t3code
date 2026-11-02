@@ -101,6 +101,7 @@ import * as Stream from "effect/Stream";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 
 import { resolveAttachmentPath, resolveAttachmentPathById } from "../../attachmentStore.ts";
+import * as PortScanner from "../../preview/PortScanner.ts";
 import { getCodexServiceTierOptionValue } from "../../codexModelOptions.ts";
 import { ServerConfig } from "../../config.ts";
 import { expandHomePath } from "@t3tools/provider-core/server/pathExpansion";
@@ -491,11 +492,19 @@ function codexMcpAppResourceUri(item: CodexDynamicToolItem): string | undefined 
   return typeof uri === "string" && uri.startsWith(MCP_APP_RESOURCE_SCHEME) ? uri : undefined;
 }
 
-function codexDynamicToolOutput(
+const CODEX_IMAGE_DATA_URL = /^data:(image\/[a-z0-9.+-]+);base64,([A-Za-z0-9+/=]+)$/i;
+
+export function codexDynamicToolOutput(
   item: Extract<CodexDynamicToolItem, { readonly type: "dynamicToolCall" }>,
 ): unknown | undefined {
   if (item.contentItems !== null && item.contentItems !== undefined) {
-    return item.contentItems;
+    return item.contentItems.map((content) => {
+      if (content.type !== "inputImage") return content;
+      const match = CODEX_IMAGE_DATA_URL.exec(content.imageUrl);
+      return match?.[1] && match[2]
+        ? { type: "image", mimeType: match[1].toLowerCase(), data: match[2] }
+        : content;
+    });
   }
   return item.success === false ? { success: false } : undefined;
 }
@@ -579,10 +588,15 @@ function approvalDecisionToLegacyReviewDecision(
 function providerRequestKindFromPermissions(
   permissions: CodexSchema.PermissionsRequestApprovalParams["permissions"],
 ): ProviderRequestKind {
-  if ((permissions.fileSystem?.write?.length ?? 0) > 0) {
+  // Codex leaves the legacy `read`/`write` lists out when a path is a glob or
+  // special path, and is replacing them with `entries`.
+  const requests = (access: "read" | "write") =>
+    (permissions.fileSystem?.[access]?.length ?? 0) > 0 ||
+    permissions.fileSystem?.entries?.some((entry) => entry.access === access);
+  if (requests("write")) {
     return "file-change";
   }
-  if ((permissions.fileSystem?.read?.length ?? 0) > 0) {
+  if (requests("read")) {
     return "file-read";
   }
   return "command";
@@ -1107,6 +1121,7 @@ function withCodexManagedFailure(
 }
 
 interface ActiveCodexTurnContext {
+  hookStopReason?: string;
   capacityRetryAttempt?: number;
   capacityRetryPending?: Deferred.Deferred<ActiveCodexTurnContext | undefined>;
   closedCommandItemIds?: ReadonlySet<string>;
@@ -1319,8 +1334,13 @@ export const CODEX_THREAD_CONFIG = {
 
 // T3 waits can block for an hour; keep Codex's MCP timeout above that.
 const CODEX_T3_MCP_TOOL_TIMEOUT_SEC = 65 * 60;
+// Holds T3 tools Codex must call directly, never from Code Mode. Calls arrive as
+// `t3-code-direct.<tool>`; t3McpToolPresentation.ts must keep resolving that form.
+const CODEX_T3_DIRECT_MCP_SERVER = "t3-code-direct";
+const CODEX_DIRECT_ONLY_T3_TOOL = "t3_thread_wait";
 
 function codexThreadRuntimeParams(input: {
+  readonly threadId: ThreadId | null;
   readonly mcpSession: McpProviderSession.McpProviderSessionConfig | undefined;
   readonly modelSelection?: { readonly model: string };
   readonly runtimePolicy?: ProviderAdapter.ProviderAdapterV2RuntimePolicy;
@@ -1330,21 +1350,34 @@ function codexThreadRuntimeParams(input: {
   readonly config: Readonly<Record<string, Schema.Json>>;
 } {
   const { mcpSession } = input;
+  const t3Server =
+    mcpSession === undefined
+      ? undefined
+      : {
+          url: mcpSession.endpoint,
+          tool_timeout_sec: CODEX_T3_MCP_TOOL_TIMEOUT_SEC,
+          http_headers: { Authorization: mcpSession.authorizationHeader },
+        };
   return {
     ...(input.runtimePolicy?.cwd == null ? {} : { cwd: input.runtimePolicy.cwd }),
     ...(input.modelSelection === undefined ? {} : { model: input.modelSelection.model }),
     config: {
       ...CODEX_THREAD_CONFIG,
-      ...(mcpSession === undefined
+      // One app-server serves many threads, so the id goes in per-thread shell config, not its env.
+      ...(input.threadId === null
+        ? {}
+        : { [`shell_environment_policy.set.${PortScanner.AGENT_THREAD_ENV}`]: input.threadId }),
+      ...(t3Server === undefined
         ? {}
         : {
-            // Override only T3's server so launch-argument MCP servers survive.
-            "mcp_servers.t3-code": {
-              url: mcpSession.endpoint,
-              tool_timeout_sec: CODEX_T3_MCP_TOOL_TIMEOUT_SEC,
-              http_headers: {
-                Authorization: mcpSession.authorizationHeader,
-              },
+            // Override only T3's servers so launch-argument MCP servers survive.
+            "mcp_servers.t3-code": { ...t3Server, disabled_tools: [CODEX_DIRECT_ONLY_T3_TOOL] },
+            // Code Mode runs a blocking wait as a nested call, and the model keeps working
+            // around it. A second, direct-only registration makes it a plain tool call.
+            [`mcp_servers.${CODEX_T3_DIRECT_MCP_SERVER}`]: {
+              ...t3Server,
+              enabled_tools: [CODEX_DIRECT_ONLY_T3_TOOL],
+              omit_tools_from: ["code_mode", "deferred"],
             },
           }),
     },
@@ -1810,6 +1843,17 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
         const turnWaiters = yield* Ref.make(new Map<string, Deferred.Deferred<void, never>>());
         const subagentThreads = yield* Ref.make(new Map<string, CodexSubagentThreadContext>());
         const subagentSelections = new Map<string, Omit<ModelSelection, "instanceId">>();
+        // A reroute names one turn; until new settings arrive, the thread's model is unknown.
+        const reroutedTurnModels = new Map<string, string>();
+        const reroutedThreads = new Set<string>();
+        const reportedTurnModel = (nativeThreadId: string, nativeTurnId: string) => {
+          const rerouted = reroutedTurnModels.get(nativeTurnId);
+          reroutedTurnModels.delete(nativeTurnId);
+          if (rerouted !== undefined) return rerouted;
+          return reroutedThreads.has(nativeThreadId)
+            ? undefined
+            : subagentSelections.get(nativeThreadId)?.model;
+        };
         const pendingSubagentTurns = yield* Ref.make(
           new Map<string, ReadonlyArray<PendingCodexSubagentTurnStarted>>(),
         );
@@ -4455,15 +4499,38 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
         );
 
         yield* client.handleServerNotification("thread/settings/updated", (payload) =>
-          updateSubagentSelection(
-            payload.threadId,
-            payload.threadSettings.model,
-            payload.threadSettings.effort,
-            payload.threadSettings.serviceTier,
+          Effect.sync(() => reroutedThreads.delete(payload.threadId)).pipe(
+            Effect.andThen(
+              updateSubagentSelection(
+                payload.threadId,
+                payload.threadSettings.model,
+                payload.threadSettings.effort,
+                payload.threadSettings.serviceTier,
+              ),
+            ),
           ),
         );
         yield* client.handleServerNotification("model/rerouted", (payload) =>
-          updateSubagentSelection(payload.threadId, payload.toModel),
+          Effect.sync(() => {
+            reroutedTurnModels.set(payload.turnId, payload.toModel);
+            reroutedThreads.add(payload.threadId);
+          }).pipe(Effect.andThen(updateSubagentSelection(payload.threadId, payload.toModel))),
+        );
+
+        yield* client.handleServerNotification("hook/completed", (payload) =>
+          Effect.gen(function* () {
+            if (payload.turnId == null || payload.run.status !== "stopped") return;
+            const context = (yield* Ref.get(activeTurns)).get(payload.turnId);
+            if (context?.providerThread.nativeThreadRef?.nativeId !== payload.threadId) return;
+            const reason = payload.run.entries
+              .filter((entry) => entry.kind === "stop")
+              .map((entry) => entry.text.trim())
+              .filter(Boolean)
+              .join("\n");
+            if (!reason) return;
+            const source = payload.run.source === undefined ? "" : ` (${payload.run.source})`;
+            context.hookStopReason = `${payload.run.eventName} hook${source}: ${reason}`;
+          }),
         );
 
         yield* client.handleServerNotification("turn/started", (payload) =>
@@ -5733,6 +5800,9 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               runOrdinal: input.context.input.runOrdinal,
               status: terminalStatus,
               failure: null,
+              ...(terminalStatus === "interrupted" && input.context.hookStopReason !== undefined
+                ? { reason: input.context.hookStopReason }
+                : {}),
               threadDisposition: "reusable",
             };
           },
@@ -6088,6 +6158,10 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                   ),
                   input.nativeTurnId,
                   input.status === "completed",
+                  reportedTurnModel(
+                    input.context.providerThread.nativeThreadRef?.nativeId ?? "",
+                    input.nativeTurnId,
+                  ),
                 ),
               };
               if (!holdsForGoal) {
@@ -6944,6 +7018,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                 client.request(
                   "thread/start",
                   codexThreadRuntimeParams({
+                    threadId: threadInput.threadId,
                     mcpSession,
                     modelSelection: threadInput.modelSelection,
                     runtimePolicy: threadInput.runtimePolicy,
@@ -6972,13 +7047,13 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
           resumeThread: Effect.fn("CodexAdapterV2.resumeThread")(
             function* (threadInput) {
               const nativeThreadId = yield* getNativeThreadId(threadInput.providerThread);
+              const appThreadId = threadInput.threadId ?? threadInput.providerThread.appThreadId;
               const resume = client.raw.request("thread/resume", {
                 threadId: nativeThreadId,
                 excludeTurns: true,
                 ...codexThreadRuntimeParams({
-                  mcpSession: yield* readMcpSession(
-                    threadInput.threadId ?? threadInput.providerThread.appThreadId,
-                  ),
+                  threadId: appThreadId,
+                  mcpSession: yield* readMcpSession(appThreadId),
                   ...(threadInput.modelSelection === undefined
                     ? {}
                     : { modelSelection: threadInput.modelSelection }),
@@ -7763,6 +7838,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                   threadId,
                   excludeTurns: true,
                   ...codexThreadRuntimeParams({
+                    threadId: threadInput.providerThread.appThreadId,
                     mcpSession: yield* readMcpSession(threadInput.providerThread.appThreadId),
                     modelSelection: input.modelSelection,
                     runtimePolicy: input.runtimePolicy,
@@ -7815,6 +7891,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                       ? {}
                       : { lastTurnId: boundary.lastTurnId }),
                     ...codexThreadRuntimeParams({
+                      threadId: threadInput.targetThreadId,
                       mcpSession: yield* mcpSessions.read(threadInput.targetThreadId),
                       ...(threadInput.modelSelection === undefined
                         ? {}
