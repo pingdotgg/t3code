@@ -1801,12 +1801,12 @@ describe("EnvironmentSupervisor routes", () => {
     }),
   );
 
-  it.effect.each(["initial", "late", "withdrawn"] as const)(
+  it.effect.each(["initial", "late", "withdrawn", "omitted"] as const)(
     "learns the %s direct endpoint over T3 Connect",
     (discovery) =>
       Effect.gen(function* () {
         const relayEntry: ConnectionCatalogEntry =
-          discovery === "withdrawn"
+          discovery === "withdrawn" || discovery === "omitted"
             ? {
                 target: LAN_ROUTE.target,
                 profile: Option.some(
@@ -1824,6 +1824,7 @@ describe("EnvironmentSupervisor routes", () => {
                 profile: Option.none(),
                 enabled: true,
               };
+        const initialProcessed = yield* Deferred.make<void>();
         const discoveryProcessed = yield* Deferred.make<void>();
         const discoveryStarted = yield* Deferred.make<void>();
         const finishDiscovery = yield* Deferred.make<void>();
@@ -1836,8 +1837,10 @@ describe("EnvironmentSupervisor routes", () => {
                   Stream.make({
                     version: 1 as const,
                     type: "snapshot" as const,
-                    config: { directEndpoints: [] } as unknown as ServerConfig,
-                  }),
+                    config: (discovery === "omitted"
+                      ? {}
+                      : { directEndpoints: [] }) as unknown as ServerConfig,
+                  }).pipe(Stream.ensuring(Deferred.succeed(initialProcessed, undefined))),
                   Stream.fromEffect(
                     Deferred.await(finishDiscovery).pipe(
                       Effect.as({
@@ -1888,9 +1891,15 @@ describe("EnvironmentSupervisor routes", () => {
             }),
         }).pipe(Effect.provide(harness.dependencies));
 
-        yield* Deferred.await(discoveryStarted);
+        if (discovery === "omitted") {
+          yield* Deferred.await(initialProcessed);
+          expect(yield* Ref.get(current)).toEqual(relayEntry);
+          expect(yield* Ref.get(learned)).toEqual([]);
+        } else {
+          yield* Deferred.await(discoveryStarted);
+        }
         yield* Deferred.succeed(finishDiscovery, undefined);
-        if (discovery === "withdrawn") {
+        if (discovery === "withdrawn" || discovery === "omitted") {
           yield* Deferred.await(discoveryProcessed);
           expect(yield* Ref.get(learned)).toContain(
             `learned:${TARGET.environmentId}:https://fixture.tail1234.ts.net`,

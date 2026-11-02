@@ -341,7 +341,8 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
     if (activeRoute === undefined) return;
     yield* lease.session.subscribeServerConfig().pipe(
       Stream.filter((event) => event.type === "snapshot"),
-      Stream.map((event) => event.config.directEndpoints ?? []),
+      Stream.map((event) => event.config.directEndpoints),
+      Stream.filter((reported) => reported !== undefined),
       Stream.changesWith((previous, next) => JSON.stringify(previous) === JSON.stringify(next)),
       Stream.runForEach((reported) =>
         Effect.gen(function* () {
