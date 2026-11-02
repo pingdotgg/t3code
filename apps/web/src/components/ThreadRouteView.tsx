@@ -145,11 +145,13 @@ export function ThreadRouteView({
   useEffect(() => {
     // A reload starts from the cached shell, which can predate the side chat's deletion,
     // and the tab the reveal adds would outlive this route.
+    // A hidden lesson's side chat goes home with upstream's redirect, revealing nothing.
     if (
       background ||
       target.kind !== "server" ||
       sideChatLessonThreadId === null ||
-      !bootstrapComplete
+      !bootstrapComplete ||
+      hiddenByTagFilter
     ) {
       return;
     }
@@ -164,7 +166,7 @@ export function ThreadRouteView({
       // Back must not land on the side chat's route again.
       replace: true,
     });
-  }, [background, bootstrapComplete, navigate, sideChatLessonThreadId, target]);
+  }, [background, bootstrapComplete, hiddenByTagFilter, navigate, sideChatLessonThreadId, target]);
 
   let view: React.ReactNode = null;
   let redirect: React.ReactNode = null;

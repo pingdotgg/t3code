@@ -21,6 +21,26 @@ vi.mock(import("../state/shell"), async (importOriginal) => ({
   useEnvironmentShellStatus: (() => state.shellStatus) as never,
 }));
 
+// A tagged lesson and its side chat, as upstream's tag filter hides them while recording.
+vi.mock(import("../state/threads"), async (importOriginal) => {
+  const actual = await importOriginal();
+  const { Atom } = await import("effect/reactivity");
+  const { threadKey } = await import("@t3tools/client-runtime/state/entities");
+  const environmentId = EnvironmentId.make("environment-local");
+  const hidden: ReadonlySet<string> = new Set(
+    ["private-lesson", "private-side"].map((id) =>
+      threadKey({ environmentId, threadId: ThreadId.make(id) }),
+    ),
+  );
+  return {
+    ...actual,
+    environmentThreadShells: {
+      ...actual.environmentThreadShells,
+      hiddenThreadKeysAtom: Atom.make(() => hidden),
+    },
+  };
+});
+
 vi.mock(import("./ChatView"), async () => {
   const { createElement } = await import("react");
   return { default: (() => createElement("p", null, "Chat view")) as never };
@@ -117,4 +137,33 @@ it("waits for the live shell, so a side chat deleted since the cached one stays 
   ).toEqual([]);
   expect(screen.router?.state.location.pathname).toBe("/environment-local/side-1");
   await expect.element(screen.getByText("Chat view")).not.toBeInTheDocument();
+});
+
+it("leaves a hidden lesson's side chat route without revealing it", async () => {
+  setup();
+  const privateLesson = makeThreadFixture({
+    id: ThreadId.make("private-lesson"),
+    environmentId: ENVIRONMENT_ID,
+  });
+  const privateSide = makeSideChatThreadFixture({
+    id: ThreadId.make("private-side"),
+    lessonId: privateLesson.id,
+  });
+  state.shells = [...state.shells, privateLesson, privateSide];
+
+  await using screen = await render(
+    <ThreadRouteView
+      target={{ kind: "server", threadRef: scopeThreadRef(ENVIRONMENT_ID, privateSide.id) }}
+    />,
+    { router: "/environment-local/private-side" },
+  );
+
+  await vi.waitFor(() => expect(screen.router?.state.location.pathname).toBe("/"));
+  expect(
+    selectThreadRightPanelState(
+      useRightPanelStore.getState().byThreadKey,
+      scopeThreadRef(ENVIRONMENT_ID, privateLesson.id),
+    ).surfaces,
+  ).toEqual([]);
+  expect(usePendingSideChatStore.getState().focusThreadKey).toBeNull();
 });
