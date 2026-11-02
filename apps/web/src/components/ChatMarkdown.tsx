@@ -1380,6 +1380,7 @@ const CHAT_MARKDOWN_COMPONENTS = {
       workspaceMutationId,
       renderContextReference,
       fileLinkChip,
+      resolvedTheme,
     } = use(ChatMarkdownRendererContext);
     const imageExpand = use(MarkdownLinkContext) ? undefined : expandMedia;
     const contextReference = typeof src === "string" ? parseComposerContextHref(src) : null;
@@ -1391,10 +1392,13 @@ const CHAT_MARKDOWN_COMPONENTS = {
         <span>{label}</span>
       );
     }
-    const localSrc = node?.properties?.dataLocalSrc;
+    // A `<picture>`'s source for this theme, resolved like any other image.
+    const themeSrc = node?.properties?.[resolvedTheme === "dark" ? "dataDarkSrc" : "dataLightSrc"];
+    const localSrc = typeof themeSrc === "string" ? undefined : node?.properties?.dataLocalSrc;
     const markdownTitle = node?.properties?.dataMarkdownTitle;
     const standalone = node?.properties?.dataStandalone === true;
-    const authoredSrc = typeof localSrc === "string" ? localSrc : src;
+    const authoredSrc =
+      typeof themeSrc === "string" ? themeSrc : typeof localSrc === "string" ? localSrc : src;
     const authoredTitle = typeof markdownTitle === "string" ? markdownTitle : title;
     const srcString =
       typeof authoredSrc === "string" ? normalizeMarkdownLinkDestination(authoredSrc) : "";
