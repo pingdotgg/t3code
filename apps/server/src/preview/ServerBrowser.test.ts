@@ -659,10 +659,12 @@ it.live.each([
   { method: "goBack" as const, message: { type: "history", delta: -1 } },
   { method: "goForward" as const, message: { type: "history", delta: 1 } },
   { method: "reload" as const, message: { type: "reload" } },
-])("a pending viewer $method allows a corrected URL and text input", ({ method, message }) =>
+])("a pending viewer $method allows input, correction and cancellation", ({ method, message }) =>
   Effect.scoped(
     Effect.gen(function* () {
-      const { browser, tabId } = yield* ready;
+      const { browser, broker, tabId } = yield* ready;
+      const manager = yield* Manager.PreviewManager;
+      const events = yield* manager.subscribeEvents;
       const viewer = yield* browser.attachViewer(viewerInput(tabId, true));
       yield* viewer.input({ type: "takeControl" });
       const started = Promise.withResolvers<void>();
@@ -676,9 +678,22 @@ it.live.each([
       yield* Effect.promise(() => started.promise);
       const cdp = contexts[0]!.sessions.at(-1)!;
       const send = cdp.send.getMockImplementation()!;
+      const request = {
+        url: () => "https://example.com/pending",
+        method: () => "GET",
+        isNavigationRequest: () => true,
+        frame: () => page,
+        failure: () => ({ errorText: "net::ERR_ABORTED" }),
+      };
       const typed = Promise.withResolvers<void>();
+      let cancelled = false;
       cdp.send.mockImplementation(async (operation, input) => {
         if (operation === "Input.insertText") typed.resolve();
+        if (operation === "Page.stopLoading") {
+          cancelled = true;
+          committed.reject(new Error("net::ERR_ABORTED"));
+          if (method !== "reload") page.emit("requestfailed", request);
+        }
         return send(operation, input);
       });
       const correction = yield* Effect.gen(function* () {
@@ -695,7 +710,34 @@ it.live.each([
       expect(contexts[0]!.sessions.at(-1)!.send).toHaveBeenCalledWith("Input.insertText", {
         text: "hello",
       });
-      committed.resolve();
+      page.emit("request", request);
+      let loadingEvent = yield* PubSub.take(events);
+      while (
+        loadingEvent.type !== "navigated" ||
+        loadingEvent.snapshot.navStatus._tag !== "Loading"
+      ) {
+        loadingEvent = yield* PubSub.take(events);
+      }
+      const reader = yield* browser.attachViewer(viewerInput(tabId, false));
+      yield* reader.input({ type: "stopLoading" });
+      expect(cancelled).toBe(false);
+      yield* viewer.input({ type: "stopLoading" });
+      expect(cancelled).toBe(true);
+      if (method === "reload") page.emit("requestfailed", request);
+      const status = yield* broker.invoke<PreviewAutomationStatus>({
+        scope,
+        tabId,
+        operation: "status",
+        input: {},
+      });
+      expect(status.loading).toBe(false);
+      let settled = yield* PubSub.take(events);
+      while (settled.type !== "navigated" || settled.snapshot.navStatus._tag !== "Success") {
+        settled = yield* PubSub.take(events);
+      }
+      expect(settled.snapshot.navStatus.url).toBe("http://localhost:5173/fixed");
+      expect(page[method]).toHaveBeenCalledTimes(method === "goto" ? 2 : 1);
+      yield* viewer.input({ type: "releaseControl" });
       yield* Fiber.join(navigation);
       yield* Fiber.join(correction);
     }),

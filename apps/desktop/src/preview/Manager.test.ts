@@ -778,6 +778,62 @@ describe("PreviewManager", () => {
     ),
   );
 
+  effectIt.effect.each([
+    { stop: true, code: "ERR_ABORTED", errno: -3, succeeds: true },
+    { stop: false, code: "ERR_ABORTED", errno: -3, succeeds: false },
+    { stop: true, code: "ERR_CONNECTION_REFUSED", errno: -102, succeeds: false },
+  ])(
+    "only an explicit Stop cancels native navigation successfully ($stop, $code)",
+    ({ stop, code, errno, succeeds }) =>
+      withManager((manager) =>
+        Effect.gen(function* () {
+          const changes = makeChangeSignal();
+          const preview = makeFaviconWebContents();
+          const started = yield* Deferred.make<void>();
+          const navigation = Promise.withResolvers<void>();
+          const failure = Object.assign(new Error(code), { code, errno });
+          preview.loadURL.mockImplementationOnce(() => {
+            Deferred.doneUnsafe(started, Exit.void);
+            return navigation.promise;
+          });
+          preview.setLoading(true);
+          Object.assign(preview.webContents, {
+            stop: () => {
+              preview.setLoading(false);
+              preview.listeners.get("did-stop-loading")!();
+              navigation.reject(failure);
+            },
+          });
+          fromId.mockReturnValue(preview.webContents);
+          const states: PreviewManager.PreviewTabState[] = [];
+          yield* manager.subscribeStateChanges((_tabId, state) =>
+            Effect.sync(() => {
+              states.push(state);
+              changes.notify();
+            }),
+          );
+          yield* manager.createTab("tab_stop");
+          yield* manager.registerWebview("tab_stop", 42);
+          expect(states.at(-1)?.navStatus.kind).toBe("Loading");
+          const pending = yield* manager
+            .navigate("tab_stop", "https://example.com/pending")
+            .pipe(Effect.forkChild);
+          yield* Deferred.await(started);
+          if (stop) {
+            yield* manager.stopLoading("tab_stop");
+            yield* changes.until(() => states.at(-1)?.navStatus.kind === "Success");
+          } else {
+            navigation.reject(failure);
+          }
+          const result = yield* Fiber.await(pending);
+          expect(Exit.isSuccess(result)).toBe(succeeds);
+          expect(preview.reload).not.toHaveBeenCalled();
+          yield* manager.refresh("tab_stop");
+          expect(preview.reload).toHaveBeenCalledOnce();
+        }),
+      ),
+  );
+
   effectIt.effect("queues navigation until the webview registers", () =>
     withManager((manager) =>
       Effect.gen(function* () {
