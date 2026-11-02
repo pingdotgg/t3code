@@ -5,6 +5,7 @@ import type { MouseEvent as ReactMouseEvent, ReactNode } from "react";
 import { resolvePullRequestState } from "./pullRequestPresentation";
 import { cn } from "~/lib/utils";
 import { readLocalApi } from "~/localApi";
+import { Badge } from "../ui/badge";
 import { Button, InlineButton } from "../ui/button";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { openOnHostLabel, showPullRequestLinkContextMenu } from "./pullRequestLinkContextMenu";
@@ -148,19 +149,19 @@ export function PullRequestDetailCrumbs({
             focusable
           />
           {detail.state !== "open" || detail.isDraft ? (
-            <span
-              className={cn(
-                "inline-flex h-5 shrink-0 items-center gap-1 rounded-md border px-1.75 text-caption",
+            <Badge
+              size="status"
+              variant={
                 detail.state === "merged"
-                  ? "border-merged-foreground/25 bg-merged-tint text-merged-foreground"
+                  ? "merged"
                   : detail.state === "closed"
-                    ? "border-error-foreground/25 bg-error-tint text-error-foreground"
-                    : "border-border bg-badge-neutral text-muted-foreground",
-              )}
+                    ? "error"
+                    : "secondary"
+              }
             >
-              <state.Icon aria-hidden className="size-[11px]" />
+              <state.Icon aria-hidden />
               {state.label}
-            </span>
+            </Badge>
           ) : null}
           {children}
         </>
