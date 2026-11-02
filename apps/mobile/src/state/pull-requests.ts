@@ -1,6 +1,7 @@
 import {
   createPullRequestEnvironmentAtoms,
   createPullRequestStackAtomFamily,
+  patchPullRequestListEntries,
 } from "@t3tools/client-runtime/state/pull-requests";
 import type { EnvironmentId, PullRequestListInput } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
@@ -9,7 +10,6 @@ import { AsyncResult, Atom } from "effect/reactivity";
 import { connectionAtomRuntime } from "../connection/runtime";
 import {
   EMPTY_PULL_REQUEST_STATS_CACHE,
-  patchPullRequestListEntry,
   pullRequestListHead,
   withAnsweredPullRequestStats,
   withListedPullRequests,
@@ -22,12 +22,15 @@ export const pullRequestListPagesKey = (target: {
   readonly input: PullRequestListInput;
 }) => JSON.stringify([target.environmentId, target.input]);
 
-const pullRequestListPagesEnvironments = new WeakMap<object, EnvironmentId>();
+// Which listing each pages atom holds, so an action's reply can reach the pages past its head.
+const pullRequestListPagesTargets = new WeakMap<
+  object,
+  readonly [EnvironmentId, PullRequestListInput]
+>();
 /** The pages loaded past each listing's head, keyed by {@link pullRequestListPagesKey}. */
 export const pullRequestListPagesFamily = Atom.family((key: string) => {
   const atom = Atom.make<PullRequestListPages | null>(null).pipe(Atom.setIdleTTL(5 * 60_000));
-  const [environmentId]: [EnvironmentId] = JSON.parse(key);
-  pullRequestListPagesEnvironments.set(atom, environmentId);
+  pullRequestListPagesTargets.set(atom, JSON.parse(key));
   return atom;
 });
 
@@ -42,14 +45,20 @@ export const composerPullRequests = createPullRequestEnvironmentAtoms(connection
   // Rows on pages past each listing's head; the head itself is patched where it is cached.
   actionReply: (target, reply, registry) =>
     Effect.sync(() => {
-      const { state, isDraft, updatedAt, observedAt } = reply;
-      const patch = { state, ...(isDraft === undefined ? {} : { isDraft }), updatedAt };
       for (const atom of registry.getNodes().keys()) {
-        if (typeof atom === "string") continue;
-        if (pullRequestListPagesEnvironments.get(atom) !== target.environmentId) continue;
-        registry.update(atom as Atom.Writable<PullRequestListPages | null>, (pages) =>
-          patchPullRequestListEntry(pages, null, target.input, patch, observedAt ?? Date.now()),
-        );
+        const listing =
+          typeof atom === "string" ? undefined : pullRequestListPagesTargets.get(atom);
+        if (listing === undefined || listing[0] !== target.environmentId) continue;
+        registry.update(atom as Atom.Writable<PullRequestListPages | null>, (pages) => {
+          if (pages === null) return pages;
+          const entries = patchPullRequestListEntries(
+            listing[1],
+            pages.entries,
+            target.input,
+            reply,
+          );
+          return entries === "refresh" || entries === pages.entries ? pages : { ...pages, entries };
+        });
       }
     }),
   // A new head can change which files GitHub still counts as viewed, so the viewed-files read is

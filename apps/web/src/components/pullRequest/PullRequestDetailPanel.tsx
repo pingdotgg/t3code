@@ -700,10 +700,10 @@ export function PullRequestDetailPanel({
     }
     if (pullRequestActionNeedsHostRefresh(action)) {
       void refreshFromHost();
-    } else if (result.value !== undefined) {
-      if (nativeStack !== null) nativeStackQuery.refresh();
     } else {
-      refreshDetail();
+      // The action command already showed the reply in the detail or re-read it.
+      activityQuery.refresh();
+      nativeStackQuery.refresh();
     }
     onActed?.(action, "done", result.value);
     return true;

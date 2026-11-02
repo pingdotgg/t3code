@@ -131,7 +131,7 @@ type ActionReplyPatch = (
   registry: AtomRegistry.AtomRegistry,
   environmentId: EnvironmentId,
   reference: PullRequestRef,
-  reply: PullRequestSummary,
+  reply: PullRequestSummary | undefined,
 ) => Effect.Effect<void>;
 
 // Module-wide so readers built by separate factories, such as linked summaries, are patched too.
@@ -166,19 +166,24 @@ function listAccepts(input: PullRequestListInput, state: string, isDraft: boolea
   );
 }
 
-/** `refresh` when the reply adds the pull request to a listing, which only a read can place. */
-function patchListWithReply(
+/**
+ * Listing rows with an action's reply applied, the same array when it changes none, and `refresh`
+ * when the reply adds the pull request to a listing, which only a read can place.
+ */
+export function patchPullRequestListEntries<Entry extends PullRequestListEntry>(
   input: PullRequestListInput,
-  value: PullRequestListResult,
+  entries: ReadonlyArray<Entry>,
   reference: PullRequestRef,
   reply: PullRequestSummary,
-): PullRequestListResult | "refresh" {
+): ReadonlyArray<Entry> | "refresh" {
   let found = false;
-  const entries = value.entries.flatMap((entry): PullRequestListEntry[] => {
+  let changed = false;
+  const patched = entries.flatMap((entry): Entry[] => {
     if (!samePullRequest(entry, reference)) return [entry];
     found = true;
     if (isStalePullRequestReply(entry, reply)) return [entry];
-    const patched = {
+    changed = true;
+    const next = {
       ...entry,
       ...pickDefined(reply, [
         "title",
@@ -193,17 +198,27 @@ function patchListWithReply(
         "observedAt",
       ]),
     };
-    return listAccepts(input, patched.state, patched.isDraft) ? [patched] : [];
+    return listAccepts(input, next.state, next.isDraft) ? [next] : [];
   });
   if (!found) {
     return input.cursors === undefined && listAccepts(input, reply.state, reply.isDraft)
       ? "refresh"
-      : value;
+      : entries;
   }
-  return {
-    ...value,
-    entries: entries.sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt)),
-  };
+  return changed
+    ? patched.sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt))
+    : entries;
+}
+
+function patchListWithReply(
+  input: PullRequestListInput,
+  value: PullRequestListResult,
+  reference: PullRequestRef,
+  reply: PullRequestSummary,
+): PullRequestListResult | "refresh" {
+  const entries = patchPullRequestListEntries(input, value.entries, reference, reply);
+  if (entries === "refresh") return entries;
+  return entries === value.entries ? value : { ...value, entries };
 }
 
 /**
@@ -229,6 +244,8 @@ function actionPatchedQuery<Input, A, E>(
     ) => A | "refresh";
     /** Fields the reply lacks also changed, so the patched value shows while a read fetches them. */
     readonly rereads?: (value: A, reply: PullRequestSummary) => boolean;
+    /** Re-read when the host's reply did not carry the pull request. */
+    readonly rereadWithoutReply?: boolean;
   },
 ) {
   const writable = Atom.family((atom: Atom.Atom<AsyncResult.AsyncResult<A, E>>) =>
@@ -242,6 +259,9 @@ function actionPatchedQuery<Input, A, E>(
       Effect.fnUntraced(function* (registry, environmentId, reference, reply) {
         if (environmentId !== target.environmentId || !options.concerns(target.input, reference))
           return;
+        if (reply === undefined) {
+          return options.rereadWithoutReply === true ? registry.refresh(atom) : undefined;
+        }
         const shown = Option.flatMap(
           registry.getNodes().get(atom)?.valueOption() ?? Option.none(),
           (current: AsyncResult.AsyncResult<A, E>) => AsyncResult.value(current),
@@ -414,6 +434,7 @@ export function createPullRequestEnvironmentAtoms<R, E>(
         persistence: detailPersistence,
         onAnswer: onAnswer.detail,
         concerns: samePullRequest,
+        rereadWithoutReply: true,
         // Reopening or a new head changes branch data and permissions the reply lacks.
         rereads: (value, reply) =>
           !isStalePullRequestReply(value, reply) &&
@@ -466,6 +487,7 @@ export function createPullRequestEnvironmentAtoms<R, E>(
           label,
           persistence: previewPersistence,
           concerns: samePullRequest,
+          rereadWithoutReply: true,
           patch: (_input, value, _reference, reply) =>
             isStalePullRequestReply(value, reply)
               ? value
@@ -574,13 +596,13 @@ export function createPullRequestEnvironmentAtoms<R, E>(
     registry: AtomRegistry.AtomRegistry,
     environmentId: EnvironmentId,
     reference: PullRequestRef,
-    reply: PullRequestSummary,
+    reply: PullRequestSummary | undefined,
   ) {
     for (const atom of registry.getNodes().keys()) {
       const patch = typeof atom === "string" ? undefined : actionReplyPatches.get(atom);
       if (patch !== undefined) yield* patch(registry, environmentId, reference, reply);
     }
-    if (reference.expectedAccountId === undefined) {
+    if (reply !== undefined && reference.expectedAccountId === undefined) {
       yield* (
         onAnswer.actionReply?.({ environmentId, input: reference }, reply, registry) ?? Effect.void
       );
@@ -739,13 +761,8 @@ export function createPullRequestEnvironmentAtoms<R, E>(
       // Preparation belongs to the write's lane. Refreshable queries would restart it after
       // every preceding action, and preparing outside the lane could reorder the clicks.
       execute: runAction,
+      // Loaded readers show the reply, or re-read when the host's reply lacked the pull request.
       onSuccess: ({ environmentId, input }, registry, reply) => {
-        if (reply === undefined) {
-          return Effect.sync(() => {
-            registry.refresh(preview({ environmentId, input }));
-            registry.refresh(previewCard({ environmentId, input }));
-          });
-        }
         const { projectId, host, repository, number, expectedAccountId } = input;
         return applyActionReply(
           registry,

@@ -162,12 +162,8 @@ export function ThreadDetailsPrRow({
     environmentId,
     reference,
     terminology,
-    onSuccess: (_action, reply) => {
-      // A reply has already patched the detail; checks follow the server's refresh.
-      if (reply === undefined) {
-        detailQuery.refresh();
-        checksQuery.refresh();
-      }
+    onSuccess: () => {
+      checksQuery.refresh();
       onActed?.();
     },
   });

@@ -37,31 +37,13 @@ export function reuseUnchanged<T>(previous: unknown, next: T): T {
   }
   if (Array.isArray(next)) {
     const before = previous as ReadonlyArray<unknown>;
-    let changedAt = before.length === next.length ? next.length : -1;
-    let changedValue: unknown;
-    if (changedAt !== -1) {
-      for (let index = 0; index < next.length; index++) {
-        if (!(index in next)) continue;
-        const reused = reuseUnchanged(before[index], next[index]);
-        if (reused !== before[index]) {
-          changedAt = index;
-          changedValue = reused;
-          break;
-        }
-      }
-    }
-    if (changedAt === next.length) return previous as T;
-    const merged = next.slice();
-    for (let index = 0; index < next.length; index++) {
-      if (!(index in next)) continue;
-      merged[index] =
-        index < changedAt
-          ? before[index]
-          : index === changedAt
-            ? changedValue
-            : reuseUnchanged(before[index], next[index]);
-    }
-    return merged as T;
+    let same = before.length === next.length;
+    const merged = next.map((item, index) => {
+      const reused = reuseUnchanged(before[index], item);
+      if (reused !== before[index]) same = false;
+      return reused;
+    });
+    return (same ? previous : merged) as T;
   }
   // Decoded settings carry Durations, which are fresh instances on every push.
   if (Equal.isEqual(next)) return (Equal.equals(previous, next) ? previous : next) as T;
@@ -69,31 +51,14 @@ export function reuseUnchanged<T>(previous: unknown, next: T): T {
   const before = previous as Record<string, unknown>;
   const after = next as Record<string, unknown>;
   const keys = Object.keys(after);
-  let changedAt = keys.length === Object.keys(before).length ? keys.length : -1;
-  let changedValue: unknown;
-  if (changedAt !== -1) {
-    for (let index = 0; index < keys.length; index++) {
-      const key = keys[index]!;
-      const reused = reuseUnchanged(before[key], after[key]);
-      if (reused !== before[key] || !(key in before)) {
-        changedAt = index;
-        changedValue = reused;
-        break;
-      }
-    }
-  }
-  if (changedAt === keys.length) return previous as T;
+  let same = keys.length === Object.keys(before).length;
   const merged: Record<string, unknown> = {};
-  for (let index = 0; index < keys.length; index++) {
-    const key = keys[index]!;
-    merged[key] =
-      index < changedAt
-        ? before[key]
-        : index === changedAt
-          ? changedValue
-          : reuseUnchanged(before[key], after[key]);
+  for (const key of keys) {
+    const reused = reuseUnchanged(before[key], after[key]);
+    if (reused !== before[key] || !(key in before)) same = false;
+    merged[key] = reused;
   }
-  return merged as T;
+  return (same ? previous : merged) as T;
 }
 
 export function applyServerConfigProjection(
