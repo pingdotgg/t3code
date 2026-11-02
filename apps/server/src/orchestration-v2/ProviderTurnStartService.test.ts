@@ -1315,6 +1315,21 @@ effectIt.effect(
     }),
 );
 
+effectIt.effect("keeps a slash command from another thread's agent verbatim", () =>
+  Effect.gen(function* () {
+    const harness = makeLocalCommandHarness({
+      text: "/goal Implement X",
+      senderThreadId: ThreadId.make("launching-thread"),
+      previousTurn: { runStatus: "completed", turnStatus: "completed" },
+    });
+    harness.tryHandlePromptCommand.mockReturnValue(Effect.succeed(false));
+
+    yield* harness.start;
+
+    expect(harness.startRootRun.mock.calls[0]?.[0].message.text).toBe("/goal Implement X");
+  }),
+);
+
 effectIt.effect("does not start another turn when abandoned-turn cleanup fails", () =>
   Effect.gen(function* () {
     const harness = makeLocalCommandHarness({
