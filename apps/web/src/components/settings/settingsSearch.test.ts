@@ -391,6 +391,10 @@ describe("movedSettingsPath", () => {
     expect(movedSettingsPath("/settings/storage", "")).toBe("/settings/maintenance");
     expect(movedSettingsPath("/settings/integrations", "devices")).toBe("/settings/devices");
     expect(movedSettingsPath("/settings/beta", "")).toBe("/settings/labs");
+    expect(movedSettingsPath("/settings/threads", "add-project-starts-in")).toBe(
+      "/settings/projects",
+    );
+    expect(movedSettingsPath("/settings/threads", "new-projects")).toBe("/settings/projects");
   });
 
   it("leaves current pages alone", () => {
@@ -398,5 +402,8 @@ describe("movedSettingsPath", () => {
     expect(movedSettingsPath("/settings/projects", "project-defaults")).toBeNull();
     expect(movedSettingsPath("/settings/connections", "remote-environments")).toBeNull();
     expect(movedSettingsPath("/settings/appearance", "theme")).toBeNull();
+    expect(movedSettingsPath("/settings/threads", "")).toBeNull();
+    expect(movedSettingsPath("/settings/threads", "response-streaming")).toBeNull();
+    expect(movedSettingsPath("/settings/threads", "text-generation")).toBeNull();
   });
 });

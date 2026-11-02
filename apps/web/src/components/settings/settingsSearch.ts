@@ -1240,6 +1240,7 @@ const SPLIT_SETTINGS_PATHS: ReadonlySet<string> = new Set([
   "/settings/appearance",
   "/settings/source-control",
   "/settings/connections",
+  "/settings/threads",
   ...Object.keys(RENAMED_SETTINGS_PATHS),
 ]);
 // Section anchors that moved but are not search results themselves.
@@ -1247,6 +1248,7 @@ const MOVED_SECTION_ANCHORS: Readonly<Record<string, SettingsPath>> = {
   "authorized-clients": "/settings/access",
   "legacy-features": "/settings/labs",
   "text-generation": "/settings/threads",
+  "new-projects": "/settings/projects",
   about: "/settings/about",
 };
 
