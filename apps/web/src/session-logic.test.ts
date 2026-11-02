@@ -179,6 +179,41 @@ describe("V2 session presentation", () => {
         completedAt: now,
       }),
     ).toMatchObject({ label: "Provider error after 10/10 retries" });
+
+    // OpenCode and ACP providers report no retry limit.
+    const firstRetry = { attempt: 1, maxAttempts: null, retryDelayMs: null };
+    expect(
+      providerErrorPresentation({
+        ...retryItem,
+        status: "completed",
+        completedAt: now,
+        retry: firstRetry,
+      }),
+    ).toMatchObject({ label: "Provider recovered (1 retry)" });
+    expect(
+      providerErrorPresentation({
+        ...retryItem,
+        status: "failed",
+        completedAt: now,
+        retry: firstRetry,
+      }),
+    ).toMatchObject({ label: "Provider error after 1 retry" });
+    expect(
+      providerErrorPresentation({
+        ...retryItem,
+        status: "completed",
+        completedAt: now,
+        retry: { ...firstRetry, attempt: 2 },
+      }),
+    ).toMatchObject({ label: "Provider recovered (2 retries)" });
+    expect(
+      providerErrorPresentation({
+        ...retryItem,
+        status: "completed",
+        completedAt: now,
+        retry: { ...firstRetry, attempt: 1, maxAttempts: 10 },
+      }),
+    ).toMatchObject({ label: "Provider recovered (1/10 retries)" });
   });
 
   it("assigns run rollback to the turn-start message instead of a later steer", () => {

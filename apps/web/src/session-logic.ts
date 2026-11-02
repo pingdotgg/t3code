@@ -377,13 +377,15 @@ export function providerErrorPresentation(
     item.retry.maxAttempts === null
       ? `${item.retry.attempt}`
       : `${item.retry.attempt}/${item.retry.maxAttempts}`;
+  // The noun agrees with the number nearest it: "1 retry", but "1/10 retries".
+  const retries = (item.retry.maxAttempts ?? item.retry.attempt) === 1 ? "retry" : "retries";
   const label =
     item.status === "running"
       ? `Retrying provider (${progress})`
       : item.status === "completed"
-        ? `Provider recovered (${progress} retries)`
+        ? `Provider recovered (${progress} ${retries})`
         : item.status === "failed"
-          ? `${item.failure.class === "usage_limit" ? "Usage limit reached" : "Provider error"} after ${progress} retries`
+          ? `${item.failure.class === "usage_limit" ? "Usage limit reached" : "Provider error"} after ${progress} ${retries}`
           : `Provider retry stopped (${progress})`;
   const retryDelay =
     item.status === "running" && item.retry.retryDelayMs !== null && item.retry.retryDelayMs > 0
