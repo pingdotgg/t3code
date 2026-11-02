@@ -104,8 +104,9 @@ const CONNECTOR_READINESS_REQUEST_TIMEOUT = Duration.seconds(5);
 const CONNECTOR_NOT_READY_CHECKS_BEFORE_RESTART = 6;
 const CONNECTOR_NOT_READY_CHECKS_MAX = 60;
 // cloudflared probes its QUIC MTU only at startup, so a new route (a VPN) silently drops full-size
-// packets. Probe the IPv4 route to an edge address: cloudflared dials edges over IPv4 by default,
-// and rotating IPv6 temporary addresses would restart it for nothing. UDP connect sends nothing.
+// packets. Probe the IPv4 route to an edge address: a full-tunnel VPN moves it even when cloudflared
+// picked an IPv6 edge, and rotating IPv6 temporary addresses would restart it for nothing. UDP
+// connect sends nothing.
 const TUNNEL_EDGE_ROUTE_PROBE_ADDRESS = "198.41.192.7";
 const TUNNEL_EDGE_ROUTE_PROBE_PORT = 7844;
 const TUNNEL_EDGE_ROUTE_LOOKUP_TIMEOUT = Duration.seconds(1);
