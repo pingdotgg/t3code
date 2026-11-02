@@ -199,17 +199,17 @@ export const makeManagedTunnelRecovery = Effect.fn("ManagedTunnelRecovery.make")
       }),
     ),
   );
+  const retry = {
+    while: options.isRetryable,
+    schedule: managedTunnelRecoveryRetrySchedule,
+  };
   return Effect.fn("ManagedTunnelRecovery.recover")(function* (
     config: RelayManagedEndpointRuntimeConfig,
   ) {
-    if (!(yield* options.isCurrent(config))) return false;
+    if (!(yield* options.isCurrent(config).pipe(Effect.retry(retry)))) return false;
     yield* waitForCooldown;
-    return yield* options.recover(config).pipe(
-      Effect.retry({
-        while: options.isRetryable,
-        schedule: managedTunnelRecoveryRetrySchedule,
-      }),
-      Effect.ensuring(recordRecovery),
-    );
+    return yield* options
+      .recover(config)
+      .pipe(Effect.retry(retry), Effect.ensuring(recordRecovery));
   }, lock.withPermits(1));
 });
