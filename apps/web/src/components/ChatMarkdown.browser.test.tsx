@@ -17,6 +17,16 @@ const { workspaceSearch, filesystemMetadata } = vi.hoisted(() => ({
   filesystemMetadata: vi.fn(),
 }));
 const parsedSources = vi.hoisted(() => [] as string[]);
+const liveTextListeners = vi.hoisted(() => new Set<(text: string | null) => void>());
+vi.mock(import("../state/entities"), async (original) => ({
+  ...(await original()),
+  subscribeAssistantMessageText: (_ref, _itemId, listener) => {
+    liveTextListeners.add(listener);
+    return () => {
+      liveTextListeners.delete(listener);
+    };
+  },
+}));
 vi.mock(import("mdast-util-from-markdown"), async (original) => {
   const actual = await original();
   return {
@@ -118,7 +128,129 @@ vi.mock(import("../hooks/useSettings"), async (original) => {
 });
 
 import ChatMarkdown from "./ChatMarkdown";
+import { ImperativeLiveMarkdown } from "./chat/ImperativeLiveMarkdown";
 import { AudioPreview } from "./files/AudioPreview";
+
+it.each([
+  ["paragraph", "A paragraph with `value` and **strong text**"],
+  ["pending paragraph whitespace", "one two six"],
+  ["list", "- first item\n- second item still growing"],
+  ["ordered list", "9. first item\n10. second item"],
+  ["table", "| File | Lines |\n| :--- | ---: |\n| a.ts | 123 |\n| b.ts | 4"],
+  ["code fence", "```ts\nconst value = 1;\nconst next = value + 2;"],
+  ["blockquote", "> first line\n> second line with **strong**"],
+  ["heading", "## A heading\n\nThe next paragraph"],
+  ["external link", "Read [the guide](https://example.com/guide) for details"],
+  ["private link", "Read [the guide](http://localhost/guide) for details"],
+  ["source control link", "Read [the guide](https://github.com/pingdotgg/t3code) for details"],
+  [
+    "several list items",
+    "- first item\n- second item\n- third item\n- fourth item with **strong** text\n- fifth item",
+  ],
+  [
+    "several table rows",
+    "| File | Change | Lines |\n| :--- | :---: | ---: |\n| src/a.ts | first | 12 |\n| src/b.ts | second | 345 |\n| src/c.ts | third | 6 |\n| src/d.ts | fourth | 789 |",
+  ],
+  ["nested list", "- outer item\n  - nested item\n  - another nested item\n- final outer item"],
+  ["heading fragments", "## Repeated heading\n\n## Repeated heading\n\n[Jump](#repeated-heading)"],
+])("matches live markdown DOM to React for a partial %s", async (name, source) => {
+  setup();
+  const viewport = { width: window.innerWidth, height: window.innerHeight };
+  await using _viewport = {
+    [Symbol.asyncDispose]: () => page.viewport(viewport.width, viewport.height),
+  };
+  await page.viewport(900, 900);
+  const fallback = vi.fn();
+  const prefix = "## Settled heading\n\nA settled paragraph.\n\n";
+  const stages = [1 / 3, 2 / 3, 1].map(
+    (fraction) => prefix + source.slice(0, Math.ceil(source.length * fraction)),
+  );
+  const threadRef = {
+    environmentId: EnvironmentId.make("fidelity"),
+    threadId: ThreadId.make("fidelity"),
+  };
+  const view = (text: string, theme: "light" | "dark" = "light") => (
+    <>
+      <style>
+        {"[data-fidelity] * { transition: none !important; animation: none !important; }"}
+      </style>
+      <section data-fidelity="react" style={{ width: 640, padding: 16 }}>
+        <ChatMarkdown text={text} cwd={undefined} isStreaming headingLevelOffset={3} />
+      </section>
+      <section data-fidelity="live" style={{ width: 640, padding: 16 }}>
+        <ImperativeLiveMarkdown
+          threadRef={threadRef}
+          itemId="fidelity"
+          initialText={stages[0]!}
+          theme={theme}
+          followEnabled={false}
+          onFallback={fallback}
+        />
+      </section>
+    </>
+  );
+  await using screen = await render(view(stages[0]!));
+  const normalize = (root: Element): string => {
+    const copy = root.cloneNode(true) as Element;
+    copy.removeAttribute("data-imperative-live");
+    for (const element of [copy, ...copy.querySelectorAll("*")]) {
+      for (const name of element.getAttributeNames()) {
+        const value = element.getAttribute(name)!;
+        if (name === "style") {
+          element.setAttribute(name, (element as HTMLElement).style.cssText);
+        } else if (/«|_r_|:r/.test(value) && /^(?:id|aria-|data-)/.test(name)) {
+          element.setAttribute(name, "generated-id");
+        }
+      }
+      const attributes = [...element.attributes].sort((a, b) => a.name.localeCompare(b.name));
+      for (const attribute of attributes) element.removeAttribute(attribute.name);
+      for (const attribute of attributes) element.setAttribute(attribute.name, attribute.value);
+    }
+    const comments = document.createTreeWalker(copy, NodeFilter.SHOW_COMMENT);
+    const remove: Node[] = [];
+    while (comments.nextNode()) remove.push(comments.currentNode);
+    remove.forEach((node) => node.parentNode?.removeChild(node));
+    copy.normalize();
+    return copy.outerHTML;
+  };
+  for (const [index, text] of stages.entries()) {
+    await act(() => {
+      for (const listener of liveTextListeners) listener(text);
+    });
+    await screen.rerender(view(text));
+    await vi.waitFor(() => {
+      expect(fallback).not.toHaveBeenCalled();
+      const react = screen.container.querySelector('[data-fidelity="react"] .chat-markdown')!;
+      const live = screen.container.querySelector('[data-fidelity="live"] .chat-markdown')!;
+      expect(normalize(live)).toBe(normalize(react));
+    });
+    const react = screen.container.querySelector<HTMLElement>('[data-fidelity="react"]')!;
+    const live = screen.container.querySelector<HTMLElement>('[data-fidelity="live"]')!;
+    // Lazy favicons load only once visible, so settle them before each capture.
+    const capture = async (root: HTMLElement) => {
+      await vi.waitFor(() =>
+        expect([...root.querySelectorAll("img")].every((image) => image.complete)).toBe(true),
+      );
+      return page.screenshot({ element: root.querySelector(".chat-markdown")!, save: false });
+    };
+    live.hidden = true;
+    const before = await capture(react);
+    react.hidden = true;
+    live.hidden = false;
+    const after = await capture(live);
+    react.hidden = false;
+    expect(after === before, `pixel fidelity: ${name}, checkpoint ${index}`).toBe(true);
+  }
+  if (name === "paragraph") {
+    await screen.rerender(view(stages.at(-1)!, "dark"));
+    await act(() => {
+      for (const listener of liveTextListeners) listener(stages.at(-1)!);
+    });
+    const react = screen.container.querySelector('[data-fidelity="react"] .chat-markdown')!;
+    const live = screen.container.querySelector('[data-fidelity="live"] .chat-markdown')!;
+    expect(normalize(live)).toBe(normalize(react));
+  }
+});
 
 it("keeps compact audio playback loaded across signed URL renewals", async () => {
   const original =
@@ -215,14 +347,25 @@ it("loads the <picture> source for the current theme through the image route", a
 
 it("reuses the parse of a streaming reply's finished blocks when it remounts", async () => {
   setup();
-  const message = (
-    <ChatMarkdown cwd="/tmp/project" text={"Finished block\n\nStill growing"} isStreaming />
-  );
+  const finished = "Finished block with [file](src/a/entry.ts)\n\n";
+  const message = <ChatMarkdown cwd="/tmp/project" text={`${finished}Still growing`} isStreaming />;
   {
     await using _first = await render(message);
   }
   await using screen = await render(message);
   await expect.element(screen.getByText("Still growing")).toBeVisible();
+  expect(parsedSources.filter((source) => source.includes("Finished block"))).toHaveLength(1);
+  const paragraph = screen.container.querySelector("p");
+  await screen.rerender(
+    <ChatMarkdown
+      cwd="/tmp/project"
+      text={`${finished}Still growing\n\nAnother [file](src/b/entry.ts)`}
+      isStreaming
+    />,
+  );
+  await expect.element(screen.getByText("entry.ts · src/a", { exact: true })).toBeVisible();
+  await expect.element(screen.getByText("entry.ts · src/b", { exact: true })).toBeVisible();
+  expect(screen.container.querySelector("p")).toBe(paragraph);
   expect(parsedSources.filter((source) => source.includes("Finished block"))).toHaveLength(1);
 });
 

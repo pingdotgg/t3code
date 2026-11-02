@@ -230,6 +230,7 @@ interface CreateManagerOptions {
     ReadonlyArray<{ readonly pid: number; readonly ppid: number; readonly name: string }>,
     never
   >;
+  retainProcessTable?: Effect.Effect<void, never, Scope.Scope>;
   subprocessPollIntervalMs?: number;
   processKillGraceMs?: number;
   registerTerminalProcesses?: Parameters<
@@ -281,6 +282,9 @@ const createManager = (
           ? { subprocessInspector: options.subprocessInspector }
           : {}),
         ...(options.processTable !== undefined ? { processTable: options.processTable } : {}),
+        ...(options.retainProcessTable !== undefined
+          ? { retainProcessTable: options.retainProcessTable }
+          : {}),
         ...(options.subprocessPollIntervalMs !== undefined
           ? { subprocessPollIntervalMs: options.subprocessPollIntervalMs }
           : {}),
@@ -416,7 +420,26 @@ it.layer(
 )("TerminalManager", (it) => {
   it.effect("spawns lazily and reuses running terminal per thread", () =>
     Effect.gen(function* () {
-      const { manager, ptyAdapter } = yield* createManager();
+      const clock = yield* Clock.Clock;
+      using sleeps = vi.spyOn(clock, "sleep");
+      let retains = 0;
+      let releases = 0;
+      const { manager, ptyAdapter } = yield* createManager(5, {
+        processKillGraceMs: 0,
+        processTable: Effect.succeed([]),
+        retainProcessTable: Effect.acquireRelease(
+          Effect.sync(() => {
+            retains++;
+          }),
+          () =>
+            Effect.sync(() => {
+              releases++;
+            }),
+        ),
+      });
+      yield* TestClock.adjust("3 seconds");
+      assert.equal(sleeps.mock.calls.length, 0);
+      expect([retains, releases]).toEqual([0, 0]);
       const [first, second] = yield* Effect.all(
         [manager.open(openInput()), manager.open(openInput())],
         { concurrency: "unbounded" },
@@ -428,7 +451,22 @@ it.layer(
       assert.equal(second.threadId, "thread-1");
       assert.equal(third.threadId, "thread-1");
       expect(ptyAdapter.spawnInputs).toHaveLength(1);
-    }),
+      yield* TestClock.adjust("1 second");
+      const pollSleeps = () =>
+        sleeps.mock.calls.filter(([duration]) => Duration.toMillis(duration) === 1_000).length;
+      assert.isAbove(pollSleeps(), 0);
+      expect([retains, releases]).toEqual([1, 0]);
+      yield* manager.close({ threadId: "thread-1" });
+      yield* TestClock.adjust("3 seconds");
+      const parkedSleeps = pollSleeps();
+      yield* TestClock.adjust("3 seconds");
+      assert.equal(pollSleeps(), parkedSleeps);
+      expect([retains, releases]).toEqual([1, 1]);
+      yield* manager.open(openInput());
+      yield* TestClock.adjust("1 second");
+      assert.isAbove(pollSleeps(), parkedSleeps);
+      expect([retains, releases]).toEqual([2, 1]);
+    }).pipe(Effect.provide(TestClock.layer())),
   );
 
   it.effect("keeps attach streams live when a terminal id is closed and reopened", () =>
@@ -892,7 +930,6 @@ it.layer(
       );
 
       yield* manager.open(openInput());
-      yield* TestClock.adjust("1 second");
       yield* Deferred.await(started);
       yield* TestClock.adjust("5 seconds");
       yield* TestClock.adjust(Duration.millis(19_999));

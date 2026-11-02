@@ -66,17 +66,15 @@ import * as HttpClient from "effect/http/HttpClient";
 import * as ServerSettings from "../serverSettings.ts";
 import { isLocalSshDeviceHost, remoteSshDeviceHosts } from "./localSshDeviceHost.ts";
 
-import { readDeviceDetail, runDeviceAction } from "./DeviceActions.ts";
 import * as ProcessRunner from "../processRunner.ts";
 import * as SecretResolver from "@t3tools/secret-provider-core/server/SecretResolver";
 import * as SecretResolverLayer from "../secrets/SecretResolver.ts";
 import { requireSettingsSecret } from "../secrets/settingsSecretValue.ts";
 import * as DeviceHost from "./DeviceHost.ts";
-import * as SshDeviceHost from "./SshDeviceHost.ts";
-import * as EasDeviceHost from "./EasDeviceHost.ts";
-import * as SimlockDeviceHost from "./SimlockDeviceHost.ts";
+import type * as SshDeviceHost from "./SshDeviceHost.ts";
+import type * as EasDeviceHost from "./EasDeviceHost.ts";
+import type * as SimlockDeviceHost from "./SimlockDeviceHost.ts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
-import { makeExpoApi } from "./ExpoApi.ts";
 import * as Exit from "effect/Exit";
 import * as LocalDeviceHost from "./LocalDeviceHost.ts";
 
@@ -1006,6 +1004,7 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
   const detail: DeviceService["Service"]["detail"] = Effect.fn("DeviceService.detail")(
     function* (input) {
       const { ready, device } = yield* resolveDevice(input.hostId, input.deviceId);
+      const { readDeviceDetail } = yield* Effect.promise(() => import("./DeviceActions.ts"));
       const read = yield* readDeviceDetail(ready, device.platform, device.id);
       return {
         hostId: ready.hostId,
@@ -1020,6 +1019,7 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
   const action: DeviceService["Service"]["action"] = Effect.fn("DeviceService.action")(
     function* (input) {
       const { ready, device } = yield* resolveDevice(input.hostId, input.deviceId);
+      const { runDeviceAction } = yield* Effect.promise(() => import("./DeviceActions.ts"));
       yield* runDeviceAction(ready, device.platform, input);
       return yield* detail({ hostId: ready.hostId, deviceId: device.id });
     },
@@ -1386,6 +1386,7 @@ export const make = Effect.gen(function* () {
         if (yield* isLocalSshDeviceHost(host).pipe(Effect.provide(localTargetContext))) {
           return yield* localHost.summary;
         }
+        const SshDeviceHost = yield* Effect.promise(() => import("./SshDeviceHost.ts"));
         return yield* SshDeviceHost.probe(host).pipe(Effect.provide(probeContext));
       }).pipe(
         Effect.mapError((error) =>
@@ -1488,6 +1489,7 @@ export const make = Effect.gen(function* () {
           added = true;
           const hostScope = yield* Scope.fork(scope);
           if (host.kind === "simlock") {
+            const SimlockDeviceHost = yield* Effect.promise(() => import("./SimlockDeviceHost.ts"));
             // Closing this scope releases the host's leases back to the pool.
             const instance = yield* SimlockDeviceHost.make(host, simlockAgentCli(host.id)).pipe(
               Effect.provideService(Scope.Scope, hostScope),
@@ -1506,6 +1508,7 @@ export const make = Effect.gen(function* () {
             continue;
           }
           if (host.kind === "eas") {
+            const EasDeviceHost = yield* Effect.promise(() => import("./EasDeviceHost.ts"));
             // Closing this scope stops the host's running sessions, so a changed
             // limit or token never leaves a billed session behind.
             const instance = yield* EasDeviceHost.make(host).pipe(
@@ -1516,6 +1519,7 @@ export const make = Effect.gen(function* () {
             configured.set(host.id, { config: host, scope: hostScope });
             continue;
           }
+          const SshDeviceHost = yield* Effect.promise(() => import("./SshDeviceHost.ts"));
           const instance = yield* SshDeviceHost.make(
             host,
             (ready) =>
@@ -1575,6 +1579,8 @@ export const make = Effect.gen(function* () {
   );
   const easAccount: DeviceService["Service"]["easAccount"] = Effect.fn("DeviceService.easAccount")(
     function* (input) {
+      const { makeExpoApi } = yield* Effect.promise(() => import("./ExpoApi.ts"));
+      const EasDeviceHost = yield* Effect.promise(() => import("./EasDeviceHost.ts"));
       const saved =
         input.hostId === undefined
           ? ""
@@ -1609,6 +1615,7 @@ export const make = Effect.gen(function* () {
     "DeviceService.simlockIdentity",
   )(
     function* (input) {
+      const SimlockDeviceHost = yield* Effect.promise(() => import("./SimlockDeviceHost.ts"));
       const environment = yield* HostProcess.Environment;
       const gatewayUrl = (
         input.gatewayUrl || SimlockDeviceHost.machineSimlockToken(environment)?.gatewayUrl

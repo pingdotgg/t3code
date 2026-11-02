@@ -4,6 +4,7 @@
 import * as NodeFSP from "node:fs/promises";
 import * as NodeCrypto from "node:crypto";
 import * as NodeModule from "node:module";
+import * as NodeZlib from "node:zlib";
 // plist is CommonJS; Node cannot load its named exports from an ES module.
 import Plist from "plist";
 
@@ -14,6 +15,7 @@ import {
   statFile,
   type DirectoryRecord,
 } from "@electron/asar";
+import { transform } from "esbuild";
 
 import { fromYaml } from "@t3tools/shared/schemaYaml";
 import * as HostProcess from "@t3tools/shared/HostProcess";
@@ -986,12 +988,29 @@ export const DESKTOP_ELECTRON_LANGUAGES = ["en-US"] as const;
 export const DESKTOP_FILE_EXCLUSIONS = [
   // Cursor walks from argv[1] to platform assets; helpers and native addons need real paths outside ASAR.
   "!**/node_modules/@cursor/sdk-*/**/*",
+  // The desktop server loads Cursor through createRequire, including its adjacent chunks.
+  "!**/node_modules/@cursor/sdk/dist/{esm,bundled}/**/*",
+  "!**/node_modules/@bufbuild/protobuf/dist/esm/**/*",
+  "!**/node_modules/@connectrpc/*/dist/esm/**/*",
+  "!**/node_modules/zod/**/*.js",
+  // Only Playwright's standalone test tooling serves these UI assets.
+  "!**/node_modules/playwright-core/lib/vite/**/*",
   "!apps/desktop/prod-resources/cursor-sdk",
   "!apps/desktop/prod-resources/cursor-sdk/**/*",
   // The installed Claude CLI is supplied explicitly; exclude optional bundled executables, retaining SDK JavaScript.
   "!**/node_modules/@anthropic-ai/claude-agent-sdk-*/**/*",
   "!**/*.map",
   "!**/*.d.cts",
+  "!**/node_modules/**/*.{ts,tsx,mts,cts}",
+  "!**/node_modules/node-addon-api/*.{h,gyp,gypi}",
+  "!**/node_modules/node-addon-api/tools/**/*",
+  // The native loader uses the binary staged beside index.js before its optional package.
+  "!**/node_modules/@napi-rs/keyring-*/**/*",
+  "!patches/**/*",
+  "!pnpm-workspace.yaml",
+  // These helpers already ship as executable extraResources.
+  "!apps/desktop/prod-resources/{resource-monitor,hyprland-capture,kde-capture}/**/*",
+  "!apps/desktop/prod-resources/{dmg,icons}/**/*",
   "!apps/desktop/resources/browser-secret",
   "!apps/desktop/resources/browser-secret/**/*",
   "!apps/desktop/prod-resources/browser-secret",
@@ -1003,15 +1022,26 @@ export const DESKTOP_FILE_EXCLUSIONS = [
   "!apps/desktop/gnome-extension",
   "!apps/desktop/gnome-extension/**/*",
 ] as const;
-// Windows terminal helpers cannot run on macOS and slow signing and notarization.
-export const MAC_FILE_EXCLUSIONS = [
+const NODE_PTY_WINDOWS_FILE_EXCLUSIONS = [
   "!**/node_modules/node-pty/prebuilds/win32-*/**/*",
   "!**/node_modules/node-pty/third_party/conpty/**/*",
 ] as const;
+export const MAC_FILE_EXCLUSIONS = [
+  ...NODE_PTY_WINDOWS_FILE_EXCLUSIONS,
+  "!**/node_modules/node-pty/prebuilds/linux-*/**/*",
+  // Clerk loads the native binary staged beside index.js before its optional package.
+  "!**/node_modules/@clerk/electron-passkeys-darwin-*/**/*",
+  "!**/node_modules/objc-js/src/**/*",
+  // electron-builder copies this to Contents/Resources/icon.icns outside the archive.
+  "!apps/desktop/prod-resources/icon.icns",
+] as const;
 // Linux builds node-pty from source; its prebuilds target other platforms.
 export const LINUX_FILE_EXCLUSIONS = [
-  ...MAC_FILE_EXCLUSIONS,
+  ...NODE_PTY_WINDOWS_FILE_EXCLUSIONS,
   "!**/node_modules/node-pty/prebuilds/darwin-*/**/*",
+  "!**/node_modules/node-pty/prebuilds/linux-*/**/*",
+  "!**/node_modules/@ff-labs/fff-bin-linux-*-musl/**/*",
+  "!**/node_modules/@yuuang/ffi-rs-linux-*-musl/**/*",
 ] as const;
 
 // Native packages (node-pty, objc-js) ship prebuilds for both Darwin architectures; only universal
@@ -1044,6 +1074,8 @@ export const WINDOWS_SERVER_ASAR_IGNORE_GLOBS = [
   "**/node_modules/@anthropic-ai/claude-agent-sdk-*/**",
   "**/node_modules/.bin",
   "**/node_modules/.bin/**",
+  "**/node_modules/playwright-core/lib/vite",
+  "**/node_modules/playwright-core/lib/vite/**",
   "**/*.map",
 ] as const;
 
@@ -1422,9 +1454,7 @@ export function resolveFffNativeDependencies(
   }
 
   return Object.fromEntries(
-    architectures.flatMap((architecture) =>
-      ["gnu", "musl"].map((libc) => [`@ff-labs/fff-bin-linux-${architecture}-${libc}`, version]),
-    ),
+    architectures.map((architecture) => [`@ff-labs/fff-bin-linux-${architecture}-gnu`, version]),
   );
 }
 
@@ -1896,6 +1926,176 @@ export const buildDesktopBundles = Effect.fn("buildDesktopBundles")(
   (repoRoot: string, appVersion: string, verbose: boolean) =>
     withDesktopBuildLock(repoRoot, buildDesktopBundlesUnlocked(repoRoot, appVersion, verbose)),
 );
+
+const minifyDesktopJavaScript = Effect.fn("desktopArtifact.minifyJavaScript")(function* (
+  directory: string,
+  recursive = false,
+  whitespaceOnly = false,
+): Effect.fn.Return<
+  void,
+  PlatformError | BundleNotSelfContainedError,
+  FileSystem.FileSystem | Path.Path
+> {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  for (const entry of yield* fs.readDirectory(directory)) {
+    if (whitespaceOnly && entry === "node_modules") continue;
+    const filePath = path.join(directory, entry);
+    const info = yield* fs.stat(filePath);
+    if (info.type === "Directory") {
+      if (recursive) yield* minifyDesktopJavaScript(filePath, true, whitespaceOnly);
+    } else if ((whitespaceOnly ? /\.(?:js|cjs|mjs)$/ : /\.(?:cjs|mjs)$/).test(entry)) {
+      const source = yield* fs.readFileString(filePath);
+      const result = yield* Effect.tryPromise({
+        try: () =>
+          transform(source, {
+            ...(whitespaceOnly
+              ? { minifyWhitespace: true, minifyIdentifiers: false, minifySyntax: false }
+              : { minify: true, keepNames: true }),
+            sourcefile: filePath,
+          }),
+        catch: (cause) =>
+          new BundleNotSelfContainedError({
+            exitCode: -1,
+            output: `Could not minify ${filePath}: ${String(cause)}`,
+          }),
+      });
+      if (whitespaceOnly && Buffer.byteLength(result.code) >= Buffer.byteLength(source)) continue;
+      // Replace pnpm's hardlink rather than modifying the shared store file.
+      const temporaryPath = `${filePath}.t3-minified`;
+      yield* fs.writeFileString(temporaryPath, result.code, { mode: info.mode });
+      yield* fs.rename(temporaryPath, filePath);
+    }
+  }
+});
+
+export const minifyDesktopRuntimeDependencies = Effect.fn(
+  "desktopArtifact.minifyRuntimeDependencies",
+)(function* (nodeModulesDir: string) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  for (const name of [
+    "playwright-core",
+    "undici",
+    "zod",
+    "@bufbuild/protobuf",
+    "@connectrpc/connect",
+    "@connectrpc/connect-web",
+    "@ff-labs/fff-node",
+    "node-pty",
+    "objc-js",
+    "@electron-webauthn/macos",
+  ]) {
+    const packageDir = path.join(nodeModulesDir, name);
+    if (!(yield* fs.exists(packageDir))) continue;
+    // Playwright serializes functions; keepNames would inject helpers unavailable in the page.
+    yield* minifyDesktopJavaScript(yield* fs.realPath(packageDir), true, true);
+  }
+});
+
+const decodeClientBuildManifest = Schema.decodeUnknownSync(
+  Schema.fromJsonString(
+    Schema.Record(
+      Schema.String,
+      Schema.Struct({
+        file: Schema.String,
+        isEntry: Schema.optional(Schema.Boolean),
+        imports: Schema.optional(Schema.Array(Schema.String)),
+        dynamicImports: Schema.optional(Schema.Array(Schema.String)),
+        css: Schema.optional(Schema.Array(Schema.String)),
+        assets: Schema.optional(Schema.Array(Schema.String)),
+      }),
+    ),
+  ),
+);
+
+const desktopStartupClientAssets = Effect.fn("desktopArtifact.startupClientAssets")(function* (
+  directory: string,
+) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const source = yield* fs.readFileString(path.join(directory, ".vite/manifest.json"));
+  const manifest = yield* Effect.try({
+    try: () => decodeClientBuildManifest(source),
+    catch: (cause) =>
+      new BundleNotSelfContainedError({
+        exitCode: -1,
+        output: `Could not read client build manifest: ${String(cause)}`,
+      }),
+  });
+  const assets = new Set<string>();
+  const visited = new Set<string>();
+  const visit = (key: string) => {
+    if (visited.has(key)) return;
+    visited.add(key);
+    const chunk = manifest[key];
+    if (!chunk) return;
+    assets.add(path.join(directory, chunk.file));
+    for (const css of chunk.css ?? []) assets.add(path.join(directory, css));
+    for (const asset of chunk.assets ?? []) {
+      if (/\.(?:woff2?|ttf|otf)$/i.test(asset)) assets.add(path.join(directory, asset));
+    }
+    for (const imported of chunk.imports ?? []) visit(imported);
+  };
+  for (const [key, chunk] of Object.entries(manifest)) {
+    // startup() awaits managed auth and router.load() before rendering the application.
+    if (
+      [
+        "src/components/clerk/ElectronManagedAuthShell.tsx",
+        "src/routes/_chat.tsx",
+        "src/routes/_chat.index.tsx",
+        "src/routes/_chat.new.tsx",
+      ].includes(key.split("?")[0] ?? "")
+    ) {
+      visit(key);
+    }
+    if (!chunk.isEntry) continue;
+    visit(key);
+    // index.html's entry dynamically loads main.tsx before the application can render.
+    for (const imported of chunk.dynamicImports ?? []) visit(imported);
+  }
+  return assets;
+});
+
+export const precompressDesktopClient = Effect.fn("desktopArtifact.precompressClient")(function* (
+  directory: string,
+) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const uncompressed = yield* desktopStartupClientAssets(directory);
+  const directories = [directory];
+  while (directories.length > 0) {
+    const current = directories.pop()!;
+    for (const entry of yield* fs.readDirectory(current)) {
+      const filePath = path.join(current, entry);
+      if (entry === ".vite" || entry === "index.html" || /\.(?:gz|br)$/.test(entry)) continue;
+      if ((yield* fs.stat(filePath)).type === "Directory") {
+        directories.push(filePath);
+      } else if (entry.endsWith(".map")) {
+        yield* fs.remove(filePath);
+      } else if (uncompressed.has(filePath)) {
+        continue;
+      } else {
+        const bytes = yield* fs.readFile(filePath);
+        if (bytes.byteLength < 1024) continue;
+        const compressed = yield* Effect.try({
+          try: () =>
+            NodeZlib.brotliCompressSync(bytes, {
+              params: { [NodeZlib.constants.BROTLI_PARAM_QUALITY]: 11 },
+            }),
+          catch: (cause) =>
+            new BundleNotSelfContainedError({
+              exitCode: -1,
+              output: `Could not compress ${filePath}: ${String(cause)}`,
+            }),
+        });
+        if (compressed.byteLength + 64 >= bytes.byteLength) continue;
+        yield* fs.writeFile(`${filePath}.br`, compressed);
+        yield* fs.remove(filePath);
+      }
+    }
+  }
+});
 
 const desktopBuildProbeSucceeds = Effect.fn("desktopBuildProbeSucceeds")(function* (
   command: ChildProcess.Command,
@@ -2572,7 +2772,7 @@ const stageLinuxIcons = Effect.fn("build-desktop-artifact.stageLinuxIcons")(func
   }
 
   const iconPath = path.join(stageResourcesDir, "icon.png");
-  yield* fs.copyFile(sourcePng, iconPath);
+  yield* stageLinuxIconSize(sourcePng, iconPath, 512, verbose);
 
   const iconsDir = path.join(stageResourcesDir, "icons");
   yield* fs.makeDirectory(iconsDir, { recursive: true });
@@ -2779,12 +2979,14 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
   wslRuntimeBundled = false,
   arch?: typeof BuildArch.Type,
 ) {
+  const path = yield* Path.Path;
+  const repoRoot = yield* RepoRoot;
   const buildConfig: Record<string, unknown> = {
-    afterPack: (yield* Path.Path).join(yield* RepoRoot, "scripts/prepare-server-compile-cache.cjs"),
     appId: DESKTOP_APP_ID,
     productName: resolveDesktopProductName(version),
     artifactName: "T3-Code-${version}-${arch}.${ext}",
     electronLanguages: [...DESKTOP_ELECTRON_LANGUAGES],
+    afterPack: path.join(repoRoot, "scripts/desktop-after-pack.ts"),
     files: [
       ...DESKTOP_FILE_EXCLUSIONS,
       ...(platform === "mac"
@@ -2826,8 +3028,6 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
   }
 
   if (platform === "mac") {
-    const path = yield* Path.Path;
-    const repoRoot = yield* RepoRoot;
     buildConfig.mac = {
       target: target === "dmg" ? [target, "zip"] : [target],
       icon: "icon.icns",
@@ -2901,11 +3101,9 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
   }
 
   if (platform === "linux") {
+    buildConfig.compression = "maximum";
     // Pin the static AppImage runtime so hosts with only FUSE 3 do not need libfuse2.
     buildConfig.toolsets = { appimage: "1.0.3" };
-    const path = yield* Path.Path;
-    const repoRoot = yield* RepoRoot;
-    buildConfig.afterPack = path.join(repoRoot, "scripts/linux-after-pack.ts");
     buildConfig.linux = {
       target: target === "AppImage" ? [target, "deb"] : [target],
       executableName: "t3code",
@@ -3104,6 +3302,7 @@ export const stageWindowsServerSidecar = Effect.fn("stageWindowsServerSidecar")(
   const serverStageDir = path.join(input.stageRoot, "server");
   yield* fs.makeDirectory(path.join(serverStageDir, "apps/server"), { recursive: true });
   yield* fs.copy(input.serverDistDir, path.join(serverStageDir, "apps/server/dist"));
+  yield* precompressDesktopClient(path.join(serverStageDir, "apps/server/dist/client"));
 
   const sidecarDependencies = {
     ...input.runtimeExternalDependencies,
@@ -3156,6 +3355,7 @@ export const stageWindowsServerSidecar = Effect.fn("stageWindowsServerSidecar")(
   );
 
   yield* Effect.log("[desktop-artifact] Packing server.asar...");
+  yield* minifyDesktopRuntimeDependencies(path.join(serverStageDir, "node_modules"));
   yield* fs.makeDirectory(path.dirname(input.asarPath), { recursive: true });
   yield* packWindowsServerAsar({
     sourceDir: serverStageDir,
@@ -3770,6 +3970,9 @@ const buildDesktopArtifactUnlocked = Effect.fn("buildDesktopArtifactUnlocked")(f
   }
   if (options.platform !== "win") {
     yield* fs.copy(distDirs.serverDist, path.join(stageAppDir, "apps/server/dist"));
+    yield* minifyDesktopJavaScript(path.join(stageAppDir, "apps/server/dist"));
+    yield* minifyDesktopJavaScript(path.join(stageAppDir, "apps/desktop/dist-electron"), true);
+    yield* precompressDesktopClient(path.join(stageAppDir, "apps/server/dist/client"));
   }
   yield* stageResourceMonitor({
     repoRoot,
@@ -3935,6 +4138,9 @@ const buildDesktopArtifactUnlocked = Effect.fn("buildDesktopArtifactUnlocked")(f
   );
   yield* stageClerkPasskeyNativeBinaries(stageAppDir, options.platform, options.arch);
   yield* stageKeyringNativeBinaries(stageAppDir, options.platform, options.arch);
+  if (options.platform !== "win") {
+    yield* minifyDesktopRuntimeDependencies(path.join(stageAppDir, "node_modules"));
+  }
 
   if (options.platform === "win" && windowsServerAsarPath) {
     yield* stageWindowsServerSidecar({

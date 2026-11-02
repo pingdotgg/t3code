@@ -234,15 +234,17 @@ const make = Effect.fn("NodePtyAdapter.make")(function* () {
   const platform = yield* HostProcess.Platform;
   const architecture = yield* HostProcess.Architecture;
 
-  const nodePty = yield* Effect.tryPromise({
-    try: loadNodePtyModule,
-    catch: (cause) =>
-      new NodePtyModuleLoadError({
-        platform,
-        architecture,
-        cause,
-      }),
-  }).pipe(Effect.orDie);
+  const loadNodePty = yield* Effect.cached(
+    Effect.tryPromise({
+      try: loadNodePtyModule,
+      catch: (cause) =>
+        new NodePtyModuleLoadError({
+          platform,
+          architecture,
+          cause,
+        }),
+    }).pipe(Effect.orDie),
+  );
 
   const ensureNodePtySpawnHelperExecutableCached = yield* Effect.cached(
     ensureNodePtySpawnHelperExecutable().pipe(
@@ -256,6 +258,7 @@ const make = Effect.fn("NodePtyAdapter.make")(function* () {
 
   return PtyAdapter.PtyAdapter.of({
     spawn: Effect.fn("NodePtyAdapter.spawn")(function* (input) {
+      const nodePty = yield* loadNodePty;
       yield* ensureNodePtySpawnHelperExecutableCached;
       // ConPTY ignores node-pty's name option for TERM; set it explicitly to avoid missing/16-color values.
       const env =

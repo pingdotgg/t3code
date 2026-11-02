@@ -1306,7 +1306,7 @@ const make = Effect.gen(function* () {
     return { parent, target, shell } as const;
   });
 
-  const loadProviders = providerRegistry.getProviders;
+  const loadProviders = providerRegistry.discoverProviders;
 
   const loadOrchestrationCapableInstanceIds = () =>
     providerAdapters.list().pipe(Effect.map((instanceIds) => new Set(instanceIds)));

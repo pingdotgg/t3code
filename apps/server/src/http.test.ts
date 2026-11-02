@@ -1,3 +1,4 @@
+import * as NodeZlib from "node:zlib";
 import { expect, it } from "@effect/vitest";
 import { describe, vi } from "vite-plus/test";
 import * as NodeHttpPlatform from "@effect/platform-node/NodeHttpPlatform";
@@ -269,6 +270,94 @@ it.layer(
       expect(changed.status).toBe(200);
       expect(changed.headers["etag"]).not.toBe(etag);
       expect(yield* changed.text).toContain("next build");
+    }),
+  );
+
+  it.effect("serves precompressed build assets to encoded and identity clients", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const staticDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-static-gzip-" });
+      const body = "export const message = 'compressed build asset';\n";
+      for (const [suffix, encoding, compress] of [
+        ["gz", "gzip", NodeZlib.gzipSync],
+        ["br", "br", NodeZlib.brotliCompressSync],
+      ] as const) {
+        const compressed = compress(body);
+        yield* fs.writeFile(path.join(staticDir, `app.js.${suffix}`), compressed);
+        yield* fs.writeFileString(path.join(staticDir, "index.html"), "<html>app shell</html>");
+        for (const supportsHandles of [true, false]) {
+          let reads = 0;
+          const request = yield* makeStaticRequest(staticDir).pipe(
+            Effect.provideService(
+              FileSystem.FileSystem,
+              FileSystem.FileSystem.of({
+                ...fs,
+                open: (candidate, options) =>
+                  !supportsHandles && candidate.endsWith(`.${suffix}`)
+                    ? Effect.fail(
+                        PlatformError.systemError({
+                          _tag: "NotFound",
+                          module: "FileSystem",
+                          method: "open",
+                          pathOrDescriptor: candidate,
+                        }),
+                      )
+                    : fs.open(candidate, options),
+                readFile: (candidate) =>
+                  Effect.gen(function* () {
+                    reads += 1;
+                    return yield* fs.readFile(candidate);
+                  }),
+              }),
+            ),
+          );
+          let etag: string | undefined;
+          for (const [acceptEncoding, encoded] of [
+            [encoding, true],
+            [`${encoding.toUpperCase()}; q=0.8`, true],
+            ["*;q=0.5", true],
+            ["identity", false],
+            [`${encoding};q=0, *;q=1`, false],
+            [`${encoding};q=0, *;q=0`, false],
+          ] as const) {
+            const response = yield* request("/app.js", {
+              headers: { "accept-encoding": acceptEncoding },
+            });
+            expect(response.status).toBe(200);
+            expect(response.headers["content-type"]).toContain("javascript");
+            expect(response.headers["vary"]).toContain("Accept-Encoding");
+            expect(response.headers["content-encoding"] === encoding).toBe(encoded);
+            expect(yield* response.text).toBe(body);
+            const readsAfterGet = reads;
+            etag ??= response.headers["etag"];
+            expect(response.headers["etag"]).toBe(etag);
+            const head = yield* request("/app.js", {
+              method: "HEAD",
+              headers: { "accept-encoding": acceptEncoding },
+            });
+            expect(head.headers["content-encoding"] === encoding).toBe(encoded);
+            expect(yield* head.text).toBe("");
+            expect(reads).toBe(readsAfterGet);
+            const unchanged = yield* request("/app.js", {
+              headers: { "accept-encoding": acceptEncoding, "if-none-match": etag! },
+            });
+            expect(unchanged.status).toBe(304);
+            expect(yield* unchanged.text).toBe("");
+            expect(reads).toBe(readsAfterGet);
+          }
+          expect(yield* (yield* request("/threads/example")).text).toContain("app shell");
+          yield* fs.writeFileString(
+            path.join(staticDir, `broken.js.${suffix}`),
+            "invalid compression",
+          );
+          expect(
+            (yield* request("/broken.js", { headers: { "accept-encoding": "identity" } })).status,
+          ).toBe(500);
+        }
+        yield* fs.remove(path.join(staticDir, `app.js.${suffix}`));
+        yield* fs.remove(path.join(staticDir, `broken.js.${suffix}`));
+      }
     }),
   );
 

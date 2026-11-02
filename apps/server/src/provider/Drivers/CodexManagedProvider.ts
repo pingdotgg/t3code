@@ -10,7 +10,7 @@ import * as Path from "effect/Path";
 import * as Stream from "effect/Stream";
 import * as Option from "effect/Option";
 import { ChildProcessSpawner } from "effect/process";
-import { makeCodexTextGeneration } from "../../textGeneration/CodexTextGeneration.ts";
+import { makeLazyTextGeneration } from "../../textGeneration/lazyTextGeneration.ts";
 import * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
 import { chatGptModels } from "../CodexChatGptModels.ts";
 import { makeCodexManagedRuntime } from "../CodexManagedRuntime.ts";
@@ -234,6 +234,7 @@ export const makeManagedCodexProvider = Effect.fn("makeManagedCodexProvider")(fu
     ),
   );
   yield* runtime.auth.controller.subscribe("managed-codex-snapshot").pipe(
+    Stream.drop(1),
     Stream.filter((state) => ["idle", "succeeded", "failed", "cancelled"].includes(state.phase)),
     // Sign-out interrupts in-flight probes; keep listening for its subsequent idle refresh.
     Stream.runForEach(() => snapshot.refresh.pipe(Effect.ignoreCause({ log: true }))),
@@ -256,11 +257,17 @@ export const makeManagedCodexProvider = Effect.fn("makeManagedCodexProvider")(fu
         }),
     ),
   );
-  const nativeGeneration = yield* makeCodexTextGeneration(
-    config,
-    undefined,
-    snapshot.getSnapshot.pipe(Effect.map((value) => value.models)),
-    resolveRuntime,
+  const nativeGeneration = yield* makeLazyTextGeneration(
+    Effect.promise(() => import("../../textGeneration/CodexTextGeneration.ts")).pipe(
+      Effect.flatMap((module) =>
+        module.makeCodexTextGeneration(
+          config,
+          undefined,
+          snapshot.getSnapshot.pipe(Effect.map((value) => value.models)),
+          resolveRuntime,
+        ),
+      ),
+    ),
   );
   const protect = <A>(operation: string, effect: Effect.Effect<A, TextGenerationError>) =>
     runtime.auth.controller.withAccess!(effect).pipe(

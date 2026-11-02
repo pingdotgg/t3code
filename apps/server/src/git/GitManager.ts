@@ -3205,7 +3205,7 @@ export const make = Effect.gen(function* () {
                   modelSelection: settings.textGenerationModelSelection,
                   style: settings.sourceControlWritingStyle,
                 })
-              : providerRegistry.getProviders.pipe(
+              : providerRegistry.discoverProviders.pipe(
                   Effect.map((providers) => ({
                     modelSelection: ServerSettings.resolveSourceControlWriterModelSelection(
                       settings,

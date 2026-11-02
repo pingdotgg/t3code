@@ -292,34 +292,73 @@ describe("makeManagedServerProvider", () => {
       ).pipe(Effect.provide(layerAlwaysRunTest)),
   );
 
-  it.effect("skips periodic provider refreshes without foreground provider-status demand", () =>
+  it.effect("serves cached state without probing and awaits live discovery on demand", () =>
     Effect.scoped(
       Effect.gen(function* () {
         const checkCalls = yield* Ref.make(0);
-        const initialCheckDone = yield* Deferred.make<void>();
-        yield* makeManagedServerProvider<TestSettings>({
-          resolveMaintenance: () => Effect.succeed(maintenanceCapabilities),
+        const enrichmentCalls = yield* Ref.make(0);
+        const releaseEnrichment = yield* Deferred.make<void>();
+        const failedSnapshot = {
+          ...refreshedSnapshot,
+          status: "error" as const,
+          auth: { status: "unauthenticated" as const },
+        };
+        const provider = yield* makeManagedServerProvider<TestSettings>({
+          resolveMaintenance: () => Effect.die("health discovery must not resolve maintenance"),
           getSettings: Effect.succeed({ enabled: true }),
           streamSettings: Stream.empty,
           haveSettingsChanged: (previous, next) => previous.enabled !== next.enabled,
           refreshOnInterval: () => true,
-          initialSnapshot: () => Effect.succeed(initialSnapshot),
+          initialSnapshot: () => Effect.succeed(refreshedSnapshot),
           checkProvider: Ref.updateAndGet(checkCalls, (count) => count + 1).pipe(
-            Effect.tap((count) =>
-              count === 1
-                ? Deferred.succeed(initialCheckDone, undefined).pipe(Effect.ignore)
-                : Effect.void,
-            ),
-            Effect.as(refreshedSnapshot),
+            Effect.as(failedSnapshot),
           ),
+          enrichSnapshot: ({ snapshot, publishSnapshot }) =>
+            Ref.update(enrichmentCalls, (count) => count + 1).pipe(
+              Effect.andThen(Deferred.await(releaseEnrichment)),
+              Effect.andThen(publishSnapshot({ ...snapshot, models: enrichedSnapshot.models })),
+            ),
           refreshInterval: "1 second",
         });
 
-        yield* Deferred.await(initialCheckDone);
         yield* TestClock.adjust("1 second");
-        yield* Effect.yieldNow;
-
+        assert.strictEqual(yield* Ref.get(checkCalls), 0);
+        assert.strictEqual(yield* Ref.get(enrichmentCalls), 0);
+        assert.deepStrictEqual(yield* provider.getSnapshot, refreshedSnapshot);
+        const discovered = yield* Effect.all([provider.ensureReady!, provider.ensureReady!], {
+          concurrency: 2,
+        });
+        assert.deepStrictEqual(discovered, [failedSnapshot, failedSnapshot]);
         assert.strictEqual(yield* Ref.get(checkCalls), 1);
+        assert.deepStrictEqual(yield* provider.getSnapshot, failedSnapshot);
+        // Readiness can precede both the client subscription and its background lease.
+        const updates = yield* provider.streamChanges.pipe(
+          Stream.filter((snapshot) => snapshot.models.length > 0),
+          Stream.take(1),
+          Stream.runCollect,
+          Effect.forkChild({ startImmediately: true }),
+        );
+        yield* Deferred.succeed(releaseEnrichment, undefined);
+        yield* TestClock.adjust("0 seconds");
+        assert.strictEqual(yield* Ref.get(enrichmentCalls), 1);
+        assert.deepStrictEqual(Array.from(yield* Fiber.join(updates)), [
+          { ...failedSnapshot, models: enrichedSnapshot.models },
+        ]);
+        const ready = yield* Effect.all([provider.ensureReady!, provider.ensureReady!], {
+          concurrency: 2,
+        });
+        assert.deepStrictEqual(
+          ready.map((snapshot) => snapshot.models),
+          [enrichedSnapshot.models, enrichedSnapshot.models],
+        );
+        assert.strictEqual(yield* Ref.get(enrichmentCalls), 1);
+        assert.strictEqual(yield* Ref.get(checkCalls), 1);
+        yield* TestClock.adjust("1 second");
+        assert.strictEqual(yield* Ref.get(checkCalls), 1);
+        assert.deepStrictEqual(yield* provider.ensureReady!, failedSnapshot);
+        assert.strictEqual(yield* Ref.get(checkCalls), 2);
+        yield* provider.refresh;
+        assert.strictEqual(yield* Ref.get(checkCalls), 3);
       }),
     ).pipe(
       Effect.provide(

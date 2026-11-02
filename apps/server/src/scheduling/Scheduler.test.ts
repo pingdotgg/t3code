@@ -8,6 +8,43 @@ import * as TestClock from "effect/testing/TestClock";
 
 import * as ServerActivation from "../serverActivation.ts";
 import * as Scheduler from "./Scheduler.ts";
+import * as DueHint from "./DueHint.ts";
+import * as DateTime from "effect/DateTime";
+
+it.effect("waits for a source deadline or invalidation instead of ticking while empty", () =>
+  Effect.gen(function* () {
+    const scheduler = yield* Scheduler.Scheduler;
+    const due = DueHint.make();
+    const receipts = yield* Queue.unbounded<void>();
+    const runs = yield* Ref.make(0);
+    let nextDueAt = Infinity;
+    yield* scheduler.register(
+      "on-demand",
+      Effect.gen(function* () {
+        const version = yield* due.version;
+        const now = DateTime.toEpochMillis(yield* DateTime.now);
+        yield* due.record(version, nextDueAt, now);
+        yield* Ref.update(runs, (n) => n + 1);
+        yield* Queue.offer(receipts, undefined);
+      }),
+      due.awaitNext,
+    );
+    yield* Queue.take(receipts);
+    yield* TestClock.adjust("30 seconds");
+    assert.equal(yield* Ref.get(runs), 1);
+    nextDueAt = DateTime.toEpochMillis(yield* DateTime.now) + 10_000;
+    yield* due.invalidate;
+    yield* Queue.take(receipts);
+    assert.equal(yield* Ref.get(runs), 2);
+    nextDueAt = Infinity;
+    yield* TestClock.adjust("10 seconds");
+    yield* Queue.take(receipts);
+    assert.equal(yield* Ref.get(runs), 3);
+    yield* TestClock.adjust("10 minutes");
+    yield* Queue.take(receipts);
+    assert.equal(yield* Ref.get(runs), 4);
+  }).pipe(Effect.provide(Scheduler.layer)),
+);
 
 it.effect("keeps other sources running after a source defects", () =>
   Effect.gen(function* () {

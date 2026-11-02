@@ -934,10 +934,6 @@ function makeManualProviderMaintenanceCapabilities(
   });
 }
 
-const decodeNpmViewVersion = Schema.decodeUnknownOption(
-  Schema.fromJsonString(Schema.Union([Schema.String, Schema.Tuple([Schema.String])])),
-);
-
 const withConfiguredNpmVersionLookup = Effect.fn("withConfiguredNpmVersionLookup")(function* (
   capabilities: ProviderMaintenanceCapabilities,
 ) {
@@ -956,20 +952,10 @@ const withConfiguredNpmVersionLookup = Effect.fn("withConfiguredNpmVersionLookup
   const prefix = prefixIndex >= 0 ? update?.args[prefixIndex + 1] : undefined;
   const lookup = runProbe(
     npmPath,
-    [
-      "view",
-      "--global",
-      ...(prefix ? ["--prefix", prefix] : []),
-      "--json",
-      `${packageName}@latest`,
-      "version",
-    ],
+    ["dist-tag", "ls", "--global", ...(prefix ? ["--prefix", prefix] : []), packageName],
     env,
   ).pipe(
-    Effect.map((stdout) => {
-      const value = stdout ? Option.getOrNull(decodeNpmViewVersion(stdout.trim())) : null;
-      return nonEmptyString(typeof value === "string" ? value : value?.[0]);
-    }),
+    Effect.map((stdout) => nonEmptyString(stdout?.match(/^latest: (\S+)\r?$/m)?.[1])),
     Effect.tap((version) =>
       version === null
         ? Effect.logWarning("Configured npm version lookup failed", { packageName })

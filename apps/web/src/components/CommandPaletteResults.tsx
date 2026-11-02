@@ -137,7 +137,8 @@ export function CommandPaletteVirtualizedResults(props: CommandPaletteVirtualize
           )
         }
         estimatedItemSize={40}
-        drawDistance={400}
+        estimatedListSize={{ height: 320, width: 560 }}
+        drawDistance={100}
         onLayout={updateScrollFade}
         onScroll={updateScrollFade}
         onReady={updateScrollFade}

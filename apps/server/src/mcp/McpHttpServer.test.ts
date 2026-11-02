@@ -21,6 +21,7 @@ import * as Context from "effect/Context";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Logger from "effect/Logger";
 import * as Schema from "effect/Schema";
@@ -41,8 +42,10 @@ import * as DeviceService from "../device/DeviceService.ts";
 import * as PullRequestReviewGuideService from "../pullRequest/PullRequestReviewGuideService.ts";
 import * as ServerConfig from "../config.ts";
 import * as ServerSettings from "../serverSettings.ts";
+import { lazyHttpRoutes } from "../lazyHttpRoutes.ts";
 import { advertisedJsonSchema } from "./advertisedJsonSchema.ts";
 import * as McpHttpServer from "./McpHttpServer.ts";
+import * as McpClientAuthenticator from "./McpClientAuthenticator.ts";
 import * as McpToolAccess from "./McpToolAccess.ts";
 import * as McpToolAccessTestkit from "./McpToolAccess.testkit.ts";
 import * as McpInvocationContext from "./McpInvocationContext.ts";
@@ -872,21 +875,56 @@ it.effect("terminates HTTP MCP sessions with DELETE", () =>
           }),
         ),
       );
-      yield* HttpRouter.serve(layerServer, {
+      let loads = 0;
+      const loading = yield* Deferred.make<void>();
+      const release = yield* Deferred.make<void>();
+      const lazyServer = lazyHttpRoutes(
+        "/mcp",
+        Effect.sync(() => {
+          loads++;
+        }).pipe(
+          Effect.andThen(Deferred.succeed(loading, undefined)),
+          Effect.andThen(Deferred.await(release)),
+          Effect.as(layerServer),
+        ),
+      );
+      yield* HttpRouter.serve(lazyServer, {
         disableListenLog: true,
         disableLogger: true,
       }).pipe(Layer.build);
+      expect(loads).toBe(0);
       const httpClient = (yield* HttpClient.HttpClient).pipe(
         HttpClient.mapRequest(HttpClientRequest.bearerToken(token)),
       );
 
-      const initializeResponse = yield* httpClient.post("/mcp", {
+      const initialize = httpClient.post("/mcp", {
         headers: { accept: "application/json, text/event-stream" },
         body: HttpBody.text(
           `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"mcp-test","version":"1.0.0"}}}`,
           "application/json",
         ),
       });
+      const abandoned = yield* initialize.pipe(Effect.forkChild);
+      yield* Deferred.await(loading);
+      yield* Fiber.interrupt(abandoned);
+      const firstRequests = yield* Effect.all([initialize, initialize], { concurrency: 2 }).pipe(
+        Effect.forkChild,
+      );
+      yield* Deferred.succeed(release, undefined);
+      const [initializeResponse, concurrent] = yield* Fiber.join(firstRequests);
+      expect(concurrent.status).toBe(200);
+      expect(concurrent.headers["mcp-session-id"]).not.toBe(
+        initializeResponse.headers["mcp-session-id"],
+      );
+      expect(loads).toBe(1);
+      const unauthorized = yield* (yield* HttpClient.HttpClient).post("/mcp", {
+        headers: { accept: "application/json, text/event-stream" },
+        body: HttpBody.text(
+          `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}`,
+          "application/json",
+        ),
+      });
+      expect(unauthorized.status).toBe(401);
       const sessionId = initializeResponse.headers["mcp-session-id"];
       expect(initializeResponse.status).toBe(200);
       expect(sessionId).not.toBeNull();
@@ -979,7 +1017,7 @@ it.effect("admits provider and OAuth client credentials and points only clients 
           }),
         ),
         Layer.provide(
-          Layer.succeed(McpHttpServer.McpClientAuthenticator, {
+          Layer.succeed(McpClientAuthenticator.McpClientAuthenticator, {
             authenticate: (request) =>
               Effect.succeed(
                 request.headers.authorization === `Bearer ${clientToken}` ? clientScope : undefined,
@@ -1436,7 +1474,7 @@ it.effect(
             }),
           ),
           Layer.provide(
-            Layer.succeed(McpHttpServer.McpClientAuthenticator, {
+            Layer.succeed(McpClientAuthenticator.McpClientAuthenticator, {
               authenticate: (request) =>
                 Effect.succeed(
                   request.headers.authorization === `Bearer ${clientToken}`

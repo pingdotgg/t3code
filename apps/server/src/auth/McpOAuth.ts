@@ -35,11 +35,10 @@ import { HttpServerRequest } from "effect/http";
 import { hostedAppUrlConfig } from "../cloud/publicConfig.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as ServerSettings from "../serverSettings.ts";
-import * as McpHttpServer from "../mcp/McpHttpServer.ts";
+import * as McpClientAuthenticator from "../mcp/McpClientAuthenticator.ts";
 import type * as McpInvocationContext from "../mcp/McpInvocationContext.ts";
 import * as PayloadSigner from "./PayloadSigner.ts";
 import * as EnvironmentAuth from "./EnvironmentAuth.ts";
-import * as ServerSecretStore from "./ServerSecretStore.ts";
 import {
   base64UrlDecodeUtf8,
   base64UrlEncode,
@@ -255,7 +254,6 @@ export const redirectForError = (error: McpOAuthRedirectError, issuer: string) =
 
 const make = Effect.gen(function* () {
   const environmentAuth = yield* EnvironmentAuth.EnvironmentAuth;
-  const secretStore = yield* ServerSecretStore.ServerSecretStore;
   const random = yield* SecureRandom.SecureRandom;
   const digester = yield* Digest.Digest;
   const serverSettings = yield* ServerSettings.ServerSettingsService;
@@ -263,12 +261,12 @@ const make = Effect.gen(function* () {
     Effect.map((settings) => settings.linkedEnvironmentsEnabled),
     Effect.orElseSucceed(() => false),
   );
-  const signer = yield* PayloadSigner.fromSecret(
-    yield* secretStore.getOrCreateRandom(SIGNING_SECRET_NAME, 32).pipe(Effect.orDie),
-  );
+  // Loaded on first use; a failed read is retried on the next request.
+  const signer = yield* PayloadSigner.make(SIGNING_SECRET_NAME);
   const codes = yield* Ref.make<ReadonlyMap<string, PendingCode>>(new Map());
 
-  const sign = (domain: string, payload: string) => signer.sign(`${domain}.${payload}`);
+  const sign = (domain: string, payload: string) =>
+    signer.sign(`${domain}.${payload}`).pipe(Effect.orDie);
 
   const signClientId = (name: string, redirectUris: ReadonlyArray<string>, peerLink: boolean) => {
     const body = base64UrlEncode(
@@ -283,7 +281,9 @@ const make = Effect.gen(function* () {
   ): Effect.fn.Return<McpOAuthClient | undefined> {
     const [body, signature, extra] = clientId.split(".");
     if (!body || !signature || extra !== undefined) return undefined;
-    const verified = yield* signer.verify(`mcp-client-id.${body}`, signature);
+    const verified = yield* signer
+      .verify(`mcp-client-id.${body}`, signature)
+      .pipe(Effect.orDie);
     if (!verified) return undefined;
     const json = Option.liftThrowable(base64UrlDecodeUtf8)(body);
     if (Option.isNone(json)) return undefined;
@@ -586,7 +586,7 @@ const make = Effect.gen(function* () {
 export const layer = Layer.effect(McpOAuth, make);
 
 export const layerMcpClientAuthenticator = Layer.effect(
-  McpHttpServer.McpClientAuthenticator,
+  McpClientAuthenticator.McpClientAuthenticator,
   Effect.gen(function* () {
     const environmentAuth = yield* EnvironmentAuth.EnvironmentAuth;
     const environment = yield* ServerEnvironment.ServerEnvironment;
@@ -598,7 +598,7 @@ export const layerMcpClientAuthenticator = Layer.effect(
         ),
       ),
     );
-    return McpHttpServer.McpClientAuthenticator.of({
+    return McpClientAuthenticator.McpClientAuthenticator.of({
       authenticate: Effect.fn("McpHttpServer.McpClientAuthenticator.authenticate")(
         function (request) {
           return environmentAuth.authenticateMcpClient(request).pipe(

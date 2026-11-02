@@ -14,12 +14,12 @@ import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as PlatformError from "effect/PlatformError";
 import * as Ref from "effect/Ref";
-import * as Schedule from "effect/Schedule";
 import * as Scope from "effect/Scope";
 import * as Semaphore from "effect/Semaphore";
 import { FetchHttpClient, HttpClient } from "effect/http";
@@ -918,10 +918,9 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
     ),
   );
 
-  const pollIfRetained = Ref.get(stateRef).pipe(
-    Effect.flatMap((state) => (state.retainCount > 0 ? pollTick() : Effect.void)),
-  );
-  yield* Effect.forkScoped(pollIfRetained.pipe(Effect.repeat(Schedule.spaced(POLL_INTERVAL))));
+  const serviceScope = yield* Effect.scope;
+  const retentionSemaphore = yield* Semaphore.make(1);
+  let pollFiber: Fiber.Fiber<void> | undefined;
 
   const acquireRetention = Effect.fn("PortDiscovery.retain")(function* () {
     const wasIdle = yield* Ref.modify(stateRef, (state) => [
@@ -930,24 +929,33 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
     ]);
     if (wasIdle) {
       yield* pollTick();
+      pollFiber = yield* Effect.forever(
+        Effect.sleep(POLL_INTERVAL).pipe(Effect.andThen(pollTick())),
+      ).pipe(Effect.interruptible, Effect.forkIn(serviceScope));
     }
-  });
+  }, retentionSemaphore.withPermits(1));
 
-  const releaseRetention = Effect.gen(function* () {
-    const idle = yield* Ref.modify(stateRef, (state) => {
-      const retainCount = Math.max(0, state.retainCount - 1);
-      return [retainCount === 0, { ...state, retainCount }];
-    });
-    if (!idle) return;
-    yield* scanSemaphore.withPermits(1)(
-      Effect.gen(function* () {
-        yield* Ref.set(socketOwnersRef, new Map());
-        yield* Ref.set(socketOwnerMissesRef, new Map());
-        const threads = yield* Ref.getAndSet(agentThreadsRef, new Map());
-        if ([...threads.values()].some((threadId) => threadId !== null)) agentScanPending = true;
-      }),
-    );
-  });
+  const releaseRetention = retentionSemaphore.withPermits(1)(
+    Effect.gen(function* () {
+      const idle = yield* Ref.modify(stateRef, (state) => {
+        const retainCount = Math.max(0, state.retainCount - 1);
+        return [retainCount === 0, { ...state, retainCount }];
+      });
+      if (!idle) return;
+      if (pollFiber) {
+        yield* Fiber.interrupt(pollFiber);
+        pollFiber = undefined;
+      }
+      yield* scanSemaphore.withPermits(1)(
+        Effect.gen(function* () {
+          yield* Ref.set(socketOwnersRef, new Map());
+          yield* Ref.set(socketOwnerMissesRef, new Map());
+          const threads = yield* Ref.getAndSet(agentThreadsRef, new Map());
+          if ([...threads.values()].some((threadId) => threadId !== null)) agentScanPending = true;
+        }),
+      );
+    }),
+  );
 
   const retain: PortDiscovery["Service"]["retain"] = Effect.acquireRelease(
     acquireRetention(),
@@ -1094,7 +1102,13 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
 
   const stopServer: PortDiscovery["Service"]["stopServer"] = (input) =>
     // Subscribers see the server leave now rather than on the next poll.
-    signalUntilStopped(input).pipe(Effect.andThen(pollIfRetained));
+    signalUntilStopped(input).pipe(
+      Effect.andThen(
+        Ref.get(stateRef).pipe(
+          Effect.flatMap((state) => (state.retainCount > 0 ? pollTick() : Effect.void)),
+        ),
+      ),
+    );
 
   return PortDiscovery.of({
     scan: scanOnce,

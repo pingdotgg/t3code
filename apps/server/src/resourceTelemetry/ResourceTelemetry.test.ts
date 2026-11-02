@@ -240,16 +240,32 @@ describe("ResourceTelemetry", () => {
           ...desktopSnapshot(sampledAtUnixMs),
           electronProcesses: [],
         };
+        let retained = false;
+        let generation = 0;
         const layerNative = NativeTelemetryClient.layerTest({
-          sampleNow: Effect.succeed(nativeGeneration(sample, 0)),
-          health: Effect.succeed({
+          retain: Effect.acquireRelease(
+            Effect.sync(() => {
+              retained = true;
+            }),
+            () =>
+              Effect.sync(() => {
+                retained = false;
+                generation++;
+              }),
+          ),
+          sampleNow: Effect.sync(() => {
+            const snapshot = nativeGeneration(sample, generation);
+            if (!retained) generation++;
+            return snapshot;
+          }),
+          health: Effect.sync(() => ({
             status: "healthy",
             hello: Option.none(),
             lastSampleAt: Option.none(),
             lastError: Option.none(),
-            restartCount: 0,
+            restartCount: generation,
             sampleIntervalMs: 1_000,
-          }),
+          })),
         });
         const layerDesktop = DesktopTelemetryReceiver.layerTest({
           latest: Effect.succeedSome(desktop),
@@ -268,6 +284,8 @@ describe("ResourceTelemetry", () => {
         ).toBe("electron-main");
         expect(snapshot.groups.electron.processStarts).toBe(1);
         expect(snapshot.groups.backend.processStarts).toBe(3);
+        expect(retained).toBe(false);
+        expect(generation).toBe(1);
       }),
   );
 

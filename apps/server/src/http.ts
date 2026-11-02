@@ -1,3 +1,4 @@
+import * as NodeZlib from "node:zlib";
 import * as Mime from "effect/http/Mime";
 import {
   AuthOrchestrationOperateScope,
@@ -13,6 +14,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
+import * as PlatformError from "effect/PlatformError";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import { cast, pipe } from "effect/Function";
@@ -564,6 +566,19 @@ const streamStaticFile = (file: FileSystem.File, size: bigint) =>
     }),
   );
 
+function acceptsEncoding(header: string | undefined, encoding: string): boolean {
+  let wildcard = false;
+  for (const entry of header?.toLowerCase().split(",") ?? []) {
+    const [coding, ...parameters] = entry.trim().split(";");
+    const quality = parameters.find((parameter) => parameter.trim().startsWith("q="));
+    const weight = quality === undefined ? 1 : Number(quality.trim().slice(2));
+    const accepted = Number.isFinite(weight) && weight > 0 && weight <= 1;
+    if (coding?.trim() === encoding) return accepted;
+    if (coding?.trim() === "*") wildcard = accepted;
+  }
+  return wildcard;
+}
+
 const handleStaticAndDevRequest = Effect.fn("handleStaticAndDevRequest")(
   function* (immutableBuildAssets: ReadonlySet<string>) {
     const request = yield* HttpServerRequest.HttpServerRequest;
@@ -634,6 +649,19 @@ const handleStaticAndDevRequest = Effect.fn("handleStaticAndDevRequest")(
     }
 
     let opened = yield* openStaticFile(filePath);
+    let encoding: "br" | "gzip" | undefined;
+    if (!opened) {
+      for (const [suffix, coding] of [
+        ["br", "br"],
+        ["gz", "gzip"],
+      ] as const) {
+        opened = yield* openStaticFile(`${filePath}.${suffix}`);
+        if (opened) {
+          encoding = coding;
+          break;
+        }
+      }
+    }
     if (!opened) {
       filePath = path.resolve(staticRoot, "index.html");
       opened = yield* openStaticFile(filePath);
@@ -665,6 +693,7 @@ const handleStaticAndDevRequest = Effect.fn("handleStaticAndDevRequest")(
     const headers: Record<string, string> = {
       "Cache-Control": cacheControl,
       ...validators(fileInfo),
+      ...(encoding ? { Vary: "Accept-Encoding" } : {}),
     };
     const etag = headers.ETag;
     const lastModified = headers["Last-Modified"];
@@ -692,14 +721,40 @@ const handleStaticAndDevRequest = Effect.fn("handleStaticAndDevRequest")(
     }
 
     const contentType = isHtml ? "text/html; charset=utf-8" : mimeType;
+    const encoded = encoding && acceptsEncoding(request.headers["accept-encoding"], encoding);
+    if (encoding && encoded) headers["Content-Encoding"] = encoding;
+    const storedPath = encoding ? `${filePath}.${encoding === "br" ? "br" : "gz"}` : filePath;
+    if (encoding && !encoded) {
+      if (request.method === "HEAD") {
+        return HttpServerResponse.stream(Stream.empty, { headers, contentType });
+      }
+      const fileSystem = yield* FileSystem.FileSystem;
+      const compressed = yield* fileSystem.readFile(storedPath);
+      const bytes = yield* Effect.tryPromise({
+        try: () =>
+          new Promise<Uint8Array>((resolve, reject) => {
+            const decompress = encoding === "br" ? NodeZlib.brotliDecompress : NodeZlib.gunzip;
+            decompress(compressed, (error, decoded) => (error ? reject(error) : resolve(decoded)));
+          }),
+        catch: (cause) =>
+          PlatformError.systemError({
+            _tag: "Unknown",
+            module: "StaticAssets",
+            method: "decompress",
+            pathOrDescriptor: filePath,
+            cause,
+          }),
+      });
+      return HttpServerResponse.uint8Array(bytes, { headers, contentType });
+    }
     if (opened.file === null && request.method !== "HEAD") {
       const fileSystem = yield* FileSystem.FileSystem;
       // Complete fallback reads before success headers; stream errors arrive too late for a 500.
-      const bytes = yield* fileSystem.readFile(filePath);
-      const info = yield* fileSystem.stat(filePath);
+      const bytes = yield* fileSystem.readFile(storedPath);
+      const info = yield* fileSystem.stat(storedPath);
       return HttpServerResponse.uint8Array(bytes, {
         headers: {
-          "Cache-Control": cacheControl,
+          ...headers,
           ...validators({ ...info, size: ByteSize.bytes(bytes.byteLength) }),
         },
         contentType,

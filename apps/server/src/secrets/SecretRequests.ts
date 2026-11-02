@@ -82,14 +82,19 @@ const make = Effect.gen(function* () {
 
   const mac = yield* Mac.Mac;
   // Keyed by the salt's hex text, as refs saved by earlier versions were.
-  const refKey = yield* Mac.key(
-    Mac.hmacSha256,
-    new TextEncoder().encode(
-      Hex.encode(yield* store.getOrCreateRandom("secret-request-salt", 32).pipe(Effect.orDie)),
+  const getRefKey = yield* Effect.cached(
+    store.getOrCreateRandom("secret-request-salt", 32).pipe(
+      Effect.flatMap((salt) =>
+        Mac.key(Mac.hmacSha256, new TextEncoder().encode(Hex.encode(salt))),
+      ),
+      Effect.orDie,
     ),
-  ).pipe(Effect.orDie);
+  );
   const refFor = (threadId: ThreadId, turnItemId: string) =>
-    mac.sign(refKey, new TextEncoder().encode(`${threadId}\u0000${turnItemId}`)).pipe(
+    getRefKey.pipe(
+      Effect.flatMap((refKey) =>
+        mac.sign(refKey, new TextEncoder().encode(`${threadId}\u0000${turnItemId}`)),
+      ),
       Effect.orDie,
       Effect.map((tag) => SecretRef.make(`${SECRET_REF_PREFIX}${Hex.encode(tag).slice(0, 32)}`)),
     );

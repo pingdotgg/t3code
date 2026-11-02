@@ -556,6 +556,7 @@ it.effect.each(PREFLIGHT_PRIMARY_STATES)("text generation preflight: %s", (prima
       options: [{ id: "effort", value: "high" }],
     };
     const calls: ModelSelection[] = [];
+    const discovered = new Set<ProviderInstanceId>();
     const instances: ProviderInstance[] = [primary, fallback].map((instanceId) => {
       const driver = ProviderDriverKind.make(instanceId === primary ? "codex" : "claudeAgent");
       const snapshot: ServerProvider = {
@@ -597,7 +598,13 @@ it.effect.each(PREFLIGHT_PRIMARY_STATES)("text generation preflight: %s", (prima
         continuationIdentity: { driverKind: driver, continuationKey: instanceId },
         displayName: undefined,
         enabled: true,
-        snapshot: { getSnapshot: Effect.succeed(snapshot) } as ProviderInstance["snapshot"],
+        snapshot: {
+          getSnapshot: Effect.succeed({ ...snapshot, installed: false, usageLimits: undefined }),
+          ensureReady: Effect.sync(() => {
+            discovered.add(instanceId);
+            return snapshot;
+          }),
+        } as ProviderInstance["snapshot"],
         orchestrationAdapter: {} as ProviderInstance["orchestrationAdapter"],
         textGeneration: TextGeneration.TextGeneration.of({
           generateCommitMessage: () => Effect.die("unused"),
@@ -652,6 +659,7 @@ it.effect.each(PREFLIGHT_PRIMARY_STATES)("text generation preflight: %s", (prima
               DEFAULT_TEXT_GENERATION_MODEL_BY_PROVIDER[ProviderDriverKind.make("claudeAgent")],
           },
     ]);
+    expect([...discovered]).toEqual(exhausted ? [primary, fallback] : [primary]);
   }),
 );
 

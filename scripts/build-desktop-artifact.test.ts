@@ -1,6 +1,9 @@
 // @effect-diagnostics nodeBuiltinImport:off - Tests use Node's glob matcher to verify electron-builder exclusions.
 import * as NodeCrypto from "node:crypto";
 import * as NodePath from "node:path";
+import * as NodeZlib from "node:zlib";
+import * as NodeVM from "node:vm";
+import * as NodeV8 from "node:v8";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { createPackageWithOptions, extractFile } from "@electron/asar";
@@ -19,6 +22,8 @@ import * as Sink from "effect/Sink";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
+import { deduplicateLicenseBlocks } from "./desktop-after-pack.ts";
+import { prebuildDesktopCompileCache } from "./lib/desktop-compile-cache.ts";
 
 import {
   buildDesktopBundles,
@@ -37,11 +42,14 @@ import {
   MissingMacPasskeyProvisioningProfileError,
   packWindowsServerAsar,
   preflightWindowsDesktopBuild,
+  precompressDesktopClient,
+  minifyDesktopRuntimeDependencies,
   renderMacPasskeyEntitlements,
   resolveMacFileExclusions,
   resolveMacWebAuthnEntitlements,
   resolveMacPasskeySigningConfiguration,
   resolveMergedStageDependencies,
+  resolveMacFileExclusions,
   resolveBuildOptions,
   stageWslRuntimeArchive,
   ancestorNodeModulesPaths,
@@ -75,6 +83,95 @@ import { symlinksSupported } from "@t3tools/shared/testing/symlinks";
 const encodeModuleUrl = Schema.encodeEffect(Schema.fromJsonString(Schema.String));
 const decodePackageVersion = Schema.decodeUnknownEffect(
   Schema.fromJsonString(Schema.Struct({ version: Schema.String })),
+);
+
+it.live.each([false, true])(
+  "prebuilds portable caches without starting the desktop or server (server: %s)",
+  (includeServer) =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fs.makeTempDirectoryScoped();
+      const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const resources = path.join(root, "resources");
+      const desktop = path.join(resources, "app.asar/apps/desktop/dist-electron");
+      const server = path.join(resources, "app.asar/apps/server/dist");
+      yield* fs.makeDirectory(desktop, { recursive: true });
+      yield* fs.makeDirectory(server, { recursive: true });
+      yield* fs.writeFileString(
+        path.join(resources, "app.asar/package.json"),
+        JSON.stringify({ main: "apps/desktop/dist-electron/boot.cjs" }),
+      );
+      yield* fs.writeFileString(
+        path.join(desktop, "main.cjs"),
+        'require("electron"); throw new Error("desktop started");',
+      );
+      yield* fs.writeFileString(path.join(server, "dependency.cjs"), "module.exports = 42;");
+      yield* fs.writeFileString(
+        path.join(server, "binCli-fixture.mjs"),
+        'import value from "./dependency.cjs"; export const cli = { value };',
+      );
+      yield* fs.writeFileString(path.join(server, "bin.mjs"), "export const bin = {};");
+      yield* Effect.promise(() =>
+        prebuildDesktopCompileCache(resources, process.execPath, includeServer),
+      );
+      const manifest = JSON.parse(
+        yield* fs.readFileString(path.join(resources, "compile-cache/runtime.json")),
+      );
+      assert.equal(manifest.node, process.versions.node);
+      assert.equal(manifest.v8, process.versions.v8);
+      assert.equal(manifest.electron, process.versions.electron);
+      assert.equal(manifest.tag, NodeV8.cachedDataVersionTag());
+      assert.equal(manifest.arch, yield* HostProcess.Architecture);
+      const entries = yield* fs.readDirectory(path.join(resources, "compile-cache"));
+      assert.isTrue(entries.some((entry) => entry.startsWith(`v${process.versions.node}-`)));
+      yield* fs.chmod(path.join(resources, "compile-cache"), 0o755);
+      yield* fs.chmod(path.join(resources, "compile-cache", manifest.cacheDirectory), 0o755);
+      const moved = path.join(root, "moved-resources");
+      yield* fs.copy(resources, moved);
+      const movedManifest = path.join(moved, "compile-cache/runtime.json");
+      yield* fs.chmod(movedManifest, 0o644);
+      yield* fs.writeFileString(movedManifest, JSON.stringify({ ...manifest, uid: -1 }));
+      const loader = NodePath.resolve("apps/desktop/src/packagedCompileCache.ts");
+      const consume = path.join(root, "consume.mjs");
+      yield* fs.writeFileString(
+        consume,
+        `import { enablePackagedCompileCache } from ${JSON.stringify(loader)};
+const enabled = enablePackagedCompileCache(${JSON.stringify(moved)});
+const { cli } = await import(${JSON.stringify(path.join(moved, "app.asar/apps/server/dist/binCli-fixture.mjs"))});
+console.log(JSON.stringify({ enabled, works: typeof cli === "object" }));`,
+      );
+      const run = Effect.gen(function* () {
+        const child = yield* spawner.spawn(
+          ChildProcess.make(process.execPath, [consume], {
+            env: { NODE_DEBUG_NATIVE: "compile_cache", NODE_COMPILE_CACHE: "" },
+            stdout: "pipe",
+            stderr: "pipe",
+          }),
+        );
+        return yield* Effect.all(
+          {
+            stdout: child.stdout.pipe(Stream.decodeText(), Stream.mkString),
+            stderr: child.stderr.pipe(Stream.decodeText(), Stream.mkString),
+            exit: child.exitCode,
+          },
+          { concurrency: "unbounded" },
+        );
+      });
+      const cached = yield* run;
+      assert.equal(Number(cached.exit), 0, cached.stderr);
+      assert.include(cached.stdout, '"enabled":true,"works":true');
+      if (includeServer) {
+        assert.match(cached.stderr, /V8 code cache for ESM .*binCli-fixture\.mjs was accepted/);
+        assert.match(cached.stderr, /V8 code cache for CommonJS .*dependency\.cjs was accepted/);
+      } else {
+        assert.notMatch(cached.stderr, /was accepted/);
+      }
+      yield* fs.writeFileString(movedManifest, JSON.stringify({ ...manifest, node: "different" }));
+      const fallback = yield* run;
+      assert.equal(Number(fallback.exit), 0, fallback.stderr);
+      assert.include(fallback.stdout, '"enabled":false,"works":true');
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
 
 // Keeps pnpm from auto-installing TypeScript, a types-only peer, into the app.
@@ -236,6 +333,151 @@ const makeMacPayloadFixture = Effect.fn("test.makeMacPayloadFixture")(function* 
 });
 
 it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
+  it("preserves component notices and links repeated license text to its full copy", () => {
+    const html =
+      "<h2>one</h2><pre>permission &amp; notice</pre><h2>two</h2><pre>other terms</pre><h2>three</h2><pre>permission &amp; notice</pre>";
+    const result = deduplicateLicenseBlocks(html);
+    assert.include(result, '<h2>one</h2><pre id="t3-license-0">permission &amp; notice</pre>');
+    assert.include(result, '<h2>two</h2><pre id="t3-license-1">other terms</pre>');
+    assert.include(result, '<h2>three</h2><a href="#t3-license-0">License text</a>');
+    assert.equal(deduplicateLicenseBlocks(result), result);
+  });
+
+  it("keeps macOS runtime natives while omitting redundant copies and build inputs", () => {
+    const excluded = (file: string, arch: "arm64" | "x64" | "universal") =>
+      resolveMacFileExclusions(arch).some((glob) => NodePath.matchesGlob(file, glob.slice(1)));
+    for (const arch of ["arm64", "x64", "universal"] as const) {
+      for (const file of [
+        "node_modules/node-pty/prebuilds/linux-x64/pty.node",
+        "node_modules/@clerk/electron-passkeys-darwin-arm64/electron-passkeys.darwin-arm64.node",
+        "node_modules/objc-js/src/native/nobjc.mm",
+        "apps/desktop/prod-resources/icon.icns",
+      ]) {
+        assert.isTrue(excluded(file, arch));
+      }
+      for (const file of [
+        "node_modules/node-pty/build/Release/pty.node",
+        "node_modules/node-pty/build/Release/spawn-helper",
+        "node_modules/@clerk/electron-passkeys/electron-passkeys.darwin-arm64.node",
+        "node_modules/objc-js/dist/native.js",
+        "apps/desktop/prod-resources/icon.png",
+      ]) {
+        assert.isFalse(excluded(file, arch));
+      }
+      for (const nativeArch of ["arm64", "x64"] as const) {
+        for (const pkg of ["node-pty", "objc-js"]) {
+          assert.equal(
+            excluded(`node_modules/${pkg}/prebuilds/darwin-${nativeArch}/binding.node`, arch),
+            arch !== "universal" && arch !== nativeArch,
+          );
+        }
+      }
+    }
+  });
+
+  it.effect("compresses lazy client assets while keeping startup assets and omitting maps", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-client-compression-" });
+      const source = "export const language = 'typescript';\n".repeat(100);
+      yield* fs.makeDirectory(path.join(root, "assets"));
+      yield* fs.makeDirectory(path.join(root, ".vite"));
+      yield* fs.writeFileString(path.join(root, "assets/language.js"), source);
+      yield* fs.writeFileString(path.join(root, "assets/language.js.map"), "source map");
+      yield* fs.writeFileString(path.join(root, "assets/font.woff2"), "small font");
+      yield* fs.writeFileString(path.join(root, "index.html"), "<html>app</html>");
+      const startupFiles = [
+        "entry.js",
+        "main.js",
+        "shared.js",
+        "auth.js",
+        "chat.js",
+        "home.js",
+        "main.css",
+        "boot.ttf",
+      ];
+      for (const file of [...startupFiles, "lazy.wasm"]) {
+        yield* fs.writeFileString(path.join(root, "assets", file), source);
+      }
+      const manifest = JSON.stringify({
+        "index.html": {
+          file: "assets/entry.js",
+          isEntry: true,
+          dynamicImports: ["src/main.tsx"],
+        },
+        "src/main.tsx": {
+          file: "assets/main.js",
+          imports: ["shared"],
+          css: ["assets/main.css"],
+          assets: ["assets/boot.ttf", "assets/lazy.wasm"],
+          dynamicImports: ["language"],
+        },
+        shared: { file: "assets/shared.js", imports: ["src/main.tsx"] },
+        "src/components/clerk/ElectronManagedAuthShell.tsx": { file: "assets/auth.js" },
+        "src/routes/_chat.tsx?tsr-split=component": {
+          file: "assets/chat.js",
+          imports: ["shared"],
+        },
+        "src/routes/_chat.index.tsx?tsr-split=component": { file: "assets/home.js" },
+        language: { file: "assets/language.js" },
+      });
+      yield* fs.writeFileString(path.join(root, ".vite/manifest.json"), manifest);
+      yield* precompressDesktopClient(root);
+      const compressed = yield* fs.readFile(path.join(root, "assets/language.js.br"));
+      assert.equal(NodeZlib.brotliDecompressSync(compressed).toString(), source);
+      assert.isFalse(yield* fs.exists(path.join(root, "assets/language.js")));
+      assert.isFalse(yield* fs.exists(path.join(root, "assets/language.js.map")));
+      assert.equal(yield* fs.readFileString(path.join(root, "assets/font.woff2")), "small font");
+      assert.equal(yield* fs.readFileString(path.join(root, "index.html")), "<html>app</html>");
+      assert.equal(yield* fs.readFileString(path.join(root, ".vite/manifest.json")), manifest);
+      for (const file of startupFiles) {
+        assert.equal(yield* fs.readFileString(path.join(root, "assets", file)), source);
+        assert.isFalse(yield* fs.exists(path.join(root, "assets", `${file}.br`)));
+      }
+      assert.equal(
+        NodeZlib.brotliDecompressSync(
+          yield* fs.readFile(path.join(root, "assets/lazy.wasm.br")),
+        ).toString(),
+        source,
+      );
+      assert.isFalse(yield* fs.exists(path.join(root, "assets/lazy.wasm")));
+      yield* precompressDesktopClient(root);
+      assert.deepStrictEqual(
+        yield* fs.readFile(path.join(root, "assets/language.js.br")),
+        compressed,
+      );
+    }),
+  );
+
+  it.effect("keeps dependency functions serializable with their original names", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fs.makeTempDirectoryScoped();
+      const packageDir = path.join(root, "playwright-core");
+      yield* fs.makeDirectory(packageDir);
+      const file = path.join(packageDir, "runtime.js");
+      yield* fs.writeFileString(
+        file,
+        `
+        globalThis.serialize = () => {
+          const predicate = () => {
+            const label = (value) => value + 1;
+            return [label.name, label(41)];
+          };
+          return predicate.toString();
+        };
+      `,
+      );
+      yield* minifyDesktopRuntimeDependencies(root);
+      const context = { serialize: () => "" };
+      NodeVM.runInNewContext(yield* fs.readFileString(file), context);
+      const result: unknown = NodeVM.runInNewContext(`(${context.serialize()})()`);
+      assert.deepEqual(Array.from(result as (string | number)[]), ["label", 42]);
+    }),
+  );
+
   it.effect("rejects overlapping builds from another process until restoration finishes", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
@@ -635,7 +877,6 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
         "node-pty": "1.1.0",
         "@crowecawcaw/xa11y": "0.13.0",
         "@ff-labs/fff-bin-linux-x64-gnu": "0.9.4",
-        "@ff-labs/fff-bin-linux-x64-musl": "0.9.4",
       },
     );
   });

@@ -346,7 +346,7 @@ const make = Effect.gen(function* () {
               ? settings.textGenerationModelSelection
               : ServerSettings.resolveSourceControlWriterModelSelection(
                   settings,
-                  yield* providerRegistry.getProviders,
+                  yield* providerRegistry.discoverProviders,
                   input.projectId,
                 );
           return yield* textGeneration

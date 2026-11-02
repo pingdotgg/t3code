@@ -29,7 +29,6 @@ import * as NodeFSP from "node:fs/promises";
 import * as EffectAcpErrors from "effect-acp/errors";
 
 import * as ServerConfig from "../config.ts";
-import { openZipArchive } from "../zipArchive.ts";
 import { makeAntigravityAcpRuntime } from "./acp/AntigravityAcpSupport.ts";
 import {
   buildAntigravityAcpSpawnInput,
@@ -609,6 +608,7 @@ export const makeAntigravityInstallation = Effect.fn("AntigravityInstallation.ma
 
       yield* report("extracting", "Extracting the verified runtime.");
       yield* Effect.gen(function* () {
+        const { openZipArchive } = yield* Effect.promise(() => import("../zipArchive.ts"));
         const archive = yield* openZipArchive(archivePath, (detail, cause) =>
           installationError("extract", detail, cause),
         );

@@ -54,6 +54,7 @@ export class ProviderRegistry extends Context.Service<
   ProviderRegistry,
   {
     readonly getProviders: Effect.Effect<ReadonlyArray<ServerProvider>>;
+    readonly discoverProviders: Effect.Effect<ReadonlyArray<ServerProvider>>;
 
     readonly refresh: (
       provider?: ProviderDriverKind,
@@ -554,7 +555,7 @@ export const layer = Layer.effect(
     ) {
       const providers = yield* upsertProviders([provider], options);
       // Reclassify the current model after fetch; republishing the old probe could overwrite newer health results.
-      if (!(yield* Ref.getAndSet(compatibilityRefreshRunning, true))) {
+      if (provider.version !== null && !(yield* Ref.getAndSet(compatibilityRefreshRunning, true))) {
         yield* manifestService.refresh.pipe(
           Effect.andThen(upsertProviders([], { persist: false })),
           Effect.ensuring(Ref.set(compatibilityRefreshRunning, false)),
@@ -1094,8 +1095,33 @@ export const layer = Layer.effect(
       }
     });
 
+    const discoverProviders = Effect.fn("ProviderRegistry.discoverProviders")(function* () {
+      const instances = yield* instanceRegistry.listInstances;
+      yield* Effect.forEach(
+        instances,
+        (instance) =>
+          Effect.gen(function* () {
+            if (!instance.snapshot.ensureReady) return;
+            const provider = yield* correlateSnapshotWithSource(
+              buildSnapshotSource(instance),
+              yield* instance.snapshot.ensureReady,
+            );
+            if ((yield* instanceRegistry.getInstance(instance.instanceId)) === instance) {
+              yield* syncProvider(provider);
+            }
+          }),
+        { concurrency: "unbounded", discard: true },
+      );
+      return yield* Ref.get(providersRef);
+    });
+
     return {
-      getProviders: Ref.get(providersRef),
+      discoverProviders: discoverProviders(),
+      getProviders: discoverProviders().pipe(
+        Effect.ignoreCause({ log: true }),
+        Effect.forkIn(serviceScope),
+        Effect.andThen(Ref.get(providersRef)),
+      ),
       refresh: (provider?: ProviderDriverKind) =>
         refresh(provider).pipe(Effect.catchCause(recoverRefreshFailure)),
       refreshInstance: (instanceId: ProviderInstanceId) =>

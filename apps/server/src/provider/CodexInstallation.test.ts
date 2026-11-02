@@ -146,6 +146,9 @@ it.effect.each(["0.156.0", "0.156.1", "0.156.2", "0.157.0"])(
   (version) =>
     Effect.gen(function* () {
       const h = yield* makeHarness({ local: { version } });
+      yield* h.installation.changes.pipe(Stream.runHead);
+      expect(yield* h.fs.exists(h.probeLog)).toBe(false);
+      expect((yield* h.installation.state).source).toBe("local");
       expect(yield* h.installation.start).toMatchObject({
         source: "local",
         phase: "succeeded",

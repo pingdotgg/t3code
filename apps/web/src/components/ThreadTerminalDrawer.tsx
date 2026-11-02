@@ -1203,13 +1203,16 @@ function TerminalSessionViewport({
       autoFocusedRef.current = true;
       focusTerminal(threadRef, terminalId);
     }
-    const unregister = registerTerminalFocusTarget({
-      threadRef,
-      terminalId,
-      focus,
+    let disposed = false;
+    let unregister: (() => void) | undefined;
+    // Focus after the drawer's layout effects, before the next keyboard event.
+    queueMicrotask(() => {
+      if (disposed) return;
+      unregister = registerTerminalFocusTarget({ threadRef, terminalId, focus });
     });
     return () => {
-      unregister();
+      disposed = true;
+      unregister?.();
       containerRef.current = null;
     };
   };

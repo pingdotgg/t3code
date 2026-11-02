@@ -10,7 +10,7 @@ import { HttpClient } from "effect/http";
 import { ChildProcessSpawner } from "effect/process";
 
 import type * as CodexUsageHistory from "../../usage/CodexUsageHistory.ts";
-import { makeCodexTextGeneration } from "../../textGeneration/CodexTextGeneration.ts";
+import { makeLazyTextGeneration } from "../../textGeneration/lazyTextGeneration.ts";
 import * as ProviderLatestVersions from "@t3tools/provider-core/server/ProviderLatestVersions";
 import * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
 import * as ServerConfig from "../../config.ts";
@@ -279,10 +279,16 @@ export const CodexDriver: ProviderDriver<
           }),
       ),
     );
-    const textGeneration = yield* makeCodexTextGeneration(
-      effectiveConfig,
-      processEnv,
-      snapshot.getSnapshot.pipe(Effect.map((value) => value.models)),
+    const textGeneration = yield* makeLazyTextGeneration(
+      Effect.promise(() => import("../../textGeneration/CodexTextGeneration.ts")).pipe(
+        Effect.flatMap((module) =>
+          module.makeCodexTextGeneration(
+            effectiveConfig,
+            processEnv,
+            snapshot.getSnapshot.pipe(Effect.map((value) => value.models)),
+          ),
+        ),
+      ),
     );
     const snapshotForCwd = (cwd: string) =>
       !effectiveConfig.enabled

@@ -3,6 +3,7 @@ import { expect, it, vi } from "vite-plus/test";
 
 import { act, fakeTimers, render } from "../../../test/render";
 import { WorktreeSetupCard } from "./WorktreeSetupCard";
+import "../../index.css";
 
 const NOW = new Date("2026-10-26T12:00:10.000Z");
 
@@ -75,4 +76,28 @@ it("stops a stage interrupted by the setup ending at the setup's end", async () 
     await vi.advanceTimersByTimeAsync(5_000);
   });
   expect(section.element().textContent).toContain("Check out files2s");
+});
+
+it("keeps signaling a running setup beyond its first animation cycle", async () => {
+  await using screen = await render(card(snapshot({})));
+  const section = screen.getByRole("region", { name: "Worktree setup" }).element();
+  const indicator = section.querySelector<HTMLElement>(".live-activity-focus")!;
+  await vi.waitFor(() => expect(indicator.getAnimations()[0]?.playState).toBe("running"));
+  const animation = indicator.getAnimations()[0]!;
+  animation.pause();
+  animation.currentTime = 5_500;
+  const previousTransform = getComputedStyle(indicator).transform;
+  animation.currentTime = 6_000;
+  expect(getComputedStyle(indicator).transform).not.toBe(previousTransform);
+
+  await screen.rerender(
+    card(
+      snapshot({
+        phase: "done",
+        endedAt: "2026-10-26T12:00:10.000Z",
+        stages: [],
+      }),
+    ),
+  );
+  expect(section.querySelector(".live-activity-focus")).toBeNull();
 });

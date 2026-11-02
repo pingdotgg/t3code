@@ -4,9 +4,9 @@ import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 
-import { autoUpdater } from "electron-updater";
+type AutoUpdater = (typeof import("electron-updater"))["autoUpdater"];
 
-type AutoUpdater = typeof autoUpdater;
+const loadAutoUpdater = Effect.promise(async () => (await import("electron-updater")).autoUpdater);
 
 export type ElectronUpdaterFeedUrl = Parameters<AutoUpdater["setFeedURL"]>[0];
 
@@ -82,96 +82,82 @@ export class ElectronUpdater extends Context.Service<
 
 /** @public */
 export const make = ElectronUpdater.of({
-  setFeedURL: Effect.fn("ElectronUpdater.setFeedURL")(function (options) {
-    return Effect.suspend(() => {
-      autoUpdater.setFeedURL(options);
-      return Effect.void;
-    });
+  setFeedURL: Effect.fn("ElectronUpdater.setFeedURL")(function* (options) {
+    const autoUpdater = yield* loadAutoUpdater;
+    autoUpdater.setFeedURL(options);
   }),
-  setAutoDownload: Effect.fn("ElectronUpdater.setAutoDownload")(function (value) {
-    return Effect.suspend(() => {
-      autoUpdater.autoDownload = value;
-      return Effect.void;
-    });
+  setAutoDownload: Effect.fn("ElectronUpdater.setAutoDownload")(function* (value) {
+    const autoUpdater = yield* loadAutoUpdater;
+    autoUpdater.autoDownload = value;
   }),
-  setAutoInstallOnAppQuit: Effect.fn("ElectronUpdater.setAutoInstallOnAppQuit")(function (value) {
-    return Effect.suspend(() => {
-      autoUpdater.autoInstallOnAppQuit = value;
-      return Effect.void;
-    });
+  setAutoInstallOnAppQuit: Effect.fn("ElectronUpdater.setAutoInstallOnAppQuit")(function* (value) {
+    const autoUpdater = yield* loadAutoUpdater;
+    autoUpdater.autoInstallOnAppQuit = value;
   }),
-  setChannel: Effect.fn("ElectronUpdater.setChannel")(function (channel) {
-    return Effect.suspend(() => {
-      autoUpdater.channel = channel;
-      return Effect.void;
-    });
+  setChannel: Effect.fn("ElectronUpdater.setChannel")(function* (channel) {
+    const autoUpdater = yield* loadAutoUpdater;
+    autoUpdater.channel = channel;
   }),
-  setAllowPrerelease: Effect.fn("ElectronUpdater.setAllowPrerelease")(function (value) {
-    return Effect.suspend(() => {
-      autoUpdater.allowPrerelease = value;
-      return Effect.void;
-    });
+  setAllowPrerelease: Effect.fn("ElectronUpdater.setAllowPrerelease")(function* (value) {
+    const autoUpdater = yield* loadAutoUpdater;
+    autoUpdater.allowPrerelease = value;
   }),
-  allowDowngrade: Effect.sync(() => autoUpdater.allowDowngrade),
-  setAllowDowngrade: Effect.fn("ElectronUpdater.setAllowDowngrade")(function (value) {
-    return Effect.suspend(() => {
-      autoUpdater.allowDowngrade = value;
-      return Effect.void;
-    });
+  allowDowngrade: loadAutoUpdater.pipe(Effect.map((autoUpdater) => autoUpdater.allowDowngrade)),
+  setAllowDowngrade: Effect.fn("ElectronUpdater.setAllowDowngrade")(function* (value) {
+    const autoUpdater = yield* loadAutoUpdater;
+    autoUpdater.allowDowngrade = value;
   }),
-  setFullChangelog: Effect.fn("ElectronUpdater.setFullChangelog")(function (value) {
-    return Effect.suspend(() => {
-      autoUpdater.fullChangelog = value;
-      return Effect.void;
-    });
+  setFullChangelog: Effect.fn("ElectronUpdater.setFullChangelog")(function* (value) {
+    const autoUpdater = yield* loadAutoUpdater;
+    autoUpdater.fullChangelog = value;
   }),
   setDisableDifferentialDownload: Effect.fn("ElectronUpdater.setDisableDifferentialDownload")(
-    function (value) {
-      return Effect.suspend(() => {
-        autoUpdater.disableDifferentialDownload = value;
-        return Effect.void;
-      });
+    function* (value) {
+      const autoUpdater = yield* loadAutoUpdater;
+      autoUpdater.disableDifferentialDownload = value;
     },
   ),
-  checkForUpdates: Effect.suspend(() => {
+  checkForUpdates: Effect.gen(function* () {
+    const autoUpdater = yield* loadAutoUpdater;
     const channel = autoUpdater.channel;
-    return Effect.tryPromise({
+    yield* Effect.tryPromise({
       try: () => autoUpdater.checkForUpdates(),
       catch: (cause) => new ElectronUpdaterCheckForUpdatesError({ channel, cause }),
     }).pipe(Effect.asVoid);
   }),
-  downloadUpdate: Effect.suspend(() => {
+  downloadUpdate: Effect.gen(function* () {
+    const autoUpdater = yield* loadAutoUpdater;
     const channel = autoUpdater.channel;
-    return Effect.tryPromise({
+    yield* Effect.tryPromise({
       try: () => autoUpdater.downloadUpdate(),
       catch: (cause) => new ElectronUpdaterDownloadUpdateError({ channel, cause }),
     }).pipe(Effect.asVoid);
   }),
-  quitAndInstall: Effect.fn("ElectronUpdater.quitAndInstall")(function ({
+  quitAndInstall: Effect.fn("ElectronUpdater.quitAndInstall")(function* ({
     isSilent,
     isForceRunAfter,
   }) {
-    return Effect.suspend(() => {
-      const channel = autoUpdater.channel;
-      return Effect.try({
-        try: () => autoUpdater.quitAndInstall(isSilent, isForceRunAfter),
-        catch: (cause) =>
-          new ElectronUpdaterQuitAndInstallError({
-            channel,
-            isSilent,
-            isForceRunAfter,
-            cause,
-          }),
-      });
+    const autoUpdater = yield* loadAutoUpdater;
+    const channel = autoUpdater.channel;
+    yield* Effect.try({
+      try: () => autoUpdater.quitAndInstall(isSilent, isForceRunAfter),
+      catch: (cause) =>
+        new ElectronUpdaterQuitAndInstallError({
+          channel,
+          isSilent,
+          isForceRunAfter,
+          cause,
+        }),
     });
   }),
-  on: Effect.fn("ElectronUpdater.on")(function (eventName, listener) {
+  on: Effect.fn("ElectronUpdater.on")(function* (eventName, listener) {
+    const autoUpdater = yield* loadAutoUpdater;
     const eventTarget = autoUpdater as unknown as {
       on: (eventName: string, listener: (...args: Array<unknown>) => void) => void;
       removeListener: (eventName: string, listener: (...args: Array<unknown>) => void) => void;
     };
     const untypedListener = listener as unknown as (...args: Array<unknown>) => void;
-    return Effect.acquireRelease(
+    yield* Effect.acquireRelease(
       Effect.sync(() => {
         eventTarget.on(eventName, untypedListener);
       }),

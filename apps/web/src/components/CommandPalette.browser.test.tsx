@@ -2,8 +2,9 @@ import { EnvironmentId, ProjectId, ThreadId } from "@t3tools/contracts";
 import { describe, expect, it, vi } from "vite-plus/test";
 import { page, userEvent } from "vite-plus/test/browser";
 
-import { render } from "../../test/render";
+import { act, render } from "../../test/render";
 import { openCommandPalette } from "../commandPaletteBus";
+import { loadCommandPaletteDialog } from "../commandPaletteModule";
 import { useCommandPaletteStore } from "../commandPaletteStore";
 import { makeThreadFixture } from "../test-fixtures";
 import type { Project, Thread } from "../types";
@@ -29,6 +30,8 @@ describe("CommandPalette open intents", () => {
   it("opens New thread in... with focus in the search input, not the Back button", async () => {
     setup();
     await using _screen = await render(<CommandPalette>{null}</CommandPalette>);
+    await act(loadCommandPaletteDialog);
+    await expect.element(page.getByRole("combobox")).not.toBeInTheDocument();
 
     openCommandPalette({ open: "new-thread-in" });
 

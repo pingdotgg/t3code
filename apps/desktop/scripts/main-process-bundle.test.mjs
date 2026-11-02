@@ -1,4 +1,7 @@
 import * as NodeChildProcess from "node:child_process";
+import * as NodeEvents from "node:events";
+import * as NodeFS from "node:fs";
+import * as NodeModule from "node:module";
 import * as NodeFSP from "node:fs/promises";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
@@ -115,6 +118,10 @@ it("loads the emitted packaged boot entry and backend cache preload", async () =
   const directory = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "t3-desktop-boot-"));
   try {
     const entries = ["src/boot.ts", "src/compileCache.ts"];
+    await NodeFSP.mkdir(NodePath.join(directory, "src"));
+    await NodeFSP.cp(new URL("../src", import.meta.url), NodePath.join(directory, "src"), {
+      recursive: true,
+    });
     assert.ok(Array.isArray(desktopConfig.pack));
     for (const packConfig of desktopConfig.pack) {
       if (!Array.isArray(packConfig.entry)) continue;
@@ -140,30 +147,170 @@ it("loads the emitted packaged boot entry and backend cache preload", async () =
       NodePath.join(outputDirectory, "backend.mjs"),
       `import { getCompileCacheDir } from 'node:module'; console.log(getCompileCacheDir() ? 'cached' : 'uncached');`,
     );
-    for (const disabled of [false, true]) {
-      for (const args of [
-        [NodePath.join(outputDirectory, "boot.cjs")],
-        [
-          "--require",
-          NodePath.join(outputDirectory, "compileCache.cjs"),
-          NodePath.join(outputDirectory, "backend.mjs"),
-        ],
-      ]) {
-        const child = NodeChildProcess.spawnSync(process.execPath, args, {
-          encoding: "utf8",
-          env: {
-            ...process.env,
-            APPIMAGE: "",
-            NODE_COMPILE_CACHE: undefined,
-            NODE_DISABLE_COMPILE_CACHE: disabled ? "1" : undefined,
-            XDG_CACHE_HOME: directory,
-            TMPDIR: directory,
-            TEMP: directory,
-            TMP: directory,
-          },
+    const nodeRequire = NodeModule.createRequire(import.meta.url);
+    for (const platform of ["linux", "darwin"]) {
+      for (const lockAvailable of [true, false]) {
+        const home = NodePath.join(directory, `${platform}-${lockAvailable}`);
+        const settingsDirectory = NodePath.join(home, ".t3", "userdata");
+        await NodeFSP.mkdir(settingsDirectory, { recursive: true });
+        await NodeFSP.writeFile(
+          NodePath.join(settingsDirectory, "desktop-settings.json"),
+          JSON.stringify({
+            mainWindowBounds: { x: 10, y: 20, width: 1200, height: 800 },
+            mainWindowMaximized: true,
+          }),
+        );
+        const events = [];
+        const immediates = [];
+        const app = Object.assign(new NodeEvents.EventEmitter(), {
+          isPackaged: true,
+          getVersion: () => "0.1.5",
+          getAppPath: () => directory,
+          setPath: () => events.push("profile"),
+          requestSingleInstanceLock: () => lockAvailable,
+          quit: () => events.push("quit"),
+          exit: () => events.push("exit"),
+          setDesktopName: () => {},
+          commandLine: { hasSwitch: () => false, getSwitchValue: () => "", appendSwitch: () => {} },
         });
-        assert.equal(child.status, 0, child.stderr);
-        assert.equal(child.stdout.trim(), disabled ? "uncached" : "cached");
+        const windows = [];
+        class BrowserWindow extends NodeEvents.EventEmitter {
+          constructor(options) {
+            super();
+            this.options = options;
+            this.destroyed = false;
+            windows.push(this);
+            events.push("window");
+          }
+          maximize() {
+            events.push("maximize");
+          }
+          show() {
+            events.push("show");
+          }
+          isDestroyed() {
+            return this.destroyed;
+          }
+        }
+        const electron = {
+          app,
+          BrowserWindow,
+          nativeTheme: { shouldUseDarkColors: true },
+          screen: { getAllDisplays: () => [{ bounds: { x: 0, y: 0, width: 1920, height: 1080 } }] },
+          protocol: { registerSchemesAsPrivileged: () => events.push("schemes") },
+          dialog: {
+            showErrorBox: (_title, detail) => {
+              throw Error(detail);
+            },
+          },
+        };
+        const modules = new Map();
+        const context = NodeVM.createContext({
+          process: {
+            versions: { electron: "44.10.0" },
+            argv: [],
+            platform,
+            env: {},
+            execPath: process.execPath,
+            emit: () => events.push("main"),
+          },
+          setImmediate: (callback) => immediates.push(callback),
+          console,
+        });
+        const load = (filename) => {
+          if (modules.has(filename)) return modules.get(filename).exports;
+          const module = { exports: {} };
+          modules.set(filename, module);
+          const require = (specifier) =>
+            specifier.startsWith(".")
+              ? load(NodePath.resolve(NodePath.dirname(filename), specifier))
+              : specifier === "electron"
+                ? electron
+                : specifier === "node:os"
+                  ? { homedir: () => home, tmpdir: () => home }
+                  : nodeRequire(specifier);
+          const source = filename.endsWith("main.cjs")
+            ? 'process.emit("startup");'
+            : NodeFS.readFileSync(filename, "utf8");
+          NodeVM.runInContext(
+            `(function(require, module, exports, __dirname) {${source}\n})`,
+            context,
+          )(require, module, module.exports, NodePath.dirname(filename));
+          return module.exports;
+        };
+        load(NodePath.join(outputDirectory, "boot.cjs"));
+        assert.equal(windows.length, 0);
+        assert.ok(!events.includes("main"));
+        const linkEvent = { preventDefault() {} };
+        app.emit("open-url", linkEvent, "t3code://oauth/callback");
+        app.emit("second-instance", linkEvent, ["t3code", "t3code://new"], home, {});
+        app.emit("ready");
+        if (!lockAvailable) {
+          assert.deepEqual(events, ["profile", "quit"]);
+          continue;
+        }
+        assert.deepEqual(events, ["profile", "schemes", "window", "maximize", "show"]);
+        assert.deepEqual(JSON.parse(JSON.stringify(windows[0].options.webPreferences)), {
+          preload: NodePath.join(outputDirectory, "preload.cjs"),
+          backgroundThrottling: false,
+          contextIsolation: true,
+          nodeIntegration: false,
+          sandbox: true,
+          webviewTag: true,
+          disableHtmlFullscreenWindowResize: true,
+        });
+        assert.equal(windows[0].options.width, 1200);
+        assert.equal(windows[0].options.height, 800);
+        immediates.shift()();
+        assert.equal(events.at(-1), "main");
+        assert.equal(windows.length, 1);
+        const boot = NodeVM.runInContext(
+          'globalThis[Symbol.for("@t3tools/desktop/boot")]',
+          context,
+        );
+        boot.detachLinkListeners();
+        const urls = [];
+        const instances = [];
+        app.on("open-url", (_event, url) => urls.push(url));
+        app.on("second-instance", (_event, argv) => instances.push(Array.from(argv)));
+        boot.replayLinkEvents();
+        boot.replayLinkEvents();
+        assert.deepEqual(urls, ["t3code://oauth/callback"]);
+        assert.deepEqual(instances, [["t3code", "t3code://new"]]);
+      }
+    }
+    const packagedOutputDirectory = NodePath.join(
+      directory,
+      "resources/app.asar/apps/desktop/dist-electron",
+    );
+    await NodeFSP.cp(outputDirectory, packagedOutputDirectory, { recursive: true });
+    for (const runtimeDirectory of [outputDirectory, packagedOutputDirectory]) {
+      for (const disabled of [false, true]) {
+        for (const args of [
+          [NodePath.join(runtimeDirectory, "boot.cjs")],
+          [
+            "--require",
+            NodePath.join(runtimeDirectory, "compileCache.cjs"),
+            NodePath.join(runtimeDirectory, "backend.mjs"),
+          ],
+        ]) {
+          const child = NodeChildProcess.spawnSync(process.execPath, args, {
+            encoding: "utf8",
+            env: {
+              ...process.env,
+              APPIMAGE: "",
+              ELECTRON_RUN_AS_NODE: "1",
+              NODE_COMPILE_CACHE: undefined,
+              NODE_DISABLE_COMPILE_CACHE: disabled ? "1" : undefined,
+              XDG_CACHE_HOME: directory,
+              TMPDIR: directory,
+              TEMP: directory,
+              TMP: directory,
+            },
+          });
+          assert.equal(child.status, 0, child.stderr);
+          assert.equal(child.stdout.trim(), disabled ? "uncached" : "cached");
+        }
       }
     }
   } finally {

@@ -26,10 +26,7 @@ import { HttpClient } from "effect/http";
 import * as AcpErrors from "effect-acp/errors";
 
 import * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
-import {
-  isAntigravityTextGenerationAvailable,
-  makeAntigravityTextGeneration,
-} from "../../textGeneration/AntigravityTextGeneration.ts";
+import { makeLazyTextGeneration } from "../../textGeneration/lazyTextGeneration.ts";
 import { makeAntigravityAuth, type AntigravityAuth } from "../AntigravityAuth.ts";
 import * as AntigravityInstallation from "../AntigravityInstallation.ts";
 import * as AntigravityUsage from "./AntigravityUsage.ts";
@@ -439,7 +436,10 @@ export const AntigravityDriver: ProviderDriver<
       probeUsage: usage.probe,
       clearUsage: usage.clear,
       auth: { type: auth.authMethod, label: antigravityAuthLabel(auth.authMethod) },
-      supportsTextGeneration: isAntigravityTextGenerationAvailable(profileDirectory).pipe(
+      supportsTextGeneration: Effect.promise(
+        () => import("../../textGeneration/AntigravityTextGeneration.ts"),
+      ).pipe(
+        Effect.flatMap((module) => module.isAntigravityTextGenerationAvailable(profileDirectory)),
         Effect.provideService(FileSystem.FileSystem, fileSystem),
         Effect.provideService(Path.Path, path),
         Effect.orElseSucceed(() => false),
@@ -480,16 +480,22 @@ export const AntigravityDriver: ProviderDriver<
           threadId,
         }),
     });
-    const textGeneration = yield* makeAntigravityTextGeneration({
-      profileDirectory,
-      defaultModel,
-      withProcess: authFlow.withProcess,
-      makeRuntime: (cwd) =>
-        makeRuntime({
-          cwd,
-          mcpServers: [],
-        }),
-    });
+    const textGeneration = yield* makeLazyTextGeneration(
+      Effect.promise(() => import("../../textGeneration/AntigravityTextGeneration.ts")).pipe(
+        Effect.flatMap((module) =>
+          module.makeAntigravityTextGeneration({
+            profileDirectory,
+            defaultModel,
+            withProcess: authFlow.withProcess,
+            makeRuntime: (cwd) =>
+              makeRuntime({
+                cwd,
+                mcpServers: [],
+              }),
+          }),
+        ),
+      ),
+    );
 
     const refreshModels = Effect.fn("AntigravityDriver.refreshModels")(
       function* () {

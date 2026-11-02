@@ -5,6 +5,7 @@ import * as NodeWorkerThreads from "node:worker_threads";
 import * as Cache from "effect/Cache";
 import * as Clock from "effect/Clock";
 import * as Duration from "effect/Duration";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Result from "effect/Result";
 import * as Exit from "effect/Exit";
@@ -294,7 +295,9 @@ const failed = (cause: unknown, message: string, operation: string) =>
 const endsReadTransaction = (sql: string) => /^\s*ROLLBACK\b|^\s*COMMIT\b/i.test(sql);
 
 // WAL readers run concurrently; one worker serialized every read behind the slowest transaction.
-const READER_POOL_SIZE = 4;
+const READER_POOL_SIZE = 2;
+// Keep the first reader for liveness reads; release surplus workers after a burst.
+const READER_IDLE_TIMEOUT = "15 seconds";
 
 // Bind transactions to one worker; fail after its exit instead of resuming outside the transaction on a replacement.
 const makeReader = Effect.fnUntraced(function* (
@@ -306,11 +309,13 @@ const makeReader = Effect.fnUntraced(function* (
         readonly worker: NodeWorkerThreads.Worker;
         readonly connection: Connection;
         readonly started: Promise<ReaderStartup>;
+        readonly awaitIdle: Effect.Effect<void>;
       }
     | undefined;
   let nextRequestId = 0;
 
   const start = () => {
+    let idle: Deferred.Deferred<void> | undefined;
     const worker = new NodeWorkerThreads.Worker(readerWorkerSource, {
       eval: true,
       workerData: {
@@ -340,6 +345,7 @@ const makeReader = Effect.fnUntraced(function* (
         );
       }
       pending.clear();
+      if (idle) Deferred.doneUnsafe(idle, Effect.void);
     };
     worker.on("message", (reply: ReaderReply | ReaderStartup) => {
       if ("type" in reply) {
@@ -350,7 +356,10 @@ const makeReader = Effect.fnUntraced(function* (
       const request = pending.get(reply.id);
       if (request === undefined) return;
       pending.delete(reply.id);
-      if (pending.size === 0) worker.unref();
+      if (pending.size === 0) {
+        worker.unref();
+        if (idle) Deferred.doneUnsafe(idle, Effect.void);
+      }
       request.resume(reply);
     });
     worker.on("error", (cause) => stop(`Database reader failed: ${cause.message}`));
@@ -388,7 +397,10 @@ const makeReader = Effect.fnUntraced(function* (
               );
             },
           });
-          if (pending.size === 1) worker.ref();
+          if (pending.size === 1) {
+            idle = Deferred.makeUnsafe<void>();
+            worker.ref();
+          }
           const cached = input.cached && !hasLargeBinding(input.params);
           // oxlint-disable-next-line unicorn/require-post-message-target-origin -- Node workers do not accept a target origin.
           worker.postMessage({ id, safeIntegers, ...input, cached });
@@ -425,7 +437,12 @@ const makeReader = Effect.fnUntraced(function* (
         return Stream.die(new UnsupportedNodeSqliteOperationError());
       },
     });
-    current = { worker, connection, started };
+    current = {
+      worker,
+      connection,
+      started,
+      awaitIdle: Effect.suspend(() => (idle ? Deferred.await(idle) : Effect.void)),
+    };
     return current;
   };
 
@@ -450,7 +467,7 @@ const makeReader = Effect.fnUntraced(function* (
       }).pipe(Effect.as(undefined));
     });
 
-  return Effect.suspend((): Effect.Effect<Connection | undefined> => {
+  const acquire = Effect.suspend((): Effect.Effect<Connection | undefined> => {
     if (pool.unavailable) return Effect.undefined;
     let reader: NonNullable<typeof current>;
     try {
@@ -482,6 +499,17 @@ const makeReader = Effect.fnUntraced(function* (
               ),
     );
   });
+  return {
+    acquire,
+    retire: Effect.gen(function* () {
+      const reader = current;
+      if (!reader) return;
+      yield* reader.awaitIdle;
+      if (current !== reader) return;
+      current = undefined;
+      yield* Effect.promise(() => reader.worker.terminate());
+    }),
+  };
 });
 
 const CHECKPOINT_FRAMES = 1000;
@@ -1079,15 +1107,17 @@ const make = Effect.fn("makeWithDatabase")(function* (
   const connection = yield* makeConnection;
   // A reader that cannot start turns off the whole pool, so routing never picks a dead slot.
   const readerPool = { unavailable: false };
+  const readerScope = yield* Effect.scope;
   const readers =
     options.readerWorker && isFileDatabase
       ? yield* Effect.forEach(Array.from({ length: READER_POOL_SIZE }), () =>
           Effect.map(
             Effect.all([makeReader(options, readerPool), Semaphore.make(1)]),
-            ([acquire, lock]) => ({
-              acquire,
+            ([reader, lock]) => ({
+              ...reader,
               lock,
               claims: 0,
+              retirement: undefined as Fiber.Fiber<void> | undefined,
             }),
           ),
         )
@@ -1106,18 +1136,26 @@ const make = Effect.fn("makeWithDatabase")(function* (
       for (const candidate of readers) if (candidate.claims < slot.claims) slot = candidate;
       slot.claims++;
       const reader = slot;
-      return Effect.andThen(
-        claimed(
-          Effect.sync(() => {
+      const cancelRetirement = reader.retirement ? Fiber.interrupt(reader.retirement) : Effect.void;
+      reader.retirement = undefined;
+      return Effect.gen(function* () {
+        yield* cancelRetirement;
+        yield* claimed(
+          Effect.gen(function* () {
             reader.claims--;
+            if (reader.claims !== 0 || reader === readers[0]) return;
+            reader.retirement = yield* Effect.sleep(READER_IDLE_TIMEOUT).pipe(
+              Effect.andThen(reader.retire),
+              Effect.interruptible,
+              Effect.forkIn(readerScope),
+            );
           }),
-        ),
-        Effect.map(reader.acquire, (readerConnection) =>
-          readerConnection === undefined
-            ? writer
-            : { name: "reader" as const, lock: reader.lock, connection: readerConnection },
-        ),
-      );
+        );
+        const readerConnection = yield* reader.acquire;
+        return readerConnection === undefined
+          ? writer
+          : { name: "reader" as const, lock: reader.lock, connection: readerConnection };
+      });
     });
 
   const acquired = (

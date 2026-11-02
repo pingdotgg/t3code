@@ -103,6 +103,7 @@ import { PierreEntryIcon } from "./chat/PierreEntryIcon";
 import { resolvePullRequestState } from "./pullRequest/pullRequestPresentation";
 import { PullRequestGlyph } from "~/components/pullRequest/pullRequestIcons";
 import { observeResize } from "~/lib/observeResize";
+import { preloadPanelShortcut } from "./chat/panelModules";
 import { surfaceShortcutKey } from "~/lib/surfaceShortcutKey";
 
 export interface RightPanelTabsProps {
@@ -296,11 +297,14 @@ function SurfaceMenuItem(props: {
   shortcut: string;
   onClick: () => void;
   children: ReactNode;
+  onIntent?: () => void;
 }) {
   const item = (
     <MenuItem
       className={!props.available ? "data-disabled:pointer-events-auto" : undefined}
       onClick={props.onClick}
+      onPointerEnter={props.onIntent}
+      onFocus={props.onIntent}
       disabled={!props.available}
       aria-keyshortcuts={props.shortcut}
     >
@@ -490,7 +494,10 @@ function RightPanelEmptyState(props: {
               <div
                 key={action.label}
                 className="group relative"
-                onMouseEnter={() => setHighlight(availableActions.indexOf(action))}
+                onMouseEnter={() => {
+                  setHighlight(availableActions.indexOf(action));
+                  preloadPanelShortcut(action.shortcut);
+                }}
                 onMouseLeave={() =>
                   setHighlight((current) =>
                     current === availableActions.indexOf(action) ? -1 : current,
@@ -500,6 +507,7 @@ function RightPanelEmptyState(props: {
                 <button
                   type="button"
                   onClick={action.onClick}
+                  onFocus={() => preloadPanelShortcut(action.shortcut)}
                   className={cn(
                     "flex h-8 w-full cursor-pointer items-center gap-2.5 rounded-(--control-radius) px-2.5 text-left text-sm transition-colors group-hover:bg-accent/60",
                     isHighlighted(action) && "bg-accent/60",
@@ -1455,6 +1463,9 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
                         disabledReason={action.disabledReason}
                         shortcut={action.shortcut}
                         onClick={action.onClick}
+                        onIntent={() => {
+                          if (action.available) preloadPanelShortcut(action.shortcut);
+                        }}
                       >
                         <Icon />
                         {action.label}

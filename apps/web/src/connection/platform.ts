@@ -35,6 +35,7 @@ import {
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
@@ -57,6 +58,7 @@ import { appAtomRegistry } from "../rpc/atomRegistry";
 import { acknowledgeRpcRequest, trackRpcRequestSent } from "../rpc/requestLatencyState";
 import {
   desktopLocalConnectionId,
+  subscribeDesktopTopologyChanges,
   readDesktopSecondaryBootstrapsResult,
   type DesktopSecondaryBootstrapsRead,
 } from "./desktopLocal";
@@ -490,8 +492,7 @@ const loadSecondaryConnectionRegistration = Effect.fn(
   };
 });
 
-// The bridge has no topology event. Cache registrations until bearer credentials near expiry.
-const PLATFORM_POLL_INTERVAL = "3 seconds";
+const PLATFORM_RETRY_MS = 3_000;
 const SECONDARY_BEARER_REFRESH_SKEW_MS = 5_000;
 
 function secondaryBearerExpiresAtEpochMs(
@@ -623,6 +624,30 @@ export function secondaryRegistrationsToRetainAfterTopologyRead(
   );
 }
 
+export function nextPlatformReconcileAt(
+  cache: ReadonlyMap<string, CachedPlatformRegistration>,
+  rejected: ReadonlyMap<string, RejectedSecondaryBootstrap>,
+  retryAtEpochMs: number | undefined,
+  nowEpochMs: number,
+): number | undefined {
+  const deadlines = [
+    ...[...cache.values()].flatMap((entry) => {
+      if (entry.refreshAtEpochMs === undefined) return [];
+      if (entry.refreshAtEpochMs > nowEpochMs) return [entry.refreshAtEpochMs];
+      return entry.expiresAtEpochMs !== undefined && entry.expiresAtEpochMs > nowEpochMs
+        ? [entry.expiresAtEpochMs]
+        : [];
+    }),
+    ...[...rejected.values()].map((entry) =>
+      Math.max(entry.retryAtEpochMs, nowEpochMs + PLATFORM_RETRY_MS),
+    ),
+    ...(retryAtEpochMs === undefined
+      ? []
+      : [Math.max(retryAtEpochMs, nowEpochMs + PLATFORM_RETRY_MS)]),
+  ];
+  return deadlines.length === 0 ? undefined : Math.min(...deadlines);
+}
+
 const layerPlatformConnectionSource = Layer.effect(
   PlatformConnectionSource.PlatformConnectionSource,
   Effect.gen(function* () {
@@ -634,7 +659,12 @@ const layerPlatformConnectionSource = Layer.effect(
     const cacheRef = yield* Ref.make(new Map<string, CachedPlatformRegistration>());
     const rejectedRef = yield* Ref.make(new Map<string, RejectedSecondaryBootstrap>());
 
+    let retryAtEpochMs: number | undefined;
     const buildPlatformRegistrations = Effect.gen(function* () {
+      retryAtEpochMs = undefined;
+      const retry = () => {
+        retryAtEpochMs = nowEpochMs + PLATFORM_RETRY_MS;
+      };
       const previous = yield* Ref.get(cacheRef);
       const nowEpochMs = yield* Clock.currentTimeMillis;
       const next = new Map<string, CachedPlatformRegistration>();
@@ -651,6 +681,7 @@ const layerPlatformConnectionSource = Layer.effect(
       }
 
       if (primaryTopologyRead._tag === "Failure") {
+        retry();
         yield* Effect.logWarning("Could not read the primary environment topology.", {
           cause: primaryTopologyRead.cause,
         });
@@ -675,6 +706,8 @@ const layerPlatformConnectionSource = Layer.effect(
             const cacheEntry = { signature, registration: built.value };
             next.set(PRIMARY_LOCAL_ENVIRONMENT_ID, cacheEntry);
             registrations.push(built.value);
+          } else {
+            retry();
           }
         }
       }
@@ -690,6 +723,7 @@ const layerPlatformConnectionSource = Layer.effect(
       }
 
       if (topologyRead._tag === "Failure") {
+        retry();
         yield* Effect.logWarning("Could not read the desktop-local backend topology.", {
           cause: topologyRead.cause,
         });
@@ -736,7 +770,7 @@ const layerPlatformConnectionSource = Layer.effect(
             ),
             Effect.tapError((error) =>
               isRejectedBootstrapCredentialError(error)
-                ? // Start backoff at rejection; this poll can outlast the first delay.
+                ? // Start backoff at rejection; an exchange can outlast the first delay.
                   Clock.currentTimeMillis.pipe(
                     Effect.map((rejectedAtEpochMs) =>
                       nextRejected.set(
@@ -774,6 +808,7 @@ const layerPlatformConnectionSource = Layer.effect(
             next.set(bootstrap.id, cached);
             registrations.push(cached.registration);
           }
+          if (Option.isNone(built) && !nextRejected.has(bootstrap.id)) retry();
         }
         yield* Ref.set(rejectedRef, nextRejected);
       }
@@ -783,8 +818,36 @@ const layerPlatformConnectionSource = Layer.effect(
     }).pipe(Effect.provide(FetchHttpClient.layer));
 
     return PlatformConnectionSource.PlatformConnectionSource.of({
-      registrations: Stream.tick(PLATFORM_POLL_INTERVAL).pipe(
-        Stream.mapEffect(() => buildPlatformRegistrations),
+      registrations: Stream.callback<ReadonlyArray<PlatformConnectionRegistration>>((output) =>
+        Effect.gen(function* () {
+          const changes = yield* Queue.sliding<void>(1);
+          const wake = () => {
+            Queue.offerUnsafe(changes, undefined);
+          };
+          yield* Effect.acquireRelease(
+            Effect.sync(() => subscribeDesktopTopologyChanges(wake)),
+            (unsubscribe) => Effect.sync(unsubscribe),
+          );
+          wake();
+          let timer: Fiber.Fiber<void> | undefined;
+          for (;;) {
+            yield* Queue.take(changes);
+            if (timer !== undefined) yield* Fiber.interrupt(timer);
+            const registrations = yield* buildPlatformRegistrations;
+            yield* Queue.offer(output, registrations);
+            const now = yield* Clock.currentTimeMillis;
+            const cache = yield* Ref.get(cacheRef);
+            const rejected = yield* Ref.get(rejectedRef);
+            const deadline = nextPlatformReconcileAt(cache, rejected, retryAtEpochMs, now);
+            timer =
+              deadline === undefined
+                ? undefined
+                : yield* Effect.sleep(Math.max(0, deadline - now)).pipe(
+                    Effect.andThen(Effect.sync(wake)),
+                    Effect.forkScoped,
+                  );
+          }
+        }),
       ),
     });
   }),

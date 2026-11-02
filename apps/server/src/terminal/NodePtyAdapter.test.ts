@@ -72,6 +72,28 @@ const layerTestFor = (platform: NodeJS.Platform = "win32") =>
 
 const layerTest = layerTestFor();
 
+it.effect("loads the native module once when concurrent terminals first spawn", () =>
+  Effect.gen(function* () {
+    const load = vi.fn(() => Promise.resolve(fakeNodePty));
+    yield* Effect.gen(function* () {
+      const adapter = yield* PtyAdapter.PtyAdapter;
+      assert.equal(load.mock.calls.length, 0);
+      yield* Effect.all([adapter.spawn(spawnInput), adapter.spawn(spawnInput)], {
+        concurrency: 2,
+      });
+      assert.equal(load.mock.calls.length, 1);
+    }).pipe(
+      Effect.provide(
+        NodePtyAdapter.layer.pipe(
+          Layer.provide(NodeServices.layer),
+          Layer.provide(Layer.succeed(HostProcess.Platform, "linux")),
+          Layer.provide(Layer.succeed(NodePtyAdapter.NodePtyModuleLoaderRef, load)),
+        ),
+      ),
+    );
+  }),
+);
+
 it.effect("waits for the Windows PID without requiring output", () =>
   Effect.gen(function* () {
     const { nativeProcess, subscribed } = preparePendingProcess();

@@ -266,6 +266,29 @@ describe("GhosttyTerminalSurface visibility", () => {
     vi.restoreAllMocks();
   });
 
+  it("settles a blinking cursor until new output or focus arrives", async () => {
+    const harness = createHarness();
+    const surface = await harness.create();
+    surface.write("\x1b[?12h\x1b[?25hready");
+    surface.input.dispatchEvent(new Event("focus"));
+    harness.flushFrame();
+    for (let i = 0; i < 2; i++) {
+      vi.advanceTimersByTime(500);
+      harness.flushFrame();
+    }
+    const paints = harness.paint.mock.calls.length;
+    vi.advanceTimersByTime(30_000);
+    harness.flushFrame();
+    expect(harness.paint.mock.calls.length).toBe(paints);
+
+    surface.write(" more");
+    harness.flushFrame();
+    const resumed = harness.paint.mock.calls.length;
+    vi.advanceTimersByTime(500);
+    harness.flushFrame();
+    expect(harness.paint.mock.calls.length).toBeGreaterThan(resumed);
+  });
+
   it("preserves shell Ctrl+A and ordinary application navigation", async () => {
     vi.stubGlobal("navigator", { platform: "Linux x86_64" });
     const harness = createHarness();

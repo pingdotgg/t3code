@@ -3,6 +3,8 @@ import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
+import * as PubSub from "effect/PubSub";
+import * as Stream from "effect/Stream";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
@@ -60,6 +62,7 @@ export class DesktopBackendPool extends Context.Service<
     readonly get: (id: BackendInstanceId) => Effect.Effect<Option.Option<DesktopBackendInstance>>;
     readonly list: Effect.Effect<readonly DesktopBackendInstance[]>;
     readonly primary: Effect.Effect<DesktopBackendInstance>;
+    readonly changes: Stream.Stream<void>;
     readonly register: (
       spec: BackendInstanceSpec,
     ) => Effect.Effect<DesktopBackendInstance, DesktopBackendPoolInstanceAlreadyRegisteredError>;
@@ -104,6 +107,8 @@ export const layer = Layer.effect(
   DesktopBackendPool,
   Effect.gen(function* () {
     const configuration = yield* DesktopBackendConfiguration.DesktopBackendConfiguration;
+    const changes = yield* PubSub.sliding<void>({ capacity: 1, replay: 1 });
+    const notify = () => PubSub.publish(changes, undefined).pipe(Effect.asVoid);
     const desktopWindow = yield* DesktopWindow.DesktopWindow;
     const electronDialog = yield* ElectronDialog.ElectronDialog;
     const electronApp = yield* ElectronApp.ElectronApp;
@@ -155,6 +160,7 @@ export const layer = Layer.effect(
 
     const primary = yield* DesktopBackendManager.makeBackendInstance({
       id: DesktopBackendManager.PRIMARY_INSTANCE_ID,
+      onTopologyChanged: notify,
       // Resolve lazily: startup loads persisted settings after pool initialization.
       label: configuration.resolvePrimaryLabel,
       configResolve: configuration.resolvePrimary,
@@ -218,10 +224,10 @@ export const layer = Layer.effect(
             return Effect.gen(function* () {
               // Provide the child Scope last so the captured pool Scope cannot shadow it and orphan stop/restart finalizers.
               const instanceScope = yield* Scope.fork(layerScope, "sequential");
-              const instance = yield* DesktopBackendManager.makeBackendInstance(spec).pipe(
-                Scope.provide(instanceScope),
-                Effect.provide(factoryContext),
-              );
+              const instance = yield* DesktopBackendManager.makeBackendInstance({
+                ...spec,
+                onTopologyChanged: notify,
+              }).pipe(Scope.provide(instanceScope), Effect.provide(factoryContext));
               const next = new Map(current);
               next.set(spec.id, {
                 _tag: "Active",
@@ -237,7 +243,7 @@ export const layer = Layer.effect(
         ).pipe(
           Effect.flatMap((result) =>
             result._tag === "Registered"
-              ? Effect.succeed(result.instance)
+              ? notify().pipe(Effect.as(result.instance))
               : Deferred.await(result.done).pipe(Effect.andThen(register(spec))),
           ),
         ),
@@ -290,7 +296,11 @@ export const layer = Layer.effect(
           undefined,
           next as ReadonlyMap<BackendInstanceId, RegisteredInstance>,
         ] as const);
-      }).pipe(Effect.andThen(Deferred.succeed(done, undefined)), Effect.asVoid);
+      }).pipe(
+        Effect.andThen(Deferred.succeed(done, undefined)),
+        Effect.andThen(notify()),
+        Effect.asVoid,
+      );
       yield* Option.match(action.entry.scope, {
         onNone: () => Effect.void,
         onSome: (scope) => Scope.close(scope, Exit.void).pipe(Effect.ignore),
@@ -314,6 +324,7 @@ export const layer = Layer.effect(
         ),
       ),
       primary: Effect.succeed(primary),
+      changes: Stream.fromPubSub(changes),
       register,
       unregister,
     });
@@ -339,6 +350,7 @@ export const layerTest = (
         }),
         list: Effect.succeed(Array.from(byId.values())),
         primary: Effect.succeed(primary),
+        changes: Stream.empty,
         register: Effect.fn("DesktopBackendPool.register")(function () {
           return Effect.die("DesktopBackendPool.layerTest does not support register");
         }),

@@ -82,6 +82,7 @@
         "src/boot.ts!",
         "src/compileCache.ts!",
         "src/serverCompileCache.ts!",
+        "src/initialWindow.ts!",
         "src/main.ts!",
         "src/preload.ts!",
         "src/preview-pick-preload.ts!",

@@ -37,9 +37,11 @@ import * as DesktopAssets from "../app/DesktopAssets.ts";
 import * as DesktopConfig from "../app/DesktopConfig.ts";
 import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
 import * as DesktopState from "../app/DesktopState.ts";
+import { setDesktopBootState } from "../app/desktopBootState.ts";
 import * as DesktopAppSettings from "../settings/DesktopAppSettings.ts";
 import * as DesktopClientSettings from "../settings/DesktopClientSettings.ts";
 import * as ElectronApp from "../electron/ElectronApp.ts";
+import * as DesktopClerk from "../app/DesktopClerk.ts";
 import * as DesktopRendererHistory from "../telemetry/DesktopRendererHistory.ts";
 import * as ElectronMenu from "../electron/ElectronMenu.ts";
 import * as ElectronShell from "../electron/ElectronShell.ts";
@@ -152,6 +154,7 @@ function makeFakeBrowserWindow() {
     setAutoHideCursor: window.setAutoHideCursor,
     setFullScreen: window.setFullScreen,
     setOpacity: window.setOpacity,
+    show: window.show,
     webContentsListeners,
     webContentsOnce: webContents.once,
     windowListeners,
@@ -232,6 +235,7 @@ function layerTest(input: {
   readonly setPreviewMainWindow?: (window: Electron.BrowserWindow) => Effect.Effect<void>;
   readonly destroyAll?: Effect.Effect<void>;
   readonly onWindowCreate?: Effect.Effect<void>;
+  readonly registerProtocolClient?: Effect.Effect<void>;
   readonly openedExternalUrls?: unknown[];
   readonly copiedTexts?: string[];
   readonly onPopupTemplate?: (input: ElectronMenu.ElectronMenuTemplateInput) => Effect.Effect<void>;
@@ -301,6 +305,9 @@ function layerTest(input: {
   return DesktopWindow.layer.pipe(
     Layer.provide(
       Layer.mergeAll(
+        Layer.mock(DesktopClerk.DesktopClerk)({
+          registerProtocolClient: input.registerProtocolClient ?? Effect.void,
+        }),
         layerDesktopAssets,
         Layer.succeed(DesktopRendererHistory.DesktopRendererHistory, {
           register: () => Effect.void,
@@ -338,7 +345,7 @@ function layerTest(input: {
           attachGuest: () => () => {},
         }),
         Layer.mock(PreviewManager.PreviewManager)({
-          getBrowserSession: () => Effect.succeed({} as Electron.Session),
+          getBrowserSession: () => Effect.die("main window must not open a preview partition"),
           setMainWindow: input.setPreviewMainWindow ?? (() => Effect.void),
           prepareWebview: () => Effect.void,
           isBrowserPartition: (partition) => partition.startsWith("persist:t3code-preview-"),
@@ -422,6 +429,7 @@ const makeSplashScenario = (createOutcomes: readonly (Electron.BrowserWindow | n
     const layer = DesktopWindow.layer.pipe(
       Layer.provide(
         Layer.mergeAll(
+          Layer.mock(DesktopClerk.DesktopClerk)({ registerProtocolClient: Effect.void }),
           layerDesktopAssets,
           Layer.succeed(DesktopRendererHistory.DesktopRendererHistory, {
             register: () => Effect.void,
@@ -544,34 +552,55 @@ describe("DesktopWindow", () => {
     );
   });
 
-  it.effect(
-    "opens and reopens the window without backend readiness when local execution is disabled",
-    () =>
+  it.effect.each([false, true])(
+    "opens and reopens the window without backend readiness when local execution is disabled (early: %s)",
+    (early) =>
       Effect.gen(function* () {
         const fakeWindow = makeFakeBrowserWindow();
         const createCount = yield* Ref.make(0);
+        const protocolRegistrations = yield* Ref.make(0);
+        fakeWindow.show.mockImplementation(() => fakeWindow.windowListeners.get("show")?.());
         const mainWindow = yield* Ref.make<Option.Option<Electron.BrowserWindow>>(Option.none());
         const layer = layerTest({
           window: fakeWindow.window,
           createCount,
           mainWindow,
           createdWindowOptions: [],
+          registerProtocolClient: Ref.update(protocolRegistrations, (count) => count + 1),
           desktopSettings: {
             ...DesktopAppSettings.DEFAULT_DESKTOP_SETTINGS,
             localEnvironmentEnabled: false,
           },
         });
-        yield* Effect.gen(function* () {
-          const desktopWindow = yield* DesktopWindow.DesktopWindow;
-          yield* desktopWindow.createMainIfBackendReady;
-          assert.equal(yield* Ref.get(createCount), 1);
-          yield* Ref.set(mainWindow, Option.none());
-          yield* desktopWindow.activate;
-          assert.equal(yield* Ref.get(createCount), 2);
-          yield* Ref.set(mainWindow, Option.none());
-          yield* desktopWindow.dispatchMenuAction("new-thread");
-          assert.equal(yield* Ref.get(createCount), 3);
-        }).pipe(Effect.provide(layer));
+        yield* Effect.acquireUseRelease(
+          Effect.sync(() => {
+            if (early)
+              setDesktopBootState({
+                window: fakeWindow.window,
+                preReadyOptions: { linux: null, linuxPasswordStoreCommandLine: null },
+                replayLinkEvents: () => {},
+                detachLinkListeners: () => {},
+              });
+          }),
+          () =>
+            Effect.gen(function* () {
+              const desktopWindow = yield* DesktopWindow.DesktopWindow;
+              yield* desktopWindow.createMainIfBackendReady;
+              assert.equal(yield* Ref.get(createCount), early ? 0 : 1);
+              assert.equal(fakeWindow.show.mock.calls.length, early ? 0 : 1);
+              assert.equal(yield* Ref.get(protocolRegistrations), 0);
+              fakeWindow.windowListeners.get("ready-to-show")?.();
+              assert.equal(yield* Ref.get(protocolRegistrations), 1);
+              assert.deepEqual(fakeWindow.loadURL.mock.calls, [["t3code-dev://app/"]]);
+              yield* Ref.set(mainWindow, Option.none());
+              yield* desktopWindow.activate;
+              assert.equal(yield* Ref.get(createCount), early ? 1 : 2);
+              yield* Ref.set(mainWindow, Option.none());
+              yield* desktopWindow.dispatchMenuAction("new-thread");
+              assert.equal(yield* Ref.get(createCount), early ? 2 : 3);
+            }).pipe(Effect.provide(layer)),
+          () => Effect.sync(() => setDesktopBootState(undefined)),
+        );
       }),
   );
 
@@ -1212,6 +1241,8 @@ describe("DesktopWindow", () => {
           const registeredMain = yield* Ref.get(scenario.mainWindow);
           assert.isTrue(Option.isSome(registeredMain));
           assert.equal(Option.getOrThrow(registeredMain), main.window);
+          assert.equal(main.show.mock.calls.length, 0);
+          main.windowListeners.get("ready-to-show")?.();
         }).pipe(Effect.provide(scenario.layer));
       }),
   );

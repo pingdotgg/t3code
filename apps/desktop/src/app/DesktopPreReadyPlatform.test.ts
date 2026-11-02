@@ -74,6 +74,48 @@ describe("DesktopPreReadyPlatform", () => {
     readFileSyncMock.mockReset().mockReturnValue("{}");
   });
 
+  it.effect.each([
+    { platform: "darwin" as const, disabled: true },
+    { platform: "linux" as const, disabled: true },
+    { platform: "win32" as const, disabled: false },
+  ])(
+    "configures Chromium networking and disk caching on $platform before startup yields",
+    ({ platform, disabled }) => {
+      const commandLine = new Map([
+        ["enable-features", "ExistingEnabledFeature"],
+        ["disable-features", "ExistingDisabledFeature"],
+      ]);
+      hasSwitchMock.mockImplementation((name: string) => commandLine.has(name));
+      getSwitchValueMock.mockImplementation((name: string) => commandLine.get(name) ?? "");
+      appendSwitchMock.mockImplementation((name: string, value = "") => {
+        commandLine.set(name, value);
+      });
+      return Effect.gen(function* () {
+        const startup = Promise.resolve().then(() =>
+          commandLine.has("disable-gpu-shader-disk-cache"),
+        );
+        yield* DesktopPreReadyPlatform.make;
+        assert.equal(yield* Effect.promise(() => startup), disabled);
+        // Chromium initializes its zygotes before app JavaScript runs.
+        assert.equal(commandLine.has("no-unsandboxed-zygote"), false);
+        assert.equal(
+          commandLine.get("enable-features"),
+          platform !== "win32"
+            ? "ExistingEnabledFeature,NetworkServiceInProcess2,SplitCacheByNetworkIsolationKey,UsePersistentCacheForCodeCache"
+            : "ExistingEnabledFeature",
+        );
+        assert.equal(
+          commandLine.get("disable-features"),
+          platform === "darwin"
+            ? "ExistingDisabledFeature,NetworkServiceDedicatedThread,CompressionDictionaryTransport,DeclarativePerformanceObserver,HttpCacheNoVarySearch,GpuPersistentCache"
+            : platform === "linux"
+              ? "ExistingDisabledFeature,NetworkServiceDedicatedThread"
+              : "ExistingDisabledFeature",
+        );
+      }).pipe(Effect.provideService(HostProcess.Platform, platform));
+    },
+  );
+
   it.effect("persists Linux scaling synchronously across relaunches and settings rewrites", () => {
     vi.stubEnv("T3CODE_HOME", "/isolated");
     vi.stubEnv("VITE_DEV_SERVER_URL", "");
@@ -211,7 +253,7 @@ describe("DesktopPreReadyPlatform", () => {
         });
 
         const layerPreReady = DesktopPreReadyPlatform.layer.pipe(
-          Layer.provide(Layer.succeed(HostProcess.Platform, "darwin")),
+          Layer.provide(Layer.succeed(HostProcess.Platform, "win32")),
         );
 
         const layerClerkShaped = Layer.effect(

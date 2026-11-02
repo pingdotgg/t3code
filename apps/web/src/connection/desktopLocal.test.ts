@@ -1,7 +1,10 @@
 import { type DesktopEnvironmentBootstrap, PRIMARY_LOCAL_ENVIRONMENT_ID } from "@t3tools/contracts";
-import { describe, expect, it } from "vite-plus/test";
+import { describe, expect, it, vi } from "vite-plus/test";
 
-import { createDesktopSecondaryBootstrapsReader } from "./desktopLocal";
+import {
+  createDesktopSecondaryBootstrapsReader,
+  subscribeDesktopTopologyChanges,
+} from "./desktopLocal";
 
 describe("desktop local topology reads", () => {
   it("reuses snapshots when polling returns fresh objects for the same topology", () => {
@@ -106,5 +109,45 @@ describe("desktop local topology reads", () => {
       throw new Error("IPC unavailable again");
     };
     expect(reader.readSnapshot()).toBe(removedSnapshot);
+  });
+});
+
+describe("desktop topology notifications", () => {
+  it("reconciles on bridge changes and return, and removes its listeners", () => {
+    const windowTarget = new EventTarget();
+    const documentTarget = Object.assign(new EventTarget(), { visibilityState: "visible" });
+    let bridgeChanged = () => {};
+    const stopBridge = vi.fn();
+    vi.stubGlobal(
+      "window",
+      Object.assign(windowTarget, {
+        desktopBridge: {
+          onLocalEnvironmentBootstrapsChanged: (listener: () => void) => {
+            bridgeChanged = listener;
+            return stopBridge;
+          },
+        },
+      }),
+    );
+    vi.stubGlobal("document", documentTarget);
+    const reconcile = vi.fn();
+    try {
+      const stop = subscribeDesktopTopologyChanges(reconcile);
+      bridgeChanged();
+      windowTarget.dispatchEvent(new Event("focus"));
+      documentTarget.visibilityState = "hidden";
+      documentTarget.dispatchEvent(new Event("visibilitychange"));
+      expect(reconcile).toHaveBeenCalledTimes(2);
+      documentTarget.visibilityState = "visible";
+      documentTarget.dispatchEvent(new Event("visibilitychange"));
+      expect(reconcile).toHaveBeenCalledTimes(3);
+      stop();
+      expect(stopBridge).toHaveBeenCalledOnce();
+      windowTarget.dispatchEvent(new Event("focus"));
+      documentTarget.dispatchEvent(new Event("visibilitychange"));
+      expect(reconcile).toHaveBeenCalledTimes(3);
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 });

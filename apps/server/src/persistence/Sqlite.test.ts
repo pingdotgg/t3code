@@ -14,6 +14,7 @@ import * as SqlClient from "effect/sql/SqlClient";
 import { vi } from "vite-plus/test";
 
 import * as SqlitePersistence from "./Sqlite.ts";
+import { migrationManifest } from "./Migrations.ts";
 
 const workers = vi.hoisted((): Array<NodeWorkerThreads.Worker> => []);
 
@@ -183,3 +184,55 @@ it.effect("drops planner statistics a database already has", () => {
     Effect.ensuring(Effect.sync(() => NodeFS.rmSync(tempDir, { recursive: true, force: true }))),
   );
 });
+
+it.effect.each([undefined, 4096])(
+  "initializes and reopens the complete schema, preserving an existing %s-byte page size",
+  (existingPageSize) => {
+    const tempDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-sqlite-fresh-"));
+    const dbPath = NodePath.join(tempDir, "state.sqlite");
+    if (existingPageSize !== undefined) {
+      const database = new NodeSqlite.DatabaseSync(dbPath);
+      database.exec(
+        `PRAGMA page_size = ${existingPageSize}; PRAGMA auto_vacuum = INCREMENTAL; CREATE TABLE existing_work(value TEXT); INSERT INTO existing_work VALUES ('retained');`,
+      );
+      database.close();
+    }
+    return Effect.gen(function* () {
+      for (const reopen of [false, true]) {
+        yield* Effect.gen(function* () {
+          const sql = yield* SqlClient.SqlClient;
+          assert.deepEqual(yield* sql`PRAGMA auto_vacuum`, [{ auto_vacuum: 2 }]);
+          assert.deepEqual(yield* sql`PRAGMA page_size`, [{ page_size: existingPageSize ?? 2048 }]);
+          assert.deepEqual(yield* sql`PRAGMA journal_mode`, [{ journal_mode: "wal" }]);
+          assert.deepEqual(yield* sql`PRAGMA synchronous`, [{ synchronous: 1 }]);
+          assert.deepEqual(yield* sql`PRAGMA foreign_keys`, [{ foreign_keys: 1 }]);
+          assert.deepEqual(yield* sql`PRAGMA checkpoint_fullfsync`, [{ checkpoint_fullfsync: 1 }]);
+          const history = yield* sql<{ readonly migration_id: number; readonly name: string }>`
+          SELECT migration_id, name FROM effect_sql_migrations ORDER BY migration_id
+        `;
+          assert.deepEqual(
+            history.map(({ migration_id, name }) => [migration_id, name]),
+            migrationManifest.map(([id, name]) => [id, name]),
+          );
+          if (!reopen) {
+            if (existingPageSize === undefined) {
+              assert.equal(NodeFS.statSync(`${dbPath}-wal`).size, 0);
+            }
+            yield* sql`CREATE TABLE retained_work(value TEXT)`;
+            yield* sql`INSERT INTO retained_work VALUES ('committed')`;
+          }
+          assert.deepEqual(yield* sql`SELECT value FROM retained_work`, [{ value: "committed" }]);
+          if (existingPageSize !== undefined) {
+            assert.deepEqual(yield* sql`SELECT value FROM existing_work`, [{ value: "retained" }]);
+          }
+        }).pipe(
+          Effect.provide(
+            SqlitePersistence.layerFromPath(dbPath).pipe(Layer.provide(NodeServices.layer)),
+          ),
+        );
+      }
+    }).pipe(
+      Effect.ensuring(Effect.sync(() => NodeFS.rmSync(tempDir, { recursive: true, force: true }))),
+    );
+  },
+);

@@ -158,7 +158,8 @@ export const layerFromProjectStore: Layer.Layer<
         const supportedRuntimeModes =
           instance === undefined
             ? undefined
-            : (yield* instance.snapshot.getSnapshot).supportedRuntimeModes;
+            : (yield* instance.snapshot.ensureReady ?? instance.snapshot.getSnapshot)
+                .supportedRuntimeModes;
         const cwd =
           input.thread.worktreePath ??
           (yield* projects.get(input.thread.projectId).pipe(

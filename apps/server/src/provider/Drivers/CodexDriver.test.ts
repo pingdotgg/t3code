@@ -20,6 +20,7 @@ import * as PlatformError from "effect/PlatformError";
 import * as Schema from "effect/Schema";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
+import * as TestClock from "effect/testing/TestClock";
 import { HttpClient, HttpClientResponse } from "effect/http";
 import * as ChildProcess from "effect/process/ChildProcess";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
@@ -161,9 +162,8 @@ it.layer(layerTest)("CodexDriver", (it) => {
           Parameters<CodexAdapterV2.CodexAppServerClientFactoryShape["open"]>[0]
         > = [];
 
-        let interruptedChecks = 0;
         let failAcquire = false;
-        const startupChecksInterrupted = yield* Deferred.make<void>();
+        let resolutions = 0;
         const acquire = () =>
           Effect.suspend(() => {
             if (failAcquire)
@@ -173,13 +173,7 @@ it.layer(layerTest)("CodexDriver", (it) => {
                   detail: "The fixture runtime is unavailable",
                 }),
               );
-            if (interruptedChecks === 2) return Effect.succeed(executable);
-            interruptedChecks += 1;
-            return (
-              interruptedChecks === 2
-                ? Deferred.succeed(startupChecksInterrupted, undefined)
-                : Effect.void
-            ).pipe(Effect.andThen(Effect.interrupt));
+            return Effect.succeed(executable);
           });
         const instance = yield* CodexDriver.create({
           instanceId,
@@ -202,7 +196,11 @@ it.layer(layerTest)("CodexDriver", (it) => {
             CodexInstallation.CodexInstallation.of({
               ...installation,
               managedDirectory: "unused-managed-installation",
-              resolve: () => Effect.succeed(executable),
+              resolve: () =>
+                Effect.sync(() => {
+                  resolutions++;
+                  return executable;
+                }),
               acquire,
             }),
           ),
@@ -234,7 +232,8 @@ it.layer(layerTest)("CodexDriver", (it) => {
           Stream.runHead,
           Effect.forkScoped,
         );
-        yield* Deferred.await(startupChecksInterrupted);
+        yield* TestClock.adjust("1 second");
+        expect(resolutions).toBe(0);
         const refresh = yield* instance.snapshot.refresh.pipe(Effect.forkChild);
         if (replacementTiming === "during-probe") {
           yield* Deferred.await(probeEntered);

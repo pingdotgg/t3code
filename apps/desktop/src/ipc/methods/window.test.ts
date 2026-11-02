@@ -6,8 +6,15 @@ import { ManagedPolicyFileError } from "@t3tools/shared/managedPolicyFile";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Ref from "effect/Ref";
+import * as SubscriptionRef from "effect/SubscriptionRef";
+import * as PubSub from "effect/PubSub";
+import * as Queue from "effect/Queue";
+import * as Stream from "effect/Stream";
+import * as Electron from "electron";
 import { vi } from "vite-plus/test";
 import type * as Electron from "electron";
 
@@ -17,7 +24,8 @@ const { focusedWebContents, ownerWindow } = vi.hoisted(() => ({
 }));
 vi.mock("electron", () => ({
   webContents: { getFocusedWebContents: focusedWebContents },
-  BrowserWindow: { fromWebContents: ownerWindow },
+  BrowserWindow: { fromWebContents: ownerWindow, getAllWindows: vi.fn(() => []) },
+  powerMonitor: { on: vi.fn(), removeListener: vi.fn() },
 }));
 
 import * as DesktopBackendConfiguration from "../../backend/DesktopBackendConfiguration.ts";
@@ -25,6 +33,8 @@ import * as DesktopBackendManager from "../../backend/DesktopBackendManager.ts";
 import * as DesktopBackendPool from "../../backend/DesktopBackendPool.ts";
 import * as DesktopAppSettings from "../../settings/DesktopAppSettings.ts";
 import * as DesktopManagedPolicy from "../../app/DesktopManagedPolicy.ts";
+import * as DesktopState from "../../app/DesktopState.ts";
+import * as DesktopLocalEnvironmentAuth from "../../backend/DesktopLocalEnvironmentAuth.ts";
 import * as ElectronDialog from "../../electron/ElectronDialog.ts";
 import * as ElectronWindow from "../../electron/ElectronWindow.ts";
 import * as IpcChannels from "../channels.ts";
@@ -32,11 +42,60 @@ import * as DesktopIpc from "../DesktopIpc.ts";
 import {
   getLocalEnvironmentBootstraps,
   installRelayTelemetryEnabled,
+  getLocalEnvironmentBearerToken,
+  installLocalEnvironmentBootstrapEvents,
   pickProjectFavicon,
   probeRemoteEditors,
   readMedia,
   syncHtmlFullscreen,
 } from "./window.ts";
+
+it.effect.each(["ready before request", "ready after request", "restart before ready"])(
+  "exchanges a renderer's bearer token with %s",
+  (ordering) =>
+    Effect.gen(function* () {
+      const primaryBackendStartup = yield* SubscriptionRef.make<DesktopState.PrimaryBackendStartup>(
+        {
+          _tag: "Starting",
+        },
+      );
+      const exchanges = yield* Ref.make(0);
+      const backendReady = yield* Ref.make(false);
+      const quitting = yield* Ref.make(false);
+      const request = getLocalEnvironmentBearerToken.handler(undefined).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            Layer.succeed(DesktopState.DesktopState, {
+              primaryBackendStartup,
+              backendReady,
+              quitting,
+            }),
+            Layer.succeed(DesktopLocalEnvironmentAuth.DesktopLocalEnvironmentAuth, {
+              getBearerToken: Ref.update(exchanges, (count) => count + 1).pipe(Effect.as("bearer")),
+            }),
+          ),
+        ),
+      );
+      if (ordering === "ready before request") {
+        yield* SubscriptionRef.set(primaryBackendStartup, { _tag: "Ready" });
+      }
+      const fiber = yield* request.pipe(Effect.forkChild({ startImmediately: true }));
+      if (ordering !== "ready before request") {
+        assert.equal(yield* Ref.get(exchanges), 0);
+        if (ordering === "restart before ready") {
+          yield* SubscriptionRef.set(primaryBackendStartup, {
+            _tag: "Failing",
+            reason: "backend restarting",
+            output: "process exited",
+          });
+          assert.equal(yield* Ref.get(exchanges), 0);
+        }
+        yield* SubscriptionRef.set(primaryBackendStartup, { _tag: "Ready" });
+      }
+      assert.equal(yield* Fiber.join(fiber), "bearer");
+      assert.equal(yield* Ref.get(exchanges), 1);
+    }),
+);
 
 const readyWslConfig: DesktopBackendManager.DesktopBackendStartConfig = {
   executablePath: "wsl.exe",
@@ -474,3 +533,45 @@ it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32")(
       assert.include(editors, "webstorm");
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
+
+describe("local environment bootstrap events", () => {
+  it.effect("forwards topology changes and resume, and disposes the resume listener", () =>
+    Effect.gen(function* () {
+      const changes = yield* PubSub.sliding<void>({ capacity: 1, replay: 1 });
+      const sent = yield* Queue.unbounded<string>();
+      const send = vi.fn();
+      vi.mocked(Electron.BrowserWindow.getAllWindows).mockReturnValue([
+        { isDestroyed: () => false, webContents: { send } } as unknown as Electron.BrowserWindow,
+      ]);
+      vi.mocked(Electron.powerMonitor.on).mockClear();
+      vi.mocked(Electron.powerMonitor.removeListener).mockClear();
+      yield* Effect.scoped(
+        Effect.gen(function* () {
+          yield* installLocalEnvironmentBootstrapEvents().pipe(
+            Effect.provide(
+              Layer.mergeAll(
+                Layer.mock(DesktopBackendPool.DesktopBackendPool)({
+                  changes: Stream.fromPubSub(changes),
+                }),
+                Layer.mock(ElectronWindow.ElectronWindow)({
+                  sendAll: (channel) => Queue.offer(sent, channel).pipe(Effect.asVoid),
+                }),
+              ),
+            ),
+          );
+          yield* PubSub.publish(changes, undefined);
+          assert.equal(yield* Queue.take(sent), "desktop:local-environment-bootstraps-changed");
+          const [event, resume] = vi.mocked(Electron.powerMonitor.on).mock.calls.at(-1)!;
+          assert.equal(event, "resume");
+          resume();
+          assert.deepEqual(send.mock.calls, [["desktop:local-environment-bootstraps-changed"]]);
+        }),
+      );
+      assert.equal(
+        vi.mocked(Electron.powerMonitor.removeListener).mock.calls.at(-1)?.[0],
+        "resume",
+      );
+      vi.mocked(Electron.BrowserWindow.getAllWindows).mockReturnValue([]);
+    }),
+  );
+});
