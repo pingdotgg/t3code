@@ -49,6 +49,7 @@ interface ScannerTestInput {
   readonly piAgentDir?: string;
   readonly importedWorkspaceRoots?: ReadonlyArray<string>;
   readonly configBaseDir?: string;
+  readonly scratchDir?: string;
   readonly providerInstances?: ContractServerSettings["providerInstances"];
 }
 
@@ -83,9 +84,18 @@ const layerScannerTest = (input: ScannerTestInput) =>
             ...input.providerInstances,
           },
         }),
-        ServerConfig.layerTest(
-          input.claudeHomePath,
-          input.configBaseDir ?? { prefix: "t3code-scanner-config-" },
+        Layer.effect(
+          ServerConfig.ServerConfig,
+          ServerConfig.ServerConfig.pipe(
+            Effect.map((config) => ({ ...config, scratchDir: input.scratchDir })),
+          ),
+        ).pipe(
+          Layer.provide(
+            ServerConfig.layerTest(
+              input.claudeHomePath,
+              input.configBaseDir ?? { prefix: "t3code-scanner-config-" },
+            ),
+          ),
         ),
         layerProjectStore(input.importedWorkspaceRoots ?? []),
       ),
@@ -724,32 +734,54 @@ it.layer(NodeServices.layer)("AgentSessionScanner", (it) => {
       }),
     );
 
-    it.effect("excludes the home directory, temporary root, and T3 data directory", () =>
-      Effect.gen(function* () {
-        const path = yield* Path.Path;
-        const claudeHomePath = yield* makeTempDir("t3code-claude-home-");
-        const codexHomePath = yield* makeTempDir("t3code-codex-home-");
-        const configBaseDir = yield* makeTempDir("t3code-scanner-base-");
-        const workspace = yield* makeTempDir("t3code-workspace-");
+    for (const scratchKind of ["directory", "symlink"] as const) {
+      it.effect.skipIf(scratchKind === "symlink" && !symlinksSupported)(
+        `excludes home, temporary, data, and configured Scratch ${scratchKind}`,
+        () =>
+          Effect.gen(function* () {
+            const path = yield* Path.Path;
+            const claudeHomePath = yield* makeTempDir("t3code-claude-home-");
+            const codexHomePath = yield* makeTempDir("t3code-codex-home-");
+            const configBaseDir = yield* makeTempDir("t3code-scanner-base-");
+            const scratchDir = yield* makeTempDir("t3code-scanner-custom-");
+            const workspace = `${scratchDir}-project`;
+            const fs = yield* FileSystem.FileSystem;
+            yield* fs.makeDirectory(workspace);
+            yield* Effect.addFinalizer(() =>
+              fs.remove(workspace, { recursive: true }).pipe(Effect.orDie),
+            );
+            const chat = path.join(scratchDir, "chat");
+            yield* fs.makeDirectory(chat);
+            const configuredScratchDir =
+              scratchKind === "symlink" ? path.join(configBaseDir, "scratch-link") : scratchDir;
+            if (scratchKind === "symlink") yield* fs.symlink(scratchDir, configuredScratchDir);
 
-        for (const [index, cwd] of [
-          NodeOS.homedir(),
-          NodeOS.tmpdir(),
-          configBaseDir,
-          workspace,
-        ].entries()) {
-          yield* writeTranscript({
-            filePath: path.join(claudeHomePath, "projects", `-slug-${index}`, "session.jsonl"),
-            contents: claudeSessionLine(cwd),
-            mtimeMs: Date.parse("2026-01-01T00:00:00.000Z") + index,
-          });
-        }
+            for (const [index, cwd] of [
+              NodeOS.homedir(),
+              NodeOS.tmpdir(),
+              configBaseDir,
+              scratchDir,
+              chat,
+              workspace,
+            ].entries()) {
+              yield* writeTranscript({
+                filePath: path.join(claudeHomePath, "projects", `-slug-${index}`, "session.jsonl"),
+                contents: claudeSessionLine(cwd),
+                mtimeMs: Date.parse("2026-01-01T00:00:00.000Z") + index,
+              });
+            }
 
-        const result = yield* runScan({ claudeHomePath, codexHomePath, configBaseDir });
+            const result = yield* runScan({
+              claudeHomePath,
+              codexHomePath,
+              configBaseDir,
+              scratchDir: configuredScratchDir,
+            });
 
-        expect(result.candidates.map((candidate) => candidate.path)).toEqual([workspace]);
-      }),
-    );
+            expect(result.candidates.map((candidate) => candidate.path)).toEqual([workspace]);
+          }),
+      );
+    }
 
     it.effect("excludes T3-managed worktree sandboxes", () =>
       Effect.gen(function* () {

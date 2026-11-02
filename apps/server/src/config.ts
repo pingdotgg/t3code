@@ -88,6 +88,7 @@ export class ServerConfig extends Context.Service<
     readonly privateNetworkOnly?: boolean | undefined;
     readonly cwd: string;
     readonly baseDir: string;
+    readonly scratchDir?: string | undefined;
     readonly staticDir: string | undefined;
     readonly devUrl: URL | undefined;
     readonly devAuthToken?: Redacted.Redacted<string> | undefined;

@@ -137,6 +137,10 @@ const EnvServerConfig = Config.all({
   port: Config.Port("T3CODE_PORT").pipe(Config.option, Config.map(Option.getOrUndefined)),
   host: Config.String("T3CODE_HOST").pipe(Config.option, Config.map(Option.getOrUndefined)),
   t3Home: Config.String("T3CODE_HOME").pipe(Config.option, Config.map(Option.getOrUndefined)),
+  scratchDir: Config.String("T3CODE_SCRATCH_DIR").pipe(
+    Config.option,
+    Config.map(Option.getOrUndefined),
+  ),
   devUrl: Config.URL("VITE_DEV_SERVER_URL").pipe(Config.option, Config.map(Option.getOrUndefined)),
   devAllowedOrigins: Config.String("T3CODE_DEV_ALLOWED_ORIGINS").pipe(
     Config.withDefault(""),
@@ -337,6 +341,9 @@ export const resolveServerConfig = Effect.fn("config.resolveServerConfig")(funct
   );
   const rawCwd = Option.getOrElse(normalizedFlags.cwd, () => process.cwd());
   const cwd = path.resolve(yield* expandHomePath(rawCwd.trim()));
+  const scratchDir = env.scratchDir?.trim()
+    ? path.resolve(yield* expandHomePath(env.scratchDir.trim()))
+    : undefined;
   const derivedPaths = yield* ServerConfig.deriveServerPaths(baseDir, devUrl, {
     baseDirIsExplicit: Option.isSome(explicitBaseDir),
   });
@@ -498,6 +505,7 @@ export const resolveServerConfig = Effect.fn("config.resolveServerConfig")(funct
     cwd,
     baseDir,
     ...derivedPaths,
+    ...(scratchDir === undefined ? {} : { scratchDir }),
     serverTracePath,
     host,
     ...(privateNetworkOnly ? { privateNetworkOnly } : {}),
