@@ -548,6 +548,8 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
       );
       let appliedModel: string | null = null;
       let appliedThinking: string | null = null;
+      // Pi re-clamps its thinking level on every set_model; the level is unknown until we send one.
+      let thinkingStale = false;
       let appliedSessionName: string | null = null;
       const outOfTurnExtensionErrors: Array<PiRpcRecord> = [];
       let lastKnownLeaf: string | null = null;
@@ -2209,6 +2211,7 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
           threadState = null;
           appliedModel = null;
           appliedThinking = null;
+          thinkingStale = false;
           appliedSessionName = null;
           baselineModel = null;
           baselineThinking = null;
@@ -2304,14 +2307,12 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
 
       const applySelection = Effect.fnUntraced(function* (modelSelection: ModelSelection) {
         const thinking = getModelSelectionStringOptionValue(modelSelection, "thinking");
-        // Pi re-clamps its thinking level on every set_model, so the cached level is stale.
-        let modelChanged = false;
         if (modelSelection.model === PI_INHERIT_MODEL_SLUG) {
           if (appliedModel !== null && baselineModel !== null) {
             const restoredModel = yield* request({ type: "set_model", ...baselineModel });
             contextWindow = rememberModelContextWindow(restoredModel);
             appliedModel = null;
-            modelChanged = true;
+            thinkingStale = true;
             const updatedAt = yield* DateTime.now;
             sessionEntity = { ...sessionEntity, model: PI_INHERIT_MODEL_SLUG, updatedAt };
             yield* emit({
@@ -2322,12 +2323,12 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
           }
           if (
             thinking === undefined &&
-            appliedThinking !== null &&
             baselineThinking !== null &&
-            appliedThinking !== baselineThinking
+            (thinkingStale || (appliedThinking !== null && appliedThinking !== baselineThinking))
           ) {
             yield* request({ type: "set_thinking_level", level: baselineThinking });
             appliedThinking = null;
+            thinkingStale = false;
           }
         } else if (modelSelection.model !== appliedModel) {
           const parsed = parsePiModelSlug(modelSelection.model);
@@ -2343,7 +2344,7 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
           });
           contextWindow = rememberModelContextWindow(selectedModel);
           appliedModel = modelSelection.model;
-          modelChanged = true;
+          thinkingStale = true;
           const updatedAt = yield* DateTime.now;
           sessionEntity = { ...sessionEntity, model: modelSelection.model, updatedAt };
           yield* emit({
@@ -2354,11 +2355,12 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
         }
         if (
           thinking !== undefined &&
-          (modelChanged || thinking !== appliedThinking) &&
+          (thinkingStale || thinking !== appliedThinking) &&
           PI_THINKING_LEVELS.has(thinking)
         ) {
           yield* request({ type: "set_thinking_level", level: thinking });
           appliedThinking = thinking;
+          thinkingStale = false;
         }
       });
 
@@ -2969,6 +2971,7 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
                       lastNativeThreadId = forkSessionFile;
                       appliedModel = null;
                       appliedThinking = null;
+                      thinkingStale = false;
                       appliedSessionName = null;
                       lastKnownLeaf = leafId;
                       leafCursorStale = entriesData === undefined;

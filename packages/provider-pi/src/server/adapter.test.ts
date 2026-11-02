@@ -1833,45 +1833,98 @@ describe("PiAdapterV2", () => {
     }).pipe(Effect.scoped, Effect.provide(layerTest)),
   );
 
-  it.effect("reapplies the selected thinking level after switching models", () =>
+  it.effect.each([
+    {
+      label: "after switching models",
+      turns: [
+        ["xai/grok-4.6", "xhigh"],
+        ["xai/grok-4.6-fast", "xhigh"],
+        ["xai/grok-4.6-fast", "low"],
+      ],
+      expected: [
+        "set_model grok-4.6",
+        "set_thinking_level xhigh",
+        "set_model grok-4.6-fast",
+        "set_thinking_level xhigh",
+        "set_thinking_level low",
+      ],
+    },
+    {
+      label: "on a later selection when the switch carried no level",
+      turns: [
+        ["xai/grok-4.6", "high"],
+        ["xai/grok-4.6-fast", undefined],
+        ["xai/grok-4.6-fast", "high"],
+      ],
+      expected: [
+        "set_model grok-4.6",
+        "set_thinking_level high",
+        "set_model grok-4.6-fast",
+        "set_thinking_level high",
+      ],
+    },
+    {
+      label: "as the Pi default after returning to the default model",
+      state: { model: { provider: "xai", id: "grok-4.6" }, thinkingLevel: "medium" },
+      turns: [
+        ["xai/grok-4.6-fast", "medium"],
+        ["default", undefined],
+      ],
+      expected: [
+        "set_model grok-4.6-fast",
+        "set_thinking_level medium",
+        "set_model grok-4.6",
+        "set_thinking_level medium",
+      ],
+    },
+  ] satisfies ReadonlyArray<{
+    label: string;
+    state?: Record<string, unknown>;
+    turns: ReadonlyArray<readonly [string, string | undefined]>;
+    expected: ReadonlyArray<string>;
+  }>)("reapplies the thinking level $label", ({ state, turns, expected }) =>
     Effect.gen(function* () {
       const fake = yield* makeFakePi;
+      if (state !== undefined) fake.queueState({ ...state, sessionFile: FAKE_SESSION_FILE });
       const { runtime, takeEvent } = yield* openRuntime(fake);
       const providerThread = yield* runtime.ensureThread({
         threadId: THREAD_ID,
         modelSelection: modelSelection("default"),
         runtimePolicy,
       });
-      const runTurn = Effect.fnUntraced(function* (
-        model: string,
-        thinking: string,
-        runOrdinal: number,
-      ) {
+      for (const [index, [model, thinking]] of turns.entries()) {
         yield* startTurn(
           runtime,
           providerThread,
           "default",
           [],
           "Hello pi",
-          { instanceId: PI_INSTANCE_ID, model, options: [{ id: "thinking", value: thinking }] },
-          runOrdinal,
+          {
+            instanceId: PI_INSTANCE_ID,
+            model,
+            ...(thinking === undefined ? {} : { options: [{ id: "thinking", value: thinking }] }),
+          },
+          index + 1,
         );
         yield* fake.emit({ type: "agent_start" });
         yield* fake.emit({ type: "agent_end", messages: [], willRetry: false });
         yield* fake.emit({ type: "agent_settled" });
         yield* takeEvent((event) => event.type === "turn.terminal");
-      });
-
-      yield* runTurn("xai/grok-4.6", "xhigh", 1);
-      yield* runTurn("xai/grok-4.6-fast", "xhigh", 2);
-      yield* runTurn("xai/grok-4.6-fast", "low", 3);
-
-      assert.equal((yield* fake.takeRequest("set_model"))["modelId"], "grok-4.6");
-      assert.equal((yield* fake.takeRequest("set_thinking_level"))["level"], "xhigh");
-      assert.equal((yield* fake.takeRequest("set_model"))["modelId"], "grok-4.6-fast");
-      // Pi clamped the level for the new model, so the selection must be sent again.
-      assert.equal((yield* fake.takeRequest("set_thinking_level"))["level"], "xhigh");
-      assert.equal((yield* fake.takeRequest("set_thinking_level"))["level"], "low");
+      }
+      // Pi re-clamps its level on set_model, so the level must be sent again after each switch.
+      assert.deepStrictEqual(
+        fake
+          .allRequests()
+          .filter(
+            (request) => request.type === "set_model" || request.type === "set_thinking_level",
+          )
+          .map((request) =>
+            request.type === "set_model"
+              ? `set_model ${String(request["modelId"])}`
+              : `set_thinking_level ${String(request["level"])}`,
+          ),
+        expected,
+      );
     }).pipe(Effect.scoped, Effect.provide(layerTest)),
   );
 
