@@ -8287,16 +8287,26 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           // Slash-command forks parent frames on `forked-command-<name>`, reused per run; agent_id is the task id.
           const frameParentId = parentToolUseIdFromSdkMessage(message);
           const frameAgentId = text(field(message, "agent_id"));
-          if (
-            frameParentId !== null &&
-            frameAgentId !== undefined &&
-            (yield* Ref.get(sessionSubagentsByTaskId)).has(frameAgentId)
-          ) {
-            yield* Ref.update(sessionSubagentTaskIdsByToolUseId, (current) =>
-              current.get(frameParentId) === frameAgentId
-                ? current
-                : new Map(current).set(frameParentId, frameAgentId),
-            );
+          if (frameParentId !== null && frameAgentId !== undefined) {
+            const subagents = yield* Ref.get(sessionSubagentsByTaskId);
+            yield* Ref.update(sessionSubagentTaskIdsByToolUseId, (current) => {
+              const aliasedTaskId = current.get(frameParentId);
+              if (aliasedTaskId === frameAgentId) return current;
+              if (subagents.has(frameAgentId)) {
+                return new Map(current).set(frameParentId, frameAgentId);
+              }
+              // An unstarted agent buffers until task_started instead of reaching a fork's earlier run.
+              // Aliases made by a launching tool call stay.
+              if (
+                aliasedTaskId === undefined ||
+                subagents.get(aliasedTaskId)?.runToolUseId === frameParentId
+              ) {
+                return current;
+              }
+              const next = new Map(current);
+              next.delete(frameParentId);
+              return next;
+            });
           }
           if (message.type === "rate_limit_event") {
             const rateLimitInfo = message.rate_limit_info;
@@ -8896,7 +8906,10 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 yield* updateClaudeSubagentNode({
                   context,
                   taskId: subagent.task.nativeTaskRef?.nativeId ?? String(subagent.task.id),
-                  toolUseId: parentToolUseId,
+                  // A fork's `forked-command-<name>` parent is shared by every run; never pin it to this one.
+                  ...(subagent.runToolUseId === parentToolUseId
+                    ? { toolUseId: parentToolUseId }
+                    : {}),
                   model,
                   status: subagent.task.status,
                 });
@@ -8989,12 +9002,14 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 activeContext: context,
               });
             } else {
+              const launchToolUseId =
+                message.tool_use_id ?? (yield* pendingFramesToolUseIdForAgent(message.task_id));
               const launch =
-                message.tool_use_id === undefined
+                launchToolUseId === undefined
                   ? undefined
-                  : pendingSubagentLaunchesByToolUseId.get(message.tool_use_id);
-              if (message.tool_use_id !== undefined) {
-                pendingSubagentLaunchesByToolUseId.delete(message.tool_use_id);
+                  : pendingSubagentLaunchesByToolUseId.get(launchToolUseId);
+              if (launchToolUseId !== undefined) {
+                pendingSubagentLaunchesByToolUseId.delete(launchToolUseId);
               }
               const owner =
                 launch?.ownerToolUseId === undefined
@@ -9002,8 +9017,8 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                   : yield* resolveSubagentByToolUseId(context, launch.ownerToolUseId);
               // Nested subagents default to their owner's model.
               const model = launch?.model ?? owner?.task.model ?? undefined;
-              // A `context: fork` skill runs at its frontmatter effort, which T3 cannot see.
-              const isForkSkill =
+              // Only Agent calls inherit a known effort; a skill fork may set one in frontmatter T3 cannot read.
+              const effortUnknown =
                 message.tool_use_id === undefined ||
                 findToolCall(context, message.tool_use_id)?.toolName === "Skill";
               if (
@@ -9032,7 +9047,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 ...(message.tool_use_id === undefined ? {} : { toolUseId: message.tool_use_id }),
                 ...(message.prompt === undefined ? {} : { prompt: message.prompt }),
                 ...(model === undefined ? {} : { model }),
-                ...(isForkSkill
+                ...(effortUnknown
                   ? { effort: null }
                   : launch?.effort === undefined
                     ? {}
@@ -9537,19 +9552,31 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           }
         });
 
+        // Slash-command forks start without a tool_use_id; their frames name the task as agent_id.
+        const pendingFramesToolUseIdForAgent = Effect.fnUntraced(function* (taskId: string) {
+          for (const [toolUseId, frames] of yield* Ref.get(pendingSubagentFramesByToolUseId)) {
+            if (frames.some((frame) => text(field(frame, "agent_id")) === taskId)) {
+              return toolUseId;
+            }
+          }
+          return undefined;
+        });
+
         const takeReleasableSubagentFrames = Effect.fnUntraced(function* (message: SDKMessage) {
           if (
             message.type !== "system" ||
             (message.subtype !== "task_started" &&
               message.subtype !== "task_progress" &&
               message.subtype !== "task_notification") ||
-            message.tool_use_id === undefined ||
             !(yield* Ref.get(sessionSubagentsByTaskId)).has(message.task_id)
           ) {
             return [];
           }
-          const toolUseId = message.tool_use_id;
           const taskId = message.task_id;
+          const toolUseId = message.tool_use_id ?? (yield* pendingFramesToolUseIdForAgent(taskId));
+          if (toolUseId === undefined) {
+            return [];
+          }
           yield* Ref.update(sessionSubagentTaskIdsByToolUseId, (current) =>
             current.get(toolUseId) === taskId ? current : new Map(current).set(toolUseId, taskId),
           );
