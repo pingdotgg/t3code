@@ -422,6 +422,37 @@ describe("AgentAwarenessRelay", () => {
         yield* relay.drain;
         assert.equal(publications.length, 3);
         assert.equal(publications[2]?.state, null);
+
+        for (const revision of [1, 2]) {
+          yield* Queue.offer(events, {
+            id: EventId.make(`event:pull-request-synced:${revision}`),
+            type: "thread.pull-request-synced",
+            threadId: THREAD_ID,
+            occurredAt: yield* DateTime.now,
+            payload: settled,
+          });
+          yield* Queue.take(pulls);
+          yield* relay.drain;
+          yield* TestClock.adjust("5 seconds");
+          yield* relay.drain;
+          assert.equal(publications.length, 3);
+        }
+
+        yield* Ref.set(currentShell, shell());
+        yield* relay.publishThread(THREAD_ID);
+        assert.equal(publications[3]?.state?.phase, "running");
+        yield* Ref.set(currentShell, settled);
+        yield* relay.publishThread(THREAD_ID);
+        yield* TestClock.adjust("5 seconds");
+        yield* relay.drain;
+        assert.equal(publications.length, 5);
+        assert.equal(publications[4]?.state, null);
+
+        yield* Ref.set(currentShell, terminal);
+        yield* relay.publishThread(THREAD_ID);
+        yield* TestClock.adjust("5 seconds");
+        yield* relay.drain;
+        assert.equal(publications.length, 5);
       }).pipe(Effect.scoped),
   );
 

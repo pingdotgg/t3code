@@ -165,6 +165,14 @@ function agentAwarenessPublishIdentity(state: RelayAgentActivityState | null): s
   return JSON.stringify(meaningfulState);
 }
 
+const NULL_PUBLISH_IDENTITY = agentAwarenessPublishIdentity(null);
+
+// A published tombstone is kept so unchanged clears dedupe, but it is not a relay row.
+function hasPublishedRelayRow(published: ReadonlyMap<ThreadId, string>, threadId: ThreadId) {
+  const identity = published.get(threadId);
+  return identity !== undefined && identity !== NULL_PUBLISH_IDENTITY;
+}
+
 function resolveAgentActivityPublishingStartupState(input: {
   readonly relayConfigured: boolean;
   readonly publishEnabled: boolean;
@@ -517,7 +525,7 @@ export const make = Effect.gen(function* () {
     if (
       threadShell !== null &&
       !isListedThreadLineage(threadShell.lineage) &&
-      !(yield* Ref.get(publishedStateByThreadRef)).has(threadId)
+      !hasPublishedRelayRow(yield* Ref.get(publishedStateByThreadRef), threadId)
     ) {
       // Subagents and side chats have no relay rows to clear; per-event tombstones would needlessly redeliver user aggregates.
       return;
@@ -538,7 +546,7 @@ export const make = Effect.gen(function* () {
     const publishedStateByThread = yield* Ref.get(publishedStateByThreadRef);
     if (
       (snapshot.state?.phase === "completed" || snapshot.state?.phase === "failed") &&
-      !publishedStateByThread.has(threadId)
+      !hasPublishedRelayRow(publishedStateByThread, threadId)
     ) {
       if (Option.isNone(thread) || !terminalWorkSinceStart(thread.value, startedAt)) return;
     }
@@ -557,10 +565,7 @@ export const make = Effect.gen(function* () {
     // Confirm tombstones over live state to avoid removing active cards.
     // Confirm completion: a run can end moments before its continuation starts, and the relay
     // alerts on every move into completed.
-    const requiresConfirmation =
-      (snapshot.state === null &&
-        publishedStateByThread.get(threadId) !== agentAwarenessPublishIdentity(null)) ||
-      snapshot.state?.phase === "completed";
+    const requiresConfirmation = snapshot.state === null || snapshot.state?.phase === "completed";
     if (requiresConfirmation) {
       if (snapshot.state?.phase === "completed") heldCompletions.add(threadId);
       const nowMs = (yield* DateTime.now).epochMilliseconds;
@@ -640,15 +645,9 @@ export const make = Effect.gen(function* () {
     }).pipe(withRelayClientTracing);
     publishConfirmDeadlines.delete(threadId);
     heldCompletions.delete(threadId);
-    yield* Ref.update(publishedStateByThreadRef, (publishedStates) => {
-      const nextPublishedStates = new Map(publishedStates);
-      if (snapshot.state === null) {
-        nextPublishedStates.delete(threadId);
-      } else {
-        nextPublishedStates.set(threadId, publishIdentity);
-      }
-      return nextPublishedStates;
-    });
+    yield* Ref.update(publishedStateByThreadRef, (publishedStates) =>
+      new Map(publishedStates).set(threadId, publishIdentity),
+    );
   });
 
   const processThreadPublish = Effect.fnUntraced(function* (threadId: ThreadId) {
