@@ -21,7 +21,7 @@ describe("mergeProviderInstanceEnvironment", () => {
             ],
             baseEnv,
           ),
-        ).toEqual({ Path: "C:\\provider-gh", CUSTOM: "override" });
+        ).toEqual({ PATH: "C:\\provider-gh", CUSTOM: "override" });
         expect(baseEnv).toEqual({ PATH: "C:\\old", Custom: "inherited" });
       }).pipe(Effect.provideService(HostProcess.Platform, "win32")),
   );
@@ -94,6 +94,33 @@ describe("mergeProviderInstanceEnvironment", () => {
         OPENROUTER_API_KEY: "sk-or-test",
         ANTHROPIC_API_KEY: "",
         OPENAI_API_KEY: "inherited",
+        PATH: "/bin",
+      });
+    }),
+  );
+
+  it.effect("replaces every inherited spelling of a name on Windows, and only there", () =>
+    Effect.gen(function* () {
+      const merge = (platform: NodeJS.Platform) =>
+        mergeProviderInstanceEnvironment(
+          [{ name: "Https_Proxy", value: "http://gateway", sensitive: false }],
+          { HTTPS_PROXY: "http://mine", PATH: "/bin" },
+        ).pipe(Effect.provideService(HostProcess.Platform, platform));
+      // A home variable in another spelling is still expanded.
+      expect(
+        yield* mergeProviderInstanceEnvironment(
+          [{ name: "Codex_Home", value: "~/corp", sensitive: false }],
+          {},
+        ).pipe(
+          Effect.provideService(HostProcess.Platform, "win32"),
+          Effect.provideService(HostProcess.HomeDirectory, "/home/ada"),
+        ),
+      ).toEqual({ CODEX_HOME: "/home/ada/corp" });
+      // Upper case sorts first, so it also wins where a spawn merges the parent environment back.
+      expect(yield* merge("win32")).toEqual({ HTTPS_PROXY: "http://gateway", PATH: "/bin" });
+      expect(yield* merge("linux")).toEqual({
+        HTTPS_PROXY: "http://mine",
+        Https_Proxy: "http://gateway",
         PATH: "/bin",
       });
     }),

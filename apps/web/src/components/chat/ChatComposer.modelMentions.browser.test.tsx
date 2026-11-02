@@ -51,7 +51,7 @@ vi.mock("./ComposerCommandMenuLayer", () => ({
 vi.mock("./ComposerControlsBar", () => ({ ComposerControlsBar: () => null }));
 vi.mock("./ComposerFooterControls", () => ({ ComposerFooterPrimaryActions: () => null }));
 vi.mock("./useProviderWorkspaceSnapshotRefresh", () => ({
-  useProviderWorkspaceSnapshotRefresh: () => () => {},
+  useProviderWorkspaceSnapshotRefresh: () => ({ refresh: () => {}, scanning: false }),
 }));
 vi.mock("./useComposerMenuItems", () => ({
   useComposerMenuItems: () => ({
@@ -120,7 +120,7 @@ function setup() {
     activeThreadId: thread.id,
     activeThread: thread,
     activeThreadShell: null,
-    promptHistoryMessages: [],
+    promptHistoryEntries: [],
     forceExpandedOnMobile: false,
     projectSelectionRequired: false,
     phase: "ready",
@@ -157,7 +157,9 @@ function setup() {
     activeProjectDefaultModelSelection: null,
     activeThreadModelSelection: thread.modelSelection,
     activeProjectId: thread.projectId,
-    activeContextWindow: null,
+    contextWindowEntries: [],
+    contextWindowLiveUsage: null,
+    contextWindowProviderThread: null,
     compactThreadUnavailable: true,
     compactDisabled: true,
     compactDisabledReason: null,

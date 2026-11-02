@@ -2800,6 +2800,7 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
 ) {
   const macAppId = yield* Config.String("T3CODE_MACOS_APP_ID").pipe(Config.option);
   const buildConfig: Record<string, unknown> = {
+    afterPack: (yield* Path.Path).join(yield* RepoRoot, "scripts/prepare-server-compile-cache.cjs"),
     appId:
       platform === "mac"
         ? Option.getOrUndefined(macAppId)?.trim() || DESKTOP_APP_ID

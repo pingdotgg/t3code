@@ -109,11 +109,16 @@ export function ProviderAuthenticationSection({
     !signedIn &&
     (provider.setup?.canAuthenticate === false ||
       (provider.driver === "acpRegistry" && auth?.methods?.length === 0));
+  const usesCredentials =
+    provider.driver === "antigravity" &&
+    (provider.auth.type === "gemini-api-key" || provider.auth.type === "agent-platform");
   const accountDescription = active
     ? auth?.phase === "starting"
-      ? (auth.message ?? "Starting sign-in…")
+      ? (auth.message ?? (usesCredentials ? "Connecting…" : "Starting sign-in…"))
       : auth?.phase === "verifying"
-        ? "Checking your account…"
+        ? usesCredentials
+          ? "Checking credentials and loading models…"
+          : "Checking your account…"
         : interaction?.type === "terminal"
           ? "Complete sign-in in the terminal below."
           : interaction?.type === "credentials"
@@ -127,7 +132,9 @@ export function ProviderAuthenticationSection({
           ? "Discovering sign-in methods…"
           : needsExternalSetup
             ? "No in-app sign-in advertised. Follow the provider's docs to finish setup."
-            : `Sign in on ${environmentLabel}.`;
+            : usesCredentials
+              ? `Connect on ${environmentLabel} to load models.`
+              : `Sign in on ${environmentLabel}.`;
   const statusMessage = auth?.phase === "failed" ? auth.message : null;
   const disabled = readOnly || pending || query.error !== null || isDiscovering;
   const installDisabled =
@@ -145,6 +152,7 @@ export function ProviderAuthenticationSection({
       ? interaction.url
       : auth?.authorizationUrl;
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Refresh the provider catalog when the external CLI installation completes.
   useEffect(() => {
     if (!canInstallCodex || installationKey === null) {
       refreshedInstallation.current = null;
@@ -155,7 +163,9 @@ export function ProviderAuthenticationSection({
     void refreshProviders({ environmentId, input: { instanceId } });
   }, [canInstallCodex, environmentId, instanceId, installationKey, refreshProviders]);
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Close the reserved OAuth browser window when this surface unmounts.
   useEffect(() => () => reservedBrowser.current?.close(), []);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Navigate or close the reserved browser as the external OAuth flow changes.
   useEffect(() => {
     if (!browserFlowId || handledBrowserFlow.current === browserFlowId) return;
     if (query.error || (auth?.flowId === browserFlowId && !active)) {
@@ -493,8 +503,12 @@ export function ProviderAuthenticationSection({
                 {signedIn
                   ? "Change account"
                   : auth?.phase === "failed" || auth?.phase === "cancelled"
-                    ? "Retry sign-in"
-                    : "Sign in"}
+                    ? usesCredentials
+                      ? "Retry connection"
+                      : "Retry sign-in"
+                    : usesCredentials
+                      ? "Connect"
+                      : "Sign in"}
               </Button>
             ) : null}
             {!active && signedIn && (provider.auth.canLogout ?? provider.setup?.canAuthenticate) ? (

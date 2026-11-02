@@ -1,8 +1,8 @@
 import type {
+  EnvironmentId,
   OrchestrationV2PendingBackgroundTask,
   OrchestrationV2ProviderGoal,
   ThreadId,
-  EnvironmentId,
 } from "@t3tools/contracts";
 import type { EnvironmentThreadShell, ThreadStructure } from "@t3tools/client-runtime/state/shell";
 import {
@@ -192,7 +192,14 @@ export function backgroundWorkNowItem(input: {
     icon: rows.every(isCommand) ? <TerminalIcon /> : <CircleDashedIcon />,
     title: only ? (
       <>
-        {verb} <span className={cn(isCommand(only) && "font-mono")}>{only.task.label}</span>
+        {verb}{" "}
+        <span
+          className={cn(
+            isCommand(only) && "font-mono in-data-[slot=popover-popup]:whitespace-pre-wrap",
+          )}
+        >
+          {only.task.label}
+        </span>
       </>
     ) : (
       presentation.title

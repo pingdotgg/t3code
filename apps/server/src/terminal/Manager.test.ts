@@ -38,6 +38,7 @@ import * as ServerConfig from "../config.ts";
 import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
 import * as ProcessRunner from "../processRunner.ts";
 import * as ServerSettings from "../serverSettings.ts";
+import * as ManagedPolicy from "../policy/ManagedPolicy.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as ProjectSetupScriptRunner from "../project/ProjectSetupScriptRunner.ts";
 import * as TerminalManager from "./Manager.ts";
@@ -766,6 +767,30 @@ it.layer(
         false,
       ]);
     }),
+  );
+
+  it.effect("labels a running command by its whole process name, spaces included", () =>
+    Effect.gen(function* () {
+      const { manager } = yield* createManager(5, {
+        subprocessPollIntervalMs: 1_000,
+        processKillGraceMs: 0,
+        processTable: Effect.succeed([
+          { pid: 9000, ppid: 1, name: "zsh" },
+          { pid: 200, ppid: 9000, name: "Google Chrome" },
+        ]),
+      }).pipe(Effect.provide(layerWithHostPlatform("darwin")));
+      const label = yield* Deferred.make<string>();
+      const unsubscribe = yield* manager.subscribe((event) =>
+        event.type === "activity"
+          ? Deferred.succeed(label, event.label).pipe(Effect.asVoid)
+          : Effect.void,
+      );
+      yield* Effect.addFinalizer(() => Effect.sync(unsubscribe));
+      yield* manager.open(openInput());
+      yield* TestClock.adjust("1 second");
+
+      expect(yield* Deferred.await(label)).toBe("Google Chrome");
+    }).pipe(Effect.provide(TestClock.layer())),
   );
 
   // Answers process-table queries after `queryDuration`, honoring the caller's
@@ -2169,6 +2194,7 @@ it.layer(
     }).pipe(
       Effect.provide(
         ServerSettings.layer.pipe(
+          Layer.provide(ManagedPolicy.layerTest()),
           Layer.provide(ServerSecretStore.layer),
           Layer.provide(SqlitePersistence.layerMemory),
           Layer.provide(

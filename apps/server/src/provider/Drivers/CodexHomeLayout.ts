@@ -88,7 +88,9 @@ export const resolveCodexHomeLayout = Effect.fn("resolveCodexHomeLayout")(functi
   const home = yield* HostProcess.HomeDirectory;
   const configuredHome =
     config.homePath.trim() ||
-    (config.setupMode === "managed" ? "" : environment.CODEX_HOME?.trim()) ||
+    (config.setupMode !== "managed" && environment.CODEX_HOME?.trim()
+      ? environment.CODEX_HOME
+      : "") ||
     "";
   const sharedHomePath = resolveHomePath(path, home, configuredHome);
   const shadowHomePath = config.shadowHomePath.trim();

@@ -39,6 +39,7 @@ import { Argument, Command, Flag } from "effect/cli";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 
 import { decide, readWorkspace } from "../.github/scripts/ci-changes.cjs";
+import { vitePlusCommand } from "./check-changed-command.ts";
 
 const GiB = 1024 ** 3;
 
@@ -181,6 +182,15 @@ export const comparisonBase = Effect.fn("checkChanged.comparisonBase")(function*
 
 const CODE = /\.[cm]?[jt]sx?$/;
 const TEST = /\.test\.[cm]?[jt]sx?$/;
+// CI runs the .github/scripts tests with `node --test`; vitest passes a failing node:test file.
+const NODE_TEST = /^\.github[/\\]scripts[/\\]/;
+export const splitTests = (tests: Iterable<string>) => {
+  const all = [...tests];
+  return {
+    vitestTests: all.filter((file) => !NODE_TEST.test(file)),
+    nodeTests: all.filter((file) => NODE_TEST.test(file)),
+  };
+};
 const escapeRegExp = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
 // A flag wins over its environment variable; either must be a positive integer.
@@ -197,6 +207,12 @@ const override = Effect.fn("checkChanged.override")(function* (
   }
   return value;
 });
+
+// Tests that read a doc; a changed doc has no test beside it to select them.
+export const docReaderTests = (files: ReadonlyArray<string>) =>
+  files.includes("docs/user/t3-connect-troubleshooting.md")
+    ? ["apps/server/src/cloud/ConnectReachability.test.ts"]
+    : [];
 
 const checkChanged = Effect.fn("checkChanged")(function* (input: {
   readonly ref: Option.Option<string>;
@@ -324,8 +340,10 @@ const checkChanged = Effect.fn("checkChanged")(function* (input: {
       }
     }
   }
+  for (const test of docReaderTests(files)) tests.add(test);
   // It reads files other than the ones beside it, so no changed file selects it.
   if (affected.includes("t3")) tests.add("apps/server/src/provider/AgentContextBudget.test.ts");
+  const { vitestTests, nodeTests } = splitTests(tests);
 
   // React Compiler coverage compiles every client source file, so run only the
   // changed files' cases, in one extra step: a -t filter in the main test step
@@ -398,8 +416,10 @@ const checkChanged = Effect.fn("checkChanged")(function* (input: {
   const spawn = (command: string, args: ReadonlyArray<string>, cwd = root) =>
     Effect.scoped(
       Effect.gen(function* () {
+        const [executable, commandArgs] =
+          command === "vp" ? vitePlusCommand(args, platform) : [command, args];
         const handle = yield* spawner.spawn(
-          ChildProcess.make(command, args, {
+          ChildProcess.make(executable, commandArgs, {
             cwd,
             env,
             extendEnv: true,
@@ -472,7 +492,7 @@ const checkChanged = Effect.fn("checkChanged")(function* (input: {
             spawn("cargo", ["--version"]).pipe(
               Effect.flatMap((cargo) =>
                 cargo.ok
-                  ? spawn(process.execPath, ["native/project-memory/build.mjs"])
+                  ? spawn(process.execPath, ["./native/project-memory/build.mjs"])
                   : Effect.succeed({
                       ok: false,
                       output:
@@ -485,11 +505,11 @@ const checkChanged = Effect.fn("checkChanged")(function* (input: {
       : undefined;
   const needsMemory = (step: Step<never>) =>
     memoryBuild === undefined ? step : afterBuild(memoryBuild, step);
-  const vitestStep = command(`test (${tests.size} files)`, [
+  const vitestStep = command(`test (${vitestTests.length} files)`, [
     "test",
     "run",
     "--passWithNoTests",
-    ...tests,
+    ...vitestTests,
   ]);
 
   const steps: Array<Step<never>> = [
@@ -528,12 +548,22 @@ const checkChanged = Effect.fn("checkChanged")(function* (input: {
       return isMemoryTest(file) ? needsMemory(step) : step;
     }),
     // From the repo root, the root vite.config.ts hands each file to its package's config.
-    ...(tests.size > 0
+    ...(vitestTests.length > 0
       ? [
           {
             ...(serverTests ? needsMemory(vitestStep) : vitestStep),
             serial: true,
           },
+        ]
+      : []),
+    ...(nodeTests.length > 0
+      ? [
+          command(`node --test (${nodeTests.length} files)`, [
+            "exec",
+            "node",
+            "--test",
+            ...nodeTests,
+          ]),
         ]
       : []),
     ...(compilerApps.length > 0

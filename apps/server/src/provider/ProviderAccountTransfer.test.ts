@@ -23,6 +23,7 @@ import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import * as ServerConfig from "../config.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as Settings from "../serverSettings.ts";
+import * as ManagedPolicy from "../policy/ManagedPolicy.ts";
 import * as ProviderAccountTransfer from "./ProviderAccountTransfer.ts";
 import * as ProviderAuthService from "./ProviderAuthService.ts";
 
@@ -601,6 +602,7 @@ describe("ProviderAccountTransfer on the real settings layer", () => {
           ProviderAccountTransfer.makeProviderAccountTransfer(builtIn),
         ).pipe(
           Layer.provideMerge(Settings.layer),
+          Layer.provide(ManagedPolicy.layerTest()),
           Layer.provideMerge(ServerSecretStore.layer),
           Layer.provideMerge(Layer.fresh(SqlitePersistence.layerMemory)),
           Layer.provideMerge(
