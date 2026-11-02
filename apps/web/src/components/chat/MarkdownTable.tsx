@@ -28,7 +28,7 @@ export function MarkdownTable({ children, ...props }: ComponentProps<"table">) {
     if (!table) return;
     const text =
       format === "csv" ? serializeTableElementToCsv(table) : serializeTableElementToMarkdown(table);
-    // Rich-text targets such as Teams build a real table only from the HTML flavor.
+    // Teams, Word, and Excel build a real table only from the HTML flavor.
     copyToClipboard(
       text,
       format,
