@@ -74,15 +74,21 @@ export function filterFilesystemBrowseEntries(
   entries: ReadonlyArray<FilesystemBrowseEntry>,
   query: string,
 ) {
-  const lowerQuery = query.toLowerCase();
+  // macOS Finder stores names decomposed (NFD), while typed text is composed (NFC).
+  const normalizedQuery = query.normalize("NFC");
+  const lowerQuery = normalizedQuery.toLowerCase();
   const showHidden = query.startsWith(".");
   const visibleEntries = entries.filter(
     (entry) =>
-      entry.name.toLowerCase().startsWith(lowerQuery) &&
+      entry.name.normalize("NFC").toLowerCase().startsWith(lowerQuery) &&
       (showHidden || !entry.name.startsWith(".")),
   );
   const exactEntry =
-    query.length > 0 ? (visibleEntries.find((entry) => entry.name === query) ?? null) : null;
+    query.length > 0
+      ? (visibleEntries.find((entry) => entry.name === query) ??
+        visibleEntries.find((entry) => entry.name.normalize("NFC") === normalizedQuery) ??
+        null)
+      : null;
 
   return { visibleEntries, exactEntry };
 }
