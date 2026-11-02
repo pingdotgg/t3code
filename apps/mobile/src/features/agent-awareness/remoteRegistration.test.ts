@@ -228,6 +228,9 @@ const runBackgroundOperations = Effect.fn("TestRemoteRegistration.runBackgroundO
 describe("makeRelayDeviceRegistrationRequest", () => {
   beforeEach(() => {
     vi.restoreAllMocks();
+    vi.mocked(Notifications.getPermissionsAsync).mockResolvedValue({ granted: true } as Awaited<
+      ReturnType<typeof Notifications.getPermissionsAsync>
+    >);
     vi.mocked(Notifications.getDevicePushTokenAsync).mockResolvedValue({
       type: "ios",
       data: "apns-token",
