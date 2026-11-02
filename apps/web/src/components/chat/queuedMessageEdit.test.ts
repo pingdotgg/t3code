@@ -7,6 +7,7 @@ import {
   type ComposerFileAttachment,
   type ComposerImageAttachment,
 } from "../../composerDraftStore";
+import { readAttachmentUpload, useAttachmentUploadStore } from "../../lib/attachmentUploadQueue";
 import { prepareQueuedEditAttachments, recoverQueuedMessageEdit } from "./queuedMessageEdit";
 
 const environmentId = EnvironmentId.make("remote-environment");
@@ -90,10 +91,16 @@ describe("queued message file edits", () => {
     const store = useComposerDraftStore.getState();
     store.setPrompt(threadTarget, "Separate draft");
     store.addFiles(editTarget, [file]);
+    useAttachmentUploadStore.setState({
+      uploadsByImageId: {
+        [file.id]: { status: "ready", environmentId, attachmentId: uploadedFile.id },
+      },
+    });
     expect(recoverQueuedMessageEdit({ editTarget, threadTarget, originalText: "" })).toBe(
       "discarded",
     );
     expect(store.getComposerDraft(threadTarget)?.prompt).toBe("Separate draft");
     expect(store.getComposerDraft(editTarget)).toBeNull();
+    expect(readAttachmentUpload(file.id)).toBeUndefined();
   });
 });
