@@ -99,8 +99,10 @@ import {
 } from "../keybindings";
 import { useShortcutModifierState } from "../shortcutModifierState";
 import { isTerminalFocused } from "../lib/terminalFocus";
+import { isPreviewFocused } from "../lib/previewFocus";
 import { isModelPickerOpen } from "../modelPickerVisibility";
 import { selectThreadTerminalUiState, useTerminalUiStateStore } from "../terminalUiStateStore";
+import { selectActiveRightPanel, useRightPanelStore } from "../rightPanelStore";
 import { isMacPlatform } from "~/lib/utils";
 import { readLocalApi } from "../localApi";
 import { useSidebarPendingFileDropStore } from "../sidebarPendingFileDropStore";
@@ -2881,6 +2883,9 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
       ? selectThreadTerminalUiState(state.terminalUiStateByThreadKey, routeThreadRef).terminalOpen
       : false,
   );
+  const routePreviewOpen = useRightPanelStore(
+    (state) => selectActiveRightPanel(state.byThreadKey, routeThreadRef) === "preview",
+  );
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- subscribes to window keydown for thread navigation shortcuts using the current thread list
   useEffect(() => {
     const onWindowKeyDown = (event: KeyboardEvent) => {
@@ -2892,6 +2897,8 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
         context: {
           terminalFocus: isTerminalFocused(),
           terminalOpen: routeTerminalOpen,
+          previewFocus: isPreviewFocused(),
+          previewOpen: routePreviewOpen,
           modelPickerOpen: isModelPickerOpen(),
           isWeb: !isElectron,
           isDesktop: isElectron,
@@ -2927,6 +2934,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     keybindings,
     navigateToThread,
     orderedThreadKeys,
+    routePreviewOpen,
     routeRowThreadKey,
     routeTerminalOpen,
     threadByKey,
@@ -2940,6 +2948,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
       context: {
         terminalFocus: terminalFocused,
         terminalOpen: routeTerminalOpen,
+        previewOpen: routePreviewOpen,
         modelPickerOpen: isModelPickerOpen(),
         isWeb: !isElectron,
         isDesktop: isElectron,
