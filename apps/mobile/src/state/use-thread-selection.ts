@@ -57,7 +57,7 @@ function latestUserMessageAt(
   return null;
 }
 
-function threadDetailToShell(
+export function threadDetailToShell(
   environmentId: EnvironmentId,
   projection: OrchestrationV2ThreadProjection,
 ): EnvironmentThreadShell {
@@ -72,6 +72,7 @@ function threadDetailToShell(
     title: thread.title,
     providerInstanceId: thread.providerInstanceId,
     modelSelection: thread.modelSelection,
+    ...(thread.modelUnreported === undefined ? {} : { modelUnreported: thread.modelUnreported }),
     runtimeMode: thread.runtimeMode,
     interactionMode: thread.interactionMode,
     branch: thread.branch,

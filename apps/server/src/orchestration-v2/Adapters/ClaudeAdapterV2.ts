@@ -9686,13 +9686,6 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           }
 
           if (message.type === "system" && message.subtype === "task_notification") {
-            const finishedFork = (yield* Ref.get(sessionSubagentsByTaskId)).get(message.task_id);
-            const transcriptModel = yield* readForkModel({
-              context,
-              subagent: finishedFork,
-              nativeThreadId: liveQuery.nativeThreadId,
-              taskId: message.task_id,
-            });
             const isRegistered = (yield* Ref.get(sessionSubagentsByTaskId)).has(message.task_id);
             // A task whose start is still held for the next wake drain has no
             // node to finish yet; hold its outcome behind that start, or the
@@ -9765,6 +9758,13 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               !context.ignoredTaskIds.has(message.task_id) &&
               !appliedSubagentOutcomes.has(message)
             ) {
+              const finishedFork = (yield* Ref.get(sessionSubagentsByTaskId)).get(message.task_id);
+              const transcriptModel = yield* readForkModel({
+                context,
+                subagent: finishedFork,
+                nativeThreadId: liveQuery.nativeThreadId,
+                taskId: message.task_id,
+              });
               yield* updateClaudeSubagentNode({
                 context,
                 taskId: message.task_id,
