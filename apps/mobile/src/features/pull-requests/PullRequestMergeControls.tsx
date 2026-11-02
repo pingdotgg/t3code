@@ -17,10 +17,12 @@ import {
   canPerformPullRequestAction,
   mergeUnavailableReason,
   MERGE_METHODS,
+  PR_ACTION_ICONS,
   pullRequestActionLabel,
 } from "./pullRequestActions";
 import { pullRequestStackMerge, singlePullRequestMergeAllowed } from "./pullRequestStack";
 import { pullRequestTarget, type PullRequestParams } from "./usePullRequestDiff";
+import { usePullRequestAction } from "./usePullRequestAction";
 import { usePullRequestPermissions } from "./usePullRequestPermissions";
 import { PullRequestGlyph } from "./pullRequestGlyphs";
 import type { AppSymbolName } from "../../components/ui/AppSymbol";
@@ -35,6 +37,7 @@ export function PullRequestMergeControls(props: {
   const terminology = sourceControlClients.get(pr.provider).changeRequest;
   const target = pullRequestTarget(props.params);
   const permissions = usePullRequestPermissions(props.params, pr);
+  const stateAction = usePullRequestAction(props.params, pr);
   const preferences = useAtomValue(mobilePreferencesAtom);
   const savePreferences = useAtomSet(updateMobilePreferencesAtom);
   const runAction = useAtomCommand(composerPullRequests.runAction, { reportFailure: false });
@@ -82,24 +85,39 @@ export function PullRequestMergeControls(props: {
       ? `${MERGE_METHODS[method].title} stack (${scope.layers.length})`
       : MERGE_METHODS[method].title
     : "Merge unavailable";
-  // States the button itself names, instead of a reason line under it.
-  const status: { label: string; icon: AppSymbolName; final?: boolean } | null =
-    pr.state === "merged"
-      ? { label: "Merged", icon: PullRequestGlyph.merged, final: true }
-      : pr.state === "closed"
-        ? { label: "Closed", icon: PullRequestGlyph.closed, final: true }
-        : pr.isDraft
-          ? { label: "Draft", icon: PullRequestGlyph.draft }
-          : pr.mergeability === "conflicting"
-            ? { label: "Resolve conflicts to merge", icon: PullRequestGlyph.conflicting }
-            : pr.autoMergeEnabled
-              ? {
-                  label: `Auto-merge pending${pr.autoMergeMethod ? ` (${pr.autoMergeMethod})` : ""}`,
-                  icon: "clock",
-                }
-              : checkingStack && !busy
-                ? { label: "Checking stack…", icon: PullRequestGlyph.merged }
-                : null;
+  const nextAction =
+    pr.state === "closed" ? "reopen" : pr.state === "open" && pr.isDraft ? "ready" : null;
+  // States the button itself names, instead of a reason line under it. Draft and
+  // closed offer their way forward when the viewer can take it.
+  const status: {
+    label: string;
+    icon: AppSymbolName;
+    final?: boolean;
+    action?: "ready" | "reopen";
+  } | null =
+    nextAction && stateAction.available(nextAction)
+      ? {
+          label: pullRequestActionLabel(nextAction, terminology),
+          icon: PR_ACTION_ICONS[nextAction],
+          final: nextAction === "reopen",
+          action: nextAction,
+        }
+      : pr.state === "merged"
+        ? { label: "Merged", icon: PullRequestGlyph.merged, final: true }
+        : pr.state === "closed"
+          ? { label: "Closed", icon: PullRequestGlyph.closed, final: true }
+          : pr.isDraft
+            ? { label: "Draft", icon: PullRequestGlyph.draft }
+            : pr.mergeability === "conflicting"
+              ? { label: "Resolve conflicts to merge", icon: PullRequestGlyph.conflicting }
+              : pr.autoMergeEnabled
+                ? {
+                    label: `Auto-merge pending${pr.autoMergeMethod ? ` (${pr.autoMergeMethod})` : ""}`,
+                    icon: "clock",
+                  }
+                : checkingStack && !busy
+                  ? { label: "Checking stack…", icon: PullRequestGlyph.merged }
+                  : null;
   const autoAction = pr.autoMergeEnabled ? "disable-auto-merge" : "enable-auto-merge";
   const canAutoMerge =
     !busy &&
@@ -186,7 +204,7 @@ export function PullRequestMergeControls(props: {
     <View className="gap-2 border-t border-border-subtle p-3">
       <SplitButton
         label={
-          busy
+          busy || stateAction.busy
             ? "Working…"
             : !permissions.connected
               ? "Reconnect to merge"
@@ -200,9 +218,11 @@ export function PullRequestMergeControls(props: {
               : label
         }
         icon={status?.icon ?? PullRequestGlyph.merged}
-        disabled={!canMerge || status !== null}
-        loading={busy || checkingStack}
-        onPress={() => confirm("merge")}
+        disabled={status?.action ? stateAction.busy : !canMerge || status !== null}
+        loading={busy || stateAction.busy || (!status?.action && checkingStack)}
+        onPress={() =>
+          status?.action ? void stateAction.perform(status.action) : confirm("merge")
+        }
         menuTitle="Merge options"
         actions={
           status?.final
