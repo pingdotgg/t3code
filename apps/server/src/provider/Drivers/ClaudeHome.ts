@@ -38,8 +38,10 @@ export const makeClaudeEnvironment = Effect.fn("makeClaudeEnvironment")(function
   const homePath = config.homePath.trim();
   if (homePath.length === 0) return resolvedBaseEnv;
   const resolvedHomePath = yield* resolveClaudeHomePath(config);
+  const path = yield* Path.Path;
+  const childHome = resolvedBaseEnv.HOME?.trim() || (yield* HostProcess.HomeDirectory);
   // Claude Code picks its Keychain item and `.claude.json` by whether CLAUDE_CONFIG_DIR is set, not by value.
-  if (resolvedHomePath === (yield* resolveClaudeHomePath({ homePath: "" }))) {
+  if (resolvedHomePath === path.resolve(childHome, ".claude")) {
     const windows = (yield* HostProcess.Platform) === "win32";
     return Object.fromEntries(
       Object.entries(resolvedBaseEnv).filter(

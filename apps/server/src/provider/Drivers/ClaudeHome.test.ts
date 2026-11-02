@@ -68,6 +68,17 @@ it.layer(NodeServices.layer)("ClaudeHome", (it) => {
       }),
     );
 
+    it.effect("keeps CLAUDE_CONFIG_DIR when the instance HOME moves Claude's default home", () =>
+      Effect.gen(function* () {
+        const path = yield* Path.Path;
+        const environment = yield* makeClaudeEnvironment(
+          { homePath: "~/.claude" },
+          { HOME: "/accounts/shell" },
+        );
+        expect(environment.CLAUDE_CONFIG_DIR).toBe(path.resolve(NodeOS.homedir(), ".claude"));
+      }),
+    );
+
     it.effect("separates capability probes by cwd", () =>
       Effect.gen(function* () {
         const config = { binaryPath: "claude", homePath: "" };
