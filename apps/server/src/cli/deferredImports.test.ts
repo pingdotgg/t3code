@@ -98,6 +98,53 @@ it.layer(NodeServices.layer)("CLI deferred imports", (it) => {
     }),
   );
 
+  it.effect("forwards live project mutations without importing the offline runtime", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-deferred-live-project-" });
+      const baseDir = NodePath.join(root, "state");
+      const workspaceRoot = NodePath.join(root, "workspace");
+      yield* fs.makeDirectory(workspaceRoot);
+      yield* persistServerRuntimeState({
+        path: NodePath.join(baseDir, "userdata", "server-runtime.json"),
+        state: yield* makePersistedServerRuntimeState({
+          config: { host: "127.0.0.1", devUrl: undefined },
+          port: 3_773,
+        }),
+      });
+
+      hooks.importsAttempted.length = 0;
+      let mutations = 0;
+      const fetch: typeof globalThis.fetch = async (_input, init) => {
+        const isMutation = init?.method === "POST";
+        if (isMutation) mutations++;
+        return Response.json(
+          isMutation
+            ? {
+                id: "live-project",
+                title: NodePath.basename(workspaceRoot),
+                workspaceRoot,
+                defaultModelSelection: null,
+                scripts: [],
+                createdAt: "2026-01-01T00:00:00.000Z",
+                updatedAt: "2026-01-01T00:00:00.000Z",
+                deletedAt: null,
+              }
+            : { projects: [], updatedAt: "2026-01-01T00:00:00.000Z" },
+        );
+      };
+
+      const exit = yield* runCli(["project", "add", workspaceRoot, "--base-dir", baseDir]).pipe(
+        Effect.provideService(FetchHttpClient.Fetch, fetch),
+        Effect.exit,
+      );
+
+      assert.isFalse(Exit.hasDies(exit));
+      assert.equal(mutations, 1);
+      assert.deepEqual(hooks.importsAttempted, []);
+    }),
+  );
+
   it.effect("never starts the history worker after an interrupted import", () =>
     Effect.gen(function* () {
       const history = yield* runCli(["__claude-history", "getSessionMessages", "session"]).pipe(
