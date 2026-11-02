@@ -253,6 +253,37 @@ it.effect.each([false, true])("honors PR URL repositories, context=%s", (withCon
   }).pipe(Effect.provide(layer));
 });
 
+it.effect("adds a fork remote with the protocol of the URL origin fetches from", () => {
+  // `readConfigValue` answers `remote.origin.url` with an SSH second URL.
+  const { git, layer } = makeLayer({
+    remoteUrl: "https://bitbucket.org/pingdotgg/t3code.git",
+    response: (request) =>
+      Response.json(
+        request.url.endsWith("/pullrequests/42")
+          ? bitbucketPullRequest
+          : {
+              ...repositoryJson,
+              full_name: "octocat/t3code",
+              links: {
+                clone: [
+                  { name: "https", href: "https://bitbucket.org/octocat/t3code.git" },
+                  { name: "ssh", href: "git@bitbucket.org:octocat/t3code.git" },
+                ],
+              },
+            },
+      ),
+  });
+  return Effect.gen(function* () {
+    const bitbucket = yield* BitbucketApi.BitbucketApi;
+    yield* bitbucket.checkoutPullRequest({ cwd: "/repo", reference: "#42" });
+    assert.deepStrictEqual(git.ensureRemote.mock.calls[0]?.[0], {
+      cwd: "/repo",
+      preferredName: "octocat",
+      url: "https://bitbucket.org/octocat/t3code.git",
+    });
+  }).pipe(Effect.provide(layer));
+});
+
 it.effect.each([false, true])(
   "reuses matching checkout remotes for numeric references, context=%s",
   (withContext) => {

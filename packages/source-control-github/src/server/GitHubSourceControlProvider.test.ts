@@ -651,6 +651,40 @@ describe("GitHubSourceControlProvider.checkoutChangeRequest", () => {
     }).pipe(Effect.provide(layer));
   });
 
+  it.effect("adds a fork remote with the protocol of the URL origin fetches from", () => {
+    // The harness's `remote.origin.url` config read answers with an SSH second URL.
+    const { layer, git } = harness({
+      remotes: [
+        "origin\thttps://github.com/acme/web.git (fetch)",
+        "origin\thttps://github.com/acme/web.git (push)",
+        "origin\tgit@github.com:acme/web.git (push)",
+      ].join("\n"),
+      graphql: () => ({ pullRequest: node(7, "feature", "someone") }),
+      api: {
+        rest: (input) => {
+          const fullName = input.path.slice("repos/".length);
+          return Effect.succeed(
+            restResponse({
+              full_name: fullName,
+              html_url: `https://github.com/${fullName}`,
+              ssh_url: `git@github.com:${fullName}.git`,
+              default_branch: "main",
+            }),
+          );
+        },
+      },
+    });
+    return Effect.gen(function* () {
+      const gh = yield* GitHubSourceControlProvider.make;
+      yield* gh.checkoutChangeRequest({ cwd: "/repo", reference: "7" });
+      assert.deepStrictEqual(git.find(([name]) => name === "ensureRemote")?.[1], {
+        cwd: "/repo",
+        preferredName: "someone",
+        url: "https://github.com/someone/web",
+      });
+    }).pipe(Effect.provide(layer));
+  });
+
   it.effect("keeps git's own output out of what a failed checkout reports", () => {
     const { layer } = harness({
       remotes: remotesOutput(["origin", "git@github.com:acme/web.git"]),

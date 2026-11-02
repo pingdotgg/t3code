@@ -724,7 +724,9 @@ export const make = Effect.gen(function* () {
         if (known !== null) return known;
         const [owner, name] = headNameWithOwner.split("/");
         const fork = yield* readRepository({ host: base.host, owner: owner!, name: name! });
-        const originUrl = yield* git.readConfigValue(input.cwd, "remote.origin.url");
+        // Git fetches from a remote's first URL; `config --get` returns the last of several.
+        const originUrl =
+          parseFetchRemotes(remotes).find((remote) => remote.name === "origin")?.url ?? null;
         return yield* git.ensureRemote({
           cwd: input.cwd,
           preferredName: headOwner ?? "fork",

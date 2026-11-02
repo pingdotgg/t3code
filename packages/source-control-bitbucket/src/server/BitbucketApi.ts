@@ -915,7 +915,12 @@ export const make = Effect.gen(function* () {
       repository: input.sourceRepositoryName,
       ...(input.context ? { context: input.context } : {}),
     }).pipe(Effect.map(normalizeRepositoryCloneUrls));
-    const originRemoteUrl = yield* readConfigValueNullable(input.cwd, "remote.origin.url");
+    // Git fetches from a remote's first URL; `config --get` returns the last of several.
+    const originRemoteUrl = yield* git.remotes(input.cwd).pipe(
+      Effect.flatten,
+      Effect.map(({ remotes }) => remotes.find((remote) => remote.name === "origin")?.url ?? null),
+      Effect.orElseSucceed(() => null),
+    );
     return yield* git.ensureRemote({
       cwd: input.cwd,
       preferredName: input.isCrossRepository
