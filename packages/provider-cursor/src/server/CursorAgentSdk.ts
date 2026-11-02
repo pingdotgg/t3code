@@ -89,6 +89,8 @@ export interface CursorAgentSdkSendInput<Error> {
   readonly message: string | SDKUserMessage;
   readonly options?: Omit<SendOptions, "onDelta">;
   readonly onDelta?: (update: InteractionUpdate) => Effect.Effect<void, Error>;
+  /** Runs `agent.summarize()` instead, which takes no message or options. */
+  readonly summarize?: boolean;
 }
 
 export interface CursorAgentSdkRun {
@@ -465,16 +467,18 @@ export const makeCursorAgentSdkRunner = Effect.fn("makeCursorAgentSdkRunner")(fu
           const startRun = () =>
             Effect.tryPromise({
               try: () =>
-                agent.send(sendInput.message, {
-                  ...sendInput.options,
-                  onDelta: async ({ update }) => {
-                    if (!callbacksReady) {
-                      pendingUpdates.push(update);
-                      return;
-                    }
-                    await dispatchUpdate(update);
-                  },
-                }),
+                sendInput.summarize === true
+                  ? agent.summarize()
+                  : agent.send(sendInput.message, {
+                      ...sendInput.options,
+                      onDelta: async ({ update }) => {
+                        if (!callbacksReady) {
+                          pendingUpdates.push(update);
+                          return;
+                        }
+                        await dispatchUpdate(update);
+                      },
+                    }),
               catch: (cause) => runnerError(cause, "run.start"),
             });
           const run = yield* startRun().pipe(
