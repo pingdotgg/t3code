@@ -1414,7 +1414,12 @@ export function useComposerSend(input: ComposerSendInput) {
         failure = startResult;
       } else {
         turnStartSucceeded = true;
-        typedThreadNamesByThreadKey.delete(threadNameKey);
+        if (
+          turnAttachmentsResult.value.length > 0 ||
+          !["/compact", "/logout"].includes(outgoingMessageText.trim().toLowerCase())
+        ) {
+          typedThreadNamesByThreadKey.delete(threadNameKey);
+        }
         setKeepFullHistory(routeThreadKey, false);
         clearUsageLimitsFor(routeThreadKey);
         if (turnUsesAttachmentUploads) {

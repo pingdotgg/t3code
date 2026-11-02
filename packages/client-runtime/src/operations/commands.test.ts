@@ -320,7 +320,7 @@ describe("V2 environment commands", () => {
       }).pipe(Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor));
 
       expect(commands).toHaveLength(1);
-      expect(commands[0]).toMatchObject({ type: "message.dispatch" });
+      expect(commands[0]).toMatchObject({ type: "message.dispatch", generateTitle: false });
       expect(commands[0]).not.toHaveProperty("titleSeed");
     }).pipe(Effect.provide(layerTestCrypto)),
   );

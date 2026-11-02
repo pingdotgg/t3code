@@ -562,9 +562,9 @@ it.effect("provisions independent launches concurrently instead of behind a glob
   }),
 );
 
-it.effect.each([" /COMPACT "])(
-  "uses the first conversation message for a title after %s",
-  (nativeCommand) =>
+it.effect.each([true, false])(
+  "respects title generation %s after maintenance history",
+  (generateTitle) =>
     Effect.gen(function* () {
       const harness = makeHarness();
       yield* Effect.gen(function* () {
@@ -575,9 +575,9 @@ it.effect.each([" /COMPACT "])(
           ...launchInput({
             command: "compact-title",
             thread: "compact-title-thread",
-            message: nativeCommand,
+            message: " /COMPACT ",
           }),
-          generateTitle: true,
+          generateTitle,
         });
         assert.isUndefined(
           (yield* threads.getThreadProjection(launched.threadId)).thread.titleRegeneration,
@@ -597,6 +597,7 @@ it.effect.each([" /COMPACT "])(
           messageId,
           createdBy: "user",
           creationSource: "web",
+          generateTitle,
           text: "Fix the failing parser",
           attachments: [],
           dispatchMode: { type: "defer_start" },
@@ -604,13 +605,15 @@ it.effect.each([" /COMPACT "])(
         assert.equal(
           (yield* threads.getThreadProjection(launched.threadId)).thread.titleRegeneration
             ?.requestId,
-          commandId,
+          generateTitle ? commandId : undefined,
         );
         assert.deepEqual(
           (yield* outbox.listByCommandId(commandId))
             .filter((effect) => effect.request.type === "thread-title.generate")
             .map((effect) => effect.request),
-          [{ type: "thread-title.generate", kind: { type: "initial", messageId } }],
+          generateTitle
+            ? [{ type: "thread-title.generate", kind: { type: "initial", messageId } }]
+            : [],
         );
       }).pipe(Effect.provide(harness.layer));
     }),

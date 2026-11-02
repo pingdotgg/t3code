@@ -200,7 +200,8 @@ export function DraftHeroHeadline({
     }
     pendingScratchRef.current = null;
     const currentDraft = getComposerDraft(draftId);
-    if (!composerDraftHasUserContent(currentDraft)) {
+    const threadName = useComposerDraftStore.getState().threadNamesByDraftId[draftId]?.trim();
+    if (!composerDraftHasUserContent(currentDraft) && !threadName) {
       void openProjectDraft(scopeProjectRef(project.environmentId, project.id));
       return;
     }

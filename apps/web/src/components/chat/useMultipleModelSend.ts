@@ -218,7 +218,13 @@ export function useMultipleModelSend(input: MultipleModelSendInput) {
                   createdAt: createdAt,
                 },
               });
-              if (result._tag === "Success") typedThreadNamesByThreadKey.delete(targetThreadKey);
+              if (
+                result._tag === "Success" &&
+                (attachments.length > 0 ||
+                  !["/compact", "/logout"].includes(target.text.trim().toLowerCase()))
+              ) {
+                typedThreadNamesByThreadKey.delete(targetThreadKey);
+              }
               return result;
             },
             openThread: (threadId) =>
