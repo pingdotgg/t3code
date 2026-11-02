@@ -3164,6 +3164,99 @@ describe("CodexAdapterV2 post-settle continuation", () => {
     ),
   );
 
+  it.effect("fails a turn whose network retries outlast the retry budget", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const scenario = "codex-connection-retry-budget";
+        const nativeThreadId = `native-${scenario}-thread`;
+        const nativeTurnId = `native-${scenario}-turn`;
+        const networkWait = (label: string, afterMs?: number) => ({
+          type: "emit_inbound" as const,
+          label,
+          ...(afterMs === undefined ? {} : { afterMs }),
+          frame: {
+            method: "error",
+            params: {
+              threadId: nativeThreadId,
+              turnId: nativeTurnId,
+              willRetry: true,
+              error: {
+                message: "Reconnecting... waiting for network",
+                additionalDetails: "Connection failed: error sending request",
+                codexErrorInfo: { responseStreamDisconnected: { httpStatusCode: null } },
+              },
+            },
+          },
+        });
+        const transcript = makeCodexReplayTranscript({
+          scenario,
+          entries: [
+            ...codexReplayPreamble({ nativeThreadId, nativeTurnId, prompt: "Summarize the repo." }),
+            networkWait("error/network-wait-1"),
+            networkWait("error/network-wait-2", 5 * 60 * 1000),
+            networkWait("error/network-wait-3", 5 * 60 * 1000),
+            {
+              type: "expect_outbound",
+              label: "turn/interrupt",
+              frame: {
+                id: 4,
+                method: "turn/interrupt",
+                params: { threadId: nativeThreadId, turnId: nativeTurnId },
+              },
+            },
+            { type: "emit_inbound", label: "turn/interrupt", frame: { id: 4, result: {} } },
+            {
+              type: "emit_inbound",
+              label: "turn/completed",
+              frame: {
+                method: "turn/completed",
+                params: {
+                  threadId: nativeThreadId,
+                  turn: makeCodexReplayTurn({ id: nativeTurnId, status: "interrupted" }),
+                },
+              },
+            },
+          ],
+        });
+        let interrupts = 0;
+        const harness = yield* makeCodexReplayHarness(
+          transcript,
+          () => Effect.void,
+          (method) =>
+            Effect.sync(() => {
+              if (method === "turn/interrupt") interrupts += 1;
+            }),
+        );
+        yield* harness.runtime.startTurn(
+          makeCodexTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make("attempt-codex-connection-retry-budget"),
+            text: "Summarize the repo.",
+          }),
+        );
+        yield* TestClock.adjust("5 minutes");
+        assert.equal(interrupts, 0, "a wait inside the budget must not stop the turn");
+        yield* TestClock.adjust("5 minutes");
+        yield* harness.awaitTerminal(1);
+
+        assert.equal(interrupts, 1);
+        assert.lengthOf(harness.terminalEvents(), 1);
+        const terminal = harness.terminalEvents()[0];
+        assert.equal(terminal?.status, "failed");
+        if (terminal?.status !== "failed") return;
+        assert.equal(terminal.failure.message, "Connection failed: error sending request");
+        assert.equal(terminal.failure.class, "transport_error");
+        assert.equal(terminal.retry?.attempt, 3);
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+        ),
+      ),
+    ),
+  );
+
   it.effect("resolves retryable app-server errors on resumed provider activity", () =>
     Effect.scoped(
       Effect.gen(function* () {
