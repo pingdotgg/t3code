@@ -192,6 +192,49 @@ function makeTestInstance(input: MakeInstanceInput) {
 }
 
 describe("DesktopBackendManager", () => {
+  it.effect("notifies readiness waiters on HTTP readiness and stop without clock advancement", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const probe = yield* Deferred.make<void>();
+        const ready = yield* Deferred.make<void>();
+        const exit = yield* Deferred.make<ChildProcessSpawner.ExitCode>();
+        const instance = yield* makeTestInstance({
+          spawnerLayer: Layer.succeed(
+            ChildProcessSpawner.ChildProcessSpawner,
+            ChildProcessSpawner.make(() =>
+              Effect.acquireRelease(
+                Effect.succeed(
+                  makeProcess({
+                    exitCode: Deferred.await(exit),
+                    kill: () =>
+                      Deferred.succeed(exit, ChildProcessSpawner.ExitCode(0)).pipe(Effect.asVoid),
+                  }),
+                ),
+                () => Deferred.succeed(exit, ChildProcessSpawner.ExitCode(0)),
+              ),
+            ),
+          ),
+          httpClientLayer: Layer.succeed(
+            HttpClient.HttpClient,
+            HttpClient.make((request) =>
+              Deferred.succeed(probe, undefined).pipe(
+                Effect.andThen(Deferred.await(ready)),
+                Effect.as(HttpClientResponse.fromWeb(request, new Response("{}"))),
+              ),
+            ),
+          ),
+        });
+        yield* instance.start;
+        yield* Deferred.await(probe);
+        const waiter = yield* instance.waitForReady(Duration.seconds(15)).pipe(Effect.forkChild);
+        yield* Deferred.succeed(ready, undefined);
+        assert.isTrue(yield* Fiber.join(waiter));
+        yield* instance.stop();
+        assert.isFalse(yield* instance.waitForReady(Duration.seconds(15)));
+      }),
+    ),
+  );
+
   it.effect("spawns the backend with fd3 bootstrap and fd4 telemetry", () =>
     Effect.scoped(
       Effect.gen(function* () {

@@ -4,6 +4,7 @@ import * as NodeEvents from "node:events";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 
+import * as DesktopWindow from "../window/DesktopWindow.ts";
 import * as ElectronWindow from "../electron/ElectronWindow.ts";
 import { WEB_LINK_OPEN_CHANNEL } from "../ipc/channels.ts";
 import * as DesktopWebLinks from "./DesktopWebLinks.ts";
@@ -21,6 +22,11 @@ const makeWindow = () => {
   const reload = () =>
     webContents.emit("did-start-navigation", { isMainFrame: true, isSameDocument: false });
   const layer = DesktopWebLinks.layer.pipe(
+    Layer.provide(
+      Layer.succeed(DesktopWindow.DesktopWindow, {
+        activate: Effect.sync(() => void revealed.push(window)),
+      } as unknown as DesktopWindow.DesktopWindow["Service"]),
+    ),
     Layer.provide(
       Layer.succeed(
         ElectronWindow.ElectronWindow,
