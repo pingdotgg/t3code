@@ -255,6 +255,15 @@ describe("model switch change", () => {
     ).toEqual({ modelChanged: false, effort: { from: "low", to: "high" } });
     expect(
       resolveModelSwitchChange(
+        {
+          from: selection("pi", { thinking: "low" }),
+          to: selection("pi", { thinking: "high" }),
+        },
+        [],
+      ),
+    ).toEqual({ modelChanged: false, effort: { from: "low", to: "high" } });
+    expect(
+      resolveModelSwitchChange(
         { from: selection("gpt"), to: selection("gpt", { reasoningEffort: "high" }) },
         [],
       ),
