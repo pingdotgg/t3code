@@ -362,11 +362,12 @@ it.layer(NodeServices.layer)("AntigravityAuth", (it) => {
     }),
   );
 
-  it.effect("shows the new Google link when the agent authenticates again", () =>
+  it.effect("accepts the new Google link and redirect when the agent authenticates again", () =>
     Effect.gen(function* () {
       const harness = yield* makeHarness();
-      yield* harness.auth.controller.start(owner);
+      const state = yield* harness.auth.controller.start(owner);
       yield* phase(harness.auth, "waiting");
+      yield* harness.auth.controller.complete(owner, { flowId: state.flowId!, callbackUrl });
       yield* Deferred.succeed(harness.authenticated, undefined);
       yield* Deferred.await(harness.sessionRequested);
 
@@ -382,6 +383,12 @@ it.layer(NodeServices.layer)("AntigravityAuth", (it) => {
         .pipe(Stream.runHead, Effect.map(Option.getOrThrow));
       assert.equal(current.phase, "waiting");
       assert.equal(current.authorizationUrl, retryUrl);
+
+      yield* harness.auth.controller.complete(owner, {
+        flowId: state.flowId!,
+        callbackUrl: callbackUrl.replace("state=test-state", "state=retry-state"),
+      });
+      assert.equal(harness.forwarded(), 2);
     }),
   );
 

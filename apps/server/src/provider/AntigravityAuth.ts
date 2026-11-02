@@ -308,8 +308,16 @@ export const makeAntigravityAuth = Effect.fn("makeAntigravityAuth")(function* <
         // A retry after auth-required starts a new attempt that may show a new Google link.
         requestLogger: (event) => {
           if (event.method !== "authenticate" || event.status === "failed") return Effect.void;
-          flow.authenticated = event.status === "succeeded";
-          return flow.authenticated ? publishVerifying(flow) : Effect.void;
+          if (event.status === "started") {
+            return lock.withPermits(1)(
+              Effect.sync(() => {
+                flow.authenticated = false;
+                flow.callbackSent = false;
+              }),
+            );
+          }
+          flow.authenticated = true;
+          return publishVerifying(flow);
         },
       });
       const started = yield* runtime.start();
