@@ -370,7 +370,7 @@ describe("EnvironmentProviderSettings routing", () => {
 });
 
 describe("EnvironmentProviderSettings instance removal", () => {
-  it("asks before resetting a configured default instance and keeps it when declined", async () => {
+  it("resets a configured default instance only once the user confirms", async () => {
     await setup();
     state.settings = {
       ...DEFAULT_UNIFIED_SETTINGS,
@@ -384,15 +384,23 @@ describe("EnvironmentProviderSettings instance removal", () => {
     };
     await setProviders([provider()]);
     await using _screen = await render(panel({ targetInstanceId: codexId }));
-    await userEvent.click(
-      page.getByRole("button", { name: "Reset Codex provider settings to default" }),
-    );
+    const reset = page.getByRole("button", { name: "Reset Codex provider settings to default" });
+    await userEvent.click(reset);
 
     expect(state.mutateProviderInstance).not.toHaveBeenCalled();
     expect(state.confirm).toHaveBeenCalledOnce();
+
+    state.confirm.mockResolvedValue(true);
+    await userEvent.click(reset);
+    await vi.waitFor(() =>
+      expect(state.mutateProviderInstance).toHaveBeenCalledWith({
+        operation: "remove",
+        instanceId: codexId,
+      }),
+    );
   });
 
-  it("asks before deleting a custom instance and keeps it when declined", async () => {
+  it("deletes a custom instance only once the user confirms", async () => {
     await setup();
     state.settings = {
       ...DEFAULT_UNIFIED_SETTINGS,
@@ -401,10 +409,20 @@ describe("EnvironmentProviderSettings instance removal", () => {
       },
     };
     await using _screen = await render(panel({ targetInstanceId: customId }));
-    await userEvent.click(page.getByRole("button", { name: `Delete instance ${customId}` }));
+    const remove = page.getByRole("button", { name: `Delete instance ${customId}` });
+    await userEvent.click(remove);
 
     expect(state.mutateProviderInstance).not.toHaveBeenCalled();
     expect(state.confirm).toHaveBeenCalledOnce();
+
+    state.confirm.mockResolvedValue(true);
+    await userEvent.click(remove);
+    await vi.waitFor(() =>
+      expect(state.mutateProviderInstance).toHaveBeenCalledWith({
+        operation: "remove",
+        instanceId: customId,
+      }),
+    );
   });
 });
 
