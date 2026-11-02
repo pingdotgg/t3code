@@ -113,7 +113,9 @@ import {
 import {
   materializeCodexShadowHome,
   resolveCodexHomeLayout,
+  withCodexEnvironmentHome,
 } from "../../provider/Drivers/CodexHomeLayout.ts";
+import { resolveCodexCredentialFingerprint } from "../../provider/Drivers/CodexCredentials.ts";
 import {
   boundProviderEventForLogging,
   shouldPersistProviderEvent,
@@ -1592,7 +1594,9 @@ export const createCodexAdapterV2 = Effect.fn("CodexAdapterV2.createCodexAdapter
   const hostEnvironment = yield* HostProcess.Environment;
   const idAllocator = yield* IdAllocator.IdAllocatorV2;
   const serverConfig = yield* ServerConfig;
-  const homeLayout = yield* resolveCodexHomeLayout(config);
+  const processEnv = yield* mergeProviderInstanceEnvironment(environment, hostEnvironment);
+  const effectiveConfig = withCodexEnvironmentHome(config, processEnv.CODEX_HOME);
+  const homeLayout = yield* resolveCodexHomeLayout(effectiveConfig);
 
   yield* materializeCodexShadowHome(homeLayout).pipe(
     Effect.mapError(
@@ -1607,16 +1611,16 @@ export const createCodexAdapterV2 = Effect.fn("CodexAdapterV2.createCodexAdapter
   );
 
   const settings = {
-    ...config,
+    ...effectiveConfig,
     enabled,
-    binaryPath: expandHomePath(config.binaryPath, yield* HostProcess.HomeDirectory),
+    binaryPath: expandHomePath(effectiveConfig.binaryPath, yield* HostProcess.HomeDirectory),
     homePath: homeLayout.effectiveHomePath ?? "",
   } satisfies CodexSettings;
 
   return yield* makeCodexAdapterV2({
     instanceId,
     settings,
-    environment: yield* mergeProviderInstanceEnvironment(environment, hostEnvironment),
+    environment: processEnv,
     clientFactory,
     crypto,
     fileSystem,
@@ -1653,6 +1657,9 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
   adapterOptions: CodexAdapterV2Options,
 ) {
   const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
+  const path = yield* Path.Path;
+  const hostEnvironment = yield* HostProcess.Environment;
+  const homeDirectory = yield* HostProcess.HomeDirectory;
   const readMcpSession = (threadId: ThreadId | null) =>
     // @effect-diagnostics-next-line effectSucceedWithVoid:off - This optional result requires undefined, not the wider void type.
     threadId === null ? Effect.succeed(undefined) : mcpSessions.read(threadId);
@@ -1662,6 +1669,23 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
   return ProviderAdapter.ProviderAdapterV2.of({
     instanceId: adapterOptions.instanceId,
     driver: CODEX_PROVIDER,
+    ...(adapterOptions.settings.setupMode !== "managed"
+      ? {
+          resolveCredentialFingerprint: Effect.fn("CodexAdapterV2.resolveCredentialFingerprint")(
+            () =>
+              resolveCodexCredentialFingerprint(
+                adapterOptions.settings,
+                adapterOptions.environment,
+              ).pipe(
+                Effect.provideService(Crypto.Crypto, crypto),
+                Effect.provideService(FileSystem.FileSystem, fileSystem),
+                Effect.provideService(Path.Path, path),
+                Effect.provideService(HostProcess.Environment, hostEnvironment),
+                Effect.provideService(HostProcess.HomeDirectory, homeDirectory),
+              ),
+          ),
+        }
+      : {}),
     getCapabilities: Effect.fn("CodexAdapterV2.getCapabilities")(function () {
       return Effect.succeed(CodexProviderCapabilitiesV2);
     }),

@@ -14,7 +14,7 @@ import {
 import type { UsageTokenTotals } from "@t3tools/contracts";
 
 import * as CodexUsageHistory from "../../usage/CodexUsageHistory.ts";
-import { resolveCodexHomeLayout } from "./CodexHomeLayout.ts";
+import { resolveCodexHomeLayout, withCodexEnvironmentHome } from "./CodexHomeLayout.ts";
 
 const TokenCount = Schema.Int.check(Schema.isGreaterThanOrEqualTo(0));
 const CodexTokenUsage = Schema.Struct({
@@ -384,13 +384,10 @@ export const codexUsageReader: ProviderUsageReader<
   directories: Effect.fn("codexUsageReader.directories")(function* ({ config, environment }) {
     if (config === undefined) return [];
     const path = yield* Path.Path;
-    const environmentHome = environment.CODEX_HOME?.trim();
     const layout = yield* resolveCodexHomeLayout(
-      config.setupMode !== "managed" &&
-        !config.homePath.trim() &&
-        !config.shadowHomePath.trim() &&
-        environmentHome
-        ? { ...config, homePath: environmentHome }
+      // Usage history must keep reporting managed homes even when instance settings are blank.
+      config.setupMode !== "managed"
+        ? withCodexEnvironmentHome(config, environment.CODEX_HOME)
         : config,
     );
     return [{ dir: path.resolve(layout.sharedHomePath, "sessions") }];

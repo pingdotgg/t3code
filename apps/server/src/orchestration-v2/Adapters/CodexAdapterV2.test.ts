@@ -25,6 +25,7 @@ import {
   ProviderSetupError,
   ProviderThreadId,
   ProviderTurnId,
+  type ResolvedProviderInstanceEnvironment,
   RunAttemptId,
   RunId,
   ThreadId,
@@ -41,9 +42,12 @@ import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 import * as Predicate from "effect/Predicate";
 import * as FileSystem from "effect/FileSystem";
+import * as Path from "effect/Path";
 import { MCP_APP_OUTPUT_KEY, readMcpAppReference } from "@t3tools/shared/mcpApp";
 import { toolOutputImages } from "@t3tools/shared/toolOutput";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import { resolveAttachmentPathById } from "../../attachmentStore.ts";
+import { ServerConfig } from "../../config.ts";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as PubSub from "effect/PubSub";
@@ -8654,4 +8658,143 @@ describe("codexDynamicToolOutput", () => {
       { type: "inputAudio", audioUrl: "data:audio/wav;base64,AAAA" },
     ]);
   });
+});
+
+describe("CodexAdapterV2 environment home derivation", () => {
+  const openSessionWithEnvironment = (input: {
+    readonly scenario: string;
+    readonly hostEnvironment: NodeJS.ProcessEnv;
+    readonly instanceEnvironment?: ResolvedProviderInstanceEnvironment;
+    readonly config?: CodexSettings;
+    /**
+     * The configured home that should land in `settings.homePath`; resolved with the platform
+     * Path, matching resolveCodexHomeLayout. Omit for a blank derived home.
+     */
+    readonly rawSettingsHome?: string;
+  }) => {
+    const transcript = makeCodexReplayTranscript({
+      scenario: input.scenario,
+      entries: codexReplayPreamble({
+        nativeThreadId: "unused",
+        nativeTurnId: "unused",
+        prompt: "unused",
+      }),
+    });
+    const openInputs: Array<
+      Parameters<CodexAdapterV2.CodexAppServerClientFactoryShape["open"]>[0]
+    > = [];
+    return Effect.gen(function* () {
+      const path = yield* Path.Path;
+      const adapter = yield* CodexAdapterV2.createCodexAdapterV2({
+        instanceId: CodexAdapterV2.CODEX_DEFAULT_INSTANCE_ID,
+        displayName: undefined,
+        environment: input.instanceEnvironment ?? [],
+        enabled: true,
+        config: input.config ?? DEFAULT_CODEX_SETTINGS,
+      });
+      yield* adapter.openSession({
+        threadId: ThreadId.make(`thread-${input.scenario}`),
+        providerSessionId: ProviderSessionId.make(`provider-session-${input.scenario}`),
+        modelSelection: CODEX_TEST_MODEL_SELECTION,
+        runtimePolicy: CODEX_TEST_RUNTIME_POLICY,
+      });
+      assert.strictEqual(openInputs.length, 1);
+      const [openInput] = openInputs;
+      if (openInput === undefined) {
+        return yield* Effect.die(new Error("The client factory never opened."));
+      }
+      const resolvedSettingsHome =
+        input.rawSettingsHome === undefined ? "" : path.resolve(input.rawSettingsHome);
+      return { openInput, resolvedSettingsHome };
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        Layer.mergeAll(
+          IdAllocator.layer,
+          McpProviderSessions.layer,
+          NodeServices.layer,
+          Layer.succeed(HostProcess.Environment, input.hostEnvironment),
+          Layer.effect(
+            ServerConfig,
+            ProviderReplayHarness.makeReplayServerConfig(input.scenario).pipe(Effect.orDie),
+          ).pipe(Layer.provide(NodeServices.layer)),
+          Layer.succeed(CodexAdapterV2.CodexAppServerClientFactory, {
+            open: (openInput) => {
+              openInputs.push(openInput);
+              // Each test opens once, so the replay driver builds inside open.
+              return Effect.gen(function* () {
+                const driver = yield* CodexReplay.makeReplayDriver(transcript);
+                return yield* Layer.build(CodexReplay.layerReplayWithDriver(driver)).pipe(
+                  Effect.flatMap((context) =>
+                    Effect.service(CodexClient.CodexAppServerClient).pipe(Effect.provide(context)),
+                  ),
+                );
+              }).pipe(
+                Effect.mapError(
+                  (cause) =>
+                    new ProviderAdapter.ProviderAdapterOpenSessionError({
+                      driver: CodexAdapterV2.CODEX_DRIVER_KIND,
+                      providerSessionId: openInput.providerSessionId,
+                      cause,
+                    }),
+                ),
+              );
+            },
+          }),
+        ),
+      ),
+    );
+  };
+
+  it.effect("keeps a blank home when no CODEX_HOME is configured", () =>
+    openSessionWithEnvironment({ scenario: "env-home-blank", hostEnvironment: {} }).pipe(
+      Effect.map(({ openInput }) => {
+        assert.strictEqual(openInput.settings.homePath, "");
+        assert.strictEqual(openInput.environment.CODEX_HOME, undefined);
+      }),
+    ),
+  );
+
+  it.effect("adopts the host environment CODEX_HOME when settings homes are blank", () =>
+    openSessionWithEnvironment({
+      scenario: "env-home-host",
+      hostEnvironment: { CODEX_HOME: "/t3-codex-derive/host" },
+      rawSettingsHome: "/t3-codex-derive/host",
+    }).pipe(
+      Effect.map(({ openInput, resolvedSettingsHome }) => {
+        assert.strictEqual(openInput.settings.homePath, resolvedSettingsHome);
+        assert.strictEqual(openInput.environment.CODEX_HOME, "/t3-codex-derive/host");
+      }),
+    ),
+  );
+
+  it.effect("prefers the instance environment CODEX_HOME over the host environment", () =>
+    openSessionWithEnvironment({
+      scenario: "env-home-instance",
+      hostEnvironment: { CODEX_HOME: "/t3-codex-derive/host" },
+      instanceEnvironment: [
+        { name: "CODEX_HOME", value: "/t3-codex-derive/instance", sensitive: false },
+      ],
+      rawSettingsHome: "/t3-codex-derive/instance",
+    }).pipe(
+      Effect.map(({ openInput, resolvedSettingsHome }) => {
+        assert.strictEqual(openInput.settings.homePath, resolvedSettingsHome);
+        assert.strictEqual(openInput.environment.CODEX_HOME, "/t3-codex-derive/instance");
+      }),
+    ),
+  );
+
+  it.effect("keeps the settings home over an environment CODEX_HOME", () =>
+    openSessionWithEnvironment({
+      scenario: "env-home-settings",
+      hostEnvironment: { CODEX_HOME: "/t3-codex-derive/host" },
+      config: { ...DEFAULT_CODEX_SETTINGS, homePath: "/t3-codex-derive/settings" },
+      rawSettingsHome: "/t3-codex-derive/settings",
+    }).pipe(
+      Effect.map(({ openInput, resolvedSettingsHome }) => {
+        assert.strictEqual(openInput.settings.homePath, resolvedSettingsHome);
+        assert.strictEqual(openInput.environment.CODEX_HOME, "/t3-codex-derive/host");
+      }),
+    ),
+  );
 });

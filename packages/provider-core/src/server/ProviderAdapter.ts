@@ -673,6 +673,12 @@ export class ProviderAdapterV2 extends Context.Service<
     readonly planSelectionTransition: (
       input: ProviderSelectionTransitionInput,
     ) => Effect.Effect<ProviderSelectionTransitionPlan, ProviderAdapterV2Error>;
+    /**
+     * Stable identity of the credentials the session runs on: a string while the same
+     * credentials serve the runtime, null once the provider surface is known to carry no
+     * credentials, undefined when nothing can be observed right now.
+     */
+    readonly resolveCredentialFingerprint?: () => Effect.Effect<string | null | undefined>;
     readonly openSession: (
       input: ProviderAdapterV2OpenSessionInput,
     ) => Effect.Effect<ProviderAdapterV2SessionRuntime, ProviderAdapterV2Error, Scope.Scope>;
