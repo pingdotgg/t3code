@@ -1,8 +1,9 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { resolveContextStripLabelsCompact } from "./BranchToolbar.logic";
+import { resolveContextStripCompaction } from "./BranchToolbar.logic";
 import {
   resolveRestingComposerControlsLayout,
+  resolveRestingComposerControlsMinimumWidth,
   resolveRestingComposerControlsNaturalWidth,
 } from "./composerFooterLayout";
 
@@ -30,16 +31,35 @@ describe("context strip labels and resting composer controls", () => {
     });
     expect(layout).toEqual({ hiddenCount: 0, visible: true });
 
-    const compact = resolveContextStripLabelsCompact({
-      compact: true,
+    const compaction = resolveContextStripCompaction({
+      current: "labels",
       neededWidth: chromeWidth + labelWidth + naturalWidth,
       availableWidth: stripWidth,
+      labelsSavedWidth: labelWidth,
     });
-    expect(compact).toBe(true);
+    expect(compaction).toBe("labels");
 
     expect(
-      resolveRestingComposerControlsLayout({ ...measurement, hostWidth: hostWidth(compact) }),
+      resolveRestingComposerControlsLayout({
+        ...measurement,
+        hostWidth: hostWidth(compaction !== "none"),
+      }),
     ).toEqual(layout);
+  });
+
+  it("compacts the branch before the full controls collapse", () => {
+    const strip = (availableWidth: number, current: "labels" | "branch") =>
+      resolveContextStripCompaction({
+        current,
+        neededWidth: chromeWidth + labelWidth + naturalWidth,
+        availableWidth,
+        labelsSavedWidth: labelWidth,
+      });
+    const compactLabelsWidth = chromeWidth + naturalWidth;
+    expect(strip(compactLabelsWidth, "labels")).toBe("labels");
+    expect(strip(compactLabelsWidth - 1, "labels")).toBe("branch");
+    expect(strip(compactLabelsWidth + 15, "branch")).toBe("branch");
+    expect(strip(compactLabelsWidth + 16, "branch")).toBe("labels");
   });
 });
 
@@ -146,5 +166,12 @@ describe("resolveRestingComposerControlsLayout with icon-only controls", () => {
       pickerIconOnly: true,
       visible: true,
     });
+    const minimumWidth = resolveRestingComposerControlsMinimumWidth(tray);
+    expect(resolveRestingComposerControlsLayout({ ...tray, hostWidth: minimumWidth }).visible).toBe(
+      true,
+    );
+    expect(
+      resolveRestingComposerControlsLayout({ ...tray, hostWidth: minimumWidth - 1 }).visible,
+    ).toBe(false);
   });
 });
