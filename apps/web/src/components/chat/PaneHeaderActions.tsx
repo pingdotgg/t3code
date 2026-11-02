@@ -3,7 +3,6 @@ import type { ProjectId } from "@t3tools/contracts";
 import GitActionsControl from "../GitActionsControl";
 import { ProjectAutomationsHeaderControl } from "./ThreadAutomationsPanel";
 import type { ThreadDetailsPanel } from "./ThreadDetailsPanel";
-import { ThreadLineageHeaderControl } from "./ThreadRelationshipsControl";
 
 /**
  * Git and project actions live in thread details; keep commit/push shortcuts mounted.
@@ -30,9 +29,6 @@ export function PaneHeaderActions(
 
   return (
     <div className="hidden min-w-0 shrink-0 items-center gap-1.5 md:empty:hidden lg:@2xl/header-actions:flex">
-      {props.draftId ? null : (
-        <ThreadLineageHeaderControl environmentId={props.environmentId} threadId={props.threadId} />
-      )}
       {props.gitCwd && props.isGitRepo ? (
         <GitActionsControl
           presentation="shortcut"
