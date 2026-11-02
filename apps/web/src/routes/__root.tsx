@@ -196,8 +196,9 @@ function RootRouteBranch() {
     </CommandPalette>
   );
 
+  // Observe the signed-out account before the shell exposes sign-in actions.
   return (
-    <>
+    <Suspense fallback={null}>
       <ChatGptWelcomeCoordinator />
       <FirstRunGate
         enabled={primaryEnvironmentAuthenticated}
@@ -209,11 +210,7 @@ function RootRouteBranch() {
         ) : null}
         {isElectron ? <RunningThreadKeepAlive /> : null}
         <RelayClientInstallDialog />
-        {hasCloudPublicConfig() ? (
-          <Suspense fallback={null}>
-            <ConnectOnboardingDialog />
-          </Suspense>
-        ) : null}
+        {hasCloudPublicConfig() ? <ConnectOnboardingDialog /> : null}
         <SshPasswordPromptDialog />
         <SnapShotCoordinator />
         <ReopenClosedViewShortcut />
@@ -230,7 +227,7 @@ function RootRouteBranch() {
         {/* Keep the theme editor above the router so drafts survive navigation. */}
         <ThemeEditorHost />
       </FirstRunGate>
-    </>
+    </Suspense>
   );
 }
 

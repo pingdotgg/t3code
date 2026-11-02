@@ -8,6 +8,7 @@ import { hasCloudPublicConfig } from "./cloud/publicConfig";
 import { isElectron } from "./env";
 import { startAppServices } from "./appInit";
 import { AppRoot } from "./AppRoot";
+import { GUEST_PAGE_PATH } from "./guestPage";
 import { clearChunkReloadGuard, reloadOnceForChunkLoadError } from "./lib/chunkReloadGuard";
 
 const router = startAppServices();
@@ -34,20 +35,34 @@ const managedAuthShellModule =
       : import("./components/clerk/BrowserManagedAuthShell")
     : null;
 
-// Configured clients always mount this dialog, so load it where the chunk reload guard covers it.
-const connectOnboardingDialogModule = managedAuthShellModule
-  ? import("./components/cloud/ConnectOnboardingDialog")
-  : null;
+// Standalone routes never mount this dialog; reloading them could also lose a consumed pairing token.
+const standaloneRoute = [
+  GUEST_PAGE_PATH,
+  "/pair",
+  "/connect",
+  "/connect-agent",
+  "/welcome",
+].includes(router.state.location.pathname);
+const connectOnboardingDialogModule =
+  managedAuthShellModule && !standaloneRoute
+    ? import("./components/cloud/ConnectOnboardingDialog").catch(() => null)
+    : null;
 
 export const startup = Promise.all([
   managedAuthShellModule?.then((module) => module.default) ?? null,
   router.load(),
-  connectOnboardingDialogModule,
 ])
   .then(([ManagedAuthShell]) => {
     // Route chunk failures resolve router.load() and surface later through the error boundary.
     if (reloadScheduled) return;
-    if (!chunkLoadFailed) clearChunkReloadGuard();
+    // A late dialog failure must retain the guard across the reload; its lazy import surfaces errors.
+    if (connectOnboardingDialogModule) {
+      void connectOnboardingDialogModule.then((module) => {
+        if (module && !chunkLoadFailed) clearChunkReloadGuard();
+      });
+    } else if (!chunkLoadFailed) {
+      clearChunkReloadGuard();
+    }
     ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
       <React.StrictMode>
         {ManagedAuthShell && clerkPublishableKey ? (
