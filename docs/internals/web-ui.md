@@ -31,8 +31,8 @@ The composer banners are the reference.
   renders `Button`.
 - [`ComposerBannerStack.tsx`](../../apps/web/src/components/chat/ComposerBannerStack.tsx) composes
   the slots and owns only stack behavior: priority, expand and collapse, dismiss transitions.
-- Consumers are a few lines of slots, and the slots carry the styling:
-  [`ComposerActivityStatus.tsx`](../../apps/web/src/components/chat/ComposerActivityStatus.tsx).
+- Consumers are a few lines of slots, and the slots carry the banner styling:
+  [`ComposerPlanFollowUpBanner.tsx`](../../apps/web/src/components/chat/ComposerPlanFollowUpBanner.tsx).
 
 Build new UI the same way. Compose or extend a component instead of copying its markup and classes.
 When a call site repeats a treatment another one already uses, make it a variant or a slot on the

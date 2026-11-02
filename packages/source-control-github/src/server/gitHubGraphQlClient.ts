@@ -266,6 +266,9 @@ const fromClientError = (
     : new GitHubRequestPolicy.GitHubApiResponseError({
         ...context,
         status: reason.status ?? 200,
+        githubErrorTypes: reason.errors.map((graphQlError) =>
+          typeof graphQlError["type"] === "string" ? graphQlError["type"] : null,
+        ),
       });
 };
 
