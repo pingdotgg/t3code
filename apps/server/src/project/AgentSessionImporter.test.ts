@@ -1,6 +1,7 @@
 import { expect, it } from "@effect/vitest";
 import {
   type AgentSessionSource,
+  type ServerSettingsError,
   EventId,
   ProjectId,
   ProviderDriverKind,
@@ -31,6 +32,7 @@ import {
 } from "../orchestration-v2/testkit/fixtures/shared.ts";
 import * as ProviderSessionRuntime from "../persistence/ProviderSessionRuntime.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
+import * as ServerSettings from "../serverSettings.ts";
 import * as AgentSessionImporter from "./AgentSessionImporter.ts";
 import * as AgentSessionScanner from "./AgentSessionScanner.ts";
 import * as ProjectService from "./ProjectService.ts";
@@ -170,6 +172,10 @@ const seedOwner = Effect.fn(function* (
 const makeImporter = Effect.fn(function* (
   candidates: ReadonlyArray<ReturnType<typeof candidate>>,
   beforeTransaction: Effect.Effect<void> = Effect.void,
+  settings: Layer.Layer<
+    ServerSettings.ServerSettingsService,
+    ServerSettingsError
+  > = ServerSettings.layerTest(),
 ) {
   const sql = yield* SqlClient.SqlClient;
   const events = yield* EventStore.EventStoreV2;
@@ -205,6 +211,7 @@ const makeImporter = Effect.fn(function* (
       Layer.provide(
         Layer.mergeAll(
           sinkLayer,
+          settings,
           Layer.succeed(IdAllocator.IdAllocatorV2, yield* IdAllocator.IdAllocatorV2),
           Layer.succeed(
             ProviderSessionRuntime.ProviderSessionRuntimeRepository,
@@ -415,4 +422,30 @@ it.effect(
         runtimePayload: { importedTranscripts: [source.source] },
       });
     }).pipe(Effect.scoped, Effect.provide(persistence)),
+);
+
+it.effect("imports under a policy ceiling in the project's default, kept under the ceiling", () =>
+  Effect.gen(function* () {
+    const projections = yield* ProjectionStore.ProjectionStoreV2;
+    const runtimes = yield* ProviderSessionRuntime.ProviderSessionRuntimeRepository;
+    const source = candidate(CODEX_MODEL_SELECTION, "ceiling");
+    const threadId = importId(source);
+    const importer = yield* makeImporter(
+      [source],
+      Effect.void,
+      ServerSettings.layerTest(
+        { defaultRuntimeMode: "full-access" },
+        {
+          organization: "Example Corp",
+          lockedSettings: [],
+          limits: { maxRuntimeMode: "auto-accept-edits" },
+        },
+      ),
+    );
+    expect(yield* importer.run).toEqual({ importedCount: 1, skippedCount: 0 });
+    expect((yield* projections.getThread(threadId)).runtimeMode).toBe("auto-accept-edits");
+    expect(Option.getOrThrow(yield* runtimes.getByThreadId({ threadId })).runtimeMode).toBe(
+      "auto-accept-edits",
+    );
+  }).pipe(Effect.scoped, Effect.provide(persistence)),
 );
