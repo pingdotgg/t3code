@@ -491,7 +491,7 @@ function SidebarRestoreHandle({ options }: { options: SidebarResolvedResizableOp
   const { ref: handleRef, ...drag } = resize;
   return (
     <div
-      className="fixed bottom-0 left-0 top-[var(--workspace-topbar-height)] z-40 w-3 [-webkit-app-region:no-drag] [[data-slot=sidebar-wrapper]:has([data-slot=sidebar-hover-edge])_&]:hidden"
+      className="fixed bottom-0 left-0 top-[var(--workspace-topbar-height)] z-41 w-3 [-webkit-app-region:no-drag] [[data-slot=sidebar-wrapper]:has([data-slot=sidebar-hover-edge])_&]:hidden"
       data-slot="sidebar-restore-edge"
       onPointerEnter={(event) => {
         if (event.pointerType === "mouse") setNear(true);
