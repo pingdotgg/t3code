@@ -317,6 +317,11 @@ function registerAppShellCommands(router: AnyRouter, shellElement: Element): () 
   };
 }
 
+// The sidebar toggle leaves the left corner, which keeps only the window's own controls.
+const THREADS_ON_RIGHT_TITLEBAR_STYLE = {
+  "--workspace-titlebar-content-left": "var(--workspace-controls-left)",
+} as CSSProperties;
+
 function SidebarControl() {
   const router = useRouter();
   const usagePageOpen = useLocation({ select: (location) => location.pathname === "/usage" });
@@ -326,8 +331,7 @@ function SidebarControl() {
   const environmentIdentificationMode = useEnvironmentIdentificationMode();
   const stageBackdropVariant = useSidebarStageBackdropVariant(environmentIdentificationMode);
   const sidebarSide = useClientSettings((settings) => settings.threadSidebarSide);
-  // The banner sits under this corner's toggle only while the sidebar is on the left.
-  const onBanner = isSidebarVisible && Boolean(stageBackdropVariant) && sidebarSide === "left";
+  const onBanner = isSidebarVisible && Boolean(stageBackdropVariant);
   const shortcutLabel = shortcutLabelForCommand(keybindings, "sidebar.toggle", {
     context: { usagePageOpen },
   });
@@ -383,7 +387,11 @@ function SidebarControl() {
     <div
       ref={appShellCommandsRef}
       className={cn(
-        "pointer-events-none fixed left-[var(--workspace-controls-left)] top-[var(--workspace-controls-top)] z-50 ml-px flex h-[var(--workspace-topbar-height)] items-center",
+        "pointer-events-none fixed top-[var(--workspace-controls-top)] flex h-[var(--workspace-topbar-height)] items-center",
+        // On the right it shares a corner with the narrow-layout panel sheet, which must cover it.
+        sidebarSide === "right"
+          ? "right-[var(--workspace-controls-right)] z-40 mr-px"
+          : "left-[var(--workspace-controls-left)] z-50 ml-px",
         isMobile && mobileSheetMounted && "hidden",
       )}
       data-sidebar-control=""
@@ -392,6 +400,7 @@ function SidebarControl() {
         <TooltipTrigger
           render={
             <SidebarTrigger
+              side={sidebarSide}
               variant={onBanner ? "media-navigation" : "ghost"}
               className={cn("pointer-events-auto", onBanner && "relative top-auto translate-y-0")}
               aria-label="Toggle main sidebar"
@@ -446,6 +455,7 @@ export function AppSidebarLayout({ children }: { children: ReactNode }) {
     "--sidebar-width": `${clampThreadSidebarWidth(sidebarWidth, sidebarMinimumWidth, sidebarMaximumWidth)}px`,
     "--panel-animation-duration": `${panelAnimationDurationMs}ms`,
     ...windowControlsInsetStyle,
+    ...(sidebarSide === "right" ? THREADS_ON_RIGHT_TITLEBAR_STYLE : {}),
   } as CSSProperties;
 
   return (

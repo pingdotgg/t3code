@@ -9,7 +9,9 @@ import {
   type ReactNode,
 } from "react";
 
+import { useSidebar } from "../components/ui/sidebar";
 import { isElectron } from "../env";
+import { useClientSettings } from "../hooks/useSettings";
 import { cn } from "../lib/utils";
 import { selectThreadRightPanelState, useRightPanelStore } from "../rightPanelStore";
 import { COLLAPSED_SIDEBAR_TITLEBAR_INSET_CLASS } from "../workspaceTitlebar";
@@ -32,8 +34,14 @@ import type { DockGroupView, DockView } from "./dockView";
 import { useDockView } from "./useDockView";
 
 const CHAT_MIN_SIZE = 320;
-const TITLEBAR_CONTROLS_INSET = "3.5rem";
+const TITLEBAR_CONTROLS_INSET =
+  "calc(3.5rem + var(--workspace-titlebar-content-right) - var(--workspace-controls-right))";
 const SASH_KEY_STEP = 16;
+// With the threads sidebar closed its toggle is left in this corner, so the controls move in.
+const SIDEBAR_TOGGLE_CLEARANCE_STYLE = {
+  "--workspace-titlebar-content-right":
+    "calc(var(--workspace-controls-right) + var(--workspace-titlebar-control-size) + 0.25rem)",
+} as CSSProperties;
 
 interface DockContext {
   readonly view: DockView;
@@ -273,6 +281,9 @@ export function DockWorkspace(props: {
   const threadRef = useDockLayoutStore((state) => state.threadRef);
   const view = useDockView(threadRef);
   const chatSlot = useDockGroupSlots(CHAT_GROUP_ID).body;
+  const { open, isMobile } = useSidebar();
+  const sidebarSide = useClientSettings((settings) => settings.threadSidebarSide);
+  const sidebarToggleInCorner = sidebarSide === "right" && (isMobile || !open);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- browser surfaces track their on-screen rect, which a dock change can move without resizing
   useLayoutEffect(() => {
     window.dispatchEvent(new Event(DOCK_LAYOUT_EVENT));
@@ -281,6 +292,7 @@ export function DockWorkspace(props: {
     <div
       ref={attachDockRoot}
       data-dock-root=""
+      {...(sidebarToggleInCorner ? { style: SIDEBAR_TOGGLE_CLEARANCE_STYLE } : {})}
       className={cn(
         "relative flex h-dvh min-h-0 min-w-0 flex-1 overflow-hidden [&_[data-slot=sidebar-inset]]:h-full!",
         props.className,

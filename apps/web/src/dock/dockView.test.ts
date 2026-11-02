@@ -103,14 +103,14 @@ describe("resolveDockView", () => {
     });
     expect(view({ thread: maximized, threadsSide: "right" }).edges).toMatchObject({
       left: "bottom",
-      right: null,
+      right: "bottom",
     });
     expect(view({ thread: maximized, threadsSide: null }).edges.top.has("bottom")).toBe(true);
   });
 
-  it("gives up the title bar corner the threads sidebar occupies", () => {
+  it("gives up only the left title bar corner to the threads sidebar", () => {
     expect(view({ threadsSide: "left" }).edges).toMatchObject({ left: null, right: "chat" });
-    expect(view({ threadsSide: "right" }).edges).toMatchObject({ left: "chat", right: null });
+    expect(view({ threadsSide: "right" }).edges).toMatchObject({ left: "chat", right: "chat" });
     expect(view({ threadsSide: null }).edges).toMatchObject({ left: "chat", right: "chat" });
   });
 });

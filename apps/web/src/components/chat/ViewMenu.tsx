@@ -1,8 +1,17 @@
 import type { ScopedThreadRef } from "@t3tools/contracts";
-import { FileDiff, Files, Globe2, LayoutPanelLeft, PanelLeft, TerminalSquare } from "lucide-react";
+import {
+  FileDiff,
+  Files,
+  Globe2,
+  LayoutPanelLeft,
+  PanelLeft,
+  PanelRight,
+  TerminalSquare,
+} from "lucide-react";
 import type { ComponentType } from "react";
 
 import { resetDockLayout } from "../../dock/dockActions";
+import { useClientSettings } from "../../hooks/useSettings";
 import {
   selectRightPanelKindShown,
   useRightPanelStore,
@@ -71,6 +80,8 @@ export function ViewMenu(props: {
 }) {
   const { toggleSidebar } = useSidebar();
   const threadsShown = useSidebarVisibility();
+  const threadsSide = useClientSettings((settings) => settings.threadSidebarSide);
+  const ThreadsIcon = threadsSide === "right" ? PanelRight : PanelLeft;
   return (
     <Menu>
       <Tooltip>
@@ -96,7 +107,7 @@ export function ViewMenu(props: {
       <MenuPopup align="end" side="bottom" sideOffset={6}>
         <MenuCheckboxItem checked={threadsShown} closeOnClick onCheckedChange={toggleSidebar}>
           <span className="flex items-center gap-2">
-            <PanelLeft className="size-4" />
+            <ThreadsIcon className="size-4" />
             Threads
             {props.threadsShortcut ? <MenuShortcut>{props.threadsShortcut}</MenuShortcut> : null}
           </span>

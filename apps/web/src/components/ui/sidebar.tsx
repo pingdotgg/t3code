@@ -1,7 +1,7 @@
 import { mergeProps } from "@base-ui/react/merge-props";
 import { useRender } from "@base-ui/react/use-render";
 import { cva, type VariantProps } from "class-variance-authority";
-import { PanelLeft, PanelLeftClose } from "lucide";
+import { PanelLeft, PanelLeftClose, PanelRight, PanelRightClose } from "lucide";
 import * as React from "react";
 import { cn } from "~/lib/utils";
 import { Button } from "~/components/ui/button";
@@ -226,6 +226,7 @@ function SidebarProvider({
             "--sidebar-width-icon": SIDEBAR_WIDTH_ICON,
             "--workspace-titlebar-content-left":
               "calc(var(--workspace-controls-left) + var(--workspace-titlebar-control-size) + var(--workspace-titlebar-control-gap))",
+            "--workspace-titlebar-content-right": "var(--workspace-controls-right)",
             ...style,
           } as React.CSSProperties
         }
@@ -390,9 +391,16 @@ function Sidebar({
   );
 }
 
-function SidebarTrigger({ className, onClick, ...props }: React.ComponentProps<typeof Button>) {
+function SidebarTrigger({
+  className,
+  onClick,
+  side,
+  ...props
+}: React.ComponentProps<typeof Button> & { side?: "left" | "right" }) {
   const { toggleSidebar } = useSidebar();
   const isOpen = useSidebarVisibility();
+  const instance = React.use(SidebarInstanceContext);
+  const onRight = (side ?? instance?.side) === "right";
 
   return (
     <Button
@@ -411,7 +419,12 @@ function SidebarTrigger({ className, onClick, ...props }: React.ComponentProps<t
       variant="ghost"
       {...props}
     >
-      <MorphIcon className="size-4" icon={isOpen ? PanelLeftClose : PanelLeft} />
+      <MorphIcon
+        className="size-4"
+        icon={
+          onRight ? (isOpen ? PanelRightClose : PanelRight) : isOpen ? PanelLeftClose : PanelLeft
+        }
+      />
       <span className="sr-only">Toggle Sidebar</span>
     </Button>
   );

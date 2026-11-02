@@ -38,7 +38,8 @@ export function resolveGroupActiveSurface(
 /**
  * What the workspace shows for one thread. A group with nothing to show drops out, so a thread
  * without a terminal open does not reserve the terminal's pane. `threadsSide` is the window edge
- * the threads sidebar is showing on, which takes that title bar corner from the dock.
+ * the threads sidebar is showing on: on the left it takes that title bar corner from the dock, and
+ * on the right the dock keeps its corner, because the top-right controls stay in the dock.
  */
 export function resolveDockView(input: {
   readonly layout: DockLayout;
@@ -79,7 +80,7 @@ export function resolveDockView(input: {
     edges: {
       top: edges.top,
       left: threadsSide === "left" ? null : edges.left,
-      right: threadsSide === "right" ? null : edges.right,
+      right: edges.right,
     },
     maximizedGroupId,
   };

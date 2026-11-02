@@ -171,11 +171,11 @@ export function ThreadPanelHeaderControl(props: PanelLayoutControlsProps) {
   );
 }
 
-/** The window's top-right controls. */
+/** The workspace's top-right controls. */
 export function WorkspaceTitlebarControls(props: { readonly children: ReactNode }) {
   return (
     <div
-      className="pointer-events-none fixed top-[var(--workspace-controls-top)] right-[var(--workspace-controls-right)] z-50 mr-px flex h-[var(--workspace-topbar-height)] items-center gap-1 [-webkit-app-region:no-drag]"
+      className="pointer-events-none absolute top-[var(--workspace-controls-top)] right-[var(--workspace-titlebar-content-right)] z-50 mr-px flex h-[var(--workspace-topbar-height)] items-center gap-1 [-webkit-app-region:no-drag]"
       data-workspace-titlebar-controls
     >
       <div className="pointer-events-auto flex h-full items-center">{props.children}</div>
