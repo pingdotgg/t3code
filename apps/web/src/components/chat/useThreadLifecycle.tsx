@@ -32,7 +32,6 @@ import {
   BACKGROUND_WORK_STOP_RETRY_AFTER_MS,
   type BackgroundWorkStopRequest,
   isBackgroundWorkStopPending,
-  presentPendingBackgroundWork,
 } from "@t3tools/client-runtime/state/thread-execution";
 import { useAcknowledgeThreadWoke, useThreadActions } from "../../hooks/useThreadActions";
 import { settleAndAdvance } from "../../settleAndAdvance";
@@ -410,8 +409,6 @@ export function useThreadLifecycle(input: ThreadLifecycleInput) {
   // The interrupt path also accepts a completed run while its provider still
   // has background work.
   const activeBackgroundTasks = !isWorking && activeThread ? pendingBackgroundTasks : [];
-  const timelineBackgroundTasks = presentPendingBackgroundWork(activeBackgroundTasks)?.items ?? [];
-  const [timelineBackgroundTask] = timelineBackgroundTasks;
   const [backgroundWorkStops, setBackgroundWorkStops] = useState<
     Record<string, BackgroundWorkStopRequest | undefined>
   >({});
@@ -687,10 +684,6 @@ export function useThreadLifecycle(input: ThreadLifecycleInput) {
     },
   } satisfies ChatShortcutCommands;
   return {
-    timelineBackgroundTaskLabel: timelineBackgroundTask?.label ?? null,
-    timelineBackgroundTaskIsCommand:
-      timelineBackgroundTask?.kind === "command" || timelineBackgroundTask?.kind === "monitor",
-    timelineBackgroundTaskMore: Math.max(0, timelineBackgroundTasks.length - 1),
     shortcuts,
     acknowledgeActiveThreadWoke,
     activeBranchMismatchKey,
