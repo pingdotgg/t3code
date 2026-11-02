@@ -72,7 +72,7 @@ export function resolveRemoteOpenState(input: {
   }
 
   if (input.sshTarget !== null && input.sshTarget.alias.length > 0) {
-    const { alias } = input.sshTarget;
+    const alias = input.sshTarget.alias.replace(/^ssh:\/\//iu, "");
     const userSeparator = alias.lastIndexOf("@");
     const host = userSeparator === -1 ? alias : alias.slice(userSeparator + 1);
     const username =
