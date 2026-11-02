@@ -267,6 +267,50 @@ describe("t3 pair", () => {
     ).pipe(Effect.provide(NodeServices.layer)),
   );
 
+  it.effect("refuses --tailscale before turning on Serve when the policy keeps clients local", () =>
+    withDescriptorServer((origin) =>
+      Effect.gen(function* () {
+        const baseDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-pair-policy-test-"));
+        const policyPath = NodePath.join(baseDir, "policy.json");
+        NodeFS.writeFileSync(
+          policyPath,
+          JSON.stringify({
+            schemaVersion: 1,
+            organization: "Example Corp",
+            limits: { clients: ["desktop", "local-browser"] },
+          }),
+        );
+        yield* persistServerRuntimeState({
+          path: NodePath.join(baseDir, "userdata", "server-runtime.json"),
+          state: yield* makePersistedServerRuntimeState({
+            config: { host: "127.0.0.1", devUrl: undefined },
+            port: Number(new URL(origin).port),
+          }),
+        });
+
+        const error = yield* provideCliTestLayers(
+          runCli(["pair", "--base-dir", baseDir, "--tailscale"]).pipe(
+            Effect.provideService(
+              ChildProcessSpawner.ChildProcessSpawner,
+              ChildProcessSpawner.make(() => Effect.die("tailscale must not run")),
+            ),
+            Effect.provide(
+              ConfigProvider.layer(
+                ConfigProvider.fromEnv({ env: { T3CODE_DEV_MANAGED_POLICY_PATH: policyPath } }),
+              ),
+            ),
+            Effect.flip,
+          ),
+        );
+
+        assert.include(
+          String(error),
+          "Example Corp's policy does not allow remote clients, so Tailscale Serve cannot be turned on.",
+        );
+      }),
+    ).pipe(Effect.provide(NodeServices.layer)),
+  );
+
   it.effect("ignores runtime state whose recorded pid is no longer alive", () =>
     withDescriptorServer((origin) =>
       Effect.gen(function* () {
