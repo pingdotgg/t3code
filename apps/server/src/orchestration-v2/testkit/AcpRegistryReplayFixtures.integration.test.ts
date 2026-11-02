@@ -182,17 +182,12 @@ describe("ACP registry replay fixtures", () => {
         const errors = projection.turnItems.filter((item) => item.type === "error");
         assert.lengthOf(errors, 1);
         assert.equal(errors[0]?.failure.class, "provider_error");
-        if (testCase.code === -32602) {
-          assert.equal(
-            errors[0]?.failure.message,
-            'The agent did not accept the model "replay-model-b". Choose another model for this provider, then retry.',
-          );
-        } else {
-          assert.match(
-            errors[0]?.failure.message ?? "",
-            /^Failed to open acpRegistry provider session \S+\.$/u,
-          );
-        }
+        assert.equal(
+          errors[0]?.failure.message,
+          testCase.code === -32602
+            ? 'The agent did not accept the model "replay-model-b". Choose another model for this provider, then retry.'
+            : "The provider needs you to sign in. Sign in from its provider settings or with its own CLI or app, then retry the turn.",
+        );
       }).pipe(
         Effect.provide(
           layerProviderReplay(scenario, AcpRegistryOrchestratorReplayHarness, {
