@@ -17,7 +17,7 @@ diff --git a/android/src/main/java/com/swmansion/enriched/markdown/utils/common/
      return buffer.toString()
    }
  
-+  private val tableCellLineBreak = Regex("""(\\*)\n""")
++  private val tableCellLineBreak = Regex("""(?<!\\)(\\*)\n""")
 +
 +  /** Serializes a table cell's content; a newline inside it becomes `<br>` so the row stays on one line. */
 +  fun serializeTableCell(cell: MarkdownASTNode): String =
@@ -81,7 +81,7 @@ diff --git a/ios/utils/MarkdownASTSerializer.m b/ios/utils/MarkdownASTSerializer
 +  NSString *markdown = markdownFromASTNodeChildren(node);
 +  if (![markdown containsString:@"\n"])
 +    return markdown;
-+  return [markdown stringByReplacingOccurrencesOfString:@"(\\\\*)\n"
++  return [markdown stringByReplacingOccurrencesOfString:@"(?<!\\\\)(\\\\*)\n"
 +                                            withString:@"$1$1<br>"
 +                                               options:NSRegularExpressionSearch
 +                                                 range:NSMakeRange(0, markdown.length)];
