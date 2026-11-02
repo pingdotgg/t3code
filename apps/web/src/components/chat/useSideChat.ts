@@ -11,7 +11,7 @@ import { useRef } from "react";
 import { newMessageId, newThreadId } from "~/lib/utils";
 import { useStableCallback } from "../../hooks/useStableCallback";
 import { useRightPanelStore } from "../../rightPanelStore";
-import { waitForThreadShell } from "../../state/entities";
+import { readThreadShell, waitForThreadShell } from "../../state/entities";
 import { threadEnvironment } from "../../state/threads";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { useOrchestrationCommand } from "../../state/use-orchestration-command";
@@ -63,14 +63,15 @@ export function useSideChat(input: {
     const text = prompt?.trim();
     // Send before showing the tab: closing a tab whose side chat has no run deletes it.
     if (text) {
-      // The server asks before edits on a side chat's first turn whatever mode is sent.
       const turn = await startThreadTurn({
         environmentId: threadRef.environmentId,
         input: {
           threadId: targetThreadId,
           message: { messageId: newMessageId(), role: "user", text, attachments: [] },
           titleSeed: deriveThreadTitleSeed({ text, attachments: [] }),
-          runtimeMode: "approval-required",
+          runtimeMode:
+            readThreadShell(scopeThreadRef(threadRef.environmentId, targetThreadId))?.runtimeMode ??
+            "approval-required",
           interactionMode: "default",
           createdAt: new Date().toISOString(),
         },
