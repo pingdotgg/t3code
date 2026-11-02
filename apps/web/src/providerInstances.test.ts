@@ -107,6 +107,45 @@ describe("provider instances across environments", () => {
     };
     expect(resolveCorrespondingProviderInstance(identified, [differentAccount])).toBeNull();
   });
+
+  it.each([
+    ["codex", "codex"],
+    ["laptop-pro", "remote-pro"],
+  ])(
+    "matches managed accounts across local registrations with ids %s and %s",
+    (leftId, rightId) => {
+      const [source, destination] = deriveProviderInstanceEntries(
+        [leftId, rightId].map((instanceId, index) => ({
+          ...provider({
+            provider: ProviderDriverKind.make("codex"),
+            instanceId,
+            displayName: "ChatGPT - Pro",
+          }),
+          auth: {
+            status: "authenticated" as const,
+            type: "chatgpt",
+            email: "one@example.test",
+            workspaceId: "workspace-one",
+            subscriptionSharing: true,
+            profileId: index === 0 ? "oaiapp_laptop" : "oaiapp_remote",
+          },
+        })),
+      );
+      expect(resolveCorrespondingProviderInstance(source!, [destination!])).toBe(destination);
+      expect(resolveCorrespondingProviderInstance(destination!, [source!])).toBe(source);
+      for (const auth of [
+        { ...destination!.snapshot.auth, email: "two@example.test" },
+        { ...destination!.snapshot.auth, type: "apiKey" },
+        { ...destination!.snapshot.auth, workspaceId: "workspace-two" },
+      ]) {
+        expect(
+          resolveCorrespondingProviderInstance(source!, [
+            { ...destination!, snapshot: { ...destination!.snapshot, auth } },
+          ]),
+        ).toBeNull();
+      }
+    },
+  );
 });
 
 describe("isProviderInstancePickerReady", () => {

@@ -5,6 +5,7 @@ import { getCustomModelOptionsByInstance } from "../../modelSelection";
 import {
   applyProviderInstanceSettings,
   deriveProviderInstanceEntries,
+  providerInstanceAccountsAreCompatible,
   resolveCorrespondingProviderInstance,
   type ProviderInstanceEntry,
 } from "../../providerInstances";
@@ -20,6 +21,7 @@ export function useScopedModelDisabledReason(
   const providersByEnvironment = useEnvironmentProviders();
   return (instanceId: ProviderInstanceId, model: string): string | null => {
     const sourceEntry = entries.find((entry) => entry.instanceId === instanceId);
+    const resolved = sourceEntry ? [sourceEntry] : [];
     for (const candidate of targets) {
       const environment = environments.find(
         (entry) => entry.environmentId === candidate.environmentId,
@@ -46,7 +48,10 @@ export function useScopedModelDisabledReason(
       ) {
         return `This model is unavailable on ${environment?.label ?? "a selected environment"}. Select that environment to choose its model separately.`;
       }
+      resolved.push(entry);
     }
-    return null;
+    return providerInstanceAccountsAreCompatible(resolved)
+      ? null
+      : "The selected environments have conflicting accounts for this provider. Select one environment to choose its model separately.";
   };
 }

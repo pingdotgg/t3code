@@ -294,6 +294,55 @@ describe("scoped settings writes", () => {
     });
   });
 
+  it.each(["email", "type", "workspaceId"] as const)(
+    "rejects conflicting destination %s values even when the source is unidentified",
+    (key) => {
+      const third = environment("Third");
+      const selected = [laptop, server, third];
+      const scope = resolveSettingsScope({}, [], selected);
+      const entries = (id: string, identity?: string) =>
+        deriveProviderInstanceEntries([
+          {
+            instanceId: ProviderInstanceId.make(id),
+            driver: ProviderDriverKind.make("codex"),
+            displayName: "ChatGPT - Pro",
+            enabled: true,
+            installed: true,
+            version: null,
+            status: "ready",
+            auth: { status: "authenticated", ...(identity ? { [key]: identity } : {}) },
+            checkedAt: "2026-01-01T00:00:00.000Z",
+            models: [],
+            slashCommands: [],
+            skills: [],
+          },
+        ]);
+      const source = entries("local-pro");
+      const patch = {
+        defaultModelSelection: { instanceId: source[0]!.instanceId, model: "gpt-6.1-sol" },
+        confirmThreadDelete: false,
+      };
+      const mapping = (thirdIdentity: string) => ({
+        source,
+        byEnvironment: new Map([
+          [laptop.environmentId, source],
+          [server.environmentId, entries("server-pro", "one")],
+          [third.environmentId, entries("third-pro", thirdIdentity)],
+        ]),
+      });
+      const consistent = planScopedSettingsPatch(scope, selected, patch, mapping("one"));
+      expect(consistent.unavailableReason).toBeNull();
+      expect(consistent.serverWrites).toHaveLength(3);
+      expect(consistent.hasClientWrite).toBe(true);
+      for (const targets of [selected, selected.toReversed()]) {
+        const conflicting = planScopedSettingsPatch(scope, targets, patch, mapping("two"));
+        expect(conflicting.serverWrites).toEqual([]);
+        expect(conflicting.hasClientWrite).toBe(false);
+        expect(conflicting.unavailableReason).toContain("account");
+      }
+    },
+  );
+
   it("edits the effective machine policy without changing other machines' rules", () => {
     const custom = environment("Laptop", {
       settings: {

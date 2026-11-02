@@ -44,6 +44,19 @@ export interface ProviderInstanceEntry {
   readonly models: ReadonlyArray<ServerProviderModel>;
 }
 
+export function providerInstanceAccountsAreCompatible(
+  entries: readonly ProviderInstanceEntry[],
+): boolean {
+  // Managed Codex profileId identifies the local OAuth registration, not the account.
+  return (["email", "type", "workspaceId"] as const).every((key) => {
+    const known = entries.flatMap((entry) => {
+      const value = entry.snapshot.auth[key];
+      return value === undefined ? [] : [value];
+    });
+    return new Set(known).size <= 1;
+  });
+}
+
 export function resolveCorrespondingProviderInstance(
   source: ProviderInstanceEntry,
   entries: readonly ProviderInstanceEntry[],
@@ -55,11 +68,7 @@ export function resolveCorrespondingProviderInstance(
       entry.driverKind === source.driverKind &&
       entry.displayName === source.displayName &&
       entry.acpRegistryAgentId === source.acpRegistryAgentId &&
-      (["email", "type", "profileId", "workspaceId"] as const).every((key) => {
-        const left = source.snapshot.auth[key];
-        const right = entry.snapshot.auth[key];
-        return left === undefined || right === undefined || left === right;
-      }),
+      providerInstanceAccountsAreCompatible([source, entry]),
   );
   return matches.length === 1 ? matches[0]! : null;
 }

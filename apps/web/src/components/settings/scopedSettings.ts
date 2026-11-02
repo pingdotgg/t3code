@@ -8,6 +8,7 @@ import {
   readsIdleCompactionModes,
   PROJECT_SCOPED_SERVER_SETTING_KEYS,
   type ProjectId,
+  type ProviderInstanceId,
   type ModelSelection,
   type ProjectScopedServerSettingKey,
   type ProjectSettingsOverrides,
@@ -28,6 +29,7 @@ import * as Cause from "effect/Cause";
 import type { ResolvedSettingsScope } from "./settingsScope";
 import {
   modelSelectionsAreEquivalent,
+  providerInstanceAccountsAreCompatible,
   resolveCorrespondingProviderInstance,
   type ProviderInstanceEntry,
 } from "../../providerInstances";
@@ -348,6 +350,7 @@ export function planScopedSettingsPatch(
           : [];
   let modelUnavailable: string | null = null;
   if (modelEntries) {
+    const resolvedAccounts = new Map<ProviderInstanceId, ProviderInstanceEntry[]>();
     const changedModels = new Set(
       Object.entries<unknown>(serverPatch).flatMap(([key, value]) =>
         MODEL_KEYS.has(key) && isPlainObject(value) && typeof value.instanceId === "string"
@@ -374,10 +377,13 @@ export function planScopedSettingsPatch(
                 modelEntries.byEnvironment.get(write.environmentId) ?? [],
               )
             : null;
-          if (!destination) {
+          if (!source || !destination) {
             modelUnavailable = `This model is unavailable on ${write.label}. Select that environment to choose its model separately.`;
             continue;
           }
+          const account = resolvedAccounts.get(source.instanceId) ?? [source];
+          account.push(destination);
+          resolvedAccounts.set(source.instanceId, account);
           next[key] = { ...selection, instanceId: destination.instanceId };
         }
         return next as T;
@@ -398,6 +404,14 @@ export function planScopedSettingsPatch(
           : patch,
       };
     });
+    if (
+      [...resolvedAccounts.values()].some(
+        (entries) => !providerInstanceAccountsAreCompatible(entries),
+      )
+    ) {
+      modelUnavailable ??=
+        "The selected environments have conflicting accounts for this provider. Select one environment to choose its model separately.";
+    }
     if (modelUnavailable) serverWrites = [];
   }
   const hasClientWrite = modelUnavailable === null && Object.keys(clientPatch).length > 0;
