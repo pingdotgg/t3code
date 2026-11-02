@@ -517,6 +517,39 @@ describe("AgentAwarenessRelay", () => {
     }),
   );
 
+  it.effect("does not alert an old completion after publishing its thread's tombstone", () =>
+    Effect.gen(function* () {
+      const oldCompleted = shell({
+        status: "completed",
+        latestRunCompletedAt: DateTime.makeUnsafe("2026-09-04T11:59:00.000Z"),
+      });
+      yield* TestClock.setTime(DateTime.toEpochMillis(DateTime.makeUnsafe(NOW)));
+      const { relay, currentShell, publications } = yield* makeTestRelay();
+      yield* Ref.set(currentShell, {
+        ...oldCompleted,
+        settledOverride: "settled",
+        settledAt: DateTime.makeUnsafe(NOW),
+        lastVisitedAt: null,
+      });
+      yield* relay.publishThread(THREAD_ID);
+      yield* TestClock.adjust("5 seconds");
+      yield* relay.drain;
+      assert.deepEqual(
+        publications.map((publication) => publication.state),
+        [null],
+      );
+
+      yield* Ref.set(currentShell, oldCompleted);
+      yield* relay.publishThread(THREAD_ID);
+      yield* TestClock.adjust("5 seconds");
+      yield* relay.drain;
+      assert.deepEqual(
+        publications.map((publication) => publication.state),
+        [null],
+      );
+    }),
+  );
+
   it.effect("drops a held completion when a queued continuation hides the thread", () =>
     Effect.gen(function* () {
       const { relay, currentShell, publications } = yield* makeTestRelay();
