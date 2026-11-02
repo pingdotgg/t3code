@@ -1524,30 +1524,28 @@ function acpPostSettleWakeShouldBuffer(
  */
 function acpEndKilledWakeTools(
   frames: ReadonlyArray<EffectAcpSchema.SessionNotification>,
-  killedTaskIds: ReadonlySet<string>,
   endedToolCallIds: ReadonlySet<string>,
-  flavor: Pick<AcpAdapterV2Flavor, "extractBackgroundTaskId" | "normalizeToolCall">,
+  flavor: Pick<AcpAdapterV2Flavor, "normalizeToolCall">,
 ): Array<EffectAcpSchema.SessionNotification> {
   const kept: Array<EffectAcpSchema.SessionNotification> = [];
   const openKilledTools = new Map<string, string>();
+  const tools = new Map<string, AcpToolCallState>();
   for (const frame of frames) {
     const toolCalls = parseSessionUpdateEvent(frame).events.flatMap((event) =>
-      event._tag === "ToolCallUpdated"
-        ? [flavor.normalizeToolCall?.(event.toolCall) ?? event.toolCall]
-        : [],
+      event._tag === "ToolCallUpdated" ? [event.toolCall] : [],
     );
     if (toolCalls.some((toolCall) => endedToolCallIds.has(toolCall.toolCallId))) continue;
     kept.push(frame);
-    for (const toolCall of toolCalls) {
+    for (const incoming of toolCalls) {
+      const merged = mergeToolCallState(tools.get(incoming.toolCallId), incoming);
+      const toolCall = flavor.normalizeToolCall?.(merged) ?? merged;
+      tools.set(toolCall.toolCallId, toolCall);
       const status = toolStatus(toolCall.status);
       if (status !== "pending" && status !== "running") {
         openKilledTools.delete(toolCall.toolCallId);
         continue;
       }
-      const taskId = flavor.extractBackgroundTaskId?.(toolCall);
-      if (taskId !== undefined && killedTaskIds.has(taskId)) {
-        openKilledTools.set(toolCall.toolCallId, frame.sessionId);
-      }
+      openKilledTools.set(toolCall.toolCallId, frame.sessionId);
     }
   }
   for (const [toolCallId, sessionId] of openKilledTools) {
@@ -8107,9 +8105,9 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             yield* emitTool(survivor, tool, "interrupted");
           }
           // Only these flavors track the tools themselves; others track monitors their tools started.
-          if (flavor.backgroundTasksIncludeForegroundTools === true && killedTaskIds.size > 0) {
+          if (flavor.backgroundTasksIncludeForegroundTools === true) {
             yield* Ref.update(wakeBuffer, (frames) =>
-              acpEndKilledWakeTools(frames, killedTaskIds, endedToolCallIds, flavor),
+              acpEndKilledWakeTools(frames, endedToolCallIds, flavor),
             );
           }
           yield* Ref.set(activeSessionId, null);

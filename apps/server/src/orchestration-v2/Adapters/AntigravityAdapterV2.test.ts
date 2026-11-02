@@ -1422,12 +1422,28 @@ describe("AntigravityAdapterV2 commands running past the reply", () => {
         status: "in_progress",
         content: [{ type: "content", content: { type: "text", text: "compiling" } }],
       });
-      yield* runCommand("wake-build");
+      yield* send({
+        sessionUpdate: "tool_call",
+        toolCallId: "wake-build",
+        kind: "execute",
+        status: "pending",
+        title: "Terminal",
+        rawInput: { CommandLine: "npm run build" },
+      });
+      yield* send({
+        sessionUpdate: "tool_call_update",
+        toolCallId: "wake-build",
+        status: "in_progress",
+      });
       yield* say("Still building.");
       assert.lengthOf(continuationRequests, 1);
 
       const continuation = turnInput(4, true);
-      yield* session.startTurn(continuation).pipe(Effect.forkScoped);
+      yield* session.startTurn(continuation);
+      assert.isFalse(
+        yield* hasPendingBackgroundWork,
+        "the sparse wake command died with the process",
+      );
       yield* takeUntil(
         (event) =>
           event.type === "message.updated" &&
