@@ -181,40 +181,47 @@ export function AndroidAnchoredMenu(props: AndroidAnchoredMenuProps) {
                 onClose={close}
               />
             ) : (
+              // Reanimated loses frame changes made before a pending entering animation starts, and
+              // the menu grows once Compose measures it, so the fade runs on a fixed-size wrapper.
               <Animated.View
                 entering={FadeIn.duration(120)}
-                className="absolute overflow-hidden bg-card-alt shadow-md"
-                style={{
-                  left,
-                  maxHeight,
-                  width: menuWidth,
-                  borderRadius: 4 * scale,
-                  ...(opensDown
-                    ? { top: local.y + local.height + ANCHOR_GAP }
-                    : { bottom: (rootHeight ?? 0) - local.y + ANCHOR_GAP }),
-                }}
+                pointerEvents="box-none"
+                className="absolute inset-0"
               >
-                {/* Compose DropdownMenu takes focus; in-window editor menus preserve the keyboard. */}
-
-                {/* The first item tap must act while the keyboard is open. */}
-                <ScrollView
-                  contentContainerStyle={{ paddingVertical: 7 * scale }}
-                  bounces={false}
-                  keyboardShouldPersistTaps="always"
-                  showsVerticalScrollIndicator={false}
+                <View
+                  className="absolute overflow-hidden bg-card-alt shadow-md"
+                  style={{
+                    left,
+                    maxHeight,
+                    width: menuWidth,
+                    borderRadius: 4 * scale,
+                    ...(opensDown
+                      ? { top: local.y + local.height + ANCHOR_GAP }
+                      : { bottom: (rootHeight ?? 0) - local.y + ANCHOR_GAP }),
+                  }}
                 >
-                  <MenuPopup
-                    inline
-                    anchor={local}
-                    menuWidth={menuWidth}
-                    actions={levelActions}
-                    title={props.title}
-                    parent={parent}
-                    onPress={onPressItem}
-                    onBack={() => setPath((current) => current.slice(0, -1))}
-                    onClose={close}
-                  />
-                </ScrollView>
+                  {/* Compose DropdownMenu takes focus; in-window editor menus preserve the keyboard. */}
+
+                  {/* The first item tap must act while the keyboard is open. */}
+                  <ScrollView
+                    contentContainerStyle={{ paddingVertical: 7 * scale }}
+                    bounces={false}
+                    keyboardShouldPersistTaps="always"
+                    showsVerticalScrollIndicator={false}
+                  >
+                    <MenuPopup
+                      inline
+                      anchor={local}
+                      menuWidth={menuWidth}
+                      actions={levelActions}
+                      title={props.title}
+                      parent={parent}
+                      onPress={onPressItem}
+                      onBack={() => setPath((current) => current.slice(0, -1))}
+                      onClose={close}
+                    />
+                  </ScrollView>
+                </View>
               </Animated.View>
             )}
           </View>
