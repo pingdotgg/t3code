@@ -1,4 +1,5 @@
 import {
+  CommandId,
   McpAppRequestError,
   type McpAppCallToolInput,
   type McpAppCallToolResult,
@@ -14,6 +15,7 @@ import {
 import { mcpAppToolCallableByApp, type McpAppReference } from "@t3tools/shared/mcpApp";
 import { mcpAppFromToolItem } from "@t3tools/shared/toolOutput";
 import * as Context from "effect/Context";
+import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -61,6 +63,7 @@ const make = Effect.gen(function* () {
   const threadManagement = yield* ThreadManagementService.ThreadManagementService;
   const providerSessions = yield* ProviderSessionManager.ProviderSessionManagerV2;
   const modelContext = yield* McpAppModelContext.McpAppModelContext;
+  const crypto = yield* Crypto.Crypto;
 
   const fail = (threadId: ThreadId, reason: McpAppRequestError["reason"], cause?: unknown) =>
     new McpAppRequestError({ threadId, reason, ...(cause === undefined ? {} : { cause }) });
@@ -135,7 +138,7 @@ const make = Effect.gen(function* () {
     if (tool === undefined || !mcpAppToolCallableByApp(tool._meta)) {
       return yield* fail(input.threadId, "tool-not-callable");
     }
-    return yield* resolved.mcpApps
+    const result = yield* resolved.mcpApps
       .callTool({
         providerThread: resolved.providerThread,
         server: resolved.app.server,
@@ -143,6 +146,32 @@ const make = Effect.gen(function* () {
         arguments: input.arguments,
       })
       .pipe(Effect.mapError((cause) => fail(input.threadId, "request-failed", cause)));
+    // A write through the app's own tool, such as a deferred form's submit, is
+    // kept so the app opens on its outcome. Reads are left out: an app can
+    // repeat those unprompted.
+    if (input.name === resolved.app.tool && !readOnlyHint(tool) && result.isError !== true) {
+      const uuid = yield* crypto.randomUUIDv4().pipe(Effect.orDie);
+      yield* threadManagement
+        .dispatch({
+          type: "mcp_app.call.record",
+          commandId: CommandId.make(`server:mcp-app-call:${input.itemId}:${uuid}`),
+          threadId: input.threadId,
+          turnItemId: input.itemId,
+          arguments: input.arguments,
+          result,
+        })
+        .pipe(
+          // The write already happened; failing the call would offer it again.
+          Effect.catch((error) =>
+            Effect.logWarning("Could not record an MCP App's tool call", {
+              threadId: input.threadId,
+              itemId: input.itemId,
+              error: error._tag,
+            }),
+          ),
+        );
+    }
+    return result;
   });
 
   const readResource = Effect.fn("McpAppRequests.readResource")(function* (

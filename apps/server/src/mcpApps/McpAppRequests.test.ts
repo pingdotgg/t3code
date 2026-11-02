@@ -1,4 +1,5 @@
 import {
+  type OrchestrationV2ServerCommand,
   ProviderSessionId,
   ProviderThreadId,
   ThreadId,
@@ -7,6 +8,7 @@ import {
   type OrchestrationV2ProviderThread,
   type OrchestrationV2TurnItem,
 } from "@t3tools/contracts";
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import { assert, describe, it } from "@effect/vitest";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -68,10 +70,13 @@ function makeLayer(input: {
   readonly item: OrchestrationV2TurnItem | null;
   readonly mcpApps?: ProviderAdapter.ProviderAdapterV2McpApps;
   readonly live?: boolean;
+  readonly recordFails?: boolean;
+  readonly dispatched?: Array<OrchestrationV2ServerCommand>;
 }) {
   return McpAppRequests.layer.pipe(
     Layer.provide(
       Layer.mergeAll(
+        NodeCrypto.layer,
         Layer.mock(McpAppModelContext.McpAppModelContext)({
           set: (entry) =>
             Effect.sync(() => {
@@ -84,6 +89,13 @@ function makeLayer(input: {
           getTurnItem: () => Effect.succeed(input.item),
         }),
         Layer.mock(ThreadManagementService.ThreadManagementService)({
+          dispatch: (command) =>
+            input.recordFails === true
+              ? Effect.fail(new Orchestrator.OrchestratorProjectionError({ threadId }))
+              : Effect.sync(() => {
+                  input.dispatched?.push(command);
+                  return {} as never;
+                }),
           getThreadRecords: (id: ThreadId) =>
             Effect.succeed({
               thread: {
@@ -139,11 +151,15 @@ describe("McpAppRequests", () => {
       Effect.succeed([
         { name: "refresh", annotations: { readOnlyHint: true } },
         { name: "model_only", _meta: { ui: { visibility: ["model"] } } },
+        { name: "get_weather" },
+        { name: "set_alert" },
       ]),
     callTool: (input) =>
       Effect.sync(() => {
         calls.push({ server: input.server, tool: input.tool });
-        return { content: [{ type: "text", text: "ok" }] };
+        return input.arguments.fail === true
+          ? { content: [{ type: "text", text: "no" }], isError: true }
+          : { content: [{ type: "text", text: "ok" }] };
       }),
     readResource: () => Effect.succeed({ contents: [] }),
   };
@@ -165,6 +181,70 @@ describe("McpAppRequests", () => {
         tool: { name: "refresh", annotations: { readOnlyHint: true } },
       });
     }).pipe(Effect.provide(makeLayer({ item: appItem({ t3McpApp: app }), mcpApps }))),
+  );
+
+  it.effect("keeps the app's writes through its own tool on the tool call", () => {
+    const dispatched: Array<OrchestrationV2ServerCommand> = [];
+    return Effect.gen(function* () {
+      const requests = yield* McpAppRequests.McpAppRequests;
+      const call = (name: string, args: Record<string, unknown>) =>
+        requests.callTool({ threadId, itemId, name, arguments: args });
+      yield* call("get_weather", { city: "Paris", _ui_submitted: true });
+      // Other tools and failed writes leave the call as it was.
+      yield* call("refresh", {});
+      yield* call("set_alert", {});
+      yield* call("get_weather", { fail: true });
+      assert.deepEqual(
+        dispatched.map((command) =>
+          command.type === "mcp_app.call.record"
+            ? {
+                threadId: command.threadId,
+                turnItemId: command.turnItemId,
+                arguments: command.arguments,
+                result: command.result,
+              }
+            : command.type,
+        ),
+        [
+          {
+            threadId,
+            turnItemId: itemId,
+            arguments: { city: "Paris", _ui_submitted: true },
+            result: { content: [{ type: "text", text: "ok" }] },
+          },
+        ],
+      );
+    }).pipe(Effect.provide(makeLayer({ item: appItem({ t3McpApp: app }), mcpApps, dispatched })));
+  });
+
+  it.effect("doesn't keep reads through the app's own tool", () => {
+    const dispatched: Array<OrchestrationV2ServerCommand> = [];
+    const readOnlyApp: ProviderAdapter.ProviderAdapterV2McpApps = {
+      ...mcpApps,
+      listTools: () =>
+        Effect.succeed([{ name: "get_weather", annotations: { readOnlyHint: true } }]),
+    };
+    return Effect.gen(function* () {
+      const requests = yield* McpAppRequests.McpAppRequests;
+      yield* requests.callTool({ threadId, itemId, name: "get_weather", arguments: {} });
+      assert.deepEqual(dispatched, []);
+    }).pipe(
+      Effect.provide(
+        makeLayer({ item: appItem({ t3McpApp: app }), mcpApps: readOnlyApp, dispatched }),
+      ),
+    );
+  });
+
+  it.effect("returns a write's result even when it can't be recorded", () =>
+    Effect.gen(function* () {
+      const requests = yield* McpAppRequests.McpAppRequests;
+      assert.deepEqual(
+        yield* requests.callTool({ threadId, itemId, name: "get_weather", arguments: {} }),
+        { content: [{ type: "text", text: "ok" }] },
+      );
+    }).pipe(
+      Effect.provide(makeLayer({ item: appItem({ t3McpApp: app }), mcpApps, recordFails: true })),
+    ),
   );
 
   it.effect("refuses tools hidden from apps or missing from the server", () =>
