@@ -405,6 +405,17 @@ const routed = Effect.fn("McpToolAccess.routed")(function* <Tools extends Record
         return yield* forwarding.value.call(scope, tool, target, { ...params, environmentId });
       });
   }
+  for (const name of Object.keys(handlers)) {
+    const handle = handlers[name] as (
+      params: unknown,
+    ) => Effect.Effect<unknown, Tool.Failure<Tools[keyof Tools]>>;
+    handlers[name] = (params: unknown) =>
+      Effect.gen(function* () {
+        const scope = yield* McpInvocationContext.McpInvocationContext;
+        yield* assertBoundedToolAccess(scope, name);
+        return yield* handle(params);
+      });
+  }
   return handlers as Toolkit.HandlersFrom<Tools>;
 });
 
@@ -421,3 +432,23 @@ export const toLayer = <Tools extends Record<string, Tool.Any>, EX = never, RX =
     ),
   );
 };
+
+const boundedTools = new Set([
+  "orchestrator_capabilities",
+  "delegate_task",
+  "task_status",
+  "task_cancel",
+]);
+
+export const assertBoundedToolAccess = (
+  scope: McpInvocationContext.McpInvocationScope,
+  tool: string,
+) =>
+  scope.thread?.boundedExecution === true && !boundedTools.has(tool)
+    ? Effect.fail(
+        new OrchestratorMcpFailure({
+          code: "capability_denied",
+          message: `Bounded execution cannot call ${tool}. Use tools inside the inherited provider sandbox, or delegate_task with inherited limits.`,
+        }),
+      )
+    : Effect.void;
