@@ -6,7 +6,7 @@ import {
   type NativeSyntheticEvent,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { NewThreadButton } from "../../components/NewThreadButton";
+import { ScrollComposeButton } from "../../components/ScrollComposeButton.android";
 import {
   androidHomeFabPosition,
   type AndroidHomeFabLayout as SharedAndroidHomeFabLayout,
@@ -16,7 +16,8 @@ import { FabScrollContext } from "./FabScrollContext";
 import { updateFabScroll } from "./fab-scroll";
 import { useAndroidControlSizing } from "../../components/ui/useAndroidControlSizing";
 import { WorkspaceTabsContext, useWorkspaceTabs } from "../workspace/WorkspaceTabsContext";
-import { FLOATING_TABS } from "../workspace/floating-workspace-tabs";
+import { FLOATING_TABS, floatingTabsMetrics } from "../workspace/floating-workspace-tabs";
+import { useEnabledNavigationTabs } from "../workspace/navigation-tabs";
 import {
   useAppearancePreferences,
   useAndroidFloatingTabs,
@@ -30,9 +31,17 @@ export function AndroidHomeFabLayout(props: ComponentProps<typeof SharedAndroidH
   const [layoutWidth, setLayoutWidth] = useState<number | null>(null);
   const { state } = useWorkspaceState();
   const [expanded, setExpanded] = useState(true);
-  const { fabSize } = useAndroidControlSizing();
+  const { scale, fabSize } = useAndroidControlSizing();
+  const enabledTabs = useEnabledNavigationTabs();
+  const barWidth =
+    layoutWidth === null
+      ? undefined
+      : layoutWidth - (Math.max(insets.left, FLOATING_TABS.edge) - FLOATING_TABS.edge);
+  const size = floatingTabsEnabled
+    ? floatingTabsMetrics(enabledTabs.length + 1, scale, fabSize, barWidth).height
+    : fabSize;
   const workspace = useWorkspaceTabs();
-  const bottomClearance = insets.bottom + FLOATING_TABS.bottom + FLOATING_TABS.edge + fabSize;
+  const bottomClearance = insets.bottom + FLOATING_TABS.bottom + FLOATING_TABS.edge + size;
   const context = floatingTabsEnabled && workspace ? { ...workspace, bottomClearance } : workspace;
   const scrollState = useRef({ anchor: 0, expanded: true });
   const onScroll = (event: NativeSyntheticEvent<NativeScrollEvent>) => {
@@ -57,9 +66,9 @@ export function AndroidHomeFabLayout(props: ComponentProps<typeof SharedAndroidH
       (!props.sidebar || floatingTabsEnabled) &&
       state.hasConnections &&
       layoutWidth !== null ? (
-        <NewThreadButton
+        <ScrollComposeButton
           key={`${appearance.baseFontSize}:${fontScale}:${layoutWidth}`}
-          extended
+          size={size}
           expanded={floatingTabsEnabled ? false : expanded}
           onPress={props.onStartNewTask}
           className="absolute"
