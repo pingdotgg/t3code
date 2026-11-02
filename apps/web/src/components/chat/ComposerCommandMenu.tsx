@@ -22,7 +22,6 @@ import {
   MessagesSquareIcon,
   PencilRulerIcon,
   SearchXIcon,
-  SparklesIcon,
   TerminalIcon,
   type LucideIcon,
 } from "lucide-react";
@@ -402,7 +401,7 @@ function ComposerCommandItemIcon(props: {
     case "provider-slash-command":
       return <TerminalIcon aria-hidden="true" className={iconClassName} />;
     case "skill":
-      return <SparklesIcon aria-hidden="true" className={iconClassName} />;
+      return <BoxIcon aria-hidden="true" className={iconClassName} />;
   }
 }
 
