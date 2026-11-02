@@ -6876,11 +6876,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         assert.isFalse(harness.events.some((event) => event.type === "subagent.updated"));
         assert.equal(harness.continuationRequests.length, 0);
         assert.isFalse(yield* harness.hasPendingBackgroundWork);
-      }).pipe(
-        Effect.provide(
-          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
-        ),
-      ),
+      }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
     ),
   );
 
