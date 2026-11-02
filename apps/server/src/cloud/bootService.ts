@@ -334,7 +334,7 @@ function launchdManager(input: {
         args: ["bootstrap", domainTarget, unitPath],
       },
       {
-        step: "starting the service",
+        step: "starting the launch agent",
         command: "launchctl",
         args: ["kickstart", serviceTarget],
       },
@@ -346,7 +346,7 @@ function launchdManager(input: {
         args: ["bootstrap", domainTarget, unitPath],
       },
       {
-        step: "restarting the service after a failed update",
+        step: "starting the launch agent after a failed update",
         command: "launchctl",
         args: ["kickstart", serviceTarget],
       },
