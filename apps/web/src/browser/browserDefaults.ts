@@ -1,4 +1,5 @@
 import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
+import { scopeProjectRef } from "@t3tools/client-runtime/environment";
 import { derivePhysicalProjectKey } from "@t3tools/client-runtime/state/project-grouping";
 import {
   DEFAULT_BROWSER_PROFILE_ID,
@@ -13,6 +14,7 @@ import {
   type ScopedThreadRef,
 } from "@t3tools/contracts";
 
+import { useComposerDraftStore } from "~/composerDraftStore";
 import {
   ensureClientSettingsHydrated,
   getClientSettings,
@@ -115,11 +117,13 @@ const toBrowserDefaults = (
   };
 };
 
+// A draft has no thread shell until its first message, but already belongs to a project.
 function readThreadProject(threadRef: ScopedThreadRef | undefined): EnvironmentProject | null {
-  const projectId = threadRef ? readThreadShell(threadRef)?.projectId : undefined;
-  return threadRef && projectId
-    ? readProject({ environmentId: threadRef.environmentId, projectId })
+  const owner = threadRef
+    ? (readThreadShell(threadRef) ??
+      useComposerDraftStore.getState().getDraftThreadByRef(threadRef))
     : null;
+  return owner ? readProject(scopeProjectRef(owner.environmentId, owner.projectId)) : null;
 }
 
 /** Pass the thread a new tab opens in so its project's profile applies. */
@@ -136,10 +140,12 @@ export async function resolveBrowserDefaults(
 }
 
 export function useBrowserDefaults(threadRef?: ScopedThreadRef | null): BrowserDefaults {
-  const projectId = useQuietThreadShell(threadRef ?? null)?.projectId;
-  const project = useProject(
-    threadRef && projectId ? { environmentId: threadRef.environmentId, projectId } : null,
+  const shell = useQuietThreadShell(threadRef ?? null);
+  const draft = useComposerDraftStore((store) =>
+    threadRef ? store.getDraftThreadByRef(threadRef) : null,
   );
+  const owner = shell ?? draft;
+  const project = useProject(owner ? scopeProjectRef(owner.environmentId, owner.projectId) : null);
   return useClientSettings((settings) => toBrowserDefaults(settings, project));
 }
 

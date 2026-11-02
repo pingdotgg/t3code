@@ -5,14 +5,34 @@ import {
   INCOGNITO_BROWSER_PROFILE_ID,
   ProjectId,
   type RepositoryIdentity,
+  ThreadId,
 } from "@t3tools/contracts";
 
 const settings = vi.hoisted(() => ({ current: {} as Record<string, unknown> }));
+const store = vi.hoisted(() => ({
+  projects: new Map<string, unknown>(),
+  drafts: new Map<string, { environmentId: string; projectId: string }>(),
+}));
 
 vi.mock("~/hooks/useSettings", () => ({
   getClientSettings: () => settings.current,
   useClientSettings: () => undefined,
   ensureClientSettingsHydrated: vi.fn(async () => undefined),
+}));
+
+vi.mock("~/state/entities", () => ({
+  readThreadShell: () => null,
+  readProject: (ref: { projectId: string }) => store.projects.get(ref.projectId) ?? null,
+  useProject: () => null,
+  useQuietThreadShell: () => null,
+}));
+
+vi.mock("~/composerDraftStore", () => ({
+  useComposerDraftStore: {
+    getState: () => ({
+      getDraftThreadByRef: (ref: { threadId: string }) => store.drafts.get(ref.threadId) ?? null,
+    }),
+  },
 }));
 
 const {
@@ -21,6 +41,13 @@ const {
   projectProfileIdsForEnvironment,
   resolveDefaultBrowserProfileId,
 } = await import("./browserDefaults");
+
+const withDefaults = {
+  browserDefaultViewport: { _tag: "fill" },
+  browserDefaultZoomFactor: 1,
+  browserDefaultAppearance: "system",
+  browserAutoShowFloatingPreview: true,
+};
 
 const withDefaultProfile = (browserDefaultProfileId: string) => {
   settings.current = {
@@ -87,6 +114,14 @@ describe("project browser profiles", () => {
         checkout(remote, "/notes", null as unknown as RepositoryIdentity),
       ),
     ).toBe("personal");
+  });
+
+  it("resolves a draft thread's project before its first message", () => {
+    settings.current = { ...withDefaults, ...profileSettings({ [workKey]: "work" }) };
+    store.projects.set(main.id, main);
+    store.drafts.set("draft-thread", { environmentId: local, projectId: main.id });
+    const draftRef = { environmentId: local, threadId: ThreadId.make("draft-thread") };
+    expect(getBrowserDefaults(draftRef).profileId).toBe("work");
   });
 
   it.each([
