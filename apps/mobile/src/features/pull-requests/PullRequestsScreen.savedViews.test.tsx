@@ -74,6 +74,7 @@ vi.mock("../../components/ui/AppActivityIndicator", () => ({
 }));
 vi.mock("../../components/ui/Button", () => ({ Button: "button" }));
 vi.mock("../../components/ui/AppText", () => ({ AppText: "Text" }));
+vi.mock("../../components/ui/AppSymbol", () => ({ SymbolView: "SymbolView" }));
 vi.mock("../../components/ui/EmptyState", () => ({ EmptyState: "EmptyState" }));
 vi.mock("../../native/v5-workspace-context", async () => ({
   NativePrimaryColumnContext: (await import("react")).createContext(null),
@@ -86,7 +87,6 @@ vi.mock("../../state/server", async () => {
 });
 vi.mock("../../state/queries", () => ({ useDebouncedValue: (value: string) => value }));
 vi.mock("./PullRequestListRow", () => ({ PullRequestListRow: "PullRequestListRow" }));
-vi.mock("./PullRequestControls", () => ({ PullRequestCardRow: "PullRequestCardRow" }));
 vi.mock("./PullRequestListFilters", () => ({
   usePullRequestListFilters: () => ({ headerMenu: null }),
   PullRequestListFilters: ({ savedViewsMenu }: { savedViewsMenu: ReactNode }) => savedViewsMenu,
