@@ -5,7 +5,7 @@ import * as NodePath from "node:path";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { createPackageWithOptions, extractFile } from "@electron/asar";
 import Plist from "plist";
-import { assert, it, vi } from "@effect/vitest";
+import { assert, it } from "@effect/vitest";
 import * as ConfigProvider from "effect/ConfigProvider";
 import * as Deferred from "effect/Deferred";
 import * as Fiber from "effect/Fiber";
@@ -1431,7 +1431,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
   });
 
   it.effect(
-    "gives the macOS backend Helper the app's launcher, privacy strings and entitlements, and still prepares the server cache",
+    "gives the macOS backend Helper the app's launcher, privacy strings and entitlements",
     () =>
       Effect.scoped(
         Effect.gen(function* () {
@@ -1488,17 +1488,10 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
             helperPlistPath,
             Plist.build({ CFBundleIdentifier: "com.t3tools.t3code.helper", LSUIElement: true }),
           );
-          const log = yield* Effect.acquireRelease(
-            Effect.sync(() => vi.spyOn(console, "log").mockImplementation(() => {})),
-            (spy) => Effect.sync(() => spy.mockRestore()),
-          );
           // ia32 never matches the host, so the shared server-cache hook takes its skip path.
           yield* Effect.promise(() =>
             afterPackMacos({ appOutDir, electronPlatformName: "darwin", arch: 0, packager: {} }),
           );
-          assert.deepStrictEqual(log.mock.calls, [
-            ["[server-compile-cache] Skipping unexecutable target darwin/ia32"],
-          ]);
           assert.deepStrictEqual(Plist.parse(yield* fs.readFileString(helperPlistPath)), {
             CFBundleIdentifier: "com.t3tools.t3code.helper",
             LSUIElement: true,

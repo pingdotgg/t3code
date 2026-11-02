@@ -1,3 +1,4 @@
+// electron-builder loads the shared CommonJS hook through Node's module loader.
 // @effect-diagnostics nodeBuiltinImport:off
 import * as NodeModule from "node:module";
 
