@@ -21,7 +21,11 @@ vi.mock("electron", () => ({
 vi.mock("electron-webauthn", () => webauthn);
 
 import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
-import { PASSKEY_CREATE_CHANNEL, PASSKEY_GET_CHANNEL } from "./GuestProtocol.ts";
+import {
+  PASSKEY_CREATE_CHANNEL,
+  PASSKEY_GET_CHANNEL,
+  PASSKEY_CANCEL_CHANNEL,
+} from "./GuestProtocol.ts";
 import * as PreviewPasskeys from "./Passkeys.ts";
 
 const layerFor = (
@@ -52,7 +56,11 @@ const layerFor = (
     ),
   );
 
-type Handler = (event: { readonly senderFrame: object | null }, publicKey: unknown) => unknown;
+type Handler = (
+  event: { readonly senderFrame: object | null },
+  publicKey: unknown,
+  requestId: string,
+) => unknown;
 
 const makeGuest = (origin = "https://accounts.example.com") => {
   const handlers = new Map<string, Handler>();
@@ -69,8 +77,12 @@ const makeGuest = (origin = "https://accounts.example.com") => {
       removeHandler: (channel: string) => handlers.delete(channel),
     },
   };
-  const call = (channel: string, publicKey: unknown, senderFrame: object | null = mainFrame) =>
-    Effect.promise(async () => handlers.get(channel)?.({ senderFrame }, publicKey));
+  const call = (
+    channel: string,
+    publicKey: unknown,
+    senderFrame: object | null = mainFrame,
+    requestId = "request",
+  ) => Effect.promise(async () => handlers.get(channel)?.({ senderFrame }, publicKey, requestId));
   return { guest: guest as unknown as Electron.WebContents, mainFrame, handlers, state, call };
 };
 
@@ -269,9 +281,19 @@ describe("PreviewPasskeys", () => {
         ceremonyStarted.resolve();
         return new Promise((resolve) => (finish = resolve));
       });
-      const first = yield* Effect.forkChild(page.call(PASSKEY_GET_CHANNEL, publicKey));
+      using abort = vi.spyOn(AbortController.prototype, "abort");
+      const first = yield* Effect.forkChild(
+        page.call(PASSKEY_GET_CHANNEL, publicKey, page.mainFrame, "active"),
+      );
       yield* Effect.promise(() => ceremonyStarted.promise);
-      assert.deepStrictEqual(yield* page.call(PASSKEY_GET_CHANNEL, publicKey), notAllowed);
+      assert.deepStrictEqual(
+        yield* page.call(PASSKEY_GET_CHANNEL, publicKey, page.mainFrame, "overlapping"),
+        notAllowed,
+      );
+      yield* page.call(PASSKEY_CANCEL_CHANNEL, null, page.mainFrame, "overlapping");
+      assert.strictEqual(abort.mock.calls.length, 0);
+      yield* page.call(PASSKEY_CANCEL_CHANNEL, null, page.mainFrame, "active");
+      assert.strictEqual(abort.mock.calls.length, 1);
 
       page.mainFrame.origin = "https://other.example";
       finish({ success: true, data: { credentialId: "AQ" } });

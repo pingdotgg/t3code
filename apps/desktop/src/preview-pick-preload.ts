@@ -7,7 +7,7 @@ import "./preview/PickPreload.ts";
 // Electron hands webPreferences.additionalArguments to sandboxed preloads in process.argv.
 if (process.argv.includes(PASSKEY_BRIDGE_ARGUMENT)) {
   installPasskeyBridge(
-    (channel, publicKey) => ipcRenderer.invoke(channel, publicKey),
+    (channel, publicKey, requestId) => ipcRenderer.invoke(channel, publicKey, requestId),
     !process.argv.includes(PASSKEY_PHONE_BRIDGE_ARGUMENT),
   );
 }

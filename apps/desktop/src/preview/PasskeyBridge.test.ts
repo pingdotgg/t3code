@@ -65,7 +65,9 @@ const install = (respond: (channel: string) => unknown) => {
   vi.stubGlobal("AuthenticatorAttestationResponse", FakeAttestationResponse);
   vi.stubGlobal("AuthenticatorAssertionResponse", FakeAssertionResponse);
 
-  const invoke = vi.fn(async (channel: string, _publicKey: unknown) => respond(channel));
+  const invoke = vi.fn(async (channel: string, _publicKey: unknown, _requestId: string) =>
+    respond(channel),
+  );
   installPasskeyBridge(invoke);
   return {
     invoke,
@@ -99,7 +101,7 @@ describe("installPasskeyBridge", () => {
       },
     })) as PublicKeyCredential;
 
-    assert.deepStrictEqual(invoke.mock.calls[0], [
+    assert.deepStrictEqual(invoke.mock.calls[0]?.slice(0, 2), [
       PASSKEY_GET_CHANNEL,
       {
         challenge: new Uint8Array([1, 2, 3]),
@@ -177,6 +179,8 @@ describe("installPasskeyBridge", () => {
     const error = await pending;
     assert.instanceOf(error, DOMException);
     assert.strictEqual((error as DOMException).name, "AbortError");
-    assert.deepStrictEqual(invoke.mock.calls.at(-1), [PASSKEY_CANCEL_CHANNEL, null]);
+    const requestId = invoke.mock.calls[0]?.[2] ?? "";
+    assert.isNotEmpty(requestId);
+    assert.deepStrictEqual(invoke.mock.calls.at(-1), [PASSKEY_CANCEL_CHANNEL, null, requestId]);
   });
 });

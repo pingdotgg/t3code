@@ -1,3 +1,4 @@
+// @effect-diagnostics cryptoRandomUUID:off - This sandboxed preload has no Effect runtime.
 import type { CreateCredentialResult, GetCredentialResult } from "electron-webauthn";
 
 import {
@@ -26,7 +27,11 @@ type PasskeyChannel =
 type CreationOptions = CredentialCreationOptions & {
   readonly mediation?: CredentialMediationRequirement;
 };
-type InvokePasskeyCeremony = (channel: PasskeyChannel, publicKey: unknown) => Promise<unknown>;
+type InvokePasskeyCeremony = (
+  channel: PasskeyChannel,
+  publicKey: unknown,
+  requestId: string,
+) => Promise<unknown>;
 
 const NOT_ALLOWED_MESSAGE =
   "The operation either timed out or was not allowed. See: https://www.w3.org/TR/webauthn-2/#sctn-privacy-considerations-client.";
@@ -220,7 +225,8 @@ export function installPasskeyBridge(invoke: InvokePasskeyCeremony, platformAuth
     signal: AbortSignal | undefined,
   ): Promise<PublicKeyCredential | null> => {
     if (signal?.aborted) throw abortReason(signal);
-    const ceremony = invoke(channel, toCloneable(publicKey)).then(
+    const requestId = crypto.randomUUID();
+    const ceremony = invoke(channel, toCloneable(publicKey), requestId).then(
       (value) => {
         const result = value as PasskeyCeremonyResult;
         if (!result.success && result.fallbackToNative) return null;
@@ -238,7 +244,7 @@ export function installPasskeyBridge(invoke: InvokePasskeyCeremony, platformAuth
     if (!signal) return ceremony;
     return new Promise((resolve, reject) => {
       const onAbort = () => {
-        void invoke(PASSKEY_CANCEL_CHANNEL, null).catch(() => {});
+        void invoke(PASSKEY_CANCEL_CHANNEL, null, requestId).catch(() => {});
         reject(abortReason(signal));
       };
       signal.addEventListener("abort", onAbort, { once: true });

@@ -173,9 +173,8 @@ const make = Effect.gen(function* () {
     },
     attachGuest: (guest) => {
       if (backend === undefined) return () => {};
-      let ceremonyPending = false;
-      let active: AbortController | undefined;
-      const cancel = () => active?.abort();
+      let active: { readonly controller: AbortController; readonly requestId: string } | undefined;
+      const cancel = () => active?.controller.abort();
       const onNavigation = (
         event: Electron.Event<Electron.WebContentsDidStartNavigationEventParams>,
       ) => {
@@ -186,6 +185,7 @@ const make = Effect.gen(function* () {
       const serve = async (
         event: IpcMainInvokeEvent,
         publicKey: { readonly timeout?: unknown } | undefined,
+        requestId: unknown,
         ceremony: (context: PasskeyCeremonyContext) => Promise<PasskeyCeremonyResult>,
       ): Promise<PasskeyCeremonyResult> => {
         // Only the guest's main frame runs the bridge preload.
@@ -193,7 +193,12 @@ const make = Effect.gen(function* () {
         if (!frame || frame !== guest.mainFrame) return notAllowed;
         // The page shares the preload's JS world; read the frame's committed origin before any await/navigation.
         const origin = frame.origin;
-        if (!isTrustworthyOrigin(origin) || ceremonyPending || !guest.isFocused()) {
+        if (
+          !isTrustworthyOrigin(origin) ||
+          active !== undefined ||
+          !guest.isFocused() ||
+          typeof requestId !== "string"
+        ) {
           return notAllowed;
         }
         if (typeof publicKey !== "object" || publicKey === null) {
@@ -204,9 +209,8 @@ const make = Effect.gen(function* () {
           : null;
         if (!host || host.isDestroyed()) return notAllowed;
 
-        ceremonyPending = true;
         const controller = new AbortController();
-        active = controller;
+        active = { controller, requestId };
         try {
           const result = await withDeadline(
             ceremony({
@@ -226,7 +230,6 @@ const make = Effect.gen(function* () {
         } finally {
           controller.abort();
           active = undefined;
-          ceremonyPending = false;
         }
       };
       const detach = () => {
@@ -240,16 +243,18 @@ const make = Effect.gen(function* () {
       guest.ipc.removeHandler(PASSKEY_CREATE_CHANNEL);
       guest.ipc.removeHandler(PASSKEY_GET_CHANNEL);
       guest.ipc.removeHandler(PASSKEY_CANCEL_CHANNEL);
-      guest.ipc.handle(PASSKEY_CANCEL_CHANNEL, (event) => {
-        if (event.senderFrame === guest.mainFrame) cancel();
+      guest.ipc.handle(PASSKEY_CANCEL_CHANNEL, (event, _publicKey, requestId: unknown) => {
+        if (event.senderFrame === guest.mainFrame && active?.requestId === requestId) cancel();
       });
       guest.ipc.handle(
         PASSKEY_CREATE_CHANNEL,
-        (event, publicKey: PublicKeyCredentialCreationOptions) =>
-          serve(event, publicKey, (context) => backend.create(publicKey, context)),
+        (event, publicKey: PublicKeyCredentialCreationOptions, requestId: unknown) =>
+          serve(event, publicKey, requestId, (context) => backend.create(publicKey, context)),
       );
-      guest.ipc.handle(PASSKEY_GET_CHANNEL, (event, publicKey: PublicKeyCredentialRequestOptions) =>
-        serve(event, publicKey, (context) => backend.get(publicKey, context)),
+      guest.ipc.handle(
+        PASSKEY_GET_CHANNEL,
+        (event, publicKey: PublicKeyCredentialRequestOptions, requestId: unknown) =>
+          serve(event, publicKey, requestId, (context) => backend.get(publicKey, context)),
       );
       return detach;
     },
