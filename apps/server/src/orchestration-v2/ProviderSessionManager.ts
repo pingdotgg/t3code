@@ -874,10 +874,11 @@ export const layerWithOptions = (
             ),
           );
         // One write per item: a late completion from the dead session's queued events rejects
-        // only the interrupt of its own item, and that item then is no longer open.
+        // only the interrupt of its own item, and that item then is no longer open. After a
+        // conflict, read again: queued events can also store more cut-off items.
         let pending = yield* readCutOff;
         for (let attempt = 0; attempt < 3 && pending.length > 0; attempt++) {
-          const conflicted: Array<OrchestrationV2TurnItem["id"]> = [];
+          let conflicted = false;
           for (const item of pending) {
             const now = yield* DateTime.now;
             const { committed } = yield* eventSink.writeIfTurnItemUnchanged({
@@ -895,10 +896,10 @@ export const layerWithOptions = (
                 },
               ],
             });
-            if (!committed) conflicted.push(item.id);
+            if (!committed) conflicted = true;
           }
-          if (conflicted.length === 0) return;
-          pending = (yield* readCutOff).filter((item) => conflicted.includes(item.id));
+          if (!conflicted) return;
+          pending = yield* readCutOff;
         }
         if (pending.length === 0) return;
         yield* Effect.logWarning("orchestration-v2.provider-session-release-tool-call-conflict", {

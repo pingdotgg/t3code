@@ -2648,14 +2648,21 @@ it.effect("ProviderSessionManagerV2 keeps provider updates that land while relea
       // Read after the late calls, so one write for all items would run out of tries first.
       const lastOpen = { ...seededToolCalls.cutOff, id: TurnItemId.make("turn-item:last-open") };
       yield* Effect.forEach([...lateCompleted, lastOpen], writeToolCall);
-      // The first hook also updates the cut-off call without ending it, so it needs a second try.
+      // The first hook also updates the cut-off call without ending it, so it needs a second
+      // try, and stores one more call that the dead session started before the release.
+      const storedLate = {
+        ...seededToolCalls.cutOff,
+        id: TurnItemId.make("turn-item:stored-late"),
+      };
       yield* Ref.set(
         beforeTurnItemsWrite,
         lateCompleted.map((item, index) =>
           writeToolCall({ ...item, status: "completed" }).pipe(
             Effect.andThen(
               index === 0
-                ? writeToolCall({ ...seededToolCalls.cutOff, title: "late output" })
+                ? writeToolCall({ ...seededToolCalls.cutOff, title: "late output" }).pipe(
+                    Effect.andThen(writeToolCall(storedLate)),
+                  )
                 : Effect.void,
             ),
             Effect.orDie,
@@ -2678,10 +2685,19 @@ it.effect("ProviderSessionManagerV2 keeps provider updates that land while relea
 
       assert.deepStrictEqual(yield* rosters, [["replacement-task"], ["dev-server"]]);
       assert.deepStrictEqual(
-        yield* Effect.forEach([seededToolCalls.cutOff, ...lateCompleted, lastOpen], (item) =>
-          toolCallStatus(item.id),
+        yield* Effect.forEach(
+          [seededToolCalls.cutOff, ...lateCompleted, lastOpen, storedLate],
+          (item) => toolCallStatus(item.id),
         ),
-        ["interrupted", "completed", "completed", "completed", "completed", "interrupted"],
+        [
+          "interrupted",
+          "completed",
+          "completed",
+          "completed",
+          "completed",
+          "interrupted",
+          "interrupted",
+        ],
       );
     });
 
