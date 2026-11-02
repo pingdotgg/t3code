@@ -1257,6 +1257,7 @@ export function PullRequestDetailPanel({
         autoMerge={autoMerge}
         canAdminOverride={canAdminOverride}
         pending={actionPending}
+        blockedReason={mergeBlockedReason}
         onConfirm={(adminOverride) =>
           perform(
             autoMerge && !adminOverride ? "enable-auto-merge" : "merge",
@@ -1420,8 +1421,6 @@ export function PullRequestDetailPanel({
                 />
               ) : null}
               <PullRequestPrimaryAction
-                mergeBlockedReason={mergeBlockedReason}
-                pullRequestKey={pullRequestKey}
                 primaryAction={primaryAction}
                 autoMergeArmed={autoMergeArmed}
                 armedAutoMergeLabel={armedAutoMergeLabel}

@@ -1,3 +1,5 @@
+import { isTestChangedFile } from "@t3tools/shared/changedFileKind";
+import { FlaskConicalOffIcon } from "lucide-react";
 import {
   capitalizeTerm,
   sourceControlClients,
@@ -51,8 +53,6 @@ import {
 } from "react";
 
 import { observeIntersection } from "~/lib/observeIntersection";
-import { useResizableWidth } from "~/hooks/useResizableWidth";
-import { RightPanelResizeHandle } from "../preview/RightPanelResizeHandle";
 import {
   isReviewFileVisible,
   reviewCommentCounts,
@@ -106,7 +106,7 @@ import { GuideChapterPanel } from "./guide/GuideChapterPanel";
 import { ReviewChapterHeader, ReviewChapterProgress } from "./ReviewChapterHeader";
 import { useCodeViewFileReveal } from "../diffs/useCodeViewFileReveal";
 import { useHideTestFiles } from "../diffs/useHideTestFiles";
-import { diffFileTreeEntries, orderDiffFilesLikeTree } from "../diffs/diffFileTree.logic";
+import { diffFileTreeEntries } from "../diffs/diffFileTree.logic";
 import { StyledDiffCodeView } from "../diffs/StyledDiffCodeView";
 import { Button } from "../ui/button";
 import { MorphIcon } from "~/components/MorphIcon";
@@ -388,13 +388,6 @@ function PullRequestCodeTab({
   const canSetChapterViewed = useAtomValue(
     pullRequestEnvironment.setFilesViewed.permissionAtom(environmentId),
   );
-  const treeWidth = useResizableWidth({
-    storageKey: "t3code:pr-diff-tree-width",
-    defaultWidth: 320,
-    minWidth: 192,
-    maxWidth: 640,
-    edge: "left",
-  });
   const scrollElement = useRef<HTMLDivElement | null>(null);
   const savedScroll = useRef<number | null>(null);
   const setScroller = (node: HTMLDivElement | null) => {
@@ -562,10 +555,19 @@ function PullRequestCodeTab({
   );
   // Ordered within a slice rather than across them: ordering the accumulated set would let a late
   // slice push a file the reader is part way through further down the page.
-  const files = orderDiffFiles(
+  const loadedFiles = orderDiffFiles(
     parsedSlices.flatMap((parsed) => (parsed?.kind === "files" ? parsed.files : [])),
     groupByType,
   );
+  const testFileCount = loadedFiles.filter((file) =>
+    isTestChangedFile(resolveFileDiffPath(file)),
+  ).length;
+  const files = hideTestFiles
+    ? loadedFiles.filter((file) => {
+        const path = resolveFileDiffPath(file);
+        return path === revealRequest?.path || !isTestChangedFile(path);
+      })
+    : loadedFiles;
   const filePaths = files.map((file) => resolveFileDiffPath(file));
   // Offered under a commit scope as well as from the whole change, because reading a change one
   // commit at a time is what the scope is for. The tick is kept against the change request rather

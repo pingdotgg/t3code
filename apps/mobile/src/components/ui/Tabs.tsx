@@ -70,7 +70,7 @@ export function Tabs<Value extends string>(props: TabsProps<Value>) {
                   : { ...current, [option.value]: { x: layout.x, width: layout.width } },
               )
             }
-            className="min-h-9 flex-row items-center gap-1.5 rounded-full px-3.5 active:opacity-70"
+            className="min-h-8 flex-row items-center gap-1.5 rounded-full px-3.5 active:opacity-70"
           >
             <AppText
               textRole="footnote"

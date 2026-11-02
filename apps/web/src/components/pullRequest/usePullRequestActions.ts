@@ -153,7 +153,11 @@ export function usePullRequestActionRunner({
         ]);
   const actionPending = actionKey !== null && pendingKeys.has(actionKey);
 
-  const perform = async (action: PullRequestAction, method?: PullRequestMergeMethod, adminOverride = false) => {
+  const perform = async (
+    action: PullRequestAction,
+    method?: PullRequestMergeMethod,
+    adminOverride = false,
+  ) => {
     if (actionKey === null || reference === null || pendingRef.current.has(actionKey)) return false;
     pendingRef.current.add(actionKey);
     setPendingKeys(new Set(pendingRef.current));

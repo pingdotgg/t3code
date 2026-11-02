@@ -1,3 +1,4 @@
+import { SymbolView } from "../../components/ui/AppSymbol";
 import * as Dialog from "../../components/ui/Dialog";
 import { useAtomRefresh, useAtomSet, useAtomValue } from "@effect/atom-react";
 import { pullRequestMergeRequirementsUnmet } from "@t3tools/client-runtime/review-workspace";
@@ -6,7 +7,7 @@ import { sourceControlClients } from "@t3tools/client-runtime/source-control-cli
 import type { PullRequestDetail, PullRequestMergeMethod } from "@t3tools/contracts";
 import { AsyncResult } from "effect/reactivity";
 import { useRef, useState } from "react";
-import { Modal, Platform, Pressable, View } from "react-native";
+import { Modal, Pressable, View } from "react-native";
 import { AppText as Text } from "../../components/ui/AppText";
 import { Button } from "../../components/ui/Button";
 import { SplitButton } from "../../components/ui/SplitButton";

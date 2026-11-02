@@ -39,7 +39,7 @@ export function PullRequestGuideContent({
   readonly active?: boolean;
 }) {
   const navigation = useNavigation();
-  const state = useReviewGuide(params, visible);
+  const state = useReviewGuide(params, active);
   const { guide, stale } = reviewGuideState(state.data);
   const detail = useEnvironmentQuery(composerPullRequests.detail(pullRequestTarget(params)));
   const viewed = usePullRequestFilesViewed(params, detail.data);

@@ -47,16 +47,19 @@ describe("review reading order", () => {
     ]);
   });
 
-  it("pairs a test with the source whose name carries its own dotted suffix", () => {
+  it("groups dotted test filenames separately from source files", () => {
     expect(
-      order([
-        file("src/c.browser.test.tsx"),
-        file("src/b.test.ts"),
-        file("src/a.logic.test.ts"),
-        file("src/c.tsx"),
-        file("src/b.ts"),
-        file("src/a.logic.ts"),
-      ]),
+      orderDiffFiles(
+        [
+          file("src/c.browser.test.tsx"),
+          file("src/b.test.ts"),
+          file("src/a.logic.test.ts"),
+          file("src/c.tsx"),
+          file("src/b.ts"),
+          file("src/a.logic.ts"),
+        ],
+        true,
+      ).map((file) => file.name),
     ).toEqual([
       "src/a.logic.ts",
       "src/b.ts",

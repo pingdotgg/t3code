@@ -464,20 +464,12 @@ export interface PullRequestTimelineEvent {
   readonly path: string | null;
   readonly reviewState: string | null;
   readonly reactions: ReadonlyArray<PullRequestReaction>;
-  readonly thread?: PullRequestTimelineThread;
 }
 
 export interface PullRequestReplyAvailability {
   readonly moreReplies: number;
   readonly hasMoreReplies: boolean;
   readonly url: string | null;
-}
-
-export interface PullRequestTimelineThread
-  extends
-    Pick<PullRequestReviewThread, "path" | "line" | "isResolved" | "isOutdated">,
-    PullRequestReplyAvailability {
-  readonly replies: ReadonlyArray<PullRequestTimelineEvent>;
 }
 
 export type PullRequestTimelineRow =
@@ -491,7 +483,6 @@ export function groupPullRequestTimelineConversations(
   for (const event of events) {
     if (
       (event.kind === "comment" || event.kind === "review") &&
-      event.thread === undefined &&
       pullRequestReviewOutcome(event.reviewState) === null
     ) {
       const last = rows.at(-1);

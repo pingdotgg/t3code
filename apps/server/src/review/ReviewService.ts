@@ -167,6 +167,15 @@ export const make = Effect.gen(function* () {
     return yield* git.getReviewDiffFileContents(input);
   });
 
+  const patchRoot = Effect.fn("ReviewService.patchRoot")(function* (cwd: string) {
+    const result = yield* git.execute({
+      operation: "ReviewService.patchRoot",
+      cwd,
+      args: ["rev-parse", "--show-toplevel"],
+    });
+    return result.stdout.replace(/\r?\n$/, "");
+  });
+
   const setStaged = Effect.fn("ReviewService.setStaged")(function* (input: ReviewSetStagedInput) {
     yield* assertWorkspaceBoundCwd("ReviewService.setStaged", input.cwd);
     if (
@@ -183,7 +192,7 @@ export const make = Effect.gen(function* () {
     if (input.patch !== undefined) {
       yield* git.execute({
         operation: "ReviewService.setStaged.patch",
-        cwd: input.cwd,
+        cwd: yield* patchRoot(input.cwd),
         args: [
           "apply",
           "--cached",
@@ -269,7 +278,7 @@ export const make = Effect.gen(function* () {
     if (input.patch !== undefined) {
       yield* git.execute({
         operation: "ReviewService.revert.patch",
-        cwd: input.cwd,
+        cwd: yield* patchRoot(input.cwd),
         args: ["apply", "--reverse", "--unidiff-zero", "--", "-"],
         stdin: input.patch,
       });

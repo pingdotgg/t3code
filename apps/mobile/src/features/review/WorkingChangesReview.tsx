@@ -1,3 +1,4 @@
+import type { OrchestrationMessageContext } from "@t3tools/contracts";
 import {
   applyWorkingChangesMutation,
   type WorkingChangesState,
@@ -75,6 +76,7 @@ type Props = {
   threadId: ThreadId;
   cwd: string;
   draftMessage: string;
+  draftContext: OrchestrationMessageContext | undefined;
   revision?: string;
   onChanged: () => void;
   openedFile?: { readonly scope: WorkingScope; readonly path?: string } | undefined;
@@ -110,6 +112,7 @@ function useWorkingChanges(props: Props, scope: WorkingScope | undefined, genera
     threadKey: `${props.environmentId}:${props.threadId}`,
     selectedSection: section,
     draftMessage: props.draftMessage,
+    draftContext: props.draftContext,
     workingTreeScope: scope,
   });
   const files = useMemo(

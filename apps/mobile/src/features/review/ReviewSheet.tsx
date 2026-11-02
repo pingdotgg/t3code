@@ -28,7 +28,6 @@ import {
   View,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { useReduceMotionEnabled } from "../../lib/appState";
 import { useNativeColumnLayoutMetrics } from "../../native/native-layout-metrics";
 
 import { AppText as Text } from "../../components/ui/AppText";
@@ -203,7 +202,6 @@ export function ReviewSheet(
       | undefined;
   },
 ) {
-  const reduceMotion = useReduceMotionEnabled();
   const { nativeReviewDiffStyle } = useAppearanceCodeSurface();
   useAdaptiveWorkspacePaneRole("inspector");
   const navigation = useNavigation();
@@ -298,7 +296,6 @@ export function ReviewSheet(
     setFallbackInset(topContentInset);
     if (isRefreshing) setFallbackScrollViewKey((key) => key + 1);
   }
-  const reviewFileNavigatorRef = useRef<ReviewFileNavigatorHandle>(null);
   const reviewFiles = parsedDiff.kind === "files" ? parsedDiff.files : [];
   const treeFiles =
     parsedDiff.kind === "files"
@@ -359,39 +356,11 @@ export function ReviewSheet(
     reportShowcaseSceneRendered({ scene: "review", themeId: nativeBridge.themeId });
   };
 
-  const handleSelectFile = async (fileId: string | null) => {
-    loadVisibleFile(fileId, true);
-    commentSelection.clearSelection();
-    if (fileId !== null && collapsedFileIds.includes(fileId)) {
-      toggleExpandedFile(fileId);
-    }
-    const nativeView = nativeReviewDiffViewRef.current;
-    if (!nativeView) return;
-    const result = await settlePromise(() =>
-      fileId === null
-        ? nativeView.scrollToTop(!reduceMotion)
-        : nativeView.scrollToFile(fileId, !reduceMotion),
-    );
-    if (AsyncResult.isFailure(result)) {
-      console.error("[review] Failed to navigate to diff file", squashAtomCommandFailure(result));
-    }
-  };
   const handleVisibleFileChange = (
     event: NativeSyntheticEvent<{ readonly fileId?: string | null }>,
   ) => {
     loadVisibleFile(event.nativeEvent.fileId ?? null);
-    reviewFileNavigatorRef.current?.setVisibleFile(event.nativeEvent.fileId ?? null);
   };
-  const renderInspector = () => (
-    <ReviewFileNavigator
-      ref={reviewFileNavigatorRef}
-      files={nativeReviewDiffData.files}
-      headerInset={insets.top}
-      sectionId={selectedSection?.id ?? null}
-      onSelectFile={(fileId) => void handleSelectFile(fileId)}
-    />
-  );
-
   const openFile = (path: string | undefined, scope?: "staged" | "unstaged") => {
     if (!selectedSection) return;
     navigation.dispatch(
@@ -404,13 +373,6 @@ export function ReviewSheet(
       }),
     );
   };
-  const handleVisibleFileChange = useCallback(
-    (event: NativeSyntheticEvent<{ readonly fileId?: string | null }>) => {
-      loadVisibleFile(event.nativeEvent.fileId ?? null);
-    },
-    [loadVisibleFile],
-  );
-
   const handleNativeToggleFile = useCallback(
     (event: NativeSyntheticEvent<{ readonly fileId?: string }>) => {
       const { fileId } = event.nativeEvent;
@@ -562,6 +524,7 @@ export function ReviewSheet(
                 threadId={threadId}
                 cwd={selectedThreadCwd}
                 draftMessage={draftMessage}
+                draftContext={draftContext}
                 revision={selectedSection?.source?.diffHash}
                 onChanged={refreshSelectedSection}
                 openedFile={

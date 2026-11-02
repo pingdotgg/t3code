@@ -661,17 +661,17 @@ function PullRequestRouteContent({ route }: StaticScreenProps<PullRequestParams>
               <Toolbar.Label>Edit description</Toolbar.Label>
             </Toolbar.MenuAction>
           ) : null}
-            {maintainerEdits.visible ? (
-              <Toolbar.MenuAction
-                icon="pencil"
-                isOn={maintainerEdits.value}
-                disabled={maintainerEdits.saving}
-                subtitle={maintainerEdits.subtitle}
-                onPress={maintainerEdits.toggle}
-              >
-                <Toolbar.Label>Allow edits from maintainers</Toolbar.Label>
-              </Toolbar.MenuAction>
-            ) : null}
+          {maintainerEdits.visible ? (
+            <Toolbar.MenuAction
+              icon="pencil"
+              isOn={maintainerEdits.value}
+              disabled={maintainerEdits.saving}
+              subtitle={maintainerEdits.subtitle}
+              onPress={maintainerEdits.toggle}
+            >
+              <Toolbar.Label>Allow edits from maintainers</Toolbar.Label>
+            </Toolbar.MenuAction>
+          ) : null}
           {identity ? (
             <Toolbar.MenuAction
               icon="arrow.up.right"
@@ -747,23 +747,27 @@ function PullRequestRouteContent({ route }: StaticScreenProps<PullRequestParams>
                       }}
                     >
                       <View className="px-4 py-3">
-                        <Tabs
-                          options={[
-                            { value: "overview", label: "Overview" },
-                            ...(guidesEnabled
-                              ? [
-                                  {
-                                    value: "guide" as const,
-                                    label: "Guide",
-                                  },
-                                ]
-                              : []),
-                            { value: "diff", label: "Code" },
-                          ]}
-                          selected={section}
-                          onSelect={selectSection}
-                          className="-mx-3.5"
-                        />
+                        {Platform.OS !== "ios" || section === tab ? (
+                          <Tabs
+                            options={[
+                              { value: "overview", label: "Overview" },
+                              ...(guidesEnabled
+                                ? [
+                                    {
+                                      value: "guide" as const,
+                                      label: "Guide",
+                                    },
+                                  ]
+                                : []),
+                              { value: "diff", label: "Code" },
+                            ]}
+                            selected={section}
+                            onSelect={selectSection}
+                            className="-mx-3.5"
+                          />
+                        ) : (
+                          <View style={{ height: 32 }} />
+                        )}
                       </View>
                       <PullRequestDiffContent params={{ ...params, path: "" }} embedded />
                     </View>
@@ -940,23 +944,27 @@ function PullRequestRouteContent({ route }: StaticScreenProps<PullRequestParams>
                               }}
                             >
                               <PullRequestIdentity pr={identity} params={params} />
-                              <Tabs
-                                options={[
-                                  { value: "overview", label: "Overview" },
-                                  ...(guidesEnabled
-                                    ? [
-                                        {
-                                          value: "guide" as const,
-                                          label: "Guide",
-                                        },
-                                      ]
-                                    : []),
-                                  { value: "diff", label: "Code" },
-                                ]}
-                                selected={section}
-                                onSelect={selectSection}
-                                className="-mx-3.5"
-                              />
+                              {Platform.OS !== "ios" || section === tab ? (
+                                <Tabs
+                                  options={[
+                                    { value: "overview", label: "Overview" },
+                                    ...(guidesEnabled
+                                      ? [
+                                          {
+                                            value: "guide" as const,
+                                            label: "Guide",
+                                          },
+                                        ]
+                                      : []),
+                                    { value: "diff", label: "Code" },
+                                  ]}
+                                  selected={section}
+                                  onSelect={selectSection}
+                                  className="-mx-3.5"
+                                />
+                              ) : (
+                                <View style={{ height: 32 }} />
+                              )}
                             </View>
                           ) : null}
                         </>
@@ -1260,7 +1268,12 @@ export function PullRequestDiffContent({
   const [expandedViewed, setExpandedViewed] = useState<ReadonlySet<string>>(() => new Set());
   const [visibleFileId, setVisibleFileId] = useState<string | null>(null);
   const nativeView = useRef<NativeReviewDiffViewHandle>(null);
-  const jumpStarted = useRef(false);
+  const jumpedUnder = useRef<boolean | null>(filter.hideTestFiles);
+  const hasTestFiles =
+    result.parsed.kind === "files" &&
+    result.parsed.files.some((file) => isPullRequestTestFile(file.path));
+  const jumpStarted = () =>
+    jumpedUnder.current !== null && (!hasTestFiles || jumpedUnder.current === filter.hideTestFiles);
   const activeChapterId = activeChapter?.id;
   const [lastChapter, setLastChapter] = useState(activeChapterId);
   if (lastChapter !== activeChapterId) {
@@ -1275,7 +1288,7 @@ export function PullRequestDiffContent({
   }
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- re-arms native file scrolling when a new chapter is mounted
   useLayoutEffect(() => {
-    if (activeChapterId !== undefined) jumpStarted.current = false;
+    if (activeChapterId !== undefined) jumpedUnder.current = null;
   }, [activeChapterId]);
   const jumpScope = pullRequestFileJumpScope(params);
   const jumpToFile = useEffectEvent((path: string) => {
@@ -1284,29 +1297,17 @@ export function PullRequestDiffContent({
     setChapterId(reviewFileGroup(path));
     setSelectedRowId(null);
     setRangeEndRowId(null);
-    jumpStarted.current = false;
+    jumpedUnder.current = null;
     const file = data.files.find((entry) => entry.path === path);
     if (!file || !nativeView.current) return;
     setCollapsedIds((ids) => ids.filter((id) => id !== file.id));
-    jumpStarted.current = true;
+    jumpedUnder.current = filter.hideTestFiles;
     void nativeView.current.scrollToFile(file.id, false).catch(() => {
-      jumpStarted.current = false;
+      jumpedUnder.current = null;
     });
   });
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- subscribes to file-jump events from the native review navigator
   useEffect(() => subscribePullRequestFileJump(jumpScope, (path) => jumpToFile(path)), [jumpScope]);
-  const appliedFilter = useRef(filter.hideTestFiles);
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- re-arms the native file reveal when filtering changes the mounted diff rows
-  useEffect(() => {
-    if (appliedFilter.current === filter.hideTestFiles) return;
-    appliedFilter.current = filter.hideTestFiles;
-    if (
-      result.parsed.kind === "files" &&
-      result.parsed.files.some((file) => isPullRequestTestFile(file.path))
-    ) {
-      jumpStarted.current = false;
-    }
-  }, [filter.hideTestFiles, result.parsed]);
   const { nativeReviewDiffStyle } = useAppearanceCodeSurface();
   const { themeAppearance, appearance, setCodeWordBreak } = useAppearancePreferences();
   const bridge = useNativeReviewDiffBridge({
@@ -1352,14 +1353,14 @@ export function PullRequestDiffContent({
       if (drawn) updateVisibleRange(event);
       if (
         targetFile &&
-        !jumpStarted.current &&
+        !jumpStarted() &&
         nativeView.current &&
         (Platform.OS !== "ios" || decoded)
       ) {
-        jumpStarted.current = true;
+        jumpedUnder.current = filter.hideTestFiles;
         if (focusIndex >= 0) return;
         void nativeView.current.scrollToFile(targetFile.id, false).catch(() => {
-          jumpStarted.current = false;
+          jumpedUnder.current = null;
         });
         return;
       }
@@ -1367,7 +1368,15 @@ export function PullRequestDiffContent({
       const lastRow = event.nativeEvent.lastRowIndex;
       if (typeof lastRow === "number" && lastRow >= data.rows.length - 40) loadMore();
     },
-    [updateVisibleRange, data.rows.length, loadMore, targetFile, focusIndex],
+    [
+      updateVisibleRange,
+      data.rows.length,
+      loadMore,
+      targetFile,
+      focusIndex,
+      jumpStarted,
+      filter.hideTestFiles,
+    ],
   );
   const onToggleFile = useCallback<NonNullable<NativeReviewDiffViewProps["onToggleFile"]>>(
     (event) => {
@@ -1452,7 +1461,7 @@ export function PullRequestDiffContent({
     setJumpPath(chapter.files[0] ?? "");
     setSelectedRowId(null);
     setRangeEndRowId(null);
-    jumpStarted.current = false;
+    jumpedUnder.current = null;
     setCollapsedIds(EMPTY_IDS);
   };
   const allCollapsed =
@@ -1488,11 +1497,11 @@ export function PullRequestDiffContent({
     if (!file) return;
     setCollapsedIds((ids) => ids.filter((id) => id !== file.id));
     setExpandedViewed((ids) => new Set(ids).add(file.id));
-    jumpStarted.current = false;
+    jumpedUnder.current = null;
     if (nativeView.current) {
-      jumpStarted.current = true;
+      jumpedUnder.current = filter.hideTestFiles;
       void nativeView.current.scrollToFile(file.id, true).catch(() => {
-        jumpStarted.current = false;
+        jumpedUnder.current = null;
       });
     }
   };
@@ -1799,7 +1808,7 @@ export function PullRequestDiffContent({
             onPress={() => {
               result.refresh();
               setDiffHead({ scopeKey, sha: detail.data?.headSha ?? null });
-              jumpStarted.current = false;
+              jumpedUnder.current = null;
               setSelectedRowId(null);
               setRangeEndRowId(null);
               setCollapsedIds(EMPTY_IDS);

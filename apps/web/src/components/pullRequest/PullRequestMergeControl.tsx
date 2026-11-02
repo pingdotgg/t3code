@@ -13,6 +13,7 @@ export function PullRequestMergeControl({
   autoMerge,
   canAdminOverride,
   pending,
+  blockedReason = null,
   onConfirm,
 }: {
   label: string;
@@ -21,6 +22,7 @@ export function PullRequestMergeControl({
   autoMerge: boolean;
   canAdminOverride: boolean;
   pending: boolean;
+  blockedReason?: string | null;
   onConfirm: (adminOverride: boolean) => Promise<boolean>;
 }) {
   const [open, setOpen] = useState(false);
@@ -34,7 +36,7 @@ export function PullRequestMergeControl({
       ? "Enable auto-merge"
       : `Confirm ${methodLabel.toLowerCase()}`;
   const setOpenAndReset = (next: boolean) => {
-    setOpen(next);
+    setOpen(next && blockedReason === null);
     setBypass(false);
   };
   if (!canAdminOverride) {
@@ -45,7 +47,11 @@ export function PullRequestMergeControl({
         variant="default"
         disabled={pending}
         aria-label={confirming ? confirmLabel : label}
-        {...inlineConfirm.props("merge", () => void onConfirm(false))}
+        aria-disabled={blockedReason !== null || undefined}
+        aria-description={blockedReason ?? undefined}
+        {...(blockedReason === null
+          ? inlineConfirm.props("merge", () => void onConfirm(false))
+          : {})}
       >
         <PullRequestGlyph.merged aria-hidden className="size-3.5" />
         <span className="@max-[30rem]/pr-header:hidden">
@@ -57,7 +63,16 @@ export function PullRequestMergeControl({
   return (
     <Popover open={open} onOpenChange={setOpenAndReset}>
       <PopoverTrigger
-        render={<Button size="xs" variant="default" disabled={pending} aria-label={label} />}
+        render={
+          <Button
+            size="xs"
+            variant="default"
+            disabled={pending}
+            aria-label={label}
+            aria-disabled={blockedReason !== null || undefined}
+            aria-description={blockedReason ?? undefined}
+          />
+        }
       >
         <PullRequestGlyph.merged aria-hidden className="size-3.5" />
         <span className="@max-[30rem]/pr-header:hidden">{pending ? "Working..." : label}</span>
@@ -95,8 +110,9 @@ export function PullRequestMergeControl({
             <Button
               size="xs"
               variant={adminOverride ? "destructive" : "default"}
-              disabled={pending}
+              disabled={pending || blockedReason !== null}
               onClick={async () => {
+                if (blockedReason !== null) return;
                 if (await onConfirm(adminOverride)) setOpenAndReset(false);
               }}
             >

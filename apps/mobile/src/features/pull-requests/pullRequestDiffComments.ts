@@ -30,11 +30,6 @@ export function reviewPosition(row: NativeReviewDiffRow): PullRequestReviewPosit
 export function discussionCommentCountLabel(count: number) {
   return `${count} ${count === 1 ? "comment" : "comments"}`;
 }
-export function reviewPositionLabel(position: PullRequestReviewPosition) {
-  const oldSide =
-    position.kind === "deleted" || (position.kind === "context" && position.side === "left");
-  return `${oldSide ? "Old line" : "Line"} ${reviewLine(position)}`;
-}
 function reviewLine(position: PullRequestReviewPosition) {
   if (position.kind === "deleted" || (position.kind === "context" && position.side === "left"))
     return position.oldLine;

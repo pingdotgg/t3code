@@ -593,7 +593,6 @@ export function PullRequestTimelineTab({
   };
   const editable = new Map(
     events
-      .flatMap((event) => [event, ...(event.thread?.replies ?? [])])
       .flatMap((event) => (event.comment ? [event.comment] : []))
       .filter((comment) => canEditPullRequestComment(detail, comment))
       .map((comment) => [comment.id, comment] as const),

@@ -129,12 +129,14 @@ describe("ReviewService", () => {
         yield* fs.writeFileString(`${workspaceRoot}/file.txt`, contents);
         const patch =
           "diff --git a/file.txt b/file.txt\n--- a/file.txt\n+++ b/file.txt\n@@ -1,2 +1,2 @@\n-one\n+ONE\n two\n";
-        yield* service.setStaged({ cwd: workspaceRoot, paths: ["file.txt"], staged: true, patch });
-        assert.include(yield* run(["diff", "--cached"]), "+ONE");
-        assert.notInclude(yield* run(["diff", "--cached"]), "+THREE");
-        assert.include(yield* run(["diff"]), "+THREE");
-        yield* service.setStaged({ cwd: workspaceRoot, paths: ["file.txt"], staged: false, patch });
-        assert.equal(yield* run(["diff", "--cached"]), "");
+        for (const cwd of [workspaceRoot, `${workspaceRoot}/nested`]) {
+          yield* service.setStaged({ cwd, paths: ["file.txt"], staged: true, patch });
+          assert.include(yield* run(["diff", "--cached"]), "+ONE");
+          assert.notInclude(yield* run(["diff", "--cached"]), "+THREE");
+          assert.include(yield* run(["diff"]), "+THREE");
+          yield* service.setStaged({ cwd, paths: ["file.txt"], staged: false, patch });
+          assert.equal(yield* run(["diff", "--cached"]), "");
+        }
         for (const cwd of [workspaceRoot, `${workspaceRoot}/nested`]) {
           yield* service.setStaged({ cwd, paths: ["file.txt"], staged: true });
           assert.include(yield* run(["diff", "--cached"]), "+THREE");
@@ -285,6 +287,7 @@ describe("ReviewService", () => {
           git
             .execute({ operation: "review.test", cwd: workspaceRoot, args })
             .pipe(Effect.map((result) => result.stdout));
+        yield* fs.makeDirectory(`${workspaceRoot}/nested`);
         yield* run(["init"]);
         yield* run(["config", "user.name", "Test"]);
         yield* run(["config", "user.email", "test@example.com"]);
@@ -300,7 +303,7 @@ describe("ReviewService", () => {
         );
         const header = "diff --git a/file.txt b/file.txt\n--- a/file.txt\n+++ b/file.txt\n";
         yield* service.revert({
-          cwd: workspaceRoot,
+          cwd: `${workspaceRoot}/nested`,
           paths: [],
           patch: header + "@@ -3,0 +3,1 @@\n+extra\n",
         });

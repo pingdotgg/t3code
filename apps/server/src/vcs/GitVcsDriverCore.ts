@@ -732,11 +732,6 @@ const createTrace2Monitor = Effect.fnUntraced(function* (
       return;
     }
     const started = hookStartByChildKey.get(childKey);
-    // Git child_exit records omit child_class and hook_name; their start record
-    // identifies whether the exiting process was a hook.
-    if (traceRecord.success.child_class !== "hook" && !(event === "child_exit" && started)) {
-      return;
-    }
     const hookNameFromEvent =
       typeof traceRecord.success.hook_name === "string" ? traceRecord.success.hook_name.trim() : "";
     const hookName = hookNameFromEvent.length > 0 ? hookNameFromEvent : (started?.hookName ?? "");

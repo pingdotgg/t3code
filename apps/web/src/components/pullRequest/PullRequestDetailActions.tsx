@@ -190,7 +190,6 @@ export function PullRequestResolveConflictsButton({
 /** The header's one prominent control, which depends on where the pull request stands. */
 export function PullRequestPrimaryAction({
   primaryAction,
-  mergeBlockedReason,
   autoMergeArmed,
   armedAutoMergeLabel,
   statePresentation,
@@ -200,7 +199,6 @@ export function PullRequestPrimaryAction({
   mergeControl,
 }: {
   primaryAction: ReturnType<typeof resolvePullRequestPrimaryControl> | null;
-  mergeBlockedReason: string | null;
   autoMergeArmed: boolean;
   armedAutoMergeLabel: string;
   statePresentation: ReturnType<typeof resolvePullRequestState> | null;

@@ -175,4 +175,3 @@ export function maintainerEditsChoiceInForce(
   if (saving) return choice.observedAt === observedAt ? choice : { ...choice, observedAt };
   return observedAt !== undefined && choice.observedAt === observedAt ? choice : null;
 }
-
