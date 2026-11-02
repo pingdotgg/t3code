@@ -102,7 +102,8 @@ const decodeFxToolError = Schema.decodeUnknownOption(
   Schema.fromJsonString(
     Schema.Struct({
       error: Schema.Struct({
-        message: Schema.String,
+        message: Schema.optional(Schema.String),
+        code: Schema.optional(Schema.String),
         details: Schema.optional(Schema.Struct({ error: Schema.optional(Schema.String) })),
       }),
     }),
@@ -158,7 +159,12 @@ function extractFxSubagentUpdate(tool: AcpToolCallState): AcpAdapterV2SubagentUp
     result:
       status === "running"
         ? null
-        : (outcome?.result ?? failure?.details?.error ?? failure?.message ?? text ?? null),
+        : (outcome?.result ??
+          failure?.details?.error ??
+          failure?.message ??
+          failure?.code ??
+          text ??
+          null),
   };
 }
 

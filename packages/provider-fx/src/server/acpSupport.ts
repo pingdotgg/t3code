@@ -82,7 +82,10 @@ const decodeFxContentText = Schema.decodeUnknownOption(
 const decodeFxCancelledError = Schema.decodeUnknownOption(
   Schema.fromJsonString(
     Schema.Struct({
-      error: Schema.Struct({ details: Schema.Struct({ error: Schema.Literal("Cancelled") }) }),
+      error: Schema.Union([
+        Schema.Struct({ details: Schema.Struct({ error: Schema.Literal("Cancelled") }) }),
+        Schema.Struct({ code: Schema.Literal("Cancelled") }),
+      ]),
     }),
   ),
 );

@@ -40,6 +40,14 @@ describe("fx cancellation failures", () => {
     { content: ["Cancelled"], cancelled: true },
     { content: ["Cancelled."], cancelled: true },
     { content: ['{"error":{"details":{"error":"Cancelled"}}}'], cancelled: true },
+    {
+      content: ['{"error":{"tool":"shell","code":"Cancelled","retryable":false}}'],
+      cancelled: true,
+    },
+    {
+      content: ['{"error":{"tool":"shell","code":"PermissionDenied","retryable":false}}'],
+      cancelled: false,
+    },
     { content: ['{"error":{"details":{"error":"Permission denied"}}}'], cancelled: false },
     { content: ["Command failed"], cancelled: false },
     { content: [""], cancelled: false },
