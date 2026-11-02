@@ -1,3 +1,4 @@
+import * as RestartWork from "../updates/RestartWork.ts";
 // @effect-diagnostics-next-line nodeBuiltinImport:off -- Effect's Crypto digest is effectful; a sync hash keeps historyPath a plain function.
 import * as NodeCrypto from "node:crypto";
 
@@ -225,6 +226,12 @@ export class TerminalManager extends Context.Service<
       readonly threadId: string;
       readonly terminalId?: string;
     }) => Effect.Effect<void>;
+
+    /**
+     * Whether any terminal is starting or running a foreground command.
+     * Restarting the server would end those, so an update waits.
+     */
+    readonly hasBusyTerminals: Effect.Effect<boolean>;
 
     readonly subscribe: (
       listener: (event: TerminalEvent) => Effect.Effect<void>,
@@ -1516,6 +1523,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
 ) {
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
+  const restartWork = yield* RestartWork.RestartWork;
   const context = yield* Effect.context<never>();
   const runFork = Effect.runForkWith(context);
 
@@ -2775,6 +2783,28 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
     ),
   );
 
+  const hasBusyTerminals = Effect.gen(function* () {
+    const sessions = [...(yield* readManagerState).sessions.values()];
+    if (sessions.some((session) => session.status === "starting")) return true;
+    const running = sessions.filter((session) => session.status === "running");
+    if (running.length === 0) return false;
+    // A cached idle result must not let a restart kill a command started since the last poll.
+    const { inspector } = yield* acquireSubprocessInspector(PROCESS_TABLE_QUERY_TIMEOUT);
+    if (Result.isFailure(inspector)) return true;
+    for (const session of running) {
+      if (
+        session.pid === null ||
+        (yield* inspector.success(session.pid).pipe(
+          Effect.map((result) => result.hasRunningSubprocess),
+          Effect.orElseSucceed(() => true),
+        ))
+      ) {
+        return true;
+      }
+    }
+    return false;
+  });
+
   let subprocessSnapshotFailureCount = 0;
   yield* Effect.forever(
     hasRunningSessions.pipe(
@@ -2963,7 +2993,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
   const openLocked = (input: TerminalOpenInput) =>
     withWorkspaceLease(
       path.resolve(input.worktreePath ?? input.cwd),
-      openWithWorkspaceLease(input),
+      restartWork.track(openWithWorkspaceLease(input)),
     );
 
   const open: TerminalManager["Service"]["open"] = (input) =>
@@ -3343,7 +3373,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
           cause,
         }),
     });
-  });
+  }, restartWork.track);
 
   const resizeLocked = Effect.fn("terminal.resize")(function* (
     input: TerminalResizeInput,
@@ -3492,9 +3522,13 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
     close,
     closeIdle,
     closeOnSettle,
+    hasBusyTerminals,
     subscribe,
     subscribeMetadata,
   });
 });
 
-export const layer = Layer.effect(TerminalManager, make()).pipe(Layer.provide(ProcessRunner.layer));
+export const layer = Layer.effect(TerminalManager, make()).pipe(
+  Layer.provide(ProcessRunner.layer),
+  Layer.provide(RestartWork.layer),
+);

@@ -15,6 +15,7 @@ import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 
 import * as SourceControlRepositoryService from "../sourceControl/SourceControlRepositoryService.ts";
+import * as RestartWork from "../updates/RestartWork.ts";
 import * as ProjectCloneTracker from "./ProjectCloneTracker.ts";
 import { parseGitCloneProgressLine } from "./gitCloneProgress.ts";
 
@@ -41,6 +42,7 @@ function makeHarness(options?: {
     onCloned: (input) => Effect.sync(() => void cloned.push(input.projectId)),
   };
   const layer = ProjectCloneTracker.layer.pipe(
+    Layer.provideMerge(RestartWork.layer),
     Layer.provide(
       Layer.mock(SourceControlRepositoryService.SourceControlRepositoryService)({
         prepareClone: (input) =>
@@ -225,6 +227,7 @@ describe("ProjectCloneTracker", () => {
         }),
     });
     const layer = ProjectCloneTracker.layer.pipe(
+      Layer.provideMerge(RestartWork.layer),
       Layer.provide(
         Layer.mock(SourceControlRepositoryService.SourceControlRepositoryService)({
           prepareClone: (input) =>
@@ -282,9 +285,67 @@ describe("ProjectCloneTracker", () => {
     }).pipe(Effect.provide(harness.layer));
   });
 
+  it.effect("gates clone admission during handoff and counts it until it finishes", () => {
+    const release = Deferred.makeUnsafe<void>();
+    const finished = Deferred.makeUnsafe<void>();
+    const harness = makeHarness({
+      clone: (input) =>
+        Deferred.await(release).pipe(
+          Effect.as({ cwd: input.destinationPath, remoteUrl: "", repository: null }),
+        ),
+    });
+    const hooks = {
+      ...harness.hooks,
+      onCloned: (input: Parameters<typeof harness.hooks.onCloned>[0]) =>
+        harness.hooks.onCloned(input).pipe(Effect.andThen(Deferred.succeed(finished, undefined))),
+    };
+    return Effect.gen(function* () {
+      const tracker = yield* ProjectCloneTracker.ProjectCloneTracker;
+      const work = yield* RestartWork.RestartWork;
+      expect(yield* work.count).toBe(0);
+      const gated = yield* Deferred.make<void>();
+      const resume = yield* Deferred.make<void>();
+      const gate = yield* work
+        .withRestartGate(
+          Deferred.succeed(gated, undefined).pipe(Effect.andThen(Deferred.await(resume))),
+        )
+        .pipe(Effect.forkChild);
+      yield* Deferred.await(gated);
+      const start = yield* tracker
+        .start(startInput, hooks)
+        .pipe(Effect.forkChild({ startImmediately: true }));
+      expect(harness.created).toEqual([]);
+      const cancelled = yield* work
+        .track(Effect.void)
+        .pipe(Effect.forkChild({ startImmediately: true }));
+      yield* Fiber.interrupt(cancelled);
+      expect(yield* work.count).toBe(0);
+      yield* Deferred.succeed(resume, undefined);
+      yield* Fiber.join(gate);
+      yield* Fiber.join(start);
+      expect(yield* work.count).toBe(1);
+      yield* Deferred.succeed(release, undefined);
+      yield* Deferred.await(finished);
+      expect(harness.cloned).toEqual([projectId]);
+    }).pipe(Effect.provide(harness.layer));
+  });
+
+  it.effect("stops counting a clone that is cancelled", () => {
+    const harness = makeHarness({ clone: () => Effect.never });
+    return Effect.gen(function* () {
+      const tracker = yield* ProjectCloneTracker.ProjectCloneTracker;
+      const work = yield* RestartWork.RestartWork;
+      yield* tracker.start(startInput, harness.hooks);
+      expect(yield* work.count).toBe(1);
+      expect(yield* tracker.cancel(projectId)).toBe(true);
+      expect(yield* work.count).toBe(0);
+    }).pipe(Effect.provide(harness.layer));
+  });
+
   it.effect("does not create a project when the clone cannot be prepared", () => {
     const harness = makeHarness();
     const layer = ProjectCloneTracker.layer.pipe(
+      Layer.provideMerge(RestartWork.layer),
       Layer.provide(
         Layer.mock(SourceControlRepositoryService.SourceControlRepositoryService)({
           prepareClone: () =>
