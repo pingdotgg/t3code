@@ -1069,7 +1069,7 @@ function ThreadDetailBody(
   const overlayRepinTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [keyboardClosing, setKeyboardClosing] = useState(false);
   const [endRepin] = useState(createThreadEndRepin);
-  const endRepinDeps: ThreadEndRepinDeps = {
+  const endRepinDeps: Omit<ThreadEndRepinDeps, "signal"> = {
     canFollowEnd: () => endFollowEnabledRef.current,
     scrollToEnd: (animated) => scrollMessageToEnd({ animated, closeKeyboard: false }),
     onScrollFailed: () => freeze.set(false),
@@ -1085,7 +1085,7 @@ function ThreadDetailBody(
     }
     overlayRepinTimerRef.current = setTimeout(() => {
       overlayRepinTimerRef.current = null;
-      endRepin.repin(endRepinDeps);
+      endRepin.repin({ ...endRepinDeps, signal: threadScope.current.signal });
     }, delayMs);
   };
   // LegendList does not re-anchor short followed conversations when floating
@@ -1290,7 +1290,7 @@ function ThreadDetailBody(
     feedRef.current?.resetEndFollow();
     setAnchorMessageId(nextAnchorMessageId);
     void endRepin
-      .closeKeyboard(endRepinDeps, !reduceMotion)
+      .closeKeyboard({ ...endRepinDeps, signal: scope }, !reduceMotion)
       .then((pinned) => {
         // The send enqueued the message optimistically, so it is in the feed or the queue.
         if (pinned || nextAnchorMessageId !== messageId || contentPresentationKind !== "ready") {

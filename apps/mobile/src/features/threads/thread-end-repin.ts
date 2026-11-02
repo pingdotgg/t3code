@@ -2,6 +2,7 @@
 const KEYBOARD_CLOSE_TIMEOUT_MS = 1_000;
 
 export interface ThreadEndRepinDeps {
+  readonly signal: AbortSignal;
   readonly canFollowEnd: () => boolean;
   readonly scrollToEnd: (animated: boolean) => Promise<void>;
   readonly onScrollFailed: () => void;
@@ -24,7 +25,7 @@ export function createThreadEndRepin() {
   let activeClose: Promise<boolean> | null = null;
 
   const repin = (deps: ThreadEndRepinDeps, animated = false) => {
-    if (activeClose !== null || !deps.canFollowEnd()) return;
+    if (deps.signal.aborted || activeClose !== null || !deps.canFollowEnd()) return;
     const pin: Promise<void> = deps
       .scrollToEnd(animated)
       .catch(deps.onScrollFailed)
@@ -39,8 +40,10 @@ export function createThreadEndRepin() {
     let timeout: ReturnType<typeof setTimeout> | undefined;
     try {
       if (activePin !== null) await activePin;
+      if (deps.signal.aborted) return false;
       // The feed must stop following before the close starts.
       await deps.nextFrame();
+      if (deps.signal.aborted) return false;
       deps.blurComposer();
       await Promise.race([
         deps.dismissKeyboard(),
@@ -60,6 +63,7 @@ export function createThreadEndRepin() {
 
   /** Resolves to whether the feed was pinned, which only happens when a keyboard had to close. */
   const closeKeyboard = (deps: ThreadEndRepinDeps, animated: boolean): Promise<boolean> => {
+    if (deps.signal.aborted) return Promise.resolve(false);
     if (activeClose !== null) return activeClose;
     // With no keyboard to wait for, the feed must keep following the row being added.
     if (!deps.isKeyboardOpen()) {

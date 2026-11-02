@@ -15,6 +15,7 @@ function deferred() {
 function setup(overrides: Partial<ThreadEndRepinDeps> = {}) {
   const log: string[] = [];
   const deps: ThreadEndRepinDeps = {
+    signal: new AbortController().signal,
     canFollowEnd: () => true,
     scrollToEnd: async (animated) => {
       log.push(`pin:${animated ? "animated" : "instant"}`);
@@ -147,4 +148,33 @@ describe("createThreadEndRepin", () => {
 
     expect(log).toEqual(["closing", "blur", "closed", "pin:instant"]);
   });
+  it.each(["pin", "frame", "dismiss"] as const)(
+    "stops a cancelled close while awaiting %s",
+    async (stage) => {
+      const scope = new AbortController();
+      const waiting = deferred();
+      const reached = deferred();
+      const pause = () => {
+        reached.resolve();
+        return waiting.promise;
+      };
+      const dismissKeyboard = vi.fn(stage === "dismiss" ? pause : async () => undefined);
+      const { log, endRepin } = setup({
+        signal: scope.signal,
+        ...(stage === "pin" ? { scrollToEnd: pause } : {}),
+        ...(stage === "frame" ? { nextFrame: pause } : {}),
+        dismissKeyboard,
+      });
+      if (stage === "pin") endRepin.repin();
+      const closing = endRepin.closeKeyboard(true);
+      await reached.promise;
+      scope.abort();
+      waiting.resolve();
+      await closing;
+
+      expect(dismissKeyboard).toHaveBeenCalledTimes(stage === "dismiss" ? 1 : 0);
+      expect(log).not.toContain("pin:animated");
+      expect(log.at(-1)).toBe("closed");
+    },
+  );
 });
