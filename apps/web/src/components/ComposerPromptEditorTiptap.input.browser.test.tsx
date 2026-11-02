@@ -9,6 +9,7 @@ import {
 
 import type { ServerProviderSkill } from "@t3tools/contracts";
 import type { Editor } from "@tiptap/core";
+import { redoDepth, undoDepth } from "@tiptap/pm/history";
 import { createElement, createRef, useEffect, useState } from "react";
 import { describe, expect, it, vi } from "vite-plus/test";
 import { userEvent } from "vite-plus/test/browser";
@@ -229,8 +230,15 @@ it.each([
   expect(textWithMark(editor, "markdownSource")).toEqual(["**bold**"]);
   await act(async () => {
     editor.commands.setTextSelection(row.selection);
+    // A composition canceled before it edits anything keeps the redo and adds no undo.
     editor.view.dom.dispatchEvent(new CompositionEvent("compositionstart"));
-    editor.view.dispatch(editor.state.tr.insertText("漢").setMeta("composition", 1));
+    editor.view.dom.dispatchEvent(new CompositionEvent("compositionend", { data: "" }));
+  });
+  expect([undoDepth(editor.state), redoDepth(editor.state)]).toEqual([1, 1]);
+  await act(async () => {
+    editor.view.dom.dispatchEvent(new CompositionEvent("compositionstart"));
+    // ProseMirror numbers each composition; the canceled one was 1.
+    editor.view.dispatch(editor.state.tr.insertText("漢").setMeta("composition", 2));
     editor.view.dom.dispatchEvent(new CompositionEvent("compositionend", { data: "漢" }));
     editor.commands.setTextSelection(editor.state.doc.content.size - 1);
   });

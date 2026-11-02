@@ -1,5 +1,12 @@
 import { type Command, Extension, Mark as TiptapMark } from "@tiptap/core";
-import { isHistoryTransaction, redo, redoDepth, undo, undoDepth } from "@tiptap/pm/history";
+import {
+  closeHistory,
+  isHistoryTransaction,
+  redo,
+  redoDepth,
+  undo,
+  undoDepth,
+} from "@tiptap/pm/history";
 import type { MarkType, Node as ProseMirrorNode } from "@tiptap/pm/model";
 import {
   AllSelection,
@@ -287,14 +294,6 @@ function collapseRevealed(state: EditorState, revealed: TextRange[]): Transactio
   return tr.setMeta(markdownSourceKey, []).setMeta("addToHistory", false);
 }
 
-/** Whether `mapping` deletes nothing inside or at the edges of `selection`. */
-function keepsSelection(mapping: Mapping, { from, to }: Selection): boolean {
-  const start = mapping.mapResult(from);
-  const end = mapping.mapResult(to);
-  const edges = [start, end].some((result) => result.deletedBefore || result.deletedAfter);
-  return !edges && end.pos - start.pos === to - from;
-}
-
 /** Replays `edit` after undoing `collapse`, so the history records the reveal with the edit. */
 function rebaseEdit(tr: Transaction, collapse: Transaction, edit: Transaction): Transaction {
   for (let index = collapse.steps.length - 1; index >= 0; index--) {
@@ -309,6 +308,22 @@ function rebaseEdit(tr: Transaction, collapse: Transaction, edit: Transaction): 
   Object.assign((tr as unknown as WithMeta).meta, (edit as unknown as WithMeta).meta);
   return tr;
 }
+
+const replayKey = new PluginKey("composer-markdown-source-replay");
+
+/**
+ * Replays the edit a request carries after the source plugin appended its collapse,
+ * in the request's one view update so an IME keeps its preedit. History ignores what
+ * is appended to an unrecorded transaction, so the request itself records nothing.
+ */
+const replayPlugin = new Plugin({
+  key: replayKey,
+  appendTransaction([request, collapse], _, state) {
+    const edit = request?.getMeta(replayKey) as Transaction | undefined;
+    // Appended transactions otherwise join the previous undo event.
+    return edit && collapse ? closeHistory(rebaseEdit(state.tr, collapse, edit)) : null;
+  },
+});
 
 function previewDecorations(
   doc: ProseMirrorNode,
@@ -408,26 +423,11 @@ function markdownSourcePlugin(type: MarkType): Plugin<MarkdownSourceState> {
     },
     props: {
       decorations: (state) => markdownSourceKey.getState(state)?.decorations,
-      handleDOMEvents: {
-        compositionstart(editorView) {
-          const { state } = editorView;
-          const revealed = markdownSourceKey.getState(state)?.revealed ?? [];
-          if (revealed.length === 0) return false;
-          // Restore history's document shape before the IME starts its preedit.
-          const collapse = collapseRevealed(state, revealed);
-          editorView.dispatch(collapse);
-          // Parsing would move a selection over or beside markers, so compose on the source.
-          // The reveal takes ProseMirror's internal composition ID so one undo removes both.
-          if (!keepsSelection(collapse.mapping, state.selection)) {
-            const { input } = editorView as unknown as { input?: { compositionID?: number } };
-            const reveal = rebaseEdit(editorView.state.tr, collapse, state.tr);
-            editorView.dispatch(reveal.setMeta("composition", input?.compositionID));
-          }
-          return false;
-        },
-      },
     },
     appendTransaction(transactions, _, state) {
+      if (transactions[0]?.getMeta(replayKey)) {
+        return collapseRevealed(state, markdownSourceKey.getState(state)?.revealed ?? []);
+      }
       // Rewriting text mid-composition would break the IME's preedit.
       if (view?.composing) return null;
       // Rewrites appended to an undo or redo join its history step, which leaves
@@ -476,14 +476,11 @@ const MarkdownSourceHistoryExtension = Extension.create({
       transaction.docChanged &&
       transaction.getMeta("addToHistory") !== false &&
       transaction.getMeta(markdownSourceKey) === undefined;
-    // Rebuilding the edit would reset the IME's preedit.
-    if (revealed.length === 0 || !recordedEdit || editor.view.composing) {
+    if (revealed.length === 0 || !recordedEdit) {
       next(transaction);
       return;
     }
-    const collapse = collapseRevealed(editor.state, revealed);
-    next(collapse);
-    next(rebaseEdit(editor.state.tr, collapse, transaction));
+    next(editor.state.tr.setMeta(replayKey, transaction));
   },
 });
 
@@ -523,6 +520,6 @@ export const ComposerMarkdownSourceExtension = TiptapMark.create({
     return [MarkdownSourceHistoryExtension];
   },
   addProseMirrorPlugins() {
-    return [markdownSourcePlugin(this.type)];
+    return [markdownSourcePlugin(this.type), replayPlugin];
   },
 });
