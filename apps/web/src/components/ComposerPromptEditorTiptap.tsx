@@ -1106,10 +1106,15 @@ function ComposerPromptEditorTiptapInner(
   const editor = useEditor(
     {
       extensions: richText ? RICH_TEXT_EXTENSIONS : PLAIN_TEXT_EXTENSIONS,
-      content: buildDocJson(value, (name) => composerSkillMeta(skills, name), {
-        styling: richText,
-        literalText,
-      }),
+      // A mounted editor ignores the content option, so parse only when an instance is created.
+      onBeforeCreate: ({ editor: created }) => {
+        created.setOptions({
+          content: buildDocJson(value, (name) => composerSkillMeta(skills, name), {
+            styling: richText,
+            literalText,
+          }),
+        });
+      },
       editable: !disabled,
       editorProps: {
         attributes: editorAttributes,

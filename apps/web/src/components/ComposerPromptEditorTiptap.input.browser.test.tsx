@@ -9,19 +9,24 @@ import {
 
 import type { ServerProviderSkill } from "@t3tools/contracts";
 import type { Editor } from "@tiptap/core";
-import { createElement, createRef, useEffect, useState } from "react";
+import { Activity, createElement, createRef, useEffect, useState } from "react";
 import { describe, expect, it, vi } from "vite-plus/test";
 import { userEvent } from "vite-plus/test/browser";
 
 import { act, fakeTimers, render } from "../../test/render";
 
-import { serializeEditorDoc } from "~/composer-rich-text-doc";
+import { buildDocJson, serializeEditorDoc } from "~/composer-rich-text-doc";
 import { isMacPlatform } from "~/lib/utils";
 import {
   ComposerPromptEditorTiptap as ComposerPromptEditor,
   type ComposerPromptEditorHandle,
   type ComposerPromptEditorProps,
 } from "./ComposerPromptEditorTiptap";
+
+vi.mock(import("~/composer-rich-text-doc"), async (importOriginal) => {
+  const actual = await importOriginal();
+  return { ...actual, buildDocJson: vi.fn(actual.buildDocJson) };
+});
 
 const babysit: ServerProviderSkill = {
   name: "babysit",
@@ -147,6 +152,37 @@ it.each([
   expect(serializeEditorDoc(editor.state.doc).value).toBe(`${value}_`);
   expect(textWithMark(editor, "italic")).toEqual([]);
   expect(textWithMark(editor, "code")).toEqual(code);
+});
+
+it("parses the draft only when an editor is created, using the latest text and skills", async () => {
+  vi.mocked(buildDocJson).mockClear();
+  // Hiding an Activity runs the effect cleanup that lets useEditor destroy its instance.
+  const composerIn = (mode: "visible" | "hidden", skills: ReadonlyArray<ServerProviderSkill>) => (
+    <Activity mode={mode}>{composer("$babysit ", true, skills)}</Activity>
+  );
+  await using screen = await render(composerIn("visible", []));
+  const first = editorIn(screen.container);
+  expect(buildDocJson).toHaveBeenCalledTimes(1);
+
+  for (const text of ["a", "b", "c"]) {
+    await act(async () => {
+      first.commands.insertContentAt(first.state.doc.content.size - 1, text);
+    });
+  }
+  expect(serializeEditorDoc(first.state.doc).value).toBe("$babysit abc");
+  expect(buildDocJson).toHaveBeenCalledTimes(1);
+
+  await screen.rerender(composerIn("hidden", []));
+  await vi.waitFor(() => expect(first.isDestroyed).toBe(true));
+  await screen.rerender(composerIn("visible", [babysit]));
+
+  const replacement = editorIn(screen.container);
+  expect(replacement).not.toBe(first);
+  expect(buildDocJson).toHaveBeenCalledTimes(2);
+  expect(serializeEditorDoc(replacement.state.doc).value).toBe("$babysit abc");
+  const [text, skillMeta] = vi.mocked(buildDocJson).mock.lastCall!;
+  expect(text).toBe("$babysit abc");
+  expect(skillMeta("babysit")).not.toBeNull();
 });
 
 it("bolds with Mod+B only when text is selected", async () => {
