@@ -646,6 +646,8 @@ export function environmentSessionGenerationAtom<R, ER>(
   return family(environmentId);
 }
 
+const queryAtomOwners = new WeakMap<object, object>();
+
 export function createEnvironmentQueryAtomFamily<R, ER, Input, A, E>(
   runtime: Atom.AtomRuntime<EnvironmentRegistry.EnvironmentRegistry | R, ER>,
   options: EnvironmentQueryAtomOptions<
@@ -793,7 +795,7 @@ export function createEnvironmentQueryAtomFamily<R, ER, Input, A, E>(
                 Atom.setIdleTTL(idleTtlMs),
               ),
       );
-    return (
+    const atom = (
       options.refreshIntervalMs === undefined
         ? queryAtom
         : queryAtom.pipe(refreshEveryUntilFinal(options.refreshIntervalMs, isFinal))
@@ -801,6 +803,10 @@ export function createEnvironmentQueryAtomFamily<R, ER, Input, A, E>(
       Atom.swr({ staleTime: options.staleTimeMs ?? 30_000, revalidateOnMount: true }),
       Atom.withLabel(`${options.label}:${key}`),
     );
+    // The family holds `atom` weakly and its node goes with its last reader; tie it to the data
+    // the TTL keeps, or a collection between reads rebuilds the family entry without its cache.
+    queryAtomOwners.set(queryAtom, atom);
+    return atom;
   });
   return (target) => family(environmentRpcKey(target));
 }
