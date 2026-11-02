@@ -99,6 +99,7 @@ vi.mock("./entities", () => ({
   useProjects: () => [],
   useServerConfigs: () => new Map([["environment-1", config]]),
   useThreadShells: () => [],
+  useVisibleThreadShells: () => [],
 }));
 vi.mock("./projects", () => ({ environmentProjects: {} }));
 vi.mock("./workspace", () => ({ workspaceConnections: {} }));
