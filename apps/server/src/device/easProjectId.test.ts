@@ -222,6 +222,19 @@ it.effect.each([
     expected: Option.some(ID_A),
   },
   {
+    case: "gives no answer when a config spreads a part of config over the top, which may bring its own extra",
+    files: {
+      "app.config.js": `module.exports = ({ config }) => ({ ...config, ...config.preview });`,
+      "app.json": JSON.stringify({
+        expo: {
+          extra: { eas: { projectId: ID_A } },
+          preview: { extra: { eas: { projectId: ID_B } } },
+        },
+      }),
+    },
+    expected: Option.none(),
+  },
+  {
     case: "gives no answer when a config spreads what a call on config returns",
     files: {
       "app.config.js": `module.exports = ({ config }) => ({ ...config, ...config.variant("dev") });`,

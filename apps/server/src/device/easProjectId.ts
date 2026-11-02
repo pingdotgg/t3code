@@ -48,13 +48,27 @@ const HOLDER_AT = {
 // `config` and no more of it: not an identifier continuing (`$`, Unicode
 // letters and a `\u` escape do, where `\b` would not), nor a property.
 const CONFIG_AT = new RegExp("config" + HOLDER_END, "uy");
-// A part of `config` other than `extra`, such as `config.ios`: app.json's own
-// values, which hold no EAS id of their own.
+// A part of `config` other than `extra`, such as `config.ios`. Spread at the top
+// it could bring its own `extra` (`...config.preview`), so it keeps the id only
+// as the first item of an array or of the entry it names (`ios: { ...config.ios`).
 const CONFIG_PART_AT = new RegExp(
   String.raw`config(?:\s*\??\.\s*(?!extra(?![\p{ID_Continue}$]))[\p{ID_Start}$_][\p{ID_Continue}$\u200c\u200d]*)+` +
     HOLDER_END,
   "uy",
 );
+const LAST_NAME = /[\p{ID_Continue}$\u200c\u200d]+$/u;
+// What opens the container just before a spread: `[`, or a bare or quoted key and `{`.
+const PART_OPENER =
+  /(?:\[|(?<![\p{ID_Continue}$\u200c\u200d\\])(?:([\p{ID_Start}$_][\p{ID_Continue}$\u200c\u200d]*)|(["'])([^"'\n]*)\2)\s*:\s*\{)\s*$/u;
+// Enough text to hold an opener; a longer one gives no answer.
+const OPENER_WINDOW = 128;
+const opensOwnEntry = (source: string, spreadAt: number, part: string): boolean => {
+  const start = Math.max(0, spreadAt - OPENER_WINDOW);
+  const opener = PART_OPENER.exec(source.slice(start, spreadAt));
+  if (!opener || (opener.index === 0 && start > 0)) return false;
+  const key = opener[1] ?? opener[3];
+  return key === undefined || key === part.match(LAST_NAME)?.[0];
+};
 
 /**
  * Only Expo's `config` and its own `extra`/`extra.eas` spreads can preserve app.json's id.
@@ -80,7 +94,8 @@ const staticConfigUse = (source: string): "spreads" | "replaces" | "unclear" => 
       continue;
     }
     CONFIG_PART_AT.lastIndex = at;
-    if (CONFIG_PART_AT.test(source)) continue;
+    const part = CONFIG_PART_AT.exec(source);
+    if (part && opensOwnEntry(source, next, part[0])) continue;
     HOLDER_AT.extra.lastIndex = at;
     HOLDER_AT.eas.lastIndex = at;
     if (!HOLDER_AT.extra.test(source) && !HOLDER_AT.eas.test(source)) return "replaces";
