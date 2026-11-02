@@ -115,6 +115,7 @@ describe("filesystem browse model", () => {
       visibleEntries: [entry],
       exactEntry: null,
     });
+    expect(filterFilesystemBrowseEntries([entry], "De").visibleEntries).toEqual([entry]);
     expect(filterFilesystemBrowseEntries([entry], "D\u00e9veloppement").exactEntry).toBe(entry);
     // Linux keeps both spellings as separate folders; the one typed exactly wins.
     const composed = { name: "D\u00e9veloppement", fullPath: "/home/me/D\u00e9veloppement" };
