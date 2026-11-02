@@ -28,3 +28,30 @@ export function tickTaskListEdit(
   // A tick undone before its save makes `to` a body seen before; it must still end the edit.
   return { stale: [...stale, hostBody].filter((seen) => seen !== body), to: body, saving: true };
 }
+
+/**
+ * Saves checkbox bodies one at a time. A body pushed while a save runs replaces any still
+ * waiting, and the run saves it next. The push that starts a run gets its outcome; one that
+ * joins a running run gets null. A failed save drops the waiting body.
+ */
+export function createTaskListSaveQueue() {
+  let next: string | null = null;
+  let running = false;
+  return (body: string, save: (body: string) => Promise<boolean>): Promise<boolean> | null => {
+    next = body;
+    if (running) return null;
+    running = true;
+    return (async () => {
+      try {
+        for (let queued: string | null = body; queued !== null; queued = next) {
+          next = null;
+          if (!(await save(queued))) return false;
+        }
+        return true;
+      } finally {
+        next = null;
+        running = false;
+      }
+    })();
+  };
+}

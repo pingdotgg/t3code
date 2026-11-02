@@ -76,6 +76,7 @@ import {
 } from "@t3tools/client-runtime/pull-request-editing";
 import { setMarkdownTaskChecked } from "@t3tools/shared/markdownTaskList";
 import {
+  createTaskListSaveQueue,
   shownTaskListBody,
   taskListEditEnded,
   tickTaskListEdit,
@@ -520,40 +521,29 @@ export function PullRequestSummaryTab({
     onRefresh();
   };
 
-  // Ticks show at once and stay clickable while saving. Saves run one at a time with the latest
-  // body, so quick ticks can't land out of order.
+  // Ticks show at once and stay clickable while they save one at a time.
   const [taskEdit, setTaskEdit] = useState<TaskListEdit | null>(null);
-  const nextTaskBody = useRef<string | null>(null);
-  // Not `taskEdit.saving`: a tick can land after the loop ends but before that shows.
-  const taskSaveRunning = useRef(false);
+  const [saveTaskBody] = useState(createTaskListSaveQueue);
   if (taskListEditEnded(taskEdit, detail.body)) setTaskEdit(null);
   const shownBody = shownTaskListBody(taskEdit, detail.body);
-  const saveTasks = async () => {
-    for (let body = nextTaskBody.current; body !== null; body = nextTaskBody.current) {
-      nextTaskBody.current = null;
-      const result = await update({ environmentId, input: { ...reference, body } });
-      if (result._tag === "Failure") {
-        nextTaskBody.current = null;
-        taskSaveRunning.current = false;
-        setTaskEdit(null);
-        toastManager.add({ type: "error", title: "Could not save the description" });
-        // An earlier save in the run may have landed.
-        onRefresh();
-        return;
-      }
-    }
-    taskSaveRunning.current = false;
-    setTaskEdit((edit) => edit && { ...edit, saving: false });
-    onRefresh();
-  };
   const toggleTask = ({ markerOffset, checked }: { markerOffset: number; checked: boolean }) => {
     const body = setMarkdownTaskChecked(shownBody, markerOffset, checked);
     if (body === shownBody) return;
     setTaskEdit(tickTaskListEdit(taskEdit, detail.body, body));
-    nextTaskBody.current = body;
-    if (taskSaveRunning.current) return;
-    taskSaveRunning.current = true;
-    void saveTasks();
+    const run = saveTaskBody(
+      body,
+      async (next) =>
+        (await update({ environmentId, input: { ...reference, body: next } }))._tag === "Success",
+    );
+    void run?.then((saved) => {
+      if (saved) setTaskEdit((edit) => edit && { ...edit, saving: false });
+      else {
+        setTaskEdit(null);
+        toastManager.add({ type: "error", title: "Could not save the description" });
+      }
+      // After a failure too: an earlier save in the run may have landed.
+      onRefresh();
+    });
   };
 
   const commentEditing: CommentEditing = {

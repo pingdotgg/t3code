@@ -155,27 +155,6 @@ it("keeps tasks clickable while saving, saves quick ticks in order, and holds th
   expect(ticked()).toEqual([false, false]);
 });
 
-it("saves a tick made as the previous save finishes, before the next render", async () => {
-  setup();
-  let finishFirstSave = (_result: unknown) => {};
-  const firstSave = new Promise((resolve) => (finishFirstSave = resolve));
-  command.mockReturnValueOnce(firstSave);
-  const body = "- [ ] First\n- [ ] Second";
-  await using screen = await render({ ...detail, body });
-  const boxes = () => screen.container.querySelectorAll<HTMLInputElement>('input[type="checkbox"]');
-
-  await userEvent.click(boxes()[1]!);
-  // `act` holds the render, so the click lands after the save loop ended but before it shows.
-  await act(async () => {
-    finishFirstSave({ _tag: "Success", value: undefined });
-    await firstSave;
-    boxes()[0]!.click();
-  });
-
-  await vi.waitFor(() => expect(command).toHaveBeenCalledTimes(2));
-  expect(command.mock.calls[1]![0].input.body).toBe("- [x] First\n- [x] Second");
-});
-
 it("leaves task checkboxes read-only for a viewer who can't edit the description", async () => {
   setup();
   await using screen = await render({

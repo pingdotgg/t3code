@@ -84,6 +84,7 @@ import { composerPullRequests } from "../../state/pull-requests";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { setMarkdownTaskChecked } from "@t3tools/shared/markdownTaskList";
 import {
+  createTaskListSaveQueue,
   shownTaskListBody,
   taskListEditEnded,
   tickTaskListEdit,
@@ -315,36 +316,13 @@ function PullRequestOverview(props: {
   const permissions = usePullRequestPermissions(props.params, pr);
   const update = useAtomCommand(composerPullRequests.update);
   const refreshDetail = useAtomRefresh(composerPullRequests.detail(requestTarget(props.params)));
-  // A checkbox ticks itself natively on tap and stays tappable while saving. Saves run one at a
-  // time with the latest body. A tap that can't be written back remounts the body to undo
-  // the tick.
+  // A checkbox ticks itself natively on tap and stays tappable while ticks save one at a time.
+  // A tap that can't be written back remounts the body to undo the tick.
   const [taskEdit, setTaskEdit] = useState<TaskListEdit | null>(null);
-  const nextTaskBody = useRef<string | null>(null);
-  // Not `taskEdit.saving`: a tap can land after the loop ends but before that shows.
-  const taskSaveRunning = useRef(false);
+  const [saveTaskBody] = useState(createTaskListSaveQueue);
   const [taskReset, setTaskReset] = useState(0);
   if (taskListEditEnded(taskEdit, pr.body)) setTaskEdit(null);
   const shownBody = shownTaskListBody(taskEdit, pr.body);
-  const saveTasks = async (finish: () => void) => {
-    const target = requestTarget(props.params);
-    for (let body = nextTaskBody.current; body !== null; body = nextTaskBody.current) {
-      nextTaskBody.current = null;
-      const result = await update({ ...target, input: { ...target.input, body } });
-      if (AsyncResult.isFailure(result)) {
-        nextTaskBody.current = null;
-        taskSaveRunning.current = false;
-        setTaskEdit(null);
-        finish();
-        // An earlier save in the run may have landed.
-        refreshDetail();
-        return;
-      }
-    }
-    taskSaveRunning.current = false;
-    setTaskEdit((edit) => edit && { ...edit, saving: false });
-    finish();
-    refreshDetail();
-  };
   const toggleTask = (input: { markerOffset: number | null; checked: boolean }) => {
     const body =
       input.markerOffset === null
@@ -355,10 +333,20 @@ function PullRequestOverview(props: {
       return;
     }
     setTaskEdit(tickTaskListEdit(taskEdit, pr.body, body));
-    nextTaskBody.current = body;
-    if (taskSaveRunning.current) return;
-    taskSaveRunning.current = true;
-    void saveTasks(props.onTaskSaveStart());
+    const target = requestTarget(props.params);
+    const run = saveTaskBody(
+      body,
+      async (next) =>
+        !AsyncResult.isFailure(await update({ ...target, input: { ...target.input, body: next } })),
+    );
+    if (run === null) return;
+    const finish = props.onTaskSaveStart();
+    void run.then((saved) => {
+      setTaskEdit(saved ? (edit) => edit && { ...edit, saving: false } : null);
+      finish();
+      // After a failure too: an earlier save in the run may have landed.
+      refreshDetail();
+    });
   };
   return (
     <View className="gap-5">
