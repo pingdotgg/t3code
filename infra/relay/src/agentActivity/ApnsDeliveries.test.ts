@@ -163,7 +163,7 @@ function layerFor(input: {
     Layer.provide(
       Layer.mergeAll(
         Layer.succeed(AgentActivityRows.AgentActivityRows, {
-          upsert: () => Effect.void,
+          upsert: ({ state }) => Effect.succeed(state),
           remove: () => Effect.void,
           pruneTerminal: () => Effect.void,
           listForUser: () =>
@@ -604,6 +604,48 @@ describe("ApnsDeliveries", () => {
       );
     },
   );
+
+  it.effect("skips queued card metadata from before a same-phase rename", () => {
+    const attempts: DeliveryAttempts.DeliveryAttemptInput[] = [];
+    const requests: HttpClientRequest.HttpClientRequest[] = [];
+    const waiting = { ...state, phase: "waiting_for_input" as const, threadTitle: "Renamed" };
+    const stale = {
+      ...aggregate,
+      activities: [{ ...aggregate.activities[0]!, phase: waiting.phase }],
+    };
+    const job = signApnsDeliveryJob({
+      secret: config.apnsDeliveryJobSigningSecret,
+      payload: makeApnsDeliveryJobPayload({
+        kind: "live_activity_update",
+        userId: target.user_id,
+        deviceId: target.device_id,
+        token: target.activity_push_token!,
+        aggregate: stale,
+        createdAt: "1970-01-01T00:00:00.000Z",
+        expiresAt: "1970-01-01T00:10:00.000Z",
+        jobId: "stale-title",
+      }),
+    });
+    return Effect.gen(function* () {
+      const deliveries = yield* ApnsDeliveries.ApnsDeliveries;
+      const result = yield* deliveries.processSignedJob(job);
+      expect(result.apnsReason).toBe("Stale APNs delivery job skipped.");
+      expect(requests).toHaveLength(0);
+    }).pipe(
+      Effect.provide(
+        layerFor({
+          attempts,
+          activityStates: [waiting],
+          config: signingConfig,
+          execute: (request) =>
+            Effect.sync(() => {
+              requests.push(request);
+              return HttpClientResponse.fromWeb(request, new Response("", { status: 200 }));
+            }),
+        }),
+      ),
+    );
+  });
 
   it.effect("processes signed push notification jobs through APNs and records attempts", () => {
     const attempts: Array<DeliveryAttempts.DeliveryAttemptInput> = [];

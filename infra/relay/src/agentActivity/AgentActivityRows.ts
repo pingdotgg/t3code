@@ -65,10 +65,11 @@ export class AgentActivityRowListPersistenceError extends Schema.TaggedError<Age
 export class AgentActivityRows extends Context.Service<
   AgentActivityRows,
   {
+    /** Returns the stored state, preserving the time of an unchanged phase. */
     readonly upsert: (input: {
       readonly environmentPublicKey: string;
       readonly state: RelayAgentActivityState;
-    }) => Effect.Effect<void, AgentActivityRowUpsertPersistenceError>;
+    }) => Effect.Effect<RelayAgentActivityState, AgentActivityRowUpsertPersistenceError>;
     readonly pruneTerminal: (input: {
       readonly updatedBefore: string;
     }) => Effect.Effect<void, AgentActivityRowPruneTerminalPersistenceError>;
@@ -121,7 +122,8 @@ const make = Effect.gen(function* () {
             }),
         ),
       );
-      yield* db
+      const samePhase = sql`${relayAgentActivityRows.stateJson} ->> 'phase' = excluded.state_json ->> 'phase'`;
+      const [stored] = yield* db
         .insert(relayAgentActivityRows)
         .values({
           environmentId: input.state.environmentId,
@@ -138,10 +140,11 @@ const make = Effect.gen(function* () {
             relayAgentActivityRows.threadId,
           ],
           set: {
-            stateJson,
-            updatedAt: input.state.updatedAt,
+            stateJson: sql`case when ${samePhase} then excluded.state_json || jsonb_build_object('updatedAt', ${relayAgentActivityRows.stateJson} ->> 'updatedAt') else excluded.state_json end`,
+            updatedAt: sql`case when ${samePhase} then ${relayAgentActivityRows.updatedAt} else excluded.updated_at end`,
           },
         })
+        .returning({ stateJson: relayAgentActivityRows.stateJson })
         .pipe(
           Effect.mapError(
             (cause) =>
@@ -152,6 +155,7 @@ const make = Effect.gen(function* () {
               }),
           ),
         );
+      return stored!.stateJson;
     }),
 
     remove: Effect.fn("relay.agent_activity_rows.remove")(function* (input) {

@@ -18,6 +18,7 @@ import {
 } from "./agentActivityPayloads.ts";
 import {
   expiresAtForJob,
+  notificationJobId,
   makeApnsDeliveryJobPayload,
   signApnsDeliveryJob,
   type ApnsDeliveryJobPayload,
@@ -148,19 +149,21 @@ const make = Effect.gen(function* () {
           "relay.thread_id": input.notification.threadId,
         });
         const now = yield* DateTime.now;
-        const jobId = yield* crypto.randomUUIDv4().pipe(
-          Effect.mapError(
-            (cause) =>
-              new ApnsDeliveryQueueSendError({
-                operation: "generate-job-id",
-                jobId: null,
-                kind: "push_notification",
-                userId: input.userId,
-                deviceId: input.deviceId,
-                cause,
-              }),
-          ),
-        );
+        const jobId =
+          notificationJobId(input) ??
+          (yield* crypto.randomUUIDv4().pipe(
+            Effect.mapError(
+              (cause) =>
+                new ApnsDeliveryQueueSendError({
+                  operation: "generate-job-id",
+                  jobId: null,
+                  kind: "push_notification",
+                  userId: input.userId,
+                  deviceId: input.deviceId,
+                  cause,
+                }),
+            ),
+          ));
         yield* Effect.annotateCurrentSpan({ "relay.delivery.job_id": jobId });
         const payload = makeApnsDeliveryJobPayload({
           kind: "push_notification",

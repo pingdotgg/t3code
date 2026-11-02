@@ -165,15 +165,21 @@ function agentAwarenessPublishIdentity(state: RelayAgentActivityState | null): s
   return JSON.stringify(meaningfulState);
 }
 
-const CLEARED_PUBLISH_IDENTITY = agentAwarenessPublishIdentity(null);
+// The relay treats a new time as a new alert, so same-phase changes like renames keep the old one.
+function withPublishedPhaseTime(
+  state: RelayAgentActivityState,
+  published: RelayAgentActivityState | null | undefined,
+): RelayAgentActivityState {
+  return published?.phase === state.phase ? { ...state, updatedAt: published.updatedAt } : state;
+}
 
 // A published tombstone stays recorded so repeats are skipped, but it is not live state.
 function hasLivePublishedState(
-  publishedStateByThread: ReadonlyMap<ThreadId, string>,
+  publishedStateByThread: ReadonlyMap<ThreadId, RelayAgentActivityState | null>,
   threadId: ThreadId,
 ): boolean {
   const identity = publishedStateByThread.get(threadId);
-  return identity !== undefined && identity !== CLEARED_PUBLISH_IDENTITY;
+  return identity !== undefined && identity !== null;
 }
 
 function resolveAgentActivityPublishingStartupState(input: {
@@ -382,7 +388,9 @@ export const make = Effect.gen(function* () {
   const cloudLinkKeyPair = yield* getOrCreateEnvironmentKeyPairFromSecretStore(secrets);
   const startedAt = (yield* DateTime.now).epochMilliseconds;
   const catchUpRequests = yield* Queue.dropping<void>(1);
-  const publishedStateByThreadRef = yield* Ref.make(new Map<ThreadId, string>());
+  const publishedStateByThreadRef = yield* Ref.make(
+    new Map<ThreadId, RelayAgentActivityState | null>(),
+  );
 
   const readSecretString = (name: string) =>
     secrets
@@ -545,8 +553,9 @@ export const make = Effect.gen(function* () {
       thread,
       project,
     });
-    const publishIdentity = agentAwarenessPublishIdentity(snapshot.state);
     const publishedStateByThread = yield* Ref.get(publishedStateByThreadRef);
+    const publishedState = publishedStateByThread.get(threadId);
+    const state = snapshot.state && withPublishedPhaseTime(snapshot.state, publishedState);
     if (
       (snapshot.state?.phase === "completed" || snapshot.state?.phase === "failed") &&
       !hasLivePublishedState(publishedStateByThread, threadId)
@@ -554,7 +563,8 @@ export const make = Effect.gen(function* () {
       if (Option.isNone(thread) || !terminalWorkSinceStart(thread.value, startedAt)) return;
     }
     if (
-      publishedStateByThread.get(threadId) === publishIdentity &&
+      publishedState !== undefined &&
+      agentAwarenessPublishIdentity(publishedState) === agentAwarenessPublishIdentity(state) &&
       // A held completion settled after an earlier clear still has to alert.
       !(snapshot.state === null && heldCompletions.has(threadId))
     ) {
@@ -613,7 +623,7 @@ export const make = Effect.gen(function* () {
             })
           : null;
       if (unsettled?.state?.phase === "completed") {
-        const completion = unsettled.state;
+        const completion = withPublishedPhaseTime(unsettled.state, publishedState);
         yield* publishState({
           projectId: unsettled.projectId,
           state: completion,
@@ -622,7 +632,7 @@ export const make = Effect.gen(function* () {
         heldCompletions.delete(threadId);
         publishConfirmDeadlines.set(threadId, nowMs + 5_000);
         yield* Ref.update(publishedStateByThreadRef, (publishedStates) =>
-          new Map(publishedStates).set(threadId, agentAwarenessPublishIdentity(completion)),
+          new Map(publishedStates).set(threadId, completion),
         );
         yield* schedulePublishConfirm(threadId);
         return;
@@ -647,13 +657,13 @@ export const make = Effect.gen(function* () {
 
     yield* publishState({
       projectId: snapshot.projectId,
-      state: snapshot.state,
+      state,
       reason: snapshot.reason,
     }).pipe(withRelayClientTracing);
     publishConfirmDeadlines.delete(threadId);
     heldCompletions.delete(threadId);
     yield* Ref.update(publishedStateByThreadRef, (publishedStates) =>
-      new Map(publishedStates).set(threadId, publishIdentity),
+      new Map(publishedStates).set(threadId, state),
     );
   });
 
