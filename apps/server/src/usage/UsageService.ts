@@ -31,6 +31,7 @@ import { writeFileStringAtomically } from "@t3tools/shared/atomicWrite";
 import { formatMalformedUsageWarning } from "@t3tools/shared/usageFormat";
 import * as ServerConfig from "../config.ts";
 import * as ServerSettings from "../serverSettings.ts";
+import { forkParked } from "../serverActivation.ts";
 import { BUILT_IN_USAGE_DRIVERS, type BuiltInUsageReadersEnv } from "../provider/builtInDrivers.ts";
 import type { ProviderDriver } from "@t3tools/provider-core/server/driver";
 import { mergeProviderInstanceEnvironment } from "@t3tools/provider-core/server/instanceEnvironment";
@@ -68,6 +69,9 @@ const MTIME_SLACK_MS = 36 * 60 * 60 * 1000;
 const MAX_HOURLY_WINDOW_MS = 24 * 60 * 60 * 1000;
 
 const CACHE_RETENTION_DAYS = 92;
+const DAY_MS = 24 * 60 * 60 * 1000;
+// The usage page opens on 30 days; a day more covers the client's local-midnight start.
+const WARM_WINDOW_DAYS = 31;
 
 const transcriptReaders = BUILT_IN_USAGE_DRIVERS.flatMap((driver) =>
   driver.usage?.kind === "transcripts" ? [{ driver, reader: driver.usage }] : [],
@@ -138,6 +142,8 @@ export class UsageService extends Context.Service<
   {
     readonly readSummary: (input: UsageSummaryInput) => Effect.Effect<UsageSummary, UsageReadError>;
     readonly refreshRates: Effect.Effect<UsagePricing>;
+    /** Parses transcripts of the default window into the scan cache; concurrent summaries await it. */
+    readonly warmScanCache: Effect.Effect<void>;
   }
 >()("t3/usage/UsageService") {}
 
@@ -677,6 +683,13 @@ export const make = Effect.gen(function* () {
     return scanned;
   });
 
+  let warming: Deferred.Deferred<void> | undefined;
+  const awaitWarmup = Effect.suspend(() =>
+    warming === undefined
+      ? Effect.void
+      : Deferred.await(warming).pipe(Effect.withSpan("UsageService.awaitWarmup")),
+  );
+
   const scanSummary = Effect.fn("UsageService.scanSummary")(function* (
     input: UsageSummaryInput,
     settings: ServerSettingsValue,
@@ -714,6 +727,8 @@ export const make = Effect.gen(function* () {
 
     const startedAtMs = yield* Clock.currentTimeMillis;
     yield* ensureScanCacheLoaded;
+    // Wait rather than parse the same cold files a second time.
+    yield* awaitWarmup;
 
     const windowStart = DateTime.make(`${input.sinceDay}T00:00:00Z`);
     if (Option.isNone(windowStart)) {
@@ -955,7 +970,45 @@ export const make = Effect.gen(function* () {
     return yield* Deferred.await(deferred);
   });
 
-  return { readSummary, refreshRates, awaitPersisted } as const;
+  const warmScanCache = Effect.gen(function* () {
+    // A summary already in flight warms the cache itself.
+    if (warming !== undefined || inflightScans.size > 0) return;
+    const done = Deferred.makeUnsafe<void>();
+    warming = done;
+    yield* Effect.gen(function* () {
+      yield* ensureScanCacheLoaded;
+      const settings = yield* readSettings;
+      const now = yield* Clock.currentTimeMillis;
+      const dirs = yield* resolveTranscriptDirs(settings, now - CACHE_RETENTION_DAYS * DAY_MS).pipe(
+        Effect.provideContext(readerContext),
+      );
+      const windowStartMs = now - WARM_WINDOW_DAYS * DAY_MS - MTIME_SLACK_MS;
+      yield* Effect.forEach(dirs, (dir) => scanTranscriptDir(dir, windowStartMs), {
+        discard: true,
+      });
+      yield* schedulePersist;
+    }).pipe(
+      Effect.catchCause((cause) =>
+        Effect.logWarning("Usage scan cache warm-up failed.", { cause }),
+      ),
+      Effect.ensuring(
+        Effect.suspend(() => {
+          warming = undefined;
+          return Deferred.succeed(done, undefined);
+        }),
+      ),
+    );
+  }).pipe(Effect.withSpan("UsageService.warmScanCache"));
+
+  return { readSummary, refreshRates, warmScanCache, awaitPersisted } as const;
 });
 
 export const layer = Layer.effect(UsageService, make);
+
+/** Warms after activation so a cold cache never delays readiness or the first summary's parse. */
+export const layerWarmup = Layer.effectDiscard(
+  Effect.gen(function* () {
+    const usage = yield* UsageService;
+    yield* forkParked(usage.warmScanCache);
+  }),
+);
