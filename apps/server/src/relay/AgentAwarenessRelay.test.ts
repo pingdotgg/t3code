@@ -190,6 +190,8 @@ const makeTestRelay = Effect.fnUntraced(function* (
         return { schemaVersion: 2, snapshotSequence: 1, threads: [], archivedThreads: [] };
       }),
     listActiveSubagentThreadIds: unused,
+    countThreads: unused,
+    listActiveShellIndex: () => Effect.succeed([]),
     listOlderSettledThreads: unused,
     readShellSnapshot: unused,
     ensureLegacyTranscript: unused,
@@ -217,6 +219,7 @@ const makeTestRelay = Effect.fnUntraced(function* (
     settleThread: unused,
     interruptThread: unused,
     stopWorkflow: () => Effect.die("unused stopWorkflow"),
+    forceStopThread: () => Effect.die("unused forceStopThread"),
     awaitBackgroundTasks: unused,
     stopDelegatedTasks: unused,
     getThreadEventSequence: unused,
@@ -717,3 +720,35 @@ describe("AgentAwarenessRelay", () => {
     ),
   );
 });
+
+it.effect("catches up after startup without polling after success", () =>
+  Effect.gen(function* () {
+    const { relay, secrets, secretReads, catchUp } = yield* makeTestRelay();
+    yield* relay.start();
+    yield* TestClock.adjust("1 second");
+    assert.equal(catchUp.shellSnapshotReads, 1);
+
+    yield* secrets.set(PUBLISH_AGENT_ACTIVITY_SECRET, new TextEncoder().encode("false"));
+    yield* relay.requestCatchUp();
+    yield* TestClock.adjust("1 second");
+    assert.equal(catchUp.shellSnapshotReads, 1);
+
+    yield* secrets.set(PUBLISH_AGENT_ACTIVITY_SECRET, new TextEncoder().encode("true"));
+    yield* relay.requestCatchUp();
+    yield* TestClock.adjust("1 second");
+    assert.equal(catchUp.shellSnapshotReads, 2);
+
+    const readsBeforeIdle = secretReads.length;
+    yield* TestClock.adjust("10 minutes");
+    assert.equal(catchUp.shellSnapshotReads, 2);
+    assert.equal(secretReads.length, readsBeforeIdle);
+
+    yield* secrets.set(
+      RELAY_ENVIRONMENT_CREDENTIAL_SECRET,
+      new TextEncoder().encode("credential-2"),
+    );
+    yield* relay.requestCatchUp();
+    yield* TestClock.adjust("1 second");
+    assert.equal(catchUp.shellSnapshotReads, 3);
+  }).pipe(Effect.scoped),
+);

@@ -86,6 +86,34 @@ To add a scenario, point a `SCENARIOS` entry at a generic ACP replay fixture
 The agent replays session updates, permission requests, and questions. It drops session setup
 and vendor frames, so Grok and fx recordings lose their vendor-only behavior.
 
+### Profiling dev startup
+
+Run `vp run profile:startup` to capture the first 20 seconds of inherited Node processes under
+`.t3/startup-profiles/<timestamp>`. Workers that execute the preload get separate profiles.
+It starts the normal dev runner and accepts its flags.
+Stop it with Ctrl+C after the capture. Set `T3CODE_STARTUP_PROFILE_DIR` to choose another output
+directory. Profiling adds overhead, so compare readiness with an ordinary `vp run dev` run.
+
+Open a `.cpuprofile` in Chrome DevTools' Performance panel for sampled function stacks and source
+lines. Each `.modules.json` is a Chrome trace containing timed module resolution, loading,
+synchronous subprocess calls, and startup measures. Per-file records include importer URLs,
+source loading, preparation, recursive dependency linking, and top-level evaluation. Preparation
+uses synchronous loader boundaries; linking includes dependencies, and CommonJS evaluation can
+include nested `require` calls. Some ESM/CommonJS interop reports a combined stage. `.process.json` records the process, Node version, and capture window.
+The server's nested Effect and SQL spans remain in `.t3/userdata/logs/server.trace.ndjson`.
+
+The preload temporarily adds module-body timing markers and uses one automatic debugger pause
+to instrument the live Node loader. The launcher adds `--no-node-snapshot` to inherited
+`NODE_OPTIONS` because Node 26's snapshotted loader cannot accept that breakpoint. Include the
+same flag when using the preload directly. This disables Node's built-in startup snapshot,
+can change compilation-cache hits, and adds overhead.
+Treat per-file captures as diagnostic runs; use uninstrumented runs for baseline startup latency.
+The first entry module can compile before loader instrumentation is installed.
+
+A fresh process still uses filesystem, Node compilation, provider, and Vite dependency caches.
+Measure a missing Vite dependency cache separately from a restart with an existing database.
+Neither the Vite ready message nor the HTTP listener proves that a browser has rendered the app.
+
 ### Sharing and remote debugging
 
 `vp run dev --share` publishes the web port over the machine's tailnet and prints a pairing URL
@@ -163,13 +191,20 @@ for the security model.
 
 `vp run check:changed` runs CI's fast checks for your branch's changes: format and lint of the
 changed files, `knip:check` when code or a manifest changes, the generated GraphQL checks, typecheck
-of the affected packages and their dependents, and the test files beside the changed files. It maps
+of the affected packages and their dependents, and the test files beside the changed files. It also
+runs the checks that read other files: the agent context budget when the server is affected, and
+React Compiler coverage for only the changed web and mobile files. It maps
 files to packages with [ci-changes.cjs](../../.github/scripts/ci-changes.cjs), as CI does. It
-compares against the merge base with `origin/main`, or with a ref you pass. CI still runs the full
+compares against the closest merge base with any remote's `main`, so a fork whose `main` lags
+upstream still compares against upstream, or with a ref you pass. CI still runs the full
 test suites and the jobs the summary lists, so a local pass does not promise a green CI run.
 
-The steps run side by side, so a run takes about as long as its slowest step, usually knip's
-exports pass at about 10 s. When the files are exactly those of the last passing run, it prints that
+The steps run side by side, as many at once as the machine allows: one per two cores and per 6 GiB
+of available memory. On a large machine a run takes about as long as its slowest step, usually
+knip's exports pass at about 10 s. Pass `--concurrency <n>` or set `CHECK_CHANGED_CONCURRENCY` to
+change the limit (`1` runs the steps one by one). A step that runs past `--timeout <seconds>` or
+`CHECK_CHANGED_TIMEOUT` (default 900) is killed with every process it started and reported as
+`TIMEOUT`, not as a failing check. When the files are exactly those of the last passing run, it prints that
 run's summary instead of running again. Any change to a file, the install, or a generated file runs
 the checks again.
 
@@ -225,6 +260,29 @@ vp run dist:desktop:win
 DMGs default to the host architecture. Use `--arch` to choose another target and `--keep-stage`
 to retain packaging files for inspection. Run `vp run dist:desktop:artifact --help` for other
 options.
+
+### Prepared server bytecode
+
+Native macOS and Windows desktop artifact builds generate server bytecode with the packaged
+Electron executable, after ASAR creation and before signing. Linux builds skip generation until
+native packaging and relocated AppImage reuse have been validated. Cross-platform and
+cross-architecture builds also skip generation explicitly. CLI, SEA and WSL runtimes keep their
+existing behavior; only desktop backend imports covered by generation receive prepared bytecode.
+Worker-only modules compile normally.
+
+Electron's Node 24 cache has no read-only option and includes the producer UID in its directory
+name. The backend links individual prepared files into its writable cache with keys for the
+installed module paths. Node replaces files atomically, so regeneration cannot write through those
+links into signed resources. Windows uses hard links and falls back to normal caching when volumes
+differ or resource permissions prevent linking. Protected installations therefore may not reuse
+prepared bytecode. No cache bytes are copied during startup.
+
+The key calculation follows Node's internal portable ESM format. Generation checks that the
+packaged engine produced the expected CLI entry and fails the build if that format changes.
+The manifest also checks Electron, Node, OS, architecture and V8's flags-sensitive version tag.
+Missing or rejected entries compile from the shipped JavaScript. Prepared backends skip the
+explicit startup flush; Node can persist missing entries on normal exit. The writable fallback
+keeps the explicit flush needed when Windows force-kills the backend.
 
 ### Linux AppImage prerequisites
 

@@ -4,9 +4,11 @@ import {
   EnvironmentId,
   ProviderDriverKind,
   ProviderInstanceId,
+  type ProviderAuthState,
   type ServerProvider,
   type UnifiedSettings,
 } from "@t3tools/contracts";
+import * as Duration from "effect/Duration";
 import { AsyncResult, type Atom } from "effect/reactivity";
 import type { ReactNode } from "react";
 import { describe, expect, it, vi } from "vite-plus/test";
@@ -17,6 +19,8 @@ import { act, render } from "../../../test/render";
 
 const state = vi.hoisted(() => ({
   providers: null as unknown as Atom.Writable<ReadonlyArray<ServerProvider>>,
+  providerAuthQuery: null as unknown,
+  providerAuth: null as ProviderAuthState | null,
   settings: null as unknown as UnifiedSettings,
   canManageProviders: true,
   canWriteSettings: true,
@@ -40,6 +44,8 @@ vi.mock(import("../../state/server"), async (original) => {
   const providers = Atom.make<ReadonlyArray<ServerProvider>>([]).pipe(Atom.keepAlive);
   state.providers = providers;
   const config = Atom.make(null);
+  const providerAuth = Atom.make(null);
+  state.providerAuthQuery = providerAuth;
   const commandLabels = {
     refreshProviders: "refresh",
     updateProvider: "update",
@@ -59,6 +65,7 @@ vi.mock(import("../../state/server"), async (original) => {
       ...actual.serverEnvironment,
       ...labelled,
       configValueAtom: (() => config) as never,
+      providerAuthState: (() => providerAuth) as never,
       providersValueAtom: (() => providers) as never,
     } as never,
   };
@@ -75,8 +82,8 @@ vi.mock(import("../../state/use-atom-command"), async (original) => ({
 }));
 vi.mock(import("../../state/query"), async (original) => ({
   ...(await original()),
-  useEnvironmentQuery: (() => ({
-    data: null,
+  useEnvironmentQuery: ((query: unknown) => ({
+    data: query === state.providerAuthQuery ? state.providerAuth : null,
     error: null,
     isPending: false,
     refresh: vi.fn(),
@@ -216,6 +223,7 @@ async function setup() {
   state.canManageProviders = true;
   state.canWriteSettings = true;
   state.searchTargetId = null;
+  state.providerAuth = null;
   state.readEnvironmentIds = [];
   state.updateEnvironmentIds = [];
   state.mutationEnvironmentIds = [];
@@ -301,5 +309,107 @@ describe("EnvironmentProviderSettings routing", () => {
       environmentId,
       input: { instanceId, elicitationId: action.elicitationId },
     });
+  });
+
+  it("lets a signed-out managed Codex account switch to the existing CLI", async () => {
+    await setup();
+    const codex = ProviderDriverKind.make("codex");
+    state.settings = {
+      ...DEFAULT_UNIFIED_SETTINGS,
+      providerInstances: {
+        [codexId]: {
+          driver: codex,
+          enabled: true,
+          config: { enabled: true, setupMode: "managed" },
+        },
+      },
+    };
+    state.providerAuth = {
+      instanceId: codexId,
+      phase: "idle",
+      flowId: null,
+      authorizationUrl: null,
+      expiresAt: null,
+      message: null,
+      methods: [{ id: "chatgpt-profile:work", name: "Work", description: null, type: "agent" }],
+    };
+    await setProviders([
+      {
+        ...provider(),
+        auth: { status: "unauthenticated" },
+        setup: { canAuthenticate: true, canInstall: true },
+      },
+    ]);
+    await using _screen = await render(panel({ targetInstanceId: codexId }));
+    await expect.element(page.getByRole("button", { name: "Reconnect account" })).toBeVisible();
+    await userEvent.click(page.getByRole("button", { name: "Use existing CLI" }).element());
+
+    expect(state.mutateProviderInstance).toHaveBeenCalledWith(
+      {
+        operation: "upsert",
+        instanceId: codexId,
+        instance: {
+          driver: codex,
+          enabled: true,
+          config: { enabled: true, setupMode: "existing" },
+        },
+      },
+      {},
+    );
+  });
+});
+
+describe("EnvironmentProviderSettings health check interval", () => {
+  it("commits interval drafts and allows retrying rejected edits", async () => {
+    await setup();
+    await using _screen = await render(panel());
+    const input = page.getByRole("textbox", { name: "Provider health check interval in seconds" });
+
+    await userEvent.type(input, "{ArrowUp}{ArrowDown}");
+    expect(
+      state.updateSettings.mock.calls.map(([patch]) =>
+        Duration.toSeconds(patch.backgroundActivity.overrides.providerHealthRefreshInterval),
+      ),
+    ).toEqual([330, 300]);
+    state.updateSettings.mockClear();
+
+    // Replacing 300 with 120 passes through 30, 3, an empty field, 1 and 12.
+    await userEvent.type(input, "{Backspace}{Backspace}{Backspace}120");
+    await expect.element(input).toHaveValue("120");
+    expect(state.updateSettings).not.toHaveBeenCalled();
+
+    await userEvent.tab();
+    expect(
+      state.updateSettings.mock.calls.map(([patch]) =>
+        Duration.toSeconds(patch.backgroundActivity.overrides.providerHealthRefreshInterval),
+      ),
+    ).toEqual([120]);
+
+    await act(() => state.updateSettings.mock.calls.at(-1)?.[1]?.onFailed?.());
+    await expect.element(input).toHaveValue("300");
+    await userEvent.type(input, "{Backspace}{Backspace}{Backspace}120");
+    await userEvent.tab();
+    expect(
+      state.updateSettings.mock.calls.map(([patch]) =>
+        Duration.toSeconds(patch.backgroundActivity.overrides.providerHealthRefreshInterval),
+      ),
+    ).toEqual([120, 120]);
+
+    const rejectPrevious = state.updateSettings.mock.calls.at(-1)?.[1]?.onFailed;
+    await userEvent.type(input, "{ArrowUp}");
+    await act(() => rejectPrevious?.());
+    await expect.element(input).toHaveValue("150");
+  });
+
+  it("restores the saved interval when a cleared field loses focus", async () => {
+    await setup();
+    await using _screen = await render(panel());
+    const input = page.getByRole("textbox", { name: "Provider health check interval in seconds" });
+
+    await userEvent.type(input, "{Backspace}{Backspace}{Backspace}");
+    await userEvent.tab();
+
+    await expect.element(input).toHaveValue("300");
+    expect(state.updateSettings).not.toHaveBeenCalled();
   });
 });
