@@ -85,10 +85,6 @@ export function getThemePreviewAppearance(): ThemeAppearance | null {
   return themePreviewAppearance;
 }
 
-export function getThemePreviewSidebarArtwork(): boolean | null {
-  return themePreviewAppearance === null ? null : false;
-}
-
 export function subscribeToThemePreview(listener: () => void): () => void {
   themePreviewListeners.add(listener);
   return () => themePreviewListeners.delete(listener);
@@ -1185,15 +1181,11 @@ export function getThemeDefinition(theme: ThemePreference): ThemeDefinition | nu
   );
 }
 
-export function themeAllowsSidebarArtwork(theme: ThemePreference): boolean {
-  const themeId = themeIdFromPreference(theme);
-  return (
-    BUILT_IN_THEME_DEFINITIONS.find((definition) => definition.id === themeId)?.sidebarArtwork ===
-    true
-  );
-}
-
-/** Every selection path must check single-appearance themes to keep mix and appearance tiles in sync. */
+/**
+ * Selecting a single-appearance theme as the base preference would clear the
+ * light/dark mix and leave the appearance tiles disagreeing with what is on
+ * screen, so every path that selects a theme has to make the same call.
+ */
 export function singleAppearanceOf(theme: ThemeDefinition): ThemeAppearance | null {
   const modes = getThemeModes(theme);
   return modes.length === 1 ? modes[0]! : null;
