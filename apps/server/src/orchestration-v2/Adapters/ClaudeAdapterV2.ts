@@ -1513,9 +1513,6 @@ export function makeClaudeQueryOptions(input: {
   const requestThinkingSummaries =
     compiledSelection.settings.alwaysThinkingEnabled !== false &&
     extraArgs["thinking-display"] !== "omitted";
-  if (requestThinkingSummaries && extraArgs["thinking-display"] === undefined) {
-    extraArgs["thinking-display"] = "summarized";
-  }
   const threadIdentity: ClaudeAgentSdkThreadIdentity = input.resume
     ? { resume: input.nativeThreadId }
     : { sessionId: input.nativeThreadId };
@@ -1570,7 +1567,7 @@ export function makeClaudeQueryOptions(input: {
       : {}),
     ...(requestThinkingSummaries
       ? {
-          thinking: { type: "adaptive" as const, display: "summarized" as const },
+          thinking: { type: "adaptive" as const },
           settings:
             typeof effectiveQuerySettings === "string"
               ? effectiveQuerySettings
