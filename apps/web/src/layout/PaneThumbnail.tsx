@@ -376,7 +376,7 @@ function ThumbnailPickerRows({
     <DraftProjectRow
       key={group.projectKey}
       selected={group.projectKey === selectedProjectKey}
-      icon={<ProjectFavicon project={group} className="size-4 shrink-0" />}
+      icon={<ProjectFavicon project={targetProject} className="size-4 shrink-0" />}
       label={group.displayName}
       badge={
         model.showProjectEnvironments ? (
