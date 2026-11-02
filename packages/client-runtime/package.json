@@ -71,6 +71,10 @@
       "types": "./src/linkRequest.ts",
       "default": "./src/linkRequest.ts"
     },
+    "./thread-draft": {
+      "types": "./src/threadDraft.ts",
+      "default": "./src/threadDraft.ts"
+    },
     "./scheduled-task-webhook": {
       "types": "./src/scheduledTaskWebhook.ts",
       "default": "./src/scheduledTaskWebhook.ts"

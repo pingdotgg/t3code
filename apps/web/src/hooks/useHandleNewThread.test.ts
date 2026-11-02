@@ -319,6 +319,7 @@ describe("useNewThreadHandler", () => {
     const raced = {
       draftId: "draft-raced",
       environmentId: "environment-ssh",
+      projectId: "project-remote",
       promotedTo: null,
       threadId: "thread-raced",
     };
@@ -334,6 +335,92 @@ describe("useNewThreadHandler", () => {
 
     expect(opened?.draftId).toBe("draft-raced");
     expect(testState.draftStore.setPrompt).not.toHaveBeenCalled();
+  });
+
+  it("a late request leaves a draft with text for another project alone", async () => {
+    testState.reset(null);
+    // A thread draft card opened this draft on another machine while the request waited, and
+    // Back restored the route the request started from.
+    const approved = {
+      draftId: "draft-approved",
+      environmentId: "environment-primary",
+      projectId: "project-approved",
+      promotedTo: null,
+      threadId: "thread-approved",
+    };
+    testState.draftStore.getDraftSessionByLogicalProjectKey
+      .mockReturnValueOnce(null)
+      .mockReturnValueOnce(approved as never);
+    testState.giveUserText("draft-approved");
+
+    const pendingOpen = useNewThreadHandler()({
+      environmentId: "environment-ssh",
+      projectId: "project-remote",
+    } as never);
+    testState.completeProjectFileRead(null);
+
+    await expect(pendingOpen).resolves.toBeNull();
+    expect(testState.router.navigate).not.toHaveBeenCalled();
+    expect(testState.draftStore.setLogicalProjectDraftThreadId).not.toHaveBeenCalled();
+    expect(testState.draftStore.setPrompt).not.toHaveBeenCalled();
+  });
+
+  it("a fresh draft never reuses another draft and is pinned before it shows", async () => {
+    testState.reset({
+      draftId: "draft-existing",
+      environmentId: "environment-ssh",
+      promotedTo: null,
+      threadId: "thread-existing",
+    });
+    testState.openEmptyDraft("draft-open");
+    const raced = {
+      draftId: "draft-raced",
+      environmentId: "environment-primary",
+      projectId: "project-other",
+      promotedTo: null,
+      threadId: "thread-raced",
+    };
+    testState.draftStore.getDraftSessionByLogicalProjectKey
+      .mockReturnValueOnce(null)
+      .mockReturnValueOnce(raced as never);
+    testState.giveUserText("draft-raced");
+
+    const pendingOpen = useNewThreadHandler()(
+      { environmentId: "environment-ssh", projectId: "project-remote" } as never,
+      { prompt: "Run the migration.", freshDraft: true, environmentSelection: "manual" },
+    );
+    testState.completeProjectFileRead(null);
+    const opened = await pendingOpen;
+
+    expect(opened).toEqual({ draftId: "draft-delayed", threadId: "thread-delayed" });
+    expect(testState.draftStore.setLogicalProjectDraftThreadId).toHaveBeenCalledOnce();
+    expect(testState.draftStore.setLogicalProjectDraftThreadId).toHaveBeenCalledWith(
+      "remote-project",
+      { environmentId: "environment-ssh", projectId: "project-remote" },
+      "draft-delayed",
+      expect.objectContaining({ environmentSelection: "manual", loadBalancedEnvironmentId: null }),
+    );
+    expect(testState.draftStore.setPrompt).toHaveBeenCalledWith(
+      "draft-delayed",
+      "Run the migration.",
+    );
+    expect(
+      testState.draftStore.setLogicalProjectDraftThreadId.mock.invocationCallOrder[0],
+    ).toBeLessThan(testState.router.navigate.mock.invocationCallOrder[0] ?? 0);
+  });
+
+  it("stops when its caller goes away while it waits, even if the route stays", async () => {
+    testState.reset(null);
+    let gone = false;
+    const pendingOpen = useNewThreadHandler()(
+      { environmentId: "environment-ssh", projectId: "project-remote" } as never,
+      { freshDraft: true, shouldAbandon: () => gone },
+    );
+    gone = true;
+    testState.completeProjectFileRead(null);
+
+    await expect(pendingOpen).resolves.toBeNull();
+    expect(testState.router.navigate).not.toHaveBeenCalled();
   });
 
   it("seeds the prompt into the empty draft that is already open", async () => {

@@ -85,6 +85,12 @@ export function createNewThreadHandler(router: AnyRouter) {
       replace?: boolean;
       /** Composer text for the draft, set before it shows. A draft with user text keeps it. */
       prompt?: string;
+      /** Always a new draft: no existing draft is reused, moved or retargeted. */
+      freshDraft?: boolean;
+      /** Pins the new draft to this machine so load balancing never moves it. */
+      environmentSelection?: "manual";
+      /** Checked with the route after every wait; a caller that went away stops the open. */
+      shouldAbandon?: () => boolean;
     },
   ): Promise<{ draftId: DraftId; threadId: ThreadId } | null> => {
     const projects = readProjects();
@@ -140,7 +146,9 @@ export function createNewThreadHandler(router: AnyRouter) {
         candidate.environmentId === projectRef.environmentId,
     );
     const abandonedSinceRequest = () =>
-      routeChangedSinceRequest() || (project !== undefined && readProject(projectRef) === null);
+      routeChangedSinceRequest() ||
+      (options?.shouldAbandon?.() ?? false) ||
+      (project !== undefined && readProject(projectRef) === null);
     const projectSettings = resolveProjectSettings(
       targetServerSettings,
       project?.id ?? null,
@@ -239,7 +247,7 @@ export function createNewThreadHandler(router: AnyRouter) {
         ? getDraftThread(currentRouteTarget.threadRef)
         : getDraftSession(currentRouteTarget.draftId)
       : null;
-    if (emptyStoredDraftThread) {
+    if (emptyStoredDraftThread && !options?.freshDraft) {
       return (async () => {
         const isDraftAlreadyOpen =
           currentRouteTarget?.kind === "draft" &&
@@ -334,6 +342,7 @@ export function createNewThreadHandler(router: AnyRouter) {
     }
 
     if (
+      !options?.freshDraft &&
       latestActiveDraftThread &&
       currentRouteTarget?.kind === "draft" &&
       latestActiveDraftThread.logicalProjectKey === logicalProjectKey &&
@@ -373,10 +382,20 @@ export function createNewThreadHandler(router: AnyRouter) {
       // Reuse drafts registered while awaiting so their pending navigation cannot lose them.
       const racedDraft = getDraftSessionByLogicalProjectKey(logicalProjectKey);
       if (
+        !options?.freshDraft &&
         racedDraft &&
         racedDraft.draftId !== storedDraftThread?.draftId &&
         readThreadShell(scopeThreadRef(racedDraft.environmentId, racedDraft.threadId)) === null
       ) {
+        // A late request must not take over a draft with text for another project, such as one a
+        // thread draft card just opened on another machine.
+        if (
+          composerDraftHasUserContent(getComposerDraft(racedDraft.draftId)) &&
+          (racedDraft.environmentId !== projectRef.environmentId ||
+            racedDraft.projectId !== projectRef.projectId)
+        ) {
+          return null;
+        }
         setLogicalProjectDraftThreadId(logicalProjectKey, projectRef, racedDraft.draftId, {
           threadId: racedDraft.threadId,
           createdAt: racedDraft.createdAt,
@@ -406,6 +425,12 @@ export function createNewThreadHandler(router: AnyRouter) {
           }),
         runtimeMode: defaultRuntimeMode,
         ...(carryInteractionMode ? { interactionMode: carryInteractionMode } : {}),
+        ...(options?.environmentSelection === undefined
+          ? {}
+          : {
+              environmentSelection: options.environmentSelection,
+              loadBalancedEnvironmentId: null,
+            }),
       });
       applyStickyState(draftId);
       const modelSelectionOverride = resolveModelSelectionOverride(draftId);

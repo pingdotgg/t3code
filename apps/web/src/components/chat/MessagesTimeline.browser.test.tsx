@@ -333,6 +333,28 @@ describe("MessagesTimeline work rows", () => {
   );
 });
 
+it("shows a thread draft as a passive row to a viewer who cannot act on the thread", async () => {
+  await using screen = await renderTimeline(
+    [
+      {
+        id: "thread-draft",
+        kind: "event",
+        createdAt: CREATED_AT,
+        projectedItem: v2Item("thread_draft", {
+          id: "thread-draft",
+          prompt: "Run the migration.",
+          hiddenCharacters: 0,
+          hint: "vps",
+        }),
+      } as Entry,
+    ],
+    { canOperateThread: false },
+  );
+  await expect.element(screen.getByText('Offered a new thread on "vps"')).toBeVisible();
+  expect(screen.buttons(/Approve and open/)).toHaveLength(0);
+  expect(screen.text()).not.toContain("Run the migration.");
+});
+
 describe("MessagesTimeline messages", () => {
   it("settles when equally long messages have very different rendered heights", async () => {
     const props = baseProps();

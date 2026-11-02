@@ -13,6 +13,7 @@ import { Collapsible, CollapsibleTrigger, CollapsiblePanel } from "../ui/collaps
 import { EnvironmentSubagentAvatar, SubagentElapsed, V2LifecycleRow } from "./V2LifecycleRow";
 import { LinkRequestCard } from "./LinkRequestCard";
 import { SecretRequestCard } from "./SecretRequestCard";
+import { ThreadDraftCard } from "./ThreadDraftCard";
 import { TimelineRowCtx, type TimelineRow } from "./timelineRowContext";
 import { subagentGroupTiming } from "./TimelineV2EventRow.logic";
 
@@ -29,6 +30,11 @@ export function V2EventTimelineRow({ row }: { row: Extract<TimelineRow, { kind: 
         item={item}
         visibility={visibility}
       />
+    );
+  }
+  if (item.type === "thread_draft") {
+    return (
+      <ThreadDraftCard item={item} threadRef={ctx.threadRef} canOperate={ctx.canOperateThread} />
     );
   }
   if (item.type === "link_request") {
