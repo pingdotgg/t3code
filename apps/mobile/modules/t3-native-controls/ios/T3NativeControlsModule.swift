@@ -318,7 +318,7 @@ public final class T3NativeControlsModule: Module {
         let options = PHAssetResourceCreationOptions()
         options.uniformTypeIdentifier = UTType(mimeType: mimeType)?.identifier
         PHAssetCreationRequest.forAsset().addResource(with: .photo, fileURL: url, options: options)
-      }) { saved, error in
+      }, completionHandler: { saved, error in
         if saved {
           promise.resolve(nil)
         } else {
@@ -328,7 +328,7 @@ public final class T3NativeControlsModule: Module {
             userInfo: [NSLocalizedDescriptionKey: "Photos could not save this image."]
           ))
         }
-      }
+      })
     }
   }
 
