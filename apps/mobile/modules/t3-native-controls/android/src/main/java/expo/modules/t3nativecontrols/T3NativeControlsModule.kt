@@ -1,6 +1,7 @@
 package expo.modules.t3nativecontrols
 
 import android.content.Intent
+import android.os.Build
 import android.text.format.DateFormat
 import android.util.Base64
 import androidx.core.content.FileProvider
@@ -17,15 +18,23 @@ class T3NativeControlsModule : Module() {
   override fun definition() = ModuleDefinition {
     Name("T3NativeControls")
 
-    Function("signDpopProof") { privateD: String, publicX: String, publicY: String, input: String ->
-      val flags = Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING
-      val signature = DpopSigner.sign(
-        Base64.decode(privateD, flags),
-        Base64.decode(publicX, flags),
-        Base64.decode(publicY, flags),
-        input
-      )
-      Base64.encodeToString(signature, flags)
+    // The EC AlgorithmParameters provider is only guaranteed from API 26.
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+      Function("signDpopProof") {
+          privateD: String,
+          publicX: String,
+          publicY: String,
+          input: String
+        ->
+        val flags = Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING
+        val signature = DpopSigner.sign(
+          Base64.decode(privateD, flags),
+          Base64.decode(publicX, flags),
+          Base64.decode(publicY, flags),
+          input
+        )
+        Base64.encodeToString(signature, flags)
+      }
     }
 
     Function("is24HourFormat") {
