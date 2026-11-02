@@ -7,7 +7,6 @@ export function floatingTabsMetrics(
   fabSize: number,
   paneWidth?: number,
   fillWidth = false,
-  composeVisible = true,
 ) {
   const unit = Math.max(1, scale);
   const height = fabSize;
@@ -17,10 +16,11 @@ export function floatingTabsMetrics(
   const room =
     paneWidth === undefined
       ? count * 60 * unit
-      : sharesRow && composeVisible
+      : sharesRow
         ? paneWidth - beside
         : paneWidth - 2 * FLOATING_TABS.edge;
   return {
+    // Reserve the compose slot even while its button is hidden.
     pill: Math.max(0, fillWidth ? room : Math.min(count * 72 * unit, room)),
     height,
     row,
