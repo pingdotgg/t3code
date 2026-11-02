@@ -433,15 +433,19 @@ export function buildProjectGroups<TProject extends EnvironmentProject>(input: {
     };
   });
   const labelCounts = new Map<string, number>();
-  for (const group of groups) {
-    const label = group.label.toLowerCase();
-    labelCounts.set(label, (labelCounts.get(label) ?? 0) + 1);
+  if (input.repositoryAccounts) {
+    for (const group of groups) {
+      const label = group.label.toLowerCase();
+      labelCounts.set(label, (labelCounts.get(label) ?? 0) + 1);
+    }
   }
   return groups.map(({ qualifiedLabel, ...group }) => ({
     ...group,
     // The owner stays when dropping it would make two groups read the same.
     label:
-      group.label !== qualifiedLabel && labelCounts.get(group.label.toLowerCase())! > 1
+      input.repositoryAccounts &&
+      group.label !== qualifiedLabel &&
+      labelCounts.get(group.label.toLowerCase())! > 1
         ? qualifiedLabel
         : group.label,
   }));
