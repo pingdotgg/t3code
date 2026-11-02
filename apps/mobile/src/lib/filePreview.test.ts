@@ -14,7 +14,7 @@ import { inlineFilePreviewKind, isPdfFile } from "./filePreview";
 import { ThreadInlineFilePreview } from "../features/threads/ThreadInlineFilePreview";
 import { AudioFilePreview } from "../features/files/AudioFilePreview";
 import { MediaVideoPlayer } from "../components/MediaVideoPlayer";
-import { EnvironmentId, MessageId, ThreadId } from "@t3tools/contracts";
+import { EnvironmentId, MessageId, ProjectId, ThreadId } from "@t3tools/contracts";
 import { acquireAudioSession, activateAudioSession, releaseAudioSession } from "./audioSession";
 import { ThreadFeed } from "../features/threads/ThreadFeed";
 import type { ThreadFeedEntry } from "./threadActivity";
@@ -127,6 +127,7 @@ vi.mock("expo-video", () => ({
   VideoView: () => null,
 }));
 vi.mock("../components/VideoThumbnailImage", () => ({ VideoThumbnailImage: () => null }));
+vi.mock("../features/threads/ThreadDraftCard", () => ({ ThreadDraftCard: () => null }));
 vi.mock("../components/ui/AppActivityIndicator", () => ({ AppActivityIndicator: () => null }));
 vi.mock("../components/MediaActionsMenu", () => ({
   MediaActionsMenu: ({ children }: { children?: ReactNode }) => children,
@@ -437,6 +438,7 @@ describe("ThreadInlineFilePreview playback", () => {
           createElement(ThreadFeed, {
             environmentId,
             threadId,
+            projectId: ProjectId.make("project"),
             detailRef: null,
             threadTitle: "preview",
             workspaceRoot: "/repo",
@@ -1376,6 +1378,7 @@ describe("ThreadFeed previews", () => {
         createElement(ThreadFeed, {
           environmentId,
           threadId,
+          projectId: ProjectId.make("project"),
           detailRef: null,
           threadTitle: "preview",
           workspaceRoot: "/repo",

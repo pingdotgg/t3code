@@ -8,14 +8,14 @@ import {
 import {
   AuthOrchestrationOperateScope,
   type EnvironmentId,
-  type ScopedThreadRef,
+  type ProjectId,
 } from "@t3tools/contracts";
 import { SendIcon } from "lucide-react";
 import { useEffect, useId, useRef, useState } from "react";
 
 import { useNewThreadHandler } from "../../hooks/useHandleNewThread";
 import { useScratchProject } from "../../hooks/useScratchProject";
-import { useProjects, useThreadShell } from "../../state/entities";
+import { useProjects } from "../../state/entities";
 import { useEnvironments } from "../../state/environments";
 import { readEnvironmentScope, useEnvironmentsWithScope } from "../../state/session";
 import { useEnvironmentShellStatus } from "../../state/shell";
@@ -31,7 +31,8 @@ import { WorkLogRow } from "./WorkLog";
  */
 export function ThreadDraftCard(props: {
   readonly item: ThreadDraftItem;
-  readonly threadRef: ScopedThreadRef | null;
+  readonly sourceEnvironmentId: EnvironmentId;
+  readonly sourceProjectId: ProjectId | null;
   readonly canOperate: boolean;
 }) {
   const { environments } = useEnvironments();
@@ -59,12 +60,19 @@ export function ThreadDraftCard(props: {
       />
     );
   }
-  return <PendingThreadDraft card={card} threadRef={props.threadRef} />;
+  return (
+    <PendingThreadDraft
+      card={card}
+      sourceEnvironmentId={props.sourceEnvironmentId}
+      sourceProjectId={props.sourceProjectId}
+    />
+  );
 }
 
 function PendingThreadDraft(props: {
   readonly card: ThreadDraftCardModel;
-  readonly threadRef: ScopedThreadRef | null;
+  readonly sourceEnvironmentId: EnvironmentId;
+  readonly sourceProjectId: ProjectId | null;
 }) {
   const { card } = props;
   const labelId = useId();
@@ -78,16 +86,12 @@ function PendingThreadDraft(props: {
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const shellStatus = useEnvironmentShellStatus(chosen);
-  const sourceThread = useThreadShell(props.threadRef);
   const projects = useProjects();
   const source =
-    sourceThread === null || props.threadRef === null
-      ? null
-      : (projects.find(
-          (project) =>
-            project.environmentId === props.threadRef?.environmentId &&
-            project.id === sourceThread.projectId,
-        ) ?? null);
+    projects.find(
+      (project) =>
+        project.environmentId === props.sourceEnvironmentId && project.id === props.sourceProjectId,
+    ) ?? null;
   // Read in the render that enables Approve, once the machine's projects have loaded.
   const match = chosen === null ? null : threadDraftProjectMatch(source, projects, chosen);
   const handleNewThread = useNewThreadHandler();

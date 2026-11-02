@@ -1425,6 +1425,7 @@ function ThreadDetailBody(
             <ThreadFeed
               environmentId={props.environmentId}
               threadId={props.selectedThread.id}
+              projectId={props.selectedThread.projectId}
               detailRef={props.selectedThreadDetailRef}
               workspaceRoot={props.threadCwd}
               feed={props.selectedThreadFeed}

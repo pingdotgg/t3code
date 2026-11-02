@@ -56,6 +56,7 @@ import {
   type EnvironmentId,
   type MessageId,
   type OrchestrationV2ProjectedTurnItem,
+  type ProjectId,
   type RunId,
   type ScheduledTaskId,
   type ScopedThreadRef,
@@ -350,6 +351,8 @@ export interface ThreadFeedProps {
   readonly onEditPendingMessage: ((message: QueuedThreadMessage) => void) | null;
   readonly environmentId: EnvironmentId;
   readonly threadId: ThreadId;
+  /** The thread's project, which a thread draft card matches on the other machine. */
+  readonly projectId: ProjectId;
   /** Null while the thread's creation is queued: reading detail then caches a not-found as deleted. */
   readonly detailRef: ScopedThreadRef | null;
   readonly threadTitle: string;
@@ -1666,6 +1669,7 @@ function renderFeedEntry(
     | "dispatchingMessageId"
     | "onEditPendingMessage"
     | "threadId"
+    | "projectId"
     | "workspaceRoot"
   > & {
     readonly copiedRowId: string | null;
@@ -1834,6 +1838,7 @@ function renderFeedEntry(
     return (
       <ThreadDraftCard
         environmentId={props.environmentId}
+        projectId={props.projectId}
         projectedItem={entry.activities[0]!.projectedItem}
         iconColor={iconSubtleColor}
       />
@@ -3623,6 +3628,7 @@ export const ThreadFeed = memo(function ThreadFeed({
             onEditPendingMessage: props.onEditPendingMessage,
             onUseArtifactTemplate: props.onUseArtifactTemplate,
             threadId: props.threadId,
+            projectId: props.projectId,
             copiedRowId,
             expandedWorkRows,
             workRowSizing,

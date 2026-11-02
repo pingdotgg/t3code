@@ -149,6 +149,13 @@ describe("threadDraftProjectMatch", () => {
     expect(threadDraftProjectMatch(source, [other, archived, live], target)).toBe(live);
   });
 
+  it("matches by folder while the other machine's repository is still unknown", () => {
+    const loading = project("app-a", "env-b", null);
+    const otherRepo = project("app-a", "env-b", "github.com/acme/other");
+    expect(threadDraftProjectMatch(source, [loading], target)).toBe(loading);
+    expect(threadDraftProjectMatch(source, [otherRepo], target)).toBeNull();
+  });
+
   it("opens scratch when the source is scratch or the machine lacks the repository", () => {
     const scratch = project("scratch", "env-a", null, { isScratch: true });
     const elsewhere = project("docs-b", "env-b", "github.com/acme/docs");

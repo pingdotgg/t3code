@@ -1,5 +1,4 @@
-import { useIsFocused } from "@react-navigation/native";
-import { StackActions } from "@react-navigation/native";
+import { StackActions, useIsFocused, useNavigation } from "@react-navigation/native";
 import {
   isAtomCommandInterrupted,
   runAtomCommand,
@@ -14,6 +13,7 @@ import {
   AuthOrchestrationOperateScope,
   type EnvironmentId,
   type OrchestrationV2ProjectedTurnItem,
+  type ProjectId,
 } from "@t3tools/contracts";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Pressable, View, type ColorValue } from "react-native";
@@ -21,9 +21,8 @@ import { Pressable, View, type ColorValue } from "react-native";
 import { SymbolView, type AppSymbolName } from "../../components/ui/AppSymbol";
 import { AppText as Text } from "../../components/ui/AppText";
 import { Button } from "../../components/ui/Button";
-import { rootNavigationRef } from "../../lib/rootNavigation";
 import { appAtomRegistry } from "../../state/atom-registry";
-import { useProjects, useThreadShell } from "../../state/entities";
+import { useProjects } from "../../state/entities";
 import { useEnvironments } from "../../state/environments";
 import { projectEnvironment } from "../../state/projects";
 import {
@@ -47,6 +46,7 @@ const SEND_SYMBOL: AppSymbolName = { ios: "paperplane", android: "desktop_window
  */
 export function ThreadDraftCard(props: {
   readonly environmentId: EnvironmentId;
+  readonly projectId: ProjectId;
   readonly projectedItem: OrchestrationV2ProjectedTurnItem;
   readonly iconColor: ColorValue;
 }) {
@@ -87,7 +87,7 @@ export function ThreadDraftCard(props: {
   return (
     <PendingThreadDraft
       sourceEnvironmentId={props.environmentId}
-      threadId={item.threadId}
+      sourceProjectId={props.projectId}
       card={card}
     />
   );
@@ -95,7 +95,7 @@ export function ThreadDraftCard(props: {
 
 function PendingThreadDraft(props: {
   readonly sourceEnvironmentId: EnvironmentId;
-  readonly threadId: OrchestrationV2ProjectedTurnItem["item"]["threadId"];
+  readonly sourceProjectId: ProjectId;
   readonly card: ThreadDraftCardModel;
 }) {
   const { card } = props;
@@ -109,23 +109,17 @@ function PendingThreadDraft(props: {
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const readiness = useEnvironmentShellReadiness(chosen);
-  const sourceThread = useThreadShell({
-    environmentId: props.sourceEnvironmentId,
-    threadId: props.threadId,
-  });
   const projects = useProjects();
   const source =
-    sourceThread === null
-      ? null
-      : (projects.find(
-          (project) =>
-            project.environmentId === props.sourceEnvironmentId &&
-            project.id === sourceThread.projectId,
-        ) ?? null);
+    projects.find(
+      (project) =>
+        project.environmentId === props.sourceEnvironmentId && project.id === props.sourceProjectId,
+    ) ?? null;
   // Read in the render that enables Approve, once the machine's projects have loaded.
   const match = chosen === null ? null : threadDraftProjectMatch(source, projects, chosen);
   // Inactive stack screens stay mounted, so focus loss cancels a pending press too.
   const focused = useIsFocused();
+  const navigation = useNavigation();
   const pressRef = useRef<{ cancelled: boolean } | null>(null);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- cancels a pending open when the screen loses focus or the card unmounts
   useEffect(() => {
@@ -174,7 +168,7 @@ function PendingThreadDraft(props: {
       projectId: project.id,
     });
     setComposerDraftText(draftKey, card.promptText);
-    rootNavigationRef.dispatch(
+    navigation.dispatch(
       StackActions.push("Thread", { draft: { draftId: draftKey, title: project.title } }),
     );
     return null;

@@ -34,7 +34,12 @@ export function V2EventTimelineRow({ row }: { row: Extract<TimelineRow, { kind: 
   }
   if (item.type === "thread_draft") {
     return (
-      <ThreadDraftCard item={item} threadRef={ctx.threadRef} canOperate={ctx.canOperateThread} />
+      <ThreadDraftCard
+        item={item}
+        sourceEnvironmentId={ctx.activeThreadEnvironmentId}
+        sourceProjectId={ctx.activeThreadProjectId}
+        canOperate={ctx.canOperateThread}
+      />
     );
   }
   if (item.type === "link_request") {

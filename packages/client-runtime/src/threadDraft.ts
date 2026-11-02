@@ -147,8 +147,9 @@ const MATCH_GROUPING = {
 
 /**
  * The project on `environmentId` a draft from `source` opens in: the first one, in the order
- * given, with the same repository and path. Null opens a scratch draft there: the source is a
- * scratch project, or that machine has no such project.
+ * given, with the same repository and path. Repository identities load after the project list, so
+ * while either side's is unknown the folder name stands in, as for mobile's machine switch. Null
+ * opens a scratch draft there: the source is a scratch project, or that machine has no such project.
  */
 export function threadDraftProjectMatch(
   source: EnvironmentProject | null,
@@ -156,14 +157,27 @@ export function threadDraftProjectMatch(
   environmentId: EnvironmentId,
 ): EnvironmentProject | null {
   if (source === null || source.isScratch === true) return null;
+  const candidates = projects.filter(
+    (project) =>
+      project.environmentId === environmentId &&
+      project.archivedAt == null &&
+      project.isScratch !== true,
+  );
   const key = deriveLogicalProjectKeyFromSettings(source, MATCH_GROUPING);
+  const folder = folderName(source.workspaceRoot);
   return (
-    projects.find(
+    candidates.find(
+      (project) => deriveLogicalProjectKeyFromSettings(project, MATCH_GROUPING) === key,
+    ) ??
+    candidates.find(
       (project) =>
-        project.environmentId === environmentId &&
-        project.archivedAt == null &&
-        project.isScratch !== true &&
-        deriveLogicalProjectKeyFromSettings(project, MATCH_GROUPING) === key,
-    ) ?? null
+        (source.repositoryIdentity == null || project.repositoryIdentity == null) &&
+        folder !== null &&
+        folderName(project.workspaceRoot) === folder,
+    ) ??
+    null
   );
 }
+
+const folderName = (workspaceRoot: string) =>
+  workspaceRoot.split(/[\\/]/).findLast(Boolean) ?? null;
