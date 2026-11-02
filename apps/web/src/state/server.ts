@@ -199,7 +199,7 @@ export const threadTagToggleAtom = Atom.make((get): ThreadTagToggle => {
   let toggle: ThreadTagToggle = null;
   for (const environmentId of enabledEnvironmentIds(get(environmentCatalog.catalogValueAtom))) {
     const settings = get(serverEnvironment.settingsValueAtom(environmentId));
-    if (settings === null || settings.hiddenThreadTags.length === 0) continue;
+    if (settings === null || !settings.hiddenThreadTags.some((tag) => tag.trim() !== "")) continue;
     if (toggle === null || environmentId === primaryEnvironmentId) {
       toggle = { hiding: settings.hideTaggedThreads, environmentId };
     }
