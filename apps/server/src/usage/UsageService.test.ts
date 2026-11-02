@@ -1635,6 +1635,69 @@ describe("UsageService", () => {
     }).pipe(Effect.scoped, Effect.provide(TestClock.layer())),
   );
 
+  it.live("keeps a new Cursor key's refresh visible beside a failing key", () =>
+    Effect.gen(function* () {
+      const { settings, home } = yield* setup;
+      const cursor = makeFakeCursor();
+      const started = yield* Deferred.make<void>();
+      const gate = yield* Deferred.make<void>();
+      yield* Effect.gen(function* () {
+        const context = yield* Layer.build(
+          layerCursorUsageAccounts(
+            Layer.succeed(CursorAccountReader.CursorAccountReader, {
+              read: (credential, sinceMs, untilMs) =>
+                (credential as { apiKey?: string }).apiKey === "failing-key"
+                  ? Effect.succeed({
+                      accountKey: null,
+                      records: [],
+                      missing: false,
+                      error: "Cursor account usage could not be read.",
+                    })
+                  : Deferred.succeed(started, undefined).pipe(
+                      Effect.andThen(Deferred.await(gate)),
+                      Effect.andThen(cursor.read(credential, sinceMs, untilMs)),
+                    ),
+            }),
+          ),
+        );
+        const accounts = Context.get(context, CursorUsageAccounts.CursorUsageAccounts);
+        const scan = (awaitRefresh: boolean) =>
+          accounts.scan({
+            instances: [
+              {
+                instanceId: ProviderInstanceId.make("cursor"),
+                environment: { CURSOR_API_KEY: "failing-key" },
+              },
+              {
+                instanceId: ProviderInstanceId.make("cursor-work"),
+                environment: { CURSOR_API_KEY: "new-key" },
+              },
+            ],
+            keychainUsageEnabled: false,
+            windowStartMs: 0,
+            retentionCutoffMs: 0,
+            awaitRefresh,
+          });
+        const first = yield* Effect.forkChild(scan(true));
+        yield* Deferred.await(started);
+        const sources = yield* scan(false);
+        assert.isTrue(sources.some((source) => source.refreshing === true));
+        yield* Deferred.succeed(gate, undefined);
+        yield* Fiber.join(first);
+      }).pipe(
+        Effect.provide(
+          layerService({
+            prefix: "usage-service-cursor-new-key",
+            home,
+            settings,
+            platform: "linux",
+            environment: {},
+          }),
+        ),
+      );
+    }).pipe(Effect.scoped),
+  );
+
   it.live("reports one Cursor source when two API keys belong to the same account", () =>
     Effect.gen(function* () {
       const { settings, home } = yield* setup;
