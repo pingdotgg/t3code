@@ -9,6 +9,8 @@ const ATTACHMENT_DOWNLOAD_DIRECTORY = "t3-attachment-downloads";
 const DOWNLOAD_RETENTION_MS = 24 * 60 * 60_000;
 const DOWNLOAD_DIRECTORY_NAME = /^(\d+)-[\da-f]{8}-[\da-f]{4}-[\da-f]{4}-[\da-f]{4}-[\da-f]{12}$/i;
 const activeDirectories = new Set<string>();
+// Android's java.net.URI rejects these in paths, and expo-file-system can leave them unescaped.
+const URI_UNSAFE_FILE_NAME_CHARACTERS = new Set('"<>[]^`{|}');
 
 function downloadFileName(name: string): string {
   const basename = name.split(/[\\/]/).at(-1) ?? "";
@@ -16,7 +18,8 @@ function downloadFileName(name: string): string {
     const codePoint = character.codePointAt(0)!;
     return codePoint < 32 ||
       (codePoint >= 127 && codePoint <= 159) ||
-      (codePoint >= 0xd800 && codePoint <= 0xdfff)
+      (codePoint >= 0xd800 && codePoint <= 0xdfff) ||
+      URI_UNSAFE_FILE_NAME_CHARACTERS.has(character)
       ? "_"
       : character;
   })
