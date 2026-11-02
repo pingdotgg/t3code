@@ -1444,7 +1444,28 @@ describe("deriveMessagesTimelineRows", () => {
       kind: "work",
       id,
       createdAt: time(second),
-      entry: { id, createdAt: time(second), runId, label: "Ran command", tone: "tool" },
+      entry: {
+        id,
+        createdAt: time(second),
+        runId,
+        label: "Edited a.ts",
+        tone: "tool",
+        projectedItem: {
+          position: 0,
+          visibility: "local",
+          sourceThreadId: ThreadId.make("thread"),
+          sourceItemId: id,
+          item: {
+            id,
+            runId,
+            status: "completed",
+            parentItemId: null,
+            type: "file_change",
+            additions: 40,
+            deletions: 0,
+          },
+        } as never,
+      },
     });
     const rows = (expandedRunIds: ReadonlySet<RunId>) =>
       deriveMessagesTimelineRows({
@@ -1458,7 +1479,17 @@ describe("deriveMessagesTimelineRows", () => {
         latestRun: { runId, status: "completed", startedAt: time(0), completedAt: time(30) },
         isWorking: false,
         expandedRunIds,
-        turnDiffSummaries: [],
+        turnDiffSummaries: [
+          {
+            runId,
+            completedAt: time(30),
+            assistantMessageId: MessageId.make("final"),
+            checkpointTurnCount: 1,
+            checkpointRef: "checkpoint-1" as never,
+            status: "ready",
+            files: [{ path: "a.ts", kind: "modified", additions: 30, deletions: 2 }],
+          },
+        ],
         supportsConversationRollback: false,
       });
 
@@ -1471,8 +1502,15 @@ describe("deriveMessagesTimelineRows", () => {
       `turn-fold:${segmentKey}`,
       "final",
     ]);
-    expect(collapsed[1]).toMatchObject({ label: "Worked for 30s" });
-    expect(collapsed[3]).toMatchObject({ label: "Continued for 20s", createdAt: time(10) });
+    expect(collapsed[1]).toMatchObject({
+      label: "Worked for 30s",
+      diff: { additions: 30, deletions: 2 },
+    });
+    expect(collapsed[3]).toMatchObject({
+      label: "Continued for 20s",
+      createdAt: time(10),
+      diff: null,
+    });
 
     expect(rows(new Set([segmentKey])).map((row) => row.id)).toEqual([
       "prompt",

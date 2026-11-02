@@ -1423,9 +1423,7 @@ function deriveTurnFolds(input: {
         label: segmentMs !== null ? `Continued for ${formatDuration(segmentMs)}` : "Continued",
         // The turn summary owns its terminal message; each segment keeps its own disclosure.
         ending: failed ? ending : "worked",
-        diff: sumFileChangeLineStat(
-          entries.flatMap((entry) => (entry.kind === "work" ? [entry.entry] : [])),
-        ),
+        diff: null,
         endingEntryIds: new Set(
           entries.flatMap((entry) => (endingEntryIds.has(entry.id) ? [entry.id] : [])),
         ),
