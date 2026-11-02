@@ -184,12 +184,7 @@ const selectOption = (
   return option?.type === "select" ? option : undefined;
 };
 
-/**
- * Writes fx's session-only `provider` (the backend), then `model`. "Default"
- * is what `fx status` reports for the session's folder, skipped when that
- * backend does not list it; any other unlisted model is still sent, so a
- * thread never runs on a model it did not pick.
- */
+/** fx's model catalog changes with its backend, so it must be read after the provider write. */
 export const applyFxModelSelection = Effect.fn("applyFxModelSelection")(function* (
   runtime: AcpSessionRuntime.AcpSessionRuntime["Service"],
   modelSelection: ModelSelection,
@@ -220,13 +215,17 @@ export const applyFxModelSelection = Effect.fn("applyFxModelSelection")(function
   const modelOption = selectOption(yield* runtime.getConfigOptions, FX_MODEL_CONFIG_ID);
   const current = modelOption?.currentValue;
   if (target === undefined || target.model === current) return current;
+  if (isDefault && !canSelectBackend) return current;
   if (
     isDefault &&
-    (!canSelectBackend ||
-      modelOption === undefined ||
+    (modelOption === undefined ||
       !collectSessionConfigOptionValues(modelOption).includes(target.model))
   ) {
-    return current;
+    return yield* new EffectAcpErrors.AcpRequestError({
+      code: -32602,
+      errorMessage: "The default fx model is unavailable on its configured backend.",
+      data: { configId: FX_MODEL_CONFIG_ID },
+    });
   }
   yield* runtime.setConfigOption(FX_MODEL_CONFIG_ID, target.model, { allowUnlistedValue: true });
   return target.model;

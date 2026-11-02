@@ -1,6 +1,6 @@
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { describe, it } from "@effect/vitest";
+import { assert, describe, it } from "@effect/vitest";
 import {
   MessageId,
   NodeId,
@@ -21,7 +21,9 @@ import { ProviderAdapterV2RuntimePolicy } from "@t3tools/provider-core/server/Pr
 import * as TestProviderHost from "@t3tools/provider-testing/TestProviderHost";
 import { resolveSelfInvocation } from "@t3tools/shared/nodeRuntime";
 import * as DateTime from "effect/DateTime";
+import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
@@ -343,36 +345,62 @@ describe("FxAdapterV2", () => {
   // `fx status` names a gateway model, but this loaded session runs on Codex,
   // whose catalog lacks it: the backend goes back first.
   it.effect("moves a loaded session on another backend back to fx's default backend", () =>
-    openFxSession({
-      scenario: "default-other-backend",
-      runtimeMode: "approval-required",
-      model: "default",
-      loadSessionId: SESSION_ID,
-      frames: [
-        ...initialize,
-        outbound("session/load"),
-        answer(
-          "session/load",
-          fxSession({
-            model: CODEX_MODEL,
-            backend: "codex",
-            models: [CODEX_MODEL],
-            modes: FX_0_0_13_MODES,
-          }),
-        ),
-        // fx then runs the gateway model it saved for that backend.
-        ...setConfig(
-          "provider",
-          "gateway",
-          fxConfig({ model: NAMED_MODEL, modes: FX_0_0_13_MODES }),
-        ),
-        ...setConfig(
-          "model",
-          FX_DEFAULT_MODEL,
-          fxConfig({ model: FX_DEFAULT_MODEL, modes: FX_0_0_13_MODES }),
-        ),
-        ...setConfig("mode", "ask", fxConfig({ model: FX_DEFAULT_MODEL, modes: FX_0_0_13_MODES })),
-      ],
+    Effect.gen(function* () {
+      for (const modelAvailable of [true, false]) {
+        const result = yield* openFxSession({
+          scenario: `default-other-backend-${modelAvailable}`,
+          runtimeMode: "approval-required",
+          model: "default",
+          loadSessionId: SESSION_ID,
+          frames: [
+            ...initialize,
+            outbound("session/load"),
+            answer(
+              "session/load",
+              fxSession({
+                model: CODEX_MODEL,
+                backend: "codex",
+                models: [CODEX_MODEL],
+                modes: FX_0_0_13_MODES,
+              }),
+            ),
+            // fx then runs the gateway model it saved for that backend.
+            ...setConfig(
+              "provider",
+              "gateway",
+              fxConfig({
+                model: NAMED_MODEL,
+                ...(modelAvailable ? {} : { models: [NAMED_MODEL] }),
+                modes: FX_0_0_13_MODES,
+              }),
+            ),
+            ...(modelAvailable
+              ? [
+                  ...setConfig(
+                    "model",
+                    FX_DEFAULT_MODEL,
+                    fxConfig({ model: FX_DEFAULT_MODEL, modes: FX_0_0_13_MODES }),
+                  ),
+                  ...setConfig(
+                    "mode",
+                    "ask",
+                    fxConfig({ model: FX_DEFAULT_MODEL, modes: FX_0_0_13_MODES }),
+                  ),
+                ]
+              : []),
+          ],
+        }).pipe(Effect.exit);
+        if (modelAvailable) {
+          assert.isTrue(Exit.isSuccess(result));
+        } else if (Exit.isFailure(result)) {
+          assert.include(
+            Cause.pretty(result.cause),
+            "The default fx model is unavailable on its configured backend.",
+          );
+        } else {
+          assert.fail("Expected Default selection to reject the unavailable model");
+        }
+      }
     }).pipe(Effect.provide(testLayer), Effect.scoped),
   );
 
