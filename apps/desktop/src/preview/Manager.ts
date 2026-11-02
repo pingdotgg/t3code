@@ -1548,7 +1548,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
               emitOpenLink({
                 tabId,
                 url: details.url,
-                // A person's click focuses a guest frame; the agent's leaves focus with the composer.
+                // A person's click focuses a guest frame; GuestInput hands focus back after the agent's press.
                 background:
                   details.disposition === "background-tab" ||
                   (browserHost.agentActedRecently(wc) && wc.focusedFrame === null),
