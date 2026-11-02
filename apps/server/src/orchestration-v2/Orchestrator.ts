@@ -5346,6 +5346,20 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     effects: Ref.Ref<Array<PendingOrchestrationEffectV2>>,
   ) {
     let projection = yield* getProjectionWithPendingEvents(command.threadId, events);
+    if (command.steerFollowUpOfRunId !== undefined) {
+      const source = projection.runs.find((run) => run.id === command.steerFollowUpOfRunId);
+      if (
+        source === undefined ||
+        command.dispatchMode.type !== "queue_after_active" ||
+        !projection.messages.some(
+          (message) => message.id === command.messageId && message.runId === source.id,
+        ) ||
+        projection.thread.archivedAt !== null ||
+        projection.thread.deletedAt !== null ||
+        (yield* stopReachedRun(command, command.threadId, source.id))
+      )
+        return;
+    }
     if (command.manualContinuationOfRunId !== undefined) {
       const source = projection.runs.find((run) => run.id === command.manualContinuationOfRunId);
       const limited = latestRootProviderFailure(source ?? null, projection.turnItems);
@@ -5831,6 +5845,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     // Provider failure or usage limits re-hold the queue.
     const worktreeSetupUnresolved = worktreeSetupPending(projection);
     const sentByUserFromClient =
+      command.steerFollowUpOfRunId === undefined &&
       command.createdBy === "user" &&
       (command.creationSource === "web" || command.creationSource === "mobile") &&
       command.scheduledTaskId === undefined;

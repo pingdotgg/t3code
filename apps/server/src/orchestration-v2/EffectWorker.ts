@@ -29,6 +29,8 @@ import * as ThreadManagementService from "./ThreadManagementService.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import { continueRestartedRun } from "./RestartContinuation.ts";
 
+const isProviderTurnControlError = Schema.is(ProviderTurnControlService.ProviderTurnControlError);
+
 export class OrchestrationEffectExecutionError extends Schema.TaggedError<OrchestrationEffectExecutionError>()(
   "OrchestrationEffectExecutionError",
   {
@@ -263,8 +265,8 @@ export const layerExecutor: Layer.Layer<
                 Effect.catch((error) =>
                   Effect.gen(function* () {
                     if (
-                      !("turnCompleted" in error) ||
-                      !error.turnCompleted ||
+                      !isProviderTurnControlError(error) ||
+                      (!error.turnCompleted && !error.steerDeclined) ||
                       effect.request.type !== "provider-turn.steer"
                     ) {
                       return yield* error;
@@ -285,6 +287,7 @@ export const layerExecutor: Layer.Layer<
                         commandId: CommandId.make(`command:steer-follow-up:${effect.id}`),
                         threadId: effect.threadId,
                         messageId: message.id,
+                        ...(error.steerDeclined ? { steerFollowUpOfRunId: run.id } : {}),
                         text: message.text,
                         ...(message.context ? { context: message.context } : {}),
                         attachments: message.attachments,
@@ -293,7 +296,7 @@ export const layerExecutor: Layer.Layer<
                           : { modelSelection: run.modelSelection }),
                         dispatchMode: {
                           type:
-                            message.delegatedCompletion === undefined
+                            message.delegatedCompletion === undefined && !error.steerDeclined
                               ? "start_immediately"
                               : "queue_after_active",
                         },
