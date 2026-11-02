@@ -634,7 +634,7 @@ describe("ProviderInstanceRegistry — multi-instance codex slice", () => {
             initializationResult: () => {
               probeCount++;
               return Promise.resolve({
-                commands: [],
+                commands: [] as Array<ClaudeSdk.SlashCommand>,
                 account: { email: loggedIn.email, subscriptionType: "pro", tokenSource: "oauth" },
               });
             },

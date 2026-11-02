@@ -197,12 +197,14 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv, Path.
       modelCatalog,
     );
 
-    // Per-instance capabilities cache: keyed on binary + resolved HOME so
-    // account-specific probes never share auth metadata across instances.
-    // A transient miss may reuse the last account once, but its usage windows keep their age.
-    const lastGoodCapabilities = yield* Ref.make<ClaudeCapabilitiesProbe | undefined>(undefined);
+    // Per-instance capabilities cache: keyed on binary + resolved HOME + logged-in account so
+    // probes never share auth metadata across instances or across a re-login.
+    // A transient miss may reuse the same key's last probe once; its usage windows keep their age.
+    const lastGoodCapabilities = yield* Ref.make<
+      { readonly key: string; readonly capabilities: ClaudeCapabilitiesProbe } | undefined
+    >(undefined);
     const capabilitiesProbeCache = yield* Cache.makeWith(
-      () =>
+      (key: string) =>
         probeClaudeCapabilities(effectiveConfig, processEnv, stateDir).pipe(
           Effect.flatMap((capabilities) =>
             ClaudeResetCredits.readClaudeOrganizationId(accountConfigPath).pipe(
@@ -213,22 +215,16 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv, Path.
               })),
             ),
           ),
-          Effect.tap(({ capabilities }) => Ref.set(lastGoodCapabilities, capabilities)),
+          Effect.tap(({ capabilities }) => Ref.set(lastGoodCapabilities, { key, capabilities })),
           Effect.catch((error) =>
             Ref.getAndSet(lastGoodCapabilities, undefined).pipe(
-              Effect.flatMap((capabilities) =>
-                capabilities === undefined
-                  ? Effect.fail(error)
-                  : ClaudeResetCredits.readClaudeOrganizationId(accountConfigPath).pipe(
-                      Effect.flatMap((workspaceId) =>
-                        workspaceId === capabilities.workspaceId
-                          ? Effect.succeed({
-                              _tag: "fallback" as const,
-                              capabilities: withoutUsage(capabilities),
-                            })
-                          : Effect.fail(error),
-                      ),
-                    ),
+              Effect.flatMap((lastGood) =>
+                lastGood?.key === key
+                  ? Effect.succeed({
+                      _tag: "fallback" as const,
+                      capabilities: withoutUsage(lastGood.capabilities),
+                    })
+                  : Effect.fail(error),
               ),
             ),
           ),
@@ -251,8 +247,13 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv, Path.
       stateDir,
       processEnv,
     );
-    const resolveCapabilities = Cache.get(capabilitiesProbeCache, capabilitiesCacheKey).pipe(
+    const resolveCapabilities = ClaudeResetCredits.readClaudeAccountKey(accountConfigPath).pipe(
+      Effect.flatMap((accountKey) =>
+        Cache.get(capabilitiesProbeCache, `${capabilitiesCacheKey}\0${accountKey}`),
+      ),
       Effect.map((result) => result.capabilities),
+      Effect.provideService(FileSystem.FileSystem, fileSystem),
+      Effect.provideService(Path.Path, path),
     );
 
     const checkProvider = catalogService.refreshInBackground.pipe(
