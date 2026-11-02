@@ -302,7 +302,8 @@ function PullRequestOverview(props: {
   readonly onDescriptionCollapse: () => void;
   readonly descriptionExpanded: boolean;
   readonly onDescriptionExpandedChange: (expanded: boolean) => void;
-  readonly onTaskSavingChange: (saving: boolean) => void;
+  /** Marks a checkbox save run as started; call the returned function when it ends. */
+  readonly onTaskSaveStart: () => () => void;
 }) {
   const { pr } = props;
   const permissions = usePullRequestPermissions(props.params, pr);
@@ -326,7 +327,7 @@ function PullRequestOverview(props: {
     taskEdit !== null && (taskEdit.saving || taskEdit.stale.includes(pr.body))
       ? taskEdit.to
       : pr.body;
-  const saveTasks = async () => {
+  const saveTasks = async (finish: () => void) => {
     const target = requestTarget(props.params);
     for (let body = nextTaskBody.current; body !== null; body = nextTaskBody.current) {
       nextTaskBody.current = null;
@@ -334,14 +335,14 @@ function PullRequestOverview(props: {
       if (AsyncResult.isFailure(result)) {
         nextTaskBody.current = null;
         setTaskEdit(null);
-        props.onTaskSavingChange(false);
+        finish();
         // An earlier save in the run may have landed.
         refreshDetail();
         return;
       }
     }
     setTaskEdit((edit) => edit && { ...edit, saving: false });
-    props.onTaskSavingChange(false);
+    finish();
     refreshDetail();
   };
   const toggleTask = (input: { markerOffset: number | null; checked: boolean }) => {
@@ -358,8 +359,7 @@ function PullRequestOverview(props: {
     setTaskEdit({ stale: [...stale, pr.body], to: body, saving: true });
     nextTaskBody.current = body;
     if (saving) return;
-    props.onTaskSavingChange(true);
-    void saveTasks();
+    void saveTasks(props.onTaskSaveStart());
   };
   return (
     <View className="gap-5">
@@ -414,8 +414,16 @@ export function PullRequestRouteScreen({ route }: StaticScreenProps<PullRequestP
   const requestedSection = useRef(chosenSection);
   const [listAnimationsReady, setListAnimationsReady] = useState(false);
   const [descriptionExpanded, setDescriptionExpanded] = useState(false);
-  // A manual description save racing a checkbox save could land first and be overwritten.
-  const [taskSaving, setTaskSaving] = useState(false);
+  // A manual description save racing a checkbox save could land first and be overwritten. Runs
+  // are tagged with their pull request, as Android swaps the shown one in place.
+  const pullRequestKey = `${params.environmentId}:${params.projectId}:${params.host}:${params.repository}#${params.number}`;
+  const [taskSaving, setTaskSaving] = useState<{ readonly pullRequest: string } | null>(null);
+  const descriptionSaving = taskSaving?.pullRequest === pullRequestKey;
+  const startTaskSave = () => {
+    const run = { pullRequest: pullRequestKey };
+    setTaskSaving(run);
+    return () => setTaskSaving((current) => (current === run ? null : current));
+  };
   const filesContent = usePullRequestFilesSection(params);
   const guidesEnabled = useReviewGuidesEnabled(params);
   // The guide tab goes away while guides are off and overview stands in. The pick is kept, so
@@ -582,7 +590,7 @@ export function PullRequestRouteScreen({ route }: StaticScreenProps<PullRequestP
                       accessibilityLabel: "Edit description",
                       icon: "doc.text" as const,
                       overflowOnly: true,
-                      disabled: taskSaving,
+                      disabled: descriptionSaving,
                       onPress: () =>
                         navigation.navigate("PullRequestEdit", { ...params, field: "body" }),
                     },
@@ -676,7 +684,7 @@ export function PullRequestRouteScreen({ route }: StaticScreenProps<PullRequestP
             {permissions.canEditChangeRequest ? (
               <Toolbar.MenuAction
                 icon="doc.text"
-                disabled={taskSaving}
+                disabled={descriptionSaving}
                 onPress={() => navigation.navigate("PullRequestEdit", { ...params, field: "body" })}
               >
                 <Toolbar.Label>Edit description</Toolbar.Label>
@@ -826,7 +834,7 @@ export function PullRequestRouteScreen({ route }: StaticScreenProps<PullRequestP
                               {pr ? (
                                 <PullRequestOverview
                                   // Android swaps the shown PR in place; checkbox saves belong to one.
-                                  key={`${params.environmentId}:${params.projectId}:${params.host}:${params.repository}#${params.number}`}
+                                  key={pullRequestKey}
                                   pr={pr}
                                   params={params}
                                   stack={stack}
@@ -838,7 +846,7 @@ export function PullRequestRouteScreen({ route }: StaticScreenProps<PullRequestP
                                   onDescriptionCollapse={() => {
                                     pendingDescriptionJump.current = true;
                                   }}
-                                  onTaskSavingChange={setTaskSaving}
+                                  onTaskSaveStart={startTaskSave}
                                 />
                               ) : summary ? (
                                 <PullRequestOverviewLoading
