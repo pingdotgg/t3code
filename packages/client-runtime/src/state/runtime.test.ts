@@ -1,4 +1,6 @@
 import { describe, expect, it } from "@effect/vitest";
+import * as NodeV8 from "node:v8";
+import * as NodeVM from "node:vm";
 import { vi } from "vite-plus/test";
 import {
   EnvironmentId,
@@ -152,6 +154,7 @@ const makeEnvironmentQueryHarness = Effect.fn("TestEnvironmentQuery.makeHarness"
 
   return {
     runtime,
+    family,
     atom: family({ environmentId: QUERY_ENVIRONMENT.environmentId, input: undefined }),
     supervisorSession,
     supervisorState,
@@ -996,6 +999,46 @@ describe("environment query lifecycle", () => {
         now = 61_000;
         expect(yield* remount).toBe("after edit");
         expect(fetches).toBe(2);
+      }),
+    ),
+  );
+
+  it.effect("keeps its cache when collected while unmounted, inside its stale time", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        NodeV8.setFlagsFromString("--expose-gc");
+        const gc = NodeVM.runInNewContext("gc") as () => void;
+        using _now = vi.spyOn(Date, "now").mockReturnValue(0);
+        let fetches = 0;
+        const harness = yield* makeEnvironmentQueryHarness(
+          Effect.sync(() => {
+            fetches += 1;
+            return fetches;
+          }),
+        );
+        const registry = AtomRegistry.make();
+        yield* Effect.addFinalizer(() => Effect.sync(() => registry.dispose()));
+        // `Atom.family` holds members weakly, so the test must hold none: another environment
+        // than `harness.atom`'s, which the harness holds.
+        const environmentId = EnvironmentId.make("unheld-environment");
+        const query = () => harness.family({ environmentId, input: undefined });
+        const first = new WeakRef(query());
+        const remount = Effect.gen(function* () {
+          const unmount = registry.mount(query());
+          yield* Effect.yieldNow;
+          const value = yield* readEnvironmentQuery(registry, query());
+          unmount();
+          return value;
+        });
+        // A WeakRef target survives until the current job ends, so collect after it.
+        const collect = Effect.yieldNow.pipe(Effect.andThen(Effect.sync(gc)));
+
+        expect(yield* remount).toBe(1);
+        yield* collect;
+        expect(yield* remount).toBe(1);
+        yield* collect;
+        expect(first.deref()).toBe(query());
+        expect(fetches).toBe(1);
       }),
     ),
   );

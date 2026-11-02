@@ -702,6 +702,9 @@ export function createEnvironmentQueryAtomFamily<R, ER, Input, A, E>(
   readonly input: Input;
 }) => Atom.Atom<AsyncResult.AsyncResult<A, E | ER | Error>> {
   const connectionAtom = environmentConnectionAtoms(runtime);
+  // `Atom.family` holds members weakly and the mounted layer has no TTL, so each member lives
+  // as long as its cache: keyed weakly, this lets both go once the cache's TTL ends.
+  const membersByCache = new WeakMap<Atom.Atom<unknown>, Atom.Atom<unknown>>();
   const family = Atom.family((key: string) => {
     const target = parseEnvironmentRpcKey<Input>(key);
     const idleTtlMs = options.idleTtlMs ?? 5 * 60_000;
@@ -825,15 +828,17 @@ export function createEnvironmentQueryAtomFamily<R, ER, Input, A, E>(
         ? queryAtom
         : queryAtom.pipe(refreshEveryUntilFinal(options.refreshIntervalMs, isFinal));
     const refreshTrigger = options.refreshTrigger?.(target);
-    return (
+    const cache = (
       refreshTrigger === undefined
         ? intervalQuery
         : intervalQuery.pipe(refreshOnSignalWhileRead(refreshTrigger, isFinal))
-    ).pipe(
-      Atom.setIdleTTL(idleTtlMs),
+    ).pipe(Atom.setIdleTTL(idleTtlMs));
+    const member = cache.pipe(
       revalidateOnMount(options.staleTimeMs ?? 30_000),
       Atom.withLabel(`${options.label}:${key}`),
     );
+    membersByCache.set(cache, member);
+    return member;
   });
   return (target) => family(environmentRpcKey(target));
 }
