@@ -13,11 +13,11 @@ is why the [shared controller](../../packages/client-runtime/src/voice-mode/cont
 takes a platform object: browsers and react-native-webrtc supply the same peer API.
 
 The stream's lifetime is the conversation's lifetime. When the client
-unsubscribes or disconnects, the server stops the realtime session, so a dropped
-client cannot leave a billed session running.
+unsubscribes or disconnects, the server requests realtime stop. A failed stop
+retains provider ownership and blocks replacement until termination is confirmed.
 
 Handoffs are client-managed, as in the Codex TUI. The
-[Codex voice module](../../apps/server/src/provider/Layers/CodexVoice.ts) hands
+[Codex voice module](../../apps/server/src/provider/CodexVoice.ts) hands
 each voice turn's final answer back with `thread/realtime/appendSpeech`, which
 keeps commentary and reasoning unspoken.
 

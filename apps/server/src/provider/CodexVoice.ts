@@ -32,17 +32,6 @@ export function readRealtimeDelegationInput(text: string): string | undefined {
   return input.length > 0 ? input : undefined;
 }
 
-function readUserMessageText(item: unknown): string | undefined {
-  if (!item || typeof item !== "object") return undefined;
-  const record = item as { type?: unknown; content?: unknown };
-  if (record.type !== "userMessage" || !Array.isArray(record.content)) return undefined;
-  return (record.content as ReadonlyArray<{ type?: unknown; text?: unknown }>)
-    .flatMap((entry) =>
-      entry.type === "text" && typeof entry.text === "string" ? [entry.text] : [],
-    )
-    .join("\n");
-}
-
 /** Reads the delegation input from a Codex `userMessage` item. */
 export function readRealtimeDelegationFromItem(item: unknown): string | undefined {
   if (!item || typeof item !== "object") return undefined;
@@ -97,7 +86,7 @@ interface ActiveVoice {
   /** Delegated turn id -> latest speakable answer in that turn. */
   readonly delegatedTurns: Map<string, string | undefined>;
   /** Handoffs resubmitted as ordinary runs, awaiting their native turn. */
-  readonly expectedHandoffs: Array<string>;
+  readonly expectedHandoffs: Set<string>;
   closed: boolean;
   stopped: boolean;
 }
@@ -185,15 +174,6 @@ export const makeCodexVoice = Effect.fn("makeCodexVoice")(function* (
           active.delegatedTurns.set(payload.turnId, undefined);
           return;
         }
-        const text = readUserMessageText(payload.item);
-        const expectedIndex =
-          text === undefined
-            ? -1
-            : active.expectedHandoffs.findIndex((expected) => text.includes(expected));
-        if (expectedIndex !== -1) {
-          active.expectedHandoffs.splice(expectedIndex, 1);
-          active.delegatedTurns.set(payload.turnId, undefined);
-        }
       }),
     ),
   );
@@ -259,7 +239,7 @@ export const makeCodexVoice = Effect.fn("makeCodexVoice")(function* (
           providerThreadId: input.providerThreadId,
           queue,
           delegatedTurns: new Map(),
-          expectedHandoffs: [],
+          expectedHandoffs: new Set(),
           closed: false,
           stopped: false,
         };
@@ -302,14 +282,18 @@ export const makeCodexVoice = Effect.fn("makeCodexVoice")(function* (
       }),
     );
 
-  /**
-   * Marks the next turn whose user message carries `text` as a voice handoff,
-   * for hosts that resubmit Codex's delegation as their own run.
-   */
-  const expectSpokenTurn = (text: string) =>
+  /** Registers the app message identity before its continuation is queued. */
+  const expectSpokenTurn = (messageId: string) =>
     Effect.map(Ref.get(activeRef), (active) => {
-      if (active && !active.closed) active.expectedHandoffs.push(text);
+      if (active && !active.closed) active.expectedHandoffs.add(messageId);
     });
 
-  return { start, expectSpokenTurn };
+  const registerTurn = (messageId: string, turnId: string) =>
+    Effect.map(Ref.get(activeRef), (active) => {
+      if (active && !active.closed && active.expectedHandoffs.delete(messageId)) {
+        active.delegatedTurns.set(turnId, undefined);
+      }
+    });
+
+  return { start, expectSpokenTurn, registerTurn };
 });

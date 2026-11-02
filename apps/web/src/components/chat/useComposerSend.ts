@@ -725,6 +725,7 @@ export function useComposerSend(input: ComposerSendInput) {
       composerPreviewAnnotations.length === 0 &&
       composerReviewComments.length === 0 &&
       composerThreadContexts.length === 0 &&
+      composerEnvironmentContexts.length === 0 &&
       multipleModelSelections === null
         ? parseStandaloneComposerSlashCommand(trimmed)
         : null;

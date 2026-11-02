@@ -2132,11 +2132,11 @@ export const layerWithOptions = (
               const providerThread = projection.providerThreads.find(
                 (thread) => thread.id === projection.thread.activeProviderThreadId,
               );
-              const runtime = providerThread?.providerSessionId
+              const entry = providerThread?.providerSessionId
                 ? (yield* Ref.get(sessions)).get(sessionKey(providerThread.providerSessionId))
-                    ?.exposedRuntime
                 : undefined;
-              if (!providerThread || !runtime)
+              const runtime = entry?.exposedRuntime;
+              if (!providerThread || !entry || !runtime)
                 return yield* new ProviderVoiceSessionError({
                   threadId: input.threadId,
                   detail: "The provider session is no longer running. Send a message first.",
@@ -2154,7 +2154,23 @@ export const layerWithOptions = (
                 providerThread,
               });
               yield* Effect.acquireRelease(
-                markBusy(providerSessionId, busyTurnKey(providerThread.id, voiceOrdinal)),
+                markBusy(
+                  providerSessionId,
+                  busyTurnKey(providerThread.id, voiceOrdinal),
+                  entry.runtime,
+                ).pipe(
+                  Effect.flatMap((marked) =>
+                    marked
+                      ? Effect.void
+                      : Effect.fail(
+                          new ProviderVoiceSessionError({
+                            threadId: input.threadId,
+                            detail:
+                              "The provider session was released while voice started. Send a message first.",
+                          }),
+                        ),
+                  ),
+                ),
                 () =>
                   markIdle(providerSessionId, providerThread.id, voiceOrdinal).pipe(Effect.ignore),
               );

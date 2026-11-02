@@ -8,13 +8,13 @@ import {
 } from "@t3tools/client-runtime/voice-mode";
 import * as Effect from "effect/Effect";
 import { AtomRegistry } from "effect/reactivity";
-import { setAudioModeAsync } from "expo-audio";
 import { activateKeepAwakeAsync, deactivateKeepAwake } from "expo-keep-awake";
 import { AppState, NativeModules } from "react-native";
 import type * as WebRTC from "react-native-webrtc";
 
 import { connectionAtomRuntime } from "../../connection/runtime";
 import { appAtomRegistry } from "../../state/atom-registry";
+import { setVoiceAudioActive } from "./voiceAudio";
 
 /**
  * False on binaries built before react-native-webrtc was added. Importing the
@@ -60,23 +60,6 @@ export const voiceMode = new VoiceModeController({
   openSession: makeVoiceSessionOpener(runOnConnectionRuntime),
 });
 
-/* WebRTC resets iOS routing when its audio unit starts; apply speaker routing afterward.
- * Headphones and Bluetooth still take precedence. */
-async function routeVoiceToSpeaker(): Promise<void> {
-  await setAudioModeAsync({
-    allowsRecording: true,
-    playsInSilentMode: true,
-    interruptionMode: "doNotMix",
-    shouldPlayInBackground: false,
-    shouldRouteThroughEarpiece: false,
-  });
-}
-
-/** Mirrors dictation's release so interrupted audio in other apps resumes. */
-async function releaseVoiceAudio(): Promise<void> {
-  await setAudioModeAsync({ allowsRecording: false });
-}
-
 const KEEP_AWAKE_TAG = "voice-mode";
 let previousPhase: VoiceModePhase = "idle";
 let routedAudio = false;
@@ -87,7 +70,8 @@ voiceMode.subscribe(({ phase }) => {
   previousPhase = phase;
   if (phase === "active" && !routedAudio) {
     routedAudio = true;
-    routeVoiceToSpeaker().catch(() => undefined);
+    // WebRTC resets iOS routing when its audio unit starts, so route after activation.
+    setVoiceAudioActive(true).catch(() => undefined);
   }
   if (phase !== "idle" && !keepAwake) {
     // A hands-free conversation must not auto-lock: backgrounding ends it.
@@ -96,7 +80,7 @@ voiceMode.subscribe(({ phase }) => {
   if (phase === "idle") {
     if (routedAudio) {
       routedAudio = false;
-      releaseVoiceAudio().catch(() => undefined);
+      setVoiceAudioActive(false).catch(() => undefined);
     }
     const activation = keepAwake;
     keepAwake = null;
