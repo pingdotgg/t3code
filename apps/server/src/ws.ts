@@ -109,6 +109,7 @@ import {
 import { RpcGroup, RpcSerialization, RpcServer } from "effect/rpc";
 
 import * as CheckpointDiffQuery from "./checkpointing/CheckpointDiffQuery.ts";
+import * as NativeChildWorkQuery from "./orchestration-v2/NativeChildWorkQuery.ts";
 import * as ServerConfig from "./config.ts";
 import * as EnvironmentTheme from "./environmentTheme.ts";
 import * as Keybindings from "./keybindings.ts";
@@ -320,6 +321,7 @@ export const withLateConfigDiscovery = <E, R>(
   liveUpdates: Stream.Stream<ServerConfigStreamEvent, E, R>,
   launcher: EditorDiscovery,
   remoteOpenTargets: RemoteOpenTargets.RemoteOpenTargets["Service"],
+  directEndpoints: Pick<DirectEndpoints.DirectEndpoints["Service"], "resolve">,
 ) => {
   const lateEditorConfig = Stream.fromEffect(launcher.resolveAvailableEditors()).pipe(
     Stream.filter(
@@ -347,7 +349,15 @@ export const withLateConfigDiscovery = <E, R>(
     Stream.map((targets) => ({ type: "remoteOpenTargetsResolved" as const, targets })),
   );
 
-  return Stream.merge(liveUpdates, Stream.merge(lateEditorConfig, lateRemoteOpenTargets)).pipe(
+  const lateDirectEndpoints = Stream.fromEffect(directEndpoints.resolve()).pipe(
+    Stream.catchCause(() => Stream.empty),
+    Stream.map((endpoints) => ({ type: "directEndpointsResolved" as const, endpoints })),
+  );
+
+  return Stream.merge(
+    liveUpdates,
+    Stream.merge(lateEditorConfig, Stream.merge(lateRemoteOpenTargets, lateDirectEndpoints)),
+  ).pipe(
     Stream.mapAccum(
       (): ClientServerConfig => config,
       (current, event): readonly [ClientServerConfig, ReadonlyArray<ServerConfigStreamEvent>] => {
@@ -364,6 +374,13 @@ export const withLateConfigDiscovery = <E, R>(
           }
           case "remoteOpenTargetsResolved": {
             const next = { ...current, remoteOpenTargets: event.targets };
+            return [next, [{ version: 1, type: "snapshot", config: next }]];
+          }
+          case "directEndpointsResolved": {
+            if (JSON.stringify(current.directEndpoints ?? []) === JSON.stringify(event.endpoints)) {
+              return [current, []];
+            }
+            const next = { ...current, directEndpoints: event.endpoints };
             return [next, [{ version: 1, type: "snapshot", config: next }]];
           }
           case "keybindingsUpdated":
@@ -887,7 +904,7 @@ export const subscribeOrchestrationV2Thread = Effect.fn("ws.orchestrationV2.subs
           Stream.map((stored) => ({
             kind: "event" as const,
             sequence: stored.sequence,
-            event: projectDomainEventForWire(stored.event),
+            event: stored.event,
           })),
           coalesceThreadLiveStream,
           Stream.mapError(
@@ -1385,6 +1402,7 @@ export const layerWsRpc = (
       const agentSessionScanner = yield* AgentSessionScanner.AgentSessionScanner;
       const agentSessionImporter = yield* AgentSessionImporter.AgentSessionImporter;
       const checkpointDiffQuery = yield* CheckpointDiffQuery.CheckpointDiffQuery;
+      const nativeChildWork = yield* NativeChildWorkQuery.NativeChildWorkQuery;
       const keybindings = yield* Keybindings.Keybindings;
       const environmentTheme = yield* EnvironmentTheme.EnvironmentThemeService;
       const externalLauncher = yield* ExternalLauncher.ExternalLauncher;
@@ -1802,7 +1820,7 @@ export const layerWsRpc = (
       const loadServerConfig = Effect.fn("ws.loadServerConfig")(function* (options: {
         readonly usageLimitsCommand: boolean;
         readonly workspaceSnapshotsOnDemand: boolean;
-        readonly deferRemoteOpenTargets: boolean;
+        readonly deferNetworkDiscovery: boolean;
         readonly catalogsPerCwd?: ReadonlySet<string>;
       }) {
         const keybindingsConfig = yield* keybindings.loadConfigState;
@@ -1823,10 +1841,12 @@ export const layerWsRpc = (
         const discovery = yield* resolveOpenDiscoveryForConfig({
           editors: externalLauncher.resolveAvailableEditors(),
           fileManagerRevealKind: externalLauncher.resolveFileManagerRevealKind(),
-          remoteOpenTargets: options.deferRemoteOpenTargets
+          remoteOpenTargets: options.deferNetworkDiscovery
             ? Effect.succeed([])
             : remoteOpenTargets.resolveTargets(),
-          directEndpoints: directEndpoints.resolve(),
+          directEndpoints: options.deferNetworkDiscovery
+            ? directEndpoints.resolveAvailable()
+            : directEndpoints.resolve(),
         });
 
         return {
@@ -1867,6 +1887,9 @@ export const layerWsRpc = (
             otlpLogsEnabled: config.otlpLogsUrl !== undefined,
           },
           settings,
+          ...(serverSettings.managedPolicy === undefined
+            ? {}
+            : { managedPolicy: serverSettings.managedPolicy }),
           shellResumeCompletionMarker: true,
           shellThreadFamilies: true,
           shellOlderSettled: true,
@@ -1998,6 +2021,8 @@ export const layerWsRpc = (
           threadManagement.forceStopThread(input),
         [ORCHESTRATION_V2_WS_METHODS.getWorkflowScript]: (input) =>
           readWorkflowScript({ scriptPath: input.scriptPath }),
+        [ORCHESTRATION_V2_WS_METHODS.getNativeChildWork]: (input) =>
+          nativeChildWork.getNativeChildWork(input),
         [ORCHESTRATION_V2_WS_METHODS.getTurnItem]: (input) =>
           threadManagement.getTurnItem(input).pipe(
             Effect.mapError(
@@ -2258,7 +2283,7 @@ export const layerWsRpc = (
           loadServerConfig({
             usageLimitsCommand: false,
             workspaceSnapshotsOnDemand: false,
-            deferRemoteOpenTargets: false,
+            deferNetworkDiscovery: false,
           }),
         [WS_METHODS.serverSearchAcpRegistry]: (input) =>
           acpRegistryCatalog
@@ -2573,14 +2598,12 @@ export const layerWsRpc = (
         [WS_METHODS.serverUpsertKeybinding]:
           /* Request instrumentation already owns the span; keep this helper in that context. */
           Effect.fnUntraced(function* (rule) {
-            const keybindingsConfig = yield* keybindings.upsertKeybindingRule(rule);
-            return { keybindings: keybindingsConfig, issues: [] };
+            return yield* keybindings.upsertKeybindingRule(rule);
           }),
         [WS_METHODS.serverRemoveKeybinding]:
           /* Request instrumentation already owns the span; keep this helper in that context. */
           Effect.fnUntraced(function* (rule) {
-            const keybindingsConfig = yield* keybindings.removeKeybindingRule(rule);
-            return { keybindings: keybindingsConfig, issues: [] };
+            return yield* keybindings.removeKeybindingRule(rule);
           }),
         [WS_METHODS.serverRunStorageCleanup]: () => storageCleanup.runNow,
         [WS_METHODS.serverGetStorageCleanupReport]: () => storageCleanup.reports,
@@ -3202,10 +3225,16 @@ export const layerWsRpc = (
               const remoteTargets = yield* Effect.forkScoped(remoteOpenTargets.resolveTargets(), {
                 startImmediately: true,
               });
+              const directResult = yield* Effect.forkScoped(
+                directEndpoints
+                  .resolve()
+                  .pipe(Effect.catchCause(() => directEndpoints.resolveAvailable())),
+                { startImmediately: true },
+              );
               const config = yield* loadServerConfig({
                 usageLimitsCommand,
                 workspaceSnapshotsOnDemand,
-                deferRemoteOpenTargets: true,
+                deferNetworkDiscovery: true,
                 catalogsPerCwd: yield* currentCatalogsPerCwd,
               });
               const keybindingsUpdates = keybindingsChanges.pipe(
@@ -3305,9 +3334,15 @@ export const layerWsRpc = (
                 rpcInitialItems([
                   { version: 1 as const, type: "snapshot" as const, config: initialConfig },
                 ]),
-                withLateConfigDiscovery(initialConfig, liveUpdates, externalLauncher, {
-                  resolveTargets: () => Fiber.join(remoteTargets),
-                }),
+                withLateConfigDiscovery(
+                  initialConfig,
+                  liveUpdates,
+                  externalLauncher,
+                  {
+                    resolveTargets: () => Fiber.join(remoteTargets),
+                  },
+                  { resolve: () => Fiber.join(directResult) },
+                ),
               );
             }),
           ),
