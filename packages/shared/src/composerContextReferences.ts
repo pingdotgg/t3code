@@ -289,7 +289,7 @@ function formatComposerContextProviderPayload(record: KnownComposerContextRecord
       ];
       if (record.text.trim()) lines.push("comment:", indent(record.text.trim()));
       if (record.diff.trim()) {
-        lines.push(`${record.fenceLanguage ?? "diff"}:`, indent(record.diff.trimEnd()));
+        lines.push(`${record.fenceLanguage ?? "diff"}:`, indent(record.diff.replace(/\n+$/, "")));
       }
       return lines.join("\n");
     }
