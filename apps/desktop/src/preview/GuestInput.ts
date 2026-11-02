@@ -92,7 +92,7 @@ const evaluate = async (debuggee: Electron.Debugger, expression: string) => {
   return reply.result?.value;
 };
 
-/** Host focus saved by the first of the presses in flight in one window, so a later press cannot save a webview. */
+/** Host focus shared by the presses in flight in one window, so a later press keeps the field an earlier one saved. */
 const HOST_FOCUS = "globalThis.__t3PreviewFocus";
 
 /** A CDP pointer press focuses the guest's native view even with focus emulation enabled. */

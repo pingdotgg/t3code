@@ -125,7 +125,7 @@ describe("preview guest input", () => {
   );
 
   it.each([{ userClicksStuckTab: false }, { userClicksStuckTab: true }])(
-    "keeps the right focus when a sibling tab's press overlaps a stuck one, user clicks: $userClicksStuckTab",
+    "keeps the right focus when a sibling press finishes beside a stuck one, user clicks: $userClicksStuckTab",
     async ({ userClicksStuckTab }) => {
       const document = { activeElement: {} as object };
       const composer = {
