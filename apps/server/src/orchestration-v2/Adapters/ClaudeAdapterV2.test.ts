@@ -13067,6 +13067,191 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     ),
   );
 
+  const FORK_SKILL_PARENT_SELECTION = {
+    instanceId: CLAUDE_TEST_MODEL_SELECTION.instanceId,
+    model: "claude-sonnet-4-6",
+    options: [{ id: "effort", value: "medium" }],
+  } satisfies ModelSelection;
+  const makeForkSkillTaskStartedFrame = (input: {
+    readonly taskId: string;
+    readonly toolUseId?: string;
+    readonly uuid: string;
+  }) =>
+    claudeSdkFrame({
+      type: "system",
+      subtype: "task_started",
+      task_id: input.taskId,
+      ...(input.toolUseId === undefined ? {} : { tool_use_id: input.toolUseId }),
+      description: "/fork-probe",
+      subagent_type: "general-purpose",
+      is_backgrounded: false,
+      task_type: "local_agent",
+      prompt: "Reply with exactly the word FORKED and nothing else.\n\n\nARGUMENTS: go",
+      skip_transcript: true,
+      ambient: true,
+      uuid: input.uuid,
+      session_id: WAKE_NATIVE_SESSION,
+    });
+  const forkSkillSubagentSelections = (
+    events: ReadonlyArray<ProviderAdapter.ProviderAdapterV2Event>,
+    taskId: string,
+  ) =>
+    events.flatMap((event) =>
+      event.type === "subagent.updated" && event.subagent.nativeTaskRef?.nativeId === taskId
+        ? [{ model: event.subagent.model, modelSelection: event.subagent.modelSelection }]
+        : [],
+    );
+
+  it.effect("records a slash-command fork skill with its own model and no parent effort", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const FORK_TASK_ID = "a0b69caf85bc9b232";
+        const FORK_PARENT_TOOL_USE_ID = "forked-command-fork-probe";
+        const harness = yield* makeWakeHarness;
+        const now = yield* DateTime.now;
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now,
+            attemptId: RunAttemptId.make("attempt-fork-skill-slash-command"),
+            text: "/fork-probe go",
+            attachments: [],
+            modelSelection: FORK_SKILL_PARENT_SELECTION,
+          }),
+        );
+        for (const frame of [
+          makeForkSkillTaskStartedFrame({
+            taskId: FORK_TASK_ID,
+            uuid: "00000000-0000-4000-8000-000000000291",
+          }),
+          claudeSdkFrame({
+            type: "user",
+            message: {
+              role: "user",
+              content: [{ type: "text", text: "Reply with exactly the word FORKED." }],
+            },
+            parent_tool_use_id: FORK_PARENT_TOOL_USE_ID,
+            agent_id: FORK_TASK_ID,
+            uuid: "00000000-0000-4000-8000-000000000292",
+            session_id: WAKE_NATIVE_SESSION,
+          }),
+          claudeSdkFrame({
+            type: "assistant",
+            parent_tool_use_id: FORK_PARENT_TOOL_USE_ID,
+            message: {
+              model: "claude-opus-4-6",
+              id: "msg_fork_skill_reply",
+              type: "message",
+              role: "assistant",
+              content: [{ type: "text", text: "FORKED" }],
+            },
+            uuid: "00000000-0000-4000-8000-000000000293",
+            session_id: WAKE_NATIVE_SESSION,
+          }),
+          claudeSdkFrame({
+            type: "system",
+            subtype: "task_notification",
+            task_id: FORK_TASK_ID,
+            status: "completed",
+            output_file: `/tmp/${FORK_TASK_ID}.output`,
+            summary: "FORKED",
+            uuid: "00000000-0000-4000-8000-000000000294",
+            session_id: WAKE_NATIVE_SESSION,
+          }),
+          makeResultFrame({
+            uuid: "00000000-0000-4000-8000-000000000295",
+            result: "FORKED",
+          }),
+        ]) {
+          yield* Queue.offer(harness.sdkMessages, frame);
+        }
+        yield* Queue.take(harness.terminalReceipts);
+
+        assert.deepEqual(forkSkillSubagentSelections(harness.events, FORK_TASK_ID).at(-1), {
+          model: "claude-opus-4-6",
+          modelSelection: {
+            instanceId: FORK_SKILL_PARENT_SELECTION.instanceId,
+            model: "claude-opus-4-6",
+          },
+        });
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+        ),
+      ),
+    ),
+  );
+
+  it.effect("does not give a fork skill launched through the Skill tool the parent effort", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const FORK_TASK_ID = "a0b69caf85bc9b233";
+        const SKILL_TOOL_USE_ID = "toolu-fork-skill-tool";
+        const harness = yield* makeWakeHarness;
+        const now = yield* DateTime.now;
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now,
+            attemptId: RunAttemptId.make("attempt-fork-skill-tool"),
+            text: "Invoke the fork-probe skill.",
+            attachments: [],
+            modelSelection: FORK_SKILL_PARENT_SELECTION,
+          }),
+        );
+        for (const frame of [
+          claudeSdkFrame({
+            type: "assistant",
+            parent_tool_use_id: null,
+            message: {
+              model: FORK_SKILL_PARENT_SELECTION.model,
+              id: "msg_fork_skill_tool_launch",
+              type: "message",
+              role: "assistant",
+              content: [
+                {
+                  type: "tool_use",
+                  id: SKILL_TOOL_USE_ID,
+                  name: "Skill",
+                  input: { skill: "fork-probe", args: "again" },
+                },
+              ],
+            },
+            uuid: "00000000-0000-4000-8000-000000000296",
+            session_id: WAKE_NATIVE_SESSION,
+          }),
+          makeForkSkillTaskStartedFrame({
+            taskId: FORK_TASK_ID,
+            toolUseId: SKILL_TOOL_USE_ID,
+            uuid: "00000000-0000-4000-8000-000000000297",
+          }),
+          makeResultFrame({
+            uuid: "00000000-0000-4000-8000-000000000298",
+            result: "FORKED",
+          }),
+        ]) {
+          yield* Queue.offer(harness.sdkMessages, frame);
+        }
+        yield* Queue.take(harness.terminalReceipts);
+
+        const efforts = forkSkillSubagentSelections(harness.events, FORK_TASK_ID).map(
+          ({ modelSelection }) => getModelSelectionStringOptionValue(modelSelection, "effort"),
+        );
+        assert.isNotEmpty(efforts);
+        assert.deepEqual(
+          efforts.filter((effort) => effort !== undefined),
+          [],
+        );
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+        ),
+      ),
+    ),
+  );
+
   it.effect("extracts text from direct content-block subagent results", () =>
     Effect.scoped(
       Effect.gen(function* () {
