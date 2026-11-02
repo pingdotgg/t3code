@@ -293,7 +293,9 @@ describe("evaluatePullRequestWatch", () => {
 
     const changedFailure = detail({ checks: [check("lint", "failure"), check("test", "success")] });
     const changed = evaluatePullRequestWatch(told, changedFailure, noRemarks);
-    assert.deepEqual(changed.changes, [{ kind: "checks-failed", failed: [check("lint", "failure")] }]);
+    assert.deepEqual(changed.changes, [
+      { kind: "checks-failed", failed: [check("lint", "failure")] },
+    ]);
     assert.isFalse(changed.next.finished);
     const final = evaluatePullRequestWatch(changed.next, changedFailure, noRemarks);
     assert.isTrue(final.finished);
