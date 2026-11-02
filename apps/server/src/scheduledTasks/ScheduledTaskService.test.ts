@@ -399,6 +399,8 @@ it.effect("thread cleanup notifies subscribers and a finishing run cannot recrea
       const run = yield* service.runNow({ id: task.id }).pipe(Effect.forkChild);
       yield* Deferred.await(started);
       yield* Deferred.await(running);
+      const refused = yield* service.runNow({ id: task.id }).pipe(Effect.flip);
+      assert.equal(refused.message, "Schedule task is already running.");
       yield* service.deleteForThread(threadId);
       yield* Deferred.await(removed);
       yield* Deferred.succeed(release, undefined);
