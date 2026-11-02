@@ -79,14 +79,21 @@ export function shouldShowComposerContextStrip(input: {
 // Hysteresis prevents labels and icons from flapping at the width boundary.
 const CONTEXT_STRIP_COMPACT_EXPAND_HYSTERESIS_PX = 16;
 
-export function resolveContextStripLabelsCompact(input: {
-  compact: boolean;
+export type ContextStripCompaction = "none" | "labels" | "branch";
+
+export function resolveContextStripCompaction(input: {
+  current: ContextStripCompaction;
   neededWidth: number;
   availableWidth: number;
-}): boolean {
-  return input.compact
-    ? input.neededWidth > input.availableWidth - CONTEXT_STRIP_COMPACT_EXPAND_HYSTERESIS_PX
-    : input.neededWidth > input.availableWidth;
+  labelsSavedWidth: number;
+}): ContextStripCompaction {
+  const fits = (width: number, expanding: boolean) =>
+    width <= input.availableWidth - (expanding ? CONTEXT_STRIP_COMPACT_EXPAND_HYSTERESIS_PX : 0);
+  if (fits(input.neededWidth, input.current !== "none")) return "none";
+  if (fits(input.neededWidth - input.labelsSavedWidth, input.current === "branch")) {
+    return "labels";
+  }
+  return "branch";
 }
 
 export function resolveEnvModeLabel(mode: EnvMode): string {
