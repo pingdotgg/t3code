@@ -9362,7 +9362,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         "runtimeRequests",
         "subagents",
       ],
-      { turnItemTypes: [], messageRoles: ["user"] },
+      // User messages measure a restart's model switch.
+      { turnItemTypes: ["user_message"], messageRoles: ["user"] },
     );
     if (projection.thread.archivedAt !== null || projection.thread.deletedAt !== null) {
       return yield* new OrchestratorDispatchError({
