@@ -231,6 +231,16 @@ describe("model switch change", () => {
         providers,
       ),
     ).toBeNull();
+    // A cataloged model without an effort control ignores stale effort options.
+    expect(
+      resolveModelSwitchChange(
+        {
+          from: selection("plain", { reasoningEffort: "low" }),
+          to: selection("plain", { reasoningEffort: "high" }),
+        },
+        [{ instanceId: from, models: [{ slug: "plain" }] }] as unknown as ServerProvider[],
+      ),
+    ).toBeNull();
   });
 
   it("falls back to stated efforts without a catalog", () => {

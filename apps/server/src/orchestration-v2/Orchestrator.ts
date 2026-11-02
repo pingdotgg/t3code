@@ -2057,15 +2057,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         startedAt: now,
         completedAt: now,
         updatedAt: now,
-        ...(activeHandoff === null
-          ? modelSwitchSince(
-              {
-                runs: projection.runs.filter((run) => run.id !== queuedRun.id),
-                turnItems: projection.turnItems,
-              },
-              queuedRun.modelSelection,
-            )
-          : {}),
+        ...(activeHandoff === null ? modelSwitchSince(projection, queuedRun.modelSelection) : {}),
       };
       const handoffTurnItem: OrchestrationV2TurnItem | null =
         activeHandoff === null

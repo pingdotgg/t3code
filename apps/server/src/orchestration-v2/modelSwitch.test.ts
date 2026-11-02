@@ -40,7 +40,8 @@ describe("modelSwitchSince", () => {
             run("queued", 3, "c", "queued"),
             run("undone", 4, "d", "rolled_back"),
           ],
-          turnItems: shown("first", "failed", "undone"),
+          // A legacy pending queued message is in the items but has not run.
+          turnItems: shown("first", "failed", "queued", "undone"),
         },
         selection("a"),
       ),

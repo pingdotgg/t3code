@@ -115,20 +115,20 @@ export function resolveModelSwitchChange(
   return modelChanged || effort ? { modelChanged, effort } : null;
 }
 
-/** The composer's reasoning control for the model; stated values only without a catalog. */
+/** The composer's reasoning control for the model; stated values only when the catalog lacks it. */
 function resolveEffort(
   selection: ModelSelection,
   models: ReadonlyArray<ServerProviderModel> | undefined,
 ): { readonly value: string; readonly label: string } | undefined {
-  const descriptor = models
-    ?.find((model) => model.slug === selection.model)
-    ?.capabilities?.optionDescriptors?.find(isReasoningSelect);
-  if (descriptor === undefined) {
+  const model = models?.find((candidate) => candidate.slug === selection.model);
+  if (model === undefined) {
     const value = REASONING_EFFORT_OPTION_IDS.map((id) =>
       getModelSelectionStringOptionValue(selection, id),
     ).find((candidate) => candidate !== undefined);
     return value === undefined ? undefined : { value, label: value };
   }
+  const descriptor = model.capabilities?.optionDescriptors?.find(isReasoningSelect);
+  if (descriptor === undefined) return undefined;
   const value =
     getModelSelectionStringOptionValue(selection, descriptor.id) ??
     getProviderOptionCurrentValue(descriptor, selection);

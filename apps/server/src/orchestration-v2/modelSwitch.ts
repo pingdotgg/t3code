@@ -22,7 +22,10 @@ export function modelSwitchSince(
   );
   let previous: OrchestrationV2ThreadProjection["runs"][number] | undefined;
   for (const run of projection.runs) {
-    if (run.status === "rolled_back" || !shown.has(run.userMessageId)) continue;
+    // Pending queued messages are hidden until their run starts.
+    if (run.status === "rolled_back" || run.status === "queued" || !shown.has(run.userMessageId)) {
+      continue;
+    }
     if (previous === undefined || runRanAfter(run, previous)) previous = run;
   }
   const from = previous?.modelSelection ?? baseline;
