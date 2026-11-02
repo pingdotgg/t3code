@@ -1,3 +1,4 @@
+import * as NodeOS from "node:os";
 import * as Cache from "effect/Cache";
 import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
@@ -939,6 +940,10 @@ export const windowsLongPathConfigEnv = (
   env: NodeJS.ProcessEnv,
 ): NodeJS.ProcessEnv =>
   platform === "win32" ? gitConfigEnv(env, "core.longpaths", "true", platform) : {};
+
+// Past 6 workers macOS checkouts burn far more kernel time without finishing sooner. Git reads 0 as every core.
+export const defaultCheckoutWorkers = (platform: NodeJS.Platform, cores: number): string =>
+  platform === "darwin" ? String(Math.min(cores, 6)) : "0";
 
 export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* () {
   const fileSystem = yield* FileSystem.FileSystem;
@@ -4212,7 +4217,9 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       ],
       { concurrency: "unbounded" },
     );
-    const checkoutWorkers = configuredCheckoutWorkers ?? "0";
+    const checkoutWorkers =
+      configuredCheckoutWorkers ??
+      defaultCheckoutWorkers(hostPlatform, NodeOS.availableParallelism());
     yield* executeGitWithStableDiagnostics(
       "GitVcsDriver.createWorktree",
       input.cwd,

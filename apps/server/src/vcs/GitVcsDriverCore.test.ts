@@ -36,6 +36,7 @@ import {
 import { symlinksSupported } from "@t3tools/shared/testing/symlinks";
 import * as ServerConfig from "../config.ts";
 import {
+  defaultCheckoutWorkers,
   makeGitVcsDriverCore,
   parseGitCheckoutProgressLine,
   splitNullSeparatedGitStdoutPaths,
@@ -4253,7 +4254,14 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
         });
 
         assert.notInclude(yield* git(cwd, ["worktree", "list", "--porcelain"]), "locked");
-        assert.equal(yield* fs.readFileString(path.join(worktreePath, "checkout-workers")), "0\n");
+        const defaultWorkers = defaultCheckoutWorkers(
+          HostProcess.Platform.defaultValue(),
+          NodeOS.availableParallelism(),
+        );
+        assert.equal(
+          yield* fs.readFileString(path.join(worktreePath, "checkout-workers")),
+          `${defaultWorkers}\n`,
+        );
         assert.equal(yield* fs.readFileString(path.join(worktreePath, "asset.txt")), "filtered\n");
         assert.equal(
           yield* git(worktreePath, ["rev-parse", "HEAD"]),
@@ -4265,7 +4273,8 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
         );
         for (const [configured, expected] of [
           ["1", "1"],
-          ["", "0"],
+          ["0", "0"],
+          ["", defaultWorkers],
         ] as const) {
           yield* git(cwd, ["config", "checkout.workers", configured]);
           const configuredPath = path.join(yield* makeTmpDir("git-worktrees-"), "configured");
@@ -4273,7 +4282,7 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
             cwd,
             path: configuredPath,
             refName: initialBranch,
-            newRefName: `feature/configured-${expected}`,
+            newRefName: `feature/configured-${configured || "empty"}`,
           });
           assert.equal(
             yield* fs.readFileString(path.join(configuredPath, "checkout-workers")),
@@ -4313,6 +4322,18 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
         );
         assert.isTrue(Result.isSuccess(result), "worktree creation failed in the hook");
       }),
+    );
+    it.each([
+      ["darwin", 14, "6"],
+      ["darwin", 6, "6"],
+      ["darwin", 4, "4"],
+      ["linux", 14, "0"],
+      ["win32", 14, "0"],
+    ] as const)(
+      "defaults checkout workers on %s with %i cores to %s",
+      (platform, cores, expected) => {
+        assert.equal(defaultCheckoutWorkers(platform, cores), expected);
+      },
     );
     it.effect.each(["commit", "short-commit", "tag", "revision"] as const)(
       "creates a worktree from a %s without recording it as a PR base",
