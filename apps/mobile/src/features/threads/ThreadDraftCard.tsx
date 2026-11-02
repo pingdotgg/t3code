@@ -19,7 +19,6 @@ import { sanitizeThreadDraftText } from "@t3tools/shared/promptLinks";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Pressable, View, type ColorValue } from "react-native";
 
-import * as Dialog from "../../components/ui/Dialog";
 import { SymbolView, type AppSymbolName } from "../../components/ui/AppSymbol";
 import { AppText as Text } from "../../components/ui/AppText";
 import { Button } from "../../components/ui/Button";
@@ -157,54 +156,58 @@ function PendingThreadDraft(props: {
   const loaded = readiness.status === "live";
   const canApprove = chosen !== null && loaded && !pending && !props.unreadable;
 
+  /** Opens the draft; returns what to tell the user when it could not, or null. */
+  const openDraft = async (
+    environmentId: EnvironmentId,
+    press: { readonly cancelled: boolean },
+  ): Promise<string | null> => {
+    if (!readEnvironmentScope(environmentId, AuthOrchestrationOperateScope)) {
+      return "This app can't start threads there.";
+    }
+    let project = match;
+    if (project === null) {
+      const scratch = await runAtomCommand(
+        appAtomRegistry,
+        projectEnvironment.openScratch,
+        { environmentId, input: {} },
+        { reportFailure: false },
+      );
+      if (press.cancelled) return null;
+      if (scratch._tag === "Failure") {
+        if (isAtomCommandInterrupted(scratch)) return null;
+        const cause = squashAtomCommandFailure(scratch);
+        return cause instanceof Error ? cause.message : "Could not open the draft.";
+      }
+      project = scratch.value;
+    }
+    const loaded = await waitForComposerDraftsLoaded().then(
+      () => true,
+      () => false,
+    );
+    if (!loaded) return "Drafts could not be loaded.";
+    if (press.cancelled) return null;
+    // Always a fresh draft on the chosen machine and project; mobile drafts keep their machine.
+    const draftKey = createNewTaskDraft({
+      environmentId: project.environmentId,
+      projectId: project.id,
+    });
+    setComposerDraftText(draftKey, props.promptText);
+    rootNavigationRef.dispatch(
+      StackActions.push("Thread", { draft: { draftId: draftKey, title: project.title } }),
+    );
+    return null;
+  };
+
   const approve = async () => {
     if (chosen === null || chosenName === null) return;
     const press = { cancelled: false };
     pressRef.current = press;
     setPending(true);
     setError(null);
-    try {
-      if (!readEnvironmentScope(chosen, AuthOrchestrationOperateScope)) {
-        setError("This app can't start threads there.");
-        return;
-      }
-      let project = match;
-      if (project === null) {
-        const scratch = await runAtomCommand(
-          appAtomRegistry,
-          projectEnvironment.openScratch,
-          { environmentId: chosen, input: {} },
-          { reportFailure: false },
-        );
-        if (press.cancelled) return;
-        if (scratch._tag === "Failure") {
-          if (!isAtomCommandInterrupted(scratch)) {
-            const cause = squashAtomCommandFailure(scratch);
-            setError(cause instanceof Error ? cause.message : "Could not open the draft.");
-          }
-          return;
-        }
-        project = scratch.value;
-      }
-      try {
-        await waitForComposerDraftsLoaded();
-      } catch {
-        Dialog.alert("Could not open the draft", "Drafts could not be loaded.");
-        return;
-      }
-      if (press.cancelled) return;
-      // Always a fresh draft on the chosen machine and project; mobile drafts keep their machine.
-      const draftKey = createNewTaskDraft({
-        environmentId: project.environmentId,
-        projectId: project.id,
-      });
-      setComposerDraftText(draftKey, props.promptText);
-      rootNavigationRef.dispatch(
-        StackActions.push("Thread", { draft: { draftId: draftKey, title: project.title } }),
-      );
-    } finally {
-      if (!press.cancelled) setPending(false);
-    }
+    const failure = await openDraft(chosen, press).catch(() => "Could not open the draft.");
+    if (press.cancelled) return;
+    setPending(false);
+    setError(failure);
   };
 
   return (

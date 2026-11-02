@@ -319,6 +319,20 @@ Claude Code, Codex, ChatGPT and other agents T3 Code did not start can drive
 threads on an environment through its MCP server. See
 [outside agents](./outside-agents.md) for setup.
 
+## Send one thread to another machine
+
+To start one thread on another machine without linking it, ask the agent, such
+as "start a thread on my vps for this, I want to check the prompt first". The
+agent shows a card in the thread with the whole prompt. Pick the machine and
+choose **Approve and open**: the app opens a draft there with that prompt, in
+the project with the same repository, or in a thread without a project. Nothing
+runs until you send the draft.
+
+No machine link or Labs setting is needed, and the agent's machine gets no
+access to the other machine. The app you approve from must be connected to
+both machines and allowed to start threads on each. The agent does not see the
+new thread or its result.
+
 ## Link another environment
 
 Link two machines, such as your laptop and a VPS, and agents on one can work on

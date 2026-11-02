@@ -38,6 +38,7 @@ import { advertisedJsonSchema } from "../../apps/server/src/mcp/advertisedJsonSc
 import {
   EnvironmentId,
   ORCHESTRATOR_MCP_RUNNING_TASK_NEXT,
+  ORCHESTRATOR_MCP_THREAD_DRAFT_NOTE,
   PullRequestState,
   ThreadId,
 } from "@t3tools/contracts";
@@ -1037,6 +1038,12 @@ const t3Default = (sample: Sample, name: string, input: Readonly<Record<string, 
       };
     case "task_cancel":
       return { taskId: input.taskId, status: "cancel_requested" };
+    case "t3_thread_draft":
+      return {
+        status: "shown",
+        turnItemId: `turn-item:thread-draft:${sample.nextTask++}`,
+        note: ORCHESTRATOR_MCP_THREAD_DRAFT_NOTE,
+      };
     case "link_pull_request": {
       const alreadyLinked = sample.linked.has(pr().url);
       sample.linked.add(pr().url);

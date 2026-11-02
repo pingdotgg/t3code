@@ -124,6 +124,11 @@ shared access declarations, not tool by tool:
 Reads are not fenced, and a client's own `thread.create` can never carry
 `linkOrigin`.
 
+**A thread draft is not a link.** `t3_thread_draft` records a turn item in the
+agent's own thread. The client that shows it opens the draft on the other
+environment with its own session, so the agent's environment never contacts
+that environment or holds a credential for it.
+
 **A delegated task can run in a linked environment.** Its child is then an
 ordinary thread there, so the parent here records the task without a child
 thread of its own (`remoteChild` instead of `childThreadId`). A follower in

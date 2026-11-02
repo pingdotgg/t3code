@@ -161,39 +161,43 @@ function PendingThreadDraft(props: {
   const loaded = shellStatus === "live";
   const canApprove = chosen !== null && loaded && !pending && !props.unreadable;
 
+  /** Opens the draft; returns what to tell the user when it could not, or null. */
+  const openDraft = async (
+    environmentId: EnvironmentId,
+    press: { readonly cancelled: boolean },
+  ): Promise<string | null> => {
+    if (!readEnvironmentScope(environmentId, AuthOrchestrationOperateScope)) {
+      return "This app can't start threads there.";
+    }
+    let projectRef = match === null ? null : scopeProjectRef(match.environmentId, match.id);
+    if (projectRef === null) {
+      // Shows its own toast when it fails, or stops quietly when interrupted.
+      const scratch = await openScratchProject(environmentId);
+      if (scratch === null || press.cancelled) return null;
+      projectRef = scopeProjectRef(scratch.environmentId, scratch.id);
+    }
+    if (press.cancelled) return null;
+    const opened = await handleNewThread(projectRef, {
+      prompt: props.promptText,
+      freshDraft: true,
+      environmentSelection: "manual",
+      shouldAbandon: () => press.cancelled,
+    });
+    if (opened === null) return press.cancelled ? null : "Could not open the draft.";
+    toastManager.add({ type: "success", title: `Draft on ${chosenName}. Read it, then send.` });
+    return null;
+  };
+
   const approve = async () => {
     if (chosen === null || chosenName === null) return;
     const press = { cancelled: false };
     pressRef.current = press;
     setPending(true);
     setError(null);
-    try {
-      if (!readEnvironmentScope(chosen, AuthOrchestrationOperateScope)) {
-        setError("This app can't start threads there.");
-        return;
-      }
-      let projectRef = match === null ? null : scopeProjectRef(match.environmentId, match.id);
-      if (projectRef === null) {
-        // Shows its own toast when it fails, or stops quietly when interrupted.
-        const scratch = await openScratchProject(chosen);
-        if (scratch === null || press.cancelled) return;
-        projectRef = scopeProjectRef(scratch.environmentId, scratch.id);
-      }
-      if (press.cancelled) return;
-      const opened = await handleNewThread(projectRef, {
-        prompt: props.promptText,
-        freshDraft: true,
-        environmentSelection: "manual",
-        shouldAbandon: () => press.cancelled,
-      });
-      if (opened !== null) {
-        toastManager.add({ type: "success", title: `Draft on ${chosenName}. Read it, then send.` });
-      } else if (!press.cancelled) {
-        setError("Could not open the draft.");
-      }
-    } finally {
-      if (!press.cancelled) setPending(false);
-    }
+    const failure = await openDraft(chosen, press).catch(() => "Could not open the draft.");
+    if (press.cancelled) return;
+    setPending(false);
+    setError(failure);
   };
 
   return (
