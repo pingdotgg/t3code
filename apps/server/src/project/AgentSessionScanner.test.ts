@@ -7,8 +7,10 @@ import {
   ProjectId,
   ProviderDriverKind,
   ProviderInstanceId,
+  SecretProviderId,
   type ServerSettings as ContractServerSettings,
 } from "@t3tools/contracts";
+import * as SecretResolver from "@t3tools/secret-provider-core/server/SecretResolver";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { symlinksSupported } from "@t3tools/shared/testing/symlinks";
 import * as DateTime from "effect/DateTime";
@@ -54,6 +56,8 @@ interface ScannerTestInput {
   readonly hostEnvironment?: NodeJS.ProcessEnv;
   readonly hostHomeDirectory?: string;
   readonly providerInstances?: ContractServerSettings["providerInstances"];
+  /** Secret values the test resolver hands back, keyed by `SecretReference.reference`. */
+  readonly secretValues?: Readonly<Record<string, string>>;
 }
 
 const layerScannerTest = (input: ScannerTestInput) =>
@@ -101,6 +105,13 @@ const layerScannerTest = (input: ScannerTestInput) =>
         ...(input.hostHomeDirectory === undefined
           ? []
           : [Layer.succeed(HostProcess.HomeDirectory, input.hostHomeDirectory)]),
+        Layer.succeed(SecretResolver.SecretResolver, {
+          read: (references) => {
+            const secretValues = input.secretValues ?? {};
+            return Effect.succeed(references.map((reference) => secretValues[reference.reference]));
+          },
+          invalidate: () => Effect.void,
+        }),
       ),
     ),
   );
@@ -714,6 +725,57 @@ it.layer(NodeServices.layer)("AgentSessionScanner", (it) => {
               config: {},
             },
           },
+        });
+
+        expect(result.candidates.map((candidate) => [candidate.path, candidate.sources])).toEqual([
+          [workspace, ["codex"]],
+        ]);
+      }),
+    );
+
+    it.effect("resolves secret-backed provider instance home variables", () =>
+      Effect.gen(function* () {
+        const path = yield* Path.Path;
+        const claudeHomePath = yield* makeTempDir("t3code-claude-home-");
+        const codexHomePath = yield* makeTempDir("t3code-codex-home-");
+        const hostHomePath = yield* makeTempDir("t3code-host-home-");
+        const secretHomePath = yield* makeTempDir("t3code-codex-secret-");
+        const workspace = yield* makeTempDir("t3code-workspace-codex-");
+
+        yield* writeTranscript({
+          filePath: path.join(
+            secretHomePath,
+            "sessions",
+            "2026",
+            "01",
+            "01",
+            "rollout-session.jsonl",
+          ),
+          contents: codexRolloutLine(workspace),
+          mtimeMs: Date.parse("2026-01-02T00:00:00.000Z"),
+        });
+
+        const result = yield* runScan({
+          claudeHomePath,
+          codexHomePath,
+          hostEnvironment: {},
+          hostHomeDirectory: hostHomePath,
+          providerInstances: {
+            [ProviderInstanceId.make("codex")]: {
+              driver: ProviderDriverKind.make("codex"),
+              // Drivers read the resolved secret; discovery must see the same home.
+              environment: [
+                {
+                  name: "CODEX_HOME",
+                  value: { provider: SecretProviderId.make("test"), reference: "vault:codex-home" },
+                  sensitive: false,
+                },
+              ],
+              // Blank so the secret home wins over the harness default settings home.
+              config: { homePath: "" },
+            },
+          },
+          secretValues: { "vault:codex-home": secretHomePath },
         });
 
         expect(result.candidates.map((candidate) => [candidate.path, candidate.sources])).toEqual([
