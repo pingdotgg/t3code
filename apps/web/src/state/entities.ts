@@ -30,7 +30,7 @@ import { Atom } from "effect/reactivity";
 import { appAtomRegistry } from "../rpc/atomRegistry";
 import { environmentProjects } from "./projects";
 import { environmentPresentations } from "./presentation";
-import { environmentServerConfigsAtom } from "./server";
+import { environmentServerConfigsAtom, serverEnvironment } from "./server";
 import {
   allEnvironmentProjectSnapshotsReadyAtom,
   allEnvironmentShellsBootstrappedAtom,
@@ -104,6 +104,19 @@ export function useServerConfigs() {
 export function useThreadShells(enabled = true): ReadonlyArray<EnvironmentThreadShell> {
   return useAtomValue(
     enabled ? environmentThreadShells.threadShellsAtom : EMPTY_THREAD_SHELLS_ATOM,
+  );
+}
+
+const NO_HIDDEN_THREAD_TAGS_ATOM = Atom.make<ReadonlyArray<string> | null>(null);
+
+/** Tags an environment hides while its tag filter is on, else null. */
+export function useHiddenThreadTags(
+  environmentId: EnvironmentId | null,
+): ReadonlyArray<string> | null {
+  return useAtomValue(
+    environmentId === null
+      ? NO_HIDDEN_THREAD_TAGS_ATOM
+      : serverEnvironment.hiddenThreadTagsAtom(environmentId),
   );
 }
 

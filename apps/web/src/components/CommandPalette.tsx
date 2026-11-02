@@ -131,11 +131,15 @@ import {
   usePrimaryEnvironmentId,
 } from "../state/environments";
 import {
+  useHiddenThreadKeys,
+  useHiddenThreadTags,
   useProjects,
   useServerConfigs,
   useVisibleThreadShells,
   waitForProject,
 } from "../state/entities";
+import { threadKey } from "@t3tools/client-runtime/state/entities";
+import { hasHiddenTag } from "@t3tools/client-runtime/state/threads";
 import { resolveThreadActionProjectRef, startNewThreadFromContext } from "../lib/chatThreadActions";
 import {
   appendBrowsePathSegment,
@@ -405,6 +409,11 @@ function OpenCommandPaletteDialog(props: {
       },
   );
   const linkedThreadSearch = initialSearch.linkedThreadSearch;
+  // Rows were captured when the palette opened; drop any hidden since then.
+  const hiddenKeys = useHiddenThreadKeys();
+  const linkedHiddenTags = useHiddenThreadTags(
+    linkedThreadSearch?.linkedThreads?.environmentId ?? null,
+  );
   const [searchState, dispatchSearch] = useReducer(reduceCommandPaletteSearchState, null, () => {
     const view = props.initialContext ? null : openIntentView(props.openIntent);
     return view
@@ -1746,6 +1755,15 @@ function OpenCommandPaletteDialog(props: {
       isLinkedThreadSearch && linkedThreadSearch?.linkedThreads
         ? buildLinkedThreadActionItems({
             ...linkedThreadSearch.linkedThreads,
+            threads: linkedThreadSearch.linkedThreads.threads.filter(
+              (thread) =>
+                !hiddenKeys.has(
+                  threadKey({
+                    environmentId: linkedThreadSearch.linkedThreads!.environmentId,
+                    threadId: thread.id,
+                  }),
+                ) && !hasHiddenTag(thread.tags, linkedHiddenTags),
+            ),
             query: linkedThreadSearch.query,
             icon: <MessageSquareIcon className={ITEM_ICON_CLASS} />,
             runThread: async (thread) => {

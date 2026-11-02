@@ -5,7 +5,7 @@ import {
   type ThreadId,
 } from "@t3tools/contracts";
 
-import { threadKey } from "./entities.ts";
+import { parseThreadKey, threadKey } from "./entities.ts";
 
 type FilterableThread = Pick<
   OrchestrationV2ThreadShell,
@@ -62,10 +62,9 @@ export function hasHiddenTag(
 }
 
 /**
- * Keys of the threads the tag filter hides. Subagents, side chats and tasks
- * delegated from a linked environment follow the thread they belong to and
- * ignore their own tags. `alreadyHidden` holds keys known hidden elsewhere,
- * such as live parents when filtering an archive page.
+ * Keys of threads the tag filter hides. Children (subagents, side chats, delegated tasks) follow
+ * their parent; while the parent's environment hides tags, an unloaded parent hides them too.
+ * `alreadyHidden` seeds keys known hidden elsewhere, such as live parents for an archive page.
  */
 export function hiddenThreadKeys(
   environments: ReadonlyArray<TagFilteredEnvironment>,
@@ -89,6 +88,9 @@ export function hiddenThreadKeys(
       });
     }
   }
+  const hidingByEnvironment = new Map(
+    environments.map((environment) => [environment.environmentId, environment.hiddenTags !== null]),
+  );
   const hiddenByKey = new Map<string, boolean>();
   const isHidden = (key: string): boolean => {
     if (alreadyHidden.has(key)) return true;
@@ -100,6 +102,14 @@ export function hiddenThreadKeys(
     const parentKey = visibilityParentKey(environment.environmentId, thread);
     const followsParent =
       parentKey !== null && (byKey.has(parentKey) || alreadyHidden.has(parentKey));
+    if (
+      parentKey !== null &&
+      !followsParent &&
+      hidingByEnvironment.get(parseThreadKey(parentKey).environmentId) === true
+    ) {
+      hiddenByKey.set(key, true);
+      return true;
+    }
     if (!followsParent) {
       const hidden = hasHiddenTag(thread.tags, environment.hiddenTags);
       hiddenByKey.set(key, hidden);
