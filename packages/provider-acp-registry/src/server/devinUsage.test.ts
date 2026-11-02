@@ -108,6 +108,7 @@ const decode = Schema.decodeUnknownSync(AcpRegistrySettings);
 describe("devinUsageReader", () => {
   it.effect("scans only registry Devin instances", () =>
     Effect.gen(function* () {
+      const path = yield* Path.Path;
       const instances = [
         { id: "acpRegistry", config: decode({}), dir: "/default" },
         { id: "acpRegistry_kimi", config: decode({ agentId: "kimi" }), dir: "/kimi" },
@@ -135,7 +136,7 @@ describe("devinUsageReader", () => {
         .pipe(Effect.provideService(HostProcess.HomeDirectory, "/home/test"));
       assert.deepStrictEqual(
         sources.map((source) => source.dir),
-        ["/devin"],
+        [path.resolve("/devin")],
       );
     }).pipe(Effect.provide(NodeServices.layer)),
   );
