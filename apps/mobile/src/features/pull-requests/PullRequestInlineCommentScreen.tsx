@@ -94,7 +94,8 @@ export function PullRequestInlineCommentScreen({ route }: StaticScreenProps<Inli
           hostedComment = undefined;
         }
       }
-      if (!setReviewDraftBusy(params, true)) return;
+      if (!setReviewDraftBusy(params, true))
+        throw new Error("Wait for the pending comment to finish saving.");
       locked = true;
       if (hostedComment && saved && body !== saved.body) {
         const target = pullRequestTarget(params);

@@ -324,6 +324,19 @@ function reviewPositionAnchor(position: PullRequestReviewPosition) {
   }
 }
 
+function isReversedReviewRange({
+  position,
+  startPosition,
+}: {
+  readonly position: PullRequestReviewPosition;
+  readonly startPosition?: PullRequestReviewPosition | undefined;
+}) {
+  if (startPosition === undefined) return false;
+  const end = reviewPositionAnchor(position);
+  const start = reviewPositionAnchor(startPosition);
+  return start.side === end.side && start.line > end.line;
+}
+
 const VERDICT_LABELS: Record<PullRequestReviewVerdict, string> = {
   comment: "review",
   approve: "approve",
@@ -2391,6 +2404,11 @@ export const make = Effect.gen(function* () {
         operation: "saveDraftComment",
         detail: "This host cannot save a comment range.",
       });
+    if (isReversedReviewRange(input.comment))
+      return yield* new PullRequestOperationError({
+        operation: "saveDraftComment",
+        detail: "The selected comment range is reversed. Select the lines again.",
+      });
     const viewer = yield* viewerPermissionsOf(project, input, "saveDraftComment");
     if (!viewer.comment)
       return yield* new PullRequestOperationError({
@@ -2458,13 +2476,8 @@ export const make = Effect.gen(function* () {
           return refuse(
             "This host supports comments on a single line. Select one line to comment.",
           );
-        for (const { position, startPosition } of input.comments) {
-          if (startPosition === undefined) continue;
-          const end = reviewPositionAnchor(position);
-          const start = reviewPositionAnchor(startPosition);
-          if (start.side === end.side && start.line > end.line)
-            return refuse("The selected comment range is reversed. Select the lines again.");
-        }
+        if (input.comments.some(isReversedReviewRange))
+          return refuse("The selected comment range is reversed. Select the lines again.");
         // A verdict with nothing attached to it is a request every host rejects, and doing so
         // here says which of the two is missing rather than reporting the host's refusal.
         if (

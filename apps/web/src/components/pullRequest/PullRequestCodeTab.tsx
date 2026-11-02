@@ -409,10 +409,15 @@ function PullRequestCodeTab({
   }>({ key: "", cursor: null, slices: NO_SLICES });
 
   const referenceKey = pullRequestReviewKey(reference);
+  const orderedCommits = // GitLab preserves UTC offsets, so compare instants.
+    detail.commits.toSorted(
+      (left, right) => Date.parse(right.committedDate) - Date.parse(left.committedDate),
+    );
+  const commitOids = orderedCommits.toReversed().map((entry) => entry.oid);
   // A commit opened from the timeline or left selected across a force-push may no longer be
   // part of the pull request; read it as "All commits" instead of requesting its diff.
   const commit =
-    selectedCommitOid !== null && detail.commits.some((entry) => entry.oid === selectedCommitOid)
+    selectedCommitOid !== null && reviewCommitSelection(commitOids, selectedCommitOid).length > 0
       ? selectedCommitOid
       : null;
   const scopeKey = JSON.stringify([environmentId, referenceKey, commit]);
@@ -1029,11 +1034,6 @@ function PullRequestCodeTab({
     setToggledFiles(new Set());
   };
 
-  const orderedCommits = // GitLab preserves UTC offsets, so compare instants.
-    detail.commits.toSorted(
-      (left, right) => Date.parse(right.committedDate) - Date.parse(left.committedDate),
-    );
-
   const beginComment = (
     range: SelectedLineRange | null,
     context: { item: CodeViewItem<ReviewAnnotationGroup> },
@@ -1356,7 +1356,6 @@ function PullRequestCodeTab({
   );
 
   // Clear obsolete commit scopes even when an empty list hides the dropdown.
-  const commitOids = orderedCommits.toReversed().map((entry) => entry.oid);
   const selectedOids = reviewCommitSelection(commitOids, commit);
   const selectedCommit = orderedCommits.find((entry) => entry.oid === commit);
   const lastReviewedSha = latestReviewedCommit(detail.comments, detail.viewer);

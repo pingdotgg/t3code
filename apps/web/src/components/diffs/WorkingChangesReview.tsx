@@ -19,6 +19,7 @@ import { useResizableWidth } from "~/hooks/useResizableWidth";
 import { createGitDiffFileContentsLoader } from "~/lib/diffFileContents";
 import {
   buildFileDiffIdentityKey,
+  buildFileDiffContentVersion,
   fnv1a32,
   getRenderablePatch,
   getDiffLineStat,
@@ -64,6 +65,33 @@ import { useReviewFilePatches } from "./useReviewFilePatches";
 import { applyWorkingChangesMutation, type WorkingChangesState } from "./workingChangesState";
 import { reviewDiffEdits } from "@t3tools/client-runtime/review-diff-context";
 import { hideWhitespaceChanges } from "~/lib/diffRendering";
+
+const workingFileCache = new WeakMap<
+  FileDiffMetadata,
+  {
+    readonly original: ReturnType<typeof workingFileEntry>;
+    whitespaceHidden?: ReturnType<typeof workingFileEntry>;
+  }
+>();
+
+function workingFileEntry(fileDiff: FileDiffMetadata) {
+  return {
+    fileDiff,
+    filePath: resolveFileDiffPath(fileDiff),
+    fileKey: buildFileDiffIdentityKey(fileDiff),
+    fileVersion: buildFileDiffContentVersion(fileDiff),
+  };
+}
+
+function cachedWorkingFile(file: FileDiffMetadata, ignoreWhitespace: boolean) {
+  let entry = workingFileCache.get(file);
+  if (!entry) {
+    entry = { original: workingFileEntry(file) };
+    workingFileCache.set(file, entry);
+  }
+  if (!ignoreWhitespace) return entry.original;
+  return (entry.whitespaceHidden ??= workingFileEntry(hideWhitespaceChanges(file)));
+}
 
 interface WorkingReviewProps {
   environmentId: EnvironmentId;
@@ -569,10 +597,7 @@ export function WorkingChangesReview(props: WorkingReviewProps) {
     edge: "left",
   });
   const codeFiles = files.map((fileDiff) => ({
-    fileDiff: props.ignoreWhitespace ? hideWhitespaceChanges(fileDiff) : fileDiff,
-    filePath: resolveFileDiffPath(fileDiff),
-    fileKey: buildFileDiffIdentityKey(fileDiff),
-    fileVersion: fnv1a32(`${props.ignoreWhitespace}:${JSON.stringify(fileDiff)}`),
+    ...cachedWorkingFile(fileDiff, props.ignoreWhitespace),
     collapsed:
       folded.has(resolveFileDiffPath(fileDiff)) || fileDiff.cacheKey?.endsWith(":pending") === true,
   }));

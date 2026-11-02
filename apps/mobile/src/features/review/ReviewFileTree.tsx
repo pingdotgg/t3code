@@ -194,43 +194,45 @@ export function ReviewFileTree({
                 );
             }}
           >
-            <Pressable
-              accessibilityRole="button"
-              accessibilityLabel={`${file.path}${renamed ? `, renamed from ${file.previousPath}` : ""}, ${file.unresolved ?? 0} unresolved comments`}
-              className="min-h-[42px] flex-row items-center gap-2 rounded-xl pr-3"
-              style={{ paddingLeft: 28 + Math.min(item.depth * 16, Math.max(0, width - 220)) }}
-              onPress={() => onSelectFile(file.path)}
-            >
-              <PierreEntryIcon kind="file" path={file.path} size={18} />
-              <View className="min-w-0 flex-1 py-1">
-                {file.previousPath && file.previousPath !== file.path ? (
-                  <ReviewRenamePath
-                    path={file.path}
-                    previousPath={file.previousPath}
-                    directory={false}
-                  />
-                ) : (
-                  <Text numberOfLines={1} ellipsizeMode="tail" className="text-sm">
-                    {file.path.split("/").at(-1)}
-                  </Text>
-                )}
-              </View>
-              {(file.unresolved ?? 0) > 0 ? (
-                <Text className="text-xs text-foreground-muted">{file.unresolved}</Text>
-              ) : null}
-              <Text
-                className={
-                  status === "A"
-                    ? "text-xs text-adaptive-emerald-600-400"
-                    : status === "D"
-                      ? "text-xs text-danger-foreground"
-                      : status === "R"
-                        ? "text-xs text-warning-foreground"
-                        : "text-xs text-foreground-muted"
-                }
+            <View className="flex-row items-center">
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel={`${file.path}${renamed ? `, renamed from ${file.previousPath}` : ""}, ${file.unresolved ?? 0} unresolved comments`}
+                className="min-h-[42px] min-w-0 flex-1 flex-row items-center gap-2 rounded-xl pr-3"
+                style={{ paddingLeft: 28 + Math.min(item.depth * 16, Math.max(0, width - 220)) }}
+                onPress={() => onSelectFile(file.path)}
               >
-                {status}
-              </Text>
+                <PierreEntryIcon kind="file" path={file.path} size={18} />
+                <View className="min-w-0 flex-1 py-1">
+                  {file.previousPath && file.previousPath !== file.path ? (
+                    <ReviewRenamePath
+                      path={file.path}
+                      previousPath={file.previousPath}
+                      directory={false}
+                    />
+                  ) : (
+                    <Text numberOfLines={1} ellipsizeMode="tail" className="text-sm">
+                      {file.path.split("/").at(-1)}
+                    </Text>
+                  )}
+                </View>
+                {(file.unresolved ?? 0) > 0 ? (
+                  <Text className="text-xs text-foreground-muted">{file.unresolved}</Text>
+                ) : null}
+                <Text
+                  className={
+                    status === "A"
+                      ? "text-xs text-adaptive-emerald-600-400"
+                      : status === "D"
+                        ? "text-xs text-danger-foreground"
+                        : status === "R"
+                          ? "text-xs text-warning-foreground"
+                          : "text-xs text-foreground-muted"
+                  }
+                >
+                  {status}
+                </Text>
+              </Pressable>
               {showViewedCheckbox ? (
                 <Pressable
                   accessibilityRole="checkbox"
@@ -238,10 +240,7 @@ export function ReviewFileTree({
                   accessibilityState={{ checked: file.reviewed === true, disabled: !onSetViewed }}
                   disabled={!onSetViewed}
                   className="min-h-11 min-w-11 items-center justify-center"
-                  onPress={(event) => {
-                    event.stopPropagation();
-                    onSetViewed?.([file.path], !file.reviewed);
-                  }}
+                  onPress={() => onSetViewed?.([file.path], !file.reviewed)}
                 >
                   <View
                     className={
@@ -266,7 +265,7 @@ export function ReviewFileTree({
                   tintColorClassName="accent-adaptive-emerald-600-400"
                 />
               ) : null}
-            </Pressable>
+            </View>
           </Menu>
         );
       }}

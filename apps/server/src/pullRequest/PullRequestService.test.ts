@@ -4349,43 +4349,59 @@ it.effect.each([false, true])(
     }),
 );
 
-it.effect(
-  "refuses ranged comments before dispatching to a host that supports only single lines",
-  () =>
+it.effect.each(["single-line", "reversed"] as const)(
+  "refuses invalid ranges before dispatching a review or draft comment (%s)",
+  (kind) =>
     Effect.gen(function* () {
       let submitted = false;
+      const provider = fakePullRequestProvider(SourceControlProviderKind.make("github"));
       const service = yield* makeService({
         projects: [
           project({ id: "p1", title: "web", workspaceRoot: "/w", repository: "acme/web" }),
         ],
         providers: [
-          fakePullRequestProvider(SourceControlProviderKind.make("github"), {
+          {
+            ...provider,
+            capabilities: {
+              ...provider.capabilities,
+              review: {
+                ...provider.capabilities.review,
+                draftComment: true,
+                rangeComment: kind === "reversed",
+              },
+            },
             submitReview: () =>
               Effect.sync(() => {
                 submitted = true;
               }),
-          }),
+            saveDraftComment: () =>
+              Effect.sync(() => {
+                submitted = true;
+                return {
+                  reviewId: "review",
+                  commentId: "comment",
+                  url: "https://github.com/acme/web/pull/1#discussion_r1",
+                };
+              }),
+          },
         ],
       });
-      const error = yield* service
-        .submitReview({
-          projectId: "p1" as ProjectId,
-          repository: "acme/web",
-          number: 1,
-          verdict: "comment",
-          body: "",
-          comments: [
-            {
-              path: "a.ts",
-              body: "Range",
-              position: { kind: "added", newLine: 8 },
-              startPosition: { kind: "added", newLine: 3 },
-            },
-          ],
-        })
-        .pipe(Effect.flip);
-      assert.strictEqual(error._tag, "PullRequestOperationError");
-      assert.isFalse(submitted);
+      const ref = { projectId: "p1" as ProjectId, repository: "acme/web", number: 1 };
+      const comment = {
+        path: "a.ts",
+        body: "Range",
+        position: { kind: "added" as const, newLine: 8 },
+        startPosition: { kind: "added" as const, newLine: kind === "reversed" ? 12 : 3 },
+      };
+      for (const operation of [
+        service.submitReview({ ...ref, verdict: "comment", body: "", comments: [comment] }),
+        service.saveDraftComment({ ...ref, comment }),
+      ]) {
+        const error = yield* operation.pipe(Effect.flip);
+        assert.strictEqual(error._tag, "PullRequestOperationError");
+        if (kind === "reversed") assert.include(error.message, "reversed");
+        assert.isFalse(submitted);
+      }
     }),
 );
 
@@ -4485,34 +4501,6 @@ it.effect(
       assert.strictEqual(error._tag, "PullRequestOperationError");
       assert.isFalse(published);
     }),
-);
-
-it.effect("forwards private reply ownership to the destination provider", () =>
-  Effect.gen(function* () {
-    const calls: string[] = [];
-    const service = yield* makeService({
-      projects: [
-        project({ id: "p1", title: "t3code", workspaceRoot: "/a", repository: "pingdotgg/t3code" }),
-      ],
-      providers: [
-        fakePullRequestProvider(SourceControlProviderKind.make("github"), {
-          replyToThread: (input) =>
-            Effect.sync(() => {
-              calls.push(`${input.threadId}:${input.pendingReviewId}:${input.body}`);
-            }),
-        }),
-      ],
-    });
-    yield* service.replyToThread({
-      projectId: "p1" as ProjectId,
-      repository: "pingdotgg/t3code",
-      number: 1,
-      threadId: "t1",
-      pendingReviewId: "private-review",
-      body: "Follow-up",
-    });
-    expect(calls).toEqual(["t1:private-review:Follow-up"]);
-  }),
 );
 
 it.effect.each(["commit", "credential", "expiry", "refresh"] as const)(

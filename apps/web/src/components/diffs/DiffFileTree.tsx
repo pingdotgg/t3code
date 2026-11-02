@@ -90,15 +90,32 @@ export function DiffFileTree({
     }
   });
 
+  const decorations = new Map<string, { total: number; reviewed: number; unresolved: number }>();
+  for (const entry of entries) {
+    const path = presented.modelPath(entry.path);
+    const parts = path.split("/");
+    const paths = [
+      path,
+      ...parts.slice(0, -1).map((_, index) => parts.slice(0, index + 1).join("/") + "/"),
+    ];
+    for (const path of paths) {
+      const previous = decorations.get(path) ?? { total: 0, reviewed: 0, unresolved: 0 };
+      decorations.set(path, {
+        total: previous.total + 1,
+        reviewed: previous.reviewed + Number(entry.reviewed === true),
+        unresolved: previous.unresolved + (entry.unresolvedComments ?? 0),
+      });
+    }
+  }
+  const decorationVersion = JSON.stringify([...decorations]);
   const renderRowDecoration = useStableCallback(
     ({ item }: { item: { kind: string; path: string } }) => {
-      const matches = entries.filter((entry) =>
-        item.kind === "directory"
-          ? entry.path.startsWith(item.path.endsWith("/") ? item.path : `${item.path}/`)
-          : entry.path === item.path,
+      const state = decorations.get(
+        item.kind === "directory" && !item.path.endsWith("/") ? `${item.path}/` : item.path,
       );
-      const count = matches.reduce((total, entry) => total + (entry.unresolvedComments ?? 0), 0);
-      const reviewed = matches.length > 0 && matches.every((entry) => entry.reviewed);
+      if (!state) return null;
+      const count = state.unresolved;
+      const reviewed = state.reviewed === state.total;
       if (!reviewed && count === 0) return null;
       return {
         text: `${reviewed ? "✓" : ""}${count > 0 ? ` ${count}` : ""}`.trim(),
@@ -190,7 +207,7 @@ export function DiffFileTree({
     // of the existing tree. This preserves its scroll, selection, and folder expansion.
     if (model.getFileTreeContainer()) model.render({});
     // oxlint-disable-next-line react/exhaustive-effect-dependencies -- Review marks change the row decoration without changing Git status or tree paths.
-  }, [entries, model]);
+  }, [decorationVersion, model]);
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Synchronize external file selection into the imperative tree and its scroll position.
   useEffect(() => {

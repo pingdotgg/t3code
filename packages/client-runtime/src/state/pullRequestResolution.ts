@@ -81,18 +81,30 @@ export function createOptimisticPullRequestResolution<E>(
           if (result._tag === "Success") {
             accepted = true;
             update.accepted = true;
-            // Keep the accepted state until a fresh host read agrees. Clearing it immediately
-            // would briefly restore the old state while the mutation's refresh is in flight.
+            // Ignore the cached read, then tolerate one stale response before accepting a
+            // repeated host disagreement (for example, another reviewer's reversal).
+            let lastRead = registry.get(source);
+            let disagreements = 0;
             registry.refresh(source);
             const reconcile = (result: AsyncResult.AsyncResult<PullRequestActivity, E>) => {
+              if (result === lastRead) return;
+              lastRead = result;
               if (result._tag !== "Success" || result.waiting) return;
               const thread = result.value.reviewThreads.find(
                 (thread) => thread.id === update.threadId,
               );
-              if (thread && thread.isResolved !== update.resolved) return;
               const updates = registry.get(pending);
               const index = updates.indexOf(update);
               if (index < 0) return;
+              if (thread && thread.isResolved !== update.resolved) {
+                if (
+                  updates.some(
+                    (entry, position) => position > index && entry.threadId === update.threadId,
+                  )
+                )
+                  return;
+                if (++disagreements < 2) return;
+              }
               // A later accepted reversal supersedes earlier accepted edits even when the host
               // never returned their intermediate state. Pending edits still need their rollback
               // predecessor, so neither they nor any later intent is retired here.

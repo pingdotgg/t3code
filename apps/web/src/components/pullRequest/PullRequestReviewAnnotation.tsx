@@ -31,7 +31,7 @@ import {
   Trash2Icon,
 } from "lucide-react";
 import { Circle, CircleCheck } from "lucide";
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { cn } from "~/lib/utils";
 
@@ -556,10 +556,19 @@ export function HostedReviewThreadCard({
   const thread = activity.data?.reviewThreads.find((entry) =>
     threadId ? entry.id === threadId : entry.comments.some((comment) => comment.id === commentId),
   );
+  const refreshActivity = activity.refresh;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Re-read hosted activity when opening a newly saved comment's conversation.
+  useEffect(() => {
+    if (commentId) refreshActivity();
+  }, [commentId, refreshActivity]);
   if (!thread || !detail.data)
     return (
       <div className="p-3 text-sm" role="status">
-        {activity.error ?? detail.error ?? "Loading conversation…"}
+        {activity.error ??
+          detail.error ??
+          (activity.isPending || detail.isPending
+            ? "Loading conversation…"
+            : "This conversation is not available yet. Refresh to check again.")}
         <Button
           size="xs"
           variant="ghost"

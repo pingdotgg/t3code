@@ -112,6 +112,19 @@ describe("optimistic review thread resolution", () => {
     expect(value().reviewThreads[0]?.isResolved).toBe(false);
   });
 
+  it("retires an accepted resolution when successive fresh reads report an external reversal", async () => {
+    const { registry, source, optimistic, value } = harness();
+    await optimistic
+      .wrap({ label: "resolve", run: async () => success() })
+      .run(registry, input("first", true));
+    registry.set(source, AsyncResult.success(initial, { waiting: true }));
+    registry.set(source, AsyncResult.success(initial));
+    expect(value().reviewThreads[0]?.isResolved).toBe(true);
+    registry.set(source, AsyncResult.success(initial, { waiting: true }));
+    registry.set(source, AsyncResult.success(initial));
+    expect(value().reviewThreads[0]?.isResolved).toBe(false);
+  });
+
   it("does not let an older failure restore its state over a newer reversal", async () => {
     const { registry, source, optimistic, value } = harness();
     const saves = [gate(), gate()];

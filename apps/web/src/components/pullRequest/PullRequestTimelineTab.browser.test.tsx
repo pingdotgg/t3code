@@ -69,13 +69,13 @@ const detail: PullRequestDetailView = {
 };
 
 it.each([false, true])("virtualizes a huge timeline with embedded=%s", async (embedded) => {
-  let scroller: HTMLElement | null = null;
+  const scroller = { current: null as HTMLElement | null };
   await using screen = await render(
     <div style={{ height: 600 }}>
       <PullRequestTimelineTab
         embedded={embedded}
         scrollerRef={(node) => {
-          scroller = node;
+          scroller.current = node;
         }}
         detail={detail}
         environmentId={EnvironmentId.make("environment")}
@@ -90,8 +90,8 @@ it.each([false, true])("virtualizes a huge timeline with embedded=%s", async (em
   const mounted = screen.container.querySelectorAll("button").length;
   expect(mounted).toBeGreaterThan(0);
   expect(mounted).toBeLessThan(COMMITS / 10);
-  expect(scroller).not.toBeNull();
-  const viewport = scroller!;
+  expect(scroller.current).not.toBeNull();
+  const viewport = scroller.current!;
   expect(viewport.clientHeight).toBeGreaterThan(0);
   expect(viewport.clientHeight).toBeLessThanOrEqual(600);
   expect(viewport.scrollHeight).toBeGreaterThan(viewport.clientHeight);
