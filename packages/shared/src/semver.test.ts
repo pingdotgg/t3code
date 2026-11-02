@@ -69,6 +69,8 @@ describe("semver helpers", () => {
     expect(satisfiesSemverRange("0.5.0", "^0.2.3")).toBe(false);
     expect(satisfiesSemverRange("0.0.3", "^0.0.3")).toBe(true);
     expect(satisfiesSemverRange("0.0.4", "^0.0.3")).toBe(false);
+    expect(satisfiesSemverRange("0.0.0", "^0.0.0")).toBe(true);
+    expect(satisfiesSemverRange("0.0.1", "^0.0.0")).toBe(false);
   });
 
   it("keeps the range checker stringifiable and executable as plain JavaScript", () => {
