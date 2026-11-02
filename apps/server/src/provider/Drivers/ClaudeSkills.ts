@@ -20,6 +20,7 @@ type ClaudeSkillRoot = {
   readonly directory: string;
   readonly scope: ClaudeSkillScope;
   readonly prefix?: string;
+  readonly synced?: boolean;
 };
 
 const FRONTMATTER_PATTERN = /^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/;
@@ -450,6 +451,7 @@ const discoverSyncedSkillRoot = Effect.fn("discoverSyncedSkillRoot")(function* (
       directory: path.join(configDirPath, "skills", "synced", bucket),
       scope: "user" as const,
       prefix: SYNCED_SKILL_PREFIX,
+      synced: true,
     },
   ];
 });
@@ -604,7 +606,14 @@ export const discoverClaudeSkills = Effect.fn("discoverClaudeSkills")(function* 
       const directoryName = entry.trim();
       if (!directoryName) continue;
       let name = directoryName;
-      if (root.prefix) {
+      if (!root.prefix) {
+        // Claude Code refuses local skills that claim the synced namespace by folder or name.
+        const names = [directoryName, frontmatter.kind === "parsed" ? frontmatter.name : undefined];
+        const reserved = (n?: string) =>
+          n?.toLowerCase() === SYNCED_SKILL_PREFIX ||
+          n?.toLowerCase().startsWith(`${SYNCED_SKILL_PREFIX}:`);
+        if (names.some(reserved)) continue;
+      } else {
         // Native folder skills use their folder; only a single SKILL.md uses its name field.
         const declaredName = singleSkill && frontmatter.kind === "parsed" ? frontmatter.name : "";
         const unprefixedName = declaredName?.startsWith(`${root.prefix}:`)
@@ -623,7 +632,7 @@ export const discoverClaudeSkills = Effect.fn("discoverClaudeSkills")(function* 
       // Plugin skills ignore skillOverrides; synced skills honor their prefixed or bare name.
       const override = !root.prefix
         ? skillOverrides.get(name)
-        : root.prefix === SYNCED_SKILL_PREFIX
+        : root.synced
           ? (skillOverrides.get(name) ?? skillOverrides.get(directoryName))
           : undefined;
       const userInvocationOnly =

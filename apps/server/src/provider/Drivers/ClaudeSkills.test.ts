@@ -59,7 +59,7 @@ it.layer(NodeServices.layer)("discoverClaudeSkills", (it) => {
     }),
   );
 
-  it.effect("picks the session org's synced bucket, applies overrides, and outranks plugins", () =>
+  it.effect("picks the session org's synced bucket and reserves its namespace", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
@@ -74,12 +74,16 @@ it.layer(NodeServices.layer)("discoverClaudeSkills", (it) => {
       yield* writeSkill(bucket, "pdf", "---\ndescription: Synced PDFs.\n---\n");
       yield* writeSkill(bucket, "docs", "# Docs");
       yield* writeSkill(bucket, "xlsx", "# Sheets");
+      const local = path.join(configDir, "skills");
+      yield* writeSkill(local, "anthropic-skills:docs", "---\ndescription: Local docs.\n---\n");
+      yield* writeSkill(local, "notes", "---\nname: anthropic-skills:notes\n---\n");
       const plugin = path.join(configDir, "plugins", "cache", "shop", "anthropic-skills");
       yield* writeSkill(
         path.join(plugin, "skills"),
         "pdf",
         "---\ndescription: Plugin PDFs.\n---\n",
       );
+      yield* writeSkill(path.join(plugin, "skills"), "zip", "# Zip");
       yield* fs.makeDirectory(path.join(plugin, ".claude-plugin"), { recursive: true });
       yield* fs.writeFileString(
         path.join(plugin, ".claude-plugin", "plugin.json"),
@@ -95,7 +99,7 @@ it.layer(NodeServices.layer)("discoverClaudeSkills", (it) => {
         path.join(configDir, "settings.json"),
         JSON.stringify({
           enabledPlugins: { "anthropic-skills@shop": true },
-          skillOverrides: { "anthropic-skills:docs": "off", xlsx: "off" },
+          skillOverrides: { "anthropic-skills:docs": "off", xlsx: "off", zip: "off" },
         }),
       );
       yield* fs.writeFileString(
@@ -112,6 +116,7 @@ it.layer(NodeServices.layer)("discoverClaudeSkills", (it) => {
           ["anthropic-skills:docs", false, null],
           ["anthropic-skills:pdf", true, "Synced PDFs."],
           ["anthropic-skills:xlsx", false, null],
+          ["anthropic-skills:zip", true, null],
         ],
       );
     }),
