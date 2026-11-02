@@ -20,6 +20,7 @@ import type { AntigravityAuth } from "../../provider/AntigravityAuth.ts";
 import type * as AcpSessionRuntime from "@t3tools/provider-acp/server/AcpSessionRuntime";
 import {
   antigravityPermissionMode,
+  antigravityRuntimeModeForSessionMode,
   applyAntigravityAcpModelSelection,
   buildAntigravityPrompt,
   type AntigravityAcpRuntimeInput,
@@ -217,6 +218,7 @@ export function makeAntigravityAcpAdapterFlavor(
       });
     }),
     sessionModeForPolicy: (policy) => antigravityPermissionMode(policy.runtimeMode),
+    runtimeModeForSessionMode: antigravityRuntimeModeForSessionMode,
     clientFileSystem: {
       readTextFile: (request, cwd) =>
         readAntigravityClientTextFile({
@@ -238,7 +240,8 @@ export function makeAntigravityAcpAdapterFlavor(
     normalizeToolCall: normalizeAntigravityToolCall,
     extractSubagentUpdate: extractAntigravitySubagentUpdate,
     supportsImagePrompts: true,
-    supportsCompaction: true,
+    // ACP 1.3.0 treats /compact as ordinary model input.
+    supportsCompaction: false,
     requiresSignIn: isAntigravitySignInRequiredError,
   };
 }

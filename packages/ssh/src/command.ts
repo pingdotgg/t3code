@@ -202,6 +202,11 @@ const runSshCommandInScope = Effect.fn("ssh/command.runSshCommand.inScope")(func
     ...baseSshArgs(target, {
       batchMode: input.batchMode ?? (input.interactiveAuth ? "no" : "yes"),
     }),
+    // Cold installs need a long command budget; a lost connection must fail sooner.
+    "-o",
+    "ServerAliveInterval=15",
+    "-o",
+    "ServerAliveCountMax=3",
     ...(input.preHostArgs ?? []),
     "--",
     hostSpec,

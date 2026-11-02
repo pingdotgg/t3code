@@ -1,7 +1,6 @@
 import {
   type ClientSettings,
   type EnvironmentId,
-  type ProjectId,
   resolveEnvironmentMachineKind,
 } from "@t3tools/contracts";
 
@@ -41,16 +40,10 @@ export function useEnvironmentLookups() {
 
 export function useProjectLookups() {
   const projects = useProjects();
-  const projectCwdById = new Map<ProjectId, string>(
-    projects.map((project) => [project.id, project.workspaceRoot]),
-  );
   const projectByKey = new Map(
     projects.map((project) => [`${project.environmentId}:${project.id}`, project]),
   );
-  const projectTitleById = new Map<ProjectId, string>(
-    projects.map((project) => [project.id, project.title]),
-  );
-  return { projectCwdById, projectByKey, projectTitleById };
+  return { projectByKey };
 }
 
 export const selectCommandPaletteClientSettings = (settings: ClientSettings) => ({

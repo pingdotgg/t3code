@@ -94,6 +94,7 @@ export function GitConfirmSheet(props: GitConfirmSheetProps) {
       gitState.selectedThreadBranches.length > 0
         ? gitState.selectedThreadBranches
         : await gitActions.refreshSelectedThreadBranches();
+    if (branches === null) return;
     const newBranchName = resolveAutoFeatureBranchName(
       Arr.filterMap(branches, (branch) =>
         branch.isRemote ? Result.failVoid : Result.succeed(branch.name),
