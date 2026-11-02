@@ -92,13 +92,78 @@ const evaluate = async (debuggee: Electron.Debugger, expression: string) => {
   return reply.result?.value;
 };
 
+let focusSequence = 0;
+
+/** A CDP pointer press focuses the guest's native view even with focus emulation enabled. */
+const sendPointerPress = async (
+  webContents: Electron.WebContents,
+  debuggee: Electron.Debugger,
+  method: string,
+  params: Record<string, unknown>,
+  sessionId: string | undefined,
+) => {
+  const host = webContents.hostWebContents;
+  if (!host || host.isDestroyed() || webContents.focusedFrame) {
+    return debuggee.sendCommand(method, params, sessionId);
+  }
+  const key = JSON.stringify(`__t3PreviewFocus${++focusSequence}`);
+  await host.executeJavaScript(`(() => {
+    const active = document.activeElement;
+    if (!active || active === document.body || active.tagName === "WEBVIEW") return;
+    globalThis[${key}] = () => {
+      delete globalThis[${key}];
+      const current = document.activeElement;
+      if (active.isConnected && current?.tagName === "WEBVIEW" &&
+          current.getWebContentsId() === ${webContents.id}) active.focus({ preventScroll: true });
+    };
+  })()`);
+  try {
+    return await debuggee.sendCommand(method, params, sessionId);
+  } finally {
+    if (!host.isDestroyed()) {
+      await host.executeJavaScript(`globalThis[${key}]?.()`);
+    }
+  }
+};
+
+const pointerCommands = new WeakMap<Electron.WebContents, Promise<unknown>>();
+
+/** Focus capture crosses processes; later pointer events must not overtake the press. */
+const sendPointerCommand = async (
+  webContents: Electron.WebContents,
+  debuggee: Electron.Debugger,
+  method: string,
+  params: Record<string, unknown>,
+  sessionId: string | undefined,
+) => {
+  const previous = pointerCommands.get(webContents) ?? Promise.resolve();
+  const current = previous
+    .catch(() => {})
+    .then(() =>
+      params["type"] === "mousePressed" || params["type"] === "touchStart"
+        ? sendPointerPress(webContents, debuggee, method, params, sessionId)
+        : debuggee.sendCommand(method, params, sessionId),
+    );
+  pointerCommands.set(webContents, current);
+  try {
+    return await current;
+  } finally {
+    if (pointerCommands.get(webContents) === current) pointerCommands.delete(webContents);
+  }
+};
+
 /** Sends one command to the guest's page, keeping reloads and input inside it. */
 export const sendPageCommand = async (
   webContents: Electron.WebContents,
   debuggee: Electron.Debugger,
   method: string,
   params: Record<string, unknown>,
+  sessionId?: string,
 ): Promise<unknown> => {
+  if (method === "Input.dispatchMouseEvent" || method === "Input.dispatchTouchEvent") {
+    return sendPointerCommand(webContents, debuggee, method, params, sessionId);
+  }
+  if (sessionId !== undefined) return debuggee.sendCommand(method, params, sessionId);
   // Electron's debugger routes Page.reload on a webview to its embedder window.
   if (method === "Page.reload") {
     if (params["ignoreCache"] === true) webContents.reloadIgnoringCache();

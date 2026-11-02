@@ -859,7 +859,7 @@ describe("MessagesTimeline attachments", () => {
           onOpen={onOpen}
         />
       );
-      await using screen = await renderElement(preview());
+      await using screen = await renderElement(<div dir="rtl">{preview()}</div>);
       const audio = screen.container.querySelector("audio")!;
       const duration = vi.spyOn(audio, "duration", "get").mockReturnValue(Infinity);
       const play = vi.spyOn(audio, "play").mockResolvedValue();
@@ -884,6 +884,10 @@ describe("MessagesTimeline attachments", () => {
         audio.dispatchEvent(new Event("durationchange"));
       });
       expect(screen.text()).toContain("0:03 / 0:10");
+      expect(
+        getComputedStyle(screen.container.querySelector("audio")!.previousElementSibling!)
+          .direction,
+      ).toBe("ltr");
       expect(progress.style.width).toBe("30%");
       await act(() => {
         duration.mockReturnValue(NaN);
