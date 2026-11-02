@@ -173,6 +173,7 @@ describe("newTaskDestination", () => {
     readonly useLastProject: boolean | undefined;
     readonly projects: ReadonlyArray<EnvironmentProject>;
     readonly current?: EnvironmentProject;
+    readonly filtered?: EnvironmentProject;
     readonly last?: { readonly environmentId: string; readonly projectId: string };
   }) {
     return newTaskDestination({
@@ -182,6 +183,10 @@ describe("newTaskDestination", () => {
       currentProject: options.current && {
         environmentId: options.current.environmentId,
         projectId: options.current.id,
+      },
+      filteredProject: options.filtered && {
+        environmentId: options.filtered.environmentId,
+        projectId: options.filtered.id,
       },
       lastProject: options.last,
     });
@@ -198,6 +203,20 @@ describe("newTaskDestination", () => {
       }),
     ).toEqual({
       draft: { requestId: "request", environmentId: "other-environment", projectId: "current" },
+    });
+  });
+
+  it("starts in the thread list's filtered project ahead of the remembered one", () => {
+    const projects = [makeProject("bravo"), makeProject("alpha")];
+    expect(
+      destination({
+        useLastProject: true,
+        projects,
+        filtered: projects[1],
+        last: { environmentId: "environment", projectId: "bravo" },
+      }),
+    ).toEqual({
+      draft: { requestId: "request", environmentId: "environment", projectId: "alpha" },
     });
   });
 
