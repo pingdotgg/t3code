@@ -3392,7 +3392,7 @@ it("rejects every registered preview tool in the disabled-browser case", () => {
   )
     .trim()
     .split("\n")
-    .map(decodeCase)
+    .map((line) => decodeCase(line))
     .find((entry) => entry.id === "preview-disabled-public-page-uses-web-fetch");
   assert.isDefined(testCase);
   const fetch = {
