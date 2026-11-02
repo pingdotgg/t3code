@@ -495,22 +495,22 @@ export function ThreadRelationshipsPanel(props: {
   const mergeTargetThreadId = resolveMergeBackTargetThreadId(projection);
   const relationshipRows = orderWebThreadLineageRows({
     graph,
-    rows: immediateThreadRelationships(graph, props.threadId),
+    rows: immediateThreadRelationships(graph, props.threadId)
+      // The graph rebuilds missing parents from lineage, so filter the rows it returns.
+      .filter((row) => !isHiddenRelation(row.threadId) && !isHiddenUnloadedRelation(row))
+      .map((row) => {
+        const agent =
+          row.edge.kind === "subagent" && !isParentThreadRelationship(row.edge, props.threadId)
+            ? subagentsByThreadId.get(row.threadId)
+            : undefined;
+        const workflowGroup = agent === undefined ? undefined : workflowGroupsById.get(agent.id);
+        return workflowGroup === undefined
+          ? row
+          : { ...row, edge: { ...row.edge, status: workflowGroup.workflow.status } };
+      }),
     currentThreadId: props.threadId,
     mergeTargetThreadId,
-  })
-    // The graph rebuilds missing parents from lineage, so filter the rows it returns.
-    .filter((row) => !isHiddenRelation(row.threadId) && !isHiddenUnloadedRelation(row))
-    .map((row) => {
-      const agent =
-        row.edge.kind === "subagent" && !isParentThreadRelationship(row.edge, props.threadId)
-          ? subagentsByThreadId.get(row.threadId)
-          : undefined;
-      const workflowGroup = agent === undefined ? undefined : workflowGroupsById.get(agent.id);
-      return workflowGroup === undefined
-        ? row
-        : { ...row, edge: { ...row.edge, status: workflowGroup.workflow.status } };
-    });
+  });
   const canMerge = mergeTargetThreadId !== null && latestMergeBackRun !== null;
   const unlistedThreadIds = relationshipRows
     .filter(
