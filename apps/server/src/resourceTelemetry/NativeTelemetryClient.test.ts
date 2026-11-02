@@ -1,16 +1,24 @@
 import type { HostPowerSnapshot } from "@t3tools/contracts";
-import { describe, expect, it } from "@effect/vitest";
+import * as HostProcess from "@t3tools/shared/HostProcess";
+import { describe, expect, it, vi } from "@effect/vitest";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Ref from "effect/Ref";
 import * as Semaphore from "effect/Semaphore";
+import * as Stream from "effect/Stream";
+import * as Option from "effect/Option";
+import { ChildProcessSpawner } from "effect/process";
 
 import {
   commitCollectionControlUpdate,
   synchronizeCollectionControlOnStart,
 } from "./NativeTelemetryClient.ts";
+import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as ServerConfig from "../config.ts";
+import * as NativeTelemetryClient from "./NativeTelemetryClient.ts";
+import * as ResourceMonitorBinary from "./ResourceMonitorBinary.ts";
 
 const basePower: HostPowerSnapshot = {
   source: "electron-main",
@@ -136,5 +144,63 @@ describe("commitCollectionControlUpdate", () => {
       expect(appliedIntervals).toEqual([5_000, 1_000]);
       expect(yield* Ref.get(applied)).toEqual(yield* Ref.get(desired));
     }),
+  );
+});
+
+describe("disabled native monitor", () => {
+  it.effect("does not spawn on Windows, degrades requests, and stays disabled on retry", () =>
+    Effect.gen(function* () {
+      const config = yield* ServerConfig.ServerConfig;
+      const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const spawn = vi.fn(() => Effect.die("disabled monitor must not spawn"));
+      yield* Effect.gen(function* () {
+        const binary = yield* ResourceMonitorBinary.make();
+        const client = yield* NativeTelemetryClient.make().pipe(
+          Effect.provideService(ResourceMonitorBinary.ResourceMonitorBinary, binary),
+        );
+        const subscription = yield* client.subscribeHealth;
+        if (subscription.latest.restartCount === 0) {
+          yield* subscription.changes.pipe(
+            Stream.filter((health) => health.restartCount > 0),
+            Stream.runHead,
+          );
+        }
+        const health = yield* client.health;
+        expect(health.status).toBe("degraded");
+        expect(Option.getOrNull(health.lastError)).toBe(
+          "Native resource monitoring is disabled by server configuration.",
+        );
+        for (const request of [
+          client.processTable.pipe(Effect.asVoid),
+          client.sampleNow.pipe(Effect.asVoid),
+          client.readHistory(1000).pipe(Effect.asVoid),
+          client.capabilities.pipe(Effect.asVoid),
+        ]) {
+          const error = yield* Effect.flip(request);
+          expect(error._tag).toBe("NativeTelemetryUnavailable");
+        }
+        const retrySubscription = yield* client.subscribeHealth;
+        expect(yield* client.retry).toBe(true);
+        yield* retrySubscription.changes.pipe(
+          Stream.filter((next) => next.restartCount > health.restartCount),
+          Stream.runHead,
+        );
+        expect(spawn).not.toHaveBeenCalled();
+      }).pipe(
+        Effect.provideService(ServerConfig.ServerConfig, {
+          ...config,
+          resourceMonitorEnabled: false,
+        }),
+        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, { ...spawner, spawn }),
+        Effect.provideService(HostProcess.Platform, "win32"),
+        Effect.provideService(HostProcess.Environment, {
+          T3CODE_RESOURCE_MONITOR_PATH: "/override/monitor.exe",
+        }),
+      );
+    }).pipe(
+      Effect.provide(ServerConfig.layerTest(process.cwd(), { prefix: "t3-monitor-client-" })),
+      Effect.scoped,
+      Effect.provide(NodeServices.layer),
+    ),
   );
 });

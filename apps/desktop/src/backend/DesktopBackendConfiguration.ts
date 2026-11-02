@@ -82,6 +82,7 @@ const DESKTOP_BACKEND_ENV_NAMES = [
 
 // Windows forwards these variables into WSL only through WSLENV.
 const WSL_FORWARDED_ENV_NAMES = [
+  "T3CODE_RESOURCE_MONITOR_ENABLED",
   "OPENAI_API_KEY",
   "ANTHROPIC_API_KEY",
   "T3CODE_TELEMETRY_ENABLED",

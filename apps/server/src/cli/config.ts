@@ -101,6 +101,9 @@ export const traceMaxFilesConfig = Config.Int("T3CODE_TRACE_MAX_FILES").pipe(
 );
 
 const EnvServerConfig = Config.all({
+  resourceMonitorEnabled: Config.Boolean("T3CODE_RESOURCE_MONITOR_ENABLED").pipe(
+    Config.withDefault(true),
+  ),
   logLevel: Config.LogLevel("T3CODE_LOG_LEVEL").pipe(Config.withDefault("Info")),
   traceMinLevel: Config.LogLevel("T3CODE_TRACE_MIN_LEVEL").pipe(Config.withDefault("Info")),
   traceTimingEnabled: Config.Boolean("T3CODE_TRACE_TIMING_ENABLED").pipe(Config.withDefault(true)),
@@ -514,6 +517,7 @@ export const resolveServerConfig = Effect.fn("config.resolveServerConfig")(funct
     desktopTelemetryControlFd,
     desktopBrowserFd,
     desktopBrowserControlFd,
+    resourceMonitorEnabled: env.resourceMonitorEnabled,
     resourceMonitorPath,
     autoBootstrapProjectFromCwd,
     logWebSocketEvents,
