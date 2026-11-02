@@ -17,6 +17,7 @@ import {
   DEFAULT_PROVIDER_INTERACTION_MODE,
   DEFAULT_RUNTIME_MODE,
   MessageId,
+  managedRuntimeModeDenial,
   PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
   type EnvironmentId,
 } from "@t3tools/contracts";
@@ -782,6 +783,14 @@ export function createThreadOutboxDelivery(): {
       );
       return restoreQueuedMessage(queuedMessage, `${title}. ${detail}`);
     }
+    // The server would refuse this mode in settings sync, which retries forever; stop first.
+    const runtimeModeDenial = managedRuntimeModeDenial(
+      serverConfig.managedPolicy,
+      settings.runtimeMode,
+    );
+    if (runtimeModeDenial !== undefined) {
+      return restoreQueuedMessage(queuedMessage, runtimeModeDenial);
+    }
 
     if (settings.runtimeMode !== thread.runtimeMode) {
       if (!hasAccess()) return true;
@@ -979,6 +988,13 @@ export function createThreadOutboxDelivery(): {
         creation.projectId,
       );
       return restoreQueuedMessage(queuedMessage, `${title}. ${detail}`);
+    }
+    const runtimeModeDenial = managedRuntimeModeDenial(
+      serverConfig.managedPolicy,
+      settings.runtimeMode,
+    );
+    if (runtimeModeDenial !== undefined) {
+      return restoreQueuedMessage(queuedMessage, runtimeModeDenial);
     }
     let prepared: PreparedTurnAttachments;
     let persistedMessage: QueuedThreadMessage;
