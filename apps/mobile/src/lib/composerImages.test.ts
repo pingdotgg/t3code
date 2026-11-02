@@ -227,7 +227,7 @@ describe("persistComposerAttachmentFile", () => {
 
     const fileUri = await persistComposerAttachmentFile(source, "Report [draft].pdf");
 
-    // expo-file-system encodes spaces and `%` but leaves `[`, `]`, `|`, `^`, `{`, `}` raw.
+    // expo-file-system encodes spaces and `%` but leaves `[`, `]`, `|` and `^` raw.
     expect(fileUri.split("/").at(-1)).toMatch(/^[\w\-.!~*'();:@&=+$, %]+\.pdf$/);
   });
 });
