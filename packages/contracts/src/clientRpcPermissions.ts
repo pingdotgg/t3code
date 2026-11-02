@@ -87,6 +87,9 @@ export function clientRpcRequiredScopes(
   method: string,
   input: unknown,
 ): readonly AuthEnvironmentScope[] {
+  // Publishing staged bytes needs the same read grant as an attachment URL, plus PR write.
+  if (method === WS_METHODS.pullRequestsUploadAttachment)
+    return [AuthSourceControlWriteScope, AuthOrchestrationReadScope];
   if (method === WS_METHODS.gitPreparePullRequestThread && input !== undefined) {
     const payload = decodePrepareThread(input);
     if (payload.mode === "worktree" && payload.threadId !== undefined)
