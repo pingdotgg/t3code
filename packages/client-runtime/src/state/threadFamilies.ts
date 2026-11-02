@@ -8,6 +8,7 @@ import {
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
+import * as Schedule from "effect/Schedule";
 import * as SubscriptionRef from "effect/SubscriptionRef";
 import { AsyncResult, Atom, type AtomRegistry } from "effect/reactivity";
 
@@ -127,7 +128,7 @@ export function createThreadFamilyAtoms<R, ER, E>(
       if (config.shellThreadFamilies !== true) return EMPTY_FAMILY;
       return yield* request(ORCHESTRATION_V2_WS_METHODS.getThreadFamily, {
         threadId: input.threadId,
-      });
+      }).pipe(Effect.retry({ times: 2, schedule: Schedule.spaced("250 millis") }));
     }),
   });
   const queryFor = (environmentId: EnvironmentId, threadId: ThreadId, generation: number) =>
