@@ -1,4 +1,5 @@
 // @effect-diagnostics nodeBuiltinImport:off - realpathSync.native resolves Windows 8.3 short names, which the Effect realPath does not.
+import * as NodeChildProcess from "node:child_process";
 import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 import * as NodeURL from "node:url";
@@ -3986,6 +3987,73 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
             `${expected}\n`,
           );
         }
+      }),
+    );
+
+    it.effect("suffixes a requested branch that already exists when asked to", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        const { initialBranch } = yield* initRepoWithCommit(cwd);
+        const path = yield* Path.Path;
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+        yield* git(cwd, ["branch", "feature/taken"]);
+        yield* writeTextFile(cwd, "later.txt", "later\n");
+        yield* git(cwd, ["add", "."]);
+        yield* git(cwd, ["commit", "-m", "later"]);
+        const takenHead = yield* git(cwd, ["rev-parse", "feature/taken"]);
+
+        const created = yield* driver.createWorktree(
+          {
+            cwd,
+            path: path.join(yield* makeTmpDir("git-worktrees-"), "taken"),
+            refName: initialBranch,
+            newRefName: "feature/taken",
+            baseRefName: initialBranch,
+          },
+          { renameBranchIfTaken: true },
+        );
+
+        assert.equal(created.worktree.refName, "feature/taken-1");
+        assert.equal(
+          yield* git(created.worktree.path, ["branch", "--show-current"]),
+          "feature/taken-1",
+        );
+        assert.equal(
+          yield* git(created.worktree.path, ["rev-parse", "HEAD"]),
+          yield* git(cwd, ["rev-parse", initialBranch]),
+        );
+        assert.equal(yield* git(cwd, ["rev-parse", "feature/taken"]), takenHead);
+        assert.equal(
+          yield* git(cwd, ["config", "branch.feature/taken-1.t3-merge-base"]),
+          initialBranch,
+        );
+
+        // Another launch takes the free name between the check and `git branch`.
+        const delegate = yield* ChildProcessSpawner.ChildProcessSpawner;
+        const spawner = ChildProcessSpawner.make((command) => {
+          if (
+            ChildProcess.isStandardCommand(command) &&
+            command.args.includes("--no-track") &&
+            command.args.includes("feature/taken-2")
+          ) {
+            NodeChildProcess.execFileSync("git", ["-C", cwd, "branch", "feature/taken-2"]);
+          }
+          return delegate.spawn(command);
+        });
+        const racingDriver = yield* makeGitVcsDriverCore().pipe(
+          Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+          Effect.provide(layerServerConfig),
+        );
+        const raced = yield* racingDriver.createWorktree(
+          {
+            cwd,
+            path: path.join(yield* makeTmpDir("git-worktrees-"), "raced"),
+            refName: initialBranch,
+            newRefName: "feature/taken",
+          },
+          { renameBranchIfTaken: true },
+        );
+        assert.equal(raced.worktree.refName, "feature/taken-3");
       }),
     );
     it.effect.each(["commit", "short-commit", "tag", "revision"] as const)(
