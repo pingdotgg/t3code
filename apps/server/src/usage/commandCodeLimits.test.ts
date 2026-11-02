@@ -1,6 +1,6 @@
 // @effect-diagnostics globalDate:off -- compare fixture epoch ms against standard ISO.
 // @effect-diagnostics nodeBuiltinImport:off -- isolated fake auth file for HTTP tests.
-import * as NodeFS from "node:fs/promises";
+import * as NodeFSP from "node:fs/promises";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import { assert, describe, it } from "@effect/vitest";
@@ -8,12 +8,13 @@ import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import { HttpClient, HttpClientResponse } from "effect/http";
 import { UsageLimitSourceSnapshot } from "@t3tools/contracts";
-
 import {
   commandCodeMonthlyWindow,
   commandCodeWindows,
   readCommandCodeLimitSource,
 } from "./commandCodeLimits.ts";
+
+const encodeUsageLimitSourceSnapshot = Schema.encodeSync(UsageLimitSourceSnapshot);
 
 describe("Command Code rolling quota windows", () => {
   it("reports subscription monthly credits separately from purchased credits", () => {
@@ -96,7 +97,7 @@ describe("Command Code rolling quota windows", () => {
   });
 
   it("encodes the Command Code limit snapshot in the existing stream contract", () => {
-    const snapshot = Schema.encodeSync(UsageLimitSourceSnapshot)({
+    const snapshot = encodeUsageLimitSourceSnapshot({
       id: "command-code-local" as typeof UsageLimitSourceSnapshot.Type.id,
       kind: "cliproxy",
       label: "Command Code",
@@ -144,11 +145,13 @@ describe("Command Code rolling quota windows", () => {
   it.effect("reads true windows using the expected CLI API origin and organization", () =>
     Effect.gen(function* () {
       const dir = yield* Effect.promise(() =>
-        NodeFS.mkdtemp(NodePath.join(NodeOS.tmpdir(), "t3-cmd-limits-")),
+        NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "t3-cmd-limits-")),
       );
       const authPath = NodePath.join(dir, "auth.json");
       yield* Effect.promise(() =>
-        NodeFS.writeFile(authPath, JSON.stringify({ apiKey: "testing-only-key" }), { mode: 0o600 }),
+        NodeFSP.writeFile(authPath, JSON.stringify({ apiKey: "testing-only-key" }), {
+          mode: 0o600,
+        }),
       );
       const visited: string[] = [];
       const client = HttpClient.make((request) =>
@@ -198,7 +201,7 @@ describe("Command Code rolling quota windows", () => {
           "https://api.commandcode.ai/alpha/billing/subscriptions?orgId=org-for-test",
         ]);
       } finally {
-        yield* Effect.promise(() => NodeFS.rm(dir, { recursive: true, force: true }));
+        yield* Effect.promise(() => NodeFSP.rm(dir, { recursive: true, force: true }));
       }
     }),
   );
@@ -206,11 +209,11 @@ describe("Command Code rolling quota windows", () => {
   it.effect("keeps rolling windows if the subscription endpoint fails", () =>
     Effect.gen(function* () {
       const dir = yield* Effect.promise(() =>
-        NodeFS.mkdtemp(NodePath.join(NodeOS.tmpdir(), "t3-cmd-limits-")),
+        NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "t3-cmd-limits-")),
       );
       const authPath = NodePath.join(dir, "auth.json");
       yield* Effect.promise(() =>
-        NodeFS.writeFile(authPath, JSON.stringify({ apiKey: "test-key" }), { mode: 0o600 }),
+        NodeFSP.writeFile(authPath, JSON.stringify({ apiKey: "test-key" }), { mode: 0o600 }),
       );
       const client = HttpClient.make((request) =>
         Effect.sync(() => {
@@ -234,7 +237,7 @@ describe("Command Code rolling quota windows", () => {
           ["weekly"],
         );
       } finally {
-        yield* Effect.promise(() => NodeFS.rm(dir, { recursive: true, force: true }));
+        yield* Effect.promise(() => NodeFSP.rm(dir, { recursive: true, force: true }));
       }
     }),
   );

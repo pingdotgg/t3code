@@ -1,6 +1,6 @@
 // @effect-diagnostics nodeBuiltinImport:off -- standalone CLI auth file is read once per refresh.
 // @effect-diagnostics globalDate:off -- upstream reset timestamps are epoch milliseconds or ISO.
-import * as NodeFS from "node:fs/promises";
+import * as NodeFSP from "node:fs/promises";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
@@ -129,7 +129,7 @@ function credential(content: string): string | null {
 export const readCommandCodeLimitSource = Effect.fn("readCommandCodeLimitSource")(
   function* (options?: { readonly authPath?: string }) {
     const content = yield* Effect.tryPromise(() =>
-      NodeFS.readFile(
+      NodeFSP.readFile(
         options?.authPath ?? NodePath.join(NodeOS.homedir(), ".commandcode", "auth.json"),
         "utf8",
       ),
