@@ -571,8 +571,17 @@ const make = Effect.gen(function* () {
     readonly userId: string;
     readonly aggregate: RelayAgentActivityAggregateState;
   }) {
+    const now = yield* DateTime.now;
     return yield* activityRows.listForUser({ userId: input.userId }).pipe(
       Effect.map((currentStates) => {
+        const currentAggregate = makeAggregateState({
+          activeStates: currentStates,
+          terminalState: null,
+          nowMs: now.epochMilliseconds,
+        });
+        if ((input.aggregate.doneCount ?? 0) !== (currentAggregate?.doneCount ?? 0)) {
+          return false;
+        }
         const currentByThread = new Map(
           currentStates.map((current) => [
             `${current.environmentId}\u0000${current.threadId}`,
