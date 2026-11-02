@@ -1,15 +1,5 @@
-import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
-import {
-  threadRuntimeIsActive,
-  type EnvironmentThreadShell,
-} from "@t3tools/client-runtime/state/shell";
-import {
-  useProjects,
-  useQuietThreadShell,
-  useServerConfigs,
-  useThreadShells,
-} from "~/state/entities";
+import { useQuietThreadShell } from "~/state/entities";
 import { useLayoutPane, useLayoutPaneFocusedRef } from "../layout/layoutPaneContext";
 import { beginLayoutTabDrag } from "../layout/layoutDrag";
 import { useLayoutStore } from "../layout/layoutStore";
@@ -21,20 +11,12 @@ import {
   runLayoutTabMenuAction,
   useLayoutPaneSiblingTabs,
 } from "../layout/PaneTabs";
-import {
-  threadPullRequestKeysEqual,
-  visibleThreadPullRequests,
-} from "@t3tools/client-runtime/thread-pull-requests";
 import type {
   ContextMenuItem,
   EnvironmentId,
   PreviewSessionSnapshot,
-  ProjectId,
-  PullRequestState,
   ResolvedKeybindingsConfig,
-  ThreadId,
 } from "@t3tools/contracts";
-import { getTerminalLabel } from "@t3tools/shared/terminalLabels";
 import {
   closestCenter,
   DndContext,
@@ -78,7 +60,6 @@ import { readLocalApi } from "~/localApi";
 import { useStableCallback } from "~/hooks/useStableCallback";
 import { Button } from "~/components/ui/button";
 import { MorphIcon } from "~/components/MorphIcon";
-import { AndroidIcon, AppleIcon } from "~/components/Icons";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
 import {
   Menu,
@@ -93,29 +74,26 @@ import {
 import { useBrowserDefaults } from "~/browser/browserDefaults";
 import { ScrollArea } from "~/components/ui/scroll-area";
 import { PanelTabCloseButton } from "~/components/ui/panel-tab-close-button";
-import { faviconUrlForOrigin } from "@t3tools/shared/favicon";
 import { useTheme } from "~/hooks/useTheme";
 import { useDeviceState } from "~/state/device";
 import type { PreviewPanelInlineSize } from "~/hooks/usePreviewPanelInlineSize";
 import { useRevealActiveTab } from "~/hooks/useRevealActiveTab";
 import { FOLDED_TAB_CLASS, usePaneTabStripFit } from "~/hooks/usePaneTabStripFit";
-import {
-  newestPullRequestSummary,
-  pullRequestEnvironment,
-  useSharedPullRequestSummary,
-} from "~/state/pullRequests";
-import { useEnvironmentQuery } from "~/state/query";
 import { COLLAPSED_SIDEBAR_TITLEBAR_INSET_CLASS } from "~/workspaceTitlebar";
 
 import { PreviewPanelShell, type PreviewPanelMode } from "./preview/PreviewPanelShell";
 import { PanelTabSlotsContext } from "./PanelTabBreadcrumb";
-import { PANE_BODY_UNDER_HEADER_CLASS, PaneNotch } from "./PaneNotch";
-import { FaviconImage } from "./preview/PreviewFaviconIcon";
+import { PANE_BODY_UNDER_HEADER_CLASS, PANE_TAB_TITLE_CLASS, PaneNotch } from "./PaneNotch";
 import { previewBridge } from "./preview/previewBridge";
-import { PierreEntryIcon } from "./chat/PierreEntryIcon";
-import { resolvePullRequestState } from "./pullRequest/pullRequestPresentation";
 import { PullRequestGlyph } from "~/components/pullRequest/pullRequestIcons";
 import { observeResize } from "~/lib/observeResize";
+import {
+  previewFaviconOf,
+  sideChatTabState,
+  SurfaceIcon,
+  surfaceTitle,
+  type PullRequestTabStatusSeed,
+} from "./SurfaceTabIcon";
 import {
   SurfaceLauncherRows,
   surfaceShortcutActionForKey,
@@ -195,16 +173,6 @@ export interface RightPanelTabsProps {
   threadTitle?: string | null;
   children: ReactNode;
 }
-
-export interface PullRequestTabStatus {
-  projectId: string;
-  repository: string;
-  number: number;
-  state: PullRequestState;
-  isDraft: boolean;
-}
-
-export type PullRequestTabStatusSeed = Pick<PullRequestTabStatus, "state" | "isDraft">;
 
 function shouldOpenDefaultBrowserProfileFromMenuClick(pointerType: string | undefined): boolean {
   return pointerType !== "touch";
@@ -475,270 +443,6 @@ function RightPanelEmptyState(props: {
   );
 }
 
-function surfaceTitle(
-  surface: RightPanelSurface,
-  sessions: Readonly<Record<string, PreviewSessionSnapshot>>,
-  terminalLabelsById: ReadonlyMap<string, string>,
-): string {
-  switch (surface.kind) {
-    case "diff":
-      return "Diff";
-    case "files":
-      return "Files";
-    case "file":
-      return surface.relativePath.slice(
-        Math.max(surface.relativePath.lastIndexOf("/"), surface.relativePath.lastIndexOf("\\")) + 1,
-      );
-    case "terminal":
-      return (
-        terminalLabelsById.get(surface.activeTerminalId) ??
-        getTerminalLabel(surface.activeTerminalId)
-      );
-    case "pull-request":
-      return `#${surface.number}`;
-    case "pull-requests":
-      return "Pull requests";
-    case "device":
-      return surface.title ?? surface.target?.name ?? "Device";
-    case "side-chat":
-      return "Side chat";
-    case "preview": {
-      const snapshot = surface.resourceId ? sessions[surface.resourceId] : null;
-      if (!snapshot || snapshot.navStatus._tag === "Idle") return "Browser";
-      if (snapshot.navStatus.title.trim().length > 0) return snapshot.navStatus.title;
-      try {
-        return new URL(snapshot.navStatus.url).host || "Browser";
-      } catch {
-        return "Browser";
-      }
-    }
-  }
-}
-
-function PreviewFavicon({ capturedUrl, url }: { capturedUrl: string | null; url: string | null }) {
-  const publicProviderUrl = faviconUrlForOrigin(url, 32);
-  return (
-    <FaviconImage
-      sources={[capturedUrl, publicProviderUrl]}
-      fallback={<Globe2 className="size-3 shrink-0" />}
-      className="size-3 shrink-0 rounded-sm object-contain"
-    />
-  );
-}
-
-function sameOrigin(left: string, right: string): boolean {
-  try {
-    return new URL(left).origin === new URL(right).origin;
-  } catch {
-    return false;
-  }
-}
-
-function previewFaviconOf(
-  surface: RightPanelSurface,
-  sessions: Readonly<Record<string, PreviewSessionSnapshot>>,
-  desktopByTabId: Readonly<Record<string, DesktopPreviewOverlay>>,
-): { url: string | null; capturedUrl: string | null } {
-  const snapshot =
-    surface.kind === "preview" && surface.resourceId ? sessions[surface.resourceId] : null;
-  const url = !snapshot || snapshot.navStatus._tag === "Idle" ? null : snapshot.navStatus.url;
-  const favicon = snapshot ? (desktopByTabId[snapshot.tabId]?.favicon ?? null) : null;
-  const capturedUrl = favicon && url && sameOrigin(favicon.pageUrl, url) ? favicon.dataUrl : null;
-  return { url, capturedUrl };
-}
-
-function SurfaceIcon({
-  surface,
-  previewUrl,
-  previewCapturedUrl,
-  theme,
-  environmentId,
-  pullRequestStatusSeed,
-}: {
-  surface: RightPanelSurface;
-  previewUrl: string | null;
-  previewCapturedUrl: string | null;
-  theme: "light" | "dark";
-  environmentId: EnvironmentId | null;
-  pullRequestStatusSeed: PullRequestTabStatusSeed | undefined;
-}) {
-  switch (surface.kind) {
-    case "preview":
-      return <PreviewFavicon capturedUrl={previewCapturedUrl} url={previewUrl} />;
-    case "diff":
-      return (
-        <FileDiff className="size-3.5 shrink-0 group-data-[active-tab=true]/tab:text-foreground" />
-      );
-    case "files":
-      return (
-        <Files className="size-3.5 shrink-0 group-data-[active-tab=true]/tab:text-foreground" />
-      );
-    case "file":
-      return (
-        <PierreEntryIcon
-          pathValue={surface.relativePath}
-          kind="file"
-          theme={theme}
-          className="size-3"
-        />
-      );
-    case "terminal":
-      return (
-        <TerminalSquare className="size-3.5 shrink-0 group-data-[active-tab=true]/tab:text-foreground" />
-      );
-    case "pull-request":
-      return (
-        <PullRequestSurfaceIcon
-          surface={surface}
-          environmentId={environmentId}
-          seed={pullRequestStatusSeed}
-        />
-      );
-    case "pull-requests":
-      return (
-        <PullRequestGlyph.link className="size-3.5 shrink-0 group-data-[active-tab=true]/tab:text-foreground" />
-      );
-    case "side-chat":
-      return <SideChatTabIcon environmentId={environmentId} threadId={surface.threadId} />;
-    case "device":
-      return surface.target?.platform === "ios" ? (
-        <AppleIcon className="size-3.5 shrink-0 group-data-[active-tab=true]/tab:text-foreground" />
-      ) : surface.target?.platform === "android" ? (
-        <AndroidIcon className="size-3.5 shrink-0 group-data-[active-tab=true]/tab:text-foreground" />
-      ) : (
-        <Smartphone className="size-3.5 shrink-0 group-data-[active-tab=true]/tab:text-foreground" />
-      );
-  }
-}
-
-/** What a side chat tab's dot shows and its title's accessible name says. */
-function sideChatTabState(shell: EnvironmentThreadShell | null) {
-  if (shell === null) return null;
-  if (shell.hasPendingApprovals || shell.pendingSubagentRequest === "approval") {
-    return "needs approval";
-  }
-  if (shell.hasPendingUserInput || shell.pendingSubagentRequest === "user_input") {
-    return "needs input";
-  }
-  return threadRuntimeIsActive(shell.runtime) ? "running" : null;
-}
-
-// Static dots: a side chat tab can stay open for a whole run.
-function SideChatTabIcon(props: { environmentId: EnvironmentId | null; threadId: ThreadId }) {
-  const state = sideChatTabState(
-    useQuietThreadShell(
-      props.environmentId === null ? null : scopeThreadRef(props.environmentId, props.threadId),
-    ),
-  );
-  return (
-    <>
-      <MessagesSquare className="size-3 shrink-0" />
-      {state === null ? null : (
-        <span
-          className={cn(
-            "absolute -top-0.5 -right-0.5 size-1.5 rounded-full",
-            state === "running" ? "bg-muted-foreground" : "bg-info",
-          )}
-          aria-hidden
-        />
-      )}
-    </>
-  );
-}
-
-export function resolvePullRequestTabLink(
-  threads: readonly Pick<EnvironmentThreadShell, "environmentId" | "pullRequests">[],
-  environmentId: EnvironmentId | null,
-  host: string | null,
-  reference: { repository: string; number: number },
-) {
-  if (environmentId === null || host === null) return undefined;
-  let newest: EnvironmentThreadShell["pullRequests"][number] | undefined;
-  for (const thread of threads) {
-    if (thread.environmentId !== environmentId) continue;
-    for (const link of visibleThreadPullRequests(thread.pullRequests)) {
-      if (
-        !threadPullRequestKeysEqual(link, {
-          host,
-          repository: reference.repository,
-          number: reference.number,
-        })
-      )
-        continue;
-      if (
-        newest === undefined ||
-        (link.snapshot?.syncedAt ?? "") > (newest.snapshot?.syncedAt ?? "")
-      )
-        newest = link;
-    }
-  }
-  return newest;
-}
-
-function PullRequestSurfaceIcon({
-  surface,
-  environmentId,
-  seed,
-}: {
-  surface: Extract<RightPanelSurface, { kind: "pull-request" }>;
-  environmentId: EnvironmentId | null;
-  seed: PullRequestTabStatusSeed | undefined;
-}) {
-  const resolvedEnvironmentId =
-    (surface.environmentId as EnvironmentId | undefined) ?? environmentId;
-  const projects = useProjects();
-  const threads = useThreadShells();
-  const project = projects.find(
-    (entry) => entry.environmentId === resolvedEnvironmentId && entry.id === surface.projectId,
-  );
-  const identity = project?.repositoryIdentity;
-  const host =
-    surface.host ??
-    (identity?.provider
-      ? sourceControlClients.changeRequestHost(identity, identity.provider)
-      : null);
-  const configs = useServerConfigs();
-  const capabilities =
-    resolvedEnvironmentId === null
-      ? undefined
-      : configs.get(resolvedEnvironmentId)?.environment.capabilities;
-  const linkedSnapshot =
-    capabilities !== undefined
-      ? (resolvePullRequestTabLink(threads, resolvedEnvironmentId, host, surface)?.snapshot ?? null)
-      : null;
-  const detail = useEnvironmentQuery(
-    resolvedEnvironmentId === null || capabilities === undefined || linkedSnapshot !== null
-      ? null
-      : pullRequestEnvironment.detail({
-          environmentId: resolvedEnvironmentId,
-          input: {
-            projectId: surface.projectId as ProjectId,
-            ...(capabilities !== undefined && surface.host !== undefined
-              ? { host: surface.host }
-              : {}),
-            repository: surface.repository,
-            number: surface.number,
-            allowStale: false,
-          },
-        }),
-  ).data;
-  const reference = {
-    projectId: surface.projectId as ProjectId,
-    repository: surface.repository,
-    number: surface.number,
-  };
-  const sharedSummary = useSharedPullRequestSummary(resolvedEnvironmentId, reference);
-  const status = linkedSnapshot ?? newestPullRequestSummary(detail, sharedSummary) ?? seed ?? null;
-  if (status === null) {
-    return <PullRequestGlyph.pullRequest className="size-3 shrink-0 text-muted-foreground" />;
-  }
-  const presentation = resolvePullRequestState({
-    state: status.state,
-    isDraft: status.isDraft ?? detail?.isDraft ?? seed?.isDraft ?? false,
-  });
-  return <presentation.Icon className={cn("size-3 shrink-0", presentation.toneClassName)} />;
-}
-
 function SortableTabList(props: {
   surfaces: readonly RightPanelSurface[];
   onMove: ((surfaceId: string, toIndex: number) => void) | undefined;
@@ -874,7 +578,7 @@ function RightPanelTab(
           : "h-6 gap-0.5 rounded-item pr-2 pl-1.5 text-xs",
         folded && FOLDED_TAB_CLASS,
         // The active tab grows with its breadcrumb; its title caps below.
-        !active && "max-w-36",
+        !active && !notched && "max-w-36",
         ownsDesktopTitleBar && "[-webkit-app-region:no-drag]",
         active
           ? cn("text-strong-foreground", !notched && "font-medium")
@@ -991,7 +695,11 @@ function RightPanelTab(
                     )}
                     onClick={() => onActivate(surface)}
                   >
-                    <span className={cn("truncate", active && "max-w-60")}>
+                    <span
+                      className={
+                        notched ? PANE_TAB_TITLE_CLASS : cn("truncate", active && "max-w-60")
+                      }
+                    >
                       {filesCrumb ? "Files" : title}
                       {threadTitle ? (
                         <span className="text-muted-foreground">
@@ -1016,7 +724,7 @@ function RightPanelTab(
             <span
               ref={onBreadcrumbSlotChange}
               className={cn(
-                "flex min-w-0 items-center",
+                "flex min-w-0 items-center empty:hidden",
                 filesCrumb && "min-w-[8ch]",
                 notched ? "gap-1" : "gap-0.5",
               )}
