@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { sanitizeCommitSubject, sanitizeSideChatText } from "./textGenerationUtils.ts";
+import {
+  sanitizeCommitSubject,
+  sanitizeSideChatText,
+  sanitizeThreadTitle,
+} from "./textGenerationUtils.ts";
 
 describe("sanitizeCommitSubject", () => {
   // regression: #19181 truncation split grapheme clusters at the subject limit
@@ -34,5 +38,18 @@ describe("sanitizeSideChatText", () => {
 
   it("cuts at a whole grapheme and marks the cut with an ellipsis", () => {
     expect(sanitizeSideChatText(`${"a".repeat(298)}🚀 more`, 300)).toBe(`${"a".repeat(298)}…`);
+  });
+});
+
+describe("sanitizeThreadTitle", () => {
+  it.each([
+    { name: "a split surrogate pair", prefixLength: 116, character: "🚀", retained: "" },
+    { name: "a complete surrogate pair", prefixLength: 115, character: "🚀", retained: "🚀" },
+    { name: "a BMP character", prefixLength: 116, character: "界", retained: "界" },
+  ])("truncates without splitting $name", ({ prefixLength, character, retained }) => {
+    const prefix = "a".repeat(prefixLength);
+    const title = `${prefix}${character} more`;
+
+    expect(sanitizeThreadTitle(title)).toBe(`${prefix}${retained}...`);
   });
 });

@@ -69,6 +69,8 @@ function planForkTargetThread(input: {
   const {
     sideChat: _sideChat,
     sideChatNoteDeliveries: _sideChatNoteDeliveries,
+    // The remote parent delegated the source thread, not its forks.
+    delegatedFrom: _delegatedFrom,
     ...sourceThread
   } = input.sourceThread;
   return {
@@ -98,6 +100,11 @@ function planForkTargetThread(input: {
     settledAt: null,
     snoozedUntil: null,
     snoozedAt: null,
+    lastSnoozeWakeAt: null,
+    pinnedAt: null,
+    pinOrderKey: null,
+    activeOrderKey: null,
+    autoSettleDisabledAt: null,
     // A guest link belongs to the thread it was made for.
     guestShare: null,
     lastVisitedAt: null,
@@ -131,7 +138,6 @@ export function planSideChatThread(input: {
     branchPullRequest: _branchPullRequest,
     rollbackRequestId: _rollbackRequestId,
     rollbackFailure: _rollbackFailure,
-    delegatedFrom: _delegatedFrom,
     ...thread
   } = planForkTargetThread({
     sourceThread: input.anchorThread,
