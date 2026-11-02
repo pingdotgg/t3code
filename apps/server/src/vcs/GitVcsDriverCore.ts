@@ -2669,12 +2669,20 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     }
 
     // A deleted upstream keeps its config; republish to its remote when it was this branch's own.
-    let goneUpstreamRemoteName: string | null = null;
+    let goneUpstream: { remoteName: string; branchName: string } | null = null;
     if (!details.hasUpstream) {
-      const publishBranch = yield* resolvePublishBranchName(cwd, branch);
       const mergeRef = yield* readConfigValue(cwd, `branch.${branch}.merge`);
-      if (mergeRef === `refs/heads/${publishBranch}`) {
-        goneUpstreamRemoteName = yield* readConfigValue(cwd, `branch.${branch}.remote`);
+      const mergeBranch = mergeRef?.startsWith("refs/heads/")
+        ? mergeRef.slice("refs/heads/".length)
+        : null;
+      const remoteName = yield* readConfigValue(cwd, `branch.${branch}.remote`);
+      if (
+        mergeBranch &&
+        remoteName &&
+        remoteName !== "." &&
+        (mergeBranch === branch || mergeBranch === (yield* resolvePublishBranchName(cwd, branch)))
+      ) {
+        goneUpstream = { remoteName, branchName: mergeBranch };
       }
     }
 
@@ -2695,7 +2703,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         const publishRemoteName = yield* resolvePushRemoteName(
           cwd,
           branch,
-          goneUpstreamRemoteName,
+          goneUpstream?.remoteName,
         ).pipe(Effect.orElseSucceed(() => null));
         if (!publishRemoteName) {
           return {
@@ -2704,7 +2712,8 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
           };
         }
 
-        const publishBranch = yield* resolvePublishBranchName(cwd, branch);
+        const publishBranch =
+          goneUpstream?.branchName ?? (yield* resolvePublishBranchName(cwd, branch));
         // The configured diff base can contain HEAD while the publish branch is still behind.
         const publishContainsHead = yield* executeGit(
           "GitVcsDriver.pushCurrentBranch.publishContainsHead",
@@ -2730,7 +2739,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     }
 
     if (!details.hasUpstream) {
-      const publishRemoteName = yield* resolvePushRemoteName(cwd, branch, goneUpstreamRemoteName);
+      const publishRemoteName = yield* resolvePushRemoteName(cwd, branch, goneUpstream?.remoteName);
       if (!publishRemoteName) {
         return yield* new GitCommandError({
           ...gitCommandContext({
@@ -2741,7 +2750,8 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
           detail: "Cannot push because no git remote is configured for this repository.",
         });
       }
-      const publishBranch = yield* resolvePublishBranchName(cwd, branch);
+      const publishBranch =
+        goneUpstream?.branchName ?? (yield* resolvePublishBranchName(cwd, branch));
       yield* runGit(
         "GitVcsDriver.pushCurrentBranch.pushWithUpstream",
         cwd,

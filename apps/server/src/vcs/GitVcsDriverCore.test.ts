@@ -5729,6 +5729,7 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
         const fork = yield* makeTmpDir("git-fork-");
         yield* git(fork, ["init", "--bare"]);
         yield* git(cwd, ["remote", "add", "fork", fork]);
+        yield* git(cwd, ["remote", "add", "feature", fork]);
         yield* git(cwd, ["push", "-u", "fork", "feature/push"]);
         yield* git(cwd, ["push", "fork", "--delete", "feature/push"]);
         yield* writeTextFile(cwd, "fork.txt", "fork\n");
@@ -5743,6 +5744,17 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
           yield* git(fork, ["--git-dir=.", "rev-parse", "refs/heads/feature/push"]),
           yield* git(cwd, ["rev-parse", "HEAD"]),
         );
+
+        yield* git(cwd, ["config", "branch.feature/push.remote", "."]);
+        yield* git(cwd, ["config", "branch.feature/push.merge", "refs/heads/push"]);
+        yield* writeTextFile(cwd, "local.txt", "local\n");
+        yield* git(cwd, ["add", "-A"]);
+        yield* (yield* GitVcsDriver.GitVcsDriver).commit(cwd, "Add local change", "");
+        const localUpstreamGone = yield* (yield* GitVcsDriver.GitVcsDriver).pushCurrentBranch(
+          cwd,
+          null,
+        );
+        assert.deepInclude(localUpstreamGone, { upstreamBranch: "origin/push" });
       }),
     );
 
