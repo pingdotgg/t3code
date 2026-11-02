@@ -825,7 +825,7 @@ function AdaptiveWorkspaceLayoutContent(
       0,
       viewportWidth -
         renderedRailWidth.value -
-        renderedSidebarWidth.value -
+        (workspacePage ? 0 : renderedSidebarWidth.value) -
         renderedInspectorWidth.value,
     ),
   );
