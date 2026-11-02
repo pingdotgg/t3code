@@ -1,11 +1,11 @@
 import { type RemoteOpenTarget } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as NetService from "@t3tools/shared/Net";
-import { readTailscaleSshEnabled, readTailscaleStatus } from "@t3tools/tailscale";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
+
+import * as TailscaleStatusCache from "./TailscaleStatusCache.ts";
 
 import { makeStaleWhileRevalidate } from "./staleWhileRevalidate.ts";
 
@@ -21,7 +21,7 @@ export class RemoteOpenTargets extends Context.Service<
 
 /** @public */
 export const make = Effect.gen(function* () {
-  const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+  const tailscale = yield* TailscaleStatusCache.TailscaleStatusCache;
   const net = yield* NetService.NetService;
 
   const discoverTargets = Effect.gen(function* () {
@@ -33,10 +33,9 @@ export const make = Effect.gen(function* () {
     );
     const username = yield* HostProcess.Username;
 
-    const magicDnsName = yield* readTailscaleStatus.pipe(
+    const magicDnsName = yield* tailscale.readStatus().pipe(
       Effect.map((status) => status.magicDnsName),
       Effect.orElseSucceed(() => null),
-      Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
     );
 
     const targets: Array<RemoteOpenTarget> = [];
@@ -45,10 +44,7 @@ export const make = Effect.gen(function* () {
       // Tailscale SSH needs no local sshd; tailscaled alone does not prove an SSH route.
       if (
         magicDnsName !== null &&
-        (yield* readTailscaleSshEnabled.pipe(
-          Effect.orElseSucceed(() => false),
-          Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
-        ))
+        (yield* tailscale.readSshEnabled().pipe(Effect.orElseSucceed(() => false)))
       ) {
         targets.push({
           kind: "tailscale",
