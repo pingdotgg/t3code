@@ -61,15 +61,13 @@ import { useDraftEnvironmentRouting } from "./useDraftEnvironmentRouting";
 const local = EnvironmentId.make("environment-local");
 const machineA = EnvironmentId.make("environment-a");
 const machineB = EnvironmentId.make("environment-b");
-const draftId = DraftId.make("draft-scratch");
-
-function Harness() {
+function Harness({ draftId }: { readonly draftId: DraftId }) {
   const draftThread = useComposerDraftStore((store) => store.getDraftSession(draftId));
   const routing = useDraftEnvironmentRouting({
     draftId,
     draftThread,
     envLocked: false,
-    automaticEnvironment: true,
+    automaticEnvironment: draftThread?.environmentSelection !== "manual",
     logicalProjectEnvironments: [local, machineA, machineB].map((environmentId) => ({
       environmentId,
       projectId: environmentId === local ? ProjectId.make("scratch-local") : null,
@@ -92,9 +90,15 @@ function Harness() {
     sendInFlightRef: { current: false },
   });
   return (
-    <button type="button" onClick={routing.onAutoEnvironmentStable}>
-      {routing.isEnvironmentChanging ? "Preparing machine" : "Ready"}
-    </button>
+    <>
+      <p>{routing.isEnvironmentChanging ? "Preparing machine" : "Ready"}</p>
+      <button type="button" onClick={routing.onAutoEnvironmentStable}>
+        Auto balance
+      </button>
+      <button type="button" onClick={() => routing.onEnvironmentChangeStable(machineA)}>
+        Use machine A
+      </button>
+    </>
   );
 }
 
@@ -107,48 +111,79 @@ const scratchProject = (environmentId: EnvironmentId) => ({
   isScratch: true,
 });
 
+function setup(name: string, balancedEnvironmentId: EnvironmentId) {
+  balancer.setup(balancedEnvironmentId);
+  scratchOpens.setup();
+  const draftId = DraftId.make(name);
+  useComposerDraftStore
+    .getState()
+    .setLogicalProjectDraftThreadId(
+      "scratch-local",
+      scopeProjectRef(local, ProjectId.make("scratch-local")),
+      draftId,
+      { environmentSelection: "auto" },
+    );
+  return {
+    draftId,
+    draft: () => useComposerDraftStore.getState().getDraftSession(draftId),
+    opened: () => scratchOpens.opens.map((open) => open.environmentId),
+  };
+}
+
 describe("useDraftEnvironmentRouting", () => {
-  it("shows Preparing machine only while the current Auto scratch open runs", async () => {
-    balancer.setup(machineA);
-    scratchOpens.setup();
-    useComposerDraftStore
-      .getState()
-      .setLogicalProjectDraftThreadId(
-        "scratch-local",
-        scopeProjectRef(local, ProjectId.make("scratch-local")),
-        draftId,
-        { environmentSelection: "auto" },
-      );
-    await using screen = await render(<Harness />);
-    const opened = () => scratchOpens.opens.map((open) => open.environmentId);
+  it("opens the balanced machine's scratch project before moving a scratch draft there", async () => {
+    const { draftId, draft, opened } = setup("draft-auto-scratch", machineB);
+    await using screen = await render(<Harness draftId={draftId} />);
+
+    await expect.element(screen.getByText("Preparing machine")).toBeInTheDocument();
+    expect(opened()).toEqual([machineB]);
+    expect(draft()?.environmentId).toBe(local);
+
+    await act(() => scratchOpens.opens[0]!.resolve(scratchProject(machineB)));
+    await expect.element(screen.getByText("Ready")).toBeInTheDocument();
+    expect(draft()).toMatchObject({
+      environmentId: machineB,
+      projectId: `scratch-${machineB}`,
+      environmentSelection: "auto",
+      loadBalancedEnvironmentId: machineB,
+    });
+  });
+
+  it("keeps the draft in place when the open fails or a newer pick supersedes it", async () => {
+    const { draftId, draft, opened } = setup("draft-auto-superseded", machineA);
+    await using screen = await render(<Harness draftId={draftId} />);
     await expect.element(screen.getByText("Preparing machine")).toBeInTheDocument();
 
-    // A late open for an old pick neither moves the draft nor leaves it preparing.
     await act(() => balancer.set(machineB));
+    expect(opened()).toEqual([machineA, machineB]);
     await act(() => scratchOpens.opens[1]!.resolve(null));
     await act(() => scratchOpens.opens[0]!.resolve(scratchProject(machineA)));
+
     await expect.element(screen.getByText("Ready")).toBeInTheDocument();
-    expect(useComposerDraftStore.getState().getDraftSession(draftId)?.environmentId).toBe(local);
-    expect(opened()).toEqual([machineA, machineB]);
+    expect(draft()?.environmentId).toBe(local);
+    expect(draft()?.loadBalancedEnvironmentId).toBeFalsy();
 
     // Re-arming Auto retries the failed open.
-    await userEvent.click(screen.getByRole("button"));
+    await userEvent.click(screen.getByRole("button", { name: "Auto balance" }));
     expect(opened()).toEqual([machineA, machineB, machineB]);
-    await act(() => scratchOpens.opens[2]!.resolve(null));
-
-    // Returning to a target whose open failed opens it again, and shows it.
-    await act(() => balancer.set(machineA));
-    await act(() => scratchOpens.opens[3]!.resolve(null));
-    await expect.element(screen.getByText("Ready")).toBeInTheDocument();
-    await act(() => balancer.set(machineB));
-    await act(() => balancer.set(machineA));
-    expect(opened()).toEqual([machineA, machineB, machineB, machineA, machineB, machineA]);
     await expect.element(screen.getByText("Preparing machine")).toBeInTheDocument();
-    await act(() => scratchOpens.opens[5]!.resolve(scratchProject(machineA)));
+  });
+
+  it("lets a manual machine pick made during an Auto open win", async () => {
+    const { draftId, draft, opened } = setup("draft-auto-manual", machineB);
+    await using screen = await render(<Harness draftId={draftId} />);
+    await expect.element(screen.getByText("Preparing machine")).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: "Use machine A" }));
+    expect(opened()).toEqual([machineB, machineA]);
+    await act(() => scratchOpens.opens[1]!.resolve(scratchProject(machineA)));
+    await act(() => scratchOpens.opens[0]!.resolve(scratchProject(machineB)));
+
     await expect.element(screen.getByText("Ready")).toBeInTheDocument();
-    expect(useComposerDraftStore.getState().getDraftSession(draftId)).toMatchObject({
+    expect(draft()).toMatchObject({
       environmentId: machineA,
-      loadBalancedEnvironmentId: machineA,
+      environmentSelection: "manual",
+      loadBalancedEnvironmentId: null,
     });
   });
 });
