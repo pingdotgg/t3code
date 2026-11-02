@@ -167,9 +167,9 @@ type TimelineFollow = ReturnType<typeof useTimelineFollow>;
 
 interface ComposerSendInput {
   readonly draftThreadNameInput: string;
-  readonly setThreadNamesByDraftId: import("react").Dispatch<
-    import("react").SetStateAction<Record<string, string>>
-  >;
+  readonly setThreadNamesByDraftId: (
+    update: (names: Record<string, string>) => Record<string, string>,
+  ) => void;
 
   readonly environmentId: EnvironmentId;
   readonly routeThreadKey: string;

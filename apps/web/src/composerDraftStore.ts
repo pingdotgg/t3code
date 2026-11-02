@@ -423,6 +423,10 @@ interface ProjectDraftSession extends DraftSessionState {
 export type ComposerThreadTarget = ScopedThreadRef | DraftId;
 
 interface ComposerDraftStoreState {
+  threadNamesByDraftId: Record<string, string>;
+  setThreadNamesByDraftId: (
+    update: (names: Record<string, string>) => Record<string, string>,
+  ) => void;
   draftsByThreadKey: Record<string, ComposerThreadDraftState>;
   draftThreadsByThreadKey: Record<string, DraftThreadState>;
   logicalProjectDraftThreadKeyByLogicalProjectKey: Record<string, string>;
@@ -2479,6 +2483,9 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
       const set = setBase;
 
       return {
+        threadNamesByDraftId: {},
+        setThreadNamesByDraftId: (update) =>
+          set((state) => ({ threadNamesByDraftId: update(state.threadNamesByDraftId) })),
         draftsByThreadKey: {},
         draftThreadsByThreadKey: {},
         logicalProjectDraftThreadKeyByLogicalProjectKey: {},

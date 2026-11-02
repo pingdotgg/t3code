@@ -940,7 +940,8 @@ export default function ChatView(props: ChatViewProps) {
     (isServerThread ? activeThread?.runtimeMode : undefined) ??
     defaultRuntimeMode;
   const isLocalDraftThread = !isServerThread && localDraftThread !== undefined;
-  const [threadNamesByDraftId, setThreadNamesByDraftId] = useState<Record<string, string>>({});
+  const threadNamesByDraftId = useComposerDraftStore((state) => state.threadNamesByDraftId);
+  const setThreadNamesByDraftId = useComposerDraftStore((state) => state.setThreadNamesByDraftId);
   const draftThreadNameInput = draftId ? (threadNamesByDraftId[draftId] ?? "") : "";
   const setDraftThreadName = (id: string, name: string) => {
     setThreadNamesByDraftId((names) => ({ ...names, [id]: name }));
