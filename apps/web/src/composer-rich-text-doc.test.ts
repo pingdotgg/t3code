@@ -592,9 +592,16 @@ describe("composer rich text document model", () => {
     ["1. one\n2. two\nafter", "1. one\n2. two\n\nafter"],
     ["- [ ] task\nafter", "- [ ] task\n\nafter"],
     ["- a\n  - b\nafter", "- a\n  - b\n\nafter"],
-  ])("separates %j from the list, or Markdown folds it into the last item", (glued, settled) => {
+    ["- item\n@README.md please", "- item\n\n@README.md please"],
+    ["> quoted\nafter", "> quoted\n\nafter"],
+  ])("separates %j from the block above, which Markdown would fold it into", (glued, settled) => {
     expect(roundTrip(glued).value).toBe(settled);
     expect(roundTrip(settled).value).toBe(settled);
+    const blockTypes = (value: string) =>
+      buildDocJson(value, (name) => ({ label: name, description: null })).content.map(
+        (block) => block.type,
+      );
+    expect(blockTypes(settled)).toEqual(blockTypes(glued));
   });
 
   it.each([
