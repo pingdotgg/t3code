@@ -21,4 +21,4 @@ export const exchangeCursorApiKey = Effect.fn("exchangeCursorApiKey")(function* 
     yield* HttpClientResponse.filterStatusOk(response),
   );
   return accessToken;
-});
+}, Effect.timeout("10 seconds"));
