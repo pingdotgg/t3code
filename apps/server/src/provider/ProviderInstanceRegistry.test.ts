@@ -2,6 +2,7 @@ import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import * as CodexInstallation from "./CodexInstallation.ts";
 import * as CodexManagedTokenBroker from "./CodexManagedTokenBroker.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
+import * as NodeFS from "node:fs";
 import * as ClaudeSdk from "@anthropic-ai/claude-agent-sdk";
 import { describe, expect, it } from "@effect/vitest";
 import { vi } from "vite-plus/test";
@@ -481,14 +482,23 @@ describe("ProviderInstanceRegistry — multi-instance codex slice", () => {
       let probeCount = 0;
       let successfulProbeCount = 0;
       let failProbe = false;
+      let loginDuringFailedProbe: string | undefined;
       const query = vi.spyOn(ClaudeSdk, "query").mockImplementation(
         () =>
           ({
-            initializationResult: () => {
+            initializationResult: async () => {
               probeCount++;
-              if (failProbe) return Promise.reject(new Error("initialization failed"));
+              if (failProbe) {
+                if (loginDuringFailedProbe !== undefined) {
+                  NodeFS.writeFileSync(
+                    accountConfigPath,
+                    JSON.stringify({ oauthAccount: { organizationUuid: loginDuringFailedProbe } }),
+                  );
+                }
+                throw new Error("initialization failed");
+              }
               successfulProbeCount++;
-              return Promise.resolve({
+              return {
                 commands: [
                   {
                     name: successfulProbeCount === 1 ? "last-good" : "recovered",
@@ -502,7 +512,7 @@ describe("ProviderInstanceRegistry — multi-instance codex slice", () => {
                   subscriptionType: "pro",
                   tokenSource: "oauth",
                 },
-              });
+              };
             },
             usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET: async () => ({
               rate_limits_available: true,
@@ -597,6 +607,20 @@ describe("ProviderInstanceRegistry — multi-instance codex slice", () => {
         expect.arrayContaining([expect.objectContaining({ name: "recovered" })]),
       );
       expect(probeCount).toBeGreaterThan(sameAccountFailureProbeCount);
+
+      failProbe = false;
+      yield* claude!.snapshot.refresh;
+      yield* TestClock.adjust("1 second");
+      yield* claude!.invalidateCaches ?? Effect.void;
+      failProbe = true;
+      loginDuringFailedProbe = "org-c";
+      const loginDuringFailure = yield* claude!.snapshot.refresh;
+      expect(loginDuringFailure).toMatchObject({
+        status: "warning",
+        auth: { status: "unknown" },
+        message: "Claude Agent CLI failed while checking account status.",
+      });
+      expect(loginDuringFailure.usageLimits).toBeUndefined();
     }).pipe(Effect.provide(layerTest)),
   );
 

@@ -200,6 +200,16 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv, Path.
     // Per-instance capabilities cache: keyed on binary + resolved HOME + logged-in account so
     // probes never share auth metadata across instances or across a re-login.
     // A transient miss may reuse the same key's last probe once; its usage windows keep their age.
+    const capabilitiesCacheKey = yield* makeClaudeCapabilitiesCacheKey(
+      effectiveConfig,
+      stateDir,
+      processEnv,
+    );
+    const readCapabilitiesKey = ClaudeResetCredits.readClaudeAccountKey(accountConfigPath).pipe(
+      Effect.map((accountKey) => `${capabilitiesCacheKey}\0${accountKey}`),
+      Effect.provideService(FileSystem.FileSystem, fileSystem),
+      Effect.provideService(Path.Path, path),
+    );
     const lastGoodCapabilities = yield* Ref.make<
       { readonly key: string; readonly capabilities: ClaudeCapabilitiesProbe } | undefined
     >(undefined);
@@ -217,9 +227,10 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv, Path.
           ),
           Effect.tap(({ capabilities }) => Ref.set(lastGoodCapabilities, { key, capabilities })),
           Effect.catch((error) =>
-            Ref.getAndSet(lastGoodCapabilities, undefined).pipe(
-              Effect.flatMap((lastGood) =>
-                lastGood?.key === key
+            // Re-read the account: a login can land while the failed probe was running.
+            Effect.all([Ref.getAndSet(lastGoodCapabilities, undefined), readCapabilitiesKey]).pipe(
+              Effect.flatMap(([lastGood, currentKey]) =>
+                lastGood?.key === key && currentKey === key
                   ? Effect.succeed({
                       _tag: "fallback" as const,
                       capabilities: withoutUsage(lastGood.capabilities),
@@ -242,18 +253,9 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv, Path.
             : Duration.zero,
       },
     );
-    const capabilitiesCacheKey = yield* makeClaudeCapabilitiesCacheKey(
-      effectiveConfig,
-      stateDir,
-      processEnv,
-    );
-    const resolveCapabilities = ClaudeResetCredits.readClaudeAccountKey(accountConfigPath).pipe(
-      Effect.flatMap((accountKey) =>
-        Cache.get(capabilitiesProbeCache, `${capabilitiesCacheKey}\0${accountKey}`),
-      ),
+    const resolveCapabilities = readCapabilitiesKey.pipe(
+      Effect.flatMap((key) => Cache.get(capabilitiesProbeCache, key)),
       Effect.map((result) => result.capabilities),
-      Effect.provideService(FileSystem.FileSystem, fileSystem),
-      Effect.provideService(Path.Path, path),
     );
 
     const checkProvider = catalogService.refreshInBackground.pipe(
