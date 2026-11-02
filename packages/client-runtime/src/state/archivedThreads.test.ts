@@ -17,6 +17,7 @@ it("does not expose an archived snapshot failure message", () => {
           Cause.fail(new Error("credential=secret-value")),
         ),
       ),
+    threadTagFilterAtom: () => Atom.make(null),
     labelPrefix: "test:archived-thread-snapshots",
   });
   const registry = AtomRegistry.make();

@@ -5,7 +5,12 @@ import {
 } from "@t3tools/client-runtime/state/models";
 import { isShownUnderParent } from "@t3tools/client-runtime/state/threads";
 import type { AnyRouter } from "@tanstack/react-router";
-import type { EnvironmentId, OrchestrationV2ThreadShell, ThreadId } from "@t3tools/contracts";
+import {
+  isThreadHiddenByTagFilter,
+  type EnvironmentId,
+  type OrchestrationV2ThreadShell,
+  type ThreadId,
+} from "@t3tools/contracts";
 import type { ClientSettings } from "@t3tools/contracts/settings";
 import * as Option from "effect/Option";
 import type { AtomRegistry } from "effect/reactivity";
@@ -19,6 +24,7 @@ import {
 import { getClientSettings, subscribeClientSettings } from "../hooks/useSettings";
 import { isWindowsPlatform } from "../lib/utils";
 import { environmentSummaries } from "../state/presentation";
+import { serverEnvironment } from "../state/server";
 import { environmentShell } from "../state/shell";
 import { environmentThreadShells } from "../state/threads";
 import {
@@ -80,6 +86,13 @@ export function startThreadNotifications(
     kind: ThreadNotificationKind,
   ) => {
     const { thread, status } = state;
+    if (
+      isThreadHiddenByTagFilter(
+        state.raw.tags,
+        registry.get(serverEnvironment.threadTagFilterAtom(environmentId)),
+      )
+    )
+      return;
     const { notificationMode: mode, inAppNotificationsEnabled } = getClientSettings();
     const active = (router.state.matches.at(-1)?.params ?? {}) as {
       environmentId?: string;

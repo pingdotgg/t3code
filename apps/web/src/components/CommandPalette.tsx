@@ -59,6 +59,8 @@ import {
   CheckIcon,
   ChevronRightIcon,
   CornerLeftUpIcon,
+  EyeIcon,
+  EyeOffIcon,
   FileSearchIcon,
   FolderGit2Icon,
   FolderIcon,
@@ -103,7 +105,11 @@ import {
   copyPromptLink,
   promptLinkRepositoryOf,
 } from "./promptLinks/copyPromptLink";
-import { useClientSettings } from "../hooks/useSettings";
+import {
+  useClientSettings,
+  usePrimarySettings,
+  useUpdatePrimarySettings,
+} from "../hooks/useSettings";
 import { useStableCallback } from "../hooks/useStableCallback";
 import { readLocalApi } from "../localApi";
 import { desktopLocalBackendId } from "../connection/desktopLocal";
@@ -417,6 +423,8 @@ function OpenCommandPaletteDialog(props: {
     setHighlightedItemValue(null);
   }
   const clientSettings = useClientSettings(selectCommandPaletteClientSettings);
+  const threadTagFilter = usePrimarySettings((settings) => settings.threadTagFilter);
+  const updatePrimarySettings = useUpdatePrimarySettings();
   const createProject = useAtomCommand(projectEnvironment.create, {
     reportFailure: false,
   });
@@ -1577,6 +1585,25 @@ function OpenCommandPaletteDialog(props: {
       shortcutCommand: direction === 1 ? "workspace.focusNext" : "workspace.focusPrevious",
       run: async () => {
         queueWorkspaceFocusFromPalette(direction);
+      },
+    });
+  }
+
+  if (threadTagFilter.hide.length > 0 || threadTagFilter.only.length > 0) {
+    actionItems.push({
+      kind: "action",
+      value: "action:thread-tag-filter",
+      searchTerms: ["tags", "filter", "hide", "show", "threads", "recording"],
+      title: threadTagFilter.enabled ? "Turn off tag filter" : "Turn on tag filter",
+      icon: threadTagFilter.enabled ? (
+        <EyeIcon className={ITEM_ICON_CLASS} />
+      ) : (
+        <EyeOffIcon className={ITEM_ICON_CLASS} />
+      ),
+      run: async () => {
+        updatePrimarySettings({
+          threadTagFilter: { ...threadTagFilter, enabled: !threadTagFilter.enabled },
+        });
       },
     });
   }

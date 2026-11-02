@@ -1,5 +1,9 @@
+import { useAtomValue } from "@effect/atom-react";
 import { scopedThreadKey } from "@t3tools/client-runtime/environment";
+import { isThreadHiddenByTagFilter, type ThreadTagFilter } from "@t3tools/contracts";
 import { Navigate, useNavigate } from "@tanstack/react-router";
+import * as Option from "effect/Option";
+import { Atom } from "effect/reactivity";
 import { useEffect, useState } from "react";
 
 import ChatView from "./ChatView";
@@ -8,6 +12,7 @@ import { SidebarInset } from "./ui/sidebar";
 import { useComposerDraftStore } from "../composerDraftStore";
 import { useSidebarPendingFileDropStore } from "../sidebarPendingFileDropStore";
 import { useEnvironmentThreadRefs, useQuietThreadShell } from "../state/entities";
+import { serverEnvironment } from "../state/server";
 import { useEnvironmentShellStatus } from "../state/shell";
 import { useEnvironmentThread } from "../state/threads";
 import {
@@ -16,6 +21,8 @@ import {
   resolveThreadRouteRenderState,
   type ThreadRouteTarget,
 } from "../threadRoutes";
+
+const NO_THREAD_TAG_FILTER_ATOM = Atom.make<ThreadTagFilter | null>(null);
 
 /**
  * Unkeyed so navigating between server threads reuses one ChatView. Rendered by the `_chat`
@@ -80,6 +87,16 @@ export function ThreadRouteView({
     unlistedThreadRef?.environmentId ?? null,
     unlistedThreadRef?.threadId ?? null,
   );
+  // The tag filter drops the thread from the shell, so a direct link loads it here instead.
+  const threadTagFilter = useAtomValue(
+    unlistedThreadRef === null
+      ? NO_THREAD_TAG_FILTER_ATOM
+      : serverEnvironment.threadTagFilterAtom(unlistedThreadRef.environmentId),
+  );
+  const hiddenByTagFilter = Option.match(unlistedThreadDetail.data, {
+    onNone: () => false,
+    onSome: (projection) => isThreadHiddenByTagFilter(projection.thread.tags, threadTagFilter),
+  });
   const renderState = resolveThreadRouteRenderState({
     bootstrapComplete,
     serverThreadExists: serverThreadShell !== null,
@@ -137,6 +154,8 @@ export function ThreadRouteView({
     } else {
       redirect = <Navigate to="/" replace />;
     }
+  } else if (hiddenByTagFilter) {
+    redirect = <Navigate to="/" replace />;
   } else if (renderState === "ready" || (renderState === "loading" && serverThreadShell !== null)) {
     view = (
       <ChatView

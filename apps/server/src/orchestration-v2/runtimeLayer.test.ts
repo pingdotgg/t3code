@@ -18,6 +18,7 @@ import {
   TurnItemId,
   type ModelSelection,
   type OrchestrationV2Run,
+  type OrchestrationV2ShellSnapshot,
   type OrchestrationV2RuntimeRequest,
   ProjectId,
   type PullRequestDetail,
@@ -2545,6 +2546,32 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
         orderKey: "a0",
       });
       assert.equal((yield* orchestrator.getThreadProjection(threadId)).thread.activeOrderKey, "a0");
+
+      const shellOf = (shell: Pick<OrchestrationV2ShellSnapshot, "threads">) =>
+        shell.threads.find((thread) => thread.id === threadId)!;
+      const untaggedShell = shellOf(yield* orchestrator.getShellSnapshot());
+      yield* TestClock.adjust("1 minute");
+      for (const [step, tag, tagged] of [
+        ["add", "demo", true],
+        ["retry", "demo", true],
+        ["add-other", "private", true],
+        ["remove", "demo", false],
+      ] as const) {
+        yield* orchestrator.dispatch({
+          type: "thread.tag.set",
+          commandId: CommandId.make(`runtime-layer-lifecycle-tag-${step}`),
+          threadId,
+          tag,
+          tagged,
+        });
+      }
+      const taggedShell = shellOf(yield* orchestrator.getShellSnapshot());
+      assert.deepEqual(taggedShell.tags, ["private"]);
+      // Tags are not activity, so the thread keeps its place in thread lists.
+      assert.equal(
+        DateTime.toEpochMillis(taggedShell.updatedAt),
+        DateTime.toEpochMillis(untaggedShell.updatedAt),
+      );
 
       const preAutoProjection = yield* orchestrator.getThreadProjection(threadId);
       const staleAutoSettle = yield* orchestrator

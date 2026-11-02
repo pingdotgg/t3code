@@ -324,3 +324,25 @@ several selected threads together. Choose **Wake thread** to bring a thread back
 A snoozed thread keeps working and stays hidden until its wake time, even while
 its agent wakes itself for background work. It comes back early only when it needs
 an approval or answer from you, when a run fails, or when you send it a message.
+
+## Hide threads by tag
+
+Tags let you hide a group of threads, for example while you record or share your
+screen. Ask an agent to tag a thread, such as "tag this thread private". Agents add
+and remove tags with `t3_thread_update` and find tagged threads with `t3_thread_list`.
+Tags match exactly, including case. A fork keeps its source's tags.
+
+To choose what to hide, edit `threadTagFilter` in the server's `settings.json` under
+`~/.t3/userdata`:
+
+```json
+"threadTagFilter": { "enabled": true, "hide": ["private"], "only": [] }
+```
+
+`hide` hides threads with any of its tags. When `only` lists tags, only threads with
+one of them stay visible. Subagents and side chats follow their parent thread. While
+`enabled` is on, matching threads leave the sidebar, the archive, search, and the
+command palette on web, desktop, and mobile, and they send no desktop notifications.
+On web and desktop, a thread you have open closes when it becomes hidden. Choose **Turn on tag filter**
+or **Turn off tag filter** in the command palette to switch it on every connected
+environment without changing your lists.

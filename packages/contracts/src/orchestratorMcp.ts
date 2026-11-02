@@ -32,6 +32,7 @@ import {
   ThreadPullRequestKey,
   ThreadPullRequestLinkSource,
 } from "./threadPullRequest.ts";
+import { ThreadTag, ThreadTags } from "./threadTags.ts";
 import { hasOnlyPairedSurrogates } from "./threadMetadataMcp.ts";
 import { ThreadTitleRegeneration } from "./threadTitle.ts";
 import {
@@ -338,6 +339,10 @@ export const OrchestratorMcpThreadListInput = Schema.Struct({
   settled: Schema.optional(Schema.Boolean),
   snoozed: Schema.optional(Schema.Boolean),
   includeSubagents: Schema.optional(Schema.Boolean),
+  tag: Schema.optional(ThreadTag.annotate({ description: "Only threads with this exact tag." })),
+  excludeTag: Schema.optional(
+    ThreadTag.annotate({ description: "Skip threads with this exact tag." }),
+  ),
   cursor: Schema.optional(NonNegativeInt),
   limit: Schema.optional(PositiveInt.check(Schema.isLessThanOrEqualTo(100))),
 });
@@ -373,6 +378,8 @@ export const OrchestratorMcpThreadListItem = Schema.Struct({
   snoozedUntil: Schema.NullOr(IsoDateTime),
   parentThreadId: Schema.NullOr(ThreadId),
   relationshipToParent: Schema.NullOr(Schema.Literals(["fork", "subagent"])),
+  /** Omitted when the thread has no tags. */
+  tags: Schema.optional(ThreadTags),
   itemCount: NonNegativeInt,
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
@@ -443,6 +450,8 @@ export const OrchestratorMcpThreadDetail = Schema.Struct({
   worktreePath: Schema.NullOr(Schema.String),
   parentThreadId: Schema.NullOr(ThreadId),
   relationshipToParent: Schema.NullOr(Schema.Literals(["fork", "subagent"])),
+  /** Omitted when the thread has no tags. */
+  tags: Schema.optional(ThreadTags),
   runCount: NonNegativeInt,
   itemCount: NonNegativeInt,
   pendingRequestCount: NonNegativeInt,

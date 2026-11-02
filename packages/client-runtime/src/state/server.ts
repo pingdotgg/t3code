@@ -1078,6 +1078,11 @@ export function createServerEnvironmentAtoms<R, E>(
       Atom.withLabel(`environment-data:server:settings:${environmentId}`),
     ),
   );
+  const threadTagFilterAtom = Atom.family((environmentId: EnvironmentId) =>
+    Atom.make((get) => get(settingsValueAtom(environmentId))?.threadTagFilter ?? null).pipe(
+      Atom.withLabel(`environment-data:server:thread-tag-filter:${environmentId}`),
+    ),
+  );
   const usagePricesAtom = Atom.family((environmentId: EnvironmentId) =>
     Atom.make((get) => {
       const overrides = get(settingsValueAtom(environmentId))?.usagePriceOverrides ?? {};
@@ -1201,6 +1206,7 @@ export function createServerEnvironmentAtoms<R, E>(
     }),
     updateStateAtom,
     settingsValueAtom,
+    threadTagFilterAtom,
     usageModelFilterAtom,
     providersValueAtom,
     providerAuthState: createEnvironmentRpcSubscriptionAtomFamily(runtime, {

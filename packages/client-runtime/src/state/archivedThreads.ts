@@ -1,8 +1,14 @@
-import { EnvironmentId, type OrchestrationV2ArchivedShellSnapshot } from "@t3tools/contracts";
+import {
+  EnvironmentId,
+  type OrchestrationV2ArchivedShellSnapshot,
+  type ThreadTagFilter,
+} from "@t3tools/contracts";
 import * as Arr from "effect/Array";
 import { pipe } from "effect/Function";
 import * as Order from "effect/Order";
 import { AsyncResult, Atom } from "effect/reactivity";
+
+import { filterThreadsByTagFilter } from "./threadTagFilter.ts";
 
 export interface ArchivedSnapshotEntry {
   readonly environmentId: EnvironmentId;
@@ -40,6 +46,7 @@ export function createArchivedThreadSnapshotsAtomFamily<E>(options: {
   readonly getSnapshotAtom: (
     environmentId: EnvironmentId,
   ) => Atom.Atom<AsyncResult.AsyncResult<OrchestrationV2ArchivedShellSnapshot, E>>;
+  readonly threadTagFilterAtom: (environmentId: EnvironmentId) => Atom.Atom<ThreadTagFilter | null>;
   readonly labelPrefix: string;
 }) {
   return Atom.family((environmentKey: string) =>
@@ -54,7 +61,14 @@ export function createArchivedThreadSnapshotsAtomFamily<E>(options: {
 
         const snapshot = AsyncResult.getOrElse(result, () => null);
         if (snapshot !== null) {
-          snapshots.push({ environmentId, snapshot });
+          const threads = filterThreadsByTagFilter(
+            snapshot.threads,
+            get(options.threadTagFilterAtom(environmentId)),
+          );
+          snapshots.push({
+            environmentId,
+            snapshot: threads === snapshot.threads ? snapshot : { ...snapshot, threads },
+          });
         }
 
         if (error === null && result._tag === "Failure") {

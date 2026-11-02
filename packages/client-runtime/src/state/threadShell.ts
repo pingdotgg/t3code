@@ -5,6 +5,7 @@ import type {
   ScopedProjectRef,
   ScopedThreadRef,
   ThreadId,
+  ThreadTagFilter,
 } from "@t3tools/contracts";
 import {
   isListedThreadLineage,
@@ -16,6 +17,7 @@ import { Atom } from "effect/reactivity";
 
 import type { EnvironmentThreadShell, PendingSubagentRequest } from "./models.ts";
 import { presentThreadShell, threadRuntimeIsActive } from "./models.ts";
+import { filterThreadsByTagFilter } from "./threadTagFilter.ts";
 import { type EnvironmentCatalogState, enabledEnvironmentIds } from "./connections.ts";
 import {
   arrayElementsEqual,
@@ -204,6 +206,8 @@ export function createEnvironmentThreadShellAtoms(input: {
   readonly snapshotAtom: (
     environmentId: EnvironmentId,
   ) => Atom.Atom<OrchestrationV2ShellSnapshot | null>;
+  /** Threads this filter hides drop out of every list and point read below. */
+  readonly threadTagFilterAtom: (environmentId: EnvironmentId) => Atom.Atom<ThreadTagFilter | null>;
 }) {
   // Point reads and aggregate lists share values without keeping an atom alive
   // for every listed thread. Replaced source objects can be collected.
@@ -232,9 +236,11 @@ export function createEnvironmentThreadShellAtoms(input: {
   };
 
   const environmentThreadsAtom = Atom.family((environmentId: EnvironmentId) =>
-    Atom.make(
-      (get): ReadonlyArray<OrchestrationV2ThreadShell> =>
+    Atom.make((get): ReadonlyArray<OrchestrationV2ThreadShell> =>
+      filterThreadsByTagFilter(
         get(input.snapshotAtom(environmentId))?.threads ?? EMPTY_THREADS,
+        get(input.threadTagFilterAtom(environmentId)),
+      ),
     ).pipe(Atom.withLabel(`environment-threads:${environmentId}`)),
   );
 

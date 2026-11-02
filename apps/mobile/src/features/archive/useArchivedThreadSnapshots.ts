@@ -9,6 +9,7 @@ import { useMemo } from "react";
 
 import { appAtomRegistry } from "../../state/atom-registry";
 import { orchestrationEnvironment } from "../../state/orchestration";
+import { serverEnvironment } from "../../state/server";
 
 function archivedSnapshotAtom(environmentId: EnvironmentId) {
   return orchestrationEnvironment.archivedShellSnapshot({
@@ -19,6 +20,7 @@ function archivedSnapshotAtom(environmentId: EnvironmentId) {
 
 const archivedSnapshotsAtom = createArchivedThreadSnapshotsAtomFamily({
   getSnapshotAtom: archivedSnapshotAtom,
+  threadTagFilterAtom: serverEnvironment.threadTagFilterAtom,
   labelPrefix: "mobile:archived-thread-snapshots",
 });
 
