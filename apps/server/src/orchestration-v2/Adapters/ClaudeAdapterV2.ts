@@ -4622,7 +4622,18 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
     for (const server of due) claudeAiReconnectAttemptedAt.set(server.name, now);
     yield* Effect.forEach(
       due,
-      (server) => query.reconnectMcpServer(server.name).pipe(Effect.ignore),
+      (server) =>
+        query.reconnectMcpServer(server.name).pipe(
+          Effect.ignore,
+          // Closing the process cut this dial short, so it must not hold the cooldown.
+          Effect.onInterrupt(() =>
+            Effect.sync(() => {
+              if (claudeAiReconnectAttemptedAt.get(server.name) === now) {
+                claudeAiReconnectAttemptedAt.delete(server.name);
+              }
+            }),
+          ),
+        ),
       {
         concurrency: "unbounded",
         discard: true,
@@ -10447,7 +10458,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           const resolvedTurnCwd = yield* fileSystem
             .realPath(turnInput.runtimePolicy.cwd ?? ".")
             .pipe(Effect.orElseSucceed(() => turnInput.runtimePolicy.cwd));
-          const querySession = yield* queryRunner
+          const openedQuery = yield* queryRunner
             .open({
               threadId: turnInput.threadId,
               providerSessionId: input.providerSessionId,
@@ -10465,6 +10476,16 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                   : Effect.void,
               ),
             );
+          let connectorReconnects: Fiber.Fiber<void> | undefined;
+          const querySession: ClaudeAgentSdkQuerySession = {
+            ...openedQuery,
+            // Stop the connector reconnects first: they cannot finish on a closed process.
+            close: Effect.suspend(() =>
+              connectorReconnects === undefined
+                ? Effect.void
+                : Fiber.interrupt(connectorReconnects),
+            ).pipe(Effect.andThen(openedQuery.close)),
+          };
           // Mark only successful opens; retries must not resume sessions that failed to create.
           yield* Ref.update(openedNativeThreads, (current) => {
             if (current.has(nativeThreadId)) {
@@ -10541,6 +10562,11 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                       processInit.mcp_servers ?? [],
                     ).pipe(
                       Effect.forkIn(sessionScope),
+                      Effect.tap((fiber) =>
+                        Effect.sync(() => {
+                          connectorReconnects = fiber;
+                        }),
+                      ),
                       Effect.andThen(handleSdkMessage({ query: querySession, message })),
                     );
                   }

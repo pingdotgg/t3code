@@ -4319,11 +4319,14 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     () =>
       Effect.gen(function* () {
         const reconnected = yield* Queue.unbounded<string>();
+        let stuckConnector: string | undefined;
         const harness = yield* makeWakeHarnessWithOptions({
           close: Queue.shutdown,
           freshQueueOnReopen: true,
           reconnectMcpServer: (serverName) =>
-            Queue.offer(reconnected, serverName).pipe(Effect.asVoid),
+            Queue.offer(reconnected, serverName).pipe(
+              Effect.andThen(serverName === stuckConnector ? Effect.never : Effect.void),
+            ),
         });
         let ordinal = 0;
         // A turn under another runtime mode starts a new Claude process.
@@ -4391,9 +4394,20 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         yield* finish;
 
         yield* TestClock.adjust("1 minute");
+        stuckConnector = "claude.ai Sentry";
         yield* startProcess("full-access");
         yield* harness.offerAndWait(init("connector-init-3"));
         assert.deepEqual(yield* takeReconnected(2), ["claude.ai Figma", "claude.ai Sentry"]);
+        yield* finish;
+
+        // Closing that process cut the Sentry dial short, so the next process tries it again.
+        yield* startProcess("auto");
+        yield* harness.offerAndWait(
+          init("connector-init-4", [
+            { name: "claude.ai Miro", status: "needs-auth", source: "claudeai" },
+          ]),
+        );
+        assert.deepEqual(yield* takeReconnected(2), ["claude.ai Miro", "claude.ai Sentry"]);
       }).pipe(
         Effect.scoped,
         Effect.provide(
