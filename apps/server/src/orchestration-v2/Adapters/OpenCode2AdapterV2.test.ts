@@ -3293,7 +3293,7 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
       const kept = "msg_t3_turn_run-attempt:kept:1";
       const dropped = "msg_t3_turn_run-attempt:dropped:1";
       const { runtime, thread } = yield* resumed([
-        out("message.list", "<any>"),
+        out("message.list", { sessionID: SESSION, limit: "100", type: "user" }),
         reply("message.list", {
           data: [
             { id: dropped, time: { created: 2 }, text: "second", type: "user" },
@@ -3301,6 +3301,8 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
           ],
           cursor: {},
         }),
+        out("message.list", { sessionID: SESSION, limit: "100", type: "synthetic" }),
+        reply("message.list", { data: [], cursor: {} }),
         out("session.revert.stage", { sessionID: SESSION, messageID: dropped, files: false }),
         replyData("session.revert.stage", { messageID: dropped, files: [] }),
         out("session.revert.commit", { sessionID: SESSION }),
@@ -3362,7 +3364,7 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
       const dropped = "msg_t3_turn_run-attempt:dropped:1";
       const offers: Array<ProviderContinuationRequests.ProviderContinuationRequest> = [];
       const { runtime, thread } = yield* resumed([
-        out("message.list", "<any>"),
+        out("message.list", { sessionID: SESSION, limit: "100", type: "user" }),
         reply("message.list", {
           data: [
             { id: dropped, time: { created: 2 }, text: "second", type: "user" },
@@ -3370,6 +3372,8 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
           ],
           cursor: {},
         }),
+        out("message.list", { sessionID: SESSION, limit: "100", type: "synthetic" }),
+        reply("message.list", { data: [], cursor: {} }),
         out("session.revert.stage", { sessionID: SESSION, messageID: dropped, files: false }),
         replyData("session.revert.stage", { messageID: dropped, files: [] }),
         out("session.revert.commit", { sessionID: SESSION }),
@@ -3592,11 +3596,13 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
         ...(running
           ? []
           : [
-              out("message.list", "<any>"),
+              out("message.list", { sessionID: SESSION, limit: "100", type: "user" }),
               reply("message.list", {
                 data: [{ id: prompt, time: { created: 1 }, text: "hi", type: "user" }],
                 cursor: {},
               }),
+              out("message.list", { sessionID: SESSION, limit: "100", type: "synthetic" }),
+              reply("message.list", { data: [], cursor: {} }),
               out("session.revert.stage", {
                 sessionID: SESSION,
                 messageID: prompt,
@@ -3752,7 +3758,7 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
         promptAccepted,
         event("session.execution.started", { sessionID: SESSION }),
         event("session.execution.succeeded", { sessionID: SESSION }),
-        out("message.list", "<any>"),
+        out("message.list", { sessionID: SESSION, limit: "100", type: "user" }),
         reply("message.list", {
           data: [
             { id: dropped, time: { created: 2 }, text: "second", type: "user" },
@@ -3760,6 +3766,8 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
           ],
           cursor: {},
         }),
+        out("message.list", { sessionID: SESSION, limit: "100", type: "synthetic" }),
+        reply("message.list", { data: [], cursor: {} }),
         out("session.revert.stage", { sessionID: SESSION, messageID: dropped, files: false }),
         replyData("session.revert.stage", { messageID: dropped, files: [] }),
         out("session.revert.commit", { sessionID: SESSION }),
@@ -3812,11 +3820,13 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
     Effect.gen(function* () {
       const prompted = `msg_t3_turn_${SESSION}:attempt:earlier`;
       const { runtime, thread } = yield* resumed([
-        out("message.list", "<any>"),
+        out("message.list", { sessionID: SESSION, limit: "100", type: "user" }),
         reply("message.list", {
           data: [{ id: prompted, time: { created: 1 }, text: "earlier", type: "user" }],
           cursor: {},
         }),
+        out("message.list", { sessionID: SESSION, limit: "100", type: "synthetic" }),
+        reply("message.list", { data: [], cursor: {} }),
         out("session.revert.stage", { sessionID: SESSION, messageID: prompted, files: false }),
         replyData("session.revert.stage", { messageID: prompted, files: [] }),
         out("session.revert.commit", { sessionID: SESSION }),
@@ -3878,7 +3888,7 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
               out("session.get", { sessionID: SESSION }),
               replyData("session.get", sessionInfo()),
               ...noOpenRequests,
-              out("message.list", "<any>"),
+              out("message.list", { sessionID: SESSION, limit: "100", type: "user" }),
               reply("message.list", {
                 data: [
                   { id: second, time: { created: 2 }, text: "second", type: "user" },
@@ -3886,6 +3896,8 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
                 ],
                 cursor: {},
               }),
+              out("message.list", { sessionID: SESSION, limit: "100", type: "synthetic" }),
+              reply("message.list", { data: [], cursor: {} }),
               out("session.revert.stage", {
                 sessionID: SESSION,
                 messageID: second,
@@ -4075,8 +4087,22 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
     Effect.gen(function* () {
       const FORK = "ses_f1484db83ffeLGtrRCFimo1H0e";
       const { runtime, thread, first, second } = yield* continued([
-        out("message.list", "<any>"),
-        reply("message.list", continuedHistory),
+        out("message.list", { sessionID: SESSION, limit: "100", type: "user" }),
+        reply("message.list", { data: [continuedHistory.data[1]], cursor: {} }),
+        out("message.list", { sessionID: SESSION, limit: "100", type: "synthetic" }),
+        reply("message.list", {
+          data: [
+            { id: "msg_later_report", time: { created: 3 }, text: "later", type: "synthetic" },
+          ],
+          cursor: { next: "synthetic-page-2" },
+        }),
+        out("message.list", {
+          sessionID: SESSION,
+          limit: "100",
+          type: "synthetic",
+          cursor: "synthetic-page-2",
+        }),
+        reply("message.list", { data: [continuedHistory.data[0]], cursor: {} }),
         out("session.fork", { sessionID: SESSION, before: "msg_report" }),
         replyData("session.fork", sessionInfo({ id: FORK })),
         out("session.update", { sessionID: FORK, permissions: "<any>" }),

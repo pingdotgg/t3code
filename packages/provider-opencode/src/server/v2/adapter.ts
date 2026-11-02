@@ -2925,12 +2925,15 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       );
     });
 
-    // The API accepts one message type; boundaries require both user and synthetic messages.
+    // OpenCode 2.2 compactions no longer match the SDK schema; boundaries need only prompts.
     const userMessages = (sessionId: string) =>
-      OpenCode2Client.paginate(
-        { sessionID: Session.ID.make(sessionId), limit: 100 },
-        client.message.list,
-      ).pipe(
+      Stream.fromIterable(["user", "synthetic"] as const).pipe(
+        Stream.flatMap((type) =>
+          OpenCode2Client.paginate(
+            { sessionID: Session.ID.make(sessionId), limit: 100, type },
+            client.message.list,
+          ),
+        ),
         Stream.runCollect,
         Effect.map(
           (messages) =>
