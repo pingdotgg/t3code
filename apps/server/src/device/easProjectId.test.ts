@@ -166,6 +166,27 @@ it.effect.each([
     expected: Option.some(ID_A),
   },
   {
+    case: "reads app.json's id through a typed variant config that spreads parts of config",
+    files: {
+      "app.config.js": `/** @param {import('expo/config').ConfigContext} context */
+      module.exports = ({ config }) => ({
+        ...config,
+        ios: { ...config.ios, infoPlist: { ...config?.ios.infoPlist, CFBundleDisplayName: "Dev" } },
+        plugins: [...config.plugins, "expo-dev-client"],
+      });`,
+      "app.json": JSON.stringify({ expo: { extra: { eas: { projectId: ID_A } } } }),
+    },
+    expected: Option.some(ID_A),
+  },
+  {
+    case: "gives no answer when a config spreads what a call on config returns",
+    files: {
+      "app.config.js": `module.exports = ({ config }) => ({ ...config, ...config.variant("dev") });`,
+      "app.json": JSON.stringify({ expo: { extra: { eas: { projectId: ID_A } } } }),
+    },
+    expected: Option.none(),
+  },
+  {
     case: "reads a project id that follows spreads",
     files: {
       "app.config.js": `export default ({ config }) => ({

@@ -48,6 +48,13 @@ const HOLDER_AT = {
 // `config` and no more of it: not an identifier continuing (`$`, Unicode
 // letters and a `\u` escape do, where `\b` would not), nor a property.
 const CONFIG_AT = new RegExp("config" + HOLDER_END, "uy");
+// A part of `config` other than `extra`, such as `config.ios`: app.json's own
+// values, which hold no EAS id of their own.
+const CONFIG_PART_AT = new RegExp(
+  String.raw`config(?:\s*\??\.\s*(?!extra(?![\p{ID_Continue}$]))[\p{ID_Start}$_][\p{ID_Continue}$\u200c\u200d]*)+` +
+    HOLDER_END,
+  "uy",
+);
 
 /**
  * Only Expo's `config` and its own `extra`/`extra.eas` spreads can preserve app.json's id.
@@ -72,6 +79,8 @@ const staticConfigUse = (source: string): "spreads" | "replaces" | "unclear" => 
       spreads++;
       continue;
     }
+    CONFIG_PART_AT.lastIndex = at;
+    if (CONFIG_PART_AT.test(source)) continue;
     HOLDER_AT.extra.lastIndex = at;
     HOLDER_AT.eas.lastIndex = at;
     if (!HOLDER_AT.extra.test(source) && !HOLDER_AT.eas.test(source)) return "replaces";
@@ -84,6 +93,9 @@ const ASSIGNS_OVER = /\bObject\s*\.\s*assign\b|\bassign\s*\(/;
 // requires or imports.
 const REPLACES_HOLDER =
   /(?:\.\s*(?:extra|eas)|\[\s*["'`](?:extra|eas)["'`]\s*\])\s*=(?!=)|\bdelete\b|\brequire\s*\(|\bimport\s*\(/;
+// A comment that starts its line cannot sit inside a string, so dropping it
+// keeps a JSDoc `{import("expo/config").ConfigContext}` from reading as code.
+const LINE_COMMENT = /^[ \t]*(?:\/\/[^\n\r\u2028\u2029]*|\/\*(?:[^*]|\*(?!\/))*\*\/)/gm;
 // An `extra`/`eas` object must start by spreading the matching `config` entry to keep app.json's id.
 // Spreading the whole config there puts the id elsewhere; shorthand entries replace it too.
 // Stop reading once entries exceed MAX_MENTIONS.
@@ -155,13 +167,14 @@ const projectIdsOf = Effect.fn("easProjectId.projectIdsOf")(function* (dir: stri
     if (mentions > MAX_MENTIONS) return null;
     const entries = [...source.matchAll(QUOTED_PROJECT_ID)];
     const quoted = entries.map((match) => match[1]!);
+    const code = source.replace(LINE_COMMENT, "");
     // A template that interpolates could be any project too, and so could
     // one a spread after the entry, or an assignment anywhere, replaces;
     if (
       quoted.length !== mentions ||
       quoted.some((id) => id.includes("${")) ||
-      ASSIGNS_OVER.test(source) ||
-      REPLACES_HOLDER.test(source) ||
+      ASSIGNS_OVER.test(code) ||
+      REPLACES_HOLDER.test(code) ||
       entries.some((match) => SPREAD_LATER.test(source.slice(match.index + match[0].length)))
     ) {
       return null;
