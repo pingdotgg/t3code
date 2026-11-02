@@ -429,6 +429,7 @@ it.effect("runs a thread-bound automation on the provider the thread uses now", 
   const layerScheduledTasks = ScheduledTasks.layer.pipe(
     Layer.provide(
       Layer.mergeAll(
+        ManagedPolicy.layerTest(),
         harness.layer,
         NodeCrypto.layer,
         Scheduler.layer,
