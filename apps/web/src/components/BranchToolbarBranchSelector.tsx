@@ -491,7 +491,7 @@ export function BranchToolbarBranchSelector({
             environmentServerSettings,
             activeProject?.id ?? null,
           ).settings.newWorktreesBaseBranch,
-          isRepo: branchRefState.data?.isRepo ?? false,
+          isRepo: branchRefState.data?.isRepo ?? branchStatusQuery.data?.isRepo ?? false,
           defaultBranchName,
           currentGitBranch,
         });

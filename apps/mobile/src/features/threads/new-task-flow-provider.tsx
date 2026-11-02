@@ -417,6 +417,8 @@ export function NewTaskFlowProvider(
   // only the explicit flag is ever written back to the draft, so the resolved
   // value keeps tracking the server setting when the config loads late.
   const draftStartFromOrigin = selectedProjectDraft.workspaceSelection?.startFromOrigin;
+  // Writing the filled worktree base back would pin it, so later setting changes would not apply.
+  const explicitDraftBranch = selectedProjectDraft.workspaceSelection?.branch ?? null;
   const startFromOrigin =
     isGitRepo && (draftStartFromOrigin ?? projectSettings.settings.newWorktreesStartFromOrigin);
   const defaultRuntimeMode = projectSettings.settings.defaultRuntimeMode;
@@ -661,7 +663,7 @@ export function NewTaskFlowProvider(
                     ? projectSettings.settings.newWorktreesBaseBranch
                     : null,
                 })
-              : selectedBranchName,
+              : explicitDraftBranch,
         worktreePath: mode === "local" ? localSelection.worktreePath : selectedWorktreePath,
         ...(draftStartFromOrigin !== undefined ? { startFromOrigin: draftStartFromOrigin } : {}),
         // Refs have not named the current branch yet; the selection follows it.
@@ -697,7 +699,7 @@ export function NewTaskFlowProvider(
     updateComposerDraftSettings(selectedProjectDraftKey, {
       workspaceSelection: {
         mode: workspaceMode,
-        branch: selectedBranchName,
+        branch: workspaceMode === "worktree" ? explicitDraftBranch : selectedBranchName,
         worktreePath: selectedWorktreePath,
         startFromOrigin: value,
         ...(selectedBranchName === null && workspaceSelection.followsCurrentCheckout

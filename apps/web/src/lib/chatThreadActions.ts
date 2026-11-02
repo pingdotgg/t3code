@@ -43,11 +43,14 @@ export function resolveNewDraftStartFromOrigin(input: {
   return input.envMode === "worktree" && input.newWorktreesStartFromOrigin;
 }
 
-/** A checkout's branch is not a worktree base, so leaving it for a new worktree starts from the configured base. */
+/**
+ * A checkout's branch is not a worktree base, so leaving it for a new worktree starts from the
+ * configured base. A null base means settings have not loaded, so the branch is left to fill.
+ */
 export function shouldResetBranchForNewWorktree(input: {
   currentEnvMode: DraftThreadEnvMode | undefined;
   nextEnvMode: DraftThreadEnvMode;
-  worktreeBaseBranch: string;
+  worktreeBaseBranch: string | null;
 }): boolean {
   return (
     input.currentEnvMode === "local" &&

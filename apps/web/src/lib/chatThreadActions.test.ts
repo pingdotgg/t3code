@@ -49,6 +49,10 @@ describe("shouldResetBranchForNewWorktree", () => {
     expect(shouldResetBranchForNewWorktree(input)).toBe(true);
   });
 
+  it("leaves the branch to fill while settings are still loading", () => {
+    expect(shouldResetBranchForNewWorktree({ ...input, worktreeBaseBranch: null })).toBe(true);
+  });
+
   it("keeps a base already picked in worktree mode", () => {
     expect(shouldResetBranchForNewWorktree({ ...input, currentEnvMode: "worktree" })).toBe(false);
   });
