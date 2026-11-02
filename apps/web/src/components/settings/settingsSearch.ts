@@ -47,6 +47,9 @@ export type SettingsSearchScope =
   | "checkout"
   | "connections";
 
+/** Environment capabilities a search result's row needs before it renders. */
+export type SettingsSearchCapability = "worktreesDirectory" | "newProjectsDirectory";
+
 export interface SettingsSearchItem {
   readonly id: string;
   readonly title: string;
@@ -68,8 +71,7 @@ export interface SettingsSearchItem {
   readonly wslAvailableOnly?: boolean;
   readonly managedTunnelOnly?: boolean;
   readonly peerLinksOnly?: boolean;
-  readonly worktreesDirectoryOnly?: boolean;
-  readonly newProjectsDirectoryOnly?: boolean;
+  readonly requiredCapability?: SettingsSearchCapability;
   readonly secondary?: boolean;
   readonly requiresThreadAutoSettlement?: boolean;
 }
@@ -85,7 +87,7 @@ export interface SettingsSearchAvailability {
   readonly hasThreadAutoSettlement: boolean;
   readonly managedTunnelActive?: boolean;
   readonly hasPeerLinkHost?: boolean;
-  /** Every connected environment in scope serves the setting, matching its row's gate. */
+  /** Some connected environment serves the setting. Landing asks for one when the scope lacks it. */
   readonly hasWorktreesDirectory?: boolean;
   readonly hasNewProjectsDirectory?: boolean;
 }
@@ -253,7 +255,7 @@ export const SETTINGS_SEARCH_ITEMS = [
     to: "/settings/worktrees",
     scope: "environment-defaults",
     searchTerms: ["worktree location folder directory path drive external disk"],
-    worktreesDirectoryOnly: true,
+    requiredCapability: "worktreesDirectory",
   },
   {
     id: "storage-artifacts",
@@ -658,7 +660,7 @@ export const SETTINGS_SEARCH_ITEMS = [
     to: "/settings/projects",
     scope: "environment-defaults",
     searchTerms: ["new project folder location path repos repositories create default"],
-    newProjectsDirectoryOnly: true,
+    requiredCapability: "newProjectsDirectory",
   },
   {
     id: "add-project-starts-in",
@@ -1270,25 +1272,38 @@ export function getSettingsSearchTargetScope(targetId: string) {
         title: item.title,
         scope: item.scope ?? SETTINGS_CATEGORY_SCOPES[item.to],
         ...(item.requiresThreadAutoSettlement ? { requiresThreadAutoSettlement: true } : {}),
+        ...(item.requiredCapability ? { requiredCapability: item.requiredCapability } : {}),
       }
     : null;
 }
 
-interface AutoSettlementSearchEnvironment {
+interface SearchTargetEnvironment {
   readonly environmentId: EnvironmentId;
   readonly connection: { readonly phase: EnvironmentConnectionPhase };
-  readonly serverConfig: object | null;
+  readonly serverConfig: {
+    readonly environment: {
+      readonly capabilities: { readonly [Capability in SettingsSearchCapability]?: boolean };
+    };
+  } | null;
 }
 
-export function getThreadAutoSettlementSearchAvailability(
-  environments: readonly AutoSettlementSearchEnvironment[],
+/** Connected environments that can show the target, and whether the selected scope is all of them. */
+export function getSettingsSearchTargetAvailability(
+  environments: readonly SearchTargetEnvironment[],
   scope?: Pick<ResolvedSettingsScope, "kind" | "environmentIds">,
+  capability?: SettingsSearchCapability,
 ) {
   const connected = environments.filter(
     (environment) =>
       environment.connection.phase === "connected" && environment.serverConfig !== null,
   );
-  const eligibleEnvironmentIds = connected.map((environment) => environment.environmentId);
+  const eligibleEnvironmentIds = connected
+    .filter(
+      (environment) =>
+        capability === undefined ||
+        environment.serverConfig?.environment.capabilities[capability] === true,
+    )
+    .map((environment) => environment.environmentId);
   const selected = connected.filter((environment) =>
     scope?.environmentIds.includes(environment.environmentId),
   );
@@ -1351,8 +1366,10 @@ export function filterAvailableSettingsSearchItems(
       (!item.requiresThreadAutoSettlement || availability.hasThreadAutoSettlement) &&
       (!item.managedTunnelOnly || availability.managedTunnelActive === true) &&
       (!item.peerLinksOnly || availability.hasPeerLinkHost === true) &&
-      (!item.worktreesDirectoryOnly || availability.hasWorktreesDirectory === true) &&
-      (!item.newProjectsDirectoryOnly || availability.hasNewProjectsDirectory === true),
+      (item.requiredCapability !== "worktreesDirectory" ||
+        availability.hasWorktreesDirectory === true) &&
+      (item.requiredCapability !== "newProjectsDirectory" ||
+        availability.hasNewProjectsDirectory === true),
   );
 }
 

@@ -14,7 +14,7 @@ import { isProviderSettingsEnvironmentAvailable } from "./ProviderSettingsPanel.
 import type { SettingsScopeSearch } from "./settingsScope";
 import {
   filterAvailableSettingsSearchItems,
-  getThreadAutoSettlementSearchAvailability,
+  getSettingsSearchTargetAvailability,
 } from "./settingsSearch";
 
 export function useAvailableSettingsSearchItems(scopeSearch: SettingsScopeSearch = {}) {
@@ -39,23 +39,14 @@ export function useAvailableSettingsSearchItems(scopeSearch: SettingsScopeSearch
           hasServerConfig: true,
         }),
     ) === true;
-  const scopedConnected = environments.filter(
-    (environment) =>
-      (scopeSearch.machine === undefined || environment.environmentId === scopeSearch.machine) &&
-      environment.connection.phase === "connected" &&
-      environment.serverConfig !== null,
-  );
-  const everyScopedEnvironmentSupports = (
-    capability: "worktreesDirectory" | "newProjectsDirectory",
-  ) =>
-    scopedConnected.length > 0 &&
-    scopedConnected.every(
-      (environment) => environment.serverConfig?.environment.capabilities[capability] === true,
-    );
-  const hasWorktreesDirectory = everyScopedEnvironmentSupports("worktreesDirectory");
-  const hasNewProjectsDirectory = everyScopedEnvironmentSupports("newProjectsDirectory");
+  const hasWorktreesDirectory =
+    getSettingsSearchTargetAvailability(environments, undefined, "worktreesDirectory")
+      .eligibleEnvironmentIds.length > 0;
+  const hasNewProjectsDirectory =
+    getSettingsSearchTargetAvailability(environments, undefined, "newProjectsDirectory")
+      .eligibleEnvironmentIds.length > 0;
   const hasThreadAutoSettlement =
-    getThreadAutoSettlementSearchAvailability(environments).eligibleEnvironmentIds.length > 0;
+    getSettingsSearchTargetAvailability(environments).eligibleEnvironmentIds.length > 0;
   const primaryEnvironmentId = usePrimaryEnvironmentId();
   const canMaintain = useEnvironmentScope(primaryEnvironmentId, AuthEnvironmentMaintainScope);
   const hasPeerLinkHost = usePeerLinkHosts().length > 0;

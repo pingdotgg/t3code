@@ -10,7 +10,7 @@ import * as Schema from "effect/Schema";
 import {
   filterAvailableSettingsSearchItems,
   getSettingsSearchTargetScope,
-  getThreadAutoSettlementSearchAvailability,
+  getSettingsSearchTargetAvailability,
   isSettingsSearchScopeAvailable,
   movedSettingsPath,
   searchSettings,
@@ -243,7 +243,7 @@ describe("settings search targets", () => {
   });
 });
 
-describe("auto-settlement search availability", () => {
+describe("search target availability", () => {
   function environment(id: string, { connected = true, loaded = true } = {}) {
     return {
       environmentId: EnvironmentId.make(id),
@@ -258,7 +258,7 @@ describe("auto-settlement search availability", () => {
   const environments = [capable, offline, loading];
 
   it("keeps results discoverable when one connected environment supports them", () => {
-    const availability = getThreadAutoSettlementSearchAvailability(environments);
+    const availability = getSettingsSearchTargetAvailability(environments);
     expect(availability.eligibleEnvironmentIds).toEqual([capable.environmentId]);
     const items = filterAvailableSettingsSearchItems({
       hasCloudPublicConfig: false,
@@ -281,7 +281,7 @@ describe("auto-settlement search availability", () => {
     "does not render the target on $environmentId or silently fall back",
     (selected) => {
       expect(
-        getThreadAutoSettlementSearchAvailability(environments, {
+        getSettingsSearchTargetAvailability(environments, {
           kind: "environment",
           environmentIds: [selected.environmentId],
         }),
@@ -289,10 +289,41 @@ describe("auto-settlement search availability", () => {
     },
   );
 
+  it("lists capability settings when one environment serves them and asks for it on landing", () => {
+    const current = {
+      ...environment("current"),
+      serverConfig: { environment: { capabilities: { newProjectsDirectory: true } } },
+    };
+    const mixed = [current, capable];
+    const availability = getSettingsSearchTargetAvailability(
+      mixed,
+      { kind: "all", environmentIds: mixed.map((entry) => entry.environmentId) },
+      "newProjectsDirectory",
+    );
+    expect(availability).toEqual({
+      eligibleEnvironmentIds: [current.environmentId],
+      isTargetAvailable: false,
+    });
+    const items = filterAvailableSettingsSearchItems({
+      hasCloudPublicConfig: false,
+      hasEnvironment: true,
+      hasProviderSettingsEnvironment: true,
+      hasMacProviderSettingsEnvironment: false,
+      canManageLocalBackend: false,
+      isWslSettingsRowVisible: false,
+      hasThreadAutoSettlement: false,
+      hasNewProjectsDirectory: availability.eligibleEnvironmentIds.length > 0,
+    });
+    expect(searchSettings("new projects directory", items)[0]?.id).toBe("new-projects-directory");
+    expect(getSettingsSearchTargetScope("new-projects-directory")?.requiredCapability).toBe(
+      "newProjectsDirectory",
+    );
+  });
+
   it("ignores offline and unloaded targets when all connected targets support the setting", () => {
     const selected = [capable, offline, loading];
     expect(
-      getThreadAutoSettlementSearchAvailability(selected, {
+      getSettingsSearchTargetAvailability(selected, {
         kind: "all",
         environmentIds: selected.map((entry) => entry.environmentId),
       }).isTargetAvailable,
