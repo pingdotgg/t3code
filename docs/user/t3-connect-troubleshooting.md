@@ -99,7 +99,8 @@ Fix:
 
 ## Sign-in, account, or link problems
 
-T3 Connect does not have an active link between your account and the host.
+This device's T3 Connect sign-in is not ready yet, or T3 Connect does not have
+an active link between your account and the host.
 
 - **The host is linked to a different account.** Sign in to the same T3 Connect
   account on this device and on the host. On the host, run `t3 connect logout`,
