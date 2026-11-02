@@ -207,7 +207,10 @@ function parseCodexRecord(parsed: unknown, state: CodexScanState): UsageRecord |
         state.lastCumulativeUsage = advanceCodexUsage(state.lastCumulativeUsage, last);
       }
       state.lastUsageSignature = signature;
-      state.lastRequestTimestampMs = timestampMs;
+      state.lastRequestTimestampMs = Math.max(
+        timestampMs,
+        state.lastRequestTimestampMs ?? timestampMs,
+      );
       return null;
     }
     state.suppressingForkCopies = false;
@@ -283,7 +286,7 @@ function parseCodexRecord(parsed: unknown, state: CodexScanState): UsageRecord |
     state.lastCumulativeUsage = advanced;
   }
   state.lastUsageSignature = signature;
-  state.lastRequestTimestampMs = timestampMs;
+  state.lastRequestTimestampMs = Math.max(timestampMs, state.lastRequestTimestampMs ?? timestampMs);
 
   const inputTokens = last.input_tokens;
   const cachedInputTokens = last.cached_input_tokens;

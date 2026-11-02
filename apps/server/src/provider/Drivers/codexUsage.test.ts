@@ -421,6 +421,26 @@ describe("parseCodexLine", () => {
     },
   );
 
+  it("does not let an older accepted request reopen the rewind window for a replay", () => {
+    const state = initialCodexScanState();
+    parseCodexLine(turnContext, state);
+    const replayed = at(52, counted(counters(100, 20), counters(1100, 220)));
+    const processed = [
+      at(50, counted(counters(1000, 200), counters(1000, 200))),
+      replayed,
+      at(49, counted(counters(10, 2))),
+      replayed,
+    ].map((line) => {
+      const record = parseCodexLine(line, state);
+      return record === null ? 0 : totalTokens(record.totals);
+    });
+
+    expect({
+      processed,
+      skipped: codexUsageFormat.readMalformedRecords?.(state),
+    }).toEqual({ processed: [1200, 120, 12, 0], skipped: 1 });
+  });
+
   it("ignores a replay of the current sequence's first request without rewinding the baseline", () => {
     const state = initialCodexScanState();
     parseCodexLine(turnContext, state);
