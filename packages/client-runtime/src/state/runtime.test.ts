@@ -1,4 +1,4 @@
-import { describe, expect, it } from "@effect/vitest";
+import { describe, expect, it, vi } from "@effect/vitest";
 import {
   EnvironmentId,
   type PreviewEvent,
@@ -954,6 +954,33 @@ describe("environment query lifecycle", () => {
         expect(executions).toBe(2);
 
         expect(yield* read).toBe(3);
+      }),
+    ),
+  );
+
+  it.effect("a reader that reopens a query older than its stale time gets the fresh answer", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        let now = 1_000_000;
+        using _now = vi.spyOn(Date, "now").mockImplementation(() => now);
+        let executions = 0;
+        const harness = yield* makeEnvironmentQueryHarness(
+          Effect.sync(() => (++executions === 1 ? "stale" : "fresh")),
+        );
+        const registry = AtomRegistry.make();
+        yield* Effect.addFinalizer(() => Effect.sync(() => registry.dispose()));
+        const read = readEnvironmentQuery(registry, harness.atom);
+
+        const unmount = registry.mount(harness.atom);
+        expect(yield* read).toBe("stale");
+        unmount();
+        // The registry releases unmounted atoms, and revalidates stale ones, on its next tick.
+        yield* Effect.yieldNow;
+
+        now += 120_000;
+        registry.mount(harness.atom);
+        yield* Effect.yieldNow;
+        expect(yield* read).toBe("fresh");
       }),
     ),
   );
