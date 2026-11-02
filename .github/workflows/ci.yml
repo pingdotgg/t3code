@@ -88,13 +88,13 @@ jobs:
         with:
           task-cache-read-token: ${{ secrets.T3_TASK_CACHE_READ_TOKEN }}
 
-      # electron's install.js (run by ensure:electron) reads this cache before it
-      # downloads from GitHub. The key changes only with the Electron version.
+      # Electron's installer reads this cache before downloading from GitHub.
+      # Hash the tracked manifest because the virtual store may be outside the checkout.
       - name: Cache Electron download
         uses: actions/cache@v6
         with:
           path: ~/.cache/electron
-          key: electron-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('node_modules/.pnpm/electron@*/node_modules/electron/package.json') }}
+          key: electron-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('apps/desktop/package.json') }}
 
       - name: Ensure Electron runtime is installed
         run: vp run --filter @t3tools/desktop ensure:electron
@@ -150,13 +150,13 @@ jobs:
         with:
           task-cache-read-token: ${{ secrets.T3_TASK_CACHE_READ_TOKEN }}
 
-      # electron's install.js (run by ensure:electron) reads this cache before it
-      # downloads from GitHub. The key changes only with the Electron version.
+      # Electron's installer reads this cache before downloading from GitHub.
+      # Hash the tracked manifest because the virtual store may be outside the checkout.
       - name: Cache Electron download
         uses: actions/cache@v6
         with:
           path: ~/.cache/electron
-          key: electron-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('node_modules/.pnpm/electron@*/node_modules/electron/package.json') }}
+          key: electron-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('apps/desktop/package.json') }}
 
       - name: Ensure Electron runtime is installed
         id: electron
@@ -243,13 +243,13 @@ jobs:
         with:
           task-cache-read-token: ${{ secrets.T3_TASK_CACHE_READ_TOKEN }}
 
-      # electron's install.js (run by ensure:electron) reads this cache before it
-      # downloads from GitHub. The key changes only with the Electron version.
+      # Electron's installer reads this cache before downloading from GitHub.
+      # Hash the tracked manifest because the virtual store may be outside the checkout.
       - name: Cache Electron download
         uses: actions/cache@v6
         with:
           path: ~/.cache/electron
-          key: electron-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('node_modules/.pnpm/electron@*/node_modules/electron/package.json') }}
+          key: electron-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('apps/desktop/package.json') }}
 
       - name: Ensure Electron runtime is installed
         run: vp run --filter @t3tools/desktop ensure:electron

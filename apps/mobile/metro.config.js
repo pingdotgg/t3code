@@ -4,6 +4,7 @@ const { pathToFileURL } = require("node:url");
 const { getDefaultConfig } = require("expo/metro-config");
 const { withUniwindConfig } = require("uniwind/metro");
 const extraThemes = require("./generated-uniwind-theme-names.json");
+const { pnpmMetroWatchFolders } = require("@t3tools/shared/pnpmVirtualStore");
 
 /** @type {import("expo/metro-config").MetroConfig} */
 const config = getDefaultConfig(__dirname);
@@ -19,9 +20,19 @@ const escapedWorkspaceRoot = workspaceRoot.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"
 const generatedDeviceStreamRoot = path.join(__dirname, ".generated", "device-stream");
 const generatedPreviewStreamRoot = path.join(__dirname, ".generated", "preview-stream");
 
-config.watchFolders = [...new Set([...(config.watchFolders ?? []), workspaceRoot])];
+config.watchFolders = [
+  ...new Set([
+    ...(config.watchFolders ?? []),
+    workspaceRoot,
+    ...pnpmMetroWatchFolders(workspaceRoot),
+  ]),
+];
 config.resolver = {
   ...config.resolver,
+  nodeModulesPaths: [
+    ...(config.resolver?.nodeModulesPaths ?? []),
+    path.join(workspaceRoot, "node_modules/.pnpm/node_modules"),
+  ],
   blockList: [
     ...(Array.isArray(config.resolver?.blockList)
       ? config.resolver.blockList

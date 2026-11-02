@@ -43,6 +43,7 @@ import {
   resolveMergedStageDependencies,
   resolveBuildOptions,
   stageWslRuntimeArchive,
+  findStorePackageDirectory,
   ancestorNodeModulesPaths,
   copyDirectoryPreservingSymlinks,
   LinuxBrowserSecretHostError,
@@ -1747,6 +1748,37 @@ it.effect.skipIf(!symlinksSupported)("rebases packaged links into the isolated t
       yield* fs.realPath(path.join(destination, "node_modules/example-absolute")),
       resolvedCopiedPackage,
     );
+  }).pipe(Effect.provide(NodeServices.layer)),
+);
+
+it.effect.skipIf(!symlinksSupported)("finds native loaders through external store links", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const root = yield* fs.makeTempDirectoryScoped({ prefix: "desktop-global-store-" });
+    const repo = path.join(root, "worktree");
+    const native = path.join(root, "store/links/@/native/1/hash/node_modules/native");
+    yield* fs.makeDirectory(native, { recursive: true });
+    yield* fs.writeFileString(path.join(native, "binding.gyp"), "{}");
+    yield* fs.writeFileString(path.join(native, "package.json"), '{"name":"native"}');
+    for (const moduleRoot of [
+      "apps/server/node_modules",
+      "apps/desktop/node_modules",
+      "node_modules",
+      "node_modules/.pnpm/node_modules",
+    ]) {
+      const modules = path.join(repo, moduleRoot);
+      yield* fs.makeDirectory(modules, { recursive: true });
+      const link = path.join(modules, "native");
+      yield* fs.symlink(native, link);
+      const found = yield* findStorePackageDirectory(repo, "native");
+      assert.strictEqual(found, yield* fs.realPath(native));
+      yield* fs.remove(link);
+    }
+    assert.strictEqual(yield* findStorePackageDirectory(repo, "missing"), null);
+    const local = path.join(repo, "node_modules/.pnpm/legacy@1/node_modules/legacy");
+    yield* fs.makeDirectory(local, { recursive: true });
+    assert.strictEqual(yield* findStorePackageDirectory(repo, "legacy"), local);
   }).pipe(Effect.provide(NodeServices.layer)),
 );
 

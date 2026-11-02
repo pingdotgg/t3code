@@ -12,6 +12,7 @@ import { defineConfig, type Connect, type Plugin } from "vite-plus";
 import * as Hash from "effect/Hash";
 import pkg from "./package.json" with { type: "json" };
 import pdfjsPkg from "pdfjs-dist/package.json" with { type: "json" };
+import { pnpmViteFsAllow } from "@t3tools/shared/pnpmVirtualStore";
 
 import {
   DEV_PROXIED_ORIGIN_PRESERVING_PREFIXES,
@@ -339,6 +340,7 @@ export default defineConfig(() => {
       port,
       strictPort: true,
       allowedHosts,
+      fs: { allow: pnpmViteFsAllow(import.meta.dirname) },
       // Warm the module graph before first request to avoid serial import transforms over tailnet.
       // Bundled dev ignores this; warmBundledDevPlugin handles it there.
       warmup: {
