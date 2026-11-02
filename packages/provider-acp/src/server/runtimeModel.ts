@@ -1095,6 +1095,18 @@ export function extractMcpToolCallIdentity(
   if (meta?.is_mcp_tool_call === true && server.length > 0 && tool.length > 0) {
     return { server, tool };
   }
+  // Kiro names the server in `_meta.kiro.serverName` and the call in `rawInput.tool_id`
+  // ("<server>::<tool>"), with the tool's own input under `rawInput.arguments`.
+  const kiroServer = isRecord(meta?.kiro) ? meta.kiro.serverName : undefined;
+  const kiroToolId = typeof rawInput?.tool_id === "string" ? rawInput.tool_id.trim() : "";
+  if (
+    typeof kiroServer === "string" &&
+    kiroServer.length > 0 &&
+    kiroToolId.startsWith(`${kiroServer}::`) &&
+    kiroToolId.length > kiroServer.length + 2
+  ) {
+    return { server: kiroServer, tool: kiroToolId.slice(kiroServer.length + 2) };
+  }
   const claudeCode = isRecord(meta?.claudeCode) ? meta.claudeCode : undefined;
   const gooseToolCall = isRecord(meta?.goose)
     ? isRecord(meta.goose.toolCall)
