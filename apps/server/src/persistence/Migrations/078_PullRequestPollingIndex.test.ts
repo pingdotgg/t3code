@@ -45,7 +45,10 @@ it.layer(NodeSqliteClient.layer({ filename: ":memory:" }))("078_PullRequestPolli
       assert.deepEqual(yield* runMigrations(), []);
       assert.deepEqual(yield* sql.unsafe(query), before);
       assert.deepEqual(before, [{ thread_id: "a" }, { thread_id: "b" }, { thread_id: "later" }]);
-      const plan = yield* sql.unsafe<{ readonly detail: string }>(`EXPLAIN QUERY PLAN ${query}`);
+      const pollingQuery = query.replace("SELECT thread_id", "SELECT payload_json");
+      const plan = yield* sql.unsafe<{ readonly detail: string }>(
+        `EXPLAIN QUERY PLAN ${pollingQuery}`,
+      );
       assert.ok(
         plan.some((row) =>
           row.detail.includes("orchestration_v2_projection_threads_pull_request_poll_idx"),
