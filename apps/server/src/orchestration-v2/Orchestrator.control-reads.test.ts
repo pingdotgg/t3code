@@ -1782,7 +1782,10 @@ it.effect("queued-message commands read a long thread's history without walking 
             (/^SEARCH .*(node|turn_item).* \(thread_id=\?\)$/.test(detail) &&
               !detail.includes("USING COVERING INDEX")) ||
             // Every active run in the environment, not only this thread's.
-            /^SEARCH .*runs.* \(status=\?\)$/.test(detail)
+            /^SEARCH .*runs.* \(status=\?\)$/.test(detail) ||
+            // A status-filtered read that fetches every typed row to check its status.
+            (/^SEARCH .*turn_items USING INDEX .* \(thread_id=\? AND type=\?\)$/.test(detail) &&
+              query.includes("status IN"))
           ) {
             walks.push(`${commandType}: ${detail}\n  in: ${query.replace(/\s+/g, " ").trim()}`);
           }

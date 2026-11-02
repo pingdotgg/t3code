@@ -4,10 +4,11 @@ import * as SqlClient from "effect/sql/SqlClient";
 export default Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
 
-  // Typed command reads; without this, each one walked every item in the thread.
+  // Typed command reads; without this, each one walked every item in the thread. Status
+  // keeps active-item reads (Stop) from fetching every settled tool row to reject it.
   yield* sql`
     CREATE INDEX orchestration_v2_projection_turn_items_thread_type_idx
-    ON orchestration_v2_projection_turn_items(thread_id, type, ordinal, turn_item_id)
+    ON orchestration_v2_projection_turn_items(thread_id, type, status)
   `;
   // Lets provider-thread ownership start from one thread's node ids without reading node rows.
   yield* sql`
