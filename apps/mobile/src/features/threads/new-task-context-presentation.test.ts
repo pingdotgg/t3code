@@ -208,6 +208,12 @@ describe("resolveWorktreeSwitchBranch", () => {
     ).toBeNull();
   });
 
+  it("leaves the branch to fill while settings are still loading", () => {
+    expect(
+      resolveWorktreeSwitchBranch({ selectedBranch: "release", worktreeBaseBranch: null }),
+    ).toBeNull();
+  });
+
   it("keeps today's behavior without a configured base", () => {
     expect(resolveWorktreeSwitchBranch({ selectedBranch: "release", worktreeBaseBranch: "" })).toBe(
       "release",

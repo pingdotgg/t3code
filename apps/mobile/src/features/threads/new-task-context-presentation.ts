@@ -72,10 +72,13 @@ export function resolveNewTaskLocalWorkspaceSelection(input: {
   };
 }
 
-/** A checkout's branch is not a worktree base, so leaving it for a new worktree starts from the configured base. */
+/**
+ * A checkout's branch is not a worktree base, so leaving it for a new worktree starts from the
+ * configured base. A null base means settings have not loaded, so the branch stays unset to fill.
+ */
 export function resolveWorktreeSwitchBranch(input: {
   readonly selectedBranch: string | null;
-  readonly worktreeBaseBranch: string;
+  readonly worktreeBaseBranch: string | null;
 }): string | null {
   return input.worktreeBaseBranch === "" ? input.selectedBranch : null;
 }
