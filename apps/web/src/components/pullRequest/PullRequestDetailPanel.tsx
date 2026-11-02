@@ -35,13 +35,7 @@ import {
   resolveEnvironmentMachineKind,
   type ScopedThreadRef,
 } from "@t3tools/contracts";
-import {
-  ArrowDownUpIcon,
-  ArrowLeftIcon,
-  FileDiffIcon,
-  GitCommitHorizontalIcon,
-  PanelRightIcon,
-} from "lucide-react";
+import { ArrowLeftIcon, FileDiffIcon, PanelRightIcon } from "lucide-react";
 import {
   lazy,
   Suspense,
@@ -54,6 +48,7 @@ import {
 import { type DraftId, useComposerDraftStore } from "~/composerDraftStore";
 import { type PullRequestDetailTab, useRightPanelStore } from "~/rightPanelStore";
 import { useEnvironmentSettings } from "~/hooks/useSettings";
+import { usePanelAnimationSettings } from "~/panelAnimations";
 import { useNewThreadHandler } from "~/hooks/useHandleNewThread";
 import { useCopyToClipboard } from "~/hooks/useCopyToClipboard";
 import { isCommandPaletteOpen } from "~/commandPaletteBus";
@@ -113,7 +108,6 @@ import {
   buildPullRequestCommentContext,
   buildPullRequestContext,
   buildResolveConflictsPrompt,
-  latestPullRequestReviewOutcomes,
   loadingPullRequestCheckoutCommand,
   isPullRequestNotFound,
   isStackedPullRequestBase,
@@ -140,11 +134,8 @@ import { resolvePickableEnvironments } from "./pullRequestProjectAssignment.logi
 import { PullRequestReadinessCard } from "./PullRequestReadinessCard";
 import {
   PullRequestActorLabel,
-  PullRequestMetaLine,
-  PullRequestReviewOutcomeIcon,
   pullRequestChecksState,
   pullRequestChecksStatePresentation,
-  pullRequestReviewOutcomeToneClassName,
   resolvePullRequestState,
   summarizePullRequestChecks,
 } from "./pullRequestPresentation";
@@ -362,8 +353,12 @@ export function PullRequestDetailPanel({
     else setTab(next);
     onTabChange?.(next);
   };
+  const { active: tabMotionActive, durationMs: tabMotionMs } = usePanelAnimationSettings();
+  // Opened panes stay mounted and the others are hidden, so scroll positions survive a switch.
+  const tabPaneProps = (value: PullRequestDetailTab) => ({
+    className: cn("absolute inset-0", value !== tab && "invisible"),
+  });
   const [codeToolbarContainer, setCodeToolbarContainer] = useState<HTMLDivElement | null>(null);
-  const [timelineOrder, setTimelineOrder] = useState<"newest" | "oldest">("newest");
   const [codeCommitScope, setCodeCommitScope] = useState<{
     readonly pullRequestKey: string;
     readonly oid: string | null;
@@ -1201,12 +1196,6 @@ export function PullRequestDetailPanel({
     : detail
       ? summarizePullRequestChecks(detail.checks)
       : null;
-  const approvalCount =
-    detail && !detail.commentsTruncated
-      ? latestPullRequestReviewOutcomes(detail.comments, detail.commits).filter(
-          (entry) => entry.outcome === "approved" && !entry.stale,
-        ).length
-      : 0;
 
   // Checking the branch out, offered from the actions menu and the merge button's menu. Beside a
   // thread the branch is already under the reader's feet, so neither offers it there.
@@ -1560,7 +1549,11 @@ export function PullRequestDetailPanel({
                 inlineConfirm={inlineConfirm}
                 showCheckout={context === "page"}
                 checkoutMenuItems={checkoutMenuItems}
-                onEditTitle={() => setTitleScope({ pullRequestKey, text: detail.title })}
+                onEditTitle={() => {
+                  scrollerByTab.current[tab]?.scrollTo({ top: 0 });
+                  setCondensedByTab((previous) => ({ ...previous, [tab]: false }));
+                  setTitleScope({ pullRequestKey, text: detail.title });
+                }}
                 repositoryUrl={repositoryUrl}
                 checkoutCommand={checkoutCommand}
               />
@@ -1668,19 +1661,34 @@ export function PullRequestDetailPanel({
 
         {detail ? (
           <nav
-            className="col-span-2 flex min-w-0 flex-wrap items-center gap-x-3 gap-y-2 px-4 pt-1.5 pb-3"
+            className="col-span-2 flex min-w-0 items-center px-4 pt-1.5 pb-3"
             aria-label={`${capitalizeTerm(terminology.singular)} tabs`}
           >
             <ToggleGroup
-              className="w-full"
+              className="relative w-full"
               size="segmented-wide"
-              variant="segmented"
+              variant="segmented-slide"
               value={[tab]}
               onValueChange={(next) => {
                 const nextTab = visibleTabs.find((item) => item.value === next[0])?.value;
                 if (nextTab) selectTab(nextTab);
               }}
             >
+              <span
+                aria-hidden
+                className={cn(
+                  "pointer-events-none absolute top-px left-0.5 h-6 rounded-lg surface-raised",
+                  tabMotionActive && "transition-transform ease-out",
+                )}
+                style={{
+                  width: `calc((100% - 0.25rem - ${visibleTabs.length - 1} * 0.125rem) / ${visibleTabs.length})`,
+                  transform: `translateX(calc(${Math.max(
+                    0,
+                    visibleTabs.findIndex((item) => item.value === tab),
+                  )} * (100% + 0.125rem)))`,
+                  ...(tabMotionActive ? { transitionDuration: `${tabMotionMs}ms` } : {}),
+                }}
+              />
               {visibleTabs.map((item) => (
                 <Toggle
                   key={item.value}
@@ -1693,69 +1701,18 @@ export function PullRequestDetailPanel({
                 </Toggle>
               ))}
             </ToggleGroup>
-            <div
-              ref={setCodeToolbarContainer}
-              className={cn("min-w-56 flex-1", tab === "code" ? "flex" : "hidden")}
-            />
-            {tab === "timeline" ? (
-              <div className="ml-auto flex shrink-0 items-center gap-2 text-meta text-muted-foreground">
-                <PullRequestMetaLine
-                  className={cn(
-                    "whitespace-nowrap text-caption transition-opacity",
-                    (activityPending || activityError) && "opacity-35",
-                  )}
-                >
-                  <span
-                    className="inline-flex items-center gap-1"
-                    aria-label={
-                      activityError
-                        ? "Commits unavailable"
-                        : `${detail.commits.length.toLocaleString()} ${
-                            detail.commits.length === 1 ? "commit" : "commits"
-                          }`
-                    }
-                  >
-                    <GitCommitHorizontalIcon aria-hidden className="size-3" />
-                    {activityError
-                      ? "-"
-                      : activityPending
-                        ? "…"
-                        : detail.commits.length.toLocaleString()}
-                  </span>
-                  {approvalCount > 0 ? (
-                    <span
-                      className={cn(
-                        "inline-flex items-center gap-1",
-                        pullRequestReviewOutcomeToneClassName("approved"),
-                      )}
-                    >
-                      <PullRequestReviewOutcomeIcon outcome="approved" className="size-3" />
-                      {approvalCount.toLocaleString()}
-                      <span className="sr-only">
-                        {approvalCount === 1 ? "approval" : "approvals"}
-                      </span>
-                    </span>
-                  ) : null}
-                </PullRequestMetaLine>
-                <Button
-                  size="xs"
-                  variant="ghost-muted"
-                  aria-label={
-                    timelineOrder === "newest"
-                      ? "Show oldest activity first"
-                      : "Show newest activity first"
-                  }
-                  onClick={() =>
-                    setTimelineOrder((value) => (value === "newest" ? "oldest" : "newest"))
-                  }
-                >
-                  <ArrowDownUpIcon aria-hidden className="size-3" />
-                  {timelineOrder === "newest" ? "Newest first" : "Oldest first"}
-                </Button>
-              </div>
-            ) : null}
           </nav>
         ) : null}
+      </div>
+      <div
+        className={cn(
+          "grid shrink-0",
+          tab === "code" && detail ? "grid-rows-[1fr]" : "grid-rows-[0fr]",
+        )}
+      >
+        <div className="min-h-0 overflow-hidden" inert={tab !== "code" || !detail}>
+          <div ref={setCodeToolbarContainer} className="flex px-4 pt-3 pb-2.5" />
+        </div>
       </div>
 
       <SourceControlAppAccessNotice
@@ -1808,7 +1765,7 @@ export function PullRequestDetailPanel({
         ) : detail ? (
           <PullRequestMarkdownContext value={markdownContext}>
             {mountedTabs.has("summary") ? (
-              <div className={cn("absolute inset-0", tab !== "summary" && "invisible")}>
+              <div {...tabPaneProps("summary")}>
                 <PullRequestSummaryTab
                   scrollerRef={scrollerRefs.summary}
                   readiness={readinessCard}
@@ -1828,7 +1785,7 @@ export function PullRequestDetailPanel({
             ) : null}
             {mountedTabs.has("guide") ? (
               <div
-                className={cn("absolute inset-0", tab !== "guide" && "invisible")}
+                {...tabPaneProps("guide")}
                 // Read by the guide run notifier, which stays quiet for a guide on screen.
                 data-guide-shown={tab === "guide" ? guideKey : undefined}
               >
@@ -1860,7 +1817,7 @@ export function PullRequestDetailPanel({
               </div>
             ) : null}
             {mountedTabs.has("timeline") ? (
-              <div className={cn("absolute inset-0", tab !== "timeline" && "invisible")}>
+              <div {...tabPaneProps("timeline")}>
                 {activityPending ? (
                   <PullRequestTimelineGhost />
                 ) : activityError ? (
@@ -1875,7 +1832,7 @@ export function PullRequestDetailPanel({
                     detail={detail}
                     environmentId={environmentId}
                     threadRef={threadRef}
-                    order={timelineOrder}
+                    order="newest"
                     onOpenCommit={openCommit}
                     {...(attachTarget === null ? {} : { onAddToChat: addCommentToChat })}
                     onOpenCode={openFileInCode}
@@ -1884,7 +1841,7 @@ export function PullRequestDetailPanel({
               </div>
             ) : null}
             {mountedTabs.has("code") ? (
-              <div className={cn("absolute inset-0", tab !== "code" && "invisible")}>
+              <div {...tabPaneProps("code")}>
                 <Suspense
                   fallback={
                     <DiffPanelLoadingState label={`Loading ${terminology.singular} diff...`} />
