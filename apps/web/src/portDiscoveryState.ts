@@ -6,6 +6,9 @@ import {
   type ThreadId,
 } from "@t3tools/contracts";
 import { isLoopbackHost } from "@t3tools/shared/preview";
+import { useAtomSet, useAtomValue } from "@effect/atom-react";
+import { Atom } from "effect/reactivity";
+import { useEffect } from "react";
 
 import { previewEnvironment } from "./state/preview";
 import { useEnvironmentQuery } from "./state/query";
@@ -40,11 +43,29 @@ export function boundConfiguredLocalServerUrls(
   return bounded;
 }
 
-function useDiscoveredPorts(
+// The subscription closes with the last reader, so remember its last answer for the next one.
+const lastDiscoveredServersAtom = Atom.family((_environmentId: EnvironmentId | null) =>
+  Atom.make<ReadonlyArray<DiscoveredLocalServer> | null>(null).pipe(Atom.keepAlive),
+);
+
+/** Live servers for an environment, or the last list seen until the subscription answers. */
+export function useDiscoveredPorts(
   environmentId: EnvironmentId | null,
-  configuredUrls?: ReadonlyArray<string>,
 ): ReadonlyArray<DiscoveredLocalServer> {
-  return useDiscoveredPortsState(environmentId, configuredUrls).servers;
+  const query = useEnvironmentQuery(
+    environmentId === null
+      ? null
+      : previewEnvironment.discoveredServers({ environmentId, input: {} }),
+  );
+  const lastAtom = lastDiscoveredServersAtom(environmentId);
+  const last = useAtomValue(lastAtom);
+  const setLast = useAtomSet(lastAtom);
+  const live = query.data?.servers;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- copies the answer into a cache that outlives this subscription
+  useEffect(() => {
+    if (live !== undefined) setLast(live);
+  }, [live, setLast]);
+  return live ?? last ?? EMPTY_PORTS;
 }
 
 export function useDiscoveredPortsState(
