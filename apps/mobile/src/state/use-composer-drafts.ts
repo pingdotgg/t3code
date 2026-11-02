@@ -828,6 +828,7 @@ function signedOutAttachmentOwners() {
 }
 
 export function findLocalComposerClipboardAttachment(
+  knownEnvironmentIds: Iterable<EnvironmentId>,
   environmentId: EnvironmentId,
   id: string,
 ): DraftComposerAttachment | undefined {
@@ -835,7 +836,9 @@ export function findLocalComposerClipboardAttachment(
     appAtomRegistry.get(threadOutboxManager.queuedMessagesByThreadKeyAtom),
   ).flat();
   for (const [key, draft] of Object.entries(appAtomRegistry.get(composerDraftsAtom))) {
-    if (composerDraftEnvironmentId(key, [environmentId], queuedMessages, draft) !== environmentId)
+    if (
+      composerDraftEnvironmentId(key, knownEnvironmentIds, queuedMessages, draft) !== environmentId
+    )
       continue;
     const attachment = draft.attachments.find((entry) => entry.id === id);
     if (attachment) return attachment;
@@ -1085,6 +1088,7 @@ export async function getComposerCloudAccountId(): Promise<string | null> {
 export async function archiveCloudComposerDrafts(
   accountId: string | null,
   environmentIds: ReadonlySet<EnvironmentId>,
+  knownEnvironmentIds: Iterable<EnvironmentId>,
 ): Promise<void> {
   await waitForComposerDraftsLoaded();
   if (!(await threadOutboxManager.load())) throw new Error("Could not preserve queued messages.");
@@ -1099,7 +1103,7 @@ export async function archiveCloudComposerDrafts(
   const remaining = { ...current };
   const savedDrafts = { ...cloud.signedOut[owner]?.drafts };
   for (const [key, draft] of Object.entries(current)) {
-    const environmentId = composerDraftEnvironmentId(key, environmentIds, queued, draft);
+    const environmentId = composerDraftEnvironmentId(key, knownEnvironmentIds, queued, draft);
     if (environmentId !== null && environmentIds.has(environmentId)) {
       savedDrafts[key] = draft;
       delete remaining[key];
