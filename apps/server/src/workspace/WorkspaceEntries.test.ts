@@ -108,6 +108,10 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceEntries", (it) => {
         yield* writeTextFile(cwd, "node_modules/pkg/index.js");
         yield* writeTextFile(cwd, "src/index.ts");
         yield* fileSystem.makeDirectory(path.join(cwd, "empty"));
+        yield* git(cwd, ["init", "sub"]);
+        yield* writeTextFile(cwd, "sub/.gitignore", "dist/\n");
+        yield* writeTextFile(cwd, "sub/dist/out.js");
+        yield* git(cwd, ["update-index", "--add", "--cacheinfo", `160000,${"1".repeat(40)},sub`]);
 
         const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
         const root = yield* workspaceEntries.list({ cwd, directoryPath: "" });
@@ -125,6 +129,17 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceEntries", (it) => {
         expect(root.truncated).toBe(false);
         expect(yield* workspaceEntries.list({ cwd, directoryPath: "node_modules/pkg" })).toEqual({
           entries: [{ path: "node_modules/pkg/index.js", kind: "file", ignored: true }],
+          truncated: false,
+        });
+        // Git refuses pathspecs inside a submodule from the outer repository.
+        expect((yield* workspaceEntries.list({ cwd, directoryPath: "sub" })).entries).toEqual(
+          expect.arrayContaining([
+            { path: "sub/.gitignore", kind: "file" },
+            { path: "sub/dist", kind: "directory", ignored: true },
+          ]),
+        );
+        expect(yield* workspaceEntries.list({ cwd, directoryPath: "sub/dist" })).toEqual({
+          entries: [{ path: "sub/dist/out.js", kind: "file", ignored: true }],
           truncated: false,
         });
         expect(yield* workspaceEntries.list({ cwd, directoryPath: "empty" })).toEqual({
