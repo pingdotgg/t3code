@@ -94,6 +94,8 @@ const make = Effect.gen(function* () {
         expectedBranch: thread.branch,
         expectedWorktreePath: input.cwd,
       });
+      // The first refresh skipped the PR lookup because the thread still had the old branch.
+      yield* observer.refresh({ cwd: input.cwd, threadId: thread.id, runId: input.runId });
     },
     (effect, input) =>
       effect.pipe(

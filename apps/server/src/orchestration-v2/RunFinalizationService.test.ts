@@ -177,6 +177,7 @@ it.effect.each(
   const threadId = ThreadId.make("thread-branch-drift");
   const runId = RunId.make("run-branch-drift");
   const scopeId = CheckpointScopeId.make("scope-branch-drift");
+  let refreshes = 0;
   const updates: Array<{
     branch: unknown;
     expectedBranch: unknown;
@@ -223,7 +224,11 @@ it.effect.each(
             }),
         }),
         Layer.succeed(RunFinalization.RunFinalizationObserver, {
-          refresh: () => Effect.succeed(scenario.checkedOut),
+          refresh: () =>
+            Effect.sync(() => {
+              refreshes += 1;
+              return scenario.checkedOut;
+            }),
           refreshAfterTurn: () => Effect.void,
         }),
       ),
@@ -240,5 +245,7 @@ it.effect.each(
         expectedWorktreePath: "/repo",
       })),
     );
+    // An adopted branch is refreshed again so its PR is found this turn.
+    assert.equal(refreshes, 1 + scenario.expected.length);
   }).pipe(Effect.provide(layer));
 });
