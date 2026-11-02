@@ -2304,11 +2304,14 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
 
       const applySelection = Effect.fnUntraced(function* (modelSelection: ModelSelection) {
         const thinking = getModelSelectionStringOptionValue(modelSelection, "thinking");
+        // Pi re-clamps its thinking level on every set_model, so the cached level is stale.
+        let modelChanged = false;
         if (modelSelection.model === PI_INHERIT_MODEL_SLUG) {
           if (appliedModel !== null && baselineModel !== null) {
             const restoredModel = yield* request({ type: "set_model", ...baselineModel });
             contextWindow = rememberModelContextWindow(restoredModel);
             appliedModel = null;
+            modelChanged = true;
             const updatedAt = yield* DateTime.now;
             sessionEntity = { ...sessionEntity, model: PI_INHERIT_MODEL_SLUG, updatedAt };
             yield* emit({
@@ -2340,6 +2343,7 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
           });
           contextWindow = rememberModelContextWindow(selectedModel);
           appliedModel = modelSelection.model;
+          modelChanged = true;
           const updatedAt = yield* DateTime.now;
           sessionEntity = { ...sessionEntity, model: modelSelection.model, updatedAt };
           yield* emit({
@@ -2350,7 +2354,7 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
         }
         if (
           thinking !== undefined &&
-          thinking !== appliedThinking &&
+          (modelChanged || thinking !== appliedThinking) &&
           PI_THINKING_LEVELS.has(thinking)
         ) {
           yield* request({ type: "set_thinking_level", level: thinking });

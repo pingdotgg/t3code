@@ -1833,6 +1833,48 @@ describe("PiAdapterV2", () => {
     }).pipe(Effect.scoped, Effect.provide(layerTest)),
   );
 
+  it.effect("reapplies the selected thinking level after switching models", () =>
+    Effect.gen(function* () {
+      const fake = yield* makeFakePi;
+      const { runtime, takeEvent } = yield* openRuntime(fake);
+      const providerThread = yield* runtime.ensureThread({
+        threadId: THREAD_ID,
+        modelSelection: modelSelection("default"),
+        runtimePolicy,
+      });
+      const runTurn = Effect.fnUntraced(function* (
+        model: string,
+        thinking: string,
+        runOrdinal: number,
+      ) {
+        yield* startTurn(
+          runtime,
+          providerThread,
+          "default",
+          [],
+          "Hello pi",
+          { instanceId: PI_INSTANCE_ID, model, options: [{ id: "thinking", value: thinking }] },
+          runOrdinal,
+        );
+        yield* fake.emit({ type: "agent_start" });
+        yield* fake.emit({ type: "agent_end", messages: [], willRetry: false });
+        yield* fake.emit({ type: "agent_settled" });
+        yield* takeEvent((event) => event.type === "turn.terminal");
+      });
+
+      yield* runTurn("xai/grok-4.6", "xhigh", 1);
+      yield* runTurn("xai/grok-4.6-fast", "xhigh", 2);
+      yield* runTurn("xai/grok-4.6-fast", "low", 3);
+
+      assert.equal((yield* fake.takeRequest("set_model"))["modelId"], "grok-4.6");
+      assert.equal((yield* fake.takeRequest("set_thinking_level"))["level"], "xhigh");
+      assert.equal((yield* fake.takeRequest("set_model"))["modelId"], "grok-4.6-fast");
+      // Pi clamped the level for the new model, so the selection must be sent again.
+      assert.equal((yield* fake.takeRequest("set_thinking_level"))["level"], "xhigh");
+      assert.equal((yield* fake.takeRequest("set_thinking_level"))["level"], "low");
+    }).pipe(Effect.scoped, Effect.provide(layerTest)),
+  );
+
   it.effect.each([
     { historical: false, label: "the latest turn" },
     { historical: true, label: "a historical turn" },
