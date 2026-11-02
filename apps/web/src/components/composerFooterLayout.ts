@@ -85,6 +85,16 @@ export function resolveRestingComposerControlsNaturalWidth(
   return restingComposerControlsWidth(input, 0);
 }
 
+export function resolveRestingComposerControlsMinimumWidth(
+  input: RestingComposerControlsMeasurement,
+): number {
+  return restingComposerControlsWidth(
+    input,
+    input.blockWidths.length,
+    input.iconOnlyFixedWidth ?? input.minimumFixedWidth,
+  );
+}
+
 const RESTING_CONTROLS_SLACK_PX = 1;
 
 export interface RestingComposerControlsLayout {
