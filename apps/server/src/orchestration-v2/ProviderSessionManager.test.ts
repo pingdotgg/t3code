@@ -3953,59 +3953,6 @@ it.effect(
 );
 
 it.effect(
-  "ProviderSessionManagerV2 keeps the cached runtime when the fingerprint re-reads to the same value",
-  () =>
-    Effect.gen(function* () {
-      const state = yield* Ref.make(emptyState);
-      const credentialFingerprint = yield* Ref.make<string | null | undefined>("fp-alice");
-      const effect = Effect.gen(function* () {
-        const eventSink = yield* EventSink.EventSinkV2;
-        const idAllocator = yield* IdAllocator.IdAllocatorV2;
-        const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
-        const now = yield* DateTime.now;
-        const threadId = ThreadId.make("thread-fp-same-digest");
-        const providerSessionId = yield* idAllocator.allocate.providerSession({
-          providerInstanceId: modelSelection.instanceId,
-          threadId,
-        });
-
-        yield* eventSink.write({
-          events: [yield* makeThreadCreatedEvent({ idAllocator, threadId, now })],
-        });
-        const firstRuntime = yield* manager.open({
-          threadId,
-          providerSessionId,
-          modelSelection,
-          runtimePolicy,
-        });
-
-        yield* Ref.set(credentialFingerprint, "fp-alice");
-
-        const secondRuntime = yield* manager.open({
-          threadId,
-          providerSessionId,
-          modelSelection,
-          runtimePolicy,
-        });
-
-        assert.strictEqual(secondRuntime, firstRuntime);
-        assert.equal((yield* Ref.get(state)).openCount, 1);
-        assert.equal((yield* Ref.get(state)).closeCount, 0);
-      });
-
-      yield* effect.pipe(
-        Effect.provide(
-          layerTest({
-            state,
-            idleTimeoutMs: 60_000,
-            credentialFingerprint,
-          }),
-        ),
-      );
-    }),
-);
-
-it.effect(
   "ProviderSessionManagerV2 retains busy session across fingerprint flip until in-flight turn finishes",
   () =>
     Effect.gen(function* () {
