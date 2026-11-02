@@ -300,6 +300,8 @@ describe("DirectEndpoints Tailscale Serve", () => {
         const status = yield* Ref.make(200);
         const finishProbe = yield* Deferred.make<void>();
         const probeStarted = yield* Deferred.make<void>();
+        const revalidationStarted = yield* Deferred.make<void>();
+        const finishRevalidation = yield* Deferred.make<void>();
         const service = yield* DirectEndpoints.make.pipe(
           Effect.provide(
             Layer.mergeAll(
@@ -311,6 +313,13 @@ describe("DirectEndpoints Tailscale Serve", () => {
                   Deferred.succeed(probeStarted, undefined).pipe(
                     Effect.andThen(Deferred.await(finishProbe)),
                     Effect.andThen(Ref.get(status)),
+                    Effect.tap((status) =>
+                      status === 502
+                        ? Deferred.succeed(revalidationStarted, undefined).pipe(
+                            Effect.andThen(Deferred.await(finishRevalidation)),
+                          )
+                        : Effect.void,
+                    ),
                     Effect.map((status) =>
                       HttpClientResponse.fromWeb(request, new Response(null, { status })),
                     ),
@@ -332,7 +341,11 @@ describe("DirectEndpoints Tailscale Serve", () => {
         ]);
         expect(yield* service.resolveAvailable()).toEqual(validated);
         yield* Ref.set(status, 502);
-        expect(yield* service.resolve()).toEqual([bound]);
+        const revalidating = yield* Effect.forkScoped(service.resolve());
+        yield* Deferred.await(revalidationStarted);
+        expect(yield* service.resolveAvailable()).toEqual(validated);
+        yield* Deferred.succeed(finishRevalidation, undefined);
+        expect(yield* Fiber.join(revalidating)).toEqual([bound]);
         expect(yield* service.resolveAvailable()).toEqual([bound]);
       }).pipe(Effect.scoped),
   );
