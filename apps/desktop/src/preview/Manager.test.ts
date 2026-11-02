@@ -814,6 +814,14 @@ describe("PreviewManager", () => {
         yield* manager.navigate("tab_redirect", "https://example.com/");
 
         preview.loadURL.mockRejectedValueOnce(
+          loadError(-3, "ERR_ABORTED", "https://example.com/blocked"),
+        );
+        const blocked = yield* Effect.exit(
+          manager.navigate("tab_redirect", "https://example.com/blocked"),
+        );
+        expect(Exit.isFailure(blocked)).toBe(true);
+
+        preview.loadURL.mockRejectedValueOnce(
           loadError(-105, "ERR_NAME_NOT_RESOLVED", "https://missing.invalid/"),
         );
         const failed = yield* Effect.exit(

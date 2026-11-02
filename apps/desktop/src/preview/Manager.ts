@@ -1997,10 +1997,14 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     yield* attemptPromise({ operation: "navigate.loadURL", tabId, webContentsId: wc.id }, () =>
       wc.loadURL(url),
     ).pipe(
-      // Electron rejects with ERR_ABORTED when the page starts another navigation, such as a
-      // script redirect, before this load finishes; did-fail-load ignores that code too.
+      // Electron reports the replacement URL for a superseded load; blocked unloads report the requested URL.
       Effect.catchIf(
-        (error) => Predicate.hasProperty(error.cause, "errno") && error.cause.errno === -3,
+        (error) =>
+          Predicate.hasProperty(error.cause, "errno") &&
+          error.cause.errno === -3 &&
+          Predicate.hasProperty(error.cause, "url") &&
+          typeof error.cause.url === "string" &&
+          error.cause.url !== url,
         () => Effect.void,
       ),
     );
