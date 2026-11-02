@@ -11022,6 +11022,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         yield* Queue.offer(harness.sdkMessages, wakeResult);
         yield* harness.awaitContinuation(1);
 
+        yield* fileSystem.remove(settingsPath);
         yield* harness.runtime.startTurn(
           makeClaudeTestTurnInput({
             threadId: harness.threadId,
@@ -11053,7 +11054,6 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           ),
         );
 
-        yield* fileSystem.remove(settingsPath);
         yield* harness.runtime.startTurn(
           makeClaudeTestTurnInput({
             threadId: harness.threadId,

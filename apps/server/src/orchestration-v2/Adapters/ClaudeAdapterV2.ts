@@ -4113,6 +4113,7 @@ interface ClaudeLiveQueryContext {
   readonly nativeThreadId: string;
   readonly query: ClaudeAgentSdkQuerySession;
   readonly queryPolicyKey: string;
+  readonly launchArgSettings: ClaudeSdkSettings | undefined;
   selection: CompiledClaudeModelSelection;
   readonly closed: Deferred.Deferred<void, never>;
   lastTurn: ActiveClaudeTurnContext | null;
@@ -10194,14 +10195,22 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           ) {
             return existing;
           }
-          const launchArgSettings = yield* readClaudeLaunchArgSettings({
+          const reuseLaunchSettings =
+            existing !== null &&
+            existing.nativeThreadId === nativeThreadId &&
+            existing.queryPolicyKey === queryPolicyKey &&
+            !existing.stopping;
+          const readLaunchSettings = readClaudeLaunchArgSettings({
             settings: adapterOptions.settings,
             cwd: turnInput.runtimePolicy.cwd,
             fileSystem,
             path,
           });
-          const catalog = yield* modelCatalog(turnInput.runtimePolicy.cwd, launchArgSettings);
-          const compiledSelection = compileClaudeModelSelection(turnInput.modelSelection, catalog);
+          let launchArgSettings = reuseLaunchSettings
+            ? existing.launchArgSettings
+            : yield* readLaunchSettings;
+          let catalog = yield* modelCatalog(turnInput.runtimePolicy.cwd, launchArgSettings);
+          let compiledSelection = compileClaudeModelSelection(turnInput.modelSelection, catalog);
           if (
             existing !== null &&
             existing.nativeThreadId === nativeThreadId &&
@@ -10267,6 +10276,12 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             (yield* liveProcessRunsBackgroundWork(existing))
           ) {
             return yield* new ClaudeBackgroundWorkBlocksQueryReplacementError();
+          }
+
+          if (reuseLaunchSettings) {
+            launchArgSettings = yield* readLaunchSettings;
+            catalog = yield* modelCatalog(turnInput.runtimePolicy.cwd, launchArgSettings);
+            compiledSelection = compileClaudeModelSelection(turnInput.modelSelection, catalog);
           }
 
           // Read before closing the live process so a bad path leaves it running.
@@ -10376,6 +10391,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             nativeThreadId,
             query: querySession,
             queryPolicyKey,
+            launchArgSettings,
             selection: compiledSelection,
             closed,
             lastTurn: null,
