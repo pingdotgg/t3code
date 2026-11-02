@@ -448,8 +448,8 @@ const CHECKPOINT_RECOVERY_MAX_CANDIDATES = 64;
 const CHECKPOINT_RECOVERY_TIMEOUT = "5 seconds";
 const GIT_CHECK_IGNORE_MAX_STDIN_BYTES = 256 * 1024;
 // HEAD reflog subjects of operations that create commits. Fast-forwards are imports, so excluded.
-const LOCAL_COMMIT_REFLOG_SUBJECT =
-  /^(?:(?:commit(?: \([^)]*\))?|cherry-pick|revert|(?:rebase|pull .*) \((?:pick|reword|edit|squash|fixup)\)): |(?:merge|pull) .*: Merge made by )/;
+export const LOCAL_COMMIT_REFLOG_SUBJECT =
+  /^(?:(?:commit(?: \([^)]*\))?|cherry-pick|revert|(?:rebase|pull(?: .*)?) \((?:pick|reword|edit|squash|fixup)\)): |(?:merge .*|pull(?: .*)?): Merge made by )/;
 const WORKSPACE_GIT_HARDENED_CONFIG_ARGS = [
   "-c",
   "core.fsmonitor=false",
