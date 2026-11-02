@@ -253,7 +253,7 @@ describe("AddProviderInstanceDialog environment routing", () => {
     expect(document.body.textContent).toContain("Executable is required.");
     expect(settingsHooks.mutate).not.toHaveBeenCalled();
 
-    await type("#add-provider-acpRegistry-manual-commandPath", "dsh");
+    await type('input[id^="add-provider-acpRegistry-manual-"][id$="-commandPath"]', "dsh");
     const commandArgs = ["--profile", "acp", " literal $(value) ; ", ""];
     for (const [index, argument] of commandArgs.entries()) {
       await click("Add argument");

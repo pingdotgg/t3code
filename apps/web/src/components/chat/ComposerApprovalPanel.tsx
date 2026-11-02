@@ -1,6 +1,7 @@
 import { ShieldIcon } from "lucide-react";
 import { use, useEffect, useEffectEvent, useState } from "react";
 import { BackgroundThreadContext } from "./backgroundThread";
+import { useLayoutPaneFocusedRef } from "../../layout/layoutPaneContext";
 import type { ProviderApprovalDecision, RuntimeRequestId } from "@t3tools/contracts";
 import type { PendingApproval } from "../../session-logic";
 import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from "../ui/collapsible";
@@ -26,6 +27,7 @@ export function ComposerApprovalPanel({
   onRespond: (requestId: RuntimeRequestId, decision: ProviderApprovalDecision) => Promise<unknown>;
 }) {
   const backgroundThread = use(BackgroundThreadContext);
+  const paneFocusedRef = useLayoutPaneFocusedRef();
   const [expanded, setExpanded] = useState(true);
   const [alwaysAllow, setAlwaysAllow] = useState(false);
   const canRespond =
@@ -41,6 +43,7 @@ export function ComposerApprovalPanel({
   useEffect(() => {
     if (!canRespond || backgroundThread) return;
     const handler = (event: KeyboardEvent) => {
+      if (!paneFocusedRef.current) return;
       if (
         (event.key !== "Escape" && event.key !== "Enter") ||
         event.defaultPrevented ||
@@ -64,7 +67,7 @@ export function ComposerApprovalPanel({
     };
     document.addEventListener("keydown", handler);
     return () => document.removeEventListener("keydown", handler);
-  }, [canRespond, primary, decline, backgroundThread]);
+  }, [canRespond, primary, decline, backgroundThread, paneFocusedRef]);
   const title =
     approval.requestKind === "command"
       ? "Command approval"

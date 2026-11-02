@@ -38,8 +38,10 @@ import type { PullRequestListPreferences, PullRequestListSort } from "./pullRequ
 import { assignProjectsToEnvironments } from "./pullRequestProjectAssignment.logic";
 import { pullRequestFilterProjects } from "@t3tools/client-runtime/pull-request-project-filter";
 import { pullRequestListEntryId } from "./pullRequestListGroups.logic";
+import { SORT_OPTIONS } from "./pullRequestListOptions";
 
 export interface PullRequestsSearch extends PullRequestListPreferences {
+  readonly pane?: 1 | undefined;
   readonly environmentId?: EnvironmentId;
   readonly projectId?: ProjectId;
   readonly host?: string;
@@ -318,5 +320,78 @@ export function usePullRequestDisplayGroups({
     hostActionsOf,
     closeSweepRows,
     listedPullRequestsBySurface,
+  };
+}
+
+const MAX_SEARCH_LABEL_CANDIDATES = 100;
+
+function pullRequestSearchLabels(raw: unknown): Partial<Pick<PullRequestsSearch, "labels">> {
+  const values = (Array.isArray(raw) ? raw : typeof raw === "string" ? [raw] : []).slice(
+    0,
+    MAX_SEARCH_LABEL_CANDIDATES,
+  );
+  const labels: Array<string> = [];
+  const seen = new Set<string>();
+  for (const rawValue of values) {
+    if (typeof rawValue !== "string") continue;
+    const value = rawValue.trim().slice(0, 200);
+    const key = value.toLowerCase();
+    if (value.length === 0 || seen.has(key)) continue;
+    labels.push(value);
+    seen.add(key);
+    if (labels.length === 10) break;
+  }
+  return labels.length === 0 ? {} : { labels };
+}
+
+export function validatePullRequestsSearch(raw: Record<string, unknown>): PullRequestsSearch {
+  return {
+    ...(raw.pane === 1 || raw.pane === "1" ? { pane: 1 as const } : {}),
+    involvement:
+      raw.involvement === "reviewing" || raw.involvement === "authored" ? raw.involvement : "all",
+    state:
+      raw.state === "closed" || raw.state === "merged" || raw.state === "all" ? raw.state : "open",
+    ...(SORT_OPTIONS.some((option) => option.value === raw.sort)
+      ? { sort: raw.sort as PullRequestListSort }
+      : {}),
+    ...(typeof raw.repository === "string" && raw.repository
+      ? { repository: raw.repository.slice(0, 200) }
+      : {}),
+    ...(typeof raw.number === "number" && Number.isInteger(raw.number) && raw.number > 0
+      ? { number: raw.number }
+      : {}),
+    ...(typeof raw.projectId === "string" && raw.projectId
+      ? { projectId: raw.projectId as ProjectId }
+      : {}),
+    ...(typeof raw.environmentId === "string" && raw.environmentId
+      ? { environmentId: raw.environmentId as EnvironmentId }
+      : {}),
+    ...(typeof raw.host === "string" && raw.host ? { host: raw.host.slice(0, 200) } : {}),
+    ...(typeof raw.selectedProjectId === "string" && raw.selectedProjectId
+      ? { selectedProjectId: raw.selectedProjectId as ProjectId }
+      : {}),
+    ...(typeof raw.selectedHost === "string" && raw.selectedHost
+      ? { selectedHost: raw.selectedHost.slice(0, 200) }
+      : {}),
+    ...(typeof raw.selectedEnvironmentId === "string" && raw.selectedEnvironmentId
+      ? { selectedEnvironmentId: raw.selectedEnvironmentId as EnvironmentId }
+      : {}),
+    // Keep every query as text and always own the key so an unvalidated parent value cannot leak.
+    q:
+      raw.q !== undefined && raw.q !== null && raw.q !== ""
+        ? (typeof raw.q === "string" ? raw.q : JSON.stringify(raw.q)).slice(0, 200)
+        : undefined,
+    ...(raw.draft === "only" || raw.draft === "hide" ? { draft: raw.draft } : {}),
+    ...(raw.review === "approved" ||
+    raw.review === "changes-requested" ||
+    raw.review === "review-required" ||
+    raw.review === "none"
+      ? { review: raw.review }
+      : {}),
+    ...(raw.checks === "passing" || raw.checks === "failing" ? { checks: raw.checks } : {}),
+    ...(typeof raw.author === "string" && raw.author.trim()
+      ? { author: raw.author.trim().slice(0, 200) }
+      : {}),
+    ...pullRequestSearchLabels(raw.labels),
   };
 }

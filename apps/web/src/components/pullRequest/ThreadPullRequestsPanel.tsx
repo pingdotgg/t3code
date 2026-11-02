@@ -289,7 +289,8 @@ function LinkRowImpl({
           "pointer-events-none opacity-0 group-hover/pr-row:pointer-events-auto group-hover/pr-row:opacity-100",
           "has-[[data-popup-open]]:pointer-events-auto has-[[data-popup-open]]:opacity-100",
           "has-[:focus-visible]:pointer-events-auto has-[:focus-visible]:opacity-100",
-          "group-has-[[data-pull-request-action-pending=true]]/pr-row:hidden",
+          // The row's quick actions come right before this span.
+          "[[data-pull-request-action-pending=true]~&]:hidden",
           speedMode && hasQuickActions && "hidden",
         )}
       >
@@ -442,7 +443,11 @@ function EnabledThreadPullRequestsPanel({ threadRef }: { threadRef: ScopedThread
 
   return (
     <PullRequestSpeedModeContext value={speedMode}>
-      <div className="flex h-full min-h-0 flex-col">
+      {/* The list scrolls up under a pane's tab row (--surface-top-inset). */}
+      <div
+        className="flex h-[calc(100%+var(--surface-top-inset,0px))] min-h-0 flex-col"
+        data-surface-reaches-under-header=""
+      >
         {/* Threads that run a stack or a sweep link hundreds of pull requests; only the rows in
           view are mounted. */}
         <LegendList<PullRequestListLine>
@@ -467,7 +472,7 @@ function EnabledThreadPullRequestsPanel({ threadRef }: { threadRef: ScopedThread
           )}
           estimatedItemSize={44}
           drawDistance={440}
-          className="min-h-0 flex-1 overscroll-contain p-1.5"
+          className="min-h-0 flex-1 overscroll-contain p-1.5 pt-under-header-1.5"
         />
         <footer className="flex items-center justify-between border-t border-border py-1.5 ps-4 pe-2.25 text-2xs text-muted-foreground">
           <span>

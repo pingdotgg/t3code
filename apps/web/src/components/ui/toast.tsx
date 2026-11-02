@@ -596,7 +596,7 @@ function Toasts({ position }: { position: ToastPosition }) {
           "data-[position*=right]:right-(--toast-inset)",
           "data-[position*=center]:-translate-x-1/2 data-[position*=center]:left-1/2",
           // The theme editor docks top-right over the stack (right-5, 21.5rem wide), so the stack steps left of it instead of peeking out from under it.
-          "md:data-[position=top-right]:[#root:has([data-theme-editor-panel][data-docked])~[data-slot=toast-portal]_&]:right-96",
+          "md:data-[position=top-right]:[[data-theme-editor-docked]_&]:right-96",
         )}
         data-position={position}
         data-slot="toast-viewport"

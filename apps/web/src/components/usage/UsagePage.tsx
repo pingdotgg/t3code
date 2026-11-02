@@ -14,7 +14,6 @@ import {
   ChartNoAxesColumnIcon,
   CircleAlertIcon,
   ChevronDownIcon,
-  ChevronRightIcon,
   InfoIcon,
   ServerIcon,
   SlidersHorizontalIcon,
@@ -371,15 +370,12 @@ export function UsagePage() {
       ? `${formatDateTimeShort(shownWindow.sinceTime, shownWindow.timeZone, hour12)} – ${formatDateTimeShort(shownWindow.untilTime, shownWindow.timeZone, hour12)}`
       : `${formatDayShort(shownWindow.sinceDay)} – ${formatDayShort(shownWindow.untilDay)}`;
   const topbarContent = (
-    <div className="grid w-full min-w-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3 py-1 @4xl/usage-header:flex">
+    <div className="grid w-full min-w-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3 py-2 @4xl/usage-header:flex">
       <WorkspaceBreadcrumb ariaLabel="Usage breadcrumb" className="min-w-0">
-        <WorkspaceBreadcrumbItem className="gap-2">
-          <ChartNoAxesColumnIcon className="size-3.5 shrink-0" aria-hidden />
+        <WorkspaceBreadcrumbItem>
           <h1>Usage</h1>
         </WorkspaceBreadcrumbItem>
-        <WorkspaceBreadcrumbSeparator>
-          <ChevronRightIcon className="size-3" />
-        </WorkspaceBreadcrumbSeparator>
+        <WorkspaceBreadcrumbSeparator />
         <WorkspaceBreadcrumbItem className="min-w-10 shrink">
           <UsageEnvironmentFilter
             environments={environments}
@@ -394,9 +390,7 @@ export function UsagePage() {
             onOpenModelPrices={() => setPriceDialog({})}
           />
         </WorkspaceBreadcrumbItem>
-        <WorkspaceBreadcrumbSeparator>
-          <ChevronRightIcon className="size-3" />
-        </WorkspaceBreadcrumbSeparator>
+        <WorkspaceBreadcrumbSeparator />
         <WorkspaceBreadcrumbItem current className="min-w-10">
           <UsageProviderFilter
             hiddenProviders={hiddenProviders}
@@ -515,9 +509,9 @@ export function UsagePage() {
   );
 
   return (
-    <AppRouteModal label="Usage">
-      <div className="flex min-h-0 min-w-0 flex-1 flex-col">
-        <header className="@container/usage-header flex min-h-12 shrink-0 items-center gap-1 border-b ps-5 pe-2">
+    <AppRouteModal label="Usage" variant="app-panel">
+      <div data-app-modal-pane="" className="flex min-h-0 min-w-0 flex-1 flex-col">
+        <header className="@container/usage-header flex min-h-12 shrink-0 items-center gap-1 ps-5 pe-2">
           {topbarContent}
           <AppRouteModalClose />
         </header>
@@ -1408,21 +1402,21 @@ function UsageEnvironmentFilter({
 
   return (
     <Menu>
-      <MenuTrigger render={<InlineButton />} className="min-w-0 max-w-full sm:shrink">
-        {/* The leading glyph doubles as the issue status, so the picker keeps
-            its width while environments report. */}
-        <span className="mr-1.5 flex size-3.5 shrink-0 items-center justify-center">
+      <MenuTrigger render={<InlineButton />} className="group/usage-environment min-w-0 max-w-full">
+        <WorkspaceBreadcrumbText>{label}</WorkspaceBreadcrumbText>
+        <span className="flex size-3.5 shrink-0 items-center justify-center text-muted-foreground">
           {showUsageStatus && hasIssue ? (
             <CircleAlertIcon
               className="size-3.5 text-warning-foreground"
               aria-label="Some environments could not report usage"
             />
           ) : (
-            <ServerIcon className="size-3.5" aria-hidden />
+            <ChevronDownIcon
+              className="size-3.5 opacity-60 transition-opacity group-hover/usage-environment:opacity-100 group-focus-visible/usage-environment:opacity-100 group-data-popup-open/usage-environment:opacity-100"
+              aria-hidden
+            />
           )}
         </span>
-        <WorkspaceBreadcrumbText className="mr-1.5">{label}</WorkspaceBreadcrumbText>
-        <ChevronDownIcon className="size-3 shrink-0 text-icon-muted" aria-hidden />
       </MenuTrigger>
       <MenuPopup align="start">
         <MenuCheckboxItem
@@ -1556,9 +1550,12 @@ function UsageProviderFilter({
 
   return (
     <Menu>
-      <MenuTrigger render={<InlineButton />} className="min-w-0 max-w-full sm:shrink">
-        <span className="mr-1.5 min-w-0 truncate">{label}</span>
-        <ChevronDownIcon className="size-3 shrink-0 text-icon-muted" aria-hidden />
+      <MenuTrigger render={<InlineButton />} className="group/usage-provider min-w-0 max-w-full">
+        <span className="min-w-0 truncate">{label}</span>
+        <ChevronDownIcon
+          className="size-3.5 shrink-0 text-muted-foreground opacity-60 transition-opacity group-hover/usage-provider:opacity-100 group-focus-visible/usage-provider:opacity-100 group-data-popup-open/usage-provider:opacity-100"
+          aria-hidden
+        />
       </MenuTrigger>
       <MenuPopup align="start">
         <MenuCheckboxItem

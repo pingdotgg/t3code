@@ -16,7 +16,7 @@ const DIALOG_MEDIA_POPUP_CLASS = `${DIALOG_POPUP_BASE_CLASS} max-h-[92vh] w-auto
 const DIALOG_APP_POPUP_CLASS = `${DIALOG_POPUP_CLASS} size-full overflow-hidden text-body max-sm:rounded-none max-sm:pt-safe max-sm:pb-safe duration-150 ease-out data-ending-style:scale-[0.985] data-starting-style:scale-[0.985] sm:max-h-[60rem] sm:max-w-[80rem]`;
 
 // A large floating panel with its own surface, independent of window chrome.
-const DIALOG_APP_PANEL_POPUP_CLASS = `${DIALOG_POPUP_BASE_CLASS} kbd-in-popover size-full max-h-[60rem] max-w-[75rem] overflow-hidden rounded-2xl border border-black/10 bg-[var(--app-panel-fill,light-dark(#fafafa,#171717))] text-body text-foreground shadow-[0_24px_64px_#00000040] dark:border-white/10 dark:shadow-[inset_0_1px_0_#ffffff12,0_24px_64px_#000000cc] duration-150 ease-out data-ending-style:scale-[0.985] data-starting-style:scale-[0.985]`;
+const DIALOG_APP_PANEL_POPUP_CLASS = `${DIALOG_POPUP_BASE_CLASS} kbd-in-popover size-full max-h-[60rem] max-w-[75rem] overflow-hidden rounded-[16px] border border-black/10 bg-[var(--app-panel-fill,light-dark(#fafafa,#171717))] text-body text-foreground shadow-[0_24px_64px_#00000040] dark:border-white/10 dark:shadow-[inset_0_1px_0_#ffffff12,0_24px_64px_#000000cc] duration-150 ease-out data-ending-style:scale-[0.985] data-starting-style:scale-[0.985]`;
 
 const DIALOG_MOBILE_SHEET_CLASS =
   "max-sm:max-w-none max-sm:rounded-none max-sm:border-x-0 max-sm:border-t max-sm:border-b-0 max-sm:opacity-[calc(1-min(var(--nested-dialogs),1))] max-sm:data-ending-style:translate-y-4 max-sm:data-starting-style:translate-y-4";

@@ -19,6 +19,8 @@ import {
 } from "@t3tools/contracts";
 import * as Equal from "effect/Equal";
 import { useLocation, useNavigate } from "@tanstack/react-router";
+import { useLayoutPageLocation } from "../../layout/pageNavigation";
+import { useLayoutPane, useLayoutPaneFocusedRef } from "../../layout/layoutPaneContext";
 import { flushSync } from "react-dom";
 import {
   createContext,
@@ -913,14 +915,18 @@ export function SettingsPageContainer({
   centered?: boolean;
 }) {
   const navigate = useNavigate();
-  const hash = useLocation({ select: (location) => location.hash });
-  const pathname = useLocation({ select: (location) => location.pathname });
+  const { hash, pathname, search } = useLayoutPageLocation();
+  const focusedRef = useLayoutPaneFocusedRef();
+  const { focused } = useLayoutPane();
   const highlightTarget = useLocation({
     select: (location) => location.state.settingsTargetHighlight !== false,
   });
   const targetId = hash.replace(/^#/, "") || null;
   const clearTargetHash = () => {
+    if (!focusedRef.current) return;
     void navigate({
+      to: pathname,
+      search: () => search,
       hash: "",
       replace: true,
       resetScroll: false,
@@ -931,15 +937,19 @@ export function SettingsPageContainer({
 
   return (
     <SettingsSearchTargetProvider
-      targetId={targetId}
+      targetId={focused ? targetId : null}
       highlightTarget={highlightTarget}
       onTargetHandled={clearTargetHash}
     >
-      <div className="scrollbar-gutter-both flex-1 overflow-y-auto" data-settings-page-scroll>
+      <div
+        className="scrollbar-gutter-both flex-1 scroll-pt-[var(--surface-top-inset,0px)] overflow-y-auto"
+        data-settings-page-scroll
+      >
         <WorkspacePageContainer
           width={width}
+          // Below a pane header the page scrolls under (--surface-top-inset).
           className={cn(
-            "max-w-[688px] gap-7 pt-9",
+            "max-w-[688px] gap-7 pt-under-header-15",
             centered && "min-h-full justify-center",
             className,
           )}

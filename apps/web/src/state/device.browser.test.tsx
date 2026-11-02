@@ -38,7 +38,8 @@ vi.mock(import("./use-atom-command"), () => {
   const run = () => Promise.resolve({ _tag: "Success", value: {} });
   return { useAtomCommand: (() => run) as never };
 });
-vi.mock(import("../components/device/DeviceHostUpdates"), () => ({
+vi.mock(import("../components/device/DeviceHostUpdates"), async (original) => ({
+  ...(await original()),
   DeviceHostUpdates: () => null,
 }));
 

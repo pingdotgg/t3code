@@ -7,7 +7,7 @@ import { useAtomCommand } from "../../state/use-atom-command";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
 import { Label } from "../ui/label";
-import { ConnectionStatusDot } from "../ConnectionStatusDot";
+import { StatusDot } from "../ui/status-dot";
 import { useSettingsScope } from "./SettingsScopeContext";
 import { useScopedSettings } from "./useScopedSettings";
 import { SettingsSection } from "./settingsLayout";
@@ -57,17 +57,17 @@ type EndpointCheck = { readonly url: string; readonly result: OtlpEndpointCheckR
 const isHttpUrl = (url: string) => /^https?:\/\/./i.test(url);
 
 function endpointStatus(url: string, check: EndpointCheck | undefined) {
-  if (url === "") return { label: "Off", dot: "bg-muted-foreground/40" };
-  if (check?.url !== url) return { label: "Not checked", dot: "bg-muted-foreground/40" };
+  if (url === "") return { label: "Off", tone: "neutral" } as const;
+  if (check?.url !== url) return { label: "Not checked", tone: "neutral" } as const;
   const { result } = check;
-  if (result === null) return { label: "Checking…", dot: "bg-warning" };
+  if (result === null) return { label: "Checking…", tone: "warning" } as const;
   switch (result._tag) {
     case "Accepted":
-      return { label: `Connected · ${Math.round(result.latencyMs)} ms`, dot: "bg-success" };
+      return { label: `Connected · ${Math.round(result.latencyMs)} ms`, tone: "success" } as const;
     case "Rejected":
-      return { label: `Rejected · HTTP ${result.status}`, dot: "bg-destructive" };
+      return { label: `Rejected · HTTP ${result.status}`, tone: "danger" } as const;
     case "Unreachable":
-      return { label: result.timedOut ? "Timed out" : "Unreachable", dot: "bg-destructive" };
+      return { label: result.timedOut ? "Timed out" : "Unreachable", tone: "danger" } as const;
   }
 }
 
@@ -186,14 +186,14 @@ function TelemetryExportForm() {
           const status = override
             ? {
                 label: check ? `${override.label} · ${check.label}` : override.label,
-                dot: check?.dot ?? "bg-muted-foreground/40",
+                tone: check?.tone ?? ("neutral" as const),
               }
             : check;
           return (
             <div key={key} className="grid gap-1.5">
               <div className="flex items-center justify-between gap-3">
                 <div className="flex items-center gap-1.5">
-                  {status && <ConnectionStatusDot dotClassName={status.dot} />}
+                  {status && <StatusDot tone={status.tone} />}
                   <Label htmlFor={key}>{label} endpoint</Label>
                 </div>
                 {status && <span className="text-meta text-muted-foreground">{status.label}</span>}

@@ -10,6 +10,7 @@ import {
 import { canSnooze, effectiveSnoozed } from "@t3tools/client-runtime/state/thread-settled";
 import {
   AuthOrchestrationOperateScope,
+  type ContextMenuItem,
   type ScopedThreadRef,
   type ThreadId,
 } from "@t3tools/contracts";
@@ -63,8 +64,19 @@ export function useThreadActionMenu(input: {
   readonly onStartRename: () => void;
   readonly onFind?: ((threadRef: ScopedThreadRef) => void) | undefined;
   readonly canShareWithGuest: boolean;
+  /** Tab actions prepended to the thread menu, read when it opens. */
+  readonly leadingItems?: () => readonly ContextMenuItem<string>[];
+  readonly onLeadingAction?: (id: string) => void;
 }) {
-  const { threadRef, projectCwd, onStartRename, onFind, canShareWithGuest } = input;
+  const {
+    threadRef,
+    projectCwd,
+    onStartRename,
+    onFind,
+    canShareWithGuest,
+    leadingItems,
+    onLeadingAction,
+  } = input;
   const router = useRouter();
   const projects = useProjects();
   const primaryEnvironmentId = usePrimaryEnvironmentId();
@@ -149,9 +161,24 @@ export function useThreadActionMenu(input: {
         canShareWithGuest,
         canTurnIntoProject: canTurnThreadIntoProject(threadRef),
       });
-      const clicked = await settlePromise(() => api.contextMenu.show(items, position));
+      const leading = leadingItems?.() ?? [];
+      const leadingIds = new Set(leading.map((item) => item.id));
+      const menuItems: ContextMenuItem<string>[] =
+        leading.length > 0
+          ? [
+              ...leading,
+              ...items.map((item, index) =>
+                index === 0 ? { ...item, separatorBefore: true } : item,
+              ),
+            ]
+          : [...items];
+      const clicked = await settlePromise(() => api.contextMenu.show(menuItems, position));
       if (clicked._tag === "Failure" || clicked.value === null) return;
-      const action: ThreadActionMenuId = clicked.value;
+      if (leadingIds.has(clicked.value)) {
+        onLeadingAction?.(clicked.value);
+        return;
+      }
+      const action = clicked.value as ThreadActionMenuId;
       if (
         threadActionRequiresOperate(action) &&
         !readEnvironmentScope(threadRef.environmentId, AuthOrchestrationOperateScope)

@@ -23,7 +23,11 @@ import type { BrowserViewportResizeDirection } from "~/browser/browserViewportLa
 import { previewRuntimeTabId } from "~/browser/previewRuntimeTabId";
 import { rendersServerTabNatively } from "~/browser/previewRuntime";
 import { primaryEnvironmentIdAtom } from "~/state/primaryEnvironment";
-import { type ServerBrowserHandle, ServerBrowserSurface } from "~/browser/ServerBrowserSurface";
+import {
+  type ServerBrowserHandle,
+  ServerBrowserSurface,
+  handoffServerBrowserFrame,
+} from "~/browser/ServerBrowserSurface";
 import {
   closeServerPictureInPicture,
   openServerPictureInPicture,
@@ -185,6 +189,13 @@ function BrowserMiniPlayer({ threadRef, tabId, miniPlayer }: Props & { readonly 
   const serverPictureInPicture =
     useServerPictureInPictureKey() === serverPictureInPictureKey(threadRef.threadId, tabId);
   const openInPanel = () => {
+    if (serverTab)
+      handoffServerBrowserFrame(
+        threadRef.environmentId,
+        threadRef.threadId,
+        tabId,
+        serverSurfaceRef.current?.canvas() ?? null,
+      );
     usePreviewMiniPlayerStore.getState().close(threadRef);
     useRightPanelStore.getState().openBrowser(threadRef, tabId);
   };

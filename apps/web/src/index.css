@@ -241,8 +241,8 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
 }
 
 /* The pane notch (pen maP8m, see PaneNotch.tsx): the pane gives up its
-   top-left corner to the chrome so a header's tabs sit on the chrome color.
-   The block runs from the pane's left edge to 16px past the tab, with a
+   top corners to the chrome so tabs and actions sit on the chrome color.
+   The block runs from the pane's edge to 16px past its children, with a
    concave 16px corner at its foot and the pane's convex 16px corner on its
    rising edge. Static paint only; below md the pane is full-bleed and there
    is no notch. */
@@ -257,6 +257,7 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
   [data-app-modal-pane] {
     /* The strip and both curves share the chrome's color and texture. */
     & [data-pane-notch]::before,
+    & [data-pane-notches-merged]::before,
     & [data-pane-notch]::after,
     & [data-pane-notch-corner] {
       background-color: var(--app-chrome-background);
@@ -266,7 +267,8 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
 
     /* The block itself. It bleeds left under the header's inset and the
        pane's clip trims it at the pane edge. */
-    & [data-pane-notch]::before {
+    & [data-pane-notch]::before,
+    & [data-pane-notches-merged]::before {
       content: "";
       position: absolute;
       z-index: -1;
@@ -286,14 +288,14 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
       width: var(--pane-notch-tail);
       height: var(--pane-notch-tail);
       mask: radial-gradient(
-        circle var(--pane-notch-tail) at 100% 100%,
+        circle var(--pane-notch-tail) at var(--pane-notch-curve-x) 100%,
         transparent calc(var(--pane-notch-tail) - 0.5px),
         #000 var(--pane-notch-tail)
       );
       pointer-events: none;
     }
 
-    /* The pane's convex corner under the notch, at the pane's left edge. */
+    /* The pane's convex corner under the notch, at the pane's edge. */
     & [data-pane-notch-corner] {
       /* The pane radius (rounded-pane). */
       --pane-notch-foot: 14px;
@@ -305,7 +307,7 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
       width: var(--pane-notch-foot);
       height: var(--pane-notch-foot);
       mask: radial-gradient(
-        circle var(--pane-notch-foot) at 100% 100%,
+        circle var(--pane-notch-foot) at var(--pane-notch-curve-x) 100%,
         transparent calc(var(--pane-notch-foot) - 0.5px),
         #000 var(--pane-notch-foot)
       );
@@ -315,9 +317,44 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
     /* The notch covers the pane's top-left corner, so the pane squares it.
        A rounded clip there would antialias the pane's background into a
        light arc around the notch. Embedded page panes need the same cut. */
-    &:has([data-pane-notch]),
-    & [data-slot="sidebar-inset"]:has([data-pane-notch]) {
+    &[data-pane-notched],
+    & [data-slot="sidebar-inset"][data-pane-notched] {
       border-start-start-radius: 0;
+    }
+
+    /* Mirror the same paint, including channel art, without flipping the
+       children or changing their focus order. Both sides start at the
+       header's top edge and put their foot at the pane's corner. */
+    & [data-pane-notch="right"]::before {
+      inset-inline: 0 -100vw;
+      border-end-end-radius: 0;
+      border-end-start-radius: var(--pane-notch-tail);
+    }
+
+    & [data-pane-notch="right"]::after {
+      inset-inline-start: auto;
+      inset-inline-end: 100%;
+    }
+
+    & [data-pane-notch-corner="right"] {
+      inset-inline-start: auto;
+      inset-inline-end: 0;
+    }
+
+    &[data-pane-notched-right],
+    & [data-slot="sidebar-inset"][data-pane-notched-right] {
+      border-start-end-radius: 0;
+    }
+
+    /* Close notches share one flat chrome row; their outer feet stay put. */
+    & [data-pane-notches-merged]::before {
+      inset-inline: 0;
+      border-radius: 0;
+    }
+
+    & [data-pane-notches-merged] [data-pane-notch]::before,
+    & [data-pane-notches-merged] [data-pane-notch]::after {
+      content: none;
     }
   }
 }
@@ -328,6 +365,7 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
 @media (width >= 48rem) {
   [data-chrome-art] [data-slot="sidebar"][data-variant="inset"] ~ [data-slot="sidebar-inset"] {
     & [data-pane-notch]::before,
+    & [data-pane-notches-merged]::before,
     & [data-pane-notch]::after,
     & [data-pane-notch-corner] {
       background: var(--chrome-art-paint);
@@ -337,13 +375,215 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
   }
 }
 
+/* Where the strip's edge cuts a pane, the visible piece gets the pane's
+   rounded corners (PaneCuts in SurfaceHost.tsx). Each cut is a chrome corner,
+   position: sticky against the strip, so the compositor carries it with the
+   scroll: no style or layout per frame. A cut sits on its own pane corner
+   until the strip's edge passes that corner, then rides the edge. Its holder
+   stops one radius short of the pane's far edge, so on a thin sliver the cut
+   slides out under the strip edge and its curve joins the pane's own corner
+   into one arc. The pane clips with overflow: clip, so the strip, not the
+   pane, is the cut's scroll container. */
+[data-pane-cut] {
+  /* The pane radius (rounded-pane). */
+  --pane-cut: 14px;
+  position: absolute;
+  z-index: 40;
+  display: flex;
+  height: var(--pane-cut);
+  pointer-events: none;
+}
+
+[data-pane-cut]::before,
+[data-pane-cut] > span > span {
+  content: "";
+  flex: none;
+  width: var(--pane-cut);
+  height: var(--pane-cut);
+  /* Its edge lies just outside the pane's own rounded clip, so resting on a
+     pane's corner it adds nothing: a pane with cuts and the lone window pane
+     without them look the same, and swapping one for the other is unseen. */
+  background: radial-gradient(
+    circle var(--pane-cut) at var(--pane-cut-center),
+    transparent var(--pane-cut),
+    var(--app-chrome-background) calc(var(--pane-cut) + 0.5px)
+  );
+}
+
+[data-pane-cut]::before {
+  position: sticky;
+}
+
+[data-pane-cut^="start"] {
+  left: 0;
+  right: var(--pane-cut);
+
+  &::before {
+    left: 0;
+  }
+}
+
+[data-pane-cut^="end"] {
+  left: var(--pane-cut);
+  right: 0;
+  justify-content: flex-end;
+
+  &::before {
+    right: 0;
+  }
+}
+
+[data-pane-cut$="top"] {
+  top: 0;
+}
+
+[data-pane-cut$="bottom"] {
+  bottom: 0;
+}
+
+[data-pane-cut="start-top"],
+[data-pane-cut="start-notch"] {
+  --pane-cut-center: 100% 100%;
+}
+
+[data-pane-cut="end-top"],
+[data-pane-cut="end-notch"] {
+  --pane-cut-center: 0 100%;
+}
+
+[data-pane-cut="start-bottom"] {
+  --pane-cut-center: 100% 0;
+}
+
+[data-pane-cut="end-bottom"] {
+  --pane-cut-center: 0 0;
+}
+
+/* Under a notch the pane's top edge is the notch's foot. These cuts anchor
+   to the notch and stop a tail short of its end, where the notch's own
+   rounded foot takes over. Resting, the end cut would bite the pane under
+   the notch's end, so it only paints while the strip's right edge holds it. */
+[data-pane-cut$="notch"] {
+  display: none;
+}
+
+[data-pane-cut="end-notch"] {
+  &::before {
+    content: none;
+  }
+
+  & > span {
+    position: sticky;
+    right: 0;
+    flex: none;
+    container-type: scroll-state;
+  }
+
+  & > span > span {
+    display: block;
+    visibility: hidden;
+  }
+}
+
+@container scroll-state(stuck: right) {
+  [data-pane-cut="end-notch"] > span > span {
+    visibility: visible;
+  }
+}
+
+@supports (anchor-scope: --pane-notch) {
+  @media (width >= 48rem) {
+    [data-slot="sidebar"][data-variant="inset"] ~ [data-slot="sidebar-inset"] {
+      & [data-layout-pane-id] {
+        anchor-scope: --pane-notch;
+      }
+
+      & [data-pane-notch=""] {
+        anchor-name: --pane-notch;
+      }
+
+      & [data-layout-pane-id][data-pane-notched] > [data-pane-cut$="notch"] {
+        display: flex;
+        top: calc(anchor(--pane-notch top) + var(--pane-notch-height));
+        right: calc(anchor(--pane-notch right) + 1rem);
+      }
+    }
+  }
+}
+
+/* Over the channel art the cuts repaint the art, as the notch does. */
+[data-chrome-art] [data-pane-cut]::before,
+[data-chrome-art] [data-pane-cut] > span > span {
+  background: var(--chrome-art-paint);
+  background-attachment: fixed;
+  background-blend-mode: var(--chrome-art-blend, normal);
+  mask: radial-gradient(
+    circle var(--pane-cut) at var(--pane-cut-center),
+    transparent var(--pane-cut),
+    #000 calc(var(--pane-cut) + 0.5px)
+  );
+}
+
 /* PaneNotch lays out the tab with this tail as its end padding. */
 [data-pane-notch] {
   --pane-notch-tail: 1rem;
 }
 
+[data-pane-notch],
+[data-pane-notch-corner] {
+  --pane-notch-curve-x: 100%;
+}
+
+[data-pane-notch="right"],
+[data-pane-notch-corner="right"] {
+  --pane-notch-curve-x: 0%;
+}
+
 [data-pane-notch-corner] {
   display: none;
+}
+
+/* A pane header that holds the notch (data-pane-header) reaches down to the
+   notch's foot. Its controls stay centered on the chrome row. */
+@media (width >= 48rem) {
+  [data-slot="sidebar"][data-variant="inset"] ~ [data-slot="sidebar-inset"] {
+    /* How far a pane's scrolling content may reach up under its header. */
+    --pane-header-overlap: var(--pane-notch-height);
+  }
+
+  [data-slot="sidebar"][data-variant="inset"] ~ [data-slot="sidebar-inset"] [data-pane-header] {
+    height: var(--pane-notch-height);
+    min-height: var(--pane-notch-height);
+    padding-block-end: calc(var(--pane-notch-height) - var(--workspace-topbar-height));
+  }
+
+  /* The conversation scrolls through the header, hiding only behind its
+     chrome-colored notches. The header still owns pointer and drag handling. */
+  [data-slot="sidebar"][data-variant="inset"] ~ [data-slot="sidebar-inset"] [data-chat-header] {
+    background: none;
+  }
+
+  /* Other pane headers keep their surface above their scrolling bodies. */
+  [data-slot="sidebar"][data-variant="inset"]
+    ~ [data-slot="sidebar-inset"]
+    [data-floating-pane-header] {
+    background-color: var(--background);
+    background-image: var(--surface-grain);
+    background-size: var(--surface-grain-size);
+  }
+
+  /* A split layout's panes square the corner under their notch too. */
+  [data-slot="sidebar"][data-variant="inset"]
+    ~ [data-slot="sidebar-inset"]
+    [data-layout-pane-id][data-pane-notched] {
+    border-start-start-radius: 0;
+  }
+
+  [data-slot="sidebar"][data-variant="inset"]
+    ~ [data-slot="sidebar-inset"]
+    :is([data-layout-pane-id], [data-pane-notch-host])[data-pane-notched-right] {
+    border-start-end-radius: 0;
+  }
 }
 
 /* Self-hosted Inter and JetBrains Mono, latin and latin-ext only. unicode-range
@@ -719,7 +959,37 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
   padding-top: var(--surface-top-inset, 0px);
 }
 
+/* The overview pins its stage to the strip's box (pinOverviewFrame in
+   Overview.tsx). Not inherited, so pinning restyles the stage alone and not
+   every pane on it. */
+@property --overview-frame-left {
+  syntax: "*";
+  inherits: false;
+}
+@property --overview-frame-top {
+  syntax: "*";
+  inherits: false;
+}
+@property --overview-frame-width {
+  syntax: "*";
+  inherits: false;
+}
+@property --overview-frame-height {
+  syntax: "*";
+  inherits: false;
+}
+
 /* Secondary buttons, select triggers, the active segment, empty-state discs. */
+/* Pads a scroller's first content clear of a pane header it scrolls under
+   (--surface-top-inset, zero elsewhere), plus a spacing step: pt-under-header-2. */
+@utility pt-under-header {
+  padding-top: var(--surface-top-inset, 0px);
+}
+
+@utility pt-under-header-* {
+  padding-top: calc(--spacing(--value(number)) + var(--surface-top-inset, 0px));
+}
+
 @utility surface-raised {
   --surface-fill: var(--raised-fill);
   --surface-rim: var(--raised-rim);
@@ -1091,35 +1361,6 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
   box-shadow: var(--raised-shadow);
 }
 
-/* An alert lifted over content: the tone's tint on a solid background. */
-@utility alert-floating {
-  --alert-floating-tint: var(--muted-foreground);
-  background:
-    linear-gradient(
-      180deg,
-      color-mix(in srgb, var(--alert-floating-tint) 15%, transparent),
-      color-mix(in srgb, var(--alert-floating-tint) 7%, transparent)
-    ),
-    var(--background) !important;
-  border-color: color-mix(in srgb, var(--alert-floating-tint) 30%, transparent) !important;
-
-  &[data-variant="error"] {
-    --alert-floating-tint: var(--error-foreground);
-  }
-
-  &[data-variant="info"] {
-    --alert-floating-tint: var(--info-foreground);
-  }
-
-  &[data-variant="success"] {
-    --alert-floating-tint: var(--success-foreground);
-  }
-
-  &[data-variant="warning"] {
-    --alert-floating-tint: var(--warning-foreground);
-  }
-}
-
 /* Paint find results without changing rendered markdown or copied text. */
 ::highlight(t3-thread-find) {
   color: var(--app-theme-search-match-foreground, oklch(0.216164 0.028283 77.423));
@@ -1397,8 +1638,7 @@ html[data-theme-id]:not([data-theme-id=""]):not(.black-chrome) {
   }
 }
 
-[data-chrome-art]:has(> [data-slot="sidebar"][data-state="collapsed"])
-  > [data-chrome-art-layer="dev"] {
+[data-chrome-art][data-sidebar-state="collapsed"] > [data-chrome-art-layer="dev"] {
   --bp-pane-left: var(--workspace-pane-inset);
   --bp-sidebar-shift: calc(var(--sidebar-width) * -1);
 }
@@ -1829,6 +2069,15 @@ html[data-theme-id]:not([data-theme-id=""]):not(.black-chrome) {
     outline: none;
   }
 
+  /* A surface that scrolls under its pane's tab row starts at the pane's top
+     edge. Its scrollers pad their first content by --surface-top-inset. The
+     body under a floating header sets --pane-surface-reach (PANE_BODY_UNDER_HEADER_CLASS),
+     so it is zero elsewhere, and below md. */
+  [data-surface-reaches-under-header] {
+    --surface-top-inset: var(--pane-surface-reach, 0px);
+    margin-top: calc(-1 * var(--surface-top-inset));
+  }
+
   [data-preview-panel-mode="inline"] [data-right-panel-surface-content] [data-surface-subheader] {
     height: calc(var(--spacing) * 7);
     min-height: calc(var(--spacing) * 7);
@@ -1999,6 +2248,31 @@ html[data-theme-id]:not([data-theme-id=""]):not(.black-chrome) {
   background-image: var(--surface-grain);
   background-repeat: repeat;
   background-size: var(--surface-grain-size);
+}
+
+/* A pane's color and grain paint together. Promoting the fallback to its own
+   layer leaves stale compositor tiles in column gutters after a pane resizes. */
+@utility pane-surface {
+  isolation: isolate;
+  &::before,
+  &::after {
+    content: "";
+    position: absolute;
+    pointer-events: none;
+  }
+  &::before {
+    inset: 6px;
+    z-index: -2;
+    background-color: var(--background);
+  }
+  &::after {
+    inset: 0;
+    z-index: -1;
+    background-color: var(--background);
+    background-image: var(--surface-grain);
+    background-repeat: repeat;
+    background-size: var(--surface-grain-size);
+  }
 }
 
 /* Suppress all transitions during theme changes */
@@ -4236,7 +4510,8 @@ html[data-theme-id="t3-chat"] [data-app-sidebar] {
 
 /* Recompute contrast wherever a subtree owns its own semantic color palette. */
 :root,
-[data-app-sidebar] {
+[data-app-sidebar],
+:root.black-chrome [data-chrome-scope] {
   --sidebar-icon-color: var(--contrast-sidebar-muted-foreground);
   --contrast-toolbar-foreground: color-mix(
     in oklab,
@@ -4501,6 +4776,12 @@ body {
 .drag-region select,
 .drag-region a {
   -webkit-app-region: no-drag;
+}
+
+/* The chat timeline's track ends above the docked composer, which covers the
+   timeline's end inset (--chat-composer-inset, set by ChatView). */
+.messages-timeline-scroll::-webkit-scrollbar-track {
+  margin-bottom: var(--chat-composer-inset, 0px);
 }
 
 /* Scrollbar styling */
@@ -4977,6 +5258,15 @@ body {
   --diffs-search-panel-fg: var(--popover-foreground);
   --diffs-search-panel-accent: var(--primary);
   --diffs-search-panel-font: var(--font-sans);
+  /* Under a pane header the viewer scrolls under (--surface-top-inset), its
+     scroll targets land at the header's foot (StyledDiffCodeView). */
+  scroll-padding-top: var(--surface-top-inset, 0px);
+}
+
+/* Pierre sticks its find panel below the sticky file header; the header sits
+   at the pane header's foot. */
+.diff-render-surface > [data-diffs-search] {
+  translate: 0 var(--surface-top-inset, 0px);
 }
 
 /* Pierre's file renderer owns its own surface tokens. Keep the root of a file
@@ -5283,4 +5573,18 @@ body {
 /* The mic's listening state: a red glyph. The pill looks the same in every style. */
 [data-composer-send-pill] {
   --pill-listening: var(--error-foreground);
+}
+
+/* redesign: layout */
+@theme {
+  --shadow-drag-label: 0 6px 16px rgb(0 0 0 / 50%);
+}
+
+/* A sideways swipe over something in a pane that scrolls sideways scrolls
+   it, and at its end stops there instead of carrying the strip along (pen
+   ZlxmK). Anywhere else in a pane the swipe scrolls the strip. Only real
+   scrollers: on a clipping wrapper (overflow hidden) "contain" would stop
+   every swipe from reaching the strip. */
+[data-layout-strip] [data-layout-pane-id] :is(pre, .overflow-x-auto, .overflow-x-scroll) {
+  overscroll-behavior-x: contain;
 }

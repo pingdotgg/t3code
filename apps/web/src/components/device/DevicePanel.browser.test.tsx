@@ -89,7 +89,8 @@ vi.mock("~/state/use-atom-command", () => ({
             : () => Promise.resolve({ _tag: "Success", value: {} }),
 }));
 vi.mock("~/state/query", () => ({ formatEnvironmentQueryError: () => "Device failed" }));
-vi.mock("~/rightPanelStore", () => ({
+vi.mock("~/rightPanelStore", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("~/rightPanelStore")>()),
   useRightPanelStore: {
     getState: () => ({
       byThreadKey: {},
@@ -99,7 +100,10 @@ vi.mock("~/rightPanelStore", () => ({
   },
   selectThreadRightPanelState: () => ({ isOpen: false, activeSurfaceId: null, surfaces: [] }),
 }));
-vi.mock("~/components/device/DeviceHostUpdates", () => ({ DeviceHostUpdates: () => null }));
+vi.mock("~/components/device/DeviceHostUpdates", () => ({
+  DeviceHostUpdates: () => null,
+  hasDeviceHostUpdates: () => false,
+}));
 vi.mock("~/components/device/DeviceWorkspace", () => ({
   DeviceWorkspace: ({ onPowerOff }: { onPowerOff: () => void }) => (
     <button onClick={onPowerOff}>Power off</button>
@@ -136,7 +140,7 @@ const deferred = () => {
 };
 
 let container: HTMLDivElement;
-// Fixed key and a changing threadRef, as RightPanelSurfaceContent mounts it.
+// Fixed key and a changing threadRef, as the retained device surface mounts it.
 const devicePanel = (threadRef: ScopedThreadRef, surface = picker) => (
   <DevicePanel
     key="device-panel"

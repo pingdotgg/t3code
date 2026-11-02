@@ -68,7 +68,7 @@ export function ProjectActionsList({
               </span>
             ) : null}
             {script.runOnSettle ? (
-              <span className="shrink-0 rounded-sm border border-border/60 px-1.5 py-px text-2xs font-normal text-muted-foreground">
+              <span className="shrink-0 rounded-badge border border-border/60 px-1.5 py-px text-caption text-muted-foreground">
                 on settle
               </span>
             ) : null}
