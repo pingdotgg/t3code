@@ -67,11 +67,11 @@ export function commandCodeMonthlyWindow(
     consumed !== null &&
     consumed >= 0;
   const allowance =
-    explicitAllowance !== null
-      ? explicitAllowance
-      : matchedBillingCycle && remaining !== null
-        ? remaining + consumed
-        : null;
+    matchedBillingCycle && remaining !== null
+      ? explicitAllowance !== null
+        ? explicitAllowance
+        : remaining + consumed
+      : null;
   const resetsAt = resetTimestamp(subscription?.currentPeriodEnd);
   if (
     subscription?.status !== "active" ||

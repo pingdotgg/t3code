@@ -80,6 +80,43 @@ describe("Command Code rolling quota windows", () => {
       periodStart: "2026-11-01T00:00:00.000Z",
       totalMonthlyCredits: 10,
     };
+    // A reported allowance does not prove that its remaining credits belong
+    // to the active billing cycle without a matching monthly usage summary.
+    assert.isNull(commandCodeMonthlyWindow(credits, { data: active }));
+    assert.isNull(
+      commandCodeMonthlyWindow(
+        credits,
+        { data: active },
+        {
+          ...currentCycle,
+          periodStart: "2026-10-01T00:00:00.000Z",
+        },
+      ),
+    );
+    assert.isNull(
+      commandCodeMonthlyWindow(
+        credits,
+        { data: active },
+        {
+          ...currentCycle,
+          periodBasis: "calendar-month",
+        },
+      ),
+    );
+    assert.isNull(
+      commandCodeMonthlyWindow(
+        credits,
+        { data: active },
+        {
+          ...currentCycle,
+          totalMonthlyCredits: Number.NaN,
+        },
+      ),
+    );
+    assert.deepStrictEqual(
+      commandCodeMonthlyWindow(credits, { data: active }, currentCycle)?.usedPercent,
+      (10 / 30) * 100,
+    );
     assert.isNull(
       commandCodeMonthlyWindow(
         noTotal,
