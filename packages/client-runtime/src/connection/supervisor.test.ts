@@ -346,7 +346,12 @@ describe("EnvironmentSupervisor", () => {
         (state) => state.phase === "connected" || state.phase === "offline",
       );
 
-      expect(settled).toMatchObject({ phase: "connected", attempt: 1, lastFailure: null });
+      expect(settled).toMatchObject({
+        phase: "connected",
+        network: "unknown",
+        attempt: 1,
+        lastFailure: null,
+      });
       expect(yield* Ref.get(harness.prepareCount)).toBe(1);
     }),
   );
