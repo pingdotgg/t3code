@@ -6,6 +6,7 @@ import type { RemoteOpenResolution } from "./remoteOpen";
 
 const state = vi.hoisted(() => ({
   remoteOpen: { state: { mode: "local-exec" }, isResolved: true } as RemoteOpenResolution,
+  openInEditor: vi.fn(async () => ({ _tag: "Success" })),
 }));
 
 vi.mock("@effect/atom-react", () => ({
@@ -16,7 +17,7 @@ vi.mock("@effect/atom-react", () => ({
     environment: { platform: { os: "linux" } },
   }),
 }));
-vi.mock("./state/use-atom-command", () => ({ useAtomCommand: () => async () => ({}) }));
+vi.mock("./state/use-atom-command", () => ({ useAtomCommand: () => state.openInEditor }));
 vi.mock(import("./remoteOpen"), async (original) => ({
   ...(await original()),
   useRemoteOpenResolution: () => state.remoteOpen,
@@ -74,10 +75,30 @@ describe("useFileContextMenu", () => {
     ],
     ["remote-unavailable", { state: { mode: "remote-unavailable" }, isResolved: true }],
     ["unresolved", { state: { mode: "local-exec" }, isResolved: false }],
-  ])("offers no host shell actions when remote open is %s", (_mode, resolution) => {
+  ])("offers no host shell actions when remote open is %s", async (_mode, resolution) => {
     state.remoteOpen = resolution;
+    state.openInEditor.mockClear();
     const menu = useFileContextMenu(BASE_TARGET.environmentId);
 
     expect(menu.buildItems(BASE_TARGET)).toEqual([]);
+    await menu.activate("open", BASE_TARGET);
+    expect(state.openInEditor).not.toHaveBeenCalled();
+  });
+
+  it("offers host shell actions when remote open is local-exec", async () => {
+    state.remoteOpen = { state: { mode: "local-exec" }, isResolved: true };
+    state.openInEditor.mockClear();
+    const menu = useFileContextMenu(BASE_TARGET.environmentId);
+
+    expect(menu.buildItems(BASE_TARGET).map((item) => item.id)).toEqual([
+      "open",
+      "reveal-in-folder",
+      "open-with",
+    ]);
+    await menu.activate("open", BASE_TARGET);
+    expect(state.openInEditor).toHaveBeenCalledWith({
+      environmentId: BASE_TARGET.environmentId,
+      input: { cwd: "/workspace/project/src/index.ts", editor: "file-manager" },
+    });
   });
 });
