@@ -4,7 +4,7 @@ import { ThreadId } from "@t3tools/contracts";
 import { DEFAULT_CLIENT_SETTINGS } from "@t3tools/contracts/settings";
 import type * as Context from "effect/Context";
 import { expect, it, vi } from "vite-plus/test";
-import { page } from "vite-plus/test/browser";
+import { page, userEvent } from "vite-plus/test/browser";
 
 import { AppRoot } from "~/AppRoot";
 // The route loads ChatView lazily, and its first transform (React Compiler over ~4k lines)
@@ -17,6 +17,7 @@ import {
   ENVIRONMENT_ID,
   PROJECT_ID,
   installFakeEnvironment,
+  threadWithHistory,
   type FakeDriver,
 } from "../../test/fakeEnvironment";
 import { render } from "../../test/render";
@@ -64,4 +65,59 @@ it("a new draft does not load its reserved thread before the server lists it", a
     .filter((url) => url.includes(`/api/orchestration/threads/${threadId}/`));
   // A 404 here marks the thread deleted, and the view never loads it once the send creates it.
   expect(threadRequests).toEqual([]);
+});
+
+const TOUCH_TABLET_QUERIES: Readonly<Record<string, boolean>> = {
+  "(pointer: coarse)": true,
+  "(pointer: fine)": false,
+  "(hover: none)": true,
+  "(hover: hover)": false,
+};
+
+async function openThreadAtTabletSize(path: string) {
+  // iPad Pro 11 in landscape: the desktop layout, above max-sm.
+  await page.viewport(1194, 834);
+  __setClientSettingsForTests({
+    ...DEFAULT_CLIENT_SETTINGS,
+    onboardingCompletedAt: "2026-01-01T00:00:00.000Z",
+  });
+  const router = getRouter(createMemoryHistory({ initialEntries: [path] }));
+  await router.load();
+  return render(<AppRoot router={router} />, {
+    // AppRoot brings its own router.
+    router: false,
+  });
+}
+
+it("opening a thread with a fine pointer focuses the composer", async () => {
+  const thread = threadWithHistory("thread-29469-fine", 1);
+  using _environment = installFakeEnvironment([thread]);
+  await using _app = await openThreadAtTabletSize(`/${ENVIRONMENT_ID}/${thread.id}`);
+
+  await expect.element(page.getByTestId("composer-editor")).toHaveFocus();
+});
+
+it("opening a thread on a touch tablet does not focus the composer", async () => {
+  const realMatchMedia = window.matchMedia.bind(window);
+  using _touch = vi
+    .spyOn(window, "matchMedia")
+    .mockImplementation((query) =>
+      query in TOUCH_TABLET_QUERIES
+        ? realMatchMedia(TOUCH_TABLET_QUERIES[query] ? "all" : "not all")
+        : realMatchMedia(query),
+    );
+  const first = threadWithHistory("thread-29469-a", 1);
+  const second = threadWithHistory("thread-29469-b", 1);
+  using _environment = installFakeEnvironment([first, second]);
+  await using _app = await openThreadAtTabletSize(`/${ENVIRONMENT_ID}/${first.id}`);
+  const composer = page.getByTestId("composer-editor");
+
+  // Focusing the editor raises the on-screen keyboard, which shrinks the page on iPadOS.
+  await expect.element(page.getByText(`Answer 0 for ${first.id}.`)).toBeVisible();
+  await expect.element(composer).toBeVisible();
+  await expect.element(composer).not.toHaveFocus();
+
+  await userEvent.click(page.getByRole("treeitem").filter({ hasText: second.title }));
+  await expect.element(page.getByText(`Answer 0 for ${second.id}.`)).toBeVisible();
+  await expect.element(composer).not.toHaveFocus();
 });
