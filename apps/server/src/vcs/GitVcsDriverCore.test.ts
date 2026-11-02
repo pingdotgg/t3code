@@ -552,6 +552,119 @@ it.effect.each(["bare", "unborn"] as const)(
     ).pipe(Effect.provide(layerTest)),
 );
 
+it.effect.each(["on a branch", "detached", "unborn"] as const)(
+  "reads only the repository root for review requests that ignore the branch when %s",
+  (state) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const delegate = yield* ChildProcessSpawner.ChildProcessSpawner;
+        const spawnedArgs: Array<ReadonlyArray<string>> = [];
+        const spawner = ChildProcessSpawner.make((command) => {
+          if (ChildProcess.isStandardCommand(command)) spawnedArgs.push(command.args);
+          return delegate.spawn(command);
+        });
+        const driver = yield* makeGitVcsDriverCore().pipe(
+          Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+        );
+        const discoveries = () => {
+          const commands = spawnedArgs.filter(
+            (args) =>
+              args.includes("--show-toplevel") ||
+              args.includes("--git-common-dir") ||
+              (args.includes("symbolic-ref") && args.includes("HEAD")),
+          );
+          spawnedArgs.length = 0;
+          return commands.length;
+        };
+        const cwd = yield* makeTmpDir();
+        if (state === "unborn") {
+          yield* git(cwd, ["init", "-b", "main"]);
+        } else {
+          yield* initRepoWithCommit(cwd);
+          yield* writeTextFile(cwd, "committed.txt", "committed\n");
+          yield* git(cwd, ["add", "."]);
+          yield* git(cwd, ["commit", "-m", "add file"]);
+          if (state === "detached") yield* git(cwd, ["checkout", "--detach"]);
+        }
+        yield* writeTextFile(cwd, "new.txt", "new\n");
+        spawnedArgs.length = 0;
+
+        const workingTree = yield* driver.getReviewDiffPreview({
+          cwd,
+          file: { path: "new.txt", previousPath: null, sourceKind: "working-tree" },
+        });
+        assert.equal(discoveries(), 1);
+        assert.deepStrictEqual(
+          workingTree.sources
+            .find((source) => source.kind === "working-tree")!
+            .files!.map((file) => file.path),
+          ["new.txt"],
+        );
+
+        if (state !== "unborn") {
+          const commitSha = yield* git(cwd, ["rev-parse", "HEAD"]);
+          spawnedArgs.length = 0;
+          const commit = yield* driver.getReviewDiffPreview({
+            cwd,
+            commitSha,
+            file: { path: "committed.txt", previousPath: null, sourceKind: "commit" },
+          });
+          assert.equal(discoveries(), 1);
+          assert.include(commit.sources[0]!.diff, "+committed");
+        }
+
+        const general = yield* driver.getReviewDiffPreview({ cwd });
+        assert.equal(discoveries(), 3);
+        assert.equal(
+          general.sources.find((source) => source.kind === "branch-range")!.headRef,
+          state === "detached" ? "HEAD" : yield* git(cwd, ["branch", "--show-current"]),
+        );
+      }),
+    ).pipe(Effect.provide(layerTest)),
+);
+
+it.effect.each([
+  { kind: "working-tree", request: { sourceKind: "working-tree" } },
+  { kind: "commit", request: { sourceKind: "commit", commitSha: "HEAD" } },
+] as const)("keeps $kind review requests safe without a worktree root", ({ request }) =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const delegate = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const bareRoot = yield* makeTmpDir("git-review-bare-");
+      const spawner = ChildProcessSpawner.make((command) =>
+        delegate.spawn(
+          ChildProcess.isStandardCommand(command) && command.options.cwd === bareRoot
+            ? ChildProcess.setEnv(command, { GIT_DIR: bareRoot })
+            : command,
+        ),
+      );
+      const driver = yield* makeGitVcsDriverCore().pipe(
+        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+      );
+      const path = yield* Path.Path;
+      const file = { path: "README.md", previousPath: null, sourceKind: request.sourceKind };
+      const input = (cwd: string) => ({
+        cwd,
+        file,
+        ...("commitSha" in request ? { commitSha: request.commitSha } : {}),
+      });
+      const source = yield* makeTmpDir();
+      yield* initRepoWithCommit(source);
+      yield* git(source, ["clone", "--bare", source, bareRoot]);
+      const nonRepository = yield* makeTmpDir();
+      for (const cwd of [bareRoot, nonRepository, path.join(nonRepository, "missing")]) {
+        assert.isEmpty((yield* driver.getReviewDiffPreview(input(cwd))).sources);
+      }
+
+      const brokenConfig = yield* makeTmpDir();
+      yield* initRepoWithCommit(brokenConfig);
+      yield* writeTextFile(brokenConfig, ".git/config", "[broken");
+      const error = yield* driver.getReviewDiffPreview(input(brokenConfig)).pipe(Effect.flip);
+      assert.equal(error.operation, "GitVcsDriver.resolveRepositoryPaths.commonDir");
+    }),
+  ).pipe(Effect.provide(layerTest)),
+);
+
 it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32")(
   "preserves embedded newlines in repository paths after worktree creation",
   () =>
@@ -2070,9 +2183,14 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
       }),
     );
 
-    it.effect("loads repository-relative files from a nested project directory", () =>
+    it.effect("loads repository-relative files from nested directories and aliases", () =>
       Effect.gen(function* () {
-        const cwd = yield* makeTmpDir();
+        const directory = yield* makeTmpDir();
+        const path = yield* Path.Path;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const platform = yield* HostProcess.Platform;
+        const cwd = path.join(directory, platform === "win32" ? "repository" : "repository\n ");
+        yield* fileSystem.makeDirectory(cwd);
         const { initialBranch } = yield* initRepoWithCommit(cwd);
         yield* git(cwd, ["checkout", "-b", "feature/nested"]);
         yield* writeTextFile(cwd, "nested/tracked.txt", "committed\n");
@@ -2080,27 +2198,34 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
         yield* git(cwd, ["commit", "-m", "nested file"]);
         yield* writeTextFile(cwd, "nested/tracked.txt", "changed\n");
         yield* writeTextFile(cwd, "untracked.txt", "new\n");
-        const path = yield* Path.Path;
         const driver = yield* GitVcsDriver.GitVcsDriver;
         const nestedCwd = path.join(cwd, "nested");
-        const preview = yield* driver.getReviewDiffPreview({
-          cwd: nestedCwd,
-          baseRef: initialBranch,
-        });
-        assert.equal(
-          preview.sources.find((source) => source.kind === "working-tree")!.files!.length,
-          2,
-        );
-        for (const source of preview.sources) {
-          for (const file of source.files ?? []) {
-            const scoped = yield* driver.getReviewDiffPreview({
-              cwd: nestedCwd,
-              baseRef: initialBranch,
-              file: { path: file.path, previousPath: file.previousPath, sourceKind: source.kind },
-            });
-            const patch = scoped.sources.find((item) => item.kind === source.kind)!;
-            assert.deepStrictEqual(patch.files, [file]);
-            assert.include(patch.diff, `b/${file.path}`);
+        const projectDirectories = [nestedCwd];
+        if (symlinksSupported) {
+          const alias = path.join(directory, "alias");
+          yield* fileSystem.symlink(nestedCwd, alias);
+          projectDirectories.push(alias);
+        }
+        for (const projectDirectory of projectDirectories) {
+          const preview = yield* driver.getReviewDiffPreview({
+            cwd: projectDirectory,
+            baseRef: initialBranch,
+          });
+          assert.equal(
+            preview.sources.find((source) => source.kind === "working-tree")!.files!.length,
+            2,
+          );
+          for (const source of preview.sources) {
+            for (const file of source.files ?? []) {
+              const scoped = yield* driver.getReviewDiffPreview({
+                cwd: projectDirectory,
+                baseRef: initialBranch,
+                file: { path: file.path, previousPath: file.previousPath, sourceKind: source.kind },
+              });
+              const patch = scoped.sources.find((item) => item.kind === source.kind)!;
+              assert.deepStrictEqual(patch.files, [file]);
+              assert.include(patch.diff, `b/${file.path}`);
+            }
           }
         }
       }),
