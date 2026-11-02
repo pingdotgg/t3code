@@ -251,7 +251,8 @@ starts the binary you set.
   machines that get T3 Code through device management.
 - `feedUrl`: the desktop app updates from your own mirror of the release feed instead of GitHub.
   Publish only the versions you have approved. The `t3` command-line server updates through npm,
-  so pin it with your package tooling.
+  so pin it with your package tooling. T3 Learn ignores `feedUrl` and always updates from its own
+  release.
 - `allowNightly: false`: the nightly channel is unavailable.
 
 ## What a policy does not cover
