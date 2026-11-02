@@ -85,10 +85,13 @@ export function filterFilesystemBrowseEntries(
         entry.name.normalize("NFC").toLowerCase().startsWith(lowerNormalizedQuery)) &&
       (showHidden || !entry.name.startsWith(".")),
   );
+  const normalizedMatches = visibleEntries.filter(
+    (entry) => entry.name.normalize("NFC") === normalizedQuery,
+  );
   const exactEntry =
     query.length > 0
       ? (visibleEntries.find((entry) => entry.name === query) ??
-        visibleEntries.find((entry) => entry.name.normalize("NFC") === normalizedQuery) ??
+        (normalizedMatches.length === 1 ? normalizedMatches[0] : null) ??
         null)
       : null;
 

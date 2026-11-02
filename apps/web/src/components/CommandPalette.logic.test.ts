@@ -804,6 +804,17 @@ describe("filterPinnedBrowseEntries", () => {
         caseSensitive: true,
       }).exactEntry,
     ).toBe(decomposed);
+    expect(
+      filterPinnedBrowseEntries({
+        browseEntries: [
+          { name: "\u212B", fullPath: "/home/me/\u212B" },
+          { name: "A\u030A", fullPath: "/home/me/A\u030A" },
+        ],
+        filterQuery: "\u00C5",
+        pinnedDirectoryName: "repo",
+        caseSensitive: true,
+      }).exactEntry,
+    ).toBeNull();
   });
 });
 

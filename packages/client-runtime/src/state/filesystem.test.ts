@@ -122,6 +122,12 @@ describe("filesystem browse model", () => {
     expect(filterFilesystemBrowseEntries([entry, composed], "D\u00e9veloppement").exactEntry).toBe(
       composed,
     );
+    // Two spellings that both normalize to the query are ambiguous; neither is picked.
+    const angstroms = [
+      { name: "\u212B", fullPath: "/home/me/\u212B" },
+      { name: "A\u030A", fullPath: "/home/me/A\u030A" },
+    ];
+    expect(filterFilesystemBrowseEntries(angstroms, "\u00C5").exactEntry).toBeNull();
   });
 });
 
