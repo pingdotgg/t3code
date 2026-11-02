@@ -112,3 +112,22 @@ export function parseInlineMarkdown(text: string): RichTextSpan[] {
   }
   return root;
 }
+
+/** Marks text the composer shows as editable Markdown source while the caret is in it. */
+export const MARKDOWN_SOURCE_MARK = "markdownSource";
+
+/** Marks for each UTF-16 unit of `text`, or null for a delimiter that parsing drops. */
+export function inlineMarkdownUnitMarks(text: string): Array<RichTextMark[] | null> {
+  const result: Array<RichTextMark[] | null> = [];
+  // Parsing only drops delimiters, so its text is a subsequence of the input.
+  for (const span of parseInlineMarkdown(text)) {
+    for (let index = 0; index < span.text.length; index += 1) {
+      while (result.length < text.length && text[result.length] !== span.text[index]) {
+        result.push(null);
+      }
+      result.push(span.marks);
+    }
+  }
+  while (result.length < text.length) result.push(null);
+  return result;
+}

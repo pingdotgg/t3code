@@ -15,7 +15,7 @@ import { userEvent } from "vite-plus/test/browser";
 
 import { act, fakeTimers, render } from "../../test/render";
 
-import { serializeEditorDoc } from "~/composer-rich-text-doc";
+import { flatToMarkdown, pmToFlat, serializeEditorDoc } from "~/composer-rich-text-doc";
 import { isMacPlatform } from "~/lib/utils";
 import {
   ComposerPromptEditorTiptap as ComposerPromptEditor,
@@ -165,7 +165,11 @@ it("bolds with Mod+B only when text is selected", async () => {
     editor.commands.setTextSelection({ from: 1, to: 5 });
   });
   await userEvent.keyboard(modB);
-  await vi.waitFor(() => expect(textWithMark(editor, "bold")).toEqual(["ship"]));
+  await vi.waitFor(() => expect(serializeEditorDoc(editor.state.doc).value).toBe("**ship** it"));
+
+  // The selection now spans the shown markers; Mod+B still removes the bold.
+  await userEvent.keyboard(modB);
+  await vi.waitFor(() => expect(serializeEditorDoc(editor.state.doc).value).toBe("ship it"));
 });
 
 it.each([false, true])(
@@ -237,6 +241,105 @@ it("keeps the caret inside unknown dollar text across rich and plain remounts", 
     editor.commands.insertContent("Y");
   });
   expect(serializeEditorDoc(editor.state.doc).value).toBe("echo $HOXYME now");
+});
+
+async function focusAt(editor: Editor, position: number | "end") {
+  // ProseMirror rewrites the DOM caret 20ms after focus. Run that now, or it
+  // can undo the first key before ProseMirror reads the native move.
+  using _timers = fakeTimers();
+  await act(async () => {
+    editor.commands.focus(position);
+  });
+  await vi.waitFor(() => expect(document.activeElement).toBe(editor.view.dom));
+  vi.runOnlyPendingTimers();
+}
+
+describe("Markdown markers around styled text", () => {
+  it.each([
+    {
+      name: "deleting the opening markers removes bold",
+      value: "**bold** after",
+      caret: 1,
+      keys: "{Delete}{Delete}",
+      expected: "bold** after",
+      marks: {},
+    },
+    {
+      name: "turning ** into * makes it italic",
+      value: "**bold** after",
+      caret: 1,
+      keys: "{Delete}{ArrowRight}{ArrowRight}{ArrowRight}{ArrowRight}{ArrowRight}{Delete}",
+      expected: "*bold* after",
+      marks: { italic: ["bold"] },
+    },
+    {
+      name: "retyping deleted closing markers restores bold",
+      value: "**bold** after",
+      caret: 3,
+      keys: "{ArrowRight}{ArrowRight}{Delete}{Delete}**",
+      expected: "**bold** after",
+      marks: { bold: ["bold"] },
+    },
+    {
+      name: "deleting a backtick removes inline code",
+      value: "`code` after",
+      caret: 1,
+      keys: "{Delete}",
+      expected: "code` after",
+      marks: {},
+    },
+  ])("edits the markers as text: $name", async ({ value, caret, keys, expected, marks }) => {
+    await using screen = await mountEditor(value);
+    const { editor } = screen;
+    // Position 1 is the start of the styled word; 3 is two characters into it.
+    await focusAt(editor, caret);
+    await userEvent.keyboard(`${keys}{End}`);
+    await vi.waitFor(() => expect(serializeEditorDoc(editor.state.doc).value).toBe(expected));
+    for (const name of ["bold", "italic", "code"] as const) {
+      expect(textWithMark(editor, name)).toEqual(marks[name as keyof typeof marks] ?? []);
+    }
+  });
+
+  it("shows nested formatting as Markdown and restores it when the caret leaves", async () => {
+    const value = "**a *b* c** d";
+    await using screen = await mountEditor(value);
+    const { editor } = screen;
+    await focusAt(editor, "a b".length + 1);
+    expect(editor.state.doc.textContent).toBe(value);
+    expect(textWithMark(editor, "bold")).toEqual([]);
+    await userEvent.keyboard("{End}");
+    await vi.waitFor(() => expect(editor.state.doc.textContent).toBe("a b c d"));
+    expect(textWithMark(editor, "bold")).toEqual(["a ", "b", " c"]);
+    expect(textWithMark(editor, "italic")).toEqual(["b"]);
+    expect(serializeEditorDoc(editor.state.doc).value).toBe(value);
+  });
+
+  it("undoes a marker edit in one step without an extra step for showing markers", async () => {
+    await using screen = await mountEditor("**bold** after");
+    const { editor } = screen;
+    await focusAt(editor, "end");
+    await userEvent.keyboard("!");
+    await act(async () => {
+      editor.commands.setTextSelection(1);
+    });
+    await userEvent.keyboard("{Delete}{Delete}{End}");
+    const value = () => serializeEditorDoc(editor.state.doc).value;
+    await vi.waitFor(() => expect(value()).toBe("bold** after!"));
+    await act(async () => {
+      editor.commands.undo();
+    });
+    expect(value()).toBe("**bold** after!");
+    await act(async () => {
+      editor.commands.undo();
+    });
+    expect(value()).toBe("**bold** after");
+    await act(async () => {
+      editor.commands.redo();
+      editor.commands.redo();
+    });
+    expect(value()).toBe("bold** after!");
+    expect(textWithMark(editor, "bold")).toEqual([]);
+  });
 });
 
 const file = {
@@ -386,26 +489,26 @@ describe("an Arabic line", () => {
     vi.runOnlyPendingTimers();
   }
 
-  it("leaves inline code through its start with ArrowRight, which points back", async () => {
-    // Positions: اكتب at 1-5, sumBy at 6-11, الان at 12-16.
-    await using screen = await mountEditor("اكتب `sumBy` الان");
+  it("walks back through inline code and its backticks with ArrowRight", async () => {
+    const value = "اكتب `sumBy` الان";
+    await using screen = await mountEditor(value);
     const { editor } = screen;
     await focusEnd(editor);
-    const caret = () => ({
-      head: editor.state.selection.head,
-      inCode: (editor.state.storedMarks ?? editor.state.selection.$head.marks()).length > 0,
-    });
-    const visited = [caret()];
-    while (visited.at(-1)!.head > 5) {
+    const offset = () => {
+      const map = serializeEditorDoc(editor.state.doc);
+      return flatToMarkdown(map, pmToFlat(map, editor.state.selection.head));
+    };
+    const visited = [offset()];
+    let sawSource = false;
+    while (visited.at(-1)! > "اكتب".length) {
       const before = visited.at(-1)!;
       await userEvent.keyboard("{ArrowRight}");
-      await vi.waitFor(() => {
-        const after = caret();
-        expect(after.head < before.head || after.inCode !== before.inCode).toBe(true);
-      });
-      visited.push(caret());
+      await vi.waitFor(() => expect(offset()).toBe(before - 1));
+      sawSource ||= editor.state.doc.textContent === value;
+      visited.push(offset());
     }
-    expect(visited.some((stop) => stop.inCode)).toBe(true);
+    expect(sawSource).toBe(true);
+    expect(textWithMark(editor, "code")).toEqual(["sumBy"]);
   });
 
   it("shows the backticks on either side of inline code it is editing", async () => {
@@ -415,14 +518,17 @@ describe("an Arabic line", () => {
       editor.commands.setTextSelection("اكتب su".length + 1);
     });
     const code = editor.view.dom.querySelector("code")!;
-    const word = document.createRange();
-    word.selectNodeContents([...code.childNodes].find((node) => node instanceof Text)!);
-    const text = word.getBoundingClientRect();
-    const [open, close] = [...editor.view.dom.querySelectorAll(".composer-rich-marker")].map(
-      (marker) => marker.getBoundingClientRect(),
-    );
-    expect(open!.right).toBeLessThanOrEqual(text.left + 1);
-    expect(close!.left).toBeGreaterThanOrEqual(text.right - 1);
+    const text = [...code.childNodes].find((node) => node instanceof Text)!;
+    expect(text.data).toBe("`sumBy`");
+    const rect = (from: number, to: number) => {
+      const range = document.createRange();
+      range.setStart(text, from);
+      range.setEnd(text, to);
+      return range.getBoundingClientRect();
+    };
+    const [open, word, close] = [rect(0, 1), rect(1, 6), rect(6, 7)];
+    expect(open.right).toBeLessThanOrEqual(word.left + 1);
+    expect(close.left).toBeGreaterThanOrEqual(word.right - 1);
   });
 
   it("starts the next line on the right", async () => {
