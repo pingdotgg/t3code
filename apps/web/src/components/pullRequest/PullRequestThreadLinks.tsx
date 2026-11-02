@@ -12,6 +12,7 @@ import { usePullRequestLinking } from "~/hooks/usePullRequestLinking";
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
 import { normalizeThreadPullRequestKey } from "@t3tools/client-runtime/thread-pull-requests";
 import {
+  useAnyEnvironmentHiding,
   useEnvironmentThreadRefs,
   useProjects,
   useServerConfigs,
@@ -68,7 +69,7 @@ function EnabledPullRequestThreadLinks({
   const linking = usePullRequestLinking(environmentId);
   const linkedHere = linking.isLinked(thread, url);
   const hiddenKeys = useAtomValue(environmentThreadShells.hiddenThreadKeysAtom);
-  const hidingAnywhere = useAtomValue(environmentThreadShells.anyEnvironmentHidingAtom);
+  const hidingAnywhere = useAnyEnvironmentHiding();
   const loadedThreadRefs = useEnvironmentThreadRefs(environmentId);
   const relations = useEnvironmentQuery(
     linking.mode === "multiple" && display !== "menu-item"

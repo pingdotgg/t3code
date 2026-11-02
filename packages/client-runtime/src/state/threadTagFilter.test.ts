@@ -107,6 +107,10 @@ describe("hiddenThreadKeys", () => {
     const visible = (hiding: boolean) =>
       visibleLinkedThreads(rows, local, loaded, hidden, hiding).map((row) => row.id);
     expect(visible(true)).toEqual(["plain-private-side-chat"]);
+    // Another machine hides tags while nothing here is hidden: unloaded rows still stay out.
+    expect(
+      visibleLinkedThreads(rows, local, loaded, NO_HIDDEN_THREADS, true).map((row) => row.id),
+    ).toEqual(["private-subagent", "plain-private-side-chat"]);
     expect(visibleLinkedThreads(rows, local, loaded, NO_HIDDEN_THREADS, false)).toBe(rows);
   });
 
