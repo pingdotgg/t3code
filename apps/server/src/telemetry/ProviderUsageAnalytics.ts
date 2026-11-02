@@ -248,7 +248,9 @@ export class RequestUsageLedger {
 
   start(runId: RunId, driver: string, context: ProviderTurnAnalyticsContext): void {
     if (this.settled.has(runId) || this.open.has(runId)) return;
-    this.open.set(runId, { driver, context, lifecycleObserved: true, turns: new Map() });
+    // A restart continuation carries on a run whose earlier turns this process never saw.
+    const lifecycleObserved = context.restartContinuation !== true;
+    this.open.set(runId, { driver, context, lifecycleObserved, turns: new Map() });
     evictOldest(this.open);
   }
 
@@ -296,7 +298,7 @@ export class RequestUsageLedger {
     const anyRootSubagents = measuredRoot.some((usage) => usage.hasSubagents);
     const measuredChildren = childUsage.filter((usage) => usage !== undefined);
     const childStatus =
-      children.length === 0 && !anyRootSubagents
+      children.length === 0 && !anyRootSubagents && !report.childrenRunning
         ? "none"
         : children.length === 0
           ? "unavailable"

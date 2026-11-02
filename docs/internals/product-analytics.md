@@ -67,25 +67,28 @@ steering, and replayed provider events do not add rows. `requestKind: "user"`
 counts what people asked for. Native subagent turns are summed apart from the
 root (`childUsageStatus`, `childInputTokens`); T3-managed child threads report
 their own requests as `t3_child`. A child still running at settlement is never
-added later, and the summary sets `childrenRunning`. A run that began before a
-server restart reports `lifecycleObserved: false`, and its continuation run sets
-`restartContinuation`, so neither counts as a new request. Collection is best
-effort, with no scan or backfill of provider history.
+added later, and the summary sets `childrenRunning`. A server restart loses the
+summary of a run in progress; the run that continues it sets
+`restartContinuation` and `lifecycleObserved: false`, so count it as that
+request with partial usage. A run that fails before any provider turn starts has
+no summary. Collection is best effort, with no scan or backfill of provider
+history.
 
 Counts cover the main agent. `otherInputTokens` and `otherOutputTokens` are what
-a provider's own ledger recorded beyond it during the turn: Claude's
-per-process `modelUsage` growth, which covers native subagents, compaction, and
-helper calls. They need a baseline from the same process, so they stay absent
-when it is unknown, and background work that ends between turns lands in the
-next one. Claude subagents have no turns of their own, so this never overlaps
-child turns.
+a provider's own ledger recorded beyond it during the turn: Claude's per-process
+`modelUsage` growth, which covers native subagents, compaction, and helper
+calls. They need a baseline from the same process, so they stay absent when it
+is unknown or the ledger goes backwards, and background work that ends between
+turns lands in the next one. Claude subagents have no turns of their own, so
+this never overlaps child turns.
 
 `model` and `effort` are what the run selected. `observedModel` and
 `mixedModels` appear only when the provider reported the models for the counted
 work (Codex thread settings and reroutes, Claude root messages, OpenCode steps).
-`mixedModels: false` without `reportVersion` was never checked. Model labels are
-vendor catalog slugs, also for routed ids such as `anthropic/claude-opus-5-5`,
-and efforts come from a closed list, so user-configured names stay out.
+`mixedModels: false` without `reportVersion` was never checked. Model labels
+come from the bundled model manifest and the Cursor and Grok catalogs, also for
+routed ids such as `anthropic/claude-opus-5-5`, and efforts come from a closed
+list, so user-configured names stay out.
 
 Status and counters answer different questions. `usageReported: false` means
 the adapter attached no usage; a harness where every row says so is unsupported,

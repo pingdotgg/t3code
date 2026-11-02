@@ -26,7 +26,8 @@ import {
 } from "./ProviderUsageAnalytics.ts";
 
 const providers = [
-  { driver: "codex", models: [{ slug: "gpt-6-sol" }, { slug: "gpt-6-luna" }] },
+  // Codex lists whatever its configured model provider serves, including private deployments.
+  { driver: "codex", models: [{ slug: "gpt-6-sol" }, { slug: "acme-azure-deployment" }] },
   { driver: "claudeAgent", models: [{ slug: "claude-opus-5-5" }, { slug: "claude-haiku-4-5" }] },
   { driver: "opencode", models: [{ slug: "ollama/acme-internal" }] },
 ].map(
@@ -178,12 +179,17 @@ describe("provider usage reporting", () => {
 
   it("keeps a request partial when its start, a steered segment, or a counter is missing", () => {
     const ledger = new RequestUsageLedger();
+    ledger.start(RunId.make("restarted"), "codex", {
+      ...context("restarted", "initial"),
+      restartContinuation: true,
+    });
     ledger.add({
       driver: "codex",
-      context: context("restarted", "steering_restart"),
+      context: context("restarted", "initial"),
       providerTurn: turn("after-restart", complete(10, 1)),
     });
     expect(ledger.settle(settled("restarted"), label)).toMatchObject({
+      restartContinuation: true,
       lifecycleObserved: false,
       usageStatus: "partial",
       inputTokens: 10,
@@ -218,7 +224,11 @@ describe("provider usage reporting", () => {
       providerTurn: turn("silent", undefined),
     });
     const silent = ledger.settle(settled("silent", true), label);
-    expect(silent).toMatchObject({ usageStatus: "unavailable", childrenRunning: true });
+    expect(silent).toMatchObject({
+      usageStatus: "unavailable",
+      childrenRunning: true,
+      childUsageStatus: "unavailable",
+    });
     expect(silent).not.toHaveProperty("outputTokens");
   });
 
@@ -301,9 +311,13 @@ describe("provider usage reporting", () => {
       observedModel: "claude-opus-5-5",
       effort: "high",
     });
-    const local = routed("ollama/acme-internal", "secret-variant");
-    for (const field of ["model", "observedModel", "effort"]) {
-      expect(local).not.toHaveProperty(field);
+    for (const local of [
+      routed("ollama/acme-internal", "secret-variant"),
+      routed("acme-azure-deployment", "high"),
+    ]) {
+      expect(local).not.toHaveProperty("model");
+      expect(local).not.toHaveProperty("observedModel");
     }
+    expect(routed("ollama/acme-internal", "secret-variant")).not.toHaveProperty("effort");
   });
 });

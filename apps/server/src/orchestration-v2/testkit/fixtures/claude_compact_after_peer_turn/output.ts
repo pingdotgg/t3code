@@ -61,15 +61,15 @@ export function assertClaudeCompactAfterPeerTurnOutput(
     outputTokens: 7,
     otherUsage: { inputTokens: 1015, outputTokens: 12 },
   });
-  // /compact reports zero tokens, but its new process's ledger shows the summary it wrote.
+  // /compact reports zero tokens as a local command.
   assert.deepInclude(usage[1], {
     usageStatus: "complete",
     inputTokens: 0,
     outputTokens: 0,
     localCommand: true,
-    otherUsage: { inputTokens: 57_324, outputTokens: 849 },
   });
-  // An empty ledger cannot cover the peer turn's own counts, so the rest stays unknown.
+  // The peer result's ledger is empty, so neither it nor the next result has a baseline.
   assert.deepInclude(usage[2], { usageStatus: "complete", outputTokens: 4 });
+  assert.notProperty(usage[1], "otherUsage");
   assert.notProperty(usage[2], "otherUsage");
 }

@@ -107,6 +107,7 @@ import { openCode2SkillInput } from "./opencode2_skill/input.ts";
 import { assertOpenCode2SkillOutput } from "./opencode2_skill/output.ts";
 import { assertOpenCode2SimpleOutput } from "./opencode2_simple/output.ts";
 import { assertOpenCode2MissingStepUsageOutput } from "./opencode2_missing_step_usage/output.ts";
+import { assertCodexModelRerouteOutput } from "./codex_model_reroute/output.ts";
 import { openCode2ToolCallInput } from "./opencode2_tool_call/input.ts";
 import { assertOpenCode2ToolCallOutput } from "./opencode2_tool_call/output.ts";
 import { assertOpenCodeSubagentOutput } from "./opencode_subagent/output.ts";
@@ -1234,6 +1235,18 @@ export const ORCHESTRATOR_REPLAY_FIXTURES: ReadonlyArray<OrchestratorReplayFixtu
         ),
         modelSelection: OPENCODE_MODEL_SELECTION,
         assertOutput: assertOpenCodeRunningChildApprovalOutput,
+      },
+    ],
+  },
+  {
+    name: "codex_model_reroute",
+    buildInput: multiTurnInput,
+    providers: [
+      {
+        driver: ProviderDriverKind.make("codex"),
+        transcriptFile: new URL("./codex_model_reroute/codex_transcript.ndjson", import.meta.url),
+        modelSelection: CODEX_MODEL_SELECTION,
+        assertOutput: assertCodexModelRerouteOutput,
       },
     ],
   },
