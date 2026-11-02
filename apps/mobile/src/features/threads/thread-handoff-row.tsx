@@ -68,25 +68,6 @@ export function modelSwitchesAtom(environmentId: EnvironmentId, threadId: Thread
   });
 }
 
-export function ThreadModelSwitchRow(props: {
-  environmentId: EnvironmentId;
-  modelSwitch: ModelSwitch;
-  iconColor: ColorValue;
-  surfaceColor: string;
-}) {
-  const { from, to, label, effortChanged } = props.modelSwitch;
-  return (
-    <ThreadHandoffDivider
-      environmentId={props.environmentId}
-      endpoints={{ from: [from], to }}
-      iconColor={props.iconColor}
-      surfaceColor={props.surfaceColor}
-      label={label}
-      showEffort={effortChanged}
-    />
-  );
-}
-
 export function ThreadHandoffRow(props: {
   environmentId: EnvironmentId;
   projectedItem: OrchestrationV2ProjectedTurnItem;

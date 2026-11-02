@@ -16,12 +16,7 @@ import {
 } from "../../lib/enrichedLinkPresentation";
 import { ThreadContextDivider } from "./thread-context-divider";
 import { useAtomValue } from "@effect/atom-react";
-import {
-  modelSwitchesAtom,
-  ThreadHandoffDivider,
-  ThreadHandoffRow,
-  ThreadModelSwitchRow,
-} from "./thread-handoff-row";
+import { modelSwitchesAtom, ThreadHandoffDivider, ThreadHandoffRow } from "./thread-handoff-row";
 import { GuestBubbleTint, GuestMessageName } from "./guestMessageStyle";
 import { ThreadGuestPendingMessage, useThreadGuestShare } from "./ThreadGuestShareBar";
 import { LinkRequestCard } from "./LinkRequestCard";
@@ -3607,11 +3602,13 @@ export const ThreadFeed = memo(function ThreadFeed({
         >
           <ThreadMediaVisibility>
             {modelSwitch ? (
-              <ThreadModelSwitchRow
+              <ThreadHandoffDivider
                 environmentId={props.environmentId}
-                modelSwitch={modelSwitch}
+                endpoints={{ from: [modelSwitch.from], to: modelSwitch.to }}
                 iconColor={iconSubtleColor}
                 surfaceColor={screenColor}
+                label={modelSwitch.label}
+                showEffort={modelSwitch.effortChanged}
               />
             ) : null}
             {renderFeedEntry(info, {
