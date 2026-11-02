@@ -5725,6 +5725,24 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
           yield* git(remote, ["--git-dir=.", "rev-parse", "refs/heads/feature/push"]),
           yield* git(cwd, ["rev-parse", "HEAD"]),
         );
+
+        const fork = yield* makeTmpDir("git-fork-");
+        yield* git(fork, ["init", "--bare"]);
+        yield* git(cwd, ["remote", "add", "fork", fork]);
+        yield* git(cwd, ["push", "-u", "fork", "feature/push"]);
+        yield* git(cwd, ["push", "fork", "--delete", "feature/push"]);
+        yield* writeTextFile(cwd, "fork.txt", "fork\n");
+        yield* git(cwd, ["add", "-A"]);
+        yield* (yield* GitVcsDriver.GitVcsDriver).commit(cwd, "Add fork change", "");
+        const forkRepublished = yield* (yield* GitVcsDriver.GitVcsDriver).pushCurrentBranch(
+          cwd,
+          null,
+        );
+        assert.deepInclude(forkRepublished, { upstreamBranch: "fork/feature/push" });
+        assert.equal(
+          yield* git(fork, ["--git-dir=.", "rev-parse", "refs/heads/feature/push"]),
+          yield* git(cwd, ["rev-parse", "HEAD"]),
+        );
       }),
     );
 

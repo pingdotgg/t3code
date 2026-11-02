@@ -1732,6 +1732,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
   const resolvePushRemoteName = Effect.fn("resolvePushRemoteName")(function* (
     cwd: string,
     refName: string,
+    fallbackRemoteName: string | null = null,
   ) {
     const branchPushRemote = yield* runGitStdout(
       "GitVcsDriver.resolvePushRemoteName.branchPushRemote",
@@ -1751,6 +1752,10 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     ).pipe(Effect.map((stdout) => stdout.trim()));
     if (pushDefaultRemote.length > 0) {
       return pushDefaultRemote;
+    }
+
+    if (fallbackRemoteName) {
+      return fallbackRemoteName;
     }
 
     return yield* resolvePrimaryRemoteName(cwd).pipe(Effect.orElseSucceed(() => null));
@@ -2663,6 +2668,16 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       };
     }
 
+    // A deleted upstream keeps its config; republish to its remote when it was this branch's own.
+    let goneUpstreamRemoteName: string | null = null;
+    if (!details.hasUpstream) {
+      const publishBranch = yield* resolvePublishBranchName(cwd, branch);
+      const mergeRef = yield* readConfigValue(cwd, `branch.${branch}.merge`);
+      if (mergeRef === `refs/heads/${publishBranch}`) {
+        goneUpstreamRemoteName = yield* readConfigValue(cwd, `branch.${branch}.remote`);
+      }
+    }
+
     const hasNoLocalDelta = details.aheadCount === 0 && details.behindCount === 0;
     if (hasNoLocalDelta) {
       if (details.hasUpstream) {
@@ -2677,9 +2692,11 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         Effect.orElseSucceed(() => null),
       );
       if (comparableBaseBranch) {
-        const publishRemoteName = yield* resolvePushRemoteName(cwd, branch).pipe(
-          Effect.orElseSucceed(() => null),
-        );
+        const publishRemoteName = yield* resolvePushRemoteName(
+          cwd,
+          branch,
+          goneUpstreamRemoteName,
+        ).pipe(Effect.orElseSucceed(() => null));
         if (!publishRemoteName) {
           return {
             status: "skipped_up_to_date" as const,
@@ -2713,7 +2730,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     }
 
     if (!details.hasUpstream) {
-      const publishRemoteName = yield* resolvePushRemoteName(cwd, branch);
+      const publishRemoteName = yield* resolvePushRemoteName(cwd, branch, goneUpstreamRemoteName);
       if (!publishRemoteName) {
         return yield* new GitCommandError({
           ...gitCommandContext({
