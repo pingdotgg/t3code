@@ -3,6 +3,7 @@ import { expect, it } from "@effect/vitest";
 import { ProviderDriverKind, ProviderInstanceId, type ServerProvider } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
+import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
@@ -32,7 +33,12 @@ const snapshot: ServerProvider = {
 const serving = (response: Response) =>
   HttpClient.make((request) => Effect.succeed(HttpClientResponse.fromWeb(request, response)));
 
-it.layer(NodeServices.layer)("fx maintenance", (it) => {
+const maintenanceLayer = Layer.merge(
+  NodeServices.layer,
+  Layer.succeed(HostProcess.KernelRelease, "24.0.0"),
+);
+
+it.layer(maintenanceLayer)("fx maintenance", (it) => {
   it.effect("uses the owning Homebrew installation and otherwise stays manual-only", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
@@ -73,10 +79,7 @@ it.layer(NodeServices.layer)("fx maintenance", (it) => {
         platform: "darwin" as const,
         env: { PATH: "" },
       };
-      const resolver = makeFxMaintenance(
-        Effect.die("Homebrew must not use fx's release channel"),
-        "24.0.0",
-      );
+      const resolver = makeFxMaintenance(Effect.die("Homebrew must not use fx's release channel"));
       const capabilities = yield* resolver
         .resolve(context)
         .pipe(
@@ -117,7 +120,6 @@ it.layer(NodeServices.layer)("fx maintenance", (it) => {
         fetchLatestFxVersion().pipe(
           Effect.provideService(HttpClient.HttpClient, serving(new Response("v0.0.15\n"))),
         ),
-        "24.0.0",
       ).resolve({
         binaryPath,
         resolvedCommandPath: binaryPath,
@@ -147,7 +149,7 @@ it.layer(NodeServices.layer)("fx maintenance", (it) => {
         updateCommand: `'${binaryPath}' upgrade`,
       });
 
-      const resolver = makeFxMaintenance(Effect.succeed("0.0.15"), "24.0.0");
+      const resolver = makeFxMaintenance(Effect.succeed("0.0.15"));
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
       const directory = yield* fs.makeTempDirectoryScoped({ prefix: "t3-fx-mise-" });
@@ -164,7 +166,10 @@ it.layer(NodeServices.layer)("fx maintenance", (it) => {
           managedPath: "/opt/versions/fx/0.0.15/bin/fx",
           env: { MISE_INSTALLS_DIR: "/opt/versions" },
         },
-        { managedPath: "/opt/store/fx-abc/bin/fx", env: { MISE_INSTALL_STORE_DIR: "/opt/store" } },
+        {
+          managedPath: "/opt/store/fx-abc/bin/fx",
+          env: { MISE_INSTALL_STORE_DIR: "/opt/store" },
+        },
         { managedPath: "/opt/dispatch/fx", env: { MISE_SHIMS_DIR: "/opt/dispatch" } },
         {
           managedPath: "/opt/system/installs/fx/0.0.15/bin/fx",
@@ -183,7 +188,12 @@ it.layer(NodeServices.layer)("fx maintenance", (it) => {
           { resolvedCommandPath: managedPath, realCommandPath: binaryPath },
           { resolvedCommandPath: binaryPath, realCommandPath: managedPath },
         ]) {
-          const managed = yield* resolver.resolve({ binaryPath, ...paths, platform: "linux", env });
+          const managed = yield* resolver.resolve({
+            binaryPath,
+            ...paths,
+            platform: "linux",
+            env,
+          });
           expect(managed.update).toBeNull();
           const managedSnapshot = yield* enrichProviderSnapshotWithVersionAdvisory(
             snapshot,
@@ -247,13 +257,15 @@ it.layer(NodeServices.layer)("fx maintenance", (it) => {
   it.effect("offers no update or latest version on macOS 14, which newer fx cannot run on", () =>
     Effect.gen(function* () {
       const binaryPath = "/opt/tools/fx";
-      const capabilities = yield* makeFxMaintenance(Effect.succeed("0.0.15"), "23.6.0").resolve({
-        binaryPath,
-        resolvedCommandPath: binaryPath,
-        realCommandPath: binaryPath,
-        platform: "darwin",
-        env: {},
-      });
+      const capabilities = yield* makeFxMaintenance(Effect.succeed("0.0.15"))
+        .resolve({
+          binaryPath,
+          resolvedCommandPath: binaryPath,
+          realCommandPath: binaryPath,
+          platform: "darwin",
+          env: {},
+        })
+        .pipe(Effect.provideService(HostProcess.KernelRelease, "23.6.0"));
       expect(capabilities.update).toBeNull();
       expect(capabilities.lookupLatestVersion).toBeUndefined();
     }),

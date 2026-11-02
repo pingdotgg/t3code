@@ -15,6 +15,13 @@ export const Architecture = Context.Reference<NodeJS.Architecture>(
   },
 );
 
+export const KernelRelease = Context.Reference<string>(
+  "@t3tools/shared/HostProcess/KernelRelease",
+  {
+    defaultValue: () => NodeOS.release(),
+  },
+);
+
 export const Hostname = Context.Reference<string>("@t3tools/shared/HostProcess/Hostname", {
   defaultValue: () => NodeOS.hostname(),
 });

@@ -1,5 +1,4 @@
-// @effect-diagnostics nodeBuiltinImport:off -- fx's macOS upgrade gate needs the host kernel release.
-import * as NodeOS from "node:os";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
 import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientRequest from "effect/http/HttpClientRequest";
@@ -33,14 +32,13 @@ export const fetchLatestFxVersion = Effect.fn("fetchLatestFxVersion")(function* 
 // fx after 0.0.13 needs Darwin 24, but its updater does not check the host version.
 export const makeFxMaintenance = (
   lookupLatestVersion: Effect.Effect<string | null>,
-  osRelease: string = NodeOS.release(),
 ): ProviderMaintenanceCapabilitiesResolver => ({
   resolve: Effect.fn("FxMaintenance.resolve")(function* (context) {
     const input = { provider: FX_DRIVER_KIND, packageName: null };
     const manualOnly = makeManualOnlyProviderMaintenanceCapabilities(input);
     if (
       context === null ||
-      (context.platform === "darwin" && Number.parseInt(osRelease, 10) < 24)
+      (context.platform === "darwin" && Number.parseInt(yield* HostProcess.KernelRelease, 10) < 24)
     ) {
       return manualOnly;
     }
