@@ -80,6 +80,9 @@ describe("resolveAddressBarInput", () => {
       "https://127.0.0.2.example.com:3000/",
     );
     expect(resolveAddressBarInput("https://127.0.0.2:3000")).toBe("https://127.0.0.2:3000/");
+    expect(resolveAddressBarInput("127.0.0.2:secret@example.com")).toBe(
+      "https://127.0.0.2:secret@example.com/",
+    );
     expect(resolveAddressBarInput("127.0.0.2:3000")).toBe("http://127.0.0.2:3000/");
   });
 
