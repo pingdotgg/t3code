@@ -292,28 +292,30 @@ export const makeDiscovery = Effect.gen(function* () {
       } satisfies SourceControlProviderDiscoveryItem);
     }),
     // Claim disabled hosts so errors identify the setting.
-    refineUnknownRemote: ({ context }) => {
+    refineUnknownRemote: Effect.fn("GitHubSourceControlProvider.refineUnknownRemote")(function* ({
+      context,
+    }) {
       const url = URL.parse(context.provider.baseUrl);
-      if (!url?.host) return Effect.succeed(null);
+      if (!url?.host) return null;
       // A timeout or keyring failure propagates: the registry does not keep that answer.
-      return api.credential(url.host).pipe(
+      const known = yield* api.credential(url.host).pipe(
+        // Most unknown hosts are not GitHub: only this span records a failure, and only a real one.
+        Effect.withTracerEnabled(false),
         Effect.as(true),
         Effect.catchTags({
           GitHubCliMissingError: () => Effect.succeed(false),
           GitHubHostDisabledError: () => Effect.succeed(true),
           GitHubNotSignedInError: () => Effect.succeed(false),
         }),
-        Effect.map((known) =>
-          known
-            ? ({
-                kind: SourceControlProviderKind.make("github"),
-                name: "GitHub Self-Hosted",
-                baseUrl: context.provider.baseUrl,
-              } as const)
-            : null,
-        ),
       );
-    },
+      return known
+        ? ({
+            kind: SourceControlProviderKind.make("github"),
+            name: "GitHub Self-Hosted",
+            baseUrl: context.provider.baseUrl,
+          } as const)
+        : null;
+    }),
   } satisfies SourceControlManagedCliDiscoverySpec;
 });
 
