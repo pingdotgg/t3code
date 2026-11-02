@@ -8,26 +8,29 @@ import {
 
 type PreparedGoogleTranscription = { readonly locale: string; readonly mode: number };
 
-const native = requireOptionalNativeModule<{
-  isAvailable(): boolean;
+type GoogleTranscriptionModule = {
   checkAvailability(): Promise<boolean>;
   prepare(id: number): Promise<PreparedGoogleTranscription>;
   transcribe(id: number, uri: string, locale: string, mode: number): Promise<string>;
   cancel(id: number): Promise<void>;
-}>("T3VoiceTranscription");
+};
+
+const native = requireOptionalNativeModule<GoogleTranscriptionModule>("T3VoiceTranscription");
 
 let nextOperationId = 0;
 
 export async function getLocalVoiceTranscriber(): Promise<VoiceTranscriber | null> {
-  if (!native?.isAvailable() || !(await native.checkAvailability())) return null;
+  if (!native || !(await native.checkAvailability())) return null;
   const module = native;
   return {
     prepare: async ({ signal }) => {
-      const prepared = await runOperation(signal, "preparation-failed", (id) => module.prepare(id));
+      const prepared = await runOperation(module, signal, "preparation-failed", (id) =>
+        module.prepare(id),
+      );
       return {
         locale: prepared.locale,
         transcribe: (uri, { signal }) =>
-          runOperation(signal, "transcription-failed", (id) =>
+          runOperation(module, signal, "transcription-failed", (id) =>
             module.transcribe(id, uri, prepared.locale, prepared.mode),
           ),
       };
@@ -36,15 +39,16 @@ export async function getLocalVoiceTranscriber(): Promise<VoiceTranscriber | nul
 }
 
 async function runOperation<T>(
+  module: GoogleTranscriptionModule,
   signal: AbortSignal,
-  errorCode: "preparation-failed" | "transcription-failed",
+  fallbackCode: "preparation-failed" | "transcription-failed",
   operation: (id: number) => Promise<T>,
 ): Promise<T> {
   throwIfVoiceTranscriptionAborted(signal);
   const id = ++nextOperationId;
   let cancellation: Promise<void> | undefined;
   const abort = () => {
-    cancellation = native!.cancel(id).catch(() => {});
+    cancellation = module.cancel(id).catch(() => {});
   };
   signal.addEventListener("abort", abort, { once: true });
   try {
@@ -53,15 +57,12 @@ async function runOperation<T>(
     return result;
   } catch (error) {
     throwIfVoiceTranscriptionAborted(signal);
+    // The native module rejects with the client-runtime codes; its message is the source of truth.
     const code =
       typeof error === "object" && error !== null && "code" in error ? error.code : undefined;
     throw new VoiceTranscriptionError(
-      code === "unavailable" || code === "unsupported-locale" ? code : errorCode,
-      code === "unavailable"
-        ? "On-device voice transcription is not available for this device language."
-        : errorCode === "preparation-failed"
-          ? "Voice transcription could not prepare this language. Check Google speech services and try again."
-          : "Voice transcription failed.",
+      code === "unavailable" ? code : fallbackCode,
+      error instanceof Error ? error.message : "Voice transcription failed.",
       { cause: error },
     );
   } finally {

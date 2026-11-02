@@ -3,9 +3,9 @@ import { Atom } from "effect/reactivity";
 import { subscribeAppActive } from "./appState";
 
 /**
- * A system permission as the app last saw it. Reads it when first mounted and
- * again each time the app returns to the foreground, where the user may have
- * changed it in system Settings. Writing stores the outcome of a request.
+ * A system permission or device capability as the app last saw it. Reads it
+ * when first mounted and again each time the app returns to the foreground,
+ * where the user may have changed it in system Settings. Writing stores the outcome of a request.
  */
 export function makePermissionStatusAtom<S>(options: {
   readonly label: string;

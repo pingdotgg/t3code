@@ -20,18 +20,13 @@ import kotlinx.coroutines.withContext
 
 internal class VoiceTranscriptionException(val code: String, message: String) : Exception(message)
 
-internal interface GoogleSpeechClient : Closeable {
-  suspend fun checkStatus(): Int
-  suspend fun download()
-}
-
 private val recognitionModes = listOf(
   SpeechRecognizerOptions.Mode.MODE_ADVANCED,
   SpeechRecognizerOptions.Mode.MODE_BASIC
 )
 
 internal suspend fun isGoogleVoiceTranscriptionSupported(
-  createClient: (Int) -> GoogleSpeechClient
+  createClient: (Int) -> MlKitSpeechClient
 ): Boolean {
   for (mode in recognitionModes) {
     createClient(mode).use { client ->
@@ -46,7 +41,7 @@ internal suspend fun isGoogleVoiceTranscriptionSupported(
 }
 
 internal suspend fun prepareGoogleVoiceTranscription(
-  createClient: (Int) -> GoogleSpeechClient
+  createClient: (Int) -> MlKitSpeechClient
 ): Int {
   for (mode in recognitionModes) {
     createClient(mode).use { client ->
@@ -59,7 +54,7 @@ internal suspend fun prepareGoogleVoiceTranscription(
   )
 }
 
-private suspend fun prepareModel(client: GoogleSpeechClient): Boolean = try {
+private suspend fun prepareModel(client: MlKitSpeechClient): Boolean = try {
   val status = client.checkStatus()
   if (status == FeatureStatus.UNAVAILABLE) {
     false
@@ -82,7 +77,7 @@ private suspend fun prepareModel(client: GoogleSpeechClient): Boolean = try {
   false
 }
 
-private suspend fun checkModelSupport(client: GoogleSpeechClient): Int = try {
+private suspend fun checkModelSupport(client: MlKitSpeechClient): Int = try {
   client.checkStatus()
 } catch (error: GenAiException) {
   if (!isModelUnavailable(error)) throw error
@@ -93,7 +88,7 @@ private fun isModelUnavailable(error: GenAiException): Boolean =
   error.errorCode == GenAiException.ErrorCode.NOT_AVAILABLE ||
     error.errorCode == GenAiException.ErrorCode.NOT_SUPPORTED
 
-internal suspend fun collectGoogleVoiceTranscript(
+private suspend fun collectGoogleVoiceTranscript(
   responses: Flow<SpeechRecognizerResponse>
 ): String {
   val text = StringBuilder()
@@ -114,7 +109,7 @@ internal suspend fun collectGoogleVoiceTranscript(
   return text.append(partial).toString().trim()
 }
 
-internal class MlKitSpeechClient(context: Context, locale: Locale, mode: Int) : GoogleSpeechClient {
+internal class MlKitSpeechClient(context: Context, locale: Locale, mode: Int) : Closeable {
   private val context = context.applicationContext
   private val recognizer = SpeechRecognition.getClient(
     speechRecognizerOptions {
@@ -123,9 +118,9 @@ internal class MlKitSpeechClient(context: Context, locale: Locale, mode: Int) : 
     }
   )
 
-  override suspend fun checkStatus() = recognizer.checkStatus()
+  suspend fun checkStatus() = recognizer.checkStatus()
 
-  override suspend fun download() {
+  suspend fun download() {
     val result = recognizer.download().first {
       it is DownloadStatus.DownloadCompleted || it is DownloadStatus.DownloadFailed
     }

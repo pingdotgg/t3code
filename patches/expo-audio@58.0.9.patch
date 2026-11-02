@@ -4,7 +4,7 @@ index 198fe6d..5b39611 100644
 +++ b/ios/AudioRecorder.swift
 @@ -285,16 +285,16 @@ class AudioRecorder: SharedRef<AVAudioRecorder>, RecordingResultHandler {
    }
-
+ 
    func didFinish(_ recorder: AVAudioRecorder, successfully flag: Bool) {
 -    // Update internal state when recording finishes automatically (e.g., from recordForDuration)
 -    currentState = .stopped
@@ -12,7 +12,7 @@ index 198fe6d..5b39611 100644
 +    currentState = flag ? .stopped : .error
      resetDurationTracking()
      durationLimitSeconds = nil
-
+ 
      emit(event: recordingStatus, payload: [
        "id": id,
        "isFinished": true,
@@ -95,17 +95,6 @@ index 3194a8ebd1b91793d03a1692c563b5d2e83c2738..e7e713199f776b60093b75da78219742
 
    /**
     * Replaces the current audio source with a new one.
-@@ -343,7 +346,9 @@ export declare class AudioRecorder extends SharedObject<RecordingEvents> {
-    * @param inputUid The uid of a `RecordingInput`.
-    * @return A `Promise` that is resolved if successful or rejected if not.
-    */
--  setInput(inputUid: string): void;
-+  setInput(inputUid: string): void | Promise<void>;
-+  /** Android only: cancel a pending recording-input selection. */
-+  cancelInputSelection?(): void;
-
-   /**
-    * Status of the current recording.
 diff --git a/build/AudioModule.types.d.ts b/build/AudioModule.types.d.ts
 index 0d63c9b949cfae7a101902fc3bb70fcf46094f68..b590f9654bbf74b5052b71e31b7ed6d3d0050aa4 100644
 --- a/build/AudioModule.types.d.ts
@@ -129,17 +118,6 @@ index 0d63c9b949cfae7a101902fc3bb70fcf46094f68..b590f9654bbf74b5052b71e31b7ed6d3
 +    pause(deactivateSession?: boolean): void;
      /**
       * Replaces the current audio source with a new one.
-      */
-@@ -273,7 +276,9 @@ export declare class AudioRecorder extends SharedObject<RecordingEvents> {
-      * @param inputUid The uid of a `RecordingInput`.
-      * @return A `Promise` that is resolved if successful or rejected if not.
-      */
--    setInput(inputUid: string): void;
-+    setInput(inputUid: string): void | Promise<void>;
-+    /** Android only: cancel a pending recording-input selection. */
-+    cancelInputSelection?(): void;
-     /**
-      * Status of the current recording.
       */
 diff --git a/android/src/main/java/expo/modules/audio/AudioModule.kt b/android/src/main/java/expo/modules/audio/AudioModule.kt
 index 6c81fce3dd518d3b82e3280940a001c7be84dd0a..16125c679c870e2eae48f8db953dedd3fc842c3d 100644
@@ -310,7 +288,7 @@ index 2ff4a474fdea3efa652436a8a3960c3669ad298b..63229cea73ef0d2fe245b5d2a2675044
 +    val audioDevices = recordingInputs(audioManager)
      for (device in audioDevices) {
 -      if (device.id == id) {
-+      if (recordingInputUid(device) == uid || device.id.toString() == uid) {
++      if (recordingInputUid(device) == uid) {
          return device
        }
      }

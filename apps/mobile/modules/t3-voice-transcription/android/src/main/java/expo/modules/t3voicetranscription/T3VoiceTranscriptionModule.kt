@@ -26,8 +26,6 @@ class T3VoiceTranscriptionModule : Module() {
   override fun definition() = ModuleDefinition {
     Name("T3VoiceTranscription")
 
-    Function("isAvailable") { Build.VERSION.SDK_INT >= Build.VERSION_CODES.S }
-
     AsyncFunction("checkAvailability").Coroutine<Boolean> {
       if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) {
         false

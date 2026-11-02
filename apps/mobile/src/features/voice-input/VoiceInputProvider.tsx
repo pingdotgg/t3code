@@ -8,6 +8,7 @@ import { Atom, AsyncResult } from "effect/reactivity";
 import { makeMutable } from "react-native-reanimated";
 
 import {
+  type MicrophoneEntry,
   microphoneOrder,
   preferredMicrophoneInput,
   rememberMicrophones,
@@ -15,7 +16,10 @@ import {
 import { getLocalVoiceTranscriber } from "../../native/voiceTranscription";
 import { mobilePreferencesAtom, updateMobilePreferencesAtom } from "../../state/preferences";
 import { getNativeShowcaseScene } from "../showcase/nativeShowcaseScene";
-import { voiceInputBlocksSubmission } from "@t3tools/client-runtime/voice-input";
+import {
+  voiceInputBlocksSubmission,
+  type VoiceTranscriber,
+} from "@t3tools/client-runtime/voice-input";
 import { createLazyVoiceRecorder } from "./lazyVoiceRecorder";
 import { VOICE_WAVEFORM_SAMPLE_COUNT } from "./voiceInputMetering";
 import { VoiceInputSession } from "./voiceInputSession";
@@ -46,9 +50,15 @@ function keepScreenAwake(tag: string): () => void {
   return () => void activation.then(() => deactivateKeepAwake(tag)).catch(() => {});
 }
 
-const localVoiceTranscriberAtom = makePermissionStatusAtom({
+export const deviceMicrophoneOrder = (saved?: ReadonlyArray<MicrophoneEntry>) =>
+  microphoneOrder(saved, Platform.OS === "android" ? "android" : "ios");
+
+/** "checking" until the first availability probe settles; re-probed on foreground. */
+export const localVoiceTranscriberAtom = makePermissionStatusAtom<
+  VoiceTranscriber | null | "checking"
+>({
   label: "mobile:voice-input:transcriber",
-  initial: null,
+  initial: "checking",
   read: () => getLocalVoiceTranscriber().catch(() => null),
 }).pipe(Atom.keepAlive);
 
@@ -84,16 +94,12 @@ const voiceInputAtom = Atom.make((get) => {
     selectInput: (inputs) => {
       const preferences = registry.get(mobilePreferencesAtom);
       if (!AsyncResult.isSuccess(preferences)) return null;
-      const platform = Platform.OS === "android" ? "android" : "ios";
-      const known = microphoneOrder(preferences.value.microphones, platform);
+      const known = deviceMicrophoneOrder(preferences.value.microphones);
       const order = rememberMicrophones(known, inputs);
       if (order !== known) {
         registry.set(updateMobilePreferencesAtom, {
           transform: (current) => ({
-            microphones: rememberMicrophones(
-              microphoneOrder(current.microphones, platform),
-              inputs,
-            ),
+            microphones: rememberMicrophones(deviceMicrophoneOrder(current.microphones), inputs),
           }),
         });
       }
@@ -102,7 +108,10 @@ const voiceInputAtom = Atom.make((get) => {
   });
   const session: VoiceInputSession = new VoiceInputSession({
     recorder,
-    getTranscriber: () => registry.get(localVoiceTranscriberAtom),
+    getTranscriber: () => {
+      const transcriber = registry.get(localVoiceTranscriberAtom);
+      return transcriber === "checking" ? null : transcriber;
+    },
     requestPermission: permission.requestPermission,
     configureRecording: async () => {
       const token = acquireAudioSession("recording");
@@ -142,7 +151,8 @@ export function useGlobalVoiceInput() {
   const snapshot = useSyncExternalStore(session.subscribe, session.getSnapshot);
   return {
     ...snapshot,
-    isAvailable: transcriber !== null || getNativeShowcaseScene() !== null,
+    isAvailable:
+      (transcriber !== null && transcriber !== "checking") || getNativeShowcaseScene() !== null,
     audioLevels,
     isBusy: voiceInputBlocksSubmission(snapshot.state),
     session,

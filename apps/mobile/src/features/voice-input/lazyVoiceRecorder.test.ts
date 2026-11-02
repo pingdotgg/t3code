@@ -9,14 +9,20 @@ type State = { readonly isRecording: boolean };
 
 function createNativeRecorder(uri: string) {
   const listeners = new Set<(status: Status) => void>();
+  // Like expo-audio on Android, preparing again requires a stop in between.
+  let isPrepared = false;
   return {
     uri: null as string | null,
     prepared: uri,
     prepareToRecordAsync: vi.fn(async function (this: { uri: string | null; prepared: string }) {
+      if (isPrepared) throw new Error("Recorder is already prepared");
+      isPrepared = true;
       this.uri = this.prepared;
     }),
     record: vi.fn(),
-    stop: vi.fn(async (): Promise<void> => undefined),
+    stop: vi.fn(async (): Promise<void> => {
+      isPrepared = false;
+    }),
     getStatus: vi.fn((): State => ({ isRecording: true })),
     addListener: vi.fn((_event: "recordingStatusUpdate", listener: (status: Status) => void) => {
       listeners.add(listener);
@@ -27,7 +33,7 @@ function createNativeRecorder(uri: string) {
       { uid: "built-in", name: "iPhone Microphone", type: "MicrophoneBuiltIn" },
     ]),
     setInput: vi.fn((_uid: string): void | Promise<void> => undefined),
-    cancelInputSelection: vi.fn(() => undefined),
+    cancelInputSelection: vi.fn((): void => undefined),
     release: vi.fn(),
     emit: (status: Status) => listeners.forEach((listener) => listener(status)),
   };
@@ -60,6 +66,7 @@ describe("createLazyVoiceRecorder", () => {
 
     const disconnected = createHarness((inputs) => inputs[1] ?? null);
     await disconnected.recorder.prepareToRecordAsync();
+    await disconnected.recorder.stop();
     disconnected.created[0]!.setInput.mockImplementationOnce(() => {
       throw new Error("Preferred input not found");
     });

@@ -30,16 +30,6 @@ at the end, leave the block. **Backspace** at the start of a code block turns it
 back into plain lines. Choose the language in a code block's corner to change
 it. Very large code blocks are shown without syntax highlighting.
 
-## Dictate on mobile
-
-On supported iOS and Android devices, use the microphone to dictate a draft,
-then finish recording to insert the transcript. You can edit it before sending.
-Recordings are limited to five minutes and are transcribed on your device.
-
-Android voice input requires Android 12 or later and compatible Google speech
-services. The first use may download a speech model. Keep T3 Code open while
-recording and transcribing.
-
 ## Attach files
 
 Attach up to 100 files per message. Each image can be up to 10 MiB, with at most
@@ -190,14 +180,15 @@ and use **Attach again** or remove the missing file before sending.
 ## Voice input on mobile
 
 On supported iPhones with iOS 26 or later and Android devices with Android 12 or
-later, use the composer's microphone to record,
-then confirm to transcribe. Text is inserted where your selection was when
-recording started, ready for you to review and edit before sending.
+later, use the composer's microphone to record, then confirm to transcribe. Text is
+inserted where your selection was when recording started, ready for you to review
+and edit before sending.
 
 Voice input uses on-device speech transcription: Apple's on iOS, and compatible
-Google on-device speech services on Android. When it is unavailable for the device
-or its language, the composer has no microphone button and **Settings → Microphone**
-says voice input isn't available.
+Google speech services on Android. When it is unavailable for the device or its
+language, the composer has no microphone button and **Settings → Microphone** says
+voice input isn't available. On Android, keep T3 Code open while recording and
+transcribing.
 
 The first use may download a speech model and needs a network connection.
 Later transcription works offline for that language. Recordings can be up to five
@@ -208,8 +199,8 @@ awake; it can sleep normally once recording stops.
 
 Choose a preferred order in **Settings → Microphone**. Voice input requests the first
 connected microphone in the list. The list mixes kinds (built-in, other wired, other
-Bluetooth, and CarPlay on iOS) with wired and
-Bluetooth devices you have dictated with, listed by name. Drag to rank them together:
+Bluetooth, and CarPlay on iOS) with wired and Bluetooth devices you have dictated
+with, listed by name. Drag to rank them together:
 for example, put **Other Bluetooth** above your AirPods so a new headset is preferred
 while the AirPods microphone stays low. By default, CarPlay comes after the built-in
 microphone on iOS. Swipe a device left to forget it. Android may use another input
