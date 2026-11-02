@@ -1039,20 +1039,25 @@ function pushBlankLineRun(acc: RichAccumulator, pmPos: number): void {
   acc.md += 1;
 }
 
-// Moves an offset into a parsed `value` past the blank lines its serialization inserted.
-// Any other difference, such as `__` written as `**`, counts as a same-length rewrite.
+// Moves an offset into a parsed `value` past the blank lines its serialization inserted,
+// treating other differences (`__` written as `**`) as same-length rewrites. When the two
+// strings do not align that way end to end, the offset is returned unmapped.
 export function serializedMarkdownOffset(
   value: string,
   serialized: string,
   offset: number,
 ): number {
+  if (value === serialized) return offset;
   let index = 0;
   let mapped = 0;
-  while (index < offset && index < value.length && mapped < serialized.length) {
+  let target = -1;
+  while (index < value.length && mapped < serialized.length) {
+    if (index === offset && target < 0) target = mapped;
     if (value[index] === serialized[mapped] || serialized[mapped] !== "\n") index += 1;
     mapped += 1;
   }
-  return mapped + (offset - index);
+  if (index !== value.length || mapped !== serialized.length) return offset;
+  return target < 0 ? mapped + (offset - index) : target;
 }
 
 function appendInlineRuns(
