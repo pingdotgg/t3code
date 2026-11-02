@@ -165,7 +165,10 @@ function resolveProjectOverrides(
   return { settings: effective as ServerSettings, sources, overrides };
 }
 
-/** New name-only projects use their checkout until the first thread, even when the default is worktree. */
+/**
+ * New name-only projects use their checkout until the first thread, even when the default is worktree.
+ * Only T3's own folder identifies them: a custom new-projects folder also holds repos the user added.
+ */
 export function resolveNewThreadEnvMode(input: {
   readonly projectSettings: ResolvedProjectSettings<ResolvedServerSettings>;
   readonly workspaceRoot: string | null;
@@ -178,7 +181,8 @@ export function resolveNewThreadEnvMode(input: {
     input.projectHasThreads ||
     input.projectSettings.sources.defaultThreadEnvMode !== "environment" ||
     input.workspaceRoot === null ||
-    input.newProjectsRoot == null
+    input.newProjectsRoot == null ||
+    input.projectSettings.settings.newProjectsDirectory !== ""
   ) {
     return configured;
   }

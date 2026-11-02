@@ -244,6 +244,24 @@ describe("resolveNewThreadEnvMode", () => {
       "worktree",
     );
     expect(resolveNewThreadEnvMode({ ...newProject, newProjectsRoot: undefined })).toBe("worktree");
+    const customFolder = resolveProjectSettings(
+      {
+        ...DEFAULT_SERVER_SETTINGS,
+        defaultThreadEnvMode: "worktree",
+        newProjectsDirectory: "~/repos",
+      },
+      projectId,
+      null,
+      null,
+    );
+    expect(
+      resolveNewThreadEnvMode({
+        ...newProject,
+        projectSettings: customFolder,
+        workspaceRoot: "/home/me/repos/existing-app",
+        newProjectsRoot: "/home/me/repos",
+      }),
+    ).toBe("worktree");
   });
 
   it("lets a project override, or a t3.json the environment defers to, keep worktree mode", () => {

@@ -143,7 +143,8 @@ first commit.
 To create new projects somewhere else, such as `~/repos`, set **New projects directory** in
 **Settings → Projects**. The path is on the machine running T3 Code, and `~` is that machine's
 home folder. Existing projects stay where they are. Clear the setting to go back to
-`~/.t3/projects`.
+`~/.t3/projects`. With a custom folder, a new project's first thread follows your default
+thread mode, because that folder can also hold repositories you added yourself.
 
 Use **Add Project** in the command palette (`Cmd/Ctrl+K`) to clone a repository. Choose a hosting
 provider or paste a Git URL, then choose where to save it. The project opens right away while the
