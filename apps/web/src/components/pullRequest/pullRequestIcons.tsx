@@ -1,7 +1,6 @@
 import {
   GitMergeIcon,
   GitPullRequestArrowIcon,
-  GitPullRequestIcon,
   GitPullRequestClosedIcon,
   GitPullRequestDraftIcon,
   LayersIcon,
@@ -12,7 +11,7 @@ import {
 import type { PullRequestState } from "@t3tools/contracts";
 
 export const PullRequestGlyph = {
-  pullRequest: GitPullRequestIcon,
+  pullRequest: GitPullRequestArrowIcon,
   reopen: GitPullRequestArrowIcon,
   draft: GitPullRequestDraftIcon,
   closed: GitPullRequestClosedIcon,
