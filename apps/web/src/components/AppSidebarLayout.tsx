@@ -377,6 +377,7 @@ function SidebarControl() {
       className={cn(
         "pointer-events-none fixed left-[var(--workspace-controls-left)] top-[var(--workspace-controls-top)] z-50 ml-px flex h-[var(--workspace-topbar-height)] items-center",
         isMobile && mobileSheetMounted && "hidden",
+        "in-[[data-slot=sidebar-wrapper]:has([data-peek])]:invisible",
       )}
       data-sidebar-control=""
     >

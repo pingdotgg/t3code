@@ -381,9 +381,9 @@ function Sidebar({
             variant === "floating" || variant === "inset"
               ? "p-2 group-data-[collapsible=icon]:w-[calc(var(--sidebar-width-icon)+(--spacing(4))+2px)]"
               : "group-data-[collapsible=icon]:w-(--sidebar-width-icon) group-data-[side=left]:border-r group-data-[side=right]:border-l",
-            // Peeking floats the card over the pane and the sidebar trigger
-            // without moving `left`, which panel animations transition.
-            "data-peek:inset-y-2 data-peek:z-51 data-peek:h-auto data-peek:overflow-hidden data-peek:rounded-xl data-peek:border data-peek:shadow-xl/15",
+            // Peeking floats the card over the pane without moving `left`, which
+            // panel animations transition. Modals portal after it on the same layer.
+            "data-peek:inset-y-2 data-peek:z-50 data-peek:h-auto data-peek:overflow-hidden data-peek:rounded-xl data-peek:border data-peek:shadow-xl/15",
             "data-[peek=entering]:-translate-x-6 data-[peek=leaving]:-translate-x-6 data-[peek=shown]:translate-x-[calc(100%+--spacing(2))]",
             "data-[peek=entering]:transition-none! data-[peek=leaving]:transition-transform! data-[peek=shown]:transition-transform! data-peek:duration-200! data-peek:ease-out! motion-reduce:data-peek:transition-none!",
             className,

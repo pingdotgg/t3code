@@ -34,24 +34,36 @@ export function useSidebarPeek({
     return () => window.clearTimeout(timer);
   }, [peek]);
 
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- document pointermove listener that hides the card once the pointer leaves it
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- document pointer listeners that hide the card once the pointer leaves it or the window
   useEffect(() => {
     const container = containerRef.current;
     if (peek !== "shown" || !container) return;
     // The offset box ignores the slide transform, so the card's right edge
-    // counts from its first frame. Menus opened from the sidebar render in
-    // portals outside it, so an open menu or a hovered popup also holds it.
-    const holdsPeekOpen = (event: globalThis.PointerEvent) =>
-      event.clientX < container.offsetWidth + CARD_INSET_PX + PEEK_EDGE_PX ||
-      container.querySelector("[data-popup-open]") !== null ||
-      (event.target instanceof Element && event.target.closest('[data-slot$="popup"]') !== null);
-    const onPointerMove = (event: globalThis.PointerEvent) => {
-      if (holdsPeekOpen(event)) return;
+    // counts from its first frame. Menus render in portals outside the card.
+    // Only an open menu sets aria-expanded; tooltips set data-popup-open too.
+    const menuIsOpen = () =>
+      container.querySelector('[aria-haspopup][aria-expanded="true"]') !== null ||
+      document.querySelector("[data-context-menu]") !== null;
+    const leave = () => {
       onLeave();
       setPeek("leaving");
     };
+    const onPointerMove = (event: globalThis.PointerEvent) => {
+      const overCard = event.clientX < container.offsetWidth + CARD_INSET_PX + PEEK_EDGE_PX;
+      const overPopup =
+        event.target instanceof Element && event.target.closest('[data-slot$="popup"]') !== null;
+      if (!overCard && !overPopup && !menuIsOpen()) leave();
+    };
+    const onPointerLeaveWindow = () => {
+      if (!menuIsOpen()) leave();
+    };
+    const root = document.documentElement;
     document.addEventListener("pointermove", onPointerMove, { passive: true });
-    return () => document.removeEventListener("pointermove", onPointerMove);
+    root.addEventListener("pointerleave", onPointerLeaveWindow);
+    return () => {
+      document.removeEventListener("pointermove", onPointerMove);
+      root.removeEventListener("pointerleave", onPointerLeaveWindow);
+    };
   }, [containerRef, onLeave, peek]);
 
   const onEdgePointerEnter = (event: PointerEvent<HTMLDivElement>) => {
