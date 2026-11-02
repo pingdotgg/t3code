@@ -543,10 +543,14 @@ const capture = async (
         "url" | "title" | "loading" | "visibleText" | "interactiveElements"
       >
     >,
-    captureViewport(input.cdp, { format: "png" }).then(async (full) => ({
-      full,
-      data: scale < 1 ? await shrinkPng(input.cdp, full, scale) : full,
-    })),
+    captureViewport(input.cdp, { format: "png" }).then(async (full) =>
+      scale < 1
+        ? {
+            data: await shrinkPng(input.cdp, full, scale),
+            full: input.fullScreenshot ? full : undefined,
+          }
+        : { data: full, full: undefined },
+    ),
   ]);
   void pageAndScreenshot.catch(constVoid);
   // Leaves time for the second read; a frame that never loads holds the tree until then.
@@ -597,9 +601,7 @@ const capture = async (
       data,
       ...pngSize(data),
     },
-    ...(input.fullScreenshot && full !== data
-      ? { fullScreenshot: { data: full, ...pngSize(full) } }
-      : {}),
+    ...(full !== undefined ? { fullScreenshot: { data: full, ...pngSize(full) } } : {}),
   };
 };
 
