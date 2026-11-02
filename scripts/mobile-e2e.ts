@@ -2,16 +2,23 @@
 // @effect-diagnostics nodeBuiltinImport:off globalDate:off - Host-side device automation uses Node subprocess and filesystem APIs directly.
 
 import * as NodeChildProcess from "node:child_process";
+import * as NodeFS from "node:fs";
 import * as NodeFSP from "node:fs/promises";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import * as NodeProcess from "node:process";
 import * as NodeURL from "node:url";
 
-import { Device, type Pool, run } from "./mobile-e2e/device.ts";
+import { Device, type Pool, poolError, run } from "./mobile-e2e/device.ts";
 import { runJourney, type StepResult } from "./mobile-e2e/journey.ts";
 import { POSES, type Pose } from "./mobile-e2e/poses.ts";
-import { failedChecks, poseFailed, type PoseResult, renderReport } from "./mobile-e2e/report.ts";
+import {
+  failedChecks,
+  poolBlocked,
+  poseFailed,
+  type PoseResult,
+  renderReport,
+} from "./mobile-e2e/report.ts";
 import { reviewPose } from "./mobile-e2e/review.ts";
 import {
   reserveAvailablePort,
@@ -139,7 +146,10 @@ async function runPose(
 async function main() {
   const args = NodeProcess.argv.slice(2);
   if (args.includes("--list")) {
-    for (const pose of POSES) NodeProcess.stdout.write(`${pose.id}\t${pose.device}\n`);
+    for (const pose of POSES)
+      NodeProcess.stdout.write(
+        `${pose.id}\t${pose.device}${pose.pending ? `\t(pending: ${pose.pending})` : ""}\n`,
+      );
     return;
   }
   const values = (flag: string) =>
@@ -150,7 +160,7 @@ async function main() {
   const platforms = values("--platform");
   const poses = POSES.filter(
     (pose) =>
-      (selected.length === 0 || selected.includes(pose.id)) &&
+      (selected.length === 0 ? !pose.pending : selected.includes(pose.id)) &&
       (platforms.length === 0 || platforms.includes(pose.platform)),
   );
   const concurrencyFlag = values("--concurrency")[0];
@@ -214,15 +224,29 @@ async function main() {
       ],
       {
         cwd: NodePath.join(REPO_ROOT, "apps/mobile"),
-        env: { ...NodeProcess.env, APP_VARIANT: "development", CI: "1" },
-        stdio: ["ignore", "ignore", "inherit"],
+        // Lazily fetched chunks (dynamic import()) sometimes arrive broken on the pool's Android
+        // emulators and throw SyntaxErrors; release builds have no lazy chunks either.
+        env: { ...NodeProcess.env, APP_VARIANT: "development", CI: "1", EXPO_NO_METRO_LAZY: "1" },
+        // The app's console output arrives through Metro; keep it with the run.
+        stdio: [
+          "ignore",
+          NodeFS.openSync(NodePath.join(outputDirectory, "metro.log"), "w"),
+          "inherit",
+        ],
         // Its own group, so stopping it also stops the expo child that owns the port.
         detached: true,
       },
     );
     await waitForPort(metroPort, "Metro", 120_000);
-    // Warm each platform's bundle once, instead of on every device at once.
+    // Warm each platform's bundle once, instead of on every device at once, and have its dev
+    // client cached before any lease: a cache miss builds, which can outlast a lease.
     for (const platform of new Set(poses.map((pose) => pose.platform))) {
+      log("e2e", `preparing the ${platform} dev client`);
+      await run(
+        NodeProcess.execPath,
+        ["scripts/mobile-native-client.ts", "ensure", platform, "--prepare"],
+        { cwd: REPO_ROOT, timeoutMs: 1_800_000 },
+      );
       log("e2e", `bundling for ${platform}`);
       await run("curl", [
         "-sf",
@@ -237,11 +261,17 @@ async function main() {
         issuePairUrl(environment, host),
       );
     const runOne = async (pose: Pose) => {
-      const first = await attempt(pose, runId);
+      let result = await attempt(pose, runId);
       // A pose that failed before its first screen usually met the pool, not the app.
-      if (!first.error || first.steps.length > 0) return first;
-      log(pose.id, `retrying after: ${first.error.split("\n")[0]}`);
-      return attempt(pose, `${runId}-retry`);
+      for (
+        let retry = 1;
+        retry <= 2 && result.error && (result.steps.length === 0 || poolError(result.error));
+        retry++
+      ) {
+        log(pose.id, `retrying after: ${result.error.split("\n")[0]}`);
+        result = await attempt(pose, `${runId}-retry${retry}`);
+      }
+      return result;
     };
     // Each platform has its own workers, so each gets its own limit; one Mac runs every
     // iOS simulator, and recording several at once on a shared pool times it out.
@@ -279,20 +309,25 @@ async function main() {
       );
       log(
         result.pose.id,
-        [result.error, ...failures].filter(Boolean).join("; ") ||
+        [poolBlocked(result) ? `blocked by the pool: ${result.error}` : result.error, ...failures]
+          .filter(Boolean)
+          .join("; ") ||
           `passed${result.findings?.length ? `, ${result.findings.length} review findings` : ""}`,
       );
     }
-    const failed = reviewed.filter(poseFailed).length;
+    const failed = reviewed.filter((result) => poseFailed(result) && !poolBlocked(result)).length;
+    const blocked = reviewed.filter(poolBlocked).length;
     NodeProcess.stdout.write(
       `${JSON.stringify({
         report,
         poses: reviewed.length,
         failed,
+        blocked,
         findings: reviewed.reduce((count, result) => count + (result.findings?.length ?? 0), 0),
       })}\n`,
     );
-    process.exitCode = failed ? 1 : 0;
+    // A pose the pool blocked was not tested, so it fails the run too.
+    process.exitCode = failed || blocked ? 1 : 0;
   } finally {
     if (metro?.pid) {
       try {
