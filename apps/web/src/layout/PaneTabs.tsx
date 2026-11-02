@@ -527,12 +527,11 @@ export function useLayoutTabLabel(tab: LayoutTab): {
             ? "~"
             : null))
         : null);
-    const label = surface
+    const title = surface
       ? (sideChat?.title ?? surfaceTabTitle(surface, preview, terminal?.state.summary?.label))
       : terminalRef
         ? terminalTabTitle(activeTerminalId, terminal?.state.summary?.label)
         : "Surface";
-    const title = threadTitle ? `${label} · ${threadTitle}` : label;
     const root =
       thread?.worktreePath ?? surfaceDraft?.worktreePath ?? project?.workspaceRoot ?? home;
     const path =
