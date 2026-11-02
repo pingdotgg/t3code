@@ -1417,7 +1417,7 @@ describe("deriveMessagesTimelineRows", () => {
     },
   );
 
-  it("splits a settled turn's work at each steer and keeps the total time on top", () => {
+  it("splits a settled turn's work at each steer, each row with its own time and edits", () => {
     const runId = RunId.make("steered-run");
     const time = (second: number) => new Date(Date.UTC(2026, 0, 1, 0, 0, second)).toISOString();
     const message = (
@@ -1440,7 +1440,12 @@ describe("deriveMessagesTimelineRows", () => {
         streaming: false,
       },
     });
-    const work = (id: string, second: number): TimelineEntry => ({
+    const work = (
+      id: string,
+      second: number,
+      additions: number,
+      deletions: number,
+    ): TimelineEntry => ({
       kind: "work",
       id,
       createdAt: time(second),
@@ -1461,8 +1466,8 @@ describe("deriveMessagesTimelineRows", () => {
             status: "completed",
             parentItemId: null,
             type: "file_change",
-            additions: 40,
-            deletions: 0,
+            additions,
+            deletions,
           },
         } as never,
       },
@@ -1471,9 +1476,9 @@ describe("deriveMessagesTimelineRows", () => {
       deriveMessagesTimelineRows({
         timelineEntries: [
           message("prompt", 0, "user", "turn_start"),
-          work("work-before-steer", 4),
+          work("work-before-steer", 4, 12, 1),
           message("steer", 10, "user", "steer"),
-          work("work-after-steer", 15),
+          work("work-after-steer", 15, 40, 0),
           message("final", 30, "assistant"),
         ],
         latestRun: { runId, status: "completed", startedAt: time(0), completedAt: time(30) },
@@ -1503,13 +1508,13 @@ describe("deriveMessagesTimelineRows", () => {
       "final",
     ]);
     expect(collapsed[1]).toMatchObject({
-      label: "Worked for 30s",
-      diff: { additions: 30, deletions: 2 },
+      label: "Worked for 10s",
+      diff: { additions: 12, deletions: 1 },
     });
     expect(collapsed[3]).toMatchObject({
       label: "Continued for 20s",
       createdAt: time(10),
-      diff: null,
+      diff: { additions: 40, deletions: 0 },
     });
 
     expect(rows(new Set([segmentKey])).map((row) => row.id)).toEqual([

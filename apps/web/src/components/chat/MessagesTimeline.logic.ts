@@ -1130,6 +1130,12 @@ function sumFileChangeLineStat(entries: Iterable<WorkLogEntry>): DiffLineStat | 
   return reported ? { additions, deletions } : null;
 }
 
+function sumTimelineFileChangeLineStat(entries: ReadonlyArray<TimelineEntry>): DiffLineStat | null {
+  return sumFileChangeLineStat(
+    entries.flatMap((entry) => (entry.kind === "work" ? [entry.entry] : [])),
+  );
+}
+
 function sumCheckpointLineStat(summary: TurnDiffSummary): DiffLineStat | null {
   const { count, additions, deletions } = checkpointFileTotals(summary);
   return count === 0 ? null : { additions, deletions };
@@ -1345,11 +1351,15 @@ function deriveTurnFolds(input: {
     // A turn cut short by a steer leaves trailing work entries behind its
     // terminal message — take whichever ended last.
     const lastEntryEnd = timelineEntryEnd(lastEntry);
-    const elapsedMs =
-      input.latestRun?.runId === runId && input.latestRun.startedAt && input.latestRun.completedAt
+    const turnStart = group.startBoundary ?? firstEntry.createdAt;
+    const firstSteer = group.steerSegments[0];
+    const firstSegment = group.entries.slice(0, firstSteer?.startIndex);
+    const elapsedMs = firstSteer
+      ? computeElapsedMs(turnStart, firstSteer.steer.createdAt)
+      : input.latestRun?.runId === runId && input.latestRun.startedAt && input.latestRun.completedAt
         ? computeElapsedMs(input.latestRun.startedAt, input.latestRun.completedAt)
         : computeElapsedMs(
-            group.startBoundary ?? firstEntry.createdAt,
+            turnStart,
             maxIsoTimestamp(group.terminalEntry?.message.updatedAt ?? null, lastEntryEnd) ??
               lastEntryEnd,
           );
@@ -1377,25 +1387,21 @@ function deriveTurnFolds(input: {
             : duration
               ? `Worked for ${duration}`
               : "Worked";
-    // The checkpoint diff is what the changed-files card shows; provider
-    // counts are the fallback for turns without a checkpoint.
-    const checkpoint = readyCheckpointByRunId.get(runId);
+    // An unsteered turn shows the checkpoint diff, as the changed-files card
+    // does. A steered turn's rows each count their own provider edits.
+    const checkpoint = firstSteer ? undefined : readyCheckpointByRunId.get(runId);
     const diff =
       (checkpoint ? sumCheckpointLineStat(checkpoint) : null) ??
-      sumFileChangeLineStat(
-        group.entries.flatMap((entry) => (entry.kind === "work" ? [entry.entry] : [])),
-      );
+      sumTimelineFileChangeLineStat(firstSegment);
 
-    // The top row keeps the whole turn's time, steers included. Work after a
-    // steer folds under its own row below that steer, keyed apart from the run
-    // so each segment opens on its own.
+    // Work after a steer folds under its own row below that steer, keyed apart
+    // from the run so each segment opens on its own.
     const segmentHiddenIds = (entries: ReadonlyArray<TimelineEntry>) =>
       new Set(entries.flatMap((entry) => (hiddenEntryIds.has(entry.id) ? [entry.id] : [])));
-    const firstSegment = group.entries.slice(0, group.steerSegments[0]?.startIndex);
     foldsByAnchorEntryId.set(group.anchorEntryId, {
       runId,
       anchorEntryId: group.anchorEntryId,
-      createdAt: group.startBoundary ?? firstEntry.createdAt,
+      createdAt: turnStart,
       hiddenEntryIds: segmentHiddenIds(firstSegment),
       entryIds: new Set(firstSegment.map((entry) => entry.id)),
       label,
@@ -1423,7 +1429,7 @@ function deriveTurnFolds(input: {
         label: segmentMs !== null ? `Continued for ${formatDuration(segmentMs)}` : "Continued",
         // The turn summary owns its terminal message; each segment keeps its own disclosure.
         ending: failed ? ending : "worked",
-        diff: null,
+        diff: sumTimelineFileChangeLineStat(entries),
         endingEntryIds: new Set(
           entries.flatMap((entry) => (endingEntryIds.has(entry.id) ? [entry.id] : [])),
         ),
