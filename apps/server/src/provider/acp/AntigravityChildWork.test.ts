@@ -156,10 +156,12 @@ it.layer(NodeServices.layer)("readAntigravityChildWork", (it) => {
       };
       expect(yield* read(profile, opaque, launch, [auto])).toEqual([]);
       // A sibling that cannot be ruled out refuses the match: its planner step is unreadable,
-      // or it is an older permission batch that stored no launch text.
+      // or it is a permission batch whose launch text is missing or cut.
       for (const sibling of [
         { ...auto, nativeTaskId: `${ROOT}:99` },
         { nativeTaskId: "0ld", title: ANTIGRAVITY_SUBAGENT_BATCH_TITLE, prompt: "Running" },
+        // Its stored launch was cut, so it may be this same launch.
+        { nativeTaskId: "cut", title: LAUNCH.role, prompt: "[Earlier output truncated]\n\nmarker" },
       ]) {
         expect(yield* read(profile, opaque, launch, [sibling])).toEqual([]);
       }

@@ -173,6 +173,9 @@ function boundText(text: string, limit = TOOL_TEXT_LIMIT): string {
 /** Keeps the tail of long tool text, as every bounded tool payload does. */
 export { boundText as boundAntigravityToolText };
 
+/** True when bounding cut some of this text. */
+export const isCutAntigravityToolText = (text: string) => text.includes(TOOL_TEXT_TRUNCATED);
+
 interface ToolPayloadBudget {
   nodes: number;
   text: number;

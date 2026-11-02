@@ -97,11 +97,7 @@ function uniqueStartLine(
     const end = index + snippet.length;
     // A hunk replaces whole lines.
     const whole =
-      index === lineStart &&
-      (end === text.length ||
-        snippet.endsWith("\n") ||
-        text[end] === "\n" ||
-        text.startsWith("\r\n", end));
+      index === lineStart && (end === text.length || snippet.endsWith("\n") || text[end] === "\n");
     found = { line, whole };
   }
   return found?.whole === true ? found.line : undefined;
@@ -158,15 +154,27 @@ export function antigravityEditPatch(input: {
   const placed: Array<{ readonly start: number; readonly hunks: StructuredPatchHunk[] }> = [];
   const snippets: StructuredPatchHunk[] = [];
   for (const chunk of chunks) {
+    // Whether a changed final line break splits or joins lines depends on what follows the match.
+    if (
+      chunk.ReplacementContent !== "" &&
+      chunk.TargetContent.endsWith("\n") !== chunk.ReplacementContent.endsWith("\n")
+    )
+      return ANTIGRAVITY_EDIT_DIFF_OMITTED;
     const hunks = snippetHunks(chunk.TargetContent, chunk.ReplacementContent, budget);
     if (hunks === undefined) return ANTIGRAVITY_EDIT_DIFF_OMITTED;
     budget -= changedLines(hunks);
     if (budget < 0) return ANTIGRAVITY_EDIT_DIFF_OMITTED;
     let start: number | undefined;
     if (input.readPreEditFile !== undefined) {
-      if (!fileRead) file = input.readPreEditFile(input.path);
+      // Line numbers do not depend on CRLF, so search with LF on both sides.
+      if (!fileRead) file = input.readPreEditFile(input.path)?.replaceAll("\r\n", "\n");
       fileRead = true;
-      start = uniqueStartLine(file, chunk.TargetContent, chunk.StartLine, chunk.EndLine);
+      start = uniqueStartLine(
+        file,
+        chunk.TargetContent.replaceAll("\r\n", "\n"),
+        chunk.StartLine,
+        chunk.EndLine,
+      );
     }
     if (start === undefined) snippets.push(...hunks);
     else placed.push({ start, hunks });

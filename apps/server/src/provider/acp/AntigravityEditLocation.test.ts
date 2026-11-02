@@ -76,34 +76,34 @@ describe("antigravityEditPatch", () => {
     expect(antigravityEditPatch({ path, rawInput: replace, readPreEditFile: () => crlf })).toBe(
       expected,
     );
-  });
-
-  it("counts a line break the replacement adds", () => {
-    // The target's line keeps its newline, so "x\n" turns one line into two.
+    // A multi-line target written with LF still finds its lines in a CRLF file.
     expect(
       antigravityEditPatch({
         path,
         rawInput: {
-          ReplacementChunks: [
-            { TargetContent: "const line3 = 3;", ReplacementContent: "x\n" },
-            { TargetContent: "const other = 15;", ReplacementContent: "const other = 150;" },
-          ],
+          TargetContent: "const line9 = 9;\nconst target = 10;",
+          ReplacementContent: "const line9 = 9;\nconst target = 100;",
         },
-        readPreEditFile: () => file,
+        readPreEditFile: () => crlf,
       }),
-    ).toBe(
-      [
-        header.trimEnd(),
-        "@@ -3,1 +3,2 @@",
-        "-const line3 = 3;",
-        "+x",
-        "+",
-        "@@ -15,1 +16,1 @@",
-        "-const other = 15;",
-        "+const other = 150;",
-        "",
-      ].join("\n"),
-    );
+    ).toMatch(/^@@ -9,2 \+9,2 @@$/m);
+  });
+
+  it("omits the preview when a chunk adds or removes a line break at its end", () => {
+    // Whether that splits or joins lines depends on what follows the match.
+    for (const [TargetContent, ReplacementContent] of [
+      ["const line3 = 3;", "x\n"],
+      ["const line3 = 3;\n", "x"],
+      ["const line20 = 20;", "x\n"],
+    ]) {
+      expect(
+        antigravityEditPatch({
+          path,
+          rawInput: { TargetContent, ReplacementContent },
+          readPreEditFile: () => file,
+        }),
+      ).toBe(ANTIGRAVITY_EDIT_DIFF_OMITTED);
+    }
   });
 
   it("labels repeated or unmatched snippets instead of placing them at line 1", () => {

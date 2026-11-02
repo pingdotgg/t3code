@@ -14,7 +14,7 @@ import * as Predicate from "effect/Predicate";
 import * as Schema from "effect/Schema";
 
 import { antigravityManagedPath, antigravityProfileRoot } from "./AntigravityProfilePaths.ts";
-import { boundAntigravityToolText } from "./AntigravityProtocol.ts";
+import { boundAntigravityToolText, isCutAntigravityToolText } from "./AntigravityProtocol.ts";
 
 // Field numbers from the runtime's trajectory protos (exa.cortex_pb).
 const STEP_METADATA = 5;
@@ -251,9 +251,14 @@ function findInvokeRecord(
   const claimed = new Set<string>();
   for (const sibling of input.siblings) {
     const idx = plannerIdxOf(sibling.nativeTaskId);
-    // A sibling that saved no launch text, or whose planner step is unreadable, cannot be ruled out.
+    // A sibling whose launch text is missing or cut, or whose planner step is unreadable,
+    // cannot be ruled out.
     if (idx === undefined) {
-      if (sibling.title === ANTIGRAVITY_SUBAGENT_BATCH_TITLE) return undefined;
+      if (
+        sibling.title === ANTIGRAVITY_SUBAGENT_BATCH_TITLE ||
+        isCutAntigravityToolText(sibling.prompt)
+      )
+        return undefined;
       continue;
     }
     if (idx < 0) continue;
