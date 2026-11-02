@@ -368,7 +368,6 @@ describe("web thread lineage ordering", () => {
           parentThreadId: current,
           createdAt: "2026-06-03T00:00:00.000Z",
           updatedAt: "2026-07-30T00:00:00.000Z",
-          status: "running",
         }),
         forkShell({ id: third, parentThreadId: current, createdAt: "2026-06-04T00:00:00.000Z" }),
         forkShell({ id: current, parentThreadId: null, createdAt: "2026-06-01T00:00:00.000Z" }),
@@ -377,13 +376,62 @@ describe("web thread lineage ordering", () => {
           parentThreadId: current,
           createdAt: "2026-06-02T00:00:00.000Z",
           updatedAt: "2026-07-31T00:00:00.000Z",
-          status: "failed",
         }),
       ],
     });
 
     expect(before).toEqual([third, second, first]);
     expect(after).toEqual(before);
+  });
+
+  it("puts working rows above idle rows, and idle rows above finished ones", () => {
+    const parent = ThreadId.make("thread-parent");
+    const newestDone = ThreadId.make("thread-newest-done");
+    const failed = ThreadId.make("thread-failed");
+    const idle = ThreadId.make("thread-idle");
+    const oldRunning = ThreadId.make("thread-old-running");
+    const pendingSubagent = ThreadId.make("thread-pending-subagent");
+
+    expect(
+      orderedLineageIds({
+        threads: [
+          forkShell({ id: parent, parentThreadId: null, createdAt: "2026-06-01T00:00:00.000Z" }),
+          forkShell({
+            id: current,
+            parentThreadId: parent,
+            createdAt: "2026-06-02T00:00:00.000Z",
+          }),
+          forkShell({
+            id: newestDone,
+            parentThreadId: current,
+            createdAt: "2026-06-09T00:00:00.000Z",
+          }),
+          forkShell({
+            id: failed,
+            parentThreadId: current,
+            createdAt: "2026-06-08T00:00:00.000Z",
+            status: "failed",
+          }),
+          forkShell({
+            id: idle,
+            parentThreadId: current,
+            createdAt: "2026-06-07T00:00:00.000Z",
+            status: "idle",
+          }),
+          forkShell({
+            id: oldRunning,
+            parentThreadId: current,
+            createdAt: "2026-06-03T00:00:00.000Z",
+            status: "running",
+          }),
+        ],
+        projection: {
+          thread: { id: current },
+          subagents: [{ childThreadId: pendingSubagent, status: "pending" }],
+          contextTransfers: [],
+        },
+      }),
+    ).toEqual([parent, oldRunning, pendingSubagent, idle, newestDone, failed]);
   });
 
   it("pins the parent first and a distinct merge-back target second", () => {

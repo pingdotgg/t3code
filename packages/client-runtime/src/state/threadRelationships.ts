@@ -176,9 +176,32 @@ function threadCreatedAtMillis(node: ThreadRelationshipNode | undefined): number
   return Number.isFinite(millis) ? millis : null;
 }
 
+const WORKING_ROW_STATUSES = new Set([
+  "pending",
+  "preparing",
+  "queued",
+  "starting",
+  "running",
+  "waiting",
+]);
+const FINISHED_ROW_STATUSES = new Set([
+  "completed",
+  "failed",
+  "error",
+  "cancelled",
+  "interrupted",
+  "rolled_back",
+]);
+
+function rowStatusRank(status: string | null): number {
+  if (status !== null && WORKING_ROW_STATUSES.has(status)) return 0;
+  if (status !== null && FINISHED_ROW_STATUSES.has(status)) return 2;
+  return 1;
+}
+
 /**
- * Web pins the parent and distinct merge-back target before newest-created-first ordering.
- * Mobile does not share this exception; do not reuse it as the canonical relationship order.
+ * Web pins the parent and distinct merge-back target, then orders working, idle and finished
+ * rows newest-created-first. Mobile does not share this order; do not reuse it as canonical.
  */
 export function orderWebThreadLineageRows(input: {
   readonly graph: ThreadRelationshipGraph;
@@ -195,6 +218,10 @@ export function orderWebThreadLineageRows(input: {
   return [...input.rows].sort((left, right) => {
     const rankDelta = pinRank(left) - pinRank(right);
     if (rankDelta !== 0) return rankDelta;
+    const statusDelta =
+      rowStatusRank(threadRelationshipRowStatus(input.graph, left)) -
+      rowStatusRank(threadRelationshipRowStatus(input.graph, right));
+    if (statusDelta !== 0) return statusDelta;
     const leftCreatedAt = threadCreatedAtMillis(input.graph.nodes.get(left.threadId));
     const rightCreatedAt = threadCreatedAtMillis(input.graph.nodes.get(right.threadId));
     if (leftCreatedAt !== rightCreatedAt) {
