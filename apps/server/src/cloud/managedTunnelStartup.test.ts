@@ -53,6 +53,8 @@ describe("makeManagedTunnelRecovery", () => {
             stored = tunnel(replacements[config.tunnelId!]!);
             return true;
           }),
+        isCurrent: (config: RelayManagedEndpointRuntimeConfig) =>
+          Effect.sync(() => config.tunnelId === stored.tunnelId),
         isRetryable: () => false,
       });
 

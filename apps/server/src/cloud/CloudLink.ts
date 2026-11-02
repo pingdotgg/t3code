@@ -503,6 +503,9 @@ export class CloudLink extends Context.Service<
       expectedConfig?: RelayManagedEndpointRuntimeConfig,
       options?: { readonly retryRuntimeFailures?: boolean },
     ) => Effect.Effect<boolean, CloudLinkBackgroundError>;
+    readonly isManagedTunnelConfigCurrent: (
+      config: RelayManagedEndpointRuntimeConfig,
+    ) => Effect.Effect<boolean, ServerSecretStore.SecretStoreError>;
     readonly startManagedTunnelIfOriginConfirmed: (
       localOrigin: string,
       options?: { readonly requireConfirmedOrigin?: boolean },
@@ -1067,6 +1070,21 @@ const make = Effect.gen(function* () {
       : { status: "ready" as const, endpointRuntimeStatus };
   });
 
+  const storedManagedTunnelConfigMatches = (
+    stored: Uint8Array,
+    config: RelayManagedEndpointRuntimeConfig,
+  ) => {
+    const current = Option.getOrNull(decodeRuntimeConfig(bytesToString(stored)));
+    return current !== null && managedEndpointRuntimeConfigsMatch(current, config);
+  };
+
+  const isManagedTunnelConfigCurrent = Effect.fn("environment.cloud.isManagedTunnelConfigCurrent")(
+    function* (config: RelayManagedEndpointRuntimeConfig) {
+      const stored = yield* secrets.get(CLOUD_ENDPOINT_RUNTIME_CONFIG);
+      return Option.isSome(stored) && storedManagedTunnelConfigMatches(stored.value, config);
+    },
+  );
+
   const recoverManagedTunnel = Effect.fn("environment.cloud.recoverManagedCloudTunnel")(function* (
     localOrigin: string,
     expectedConfig?: RelayManagedEndpointRuntimeConfig,
@@ -1086,17 +1104,11 @@ const make = Effect.gen(function* () {
     ) {
       return false;
     }
-    if (expectedConfig !== undefined) {
-      const current = Option.getOrNull(decodeRuntimeConfig(bytesToString(runtimeConfig.value)));
-      if (
-        current === null ||
-        current.providerKind !== expectedConfig.providerKind ||
-        current.connectorToken !== expectedConfig.connectorToken ||
-        current.tunnelId !== expectedConfig.tunnelId ||
-        current.tunnelName !== expectedConfig.tunnelName
-      ) {
-        return false;
-      }
+    if (
+      expectedConfig !== undefined &&
+      !storedManagedTunnelConfigMatches(runtimeConfig.value, expectedConfig)
+    ) {
+      return false;
     }
 
     const parsedOrigin = yield* Effect.try({
@@ -1652,6 +1664,7 @@ const make = Effect.gen(function* () {
       reconcileDesiredLinkIfStillDesired: notDesired,
       registerManagedTunnelRecovery: notLinked,
       recoverManagedTunnel: notStarted,
+      isManagedTunnelConfigCurrent: notStarted,
       startManagedTunnelIfOriginConfirmed: notStarted,
       releaseManagedTunnelOnShutdown,
     });
@@ -1668,6 +1681,7 @@ const make = Effect.gen(function* () {
     reconcileDesiredLinkIfStillDesired,
     registerManagedTunnelRecovery,
     recoverManagedTunnel,
+    isManagedTunnelConfigCurrent,
     startManagedTunnelIfOriginConfirmed,
     releaseManagedTunnelOnShutdown,
   });

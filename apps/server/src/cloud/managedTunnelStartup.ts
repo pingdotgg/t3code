@@ -167,13 +167,15 @@ export const MANAGED_TUNNEL_FIRST_REGISTRATION_JITTER = Duration.seconds(30);
 /**
  * Runs one recovery per request, one at a time: waits out the current
  * cooldown, then calls the relay, retrying it while it stays unavailable.
+ * A request for a tunnel an earlier recovery already replaced is dropped
+ * without waiting or growing the cooldown.
  */
 export const makeManagedTunnelRecovery = Effect.fn("ManagedTunnelRecovery.make")(function* <
-  A,
   E,
   R,
 >(options: {
-  readonly recover: (config: RelayManagedEndpointRuntimeConfig) => Effect.Effect<A, E, R>;
+  readonly recover: (config: RelayManagedEndpointRuntimeConfig) => Effect.Effect<boolean, E, R>;
+  readonly isCurrent: (config: RelayManagedEndpointRuntimeConfig) => Effect.Effect<boolean, E, R>;
   readonly isRetryable: (error: E) => boolean;
 }) {
   const lock = yield* Semaphore.make(1);
@@ -197,18 +199,17 @@ export const makeManagedTunnelRecovery = Effect.fn("ManagedTunnelRecovery.make")
       }),
     ),
   );
-  return (config: RelayManagedEndpointRuntimeConfig) =>
-    lock.withPermits(1)(
-      waitForCooldown.pipe(
-        Effect.andThen(
-          options.recover(config).pipe(
-            Effect.retry({
-              while: options.isRetryable,
-              schedule: managedTunnelRecoveryRetrySchedule,
-            }),
-            Effect.ensuring(recordRecovery),
-          ),
-        ),
-      ),
+  return Effect.fn("ManagedTunnelRecovery.recover")(function* (
+    config: RelayManagedEndpointRuntimeConfig,
+  ) {
+    if (!(yield* options.isCurrent(config))) return false;
+    yield* waitForCooldown;
+    return yield* options.recover(config).pipe(
+      Effect.retry({
+        while: options.isRetryable,
+        schedule: managedTunnelRecoveryRetrySchedule,
+      }),
+      Effect.ensuring(recordRecovery),
     );
+  }, lock.withPermits(1));
 });

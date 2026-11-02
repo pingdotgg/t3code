@@ -1000,6 +1000,7 @@ const layerMakeServer = Layer.unwrap(
                 cloudLink.recoverManagedTunnel(localOrigin, config, {
                   retryRuntimeFailures: true,
                 }),
+              isCurrent: cloudLink.isManagedTunnelConfigCurrent,
               isRetryable: (error) =>
                 CloudLink.shouldRetryCloudLink(error) &&
                 error._tag !== "CloudLinkEndpointUnavailableError",
