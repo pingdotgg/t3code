@@ -19,6 +19,7 @@ export type SettingsPath =
   | "/settings/projects"
   | "/settings/general"
   | "/settings/diagnostics"
+  | "/settings/voice"
   | "/settings/appearance"
   | "/settings/chat"
   | "/settings/diffs"
@@ -107,6 +108,7 @@ export const SETTINGS_SECTION_LABELS: Readonly<Record<SettingsPath, string>> = {
   "/settings/maintenance": "Maintenance",
   "/settings/labs": "Labs",
   "/settings/about": "About",
+  "/settings/voice": "Voice",
   "/settings/archived": "Archive",
 };
 
@@ -121,6 +123,7 @@ export const SETTINGS_NAV_GROUPS: ReadonlyArray<{
       "/settings/general",
       "/settings/appearance",
       "/settings/chat",
+      "/settings/voice",
       "/settings/diffs",
       "/settings/keybindings",
       "/settings/snap-shot",
@@ -454,6 +457,58 @@ export const SETTINGS_SEARCH_ITEMS = [
     ],
   },
   {
+    id: "dictation-shortcut-mode",
+    title: "Dictation shortcut mode",
+    to: "/settings/voice",
+    searchTerms: ["speech voice keyboard hotkey hold toggle auto"],
+  },
+  {
+    id: "transcription-environment",
+    title: "Transcription environment",
+    to: "/settings/voice",
+    desktopOnly: true,
+    searchTerms: ["speech voice stt server machine device"],
+  },
+  {
+    id: "local-voice-input",
+    title: "Transcription models",
+    to: "/settings/voice",
+    desktopOnly: true,
+    searchTerms: ["speech voice stt download local whisper parakeet canary moonshine"],
+  },
+  {
+    id: "microphone",
+    title: "Microphone",
+    to: "/settings/voice",
+    desktopOnly: true,
+  },
+  {
+    id: "dictionary",
+    title: "Dictionary",
+    to: "/settings/voice",
+    desktopOnly: true,
+    searchTerms: ["speech voice transcription vocabulary names glossary"],
+  },
+  {
+    id: "remove-filler-words",
+    title: "Remove filler words",
+    to: "/settings/voice",
+    desktopOnly: true,
+    searchTerms: ["voice speech transcription hesitation um uh cleanup"],
+  },
+  {
+    id: "speech-acceleration",
+    title: "Transcription acceleration",
+    to: "/settings/voice",
+    searchTerms: ["voice speech gpu cpu hardware transcription"],
+  },
+  {
+    id: "speech-model-unload",
+    title: "Model unload",
+    to: "/settings/voice",
+    searchTerms: ["voice speech transcription memory idle timeout never"],
+  },
+  {
     id: "working-shelf",
     title: "Working section",
     to: "/settings/general",
@@ -707,6 +762,34 @@ export const SETTINGS_SEARCH_ITEMS = [
     to: "/settings/threads",
     scope: "project-defaults",
     searchTerms: ["generated thread titles prompt custom style naming rename regenerate"],
+  },
+  {
+    id: "speech-post-processing",
+    title: "Voice post-processing",
+    to: "/settings/voice",
+    searchTerms: ["speech transcription polish clean provider"],
+    desktopOnly: true,
+  },
+  {
+    id: "speech-post-processing-model",
+    title: "Voice post-processing model",
+    to: "/settings/voice",
+    searchTerms: ["speech transcription provider model"],
+    desktopOnly: true,
+  },
+  {
+    id: "speech-correction-word",
+    title: "Explicit correction cue",
+    to: "/settings/voice",
+    searchTerms: ["speech voice self correction revise err"],
+    desktopOnly: true,
+  },
+  {
+    id: "speech-post-processing-prompt",
+    title: "Voice post-processing prompt",
+    to: "/settings/voice",
+    searchTerms: ["speech transcription instructions cleanup"],
+    desktopOnly: true,
   },
   {
     id: "app-version",
@@ -1221,6 +1304,7 @@ const SETTINGS_CATEGORY_SCOPES: Readonly<Record<SettingsPath, SettingsSearchScop
   "/settings/diagnostics": "environment",
   "/settings/projects": "project",
   "/settings/general": null,
+  "/settings/voice": null,
   "/settings/appearance": null,
   "/settings/chat": null,
   "/settings/diffs": null,

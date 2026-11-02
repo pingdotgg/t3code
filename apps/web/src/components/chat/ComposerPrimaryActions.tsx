@@ -61,6 +61,8 @@ interface ComposerPrimaryActionsProps {
   onResume?: () => void;
   onPreviousPendingQuestion: () => void;
   onInterrupt: () => void;
+  /** Leads the send and stop pill, for the dictation mic. */
+  leadingAction?: ReactNode;
   compactBeforeSendTokens?: number | null;
   keepFullHistory?: boolean;
   onToggleKeepFullHistory?: () => void;
@@ -93,10 +95,15 @@ const messageActionPillClassName =
 const COMPOSER_PILL_CLASS_NAME =
   "relative isolate inline-flex h-8 shrink-0 items-center rounded-lg surface-pill";
 
-// One 32px button slot inside the pill (send, stop, and later the mic), concentric
+// One 32px button slot inside the pill (send, stop, and the dictation mic), concentric
 // with the pill inside its 1px rim.
 const COMPOSER_PILL_SLOT_CLASS_NAME =
   "relative isolate flex h-full shrink-0 cursor-pointer items-center justify-center rounded-item outline-none transition-colors duration-150 hover:bg-foreground/8 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring [&_svg]:pointer-events-none";
+
+// An icon button inside the pill: send and the dictation mic share it. r7, concentric
+// with the r8 pill inside its 1px rim.
+export const COMPOSER_PILL_BUTTON_CLASS_NAME =
+  "relative isolate flex h-full items-center justify-center gap-1 overflow-hidden rounded-item text-foreground transition-colors duration-150 enabled:cursor-pointer enabled:hover:bg-foreground/8 disabled:pointer-events-none disabled:opacity-64 [&_svg]:pointer-events-none";
 
 /** A labeled primary action on the message-action pill; callers add height, padding and split edges. */
 function MessageActionPill({ className, type = "button", ...props }: ComponentProps<"button">) {
@@ -131,6 +138,7 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
   onResume,
   onPreviousPendingQuestion,
   onInterrupt,
+  leadingAction,
   compactBeforeSendTokens = null,
   keepFullHistory = false,
   onToggleKeepFullHistory,
@@ -153,6 +161,7 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
   // The stop square sits in the same pill as send, so the pill never changes shape.
   const renderStopGenerationButton = (insidePendingAction: boolean) => (
     <ComposerSendPill key="interrupt" className={cn(insidePendingAction && "sm:h-7")}>
+      {insidePendingAction ? null : leadingAction}
       <Tooltip>
         <TooltipTrigger
           render={
@@ -305,7 +314,7 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
     <button
       type={showResume ? "button" : "submit"}
       className={cn(
-        "relative isolate flex h-full items-center justify-center gap-1 overflow-hidden rounded-md text-foreground transition-colors duration-150 enabled:cursor-pointer enabled:hover:bg-foreground/8 disabled:pointer-events-none disabled:opacity-64 [&_svg]:pointer-events-none",
+        COMPOSER_PILL_BUTTON_CLASS_NAME,
         showQueueLabel ? "ps-1.5 pe-2.5 text-label" : "w-8",
       )}
       {...pointerFocusProps}
@@ -339,6 +348,7 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
 
   const submit = (
     <ComposerSendPill>
+      {leadingAction}
       <Tooltip>
         {/* A span trigger keeps the tooltip reachable while send is disabled. */}
         <TooltipTrigger render={<span className="flex h-full" />}>{sendButton}</TooltipTrigger>
@@ -387,8 +397,15 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
 /**
  * The mic + send pill. Send and stop render inside it, and dictation's mic
  * joins as a sibling slot before them, so the pill keeps one shape in every state.
+ * The phone composer's collapsed row renders it too, with the same slots.
  */
-function ComposerSendPill({ className, children }: { className?: string; children: ReactNode }) {
+export function ComposerSendPill({
+  className,
+  children,
+}: {
+  className?: string;
+  children: ReactNode;
+}) {
   return (
     <span data-composer-send-pill="true" className={cn(COMPOSER_PILL_CLASS_NAME, className)}>
       {children}

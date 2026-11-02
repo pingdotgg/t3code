@@ -56,6 +56,7 @@ export function AssistantCitationChip({
   const commentPopupRef = useRef<HTMLDivElement>(null);
   const chipRef = useRef<HTMLSpanElement>(null);
   const draftCommentRef = useRef<string | null>(null);
+  const [voiceSetupOpen, setVoiceSetupOpen] = useState(false);
   const [unavailableSourceAnchor, setUnavailableSourceAnchor] =
     useState<AssistantCitationSourceAnchor | null>(null);
   const commentOpen = commentEditor?.open ?? false;
@@ -157,7 +158,7 @@ export function AssistantCitationChip({
       {composerSourceLink}
       {commentEditor ? (
         <Popover
-          open={commentEditor.open}
+          open={commentEditor.open && !voiceSetupOpen}
           onOpenChange={(open, eventDetails) => {
             if (!open && !settleDraftOnClose(eventDetails.reason)) {
               eventDetails.cancel();
@@ -175,6 +176,8 @@ export function AssistantCitationChip({
           </PopoverTrigger>
           {commentEditor.open ? (
             <PopoverPopup
+              // Keep voice setup alive while its dialog replaces the comment popover.
+              keepMounted
               {...composerFloatingLayerProps}
               side="top"
               align="start"
@@ -208,6 +211,7 @@ export function AssistantCitationChip({
                 key={serializeAssistantCitation(citation)}
                 citation={citation}
                 inputRef={commentInputRef}
+                onVoiceSetupOpenChange={setVoiceSetupOpen}
                 onViewSource={() => {
                   void navigate(assistantCitationNavigation(citation));
                 }}

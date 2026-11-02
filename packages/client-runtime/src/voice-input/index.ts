@@ -2,6 +2,7 @@ export {
   VoiceInputController,
   VOICE_RECORDING_LIMIT_SECONDS,
   voiceInputBlocksSubmission,
+  voiceInputFreezesEditor,
   type VoiceDraftSnapshot,
   type VoiceInputControllerDependencies,
   type VoiceInputPhase,
@@ -17,3 +18,22 @@ export {
   type VoiceTranscriptionErrorCode,
   type VoiceTranscriptionOptions,
 } from "./transcription.ts";
+export {
+  cancelEnvironmentSpeechModelDownload,
+  downloadEnvironmentSpeechModel,
+  getEnvironmentSpeechModels,
+  getEnvironmentSpeechStatus,
+  postProcessEnvironmentTranscript,
+  prepareEnvironmentSpeechModel,
+  updateEnvironmentSpeechCustomWords,
+  updateEnvironmentSpeechFillerWordRemoval,
+  updateEnvironmentSpeechAcceleration,
+  updateEnvironmentSpeechModelUnloadTimeout,
+  updateEnvironmentSpeechLanguage,
+  updateEnvironmentSpeechTranslation,
+  getEnvironmentSpeechStreamUrl,
+  removeEnvironmentSpeechModel,
+  selectEnvironmentSpeechModel,
+  transcribeEnvironmentPcm,
+} from "./environment.ts";
+export { openSpeechStream } from "./stream.ts";
