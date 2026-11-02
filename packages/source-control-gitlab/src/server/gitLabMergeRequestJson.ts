@@ -385,7 +385,7 @@ export function decodePipelineStageChecksJson(
   if (
     (decoded.success.errors?.length ?? 0) > 0 ||
     pipeline?.stages?.pageInfo?.hasNextPage === true ||
-    pipeline?.stages?.nodes.includes(null) === true
+    pipeline?.stages?.nodes.some((stage) => stage === null || trimmed(stage.name) === null) === true
   ) {
     return Result.succeed(null);
   }

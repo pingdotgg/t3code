@@ -395,6 +395,17 @@ describe("decodePipelineStageChecksJson", () => {
     expect(
       expectSuccess(
         decodePipelineStageChecksJson(
+          stagesJson([
+            { name: "build", status: "success" },
+            { name: null, status: "failed" },
+          ]),
+          "https://gitlab.com",
+        ),
+      ),
+    ).toBe(null);
+    expect(
+      expectSuccess(
+        decodePipelineStageChecksJson(
           JSON.stringify({
             ...JSON.parse(stagesJson([{ name: "build", status: "success" }])),
             errors: [{ message: "boom" }],
