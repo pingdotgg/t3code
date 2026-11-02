@@ -289,11 +289,20 @@ export const SETTINGS_SEARCH_ITEMS = [
   },
   {
     id: "default-permissions",
-    title: "Permissions",
+    title: "New threads permissions",
     to: "/settings/threads",
     scope: "project-defaults",
     searchTerms: [
       "new thread default runtime mode supervised approvals auto accept edits full access",
+    ],
+  },
+  {
+    id: "side-chat-permissions",
+    title: "Side chat permissions",
+    to: "/settings/threads",
+    scope: "project-defaults",
+    searchTerms: [
+      "side chats /side /btw runtime mode supervised approvals auto accept edits full access",
     ],
   },
   {

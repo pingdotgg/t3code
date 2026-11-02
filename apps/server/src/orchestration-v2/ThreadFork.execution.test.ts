@@ -14,6 +14,7 @@ import {
   ProviderTurnId,
   RunAttemptId,
   RunId,
+  type ServerSettingsPatch,
   ThreadId,
   TurnItemId,
 } from "@t3tools/contracts";
@@ -56,7 +57,7 @@ const forkCases = (
     { runEffectWorker: false },
   );
 
-  return { driver, status, instanceId, modelSelection, layer };
+  return { driver, status, instanceId, modelSelection, adapter, layer };
 });
 
 it.effect("a persisted fork leaves PR watching with its parent until explicitly opted in", () =>
@@ -926,6 +927,51 @@ it.effect("resolves an explicit checkpoint fork to its source run", () =>
     const child = yield* orchestrator.getThreadShell(childId);
     assert.deepEqual(child?.forkedFrom, { type: "run", threadId: parentId, runId });
   }).pipe(Effect.provide(forkCases[0]!.layer)),
+);
+
+it.effect.each([
+  { settings: {}, expected: "approval-required" },
+  { settings: { sideChatRuntimeMode: "full-access" }, expected: "full-access" },
+  {
+    settings: {
+      sideChatRuntimeMode: "full-access",
+      projectSettingsOverrides: {
+        [ProjectId.make("side-chat-project")]: { sideChatRuntimeMode: "auto-accept-edits" },
+      },
+    },
+    expected: "auto-accept-edits",
+  },
+  {
+    settings: {
+      sideChatRuntimeMode: "approval-required",
+      projectSettingsOverrides: {
+        [ProjectId.make("side-chat-project")]: { sideChatRuntimeMode: "auto" },
+      },
+    },
+    expected: "auto",
+  },
+] satisfies ReadonlyArray<{ settings: ServerSettingsPatch; expected: string }>)(
+  "new side chats use their scoped permission default: %j",
+  ({ settings, expected }) =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const parentId = ThreadId.make("side-chat-permissions-parent");
+      const sideChatId = ThreadId.make("side-chat-permissions-child");
+      yield* createParent(parentId);
+      yield* forkSideChat("side-chat-permissions-fork", parentId, sideChatId);
+      assert.equal((yield* orchestrator.getThreadShell(sideChatId))?.runtimeMode, expected);
+      assert.equal((yield* orchestrator.getThreadShell(parentId))?.runtimeMode, "full-access");
+      yield* askSideChat(sideChatId, "side-chat-permissions-first-turn");
+      assert.equal((yield* orchestrator.getThreadShell(sideChatId))?.runtimeMode, expected);
+    }).pipe(
+      Effect.provide(
+        ProviderReplayHarness.layerWithRegistry(
+          { name: "side-chat-permissions" },
+          ProviderAdapterRegistry.layerFromAdapters([forkCases[0]!.adapter]),
+          { runEffectWorker: false, settings },
+        ),
+      ),
+    ),
 );
 
 it.effect("a side chat of an idle parent still starts with the framing note", () =>

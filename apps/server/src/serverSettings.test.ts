@@ -2503,15 +2503,28 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))(
           config.settingsPath,
           JSON.stringify({
             defaultRuntimeMode: "auto",
+            sideChatRuntimeMode: "full-access",
             projectSettingsOverrides: {
-              [raised]: { defaultRuntimeMode: "full-access" },
-              [supervised]: { defaultRuntimeMode: "approval-required" },
+              [raised]: { defaultRuntimeMode: "full-access", sideChatRuntimeMode: "auto" },
+              [supervised]: {
+                defaultRuntimeMode: "approval-required",
+                sideChatRuntimeMode: "approval-required",
+              },
             },
           }),
         );
 
         const settings = yield* service.getSettings;
         assert.equal(settings.defaultRuntimeMode, "auto-accept-edits");
+        assert.equal(settings.sideChatRuntimeMode, "auto-accept-edits");
+        assert.equal(
+          settings.projectSettingsOverrides[raised]?.sideChatRuntimeMode,
+          "auto-accept-edits",
+        );
+        assert.equal(
+          settings.projectSettingsOverrides[supervised]?.sideChatRuntimeMode,
+          "approval-required",
+        );
         assert.equal(
           settings.projectSettingsOverrides[raised]?.defaultRuntimeMode,
           "auto-accept-edits",
@@ -2524,7 +2537,9 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))(
         yield* service.updateSettings({ defaultAutoPull: true });
         const stored = JSON.parse(yield* fs.readFileString(config.settingsPath));
         assert.equal(stored.defaultRuntimeMode, "auto");
+        assert.equal(stored.sideChatRuntimeMode, "full-access");
         assert.equal(stored.projectSettingsOverrides[raised].defaultRuntimeMode, "full-access");
+        assert.equal(stored.projectSettingsOverrides[raised].sideChatRuntimeMode, "auto");
       }).pipe(
         Effect.provide(
           layerServerSettings({
