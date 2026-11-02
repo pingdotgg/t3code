@@ -161,6 +161,36 @@ export function resolveDraftProjectSelection(
   return onlyScope ? { kind: "select", project: onlyScope.representative } : { kind: "pick" };
 }
 
+/**
+ * Which project a pending share import may target. The route's initial
+ * project wins while it is still resolving; once the user explicitly picks a
+ * different project (the flow key names the selected one), the import
+ * follows that choice instead of stalling. A selected project that matches
+ * neither is a transient catalog fallback and must not start an import.
+ */
+export function resolveShareImportProject(input: {
+  readonly selectedProject: EnvironmentProject | null;
+  readonly selectedProjectKey: string | null;
+  readonly initialEnvironmentId: string | undefined;
+  readonly initialProjectId: string | undefined;
+}): EnvironmentProject | null {
+  const selected = input.selectedProject;
+  if (selected === null) {
+    return null;
+  }
+  const selectedKey = scopedProjectKey(selected.environmentId, selected.id);
+  const initialKey =
+    input.initialEnvironmentId !== undefined && input.initialProjectId !== undefined
+      ? `${input.initialEnvironmentId}:${input.initialProjectId}`
+      : null;
+  if (initialKey === null || selectedKey === initialKey) {
+    return selected;
+  }
+  const followsExplicitChoice =
+    input.selectedProjectKey !== null && selectedKey === input.selectedProjectKey;
+  return followsExplicitChoice ? selected : null;
+}
+
 type ProjectRef = { readonly environmentId: string; readonly projectId: string };
 
 export function newTaskDestination(options: {

@@ -10,6 +10,7 @@ import {
   resolveEnvironmentProjectMatch,
   resolveGenuineEnvironmentProjectMatch,
   resolveNewTaskScratchOption,
+  resolveShareImportProject,
 } from "./new-task-project-selection";
 
 function makeProject(
@@ -116,6 +117,76 @@ describe("resolveEnvironmentProjectMatch", () => {
     const unindexed = makeProject("unindexed", "server", { workspaceRoot: "/srv/t3code" });
     expect(resolveEnvironmentProjectMatch([fork, unindexed], selected)).toBe(unindexed);
     expect(resolveEnvironmentProjectMatch([fork], selected)).toBe(fork);
+  });
+});
+
+describe("resolveShareImportProject", () => {
+  const initial = { initialEnvironmentId: "environment", initialProjectId: "t3code" };
+
+  it("targets the selected project when the route names no initial project", () => {
+    const selected = makeProject("t3code");
+    expect(
+      resolveShareImportProject({
+        selectedProject: selected,
+        selectedProjectKey: null,
+        initialEnvironmentId: undefined,
+        initialProjectId: undefined,
+      }),
+    ).toBe(selected);
+  });
+
+  it("targets the initial project while it is selected", () => {
+    const selected = makeProject("t3code");
+    expect(
+      resolveShareImportProject({
+        selectedProject: selected,
+        selectedProjectKey: "environment:t3code",
+        ...initial,
+      }),
+    ).toBe(selected);
+  });
+
+  it("holds the import while the catalog still resolves the initial project", () => {
+    const fallback = makeProject("other");
+    expect(
+      resolveShareImportProject({
+        selectedProject: fallback,
+        selectedProjectKey: null,
+        ...initial,
+      }),
+    ).toBeNull();
+  });
+
+  it("follows an explicit choice once the flow names it", () => {
+    const chosen = makeProject("chosen", "server");
+    expect(
+      resolveShareImportProject({
+        selectedProject: chosen,
+        selectedProjectKey: "server:chosen",
+        ...initial,
+      }),
+    ).toBe(chosen);
+  });
+
+  it("holds the import when the chosen project is gone from the catalog", () => {
+    const fallback = makeProject("other");
+    expect(
+      resolveShareImportProject({
+        selectedProject: fallback,
+        selectedProjectKey: "server:chosen",
+        ...initial,
+      }),
+    ).toBeNull();
+  });
+
+  it("holds the import without a selected project", () => {
+    expect(
+      resolveShareImportProject({
+        selectedProject: null,
+        selectedProjectKey: null,
+        ...initial,
+      }),
+    ).toBeNull();
   });
 });
 

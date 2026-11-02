@@ -182,6 +182,30 @@ export function NewTaskRouteScreen({ route }: StaticScreenProps<NewTaskRoutePara
   // Explicit choice (from the environment picker) never auto-resumes a share
   // reservation: the user is here to pick a different project.
   const explicitProjectChoice = route.params?.explicitProjectChoice === true;
+  // An explicitly tapped machine constrains the chooser to its own projects
+  // so picking a row cannot silently move the draft elsewhere. A normally
+  // opened chooser keeps listing every environment.
+  const displayScopes =
+    routePreferredEnvironmentId === undefined
+      ? projectScopes
+      : projectScopes.flatMap((scope) => {
+          const projects = scope.projects.filter(
+            (project) => String(project.environmentId) === routePreferredEnvironmentId,
+          );
+          if (projects.length === 0) {
+            return [];
+          }
+          return [
+            {
+              ...scope,
+              projects,
+              representative: projects[0] ?? scope.representative,
+              projectRefs: scope.projectRefs.filter(
+                (ref) => String(ref.environmentId) === routePreferredEnvironmentId,
+              ),
+            },
+          ];
+        });
   const incomingShare = routeShareId ? getShare(routeShareId) : null;
   const incomingShareSubtitle = incomingShare
     ? incomingShare.attachments.length === 0
@@ -193,7 +217,7 @@ export function NewTaskRouteScreen({ route }: StaticScreenProps<NewTaskRoutePara
   const screenTitle = incomingShare ? "Start a task" : "Choose project";
   const projectEmptyState = deriveProjectEmptyState(catalogState);
   const serverConfigs = useServerConfigs();
-  const listScopes = pickableProjectGroups(projectScopes).filter(
+  const listScopes = pickableProjectGroups(displayScopes).filter(
     (scope) =>
       !scope.projects.every((project) =>
         isScratchProject(project, serverConfigs.get(project.environmentId)?.scratchWorkspaceRoot),
@@ -222,7 +246,7 @@ export function NewTaskRouteScreen({ route }: StaticScreenProps<NewTaskRoutePara
       ? resolveNewTaskScratchOption({
           environments: connectedEnvironments,
           serverConfigs,
-          selectedEnvironmentId,
+          selectedEnvironmentId: preferredEnvironmentId,
         })
       : null;
   const canStartScratch = scratchOption?.ready === true;

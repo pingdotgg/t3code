@@ -85,7 +85,10 @@ import {
   useHardwareKeyboardCommand,
 } from "../keyboard/hardwareKeyboardCommands";
 import { resolveProjectThreadCreationBranch } from "./projectThreadCreationValidation";
-import { resolveDraftProjectSelection } from "./new-task-project-selection";
+import {
+  resolveDraftProjectSelection,
+  resolveShareImportProject,
+} from "./new-task-project-selection";
 import {
   resolveNewTaskBranchLabel,
   resolveNewTaskWorkspaceLabel,
@@ -304,24 +307,21 @@ export function NewTaskDraftScreen(props: {
   );
   const shareImportTarget = (() => {
     if (!props.incomingShareId || flowKey === undefined || !flow.draftKey) return null;
-    if (!selectedProject || !incomingShare || isIncomingShareAwaitingServerConfig) return null;
-    const initialEnvironmentId = props.initialProjectRef?.environmentId;
-    const initialProjectId = props.initialProjectRef?.projectId;
-    if (
-      initialEnvironmentId &&
-      initialProjectId &&
-      (selectedProject.environmentId !== initialEnvironmentId ||
-        selectedProject.id !== initialProjectId)
-    ) {
-      return null;
-    }
+    if (!incomingShare || isIncomingShareAwaitingServerConfig) return null;
+    const importProject = resolveShareImportProject({
+      selectedProject,
+      selectedProjectKey,
+      initialEnvironmentId: props.initialProjectRef?.environmentId,
+      initialProjectId: props.initialProjectRef?.projectId,
+    });
+    if (!importProject) return null;
     return {
       flowKey,
       routeKey: currentRoute.key,
       draftKey: flow.draftKey,
       destination: {
-        environmentId: String(selectedProject.environmentId),
-        projectId: String(selectedProject.id),
+        environmentId: String(importProject.environmentId),
+        projectId: String(importProject.id),
       },
       shareId: incomingShare.id,
     };
