@@ -2,7 +2,6 @@ import { withRelayClientTracing } from "@t3tools/shared/relayTracing";
 import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
-import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
@@ -476,17 +475,13 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
     generation: number,
     lastFailure: ConnectionAttemptError | null,
     synchronizedRoutes: Ref.Ref<number>,
-    transportOpened: Deferred.Deferred<void>,
-    routeOpen: Ref.Ref<boolean>,
+    routeOpen: SubscriptionRef.SubscriptionRef<boolean>,
   ) {
     return yield* driver.connect(yield* attemptEntry, (progress) => {
       if ("transportOpened" in progress) {
-        return Ref.set(routeOpen, true).pipe(
-          Effect.andThen(Deferred.succeed(transportOpened, undefined)),
-          Effect.asVoid,
-        );
+        return SubscriptionRef.set(routeOpen, true);
       }
-      return Ref.set(routeOpen, false).pipe(
+      return SubscriptionRef.set(routeOpen, false).pipe(
         Effect.andThen(
           progress.stage === "synchronizing"
             ? Ref.update(synchronizedRoutes, (count) => count + 1)
@@ -575,19 +570,11 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
     lastFailure: ConnectionAttemptError | null,
     pendingRetry: Option.Option<PendingRetryTrace>,
     synchronizedRoutes: Ref.Ref<number>,
-    transportOpened: Deferred.Deferred<void>,
-    routeOpen: Ref.Ref<boolean>,
+    routeOpen: SubscriptionRef.SubscriptionRef<boolean>,
   ) {
     if (usesRelay) {
       return yield* traceRelayEstablishment(
-        establishConnection(
-          attempt,
-          generation,
-          lastFailure,
-          synchronizedRoutes,
-          transportOpened,
-          routeOpen,
-        ),
+        establishConnection(attempt, generation, lastFailure, synchronizedRoutes, routeOpen),
         attempt,
         generation,
         pendingRetry,
@@ -598,7 +585,6 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
       generation,
       lastFailure,
       synchronizedRoutes,
-      transportOpened,
       routeOpen,
     ).pipe(
       Effect.map((lease) => ({
@@ -612,7 +598,9 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
     );
   });
 
-  const waitForEstablishmentInterrupt = Effect.fnUntraced(function* (routeOpen: Ref.Ref<boolean>) {
+  const waitForEstablishmentInterrupt = Effect.fnUntraced(function* (
+    routeOpen: SubscriptionRef.SubscriptionRef<boolean>,
+  ) {
     // A primary attempt keeps running through an offline report, so the
     // network returning restarts it in case it stalled meanwhile.
     let deviceOffline =
@@ -635,7 +623,7 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
           // its setup timeout, so a recovery restarts it unless its socket is open.
           const recovered = next.network === "online" || deviceOffline;
           deviceOffline = false;
-          if (recovered && !(yield* Ref.get(routeOpen))) {
+          if (recovered && !(yield* SubscriptionRef.get(routeOpen))) {
             return true;
           }
           break;
@@ -926,14 +914,22 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
     }
   });
 
+  // An open socket pauses the clock; a route that fails after opening gives
+  // the next route its own time to open.
   const awaitWakeRecoveryStall = Effect.fnUntraced(function* (
-    transportOpened: Deferred.Deferred<void>,
+    routeOpen: SubscriptionRef.SubscriptionRef<boolean>,
   ) {
-    const opened = yield* Deferred.await(transportOpened).pipe(
-      Effect.timeoutOption(WAKE_RECOVERY_OPEN_TIMEOUT),
-    );
-    if (Option.isSome(opened)) {
-      return yield* Effect.never;
+    const awaitRouteOpen = (open: boolean) =>
+      SubscriptionRef.changes(routeOpen).pipe(
+        Stream.filter((value) => value === open),
+        Stream.runHead,
+      );
+    while (
+      Option.isSome(
+        yield* awaitRouteOpen(true).pipe(Effect.timeoutOption(WAKE_RECOVERY_OPEN_TIMEOUT)),
+      )
+    ) {
+      yield* awaitRouteOpen(false);
     }
     yield* Effect.logInfo("Connection after a wake did not open; retrying it once.").pipe(
       Effect.annotateLogs({
@@ -954,8 +950,7 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
     const switchingTo = yield* Ref.get(preferredRouteId);
     yield* SubscriptionRef.set(prepared, Option.none());
     const synchronizedRoutes = yield* Ref.make(0);
-    const transportOpened = yield* Deferred.make<void>();
-    const routeOpen = yield* Ref.make(false);
+    const routeOpen = yield* SubscriptionRef.make(false);
     const wakeRecovery = yield* Ref.getAndSet(wakeRecoveryPending, false);
     const establishment = yield* Effect.raceAllFirst([
       exitUnlessInterrupted(
@@ -965,7 +960,6 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
           lastFailure,
           pendingRetry,
           synchronizedRoutes,
-          transportOpened,
           routeOpen,
         ),
       ).pipe(
@@ -998,7 +992,7 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
           yield* Effect.sleep(Duration.nanos(remaining));
         }
       }),
-      ...(wakeRecovery ? [awaitWakeRecoveryStall(transportOpened)] : []),
+      ...(wakeRecovery ? [awaitWakeRecoveryStall(routeOpen)] : []),
     ]);
 
     if (establishment._tag === "Interrupted") {
