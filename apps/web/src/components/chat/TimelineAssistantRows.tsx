@@ -57,6 +57,7 @@ export function AssistantTimelineRow({ row }: { row: Extract<TimelineRow, { kind
             <ChatMarkdown
               text={messageText}
               renderInsights
+              assistantReply
               cwd={ctx.markdownCwd}
               threadRef={ctx.threadRef ?? undefined}
               isStreaming={Boolean(row.message.streaming)}
