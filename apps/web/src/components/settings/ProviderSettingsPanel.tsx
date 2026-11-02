@@ -141,7 +141,7 @@ async function confirmProviderInstanceRemoval(
   question: string,
   consequence = "",
 ): Promise<boolean> {
-  const message = `${question} Its saved settings, including any custom binary path, will be removed.${consequence}`;
+  const message = `${question}\nIts saved settings, including any custom binary path, will be removed.${consequence}`;
   const confirmed = await settlePromise(() =>
     ensureLocalApi().dialogs.confirm(message, { variant: "destructive" }),
   );
