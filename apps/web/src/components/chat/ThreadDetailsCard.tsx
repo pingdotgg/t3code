@@ -171,8 +171,10 @@ export function ThreadDetailsCard({
           data-workspace-focus-key={`details:${threadRef.environmentId}:${threadRef.threadId}`}
           // Skip the return transition to avoid overlapping the rising preview.
           className={cn(
-            "absolute z-20",
+            "absolute",
             topInset > 0 && "transition-[top] duration-150 ease-out motion-reduce:transition-none",
+            // While fading over the moving panel, stay above the panel's browser webview (z 30).
+            settling ? "z-31" : "z-20",
             settling &&
               "[[data-panel-animations=true]_&]:transition-[left] [[data-panel-animations=true]_&]:duration-(--panel-animation-duration) [[data-panel-animations=true]_&]:ease-out",
           )}
