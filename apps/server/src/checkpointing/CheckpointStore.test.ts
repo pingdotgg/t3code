@@ -150,21 +150,23 @@ it.layer(layerTest)("CheckpointStore.layer", (it) => {
       }),
     );
 
-    it.effect("keeps a/ and b/ patch prefixes when the repository disables them", () =>
+    it.effect("keeps the patch format clients parse when the repository changes it", () =>
       Effect.gen(function* () {
         const tmp = yield* makeTmpDir();
         yield* initRepoWithCommit(tmp);
         yield* git(tmp, ["config", "diff.noprefix", "true"]);
+        yield* git(tmp, ["config", "diff.suppressBlankEmpty", "true"]);
         const checkpointStore = yield* CheckpointStore.CheckpointStore;
         const threadId = ThreadId.make("thread-checkpoint-store-noprefix");
         const fromCheckpointRef = checkpointRefForThreadTurn(threadId, 0);
         const toCheckpointRef = checkpointRefForThreadTurn(threadId, 1);
 
+        yield* writeTextFile(NodePath.join(tmp, "README.md"), "# test\n\nbefore\n");
         yield* checkpointStore.captureCheckpoint({
           cwd: tmp,
           checkpointRef: fromCheckpointRef,
         });
-        yield* writeTextFile(NodePath.join(tmp, "README.md"), "# changed\n");
+        yield* writeTextFile(NodePath.join(tmp, "README.md"), "# test\n\nafter\n");
         yield* checkpointStore.captureCheckpoint({
           cwd: tmp,
           checkpointRef: toCheckpointRef,
@@ -178,6 +180,7 @@ it.layer(layerTest)("CheckpointStore.layer", (it) => {
         });
 
         expect(diff).toContain("diff --git a/README.md b/README.md");
+        expect(diff).toContain(" # test\n \n-before\n+after\n");
       }),
     );
 
