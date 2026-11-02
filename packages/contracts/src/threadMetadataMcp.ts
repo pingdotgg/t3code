@@ -1,4 +1,3 @@
-import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 
 import {
@@ -9,7 +8,6 @@ import {
   TrimmedNonEmptyString,
 } from "./baseSchemas.ts";
 import { ThreadLinkedPullRequest } from "./threadPullRequest.ts";
-import { StoredThreadTags, ThreadTag } from "./threadTags.ts";
 import { ThreadTitleRegeneration } from "./threadTitle.ts";
 
 export function hasOnlyPairedSurrogates(value: string): boolean {
@@ -42,34 +40,19 @@ const ThreadMetadataClientRequestId = TrimmedNonEmptyString.check(Schema.isMaxLe
   )
   .annotate({ description: "Stable idempotency key to reuse when retrying this mutation." });
 
-export const ThreadMetadataMcpAction = Schema.Literals([
-  "rename",
-  "regenerate_title",
-  "add_tag",
-  "remove_tag",
-]);
+export const ThreadMetadataMcpAction = Schema.Literals(["rename", "regenerate_title"]);
 export type ThreadMetadataMcpAction = typeof ThreadMetadataMcpAction.Type;
 
 export const ThreadMetadataMcpUpdateInput = Schema.Struct({
   threadId: Schema.optional(ThreadId),
   action: ThreadMetadataMcpAction,
   title: Schema.optional(ThreadMetadataTitle),
-  tag: Schema.optional(
-    ThreadTag.annotate({
-      description: "Single-line tag, matched exactly. Required only for add_tag and remove_tag.",
-    }),
-  ),
   clientRequestId: Schema.optional(ThreadMetadataClientRequestId),
 }).check(
   Schema.makeFilter((input) =>
     (input.action === "rename") === (input.title !== undefined)
       ? true
-      : "rename requires title; other actions do not accept one.",
-  ),
-  Schema.makeFilter((input) =>
-    (input.action === "add_tag" || input.action === "remove_tag") === (input.tag !== undefined)
-      ? true
-      : "add_tag and remove_tag require tag; other actions do not accept one.",
+      : "rename requires title; regenerate_title does not accept one.",
   ),
 );
 export type ThreadMetadataMcpUpdateInput = typeof ThreadMetadataMcpUpdateInput.Type;
@@ -82,8 +65,6 @@ export const ThreadMetadataMcpUpdateResult = Schema.Struct({
   title: Schema.String,
   titleRegeneration: Schema.NullOr(ThreadTitleRegeneration),
   linkedPullRequest: Schema.NullOr(ThreadLinkedPullRequest),
-  // Older linked servers omit tags.
-  tags: StoredThreadTags.pipe(Schema.withDecodingDefault(Effect.succeed([]))),
   updatedAt: IsoDateTime,
 });
 export type ThreadMetadataMcpUpdateResult = typeof ThreadMetadataMcpUpdateResult.Type;

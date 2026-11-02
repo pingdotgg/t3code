@@ -63,10 +63,7 @@ function metadataCommand(input: {
   readonly commandId: CommandId;
   readonly threadId: ThreadId;
   readonly update: ThreadMetadataMcpUpdateInput;
-}): Extract<
-  OrchestrationV2Command,
-  { readonly type: "thread.metadata.update" | "thread.tag.set" }
-> {
+}): Extract<OrchestrationV2Command, { readonly type: "thread.metadata.update" }> {
   switch (input.update.action) {
     case "rename":
       return {
@@ -82,15 +79,6 @@ function metadataCommand(input: {
         threadId: input.threadId,
         regenerateTitle: true,
       };
-    case "add_tag":
-    case "remove_tag":
-      return {
-        type: "thread.tag.set",
-        commandId: input.commandId,
-        threadId: input.threadId,
-        tag: input.update.tag!,
-        tagged: input.update.action === "add_tag",
-      };
   }
 }
 
@@ -100,7 +88,7 @@ function resultFromThread(input: {
   readonly sequence: number;
   readonly thread: Pick<
     OrchestrationV2AppThread,
-    "id" | "title" | "titleRegeneration" | "linkedPullRequest" | "tags" | "updatedAt"
+    "id" | "title" | "titleRegeneration" | "linkedPullRequest" | "updatedAt"
   >;
 }): ThreadMetadataMcpUpdateResult {
   return {
@@ -117,7 +105,6 @@ function resultFromThread(input: {
             startedAt: DateTime.formatIso(input.thread.titleRegeneration.startedAt),
           },
     linkedPullRequest: input.thread.linkedPullRequest ?? null,
-    tags: input.thread.tags ?? [],
     updatedAt: DateTime.formatIso(input.thread.updatedAt),
   };
 }
@@ -184,14 +171,11 @@ const make = Effect.gen(function* () {
         ),
       );
     const metadataEvent = dispatched.storedEvents.find(
-      (stored) =>
-        stored.event.type === "thread.metadata-updated" ||
-        stored.event.type === "thread.tags-updated",
+      (stored) => stored.event.type === "thread.metadata-updated",
     );
     // Retries may find stored events compacted away; answer from the projection.
     const thread =
-      metadataEvent?.event.type === "thread.metadata-updated" ||
-      metadataEvent?.event.type === "thread.tags-updated"
+      metadataEvent?.event.type === "thread.metadata-updated"
         ? metadataEvent.event.payload
         : yield* threadManagement
             .getThreadShell(threadId)

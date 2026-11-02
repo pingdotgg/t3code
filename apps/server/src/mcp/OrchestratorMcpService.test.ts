@@ -3243,16 +3243,15 @@ describe("OrchestratorMcpService thread list", () => {
     capabilities: new Set(["orchestration"]),
     issuedAt: 1,
   };
-  const shell = (id: string, projectId: string, snoozed: boolean, tags: Array<string> = []) => ({
+  const shell = (id: string, projectId: string, snoozed: boolean) => ({
     ...liveThreadShell(ThreadId.make(id)),
     projectId: ProjectId.make(projectId),
     status: "completed" as const,
     snoozedUntil: snoozed ? DateTime.makeUnsafe("2099-01-01T00:00:00Z") : null,
-    tags,
   });
   const shells = [
-    shell("thread:a-snoozed", "project:a", true, ["demo"]),
-    shell("thread:a-awake", "project:a", false, ["private"]),
+    shell("thread:a-snoozed", "project:a", true),
+    shell("thread:a-awake", "project:a", false),
     shell("thread:b-snoozed", "project:b", true),
   ];
   const service = layerOrchestratorService.pipe(
@@ -3296,20 +3295,6 @@ describe("OrchestratorMcpService thread list", () => {
           ["thread:b-snoozed", "project:b"],
         ],
       );
-    }).pipe(Effect.provide(service)),
-  );
-
-  it.effect("filters by tag before counting and paging", () =>
-    Effect.gen(function* () {
-      const mcp = yield* OrchestratorMcpService.OrchestratorMcpService;
-      const tagged = yield* mcp.listThreads(client, { allProjects: true, tag: "demo" });
-      assert.deepStrictEqual(
-        tagged.threads.map((thread) => ({ threadId: thread.threadId, tags: thread.tags })),
-        [{ threadId: ThreadId.make("thread:a-snoozed"), tags: ["demo"] }],
-      );
-      assert.equal(tagged.total, 1);
-      const paged = yield* mcp.listThreads(client, { allProjects: true, tag: "demo", limit: 1 });
-      assert.equal(paged.nextCursor, null);
     }).pipe(Effect.provide(service)),
   );
 });

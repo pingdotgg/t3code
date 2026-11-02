@@ -324,26 +324,3 @@ several selected threads together. Choose **Wake thread** to bring a thread back
 A snoozed thread keeps working and stays hidden until its wake time, even while
 its agent wakes itself for background work. It comes back early only when it needs
 an approval or answer from you, when a run fails, or when you send it a message.
-
-## Hide threads by tag
-
-Tags let you hide a group of threads from view, for example while you record or share
-your screen. Hidden threads keep running as usual. Ask an agent to tag a thread, such
-as "tag this thread private", or to list the threads that have a tag. Tags match
-exactly, including case. A fork keeps its source's tags.
-
-To choose what to hide, edit the server's `settings.json` under `~/.t3/userdata`:
-
-```json
-"hiddenThreadTags": ["private"],
-"hideTaggedThreads": true
-```
-
-While `hideTaggedThreads` is on, threads with any of these tags leave the sidebar, the
-archive, the command palette, and thread mentions. Their subagents, side chats, and
-tasks on linked machines follow them, whatever their own tags, and hidden threads show no
-notification pop-ups.
-On web and desktop, an open thread that becomes hidden closes. Choose **Hide tagged
-threads** or **Show tagged threads** in the web or desktop command palette to switch this on every
-connected machine. Each machine keeps its own list of tags. The mobile app does not
-yet close a hidden thread you have open, and push notifications still arrive.
