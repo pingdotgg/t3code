@@ -2028,6 +2028,12 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
         const stoppedRunQuarantine = yield* Ref.make(false);
         // Native subagents can outlive interrupts; carry lineage forward to finish their original turn items.
         const carryoverSubagents = yield* Ref.make<AcpCarryoverSubagents | null>(null);
+        // Without deferred finalize, background tools outlive their turn; their late
+        // updates still belong to the original turn item, keyed by tool call id.
+        const carryoverBackgroundTools = new Map<
+          string,
+          { readonly context: ActiveAcpTurn; readonly sessionId: string; readonly taskId: string }
+        >();
         const handledBackgroundTaskIdsInActiveTurn = yield* Ref.make<ReadonlySet<string>>(
           new Set(),
         );
@@ -4760,6 +4766,23 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             }
             return;
           }
+          const carriedBackgroundTool =
+            update.sessionUpdate === "tool_call_update"
+              ? carryoverBackgroundTools.get(update.toolCallId)
+              : undefined;
+          if (carriedBackgroundTool?.sessionId === notification.sessionId) {
+            for (const event of parseSessionUpdateEvent(notification).events) {
+              if (event._tag !== "ToolCallUpdated") continue;
+              yield* emitTool(carriedBackgroundTool.context, event.toolCall);
+              const status = toolStatus(
+                carriedBackgroundTool.context.tools.get(event.toolCall.toolCallId)?.status,
+              );
+              if (status !== "completed" && status !== "failed") continue;
+              carryoverBackgroundTools.delete(event.toolCall.toolCallId);
+              yield* markBackgroundTaskEnded(carriedBackgroundTool.taskId);
+            }
+            return;
+          }
           if (yield* followNativeChild(notification, context)) return;
           if (
             followsAgentWorkState &&
@@ -6756,6 +6779,8 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             candidate: AcpSessionRuntime.AcpSessionRuntimeStartResult,
           ) {
             rememberTerminalEnvironment(candidate.sessionId, yield* readMcpContext(threadId));
+            // The replacement session cannot report the old session's background tools.
+            yield* terminalizeCarryoverBackgroundTools();
             yield* Ref.set(runtimeRestartRequired, false);
             yield* Ref.set(activeSessionId, candidate.sessionId);
             yield* setActiveSessionSetup(candidate);
@@ -7206,7 +7231,18 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           }
         });
 
+        const terminalizeCarryoverBackgroundTools = Effect.fnUntraced(function* () {
+          const carried = [...carryoverBackgroundTools];
+          carryoverBackgroundTools.clear();
+          for (const [toolCallId, { context, taskId }] of carried) {
+            yield* markBackgroundTaskEnded(taskId);
+            const tool = context.tools.get(toolCallId);
+            if (tool !== undefined) yield* emitTool(context, tool, "interrupted");
+          }
+        });
+
         const quarantineStoppedRun = Effect.fnUntraced(function* () {
+          yield* terminalizeCarryoverBackgroundTools();
           yield* continuationPermit.withPermit(
             Effect.gen(function* () {
               yield* Ref.update(continuationGeneration, (value) => value + 1);
@@ -7377,6 +7413,24 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                 projectsLateTerminals: settledStatus === "completed" || childTurnsContinue,
                 subagents: subagentsRequiringCarryover,
               });
+            }
+          }
+          if (
+            flavor.deferFinalizeForBackgroundWork !== true &&
+            settledStatus !== "interrupted" &&
+            !directStopQuarantine
+          ) {
+            const sessionId = yield* Ref.get(activeSessionId);
+            for (const tool of context.tools.values()) {
+              const taskId = flavor.extractBackgroundTaskId?.(tool);
+              const toolState = toolStatus(tool.status);
+              if (
+                sessionId === null ||
+                taskId === undefined ||
+                (toolState !== "pending" && toolState !== "running")
+              )
+                continue;
+              carryoverBackgroundTools.set(tool.toolCallId, { context, sessionId, taskId });
             }
           }
           yield* Ref.set(activeTurn, null);

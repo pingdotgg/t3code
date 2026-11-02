@@ -36,6 +36,15 @@ export function normalizeDevinToolCall(tool: AcpToolCallState): AcpToolCallState
     : tool;
 }
 
+/** Devin flags a backgrounded exec and names the client terminal running it. */
+export function extractDevinBackgroundShellId(tool: AcpToolCallState): string | undefined {
+  const meta = record(tool.data.meta);
+  const shellId = meta?.["cognition.ai/backgroundShellId"];
+  return meta?.["cognition.ai/background"] === true && typeof shellId === "string"
+    ? shellId
+    : undefined;
+}
+
 export function extractDevinSubagentUpdate(
   tool: AcpToolCallState,
 ): AcpAdapterV2SubagentUpdate | undefined {

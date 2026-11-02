@@ -6,6 +6,7 @@ import {
 import {
   normalizeDevinSessionUpdate,
   normalizeDevinToolCall,
+  extractDevinBackgroundShellId,
   extractDevinSubagentUpdate,
 } from "./devinAcp.ts";
 import { extractDroidElicitationForm } from "./droidAcp.ts";
@@ -245,6 +246,7 @@ export const makeAcpRegistryAdapterV2 = Effect.fn("makeAcpRegistryAdapterV2")(fu
           normalizeSessionUpdate: normalizeDevinSessionUpdate,
           normalizeToolCall: normalizeDevinToolCall,
           extractSubagentUpdate: extractDevinSubagentUpdate,
+          extractBackgroundTaskId: extractDevinBackgroundShellId,
         }
       : {}),
     ...(copilotRouting === undefined

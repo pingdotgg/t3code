@@ -2878,7 +2878,7 @@ describe("AcpAdapterV2", () => {
 
   // regression: #29291 Devin ends its prompt while a background shell runs and
   // reports the shell's completion outside any turn.
-  it.live("keeps a Devin background shell running until Devin reports it finished", () =>
+  it.effect("keeps a Devin background shell running until Devin reports it finished", () =>
     Effect.gen(function* () {
       const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
       const path = yield* Path.Path;
@@ -2983,14 +2983,20 @@ describe("AcpAdapterV2", () => {
           now: yield* DateTime.now,
         }),
       );
-      // The reply closes while the adapter handles end_turn, and session updates
-      // wait for that handling to finish.
-      const settled = yield* until(
-        (event) =>
-          event.type === "turn_item.updated" &&
-          event.turnItem.type === "assistant_message" &&
-          event.turnItem.status === "completed",
+      const settled = yield* until((event) => event.type === "turn.terminal");
+      const terminal = settled.at(-1);
+      assert.equal(terminal?.type === "turn.terminal" ? terminal.status : undefined, "completed");
+      const execUpdates = settled.flatMap((event) =>
+        event.type === "turn_item.updated" && event.turnItem.nativeItemRef?.nativeId === "exec-1"
+          ? [event.turnItem]
+          : [],
       );
+      assert.notInclude(
+        execUpdates.map((item) => item.status),
+        "completed",
+        "the background shell is still running",
+      );
+      assert.equal(execUpdates.at(-1)?.status, "running");
       yield* handler!({
         sessionId: "mock-session-1",
         update: {
@@ -2998,26 +3004,19 @@ describe("AcpAdapterV2", () => {
           toolCallId: "exec-1",
           status: "completed",
           rawOutput: "server exited",
-          _meta: backgroundMeta,
+          _meta: { "cognition.ai/inferenceToolName": "exec" },
         },
       });
-      const finished = [...settled, ...(yield* until((event) => event.type === "turn.terminal"))];
-      const firstCompleted = finished.find(
+      const finished = (yield* until(
         (event) =>
           event.type === "turn_item.updated" &&
           event.turnItem.nativeItemRef?.nativeId === "exec-1" &&
           event.turnItem.status === "completed",
-      );
-      assert.equal(
-        firstCompleted?.type === "turn_item.updated" &&
-          firstCompleted.turnItem.type === "command_execution"
-          ? firstCompleted.turnItem.output
-          : undefined,
-        "server exited",
-        "the background shell is reported finished only by Devin's completion",
-      );
-      const terminal = finished.at(-1);
-      assert.equal(terminal?.type === "turn.terminal" ? terminal.status : undefined, "completed");
+      )).at(-1);
+      const item = finished?.type === "turn_item.updated" ? finished.turnItem : undefined;
+      assert.equal(item?.type === "command_execution" ? item.output : undefined, "server exited");
+      assert.equal(item?.id, execUpdates.at(-1)?.id);
+      assert.equal(item?.runId, execUpdates.at(-1)?.runId);
     }).pipe(Effect.provide(layerTest), Effect.scoped),
   );
 
