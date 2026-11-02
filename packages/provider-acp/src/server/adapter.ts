@@ -3049,12 +3049,16 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             );
           }
 
+          const previousResultMessage = subagent.assistantMessages.get(
+            `${nativeTaskId}:message:result`,
+          );
           if (
             taskStatus !== "running" &&
-            subagent.assistantText.length === 0 &&
-            update.result !== null
+            update.result !== null &&
+            (subagent.assistantText.length === 0 ||
+              (previousResultMessage !== undefined && previousResultMessage !== update.result))
           ) {
-            yield* emitSubagentAssistant(subagent, update.result);
+            yield* emitSubagentAssistant(subagent, update.result, "replace");
           }
           const result = update.result ?? subagent.task.result ?? (subagent.assistantText || null);
           subagent.task = {
