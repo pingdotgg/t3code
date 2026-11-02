@@ -38,25 +38,6 @@ Build new UI the same way. Compose or extend a component instead of copying its 
 When a call site repeats a treatment another one already uses, make it a variant or a slot on the
 shared component. A new composer banner or notice uses the `ComposerBanner` slots.
 
-## Dock
-
-The chat and the thread's panels are one tree of splits and tab groups
-([`dock/`](../../apps/web/src/dock/dockLayout.ts)), stored globally, while tabs stay per thread. The
-threads sidebar is outside the tree, pinned to a window edge, and the chat's group takes no tabs.
-Those two lifetimes are the reason for most of the design:
-
-- A layout per thread would move panels on every thread switch. A global tab list would lose
-  per-thread tabs. So the tree is global and a surface only records which group it was
-  left in; a group with nothing to show for the current thread drops out of the render. The tree
-  keeps it, so sizes and placement return with the tab.
-- `ChatView` owns the props every surface needs, but the dock sits above the routes. It portals
-  tab bars and surfaces into slots the workspace publishes, rather than lifting that state.
-- Content renders into a host element that moves between slots
-  ([`DockHostPortal`](../../apps/web/src/dock/DockHostPortal.tsx)). Keying React on the slot would
-  remount terminals and editors on every drag, and remounting the chat would drop those portals.
-- Window chrome must not live inside a group. The title bar controls portal to the dock root, or a
-  maximized panel would cover them.
-
 ## Handlers in large components
 
 V8 gives every closure created in one render a single shared scope. A memoized handler keeps
