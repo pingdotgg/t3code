@@ -3742,7 +3742,6 @@ export const ThreadFeed = memo(function ThreadFeed({
             // Enable overflow: RN scrollTo clamps against raw insets and ignores the automatic header inset.
             scrollToOverflowEnabled
             estimatedItemSize={180}
-            alignItemsAtEnd
             initialScrollAtEnd
             onLoad={() => {
               loadedListKeyRef.current = listMountKey;
