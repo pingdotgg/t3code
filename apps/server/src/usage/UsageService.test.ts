@@ -1593,6 +1593,48 @@ describe("UsageService", () => {
     }).pipe(Effect.scoped),
   );
 
+  it.live("does not show a previous Cursor account's history after the API key changes", () =>
+    Effect.gen(function* () {
+      const { settings, home } = yield* setup;
+      yield* TestClock.setTime(CURSOR_NOW);
+      let apiKey = "first-account-key";
+      const signIn = () =>
+        Option.some(
+          new TextEncoder().encode(
+            encodeUnknownJsonString({
+              version: 1,
+              backendUrl: "https://api2.cursor.sh",
+              apiKey,
+              createdAtMs: 0,
+            }),
+          ),
+        );
+      const cursor = makeFakeCursor();
+      cursor.state.events = [{ timestampMs: CURSOR_NOW - 3 * HOUR_MS, outputTokens: 7 }];
+      yield* Effect.gen(function* () {
+        const service = yield* makeWithCursor(cursor.read);
+        const first = yield* service.readSummary({ ...WINDOW, awaitRefresh: true });
+        assert.isTrue(first.buckets.some((bucket) => bucket.provider === "cursor"));
+
+        apiKey = "second-account-key";
+        cursor.state.error = "Cursor account usage could not be read.";
+        const second = yield* service.readSummary({ ...WINDOW, awaitRefresh: true });
+        assert.isFalse(second.buckets.some((bucket) => bucket.provider === "cursor"));
+      }).pipe(
+        Effect.provide(
+          layerService({
+            prefix: "usage-service-cursor-key-change",
+            home,
+            settings,
+            platform: "darwin",
+            environment: {},
+            secretStore: { get: () => Effect.sync(signIn) },
+          }),
+        ),
+      );
+    }).pipe(Effect.scoped, Effect.provide(TestClock.layer())),
+  );
+
   it.live(
     "includes OpenCode history but does not substitute desktop usage for an unavailable Cursor account",
     () =>
