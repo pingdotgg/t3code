@@ -129,6 +129,7 @@ interface SelectedElement {
 }
 
 interface AnnotationSession {
+  claimPress: (event: MouseEvent) => boolean;
   teardown: (notifyMain: boolean) => void;
   applyTheme: (theme: DesktopPreviewAnnotationTheme) => void;
   setSendEnabled: (enabled: boolean) => void;
@@ -216,6 +217,19 @@ const requestNavigationForButton = (event: MouseEvent): void => {
 window.addEventListener("mousedown", suppressNavigationButton, true);
 window.addEventListener("mouseup", requestNavigationForButton, true);
 window.addEventListener("auxclick", suppressNavigationButton, true);
+
+// Page outside-press handlers see presses on the closed overlay as presses on its host.
+// Registered before page scripts so a claimed press stops ahead of every page listener.
+for (const type of ["pointerdown", "mousedown", "pointerup", "mouseup", "click"]) {
+  window.addEventListener(
+    type,
+    (event) => {
+      if (!(event instanceof MouseEvent) || !activeSession?.claimPress(event)) return;
+      if (event instanceof PointerEvent && type !== "click") recordingCursor?.observePress(event);
+    },
+    true,
+  );
+}
 
 const nextId = createAnnotationIdSource();
 
@@ -625,6 +639,11 @@ function startAnnotation(sendEnabled: boolean): void {
   const strokes: PreviewAnnotationStrokeTarget[] = [];
   const styleChanges = new Map<string, PreviewAnnotationStyleChange>();
   const toolButtons = new Map<AnnotationTool, HTMLButtonElement>();
+  // Claimed presses never reach overlay listeners, so buttons register their action here.
+  const pressActions = new Map<HTMLButtonElement, () => void>();
+  const onPress = (button: HTMLButtonElement, action: () => void): void => {
+    pressActions.set(button, action);
+  };
   // Chromium draws a PDF in its own viewer frame, so pointer and key input over it
   // never reaches this document. A transparent layer above the viewer catches the
   // pointer and takes focus for Escape and the tool keys. A PDF has no elements to
@@ -904,7 +923,7 @@ function startAnnotation(sendEnabled: boolean): void {
     aspectLock.classList.toggle("bg-muted", !aspectLocked);
     aspectLock.classList.toggle("text-muted-foreground", !aspectLocked);
   };
-  aspectLock.addEventListener("click", () => {
+  onPress(aspectLock, () => {
     aspectLocked = !aspectLocked;
     refreshAspectButton();
   });
@@ -984,7 +1003,7 @@ function startAnnotation(sendEnabled: boolean): void {
   for (const [candidate, label, title] of tools) {
     const button = createButton(label, title);
     button.className += " h-8 px-2.5 text-sm";
-    button.addEventListener("click", () => {
+    onPress(button, () => {
       tool = candidate;
       refreshToolButtons();
     });
@@ -1066,7 +1085,7 @@ function startAnnotation(sendEnabled: boolean): void {
     });
   }
 
-  adjust.addEventListener("click", () => {
+  onPress(adjust, () => {
     if (selected.size === 0) return;
     if (!editorExpanded) {
       const rect = editor.getBoundingClientRect();
@@ -1123,9 +1142,7 @@ function startAnnotation(sendEnabled: boolean): void {
     event.preventDefault();
     event.stopPropagation();
   };
-  dragHandle.addEventListener("pointerdown", onEditorPointerDown);
   dragHandle.addEventListener("pointermove", onEditorPointerMove);
-  dragHandle.addEventListener("pointerup", onEditorPointerUp);
   dragHandle.addEventListener("pointercancel", onEditorPointerUp);
 
   const repaint = (): void => {
@@ -1314,6 +1331,43 @@ function startAnnotation(sendEnabled: boolean): void {
     event.stopPropagation();
   };
 
+  let overlayGesture = false;
+  let pressedButton: HTMLButtonElement | null = null;
+  const pressButtonAt = (element: Element | null): HTMLButtonElement | null => {
+    const button = element?.closest("button");
+    return button && pressActions.has(button) && !button.disabled ? button : null;
+  };
+
+  // Stops a trusted press on the overlay and runs what its target would have, leaving
+  // native defaults such as focus and text selection to the browser.
+  const claimPress = (event: MouseEvent): boolean => {
+    if (!event.isTrusted) return false;
+    if (event.type === "pointerdown") overlayGesture = event.target === host;
+    // After a drag releases pointer capture, its mouseup and click land on the page.
+    if (event.target !== host && !overlayGesture) return false;
+    event.stopImmediatePropagation();
+    // Keyboard activation clicks the focused control and reports no click count.
+    const fromKeyboard = event.type === "click" && event.detail === 0;
+    const target = fromKeyboard
+      ? shadowRoot.activeElement
+      : shadowRoot.elementFromPoint(event.clientX, event.clientY);
+    if (event.type === "pointerdown" && event instanceof PointerEvent) {
+      pressedButton = pressButtonAt(target);
+      if (target && dragHandle.contains(target)) onEditorPointerDown(event);
+    } else if (event.type === "pointerup" && event instanceof PointerEvent) {
+      onEditorPointerUp(event);
+      onPointerUp(event);
+    } else if (event.type === "click") {
+      overlayGesture = false;
+      // Like onClick, a page target never acts on a click from an overlay gesture.
+      if (event.target !== host) event.preventDefault();
+      const button = pressButtonAt(target);
+      if (button && (fromKeyboard || button === pressedButton)) pressActions.get(button)?.();
+      pressedButton = null;
+    }
+    return true;
+  };
+
   const onPointerOut = (event: PointerEvent): void => {
     if (event.relatedTarget === null) clearHoverOutline();
   };
@@ -1347,9 +1401,7 @@ function startAnnotation(sendEnabled: boolean): void {
     window.removeEventListener("keydown", onKeyDown, true);
     window.removeEventListener("scroll", repaint, true);
     window.removeEventListener("resize", repaint);
-    dragHandle.removeEventListener("pointerdown", onEditorPointerDown);
     dragHandle.removeEventListener("pointermove", onEditorPointerMove);
-    dragHandle.removeEventListener("pointerup", onEditorPointerUp);
     dragHandle.removeEventListener("pointercancel", onEditorPointerUp);
     if (editorLayoutFrame !== null) window.cancelAnimationFrame(editorLayoutFrame);
     ipcRenderer.off(CANCEL_PICK_CHANNEL, onCancel);
@@ -1443,7 +1495,7 @@ function startAnnotation(sendEnabled: boolean): void {
         teardown(true);
       });
   };
-  submit.addEventListener("click", () => submitAnnotation("attach"));
+  onPress(submit, () => submitAnnotation("attach"));
   root.addEventListener("keydown", (event) => {
     const submission =
       event.target === comment ? resolveAnnotationSubmission(event, sendEnabled) : null;
@@ -1474,6 +1526,7 @@ function startAnnotation(sendEnabled: boolean): void {
   refreshToolButtons();
   updateStatus();
   activeSession = {
+    claimPress,
     teardown,
     applyTheme: (theme) => applyAnnotationTheme(host, theme),
     setSendEnabled: (enabled) => {

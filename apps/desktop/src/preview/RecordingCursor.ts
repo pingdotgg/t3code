@@ -171,6 +171,8 @@ export function installRecordingCursor(
   return {
     move,
     keyPress,
+    observePress: (event: PointerEvent) =>
+      event.type === "pointerdown" ? pointerDown(event) : pointerUp(event),
     setController,
     setTheme,
     dispose: () => {

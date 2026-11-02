@@ -1,10 +1,12 @@
 import "vite-plus/test/config";
-import { defaultInclude, defineConfig } from "vite-plus";
+import { defaultExclude, defaultInclude, defineConfig } from "vite-plus";
 
 import { isDesktopRuntimeExternalDependency } from "../../scripts/lib/desktop-external-packages.ts";
 import { loadRepoEnv } from "../../scripts/lib/public-config.ts";
 
 const repoEnv = loadRepoEnv();
+// Guest preload tests drive a real DOM; everything else runs in Node.
+const domTests = ["src/preview/PickPreload.test.ts"];
 
 // Install only bundle externals; the server bundle already carries its dependency tree.
 const isMainProcessExternal = (id: string) =>
@@ -142,13 +144,23 @@ export default defineConfig({
     },
   ],
   test: {
-    include: [...defaultInclude, "../../native/kde-snap-shot/src/*.test.ts"],
     // The Windows lane runs workspace suites concurrently; filesystem-heavy
     // desktop integration tests can exceed Vitest's 5 second default there.
     testTimeout: 15_000,
     setupFiles: [
       "../../packages/shared/src/testing/longTempDir.ts",
       "../../packages/shared/src/testing/providerEnv.ts",
+    ],
+    projects: [
+      {
+        extends: true,
+        test: {
+          name: "unit",
+          include: [...defaultInclude, "../../native/kde-snap-shot/src/*.test.ts"],
+          exclude: [...defaultExclude, ...domTests],
+        },
+      },
+      { extends: true, test: { name: "dom", include: domTests, environment: "jsdom" } },
     ],
   },
 });
