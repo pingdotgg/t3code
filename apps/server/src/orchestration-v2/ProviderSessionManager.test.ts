@@ -2639,8 +2639,8 @@ it.effect("ProviderSessionManagerV2 keeps provider updates that land while relea
         writeToolCall,
         toolCallStatus,
       } = yield* openSessionWithBackgroundCommand("provider-session-manager-raced-roster");
-      // Before each cleanup write, one of these calls completes late. The completion must win,
-      // and the conflicts must not stop the open calls from being interrupted.
+      // Before each of the first four cleanup writes, one of these calls completes late. The
+      // completion must win, and the conflicts must not stop the open calls from being interrupted.
       const lateCompleted = ["late-1", "late-2", "late-3", "late-4"].map((name) => ({
         ...seededToolCalls.cutOff,
         id: TurnItemId.make(`turn-item:${name}`),
@@ -2656,11 +2656,15 @@ it.effect("ProviderSessionManagerV2 keeps provider updates that land while relea
         ...seededToolCalls.cutOff,
         id: TurnItemId.make("turn-item:stored-in-clean-pass"),
       };
+      const storedAfterLastPass = {
+        ...seededToolCalls.cutOff,
+        id: TurnItemId.make("turn-item:stored-after-last-pass"),
+      };
       const complete = (item: OrchestrationV2TurnItem) =>
         writeToolCall({ ...item, status: "completed" });
       // One hook runs before each cleanup write. The first pass writes the cut-off call, the
       // four late calls and the last open call; the second pass writes the cut-off call again
-      // and the call stored late.
+      // and the call stored late; the third pass writes the call stored in the clean pass.
       yield* Ref.set(
         beforeTurnItemsWrite,
         [
@@ -2677,6 +2681,9 @@ it.effect("ProviderSessionManagerV2 keeps provider updates that land while relea
           Effect.void,
           // The second pass has no conflict, but one more call lands during it.
           writeToolCall(storedInCleanPass),
+          Effect.void,
+          // Cleanup stops after three passes, so a call that lands during the third stays open.
+          writeToolCall(storedAfterLastPass),
         ].map(Effect.orDie),
       );
       const seeded = providerThreads[0]!;
@@ -2696,7 +2703,14 @@ it.effect("ProviderSessionManagerV2 keeps provider updates that land while relea
       assert.deepStrictEqual(yield* rosters, [["replacement-task"], ["dev-server"]]);
       const statuses = Object.fromEntries(
         yield* Effect.forEach(
-          [seededToolCalls.cutOff, ...lateCompleted, lastOpen, storedLate, storedInCleanPass],
+          [
+            seededToolCalls.cutOff,
+            ...lateCompleted,
+            lastOpen,
+            storedLate,
+            storedInCleanPass,
+            storedAfterLastPass,
+          ],
           (item) => toolCallStatus(item.id).pipe(Effect.map((status) => [item.id, status])),
         ),
       );
@@ -2706,6 +2720,7 @@ it.effect("ProviderSessionManagerV2 keeps provider updates that land while relea
         [lastOpen.id]: "interrupted",
         [storedLate.id]: "interrupted",
         [storedInCleanPass.id]: "interrupted",
+        [storedAfterLastPass.id]: "running",
       });
     });
 
