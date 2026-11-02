@@ -629,4 +629,45 @@ describe("v2 thread shell lists", () => {
       harness.registry.dispose();
     }
   });
+
+  it("delivers one quiet shell list per snapshot update that changes several threads", () => {
+    const harness = makeHarness();
+    const snapshot: OrchestrationV2ShellSnapshot = {
+      ...v2ShellSnapshot,
+      threads: ["a", "b", "c", "d"].map((id) => ({
+        ...v2ThreadShell,
+        id: ThreadId.make(id),
+        title: id,
+      })),
+    };
+    harness.registry.set(harness.snapshotAtom(environmentId), snapshot);
+    const delivered: Array<ReadonlyArray<string>> = [];
+    const unsubscribe = harness.registry.subscribe(
+      harness.threads.quietThreadShellsAtom,
+      (list) => delivered.push(list.map((thread) => thread.title).toSorted()),
+      { immediate: true },
+    );
+    try {
+      expect(delivered).toEqual([["a", "b", "c", "d"]]);
+      delivered.length = 0;
+      const next = ["a", "b", "c"].reduce(
+        (current, id, index) =>
+          applyShellStreamEvent(current, {
+            kind: "thread.updated",
+            location: "active",
+            sequence: index + 1,
+            thread: {
+              ...current.threads.find((thread) => thread.id === id)!,
+              title: `${id} renamed`,
+            },
+          }),
+        snapshot,
+      );
+      harness.registry.set(harness.snapshotAtom(environmentId), next);
+      expect(delivered).toEqual([["a renamed", "b renamed", "c renamed", "d"]]);
+    } finally {
+      unsubscribe();
+      harness.registry.dispose();
+    }
+  });
 });
