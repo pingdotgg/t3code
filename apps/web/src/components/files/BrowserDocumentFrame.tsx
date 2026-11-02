@@ -30,6 +30,7 @@ import {
   useLayoutEffect,
   useRef,
   useState,
+  useSyncExternalStore,
 } from "react";
 import { isElectron } from "~/env";
 import { FileSurfaceLoading } from "./fileSurfaceChrome";
@@ -174,6 +175,11 @@ function FileDocument(props: { readonly src: string; readonly title: string }) {
   );
 }
 
+const subscribeToFullscreen = (onChange: () => void) => {
+  document.addEventListener("fullscreenchange", onChange);
+  return () => document.removeEventListener("fullscreenchange", onChange);
+};
+
 /** Keep the initial URL while mounted; re-signing must not reload the page. */
 export function HtmlRenderDocument(props: {
   readonly src: string;
@@ -190,6 +196,11 @@ export function HtmlRenderDocument(props: {
   const frameRef = useRef<HTMLIFrameElement>(null);
   const [src] = useState(() => `${props.src.split("#", 1)[0]}${htmlRenderThemeFragment(theme)}`);
   const [loaded, setLoaded] = useState(false);
+  // A page that takes the screen can be taller than the screen, so it must scroll there.
+  const fullscreen = useSyncExternalStore(
+    subscribeToFullscreen,
+    () => document.fullscreenElement !== null && document.fullscreenElement === frameRef.current,
+  );
   const [expandedImage, setExpandedImage] = useState<ExpandedImagePreview | null>(null);
   const postTheme = () => {
     frameRef.current?.contentWindow?.postMessage(htmlRenderThemeMessage(theme), "*");
@@ -329,7 +340,7 @@ export function HtmlRenderDocument(props: {
         allow="fullscreen"
         // Chromium latches trackpad swipes to a frame the page can scroll one device pixel;
         // only the frame element can stop a cross-origin page scrolling.
-        scrolling={props.fitted ? "no" : undefined}
+        scrolling={props.fitted && !fullscreen ? "no" : undefined}
         loading="lazy"
         onLoad={() => {
           setLoaded(true);
