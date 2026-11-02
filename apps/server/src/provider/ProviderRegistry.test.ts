@@ -1787,6 +1787,133 @@ it.layer(
       }),
     );
 
+    it.effect("keeps an enriched snapshot that streams in before a manual refresh returns", () =>
+      Effect.gen(function* () {
+        const driver = ProviderDriverKind.make("acpRegistry");
+        const instanceId = ProviderInstanceId.make("gemini");
+        const initialProvider = {
+          instanceId,
+          driver,
+          status: "ready",
+          enabled: true,
+          installed: true,
+          auth: { status: "authenticated" },
+          checkedAt: "2026-06-10T00:00:00.000Z",
+          version: "1.0.0",
+          models: [],
+          slashCommands: [],
+          skills: [],
+        } as const satisfies ServerProvider;
+        const pendingProvider = {
+          ...initialProvider,
+          status: "warning",
+          auth: { status: "unknown" },
+          checkedAt: "2026-06-10T00:01:00.000Z",
+          message: "Checking ACP authentication, models, and commands in the background...",
+        } as const satisfies ServerProvider;
+        const enrichedProvider = {
+          ...initialProvider,
+          status: "error",
+          auth: { status: "unauthenticated" },
+          checkedAt: "2026-06-10T00:01:01.000Z",
+          message: "Sign in to Gemini to use this agent.",
+        } as const satisfies ServerProvider;
+        const snapshotRef = yield* Ref.make<ServerProvider>(initialProvider);
+        const changes = yield* PubSub.unbounded<ServerProvider>();
+        const publishSnapshot = (provider: ServerProvider) =>
+          Ref.set(snapshotRef, provider).pipe(Effect.andThen(PubSub.publish(changes, provider)));
+        const releaseRefresh = yield* Deferred.make<void>();
+        const instance = {
+          instanceId,
+          driverKind: driver,
+          continuationIdentity: { driverKind: driver, continuationKey: "acpRegistry:gemini" },
+          displayName: undefined,
+          enabled: true,
+          snapshot: {
+            resolveMaintenance: () =>
+              Effect.succeed(
+                makeManualOnlyProviderMaintenanceCapabilities({
+                  provider: driver,
+                  packageName: null,
+                }),
+              ),
+            getSnapshot: Ref.get(snapshotRef),
+            // Like a managed provider: publish the probe, let enrichment publish its result,
+            // then return the probe after a slow tail such as ACP's refreshMethods.
+            refresh: Effect.gen(function* () {
+              yield* publishSnapshot(pendingProvider);
+              yield* publishSnapshot(enrichedProvider);
+              yield* Deferred.await(releaseRefresh);
+              return pendingProvider;
+            }),
+            streamChanges: Stream.fromPubSub(changes),
+            applyUsageLimits: () => Effect.void,
+          },
+          orchestrationAdapter: {} as ProviderInstance["orchestrationAdapter"],
+          textGeneration: {} as ProviderInstance["textGeneration"],
+        } satisfies ProviderInstance;
+        const instanceRegistryLayer = Layer.succeed(
+          ProviderInstanceRegistry.ProviderInstanceRegistry,
+          {
+            getInstance: (requestedId) =>
+              Effect.succeed(requestedId === instanceId ? instance : undefined),
+            listInstances: Effect.succeed([instance]),
+            listUnavailable: Effect.succeed([]),
+            streamChanges: Stream.empty,
+            subscribeChanges: Effect.flatMap(PubSub.unbounded<void>(), PubSub.subscribe),
+          },
+        );
+        const scope = yield* Scope.make();
+        yield* Effect.addFinalizer(() => Scope.close(scope, Exit.void));
+        const runtimeServices = yield* Layer.build(
+          ProviderRegistry.layer.pipe(
+            Layer.provide(layerUnusedMutator),
+            Layer.provideMerge(instanceRegistryLayer),
+            Layer.provideMerge(
+              ServerConfig.layerTest(process.cwd(), {
+                prefix: "t3-provider-registry-enriched-refresh-",
+              }),
+            ),
+            Layer.provideMerge(NodeServices.layer),
+          ),
+        ).pipe(Scope.provide(scope));
+
+        yield* Effect.gen(function* () {
+          const registry = yield* ProviderRegistry.ProviderRegistry;
+          const config = yield* ServerConfig.ServerConfig;
+          const filePath = yield* resolveProviderStatusCachePath({
+            cacheDir: config.providerStatusCacheDir,
+            instanceId,
+          });
+          expect(yield* registry.getProviders).toEqual([expect.objectContaining(initialProvider)]);
+
+          const enrichedObserved = yield* awaitPersistedProvider(
+            registry,
+            enrichedProvider.checkedAt,
+          );
+          const refreshed = yield* registry.refreshInstance(instanceId).pipe(Effect.forkChild);
+          yield* Fiber.join(enrichedObserved);
+          yield* Deferred.succeed(releaseRefresh, undefined);
+          const returned = yield* Fiber.join(refreshed);
+
+          const enriched = {
+            status: enrichedProvider.status,
+            auth: enrichedProvider.auth,
+            message: enrichedProvider.message,
+            checkedAt: enrichedProvider.checkedAt,
+          };
+          expect(
+            yield* registry.getProviders,
+            "getProviders should hold the enriched snapshot, not the stale pending one refresh returned",
+          ).toEqual([expect.objectContaining(enriched)]);
+          expect(returned).toEqual([expect.objectContaining(enriched)]);
+          expect(yield* readProviderStatusCache(filePath)).toEqual(
+            expect.objectContaining(enriched),
+          );
+        }).pipe(Effect.provide(runtimeServices));
+      }),
+    );
+
     it.effect("persists the merged snapshot when a live update has empty models", () =>
       Effect.gen(function* () {
         const cursorDriver = ProviderDriverKind.make("cursor");
