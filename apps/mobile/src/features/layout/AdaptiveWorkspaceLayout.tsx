@@ -78,6 +78,10 @@ import {
 } from "../workspace/workspace-detail-selection";
 import { startOpeningDetail } from "../workspace/useSelectWorkspaceDetail";
 import { useWorkspaceTabs } from "../workspace/WorkspaceTabsContext";
+import {
+  rememberedThreadWorkspaceNavigationState,
+  useRememberThreadWorkspaceLocation,
+} from "../workspace/threadWorkspaceNavigationMemory";
 import { HomeListOptionsProvider } from "../home/home-list-options";
 import { newTaskDestination } from "../threads/new-task-project-selection";
 import { usePendingTaskListActions } from "../home/usePendingTaskListActions";
@@ -237,6 +241,7 @@ function AdaptiveWorkspaceLayoutContent(
   const workspacePage =
     Platform.OS === "android" && (androidSettingsOpen || workspace?.state.selectedTab === "usage");
   const navigation = useNavigation();
+  useRememberThreadWorkspaceLocation();
   const activeRoleOwner = useRef<symbol | null>(null);
   const [primarySidebarPreferredVisible, setPrimarySidebarPreferredVisible] = useState(true);
   const [supplementaryPanePreferredVisible, setSupplementaryPanePreferredVisible] = useState(true);
@@ -585,7 +590,20 @@ function AdaptiveWorkspaceLayoutContent(
         tab: detail.name === "Thread" ? "threads" : "pullRequests",
       });
       startOpeningDetail(detail);
-      navigation.dispatch(selectWorkspaceDetail(detail, sheet));
+      const state = rootStackState(navigation);
+      const remembered =
+        detail.name === "Thread" && !sheet && detail.params?.environmentId && detail.params.threadId
+          ? rememberedThreadWorkspaceNavigationState(
+              state,
+              {
+                environmentId: detail.params.environmentId,
+                threadId: detail.params.threadId,
+              },
+              true,
+            )
+          : null;
+      if (state && remembered) dispatchRootStackReset(navigation, state, remembered);
+      else navigation.dispatch(selectWorkspaceDetail(detail, sheet));
     });
   }
   const handleSelectThreadRoute = (params: ReactNavigation.RootParamList["Thread"]) =>
@@ -843,6 +861,7 @@ function AdaptiveWorkspaceLayoutContent(
   }));
 
   const handleSelectThread = (thread: EnvironmentThreadShell) => {
+    if (scopedThreadKey(thread.environmentId, thread.id) === selectedThreadKey) return;
     handleSelectThreadRoute({
       environmentId: String(thread.environmentId),
       threadId: String(thread.id),

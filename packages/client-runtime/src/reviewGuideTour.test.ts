@@ -1,3 +1,4 @@
+import type { PullRequestReviewGuideStop } from "@t3tools/contracts";
 import { parsePatchFiles } from "@pierre/diffs/utils/parsePatchFiles";
 import { describe, expect, it } from "vite-plus/test";
 
@@ -6,6 +7,7 @@ import {
   excerptRows,
   fileDiffRows,
   rowsToPatch,
+  reviewGuideStopProgress,
 } from "./reviewGuideTour.js";
 
 const PATCH = `diff --git a/src/tray.ts b/src/tray.ts
@@ -32,6 +34,49 @@ function parse(patch: string) {
 }
 
 const rows = fileDiffRows(parse(PATCH));
+
+function stop(overrides: Partial<PullRequestReviewGuideStop>): PullRequestReviewGuideStop {
+  return {
+    title: "Stop",
+    summary: "",
+    attention: null,
+    excerpts: [],
+    files: [],
+    notes: [],
+    questions: [],
+    ...overrides,
+  };
+}
+
+describe("reviewGuideStopProgress", () => {
+  it("counts each chapter file once and completes when its last file is reviewed", () => {
+    const chapter = stop({
+      files: [
+        { path: "a.ts", note: "" },
+        { path: "b.ts", note: "" },
+      ],
+      excerpts: [{ path: "a.ts", side: "new", start: 1, end: 3, caption: "" }],
+    });
+    const viewed = new Set(["a.ts"]);
+    expect(reviewGuideStopProgress(chapter, (path) => viewed.has(path))).toEqual({
+      paths: ["a.ts", "b.ts"],
+      reviewedCount: 1,
+      reviewed: false,
+    });
+    viewed.add("b.ts");
+    expect(reviewGuideStopProgress(chapter, (path) => viewed.has(path)).reviewed).toBe(true);
+    viewed.delete("a.ts");
+    expect(reviewGuideStopProgress(chapter, (path) => viewed.has(path)).reviewed).toBe(false);
+  });
+
+  it("does not mark a context-only chapter as reviewed", () => {
+    expect(reviewGuideStopProgress(stop({}), () => true)).toEqual({
+      paths: [],
+      reviewedCount: 0,
+      reviewed: false,
+    });
+  });
+});
 
 describe("fileDiffRows", () => {
   it("numbers both sides through context, deletions and additions", () => {

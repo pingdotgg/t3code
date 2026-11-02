@@ -1,11 +1,15 @@
 import { useMemo } from "react";
+import { useNavigation } from "@react-navigation/native";
 import { AppBar } from "../../components/ui/AppBar";
 import { ScreenHeaderButton } from "../../components/ui/ScreenHeaderButton";
 import type { AppBarAction } from "../../components/ui/AppBar.types";
 import { useAdaptiveWorkspaceLayout } from "../layout/AdaptiveWorkspaceLayout";
 import type { ThreadInspectorMode } from "./thread-inspector-content-stack";
 import { useThreadHeaderOptions } from "./useThreadHeaderOptions";
+import { useThreadGitMenuDefinition } from "./ThreadGitControls";
+import { THREAD_WORKSPACE_GLYPH } from "./threadGitActions";
 import { useWorkspaceBackNavigation } from "../workspace/useAndroidWorkspaceNavigation";
+import { readWorkspacePane, workspaceThreadMemoryKey } from "../workspace/workspacePaneMemory";
 import { PullRequestGlyph } from "../pull-requests/pullRequestGlyphs";
 
 export function ThreadHeader(
@@ -20,12 +24,15 @@ export function ThreadHeader(
   },
 ) {
   const goBack = useWorkspaceBackNavigation("threads");
-  const { layout, panes, toggleAuxiliaryPane, composerKeyboardActive } =
-    useAdaptiveWorkspaceLayout();
+  const { layout, panes, composerKeyboardActive } = useAdaptiveWorkspaceLayout();
+  const navigation = useNavigation();
   const { onOpenTerminal, onMergeBack } = props.gitControls;
   const native = useThreadHeaderOptions(props);
+  const gitMenu = useThreadGitMenuDefinition(props.gitControls);
   const androidHeaderActions = useMemo<ReadonlyArray<AppBarAction>>(() => {
     const actions: AppBarAction[] = [];
+    const environmentId = String(props.gitControls.environmentId);
+    const threadId = String(props.gitControls.threadId);
     if (props.onReturnToThread) {
       actions.push({
         accessibilityLabel: "Return to chat",
@@ -34,12 +41,14 @@ export function ThreadHeader(
       });
     }
     if (props.hasThreadCwd) {
-      const filesVisible = props.inspectorMode === "files" && panes.auxiliaryPaneVisible;
       actions.push({
-        accessibilityLabel: filesVisible ? "Close files" : "Open files",
-        selected: filesVisible,
-        icon: "folder",
-        onPress: filesVisible ? toggleAuxiliaryPane : props.onOpenFilesInspector,
+        accessibilityLabel: "Open workspace",
+        icon: THREAD_WORKSPACE_GLYPH,
+        onPress: () => {
+          const pane = readWorkspacePane(workspaceThreadMemoryKey(environmentId, threadId));
+          if (pane === "files") navigation.navigate("ThreadFiles", { environmentId, threadId });
+          else navigation.navigate("ThreadReview", { environmentId, threadId });
+        },
       });
     }
     if (props.hasWorkspaceRoot && props.gitControls.canOpenTerminal) {
@@ -49,11 +58,6 @@ export function ThreadHeader(
         onPress: () => onOpenTerminal(null),
       });
     }
-    actions.push({
-      accessibilityLabel: "Open git controls",
-      icon: "point.topleft.down.curvedto.point.bottomright.up",
-      onPress: props.onOpenGitInspector,
-    });
     if (onMergeBack) {
       actions.push({
         accessibilityLabel: "Merge back to source",
@@ -63,17 +67,15 @@ export function ThreadHeader(
     }
     return actions;
   }, [
-    props.inspectorMode,
-    panes.auxiliaryPaneVisible,
-    props.onOpenFilesInspector,
     onOpenTerminal,
     onMergeBack,
-    props.onOpenGitInspector,
-    toggleAuxiliaryPane,
     props.onReturnToThread,
     props.hasThreadCwd,
     props.hasWorkspaceRoot,
     props.gitControls.canOpenTerminal,
+    props.gitControls.environmentId,
+    props.gitControls.threadId,
+    navigation,
   ]);
 
   return (
@@ -100,6 +102,7 @@ export function ThreadHeader(
         }
         onBack={layout.usesSplitView ? undefined : goBack}
         actions={androidHeaderActions}
+        menus={gitMenu ? [gitMenu] : undefined}
         hideBottomBorder
         compact={composerKeyboardActive}
       />

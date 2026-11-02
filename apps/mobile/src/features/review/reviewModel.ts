@@ -1,3 +1,4 @@
+import { hideWhitespaceChanges } from "@t3tools/client-runtime/review-diff-whitespace";
 import { parsePatchFiles } from "@pierre/diffs/utils/parsePatchFiles";
 import type { ChangeTypes, FileDiffMetadata } from "@pierre/diffs/types";
 import {
@@ -13,7 +14,6 @@ import * as Order from "effect/Order";
 export type ReviewSectionKind = "turn" | "working-tree" | "branch-range";
 
 const CHANGES_SECTION_ID = "git:branch-range";
-const CHANGES_TITLE = "Changes";
 const UNCOMMITTED_SUBTITLE = "Staged, unstaged, and untracked files";
 
 export interface ReviewSectionItem {
@@ -457,9 +457,9 @@ function completePatchSource(file: FileDiffMetadata, rawPatch: string | null | u
   };
 }
 
-function mapRenderableFile(
+export function mapRenderableFile(
   file: FileDiffMetadata,
-  id: string,
+  id: string = file.name,
   rawPatch?: string | null,
 ): ReviewRenderableFile {
   const path = file.name || file.prevName || "";
@@ -550,14 +550,14 @@ export function buildReviewSectionItems(input: {
       truncated: section.truncated,
       isLoading: false,
     }));
-  const hasChangesItem = gitItems.some((item) => item.id === CHANGES_SECTION_ID);
+  const hasChangesItem = gitItems.some((item) => item.kind === "working-tree");
   const visibleGitItems =
     input.loadingGitSections && !hasChangesItem
       ? [
           {
-            id: CHANGES_SECTION_ID,
-            kind: "branch-range",
-            title: CHANGES_TITLE,
+            id: "git:working-tree",
+            kind: "working-tree",
+            title: "Uncommitted changes",
             subtitle: null,
             diff: null,
             isLoading: true,
@@ -569,10 +569,17 @@ export function buildReviewSectionItems(input: {
   return [...turnItems, ...visibleGitItems];
 }
 
+/** Opens Git on uncommitted changes, with branch and turn fallbacks for other sources. */
 export function getDefaultReviewSectionId(
   sections: ReadonlyArray<ReviewSectionItem>,
 ): string | null {
-  return (sections.find((section) => section.id === CHANGES_SECTION_ID) ?? sections[0])?.id ?? null;
+  return (
+    (
+      sections.find((section) => section.kind === "working-tree") ??
+      sections.find((section) => section.id === CHANGES_SECTION_ID) ??
+      sections[0]
+    )?.id ?? null
+  );
 }
 
 /**
@@ -592,6 +599,7 @@ export function resolveReviewSelectedSectionId(
 export function buildReviewParsedDiff(
   diff: string | null | undefined,
   cacheScope: string,
+  ignoreWhitespace = false,
 ): ReviewParsedDiff {
   if (!diff?.trim()) {
     return { kind: "empty" };
@@ -622,7 +630,7 @@ export function buildReviewParsedDiff(
       Arr.flatMap((patch) => patch.files),
       Arr.map((file, index) =>
         mapRenderableFile(
-          file,
+          ignoreWhitespace ? hideWhitespaceChanges(file) : file,
           `${patchId}:f${index.toString(36)}`,
           rawFiles.get(
             `diff --git ${quoteGitPatchPath(`a/${file.name}`)} ${quoteGitPatchPath(`b/${file.name}`)}`,

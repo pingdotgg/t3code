@@ -3,6 +3,10 @@ import {
   sourceControlClients,
   type ChangeRequestTerminology,
 } from "@t3tools/client-runtime/source-control-clients";
+import {
+  pullRequestReviewVerdict,
+  visibleCommentBody,
+} from "@t3tools/client-runtime/review-threads";
 import * as Schema from "effect/Schema";
 import {
   GitCommandError,
@@ -287,7 +291,7 @@ export function allowedPullRequestMergeMethods(
     : detail.capabilities.mergeMethods.filter((method) => detail.mergeCapabilities[method]);
 }
 
-function canPerformPullRequestAction(
+export function canPerformPullRequestAction(
   detail: Pick<PullRequestActionableDetail, "capabilities" | "viewerPermissions"> | null,
   action: PullRequestAction,
 ): boolean {
@@ -381,16 +385,7 @@ export type PullRequestReviewOutcome = "approved" | "changes-requested" | "dismi
 export function pullRequestReviewOutcome(
   reviewState: string | null,
 ): PullRequestReviewOutcome | null {
-  switch (reviewState?.trim().toLowerCase().replaceAll("_", "-")) {
-    case "approved":
-      return "approved";
-    case "changes-requested":
-      return "changes-requested";
-    case "dismissed":
-      return "dismissed";
-    default:
-      return null;
-  }
+  return pullRequestReviewVerdict(reviewState);
 }
 
 // Host UTC offsets make lexical timestamp sorting unsafe.
@@ -454,7 +449,10 @@ export function latestPullRequestReviewOutcomes(
 export interface PullRequestTimelineEvent {
   readonly id: string;
   readonly at: string;
-  readonly kind: "opened" | "commit" | "comment" | "review" | "merged" | "closed";
+  readonly kind: "opened" | "commit" | "comment" | "review" | "thread" | "merged" | "closed";
+  /** The entire discussion stays together instead of repeating its replies as flat remarks. */
+  readonly reviewThread?: PullRequestReviewThread;
+  readonly comment?: PullRequestComment;
   readonly title: string;
   readonly body: string | null;
   readonly markdown: boolean;
@@ -466,21 +464,12 @@ export interface PullRequestTimelineEvent {
   readonly path: string | null;
   readonly reviewState: string | null;
   readonly reactions: ReadonlyArray<PullRequestReaction>;
-  readonly comment?: PullRequestComment;
-  readonly thread?: PullRequestTimelineThread;
 }
 
 export interface PullRequestReplyAvailability {
   readonly moreReplies: number;
   readonly hasMoreReplies: boolean;
   readonly url: string | null;
-}
-
-export interface PullRequestTimelineThread
-  extends
-    Pick<PullRequestReviewThread, "path" | "line" | "isResolved" | "isOutdated">,
-    PullRequestReplyAvailability {
-  readonly replies: ReadonlyArray<PullRequestTimelineEvent>;
 }
 
 export type PullRequestTimelineRow =
@@ -494,7 +483,6 @@ export function groupPullRequestTimelineConversations(
   for (const event of events) {
     if (
       (event.kind === "comment" || event.kind === "review") &&
-      event.thread === undefined &&
       pullRequestReviewOutcome(event.reviewState) === null
     ) {
       const last = rows.at(-1);
@@ -512,27 +500,7 @@ export function groupPullRequestTimelineConversations(
 
 /** Marker-only bodies are empty; otherwise retain text, including fenced HTML comments. */
 export function visibleBody(body: string): string | null {
-  return body.replace(/<!--[\s\S]*?-->/gu, "").trim().length === 0 ? null : body.trim();
-}
-
-function commentTimelineEvent(comment: PullRequestComment): PullRequestTimelineEvent {
-  return {
-    comment,
-    id: comment.id,
-    at: comment.createdAt,
-    kind: comment.kind === "review" ? "review" : "comment",
-    title: comment.kind === "review" ? "reviewed" : "commented",
-    body: visibleBody(comment.body),
-    markdown: true,
-    url: comment.url,
-    actor: comment.author,
-    commitAuthors: [],
-    additions: null,
-    deletions: null,
-    path: comment.path,
-    reviewState: comment.reviewState,
-    reactions: comment.reactions ?? [],
-  };
+  return visibleCommentBody(body);
 }
 
 export type PullRequestConversationItem =
@@ -593,7 +561,13 @@ export function pullRequestConversationItems(
   let next = 0;
   // Preserve loose comments' existing order, inserting each thread at its finding's time.
   for (const comment of comments) {
-    if (claimed.has(comment.id)) continue;
+    if (
+      claimed.has(comment.id) ||
+      (comment.kind === "review" &&
+        visibleBody(comment.body) === null &&
+        pullRequestReviewOutcome(comment.reviewState) === null)
+    )
+      continue;
     while (
       next < threads.length &&
       instant(threads[next]!.createdAt) < instant(comment.createdAt)
@@ -612,7 +586,7 @@ export function pullRequestConversationItemComments(
   return item.kind === "comment" ? [item.comment] : [item.root, ...item.replies];
 }
 
-export function isPullRequestCommentFinished(
+function isPullRequestCommentFinished(
   comment: PullRequestComment,
   thread?: PullRequestReviewThread,
 ): boolean {
@@ -660,10 +634,19 @@ export function buildPullRequestTimeline(
   detail: Pick<
     PullRequestDetailView,
     "provider" | "createdAt" | "author" | "commits" | "comments" | "mergedAt" | "closedAt"
-  > &
-    Partial<Pick<PullRequestDetailView, "reviewThreads">>,
+  > & { readonly reviewThreads?: ReadonlyArray<PullRequestReviewThread> },
 ): ReadonlyArray<PullRequestTimelineEvent> {
   const term = sourceControlClients.get(detail.provider).changeRequest.singular;
+  const currentComments = new Map(detail.comments.map((comment) => [comment.id, comment]));
+  const threads = (detail.reviewThreads ?? []).map((thread) => ({
+    ...thread,
+    comments: thread.comments
+      .map((comment) => currentComments.get(comment.id) ?? comment)
+      .toSorted((left, right) => instant(left.createdAt) - instant(right.createdAt)),
+  }));
+  const threadedCommentIds = new Set(
+    threads.flatMap((thread) => thread.comments.map((comment) => comment.id)),
+  );
   return [
     {
       id: "created",
@@ -697,20 +680,55 @@ export function buildPullRequestTimeline(
       reviewState: null,
       reactions: [],
     })),
-    ...pullRequestConversationItems(detail.comments, detail.reviewThreads ?? []).map((item) => {
-      if (item.kind === "comment") return commentTimelineEvent(item.comment);
+    ...detail.comments
+      .filter(
+        (comment) =>
+          !threadedCommentIds.has(comment.id) &&
+          !(
+            comment.kind === "review" &&
+            visibleBody(comment.body) === null &&
+            pullRequestReviewOutcome(comment.reviewState) === null
+          ),
+      )
+      .map((comment) => ({
+        id: comment.id,
+        comment,
+        at: comment.createdAt,
+        kind: comment.kind === "review" ? ("review" as const) : ("comment" as const),
+        title: comment.kind === "review" ? "reviewed" : "commented",
+        body: visibleBody(comment.body),
+        markdown: true,
+        url: comment.url,
+        actor: comment.author,
+        commitAuthors: [],
+        additions: null,
+        deletions: null,
+        path: comment.path,
+        reviewState: comment.reviewState,
+        reactions: comment.reactions ?? [],
+      })),
+    ...threads.map((thread) => {
+      const first = thread.comments[0];
+      const latest = thread.comments.reduce(
+        (at, comment) => (instant(comment.createdAt) > instant(at) ? comment.createdAt : at),
+        first?.createdAt ?? detail.createdAt,
+      );
       return {
-        ...commentTimelineEvent(item.root),
-        thread: {
-          path: item.thread.path,
-          line: item.thread.line,
-          isResolved: item.thread.isResolved,
-          isOutdated: item.thread.isOutdated,
-          replies: item.replies.map(commentTimelineEvent),
-          moreReplies: item.moreReplies,
-          hasMoreReplies: item.hasMoreReplies,
-          url: item.url,
-        },
+        id: `thread:${thread.id}`,
+        at: latest,
+        kind: "thread" as const,
+        reviewThread: thread,
+        title: thread.isResolved ? "resolved discussion" : "open discussion",
+        body: null,
+        markdown: false,
+        url: first?.url ?? null,
+        actor: first?.author ?? null,
+        commitAuthors: [],
+        additions: null,
+        deletions: null,
+        path: thread.path,
+        reviewState: null,
+        reactions: [],
       };
     }),
     ...(detail.mergedAt

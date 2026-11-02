@@ -1,0 +1,276 @@
+import type {
+  PullRequestActor,
+  PullRequestCapabilities,
+  PullRequestComment,
+  PullRequestDetail,
+  PullRequestViewerPermissions,
+} from "@t3tools/contracts";
+import { describe, expect, it } from "vite-plus/test";
+
+import {
+  reviewThreadReplyTarget,
+  pendingReviewCommentsFromThreads,
+  groupPendingReviewComments,
+  canEditPullRequestChangeRequest,
+  canEditPullRequestComment,
+  canResolvePullRequestThread,
+} from "./reviewEditing.ts";
+
+type Subject = Pick<PullRequestDetail, "author" | "capabilities" | "viewer" | "viewerPermissions">;
+
+function actor(login: string): PullRequestActor {
+  return { login, name: null, avatarUrl: null };
+}
+
+function capabilities(edit?: PullRequestCapabilities["edit"]): PullRequestCapabilities {
+  return {
+    diff: true,
+    comment: true,
+    actions: [],
+    mergeMethods: [],
+    search: true,
+    reactions: true,
+    review: { inlineComment: true, reply: true, resolve: true, verdicts: [] },
+    reviewers: { request: true, listCandidates: true },
+    ...(edit === undefined ? {} : { edit }),
+  };
+}
+
+function permissions(
+  overrides: Partial<PullRequestViewerPermissions> = {},
+): PullRequestViewerPermissions {
+  return {
+    actions: [],
+    comment: true,
+    resolve: true,
+    verdicts: [],
+    requestReviewers: true,
+    ...overrides,
+  };
+}
+
+function subject(overrides: Partial<Subject> = {}): Subject {
+  return {
+    author: actor("octocat"),
+    capabilities: capabilities({ changeRequest: true, comment: true }),
+    viewer: "octocat",
+    viewerPermissions: permissions(),
+    ...overrides,
+  };
+}
+
+function comment(overrides: Partial<PullRequestComment> = {}): PullRequestComment {
+  return {
+    id: "c1",
+    kind: "issue-comment",
+    author: actor("octocat"),
+    body: "words",
+    createdAt: "2026-01-01T00:00:00.000Z",
+    url: null,
+    path: null,
+    reviewState: null,
+    ...overrides,
+  };
+}
+
+describe("canEditPullRequestChangeRequest", () => {
+  it("matches the author regardless of case", () => {
+    expect(canEditPullRequestChangeRequest(subject({ viewer: "OctoCat" }))).toBe(true);
+  });
+
+  it("lets somebody who may merge rewrite a change request they did not write", () => {
+    expect(
+      canEditPullRequestChangeRequest(
+        subject({
+          author: actor("someone-else"),
+          viewerPermissions: permissions({ actions: ["merge"] }),
+        }),
+      ),
+    ).toBe(true);
+  });
+
+  it("follows the host's own answer about the reader over authorship and merge access", () => {
+    expect(
+      canEditPullRequestChangeRequest(
+        subject({
+          author: actor("someone-else"),
+          viewerPermissions: permissions({ editChangeRequest: true }),
+        }),
+      ),
+    ).toBe(true);
+    expect(
+      canEditPullRequestChangeRequest(
+        subject({
+          viewerPermissions: permissions({ actions: ["merge"], editChangeRequest: false }),
+        }),
+      ),
+    ).toBe(false);
+    expect(
+      canEditPullRequestChangeRequest(
+        subject({
+          capabilities: capabilities({ changeRequest: false, comment: true }),
+          viewerPermissions: permissions({ editChangeRequest: true }),
+        }),
+      ),
+    ).toBe(false);
+  });
+
+  it("refuses a reader who neither wrote it nor may merge it", () => {
+    expect(
+      canEditPullRequestChangeRequest(
+        subject({
+          author: actor("someone-else"),
+          viewerPermissions: permissions({ actions: ["close"] }),
+        }),
+      ),
+    ).toBe(false);
+  });
+
+  it("refuses where the host cannot rewrite a change request at all", () => {
+    expect(
+      canEditPullRequestChangeRequest(
+        subject({ capabilities: capabilities({ changeRequest: false, comment: true }) }),
+      ),
+    ).toBe(false);
+    expect(canEditPullRequestChangeRequest(subject({ capabilities: capabilities() }))).toBe(false);
+  });
+
+  it("still allows a merger the host could not name", () => {
+    expect(
+      canEditPullRequestChangeRequest(
+        subject({ viewer: undefined, viewerPermissions: permissions({ actions: ["merge"] }) }),
+      ),
+    ).toBe(true);
+  });
+});
+
+describe("canEditPullRequestComment", () => {
+  it("lets the reader rewrite their own remark on a line", () => {
+    expect(canEditPullRequestComment(subject(), comment({ kind: "review-comment" }))).toBe(true);
+  });
+
+  it("matches the author regardless of case", () => {
+    expect(
+      canEditPullRequestComment(
+        subject({ viewer: "OCTOCAT" }),
+        comment({ author: actor("octocat") }),
+      ),
+    ).toBe(true);
+  });
+
+  it("refuses somebody else's remark", () => {
+    expect(canEditPullRequestComment(subject(), comment({ author: actor("someone-else") }))).toBe(
+      false,
+    );
+  });
+
+  it("follows the host's own answer about a remark over authorship", () => {
+    expect(canEditPullRequestComment(subject(), comment({ canEdit: false }))).toBe(false);
+    expect(
+      canEditPullRequestComment(
+        subject(),
+        comment({ author: actor("someone-else"), canEdit: true }),
+      ),
+    ).toBe(true);
+    expect(
+      canEditPullRequestComment(
+        subject({ capabilities: capabilities({ changeRequest: true, comment: false }) }),
+        comment({ canEdit: true }),
+      ),
+    ).toBe(false);
+  });
+
+  it("refuses a review's own summary", () => {
+    expect(canEditPullRequestComment(subject(), comment({ kind: "review" }))).toBe(false);
+  });
+});
+
+describe("canResolvePullRequestThread", () => {
+  it("uses the reader's repository-wide permission where the host says nothing per thread", () => {
+    expect(canResolvePullRequestThread(subject(), {})).toBe(true);
+    expect(
+      canResolvePullRequestThread(
+        subject({ viewerPermissions: permissions({ resolve: false }) }),
+        {},
+      ),
+    ).toBe(false);
+  });
+
+  it("only narrows the reader's permission with the host's answer for one thread", () => {
+    expect(canResolvePullRequestThread(subject(), { canResolve: false })).toBe(false);
+    expect(
+      canResolvePullRequestThread(subject({ viewerPermissions: permissions({ resolve: false }) }), {
+        canResolve: true,
+      }),
+    ).toBe(false);
+  });
+});
+
+describe("reviewThreadReplyTarget", () => {
+  it("carries private ownership while leaving published replies immediate", () => {
+    const thread = {
+      id: "t1",
+      path: "a.ts",
+      line: 2,
+      side: "right" as const,
+      isResolved: false,
+      isOutdated: false,
+      comments: [],
+    };
+    expect(reviewThreadReplyTarget(thread)).toEqual({ threadId: "t1" });
+    expect(
+      reviewThreadReplyTarget({
+        ...thread,
+        comments: [
+          {
+            id: "c1",
+            body: "Draft",
+            url: null,
+            author: null,
+            createdAt: "2026-10-20T00:00:00Z",
+            pendingReviewId: "private-review",
+          },
+        ],
+      }),
+    ).toEqual({ threadId: "t1", pendingReviewId: "private-review" });
+    const privateThread = {
+      ...thread,
+      commentCount: 2,
+      comments: ["root", "reply"].map((id) => ({
+        id,
+        body: id,
+        url: `https://github.com/example/repo/pull/1#discussion_${id}`,
+        author: null,
+        createdAt: "2026-10-20T00:00:00Z",
+        pendingReviewId: "private-review",
+      })),
+    };
+    const pending = pendingReviewCommentsFromThreads([privateThread]);
+    const local = {
+      id: "local",
+      path: "a.ts",
+      position: { kind: "added" as const, newLine: 3 },
+      body: "Unsaved",
+    };
+    expect(pending).toHaveLength(2);
+    expect(groupPendingReviewComments([privateThread], [...pending, local])).toEqual({
+      threads: [privateThread],
+      pendingComments: [local],
+    });
+    expect(groupPendingReviewComments([privateThread], pending.slice(0, 1)).threads).toEqual([
+      { ...privateThread, comments: privateThread.comments.slice(0, 1), commentCount: 1 },
+    ]);
+    const publishedRoot = {
+      ...privateThread,
+      comments: [
+        { ...privateThread.comments[0]!, pendingReviewId: undefined },
+        privateThread.comments[1]!,
+      ],
+    };
+    expect(groupPendingReviewComments([publishedRoot], pending.slice(1))).toEqual({
+      threads: [publishedRoot],
+      pendingComments: [],
+    });
+    expect(groupPendingReviewComments([], pending).pendingComments).toEqual(pending);
+  });
+});

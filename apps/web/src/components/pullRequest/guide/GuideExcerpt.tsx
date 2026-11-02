@@ -1,3 +1,4 @@
+import { reviewPositionLabel } from "@t3tools/client-runtime/review-selection";
 import type {
   DiffLineAnnotation,
   FileDiffContentsLoader,
@@ -5,11 +6,19 @@ import type {
   SelectedLineRange,
 } from "@pierre/diffs";
 import { FileDiff } from "@pierre/diffs/react";
-import type { PullRequestReviewGuideExcerpt, PullRequestReviewPosition } from "@t3tools/contracts";
+import type {
+  EnvironmentId,
+  PullRequestRef,
+  PullRequestReviewThread,
+  PullRequestReviewGuideExcerpt,
+  PullRequestReviewPosition,
+} from "@t3tools/contracts";
 import { ArrowUpRightIcon } from "lucide-react";
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 
 import { useRenderedAppearance } from "~/hooks/useTheme";
+import { PierreEntryIcon } from "../../chat/PierreEntryIcon";
+import { useClientSettings } from "~/hooks/useSettings";
 import {
   getRenderablePatch,
   resolveDiffThemeName,
@@ -23,11 +32,15 @@ import {
 } from "~/reviewCommentContext";
 
 import { DiffCommentAnnotation } from "../../diffs/DiffCommentAnnotation";
-import { DIFF_VIEW_UNSAFE_CSS } from "../../diffs/StyledDiffCodeView";
+import { INLINE_RENAME_HEADER_CSS } from "../../diffs/StyledDiffCodeView";
+import { GUIDE_DIFF_UNSAFE_CSS } from "./guideDiffStyles";
 import { Button } from "../../ui/button";
+import { Checkbox } from "../../ui/checkbox";
+import { DiffFileRename } from "../../diffs/DiffFileRename";
 import {
   getReviewPositionAnchor,
   PendingReviewCommentCard,
+  HostedReviewThreadCard,
   toViewerSide,
 } from "../PullRequestReviewAnnotation";
 import type { PendingReviewComment } from "../pullRequestReviewStore";
@@ -40,7 +53,12 @@ import {
 import { GuideNoteMarker } from "./GuideNotes";
 import { GuideProse } from "./GuideProse";
 
-const EXCERPT_UNSAFE_CSS = `${DIFF_VIEW_UNSAFE_CSS}
+// When wrapping is off, keep the excerpt's scrollbar visible so long lines do not look cut off.
+const EXCERPT_UNSAFE_CSS = `${GUIDE_DIFF_UNSAFE_CSS}
+${INLINE_RENAME_HEADER_CSS}
+[data-diffs-header] [data-change-icon] {
+  display: none;
+}
 [data-code]::-webkit-scrollbar-thumb {
   background-color: var(--diffs-bg-context);
 }
@@ -51,11 +69,28 @@ export interface ExcerptNoteMarker {
   readonly markers: ReadonlyArray<{ readonly marker: string; readonly title: string }>;
 }
 
+/**
+ * What a reader can do with lines of an excerpt, the same two things the Code tab offers: queue a
+ * comment for the review, or ask an agent about them. Null where neither is possible.
+ */
 export interface ExcerptCommenting {
+  /** Whether a comment can be queued for the review; asking an agent needs no host support. */
   readonly canComment: boolean;
   /** The host anchors a comment to a range of lines rather than to its last one. */
   readonly rangeComments: boolean;
+  readonly renderAttachments?: (
+    onTextChange: (text: string) => void,
+    onBusyChange: (busy: boolean) => void,
+    textarea: HTMLTextAreaElement | null,
+  ) => ReactNode;
+  /** Comments already queued for the review, placed on the lines they belong to. */
   readonly pending: ReadonlyArray<PendingReviewComment>;
+  readonly threads?: ReadonlyArray<PullRequestReviewThread>;
+  readonly pendingCommentTarget: {
+    environmentId: EnvironmentId;
+    reference: PullRequestRef;
+    canCopyLink: boolean;
+  };
   readonly onComment: (comment: {
     readonly path: string;
     readonly oldPath: string | null;
@@ -64,10 +99,12 @@ export interface ExcerptCommenting {
     readonly body: string;
   }) => void;
   readonly onRemove: (commentId: string) => void;
+  /** Opens an agent thread about the lines; null where no thread can be opened. */
   readonly onAskAgent: ((comment: ReviewCommentContext, request: string) => void) | null;
 }
 
 interface ExcerptAnnotation {
+  readonly threads: ReadonlyArray<PullRequestReviewThread>;
   readonly markers: ExcerptNoteMarker["markers"];
   readonly pending: ReadonlyArray<PendingReviewComment>;
   readonly draft: boolean;
@@ -81,14 +118,19 @@ interface ExcerptDraft {
 
 type ExcerptSlice = NonNullable<ReturnType<typeof excerptSlice>>;
 
-function excerptSlice(file: FileDiffMetadata | null, excerpt: PullRequestReviewGuideExcerpt) {
+function excerptSlice(
+  file: FileDiffMetadata | null,
+  excerpt: PullRequestReviewGuideExcerpt,
+  ignoreWhitespace: boolean,
+) {
   if (file === null) return null;
   const rows = fileDiffRows(file);
   const shown = excerptRows(rows, excerpt);
   if (shown.length === 0) return null;
   const parsed = getRenderablePatch(
     rowsToPatch(excerpt.path, resolveFileDiffPreviousPath(file), shown),
-    `pull-request-guide-excerpt:${excerpt.path}:${excerpt.side}:${excerpt.start}-${excerpt.end}`,
+    `pull-request-guide-excerpt:${excerpt.path}:${excerpt.side}:${excerpt.start}-${excerpt.end}:${ignoreWhitespace}`,
+    { ignoreWhitespace },
   );
   const fileDiff = parsed?.kind === "files" ? parsed.files[0] : undefined;
   if (fileDiff === undefined) return null;
@@ -131,18 +173,25 @@ export function GuideExcerpt({
   commenting,
   loadDiffFiles,
   onOpenFile,
+  viewed,
+  onSetViewed,
 }: {
   excerpt: PullRequestReviewGuideExcerpt;
+  /** The file's parsed diff, null while it loads or when the host withheld it. */
   file: FileDiffMetadata | null;
   loading: boolean;
   notes: ReadonlyArray<ExcerptNoteMarker>;
   commenting: ExcerptCommenting | null;
+  /** Loads the file's unchanged lines for the bars around the excerpt. */
   loadDiffFiles: FileDiffContentsLoader;
   onOpenFile: (path: string) => void;
+  viewed: boolean;
+  onSetViewed: ((viewed: boolean) => void) | null;
 }) {
   // Keep selections outside ExcerptDiff to survive head reloads.
   const [draft, setDraft] = useState<ExcerptDraft | null>(null);
-  const slice = excerptSlice(file, excerpt);
+  const settings = useClientSettings();
+  const slice = excerptSlice(file, excerpt, settings.diffIgnoreWhitespace);
 
   return (
     <figure className="flex min-w-0 flex-col gap-1.5">
@@ -162,6 +211,8 @@ export function GuideExcerpt({
           notes={notes}
           commenting={commenting}
           onOpenFile={onOpenFile}
+          viewed={viewed}
+          onSetViewed={onSetViewed}
         />
       ) : loading ? (
         <p className="rounded-lg border border-border/60 px-3 py-2 text-xs text-muted-foreground">
@@ -192,6 +243,8 @@ function ExcerptDiff({
   notes,
   commenting,
   onOpenFile,
+  viewed,
+  onSetViewed,
 }: {
   excerpt: PullRequestReviewGuideExcerpt;
   file: FileDiffMetadata;
@@ -202,10 +255,14 @@ function ExcerptDiff({
   notes: ReadonlyArray<ExcerptNoteMarker>;
   commenting: ExcerptCommenting | null;
   onOpenFile: (path: string) => void;
+  viewed: boolean;
+  onSetViewed: ((viewed: boolean) => void) | null;
 }) {
   const resolvedTheme = useRenderedAppearance();
+  const settings = useClientSettings();
   const loadExcerptFiles = excerptLoader(excerpt, slice.rows, loadDiffFiles);
 
+  // Notes, queued comments and the draft share one annotation per line, as in the Code tab.
   const annotations = (() => {
     const groups = new Map<string, DiffLineAnnotation<ExcerptAnnotation>>();
     const at = (side: "additions" | "deletions", line: number) => {
@@ -215,7 +272,7 @@ function ExcerptDiff({
       const created: DiffLineAnnotation<ExcerptAnnotation> = {
         side,
         lineNumber: line,
-        metadata: { markers: [], pending: [], draft: false },
+        metadata: { markers: [], pending: [], threads: [], draft: false },
       };
       groups.set(key, created);
       return created;
@@ -235,11 +292,20 @@ function ExcerptDiff({
         markers: [...metadata.markers, ...note.markers],
       }));
     }
+    for (const thread of commenting?.threads ?? []) {
+      if (thread.path !== excerpt.path || thread.isOutdated || thread.line === null) continue;
+      const side = toViewerSide(thread.side);
+      if (!slice?.drawn[side].has(thread.line)) continue;
+      update(side, thread.line, (metadata) => ({
+        ...metadata,
+        threads: [...metadata.threads, thread],
+      }));
+    }
     for (const comment of commenting?.pending ?? []) {
       if (comment.path !== excerpt.path) continue;
       const anchor = getReviewPositionAnchor(comment.position);
       const side = toViewerSide(anchor.side);
-      if (!slice.drawn[side].has(anchor.line)) continue;
+      if (!slice?.drawn[side].has(anchor.line)) continue;
       update(side, anchor.line, (metadata) => ({
         ...metadata,
         pending: [...metadata.pending, comment],
@@ -252,16 +318,22 @@ function ExcerptDiff({
     return [...groups.values()];
   })();
 
+  // Positions and the agent's copy of the lines come from the whole file's diff, so a comment
+  // lands where the Code tab would put it rather than on the excerpt's cut-down patch.
   const beginComment = (range: SelectedLineRange | null) => {
-    if (range === null) return;
+    if (range === null || file === null) return;
     const anchor = resolveDiffReviewAnchor(file, range, commenting?.rangeComments === true);
     if (anchor === null) return;
     setDraft({ range, ...anchor });
   };
-  const interactive = commenting !== null && draft === null;
+  const interactive =
+    commenting !== null &&
+    draft === null &&
+    (commenting.canComment || commenting.onAskAgent !== null);
+  const canQueueComment = commenting?.canComment === true;
   const onAskAgent = commenting?.onAskAgent ?? null;
   const askAgent = (request: string) => {
-    if (draft === null || onAskAgent === null) return;
+    if (draft === null || file === null || onAskAgent === null) return;
     const comment = buildDiffReviewComment({
       id: `pull-request-guide:${excerpt.path}:${draft.range.start}:${draft.range.end}`,
       sectionId: `pull-request-guide:${excerpt.path}`,
@@ -276,25 +348,31 @@ function ExcerptDiff({
   };
 
   const options = {
-    diffStyle: "unified" as const,
+    diffStyle: settings.diffLayout === "split" ? ("split" as const) : ("unified" as const),
     lineDiffType: "none" as const,
-    overflow: "scroll" as const,
+    overflow: settings.wordWrap ? ("wrap" as const) : ("scroll" as const),
     theme: resolveDiffThemeName(resolvedTheme),
     themeType: resolvedTheme,
     preferredHighlighter: PREFERRED_HIGHLIGHTER,
     unsafeCSS: EXCERPT_UNSAFE_CSS,
+    // Hover a line for the gutter button, or drag across line numbers, as in the Code tab.
     enableGutterUtility: interactive,
     enableLineSelection: interactive,
     onGutterUtilityClick: beginComment,
     onLineSelectionEnd: beginComment,
+    // Without a loader there is nothing to expand into, so the bars stay plain.
     ...(loadExcerptFiles === null
       ? { hunkSeparators: "simple" as const }
       : { loadDiffFiles: loadExcerptFiles }),
   };
 
   return (
-    <div className="min-w-0 overflow-hidden rounded-lg border border-border/60">
+    <div className="min-w-0 border-y border-border/60">
       <FileDiff<ExcerptAnnotation>
+        renderHeaderPrefix={() => (
+          <PierreEntryIcon pathValue={excerpt.path} kind="file" theme={resolvedTheme} />
+        )}
+        renderHeaderFilenameSuffix={() => (file ? <DiffFileRename file={file} /> : null)}
         fileDiff={slice.fileDiff}
         options={options}
         lineAnnotations={annotations}
@@ -311,39 +389,53 @@ function ExcerptDiff({
                 ))}
               </div>
             ) : null}
-            {annotation.metadata.pending.map((comment) => (
-              <PendingReviewCommentCard
-                key={comment.id}
-                comment={comment}
-                onRemove={() => commenting?.onRemove(comment.id)}
-              />
-            ))}
+            {commenting !== null
+              ? annotation.metadata.threads.map((thread) => (
+                  <HostedReviewThreadCard
+                    key={thread.id}
+                    threadId={thread.id}
+                    environmentId={commenting.pendingCommentTarget.environmentId}
+                    reference={commenting.pendingCommentTarget.reference}
+                  />
+                ))
+              : null}
+            {commenting !== null
+              ? annotation.metadata.pending.map((comment) => (
+                  <PendingReviewCommentCard
+                    key={comment.id}
+                    comment={comment}
+                    {...commenting.pendingCommentTarget}
+                  />
+                ))
+              : null}
             {annotation.metadata.draft && draft !== null && commenting !== null ? (
               <DiffCommentAnnotation
                 kind="draft"
-                rangeLabel={`${excerpt.path}:${getReviewPositionAnchor(draft.position).line}`}
+                renderAttachments={commenting.renderAttachments}
+                pending={!canQueueComment && onAskAgent === null}
+                rangeLabel={`${excerpt.path} · ${reviewPositionLabel(draft.position, draft.startPosition)}`}
                 text=""
                 placeholder={
-                  commenting.canComment ? "Add a comment…" : "Ask the agent about these lines…"
+                  canQueueComment ? "Add a comment…" : "Ask the agent about these lines…"
                 }
-                submitLabel={commenting.canComment ? "Add to review" : "Ask agent"}
-                {...(commenting.canComment && onAskAgent !== null
+                submitLabel={canQueueComment ? "Add to review" : "Add to composer"}
+                {...(canQueueComment && onAskAgent !== null
                   ? {
                       secondaryAction: {
-                        label: "Ask agent",
+                        label: "Add to composer",
                         onAction: (text: string) => askAgent(text),
                       },
                     }
                   : {})}
                 onCancel={() => setDraft(null)}
                 onComment={(body) => {
-                  if (!commenting.canComment) {
+                  if (!canQueueComment) {
                     askAgent(body);
                     return;
                   }
                   commenting.onComment({
                     path: excerpt.path,
-                    oldPath: previousPathOf(file, excerpt.path),
+                    oldPath: file === null ? null : previousPathOf(file, excerpt.path),
                     position: draft.position,
                     startPosition: draft.startPosition,
                     body,
@@ -355,7 +447,17 @@ function ExcerptDiff({
           </div>
         )}
         renderHeaderMetadata={() => (
-          <span className="flex items-center gap-2 text-xs text-muted-foreground">
+          <span className="flex items-center gap-2 text-xs font-medium text-muted-foreground">
+            {onSetViewed ? (
+              <label className="flex items-center gap-1.5">
+                <Checkbox
+                  aria-label={`Reviewed ${excerpt.path}`}
+                  checked={viewed}
+                  onCheckedChange={(checked) => onSetViewed(checked === true)}
+                />
+                Reviewed
+              </label>
+            ) : null}
             <span className="tabular-nums">
               {excerpt.side === "old" ? "removed code, " : ""}showing {slice.shown} of {slice.total}{" "}
               diff lines
@@ -375,6 +477,7 @@ function ExcerptDiff({
   );
 }
 
+/** A renamed file's comment carries its old path too, which hosts need to place it. */
 function previousPathOf(file: FileDiffMetadata, path: string): string | null {
   const previous = resolveFileDiffPreviousPath(file);
   return previous === path ? null : previous;

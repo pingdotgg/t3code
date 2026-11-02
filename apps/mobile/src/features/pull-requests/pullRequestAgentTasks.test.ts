@@ -30,16 +30,21 @@ describe("PR agent tasks", () => {
     expect(pullRequestAgentThread([thread, archived], archived.id)).toBe(archived);
   });
   it("replaces the helper's own text when switching tasks, keeping user edits", () => {
-    const first = appendPullRequestAgentPrompt("My question", "explain", GITHUB);
+    const first = appendPullRequestAgentPrompt("My question", "feedback", GITHUB);
     const next = appendPullRequestAgentPrompt(
       first,
-      "feedback",
+      "conflicts",
       GITHUB,
-      pullRequestAgentPrompt("explain", GITHUB),
+      pullRequestAgentPrompt("feedback", GITHUB),
     );
-    expect(next).toBe(`My question\n\n${pullRequestAgentPrompt("feedback", GITHUB)}`);
+    expect(next).toBe(`My question\n\n${pullRequestAgentPrompt("conflicts", GITHUB)}`);
     expect(
-      appendPullRequestAgentPrompt(next, "ask", GITHUB, pullRequestAgentPrompt("feedback", GITHUB)),
+      appendPullRequestAgentPrompt(
+        next,
+        "ask",
+        GITHUB,
+        pullRequestAgentPrompt("conflicts", GITHUB),
+      ),
     ).toBe("My question");
     const edited = `${first} with my own edit`;
     expect(
@@ -47,7 +52,7 @@ describe("PR agent tasks", () => {
         edited,
         "ask",
         GITHUB,
-        pullRequestAgentPrompt("explain", GITHUB),
+        pullRequestAgentPrompt("feedback", GITHUB),
       ),
     ).toBe(edited);
   });

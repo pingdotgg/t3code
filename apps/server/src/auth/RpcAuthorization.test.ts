@@ -6,6 +6,7 @@ import {
   AuthSettingsWriteScope,
   DEFAULT_SERVER_SETTINGS,
   ProviderDriverKind,
+  ProjectId,
   ProviderInstanceId,
   SecretProviderId,
   ThreadId,
@@ -318,29 +319,36 @@ describe("thread context authorization", () => {
   );
 });
 
-it.effect("separates host file URLs from readable attachment URLs", () =>
+it.effect("separates filesystem reads, attachment reads, and hosted publication", () =>
   Effect.gen(function* () {
     const group = WsRpcGroup.omit(
       ...[...WsRpcGroup.requests.keys()].filter(
         (
           tag,
-        ): tag is Exclude<keyof typeof RPC_REQUIRED_SCOPES, typeof WS_METHODS.assetsCreateUrl> =>
-          tag !== WS_METHODS.assetsCreateUrl,
+        ): tag is Exclude<
+          keyof typeof RPC_REQUIRED_SCOPES,
+          typeof WS_METHODS.assetsCreateUrl | typeof WS_METHODS.pullRequestsUploadAttachment
+        > => tag !== WS_METHODS.assetsCreateUrl && tag !== WS_METHODS.pullRequestsUploadAttachment,
       ),
     );
     let handled = 0;
-    const client = yield* RpcTest.makeClient(group).pipe(
-      Effect.provide(
-        Layer.mergeAll(
-          group.toLayerHandler(WS_METHODS.assetsCreateUrl, () =>
-            Effect.sync(() => {
-              handled++;
-              return { relativeUrl: "/api/assets/file", expiresAt: 1 };
-            }),
-          ),
-          RpcAuthorization.layer([AuthOrchestrationReadScope]),
-        ),
+    let published = 0;
+    const handlers = Layer.merge(
+      group.toLayerHandler(WS_METHODS.assetsCreateUrl, () =>
+        Effect.sync(() => {
+          handled++;
+          return { relativeUrl: "/api/assets/file", expiresAt: 1 };
+        }),
       ),
+      group.toLayerHandler(WS_METHODS.pullRequestsUploadAttachment, () =>
+        Effect.sync(() => {
+          published++;
+          return { url: "https://github.com/user-attachments/assets/image" };
+        }),
+      ),
+    );
+    const client = yield* RpcTest.makeClient(group).pipe(
+      Effect.provide(Layer.merge(handlers, RpcAuthorization.layer([AuthOrchestrationReadScope]))),
     );
     yield* client[WS_METHODS.assetsCreateUrl]({
       resource: { _tag: "attachment", attachmentId: "image" },
@@ -358,6 +366,39 @@ it.effect("separates host file URLs from readable attachment URLs", () =>
       });
     }
     expect(handled).toBe(1);
+    const attachment = {
+      projectId: ProjectId.make("project"),
+      repository: "org/repo",
+      number: 1,
+      attachmentId: "pending-00000000-0000-4000-8000-000000000001-png",
+      name: "image.png",
+      mimeType: "image/png" as const,
+      sizeBytes: 3,
+    };
+    expect(
+      yield* client[WS_METHODS.pullRequestsUploadAttachment](attachment).pipe(Effect.flip),
+    ).toMatchObject({ requiredPermission: AuthSourceControlWriteScope });
+    expect(published).toBe(0);
+    for (const scopes of [
+      [AuthSourceControlWriteScope],
+      [AuthSourceControlWriteScope, AuthOrchestrationReadScope],
+    ]) {
+      const publisher = yield* RpcTest.makeClient(group).pipe(
+        Effect.provide(Layer.merge(handlers, RpcAuthorization.layer(scopes))),
+      );
+      const operation = publisher[WS_METHODS.pullRequestsUploadAttachment](attachment);
+      if (!scopes.includes(AuthOrchestrationReadScope)) {
+        expect(yield* operation.pipe(Effect.flip)).toMatchObject({
+          requiredPermission: AuthOrchestrationReadScope,
+        });
+        expect(published).toBe(0);
+      } else {
+        expect(yield* operation).toEqual({
+          url: "https://github.com/user-attachments/assets/image",
+        });
+        expect(published).toBe(1);
+      }
+    }
   }).pipe(Effect.scoped),
 );
 

@@ -1,3 +1,5 @@
+import { useAtomValue } from "@effect/atom-react";
+import { PullRequestAdminMergeOption } from "../pullRequest/PullRequestAdminMergeOption";
 import { resolvePullRequestDetailChecks } from "@t3tools/client-runtime/pull-request-checks";
 import {
   capitalizeTerm,
@@ -174,11 +176,21 @@ export function ThreadDetailsPrRow({
     environmentId,
     (project?.id as ProjectId | undefined) ?? null,
   );
-  const [confirmingMerge, setConfirmingMerge] = useState(false);
+  const canWriteSourceControl = useAtomValue(
+    pullRequestEnvironment.runAction.permissionAtom(environmentId),
+  );
+  const [mergeConfirmation, setMergeConfirmation] = useState<{
+    key: string;
+    adminOverride: boolean;
+  } | null>(null);
+  const canAdminOverride = detail?.viewerPermissions.adminMerge === true && canWriteSourceControl;
+  const confirmationKey = `${refreshKey}:${detail?.headSha ?? ""}:${lastSelectedMergeMethod}:${canAdminOverride}`;
+  const confirmingMerge = mergeConfirmation?.key === confirmationKey;
+  const adminOverride = canAdminOverride && (mergeConfirmation?.adminOverride ?? false);
 
   const rowAction = resolveThreadPanelPullRequestAction(detail);
-  if (confirmingMerge && rowAction !== "merge") {
-    setConfirmingMerge(false);
+  if (mergeConfirmation && (!confirmingMerge || rowAction !== "merge")) {
+    setMergeConfirmation(null);
   }
   const conflicting = isPullRequestConflicting(detail);
   const checksState = detail === null ? "none" : classifyPullRequestChecks(detail.checks);
@@ -356,7 +368,7 @@ export function ThreadDetailsPrRow({
                 destructive: false,
                 suffix: null,
                 tooltip: `Merge this ${terminology.singular} (${selectedMergeMethod})`,
-                onClick: () => setConfirmingMerge(true),
+                onClick: () => setMergeConfirmation({ key: confirmationKey, adminOverride: false }),
               }
             : null;
 
@@ -483,7 +495,12 @@ export function ThreadDetailsPrRow({
         openRow(label, "row")
       )}
       {rowAction === "merge" ? (
-        <AlertDialog open={confirmingMerge} onOpenChange={(open) => setConfirmingMerge(open)}>
+        <AlertDialog
+          open={confirmingMerge}
+          onOpenChange={(open) => {
+            if (!open) setMergeConfirmation(null);
+          }}
+        >
           <AlertDialogPopup>
             <AlertDialogHeader>
               <AlertDialogTitle>Merge {terminology.singular}?</AlertDialogTitle>
@@ -491,6 +508,17 @@ export function ThreadDetailsPrRow({
                 This merges #{number} using {selectedMergeMethod}.
               </AlertDialogDescription>
             </AlertDialogHeader>
+            {canAdminOverride ? (
+              <div className="px-6 pb-4">
+                <PullRequestAdminMergeOption
+                  checked={adminOverride}
+                  disabled={actionPending}
+                  onCheckedChange={(adminOverride) =>
+                    setMergeConfirmation({ key: confirmationKey, adminOverride })
+                  }
+                />
+              </div>
+            ) : null}
             <AlertDialogFooter>
               <AlertDialogClose render={<Button variant="outline" size="sm" />}>
                 Cancel
@@ -498,9 +526,12 @@ export function ThreadDetailsPrRow({
               <Button
                 size="sm"
                 disabled={actionPending}
-                onClick={() => {
-                  setConfirmingMerge(false);
-                  void perform("merge", selectedMergeMethod);
+                variant={adminOverride ? "destructive" : "default"}
+                onClick={async () => {
+                  const merged = adminOverride
+                    ? await perform("merge", selectedMergeMethod, true)
+                    : await perform("merge", selectedMergeMethod);
+                  if (merged) setMergeConfirmation(null);
                 }}
               >
                 Merge

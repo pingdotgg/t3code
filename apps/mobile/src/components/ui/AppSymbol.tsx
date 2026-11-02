@@ -22,6 +22,10 @@ import IconArrowsLeftRight from "@tabler/icons-react-native/IconArrowsLeftRight"
 import IconArrowsDiagonal2 from "@tabler/icons-react-native/IconArrowsDiagonal2";
 import IconArrowsMinimize from "@tabler/icons-react-native/IconArrowsMinimize";
 import IconBan from "@tabler/icons-react-native/IconBan";
+import IconArrowsVertical from "@tabler/icons-react-native/IconArrowsVertical";
+import { DiffCollapseIcon, DiffExpandIcon } from "../DiffDisclosureIcons";
+import IconSquare from "@tabler/icons-react-native/IconSquare";
+import IconSquareCheckFilled from "@tabler/icons-react-native/IconSquareCheckFilled";
 import IconBellRinging from "@tabler/icons-react-native/IconBellRinging";
 import IconBolt from "@tabler/icons-react-native/IconBolt";
 import IconBox from "@tabler/icons-react-native/IconBox";
@@ -45,6 +49,7 @@ import IconMoodPlus from "@tabler/icons-react-native/IconMoodPlus";
 import IconTag from "@tabler/icons-react-native/IconTag";
 import IconTicket from "@tabler/icons-react-native/IconTicket";
 import IconClock from "@tabler/icons-react-native/IconClock";
+import IconPaperclip from "@tabler/icons-react-native/IconPaperclip";
 import IconCode from "@tabler/icons-react-native/IconCode";
 import IconCopy from "@tabler/icons-react-native/IconCopy";
 import IconDatabase from "@tabler/icons-react-native/IconDatabase";
@@ -173,6 +178,8 @@ const ANDROID_ICON_BY_SF_SYMBOL = {
   camera: IconCamera,
   car: IconCar,
   "chart.bar.xaxis": IconChartBar,
+  square: IconSquare,
+  "checkmark.square.fill": IconSquareCheckFilled,
   checkmark: IconCheck,
   "checkmark.circle": IconCircleCheck,
   "checkmark.circle.fill": IconCircleCheck,
@@ -194,6 +201,9 @@ const ANDROID_ICON_BY_SF_SYMBOL = {
   "chevron.left.forwardslash.chevron.right": IconCode,
   "chevron.right": IconChevronRight,
   "chevron.up": IconChevronUp,
+  "arrow.up.and.down": IconArrowsVertical,
+  "diff.collapse": DiffCollapseIcon,
+  "diff.expand": DiffExpandIcon,
   desktopcomputer: IconDeviceDesktop,
   doc: IconFileText,
   "doc.on.doc": IconCopy,
@@ -273,6 +283,7 @@ const ANDROID_ICON_BY_SF_SYMBOL = {
   "bubble.left": IconMessage,
   sparkles: IconSparkles,
   "plus.bubble": IconMessagePlus,
+  paperclip: IconPaperclip,
   "text.word.spacing": IconLetterSpacing,
   "textformat.size": IconTypography,
   "textformat.size.larger": IconTextIncrease,
@@ -285,13 +296,25 @@ const ANDROID_ICON_BY_SF_SYMBOL = {
   "xmark.circle.fill": IconCircleXFilled,
 } satisfies Partial<
   Record<
-    SFSymbol | "git.pull-request.closed" | "git.pull-request.draft" | "git.commit" | "file.diff",
+    | SFSymbol
+    | "git.pull-request.closed"
+    | "git.pull-request.draft"
+    | "git.commit"
+    | "file.diff"
+    | "diff.collapse"
+    | "diff.expand",
     Icon
   >
 >;
 const SF_ICON_LOOKUP: Partial<
   Record<
-    SFSymbol | "git.pull-request.closed" | "git.pull-request.draft" | "git.commit" | "file.diff",
+    | SFSymbol
+    | "git.pull-request.closed"
+    | "git.pull-request.draft"
+    | "git.commit"
+    | "file.diff"
+    | "diff.collapse"
+    | "diff.expand",
     Icon
   >
 > = ANDROID_ICON_BY_SF_SYMBOL;

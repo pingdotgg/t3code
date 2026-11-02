@@ -61,6 +61,9 @@ export class GitWorkflowService extends Context.Service<
     readonly invalidateRemoteStatus: (cwd: string) => Effect.Effect<void, never>;
     readonly invalidateStatus: (cwd: string) => Effect.Effect<void, never>;
     readonly pullCurrentBranch: (cwd: string) => Effect.Effect<VcsPullResult, GitCommandError>;
+    readonly generateStagedCommitMessage: (input: {
+      readonly cwd: string;
+    }) => Effect.Effect<string, GitManagerServiceError>;
     readonly runStackedAction: (
       input: GitRunStackedActionInput,
       options?: GitManager.GitRunStackedActionOptions,
@@ -271,6 +274,7 @@ export const make = Effect.gen(function* () {
       ensureGit(operation, input.cwd).pipe(Effect.andThen(run(input)));
 
   return GitWorkflowService.of({
+    generateStagedCommitMessage: gitManager.generateStagedCommitMessage,
     isRepository: Effect.fn("GitWorkflowService.isRepository")(function (cwd) {
       return registry.detect({ cwd }).pipe(
         Effect.map((handle) => handle?.kind === "git"),

@@ -68,11 +68,15 @@ const detail: PullRequestDetailView = {
   },
 };
 
-it("mounts only the timeline rows near the viewport of a huge pull request", async () => {
+it.each([false, true])("virtualizes a huge timeline with embedded=%s", async (embedded) => {
+  const scroller = { current: null as HTMLElement | null };
   await using screen = await render(
     <div style={{ height: 600 }}>
       <PullRequestTimelineTab
-        scrollerRef={() => {}}
+        embedded={embedded}
+        scrollerRef={(node) => {
+          scroller.current = node;
+        }}
         detail={detail}
         environmentId={EnvironmentId.make("environment")}
         reference={detail}
@@ -86,4 +90,12 @@ it("mounts only the timeline rows near the viewport of a huge pull request", asy
   const mounted = screen.container.querySelectorAll("button").length;
   expect(mounted).toBeGreaterThan(0);
   expect(mounted).toBeLessThan(COMMITS / 10);
+  expect(scroller.current).not.toBeNull();
+  const viewport = scroller.current!;
+  expect(viewport.clientHeight).toBeGreaterThan(0);
+  expect(viewport.clientHeight).toBeLessThanOrEqual(600);
+  expect(viewport.scrollHeight).toBeGreaterThan(viewport.clientHeight);
+  viewport.scrollTop = viewport.scrollHeight;
+  viewport.dispatchEvent(new Event("scroll"));
+  await expect.element(screen.getByText(`Commit number ${COMMITS - 1}`)).toBeVisible();
 });

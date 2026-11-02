@@ -19,6 +19,10 @@
       "types": "./src/workspaceBasenameLookup.ts",
       "default": "./src/workspaceBasenameLookup.ts"
     },
+    "./review-mutation-queue": {
+      "types": "./src/reviewMutationQueue.ts",
+      "default": "./src/reviewMutationQueue.ts"
+    },
     "./composerThreadItems": {
       "types": "./src/composerThreadItems.ts",
       "default": "./src/composerThreadItems.ts"
@@ -499,10 +503,6 @@
       "types": "./src/pullRequestChecks.ts",
       "default": "./src/pullRequestChecks.ts"
     },
-    "./pull-request-editing": {
-      "types": "./src/pullRequestEditing.ts",
-      "default": "./src/pullRequestEditing.ts"
-    },
     "./pull-request-reactions": {
       "types": "./src/pullRequestReactions.ts",
       "default": "./src/pullRequestReactions.ts"
@@ -518,6 +518,62 @@
     "./provider-clients": {
       "types": "./src/providerClients.ts",
       "default": "./src/providerClients.ts"
+    },
+    "./review-workspace": {
+      "types": "./src/reviewWorkspace.ts",
+      "default": "./src/reviewWorkspace.ts"
+    },
+    "./review-working-changes-state": {
+      "types": "./src/reviewWorkingChangesState.ts",
+      "default": "./src/reviewWorkingChangesState.ts"
+    },
+    "./review-diff-context": {
+      "types": "./src/reviewDiffContext.ts",
+      "default": "./src/reviewDiffContext.ts"
+    },
+    "./review-tree-selection": {
+      "types": "./src/reviewFileTreeSelection.ts",
+      "default": "./src/reviewFileTreeSelection.ts"
+    },
+    "./review-selection": {
+      "types": "./src/reviewSelection.ts",
+      "default": "./src/reviewSelection.ts"
+    },
+    "./review-attachments": {
+      "types": "./src/reviewAttachments.ts",
+      "default": "./src/reviewAttachments.ts"
+    },
+    "./review-activity": {
+      "types": "./src/reviewActivity.ts",
+      "default": "./src/reviewActivity.ts"
+    },
+    "./review-editing": {
+      "types": "./src/reviewEditing.ts",
+      "default": "./src/reviewEditing.ts"
+    },
+    "./review-threads": {
+      "types": "./src/reviewThreads.ts",
+      "default": "./src/reviewThreads.ts"
+    },
+    "./review-reactions": {
+      "types": "./src/reviewReactions.ts",
+      "default": "./src/reviewReactions.ts"
+    },
+    "./review-file-viewed": {
+      "types": "./src/reviewFileViewed.ts",
+      "default": "./src/reviewFileViewed.ts"
+    },
+    "./review-file-progress": {
+      "types": "./src/useReviewFileProgress.ts",
+      "default": "./src/useReviewFileProgress.ts"
+    },
+    "./review-diff-whitespace": {
+      "types": "./src/reviewDiffWhitespace.ts",
+      "default": "./src/reviewDiffWhitespace.ts"
+    },
+    "./review-diff-metadata": {
+      "types": "./src/reviewDiffMetadata.ts",
+      "default": "./src/reviewDiffMetadata.ts"
     }
   },
   "scripts": {
@@ -539,13 +595,19 @@
     "@t3tools/shared": "workspace:*",
     "@t3tools/source-control-core": "workspace:*",
     "@t3tools/source-control-definitions": "workspace:*",
+    "diff": "9.0.0",
     "effect": "catalog:",
     "jszip": "3.10.1",
     "three": "0.180.0"
   },
   "devDependencies": {
     "@effect/vitest": "catalog:",
+    "@types/react": "~19.3.0",
     "@types/three": "0.180.0",
+    "react": "catalog:",
     "vite-plus": "catalog:"
+  },
+  "peerDependencies": {
+    "react": ">=19.2.0 <20"
   }
 }

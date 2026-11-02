@@ -3,6 +3,7 @@ package expo.modules.t3reviewdiff
 import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Color
+import android.graphics.Paint
 import android.graphics.Typeface
 import android.text.Spanned
 import android.text.TextPaint
@@ -38,6 +39,44 @@ class ReviewDiffCodeLayoutTest {
         assertInkFits(layout, width, fixture)
         assertLinesFit(layout, fixture, width)
       }
+    }
+  }
+
+  @Test
+  fun expandedCommentEllipsisBoundsMeasurementAndKeepsSurrogatePairs() {
+    val comment = "\uD83D\uDE00" + "a".repeat(65534)
+    val measuringPaint = CountingPaint()
+    val result = ellipsizeDiffText(comment, measuringPaint, 4f)
+    assertTrue(
+      "one comment must not measure progressively shorter prefixes",
+      measuringPaint.measuredCharacters <= comment.length * 2L + 3,
+    )
+    assertEquals("...", result)
+    assertEquals("short", ellipsizeDiffText("short", measuringPaint, 5f))
+    assertEquals("ab...", ellipsizeDiffText("abcdef", measuringPaint, 5f))
+  }
+
+  private class CountingPaint : Paint() {
+    var measuredCharacters = 0L
+
+    override fun measureText(text: String): Float {
+      measuredCharacters += text.length
+      return text.length.toFloat()
+    }
+
+    override fun measureText(text: String, start: Int, end: Int): Float {
+      measuredCharacters += end - start
+      return (end - start).toFloat()
+    }
+
+    override fun breakText(
+      text: String,
+      measureForwards: Boolean,
+      maxWidth: Float,
+      measuredWidth: FloatArray?
+    ): Int {
+      measuredCharacters += text.length
+      return maxWidth.toInt().coerceIn(0, text.length)
     }
   }
 

@@ -1,4 +1,7 @@
 import { normalizeHost } from "@t3tools/source-control-core/server/pullRequestUtils";
+import type * as Stream from "effect/Stream";
+import type { PlatformError } from "effect/PlatformError";
+import { FetchHttpClient } from "effect/http";
 import * as Context from "effect/Context";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -34,6 +37,14 @@ export interface GitHubRestInput {
   /** Relative to the API root, including query string. */
   readonly path: string;
   readonly body?: unknown;
+  /** Server-local streaming media upload, addressed to this host's uploads endpoint. */
+  readonly upload?: {
+    readonly repositoryId: number;
+    readonly name: string;
+    readonly mimeType: string;
+    readonly sizeBytes: number;
+    readonly stream: Stream.Stream<Uint8Array, PlatformError>;
+  };
   /** Defaults to `application/vnd.github+json`. */
   readonly accept?: string;
   /** Revalidate cached answers; 304 returns successfully without spending quota. */
@@ -181,7 +192,10 @@ export const make = Effect.gen(function* () {
   });
 
   const rest: GitHubRest["Service"]["rest"] = (input) => {
-    const url = `${gitHubApiUrls(input.host).rest}/${input.path.replace(/^\/+/, "")}`;
+    const url =
+      input.upload === undefined
+        ? `${gitHubApiUrls(input.host).rest}/${input.path.replace(/^\/+/, "")}`
+        : `https://uploads.${normalizeHost(input.host)}/user-attachments/assets?${new URLSearchParams({ repository_id: String(input.upload.repositoryId), name: input.upload.name, content_type: input.upload.mimeType })}`;
     const base = HttpClientRequest.make(input.method ?? "GET")(url).pipe(
       HttpClientRequest.setHeader("accept", input.accept ?? "application/vnd.github+json"),
     );
@@ -190,12 +204,19 @@ export const make = Effect.gen(function* () {
         ? base
         : base.pipe(HttpClientRequest.setHeader("if-none-match", input.ifNoneMatch));
     const request =
-      input.body === undefined
-        ? withEtag
-        : withEtag.pipe(HttpClientRequest.bodyJsonUnsafe(input.body));
+      input.upload !== undefined
+        ? withEtag.pipe(
+            HttpClientRequest.bodyStream(input.upload.stream, {
+              contentType: "application/octet-stream",
+              contentLength: input.upload.sizeBytes,
+            }),
+          )
+        : input.body === undefined
+          ? withEtag
+          : withEtag.pipe(HttpClientRequest.bodyJsonUnsafe(input.body));
     return SourceControlRateLimit.Interactive.pipe(
-      Effect.flatMap((interactive) =>
-        send({
+      Effect.flatMap((interactive) => {
+        const response = send({
           host: input.host,
           operation: input.operation,
           request,
@@ -203,8 +224,23 @@ export const make = Effect.gen(function* () {
           timeout: input.timeout,
           allowReserve: input.allowReserve ?? interactive,
           acceptNotModified: input.ifNoneMatch !== undefined,
-        }),
-      ),
+        });
+        if (input.upload === undefined) return response;
+        const sizeBytes = input.upload.sizeBytes;
+        // FetchHttpClient removes Content-Length. GitHub refuses chunked asset uploads,
+        // so restore the verified file length at the server's fetch boundary.
+        return FetchHttpClient.Fetch.pipe(
+          Effect.flatMap((fetch) =>
+            response.pipe(
+              Effect.provideService(FetchHttpClient.Fetch, (url, init) => {
+                const headers = new Headers(init?.headers);
+                headers.set("content-length", String(sizeBytes));
+                return fetch(url, { ...init, headers });
+              }),
+            ),
+          ),
+        );
+      }),
     );
   };
 

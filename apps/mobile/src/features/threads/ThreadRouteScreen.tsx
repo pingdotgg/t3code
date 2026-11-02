@@ -849,7 +849,6 @@ function ThreadRouteContent(
         )
       : [],
     terminalSessions: terminalMenuSessions,
-    showDirectFileControl: layout.usesSplitView,
     onOpenTerminal: handleOpenTerminal,
     onOpenNewTerminal: handleOpenNewTerminal,
     onRunProjectScript: handleRunProjectScript,

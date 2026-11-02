@@ -19,6 +19,7 @@ import { usePullRequestPermissions } from "./usePullRequestPermissions";
 import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
 import { usePullRequestReviewDraft } from "./usePullRequestReviewDraft";
 import { usePullRequestAgentActions } from "./usePullRequestAgentActions";
+import type { PullRequestAgentTask } from "./pullRequestAgentTasks";
 
 export function PullRequestCardGroup(props: { readonly children: ReactNode }) {
   return (
@@ -104,30 +105,205 @@ export function PullRequestCardRow(props: {
   );
 }
 
-export function PullRequestActionToolbar(props: {
+type PullRequestActionToolbarProps = {
   readonly pr: PullRequestDetail | null;
   readonly params: PullRequestParams;
   readonly filePath?: string;
   readonly onOpenFiles?: () => void;
+  readonly showFiles?: boolean;
   readonly onHeightChange?: (height: number) => void;
-}) {
+};
+
+function useVerticalPullRequestRail() {
+  const metrics = useNativeLayoutMetrics();
+  return Platform.OS === "ios" && metrics !== null && metrics.verticalBarEdge !== "none";
+}
+
+function pullRequestThreadMenuItems(
+  agent: ReturnType<typeof usePullRequestAgentActions>,
+  task: PullRequestAgentTask,
+) {
+  return agent.threadActions(task).map((item) => (
+    <Toolbar.MenuAction
+      key={item.id}
+      icon={item.image}
+      subtitle={"subtitle" in item ? item.subtitle : undefined}
+      disabled={agent.disabled || ("attributes" in item && item.attributes.disabled)}
+      onPress={() => agent.select(item.id)}
+    >
+      <Toolbar.Label>{item.title}</Toolbar.Label>
+    </Toolbar.MenuAction>
+  ));
+}
+
+function pullRequestAgentMenuItems(agent: ReturnType<typeof usePullRequestAgentActions>) {
+  return agent.actions
+    .filter((action) => action.task !== "ask")
+    .map((action) =>
+      agent.threads.length > 1 && !action.disabled ? (
+        <Toolbar.Menu key={action.task} title={action.title} icon={action.icon}>
+          {pullRequestThreadMenuItems(agent, action.task)}
+        </Toolbar.Menu>
+      ) : (
+        <Toolbar.MenuAction
+          key={action.task}
+          icon={action.icon}
+          disabled={agent.disabled || action.disabled}
+          onPress={() => agent.start(action.task)}
+        >
+          <Toolbar.Label>{action.title}</Toolbar.Label>
+        </Toolbar.MenuAction>
+      ),
+    );
+}
+
+type PullRequestHeaderToolbarProps = {
+  readonly pr: PullRequestDetail | null;
+  readonly params: PullRequestParams;
+  readonly filePath?: string;
+  readonly title: string;
+  readonly accessibilityLabel?: string;
+  readonly onOpenComments: () => void;
+  readonly commentsInHorizontalBar?: boolean;
+  readonly controls?: ReadonlyArray<ReactNode>;
+  readonly railMenuItems?: ReactNode;
+  readonly children?: ReactNode;
+};
+
+function pullRequestHeaderMenu(props: PullRequestHeaderToolbarProps, actions?: ReactNode) {
+  return (
+    <Toolbar.Menu
+      title={props.title}
+      accessibilityLabel={props.accessibilityLabel ?? props.title}
+      icon="ellipsis"
+      identifier="pull-request-more-actions"
+    >
+      {actions}
+      {props.children}
+    </Toolbar.Menu>
+  );
+}
+
+export function PullRequestHeaderToolbar(props: PullRequestHeaderToolbarProps) {
+  const vertical = useVerticalPullRequestRail();
+  return vertical ? (
+    <PullRequestVerticalHeaderToolbar {...props} />
+  ) : (
+    <Toolbar placement="right">
+      {props.controls}
+      {props.commentsInHorizontalBar !== false ? (
+        <Toolbar.Button
+          icon="text.bubble"
+          accessibilityLabel="Comments"
+          onPress={props.onOpenComments}
+        />
+      ) : null}
+      {pullRequestHeaderMenu(props)}
+    </Toolbar>
+  );
+}
+
+function PullRequestVerticalHeaderToolbar(props: PullRequestHeaderToolbarProps) {
   const navigation = useNavigation();
-  const { draft } = usePullRequestReviewDraft(props.params);
+  const draft = usePullRequestReviewDraft(props.params);
+  const permissions = usePullRequestPermissions(props.params, props.pr);
+  const agent = usePullRequestAgentActions(props.params, props.pr, props.filePath);
+  const { themeVariables: colors } = useAppearancePreferences();
+  const pendingReview =
+    props.pr !== null &&
+    permissions.verdicts.length > 0 &&
+    (draft.comments.length > 0 || Boolean(draft.pendingReviewId));
+  const showAgentControls = props.pr !== null && (agent.canAsk || !permissions.connected);
+  const canOpenThread = props.pr !== null && (agent.threads.length > 0 || showAgentControls);
+  const { shortLabel } = sourceControlClients.get(
+    (props.pr ?? props.params.initialSummary)?.provider,
+  ).changeRequest;
+  const threadLabel = agent.threads.length ? "Continue thread" : `Work on ${shortLabel}`;
+  const submitLabel = `Submit review${draft.comments.length ? ` · ${draft.comments.length}` : ""}`;
+  const actions = (
+    <>
+      {canOpenThread ? (
+        agent.threads.length > 1 ? (
+          <Toolbar.Menu
+            title={threadLabel}
+            icon="bubble.left.and.bubble.right"
+            disabled={agent.disabled}
+          >
+            {pullRequestThreadMenuItems(agent, "ask")}
+          </Toolbar.Menu>
+        ) : (
+          <Toolbar.MenuAction
+            icon="bubble.left.and.bubble.right"
+            disabled={agent.disabled}
+            onPress={() => agent.start("ask")}
+          >
+            <Toolbar.Label>{threadLabel}</Toolbar.Label>
+          </Toolbar.MenuAction>
+        )
+      ) : null}
+      {showAgentControls ? (
+        <Toolbar.Menu title="AI helpers" icon="sparkles" disabled={agent.disabled}>
+          {pullRequestAgentMenuItems(agent)}
+        </Toolbar.Menu>
+      ) : null}
+      {props.railMenuItems}
+    </>
+  );
+  return (
+    <Toolbar placement="right">
+      {/* UIKit places trailing items from the edge inward, reversing the vertical order. */}
+      {pendingReview ? (
+        <Toolbar.Button
+          identifier="pull-request-primary-action"
+          label={submitLabel}
+          accessibilityLabel={submitLabel}
+          icon="text.bubble"
+          variant="prominent"
+          tintColor={colors["--color-prominent-action"]}
+          disabled={draft.busy}
+          onPress={() =>
+            navigation.navigate("PullRequestReview", { ...props.params, mode: "review" })
+          }
+          separateBackground
+          visibilityPriority="high"
+        />
+      ) : null}
+      {pullRequestHeaderMenu(props, actions)}
+      <Toolbar.Button
+        identifier="pull-request-comments"
+        icon="text.bubble"
+        accessibilityLabel="Comments"
+        onPress={props.onOpenComments}
+        separateBackground
+        visibilityPriority="high"
+      />
+    </Toolbar>
+  );
+}
+
+export function PullRequestActionToolbar(props: PullRequestActionToolbarProps) {
+  const vertical = useVerticalPullRequestRail();
+  return vertical ? null : <PullRequestHorizontalActionToolbar {...props} />;
+}
+
+function PullRequestHorizontalActionToolbar(props: PullRequestActionToolbarProps) {
+  const navigation = useNavigation();
+  const { comments, pendingReviewId, busy: draftBusy } = usePullRequestReviewDraft(props.params);
   const { themeVariables: colors } = useAppearancePreferences();
   const insets = useSafeAreaInsets();
-  const nativeMetrics = useNativeLayoutMetrics();
-  const verticalControls = nativeMetrics !== null && nativeMetrics.verticalBarEdge !== "none";
   const permissions = usePullRequestPermissions(props.params, props.pr);
   const agent = usePullRequestAgentActions(props.params, props.pr, props.filePath);
   const canReview = permissions.verdicts.length > 0;
-  const pendingReview = canReview && draft.comments.length > 0;
+  const pendingReview = canReview && (comments.length > 0 || Boolean(pendingReviewId));
   const showAgentControls = agent.canAsk || !permissions.connected;
   const canOpenThread = agent.threads.length > 0 || showAgentControls;
   const { shortLabel } = sourceControlClients.get(
     (props.pr ?? props.params.initialSummary)?.provider,
   ).changeRequest;
   const threadLabel = agent.threads.length ? "Continue thread" : `Work on ${shortLabel}`;
-  const primaryLabel = pendingReview ? `Submit review · ${draft.comments.length}` : threadLabel;
+  const primaryLabel = pendingReview
+    ? `Submit review${comments.length ? ` · ${comments.length}` : ""}`
+    : threadLabel;
   const chooseThread = agent.threads.length > 1;
   const agentActions = agent.actions.filter((action) => action.task !== "ask");
   const open = (mode: "review" | "comment") =>
@@ -137,7 +313,7 @@ export function PullRequestActionToolbar(props: {
   const openFiles =
     props.onOpenFiles ?? (() => navigation.navigate("PullRequestFiles", props.params));
   if (!props.pr) return null;
-  const primaryDisabled = pendingReview ? false : agent.disabled;
+  const primaryDisabled = pendingReview ? draftBusy : agent.disabled;
   const showPrimary = pendingReview || canOpenThread;
   if (Platform.OS === "android") {
     const primary = (
@@ -187,23 +363,15 @@ export function PullRequestActionToolbar(props: {
                 )}
               </View>
             ) : null}
-            <IconButton icon="file.diff" accessibilityLabel="Changed files" onPress={openFiles} />
+            {props.showFiles !== false ? (
+              <IconButton icon="file.diff" accessibilityLabel="Changed files" onPress={openFiles} />
+            ) : null}
           </View>
         </Toolbar>
       </View>
     );
   }
-  const nativeThreadItems = threadMenuItems.map((item) => (
-    <Toolbar.MenuAction
-      key={item.id}
-      icon={item.image}
-      subtitle={"subtitle" in item ? item.subtitle : undefined}
-      disabled={"attributes" in item && item.attributes.disabled}
-      onPress={() => agent.select(item.id)}
-    >
-      <Toolbar.Label>{item.title}</Toolbar.Label>
-    </Toolbar.MenuAction>
-  ));
+  const nativeThreadItems = pullRequestThreadMenuItems(agent, "ask");
   const primaryControl = showPrimary ? (
     !pendingReview && chooseThread ? (
       <Toolbar.Menu
@@ -211,13 +379,6 @@ export function PullRequestActionToolbar(props: {
         title={primaryLabel}
         accessibilityLabel={primaryLabel}
         variant="prominent"
-        icon={
-          verticalControls
-            ? pendingReview
-              ? "text.bubble"
-              : "bubble.left.and.bubble.right"
-            : undefined
-        }
         tintColor={colors["--color-prominent-action"]}
         disabled={primaryDisabled}
         separateBackground
@@ -230,13 +391,6 @@ export function PullRequestActionToolbar(props: {
         label={primaryLabel}
         accessibilityLabel={primaryLabel}
         variant="prominent"
-        icon={
-          verticalControls
-            ? pendingReview
-              ? "text.bubble"
-              : "bubble.left.and.bubble.right"
-            : undefined
-        }
         tintColor={colors["--color-prominent-action"]}
         disabled={primaryDisabled}
         onPress={primaryPress}
@@ -253,51 +407,20 @@ export function PullRequestActionToolbar(props: {
       disabled={agent.disabled}
       separateBackground
     >
-      {agentActions.map((action) =>
-        chooseThread && !action.disabled ? (
-          <Toolbar.Menu key={action.task} title={action.title} icon={action.icon}>
-            {agent.threadActions(action.task).map((item) => (
-              <Toolbar.MenuAction
-                key={item.id}
-                icon={item.image}
-                subtitle={"subtitle" in item ? item.subtitle : undefined}
-                disabled={"attributes" in item && item.attributes.disabled}
-                onPress={() => agent.select(item.id)}
-              >
-                <Toolbar.Label>{item.title}</Toolbar.Label>
-              </Toolbar.MenuAction>
-            ))}
-          </Toolbar.Menu>
-        ) : (
-          <Toolbar.MenuAction
-            key={action.task}
-            icon={action.icon}
-            disabled={action.disabled}
-            onPress={() => agent.start(action.task)}
-          >
-            <Toolbar.Label>{action.title}</Toolbar.Label>
-          </Toolbar.MenuAction>
-        ),
-      )}
+      {pullRequestAgentMenuItems(agent)}
     </Toolbar.Menu>
   ) : null;
-  const filesControl = (
-    <Toolbar.Button
-      identifier="workspace-trailing-action"
-      icon={{ type: "image", source: require("../../../assets/icons/file-diff.png") }}
-      accessibilityLabel="Changed files"
-      onPress={openFiles}
-      separateBackground
-    />
-  );
-  if (verticalControls)
-    return (
-      <Toolbar placement="bottom">
-        {filesControl}
-        {agentControl}
-        {primaryControl}
-      </Toolbar>
-    );
+  // Tabler file-diff geometry, rasterized at 1x/2x/3x for UIKit template images.
+  const filesControl =
+    props.showFiles !== false ? (
+      <Toolbar.Button
+        identifier="workspace-trailing-action"
+        icon={{ type: "image", source: require("../../../assets/icons/file-diff.png") }}
+        accessibilityLabel="Changed files"
+        onPress={openFiles}
+        separateBackground
+      />
+    ) : null;
   return (
     <Toolbar placement="bottom">
       {agentControl}

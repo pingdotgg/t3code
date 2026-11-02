@@ -1,4 +1,5 @@
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
+import { PullRequestAttachments } from "./PullRequestAttachments";
 import { useAtomCommand } from "~/state/use-atom-command";
 import type { EnvironmentId, PullRequestDetailView, PullRequestRef } from "@t3tools/contracts";
 import { SendIcon } from "lucide-react";
@@ -35,6 +36,7 @@ export function PullRequestCommentForm({
   onCommented: () => void;
   onClose: () => void;
 }) {
+  const [uploading, setUploading] = useState(false);
   const [body, setBody] = useState("");
   const [submitting, setSubmitting] = useState<"comment" | "close" | "reopen" | null>(null);
   const postComment = useAtomCommand(pullRequestEnvironment.comment, {
@@ -54,7 +56,7 @@ export function PullRequestCommentForm({
 
   const submit = async (action: "comment" | "close" | "reopen") => {
     const trimmed = body.trim();
-    if (trimmed.length === 0 || submitting !== null || actionPending) return;
+    if (trimmed.length === 0 || submitting !== null || actionPending || uploading) return;
     setSubmitting(action);
     if (action !== "comment") {
       const result = await onCommentAction(trimmed, action);
@@ -84,11 +86,11 @@ export function PullRequestCommentForm({
   };
 
   return (
-    <div className="space-y-2">
+    <div data-review-attachment-composer className="space-y-2">
       <Textarea
         ref={textareaRef}
         // Lock while posting because success clears the draft.
-        disabled={submitting !== null || actionPending}
+        disabled={submitting !== null || actionPending || uploading}
         value={body}
         rows={3}
         placeholder="Leave a comment"
@@ -108,12 +110,20 @@ export function PullRequestCommentForm({
           }
         }}
       />
+      <PullRequestAttachments
+        environmentId={environmentId}
+        reference={reference}
+        disabled={submitting !== null || actionPending}
+        onBusyChange={setUploading}
+        textareaRef={textareaRef}
+        onTextChange={setBody}
+      />
       <div className="flex flex-wrap justify-end gap-2">
         {followUpAction === null ? null : (
           <Button
             size="xs"
             variant={followUpAction === "close" ? "destructive-outline" : "outline"}
-            disabled={body.trim().length === 0 || submitting !== null || actionPending}
+            disabled={body.trim().length === 0 || submitting !== null || actionPending || uploading}
             {...(followUpAction === "close"
               ? inlineConfirm.props("close", () => void submit("close"))
               : { onClick: () => void submit("reopen") })}
@@ -147,7 +157,7 @@ export function PullRequestCommentForm({
         <Button
           size="xs"
           variant="outline"
-          disabled={body.trim().length === 0 || submitting !== null || actionPending}
+          disabled={body.trim().length === 0 || submitting !== null || actionPending || uploading}
           onClick={() => void submit("comment")}
         >
           <SendIcon className="size-3.5" />

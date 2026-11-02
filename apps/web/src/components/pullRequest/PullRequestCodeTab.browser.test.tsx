@@ -177,10 +177,10 @@ async function expectFileHeaderShown(
   const header = screen.getByText(path, { exact: true }).first();
   await expect.element(header).toBeInTheDocument();
   await vi.waitFor(() => {
-    const top = header.element().getBoundingClientRect().top;
+    const headerBounds = header.element().getBoundingClientRect();
     const bounds = container.getBoundingClientRect();
-    expect(top).toBeGreaterThanOrEqual(bounds.top);
-    expect(top).toBeLessThan(bounds.top + bounds.height / 2);
+    expect(headerBounds.top).toBeGreaterThanOrEqual(bounds.top);
+    expect(headerBounds.bottom).toBeLessThanOrEqual(bounds.bottom);
   });
 }
 
@@ -203,36 +203,49 @@ it("pages forward to a file asked for that is not loaded yet, then scrolls to it
   await expectFileHeaderShown(screen, container, "late.ts");
 });
 
-it("never requests the diff of a selected commit the pull request no longer has", async () => {
-  setup({ paged: false });
-  const container = document.createElement("div");
-  container.className = "flex h-[700px] w-[900px]";
-  // The timeline can open a commit that a force-push removed from the pull request.
-  await using screen = await render(
-    <PullRequestCodeTab
-      scrollerRef={() => {}}
-      environmentId={EnvironmentId.make("environment")}
-      reference={detail}
-      detail={{
-        ...detail,
-        commits: [
-          {
-            oid: "kept",
-            messageHeadline: "Kept commit",
-            committedDate: "2026-09-01T00:00:00Z",
-          },
-        ],
-      }}
-      selectedCommitOid="gone"
-      onSelectedCommitChange={() => {}}
-      onRefresh={() => {}}
-    />,
-    { container },
-  );
+it.each(["gone", "kept..newer"])(
+  "validates the selected commit scope %s against the pull request",
+  async (selection) => {
+    setup({ paged: false });
+    const container = document.createElement("div");
+    container.className = "flex h-[700px] w-[900px]";
+    // The timeline can open a commit that a force-push removed from the pull request.
+    await using screen = await render(
+      <PullRequestCodeTab
+        scrollerRef={() => {}}
+        environmentId={EnvironmentId.make("environment")}
+        reference={detail}
+        detail={{
+          ...detail,
+          commits: [
+            {
+              oid: "newer",
+              messageHeadline: "Newer commit",
+              committedDate: "2026-09-02T00:00:00Z",
+            },
+            {
+              oid: "kept",
+              messageHeadline: "Kept commit",
+              committedDate: "2026-09-01T00:00:00Z",
+            },
+          ],
+        }}
+        selectedCommitOid={selection}
+        onSelectedCommitChange={() => {}}
+        onRefresh={() => {}}
+      />,
+      { container },
+    );
 
-  await expect.element(screen.getByText("1 file", { exact: true })).toBeVisible();
-  await expect
-    .element(screen.getByRole("button", { name: "Diff scope: All commits" }))
-    .toBeVisible();
-  expect(mocks.diffCommits).not.toContain("gone");
-});
+    await expect.element(screen.getByText("1 file", { exact: true })).toBeVisible();
+    await expect
+      .element(
+        screen.getByRole("button", {
+          name: selection === "gone" ? "Diff scope: All commits" : "Diff scope: 2 commits",
+        }),
+      )
+      .toBeVisible();
+    expect(mocks.diffCommits).not.toContain("gone");
+    if (selection !== "gone") expect(mocks.diffCommits).toContain(selection);
+  },
+);

@@ -4,7 +4,7 @@ import { resolveFilesystemReadAccess } from "@t3tools/client-runtime/state/files
 import { environmentSession } from "../../state/session";
 import { NativeStackScreenOptions } from "../../native/StackHeader";
 import { StackActions, useNavigation, type StaticScreenProps } from "@react-navigation/native";
-import { useId, useState } from "react";
+import { useId, useState, type ReactNode } from "react";
 import { Platform, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import Svg, { Defs, LinearGradient, Rect, Stop } from "react-native-svg";
@@ -17,6 +17,7 @@ import {
 } from "@t3tools/shared/filePreview";
 import { mediaFileReference } from "@t3tools/client-runtime/media-reference";
 
+import { AppTextInput } from "../../components/ui/AppText";
 import { ScreenContent } from "../../components/ui/ScreenContent";
 import { filePreviewDelimiter, parseDelimitedPreview } from "@t3tools/shared/delimitedPreview";
 import { DelimitedFilePreview } from "./DelimitedFilePreview";
@@ -232,6 +233,7 @@ function FileContent(props: {
   readonly threadId: ThreadId | null;
   readonly initialLine: number | null;
   readonly truncated: boolean;
+  readonly headerReserved?: boolean;
   readonly onRefresh?: () => Promise<void> | void;
 }) {
   // Reopening a mutable host file must not reuse a poster from an earlier visit.
@@ -239,7 +241,9 @@ function FileContent(props: {
   const insets = useSafeAreaInsets();
   const columnMetrics = useNativeColumnLayoutMetrics();
   const reservedHeaderInset =
-    Platform.OS === "ios" && props.truncated ? (columnMetrics?.safeArea.top ?? insets.top) : 0;
+    Platform.OS === "ios" && props.truncated && !props.headerReserved
+      ? (columnMetrics?.safeArea.top ?? insets.top)
+      : 0;
   const isMarkdown = isMarkdownPreviewFile(props.relativePath);
   const delimiter = filePreviewDelimiter({ name: props.relativePath });
   const isBrowserFile = isWorkspaceBrowserPreviewPath(props.relativePath);
@@ -333,7 +337,7 @@ function FileContent(props: {
           contents={props.fileContents}
           path={props.relativePath}
           initialLine={props.initialLine}
-          headerInsetTop={props.truncated ? 0 : undefined}
+          headerInsetTop={props.truncated || props.headerReserved ? 0 : undefined}
           onRefresh={props.onRefresh}
         />
       )}
@@ -431,7 +435,12 @@ function FilesToolbarBottomFade() {
   );
 }
 
-export function ThreadFilesTreeScreen(props: ThreadFilesRouteScreenProps) {
+export function ThreadFilesTreeScreen(
+  props: ThreadFilesRouteScreenProps & {
+    readonly workspaceTabs?: ReactNode;
+    readonly workspaceHeader?: ReactNode;
+  },
+) {
   useAdaptiveWorkspacePaneRole("inspector");
   const navigation = useNavigation();
   const { fileInspector, layout } = useAdaptiveWorkspaceLayout();
@@ -500,6 +509,7 @@ export function ThreadFilesTreeScreen(props: ThreadFilesRouteScreenProps) {
         projectName={projectName}
         selectedPath={null}
         onSelectFile={handleSelectFile}
+        toolbar={props.workspaceTabs}
       />
     ) : null;
   const handlePreviewFile = (relativePath: string) => {
@@ -550,13 +560,15 @@ export function ThreadFilesTreeScreen(props: ThreadFilesRouteScreenProps) {
 
   const content = (
     <>
-      <FilesBrowserHeader
-        projectName={projectName}
-        searchQuery={searchQuery}
-        onSearchQueryChange={setSearchQuery}
-        onRefresh={entriesQuery.refresh}
-        onBack={handleReturnToThread}
-      />
+      {props.workspaceHeader ?? (
+        <FilesBrowserHeader
+          projectName={projectName}
+          searchQuery={searchQuery}
+          onSearchQueryChange={setSearchQuery}
+          onRefresh={entriesQuery.refresh}
+          onBack={handleReturnToThread}
+        />
+      )}
       <ScreenContent insetHorizontal={layout.usesSplitView}>
         <FileTreeBrowser
           key={JSON.stringify([environmentId, cwd])}
@@ -579,6 +591,27 @@ export function ThreadFilesTreeScreen(props: ThreadFilesRouteScreenProps) {
             entriesQuery.selectPath(path);
             handleSelectFile(path);
           }}
+          pinnedToolbar={props.workspaceHeader !== undefined}
+          toolbar={
+            props.workspaceHeader ? (
+              <>
+                {props.workspaceTabs}
+                <View className="px-3 py-2">
+                  <AppTextInput
+                    accessibilityLabel="Search files"
+                    placeholder="Search files"
+                    value={searchQuery}
+                    onChangeText={setSearchQuery}
+                    autoCapitalize="none"
+                    autoCorrect={false}
+                    className="min-h-9 py-2 text-sm"
+                  />
+                </View>
+              </>
+            ) : (
+              props.workspaceTabs
+            )
+          }
         />
         <FilesToolbarBottomFade />
       </ScreenContent>
@@ -588,7 +621,9 @@ export function ThreadFilesTreeScreen(props: ThreadFilesRouteScreenProps) {
   return Platform.OS === "android" ? <View className="flex-1 bg-header">{content}</View> : content;
 }
 
-export function ThreadFileScreen(props: ThreadFileRouteScreenProps) {
+export function ThreadFileScreen(
+  props: ThreadFileRouteScreenProps & { readonly workspaceTabs?: ReactNode },
+) {
   useAdaptiveWorkspacePaneRole("inspector");
   const navigation = useNavigation();
   const { fileInspector } = useAdaptiveWorkspaceLayout();
@@ -770,6 +805,7 @@ export function ThreadFileScreen(props: ThreadFileRouteScreenProps) {
       />
     ) : undefined;
   const safeAreaInsets = useSafeAreaInsets();
+  const columnMetrics = useNativeColumnLayoutMetrics();
   const inspectorHeaderInset = Platform.OS === "ios" ? 0 : safeAreaInsets.top;
   const renderWorkspaceInspector = () => (
     <ThreadInspectorContentStack
@@ -984,6 +1020,16 @@ export function ThreadFileScreen(props: ThreadFileRouteScreenProps) {
         actions={fileMenuActions}
       />
       <ScreenContent>
+        {props.workspaceTabs ? (
+          <View
+            style={{
+              paddingTop:
+                Platform.OS === "ios" ? (columnMetrics?.safeArea.top ?? safeAreaInsets.top) : 0,
+            }}
+          >
+            {props.workspaceTabs}
+          </View>
+        ) : null}
         <FileContent
           key={previewKey}
           activeMode={resolvedActiveMode}
@@ -1001,6 +1047,7 @@ export function ThreadFileScreen(props: ThreadFileRouteScreenProps) {
           relativePath={relativePath}
           threadId={threadId}
           truncated={fileData?.truncated ?? false}
+          headerReserved={props.workspaceTabs !== undefined}
           onRefresh={() => fileQuery.refresh()}
         />
       </ScreenContent>

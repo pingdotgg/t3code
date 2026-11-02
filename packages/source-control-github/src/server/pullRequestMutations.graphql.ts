@@ -22,16 +22,18 @@ export const AddReviewThreadReply = GraphQL.mutation("AddReviewThreadReply", {
   document: {
     variables: [
       { name: "threadId", body: "ID!" },
-      { name: "body", body: "String!" }
+      { name: "body", body: "String!" },
+      { name: "reviewId", body: "ID" }
     ],
     selections: [
-      { name: "addPullRequestReviewThreadReply", body: ["(input:{pullRequestReviewThreadId:$", "threadId", " body:$", "body", "}){comment{id}}"] }
+      { name: "addPullRequestReviewThreadReply", body: ["(input:{pullRequestReviewThreadId:$", "threadId", " body:$", "body", " pullRequestReviewId:$", "reviewId", "}){comment{id}}"] }
     ],
     fragments: []
   },
   variables: {
     threadId: Shared.ID,
-    body: Schema.String
+    body: Schema.String,
+    reviewId: Schema.optional(Schema.NullOr(Shared.ID))
   },
   result: Schema.Struct({
     /** Adds a reply to an existing Pull Request Review Thread. */

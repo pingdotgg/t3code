@@ -15,11 +15,11 @@ interface FileRevealHandle {
  */
 export function createCodeViewFileReveal() {
   let viewer: FileRevealHandle | null = null;
-  let pending: string | null = null;
+  let pending: { fileKey: string; target?: CodeViewScrollTarget } | null = null;
   const flush = () => {
     if (pending === null || viewer === null) return;
-    if (!viewer.getInstance() || viewer.getItem(pending) === undefined) return;
-    viewer.scrollTo({ type: "item", id: pending, align: "start" });
+    if (!viewer.getInstance() || viewer.getItem(pending.fileKey) === undefined) return;
+    viewer.scrollTo(pending.target ?? { type: "item", id: pending.fileKey, align: "start" });
     pending = null;
   };
   return {
@@ -28,8 +28,8 @@ export function createCodeViewFileReveal() {
       viewer = next;
       flush();
     },
-    request(fileKey: string) {
-      pending = fileKey;
+    request(fileKey: string, target?: CodeViewScrollTarget) {
+      pending = { fileKey, ...(target ? { target } : {}) };
       flush();
     },
     flush,

@@ -63,8 +63,8 @@ vi.mock("~/state/filesystem", () => ({
 }));
 vi.mock("~/hooks/useThreadRouteTarget", () => ({ useThreadRouteRef: () => state.threadRef }));
 vi.mock("~/hooks/useSettings", () => ({
-  useClientSettings: (select: (settings: ClientSettings) => unknown) =>
-    select(DEFAULT_CLIENT_SETTINGS),
+  useClientSettings: (select?: (settings: ClientSettings) => unknown) =>
+    select ? select(DEFAULT_CLIENT_SETTINGS) : DEFAULT_CLIENT_SETTINGS,
   updateClientSettings: async () => {},
 }));
 vi.mock("~/hooks/useTheme", () => ({ useRenderedAppearance: () => "dark" }));
@@ -78,6 +78,7 @@ vi.mock("~/fileContextMenu", () => ({ useFileContextMenuHandler: () => () => {} 
 vi.mock("~/browser/useOpenLink", () => ({ useOpenLink: () => async () => {} }));
 // The test drives comparison controls, without mounting virtualized diff viewers or their workers.
 vi.mock("./diffs/AnnotatableCodeView", () => ({ AnnotatableCodeView: () => null }));
+vi.mock("./diffs/WorkingChangesReview", () => ({ WorkingChangesReview: () => null }));
 vi.mock("./diffs/DiffFileTree", () => ({ DiffFileTree: () => null }));
 vi.mock("./DiffFilePathCopyButton", () => ({ DiffFilePathCopyButton: () => null }));
 

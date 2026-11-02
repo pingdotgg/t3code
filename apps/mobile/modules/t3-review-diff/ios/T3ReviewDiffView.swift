@@ -7,6 +7,7 @@ private struct ReviewDiffNativeRow: Decodable, Sendable {
   let fileId: String?
   let filePath: String?
   let previousPath: String?
+  let renameSegments: [ReviewDiffRenameSegment]?
   let changeType: String?
   let additions: Int?
   let deletions: Int?
@@ -18,7 +19,20 @@ private struct ReviewDiffNativeRow: Decodable, Sendable {
   let wordDiffRanges: [ReviewDiffNativeWordDiffRange]?
   let commentText: String?
   let commentRangeLabel: String?
+  let commentPending: Bool?
+  let commentResolvedSummary: String?
   let commentSectionTitle: String?
+  let hunkAction: String?
+  let hunkActionDisabled: Bool?
+  let hunkRevertAction: Bool?
+  let hunkRevertActionDisabled: Bool?
+  let fileAction: String?
+  let fileActionDisabled: Bool?
+}
+
+private struct ReviewDiffRenameSegment: Decodable, Sendable {
+  let text: String
+  let kind: String
 }
 
 private struct ReviewDiffNativeWordDiffRange: Decodable, Sendable {
@@ -347,6 +361,9 @@ public final class T3ReviewDiffView: ExpoView, UIScrollViewDelegate {
   let onToggleFile = EventDispatcher()
   let onToggleViewedFile = EventDispatcher()
   let onPressLine = EventDispatcher()
+  let onSelectLineRange = EventDispatcher()
+  let onPressHunk = EventDispatcher()
+  let onPressFileAction = EventDispatcher()
   let onToggleComment = EventDispatcher()
   let onPullToRefresh = EventDispatcher()
 
@@ -378,6 +395,15 @@ public final class T3ReviewDiffView: ExpoView, UIScrollViewDelegate {
     contentView.onPressLine = { [weak self] payload in
       self?.onPressLine(payload)
     }
+    contentView.onSelectLineRange = { [weak self] payload in
+      self?.onSelectLineRange(payload)
+    }
+    contentView.onPressHunk = { [weak self] rowId, action in
+      self?.onPressHunk(["rowId": rowId, "action": action])
+    }
+    contentView.onPressFileAction = { [weak self] fileId, rowId in
+      self?.onPressFileAction(["fileId": fileId, "rowId": rowId])
+    }
     contentView.onToggleComment = { [weak self] commentId in
       self?.onToggleComment(["commentId": commentId])
     }
@@ -385,6 +411,7 @@ public final class T3ReviewDiffView: ExpoView, UIScrollViewDelegate {
       self?.emitDebug("draw-metrics", metrics)
     }
     scrollView.addSubview(contentView)
+    contentView.attachScrollView(scrollView)
   }
 
   public override func layoutSubviews() {
@@ -649,6 +676,18 @@ public final class T3ReviewDiffView: ExpoView, UIScrollViewDelegate {
 
   func setSelectedRowIdsJson(_ selectedRowIdsJson: String) {
     contentView.selectedRowIds = decodeFileIdSet(selectedRowIdsJson)
+  }
+
+  func setEnableLineRangeSelection(_ enabled: Bool) {
+    contentView.enableLineRangeSelection = enabled
+  }
+
+  func setShowViewedCheckbox(_ shown: Bool) {
+    contentView.showViewedCheckbox = shown
+  }
+
+  func setViewedCheckboxEnabled(_ enabled: Bool) {
+    contentView.viewedCheckboxEnabled = enabled
   }
 
   func setCollapsedCommentIdsJson(_ collapsedCommentIdsJson: String) {
@@ -1038,7 +1077,8 @@ private struct ReviewDiffGeometryConfiguration: Equatable {
     if row.kind == "file" { return style.fileHeaderHeight }
     if collapsedFileIds.contains(row.resolvedFileId) { return 0 }
     if row.kind == "notice" { return max(style.rowHeight * 2, 44) }
-    if row.kind == "comment" { return collapsedCommentIds.contains(row.id) ? 44 : 124 }
+    if row.kind == "comment" { return collapsedCommentIds.contains(row.id) || row.commentResolvedSummary != nil ? 44 : 124 }
+    if row.kind == "hunk", row.hunkAction != nil { return max(style.rowHeight, 44) }
     return style.rowHeight
   }
 }
@@ -1075,6 +1115,7 @@ private extension ReviewDiffNativeRow {
 private final class ReviewDiffContentView: UIView, UIGestureRecognizerDelegate {
   var rows: [ReviewDiffNativeRow] = [] {
     didSet {
+      clearNativeRange()
       stopHorizontalDeceleration()
       horizontalOffsetsByFileId.removeAll()
       headerPathOffsetsByFileId.removeAll()
@@ -1082,6 +1123,7 @@ private final class ReviewDiffContentView: UIView, UIGestureRecognizerDelegate {
       activePanKind = nil
       codeDecorationVersion += 1
       tokenAttributedStringsByRowId.removeAll()
+      renameAttributedStringsByRowId.removeAll()
       if let geometry = preparedRowGeometry {
         preparedRowGeometry = nil
         applyRowGeometry(geometry)
@@ -1096,6 +1138,7 @@ private final class ReviewDiffContentView: UIView, UIGestureRecognizerDelegate {
     didSet {
       codeDecorationVersion += 1
       tokenAttributedStringsByRowId.removeAll()
+      renameAttributedStringsByRowId.removeAll()
       clampHorizontalOffsets()
       setNeedsDisplayForVisibleBounds()
     }
@@ -1120,8 +1163,21 @@ private final class ReviewDiffContentView: UIView, UIGestureRecognizerDelegate {
   }
   var selectedRowIds: Set<String> = [] {
     didSet {
+      if selectedRowIds.isEmpty && !isRangeDragging { clearNativeRange() }
       setNeedsDisplayForVisibleBounds()
     }
+  }
+  var enableLineRangeSelection = false {
+    didSet { if !enableLineRangeSelection { clearNativeRange() } }
+  }
+  var showViewedCheckbox = true {
+    didSet {
+      clampHorizontalOffsets()
+      setNeedsDisplayForVisibleBounds()
+    }
+  }
+  var viewedCheckboxEnabled = true {
+    didSet { setNeedsDisplayForVisibleBounds() }
   }
   var collapsedCommentIds: Set<String> = [] {
     didSet {
@@ -1133,6 +1189,7 @@ private final class ReviewDiffContentView: UIView, UIGestureRecognizerDelegate {
     didSet {
       codeDecorationVersion += 1
       tokenAttributedStringsByRowId.removeAll()
+      renameAttributedStringsByRowId.removeAll()
       rebuildRowLayout()
       clampHorizontalOffsets()
       setNeedsDisplayForVisibleBounds()
@@ -1154,6 +1211,7 @@ private final class ReviewDiffContentView: UIView, UIGestureRecognizerDelegate {
       tokenColorsByHex.removeAll()
       codeDecorationVersion += 1
       tokenAttributedStringsByRowId.removeAll()
+      renameAttributedStringsByRowId.removeAll()
       setNeedsDisplayForVisibleBounds()
     }
   }
@@ -1163,6 +1221,7 @@ private final class ReviewDiffContentView: UIView, UIGestureRecognizerDelegate {
   private var fileHeaderRowIndices: [Int] = []
   private var contentWidthsByFileId: [String: CGFloat] = [:]
   private var tokenColorsByHex: [String: UIColor] = [:]
+  private var renameAttributedStringsByRowId: [String: NSAttributedString] = [:]
   private var tokenAttributedStringsByRowId: [String: NSAttributedString] = [:]
   private var codeCharacterWidth: CGFloat = 8
   private var codeWrapColumns: Int?
@@ -1189,10 +1248,19 @@ private final class ReviewDiffContentView: UIView, UIGestureRecognizerDelegate {
   private var horizontalVelocity: CGFloat = 0
   private var lastDecelerationTimestamp: CFTimeInterval = 0
   private var lastDrawMetricsTimestamp: CFTimeInterval = 0
+  private weak var parentScrollView: UIScrollView?
+  private var rangeStartIndex: Int?
+  private var rangeEndIndex: Int?
+  private var rangeLineIndices: [Int] = []
+  private var nativeSelectedRowIds: Set<String> = []
+  private var isRangeDragging = false
   var isVerticalScrollActive = false
   var onToggleFile: ((String) -> Void)?
   var onToggleViewedFile: ((String) -> Void)?
   var onPressLine: (([String: Any]) -> Void)?
+  var onSelectLineRange: (([String: Any]) -> Void)?
+  var onPressHunk: ((String, String) -> Void)?
+  var onPressFileAction: ((String, String) -> Void)?
   var onToggleComment: ((String) -> Void)?
   var onDrawMetrics: (([String: Any]) -> Void)?
 
@@ -1463,6 +1531,17 @@ private final class ReviewDiffContentView: UIView, UIGestureRecognizerDelegate {
     return gesture
   }()
 
+  private lazy var rangeHandlePanGesture: UIPanGestureRecognizer = {
+    let gesture = UIPanGestureRecognizer(target: self, action: #selector(handleRangeHandlePan(_:)))
+    gesture.delegate = self
+    return gesture
+  }()
+
+  func attachScrollView(_ scrollView: UIScrollView) {
+    parentScrollView = scrollView
+    scrollView.panGestureRecognizer.require(toFail: rangeHandlePanGesture)
+  }
+
   override init(frame: CGRect) {
     super.init(frame: frame)
     isOpaque = true
@@ -1470,6 +1549,7 @@ private final class ReviewDiffContentView: UIView, UIGestureRecognizerDelegate {
     addGestureRecognizer(horizontalPanGesture)
     addGestureRecognizer(tapGesture)
     addGestureRecognizer(longPressGesture)
+    addGestureRecognizer(rangeHandlePanGesture)
     tapGesture.require(toFail: longPressGesture)
   }
 
@@ -1488,10 +1568,15 @@ private final class ReviewDiffContentView: UIView, UIGestureRecognizerDelegate {
     addGestureRecognizer(horizontalPanGesture)
     addGestureRecognizer(tapGesture)
     addGestureRecognizer(longPressGesture)
+    addGestureRecognizer(rangeHandlePanGesture)
     tapGesture.require(toFail: longPressGesture)
   }
 
   override func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
+    if gestureRecognizer === rangeHandlePanGesture {
+      return enableLineRangeSelection && rangeHandle(at: gestureRecognizer.location(in: self)) != nil
+    }
+    if isRangeDragging { return false }
     guard gestureRecognizer === horizontalPanGesture else {
       return true
     }
@@ -1530,12 +1615,23 @@ private final class ReviewDiffContentView: UIView, UIGestureRecognizerDelegate {
     }
 
     let row = rows[rowIndex]
+    if row.kind == "hunk", row.hunkAction != nil {
+      let rect = CGRect(x: 0, y: rowOffsets[rowIndex] - verticalOffset, width: viewportWidth, height: height(for: row))
+      handleHunkTap(row: row, rect: rect, point: point)
+      return
+    }
     if row.kind == "comment" {
       onToggleComment?(row.id)
       return
     }
 
     if row.kind == "line" {
+      if enableLineRangeSelection, let start = rangeStartIndex,
+         resolvedFileId(for: rows[start]) == resolvedFileId(for: row) {
+        updateNativeRange(start: start, end: rowIndex)
+        return
+      }
+      clearNativeRange()
       onPressLine?(linePressPayload(for: row, gesture: "tap"))
       return
     }
@@ -1549,8 +1645,17 @@ private final class ReviewDiffContentView: UIView, UIGestureRecognizerDelegate {
     handleFileHeaderTap(row: row, rect: rect, point: point)
   }
 
+  private func handleHunkTap(row: ReviewDiffNativeRow, rect: CGRect, point: CGPoint) {
+    if row.hunkRevertAction == true, hunkRevertRect(in: rect).contains(point) {
+      if row.hunkRevertActionDisabled != true { onPressHunk?(row.id, "revert") }
+    } else if hunkActionRect(in: rect).contains(point), row.hunkActionDisabled != true {
+      onPressHunk?(row.id, "stage")
+    }
+  }
+
   @objc private func handleLongPress(_ gesture: UILongPressGestureRecognizer) {
-    guard gesture.state == .began else {
+    if gesture.state == .ended || gesture.state == .cancelled || gesture.state == .failed {
+      finishRangeDrag()
       return
     }
 
@@ -1565,11 +1670,100 @@ private final class ReviewDiffContentView: UIView, UIGestureRecognizerDelegate {
     }
 
     let row = rows[rowIndex]
-    guard row.kind == "line" else {
+    if gesture.state == .began {
+      guard row.kind == "line" else { return }
+      if !enableLineRangeSelection {
+        onPressLine?(linePressPayload(for: row, gesture: "longPress"))
+        return
+      }
+      beginNativeRange(at: rowIndex)
+    } else if gesture.state == .changed, isRangeDragging, let start = rangeStartIndex {
+      updateNativeRange(start: start, end: nearestRangeLine(to: rowIndex))
+    }
+  }
+
+  private func beginNativeRange(at index: Int) {
+    let fileId = resolvedFileId(for: rows[index])
+    rangeLineIndices = rows.indices.filter {
+      rows[$0].kind == "line" && resolvedFileId(for: rows[$0]) == fileId && height(at: $0) > 0
+    }
+    isRangeDragging = true
+    parentScrollView?.panGestureRecognizer.isEnabled = false
+    updateNativeRange(start: index, end: index)
+  }
+
+  private func updateNativeRange(start: Int, end: Int) {
+    guard rows.indices.contains(start), rows.indices.contains(end), rows[end].kind == "line",
+          resolvedFileId(for: rows[start]) == resolvedFileId(for: rows[end]) else { return }
+    if rangeStartIndex == start && rangeEndIndex == end { return }
+    rangeStartIndex = start
+    rangeEndIndex = end
+    let first = min(start, end), last = max(start, end)
+    nativeSelectedRowIds = Set(rangeLineIndices.filter { $0 >= first && $0 <= last }.map { rows[$0].id })
+    onSelectLineRange?(["startRowId": rows[first].id, "endRowId": rows[last].id])
+    setNeedsDisplayForVisibleBounds()
+  }
+
+  private func nearestRangeLine(to index: Int) -> Int {
+    guard let first = rangeLineIndices.first, let last = rangeLineIndices.last else { return index }
+    let target = min(max(index, first), last)
+    var low = 0, high = rangeLineIndices.count
+    while low < high {
+      let middle = (low + high) / 2
+      if rangeLineIndices[middle] < target { low = middle + 1 } else { high = middle }
+    }
+    return rangeLineIndices[min(low, rangeLineIndices.count - 1)]
+  }
+
+  private func finishRangeDrag() {
+    isRangeDragging = false
+    parentScrollView?.panGestureRecognizer.isEnabled = true
+  }
+
+  private func clearNativeRange() {
+    finishRangeDrag()
+    rangeStartIndex = nil
+    rangeEndIndex = nil
+    rangeLineIndices = []
+    nativeSelectedRowIds = []
+  }
+
+  private func rangeHandleCenters() -> (CGPoint, CGPoint)? {
+    guard let start = rangeStartIndex, let end = rangeEndIndex,
+          rows.indices.contains(start), rows.indices.contains(end) else { return nil }
+    let first = min(start, end), last = max(start, end)
+    guard height(at: first) > 0, height(at: last) > 0 else { return nil }
+    let x = max(12, stickyWidth - 6)
+    return (
+      CGPoint(x: x, y: rowOffsets[first] - verticalOffset),
+      CGPoint(x: x, y: rowOffsets[last] + height(at: last) - verticalOffset)
+    )
+  }
+
+  private func rangeHandle(at point: CGPoint) -> Bool? {
+    guard let (start, end) = rangeHandleCenters() else { return nil }
+    if hypot(point.x - start.x, point.y - start.y) <= 22 { return true }
+    if hypot(point.x - end.x, point.y - end.y) <= 22 { return false }
+    return nil
+  }
+
+  @objc private func handleRangeHandlePan(_ gesture: UIPanGestureRecognizer) {
+    if gesture.state == .ended || gesture.state == .cancelled || gesture.state == .failed {
+      finishRangeDrag()
       return
     }
-
-    onPressLine?(linePressPayload(for: row, gesture: "longPress"))
+    let point = gesture.location(in: self)
+    if gesture.state == .began, let movingStart = rangeHandle(at: point),
+       let start = rangeStartIndex, let end = rangeEndIndex {
+      rangeStartIndex = movingStart ? max(start, end) : min(start, end)
+      rangeEndIndex = movingStart ? min(start, end) : max(start, end)
+      isRangeDragging = true
+      parentScrollView?.panGestureRecognizer.isEnabled = false
+    }
+    if isRangeDragging, let start = rangeStartIndex,
+       let index = rowIndex(at: verticalOffset + point.y) {
+      updateNativeRange(start: start, end: nearestRangeLine(to: index))
+    }
   }
 
   private func linePressPayload(for row: ReviewDiffNativeRow, gesture: String) -> [String: Any] {
@@ -1596,8 +1790,15 @@ private final class ReviewDiffContentView: UIView, UIGestureRecognizerDelegate {
     let interactiveRects = fileHeaderInteractiveRects(for: row, cardRect: rect)
     let fileId = resolvedFileId(for: row)
 
-    if interactiveRects.checkbox.contains(point) {
-      onToggleViewedFile?(fileId)
+    if row.fileAction != nil, fileActionRect(in: rect).contains(point) {
+      if row.fileActionDisabled != true { onPressFileAction?(fileId, row.id) }
+      return
+    }
+
+    // Keep the drawn mark small while giving it a full touch target in the file header.
+    let checkboxTouchRect = interactiveRects.checkbox.insetBy(dx: -12, dy: -12).intersection(rect)
+    if showViewedCheckbox && checkboxTouchRect.contains(point) {
+      if viewedCheckboxEnabled { onToggleViewedFile?(fileId) }
       return
     }
 
@@ -2046,6 +2247,12 @@ private final class ReviewDiffContentView: UIView, UIGestureRecognizerDelegate {
       drawnRowCount += 1
     }
     drawStickyFileHeader(context: context)
+    if let (start, end) = rangeHandleCenters() {
+      UIColor.systemBlue.setFill()
+      for point in [start, end] {
+        UIBezierPath(ovalIn: CGRect(x: point.x - 5, y: point.y - 5, width: 10, height: 10)).fill()
+      }
+    }
 
     maybeEmitDrawMetrics(
       drawnRowCount: drawnRowCount,
@@ -2139,7 +2346,12 @@ private final class ReviewDiffContentView: UIView, UIGestureRecognizerDelegate {
 
     drawFileIcon(rect: interactiveRects.icon, changeType: row.changeType)
 
-    drawViewedCheckbox(rect: interactiveRects.checkbox, checked: viewedFileIds.contains(fileId))
+    if showViewedCheckbox {
+      context.saveGState()
+      if !viewedCheckboxEnabled { context.setAlpha(0.4) }
+      drawViewedCheckbox(rect: interactiveRects.checkbox, checked: viewedFileIds.contains(fileId))
+      context.restoreGState()
+    }
 
     let deletions = row.deletions ?? 0
     let additions = row.additions ?? 0
@@ -2149,7 +2361,8 @@ private final class ReviewDiffContentView: UIView, UIGestureRecognizerDelegate {
     let addWidth = textWidth(addText, font: fileHeaderMetaFont)
     let countsGap = min(style.fileHeaderCountGap, 4)
     let countsWidth = deleteWidth + countsGap + addWidth
-    let countsX = interactiveRects.checkbox.minX - 10 - countsWidth
+    let countsRight = row.fileAction == nil ? interactiveRects.checkbox.minX : fileActionRect(in: cardRect).minX
+    let countsX = countsRight - 10 - countsWidth
     drawSingleLineText(
       deleteText,
       rect: CGRect(x: countsX, y: centerY - 9, width: deleteWidth, height: 18),
@@ -2165,14 +2378,34 @@ private final class ReviewDiffContentView: UIView, UIGestureRecognizerDelegate {
 
     let pathLayout = fileHeaderPathLayout(for: row, cardRect: cardRect)
     let pathOffset = horizontalOffset(for: resolvedFileId(for: row), kind: .fileHeaderPath)
-    drawSingleLineText(
-      pathLayout.displayPath,
-      rect: pathLayout.rect,
-      color: theme.text,
-      font: fileHeaderFont,
-      horizontalOffset: pathOffset
-    )
+    if let segments = row.renameSegments, !segments.isEmpty {
+      drawRenamePath(segments, rowId: row.id, rect: pathLayout.rect, horizontalOffset: pathOffset, context: context)
+    } else {
+      drawSingleLineText(
+        pathLayout.displayPath,
+        rect: pathLayout.rect,
+        color: theme.text,
+        font: fileHeaderFont,
+        horizontalOffset: pathOffset
+      )
+    }
     drawFileHeaderPathScrollFade(row, pathRect: pathLayout.rect, horizontalOffset: pathOffset, context: context)
+    if let action = row.fileAction {
+      let button = fileActionRect(in: cardRect).insetBy(dx: 4, dy: 7)
+      context.setStrokeColor(theme.border.cgColor)
+      context.setLineWidth(1 / traitCollection.displayScale)
+      UIBezierPath(roundedRect: button, cornerRadius: 6).stroke()
+      drawCenteredText(
+        action,
+        rect: button,
+        color: row.fileActionDisabled == true ? theme.mutedText : theme.hunkText,
+        font: .systemFont(ofSize: 12, weight: .semibold)
+      )
+    }
+  }
+
+  private func fileActionRect(in rect: CGRect) -> CGRect {
+    CGRect(x: rect.maxX - 100, y: rect.minY, width: 94, height: rect.height)
   }
 
   private func drawNoticeRow(_ row: ReviewDiffNativeRow, rect: CGRect, context: CGContext) {
@@ -2217,7 +2450,7 @@ private final class ReviewDiffContentView: UIView, UIGestureRecognizerDelegate {
     theme.background.setFill()
     context.fill(rect)
 
-    let isCollapsed = collapsedCommentIds.contains(row.id)
+    let isCollapsed = collapsedCommentIds.contains(row.id) || row.commentResolvedSummary != nil
     let cardInset = CGFloat(8)
     let cardRect = rect.insetBy(dx: cardInset, dy: 5)
     let cardPath = UIBezierPath(roundedRect: cardRect, cornerRadius: 10)
@@ -2230,13 +2463,28 @@ private final class ReviewDiffContentView: UIView, UIGestureRecognizerDelegate {
     let chevronRect = CGRect(x: cardRect.minX + 10, y: cardRect.minY + 11, width: 16, height: 16)
     drawDisclosureChevron(rect: chevronRect, color: theme.mutedText, collapsed: isCollapsed)
 
-    let title = "Comment on \(row.commentRangeLabel ?? "line")"
+    let pending = row.commentPending == true
+    if pending {
+      let badge = CGRect(x: cardRect.maxX - 88, y: cardRect.minY + 7, width: 78, height: 24)
+      UIColor.systemOrange.withAlphaComponent(0.14).setFill()
+      UIBezierPath(roundedRect: badge, cornerRadius: 5).fill()
+      UIColor.systemOrange.setStroke()
+      let clock = CGRect(x: badge.minX + 6, y: badge.minY + 6, width: 12, height: 12)
+      let path = UIBezierPath(ovalIn: clock)
+      path.move(to: CGPoint(x: clock.midX, y: clock.minY + 3))
+      path.addLine(to: CGPoint(x: clock.midX, y: clock.midY))
+      path.addLine(to: CGPoint(x: clock.midX + 3, y: clock.midY + 1))
+      path.lineWidth = 1
+      path.stroke()
+      drawSingleLineText("Pending", rect: CGRect(x: badge.minX + 23, y: badge.minY + 3, width: 52, height: 18), color: UIColor.systemOrange, font: fileHeaderSubtextFont)
+    }
+    let title = row.commentResolvedSummary ?? "Comment on \(row.commentRangeLabel ?? "line")"
     drawSingleLineText(
       title,
       rect: CGRect(
         x: chevronRect.maxX + 10,
         y: cardRect.minY + 8,
-        width: max(24, cardRect.width - chevronRect.maxX - 28),
+        width: max(24, cardRect.maxX - chevronRect.maxX - (pending ? 98 : 28)),
         height: fileHeaderSubtextFont.lineHeight + 4
       ),
       color: theme.mutedText,
@@ -2275,12 +2523,13 @@ private final class ReviewDiffContentView: UIView, UIGestureRecognizerDelegate {
     let addWidth = textWidth("+\(additions)", font: fileHeaderMetaFont)
     let countsGap = min(style.fileHeaderCountGap, 4)
     let countsWidth = deleteWidth + countsGap + addWidth
-    let countsX = interactiveRects.checkbox.minX - 10 - countsWidth
+    let countsRight = row.fileAction == nil ? interactiveRects.checkbox.minX : fileActionRect(in: cardRect).minX
+    let countsX = countsRight - 10 - countsWidth
     let pathX = interactiveRects.icon.maxX + 10
     let pathWidth = max(CGFloat(24), countsX - pathX - 12)
     let displayPath: String
-    if let previousPath = row.previousPath, previousPath != row.filePath, let filePath = row.filePath {
-      displayPath = "\(previousPath) -> \(filePath)"
+    if let segments = row.renameSegments, !segments.isEmpty {
+      displayPath = segments.map(\.text).joined()
     } else {
       displayPath = row.filePath ?? ""
     }
@@ -2299,7 +2548,9 @@ private final class ReviewDiffContentView: UIView, UIGestureRecognizerDelegate {
     let horizontalPadding = style.fileHeaderHorizontalPadding
     let chevronRect = CGRect(x: cardRect.minX + horizontalPadding, y: centerY - 10, width: 20, height: 20)
     let iconRect = CGRect(x: chevronRect.maxX + 8, y: centerY - 10, width: 20, height: 20)
-    let checkboxRect = CGRect(x: cardRect.maxX - horizontalPadding - 20, y: centerY - 10, width: 20, height: 20)
+    let checkboxRect = showViewedCheckbox
+      ? CGRect(x: cardRect.maxX - horizontalPadding - 20, y: centerY - 10, width: 20, height: 20)
+      : CGRect(x: cardRect.maxX - horizontalPadding + 10, y: centerY, width: 0, height: 0)
     return ReviewDiffFileHeaderInteractiveRects(
       chevron: chevronRect,
       icon: iconRect,
@@ -2447,7 +2698,13 @@ private final class ReviewDiffContentView: UIView, UIGestureRecognizerDelegate {
       .foregroundColor: color,
       .paragraphStyle: paragraphStyle,
     ]
-    (text as NSString).draw(in: rect, withAttributes: attributes)
+    (text as NSString).draw(
+      in: CGRect(
+        x: rect.minX, y: centeredTextY(in: rect, font: font),
+        width: rect.width, height: font.lineHeight
+      ),
+      withAttributes: attributes
+    )
   }
 
   private func drawHunkRow(_ row: ReviewDiffNativeRow, rect: CGRect, context: CGContext) {
@@ -2458,7 +2715,8 @@ private final class ReviewDiffContentView: UIView, UIGestureRecognizerDelegate {
     context.fill(rect)
 
     context.saveGState()
-    context.clip(to: CGRect(x: stickyWidth, y: rect.minY, width: max(0, viewportWidth - stickyWidth), height: style.rowHeight))
+    let actionWidth: CGFloat = row.hunkAction == nil ? 0 : (row.hunkRevertAction == true ? 224 : 112)
+    context.clip(to: CGRect(x: stickyWidth, y: rect.minY, width: max(0, viewportWidth - stickyWidth - actionWidth), height: rect.height))
     drawText(
       row.text ?? "",
       rect: CGRect(
@@ -2471,6 +2729,31 @@ private final class ReviewDiffContentView: UIView, UIGestureRecognizerDelegate {
       font: hunkFont
     )
     context.restoreGState()
+    if let action = row.hunkAction {
+      let button = hunkActionRect(in: rect).insetBy(dx: 6, dy: 6)
+      theme.headerBackground.setFill()
+      UIBezierPath(roundedRect: button, cornerRadius: 6).fill()
+      drawCenteredText(action, rect: button, color: row.hunkActionDisabled == true ? theme.mutedText : theme.hunkText, font: .systemFont(ofSize: 13, weight: .semibold))
+    }
+    if row.hunkRevertAction == true {
+      let button = hunkRevertRect(in: rect).insetBy(dx: 6, dy: 6)
+      theme.headerBackground.setFill()
+      UIBezierPath(roundedRect: button, cornerRadius: 6).fill()
+      drawCenteredText(
+        "Revert hunk",
+        rect: button,
+        color: row.hunkRevertActionDisabled == true ? theme.mutedText : theme.deleteText,
+        font: .systemFont(ofSize: 13, weight: .semibold)
+      )
+    }
+  }
+
+  private func hunkActionRect(in rect: CGRect) -> CGRect {
+    CGRect(x: viewportWidth - 112, y: rect.minY, width: 112, height: rect.height)
+  }
+
+  private func hunkRevertRect(in rect: CGRect) -> CGRect {
+    CGRect(x: viewportWidth - 224, y: rect.minY, width: 112, height: rect.height)
   }
 
   private func drawCodeRow(_ row: ReviewDiffNativeRow, rect: CGRect, context: CGContext) {
@@ -2601,10 +2884,12 @@ private final class ReviewDiffContentView: UIView, UIGestureRecognizerDelegate {
     rect: CGRect,
     context: CGContext
   ) {
-    guard selectedRowIds.contains(row.id) else {
+    guard selectedRowIds.contains(row.id) || nativeSelectedRowIds.contains(row.id) else {
       return
     }
 
+    UIColor.systemBlue.withAlphaComponent(0.1).setFill()
+    context.fill(rect)
     theme.hunkText.withAlphaComponent(0.95).setFill()
     context.fill(CGRect(x: 0, y: rect.minY, width: style.changeBarWidth, height: rect.height))
   }
@@ -2722,6 +3007,33 @@ private final class ReviewDiffContentView: UIView, UIGestureRecognizerDelegate {
 
   private func centeredTextY(in rect: CGRect, font: UIFont) -> CGFloat {
     rect.midY - font.lineHeight / 2
+  }
+
+  private func drawRenamePath(
+    _ segments: [ReviewDiffRenameSegment], rowId: String, rect: CGRect,
+    horizontalOffset: CGFloat, context: CGContext
+  ) {
+    let text: NSAttributedString
+    if let cached = renameAttributedStringsByRowId[rowId] {
+      text = cached
+    } else {
+      let result = NSMutableAttributedString(string: "")
+      for segment in segments {
+        var attributes: [NSAttributedString.Key: Any] = [
+          .font: fileHeaderFont, .ligature: 0,
+          .foregroundColor: segment.kind == "context" ? theme.mutedText : theme.text
+        ]
+        if segment.kind == "removed" { attributes[.backgroundColor] = theme.deleteBackground }
+        if segment.kind == "added" { attributes[.backgroundColor] = theme.addBackground }
+        result.append(NSAttributedString(string: segment.text, attributes: attributes))
+      }
+      renameAttributedStringsByRowId[rowId] = result
+      text = result
+    }
+    context.saveGState()
+    context.clip(to: rect)
+    text.draw(at: CGPoint(x: rect.minX - horizontalOffset, y: rect.midY - fileHeaderFont.lineHeight / 2))
+    context.restoreGState()
   }
 
   private func drawSingleLineText(
