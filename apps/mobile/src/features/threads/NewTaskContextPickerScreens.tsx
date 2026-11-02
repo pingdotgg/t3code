@@ -19,7 +19,7 @@ import {
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
 import * as Haptics from "expo-haptics";
-import { useNavigation, useRoute } from "@react-navigation/native";
+import { useNavigation, type StaticScreenProps } from "@react-navigation/native";
 import { useRef, useState, type ReactNode } from "react";
 import { sanitizeNewRefName } from "@t3tools/shared/git";
 import { Platform, Pressable, ScrollView, View } from "react-native";
@@ -182,13 +182,13 @@ function PickerSurface(props: { readonly children: ReactNode }) {
   );
 }
 
-export function NewTaskEnvironmentPickerRouteScreen() {
+export function NewTaskEnvironmentPickerRouteScreen({
+  route,
+}: StaticScreenProps<{ readonly incomingShareId?: string } | undefined>) {
   const flow = useNewTaskFlow();
   const navigation = useNavigation();
-  const route = useRoute();
   const insets = useSafeAreaInsets();
-  const incomingShareId = (route.params as { readonly incomingShareId?: unknown } | undefined)
-    ?.incomingShareId;
+  const incomingShareId = route.params?.incomingShareId;
   const shareId = typeof incomingShareId === "string" ? incomingShareId : undefined;
   return (
     <View className="flex-1 bg-sheet" collapsable={false}>

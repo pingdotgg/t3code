@@ -185,11 +185,8 @@ type NewTaskFlowContextValue = {
   readonly missingRouteDraftId: string | null;
   readonly selectEnvironment: (environmentId: EnvironmentId) => void;
   /**
-   * Whether tapping the environment can switch the draft straight there.
    * False when the machine holds no copy of the selected project, so the
-   * user must pick a project explicitly instead of landing on an unrelated
-   * first project. Always true before a project is selected or for scratch
-   * drafts, where there is no selection to silently retarget.
+   * tap opens the project picker instead of a silent unrelated retarget.
    */
   readonly canSwitchEnvironmentDirectly: (environmentId: EnvironmentId) => boolean;
   readonly switchEnvironment: (environmentId: EnvironmentId) => Promise<boolean>;
