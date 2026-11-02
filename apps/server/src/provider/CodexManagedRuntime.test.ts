@@ -121,7 +121,7 @@ it.live.each(
             assert.equal(runtime.homeLayout.mode, "direct");
           } else {
             assert.include(effective.config.homePath, instanceId);
-            assert.include(effective.config.homePath, "userdata/providers/codex");
+            assert.include(effective.config.homePath, path.join("userdata", "providers", "codex"));
             assert.equal(runtime.homeLayout.mode, "authOverlay");
             assert.equal(
               yield* fs.readLink(path.join(effective.config.homePath, "sessions")),
