@@ -1816,6 +1816,8 @@ describe("CursorAdapterV2", () => {
             "argument-only": { "command": "node", "args": ["server.mjs", "--workspace", "\${workspaceFolder}"] },
             "env-only": { "command": "node", "args": ["server.mjs"], "env": { "PROJECT_ROOT": "\${workspaceFolder}" } },
             "cwd-only": { "command": "node", "args": ["server.mjs"], "cwd": "\${workspaceFolder}" },
+            "unset-env": { "command": "node", "env": { "CONFIG": "\${env:T3_MCP_UNSET}" } },
+            "wrapped": { "command": "proto", "args": ["run", "node", "--", "\${workspaceFolder}/server.mjs"] },
             "off": { "command": "node", "args": ["\${workspaceFolder}/off.mjs"] },
             "typed": { "type": "\${env:MCP_TYPE}", "command": "node", "args": ["server.mjs"] },
             "plugin-docs-search": { "command": "node", "args": ["\${workspaceFolder}/search.mjs"] },
@@ -1892,7 +1894,30 @@ describe("CursorAdapterV2", () => {
           );
 
         const expectedServers = {
-          repro: { command: "node", args: [`${workspace}/server.mjs`], startupTimeoutSec: 120 },
+          repro: {
+            command: "node",
+            args: [`${workspace}/server.mjs`],
+            startupTimeoutSec: 120,
+            cwd: workspace,
+          },
+          "argument-only": {
+            command: "node",
+            args: ["server.mjs", "--workspace", workspace],
+            cwd: workspace,
+          },
+          "env-only": {
+            command: "node",
+            args: ["server.mjs"],
+            env: { PROJECT_ROOT: workspace },
+            cwd: workspace,
+          },
+          "cwd-only": { command: "node", args: ["server.mjs"], cwd: workspace },
+          "unset-env": { command: "node", env: { CONFIG: "" }, cwd: workspace },
+          wrapped: {
+            command: "proto",
+            args: ["run", "node", "--", `${workspace}/server.mjs`],
+            cwd: workspace,
+          },
         };
         assert.deepEqual(openedWith?.mcpServers, expectedServers);
         for (const disabledState of ["[", '{"off": true}', '["off",]']) {

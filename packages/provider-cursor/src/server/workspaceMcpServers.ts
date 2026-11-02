@@ -123,7 +123,7 @@ export const cursorWorkspaceMcpServers = Effect.fn("cursorWorkspaceMcpServers")(
       (match, envName: string | undefined, name: string, fallback: string | undefined) =>
         (envName === undefined
           ? (variables.get(name) ?? environment[name] ?? fallback)
-          : environment[envName]) ?? match,
+          : (environment[envName] ?? "")) ?? match,
     );
 
   const seen = new Set<string>();
@@ -138,26 +138,28 @@ export const cursorWorkspaceMcpServers = Effect.fn("cursorWorkspaceMcpServers")(
     if (Option.isNone(config)) continue;
     const rawServers = (
       contents as {
-        readonly mcpServers: Record<string, { command?: unknown; args?: ReadonlyArray<unknown> }>;
+        readonly mcpServers: Record<string, unknown>;
       }
     ).mcpServers;
     for (const [name, server] of Object.entries(config.value.mcpServers)) {
       if (seen.has(name)) continue;
       seen.add(name);
       if (disabled.has(name)) continue;
-      // The SDK already resolves every other server the same way. It names plugin
-      // servers `plugin-<plugin>-<name>` and prefers them over file servers, so a
-      // file server with such a name stays with the SDK, which can see plugins.
+      // Plugin definitions take precedence in the SDK, which can see enabled plugins.
       if (
         "command" in server &&
         !name.startsWith("plugin-") &&
-        // File clients start before deduplication; only replace executable/script paths.
         someString(
-          [rawServers[name]?.command, rawServers[name]?.args?.[0]],
-          (text) => !text.startsWith("-") && WORKSPACE_VARIABLE_PATTERN.test(text),
+          rawServers[name],
+          (text) =>
+            WORKSPACE_VARIABLE_PATTERN.test(text) ||
+            Array.from(text.matchAll(/\$\{env:([A-Za-z_][A-Za-z0-9_]*)\}/g)).some(
+              ([, name]) => name !== undefined && environment[name] === undefined,
+            ),
         )
       ) {
-        servers[name] = server as McpServerConfig;
+        // The SDK starts file clients before deduplication, so a literal copy may also run.
+        servers[name] = { ...server, cwd: server.cwd ?? projectRoot } as McpServerConfig;
       }
     }
   }
