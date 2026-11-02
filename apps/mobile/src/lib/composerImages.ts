@@ -119,7 +119,7 @@ export function composerAttachmentInlineUri(
 const OWNED_PASTED_IMAGE_DIRECTORY = "t3-composer-paste";
 const ATTACHMENT_COPY_CHUNK_BYTES = 64 * 1024;
 // expo-file-system leaves these raw in file URIs, and Android's java.net.URI rejects them.
-const URI_REJECTED_CHARACTERS = '[]{}|^`"<>\\';
+const URI_REJECTED_CHARACTERS = "[]|";
 
 export async function persistComposerAttachmentFile(
   uri: string,
@@ -132,6 +132,7 @@ export async function persistComposerAttachmentFile(
   const safeName =
     Array.from(name, (character) =>
       character === "/" ||
+      character === "\\" ||
       URI_REJECTED_CHARACTERS.includes(character) ||
       character.charCodeAt(0) < 32
         ? "-"

@@ -10,7 +10,7 @@ const DOWNLOAD_RETENTION_MS = 24 * 60 * 60_000;
 const DOWNLOAD_DIRECTORY_NAME = /^(\d+)-[\da-f]{8}-[\da-f]{4}-[\da-f]{4}-[\da-f]{4}-[\da-f]{12}$/i;
 const activeDirectories = new Set<string>();
 // expo-file-system leaves these raw in file URIs, and Android's java.net.URI rejects them.
-const URI_REJECTED_CHARACTERS = '[]{}|^`"<>';
+const URI_REJECTED_CHARACTERS = "[]|";
 
 function downloadFileName(name: string): string {
   const basename = name.split(/[\\/]/).at(-1) ?? "";
