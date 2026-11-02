@@ -1243,20 +1243,20 @@ export const layerWithOptions = (
           reason: "manual_shutdown",
           detail: "Provider credentials changed.",
           keepIfBusyOtherThan: [],
-        }).pipe(
+        }).pipe(logReleaseFailure(entry.runtime.providerSessionId));
+        // The busy path keeps the runtime in `sessions`; log only a release that happened.
+        const live = (yield* Ref.get(sessions)).get(key);
+        const released = live?.runtime !== entry.runtime;
+        if (released) {
           // detail is not persisted for non-error releases and idle sessions have no
           // subscribers — the log is where a released app-server can be attributed.
-          Effect.tap(() =>
-            Effect.logInfo("orchestration-v2.provider-session-released", {
-              providerSessionId: entry.runtime.providerSessionId,
-              reason: "manual_shutdown",
-              detail: "Provider credentials changed.",
-            }),
-          ),
-          logReleaseFailure(entry.runtime.providerSessionId),
-        );
-        const live = (yield* Ref.get(sessions)).get(key);
-        return live?.runtime !== entry.runtime;
+          yield* Effect.logInfo("orchestration-v2.provider-session-released", {
+            providerSessionId: entry.runtime.providerSessionId,
+            reason: "manual_shutdown",
+            detail: "Provider credentials changed.",
+          });
+        }
+        return released;
       });
 
       const withActivityError = <A, E, R>(
