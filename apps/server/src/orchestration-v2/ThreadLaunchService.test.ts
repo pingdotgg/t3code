@@ -50,6 +50,7 @@ import * as ManagedProjectFolders from "../project/ManagedProjectFolders.ts";
 import * as ProviderRegistryMock from "../provider/testUtils/providerRegistryMock.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as ScheduledTasks from "../scheduledTasks/ScheduledTaskService.ts";
+import * as ManagedPolicy from "../policy/ManagedPolicy.ts";
 import * as SecretRequests from "../secrets/SecretRequests.ts";
 import * as TextGeneration from "../textGeneration/TextGeneration.ts";
 import { ClaudeProviderCapabilitiesV2 } from "./Adapters/ClaudeAdapterV2.ts";
@@ -82,6 +83,8 @@ const project = {
   defaultModelSelection: modelSelection,
   defaultThreadEnvMode: null,
   scripts: [],
+  pinnedAt: null,
+  archivedAt: null,
   createdAt: "2026-06-20T00:00:00.000Z",
   updatedAt: "2026-06-20T00:00:00.000Z",
   deletedAt: null,
@@ -247,6 +250,8 @@ function makeHarness(options: HarnessOptions = {}) {
               faviconPath: null,
               projectIcon: null,
               scripts: project.scripts,
+              pinnedAt: null,
+              archivedAt: null,
               createdAt: project.createdAt,
               updatedAt: project.updatedAt,
               deletedAt: project.deletedAt,
@@ -323,6 +328,7 @@ it.effect.each(
           NodeCrypto.layer,
           Scheduler.layer,
           Layer.mock(SecretRequests.SecretRequests)({}),
+          ManagedPolicy.layerTest(),
           Layer.mock(RemoteDelegation.RemoteDelegation)({}),
         ),
       ),
@@ -389,6 +395,7 @@ it.effect(
           NodeCrypto.layer,
           Scheduler.layer,
           Layer.mock(SecretRequests.SecretRequests)({}),
+          ManagedPolicy.layerTest(),
         ),
       ),
     );
@@ -426,6 +433,7 @@ it.effect("runs a thread-bound automation on the provider the thread uses now", 
         NodeCrypto.layer,
         Scheduler.layer,
         Layer.mock(SecretRequests.SecretRequests)({}),
+        ManagedPolicy.layerTest(),
       ),
     ),
   );
@@ -889,6 +897,7 @@ function scratchHarness() {
         NodeCrypto.layer,
         Scheduler.layer,
         Layer.mock(SecretRequests.SecretRequests)({}),
+        ManagedPolicy.layerTest(),
       ),
     ),
   );
@@ -1110,6 +1119,29 @@ it.effect.each(["stable", "upstream/release"])(
     ),
 );
 
+it.effect("fetches the origin base from the remote it already resolved", () => {
+  let fetchInput: Deferred.Deferred<unknown> | null = null;
+  const harness = makeHarness({
+    fetchWorktreeBaseCommit: (input) => Deferred.succeed(fetchInput!, input).pipe(Effect.as(null)),
+  });
+  return Effect.gen(function* () {
+    fetchInput = yield* Deferred.make<unknown>();
+    const launches = yield* ThreadLaunch.ThreadLaunchService;
+    yield* launches.launch(
+      launchInput({
+        command: "command:launch:resolved-remote",
+        thread: "thread:launch:resolved-remote",
+        workspace: { type: "worktree", baseRef: "main", startFromOrigin: true },
+      }),
+    );
+    assert.deepEqual(yield* Deferred.await(fetchInput), {
+      cwd: project.workspaceRoot,
+      refName: "main",
+      remote: { remoteName: "origin", branchName: "main" },
+    });
+  }).pipe(Effect.provide(harness.layer));
+});
+
 it.effect("shows the fetch diagnosis when preparing a worktree from origin fails", () => {
   const detail =
     "Git could not authenticate with the remote. Check Git credentials or SSH access on the server, then retry.";
@@ -1157,6 +1189,100 @@ it.effect("shows the fetch diagnosis when preparing a worktree from origin fails
     assert.equal(harness.createWorktree.mock.calls.length, 0);
     assert.equal(harness.runSetup.mock.calls.length, 0);
   }).pipe(Effect.provide(harness.layer));
+});
+
+it.effect("rejects a preparation retry after the project disables its provider", () => {
+  let fetchAttempts = 0;
+  const harness = makeHarness({
+    fetchWorktreeBaseCommit: () =>
+      fetchAttempts++ === 0
+        ? Effect.fail(
+            new GitCommandError({
+              operation: "GitVcsDriver.fetchRemote",
+              command: "git",
+              cwd: project.workspaceRoot,
+              detail: "Git could not reach the remote.",
+              exitCode: 128,
+            }),
+          )
+        : Effect.succeed({ commitSha: "remote-main-sha", remoteRefName: "origin/main" }),
+  });
+  return Effect.gen(function* () {
+    const launches = yield* ThreadLaunch.ThreadLaunchService;
+    const settings = yield* ServerSettings.ServerSettingsService;
+    const threads = yield* ThreadManagement.ThreadManagementService;
+    const launched = yield* launches.launch(
+      launchInput({
+        command: "command:launch:disabled-preparation-retry",
+        thread: "thread:launch:disabled-preparation-retry",
+        message: "Start from origin",
+        workspace: { type: "worktree", baseRef: "main", startFromOrigin: true },
+      }),
+    );
+    yield* preparationSettled(launched.threadId);
+    yield* settings.updateSettings({
+      projectSettingsOverrides: {
+        [projectId]: { providerInstances: { [modelSelection.instanceId]: { enabled: false } } },
+      },
+    });
+
+    const error = yield* launches
+      .retryPreparation({
+        commandId: CommandId.make("command:launch:disabled-preparation-retry:retry"),
+        threadId: launched.threadId,
+        runId: launched.projection.runs[0]!.id,
+      })
+      .pipe(Effect.flip);
+
+    assert.equal(error._tag, "ThreadManagementProviderInstanceDisabledError");
+    assert.equal((yield* threads.getThreadProjection(launched.threadId)).runs[0]?.status, "failed");
+    assert.equal(fetchAttempts, 1);
+  }).pipe(Effect.provide(harness.layer));
+});
+
+it.effect("does not release a prepared run after the project disables its provider", () => {
+  return Effect.gen(function* () {
+    const setupEntered = yield* Deferred.make<void>();
+    const allowSetup = yield* Deferred.make<void>();
+    const harness = makeHarness({
+      runSetup: () =>
+        Deferred.succeed(setupEntered, undefined).pipe(
+          Effect.andThen(Deferred.await(allowSetup)),
+          Effect.as({ status: "no-script" as const }),
+        ),
+    });
+    yield* Effect.gen(function* () {
+      const launches = yield* ThreadLaunch.ThreadLaunchService;
+      const settings = yield* ServerSettings.ServerSettingsService;
+      const launched = yield* launches.launch(
+        launchInput({
+          command: "command:launch:disable-during-preparation",
+          thread: "thread:launch:disable-during-preparation",
+          message: "Prepare a worktree",
+          workspace: { type: "worktree", baseRef: "main" },
+        }),
+      );
+      yield* Deferred.await(setupEntered);
+      yield* settings.updateSettings({
+        projectSettingsOverrides: {
+          [projectId]: { providerInstances: { [modelSelection.instanceId]: { enabled: false } } },
+        },
+      });
+      yield* Deferred.succeed(allowSetup, undefined);
+      const projection = yield* preparationSettled(launched.threadId);
+      assert.equal(projection.runs[0]?.status, "failed");
+      const effects = yield* (yield* EffectOutbox.EffectOutboxV2).listByCommandId(
+        CommandId.make("command:launch:disable-during-preparation:release"),
+      );
+      assert.isFalse(
+        effects.some(
+          (effect) =>
+            effect.request.type === "provider-turn.start" &&
+            effect.request.runId === launched.projection.runs[0]?.id,
+        ),
+      );
+    }).pipe(Effect.provide(harness.layer));
+  });
 });
 
 it.effect.each(["fails", "is interrupted"] as const)(
