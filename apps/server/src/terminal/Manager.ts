@@ -1167,6 +1167,10 @@ function findEscapeSequenceEndIndex(input: string, start: number): number | null
   if (cursor >= input.length) {
     return null;
   }
+  // A second ESC restarts the sequence, so leave it for the next pass.
+  if (input.charCodeAt(cursor) === 0x1b) {
+    return cursor;
+  }
   return isEscapeFinalByte(input.charCodeAt(cursor)) ? cursor + 1 : start + 1;
 }
 

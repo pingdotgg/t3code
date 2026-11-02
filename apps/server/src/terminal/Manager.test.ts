@@ -1137,14 +1137,17 @@ it.layer(
       process.emitData("\u0090$q m\u009c\u00901$r0m\u009c");
       process.emitData("\u0090+q544e\u009c\u00901+r544e=1b\u009c");
       process.emitData('\u001b[!p\u001b["p\u001b[4 q\u001b[u');
+      process.emitData("\u001b]0;x\u001b\u001b[?2026$p");
       process.emitData("done\n");
 
       yield* manager.close({ threadId: "thread-1" });
 
       const reopened = yield* manager.open(openInput());
-      expect(reopened.history.startsWith('prompt \u001b[!p\u001b["p\u001b[4 q\u001b[udone\n')).toBe(
-        true,
-      );
+      expect(
+        reopened.history.startsWith(
+          'prompt \u001b[!p\u001b["p\u001b[4 q\u001b[u\u001b]0;x\u001bdone\n',
+        ),
+      ).toBe(true);
     }),
   );
 
