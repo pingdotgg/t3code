@@ -110,12 +110,32 @@ function snapshotToPersist(
   return { snapshotSequence, projection };
 }
 
-// About twice the server's THREAD_HISTORY_TURN_SNAPSHOT_ROW_LIMIT (502), so a snapshot's extra
-// rows and older servers' windows still fit; only streamed growth passes it.
-const CACHED_THREAD_TURN_ITEM_LIMIT = 1_000;
+// Room for a server snapshot (a 1 MiB turn window plus runs and checkpoints). Encoding a larger
+// cache blocks the main thread, and only events streamed into a mounted thread grow one past it.
+const CACHED_THREAD_MAX_JSON_LENGTH = 4 * 1024 * 1024;
+const jsonLengths = new WeakMap<object, number>();
+
+// Approximates the JSON length without building it. Projection versions share unchanged
+// objects, so the memo limits a repeat check to the rows that changed.
+function approximateJsonLength(value: unknown): number {
+  if (typeof value === "string") return value.length + 2;
+  if (typeof value !== "object" || value === null) return 8;
+  const known = jsonLengths.get(value);
+  if (known !== undefined) return known;
+  let length = 2;
+  if (Array.isArray(value)) {
+    for (const entry of value) length += approximateJsonLength(entry) + 1;
+  } else {
+    for (const [key, entry] of Object.entries(value)) {
+      length += key.length + 4 + approximateJsonLength(entry);
+    }
+  }
+  jsonLengths.set(value, length);
+  return length;
+}
 
 function isBoundedProjection(thread: OrchestrationV2ThreadProjection): boolean {
-  return thread.turnItems.length <= CACHED_THREAD_TURN_ITEM_LIMIT;
+  return approximateJsonLength(thread) <= CACHED_THREAD_MAX_JSON_LENGTH;
 }
 
 function shouldPersistThread(

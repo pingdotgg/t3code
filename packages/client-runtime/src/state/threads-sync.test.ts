@@ -79,8 +79,10 @@ const BASE_PROJECTION: OrchestrationV2ThreadProjection = {
   thread: { ...v2Projection.thread, title: "Cached thread" },
 };
 
-// threads.ts keeps threads with more rows than this out of the cache.
-const CACHED_THREAD_ROW_LIMIT = 1_000;
+// threads.ts keeps threads whose JSON is longer than this out of the cache.
+const CACHED_THREAD_MAX_JSON_LENGTH = 4 * 1024 * 1024;
+// Enough 8 KiB rows to pass that limit, as a long tool history does.
+const OVERSIZED_THREAD_ROWS = 600;
 
 const noticeItem = (index: number): OrchestrationV2TurnItem => ({
   id: TurnItemId.make(`streamed-item-${index}`),
@@ -98,7 +100,7 @@ const noticeItem = (index: number): OrchestrationV2TurnItem => ({
   completedAt: v2Now,
   updatedAt: v2Now,
   type: "system_notice",
-  message: `Notice ${index}`,
+  message: `Notice ${index} `.padEnd(8 * 1024, "x"),
 });
 
 type TestThreadInput = OrchestrationV2ThreadStreamItem | Error;
@@ -516,7 +518,7 @@ describe("EnvironmentThreads", () => {
 
   it.effect("does not cache a thread that events grew far past a bounded snapshot", () =>
     Effect.gen(function* () {
-      const appendedItems = CACHED_THREAD_ROW_LIMIT + 100;
+      const appendedItems = OVERSIZED_THREAD_ROWS;
       const saved = yield* Effect.scoped(
         Effect.gen(function* () {
           const h = yield* makeHarness({
@@ -546,10 +548,10 @@ describe("EnvironmentThreads", () => {
         }),
       );
       // Leaving the thread also saves it, so every write the cache received is here.
-      const savedRows = (yield* Ref.get(saved)).map(
-        (snapshot) => snapshot.projection.turnItems.length,
+      const savedLengths = (yield* Ref.get(saved)).map(
+        (snapshot) => JSON.stringify(snapshot).length,
       );
-      expect(Math.max(0, ...savedRows)).toBeLessThanOrEqual(CACHED_THREAD_ROW_LIMIT);
+      expect(Math.max(0, ...savedLengths)).toBeLessThanOrEqual(CACHED_THREAD_MAX_JSON_LENGTH);
     }),
   );
 
@@ -558,9 +560,7 @@ describe("EnvironmentThreads", () => {
       const h = yield* makeHarness({
         cached: {
           ...BASE_PROJECTION,
-          turnItems: Array.from({ length: CACHED_THREAD_ROW_LIMIT + 1 }, (_, index) =>
-            noticeItem(index),
-          ),
+          turnItems: Array.from({ length: OVERSIZED_THREAD_ROWS }, (_, index) => noticeItem(index)),
         },
         cachedHistory: { historyCursor: "older", hasMoreHistory: true },
         httpSnapshot: {
