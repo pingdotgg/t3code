@@ -61,7 +61,9 @@ vi.mock("expo-file-system", () => ({
 
     get size(): number | null {
       const entry = files.get(this.uri);
-      return entry && !entry.deleted ? Math.ceil((entry.base64.length * 3) / 4) : null;
+      return entry && !entry.deleted
+        ? Math.floor((entry.base64.replace(/=+$/, "").length * 3) / 4)
+        : null;
     }
 
     async copy(destination: { readonly uri: string }): Promise<void> {
