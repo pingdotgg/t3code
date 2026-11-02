@@ -3288,12 +3288,61 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
     }).pipe(Effect.scoped),
   );
 
+  it.effect("rejects unreadable rollback history before cutting the native session", () =>
+    Effect.gen(function* () {
+      const { runtime, thread } = yield* resumed([
+        out("message.list", { sessionID: SESSION, limit: "100", type: undefined }),
+        reply("message.list", {
+          data: [
+            { id: "msg_kept", time: { created: 1 }, text: "first", type: "user" },
+            {
+              id: "msg_compaction",
+              time: { created: 2 },
+              type: "compaction",
+              status: "completed",
+              reason: "auto",
+              summary: "First turn summary",
+            },
+            { id: "msg_dropped", time: { created: 3 }, text: "second", type: "user" },
+          ],
+          cursor: {},
+        }),
+      ]);
+      const now = yield* DateTime.now;
+      const turns = ["msg_kept", "msg_dropped"].map((nativeId, index) => ({
+        id: ProviderTurnId.make(`provider-turn:rollback-history:${index}`),
+        providerThreadId: thread.id,
+        nodeId: NodeId.make(`node:rollback-history:${index}`),
+        runAttemptId: RunAttemptId.make(`attempt:rollback-history:${index}`),
+        nativeTurnRef: { driver: OPENCODE_PROVIDER, nativeId, strength: "weak" as const },
+        ordinal: index + 1,
+        status: "completed" as const,
+        startedAt: now,
+        completedAt: now,
+      }));
+      const failure = yield* runtime
+        .rollbackThread({
+          providerThread: thread,
+          target: {
+            type: "provider_turn",
+            checkpointId: CheckpointId.make("checkpoint:rollback-history"),
+            appRunOrdinal: 1,
+            providerTurn: turns[0]!,
+          },
+          providerThreadTurns: turns,
+        })
+        .pipe(Effect.flip);
+      assert.equal(failure._tag, "ProviderAdapterRollbackThreadError");
+      assert.include(Cause.pretty(Cause.fail(failure)), '["recent"]');
+    }).pipe(Effect.scoped),
+  );
+
   it.effect("clears a staged revert whose commit failed, before the next prompt too", () =>
     Effect.gen(function* () {
       const kept = "msg_t3_turn_run-attempt:kept:1";
       const dropped = "msg_t3_turn_run-attempt:dropped:1";
       const { runtime, thread } = yield* resumed([
-        out("message.list", { sessionID: SESSION, limit: "100", type: "user" }),
+        out("message.list", "<any>"),
         reply("message.list", {
           data: [
             { id: dropped, time: { created: 2 }, text: "second", type: "user" },
@@ -3301,8 +3350,6 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
           ],
           cursor: {},
         }),
-        out("message.list", { sessionID: SESSION, limit: "100", type: "synthetic" }),
-        reply("message.list", { data: [], cursor: {} }),
         out("session.revert.stage", { sessionID: SESSION, messageID: dropped, files: false }),
         replyData("session.revert.stage", { messageID: dropped, files: [] }),
         out("session.revert.commit", { sessionID: SESSION }),
@@ -3364,7 +3411,7 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
       const dropped = "msg_t3_turn_run-attempt:dropped:1";
       const offers: Array<ProviderContinuationRequests.ProviderContinuationRequest> = [];
       const { runtime, thread } = yield* resumed([
-        out("message.list", { sessionID: SESSION, limit: "100", type: "user" }),
+        out("message.list", "<any>"),
         reply("message.list", {
           data: [
             { id: dropped, time: { created: 2 }, text: "second", type: "user" },
@@ -3372,8 +3419,6 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
           ],
           cursor: {},
         }),
-        out("message.list", { sessionID: SESSION, limit: "100", type: "synthetic" }),
-        reply("message.list", { data: [], cursor: {} }),
         out("session.revert.stage", { sessionID: SESSION, messageID: dropped, files: false }),
         replyData("session.revert.stage", { messageID: dropped, files: [] }),
         out("session.revert.commit", { sessionID: SESSION }),
@@ -3596,13 +3641,11 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
         ...(running
           ? []
           : [
-              out("message.list", { sessionID: SESSION, limit: "100", type: "user" }),
+              out("message.list", "<any>"),
               reply("message.list", {
                 data: [{ id: prompt, time: { created: 1 }, text: "hi", type: "user" }],
                 cursor: {},
               }),
-              out("message.list", { sessionID: SESSION, limit: "100", type: "synthetic" }),
-              reply("message.list", { data: [], cursor: {} }),
               out("session.revert.stage", {
                 sessionID: SESSION,
                 messageID: prompt,
@@ -3758,7 +3801,7 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
         promptAccepted,
         event("session.execution.started", { sessionID: SESSION }),
         event("session.execution.succeeded", { sessionID: SESSION }),
-        out("message.list", { sessionID: SESSION, limit: "100", type: "user" }),
+        out("message.list", "<any>"),
         reply("message.list", {
           data: [
             { id: dropped, time: { created: 2 }, text: "second", type: "user" },
@@ -3766,8 +3809,6 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
           ],
           cursor: {},
         }),
-        out("message.list", { sessionID: SESSION, limit: "100", type: "synthetic" }),
-        reply("message.list", { data: [], cursor: {} }),
         out("session.revert.stage", { sessionID: SESSION, messageID: dropped, files: false }),
         replyData("session.revert.stage", { messageID: dropped, files: [] }),
         out("session.revert.commit", { sessionID: SESSION }),
@@ -3820,13 +3861,11 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
     Effect.gen(function* () {
       const prompted = `msg_t3_turn_${SESSION}:attempt:earlier`;
       const { runtime, thread } = yield* resumed([
-        out("message.list", { sessionID: SESSION, limit: "100", type: "user" }),
+        out("message.list", "<any>"),
         reply("message.list", {
           data: [{ id: prompted, time: { created: 1 }, text: "earlier", type: "user" }],
           cursor: {},
         }),
-        out("message.list", { sessionID: SESSION, limit: "100", type: "synthetic" }),
-        reply("message.list", { data: [], cursor: {} }),
         out("session.revert.stage", { sessionID: SESSION, messageID: prompted, files: false }),
         replyData("session.revert.stage", { messageID: prompted, files: [] }),
         out("session.revert.commit", { sessionID: SESSION }),
@@ -3888,7 +3927,7 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
               out("session.get", { sessionID: SESSION }),
               replyData("session.get", sessionInfo()),
               ...noOpenRequests,
-              out("message.list", { sessionID: SESSION, limit: "100", type: "user" }),
+              out("message.list", "<any>"),
               reply("message.list", {
                 data: [
                   { id: second, time: { created: 2 }, text: "second", type: "user" },
@@ -3896,8 +3935,6 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
                 ],
                 cursor: {},
               }),
-              out("message.list", { sessionID: SESSION, limit: "100", type: "synthetic" }),
-              reply("message.list", { data: [], cursor: {} }),
               out("session.revert.stage", {
                 sessionID: SESSION,
                 messageID: second,
