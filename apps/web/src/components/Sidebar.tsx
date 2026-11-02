@@ -3057,10 +3057,12 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                       <ListFilterIcon className="size-4" />
                     )}
                   </ComboboxTrigger>
+                  {/* Refocusing the trigger after a pointer close shows its focus ring and opens its tooltip. */}
                   <ComboboxPopup
                     align="start"
                     anchor={headerSearchRef}
                     className="max-w-[min(18rem,var(--available-width))] overflow-hidden"
+                    finalFocus={(closeType) => closeType === "keyboard"}
                   >
                     <ComboboxSearchInput
                       aria-label="Search projects"

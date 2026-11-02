@@ -495,6 +495,41 @@ it.live("the agent asks without waiting, and the user links the box after its tu
       ).toMatchObject({ kind: "user_input" });
       expect(yield* a.projections.getSettlementCandidates(threadId)).toEqual([]);
 
+      // Once the user writes in the thread again, the card stops asking but stays answerable.
+      const wroteAt = DateTime.add(card.startedAt!, { seconds: 1 });
+      yield* a.sink.write({
+        commandId: CommandId.make("command:user-writes:laptop"),
+        events: [
+          {
+            id: EventId.make("event:user-writes"),
+            type: "message.updated",
+            threadId,
+            occurredAt: wroteAt,
+            payload: {
+              createdBy: "user",
+              creationSource: "web",
+              id: MessageId.make("message:user-writes"),
+              threadId,
+              runId: null,
+              nodeId: null,
+              role: "user",
+              text: "Something else",
+              attachments: [],
+              streaming: false,
+              createdAt: wroteAt,
+              updatedAt: wroteAt,
+            },
+          },
+        ],
+      });
+      expect((yield* a.orchestrator.getThreadShell(threadId))?.pendingRuntimeRequest).toBeNull();
+      expect(
+        ProjectionStore.threadShellFromProjection(
+          yield* a.orchestrator.getThreadProjection(threadId),
+        ).pendingRuntimeRequest,
+      ).toBeNull();
+      expect(yield* cardOf(a)).toMatchObject({ status: "waiting", linkStatus: "pending" });
+
       // The user's client mints a code on the box and picks more than the agent suggested.
       const pairing = yield* b.auth.issuePairingCredential();
       yield* a.requests.answer({
@@ -912,6 +947,35 @@ it.live("naming a machine that is already linked returns the link at once, with 
       // Not both: the address could name another machine than the id.
       const both = yield* a.call({ environmentId: box.environmentId, url: b.url });
       expect(errorOf(both)).toMatchObject({ code: "invalid_request" });
+    }),
+  ),
+);
+
+it.live("a retry naming a machine linked meanwhile closes the card it left as linked", () =>
+  withBoth((a, b) =>
+    Effect.gen(function* () {
+      yield* seedThread(a);
+      yield* a.call({ url: b.url, clientRequestId: "link-box" });
+      yield* pendingCard(a);
+      // Linked from Settings meanwhile, not through the card.
+      const pairing = yield* b.auth.issuePairingCredential();
+      yield* a.links.link({ url: b.url, pairingCode: pairing.credential, access: "auto" });
+
+      const retried = yield* a.call({
+        environmentId: box.environmentId,
+        clientRequestId: "link-box",
+      });
+      expect(retried.structuredContent).toEqual({
+        status: "linked",
+        environmentId: box.environmentId,
+        label: "Box",
+        access: "auto",
+      });
+      expect(yield* cardOf(a)).toMatchObject({
+        linkStatus: "linked",
+        linkedEnvironmentId: box.environmentId,
+      });
+      expect((yield* a.orchestrator.getThreadShell(threadId))?.pendingRuntimeRequest).toBeNull();
     }),
   ),
 );
