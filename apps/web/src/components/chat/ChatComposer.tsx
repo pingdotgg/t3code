@@ -974,6 +974,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     planModeEnabled: settings.planModeEnabled,
     provider: selectedProviderStatus,
     interactionMode: requestedInteractionMode,
+    persistedInteractionMode: props.activeThreadShell?.interactionMode,
   });
   const selectedModelSelection: ModelSelection = createModelSelection(
     selectedInstanceId,

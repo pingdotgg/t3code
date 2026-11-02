@@ -63,7 +63,9 @@ import {
   composerContextImportsAtom,
   countComposerDraftAttachmentsAfterSelection,
   useComposerDraft,
+  useComposerDraftSettings,
 } from "../../state/use-composer-drafts";
+import { resolvePlanThreadModeControl } from "../../state/legacy-plan-mode";
 import { appAtomRegistry } from "../../state/atom-registry";
 import type { ComposerDocumentAttachment } from "../../lib/composerContext";
 import { useProject, useVisibleThreadShells } from "../../state/entities";
@@ -81,7 +83,11 @@ import { VideoPreviewModal, type VideoPreviewSource } from "../../components/Vid
 import { GlassSurface } from "../../components/ui/GlassSurface";
 import { ComposerEditor, type ComposerEditorHandle } from "../../components/ComposerEditor";
 import { fileRoutePathSegments } from "../files/filePath";
-import { ComposerActionButton, ComposerToolbarRow } from "../../components/ComposerToolbar";
+import {
+  ComposerActionButton,
+  ComposerInlineControl,
+  ComposerToolbarRow,
+} from "../../components/ComposerToolbar";
 import { ComposerModelControl } from "../../components/ComposerModelControl";
 import {
   composerStripAttachments,
@@ -453,6 +459,7 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
   const composerOwnerKey = scopedThreadKey(props.environmentId, props.selectedThread.id);
   const composerDraftKey = props.draftKey ?? composerOwnerKey;
   const { text: draftMessage, attachments: draftAttachments } = useComposerDraft(composerDraftKey);
+  const draftInteractionMode = useComposerDraftSettings(composerOwnerKey).interactionMode;
   const queuedEdit = props.queuedEdit ?? null;
   const hasContent =
     draftMessage.trim().length > 0 ||
@@ -505,6 +512,14 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
       ) ?? null
     );
   })();
+  const planThreadMode = props.onUpdateInteractionMode
+    ? resolvePlanThreadModeControl({
+        isDraft: props.isDraft === true,
+        persistedInteractionMode: props.selectedThread.interactionMode,
+        draftInteractionMode,
+        provider: selectedProviderStatus,
+      })
+    : null;
   const openDraftDocument = (attachment: ComposerDocumentAttachment) => {
     Keyboard.dismiss();
     navigation.navigate("ThreadAttachment", {
@@ -813,6 +828,27 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
     </View>
   );
 
+  const modeControl =
+    planThreadMode !== null ? (
+      <ComposerInlineControl
+        size={usesLargeControls ? "large" : "regular"}
+        accessibilityHint={`Switches to ${planThreadMode === "plan" ? "Build" : "Plan"} mode`}
+        accessibilityLabel={`Interaction mode: ${planThreadMode === "plan" ? "Plan" : "Build"}`}
+        emphasized
+        icon={
+          planThreadMode === "plan"
+            ? { ios: "list.bullet.clipboard", android: "auto_awesome" }
+            : { ios: "hammer", android: "construction" }
+        }
+        label={planThreadMode === "plan" ? "Plan" : "Build"}
+        iconOnly={!compactEditor.isExpanded}
+        onPress={() =>
+          props.onUpdateInteractionMode?.(planThreadMode === "plan" ? "default" : "plan")
+        }
+        showChevron={false}
+      />
+    ) : null;
+
   return (
     <Animated.View
       onLayout={(event) => props.onHeightChange?.(event.nativeEvent.layout.height)}
@@ -1093,6 +1129,7 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
                   compactEditor.isExpanded ? { flex: 1, justifyContent: "flex-end" } : undefined
                 }
               >
+                {modeControl}
                 {modelControl}
                 <ComposerDictationStartAction
                   size={usesLargeControls ? "large" : "regular"}
