@@ -67,6 +67,7 @@ it.effect("includes the scheduler zone in empty lists and subscription updates",
     const layerDependencies = Layer.mergeAll(
       NodeCrypto.layer,
       Scheduler.layer,
+      ManagedPolicy.layerTest(),
       Layer.mock(ThreadLaunchService.ThreadLaunchService)({}),
       Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
         namedProjectsRoot: "/projects",
