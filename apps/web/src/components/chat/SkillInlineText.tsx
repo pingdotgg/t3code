@@ -4,7 +4,7 @@ import { Children, cloneElement, isValidElement, type ReactNode } from "react";
 import { matchInlineSkills } from "@t3tools/shared/inlineSkills";
 
 import { useRightPanelStore } from "~/rightPanelStore";
-import { SparklesIcon } from "lucide-react";
+import { SKILL_CHIP_ICON_SVG } from "../composerInlineChip";
 import { ContextChipPopover } from "../contextChipParts";
 import { Button } from "../ui/button";
 
@@ -112,5 +112,11 @@ export function SkillChipPopover(props: {
 
 /** The skill glyph; the surrounding chip sizes and colors its svg. */
 function SkillChipIcon() {
-  return <SparklesIcon aria-hidden="true" />;
+  return (
+    <span
+      aria-hidden="true"
+      className="contents"
+      dangerouslySetInnerHTML={{ __html: SKILL_CHIP_ICON_SVG }}
+    />
+  );
 }
