@@ -25,5 +25,6 @@ export function tickTaskListEdit(
 ): TaskListEdit {
   const shown = shownTaskListBody(edit, hostBody);
   const stale = edit !== null && shown !== hostBody ? [...edit.stale, shown] : [];
-  return { stale: [...stale, hostBody], to: body, saving: true };
+  // A tick undone before its save makes `to` a body seen before; it must still end the edit.
+  return { stale: [...stale, hostBody].filter((seen) => seen !== body), to: body, saving: true };
 }

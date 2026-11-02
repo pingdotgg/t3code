@@ -25,4 +25,9 @@ describe("TaskListEdit", () => {
     expect(taskListEditEnded(done, "C")).toBe(true);
     expect(taskListEditEnded(done, "Edited on the host")).toBe(true);
   });
+
+  it("ends a tick undone before its save, so later host changes show", () => {
+    const undone = saved(tickTaskListEdit(tickTaskListEdit(null, "A", "B"), "A", "A"));
+    expect(taskListEditEnded(undone, "A")).toBe(true);
+  });
 });
