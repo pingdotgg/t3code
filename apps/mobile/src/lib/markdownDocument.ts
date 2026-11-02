@@ -435,17 +435,62 @@ function markdownWithWindowsPathDestinations(markdown: string): string {
 // md4c's `$` flanking: line edge, Unicode whitespace (Zs, \t\v\f) or punctuation (P, S), except `$`.
 const DOLLAR_MAY_OPEN_AFTER = /(?:^|(?!\$)[\n\r\t\v\f\p{Zs}\p{P}\p{S}])$/u;
 const DOLLAR_MAY_CLOSE_BEFORE = /^(?:$|(?!\$)[\n\r\t\v\f\p{Zs}\p{P}\p{S}])/u;
-// An unclosed math delimiter makes the parser scan to the end of its paragraph or the message.
-const MAX_MATH_SCAN = 2_000_000;
+// Rough Node microseconds for `markdownMathRanges`, so long or pathological replies stay raw.
+const MATH_PARSE_BUDGET = 120_000;
+const CHARACTER_COST = 1.5;
+const LINE_COST = 40;
+const DELIMITER_COST = 10;
+// A failed inline opener also costs about 1/16 per character before it on its line.
+const COLUMN_DIVISOR = 16;
+// How far the parser reads past an opener: unclosed `\(`, `\[` and `$$` to their paragraph's end,
+// a `\[` alone on its line to a line ending in `\]`, `$$` to the next `$$` and `$$$` to the end.
+// A lone `$` stops at the next one, so its reads never overlap.
+const PARAGRAPH_END = /(?:\r\n|\r(?!\n)|\n)(?: {0,3}>)*[ \t]*(?![^\r\n])/g;
+const LINE_END = /[\r\n]/g;
+const PAREN_CLOSE = /(?<!\\)(?:\\\\)*\\\)/g;
+const BRACKET_CLOSE = /(?<!\\)(?:\\\\)*\\\]/g;
+const TEX_FENCE_CLOSE = /\\\][ \t]*(?![^\r\n])/g;
+const DOLLAR_FENCE_CLOSE = /(?<!\\)\$\$/g;
+
+function mathParseFits(markdown: string): boolean {
+  const stops = new Map<RegExp, number>();
+  // Openers arrive in order, so each pattern's next match is searched for once per stretch.
+  const until = (pattern: RegExp, from: number) => {
+    let stop = stops.get(pattern);
+    if (stop === undefined || stop < from) {
+      pattern.lastIndex = from;
+      stop = pattern.exec(markdown)?.index ?? markdown.length;
+      stops.set(pattern, stop);
+    }
+    return stop - from;
+  };
+  let work = markdown.length * CHARACTER_COST;
+  for (const _ of markdown.matchAll(/(?:\r\n?|\n)(?=[^\r\n])/g)) work += LINE_COST;
+  let lineStart = 0;
+  for (const match of markdown.matchAll(/\\[([]([ \t]*(?![^\r\n]))?|\$+/g)) {
+    const [delimiter, texFence] = match;
+    const index = match.index;
+    if (index - lineStart > until(LINE_END, lineStart)) {
+      lineStart = index;
+      while (lineStart > 0 && !/[\r\n]/.test(markdown[lineStart - 1]!)) lineStart -= 1;
+    }
+    work += DELIMITER_COST + (index - lineStart) / COLUMN_DIVISOR;
+    const paragraph = until(PARAGRAPH_END, index);
+    const close = delimiter === "\\(" ? PAREN_CLOSE : delimiter[0] === "\\" ? BRACKET_CLOSE : null;
+    // A closed formula consumes the openers inside it; only an unclosed one rereads its paragraph.
+    if (close ? until(close, index + 2) + 2 >= paragraph : delimiter.length > 1) work += paragraph;
+    if (texFence !== undefined) work += until(TEX_FENCE_CLOSE, index + 2);
+    else if (delimiter.length > 2 && delimiter[0] === "$") work += markdown.length - index;
+    else if (delimiter === "$$") work += until(DOLLAR_FENCE_CLOSE, index + 2);
+    if (work > MATH_PARSE_BUDGET) return false;
+  }
+  return true;
+}
 
 /** md4c only typesets `$` and `$$`, so swap the delimiters of formulas web reads as `\(` or `\[`. */
 export function markdownWithDollarMath(markdown: string): string {
   if (!markdown.includes("\\(") && !markdown.includes("\\[")) return markdown;
-  let scan = markdown.length;
-  for (const delimiter of markdown.matchAll(/\\[([]|\$/g)) {
-    scan += markdown.length - delimiter.index;
-    if (scan > MAX_MATH_SCAN) return markdown;
-  }
+  if (!mathParseFits(markdown)) return markdown;
   const ranges = markdownMathRanges(markdown);
   const edits: MarkdownEdit[] = [];
   for (const [index, { start, end, source }] of ranges.entries()) {

@@ -54,6 +54,16 @@ describe("backslash math delimiters", () => {
     );
   });
 
+  it("converts a long reply full of closed formulas", () => {
+    const line = (i: number, open: string, close: string) =>
+      `The term ${open}x_${i}^2 + 2 x_${i} + 1${close} is non-negative.`;
+    const reply = Array.from({ length: 390 }, (_, i) => line(i, "\\(", "\\)")).join("\n");
+
+    expect(markdownWithDollarMath(reply)).toBe(
+      Array.from({ length: 390 }, (_, i) => line(i, "$", "$")).join("\n"),
+    );
+  });
+
   it("keeps container prefixes inside a multi-line formula", () => {
     expect(markdownWithDollarMath(String.raw`> \[` + "\n> a+b\n> " + String.raw`\]`)).toBe(
       "> $$\n> a+b\n> $$",
