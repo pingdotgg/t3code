@@ -844,8 +844,22 @@ function makeReplayQueryRunner(
           replayEffect(() => {
             assertNextOutboundFrame({ type: "query.background_tasks", toolUseId });
           }).pipe(Effect.as(true)),
-        interrupt: replayEffect(() => {
-          assertNextOutboundFrame({ type: "query.interrupt" });
+        interrupt: Effect.tryPromise({
+          try: async (signal) => {
+            // Persisting inbound frames can yield before the recorded interrupt point.
+            while (true) {
+              const entry = transcript.entries[cursor];
+              if (entry?.type !== "emit_inbound") break;
+              throwIfFailed();
+              if (entry.label !== undefined) {
+                replayOptions.replayGate?.release(entry.label);
+              }
+              await waitForCursorAdvance(cursorAdvanced.promise, signal);
+              if (signal.aborted) return;
+            }
+            assertNextOutboundFrame({ type: "query.interrupt" });
+          },
+          catch: (cause) => replayQueryRunnerError(transcript, cause),
         }),
         close: Effect.void,
       };
@@ -942,27 +956,93 @@ function replayQueryRunnerService(
 
 function layerClaudeAgentSdkReplay(
   transcript: ClaudeAgentSdkReplayTranscript,
+  configDir: string,
   options: {
     readonly replayGate?: ProviderReplayGate;
     readonly queryRunner?: ClaudeQueryRunner;
   } = {},
-): Layer.Layer<ClaudeAdapterV2.ClaudeAgentSdkQueryRunner> {
-  if (options.queryRunner !== undefined) {
-    return Layer.succeed(
-      ClaudeAdapterV2.ClaudeAgentSdkQueryRunner,
-      replayQueryRunnerService(transcript, options.queryRunner),
-    );
-  }
-  const queryRunner = makeReplayQueryRunner(transcript, options);
+) {
+  const queryRunner = options.queryRunner ?? makeReplayQueryRunner(transcript, options);
   return Layer.effect(
     ClaudeAdapterV2.ClaudeAgentSdkQueryRunner,
     Effect.gen(function* () {
-      yield* Effect.addFinalizer(() =>
-        Effect.sync(() => {
-          queryRunner.assertComplete();
-        }),
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const projectDir = path.join(configDir, "projects", "replay-project");
+      const transcriptPath = (sessionId: string) => path.join(projectDir, `${sessionId}.jsonl`);
+      const recordSchema = Schema.fromJsonString(Schema.Record(Schema.String, Schema.Unknown));
+      const encodeRecord = Schema.encodeEffect(recordSchema);
+      const decodeRecord = Schema.decodeEffect(recordSchema);
+      if (options.queryRunner === undefined) {
+        yield* Effect.addFinalizer(() =>
+          Effect.sync(() => {
+            queryRunner.assertComplete();
+          }),
+        );
+      }
+      const replay = replayQueryRunnerService(transcript, queryRunner);
+
+      // The real CLI saves conversation frames before the adapter can resume them.
+      const persistMessage = Effect.fnUntraced(
+        function* (message: SDKMessage) {
+          if (
+            (message.type !== "user" && message.type !== "assistant") ||
+            message.parent_tool_use_id !== null ||
+            typeof message.session_id !== "string"
+          ) {
+            return;
+          }
+          yield* fileSystem.makeDirectory(projectDir, { recursive: true });
+          const record = yield* encodeRecord({ ...message, sessionId: message.session_id });
+          yield* fileSystem.writeFileString(transcriptPath(message.session_id), `${record}\n`, {
+            flag: "a",
+          });
+        },
+        Effect.mapError((cause) => replayQueryRunnerError(transcript, cause)),
       );
-      return replayQueryRunnerService(transcript, queryRunner);
+
+      return ClaudeAdapterV2.ClaudeAgentSdkQueryRunner.of({
+        ...replay,
+        open: (input) =>
+          replay.open(input).pipe(
+            Effect.map((query) => ({
+              ...query,
+              messages: query.messages.pipe(Stream.tap(persistMessage)),
+            })),
+          ),
+        forkSession: Effect.fnUntraced(
+          function* (input) {
+            const forked = yield* replay.forkSession(input);
+            const source = yield* fileSystem.readFileString(transcriptPath(input.sessionId));
+            const records = yield* Effect.forEach(source.trimEnd().split("\n"), (line) =>
+              decodeRecord(line),
+            );
+            const boundary = input.options.upToMessageId;
+            const end =
+              boundary === undefined
+                ? records.length - 1
+                : records.findIndex((record) => record.uuid === boundary);
+            if (end < 0) {
+              return yield* Effect.die(
+                new Error("Claude replay fork cursor is not in saved history."),
+              );
+            }
+            const forkRecords = yield* Effect.forEach(records.slice(0, end + 1), (record) =>
+              encodeRecord({
+                ...record,
+                sessionId: forked.sessionId,
+                session_id: forked.sessionId,
+              }),
+            );
+            yield* fileSystem.writeFileString(
+              transcriptPath(forked.sessionId),
+              `${forkRecords.join("\n")}\n`,
+            );
+            return forked;
+          },
+          Effect.mapError((cause) => replayQueryRunnerError(transcript, cause)),
+        ),
+      });
     }),
   );
 }
@@ -1018,6 +1098,7 @@ function layerClaudeProviderAdapterRegistryReplay(
   options: {
     readonly replayGate?: ProviderReplayGate;
     readonly queryRunner?: ClaudeQueryRunner;
+    readonly configDir?: string;
   } = {},
 ) {
   const layerServerConfig = Layer.effect(
@@ -1025,33 +1106,39 @@ function layerClaudeProviderAdapterRegistryReplay(
     makeReplayServerConfig(transcript.scenario).pipe(Effect.orDie),
   ).pipe(Layer.provide(NodeServices.layer));
   return Layer.unwrap(
-    writeReplayTaskOutputFiles(transcript).pipe(
-      Effect.orDie,
-      Effect.map((tmpRoot) =>
-        ProviderAdapterRegistry.layerFromAdaptersEffect(
-          ClaudeAdapterV2.createClaudeAdapterV2(
-            {
-              instanceId: ClaudeAdapterV2.CLAUDE_DEFAULT_INSTANCE_ID,
-              displayName: undefined,
-              environment: [{ name: "CLAUDE_CODE_TMPDIR", value: tmpRoot, sensitive: false }],
-              enabled: true,
-              config: DEFAULT_CLAUDE_SETTINGS,
-            },
-            {},
-          ).pipe(Effect.map((adapter) => [adapter])),
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const tmpRoot = yield* writeReplayTaskOutputFiles(transcript);
+      const configDir =
+        options.configDir ??
+        (yield* fileSystem.makeTempDirectoryScoped({ prefix: "claude-replay-home-" }));
+      return ProviderAdapterRegistry.layerFromAdaptersEffect(
+        ClaudeAdapterV2.createClaudeAdapterV2(
+          {
+            instanceId: ClaudeAdapterV2.CLAUDE_DEFAULT_INSTANCE_ID,
+            displayName: undefined,
+            environment: [
+              { name: "CLAUDE_CODE_TMPDIR", value: tmpRoot, sensitive: false },
+              { name: "CLAUDE_CONFIG_DIR", value: configDir, sensitive: false },
+            ],
+            enabled: true,
+            config: DEFAULT_CLAUDE_SETTINGS,
+          },
+          {},
+        ).pipe(Effect.map((adapter) => [adapter])),
+      ).pipe(
+        Layer.provide(
+          Layer.mergeAll(
+            layerClaudeAgentSdkReplay(transcript, configDir, options).pipe(
+              Layer.provide(NodeServices.layer),
+            ),
+            IdAllocator.layer,
+            NodeServices.layer,
+            layerServerConfig,
+          ),
         ),
-      ),
-      Effect.provide(NodeServices.layer),
-    ),
-  ).pipe(
-    Layer.provide(
-      Layer.mergeAll(
-        layerClaudeAgentSdkReplay(transcript, options),
-        IdAllocator.layer,
-        NodeServices.layer,
-        layerServerConfig,
-      ),
-    ),
+      );
+    }).pipe(Effect.orDie, Effect.provide(NodeServices.layer)),
   );
 }
 
@@ -2832,14 +2919,19 @@ export const ClaudeOrchestratorReplayHarness: OrchestratorV2ProviderReplayHarnes
     layerClaudeProviderAdapterRegistryReplay(transcript, options),
 };
 
-export function makeClaudeRestartReplayHarness(transcript: ClaudeAgentSdkReplayTranscript) {
-  const queryRunner = makeReplayQueryRunner(transcript);
-  return {
-    harness: {
-      ...ClaudeOrchestratorReplayHarness,
-      makeProviderAdapterRegistryLayer: (replayed) =>
-        layerClaudeProviderAdapterRegistryReplay(replayed, { queryRunner }),
-    } satisfies typeof ClaudeOrchestratorReplayHarness,
-    assertComplete: replayQueryRunnerService(transcript, queryRunner).assertComplete,
-  };
-}
+export const makeClaudeRestartReplayHarness = Effect.fn("makeClaudeRestartReplayHarness")(
+  function* (transcript: ClaudeAgentSdkReplayTranscript) {
+    const fileSystem = yield* FileSystem.FileSystem;
+    // Native storage outlives each simulated server's adapter registry.
+    const configDir = yield* fileSystem.makeTempDirectoryScoped({ prefix: "claude-replay-home-" });
+    const queryRunner = makeReplayQueryRunner(transcript);
+    return {
+      harness: {
+        ...ClaudeOrchestratorReplayHarness,
+        makeProviderAdapterRegistryLayer: (replayed) =>
+          layerClaudeProviderAdapterRegistryReplay(replayed, { queryRunner, configDir }),
+      } satisfies typeof ClaudeOrchestratorReplayHarness,
+      assertComplete: replayQueryRunnerService(transcript, queryRunner).assertComplete,
+    };
+  },
+);

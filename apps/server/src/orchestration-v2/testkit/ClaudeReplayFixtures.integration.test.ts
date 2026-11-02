@@ -12,9 +12,11 @@ import * as Effect from "effect/Effect";
 import { ClaudeOrchestratorReplayHarness } from "../Adapters/ClaudeAdapterV2.testkit.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as Orchestrator from "../Orchestrator.ts";
+import * as EffectWorker from "../EffectWorker.ts";
 import { userFacingDispatchErrorMessage } from "../UserFacingErrors.ts";
 import { provideDeterministicTestRuntime } from "./DeterministicRuntime.ts";
 import { subagentInput } from "./fixtures/subagent/input.ts";
+import { turnInterruptMidToolInput } from "./fixtures/turn_interrupt_mid_tool/input.ts";
 import { runOrchestratorV2Scenario } from "./OrchestratorScenario.ts";
 import * as ProviderReplayHarness from "./ProviderReplayHarness.ts";
 import { materializeReplayTranscriptRuntimeInstructions } from "./ReplayRuntimeInstructions.ts";
@@ -30,6 +32,8 @@ import {
   type ReplayFixtureCase,
 } from "./ProviderReplayFixtures.ts";
 import { readProviderReplayTranscript } from "@t3tools/provider-testing/replayTranscript";
+import { makeProviderReplayGate } from "@t3tools/provider-testing/replayGate";
+import { checkpointWorkspace } from "@t3tools/provider-testing/replayWorkspace";
 
 const readTranscript = Effect.fn("readClaudeReplayFixture")(function* (file: URL) {
   return yield* readProviderReplayTranscript(file);
@@ -45,6 +49,71 @@ function runClaudeReplayFixture(input: ReplayFixtureCase) {
 
 describe("Claude Agent SDK replay fixtures", () => {
   itRunsReplayFixtures("claudeAgent", runClaudeReplayFixture);
+
+  it.effect("interrupts a replay while an inbound frame is held by a gate", () =>
+    Effect.gen(function* () {
+      const recorded = yield* readClaudeTranscriptFixture("turn_interrupt_mid_tool");
+      const interruptIndex = recorded.entries.findIndex(
+        (entry) => entry.type === "expect_outbound" && entry.label === "query.interrupt:1",
+      );
+      assert.equal(recorded.entries[interruptIndex - 1]?.type, "emit_inbound");
+      const transcript = yield* ClaudeOrchestratorReplayHarness.decodeTranscript({
+        ...recorded,
+        entries: recorded.entries.map((entry, index) =>
+          index === interruptIndex - 1 ? { ...entry, label: "before-interrupt" } : entry,
+        ),
+      });
+      const materialized = yield* materializeFixtureInput({
+        scenario: transcript.scenario,
+        fixtureInput: turnInterruptMidToolInput(),
+        driver: ProviderDriverKind.make("claudeAgent"),
+        modelSelection: CLAUDE_MODEL_SELECTION,
+      }).pipe(Effect.provide(IdAllocator.layer));
+      const workspace = yield* checkpointWorkspace(transcript.scenario);
+      const replayGate = makeProviderReplayGate(["before-interrupt"]);
+      const scenario = {
+        name: `${transcript.scenario}:gated-interrupt`,
+        transcript,
+        ...materialized,
+        runtimePolicyOverride: { cwd: workspace },
+      };
+      yield* Effect.gen(function* () {
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+        for (const command of materialized.commands) {
+          if (command.type === "run.interrupt") {
+            assert.isTrue(
+              yield* Effect.promise(() => replayGate.waitForReached("before-interrupt")),
+            );
+            const active = yield* orchestrator.getThreadProjection(command.threadId);
+            assert.equal(active.providerTurns[0]?.status, "running");
+          }
+          yield* orchestrator.dispatch(command);
+          yield* worker.drain();
+        }
+        const projection = yield* orchestrator.getThreadProjection(
+          materialized.projectionThreadIds[0]!,
+        );
+        assert.deepEqual(
+          projection.runs.map((run) => run.status),
+          ["interrupted"],
+        );
+        assert.equal(projection.providerTurns[0]?.status, "interrupted");
+        assert.equal(projection.providerThreads[0]?.status, "idle");
+        assert.equal(
+          projection.turnItems.find((item) => item.type === "run_interrupt_result")?.status,
+          "interrupted",
+        );
+      }).pipe(
+        Effect.provide(
+          ProviderReplayHarness.layerProviderReplay(scenario, ClaudeOrchestratorReplayHarness, {
+            replayGate,
+            runEffectWorker: false,
+          }),
+        ),
+      );
+    }).pipe(provideDeterministicTestRuntime, Effect.provide(NodeServices.layer), Effect.scoped),
+  );
 
   it.effect("refuses messages to a native subagent thread without touching it", () =>
     Effect.gen(function* () {

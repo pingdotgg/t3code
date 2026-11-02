@@ -405,7 +405,7 @@ describe("orchestrator replay recovery", () => {
         });
         const { phase1Commands, phase1Steps, phase2Commands, phase2Steps } =
           splitAfterFirstIdle(materialized);
-        const { harness, assertComplete } = makeClaudeRestartReplayHarness(transcript);
+        const { harness, assertComplete } = yield* makeClaudeRestartReplayHarness(transcript);
         const options = {
           databaseLayer: SqlitePersistence.layerFromPath(path.join(tempDir, "state.sqlite")).pipe(
             Layer.provide(NodeServices.layer),
@@ -517,7 +517,7 @@ describe("orchestrator replay recovery", () => {
         });
         const { phase1Commands, phase1Steps, phase2Commands, phase2Steps } =
           splitAfterFirstIdle(materialized);
-        const { harness, assertComplete } = makeClaudeRestartReplayHarness(transcript);
+        const { harness, assertComplete } = yield* makeClaudeRestartReplayHarness(transcript);
         const options = {
           databaseLayer: SqlitePersistence.layerFromPath(path.join(tempDir, "state.sqlite")).pipe(
             Layer.provide(NodeServices.layer),

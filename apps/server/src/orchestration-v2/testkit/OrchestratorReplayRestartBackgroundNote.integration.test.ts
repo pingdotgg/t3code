@@ -156,7 +156,7 @@ const runRestart = Effect.fn("runRestart")(function* (input: {
   const firstIdle = materialized.steps.findIndex((step) => step.type === "await_thread_idle");
   const phase1Steps = materialized.steps.slice(0, firstIdle + 1);
   const phase2Steps = materialized.steps.slice(firstIdle + 1);
-  const { harness, assertComplete } = makeClaudeRestartReplayHarness(transcript);
+  const { harness, assertComplete } = yield* makeClaudeRestartReplayHarness(transcript);
   const layerDatabase = SqlitePersistence.layerFromPath(path.join(tempDir, "state.sqlite")).pipe(
     Layer.provide(NodeServices.layer),
   );
