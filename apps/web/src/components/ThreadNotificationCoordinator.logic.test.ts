@@ -9,7 +9,8 @@ import {
 const working: ThreadNotificationObservation = {
   attention: null,
   settled: false,
-  completedAt: null, snoozed: false,
+  completedAt: null,
+  snoozed: false,
 };
 const completed = (at: number): ThreadNotificationObservation => ({
   attention: null,
@@ -50,7 +51,6 @@ describe("createThreadNotificationGate", () => {
     expect(notify.mock.calls).toEqual([["thread", "input"]]);
   });
 
-
   it("notifies a completion immediately and only once", () => {
     const { notify, observe } = harness();
     observe(working);
@@ -79,7 +79,12 @@ describe("createThreadNotificationGate", () => {
   it("notifies attention once and still notifies the subsequent completion", () => {
     const { notify, observe } = harness();
     observe(working);
-    const attention = { attention: "run-1:approval", settled: false, completedAt: null };
+    const attention = {
+      attention: "run-1:approval",
+      settled: false,
+      completedAt: null,
+      snoozed: false,
+    };
     observe(attention);
     expect(notify.mock.calls).toEqual([["thread", "input"]]);
     observe({ ...attention });
@@ -96,7 +101,7 @@ describe("createThreadNotificationGate", () => {
     const { notify, observe } = harness();
     observe(working);
     observe(completed(1));
-    observe({ attention: "run-1:limited", settled: false, completedAt: null });
+    observe({ attention: "run-1:limited", settled: false, completedAt: null, snoozed: false });
     observe(completed(1));
     expect(notify.mock.calls).toEqual([
       ["thread", "completion"],
