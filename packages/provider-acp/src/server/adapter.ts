@@ -7951,8 +7951,9 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                 runRuntimeCallbackAtGeneration(
                   promptGeneration,
                   Effect.gen(function* () {
+                    if (context.finalized) return;
                     yield* recordMetaContextUsage(requestedSessionId, result._meta);
-                    if (context.finalized || followsAgentWorkState) return;
+                    if (followsAgentWorkState) return;
                     // ACP v2 reports a failed prompt as an idle `error`, not an RPC error.
                     const idleError = result.stopReason === "error" && !context.interrupted;
                     const hiddenFailure =
