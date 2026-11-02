@@ -681,10 +681,6 @@ it.live("Stop settles an initial navigation before its request event", () =>
         return send(operation, input);
       });
       yield* viewer.input({ type: "stopLoading" });
-      const { sessions } = yield* manager.list({ threadId: scope.thread.threadId });
-      expect(sessions.find((session) => session.tabId === tabId)?.navStatus).toEqual({
-        _tag: "Idle",
-      });
       let settled = yield* PubSub.take(events);
       while (
         settled.type !== "navigated" ||
@@ -693,6 +689,10 @@ it.live("Stop settles an initial navigation before its request event", () =>
       ) {
         settled = yield* PubSub.take(events);
       }
+      const { sessions } = yield* manager.list({ threadId: scope.thread.threadId });
+      expect(sessions.find((session) => session.tabId === tabId)?.navStatus).toEqual({
+        _tag: "Idle",
+      });
     }),
   ).pipe(Effect.provide(layer)),
 );
@@ -788,16 +788,16 @@ it.live.each([
         input: {},
       });
       expect(status.loading).toBe(false);
+      const expectedStatus = blank ? "Idle" : "Success";
+      let settled = yield* PubSub.take(events);
+      while (settled.type !== "navigated" || settled.snapshot.navStatus._tag !== expectedStatus) {
+        settled = yield* PubSub.take(events);
+      }
       if (blank) {
         const { sessions } = yield* manager.list({ threadId: scope.thread.threadId });
         expect(sessions.find((session) => session.tabId === tabId)?.navStatus).toEqual({
           _tag: "Idle",
         });
-      }
-      const expectedStatus = blank ? "Idle" : "Success";
-      let settled = yield* PubSub.take(events);
-      while (settled.type !== "navigated" || settled.snapshot.navStatus._tag !== expectedStatus) {
-        settled = yield* PubSub.take(events);
       }
       if (settled.snapshot.navStatus._tag === "Success")
         expect(settled.snapshot.navStatus.url).toBe("http://localhost:5173/fixed");
