@@ -8,6 +8,7 @@ import {
   OrchestrationV2ProviderSession,
   type OrchestrationV2ProviderThread,
   OrchestrationV2RuntimeRequest,
+  type OrchestrationV2TurnItem,
   ProviderInstanceId,
   ProviderSessionId,
   ThreadId,
@@ -78,6 +79,17 @@ export const ProviderSessionReleaseReason = Schema.Literals([
   "server_shutdown",
 ]);
 export type ProviderSessionReleaseReason = typeof ProviderSessionReleaseReason.Type;
+
+// Tool calls that only a live provider process can end.
+const releasedToolCallTypes: ReadonlyArray<OrchestrationV2TurnItem["type"]> = [
+  "command_execution",
+  "dynamic_tool",
+];
+const activeTurnItemStatuses: ReadonlyArray<OrchestrationV2TurnItem["status"]> = [
+  "pending",
+  "running",
+  "waiting",
+];
 
 export class ProviderSessionOpenError extends Schema.TaggedError<ProviderSessionOpenError>()(
   "ProviderSessionOpenError",
@@ -741,8 +753,9 @@ export const layerWithOptions = (
         }
       });
 
-      // Read tasks as soon as the session leaves the live map, before a replacement reports its own.
-      // Keep OpenCode's roster: its background subagents share a server and can outlive the session.
+      // Read tasks and open tool calls as soon as the session leaves the live map, before a
+      // replacement reports its own. Keep OpenCode's roster: its background subagents share a
+      // server and can outlive the session.
       const readReleasedBackgroundTasks = Effect.fn(
         "ProviderSessionManager.readReleasedBackgroundTasks",
       )(
@@ -762,19 +775,29 @@ export const layerWithOptions = (
           if (input.detachedThreadId !== undefined) threadIds.add(input.detachedThreadId);
           const released = [];
           for (const threadId of threadIds) {
-            const projection = yield* projectionStore.getThreadRecords(threadId, [
-              "providerThreads",
-            ]);
+            const projection = yield* projectionStore.getThreadRecords(
+              threadId,
+              ["providerThreads", "turnItems"],
+              {
+                turnItemTypes: releasedToolCallTypes,
+                turnItemStatuses: activeTurnItemStatuses,
+              },
+            );
             for (const providerThread of projection.providerThreads) {
+              if (providerThread.providerSessionId !== providerSessionId) continue;
               const tasks = providerThread.pendingBackgroundTasks ?? [];
-              if (providerThread.providerSessionId !== providerSessionId || tasks.length === 0) {
-                continue;
-              }
+              const turnItemIds = new Set(
+                projection.turnItems
+                  .filter((item) => item.providerThreadId === providerThread.id)
+                  .map((item) => item.id),
+              );
+              if (tasks.length === 0 && turnItemIds.size === 0) continue;
               released.push({
                 threadId,
                 providerSessionId,
                 providerThreadId: providerThread.id,
                 taskIds: new Set(tasks.map((task) => task.taskId)),
+                turnItemIds,
               });
             }
           }
@@ -795,13 +818,15 @@ export const layerWithOptions = (
       >[number];
 
       // Dead processes cannot report task endings; stale rosters keep threads Waiting.
-      const writeReleasedBackgroundWorkEvents = (
-        released: ReadonlyArray<ReleasedBackgroundTasks>,
-      ) =>
-        Effect.forEach(
-          released,
-          ({ threadId, providerSessionId, providerThreadId, taskIds }) =>
-            Effect.gen(function* () {
+      const writeReleasedRosterEvents = ({
+        threadId,
+        providerSessionId,
+        providerThreadId,
+        taskIds,
+      }: ReleasedBackgroundTasks) =>
+        taskIds.size === 0
+          ? Effect.void
+          : Effect.gen(function* () {
               for (let attempt = 0; attempt < 3; attempt++) {
                 const projection = yield* projectionStore.getThreadRecords(threadId, [
                   "providerThreads",
@@ -840,7 +865,49 @@ export const layerWithOptions = (
                   providerThreadId,
                 },
               );
-            }),
+            });
+
+      // Tool calls cut off by the dead process never report an end either. Run finalization
+      // keeps them open for a late result, so they would stay Waiting forever.
+      const writeReleasedToolCallEvents = ({
+        threadId,
+        providerSessionId,
+        turnItemIds,
+      }: ReleasedBackgroundTasks) =>
+        turnItemIds.size === 0
+          ? Effect.void
+          : Effect.gen(function* () {
+              const projection = yield* projectionStore.getThreadRecords(threadId, ["turnItems"], {
+                turnItemTypes: releasedToolCallTypes,
+                turnItemStatuses: activeTurnItemStatuses,
+              });
+              const stillOpen = projection.turnItems.filter((item) => turnItemIds.has(item.id));
+              if (stillOpen.length === 0) return;
+              const now = yield* DateTime.now;
+              const events: Array<OrchestrationV2DomainEvent> = [];
+              for (const item of stillOpen) {
+                events.push({
+                  id: yield* idAllocator.allocate.event({ threadId, providerSessionId }),
+                  type: "turn-item.updated",
+                  threadId,
+                  ...(item.runId === null ? {} : { runId: item.runId }),
+                  ...(item.nodeId === null ? {} : { nodeId: item.nodeId }),
+                  occurredAt: now,
+                  payload: { ...item, status: "interrupted", completedAt: now, updatedAt: now },
+                });
+              }
+              yield* eventSink.write({ events });
+            });
+
+      const writeReleasedBackgroundWorkEvents = (
+        released: ReadonlyArray<ReleasedBackgroundTasks>,
+      ) =>
+        Effect.forEach(
+          released,
+          (entry) =>
+            writeReleasedRosterEvents(entry).pipe(
+              Effect.andThen(writeReleasedToolCallEvents(entry)),
+            ),
           { discard: true },
         );
 

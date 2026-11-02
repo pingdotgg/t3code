@@ -10,6 +10,7 @@ import {
   type OrchestrationV2ProviderCapabilities,
   type OrchestrationV2ProviderSession,
   type OrchestrationV2ProviderThread,
+  type OrchestrationV2TurnItem,
   type Project,
   ProjectId,
   ProviderDriverKind,
@@ -2510,6 +2511,128 @@ it.effect("ProviderSessionManagerV2 keeps the roster of a runtime whose tasks ca
       ),
     );
   }),
+);
+
+const seedToolCalls = (input: {
+  readonly threadId: ThreadId;
+  readonly providerThreads: ReadonlyArray<OrchestrationV2ProviderThread>;
+}) =>
+  Effect.gen(function* () {
+    const eventSink = yield* EventSink.EventSinkV2;
+    const idAllocator = yield* IdAllocator.IdAllocatorV2;
+    const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
+    const now = yield* DateTime.now;
+    const [releasedThread, otherThread] = input.providerThreads;
+    const toolCall = (
+      nativeItemId: string,
+      providerThread: OrchestrationV2ProviderThread,
+      status: "running" | "completed",
+      ordinal: number,
+    ) =>
+      ({
+        id: idAllocator.derive.turnItemFromProviderItem({ driver: CODEX_DRIVER, nativeItemId }),
+        threadId: input.threadId,
+        runId: null,
+        nodeId: null,
+        providerThreadId: providerThread.id,
+        providerTurnId: null,
+        nativeItemRef: null,
+        parentItemId: null,
+        ordinal,
+        status,
+        title: null,
+        startedAt: now,
+        completedAt: status === "completed" ? now : null,
+        updatedAt: now,
+        type: "dynamic_tool",
+        toolName: "mcp__t3-code__t3_worktree_handoff",
+        input: {},
+      }) satisfies OrchestrationV2TurnItem;
+    const items = {
+      cutOff: toolCall("handoff-cut-off", releasedThread!, "running", 1),
+      finished: toolCall("finished-call", releasedThread!, "completed", 2),
+      otherSession: toolCall("other-session-call", otherThread!, "running", 3),
+    };
+    yield* eventSink.write({
+      events: yield* Effect.forEach(Object.values(items), (payload) =>
+        Effect.gen(function* () {
+          return {
+            id: yield* idAllocator.allocate.event({ threadId: input.threadId }),
+            type: "turn-item.updated" as const,
+            threadId: input.threadId,
+            driver: CODEX_DRIVER,
+            occurredAt: now,
+            payload,
+          };
+        }),
+      ),
+    });
+    const statuses = Effect.gen(function* () {
+      const projection = yield* projectionStore.getThreadProjection(input.threadId);
+      const statusOf = (item: OrchestrationV2TurnItem) => {
+        const stored = projection.turnItems.find((candidate) => candidate.id === item.id);
+        return { status: stored?.status, completed: stored?.completedAt != null };
+      };
+      return {
+        cutOff: statusOf(items.cutOff),
+        finished: statusOf(items.finished),
+        otherSession: statusOf(items.otherSession),
+      };
+    });
+    return { statuses };
+  });
+
+// regression: #15993 a worktree handoff left its tool call running, so the thread stayed Waiting
+it.effect(
+  "ProviderSessionManagerV2 interrupts the open tool calls of a session a detach releases",
+  () =>
+    Effect.gen(function* () {
+      const state = yield* Ref.make(emptyState);
+      const effect = Effect.gen(function* () {
+        const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+        const { threadId, providerSessionId, providerThreads } =
+          yield* openSessionWithBackgroundCommand("provider-session-manager-detach-tool-calls");
+        const { statuses } = yield* seedToolCalls({ threadId, providerThreads });
+
+        yield* manager.detach({ providerSessionId, threadId, detail: "Workspace changed." });
+
+        assert.deepStrictEqual(yield* statuses, {
+          cutOff: { status: "interrupted", completed: true },
+          finished: { status: "completed", completed: true },
+          otherSession: { status: "running", completed: false },
+        });
+      });
+
+      yield* effect.pipe(
+        Effect.provide(
+          layerTest({ state, idleTimeoutMs: 60_000, capabilities: ExclusiveCapabilities }),
+        ),
+      );
+    }),
+);
+
+it.effect(
+  "ProviderSessionManagerV2 keeps the tool calls of a runtime whose tasks can outlive it",
+  () =>
+    Effect.gen(function* () {
+      const state = yield* Ref.make(emptyState);
+      const effect = Effect.gen(function* () {
+        const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+        const { threadId, providerSessionId, providerThreads } =
+          yield* openSessionWithBackgroundCommand("provider-session-manager-outliving-tool-calls");
+        const { statuses } = yield* seedToolCalls({ threadId, providerThreads });
+
+        yield* manager.close(providerSessionId);
+
+        assert.deepStrictEqual((yield* statuses).cutOff, { status: "running", completed: false });
+      });
+
+      yield* effect.pipe(
+        Effect.provide(
+          layerTest({ state, idleTimeoutMs: 60_000, backgroundTasksEndWithProcess: false }),
+        ),
+      );
+    }),
 );
 
 // regression: #19355 settled and idle-released threads stayed Waiting

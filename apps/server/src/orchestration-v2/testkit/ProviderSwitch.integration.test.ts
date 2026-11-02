@@ -8,6 +8,7 @@ import {
   MessageId,
   type ModelSelection,
   type OrchestrationV2Command,
+  type OrchestrationV2DomainEvent,
   type OrchestrationV2ProviderCapabilities,
   type OrchestrationV2ProviderSession,
   type OrchestrationV2ProviderThread,
@@ -22,6 +23,7 @@ import {
   TurnItemId,
   ProviderDriverKind,
 } from "@t3tools/contracts";
+import { derivePendingBackgroundWork } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -119,6 +121,12 @@ function makeTestAdapter(input: {
   readonly subagentOnlyBackgroundWork?: boolean;
   readonly holdFirstTurn?: Deferred.Deferred<void>;
   readonly releaseFirstTurn?: Deferred.Deferred<void>;
+  /** A tool call the held turn reports running before it holds. */
+  readonly heldRunningToolCall?: {
+    readonly id: TurnItemId;
+    readonly toolName: string;
+  };
+  readonly backgroundTasksEndWithProcess?: true;
 }): ProviderAdapter.ProviderAdapterV2["Service"] {
   return {
     instanceId: input.instanceId,
@@ -148,6 +156,9 @@ function makeTestAdapter(input: {
           providerSessionId: sessionInput.providerSessionId,
           providerSession,
           events: Stream.fromPubSub(events),
+          ...(input.backgroundTasksEndWithProcess === undefined
+            ? {}
+            : { backgroundTasksEndWithProcess: input.backgroundTasksEndWithProcess }),
           ...(input.pendingBackgroundWork === undefined
             ? {}
             : {
@@ -263,18 +274,59 @@ function makeTestAdapter(input: {
                     : { nativeThreadHasTurns: turnInput.nativeThreadHasTurns }),
                 },
               ]);
+              const providerTurnId = ProviderTurnId.make(
+                `provider-turn:${input.driver}:${turnInput.threadId}:${turnInput.runOrdinal}`,
+              );
               if (
                 turnInput.runOrdinal === (input.holdRunOrdinal ?? 1) &&
                 input.holdFirstTurn !== undefined
               ) {
+                if (input.heldRunningToolCall !== undefined) {
+                  const startedAt = yield* DateTime.now;
+                  yield* PubSub.publish(events, {
+                    type: "provider_turn.updated",
+                    driver: input.driver,
+                    providerTurn: {
+                      id: providerTurnId,
+                      providerThreadId: turnInput.providerThread.id,
+                      nodeId: turnInput.rootNodeId,
+                      runAttemptId: turnInput.attemptId,
+                      nativeTurnRef: null,
+                      ordinal: turnInput.runOrdinal,
+                      status: "running",
+                      startedAt,
+                      completedAt: null,
+                    },
+                  });
+                  yield* PubSub.publish(events, {
+                    type: "turn_item.updated",
+                    driver: input.driver,
+                    turnItem: {
+                      id: input.heldRunningToolCall.id,
+                      threadId: turnInput.threadId,
+                      runId: turnInput.runId,
+                      nodeId: turnInput.rootNodeId,
+                      providerThreadId: turnInput.providerThread.id,
+                      providerTurnId,
+                      nativeItemRef: null,
+                      parentItemId: null,
+                      ordinal: turnInput.runOrdinal * 100 + 1,
+                      status: "running",
+                      title: null,
+                      startedAt,
+                      completedAt: null,
+                      updatedAt: startedAt,
+                      type: "dynamic_tool",
+                      toolName: input.heldRunningToolCall.toolName,
+                      input: {},
+                    },
+                  });
+                }
                 yield* Deferred.succeed(input.holdFirstTurn, undefined);
                 if (input.releaseFirstTurn === undefined) return;
                 yield* Deferred.await(input.releaseFirstTurn);
               }
               const eventTime = yield* DateTime.now;
-              const providerTurnId = ProviderTurnId.make(
-                `provider-turn:${input.driver}:${turnInput.threadId}:${turnInput.runOrdinal}`,
-              );
               const terminalStatus = input.failedRunOrdinals?.has(turnInput.runOrdinal)
                 ? "failed"
                 : input.interruptedRunOrdinals?.has(turnInput.runOrdinal)
@@ -1758,6 +1810,136 @@ describe("orchestration v2 provider switching", () => {
         );
       }),
     ),
+  );
+
+  // regression: #15993 the agent releases its own Claude session through a tool call, by
+  // handing the thread off to a worktree or by switching its provider. Nothing is left to
+  // report how the call ended, so it stayed running and the thread stayed Waiting.
+  it.live.each(["handoff", "switch"] as const)(
+    "interrupts a tool call that a %s cuts off by releasing its session",
+    (release) =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const key = `${release}-cuts-off-tool-call`;
+          const worktreePath = yield* checkpointWorkspace(key);
+          const capturedTurns = yield* Ref.make<ReadonlyArray<CapturedTurn>>([]);
+          const started = yield* Deferred.make<void>();
+          const toolCallId = TurnItemId.make(`turn-item:${key}`);
+          const scenarioThreadId = ThreadId.make(`thread:${key}`);
+          const layerRegistry = ProviderAdapterRegistry.layerFromAdapters([
+            makeTestAdapter({
+              instanceId: CLAUDE_MODEL_SELECTION.instanceId,
+              driver: CLAUDE_DRIVER,
+              capabilities: ClaudeProviderCapabilitiesV2,
+              modelSelection: CLAUDE_MODEL_SELECTION,
+              responseByRunOrdinal: {},
+              capturedTurns,
+              holdFirstTurn: started,
+              heldRunningToolCall: {
+                id: toolCallId,
+                toolName:
+                  release === "handoff"
+                    ? "mcp__t3-code__t3_worktree_handoff"
+                    : "mcp__t3-code__t3_thread_configure",
+              },
+              backgroundTasksEndWithProcess: true,
+            }),
+            makeTestAdapter({
+              instanceId: CODEX_MODEL_SELECTION.instanceId,
+              driver: CODEX_DRIVER,
+              capabilities: CodexProviderCapabilitiesV2,
+              modelSelection: CODEX_MODEL_SELECTION,
+              responseByRunOrdinal: {},
+              capturedTurns,
+            }),
+          ]);
+          yield* Effect.gen(function* () {
+            const orchestrator = yield* Orchestrator.OrchestratorV2;
+            const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+            const awaitEvent = (predicate: (event: OrchestrationV2DomainEvent) => boolean) =>
+              orchestrator.streamDomainEvents.pipe(
+                Stream.filter(predicate),
+                Stream.take(1),
+                Stream.runDrain,
+                Effect.forkScoped,
+              );
+            yield* orchestrator.dispatch({
+              type: "thread.create",
+              createdBy: "user",
+              creationSource: "web",
+              commandId: CommandId.make(`command:${key}:create`),
+              threadId: scenarioThreadId,
+              projectId: ProjectId.make(`project:${key}`),
+              title: "Tool call releases its session",
+              modelSelection: CLAUDE_MODEL_SELECTION,
+              runtimeMode: "full-access",
+              interactionMode: "default",
+              branch: null,
+              worktreePath: null,
+            });
+            const toolCallRunning = yield* awaitEvent(
+              (event) =>
+                event.type === "turn-item.updated" &&
+                event.payload.id === toolCallId &&
+                event.payload.status === "running",
+            );
+            yield* orchestrator.dispatch({
+              type: "message.dispatch",
+              createdBy: "user",
+              creationSource: "web",
+              commandId: CommandId.make(`command:${key}:message`),
+              threadId: scenarioThreadId,
+              messageId: MessageId.make(`message:${key}`),
+              text: "Release this session",
+              attachments: [],
+              modelSelection: CLAUDE_MODEL_SELECTION,
+              dispatchMode: { type: "start_immediately" },
+            });
+            yield* Deferred.await(started);
+            yield* Fiber.join(toolCallRunning);
+
+            const runFailed = yield* awaitEvent(
+              (event) => event.type === "run.updated" && event.payload.status === "failed",
+            );
+            yield* orchestrator.dispatch(
+              release === "handoff"
+                ? {
+                    type: "thread.metadata.update",
+                    commandId: CommandId.make(`command:${key}:release`),
+                    threadId: scenarioThreadId,
+                    branch: `t3/${key}`,
+                    worktreePath,
+                    expectedWorktreePath: null,
+                  }
+                : {
+                    type: "provider.switch",
+                    commandId: CommandId.make(`command:${key}:release`),
+                    threadId: scenarioThreadId,
+                    modelSelection: CODEX_MODEL_SELECTION,
+                  },
+            );
+            yield* worker.drain();
+            yield* Fiber.join(runFailed);
+
+            const projection = yield* orchestrator.getThreadProjection(scenarioThreadId);
+            const toolCall = projection.turnItems.find((item) => item.id === toolCallId);
+            assert.equal(toolCall?.status, "interrupted");
+            assert.isNotNull(toolCall?.completedAt);
+            assert.deepEqual(
+              derivePendingBackgroundWork({
+                latestRun: projection.runs.at(-1),
+                providerThreads: projection.providerThreads,
+                turnItems: projection.turnItems,
+                activeProviderThreadId: projection.thread.activeProviderThreadId,
+                runs: projection.runs,
+              }),
+              [],
+            );
+          }).pipe(
+            Effect.provide(ProviderReplayHarness.layerWithRegistry({ name: key }, layerRegistry)),
+          );
+        }),
+      ),
   );
 
   it.live("checks the queued provider's capability while the current provider stays running", () =>
