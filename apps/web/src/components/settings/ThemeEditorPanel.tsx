@@ -666,6 +666,9 @@ export function ThemeEditorPanel({
           : inspectThemeRoleAtElement(target);
       if (!inspection) return;
       clearHover();
+      // preventDefault keeps focus put; blur so a focused color field commits its draft before
+      // selectThemeRole can switch modes and unmount it.
+      if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
       selectThemeRole(inspection.role, true);
       shouldDisarmAfterClick = true;
     };
