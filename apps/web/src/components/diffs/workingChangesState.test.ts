@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 import { hydratePartialDiff } from "@pierre/diffs";
+import { parsePatchFiles } from "@pierre/diffs/utils/parsePatchFiles";
 import {
   reviewPatchHunks,
   reviewSelectedLinesPatch,
@@ -219,6 +220,11 @@ describe("optimistic working changes", () => {
     });
     expect(edits(next.staged)).toEqual(["+extra"]);
     expect(edits(next.unstaged)).toEqual(["-beta", "+BETA"]);
+    for (const scope of [next.staged, next.unstaged]) {
+      for (const patch of scope.hunksByPath.get("file.txt")!) {
+        expect(parsePatchFiles(patch, undefined, true)[0]?.files).toHaveLength(1);
+      }
+    }
     expect(next.unstaged.files[0]?.additionLines).toEqual([
       "alpha\n",
       "BETA\n",

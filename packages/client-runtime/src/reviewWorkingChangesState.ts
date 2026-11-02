@@ -98,7 +98,7 @@ function optimisticFile(
               .join(""),
       )
       .join("");
-    return `${header}${hunk.hunkSpecs}\n${body}`;
+    return `${header}${hunk.hunkSpecs?.trimEnd()}\n${body}`;
   });
   const patch = header + hunks.map((hunk) => hunk.slice(header.length)).join("");
   const file = parsePatchFiles(patch, `optimistic:${Hash.string(patch)}`)[0]?.files[0];
