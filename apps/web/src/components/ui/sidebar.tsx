@@ -267,8 +267,10 @@ function Sidebar({
   variant = "sidebar",
   collapsible = "offcanvas",
   revealOnHover = false,
+  hoverAnimationDurationMs = 0,
   resizable = false,
   className,
+  style,
   children,
   ...props
 }: React.ComponentProps<"div"> & {
@@ -276,6 +278,7 @@ function Sidebar({
   variant?: "sidebar" | "floating" | "inset";
   collapsible?: "offcanvas" | "icon" | "none";
   revealOnHover?: boolean;
+  hoverAnimationDurationMs?: number;
   resizable?: boolean | SidebarResizableOptions;
 }) {
   const { isMobile, state, openMobile, setOpenMobile, setMobileSheetElement } = useSidebar();
@@ -284,6 +287,12 @@ function Sidebar({
   const { ref: peekRef, ...peek } = useSidebarPeek(
     revealOnHover && offcanvasCollapsed && side === "left" && hasHover,
   );
+  const prefersReducedMotion = useMediaQuery("(prefers-reduced-motion: reduce)");
+  const hoverTransition = offcanvasCollapsed && peek.hasRevealed;
+  const hoverDurationMs = prefersReducedMotion ? 0 : hoverAnimationDurationMs;
+  const containerStyle = hoverTransition
+    ? ({ ...style, "--panel-animation-duration": `${hoverDurationMs}ms` } as React.CSSProperties)
+    : style;
 
   const resolvedResizable = resolveSidebarResizable({ collapsible, isMobile, resizable });
   const instanceContextValue: SidebarInstanceContextProps = {
@@ -301,6 +310,7 @@ function Sidebar({
             className,
           )}
           data-slot="sidebar"
+          style={style}
           {...props}
         >
           {children}
@@ -340,6 +350,7 @@ function Sidebar({
                 SIDEBAR_TITLEBAR_CONTROL_SIZE,
                 side === "left" ? "pl-safe" : "pr-safe",
               )}
+              style={style}
               {...props}
             >
               {children}
@@ -394,17 +405,22 @@ function Sidebar({
         <div
           className={cn(
             "fixed inset-y-0 z-10 hidden h-svh w-(--sidebar-width) md:flex",
-            "[[data-panel-animations=true]_&]:transition-[left,right,width] [[data-panel-animations=true]_&]:[transition-duration:var(--panel-animation-duration)] [[data-panel-animations=true]_&]:ease-out",
+            "[[data-panel-animations=true]_&]:transition-[translate,width] [[data-panel-animations=true]_&]:[transition-duration:var(--panel-animation-duration)] [[data-panel-animations=true]_&]:ease-out",
             side === "left"
-              ? "left-0 group-data-[collapsible=offcanvas]:left-[calc(var(--sidebar-width)*-1)] group-data-[revealed=true]:left-0"
-              : "right-0 group-data-[collapsible=offcanvas]:right-[calc(var(--sidebar-width)*-1)]",
+              ? "left-0 group-data-[collapsible=offcanvas]:-translate-x-full group-data-[revealed=true]:translate-x-0"
+              : "right-0 group-data-[collapsible=offcanvas]:translate-x-full",
             variant === "floating" || variant === "inset"
               ? "p-2 group-data-[collapsible=icon]:w-[calc(var(--sidebar-width-icon)+(--spacing(4))+2px)]"
               : "group-data-[collapsible=icon]:w-(--sidebar-width-icon) group-data-[side=left]:border-r group-data-[side=right]:border-l",
             className,
-            peek.revealed && "z-[45] shadow-xl",
+            hoverTransition && "z-[45]",
+            hoverTransition &&
+              hoverDurationMs > 0 &&
+              "transition-[translate] duration-(--panel-animation-duration) ease-out",
+            peek.revealed && "shadow-xl",
           )}
           data-slot="sidebar-container"
+          style={containerStyle}
           {...props}
         >
           <div

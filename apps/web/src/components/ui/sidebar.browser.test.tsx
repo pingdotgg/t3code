@@ -1,5 +1,6 @@
 import { page, userEvent } from "vite-plus/test/browser";
 import { describe, expect, it, vi } from "vite-plus/test";
+import type { CSSProperties } from "react";
 
 import { act, fakeTimers, render } from "../../../test/render";
 import { Sidebar, SidebarProvider, SidebarRail, SidebarTrigger, useSidebar } from "./sidebar";
@@ -20,12 +21,23 @@ function Harness(props: {
   readonly onResize?: (width: number) => void;
   readonly revealOnHover?: boolean;
   readonly defaultOpen?: boolean;
+  readonly panelAnimationDurationMs?: number;
+  readonly hoverAnimationDurationMs?: number;
 }) {
   return (
-    <SidebarProvider defaultOpen={props.defaultOpen ?? true}>
+    <SidebarProvider
+      defaultOpen={props.defaultOpen ?? true}
+      data-panel-animations={props.panelAnimationDurationMs ? "true" : "false"}
+      style={
+        {
+          "--panel-animation-duration": `${props.panelAnimationDurationMs ?? 0}ms`,
+        } as CSSProperties
+      }
+    >
       <Sidebar
         collapsible="offcanvas"
         revealOnHover={props.revealOnHover ?? false}
+        hoverAnimationDurationMs={props.hoverAnimationDurationMs ?? 0}
         resizable={{
           minWidth: 200,
           maxWidth: 600,
@@ -53,6 +65,66 @@ function Harness(props: {
 }
 
 describe("Sidebar", () => {
+  it.each([
+    { panel: 0, hover: 200, reduced: false, expected: 200 },
+    { panel: 300, hover: 75, reduced: false, expected: 75 },
+    { panel: 300, hover: 0, reduced: false, expected: 0 },
+    { panel: 0, hover: 200, reduced: true, expected: 0 },
+  ])(
+    "keeps hover enter/exit at $expected ms with panel=$panel, hover=$hover, reduced=$reduced",
+    async ({ panel, hover, reduced, expected }) => {
+      await page.viewport(1280, 800);
+      const matchMedia = window.matchMedia.bind(window);
+      using _media = vi.spyOn(window, "matchMedia").mockImplementation((query) => {
+        const result = matchMedia(query);
+        return query === "(prefers-reduced-motion: reduce)"
+          ? Object.defineProperty(result, "matches", { value: reduced })
+          : result;
+      });
+      await using screen = await render(
+        <Harness
+          defaultOpen={false}
+          revealOnHover
+          panelAnimationDurationMs={panel}
+          hoverAnimationDurationMs={hover}
+        />,
+        {
+          router: false /* no routes involved */,
+        },
+      );
+      using _timers = fakeTimers();
+      const sidebar = screen.container.querySelector<HTMLElement>('[data-slot="sidebar"]')!;
+      const container = sidebar.querySelector<HTMLElement>('[data-slot="sidebar-container"]')!;
+      const gap = sidebar.querySelector<HTMLElement>('[data-slot="sidebar-gap"]')!;
+      const edge = screen.container.querySelector<HTMLElement>('[data-slot="sidebar-hover-edge"]')!;
+      expect(getComputedStyle(container).transitionDuration).toBe(`${panel / 1000}s`);
+      edge.dispatchEvent(new PointerEvent("pointerover", { bubbles: true, pointerType: "mouse" }));
+      await act(() => vi.advanceTimersByTimeAsync(110));
+      expect(sidebar.inert).toBe(false);
+      expect(getComputedStyle(container).transitionDuration).toBe(`${expected / 1000}s`);
+      expect(gap.getBoundingClientRect().width).toBe(0);
+      sidebar.dispatchEvent(
+        new PointerEvent("pointerout", {
+          bubbles: true,
+          pointerType: "mouse",
+          relatedTarget: document.body,
+        }),
+      );
+      await act(() => vi.advanceTimersByTimeAsync(200));
+      expect(sidebar.inert).toBe(true);
+      expect(getComputedStyle(container).transitionDuration).toBe(`${expected / 1000}s`);
+      const trigger = screen.container.querySelector<HTMLButtonElement>(
+        '[data-sidebar="trigger"]',
+      )!;
+      await act(() => trigger.click());
+      expect(sidebar.dataset.state).toBe("expanded");
+      expect(getComputedStyle(container).transitionDuration).toBe(`${panel / 1000}s`);
+      await act(() => trigger.click());
+      expect(sidebar.dataset.state).toBe("collapsed");
+      expect(getComputedStyle(container).transitionDuration).toBe(`${panel / 1000}s`);
+    },
+  );
+
   it("peeks only for mouse hover, overlays the chat, and keeps the explicit toggle available", async () => {
     await page.viewport(1280, 800);
     await using screen = await render(<Harness defaultOpen={false} revealOnHover />, {

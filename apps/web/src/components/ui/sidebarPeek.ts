@@ -2,7 +2,7 @@ import { useEffect, useState, useSyncExternalStore } from "react";
 import { subscribeContextMenu } from "~/localApi";
 
 function createSidebarPeek() {
-  let revealed = false;
+  let snapshot = { revealed: false, hasRevealed: false };
   let inside = false;
   let keyboard = false;
   let portalFocused = false;
@@ -12,9 +12,10 @@ function createSidebarPeek() {
   let timer: ReturnType<typeof setTimeout> | undefined;
   const listeners = new Set<() => void>();
   const clear = () => clearTimeout(timer);
-  const publish = (value: boolean) => {
+  const publish = (value: boolean, reset = false) => {
     clear();
-    if (revealed === value) return;
+    const hasRevealed = !reset && (value || snapshot.hasRevealed);
+    if (snapshot.revealed === value && snapshot.hasRevealed === hasRevealed) return;
     if (
       !value &&
       sidebar?.dataset.state === "collapsed" &&
@@ -26,7 +27,7 @@ function createSidebarPeek() {
       ).find((element) => !sidebar?.contains(element));
       trigger?.focus({ preventScroll: true });
     }
-    revealed = value;
+    snapshot = { revealed: value, hasRevealed };
     for (const listener of listeners) listener();
   };
   const hide = () => {
@@ -52,7 +53,7 @@ function createSidebarPeek() {
         listeners.delete(listener);
       };
     },
-    getSnapshot: () => revealed,
+    getSnapshot: () => snapshot,
     ref(node: HTMLDivElement | null) {
       sidebar = node;
       return () => {
@@ -76,7 +77,7 @@ function createSidebarPeek() {
           ?.querySelector('[data-slot="sidebar-container"]')
           ?.getBoundingClientRect();
         contextMenuOpen =
-          revealed &&
+          snapshot.revealed &&
           position !== null &&
           rect !== undefined &&
           position.x >= rect.left &&
@@ -108,7 +109,7 @@ function createSidebarPeek() {
         inside = false;
         portalFocused = false;
         contextMenuOpen = false;
-        publish(false);
+        publish(false, true);
       };
     },
     edgeEnter(event: React.PointerEvent) {
@@ -144,8 +145,12 @@ function createSidebarPeek() {
 
 export function useSidebarPeek(enabled: boolean) {
   const [peek] = useState(createSidebarPeek);
-  const revealed = useSyncExternalStore(peek.subscribe, peek.getSnapshot, peek.getSnapshot);
+  const snapshot = useSyncExternalStore(peek.subscribe, peek.getSnapshot, peek.getSnapshot);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- connects pointer/focus dismissal to the window while edge reveal is available
   useEffect(() => (enabled ? peek.connect() : undefined), [enabled, peek]);
-  return { ...peek, revealed: enabled && revealed };
+  return {
+    ...peek,
+    revealed: enabled && snapshot.revealed,
+    hasRevealed: enabled && snapshot.hasRevealed,
+  };
 }

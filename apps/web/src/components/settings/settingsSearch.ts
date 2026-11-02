@@ -367,6 +367,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["sidebar auto appear hover peek hidden left edge mouse"],
   },
   {
+    id: "sidebar-hover-animation-speed",
+    title: "Hover animation speed",
+    to: "/settings/appearance",
+    searchTerms: ["sidebar transition duration separate override slide in out animation"],
+  },
+  {
     id: "environment-identification",
     title: "Environment identification",
     to: "/settings/appearance",
