@@ -36,6 +36,7 @@ export function setMarkdownTaskChecked(
 
 function plainText(node: Nodes): string {
   if (node.type === "text" || node.type === "inlineCode") return node.value;
+  if (node.type === "break") return "\n";
   return "children" in node ? node.children.map(plainText).join("") : "";
 }
 
@@ -65,17 +66,16 @@ export function markdownTaskListItems(
 const letters = (text: string) => text.replace(/[^\p{L}\p{N}]/gu, "");
 
 /**
- * Offset of the `index`th task marker, or null when a renderer's item text shows it counted
- * another item. Android cuts that text at the first line break; iOS sends the whole paragraph.
+ * Offset of the task marker whose item a renderer reports by its text, or null when none or
+ * several match. Native renderers restart their checkbox count after a code block or table and
+ * cut the text at a line break, so the count is unreliable and the text is matched line by line.
  */
-export function markdownTaskMarkerOffset(
-  markdown: string,
-  index: number,
-  renderedText: string,
-): number | null {
-  const item = markdownTaskListItems(markdown)[index];
-  if (item?.markerOffset == null) return null;
+export function markdownTaskMarkerOffset(markdown: string, renderedText: string): number | null {
   const rendered = letters(renderedText);
-  const source = letters(item.text);
-  return rendered.startsWith(source) || source.startsWith(rendered) ? item.markerOffset : null;
+  if (rendered === "") return null;
+  const matches = markdownTaskListItems(markdown).filter((item) => {
+    const lines = item.text.split("\n");
+    return lines.some((_, end) => letters(lines.slice(0, end + 1).join("")) === rendered);
+  });
+  return matches.length === 1 ? (matches[0]?.markerOffset ?? null) : null;
 }

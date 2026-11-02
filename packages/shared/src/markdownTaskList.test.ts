@@ -48,11 +48,33 @@ describe("markdownTaskListItems", () => {
 });
 
 describe("markdownTaskMarkerOffset", () => {
-  it("matches a renderer's item text cut at a line break, and rejects another item's", () => {
-    const markdown = "- [ ] Wrapped\n  item\n- [ ] Hard  \n  break\n";
-    expect(markdownTaskMarkerOffset(markdown, 0, "Wrapped")).toBe(2);
-    expect(markdownTaskMarkerOffset(markdown, 0, "Wrapped item")).toBe(2);
-    expect(markdownTaskMarkerOffset(markdown, 1, "Hard")).toBe(23);
-    expect(markdownTaskMarkerOffset(markdown, 1, "Wrapped")).toBeNull();
+  it("finds the tapped item by its text, cut at any line break, and refuses to guess", () => {
+    const markdown = [
+      "- [ ] Tests",
+      "```ts",
+      "code",
+      "```",
+      "- [ ] Tests pass on Android",
+      "- [ ] Wrapped",
+      "  item",
+      "- [ ] Hard  ",
+      "  break",
+      "- [ ] N/A",
+      "- [ ] N/A",
+      "- [ ] 🚀",
+    ].join("\n");
+    const marker = (text: string) => markdown.indexOf(`[ ] ${text}`);
+
+    // After the code block the native count restarts, so only the text identifies the item.
+    expect(markdownTaskMarkerOffset(markdown, "Tests pass on Android")).toBe(
+      marker("Tests pass on Android"),
+    );
+    expect(markdownTaskMarkerOffset(markdown, "Tests")).toBe(marker("Tests\n"));
+    expect(markdownTaskMarkerOffset(markdown, "Wrapped")).toBe(marker("Wrapped"));
+    expect(markdownTaskMarkerOffset(markdown, "Wrapped item")).toBe(marker("Wrapped"));
+    expect(markdownTaskMarkerOffset(markdown, "Hard")).toBe(marker("Hard"));
+    expect(markdownTaskMarkerOffset(markdown, "N/A")).toBeNull();
+    expect(markdownTaskMarkerOffset(markdown, "🚀")).toBeNull();
+    expect(markdownTaskMarkerOffset(markdown, "")).toBeNull();
   });
 });
