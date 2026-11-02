@@ -118,6 +118,8 @@ describe("workspaceRelativeFilePath", () => {
     ["/C:/Repo/src/main.ts", "c:\\repo", "src/main.ts"],
     ["C:\\Repo\\src\\main.ts", "/c:/repo", "src/main.ts"],
     ["\\\\SERVER\\Share\\Repo\\src\\main.ts", "\\\\server\\share\\repo", "src/main.ts"],
+    ["\\\\SERVER\\Share\\Repo\\src\\main.ts", "//server/share/repo", "src/main.ts"],
+    ["//server/share/a\\b.txt", "//server/share", "a\\b.txt"],
     ["\\\\server\\share\\repo\\..\\notes.md", "\\\\server\\share\\repo", null],
   ])("relates %s to %s", (path, workspaceRoot, relativePath) => {
     expect(workspaceRelativeFilePath(path, workspaceRoot)).toBe(relativePath);

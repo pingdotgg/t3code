@@ -95,7 +95,9 @@ export function workspaceRelativeFilePath(
   workspaceRoot: string | null | undefined,
 ): string | null {
   if (!workspaceRoot) return null;
-  const caseInsensitive = isWindowsAbsolutePath(stripSlashPrefixedWindowsDrive(workspaceRoot));
+  const caseInsensitive =
+    isWindowsAbsolutePath(stripSlashPrefixedWindowsDrive(workspaceRoot)) ||
+    (isNetworkPath(workspaceRoot) && isUncPath(path));
   const normalizedPath = caseInsensitive
     ? stripSlashPrefixedWindowsDrive(path.replaceAll("\\", "/"))
     : path;
