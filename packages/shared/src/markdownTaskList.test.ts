@@ -75,5 +75,11 @@ describe("markdownTaskMarkerOffset", () => {
       source.indexOf("[ ] Revert"),
     );
     expect(markdownTaskMarkerOffset(source, "Deploy", "- [ ] Deploy")).toBeNull();
+
+    // HTML rewrites can drop one item and add another, keeping the count but shifting positions.
+    const shifted =
+      "- [ ] <details><summary>Run</summary></details>\n- [ ] second\n\n<img src=a.png>\n- [ ] hidden";
+    const shiftedRendered = "- [ ] second\n\n![](a.png)\n\n- [ ] hidden";
+    expect(markdownTaskMarkerOffset(shifted, "hidden", shiftedRendered)).toBeNull();
   });
 });

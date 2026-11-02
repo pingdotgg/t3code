@@ -41,8 +41,8 @@ function plainText(node: Nodes): string {
 }
 
 /**
- * Task list items in document order, the order renderers number their checkboxes in. `text` is
- * the item's first paragraph as plain text, to check a renderer's item against the source.
+ * Task list items in document order. `text` is the item's first paragraph as plain text, with a
+ * `\n` at each line break, to find a renderer's item by its text.
  */
 function markdownTaskListItems(
   markdown: string,
@@ -87,5 +87,15 @@ export function markdownTaskMarkerOffset(
       ? [index]
       : [];
   });
-  return matches.length === 1 ? (items[matches[0]!]?.markerOffset ?? null) : null;
+  const item = matches.length === 1 ? items[matches[0]!] : undefined;
+  // Rewrites only shorten or drop text (links, `<br>`); an item they can't explain is another one.
+  return item && within(rendered, letters(item.text)) ? item.markerOffset : null;
+}
+
+/** Whether `part`'s characters all appear in `whole`, in order. */
+function within(part: string, whole: string): boolean {
+  const wanted = [...part];
+  let found = 0;
+  for (const char of whole) if (char === wanted[found]) found++;
+  return found === wanted.length;
 }
