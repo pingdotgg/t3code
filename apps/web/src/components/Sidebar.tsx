@@ -3493,11 +3493,11 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                             }
                             snoozeWakeLabelText={
                               section === "snoozed" && thread.snoozedUntil != null
-                                ? `Until ${snoozeWakeShortLabel(
+                                ? snoozeWakeShortLabel(
                                     thread.snoozedUntil,
                                     new Date(),
                                     timestampFormat,
-                                  )}`
+                                  )
                                 : null
                             }
                             wokeAt={threadWokeAt(thread, { now: snoozeNow })}
