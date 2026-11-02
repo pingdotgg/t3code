@@ -729,7 +729,7 @@ export const make = Effect.gen(function* () {
   const projectStore = yield* ProjectStore.ProjectStoreV2;
   const baseDir = path.resolve(serverConfig.baseDir);
   const worktreesDir = path.resolve(serverConfig.worktreesDir);
-  const foldWorktreeCase = (yield* HostProcess.Platform) === "win32";
+  const windows = (yield* HostProcess.Platform) === "win32";
   const hostEnvironment = yield* HostProcess.Environment;
   const homeDir = yield* HostProcess.HomeDirectory;
   // `/private/tmp` is what macOS reports for sessions started in `/tmp`.
@@ -746,14 +746,14 @@ export const make = Effect.gen(function* () {
   const isExcludedProjectPath = (candidatePath: string) =>
     excludedProjectRoots.has(normalizeProjectPathForComparison(candidatePath)) ||
     excludedProjectAncestors.some((ancestor) =>
-      normalizeForWorktreeMatch(candidatePath, foldWorktreeCase).startsWith(
-        normalizeForWorktreeMatch(ancestor, foldWorktreeCase),
+      normalizeForWorktreeMatch(candidatePath, windows).startsWith(
+        normalizeForWorktreeMatch(ancestor, windows),
       ),
     ) ||
-    normalizeForWorktreeMatch(candidatePath, foldWorktreeCase).startsWith(
-      normalizeForWorktreeMatch(baseDir, foldWorktreeCase),
+    normalizeForWorktreeMatch(candidatePath, windows).startsWith(
+      normalizeForWorktreeMatch(baseDir, windows),
     ) ||
-    isT3ManagedWorktree(candidatePath, worktreesDir, foldWorktreeCase);
+    isT3ManagedWorktree(candidatePath, worktreesDir, windows);
 
   const listDirectory = (directory: string) =>
     fileSystem.readDirectory(directory).pipe(Effect.orElseSucceed((): ReadonlyArray<string> => []));
@@ -1306,8 +1306,11 @@ export const make = Effect.gen(function* () {
       const seenHomes = new Set<string>();
       for (const { instanceId, config: instance } of instances) {
         const environmentHome = (name: "CLAUDE_CONFIG_DIR" | "CODEX_HOME") => {
+          // Windows merges variable names case-insensitively; discovery must match the merge.
           const configured = instance.environment?.findLast(
-            (variable) => variable.name === name,
+            (variable) =>
+              typeof variable.value === "string" &&
+              (windows ? variable.name.toUpperCase() === name : variable.name === name),
           )?.value;
           return typeof configured === "string" ? configured : hostEnvironment[name];
         };

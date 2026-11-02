@@ -9,6 +9,7 @@ import {
   ProviderInstanceId,
   type ServerSettings as ContractServerSettings,
 } from "@t3tools/contracts";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import { symlinksSupported } from "@t3tools/shared/testing/symlinks";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -49,6 +50,9 @@ interface ScannerTestInput {
   readonly piAgentDir?: string;
   readonly importedWorkspaceRoots?: ReadonlyArray<string>;
   readonly configBaseDir?: string;
+  readonly hostPlatform?: NodeJS.Platform;
+  readonly hostEnvironment?: NodeJS.ProcessEnv;
+  readonly hostHomeDirectory?: string;
   readonly providerInstances?: ContractServerSettings["providerInstances"];
 }
 
@@ -88,6 +92,15 @@ const layerScannerTest = (input: ScannerTestInput) =>
           input.configBaseDir ?? { prefix: "t3code-scanner-config-" },
         ),
         layerProjectStore(input.importedWorkspaceRoots ?? []),
+        ...(input.hostPlatform === undefined
+          ? []
+          : [Layer.succeed(HostProcess.Platform, input.hostPlatform)]),
+        ...(input.hostEnvironment === undefined
+          ? []
+          : [Layer.succeed(HostProcess.Environment, input.hostEnvironment)]),
+        ...(input.hostHomeDirectory === undefined
+          ? []
+          : [Layer.succeed(HostProcess.HomeDirectory, input.hostHomeDirectory)]),
       ),
     ),
   );
@@ -661,6 +674,50 @@ it.layer(NodeServices.layer)("AgentSessionScanner", (it) => {
           [piWorkspace, ["pi"]],
           [codexWorkspace, ["codex"]],
           [claudeWorkspace, ["claudeAgent"]],
+        ]);
+      }),
+    );
+
+    it.effect("matches Windows-cased provider environment variable names", () =>
+      Effect.gen(function* () {
+        const path = yield* Path.Path;
+        const claudeHomePath = yield* makeTempDir("t3code-claude-home-");
+        const codexHomePath = yield* makeTempDir("t3code-codex-home-");
+        const hostHomePath = yield* makeTempDir("t3code-host-home-");
+        const codexEnvironmentHome = yield* makeTempDir("t3code-codex-env-");
+        const workspace = yield* makeTempDir("t3code-workspace-codex-");
+
+        yield* writeTranscript({
+          filePath: path.join(
+            codexEnvironmentHome,
+            "sessions",
+            "2026",
+            "01",
+            "01",
+            "rollout-session.jsonl",
+          ),
+          contents: codexRolloutLine(workspace),
+          mtimeMs: Date.parse("2026-01-02T00:00:00.000Z"),
+        });
+
+        const result = yield* runScan({
+          claudeHomePath,
+          codexHomePath,
+          hostPlatform: "win32",
+          hostEnvironment: {},
+          hostHomeDirectory: hostHomePath,
+          providerInstances: {
+            [ProviderInstanceId.make("codex")]: {
+              driver: ProviderDriverKind.make("codex"),
+              // Windows merges variable names case-insensitively; discovery must match the merge.
+              environment: [{ name: "Codex_Home", value: codexEnvironmentHome, sensitive: false }],
+              config: {},
+            },
+          },
+        });
+
+        expect(result.candidates.map((candidate) => [candidate.path, candidate.sources])).toEqual([
+          [workspace, ["codex"]],
         ]);
       }),
     );
