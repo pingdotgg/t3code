@@ -5457,6 +5457,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
               outputTokens: queryExits ? 40 : 46,
               cachedInputTokens: queryExits ? 2000 : 11455,
               cacheCreationTokens: queryExits ? 500 : 2847,
+              ...(queryExits ? {} : { models: ["claude-sonnet-4-6"] }),
             },
           );
         }
