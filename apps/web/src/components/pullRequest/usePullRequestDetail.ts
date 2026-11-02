@@ -19,6 +19,7 @@ import {
 } from "~/state/pullRequests";
 import {
   applyPullRequestDetailOverride,
+  expirePullRequestDetailOverride,
   readPullRequestDetailSnapshot,
   recordPullRequestDetailOverride,
   resolveDisplayedPullRequestDetail,
@@ -185,7 +186,7 @@ export function usePullRequestDetail(
     setOverride((previous) => recordPullRequestDetailOverride(previous, scopeKey, patch, at));
     // A fetch that never agrees must not pin the confirmed outcome forever.
     window.setTimeout(
-      () => setOverride((previous) => (previous?.at === at ? null : previous)),
+      () => setOverride((previous) => expirePullRequestDetailOverride(previous, at)),
       PULL_REQUEST_OVERRIDE_TRUST_MS,
     );
   };

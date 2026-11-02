@@ -41,6 +41,7 @@ import {
   threadPullRequestPanelTarget,
   latestPullRequestReviewOutcomes,
   applyPullRequestDetailOverride,
+  expirePullRequestDetailOverride,
   pullRequestDetailPatchAfterAction,
   recordPullRequestDetailOverride,
   settlePullRequestDetailOverride,
@@ -357,13 +358,13 @@ describe("confirmed action outcome on the detail", () => {
     const first = record({ isDraft: false });
     expect(recordPullRequestDetailOverride(first, scope, { state: "closed" }, at + 1)).toEqual({
       scope,
-      at: at + 1,
+      at: { isDraft: at, state: at + 1 },
       isDraft: false,
       state: "closed",
     });
     expect(recordPullRequestDetailOverride(first, "other", { state: "closed" }, at + 1)).toEqual({
       scope: "other",
-      at: at + 1,
+      at: { state: at + 1 },
       state: "closed",
     });
   });
@@ -377,7 +378,7 @@ describe("confirmed action outcome on the detail", () => {
     );
     expect(settlePullRequestDetailOverride(override, detail, scope)).toBe(override);
     expect(settlePullRequestDetailOverride(override, { ...detail, isDraft: false }, scope)).toEqual(
-      { scope, at, autoMergeEnabled: true },
+      { scope, at: { autoMergeEnabled: at }, autoMergeEnabled: true },
     );
     expect(
       settlePullRequestDetailOverride(
@@ -388,6 +389,23 @@ describe("confirmed action outcome on the detail", () => {
     ).toBeNull();
     expect(settlePullRequestDetailOverride(override, detail, "other")).toBeNull();
     expect(settlePullRequestDetailOverride(override, null, scope)).toBe(override);
+  });
+
+  it("expires each field on its own deadline", () => {
+    const override = recordPullRequestDetailOverride(
+      record({ isDraft: false }),
+      scope,
+      { autoMergeEnabled: true },
+      at + 1,
+    );
+    expect(expirePullRequestDetailOverride(override, at)).toEqual({
+      scope,
+      at: { autoMergeEnabled: at + 1 },
+      autoMergeEnabled: true,
+    });
+    expect(
+      expirePullRequestDetailOverride(expirePullRequestDetailOverride(override, at), at + 1),
+    ).toBeNull();
   });
 });
 
