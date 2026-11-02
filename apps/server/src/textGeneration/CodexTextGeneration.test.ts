@@ -450,6 +450,7 @@ const PREFLIGHT_PRIMARY_STATES = [
   "exhausted",
   "not installed",
   "signed out",
+  "signed out, fallback failed",
 ] as const;
 
 it.effect.each(PREFLIGHT_PRIMARY_STATES)("text generation preflight: %s", (primaryState) =>
@@ -482,8 +483,11 @@ it.effect.each(PREFLIGHT_PRIMARY_STATES)("text generation preflight: %s", (prima
         ...(primaryState === "not installed" && instanceId === primary
           ? { installed: false, status: "error", auth: { status: "unknown" } }
           : {}),
-        ...(primaryState === "signed out" && instanceId === primary
+        ...(primaryState.startsWith("signed out") && instanceId === primary
           ? { status: "error", auth: { status: "unauthenticated" } }
+          : {}),
+        ...(primaryState === "signed out, fallback failed" && instanceId === fallback
+          ? { status: "error", auth: { status: "unknown" } }
           : {}),
         ...(primaryState === "exhausted" && instanceId === primary
           ? {
@@ -543,7 +547,9 @@ it.effect.each(PREFLIGHT_PRIMARY_STATES)("text generation preflight: %s", (prima
       }),
     ).toEqual({ title: "Generated title" });
     expect(calls).toEqual([
-      primaryState === "ready" || primaryState === "pending"
+      primaryState === "ready" ||
+      primaryState === "pending" ||
+      primaryState === "signed out, fallback failed"
         ? selection
         : {
             instanceId: fallback,

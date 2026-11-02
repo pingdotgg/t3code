@@ -114,6 +114,7 @@ export const make = Effect.gen(function* () {
               resolveProjectProviderInstanceEnabled(settings, null, instanceId) &&
               provider.installed &&
               provider.auth.status !== "unauthenticated" &&
+              provider.status !== "error" &&
               isProviderAvailable(provider) &&
               isProviderTextGenerationCapable(provider) &&
               (operation !== "generateReviewGuide" || INVESTIGATING_DRIVERS.has(driver)) &&
