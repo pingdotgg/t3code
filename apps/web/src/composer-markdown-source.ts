@@ -287,6 +287,14 @@ function collapseRevealed(state: EditorState, revealed: TextRange[]): Transactio
   return tr.setMeta(markdownSourceKey, []).setMeta("addToHistory", false);
 }
 
+/** Whether `mapping` deletes nothing inside or at the edges of `selection`. */
+function keepsSelection(mapping: Mapping, { from, to }: Selection): boolean {
+  const start = mapping.mapResult(from);
+  const end = mapping.mapResult(to);
+  const edges = [start, end].some((result) => result.deletedBefore || result.deletedAfter);
+  return !edges && end.pos - start.pos === to - from;
+}
+
 /** Replays `edit` after undoing `collapse`, so the history records the reveal with the edit. */
 function rebaseEdit(tr: Transaction, collapse: Transaction, edit: Transaction): Transaction {
   for (let index = collapse.steps.length - 1; index >= 0; index--) {
@@ -402,10 +410,18 @@ function markdownSourcePlugin(type: MarkType): Plugin<MarkdownSourceState> {
       decorations: (state) => markdownSourceKey.getState(state)?.decorations,
       handleDOMEvents: {
         compositionstart(editorView) {
-          const revealed = markdownSourceKey.getState(editorView.state)?.revealed ?? [];
+          const { state } = editorView;
+          const revealed = markdownSourceKey.getState(state)?.revealed ?? [];
+          if (revealed.length === 0) return false;
           // Restore history's document shape before the IME starts its preedit.
-          if (revealed.length > 0) {
-            editorView.dispatch(collapseRevealed(editorView.state, revealed));
+          const collapse = collapseRevealed(state, revealed);
+          editorView.dispatch(collapse);
+          // Parsing would move a selection over or beside markers, so compose on the source.
+          // The reveal takes ProseMirror's internal composition ID so one undo removes both.
+          if (!keepsSelection(collapse.mapping, state.selection)) {
+            const { input } = editorView as unknown as { input?: { compositionID?: number } };
+            const reveal = rebaseEdit(editorView.state.tr, collapse, state.tr);
+            editorView.dispatch(reveal.setMeta("composition", input?.compositionID));
           }
           return false;
         },

@@ -203,7 +203,16 @@ it("lets composition replace selected text without surrounding it", async () => 
   expect(serializeEditorDoc(editor.state.doc).value).toBe('"');
 });
 
-it("undoes composition in revealed Markdown through the earlier paste", async () => {
+it.each([
+  { at: "inside bold", selection: 5, composed: "**bo漢ld** after", bold: ["bo漢ld"] },
+  {
+    at: "over the opening markers",
+    selection: { from: 1, to: 3 },
+    composed: "漢bold** after",
+    bold: [],
+  },
+  { at: "after the closing markers", selection: 9, composed: "**bold**漢 after", bold: ["bold"] },
+])("undoes composition $at in revealed Markdown through the earlier paste", async (row) => {
   await using screen = await mountEditor("");
   const { editor } = screen;
   const value = () => serializeEditorDoc(editor.state.doc).value;
@@ -219,12 +228,13 @@ it("undoes composition in revealed Markdown through the earlier paste", async ()
   expect(value()).toBe("**bold** after");
   expect(textWithMark(editor, "markdownSource")).toEqual(["**bold**"]);
   await act(async () => {
+    editor.commands.setTextSelection(row.selection);
     editor.view.dom.dispatchEvent(new CompositionEvent("compositionstart"));
     editor.view.dispatch(editor.state.tr.insertText("漢").setMeta("composition", 1));
     editor.view.dom.dispatchEvent(new CompositionEvent("compositionend", { data: "漢" }));
     editor.commands.setTextSelection(editor.state.doc.content.size - 1);
   });
-  expect(value()).toBe("**bo漢ld** after");
+  expect(value()).toBe(row.composed);
   await act(async () => {
     editor.commands.undo();
   });
@@ -238,8 +248,8 @@ it("undoes composition in revealed Markdown through the earlier paste", async ()
     editor.commands.redo();
     editor.commands.setTextSelection(editor.state.doc.content.size - 1);
   });
-  expect(value()).toBe("**bo漢ld** after");
-  expect(textWithMark(editor, "bold")).toEqual(["bo漢ld"]);
+  expect(value()).toBe(row.composed);
+  expect(textWithMark(editor, "bold")).toEqual(row.bold);
 });
 
 it("keeps unknown dollar names editable when restoring and pasting a draft", async () => {
