@@ -353,10 +353,6 @@ function saveQueryOnConnection(
   return Effect.callback<void, ConnectionTransientError>((resume) => {
     try {
       const bytes = new TextEncoder().encode(payload).length;
-      if (bytes > QUERY_MAX_PAYLOAD_BYTES) {
-        resume(Effect.void);
-        return;
-      }
       const transaction = database.transaction(QUERY_STORE_NAME, "readwrite");
       transaction.addEventListener("abort", () => {
         resume(
@@ -367,6 +363,11 @@ function saveQueryOnConnection(
         resume(Effect.void);
       });
       const store = transaction.objectStore(QUERY_STORE_NAME);
+      // An answer too large to keep must not leave its older copy to paint on the next start.
+      if (bytes > QUERY_MAX_PAYLOAD_BYTES) {
+        store.delete(queryCacheKey(environmentId, key));
+        return;
+      }
       store.put({ environmentId, payload, updatedAt, bytes }, queryCacheKey(environmentId, key));
       const request = store
         .index(QUERY_UPDATED_INDEX_NAME)

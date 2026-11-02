@@ -19,4 +19,14 @@ describe("IndexedDB query cache", () => {
       expect(yield* store.load(first, "pr")).toEqual(Option.none());
     }).pipe(Effect.provide(ConnectionStorage.layer)),
   );
+
+  it.effect("drops the older copy when an answer grows too large to keep", () =>
+    Effect.gen(function* () {
+      const store = (yield* EnvironmentQueryStore)!;
+      const environmentId = EnvironmentId.make("query-oversize");
+      yield* store.save(environmentId, "diff", "small");
+      yield* store.save(environmentId, "diff", "x".repeat(4 * 1024 * 1024 + 1));
+      expect(yield* store.load(environmentId, "diff")).toEqual(Option.none());
+    }).pipe(Effect.provide(ConnectionStorage.layer)),
+  );
 });
