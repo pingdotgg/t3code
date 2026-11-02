@@ -209,14 +209,40 @@ describe("mobile connection storage", () => {
   });
 
   it("discards malformed saved PR views without discarding other preferences", async () => {
+    const validView = {
+      id: "reviewing",
+      name: "Review queue",
+      environmentId: null,
+      query: "bug",
+      controls: { state: "open", involvement: "reviewing", filters: {}, sort: "updated" },
+    } as const;
     mocks.setPreferencesJson(
       JSON.stringify({
         baseFontSize: 17,
-        pullRequestSavedViews: [{ id: "invalid", name: "Broken", controls: { sort: "unknown" } }],
+        pullRequestSavedViews: [
+          validView,
+          {
+            ...validView,
+            id: "invalid",
+            name: "Broken",
+            controls: { ...validView.controls, sort: "unknown" },
+          },
+        ],
       }),
       10,
     );
-    expect(await loadPreferences()).toEqual({ baseFontSize: 17 });
+    expect(await loadPreferences()).toEqual({
+      baseFontSize: 17,
+      pullRequestSavedViews: [validView],
+    });
+    await savePreferencesPatch({ baseFontSize: 18 });
+    expect(await loadPreferences()).toEqual({
+      baseFontSize: 18,
+      pullRequestSavedViews: [validView],
+    });
+    expect(JSON.parse(mocks.getPreferencesJson() ?? "{}").pullRequestSavedViews).toEqual([
+      validView,
+    ]);
   });
 
   it("reconciles fallback preferences after SQLite recovers", async () => {

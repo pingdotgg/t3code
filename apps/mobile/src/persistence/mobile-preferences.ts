@@ -44,7 +44,7 @@ export const PullRequestSavedView = Schema.Struct({
   query: Schema.String,
 });
 export type PullRequestSavedView = typeof PullRequestSavedView.Type;
-const isPullRequestSavedViews = Schema.is(Schema.Array(PullRequestSavedView));
+const isPullRequestSavedView = Schema.is(PullRequestSavedView);
 
 const ThreadListFilters = Schema.Struct({
   environmentId: Schema.NullOr(EnvironmentId),
@@ -371,8 +371,8 @@ function sanitizePreferences(parsed: Preferences): Preferences {
   if (isWorkspaceSelections(parsed.workspaceSelections)) {
     preferences.workspaceSelections = parsed.workspaceSelections;
   }
-  if (isPullRequestSavedViews(parsed.pullRequestSavedViews)) {
-    preferences.pullRequestSavedViews = parsed.pullRequestSavedViews;
+  if (Array.isArray(parsed.pullRequestSavedViews)) {
+    preferences.pullRequestSavedViews = parsed.pullRequestSavedViews.filter(isPullRequestSavedView);
   }
   return preferences;
 }
