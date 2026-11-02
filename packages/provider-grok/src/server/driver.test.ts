@@ -172,6 +172,32 @@ it.layer(layerTest)("GrokDriver", (it) => {
     });
   }
 
+  it.effect("probes a ~/ binary path from the home directory", () => {
+    const spawned: Array<string> = [];
+    return Effect.gen(function* () {
+      const path = yield* Path.Path;
+      const instance = yield* GrokDriver.create({
+        instanceId: ProviderInstanceId.make("grok-home"),
+        displayName: "Grok test",
+        enabled: true,
+        environment: [],
+        config: { ...GrokDriver.defaultConfig(), binaryPath: "~/bin/grok" },
+      }).pipe(Effect.provideService(HostProcess.HomeDirectory, "/test-home"));
+      yield* instance.snapshot.refresh;
+      expect(spawned).not.toHaveLength(0);
+      expect(new Set(spawned)).toEqual(new Set([path.join("/test-home", "bin", "grok")]));
+    }).pipe(
+      Effect.provideService(
+        ChildProcessSpawner.ChildProcessSpawner,
+        stdoutSpawner((command) => {
+          spawned.push(command);
+          return "grok 1.0.0\n";
+        }),
+      ),
+      Effect.scoped,
+    );
+  });
+
   it.effect("stays manual-only when the configured executable does not exist", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;

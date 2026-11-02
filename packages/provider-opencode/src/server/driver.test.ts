@@ -88,6 +88,30 @@ it.layer(layer)("OpenCodeDriver runtime selection", (it) => {
     }).pipe(Effect.scoped),
   );
 
+  it.effect("probes and starts a ~/ binary path from the home directory", () =>
+    Effect.gen(function* () {
+      const binaryPaths: Array<string> = [];
+      const record = ({ binaryPath }: { readonly binaryPath: string }) =>
+        Effect.sync(() => binaryPaths.push(binaryPath));
+      const instance = yield* create({ binaryPath: "~/bin/opencode" }, noHttp).pipe(
+        Effect.provideService(HostProcess.HomeDirectory, "/test-home"),
+        Effect.provideService(OpenCodeRuntime.OpenCodeRuntime, {
+          ...openCode2Runtime,
+          runOpenCodeCommand: (input) =>
+            record(input).pipe(Effect.andThen(openCode2Runtime.runOpenCodeCommand(input))),
+          startOpenCodeServerProcess: (input) =>
+            record(input).pipe(Effect.andThen(reachedServer("start"))),
+        }),
+      );
+      yield* instance.snapshot.refresh;
+      assert.isNotEmpty(binaryPaths);
+      assert.deepStrictEqual(
+        [...new Set(binaryPaths)],
+        [NodePath.join("/test-home", "bin", "opencode")],
+      );
+    }).pipe(Effect.scoped),
+  );
+
   it.effect("answers capability reads without waiting on an unreachable server", () =>
     Effect.gen(function* () {
       const hang = HttpClient.make(() => Effect.never);
