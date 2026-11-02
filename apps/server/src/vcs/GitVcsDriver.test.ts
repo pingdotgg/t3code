@@ -404,7 +404,9 @@ it.effect("checkpoint capture removes the batch object directory a killed add le
 
     assert.strictEqual(result._tag, "Failure");
     assert.deepEqual(
-      (yield* fs.readDirectory(objects)).filter((entry) => entry.startsWith("tmp_objdir-")),
+      (yield* fs.readDirectory(objects)).filter(
+        (entry) => entry.startsWith("tmp_objdir-") || entry.startsWith("t3-checkpoint-"),
+      ),
       ["tmp_objdir-bulk-fsync-other"],
     );
     assert.deepEqual(
@@ -675,7 +677,9 @@ it.effect.each(
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
       const driver = yield* GitVcsDriver.makeVcsDriverShape();
-      const cwd = yield* fs.makeTempDirectoryScoped({ prefix: "t3-checkpoint-sparse-" });
+      const cwd = yield* fs.makeTempDirectoryScoped({
+        prefix: `t3-checkpoint-sparse-${process.platform === "win32" ? ";" : ":"}`,
+      });
       const { git } = yield* makeCheckpointFixture(driver, cwd);
       const write = Effect.fn(function* (name: string, contents: string) {
         yield* fs.makeDirectory(path.dirname(path.join(cwd, name)), { recursive: true });

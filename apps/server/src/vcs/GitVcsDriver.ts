@@ -38,6 +38,7 @@ import {
 } from "@t3tools/contracts";
 import { isMissingExecutable } from "@t3tools/source-control-core/server/discovery";
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import { quoteGitPatchPath } from "@t3tools/shared/gitPatchPath";
 import {
   makeGitVcsDriverCore,
   PATCH_RENDER_PREFIX_ARGS,
@@ -971,10 +972,14 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
       // Staging into a private object directory makes that leftover ours to delete.
       const objectsDir = path.join(gitCommonDir, "objects");
       const stagingObjectsDir = path.join(objectsDir, `t3-checkpoint-objects-${indexId}`);
+      const quotedObjectsDir = quoteGitPatchPath(objectsDir);
       const stageEnv: NodeJS.ProcessEnv = {
         ...commitEnv,
         GIT_OBJECT_DIRECTORY: stagingObjectsDir,
-        GIT_ALTERNATE_OBJECT_DIRECTORIES: [objectsDir, process.env.GIT_ALTERNATE_OBJECT_DIRECTORIES]
+        GIT_ALTERNATE_OBJECT_DIRECTORIES: [
+          quotedObjectsDir.startsWith('"') ? quotedObjectsDir : `"${quotedObjectsDir}"`,
+          process.env.GIT_ALTERNATE_OBJECT_DIRECTORIES,
+        ]
           .filter(Boolean)
           .join(hostPlatform === "win32" ? ";" : ":"),
       };
