@@ -312,6 +312,8 @@ export const openExternal = DesktopIpc.makeIpcMethod({
   }),
 });
 
+const READ_MEDIA_MAX_BYTES = 256 * 1024 * 1024;
+
 // The renderer can display media it cannot fetch(); reading here keeps Save and Copy working for it.
 export const readMedia = DesktopIpc.makeIpcMethod({
   channel: IpcChannels.READ_MEDIA_CHANNEL,
@@ -331,11 +333,22 @@ export const readMedia = DesktopIpc.makeIpcMethod({
     return yield* Effect.tryPromise(async () => {
       // Like an <img>, send the session's cookies.
       const response = await session.fetch(url, { credentials: "include" });
-      return {
-        status: response.status,
-        mimeType: response.headers.get("content-type") ?? "",
-        data: new Uint8Array(await response.arrayBuffer()),
-      };
+      const mimeType = response.headers.get("content-type") ?? "";
+      if (!response.ok || !response.body) {
+        await response.body?.cancel();
+        return { status: response.status, mimeType, data: new Uint8Array() };
+      }
+      // The whole body crosses IPC, so stop before a huge file can exhaust main-process memory.
+      const chunks: Uint8Array[] = [];
+      let size = 0;
+      for await (const chunk of response.body) {
+        size += chunk.byteLength;
+        if (size > READ_MEDIA_MAX_BYTES) {
+          return { status: 413, mimeType, data: new Uint8Array() };
+        }
+        chunks.push(chunk);
+      }
+      return { status: response.status, mimeType, data: Buffer.concat(chunks) };
     }).pipe(Effect.orElseSucceed(() => null));
   }),
 });
