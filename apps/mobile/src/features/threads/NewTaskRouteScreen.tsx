@@ -17,6 +17,7 @@ import {
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
 import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
+import { EnvironmentId } from "@t3tools/contracts";
 import { useEffect, useRef, useState } from "react";
 import { Platform, Pressable, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -49,6 +50,8 @@ type NewTaskRouteParams = {
   readonly pr?: string | string[];
   readonly provider?: string | string[];
   readonly model?: string | string[];
+  /** The machine the user tapped in the environment picker; prefer its copy. */
+  readonly preferredEnvironmentId?: string | string[];
 };
 
 function deriveProjectEmptyState(catalogState: WorkspaceState): {
@@ -165,6 +168,15 @@ export function NewTaskRouteScreen({ route }: StaticScreenProps<NewTaskRoutePara
   const routeShareId = Array.isArray(route.params?.incomingShareId)
     ? route.params.incomingShareId[0]
     : route.params?.incomingShareId;
+  const routePreferredEnvironmentId = Array.isArray(route.params?.preferredEnvironmentId)
+    ? route.params.preferredEnvironmentId[0]
+    : route.params?.preferredEnvironmentId;
+  // The environment picker passes the tapped machine so its copy wins over
+  // the draft's current one; otherwise the chooser keeps the flow's machine.
+  const preferredEnvironmentId =
+    routePreferredEnvironmentId === undefined
+      ? selectedEnvironmentId
+      : EnvironmentId.make(routePreferredEnvironmentId);
   const incomingShare = routeShareId ? getShare(routeShareId) : null;
   const incomingShareSubtitle = incomingShare
     ? incomingShare.attachments.length === 0
@@ -470,7 +482,7 @@ export function NewTaskRouteScreen({ route }: StaticScreenProps<NewTaskRoutePara
                 const hasMultipleProjects = scope.projects.length > 1;
                 const selectionTarget = getProjectScopeSelectionTarget(
                   scope,
-                  selectedEnvironmentId,
+                  preferredEnvironmentId,
                   connectedEnvironmentIds,
                 );
                 if (Platform.OS === "android") {

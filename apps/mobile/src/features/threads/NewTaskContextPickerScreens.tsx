@@ -229,13 +229,11 @@ export function NewTaskEnvironmentPickerRouteScreen({
                   // (not push) so the draft stays underneath and setProject
                   // carries the prompt and attachments over.
                   if (!flow.canSwitchEnvironmentDirectly(environment.environmentId)) {
-                    if (shareId === undefined) {
-                      navigation.dispatch(StackActions.replace("NewTaskProject"));
-                    } else {
-                      navigation.dispatch(
-                        StackActions.replace("NewTaskProject", { incomingShareId: shareId }),
-                      );
-                    }
+                    const params = {
+                      preferredEnvironmentId: String(environment.environmentId),
+                      ...(shareId === undefined ? {} : { incomingShareId: shareId }),
+                    };
+                    navigation.dispatch(StackActions.replace("NewTaskProject", params));
                     return;
                   }
                   void flow.switchEnvironment(environment.environmentId).then((switched) => {
