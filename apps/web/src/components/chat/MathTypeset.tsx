@@ -8,13 +8,9 @@ import { LRUCache } from "../../lib/lruCache";
 // that from typesetting the same formulas again. "" records a parse error.
 const typesetCache = new LRUCache<string>(1000, 4 * 1024 * 1024);
 
-function typeset(tex: string, display: boolean): string {
-  const key = `${display ? "display" : "inline"}:${tex}`;
-  const cached = typesetCache.get(key);
-  if (cached !== null) return cached;
-  let html = "";
+function render(tex: string, display: boolean): string {
   try {
-    html = katex.renderToString(tex, {
+    return katex.renderToString(tex, {
       displayMode: display,
       output: "htmlAndMathml",
       throwOnError: true,
@@ -26,6 +22,19 @@ function typeset(tex: string, display: boolean): string {
     });
   } catch {
     // Unfinished or unsupported TeX stays readable as its source.
+    return "";
+  }
+}
+
+function typeset(tex: string, display: boolean): string {
+  const key = `${display ? "display" : "inline"}:${tex}`;
+  const cached = typesetCache.get(key);
+  if (cached !== null) return cached;
+  let html = render(tex, display);
+  if (!html) {
+    // Models write `\text{5% off}`, where TeX's comment `%` would swallow the closing braces.
+    const escaped = tex.replace(/\\[\s\S]|%/g, (match) => (match === "%" ? "\\%" : match));
+    if (escaped !== tex) html = render(escaped, display);
   }
   typesetCache.set(key, html, (key.length + html.length) * 2);
   return html;
