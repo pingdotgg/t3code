@@ -226,12 +226,17 @@ describe("description drafts", () => {
     expect(descriptionDraftInForce(draft, url, 3)).toBeNull();
   });
 
-  it("ends on a failed save and ignores saves that settle after it", () => {
+  it("outlives failed saves until a reading after the last one, losing the body only with it", () => {
     let draft: DescriptionDraft | null = startDescriptionSave(null, { url, observedAt: 1 }, ticked);
     draft = startDescriptionSave(draft, { url, observedAt: 1 }, unticked);
+    // The save still running writes the whole body again.
     draft = settleDescriptionSave(draft, url, false);
-    expect(draft).toBeNull();
-    expect(settleDescriptionSave(draft, url, true)).toBeNull();
+    expect(descriptionDraftInForce(draft, url, 2)).toMatchObject({ body: unticked, saves: 1 });
+    draft = descriptionDraftInForce(draft, url, 2);
+    draft = settleDescriptionSave(draft, url, false);
+    expect(descriptionDraftInForce(draft, url, 2)).toMatchObject({ body: null, saves: 0 });
+    expect(settleDescriptionSave(draft, url, true)).toBe(draft);
+    expect(descriptionDraftInForce(draft, url, 3)).toBeNull();
   });
 
   it("belongs to one change request", () => {

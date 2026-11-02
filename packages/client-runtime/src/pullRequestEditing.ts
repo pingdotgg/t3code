@@ -66,7 +66,8 @@ export function maintainerEditsChoiceInForce<
 export interface DescriptionDraft {
   readonly key: string;
   readonly observedAt: number | undefined;
-  readonly body: string;
+  /** Null once the last save failed: until a host reading, nobody knows which saves landed. */
+  readonly body: string | null;
   /** Saves still running. The host applies them in order, so the last one is `body`. */
   readonly saves: number;
 }
@@ -89,14 +90,15 @@ export function startDescriptionSave(
   return { key: detail.url, observedAt: detail.observedAt, body, saves: saves + 1 };
 }
 
-/** A failed save drops the draft: the saves before it may have landed, so only a reading knows. */
+/** Each save writes the whole body, so a failure only loses `body` when no later save is running. */
 export function settleDescriptionSave(
   draft: DescriptionDraft | null,
   key: string,
   saved: boolean,
 ): DescriptionDraft | null {
   if (draft === null || draft.key !== key || draft.saves === 0) return draft;
-  return saved ? { ...draft, saves: draft.saves - 1 } : null;
+  const saves = draft.saves - 1;
+  return { ...draft, saves, body: saved || saves > 0 ? draft.body : null };
 }
 
 /** Hosts do not support rewriting review summaries through comment mutations. */

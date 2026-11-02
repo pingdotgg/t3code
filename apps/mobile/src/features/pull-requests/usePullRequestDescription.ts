@@ -43,7 +43,7 @@ export function usePullRequestDescription(
         cause instanceof Error ? cause.message : "Try again.",
       );
     }
-    if (!saved || savesRunning.current === 0) refreshDetail();
+    if (savesRunning.current === 0) refreshDetail();
   };
   return {
     body,

@@ -497,7 +497,11 @@ export function PullRequestSummaryTab({
   });
   const canUpdate = useAtomValue(pullRequestEnvironment.update.permissionAtom(environmentId));
   const canEditDescription = canUpdate && canEditPullRequestChangeRequest(detail);
-  const [bodyScope, setBodyScope] = useState<string | null>(null);
+  // The editor keeps the body it opened from, so a failed save cannot reset what was typed.
+  const [bodyScope, setBodyScope] = useState<{
+    readonly url: string;
+    readonly body: string;
+  } | null>(null);
   const [descriptionDraft, setDescriptionDraft] = useState<DescriptionDraft | null>(null);
   const descriptionDraftKept = descriptionDraftInForce(
     descriptionDraft,
@@ -526,7 +530,7 @@ export function PullRequestSummaryTab({
     const saved = result._tag === "Success";
     setDescriptionDraft((draft) => settleDescriptionSave(draft, key, saved));
     if (!saved) toastManager.add({ type: "error", title: "Could not save the description" });
-    if (!saved || descriptionSavesRunning.current === 0) onRefresh();
+    if (descriptionSavesRunning.current === 0) onRefresh();
     return saved;
   };
   const saveBody = async (body: string) => {
@@ -784,10 +788,10 @@ export function PullRequestSummaryTab({
 
       <Section key={`description:${detail.url}`} title="Description" keepMounted>
         <div className="group">
-          {bodyScope === detail.url ? (
+          {bodyScope?.url === detail.url ? (
             <PullRequestMarkdownEditor
               allowEmpty
-              value={description}
+              value={bodyScope.body}
               cwd={detail.workspaceRoot}
               environmentId={environmentId}
               threadRef={threadRef}
@@ -810,7 +814,7 @@ export function PullRequestSummaryTab({
               {canEditDescription ? (
                 <PullRequestEditButton
                   aria-label="Edit description"
-                  onClick={() => setBodyScope(detail.url)}
+                  onClick={() => setBodyScope({ url: detail.url, body: description })}
                 />
               ) : null}
             </div>

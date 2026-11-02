@@ -9,6 +9,11 @@ vi.mock(import("~/state/use-atom-command"), async (original) => ({
   ...(await original()),
   useAtomCommand: (() => state.update) as never,
 }));
+vi.mock(import("~/state/session"), async (original) => ({
+  ...(await original()),
+  readEnvironmentScope: () => true,
+  useEnvironmentScope: () => true,
+}));
 vi.mock(import("~/state/pullRequests"), async (original) => {
   const actual = await original();
   const { Atom } = await import("effect/reactivity");
@@ -119,8 +124,9 @@ async function render(value = detail) {
   });
 }
 
-it("keeps an unsaved description when collapsed and reopened", async () => {
+it("keeps an unsaved description when collapsed and reopened, and after a failed save", async () => {
   setup();
+  state.update.mockResolvedValue({ _tag: "Failure", cause: new Error("offline") });
   await using screen = await render();
   await act(async () =>
     screen.container.querySelector<HTMLButtonElement>('[aria-label="Edit description"]')!.click(),
@@ -131,6 +137,11 @@ it("keeps an unsaved description when collapsed and reopened", async () => {
   await screen.click("Description");
   expect(screen.expanded("Description")).toBe("false");
   await screen.click("Description");
+  expect(screen.container.querySelector("textarea")!.value).toBe("Unsaved description");
+
+  await userEvent.click(screen.getByRole("button", { name: "Save" }));
+  expect(state.update).toHaveBeenCalledTimes(1);
+  await expect.element(screen.getByRole("button", { name: "Save" })).toBeEnabled();
   expect(screen.container.querySelector("textarea")!.value).toBe("Unsaved description");
 });
 
