@@ -283,11 +283,11 @@ export function SuspenseShikiCodeBlock({
   const [hasStreamed, setHasStreamed] = useState(isStreaming);
   if (isStreaming && !hasStreamed) setHasStreamed(true);
   const language = extractFenceLanguage(className);
-  const cacheKey = createHighlightCacheKey(code, language, themeName);
+  const cacheKey = isStreaming ? null : createHighlightCacheKey(code, language, themeName);
   // Once lines are mounted individually, keep that renderer when streaming
   // finishes so switching to cached HTML cannot clear an existing selection.
   const cachedHighlightedHtml =
-    !isStreaming && !hasStreamed ? highlightedCodeCache.get(cacheKey) : null;
+    cacheKey !== null && !hasStreamed ? highlightedCodeCache.get(cacheKey) : null;
 
   if (cachedHighlightedHtml != null) {
     return (
@@ -304,7 +304,6 @@ export function SuspenseShikiCodeBlock({
       language={language}
       themeName={themeName}
       cacheKey={cacheKey}
-      isStreaming={isStreaming}
       preserveLines={isStreaming || hasStreamed}
     />
   );
@@ -314,8 +313,7 @@ interface UncachedShikiCodeBlockProps {
   code: string;
   language: string;
   themeName: DiffThemeName;
-  cacheKey: string;
-  isStreaming: boolean;
+  cacheKey: string | null;
   preserveLines: boolean;
 }
 
@@ -324,7 +322,6 @@ function UncachedShikiCodeBlock({
   language,
   themeName,
   cacheKey,
-  isStreaming,
   preserveLines,
 }: UncachedShikiCodeBlockProps) {
   const highlighter = use(getSyntaxHighlighterPromise(language));
@@ -350,8 +347,8 @@ function UncachedShikiCodeBlock({
           : highlighter.codeToHtml(code, { lang: "text", theme: themeName });
       }
     })();
-    // A finished block is cached for the next mount; a streaming one is still changing.
-    if (!isStreaming) {
+    // A finished block is cached for the next mount; a streaming one has no key.
+    if (cacheKey !== null) {
       const highlightedHtml = typeof result === "string" ? result : toHtml(result);
       highlightedCodeCache.set(
         cacheKey,
