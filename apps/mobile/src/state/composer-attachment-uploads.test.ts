@@ -337,3 +337,22 @@ it("keeps an unexpected draft flush error blocking Send", async () => {
   );
   expect(native.deleted).toEqual(["pending-1"]);
 });
+
+it("uploads draft attachments for threads whose ids contain colons", () => {
+  const keys = [
+    "environment-1:thread-1",
+    "environment-1:thread:mcp:namespace:key:0",
+    "environment-1:command-1:fork",
+    "environment-1:thread-1~queued-edit~run:1",
+  ];
+  const requests = composerAttachmentUploadRequests({
+    drafts: Object.fromEntries(keys.map((key) => [key, { attachments: [{ ...image, id: key }] }])),
+    queuedMessagesByThreadKey: {},
+    connectedEnvironmentIds: new Set([environmentId]),
+    operableEnvironmentIds: new Set([environmentId]),
+    serverConfigs: new Map([[environmentId, config]]),
+  });
+  expect(requests.map((request) => [request.attachment.id, request.environmentId])).toEqual(
+    keys.map((key) => [key, environmentId]),
+  );
+});
