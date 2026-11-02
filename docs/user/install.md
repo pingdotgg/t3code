@@ -191,6 +191,11 @@ Chocolatey installs compare against the version their package manager offers,
 which can trail the npm release; update Claude installed with Chocolatey
 through Chocolatey.
 
+If Codex or Claude uses a launcher as its **Binary path**, set **Maintenance binary path**
+to the underlying CLI installation in web or desktop Settings. Sessions keep using the
+launcher; Update now uses the maintenance installation and still verifies the session
+binary's version afterward. Clear the maintenance path to update the session binary again.
+
 Add another provider instance for a separate account or configuration. Each
 instance can have its own environment variables, such as API keys or a custom
 base URL. Mark secret values as sensitive; after saving, T3 Code does not display

@@ -349,6 +349,9 @@ export const make = Effect.fn("ProviderMaintenanceRunner.make")(function* () {
             enrichProviderSnapshotWithVersionAdvisory(
               refreshedProvider,
               maintenanceCapabilities,
+              phase === "pre-update"
+                ? { enableProviderUpdateChecks: undefined, useMaintenanceVersion: true }
+                : undefined,
             ).pipe(
               Effect.provideService(HttpClient.HttpClient, httpClient),
               Effect.provideService(ProviderLatestVersions.ProviderLatestVersions, latestVersions),

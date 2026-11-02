@@ -5,6 +5,8 @@ export interface ProviderMaintenanceCapabilities {
   readonly provider: ProviderDriverKind;
   readonly packageName: string | null;
   readonly update: ProviderMaintenanceCommandAction | null;
+  /** Selected maintenance CLI version; never replaces the session snapshot version. */
+  readonly lookupMaintenanceVersion?: Effect.Effect<string | null>;
   /** undefined defers to npm; null means the installer could not determine the latest version. */
   readonly latestVersion?: string | null;
   /**
