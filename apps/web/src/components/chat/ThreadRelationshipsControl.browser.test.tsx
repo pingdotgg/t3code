@@ -9,11 +9,14 @@ const state = vi.hoisted(() => ({
   projection: null as unknown,
   commandSucceeds: false,
   relatedShells: [] as unknown[],
+  family: null as unknown,
+  familyAtom: null as unknown,
 }));
 
 vi.mock(import("@effect/atom-react"), async (original) => ({
   ...(await original()),
-  useAtomValue: (() => false) as never,
+  useAtomValue: ((atom: unknown, select?: (value: unknown) => unknown) =>
+    atom === state.familyAtom ? (select ? select(state.family) : state.family) : false) as never,
 }));
 
 vi.mock(import("../../state/entities"), () => ({
@@ -33,6 +36,15 @@ vi.mock(import("../../state/environments"), () => ({
 vi.mock(import("../../lib/archivedThreadsState"), () => ({
   useArchivedThreadSnapshots: (() => ({ snapshots: [] })) as never,
 }));
+vi.mock(import("../../state/threads"), async (original) => {
+  const actual = await original();
+  const { Atom } = await import("effect/reactivity");
+  state.familyAtom = Atom.make(null);
+  return {
+    ...actual,
+    threadFamilies: { ...actual.threadFamilies, familyAtom: (() => state.familyAtom) as never },
+  };
+});
 vi.mock(import("../../state/use-atom-command"), () => ({
   useAtomCommand: (() => async () =>
     state.commandSucceeds
@@ -51,6 +63,7 @@ const threadId = ThreadId.make("fork");
 function setup() {
   state.commandSucceeds = false;
   state.relatedShells = [];
+  state.family = AsyncResult.initial(true);
   state.projection = {
     thread: {
       id: threadId,
@@ -342,4 +355,94 @@ it("shows a delegated-from thread's full title in its tooltip even when its envi
 
   await row.click({ force: true });
   expect(screen.router?.state.location.pathname).toBe("/environment/fork");
+});
+
+function setupSourceWithTransfers(
+  transfers: ReadonlyArray<{
+    sourceThreadId: string;
+    targetThreadId: string;
+    type: string;
+    status: string;
+  }>,
+  familyThreads: ReadonlyArray<{ id: string; title: string }>,
+) {
+  setup();
+  const source = {
+    id: "source",
+    title: "Source",
+    activeProviderThreadId: null,
+    lineage: { parentThreadId: null, relationshipToParent: null, rootThreadId: "source" },
+    forkedFrom: null,
+  };
+  const liveFork = {
+    id: "live-fork",
+    title: "Live fork",
+    lineage: { parentThreadId: "source", relationshipToParent: "fork", rootThreadId: "source" },
+    forkedFrom: null,
+  };
+  state.projection = {
+    ...(state.projection as Record<string, unknown>),
+    thread: source,
+    contextTransfers: transfers,
+  };
+  state.relatedShells = [liveFork];
+  state.family = AsyncResult.success({
+    snapshotSequence: 1,
+    threads: [
+      source,
+      liveFork,
+      ...familyThreads.map((thread) => ({
+        ...thread,
+        lineage: { parentThreadId: "source", relationshipToParent: "fork", rootThreadId: "source" },
+        forkedFrom: null,
+      })),
+    ],
+  });
+}
+
+it.each([
+  [
+    "a pending fork transfer",
+    { sourceThreadId: "source", targetThreadId: "deleted-fork", type: "fork", status: "pending" },
+  ],
+  [
+    "a merge-back transfer",
+    {
+      sourceThreadId: "deleted-fork",
+      targetThreadId: "source",
+      type: "merge_back",
+      status: "consumed",
+    },
+  ],
+])("hides a deleted fork that left %s once its family read is settled", async (_, transfer) => {
+  setupSourceWithTransfers([transfer], []);
+  await using screen = await render(
+    <ThreadRelationshipsPanel
+      environmentId={environmentId}
+      threadId={ThreadId.make("source")}
+      showLineage
+      showSideChats={false}
+    />,
+  );
+
+  await expect.element(screen.getByText("Live fork", { exact: true })).toBeVisible();
+  await expect.element(screen.getByText("deleted-fork")).not.toBeInTheDocument();
+});
+
+it("titles an older fork the shell omitted from its family read", async () => {
+  setupSourceWithTransfers(
+    [{ sourceThreadId: "source", targetThreadId: "older-fork", type: "fork", status: "consumed" }],
+    [{ id: "older-fork", title: "Older fork" }],
+  );
+  await using screen = await render(
+    <ThreadRelationshipsPanel
+      environmentId={environmentId}
+      threadId={ThreadId.make("source")}
+      showLineage
+      showSideChats={false}
+    />,
+  );
+
+  await expect.element(screen.getByText("Older fork", { exact: true })).toBeVisible();
+  await expect.element(screen.getByText("older-fork")).not.toBeInTheDocument();
 });
