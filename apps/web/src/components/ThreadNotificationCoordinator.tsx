@@ -84,16 +84,22 @@ export function startThreadNotifications(
     if (remaining.length === 0) openToasts.delete(key);
     else openToasts.set(key, remaining);
   };
-  // A notification shown before the tag filter turned on must not stay on screen.
-  const closeHiddenPending = (hidden: ReadonlySet<string>) => {
+  // A notification shown before the tag filter turned on must not stay on screen. While hiding,
+  // one whose thread left the live list (archived) cannot be judged, so it closes too.
+  const closeHiddenPending = () => {
+    const hidden = registry.get(environmentThreadShells.hiddenThreadKeysAtom);
+    const live = registry.get(environmentThreadShells.anyEnvironmentHidingAtom)
+      ? new Set(registry.get(environmentThreadShells.threadRefsAtom).map(threadKey))
+      : null;
+    const shouldClose = (key: string) => hidden.has(key) || (live !== null && !live.has(key));
     for (const [key, toastIds] of openToasts) {
-      if (!hidden.has(key)) continue;
+      if (!shouldClose(key)) continue;
       for (const toastId of toastIds) toastManager.close(toastId);
       openToasts.delete(key);
     }
     const count = pending.size;
     for (const [tag, entry] of pending) {
-      if (!hidden.has(threadKey(entry))) continue;
+      if (!shouldClose(threadKey(entry))) continue;
       entry.notification.close();
       pending.delete(tag);
     }
@@ -397,16 +403,17 @@ export function startThreadNotifications(
       syncEnvironments();
     },
   );
-  const unsubscribeHidden = registry.subscribe(
-    environmentThreadShells.hiddenThreadKeysAtom,
-    closeHiddenPending,
-  );
+  const unsubscribeHidden = [
+    registry.subscribe(environmentThreadShells.hiddenThreadKeysAtom, closeHiddenPending),
+    registry.subscribe(environmentThreadShells.anyEnvironmentHidingAtom, closeHiddenPending),
+    registry.subscribe(environmentThreadShells.threadRefsAtom, closeHiddenPending),
+  ];
   onSettings();
 
   return () => {
     unsubscribeSettings();
     unsubscribeEnvironmentIds();
-    unsubscribeHidden();
+    for (const unsubscribe of unsubscribeHidden) unsubscribe();
     for (const entry of watched.values()) entry.unsubscribe();
     watched.clear();
     stopModeListeners();
