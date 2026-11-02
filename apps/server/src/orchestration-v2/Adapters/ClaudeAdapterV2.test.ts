@@ -4214,7 +4214,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
             Effect.gen(function* () {
               const harness = yield* makeWakeHarnessWithOptions({
                 settings: { ...DEFAULT_CLAUDE_SETTINGS, homePath: home, launchArgs },
-                environment: { CLAUDE_CODE_ENTRYPOINT: "t3-code" },
+                environment: {},
               });
               yield* harness.runtime.startTurn(
                 makeClaudeTestTurnInput({

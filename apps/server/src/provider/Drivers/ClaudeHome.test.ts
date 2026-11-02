@@ -10,6 +10,7 @@ import {
   makeClaudeCapabilitiesCacheKey,
   makeClaudeContinuationGroupKey,
   makeClaudeEnvironment,
+  mergeClaudeBaseEnvironment,
   mergeClaudeProcessEnvironment,
   resolveClaudeHomePath,
   resolveClaudeSessionEnvironment,
@@ -160,7 +161,7 @@ it.layer(NodeServices.layer)("ClaudeHome", (it) => {
         resolveClaudeSessionEnvironment({ homePath }, environment, cwd, launchArgEnv).pipe(
           Effect.map((resolved) => resolved.CLAUDE_CODE_ENTRYPOINT),
         );
-      const subscription = { CLAUDE_CODE_ENTRYPOINT: "t3-code" };
+      const subscription = {};
       const apiKey = { ANTHROPIC_API_KEY: "key" };
 
       expect(yield* entrypoint(subscription)).toBe("t3-code");
@@ -190,6 +191,20 @@ it.layer(NodeServices.layer)("ClaudeHome", (it) => {
       yield* write(local, { ANTHROPIC_API_KEY: "" });
       expect(yield* entrypoint(apiKey)).toBe("t3-code");
       yield* write(local, {});
+
+      // The base env keeps only a label the instance configured, so settings edits take effect.
+      yield* write(user, { CLAUDE_CODE_ENTRYPOINT: "removed-later" });
+      const base = yield* mergeClaudeBaseEnvironment(undefined, {
+        CLAUDE_CODE_ENTRYPOINT: "claude-desktop",
+        CLAUDECODE: "1",
+      });
+      expect(base).toEqual({});
+      expect(yield* entrypoint(base)).toBe("removed-later");
+      yield* write(user, {});
+      expect(yield* entrypoint(base)).toBe("t3-code");
+
+      // Even t3-code is kept when the instance configures it.
+      expect(yield* entrypoint({ ...apiKey, CLAUDE_CODE_ENTRYPOINT: "t3-code" })).toBe("t3-code");
 
       // A configured label survives a session key, and session settings can set one themselves.
       expect(yield* entrypoint({ ...apiKey, CLAUDE_CODE_ENTRYPOINT: "instance" })).toBe("instance");
