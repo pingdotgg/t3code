@@ -84,7 +84,9 @@ export function createArchivedThreadSnapshotsAtomFamily<E>(options: {
           hiddenTags: get(options.hiddenThreadTagsAtom(environmentId)),
         })),
         get(options.hiddenThreadKeysAtom),
-        new Set(get(options.liveThreadRefsAtom).map(threadKey)),
+        snapshots.some(({ environmentId }) => get(options.hiddenThreadTagsAtom(environmentId)))
+          ? new Set(get(options.liveThreadRefsAtom).map(threadKey))
+          : undefined,
       );
       if (hidden.size === 0) return { snapshots, error, isLoading };
       return {

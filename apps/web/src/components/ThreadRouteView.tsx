@@ -3,7 +3,6 @@ import { scopedThreadKey } from "@t3tools/client-runtime/environment";
 import { parseThreadKey, threadKey } from "@t3tools/client-runtime/state/entities";
 import { hasHiddenTag, visibilityParentKey } from "@t3tools/client-runtime/state/threads";
 import * as Option from "effect/Option";
-import { Atom } from "effect/reactivity";
 import { Navigate, useNavigate } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
 
@@ -12,9 +11,12 @@ import { BackgroundThreadContext } from "./chat/backgroundThread";
 import { SidebarInset } from "./ui/sidebar";
 import { useComposerDraftStore } from "../composerDraftStore";
 import { useSidebarPendingFileDropStore } from "../sidebarPendingFileDropStore";
-import { useEnvironmentThreadRefs, useQuietThreadShell } from "../state/entities";
+import {
+  useEnvironmentThreadRefs,
+  useHiddenThreadTags,
+  useQuietThreadShell,
+} from "../state/entities";
 import { useEnvironmentShellStatus } from "../state/shell";
-import { serverEnvironment } from "../state/server";
 import { environmentThreadShells, useEnvironmentThread } from "../state/threads";
 import {
   buildThreadRouteParams,
@@ -22,8 +24,6 @@ import {
   resolveThreadRouteRenderState,
   type ThreadRouteTarget,
 } from "../threadRoutes";
-
-const NO_HIDDEN_TAGS_ATOM = Atom.make<ReadonlyArray<string> | null>(null);
 
 /**
  * Unkeyed so navigating between server threads reuses one ChatView. Rendered by the `_chat`
@@ -90,11 +90,7 @@ export function ThreadRouteView({
   );
   const hiddenKeys = useAtomValue(environmentThreadShells.hiddenThreadKeysAtom);
   // A thread the shell leaves out (older settled, idle subagent) is judged from its loaded detail.
-  const unlistedHiddenTags = useAtomValue(
-    unlistedThreadRef === null
-      ? NO_HIDDEN_TAGS_ATOM
-      : serverEnvironment.hiddenThreadTagsAtom(unlistedThreadRef.environmentId),
-  );
+  const unlistedHiddenTags = useHiddenThreadTags(unlistedThreadRef?.environmentId ?? null);
   const unlistedThread = Option.getOrNull(Option.map(unlistedThreadDetail.data, (p) => p.thread));
   const unlistedParentKey =
     unlistedThreadRef === null || unlistedThread === null
@@ -103,10 +99,8 @@ export function ThreadRouteView({
   const unlistedParentShell = useQuietThreadShell(
     unlistedParentKey === null ? null : parseThreadKey(unlistedParentKey),
   );
-  const unlistedParentHiddenTags = useAtomValue(
-    unlistedParentKey === null
-      ? NO_HIDDEN_TAGS_ATOM
-      : serverEnvironment.hiddenThreadTagsAtom(parseThreadKey(unlistedParentKey).environmentId),
+  const unlistedParentHiddenTags = useHiddenThreadTags(
+    unlistedParentKey === null ? null : parseThreadKey(unlistedParentKey).environmentId,
   );
   // Off-shell threads: a child follows its parent; while hiding, an unloaded parent hides it too.
   const unlistedHidden =

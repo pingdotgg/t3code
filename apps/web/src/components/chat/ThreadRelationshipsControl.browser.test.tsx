@@ -26,7 +26,6 @@ vi.mock(import("../../state/entities"), () => ({
       : [(state.projection as { thread: unknown }).thread, ...state.relatedShells]) as never,
   useProjects: (() => []) as never,
   useHiddenThreadKeys: (() => new Set()) as never,
-  useHiddenThreadTags: (() => null) as never,
 }));
 vi.mock(import("../../state/environments"), () => ({
   useEnvironment: (() => null) as never,
