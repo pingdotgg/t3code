@@ -1340,7 +1340,8 @@ describe("AntigravityAdapterV2 commands running past the reply", () => {
 
   it.effect("stops tracking a failed prompt's commands unless the run keeps them", () =>
     Effect.gen(function* () {
-      const { session, prompts, turnInput, takeUntil, send } = yield* openRunningCommandSession();
+      const { session, prompts, turnInput, seen, takeUntil, toolStatuses, send } =
+        yield* openRunningCommandSession();
       const hasPendingBackgroundWork = session.hasPendingBackgroundWork;
       if (hasPendingBackgroundWork === undefined) {
         return assert.fail("Antigravity sessions must report pending background work");
@@ -1380,10 +1381,25 @@ describe("AntigravityAdapterV2 commands running past the reply", () => {
       const refused = yield* startPrompt(2);
       yield* runCommand("replaced-build");
       yield* Deferred.succeed(refused, { stopReason: "refusal" });
-      assert.isTrue((yield* failedTerminal).childTurnsContinue);
+      const refusedTerminal = yield* failedTerminal;
+      assert.isTrue(refusedTerminal.childTurnsContinue);
       assert.isTrue(yield* hasPendingBackgroundWork);
+      const refusedRunId = turnInput(2, false).runId;
+      assert.deepEqual(toolStatuses(refusedRunId, "replaced-build"), ["running"]);
       const errored = yield* startPrompt(3);
       assert.isFalse(yield* hasPendingBackgroundWork, "the replaced process's command is gone");
+      // The replacement ends the killed command on its own run before the next turn opens.
+      yield* takeUntil((event) => event.type === "provider_turn.updated");
+      const killed = seen.findLast(
+        (event) =>
+          event.type === "turn_item.updated" &&
+          event.turnItem.nativeItemRef?.nativeId === "replaced-build",
+      );
+      assert.deepInclude(killed?.type === "turn_item.updated" ? killed.turnItem : {}, {
+        runId: refusedRunId,
+        providerTurnId: refusedTerminal.providerTurnId,
+        status: "interrupted",
+      });
 
       // An idle error leaves the agent and its command running for the same run.
       yield* runCommand("surviving-build");

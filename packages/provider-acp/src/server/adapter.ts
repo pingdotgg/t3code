@@ -2218,6 +2218,8 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
         const stoppedRunQuarantine = yield* Ref.make(false);
         // Native subagents can outlive interrupts; carry lineage forward to finish their original turn items.
         const carryoverSubagents = yield* Ref.make<AcpCarryoverSubagents | null>(null);
+        // A failed turn whose tools outlive it; replacing the runtime must end them on that run.
+        const survivingToolsTurn = yield* Ref.make<ActiveAcpTurn | null>(null);
         const handledBackgroundTaskIdsInActiveTurn = yield* Ref.make<ReadonlySet<string>>(
           new Set(),
         );
@@ -7688,6 +7690,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               (followsAgentWorkState &&
                 rootSessionId !== null &&
                 hasWorkingDescendant(rootSessionId)));
+          yield* Ref.set(survivingToolsTurn, childTurnsContinue ? context : null);
           // Foreground tools of a prompt that failed for good never report their end.
           if (
             settledStatus === "failed" &&
@@ -8027,7 +8030,15 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           yield* restartAcpRuntime(threadId);
           yield* Ref.set(runtimeRestartRequired, false);
           // The replaced process took its running commands with it.
-          yield* Ref.set(runningBackgroundTaskIds, new Set());
+          const killedTaskIds = yield* Ref.getAndSet(runningBackgroundTaskIds, new Set());
+          const survivor = yield* Ref.getAndSet(survivingToolsTurn, null);
+          if (survivor !== null) {
+            for (const [taskId, toolCallId] of survivor.toolCallIdsByBackgroundTaskId) {
+              const tool = survivor.tools.get(toolCallId);
+              if (tool === undefined || !killedTaskIds.has(taskId)) continue;
+              yield* emitTool(survivor, tool, "interrupted");
+            }
+          }
           yield* Ref.set(activeSessionId, null);
           yield* Ref.set(activeSessionSetup, null);
           yield* Ref.set(activeSelection, null);
